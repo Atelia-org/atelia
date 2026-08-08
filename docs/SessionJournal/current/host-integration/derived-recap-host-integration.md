@@ -267,7 +267,7 @@ DerivedRecapPlanningProgressInspector.InspectAsync(
   |  BelowCadenceThreshold(progress snapshot)
   |  AwaitingReplaySafeAdmission(progress snapshot)
   |  CadenceReady(progress snapshot)
-  |  RawSafetyRejected
+  |  FullRebuildRequired
   |  Retryable
   |  Unavailable
   |  BeyondPrefix

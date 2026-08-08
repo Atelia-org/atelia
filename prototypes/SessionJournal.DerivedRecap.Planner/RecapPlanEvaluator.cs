@@ -31,17 +31,9 @@ public static class RecapPlanEvaluator {
             );
         }
         if (rawGrowthEventCount > limits.MaxRawGrowthEventCount) {
-            return new RecapRawSafetyResult.Unavailable(
-                [
-                    new RecapPlanDefect(
-                        RecapPlanDefectCodes
-                            .MaxRawGrowthEventCountExceeded,
-                        $"Raw growth after cadence baseline is "
-                        + $"{rawGrowthEventCount}; limit is "
-                        + $"{limits.MaxRawGrowthEventCount}."
-                    )
-                ],
-                rawGrowthEventCount
+            return new RecapRawSafetyResult.FullRebuildRequired(
+                rawGrowthEventCount,
+                limits.MaxRawGrowthEventCount
             );
         }
         return new RecapRawSafetyResult.Safe(rawGrowthEventCount);
@@ -73,12 +65,9 @@ public static class RecapPlanEvaluator {
             );
         }
         if (rawGrowthEventCount > limits.MaxRawGrowthEventCount) {
-            return new RecapRawSafetyResult.Unavailable(
-                [new RecapPlanDefect(
-                    RecapPlanDefectCodes.MaxRawGrowthEventCountExceeded,
-                    $"Raw growth after cadence baseline is {rawGrowthEventCount}; limit is {limits.MaxRawGrowthEventCount}."
-                )],
-                rawGrowthEventCount
+            return new RecapRawSafetyResult.FullRebuildRequired(
+                rawGrowthEventCount,
+                limits.MaxRawGrowthEventCount
             );
         }
         return new RecapRawSafetyResult.Safe(rawGrowthEventCount);
@@ -115,16 +104,9 @@ public static class RecapPlanEvaluator {
         );
         if (rawGrowthEventCount
             > limits.MaxRawGrowthEventCount) {
-            return new RecapSchedulingResult.Unavailable(
-                [
-                    new RecapPlanDefect(
-                        RecapPlanDefectCodes
-                            .MaxRawGrowthEventCountExceeded,
-                        $"Raw growth after cadence baseline is "
-                        + $"{rawGrowthEventCount}; limit is "
-                        + $"{limits.MaxRawGrowthEventCount}."
-                    )
-                ],
+            return new RecapSchedulingResult.FullRebuildRequired(
+                rawGrowthEventCount,
+                limits.MaxRawGrowthEventCount,
                 measurement
             );
         }

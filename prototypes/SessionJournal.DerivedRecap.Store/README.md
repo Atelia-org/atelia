@@ -3,6 +3,23 @@
 This project owns event-addressed Recap persistence, structural validation,
 atomic publication, strict ordinal selection, and exact materialization.
 
+## Full-rebuild execution aid
+
+`DerivedRecapRebuildSpoolStore` owns an independent
+`derived/recap/rebuild/v1` execution-aid root. It is not part of the v4 truth
+Store and survives `DerivedRecapStore.ResetAsync`. Its strict canonical files
+contain only selected-lineage capture identity, content-free address/header
+entries, page-chain checkpoints, and a completion seal; they never contain raw
+event bodies, recap content, prompts, epoch boundaries, or policy decisions.
+
+A partial campaign may be reopened after a crash, but cannot be consumed until
+sealed. Even a sealed spool is only evidence: a read-only SessionJournal engine
+must revalidate its exact RefId/head and both page orders before it issues a
+forward cursor. Campaigns may be deleted and rebuilt from raw authority.
+Page/event/encoded-byte limits, canonical decoding, temp inventory bounds, and
+per-Ref locking fail closed. This facility does not select or execute recap
+epochs; that Planner consumer remains an R3C responsibility.
+
 ## Frozen maintainer capability
 
 Every Maintain plan durably freezes the exact

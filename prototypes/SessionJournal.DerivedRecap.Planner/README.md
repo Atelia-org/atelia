@@ -64,12 +64,17 @@ admission、Publish和Restore，并把 Store的结构化 `BeyondPrefix` evidence
 restore及online lifecycle结果；不会把它降级成普通字符串或扫描完整raw lineage来猜答案。
 
 普通 `Prepare`、exact Building `Resume`、exact Published `Restore`与online lifecycle都只使用
-bounded prefix、metadata proof和opaque write authority。需要的raw anchor/window无法在当前
-prefix中证明时，会在读取recap payload、调用Maintainer或写Store之前返回stage-qualified
-`BeyondPrefix`；不会退回full-lineage header/setup discovery。特别是当513-header prefix之外
-可能存在prior Published baseline时，preflight只能返回`BeyondPrefix`，不能伪造exact
-raw-growth count；只有baseline能在prefix内确定且配置limit更小时，才可能报告exact
-`RawSafetyRejected`。
+bounded prefix、metadata proof和opaque write authority。NewPlanning需要的raw anchor/window无法在当前
+prefix或raw-growth cap内证明时，会在读取recap payload、调用Maintainer或写Store之前返回
+stage-qualified `FullRebuildRequired`；不会创建rebuild spool或退回full-lineage discovery。
+Building Resume与Published Restore仍保留各自stage-qualified `BeyondPrefix`，因为它们必须恢复已冻结的
+exact artifact，而不是启动新rebuild campaign。
+
+显式operator/rebuild流程另走`DerivedRecapFullRebuildAuthorityPreparer`：`BeginAsync`只冻结exact
+`RefId + raw head`并创建零页campaign，caller先取得campaign id；`ResumeAsync`分页审计并seal；
+`OpenForwardCursorAsync`在重新绑定当前raw authority后，从bootstrap到captured head顺序物化bounded
+range。spool只保存content-free address/header/provenance，不保存event body、prompt、recap或epoch/policy
+决定。R3A尚不选择cadence epoch、不运行Maintainer，也不reset或写Building；这些consumer语义属于R3C。
 
 ## 引用
 
@@ -321,6 +326,11 @@ PreparedRecapOperationAuthority authority = prepared switch {
             $"Preparation exceeded its bounded prefix at "
             + $"{beyond.Stage}: {beyond.Evidence.RequiredAnchor}"
         ),
+    DerivedRecapOperationPreparationResult.FullRebuildRequired rebuild =>
+        throw new InvalidOperationException(
+            $"Explicit full rebuild required at "
+            + $"{rebuild.Requirement.Stage}."
+        ),
     _ => throw new InvalidDataException(
         "Unknown DerivedRecap preparation result."
     )
@@ -338,7 +348,7 @@ DerivedRecapPlanningDiagnostics? diagnostics =
     executor.LastPlanningDiagnostics;
 ```
 
-Host必须对`Ready / Retryable / Unavailable / BeyondPrefix`做exhaustive mapping；不要把失败折叠成
+Host必须对`Ready / Retryable / Unavailable / BeyondPrefix / FullRebuildRequired`做exhaustive mapping；不要把失败折叠成
 无条件继续，也不要扩大bounded prefix或fallback full scan。preparer会把Available Building变成exact
 frozen authority；其他Building状态是typed unavailable。`DerivedRecapPreparedExecutor`只执行这份
 preparer签发的authority，不替Host猜测多个、stale或损坏Building中的“最新”实例。
@@ -365,12 +375,15 @@ switch (result) {
     case DerivedRecapExecutionResult.BeyondPrefix beyond:
         // 保留stage/evidence；不得扩大prefix或fallback full scan。
         break;
+    case DerivedRecapExecutionResult.FullRebuildRequired rebuild:
+        // 仅operator路径可显式创建/恢复full-rebuild campaign。
+        break;
 }
 ```
 
 `LastPlanningDiagnostics`只有 new-planning attempt才存在：
 
-- `RawSafetyRejected`：raw backpressure在 tokenizer前拒绝；
+- `FullRebuildRequired`：bounded new-planning在 tokenizer前拒绝；
 - `ExactSchedule`：记录 estimator、growth load、HistoryUnit/raw counts，以及可选 selected
   absorbed/recent load。
 
@@ -407,7 +420,7 @@ planning window、HistoryLoad与`EvaluateSchedule`，不会调用policy、Mainta
   dependency-closed boundary；
 - `CadenceReady`：cadence已有合法candidate，但这不承诺后续policy、budget、Maintainer或publication
   成功；
-- `FrozenBuilding`、`RawSafetyRejected`、`Retryable`、`Unavailable`、`BeyondPrefix`保持各自typed语义；
+- `FrozenBuilding`、`FullRebuildRequired`、`Retryable`、`Unavailable`、`BeyondPrefix`保持各自typed语义；
   `Retryable.Kind`区分`RawHeadChanged`与`SourceChanged`，`Code`只是从Kind派生的字符串表示。
 
 成功schedule的`DerivedRecapPlanningProgressSnapshot`同时携带exact `CapturedRawHead`、cadence
@@ -596,6 +609,11 @@ PreparedRecapOperationAuthority authority = prepared switch {
         throw new InvalidOperationException(
             $"Preparation exceeded its bounded prefix at "
             + $"{beyond.Stage}: {beyond.Evidence.RequiredAnchor}"
+        ),
+    DerivedRecapOperationPreparationResult.FullRebuildRequired rebuild =>
+        throw new InvalidOperationException(
+            $"Explicit full rebuild required at "
+            + $"{rebuild.Requirement.Stage}."
         ),
     _ => throw new InvalidDataException(
         "Unknown DerivedRecap preparation result."

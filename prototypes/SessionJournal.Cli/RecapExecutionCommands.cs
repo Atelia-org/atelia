@@ -12,7 +12,7 @@ namespace Atelia.SessionJournal.Cli;
 
 internal static class RecapExecutionCommands {
     private const string ReportSchema =
-        "atelia.session-journal.derived-recap-execution.v6";
+        "atelia.session-journal.derived-recap-execution.v7";
     private const string DefaultCallLogDirectory =
         "gitignore/session-journal/recap-maintainer-calls";
 
@@ -142,6 +142,8 @@ internal static class RecapExecutionCommands {
         SJ.SessionCurrentLineageBeyondPrefix? readinessBeyondPrefix =
             null;
         DerivedRecapBeyondPrefixStage? readinessBeyondPrefixStage = null;
+        DerivedRecapFullRebuildRequirement?
+            readinessFullRebuild = null;
         if (operation is "run" or "resume") {
             RecapOperationReadinessResult readiness =
                 await (operation == "run"
@@ -163,6 +165,25 @@ internal static class RecapExecutionCommands {
                 preparedCapabilityCatalog = ready.CapabilityCatalog;
                 plannerComposition = ready.Composition;
                 readinessDefects = [];
+            }
+            else if (readiness
+                is RecapOperationReadinessResult
+                    .FullRebuildRequired rebuild) {
+                readinessFullRebuild = rebuild.Requirement;
+                preparedCapabilityCatalog =
+                    rebuild.CapabilityCatalog;
+                plannerComposition = rebuild.Composition;
+                readinessDefects = [
+                    DerivedRecapExecutionDefectCodes
+                        .FullRebuildRequired
+                ];
+                readinessConfigReport = CreateConfigReport(
+                    rebuild.Composition
+                );
+                readinessBeyondPrefix =
+                    rebuild.Requirement.BeyondPrefix;
+                readinessBeyondPrefixStage =
+                    rebuild.Requirement.Stage;
             }
             else {
                 var blocked =
@@ -200,15 +221,23 @@ internal static class RecapExecutionCommands {
                         ?? throw new InvalidDataException(
                             "Raw SessionJournal has no current head."
                         ),
-                    readinessBeyondPrefix is not null
-                        ? "BeyondPrefix"
+                    readinessFullRebuild is not null
+                        ? "FullRebuildRequired"
+                        : readinessBeyondPrefix is not null
+                            ? "BeyondPrefix"
                         : retryable
                             ? "Retryable"
                             : "Unavailable",
                     anchor,
                     blockId: null,
-                    code: retryableCode,
-                    defectCodes: retryable ? [] : readinessDefects,
+                    code: readinessFullRebuild is not null
+                        ? DerivedRecapExecutionDefectCodes
+                            .FullRebuildRequired
+                        : retryableCode,
+                    defectCodes: retryable
+                        || readinessFullRebuild is not null
+                            ? []
+                            : readinessDefects,
                     readinessConfigReport,
                     planningDiagnostics: null,
                     callLogCount: 0,
@@ -216,7 +245,8 @@ internal static class RecapExecutionCommands {
                     readinessBeyondPrefix,
                     readinessBeyondPrefixStage is { } readinessStage
                         ? BeyondPrefixStageToken(readinessStage)
-                        : null
+                        : null,
+                    readinessFullRebuild
                 ),
                 reportPath,
                 exitCode: retryable ? 3 : 2
@@ -449,6 +479,29 @@ internal static class RecapExecutionCommands {
                 ),
                 2
             ),
+            DerivedRecapExecutionResult.FullRebuildRequired rebuild => (
+                Report(
+                    operation,
+                    engine,
+                    rawHead,
+                    "FullRebuildRequired",
+                    requestedAnchor,
+                    null,
+                    DerivedRecapExecutionDefectCodes
+                        .FullRebuildRequired,
+                    [],
+                    configReport,
+                    CreatePlanningReport(planningDiagnostics),
+                    calls,
+                    callLogDirectory,
+                    rebuild.Requirement.BeyondPrefix,
+                    BeyondPrefixStageToken(
+                        rebuild.Requirement.Stage
+                    ),
+                    rebuild.Requirement
+                ),
+                2
+            ),
             DerivedRecapExecutionResult.BlockFailed failed => (
                 Report(
                     operation,
@@ -616,7 +669,9 @@ internal static class RecapExecutionCommands {
         int callLogCount,
         string callLogDirectory,
         SJ.SessionCurrentLineageBeyondPrefix? beyondPrefixEvidence = null,
-        string? beyondPrefixStage = null
+        string? beyondPrefixStage = null,
+        DerivedRecapFullRebuildRequirement?
+            fullRebuildRequirement = null
     ) => new(
         ReportSchema,
         operation,
@@ -652,6 +707,16 @@ internal static class RecapExecutionCommands {
                 SJ.EventAddressTextCodec.Format(
                     beyondPrefixEvidence.NextAddress
                 )
+            ),
+        fullRebuildRequirement is null
+            ? null
+            : new RecapExecutionFullRebuildReport(
+                fullRebuildRequirement.Reason.ToString(),
+                BeyondPrefixStageToken(
+                    fullRebuildRequirement.Stage
+                ),
+                fullRebuildRequirement.MaxRawGrowthEventCount,
+                fullRebuildRequirement.ProvenRawGrowthEventCount
             )
     );
 
@@ -726,15 +791,15 @@ internal static class RecapExecutionCommands {
     private static RecapExecutionPlanningReport? CreatePlanningReport(
         DerivedRecapPlanningDiagnostics? diagnostics
     ) => diagnostics switch {
-        DerivedRecapPlanningDiagnostics.RawSafetyRejected rejected =>
+        DerivedRecapPlanningDiagnostics.FullRebuildRequired rebuild =>
             new RecapExecutionPlanningReport(
-                "RawSafetyRejected",
+                "FullRebuildRequired",
                 HistoryUnitLoadEstimatorId: null,
                 GrowthHistoryLoad: null,
                 SelectedAbsorbedHistoryLoad: null,
                 SelectedRecentHistoryLoad: null,
                 GrowthHistoryUnitCount: null,
-                rejected.RawGrowthEventCount
+                rebuild.Requirement.ProvenRawGrowthEventCount
             ),
         DerivedRecapPlanningDiagnostics.ExactSchedule exact =>
             new RecapExecutionPlanningReport(
@@ -855,7 +920,8 @@ internal sealed record RecapExecutionReport(
     RecapExecutionPlanningReport? Planning,
     int CallLogCount,
     string? CallLogDirectory,
-    RecapExecutionBeyondPrefixReport? BeyondPrefix
+    RecapExecutionBeyondPrefixReport? BeyondPrefix,
+    RecapExecutionFullRebuildReport? FullRebuild
 );
 
 internal sealed record RecapExecutionBeyondPrefixReport(
@@ -864,6 +930,13 @@ internal sealed record RecapExecutionBeyondPrefixReport(
     string CapturedHead,
     int HeaderCount,
     string NextAddress
+);
+
+internal sealed record RecapExecutionFullRebuildReport(
+    string Reason,
+    string Stage,
+    int MaxRawGrowthEventCount,
+    int? ProvenRawGrowthEventCount
 );
 
 internal sealed record RecapExecutionConfigReport(

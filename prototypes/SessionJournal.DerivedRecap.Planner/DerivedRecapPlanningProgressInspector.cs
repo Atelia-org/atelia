@@ -99,14 +99,8 @@ public abstract record DerivedRecapPlanningProgressInspectionResult {
         DerivedRecapPlanningProgressSnapshot Snapshot
     ) : DerivedRecapPlanningProgressInspectionResult;
 
-    public sealed record RawSafetyRejected(
-        EventAddress CapturedRawHead,
-        EventAddress CadenceBaseline,
-        EventAddress? LatestPublishedSetAnchor,
-        RecapCadenceConfig Cadence,
-        int RawGrowthEventCount,
-        int MaxRawGrowthEventCount,
-        IReadOnlyList<DerivedRecapExecutionDefect> Defects
+    public sealed record FullRebuildRequired(
+        DerivedRecapFullRebuildRequirement Requirement
     ) : DerivedRecapPlanningProgressInspectionResult;
 
     public sealed record Retryable(
@@ -177,6 +171,10 @@ public static class DerivedRecapPlanningProgressInspector {
                 beyond:
                 return new DerivedRecapPlanningProgressInspectionResult
                     .BeyondPrefix(beyond.Stage, beyond.Evidence);
+            case DerivedRecapOperationPreparationResult
+                .FullRebuildRequired rebuild:
+                return new DerivedRecapPlanningProgressInspectionResult
+                    .FullRebuildRequired(rebuild.Requirement);
         }
 
         PreparedRecapOperationAuthority authority =
@@ -227,17 +225,9 @@ public static class DerivedRecapPlanningProgressInspector {
             DerivedRecapScheduleReadResult.Ready ready =>
                 new DerivedRecapPlanningProgressInspectionResult
                     .CadenceReady(ready.Progress),
-            DerivedRecapScheduleReadResult.RawSafetyRejected rejected =>
+            DerivedRecapScheduleReadResult.FullRebuildRequired rebuild =>
                 new DerivedRecapPlanningProgressInspectionResult
-                    .RawSafetyRejected(
-                        rejected.CapturedRawHead,
-                        rejected.CadenceBaseline,
-                        rejected.LatestPublishedSetAnchor,
-                        rejected.Cadence,
-                        rejected.RawGrowthEventCount,
-                        rejected.MaxRawGrowthEventCount,
-                        rejected.Defects
-                    ),
+                    .FullRebuildRequired(rebuild.Requirement),
             DerivedRecapScheduleReadResult.Retryable retryable =>
                 new DerivedRecapPlanningProgressInspectionResult
                     .Retryable(retryable.Kind, retryable.Detail),

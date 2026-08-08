@@ -172,7 +172,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.Equal(5, firstFactory.CallCount);
         using JsonDocument first = ReadJson(firstReport);
         Assert.Equal(
-            "atelia.session-journal.derived-recap-execution.v6",
+            "atelia.session-journal.derived-recap-execution.v7",
             String(first, "schema")
         );
         JsonElement reportedConfig =
@@ -393,15 +393,20 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.False(Directory.Exists(calls));
         using JsonDocument report = ReadJson(reportPath);
         Assert.Equal(
-            "atelia.session-journal.derived-recap-execution.v6",
+            "atelia.session-journal.derived-recap-execution.v7",
             String(report, "schema")
         );
-        Assert.Equal("BeyondPrefix", String(report, "resultStatus"));
-        Assert.Contains(
-            "BeyondPrefix",
+        Assert.Equal(
+            "FullRebuildRequired",
+            String(report, "resultStatus")
+        );
+        Assert.Equal(
+            "FullRebuildRequired",
+            String(report, "code")
+        );
+        Assert.Empty(
             report.RootElement.GetProperty("defectCodes")
                 .EnumerateArray()
-                .Select(static item => item.GetString())
         );
         Assert.Equal(
             JsonValueKind.Null,
@@ -426,6 +431,22 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.False(string.IsNullOrWhiteSpace(
             beyondPrefix.GetProperty("nextAddress").GetString()
         ));
+        JsonElement rebuild =
+            report.RootElement.GetProperty("fullRebuild");
+        Assert.Equal(
+            "BoundedRawAuthorityInsufficient",
+            rebuild.GetProperty("reason").GetString()
+        );
+        Assert.Equal(
+            "new-planning-source-anchor",
+            rebuild.GetProperty("stage").GetString()
+        );
+        Assert.False(Directory.Exists(Path.Combine(
+            fixture.Path,
+            "derived",
+            "recap",
+            "rebuild"
+        )));
         Assert.Empty(Directory.EnumerateDirectories(
             Path.Combine(
                 fixture.Path,
@@ -487,10 +508,13 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         ));
         using JsonDocument report = ReadJson(reportPath);
         Assert.Equal(
-            "atelia.session-journal.derived-recap-execution.v6",
+            "atelia.session-journal.derived-recap-execution.v7",
             String(report, "schema")
         );
-        Assert.Equal("BeyondPrefix", String(report, "resultStatus"));
+        Assert.Equal(
+            "FullRebuildRequired",
+            String(report, "resultStatus")
+        );
         JsonElement beyond =
             report.RootElement.GetProperty("beyondPrefix");
         Assert.Equal(
@@ -513,6 +537,22 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             SJ.EventAddressTextCodec.Format(expected.NextAddress),
             beyond.GetProperty("nextAddress").GetString()
         );
+        JsonElement rebuild =
+            report.RootElement.GetProperty("fullRebuild");
+        Assert.Equal(
+            "BoundedRawAuthorityInsufficient",
+            rebuild.GetProperty("reason").GetString()
+        );
+        Assert.Equal(
+            "new-planning-raw-growth",
+            rebuild.GetProperty("stage").GetString()
+        );
+        Assert.False(Directory.Exists(Path.Combine(
+            fixture.Path,
+            "derived",
+            "recap",
+            "rebuild"
+        )));
     }
 
     [Fact]
@@ -596,7 +636,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.Equal(beforeDerived, HashDerivedFiles(fixture.Path));
         using JsonDocument report = ReadJson(reportPath);
         Assert.Equal(
-            "atelia.session-journal.derived-recap-execution.v6",
+            "atelia.session-journal.derived-recap-execution.v7",
             String(report, "schema")
         );
         Assert.Equal("restore", String(report, "operation"));

@@ -85,7 +85,8 @@ internal sealed class DerivedRecapScheduleReader {
             case DerivedRecapSelection.ExactPublishedSetInvalid invalid:
                 return Unavailable(invalid.Defects);
             case DerivedRecapSelection.BeyondPrefix beyond:
-                return new DerivedRecapScheduleReadResult.BeyondPrefix(
+                return FullRebuildRequired(
+                    baseline.CapturedRawHead,
                     DerivedRecapBeyondPrefixStage.NewPlanningSourceAnchor,
                     beyond.Evidence
                 );
@@ -117,7 +118,8 @@ internal sealed class DerivedRecapScheduleReader {
             if (startRead
                 is SessionCreatedPlanningSeedReadResult.BeyondPrefix
                     search) {
-                return new DerivedRecapScheduleReadResult.BeyondPrefix(
+                return FullRebuildRequired(
+                    baseline.CapturedRawHead,
                     DerivedRecapBeyondPrefixStage.NewPlanningRawGrowth,
                     search.ContinuationEvidence
                 );
@@ -185,7 +187,8 @@ internal sealed class DerivedRecapScheduleReader {
             EarliestSourceBoundaryResolution earliestResolution =
                 FindEarliestSourceBoundary(lineage, sourcePlan);
             if (earliestResolution.BeyondPrefix is { } sourceBeyond) {
-                return new DerivedRecapScheduleReadResult.BeyondPrefix(
+                return FullRebuildRequired(
+                    baseline.CapturedRawHead,
                     DerivedRecapBeyondPrefixStage
                         .NewPlanningSourceAnchor,
                     sourceBeyond
@@ -213,7 +216,8 @@ internal sealed class DerivedRecapScheduleReader {
                 if (bounded
                     is SessionHistoryPlanningWindowReadResult.BeyondPrefix
                         beyond) {
-                    return new DerivedRecapScheduleReadResult.BeyondPrefix(
+                    return FullRebuildRequired(
+                        baseline.CapturedRawHead,
                         DerivedRecapBeyondPrefixStage
                             .NewPlanningPendingWindow,
                         beyond.Evidence
@@ -234,7 +238,8 @@ internal sealed class DerivedRecapScheduleReader {
                 if (proofResult
                     is SessionHistoryPlanningWindowProofResult.BeyondPrefix
                         beyond) {
-                    return new DerivedRecapScheduleReadResult.BeyondPrefix(
+                    return FullRebuildRequired(
+                        baseline.CapturedRawHead,
                         DerivedRecapBeyondPrefixStage
                             .NewPlanningPendingWindow,
                         beyond.Evidence
@@ -249,7 +254,8 @@ internal sealed class DerivedRecapScheduleReader {
                 if (setupProofResult
                     is SessionGoverningSetupProofResult.BeyondPrefix
                         setupBeyond) {
-                    return new DerivedRecapScheduleReadResult.BeyondPrefix(
+                    return FullRebuildRequired(
+                        baseline.CapturedRawHead,
                         DerivedRecapBeyondPrefixStage
                             .NewPlanningSourceAnchor,
                         setupBeyond.Evidence.ContinuationEvidence
@@ -287,19 +293,22 @@ internal sealed class DerivedRecapScheduleReader {
                     cadenceBaseline
                 );
             if (rawSafety
-                is RecapRawSafetyResult.Unavailable rawUnavailable) {
-                if (rawUnavailable.RawGrowthEventCount is { } rawCount) {
-                    return new DerivedRecapScheduleReadResult
-                        .RawSafetyRejected(
+                is RecapRawSafetyResult.FullRebuildRequired rebuild) {
+                return new DerivedRecapScheduleReadResult
+                    .FullRebuildRequired(
+                        new DerivedRecapFullRebuildRequirement(
                             lineage.CapturedHead,
-                            cadenceBaseline,
-                            latest?.SetAdmissionAnchor,
-                            _inputs.Cadence,
-                            rawCount,
-                            _limits.MaxRawGrowthEventCount,
-                            Map(rawUnavailable.Defects)
-                        );
-                }
+                            DerivedRecapFullRebuildReason
+                                .RawGrowthLimitExceeded,
+                            DerivedRecapBeyondPrefixStage
+                                .NewPlanningRawGrowth,
+                            rebuild.MaxRawGrowthEventCount,
+                            rebuild.RawGrowthEventCount
+                        )
+                    );
+            }
+            if (rawSafety
+                is RecapRawSafetyResult.Unavailable rawUnavailable) {
                 return new DerivedRecapScheduleReadResult.Unavailable(
                     Map(rawUnavailable.Defects)
                 );
@@ -368,6 +377,20 @@ internal sealed class DerivedRecapScheduleReader {
                             )
                             : null
                     ),
+                RecapSchedulingResult.FullRebuildRequired
+                    scheduleRebuild =>
+                    new DerivedRecapScheduleReadResult
+                        .FullRebuildRequired(
+                            new DerivedRecapFullRebuildRequirement(
+                                lineage.CapturedHead,
+                                DerivedRecapFullRebuildReason
+                                    .RawGrowthLimitExceeded,
+                                DerivedRecapBeyondPrefixStage
+                                    .NewPlanningRawGrowth,
+                                scheduleRebuild.MaxRawGrowthEventCount,
+                                scheduleRebuild.RawGrowthEventCount
+                            )
+                        ),
                 _ => throw new InvalidOperationException(
                     "Unknown exact scheduling result."
                 )
@@ -492,7 +515,7 @@ internal sealed class DerivedRecapScheduleReader {
         );
     }
 
-    private static DerivedRecapScheduleReadResult?
+    private DerivedRecapScheduleReadResult?
         MatchPlanningBaseline(
         DerivedRecapPlanningBaseline baseline,
         DerivedRecapSelection observed
@@ -505,7 +528,8 @@ internal sealed class DerivedRecapScheduleReader {
             );
         }
         if (observed is DerivedRecapSelection.BeyondPrefix beyond) {
-            return new DerivedRecapScheduleReadResult.BeyondPrefix(
+            return FullRebuildRequired(
+                baseline.CapturedRawHead,
                 DerivedRecapBeyondPrefixStage.NewPlanningSourceAnchor,
                 beyond.Evidence
             );
@@ -557,6 +581,20 @@ internal sealed class DerivedRecapScheduleReader {
             $"Raw SessionJournal head changed during planning. Expected "
             + $"'{expected}'."
         );
+
+    private DerivedRecapScheduleReadResult.FullRebuildRequired
+        FullRebuildRequired(
+        EventAddress capturedRawHead,
+        DerivedRecapBeyondPrefixStage stage,
+        SessionCurrentLineageBeyondPrefix evidence
+    ) => new(new DerivedRecapFullRebuildRequirement(
+        capturedRawHead,
+        DerivedRecapFullRebuildReason
+            .BoundedRawAuthorityInsufficient,
+        stage,
+        _limits.MaxRawGrowthEventCount,
+        beyondPrefix: evidence
+    ));
 
     private static DerivedRecapScheduleReadResult.Unavailable Unavailable(
         IReadOnlyList<RecapPlanDefect> defects
@@ -645,14 +683,8 @@ internal abstract record DerivedRecapScheduleReadResult {
         DerivedRecapPlanningProgressSnapshot Progress
     ) : DerivedRecapScheduleReadResult;
 
-    internal sealed record RawSafetyRejected(
-        EventAddress CapturedRawHead,
-        EventAddress CadenceBaseline,
-        EventAddress? LatestPublishedSetAnchor,
-        RecapCadenceConfig Cadence,
-        int RawGrowthEventCount,
-        int MaxRawGrowthEventCount,
-        IReadOnlyList<DerivedRecapExecutionDefect> Defects
+    internal sealed record FullRebuildRequired(
+        DerivedRecapFullRebuildRequirement Requirement
     ) : DerivedRecapScheduleReadResult;
 
     internal sealed record Retryable(

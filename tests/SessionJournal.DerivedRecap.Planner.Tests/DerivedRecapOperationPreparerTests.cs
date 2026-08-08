@@ -306,15 +306,20 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
             evidence
         );
 
-        var beyond = Assert.IsType<
-            DerivedRecapOperationPreparationResult.BeyondPrefix
+        var rebuild = Assert.IsType<
+            DerivedRecapOperationPreparationResult.FullRebuildRequired
         >(await scenario.PrepareAsync(Capabilities()));
 
         Assert.Equal(
             DerivedRecapBeyondPrefixStage.NewPlanningSourceAnchor,
-            beyond.Stage
+            rebuild.Requirement.Stage
         );
-        Assert.Same(evidence, beyond.Evidence);
+        Assert.Equal(
+            DerivedRecapFullRebuildReason
+                .BoundedRawAuthorityInsufficient,
+            rebuild.Requirement.Reason
+        );
+        Assert.Same(evidence, rebuild.Requirement.BeyondPrefix);
         Assert.Equal(1, scenario.LoadCallCount);
         Assert.Equal(1, scenario.SelectLatestCallCount);
         Assert.Equal(0, scenario.ReadPlanCallCount);
@@ -604,6 +609,10 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
         Type[] exported = typeof(DerivedRecapPreparedExecutor)
             .Assembly.GetExportedTypes();
         foreach (Type type in exported) {
+            if (type
+                == typeof(DerivedRecapFullRebuildAuthorityPreparer)) {
+                continue;
+            }
             IEnumerable<System.Reflection.MethodBase> publicCallables =
                 type.GetConstructors(
                     System.Reflection.BindingFlags.Public

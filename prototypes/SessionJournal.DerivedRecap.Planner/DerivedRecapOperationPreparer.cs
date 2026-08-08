@@ -187,6 +187,11 @@ public abstract record DerivedRecapOperationPreparationResult {
         DerivedRecapBeyondPrefixStage Stage,
         SessionCurrentLineageBeyondPrefix Evidence
     ) : DerivedRecapOperationPreparationResult;
+
+    public sealed record FullRebuildRequired(
+        DerivedRecapFullRebuildRequirement Requirement,
+        ResolvedRecapPlanningConfiguration Configuration
+    ) : DerivedRecapOperationPreparationResult;
 }
 
 /// <summary>
@@ -640,10 +645,18 @@ public static class DerivedRecapOperationPreparer {
         if (frozenCatalog is FrozenCatalogReadResult.BeyondPrefix
             catalogBeyond) {
             return new DerivedRecapOperationPreparationResult
-                .BeyondPrefix(
-                    DerivedRecapBeyondPrefixStage
-                        .NewPlanningSourceAnchor,
-                    catalogBeyond.Evidence
+                .FullRebuildRequired(
+                    new DerivedRecapFullRebuildRequirement(
+                        lineage.CapturedHead,
+                        DerivedRecapFullRebuildReason
+                            .BoundedRawAuthorityInsufficient,
+                        DerivedRecapBeyondPrefixStage
+                            .NewPlanningSourceAnchor,
+                        configuration.PlanningLimits
+                            .MaxRawGrowthEventCount,
+                        beyondPrefix: catalogBeyond.Evidence
+                    ),
+                    configuration
                 );
         }
         if (frozenCatalog is FrozenCatalogReadResult.SourceChanged

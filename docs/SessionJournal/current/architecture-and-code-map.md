@@ -93,6 +93,7 @@ Galatea.Server         -> Core + Store + Planner + Maintainers + Runtime + Compl
 | tail phase recovery | [`SessionExecutionTailResolver.cs`](../../../prototypes/SessionJournal/SessionExecutionTailResolver.cs) | [`SessionExecutionTailResolverTests.cs`](../../../tests/SessionJournal.Tests/SessionExecutionTailResolverTests.cs) |
 | runtime recovery inspection/execution | [`SessionJournalEngine.RuntimeRecovery.cs`](../../../prototypes/SessionJournal/SessionJournalEngine.RuntimeRecovery.cs) | [`SessionRuntimeRecoveryRequirementsTests.cs`](../../../tests/SessionJournal.Tests/SessionRuntimeRecoveryRequirementsTests.cs)、[`SessionPreparedCompletionRecoveryEngineTests.cs`](../../../tests/SessionJournal.Tests/SessionPreparedCompletionRecoveryEngineTests.cs) |
 | Parent lineage与 bounded proof | [`SessionHistoryPlanning.cs`](../../../prototypes/SessionJournal/SessionHistoryPlanning.cs) | [`SessionBoundedLineageTests.cs`](../../../tests/SessionJournal.Tests/SessionBoundedLineageTests.cs) |
+| explicit paged selected-lineage audit / forward cursor | [`SessionJournalEngine.SelectedLineageAudit.cs`](../../../prototypes/SessionJournal/SessionJournalEngine.SelectedLineageAudit.cs) | [`SessionSelectedLineageAuditTests.cs`](../../../tests/SessionJournal.Tests/SessionSelectedLineageAuditTests.cs) |
 | engine-bound read surface | [`SessionJournalReadView.cs`](../../../prototypes/SessionJournal/SessionJournalReadView.cs) | [`SessionJournalReadViewTests.cs`](../../../tests/SessionJournal.Tests/SessionJournalReadViewTests.cs) |
 | governing setup | [`SessionAuthoritativeGoverningSetupResolver.cs`](../../../prototypes/SessionJournal/SessionAuthoritativeGoverningSetupResolver.cs) | [`SessionDesiredSetupReconciliationTests.cs`](../../../tests/SessionJournal.Tests/SessionDesiredSetupReconciliationTests.cs) |
 
@@ -110,6 +111,7 @@ Galatea.Server         -> Core + Store + Planner + Maintainers + Runtime + Compl
 | atomic publish | [`DerivedRecapPublisher.cs`](../../../prototypes/SessionJournal.DerivedRecap.Store/DerivedRecapPublisher.cs) | [`DerivedRecapPublisherTests.cs`](../../../tests/SessionJournal.DerivedRecap.Store.Tests/DerivedRecapPublisherTests.cs) |
 | exact-slot restore primitive | [`DerivedRecapRestorer.cs`](../../../prototypes/SessionJournal.DerivedRecap.Store/DerivedRecapRestorer.cs) | [`DerivedRecapPublishedRestoreInspectionTests.cs`](../../../tests/SessionJournal.DerivedRecap.Store.Tests/DerivedRecapPublishedRestoreInspectionTests.cs)、[`DerivedRecapPublishedRestoreWriteTests.cs`](../../../tests/SessionJournal.DerivedRecap.Store.Tests/DerivedRecapPublishedRestoreWriteTests.cs) |
 | filesystem durability | [`RecapDurableFileSystem.cs`](../../../prototypes/SessionJournal.DerivedRecap.Store/RecapDurableFileSystem.cs) | [`DerivedRecapCrashRecoveryTests.cs`](../../../tests/SessionJournal.DerivedRecap.Store.Tests/DerivedRecapCrashRecoveryTests.cs) |
+| deletable full-rebuild spool | [`DerivedRecapRebuildSpoolStore.cs`](../../../prototypes/SessionJournal.DerivedRecap.Store/DerivedRecapRebuildSpoolStore.cs) | [`DerivedRecapRebuildSpoolTests.cs`](../../../tests/SessionJournal.DerivedRecap.Store.Tests/DerivedRecapRebuildSpoolTests.cs) |
 
 使用与 durability 边界见 [Store README](../../../prototypes/SessionJournal.DerivedRecap.Store/README.md)。
 
@@ -122,6 +124,7 @@ Galatea.Server         -> Core + Store + Planner + Maintainers + Runtime + Compl
 | HistoryLoad measure/project | [`O200kBaseHistoryUnitLoadEstimator.cs`](../../../prototypes/SessionJournal.DerivedRecap.Planner/O200kBaseHistoryUnitLoadEstimator.cs)、[`RecapHistoryLoadProjector.cs`](../../../prototypes/SessionJournal.DerivedRecap.Planner/RecapHistoryLoadProjector.cs) | [`RecapHistoryLoadProjectorTests.cs`](../../../tests/SessionJournal.DerivedRecap.Planner.Tests/RecapHistoryLoadProjectorTests.cs) |
 | cadence/policy evaluation | [`RecapPlanEvaluator.cs`](../../../prototypes/SessionJournal.DerivedRecap.Planner/RecapPlanEvaluator.cs) | [`RecapPlanEvaluatorTests.cs`](../../../tests/SessionJournal.DerivedRecap.Planner.Tests/RecapPlanEvaluatorTests.cs) |
 | phase-first authority preparation | [`DerivedRecapOperationPreparer.cs`](../../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapOperationPreparer.cs) | [`DerivedRecapOperationPreparerTests.cs`](../../../tests/SessionJournal.DerivedRecap.Planner.Tests/DerivedRecapOperationPreparerTests.cs) |
+| explicit full-rebuild raw authority | [`DerivedRecapFullRebuildAuthorityPreparer.cs`](../../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapFullRebuildAuthorityPreparer.cs) | [`DerivedRecapFullRebuildAuthorityPreparerTests.cs`](../../../tests/SessionJournal.DerivedRecap.Planner.Tests/DerivedRecapFullRebuildAuthorityPreparerTests.cs) |
 | NewPlanning/Building execution | [`DerivedRecapPreparedExecutor.cs`](../../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapPreparedExecutor.cs) | [`DerivedRecapPlannerExecutorTests.cs`](../../../tests/SessionJournal.DerivedRecap.Planner.Tests/DerivedRecapPlannerExecutorTests.cs) |
 | exact Published Restore | [`DerivedRecapRestoreExecutor.cs`](../../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapRestoreExecutor.cs) | [`DerivedRecapRestoreExecutorTests.cs`](../../../tests/SessionJournal.DerivedRecap.Planner.Tests/DerivedRecapRestoreExecutorTests.cs) |
 | online candidate/lifecycle | [`DerivedRecapOnlineLifecycleCoordinator.cs`](../../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapOnlineLifecycleCoordinator.cs) | [`DerivedRecapOnlineLifecycleCoordinatorTests.cs`](../../../tests/SessionJournal.DerivedRecap.Planner.Tests/DerivedRecapOnlineLifecycleCoordinatorTests.cs) |
@@ -184,7 +187,8 @@ tests可独立验证本地安全性质，但也不能代替真实export、provid
 - `SessionJournalEngine`是普通 consumer 的 raw mutation入口；同一实例的 outer mutations必须由 Host串行化。
 - `SessionJournalReadView`及其派生 lineage/prepared authority绑定 owning Engine lifetime，dispose后不得复用。
 - caller不能用普通 descriptor、路径存在性或自造token替代 Store/Planner签发的 opaque authority。
-- bounded proof不足必须传播 typed `BeyondPrefix`，不得 hidden-page或fallback full lineage。
+- NewPlanning bounded proof不足必须传播 typed `FullRebuildRequired`，且普通path不得创建spool或fallback
+  full lineage；frozen Resume/Restore仍传播stage-qualified `BeyondPrefix`。
 - Store final-head reread 是 fence，不是跨同一 Engine caller的原子 CAS；不要据此放松 Host serialization。
 - Maintainers 的 embedded prompt `LogicalName`有意保留旧 `Atelia.SessionJournal.Maintainers.Prompts.*`
   resource identity。`LogicalName`本身不进入fingerprint preimage；prompt fingerprint由schema与两段prompt

@@ -648,6 +648,19 @@ public sealed class DerivedRecapPlannerExecutorTests {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 1
         );
+        var sourceMaintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "source"
+        );
+        _ = Assert.IsType<DerivedRecapExecutionResult.Published>(
+            await fixture.CreateExecutor(
+                    new BoundedMaintainAllRecapPlanningPolicy(),
+                    [sourceMaintainer]
+                )
+                .RunAsync()
+        );
+        fixture.AppendPair("over-limit");
         var maintainer = new ScriptedMaintainer(
             "self-maintainer",
             fixture.SelfTarget,
@@ -664,17 +677,32 @@ public sealed class DerivedRecapPlannerExecutorTests {
             maxRawGrowthEventCount: 1
         );
 
-        var beyond = Assert.IsType<
-            DerivedRecapExecutionResult.BeyondPrefix
+        var rebuild = Assert.IsType<
+            DerivedRecapExecutionResult.FullRebuildRequired
         >(await executor.RunAsync());
 
         Assert.Equal(
-            DerivedRecapBeyondPrefixStage.NewPlanningRawGrowth,
-            beyond.Stage
+            DerivedRecapBeyondPrefixStage.NewPlanningPendingWindow,
+            rebuild.Requirement.Stage
         );
-        Assert.Null(executor.LastPlanningDiagnostics);
+        Assert.Equal(
+            DerivedRecapFullRebuildReason
+                .BoundedRawAuthorityInsufficient,
+            rebuild.Requirement.Reason
+        );
+        Assert.Null(rebuild.Requirement.ProvenRawGrowthEventCount);
+        Assert.NotNull(rebuild.Requirement.BeyondPrefix);
+        Assert.IsType<
+            DerivedRecapPlanningDiagnostics.FullRebuildRequired
+        >(executor.LastPlanningDiagnostics);
         Assert.Equal(0, estimator.MeasureCallCount);
         Assert.Equal(0, maintainer.CallCount);
+        Assert.False(Directory.Exists(Path.Combine(
+            fixture.Path,
+            "derived",
+            "recap",
+            "rebuild"
+        )));
     }
 
     [Fact]
@@ -704,8 +732,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
             static (_, _) => "must-not-run"
         );
 
-        var beyond = Assert.IsType<
-            DerivedRecapExecutionResult.BeyondPrefix
+        var rebuild = Assert.IsType<
+            DerivedRecapExecutionResult.FullRebuildRequired
         >(
             await fixture.CreateExecutor(
                     new BoundedMaintainAllRecapPlanningPolicy(),
@@ -717,10 +745,21 @@ public sealed class DerivedRecapPlannerExecutorTests {
 
         Assert.Equal(
             DerivedRecapBeyondPrefixStage.NewPlanningSourceAnchor,
-            beyond.Stage
+            rebuild.Requirement.Stage
+        );
+        Assert.Equal(
+            DerivedRecapFullRebuildReason
+                .BoundedRawAuthorityInsufficient,
+            rebuild.Requirement.Reason
         );
         Assert.Equal(0, estimator.MeasureCallCount);
         Assert.Equal(0, maintainer.CallCount);
+        Assert.False(Directory.Exists(Path.Combine(
+            fixture.Path,
+            "derived",
+            "recap",
+            "rebuild"
+        )));
     }
 
     [Fact]

@@ -166,15 +166,14 @@ ceiling，再调用 Maintainers。已有一个合法 current-lineage Building时
 Building descriptor/manifest hash。healthy final block不重做。多个或 stale Building返回 typed
 readiness defect，不猜测“最新”。
 
-NewPlanning 先执行 content-free raw safety gate；被 hard cap 拒绝时不调用 HistoryLoad
-estimator，并报告 `RawSafetyRejected`。通过 gate 后才按 config 指定的 estimator 测量 exact
-planning window，使用 load threshold 选择 admission boundary。若 Store的513-header bounded
-prefix无法证明 prior Published baseline或所需anchor，preflight会先以exit code 2返回
-`BeyondPrefix`，`defectCodes`包含`BeyondPrefix`，并且不会创建client、call log、Building或
-staging目录。此时不能声称exact `RawSafetyRejected`；configured limit较小且baseline已在prefix
-内确定时，仍保留exact raw-safety诊断。
+NewPlanning 先执行 content-free raw safety gate。若513-header bounded prefix或configured raw-growth
+cap不足以证明所需baseline/window，preflight会以exit code 2返回`FullRebuildRequired`，并且不会创建
+client、call log、Building、staging或rebuild spool。`beyondPrefix`在有continuation proof时保留
+required anchor、captured head、header count与next address；`fullRebuild`报告reason、stage与limit。
+该普通命令绝不隐式full scan；显式campaign API当前只准备raw authority，完整multi-epoch recap consumer
+仍待R3C。
 
-execution report schema V6同时报告 estimator ID、growth load、可空的 selected
+execution report schema V7同时报告 estimator ID、growth load、可空的 selected
 absorbed/recent load，以及仅用于结构诊断的 HistoryUnit/raw event counts。prepare、execute或
 restore遇到bounded-lineage不确定性时，`beyondPrefix`携带`requiredAnchor`、`capturedHead`、
 `headerCount`和`nextAddress`；普通不可用场景该字段为null。B2 boundary迁移后，普通`run`
@@ -256,6 +255,7 @@ reset 后的 catch-up 仍需显式执行一次或多次 `recap run`。
 | 结果 | 退出码 | 含义 |
 |---|---:|---|
 | `Published` / `Restored` / `NoBuild` | 0 | 操作完成，或当前无需建立新 set |
+| `FullRebuildRequired` | 2 | NewPlanning bounded authority不足；必须显式进入operator rebuild流程 |
 | `BeyondPrefix` | 2 | bounded authority不足；报告携带required anchor、captured head、header count与continuation |
 | `Unavailable` / `BlockFailed` | 2 | 稳定的 Store、frozen plan 或 block failure |
 | `Retryable` | 3 | raw head/CAS 等 optimistic boundary 已改变，可在重新检查后重试 |
@@ -326,7 +326,7 @@ request 为唯一真源，对 Store 是 zero-touch。
 
 成功返回 0；参数、unsupported phase、not-ready、Store/Completion 或路径失败返回 1。online JSON
 report 同样 content-free；NewPlanning额外报告实际 repo config path/hash与
-`RawSafetyRejected`/`ExactSchedule` diagnostics；online report schema 是 V6，top-level exact
+`FullRebuildRequired`/`ExactSchedule` diagnostics；online report schema 是 V6，top-level exact
 shape为`schema`、`branchName`、`branchRefId`、`head`、`phase`、`providerId`、`apiSpecId`、
 `model`、`errorCount`、`config`与`planning`。它不复制 observation/request/action/response、API key
 或其他secret，也不保存从这些正文派生的hash；`configSha256`与profile fingerprints仍是合法的

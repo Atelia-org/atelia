@@ -393,10 +393,11 @@ public sealed class RecapPlanEvaluatorTests {
                 scheduling
             );
 
-        AssertDefect(
-            result,
-            RecapPlanDefectCodes.MaxRawGrowthEventCountExceeded
-        );
+        var rebuild = Assert.IsType<
+            RecapSchedulingResult.FullRebuildRequired
+        >(result);
+        Assert.Equal(2, rebuild.RawGrowthEventCount);
+        Assert.Equal(1, rebuild.MaxRawGrowthEventCount);
     }
 
     [Fact]
@@ -514,8 +515,8 @@ public sealed class RecapPlanEvaluatorTests {
             model.Limits.MaxRawEventsPerStep,
             model.Limits.MaxRawEventsPerBuild
         );
-        var rejected = Assert.IsType<
-            RecapRawSafetyResult.Unavailable
+        var rebuild = Assert.IsType<
+            RecapRawSafetyResult.FullRebuildRequired
         >(
             RecapPlanEvaluator.EvaluateRawSafety(
                 limits,
@@ -523,13 +524,8 @@ public sealed class RecapPlanEvaluatorTests {
                 model.A11
             )
         );
-        Assert.Equal(2, rejected.RawGrowthEventCount);
-        Assert.Contains(
-            rejected.Defects,
-            defect => defect.Code
-                == RecapPlanDefectCodes
-                    .MaxRawGrowthEventCountExceeded
-        );
+        Assert.Equal(2, rebuild.RawGrowthEventCount);
+        Assert.Equal(1, rebuild.MaxRawGrowthEventCount);
     }
 
     [Fact]

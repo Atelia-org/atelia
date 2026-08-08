@@ -566,12 +566,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         Assert.Empty(script.Trace);
     }
 
-    [Theory]
-    [InlineData(RecapPlanDefectCodes.RawBuildLimitExceeded)]
-    [InlineData(
-        RecapPlanDefectCodes.MaxRawGrowthEventCountExceeded
-    )]
-    public async Task BuildLimitOnlyMapsToBackpressure(string code) {
+    [Fact]
+    public async Task BuildLimitOnlyMapsToBackpressure() {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
         EventAddress latest = fixture.Lineage.HeadToOldest[1].Address;
@@ -584,7 +580,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             [
                 new DerivedRecapExecutionResult.Unavailable([
                     new DerivedRecapExecutionDefect(
-                        code,
+                        RecapPlanDefectCodes.RawBuildLimitExceeded,
                         "bounded"
                     )
                 ])
@@ -601,6 +597,51 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         Assert.Equal(
             SessionContextLifecycleStatus.Backpressure,
             result.Status
+        );
+        Assert.Equal(
+            ["S0", $"R:{latest}", "S0", "Run"],
+            script.Trace
+        );
+    }
+
+    [Fact]
+    public async Task FullRebuildRequiredMapsToUnavailable() {
+        using LifecycleFixture fixture =
+            LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
+        EventAddress latest = fixture.Lineage.HeadToOldest[1].Address;
+        var script = new LifecycleScript(
+            [
+                Selected(fixture, latest),
+                Selected(fixture, latest)
+            ],
+            [Restored(fixture, latest)],
+            [new DerivedRecapExecutionResult.FullRebuildRequired(
+                new DerivedRecapFullRebuildRequirement(
+                    fixture.Lineage.CapturedHead,
+                    DerivedRecapFullRebuildReason
+                        .RawGrowthLimitExceeded,
+                    DerivedRecapBeyondPrefixStage.NewPlanningRawGrowth,
+                    maxRawGrowthEventCount: 1,
+                    provenRawGrowthEventCount: 2
+                )
+            )]
+        );
+
+        SessionContextLifecycleResult result =
+            await fixture.Coordinator(script).PrepareAsync(
+                fixture.Engine.ReadView,
+                fixture.Request(),
+                CancellationToken.None
+            );
+
+        Assert.Equal(
+            SessionContextLifecycleStatus.Unavailable,
+            result.Status
+        );
+        Assert.Contains(
+            DerivedRecapExecutionDefectCodes.FullRebuildRequired,
+            result.Detail,
+            StringComparison.Ordinal
         );
         Assert.Equal(
             ["S0", $"R:{latest}", "S0", "Run"],

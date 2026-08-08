@@ -685,6 +685,12 @@ public abstract record RecapSchedulingResult {
         RecapExactScheduleMeasurement? Measurement = null
     ) : RecapSchedulingResult;
 
+    public sealed record FullRebuildRequired(
+        int RawGrowthEventCount,
+        int MaxRawGrowthEventCount,
+        RecapExactScheduleMeasurement Measurement
+    ) : RecapSchedulingResult;
+
     public sealed record Ready : RecapSchedulingResult {
         internal Ready(
             RecapPlanningInputs inputs,
@@ -720,6 +726,11 @@ public abstract record RecapRawSafetyResult {
 
     public sealed record Safe(int RawGrowthEventCount)
         : RecapRawSafetyResult;
+
+    public sealed record FullRebuildRequired(
+        int RawGrowthEventCount,
+        int MaxRawGrowthEventCount
+    ) : RecapRawSafetyResult;
 
     public sealed record Unavailable(
         IReadOnlyList<RecapPlanDefect> Defects,
@@ -784,8 +795,6 @@ public abstract record RecapPlanResult {
 }
 
 public static class RecapPlanDefectCodes {
-    public const string MaxRawGrowthEventCountExceeded =
-        nameof(MaxRawGrowthEventCountExceeded);
     public const string CadenceBaselineInvalid =
         nameof(CadenceBaselineInvalid);
     public const string PlanningFactsInvalid =

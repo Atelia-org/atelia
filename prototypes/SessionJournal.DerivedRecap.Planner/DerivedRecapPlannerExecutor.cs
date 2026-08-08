@@ -141,18 +141,19 @@ internal sealed class DerivedRecapPlannerExecutor {
                 return new DerivedRecapExecutionResult.NoBuild(
                     noBuild.Reason
                 );
-            case DerivedRecapScheduleReadResult.RawSafetyRejected
-                rejected:
+            case DerivedRecapScheduleReadResult.FullRebuildRequired
+                rebuild:
                 Volatile.Write(
                     ref _lastPlanningDiagnostics,
                     new DerivedRecapPlanningDiagnostics
-                        .RawSafetyRejected(
-                            rejected.RawGrowthEventCount
+                        .FullRebuildRequired(
+                            rebuild.Requirement
                         )
                 );
-                return new DerivedRecapExecutionResult.Unavailable(
-                    rejected.Defects
-                );
+                return new DerivedRecapExecutionResult
+                    .FullRebuildRequired(
+                        rebuild.Requirement
+                    );
             case DerivedRecapScheduleReadResult.Retryable retryable:
                 return new DerivedRecapExecutionResult.Retryable(
                     retryable.Code,
@@ -765,16 +766,22 @@ internal sealed class DerivedRecapPlannerExecutor {
         }
     }
 
-    private static DerivedRecapExecutionResult SelectionUnavailable(
+    private DerivedRecapExecutionResult SelectionUnavailable(
         DerivedRecapSelection selection
     ) => selection switch {
         DerivedRecapSelection.ExactPublishedSetInvalid invalid =>
             Unavailable(invalid.Defects),
         DerivedRecapSelection.BeyondPrefix beyond =>
-            new DerivedRecapExecutionResult.BeyondPrefix(
-                DerivedRecapBeyondPrefixStage
-                    .NewPlanningSourceAnchor,
-                beyond.Evidence
+            new DerivedRecapExecutionResult.FullRebuildRequired(
+                new DerivedRecapFullRebuildRequirement(
+                    beyond.Evidence.CapturedHead,
+                    DerivedRecapFullRebuildReason
+                        .BoundedRawAuthorityInsufficient,
+                    DerivedRecapBeyondPrefixStage
+                        .NewPlanningSourceAnchor,
+                    _limits.MaxRawGrowthEventCount,
+                    beyondPrefix: beyond.Evidence
+                )
             ),
         DerivedRecapSelection.StoreUnavailable unavailable =>
             Unavailable(

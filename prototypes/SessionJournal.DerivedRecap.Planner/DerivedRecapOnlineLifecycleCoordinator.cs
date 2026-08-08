@@ -671,6 +671,13 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             SessionContextLifecycleResult.BeyondPrefix(
                 beyond.Evidence
             ),
+        DerivedRecapExecutionResult.FullRebuildRequired rebuild =>
+            Unavailable(
+                DerivedRecapExecutionDefectCodes.FullRebuildRequired,
+                $"Explicit full rebuild is required at stage "
+                + $"'{rebuild.Requirement.Stage}' for captured raw "
+                + $"head '{rebuild.Requirement.CapturedRawHead}'."
+            ),
         DerivedRecapExecutionResult.BlockFailed failed =>
             Unavailable(failed.Code, failed.Detail),
         _ => throw new InvalidDataException(
@@ -683,8 +690,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         IReadOnlyList<DerivedRecapExecutionDefect> defects
     ) => defects.Count != 0
          && defects.All(static defect => defect.Code is
-             RecapPlanDefectCodes.MaxRawGrowthEventCountExceeded
-             or RecapPlanDefectCodes.RouteLimitExceeded
+             RecapPlanDefectCodes.RouteLimitExceeded
              or RecapPlanDefectCodes.CallLimitExceeded
              or RecapPlanDefectCodes.RawStepLimitExceeded
              or RecapPlanDefectCodes.RawBuildLimitExceeded);

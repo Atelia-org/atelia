@@ -90,13 +90,96 @@ public abstract record DerivedRecapPlanningDiagnostics {
     private DerivedRecapPlanningDiagnostics() {
     }
 
-    public sealed record RawSafetyRejected(
-        int RawGrowthEventCount
+    public sealed record FullRebuildRequired(
+        DerivedRecapFullRebuildRequirement Requirement
     ) : DerivedRecapPlanningDiagnostics;
 
     public sealed record ExactSchedule(
         RecapExactScheduleMeasurement Measurement
     ) : DerivedRecapPlanningDiagnostics;
+}
+
+public enum DerivedRecapFullRebuildReason {
+    BoundedRawAuthorityInsufficient = 1,
+    RawGrowthLimitExceeded = 2
+}
+
+/// <summary>
+/// Typed refusal from the bounded online path. It is evidence that an
+/// operator must explicitly prepare full raw authority; it does not itself
+/// start a scan, create a spool, reset Store truth, or run a Maintainer.
+/// </summary>
+public sealed record DerivedRecapFullRebuildRequirement {
+    public DerivedRecapFullRebuildRequirement(
+        EventAddress capturedRawHead,
+        DerivedRecapFullRebuildReason reason,
+        DerivedRecapBeyondPrefixStage stage,
+        int maxRawGrowthEventCount,
+        int? provenRawGrowthEventCount = null,
+        SessionCurrentLineageBeyondPrefix? beyondPrefix = null
+    ) {
+        if (capturedRawHead == default) {
+            throw new ArgumentException(
+                "Full-rebuild requirement needs a captured raw head.",
+                nameof(capturedRawHead)
+            );
+        }
+        if (!Enum.IsDefined(reason)) {
+            throw new ArgumentOutOfRangeException(nameof(reason));
+        }
+        if (maxRawGrowthEventCount <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxRawGrowthEventCount)
+            );
+        }
+        if (provenRawGrowthEventCount < 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(provenRawGrowthEventCount)
+            );
+        }
+        if (stage is not (
+                DerivedRecapBeyondPrefixStage.NewPlanningSourceAnchor
+                or DerivedRecapBeyondPrefixStage.NewPlanningRawGrowth
+                or DerivedRecapBeyondPrefixStage.NewPlanningPendingWindow
+            )) {
+            throw new ArgumentOutOfRangeException(
+                nameof(stage),
+                "Only new-planning bounded-authority failures require an explicit full rebuild."
+            );
+        }
+        if (reason
+            == DerivedRecapFullRebuildReason
+                .BoundedRawAuthorityInsufficient) {
+            if (beyondPrefix is null
+                || provenRawGrowthEventCount is not null) {
+                throw new ArgumentException(
+                    "Bounded-authority rebuild requirements need only exact BeyondPrefix evidence."
+                );
+            }
+        }
+        else if (stage
+                 != DerivedRecapBeyondPrefixStage.NewPlanningRawGrowth
+                 || beyondPrefix is not null
+                 || provenRawGrowthEventCount is not int proven
+                 || proven <= maxRawGrowthEventCount) {
+            throw new ArgumentException(
+                "Raw-growth rebuild requirements need an exact over-limit count at the raw-growth stage."
+            );
+        }
+        CapturedRawHead = capturedRawHead;
+        Reason = reason;
+        Stage = stage;
+        MaxRawGrowthEventCount = maxRawGrowthEventCount;
+        ProvenRawGrowthEventCount = provenRawGrowthEventCount;
+        BeyondPrefix = beyondPrefix;
+    }
+
+    public EventAddress CapturedRawHead { get; }
+    public DerivedRecapFullRebuildReason Reason { get; }
+    public DerivedRecapBeyondPrefixStage Stage { get; }
+    public int MaxRawGrowthEventCount { get; }
+    public int? ProvenRawGrowthEventCount { get; }
+    public SessionCurrentLineageBeyondPrefix? BeyondPrefix { get; }
 }
 
 public enum DerivedRecapBeyondPrefixStage {
@@ -133,6 +216,10 @@ public abstract record DerivedRecapExecutionResult {
         SessionCurrentLineageBeyondPrefix Evidence
     ) : DerivedRecapExecutionResult;
 
+    public sealed record FullRebuildRequired(
+        DerivedRecapFullRebuildRequirement Requirement
+    ) : DerivedRecapExecutionResult;
+
     public sealed record Retryable(string Code, string Detail)
         : DerivedRecapExecutionResult;
 
@@ -145,6 +232,8 @@ public abstract record DerivedRecapExecutionResult {
 }
 
 public static class DerivedRecapExecutionDefectCodes {
+    public const string FullRebuildRequired =
+        nameof(FullRebuildRequired);
     public const string StoreUnavailable = nameof(StoreUnavailable);
     public const string PublishedSourceUnavailable =
         nameof(PublishedSourceUnavailable);

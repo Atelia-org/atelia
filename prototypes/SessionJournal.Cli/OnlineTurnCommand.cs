@@ -495,15 +495,15 @@ internal static class OnlineTurnCommand {
     private static RecapExecutionPlanningReport? CreatePlanningReport(
         DerivedRecapPlanningDiagnostics? diagnostics
     ) => diagnostics switch {
-        DerivedRecapPlanningDiagnostics.RawSafetyRejected rejected =>
+        DerivedRecapPlanningDiagnostics.FullRebuildRequired rebuild =>
             new RecapExecutionPlanningReport(
-                "RawSafetyRejected",
+                "FullRebuildRequired",
                 HistoryUnitLoadEstimatorId: null,
                 GrowthHistoryLoad: null,
                 SelectedAbsorbedHistoryLoad: null,
                 SelectedRecentHistoryLoad: null,
                 GrowthHistoryUnitCount: null,
-                rejected.RawGrowthEventCount
+                rebuild.Requirement.ProvenRawGrowthEventCount
             ),
         DerivedRecapPlanningDiagnostics.ExactSchedule exact =>
             new RecapExecutionPlanningReport(

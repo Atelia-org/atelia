@@ -13,8 +13,8 @@ Context baseline：`6a80afdda7f12d6c9ce432066dfb51d1b3326762`
 | R1 | Complete | `6d273515` + tail fix `e846ea14`; immutable typed prefix/output/tail, provider projection, call-log v6 and Prepared fail-closed boundary; independent tail review found no P0/P1 |
 | R2A | Complete | new DerivedRecap Abstractions; immutable family/member/output-protocol single source; structured `Updated \| KeepUnchanged`; old per-block request/result path removed; focused Maintainers/Planner/Host tests and solution build validated |
 | R2B | Complete | shared ExecutionLane、reference-interned RuntimeGroup、BoundMaintainer single dispatch path；Galatea/CLI route sharing与per-call attribution wired，仍串行且NoReuseExpected |
-| R3A | Next | design full-rebuild raw authority / forward spool before Store vNext cut |
-| R3A–R7 | Pending | follow the package gates in §11; do not infer implementation from this target document |
+| R3A | Complete | explicit paged selected-lineage audit、independent strict content-free rebuild spool、authority-owned sequential forward cursor、normal-path typed `FullRebuildRequired`; cadence epoch consumer remains R3C |
+| R3B–R7 | Pending | follow the package gates in §11; do not infer implementation from this target document |
 
 R1 deterministic evidence: Completion 456 non-live tests, SessionJournal 409, Agent.Core 117, Galatea 94 passed / 4
 environment-skipped, solution build 0 warnings/errors. The existing full CLI baseline still has 16 recap fakes that reject the
@@ -658,11 +658,12 @@ member归属；Family/Group mismatch构造失败；NoBuild/all-healthy recovery�
 ### R3A — Full-rebuild raw authority / forward spool
 
 Intent：让reset/rebuild在超过normal raw-growth hard cap时仍有独立、可审计的authority。  
-In scope：paged selected-lineage audit、forward epoch spool/index、raw-head变化、crash resume、typed
-`FullRebuildRequired` / `MoreWorkPending`。  
+In scope：paged selected-lineage audit、content-free forward spool/index、raw-head变化、crash resume、typed
+`FullRebuildRequired`。  
 Out of scope：Store vNext wire、maintainer dispatch、并行。  
-Done when：normal path不full-scan fallback；explicit rebuild能从超cap lineage定位最老slab；spool可删且不成为
-事实源；分页proof/raw-head变化fail closed。
+Done when：normal path不full-scan fallback；explicit rebuild能从超cap lineage的bootstrap顺序枚举并物化exact
+bounded ranges；spool可删且不成为事实源；分页proof/raw-head变化fail closed。cadence slab选择、multi-epoch
+consumer与`MoreWorkPending`明确留给R3C。
 
 ### R3B — Shared Epoch vNext Store
 
@@ -755,7 +756,7 @@ correctness，不用估算值冒充证据。
 - bounded online loop达到operation cap时返回typed `MoreWorkPending`，已Published epochs保持有效，但本次online
   candidate不得返回Ready；
 - normal bounded authority无法覆盖baseline时返回`FullRebuildRequired`，不full-scan fallback；
-- explicit rebuild在超过raw-growth hard cap的fixture上仍能从最老slab逐epoch完成，并检测分页proof/raw-head变化；
+- R3A explicit authority在超过raw-growth hard cap的fixture上仍能从bootstrap顺序物化完整lineage，并检测分页proof/raw-head变化；R3C再证明从最老slab逐epoch完成；
 
 ### Scheduler
 

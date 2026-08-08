@@ -24,6 +24,12 @@ internal abstract record RecapOperationReadinessResult {
         SJ.SessionCurrentLineageBeyondPrefix? BeyondPrefix = null,
         DerivedRecapBeyondPrefixStage? BeyondPrefixStage = null
     ) : RecapOperationReadinessResult;
+
+    internal sealed record FullRebuildRequired(
+        DerivedRecapFullRebuildRequirement Requirement,
+        RecapMaintainerProfileCatalog CapabilityCatalog,
+        ResolvedRecapPlannerComposition Composition
+    ) : RecapOperationReadinessResult;
 }
 
 internal sealed record RecapOperationReadinessDefect(
@@ -176,6 +182,16 @@ internal static class RecapOperationReadiness {
                     Composition: null,
                     BeyondPrefix: beyond.Evidence,
                     BeyondPrefixStage: beyond.Stage
+                ),
+            DerivedRecapOperationPreparationResult
+                .FullRebuildRequired rebuild =>
+                new RecapOperationReadinessResult.FullRebuildRequired(
+                    rebuild.Requirement,
+                    concreteCapabilities,
+                    RecapCliCompositionResolver.Enrich(
+                        rebuild.Configuration,
+                        concreteCapabilities
+                    )
                 ),
             _ => throw new InvalidDataException(
                 "Unknown DerivedRecap preparation result."
