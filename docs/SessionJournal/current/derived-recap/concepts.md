@@ -189,7 +189,8 @@ workflow authority。
 
 一次 Maintain 的 durable input 至少包括：
 
-- build-local exact old block；
+- build-local exact current block，供 Planner 验证 source 与实现 `KeepUnchanged`，不进入 neutral
+  Maintainer input；
 - stable MaintainerId；
 - ordered `CatchUpBoundaries[]`，每项冻结 `(Address, Setups)`；
 - source replay start 与 frozen input cursor 的 exact governing setup refs；
@@ -205,8 +206,9 @@ replay authority，执行时不得重新发现后静默替换。
 blocks的上一版；不得读取当前Building的partial results。其admission anchor是previous Published
 full-pack container anchor，必须等于每个Existing Maintain的`SourceSetAnchor`，不是per-block replay
 cursor。source-set必须strictly早于target，而cursor可早于或等于source-set；即按时间顺序为
-`cursor <= prior/source-set < target`。neutral maintenance request仍携带`OldBlock`，
-但current rewrite以shared prior context作为旧recap唯一prompt表示，避免当前block重复出现。
+`cursor <= prior/source-set < target`。neutral `RecapMaintenanceEpochInput`只携带set-level shared prior、
+同一epoch history与source metadata，不携带per-block old payload；current rewrite因此只通过shared prior
+看到自己和其他blocks的上一版，各正文不会在prompt中重复出现。
 
 policy可以只读authoritative shared prior，但不输出per-block prior。Evaluator冻结
 `EffectivePriorContext = any Maintain ? authoritative shared : Empty`，所以all-Inherit manifest不会携带

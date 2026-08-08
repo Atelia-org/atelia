@@ -47,26 +47,28 @@ provider exactly-once 或 byte-identical LLM regeneration。
 
 | Assembly | 职责 |
 |---|---|
+| `Atelia.SessionJournal.DerivedRecap.Abstractions` | neutral `RecapMaintenanceEpochInput`、`RecapMaintenanceSuccess` 与 `IRecapBlockMaintainer` execution contracts |
 | `Atelia.SessionJournal.DerivedRecap.Store` | event-addressed point IO、validation、Building/Published directories、strict selection descriptor 与 structural defects |
 | `Atelia.SessionJournal.DerivedRecap.Planner` | trigger、NoBuild/Maintain/Inherit、frozen plan、bounded Resume/Restore |
-| `Atelia.SessionJournal.DerivedRecap.Maintainers` | concrete `IRecapBlockMaintainer`、rewrite profiles 与 prompts |
+| `Atelia.SessionJournal.DerivedRecap.Maintainers` | concrete family/member/output-protocol definitions、structured rewrite 与 prompts |
 
 依赖：
 
 ```text
-DerivedRecap.Store ───────> SessionJournal neutral context contracts
-DerivedRecap.Planner ─────> Store + SessionJournal neutral contracts
-DerivedRecap.Maintainers ─> SessionJournal neutral contracts
+DerivedRecap.Abstractions ─> SessionJournal context-header contracts + Completion.Abstractions
+DerivedRecap.Store ────────> SessionJournal
+DerivedRecap.Planner ──────> Store + DerivedRecap.Abstractions
+DerivedRecap.Maintainers ──> DerivedRecap.Abstractions + SessionJournal + Completion.Abstractions
 
 SessionJournal.Cli / Agent Host
-  └─ composition root：组合三者
+  └─ composition root：组合 Store / Planner / Maintainers并引用neutral contracts
 ```
 
 约束：
 
 - raw `Atelia.SessionJournal` 不引用 concrete Recap assemblies；
 - Store 不引用 Planner 或 Maintainers；
-- Planner 只接收注入的 `IRecapBlockMaintainer`；
+- Planner 只接收从 `DerivedRecap.Abstractions` 注入的 `IRecapBlockMaintainer`；
 - Store 不回调 Planner；
 - Store 与 Planner 都不得修改 raw SessionJournal；
 - current `MemoryPack* / IMemoryBlockMaintainer` 已在 R0 完成一次无兼容层 contract cutover：
@@ -218,7 +220,8 @@ RecapBlockPlan =
   Published full-pack container anchor，必须等于Existing `SourceSetAnchor`，不是per-block cursor；
 - source-set是target的strict ancestor，frozen input cursor可早于或等于source-set；按时间顺序为
   `cursor <= prior/source-set < target`；
-- prior context不读取当前Building的partial output；current rewrite不再把`OldBlock`重复放入prompt；
+- prior context不读取当前Building的partial output；neutral epoch input不含per-block old payload，current
+  rewrite只在shared prior中读取自己和其他blocks的上一版；
 - first-maintain只允许Empty source；existing-maintain只允许Existing source；两者不得在同一manifest
   混用；Resume/Restore共享root snapshot，不从inputs重新render或读取live Published；
 - 完整canonical manifest/publication encoded bytes分别在写前受2 MiB/3 MiB上限约束；JSON escaping与

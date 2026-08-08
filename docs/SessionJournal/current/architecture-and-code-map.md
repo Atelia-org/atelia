@@ -1,7 +1,7 @@
 # SessionJournal 当前架构与代码地图
 
 > **用途**：Coding Agent 的 current implementation 发现入口  
-> **实现基线**：`2e90b37f8b95bf795f0ba3cb95c061c822c6de9a`  
+> **实现基线**：`564c18f6137c5e9bd3145bbfb0704ac8d28a8039`  
 > **基线含义**：这是本文提交前的 exact code HEAD；后续 HEAD 不自动继承本文判断  
 > **非 authority 声明**：本文不是 API/wire 规范、兼容性承诺、验收结果或未来目标设计
 
@@ -45,17 +45,11 @@ derived/recap/v4 is a disposable, rebuildable sidecar; it is not a raw fact.
 依赖方向直接来自各项目 `.csproj`：
 
 ```text
-Diagnostics / EventJournal / Completion abstractions+tools
-                         ^
-                         |
-                  SessionJournal Core
-                    ^       ^
-                    |       +----------- Maintainers (+ Completion.Abstractions)
-                    |
-              DerivedRecap.Store
-                    ^
-                    |
-              DerivedRecap.Planner
+DerivedRecap.Abstractions -> SessionJournal Core + Completion.Abstractions
+DerivedRecap.Store        -> SessionJournal Core
+DerivedRecap.Planner      -> Store + DerivedRecap.Abstractions
+DerivedRecap.Maintainers  -> SessionJournal Core + DerivedRecap.Abstractions
+                             + Completion.Abstractions
 
 SessionJournal.Offline -> Core + EventJournal
 SessionJournal.Cli     -> Core + Store + Planner + Maintainers + Offline + Completion
@@ -64,15 +58,17 @@ Galatea.Server         -> Core + Store + Planner + Maintainers + Completion
 
 | 组件 | 当前职责 | 明确不负责 |
 |---|---|---|
-| Core | raw event/wire、Parent lineage、setup、Send/Resume、Prepared recovery、neutral context contracts | Recap filesystem、active planning policy、concrete prompt/profile |
+| Core | raw event/wire、Parent lineage、setup、Send/Resume、Prepared recovery、context-header data contracts | Recap filesystem、Maintainer execution contract、active planning policy、concrete prompt/profile |
+| DerivedRecap Abstractions | neutral epoch input、closed success union、`IRecapBlockMaintainer` | Store wire、planning policy、concrete prompt、provider dispatch |
 | Store | Building/Published IO、selection、materialization、publication、exact-slot Restore primitives | cadence、active config、Maintainer prompt、raw mutation |
 | Planner | NewPlanning cadence、frozen Building execution、Published Restore orchestration、online lifecycle | durable membership、concrete Maintainer、Host secrets/provider |
-| Maintainers | concrete profiles、prompts、stable identity/fingerprint、rewrite implementation | Store/Planner workflow、raw journal、Host composition |
+| Maintainers | concrete family/member/output protocol、prompts、stable identity/fingerprint、rewrite implementation | Store/Planner workflow、raw journal、Host composition |
 | CLI / Galatea | composition、phase ordering、Completion connection、operator surface | 重新定义 Core/Store authority |
 | Offline | checked forward fold与只读 validation | tail repair、online recovery、derived publication |
 
 项目入口：[Core csproj](../../../prototypes/SessionJournal/SessionJournal.csproj)、
 [Store csproj](../../../prototypes/SessionJournal.DerivedRecap.Store/SessionJournal.DerivedRecap.Store.csproj)、
+[Abstractions csproj](../../../prototypes/SessionJournal.DerivedRecap.Abstractions/SessionJournal.DerivedRecap.Abstractions.csproj)、
 [Planner csproj](../../../prototypes/SessionJournal.DerivedRecap.Planner/SessionJournal.DerivedRecap.Planner.csproj)、
 [Maintainers csproj](../../../prototypes/SessionJournal.DerivedRecap.Maintainers/SessionJournal.DerivedRecap.Maintainers.csproj)、
 [Offline csproj](../../../prototypes/SessionJournal.Offline/SessionJournal.Offline.csproj)、
