@@ -599,7 +599,10 @@ public sealed class RecapPlanEvaluatorTests {
                     model.ClientId,
                     new RecapPlanningMaintainSource.Existing(source),
                     [model.SourceSet, model.Admission],
-                    EmptyRecapPriorContext.Instance
+                    new InlineRecapPriorContext(
+                        model.A11,
+                        ContextHeaderSnapshot.Empty
+                    )
                 )
             ]
         );
@@ -609,7 +612,10 @@ public sealed class RecapPlanEvaluatorTests {
             RecapPlanEvaluator.EvaluateIntent(
                 ready,
                 policyFacts,
-                EmptyRecapPriorContext.Instance
+                new InlineRecapPriorContext(
+                    model.A11,
+                    ContextHeaderSnapshot.Empty
+                )
             );
 
         AssertDefect(result, RecapPlanDefectCodes.AdmissionInvalid);
@@ -887,7 +893,7 @@ public sealed class RecapPlanEvaluatorTests {
             RecapPlanEvaluator.EvaluateIntent(
                 model.Schedule(policy),
                 model.PolicyFacts(),
-                EmptyRecapPriorContext.Instance
+                model.ExistingPrior()
             );
 
         AssertDefect(
@@ -907,7 +913,7 @@ public sealed class RecapPlanEvaluatorTests {
         RecapPlanIntentResult result = RecapPlanEvaluator.EvaluateIntent(
             model.Schedule(failed),
             model.PolicyFacts(),
-            EmptyRecapPriorContext.Instance
+            model.ExistingPrior()
         );
 
         AssertDefect(result, RecapPlanDefectCodes.PolicyFailed);
@@ -918,7 +924,7 @@ public sealed class RecapPlanEvaluatorTests {
             RecapPlanEvaluator.EvaluateIntent(
                 model.Schedule(canceled),
                 model.PolicyFacts(),
-                EmptyRecapPriorContext.Instance
+                model.ExistingPrior()
             )
         );
         var outOfMemory = new ThrowingPolicy(
@@ -928,7 +934,7 @@ public sealed class RecapPlanEvaluatorTests {
             RecapPlanEvaluator.EvaluateIntent(
                 model.Schedule(outOfMemory),
                 model.PolicyFacts(),
-                EmptyRecapPriorContext.Instance
+                model.ExistingPrior()
             )
         );
 
@@ -961,7 +967,7 @@ public sealed class RecapPlanEvaluatorTests {
                     model.SelfId,
                     new RecapPlanningMaintainSource.Existing(source),
                     [model.A5, model.A11, model.Admission],
-                    EmptyRecapPriorContext.Instance
+                    model.ExistingPrior()
                 )
             ]
         );
@@ -987,7 +993,7 @@ public sealed class RecapPlanEvaluatorTests {
             "previous-action"
         );
         var authoritative = new InlineRecapPriorContext(
-            model.A1,
+            model.SourceSet,
             snapshot
         );
 
@@ -1005,7 +1011,7 @@ public sealed class RecapPlanEvaluatorTests {
                 model.Schedule(new StubPolicy(
                     model.ValidMaintainIntent(
                         new InlineRecapPriorContext(
-                            model.A1,
+                            model.SourceSet,
                             snapshot with {
                                 ActionMessage = "different-action"
                             }
@@ -1020,7 +1026,7 @@ public sealed class RecapPlanEvaluatorTests {
                 model.Schedule(new StubPolicy(
                     model.ValidMaintainIntent(
                         new InlineRecapPriorContext(
-                            model.A1,
+                            model.SourceSet,
                             snapshot with { }
                         )
                     )
@@ -1037,6 +1043,107 @@ public sealed class RecapPlanEvaluatorTests {
         Assert.IsType<RecapPlanIntentResult.IntentReady>(
             equalIndependent
         );
+    }
+
+    [Fact]
+    public void AuthoritativeSharedPriorMustMatchPlanningPhase() {
+        TestModel model = TestModel.Create();
+        var existingEmptyPolicy = new StubPolicy(
+            model.ValidMaintainIntent(
+                EmptyRecapPriorContext.Instance
+            )
+        );
+        var wrongAnchor = new InlineRecapPriorContext(
+            model.A11,
+            ContextHeaderSnapshot.Empty
+        );
+        var existingWrongAnchorPolicy = new StubPolicy(
+            model.ValidMaintainIntent(wrongAnchor)
+        );
+
+        RecapPlanIntentResult existingEmpty =
+            RecapPlanEvaluator.EvaluateIntent(
+                model.Schedule(existingEmptyPolicy),
+                model.PolicyFacts(),
+                EmptyRecapPriorContext.Instance
+            );
+        RecapPlanIntentResult existingWrongAnchor =
+            RecapPlanEvaluator.EvaluateIntent(
+                model.Schedule(existingWrongAnchorPolicy),
+                model.PolicyFacts(),
+                wrongAnchor
+            );
+
+        var firstWindow = new RecapHistoryWindowFacts(
+            model.A1,
+            totalHistoryUnitCount: 4,
+            [
+                new(model.A5, 1),
+                new(model.A11, 2),
+                new(model.SourceSet, 3),
+                new(model.Admission, 4)
+            ]
+        );
+        var firstScheduling = new RecapSchedulingFacts(
+            model.Scheduling.CapturedHead,
+            model.Scheduling.HeadToRoot,
+            firstWindow,
+            model.A1,
+            latestPublishedSetAnchor: null,
+            TestHistoryLoadMeasurement.UnitCountEquivalent(
+                firstWindow,
+                model.A1
+            )
+        );
+        var firstInline = new InlineRecapPriorContext(
+            model.A1,
+            ContextHeaderSnapshot.Empty
+        );
+        var firstInlinePolicy = new StubPolicy(
+            new RecapPlanningPolicyDecision.Build(
+                model.Admission,
+                [
+                    new RecapBlockPlanningDecision.Maintain(
+                        model.ClientId,
+                        new RecapPlanningMaintainSource.Empty(
+                            model.A1
+                        ),
+                        [
+                            model.A5,
+                            model.A11,
+                            model.SourceSet,
+                            model.Admission
+                        ],
+                        firstInline
+                    )
+                ]
+            )
+        );
+        RecapPlanIntentResult firstInlineResult =
+            RecapPlanEvaluator.EvaluateIntent(
+                model.Schedule(
+                    firstInlinePolicy,
+                    firstScheduling
+                ),
+                new RecapPolicyFacts(model.A1, []),
+                firstInline
+            );
+
+        AssertDefect(
+            existingEmpty,
+            RecapPlanDefectCodes.PriorContextInvalid
+        );
+        AssertDefect(
+            existingWrongAnchor,
+            RecapPlanDefectCodes.PriorContextInvalid
+        );
+        AssertDefect(
+            firstInlineResult,
+            RecapPlanDefectCodes.PriorContextInvalid
+        );
+        Assert.Equal(0, existingEmptyPolicy.CallCount);
+        Assert.Equal(0, existingWrongAnchorPolicy.CallCount);
+        Assert.Equal(0, firstInlinePolicy.CallCount);
     }
 
     [Fact]
@@ -1059,10 +1166,10 @@ public sealed class RecapPlanEvaluatorTests {
     }
 
     [Fact]
-    public void ExactSourceCursorAndInlinePriorAreValidatedPreflight() {
+    public void LatestPublishedPriorCannotCrossLaggingSourceCursor() {
         TestModel model = TestModel.Create();
         var prior = new InlineRecapPriorContext(
-            model.A5,
+            model.SourceSet,
             ContextHeaderSnapshot.Empty
         );
         RecapPlanIntentResult.IntentReady intent =
@@ -1079,20 +1186,6 @@ public sealed class RecapPlanEvaluatorTests {
             result,
             RecapPlanDefectCodes.PriorContextInvalid
         );
-    }
-
-    [Fact]
-    public void ExistingRouteStartsAtExactSourceCursorNotContainer() {
-        TestModel model = TestModel.Create();
-        RecapPlanIntentResult.IntentReady intent =
-            model.IntentReady(model.ValidMaintainIntent());
-
-        RecapPlanResult result = RecapPlanEvaluator.ValidatePlan(
-            intent,
-            model.Preflight()
-        );
-
-        Assert.IsType<RecapPlanResult.PlanReady>(result);
     }
 
     [Fact]
@@ -1446,7 +1539,7 @@ public sealed class RecapPlanEvaluatorTests {
                         AvailableSource.Source
                     ),
                     route,
-                    prior ?? EmptyRecapPriorContext.Instance
+                    prior ?? ExistingPrior()
                 )
             ]
         );
@@ -1460,7 +1553,12 @@ public sealed class RecapPlanEvaluatorTests {
         ) => RecapPlanEvaluator.EvaluateIntent(
             Schedule(new StubPolicy(decision)),
             PolicyFacts(),
-            EmptyRecapPriorContext.Instance
+            ExistingPrior()
+        );
+
+        public InlineRecapPriorContext ExistingPrior() => new(
+            SourceSet,
+            ContextHeaderSnapshot.Empty
         );
 
         public RecapPolicyFacts PolicyFacts() => new(
@@ -1483,7 +1581,7 @@ public sealed class RecapPlanEvaluatorTests {
                 Schedule(new StubPolicy(decision)),
                 PolicyFacts(),
                 sharedPriorContext
-                    ?? EmptyRecapPriorContext.Instance
+                    ?? ExistingPrior()
             )
         );
 

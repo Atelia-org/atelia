@@ -378,7 +378,13 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
                 ready,
                 PolicyFacts,
                 sharedPriorContext
-                    ?? EmptyRecapPriorContext.Instance
+                    ?? (PolicyFacts.EmptyReplayStartExclusive
+                            is not null
+                        ? EmptyRecapPriorContext.Instance
+                        : new InlineRecapPriorContext(
+                            Scheduling.LatestPublishedSetAnchor!.Value,
+                            ContextHeaderSnapshot.Empty
+                        ))
             );
         }
 

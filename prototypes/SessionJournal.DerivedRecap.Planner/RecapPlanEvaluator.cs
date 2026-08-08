@@ -206,6 +206,15 @@ public static class RecapPlanEvaluator {
         if (sourceDefects.Count != 0) {
             return IntentUnavailable(sourceDefects);
         }
+        List<RecapPlanDefect> priorDefects =
+            ValidateAuthoritativeSharedPriorContext(
+                schedule,
+                policyFacts,
+                sharedPriorContext
+            );
+        if (priorDefects.Count != 0) {
+            return IntentUnavailable(priorDefects);
+        }
 
         RecapPlanningPolicyDecision decision;
         try {
@@ -271,6 +280,40 @@ public static class RecapPlanEvaluator {
         return defects.Count == 0
             ? new RecapPlanIntentResult.IntentReady(schedule, build)
             : IntentUnavailable(defects);
+    }
+
+    private static List<RecapPlanDefect>
+        ValidateAuthoritativeSharedPriorContext(
+        RecapSchedulingResult.Ready schedule,
+        RecapPolicyFacts policyFacts,
+        RecapPriorContext sharedPriorContext
+    ) {
+        var defects = new List<RecapPlanDefect>();
+        if (policyFacts.EmptyReplayStartExclusive is not null
+            && schedule.Facts.LatestPublishedSetAnchor is null) {
+            if (sharedPriorContext is not EmptyRecapPriorContext) {
+                Add(
+                    defects,
+                    RecapPlanDefectCodes.PriorContextInvalid,
+                    "First-build authoritative prior context must be Empty."
+                );
+            }
+            return defects;
+        }
+        if (schedule.Facts.LatestPublishedSetAnchor
+                is { } latestPublished
+            && (sharedPriorContext
+                    is not InlineRecapPriorContext inline
+                || inline.AdmissionAnchor != latestPublished
+                || inline.Snapshot is null)) {
+            Add(
+                defects,
+                RecapPlanDefectCodes.PriorContextInvalid,
+                "Existing-build authoritative prior context must be "
+                + "an Inline snapshot at the latest Published anchor."
+            );
+        }
+        return defects;
     }
 
     public static RecapPlanResult ValidatePlan(

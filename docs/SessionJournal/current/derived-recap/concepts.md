@@ -205,7 +205,9 @@ blocks的上一版；不得读取当前Building的partial results。其admission
 start，保证block执行顺序与crash/reopen不改变输入。neutral maintenance request仍携带`OldBlock`，
 但current rewrite以shared prior context作为旧recap唯一prompt表示，避免当前block重复出现。
 policy只能把authoritative shared prior按值保留到每个Maintain decision；Evaluator必须拒绝Empty/
-Inline kind、anchor或snapshot内容发生变化的输出。
+Inline kind、anchor或snapshot内容发生变化的输出。Evaluator还必须先验证phase：first build只接受
+Empty；existing build只接受位于exact latest Published anchor且snapshot非null的Inline（snapshot
+正文允许为空）。
 
 ## 6. Published membership 与 strict ordinal
 
