@@ -23,6 +23,11 @@ internal static class SessionRequestCanonicalizer {
                 "Completion request canonical-json v1 cannot represent non-default tool-choice or parallel-call policy."
             );
         }
+        if (!request.TailMessages.IsEmpty) {
+            throw new NotSupportedException(
+                "Completion request canonical-json v1 cannot represent a non-empty typed request tail."
+            );
+        }
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
@@ -32,9 +37,6 @@ internal static class SessionRequestCanonicalizer {
             writer.WriteStartArray("context");
             foreach (IHistoryMessage message
                 in request.PromptPrefix.SharedContextMessages) {
-                WriteHistoryMessage(writer, message);
-            }
-            foreach (IHistoryMessage message in request.TailMessages) {
                 WriteHistoryMessage(writer, message);
             }
             writer.WriteEndArray();

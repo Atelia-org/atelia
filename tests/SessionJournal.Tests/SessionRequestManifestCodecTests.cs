@@ -446,6 +446,29 @@ public sealed class SessionRequestManifestCodecTests {
         );
     }
 
+    [Fact]
+    public void CanonicalRequestV1_RejectsNonEmptyTypedTail() {
+        var request = new CompletionRequest(
+            "model",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault([]),
+                [new ObservationMessage("shared")]
+            ),
+            [new ObservationMessage("tail")]
+        );
+
+        NotSupportedException exception = Assert.Throws<NotSupportedException>(
+            () => SessionRequestCanonicalizer.CreateCommitment(request)
+        );
+
+        Assert.Contains(
+            "non-empty typed request tail",
+            exception.Message,
+            StringComparison.Ordinal
+        );
+    }
+
     private static CompletionRequest RebuildRequest(
         CompletionRequest source,
         string? modelId = null,

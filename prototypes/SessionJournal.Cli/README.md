@@ -331,7 +331,7 @@ shape为`schema`、`branchName`、`branchRefId`、`head`、`phase`、`providerId
 `model`、`errorCount`、`config`与`planning`。它不复制 observation/request/action/response、API key
 或其他secret，也不保存从这些正文派生的hash；`configSha256`与profile fingerprints仍是合法的
 content-free composition provenance。Frozen Building及 Prepared/Started recovery的
-config/planning字段为 null。完整 request/action只存在于单独显式配置且成功写入的call-log v1；
+config/planning字段为 null。完整 request/action只存在于单独显式配置且成功写入的call-log v6；
 该日志仍是best-effort，初始化、reserve、write或flush失败不会替换provider结果或异常，因此
 operational evidence可能缺失。
 

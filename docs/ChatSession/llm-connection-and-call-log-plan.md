@@ -192,7 +192,7 @@ gitignore/backtest/rolling-summary-calls/
 
 ```json
 {
-  "schema": "atelia.completion.call-log.v5",
+  "schema": "atelia.completion.call-log.v6",
   "callId": 1,
   "timestampUtc": "2026-07-20T00:00:00Z",
   "elapsedMs": 12345,
@@ -214,7 +214,20 @@ gitignore/backtest/rolling-summary-calls/
     "targetCarrier": "System",
     "targetBlockId": "session.rolling-summary"
   },
-  "request": {},
+  "request": {
+    "modelId": "deepseek-v4",
+    "promptPrefix": {
+      "systemPrompt": "...",
+      "outputContract": {
+        "tools": [],
+        "toolChoice": { "kind": "providerDefault" },
+        "allowParallelToolCalls": null
+      },
+      "sharedContextMessages": []
+    },
+    "tailMessages": [],
+    "maxTokens": null
+  },
   "invocationOptions": {
     "promptCacheReuseHint": "noReuseExpected"
   },

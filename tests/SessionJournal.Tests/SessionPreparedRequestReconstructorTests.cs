@@ -61,6 +61,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 committed.Request
             )
         );
+        Assert.Empty(direct.Request.TailMessages);
+        Assert.Empty(committed.Request.TailMessages);
         var action = Assert.IsType<ActionMessage>(committed.Request.PromptPrefix.SharedContextMessages[^2]);
         var reasoning = Assert.IsType<OpaqueReasoningBlock>(action.Blocks[0]);
         Assert.Equal([0, 1, 2, 254, 255], reasoning.Payload);

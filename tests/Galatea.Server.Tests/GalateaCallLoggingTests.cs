@@ -375,7 +375,7 @@ public sealed class GalateaCallLoggingTests {
             File.ReadAllText(path)
         );
         Assert.Equal(
-            "atelia.completion.call-log.v5",
+            "atelia.completion.call-log.v6",
             document.RootElement.GetProperty("schema").GetString()
         );
         Assert.Equal(

@@ -56,7 +56,8 @@ repo之外且按敏感数据管理。日志是best-effort operational evidence�
 或cleanup失败都不会令agent Send或Maintainer调用失败，也不会替换provider异常；相应调用可能没有
 call-log文件。初始化失败会在该wrapper的剩余生命周期禁用日志；cleanup失败可能留下未登记且不完整的
 orphan文件。只有完成serialize/write/flush/close并成功登记的文件才计为成功日志，orphan不得用于推断
-调用次数、provider结果或recovery状态。call-log v5在connection snapshot之外另行记录每次调用请求的
+调用次数、provider结果或recovery状态。call-log v6结构化记录request的prompt prefix、output contract、
+shared context、tail与max tokens，并在connection snapshot之外另行记录每次调用请求的
 `invocationOptions.promptCacheReuseHint`，因此可以区分继承connection默认值与workload显式override；
 该运行hint不会改变wrapper透传的dispatch identity。
 
@@ -107,7 +108,7 @@ Anthropic route 可以通过 `anthropicPromptCacheTtl` 选择 prompt cache 的�
 ```
 
 允许值为 `provider-default|5m|1h`。缺省的 `provider-default` 保持厂商默认行为，并在 wire 中省略
-`ttl`；非 Anthropic connection 配置非默认值会 fail fast。该值会写入Completion call-log v5的
+`ttl`；非 Anthropic connection 配置非默认值会 fail fast。该值会写入Completion call-log v6的
 connection snapshot，但作为可调整的运行策略不进入durable dispatch fingerprint。Galatea agent当前
 使用`ConnectionDefault` invocation hint，所以继续继承connection配置的一小时TTL；single-shot的
 `RewriteRecapBlockMaintainer`则显式传递`NoReuseExpected`，在Anthropic上不创建这份one-shot prompt
