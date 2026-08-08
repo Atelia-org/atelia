@@ -1,0 +1,29 @@
+{
+  "name": "@atelia/local-codex-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Private MCP bridge from ChatGPT to a local persistent Codex app-server.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test:integration": "npm run build && CODEX_BRIDGE_RUN_LIVE=1 node --test dist/tests/live-integration.test.js",
+    "start": "node dist/src/index.js",
+    "start:http": "CODEX_BRIDGE_TRANSPORT=http node dist/src/index.js",
+    "schemas:generate": "codex app-server generate-ts --out ./schemas",
+    "inspect": "npx --package=@modelcontextprotocol/inspector@2.1.0 mcp-inspector"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "18.19.130",
+    "typescript": "5.9.3"
+  }
+}
