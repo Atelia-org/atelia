@@ -27,7 +27,9 @@
 - `operations/`：可重复 procedure，不是执行成功证明。
 - `evidence/`：exact run、candidate 或 review 的记录，不随 HEAD 自动续期。
 - `archive/`：已完成、被替代或历史材料；正常实现任务不得从这里推导 current API。
-- 当前没有 active plan；只有真实未关闭工作出现时才创建 `work/active/`。
+- 当前 active plan：
+  [DerivedRecap Shared Epoch / Maintainer Family 并行重构计划](work/active/derived-recap-shared-epoch-parallel-maintainer-refactor-plan.md)。
+  该文档描述尚未实施的 target；current code事实仍以owning code/tests与`current/`文档为准。
 
 目录、标题、日期、`README.md` 或 `public` 均不自动授予 authority。
 
