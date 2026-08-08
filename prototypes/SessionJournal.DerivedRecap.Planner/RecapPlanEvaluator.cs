@@ -265,6 +265,7 @@ public static class RecapPlanEvaluator {
         List<RecapPlanDefect> defects = ValidateIntent(
             schedule,
             policyFacts,
+            sharedPriorContext,
             build
         );
         return defects.Count == 0
@@ -590,6 +591,7 @@ public static class RecapPlanEvaluator {
     private static List<RecapPlanDefect> ValidateIntent(
         RecapSchedulingResult.Ready schedule,
         RecapPolicyFacts policyFacts,
+        RecapPriorContext sharedPriorContext,
         RecapPlanningPolicyDecision.Build build
     ) {
         var defects = new List<RecapPlanDefect>();
@@ -672,6 +674,7 @@ public static class RecapPlanEvaluator {
                         lineage,
                         replaySafe,
                         maintain,
+                        sharedPriorContext,
                         admissionIndex,
                         defects
                     );
@@ -696,9 +699,21 @@ public static class RecapPlanEvaluator {
         IReadOnlyDictionary<EventAddress, int> lineage,
         IReadOnlySet<EventAddress> replaySafe,
         RecapBlockPlanningDecision.Maintain maintain,
+        RecapPriorContext sharedPriorContext,
         int admissionIndex,
         List<RecapPlanDefect> defects
     ) {
+        if (!PriorContextsAreEquivalent(
+                maintain.PriorContext,
+                sharedPriorContext
+            )) {
+            Add(
+                defects,
+                RecapPlanDefectCodes.PriorContextInvalid,
+                $"Block '{maintain.RecapBlockId}' prior context differs "
+                + "from the authoritative shared prior context."
+            );
+        }
         switch (maintain.Source) {
             case RecapPlanningMaintainSource.Existing existing:
                 ValidateChosenSource(
@@ -785,6 +800,21 @@ public static class RecapPlanEvaluator {
         EventAddress buildAdmission()
             => lineage.Single(pair => pair.Value == admissionIndex).Key;
     }
+
+    private static bool PriorContextsAreEquivalent(
+        RecapPriorContext left,
+        RecapPriorContext right
+    ) => (left, right) switch {
+        (EmptyRecapPriorContext, EmptyRecapPriorContext) => true,
+        (InlineRecapPriorContext leftInline,
+            InlineRecapPriorContext rightInline) =>
+            leftInline.AdmissionAnchor
+                == rightInline.AdmissionAnchor
+            && leftInline.Snapshot is not null
+            && rightInline.Snapshot is not null
+            && leftInline.Snapshot == rightInline.Snapshot,
+        _ => false
+    };
 
     private static void ValidateChosenSource(
         RecapPolicyFacts policyFacts,

@@ -204,6 +204,8 @@ replay authority，执行时不得重新发现后静默替换。
 blocks的上一版；不得读取当前Building的partial results。其admission anchor必须不晚于first replay
 start，保证block执行顺序与crash/reopen不改变输入。neutral maintenance request仍携带`OldBlock`，
 但current rewrite以shared prior context作为旧recap唯一prompt表示，避免当前block重复出现。
+policy只能把authoritative shared prior按值保留到每个Maintain decision；Evaluator必须拒绝Empty/
+Inline kind、anchor或snapshot内容发生变化的输出。
 
 ## 6. Published membership 与 strict ordinal
 
