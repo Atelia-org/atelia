@@ -526,6 +526,17 @@ internal static class RecapFrozenPlanBarrier {
             if (plan is not MaintainRecapBlockPlan maintain) {
                 continue;
             }
+            if (maintain.Source
+                    is ExistingRecapMaintainSource existing
+                && (manifest.PriorContext
+                        is not InlineRecapPriorContext inline
+                    || inline.AdmissionAnchor
+                        != existing.SourceSetAnchor)) {
+                return FrozenAuthority(
+                    $"Block '{plan.RecapBlockId}' inline prior does "
+                    + "not match its exact source set admission."
+                );
+            }
             EventAddress start = maintain.Source switch {
                 EmptyRecapMaintainSource empty =>
                     empty.ReplayStartExclusive,
@@ -541,15 +552,6 @@ internal static class RecapFrozenPlanBarrier {
                 return FrozenAuthority(
                     $"Block '{plan.RecapBlockId}' replay start is "
                     + "newer than its target admission."
-                );
-            }
-            if (manifest.PriorContext
-                    is InlineRecapPriorContext inline
-                && lineageIndexes[inline.AdmissionAnchor]
-                    < startIndex) {
-                return FrozenAuthority(
-                    $"Block '{plan.RecapBlockId}' inline prior is "
-                    + "newer than its exact replay start."
                 );
             }
             int previousIndex = startIndex;

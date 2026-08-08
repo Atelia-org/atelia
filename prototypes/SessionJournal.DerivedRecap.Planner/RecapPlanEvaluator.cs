@@ -899,6 +899,11 @@ public static class RecapPlanEvaluator {
                     );
                     break;
                 case RecapBlockPlanningDecision.Maintain maintain:
+                    ValidatePriorContextSourceSet(
+                        ready.EffectivePriorContext,
+                        maintain,
+                        defects
+                    );
                     EventAddress? start = maintain.Source switch {
                         RecapPlanningMaintainSource.Empty empty =>
                             empty.ReplayStartExclusive,
@@ -922,13 +927,6 @@ public static class RecapPlanEvaluator {
                         previous,
                         lineage,
                         GetReplaySafeAddresses(facts),
-                        defects
-                    );
-                    ValidatePriorContext(
-                        ready.EffectivePriorContext,
-                        maintain.RecapBlockId,
-                        previous,
-                        lineage,
                         defects
                     );
                     foreach (EventAddress endpoint
@@ -1070,32 +1068,22 @@ public static class RecapPlanEvaluator {
         }
     }
 
-    private static void ValidatePriorContext(
+    private static void ValidatePriorContextSourceSet(
         RecapPriorContext priorContext,
-        RecapBlockId recapBlockId,
-        EventAddress start,
-        IReadOnlyDictionary<EventAddress, int> lineage,
+        RecapBlockPlanningDecision.Maintain maintain,
         List<RecapPlanDefect> defects
     ) {
-        switch (priorContext) {
-            case EmptyRecapPriorContext:
-                return;
-            case InlineRecapPriorContext inline
-                when inline.Snapshot is not null
-                     && lineage.TryGetValue(
-                         inline.AdmissionAnchor,
-                         out int priorIndex
-                     )
-                     && priorIndex >= lineage[start]:
-                return;
-            default:
-                Add(
-                    defects,
-                    RecapPlanDefectCodes.PriorContextInvalid,
-                    $"Block '{recapBlockId}' prior context "
-                    + "is not an ancestor of its replay start."
-                );
-                return;
+        if (maintain.Source
+                is RecapPlanningMaintainSource.Existing existing
+            && (priorContext is not InlineRecapPriorContext inline
+                || inline.AdmissionAnchor
+                    != existing.Source.SourceSetAnchor)) {
+            Add(
+                defects,
+                RecapPlanDefectCodes.PriorContextInvalid,
+                $"Block '{maintain.RecapBlockId}' prior context does "
+                + "not match its exact source set admission."
+            );
         }
     }
 

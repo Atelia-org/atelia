@@ -2915,7 +2915,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
-    public async Task ResumeRejectsNonAncestorInlinePriorBeforeMaintainer() {
+    public async Task ResumeRejectsPriorFromDifferentSourceSetBeforeMaintainer() {
         int componentReads = 0;
         int mutations = 0;
         using TestFixture fixture = await TestFixture.CreateAsync(
@@ -2980,7 +2980,16 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 )
                 .ResumeAsync(admission);
 
-        Assert.IsType<DerivedRecapExecutionResult.Unavailable>(result);
+        var unavailable = Assert.IsType<
+            DerivedRecapExecutionResult.Unavailable
+        >(result);
+        Assert.Contains(
+            unavailable.Defects,
+            defect => defect.Detail.Contains(
+                "does not match its exact source set admission",
+                StringComparison.Ordinal
+            )
+        );
         Assert.Equal(0, maintainer.CallCount);
         Assert.Equal(0, componentReads);
         Assert.Equal(0, mutations);

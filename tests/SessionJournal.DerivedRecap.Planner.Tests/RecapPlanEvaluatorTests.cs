@@ -1121,7 +1121,7 @@ public sealed class RecapPlanEvaluatorTests {
     }
 
     [Fact]
-    public void LatestPublishedPriorCannotCrossLaggingSourceCursor() {
+    public void LatestPublishedPriorSharesContainerAcrossLaggingSourceCursor() {
         TestModel model = TestModel.Create();
         var prior = new InlineRecapPriorContext(
             model.SourceSet,
@@ -1130,15 +1130,17 @@ public sealed class RecapPlanEvaluatorTests {
         RecapPlanIntentResult.IntentReady intent =
             model.IntentReady(model.ValidMaintainIntent(), prior);
 
-        RecapPlanResult result = RecapPlanEvaluator.ValidatePlan(
-            intent,
-            model.Preflight()
+        RecapPlanResult.PlanReady ready = Assert.IsType<
+            RecapPlanResult.PlanReady
+        >(
+            RecapPlanEvaluator.ValidatePlan(
+                intent,
+                model.Preflight()
+            )
         );
-
-        AssertDefect(
-            result,
-            RecapPlanDefectCodes.PriorContextInvalid
-        );
+        Assert.Same(prior, ready.EffectivePriorContext);
+        Assert.Equal(model.A1, model.AvailableSource.AbsorbedThrough);
+        Assert.Equal(model.SourceSet, prior.AdmissionAnchor);
     }
 
     [Fact]

@@ -41,6 +41,14 @@ Empty Maintain sources cannot be mixed in one manifest. Resume and Restore
 reuse the exact root snapshot for every Maintainer step; they do not render it
 again from frozen inputs or read a live Published source.
 
+For every Existing Maintain, the Inline anchor is the exact previous
+Published container anchor and must equal `Existing.SourceSetAnchor`; it is not
+a per-block replay cursor. Store independently validates the source set as a
+strict ancestor of the target and the frozen input as the block's exact replay
+start. In chronological order the legal relation is
+`cursor <= prior/source-set < target`, so an inherited block may legitimately
+lag behind the full-pack snapshot that supplies its read-only context.
+
 The 2 MiB manifest and 3 MiB publication limits apply to the actual canonical
 encoded JSON, including escaping and all plan metadata. Creation and envelope
 rewrite reject over-limit encoded bytes before the corresponding durable write;
@@ -114,7 +122,7 @@ that resource bound.
 Building creation has the same authority boundary. Application code uses
 `DerivedRecapBuildingInstaller`, while direct `CreateBuildingAsync` remains an
 internal trusted/test seam. Before any source read or staging write, the
-installer validates admission anchor, replay routes, prior-context anchors,
+installer validates admission anchor, replay routes, prior/source-set binding,
 source anchors, and non-retroactive publication against its captured lineage.
 Current Building execution supports Empty, Existing, and Inherit sources;
 referenced Published sources are reread exactly and frozen into the Building.

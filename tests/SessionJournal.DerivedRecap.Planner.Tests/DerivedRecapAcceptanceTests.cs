@@ -10,7 +10,7 @@ public sealed class DerivedRecapAcceptanceTests {
     private const int MaxContent = 4096;
 
     [Fact]
-    public async Task MultiEndpointMaintenancePublishesOnlySetAdmissions() {
+    public async Task LaggingBlockUsesLatestPublishedPackAsSharedPrior() {
         using AcceptanceFixture fixture =
             await AcceptanceFixture.CreateAsync();
         EventAddress[] a = fixture.AppendNumberedPairs(20);
@@ -41,7 +41,9 @@ public sealed class DerivedRecapAcceptanceTests {
                         )
                     ]
                 ),
-                2 => MaintainExisting(
+                2 => Inherit(context, a[8]),
+                3 => Inherit(context, a[12]),
+                4 => MaintainExisting(
                     context,
                     a[20],
                     [a[5], a[11], a[20]]
@@ -50,6 +52,21 @@ public sealed class DerivedRecapAcceptanceTests {
                     "Unexpected Galatea planning phase."
                 )
             };
+
+            RecapPlanningPolicyDecision.Build Inherit(
+                RecapPlanningPolicyContext current,
+                EventAddress admission
+            ) => new(
+                admission,
+                [
+                    new RecapBlockPlanningDecision.Inherit(
+                        id,
+                        Assert.Single(
+                            current.PolicyFacts.AvailableSources
+                        ).Source
+                    )
+                ]
+            );
 
             RecapPlanningPolicyDecision.Build MaintainExisting(
                 RecapPlanningPolicyContext current,
@@ -88,6 +105,24 @@ public sealed class DerivedRecapAcceptanceTests {
         Assert.Equal(a[1], atA1.SetAdmissionAnchor);
         Assert.Equal(1, maintainer.CallCount);
 
+        PublishedRecapDescriptor atA8 =
+            await RunPublishedAsync(executor);
+        PublishedRecapDescriptor atA12 =
+            await RunPublishedAsync(executor);
+        Assert.Equal(a[8], atA8.SetAdmissionAnchor);
+        Assert.Equal(a[12], atA12.SetAdmissionAnchor);
+        Assert.Equal(1, maintainer.CallCount);
+        Assert.Equal(
+            a[1],
+            await ReadCursorAsync(fixture.Store, atA8, id)
+        );
+        PublishedRecapSourceSnapshot a12Source =
+            await ReadSourceAsync(fixture.Store, atA12, id);
+        Assert.Equal(
+            a[1],
+            Assert.Single(a12Source.FrozenInputs).AbsorbedThrough
+        );
+
         PublishedRecapDescriptor atA20 =
             await RunPublishedAsync(executor);
         Assert.Equal(a[20], atA20.SetAdmissionAnchor);
@@ -108,7 +143,27 @@ public sealed class DerivedRecapAcceptanceTests {
             Assert.IsType<ExistingRecapMaintainSource>(
                 finalPlan.Source
         );
-        Assert.Equal(a[1], finalSource.SourceSetAnchor);
+        Assert.Equal(a[12], finalSource.SourceSetAnchor);
+        InlineRecapPriorContext finalPrior = Assert.IsType<
+            InlineRecapPriorContext
+        >(final.Publication.FrozenPlanSnapshot.PriorContext);
+        Assert.Equal(a[12], finalPrior.AdmissionAnchor);
+        Assert.Contains(
+            Assert.Single(a12Source.FrozenInputs).Content,
+            finalPrior.Snapshot.SystemPromptFragment,
+            StringComparison.Ordinal
+        );
+        Assert.All(
+            maintainer.Requests.Skip(1),
+            request => Assert.Equal(
+                finalPrior.Snapshot,
+                request.RecentHistory.PriorContext
+            )
+        );
+        Assert.Equal(
+            Assert.Single(a12Source.FrozenInputs).Content,
+            maintainer.Requests[1].OldBlock.Text
+        );
         Assert.Equal(
             [a[5], a[11], a[20]],
             finalPlan.CatchUpBoundaries.Select(
@@ -123,6 +178,8 @@ public sealed class DerivedRecapAcceptanceTests {
             );
         EventAddress[] expectedOrdinals = [
             a[20],
+            a[12],
+            a[8],
             a[1]
         ];
         for (int ordinal = 0;
@@ -517,6 +574,15 @@ public sealed class DerivedRecapAcceptanceTests {
         return available.Snapshot;
     }
 
+    private static async ValueTask<EventAddress> ReadCursorAsync(
+        DerivedRecapStore store,
+        PublishedRecapDescriptor descriptor,
+        RecapBlockId blockId
+    ) => Assert.Single(
+        (await ReadSourceAsync(store, descriptor, blockId))
+            .FrozenInputs
+    ).AbsorbedThrough;
+
     private static async Task<string> RunHarnessAsync(
         string repositoryPath,
         string failpoint,
@@ -632,6 +698,7 @@ public sealed class DerivedRecapAcceptanceTests {
             "sha256:0000000000000000000000000000000000000000000000000000000000000000";
         public ContextHeaderBlockPath Target { get; }
         public int CallCount { get; private set; }
+        public List<RecapBlockMaintenanceRequest> Requests { get; } = [];
 
         public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
             RecapBlockMaintenanceRequest request,
@@ -639,6 +706,7 @@ public sealed class DerivedRecapAcceptanceTests {
         ) {
             ct.ThrowIfCancellationRequested();
             CallCount++;
+            Requests.Add(request);
             return ValueTask.FromResult(
                 new RecapBlockMaintenanceResult(
                     Id,

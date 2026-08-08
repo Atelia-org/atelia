@@ -473,6 +473,12 @@ all-Inherit则冻结Empty。snapshot包含每个Maintainer自己的上一版和�
 neutral request contract交付，但current rewrite只消费上述shared prior context，避免当前block正文
 重复进入prompt。
 
+Inline prior的anchor表示previous Published full-pack container，必须等于每个Existing Maintain的
+`SourceSetAnchor`，而不是该block的`AbsorbedThrough` cursor。source-set仍必须是target admission的
+strict ancestor；block cursor与catch-up route由各自frozen input独立验证。按时间顺序允许
+`cursor <= prior/source-set < target`，所以经过多轮Inherit后，最新full-pack prior可以合法地晚于
+某个lagging block cursor。
+
 Resume与Restore都从authoritative manifest读取同一份root prior，并把同一个runtime snapshot共享给
 所有pending Maintainer steps。它们不从build-local inputs重新render，也不读取live Published source。
 Planner/Store在任何对应durable write前分别检查完整manifest/publication canonical encoded bytes不超过

@@ -214,8 +214,10 @@ RecapBlockPlan =
   `EffectivePriorContext = any Maintain ? authoritative shared : Empty`；all-Inherit只冻结Empty；
 - first-maintain的prior context显式Empty；已有source且需要Maintain时，从同一次exact previous
   Published snapshot按frozen plan顺序投影全部frozen blocks，在manifest根级冻结一次Inline snapshot；
-- shared prior context整条route复用，包含当前block及其他blocks的上一版；Inline anchor是first
-  replay start的同-lineage ancestor；
+- shared prior context整条route复用，包含当前block及其他blocks的上一版；Inline anchor是previous
+  Published full-pack container anchor，必须等于Existing `SourceSetAnchor`，不是per-block cursor；
+- source-set是target的strict ancestor，frozen input cursor可早于或等于source-set；按时间顺序为
+  `cursor <= prior/source-set < target`；
 - prior context不读取当前Building的partial output；current rewrite不再把`OldBlock`重复放入prompt；
 - first-maintain只允许Empty source；existing-maintain只允许Existing source；两者不得在同一manifest
   混用；Resume/Restore共享root snapshot，不从inputs重新render或读取live Published；

@@ -117,6 +117,19 @@ internal static class RecapFrozenPlanRawValidator {
                         }
                         break;
                     case ExistingRecapMaintainSource existing:
+                        if (manifest.PriorContext
+                                is not InlineRecapPriorContext inline
+                            || inline.AdmissionAnchor
+                                != existing.SourceSetAnchor) {
+                            Add(
+                                defects,
+                                $"Maintain block "
+                                + $"'{plan.RecapBlockId}' inline "
+                                + "prior context does not match its "
+                                + "exact source set admission."
+                            );
+                            return defects;
+                        }
                         if (!TryValidateFrozenSource(
                                 frozenInputs,
                                 plan,
@@ -147,21 +160,6 @@ internal static class RecapFrozenPlanRawValidator {
                             + "has an unsupported source."
                         );
                         return defects;
-                }
-
-                if (manifest.PriorContext
-                        is InlineRecapPriorContext inline
-                    && (!lineageIndex.TryGetValue(
-                            inline.AdmissionAnchor,
-                            out int priorIndex
-                        )
-                        || priorIndex < startIndex)) {
-                    Add(
-                        defects,
-                        $"Maintain block '{plan.RecapBlockId}' inline "
-                        + "prior context is not an ancestor of its "
-                        + "replay start."
-                    );
                 }
 
                 int previousIndex = startIndex;

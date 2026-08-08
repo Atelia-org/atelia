@@ -202,8 +202,10 @@ workflow authority。
 replay authority，执行时不得重新发现后静默替换。
 
 非空 prior context必须来自planning时同一次exact Published source snapshot，包含当前block和其他
-blocks的上一版；不得读取当前Building的partial results。其admission anchor必须不晚于first replay
-start，保证block执行顺序与crash/reopen不改变输入。neutral maintenance request仍携带`OldBlock`，
+blocks的上一版；不得读取当前Building的partial results。其admission anchor是previous Published
+full-pack container anchor，必须等于每个Existing Maintain的`SourceSetAnchor`，不是per-block replay
+cursor。source-set必须strictly早于target，而cursor可早于或等于source-set；即按时间顺序为
+`cursor <= prior/source-set < target`。neutral maintenance request仍携带`OldBlock`，
 但current rewrite以shared prior context作为旧recap唯一prompt表示，避免当前block重复出现。
 
 policy可以只读authoritative shared prior，但不输出per-block prior。Evaluator冻结

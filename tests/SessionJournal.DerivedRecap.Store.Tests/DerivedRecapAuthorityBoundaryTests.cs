@@ -1002,7 +1002,8 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
     [InlineData("admission", "AdmissionAnchorOffLineage")]
     [InlineData("source", "SourceAnchorInvalid")]
     [InlineData("catch-up", "CatchUpRouteInvalid")]
-    [InlineData("prior", "PriorContextAnchorInvalid")]
+    [InlineData("prior-mismatch", "PriorContextAnchorInvalid")]
+    [InlineData("prior-target", "PriorContextAnchorInvalid")]
     [InlineData("retroactive", "RetroactivePublication")]
     public async Task InstallerRejectsInvalidPlanBeforeStaging(
         string defectKind,
@@ -1028,33 +1029,33 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         }
         PublishedRecapDescriptor? priorSource = null;
         DerivedRecapFrozenInput? priorInput = null;
-        if (defectKind == "prior") {
-            // Freeze a real older cursor so preflight can reach the
-            // manifest-level prior ancestry check.
+        if (defectKind.StartsWith("prior", StringComparison.Ordinal)) {
+            // Freeze a real lagging cursor so prior/source-set authority
+            // is checked independently from per-block replay position.
             EventAddress sourceAnchor =
                 lineage.CurrentPrefix.HeadToOldest[4].Address;
             EventAddress sourceReplayStart =
                 lineage.CurrentPrefix.HeadToOldest[6].Address;
             const string sourceContent = "source recap";
-            priorSource = await fixture.PublishAsync(
+            (priorSource, priorInput) = await PublishLaggingSourceAsync(
+                fixture,
                 sourceAnchor,
                 sourceReplayStart,
-                content: sourceContent
-            );
-            priorInput = RecapWireTestFacts.CreateFrozenInput(
-                fixture.Engine,
-                new RecapBlockId("roleplay.self"),
-                Target("roleplay.self"),
-                sourceAnchor,
+                lineage.CurrentPrefix.HeadToOldest[8].Address,
                 sourceContent
             );
             replayStart = sourceAnchor;
         }
         SessionContextAnchorSetupReferences targetSetups =
             fixture.Setups(target);
-        RecapPriorContext manifestPrior = defectKind == "prior"
+        RecapPriorContext manifestPrior = defectKind.StartsWith(
+            "prior",
+            StringComparison.Ordinal
+        )
             ? new InlineRecapPriorContext(
-                target,
+                defectKind == "prior-target"
+                    ? target
+                    : lineage.CurrentPrefix.HeadToOldest[2].Address,
                 ContextHeaderSnapshot.Empty
             )
             : EmptyRecapPriorContext.Instance;
@@ -1086,7 +1087,8 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 replayStart,
                 [target, target]
             ),
-            "prior" => new MaintainRecapBlockPlan(
+            "prior-mismatch" or "prior-target" =>
+                new MaintainRecapBlockPlan(
                 new RecapBlockId("roleplay.self"),
                 Target("roleplay.self"),
                 "roleplay.autobiographical",
@@ -1149,6 +1151,80 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         Assert.IsType<BuildingReadResult.Missing>(
             await fixture.Store.ReadBuildingAsync(admission)
         );
+    }
+
+    [Fact]
+    public async Task InstallerAcceptsSourceSetPriorWithLaggingCursor() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 5);
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress target = lineage.CapturedHead;
+        EventAddress sourceAnchor =
+            lineage.CurrentPrefix.HeadToOldest[4].Address;
+        EventAddress sourceCursor =
+            lineage.CurrentPrefix.HeadToOldest[6].Address;
+        const string sourceContent = "lagging source recap";
+        (
+            PublishedRecapDescriptor source,
+            DerivedRecapFrozenInput input
+        ) = await PublishLaggingSourceAsync(
+                fixture,
+                sourceAnchor,
+                sourceCursor,
+                lineage.CurrentPrefix.HeadToOldest[8].Address,
+                sourceContent
+            );
+        var prior = new InlineRecapPriorContext(
+            sourceAnchor,
+            new ContextHeaderSnapshot(
+                "frozen source-set pack",
+                string.Empty,
+                string.Empty
+            )
+        );
+        var plan = new MaintainRecapBlockPlan(
+            new RecapBlockId("roleplay.self"),
+            Target("roleplay.self"),
+            "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
+            new ExistingRecapMaintainSource(
+                sourceAnchor,
+                input.AbsorbedThroughSetups,
+                source.EnvelopeSha256,
+                input.PayloadSha256
+            ),
+            [fixture.Boundary(target)],
+            RecapWireTestFacts.PriorDigest(prior)
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                target,
+                fixture.Setups(target),
+                prior,
+                [plan]
+            );
+
+        CreateBuildingResult.Created created = Assert.IsType<
+            CreateBuildingResult.Created
+        >(
+            await new DerivedRecapBuildingInstaller(
+                    fixture.Store,
+                    fixture.ReadView
+                )
+                .InstallAsync(manifest, lineage.CapturedHead)
+        );
+
+        Assert.Equal(target, created.Descriptor.SetAdmissionAnchor);
+        BuildingSnapshot building = Assert.IsType<
+            BuildingReadResult.Available
+        >(await fixture.Store.ReadBuildingAsync(target)).Snapshot;
+        InlineRecapPriorContext frozenPrior = Assert.IsType<
+            InlineRecapPriorContext
+        >(building.Manifest.PriorContext);
+        Assert.Equal(sourceAnchor, frozenPrior.AdmissionAnchor);
+        Assert.Equal(prior.Snapshot, frozenPrior.Snapshot);
+        Assert.NotEqual(sourceAnchor, input.AbsorbedThrough);
     }
 
     [Fact]
@@ -1293,6 +1369,81 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 )
                 .InstallAsync(manifest, lineage.CapturedHead)
         );
+    }
+
+    private static async ValueTask<(
+        PublishedRecapDescriptor Source,
+        DerivedRecapFrozenInput Input
+    )> PublishLaggingSourceAsync(
+        RecapStoreFixture fixture,
+        EventAddress sourceSetAnchor,
+        EventAddress sourceCursor,
+        EventAddress baseReplayStart,
+        string content
+    ) {
+        var id = new RecapBlockId("roleplay.self");
+        ContextHeaderBlockPath target = Target(id.Value);
+        PublishedRecapDescriptor cursorSource =
+            await fixture.PublishAsync(
+                sourceCursor,
+                baseReplayStart,
+                content: content
+            );
+        PublishedRecapSourceSnapshot cursorRead = Assert.IsType<
+            PublishedRecapSourceReadResult.Available
+        >(
+            await fixture.Store.ReadPublishedSourceAsync(
+                cursorSource,
+                [id]
+            )
+        ).Snapshot;
+        DerivedRecapFrozenInput cursorInput = Assert.Single(
+            cursorRead.FrozenInputs
+        );
+        var inherit = new InheritRecapBlockPlan(
+            id,
+            target,
+            cursorSource.SetAdmissionAnchor,
+            cursorInput.AbsorbedThroughSetups,
+            cursorSource.EnvelopeSha256,
+            cursorInput.PayloadSha256
+        );
+        DerivedRecapSetManifest sourceSetManifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                sourceSetAnchor,
+                fixture.Setups(sourceSetAnchor),
+                EmptyRecapPriorContext.Instance,
+                [inherit]
+            );
+        _ = Assert.IsType<CreateBuildingResult.Created>(
+            await fixture.Store.CreateBuildingAsync(sourceSetManifest)
+        );
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+            sourceSetAnchor,
+            DerivedRecapCodec.CreateBlock(
+                inherit,
+                sourceCursor,
+                content
+            )
+        );
+        PublishedRecapDescriptor sourceSet = Assert.IsType<
+            PublishRecapResult.Published
+        >(await fixture.Publisher.PublishAsync(sourceSetAnchor)).Descriptor;
+        PublishedRecapSourceSnapshot sourceSetRead = Assert.IsType<
+            PublishedRecapSourceReadResult.Available
+        >(
+            await fixture.Store.ReadPublishedSourceAsync(
+                sourceSet,
+                [id]
+            )
+        ).Snapshot;
+        DerivedRecapFrozenInput input = Assert.Single(
+            sourceSetRead.FrozenInputs
+        );
+        Assert.Equal(sourceCursor, input.AbsorbedThrough);
+        return (sourceSet, input);
     }
 
     private static MaintainRecapBlockPlan Maintain(
