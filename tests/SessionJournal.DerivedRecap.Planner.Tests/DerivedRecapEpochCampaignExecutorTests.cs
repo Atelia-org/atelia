@@ -410,6 +410,35 @@ public sealed class DerivedRecapEpochCampaignExecutorTests {
         );
     }
 
+    [Fact]
+    public async Task NoBuildReplansWhenRawHeadChangesDuringDecision() {
+        using var fixture = new CampaignFixture();
+        _ = fixture.AppendPair("A");
+        var policy = new MutatingNoBuildPolicy(fixture);
+        RecapEpochBlockDefinition[] definitions = fixture.Definitions();
+        var self = new RecordingMaintainer(
+            definitions[0],
+            _ => new RecapMaintenanceSuccess.Updated("self")
+        );
+        var world = new RecordingMaintainer(
+            definitions[1],
+            _ => new RecapMaintenanceSuccess.Updated("world")
+        );
+        DerivedRecapEpochCampaignExecutor executor = fixture.Executor(
+            policy,
+            [self, world],
+            maxEpochsPerOperation: 2,
+            maxCallsPerOperation: 4
+        );
+
+        Assert.IsType<DerivedRecapEpochOperationResult.Fresh>(
+            await executor.RunOnlineAsync()
+        );
+        Assert.Equal(2, policy.Calls);
+        Assert.Empty(self.Inputs);
+        Assert.Empty(world.Inputs);
+    }
+
     private static string Render(IHistoryMessage message) => message switch {
         ObservationMessage observation => observation.Content ?? string.Empty,
         ActionMessage action => action.GetFlattenedText(),
@@ -435,6 +464,24 @@ public sealed class DerivedRecapEpochCampaignExecutorTests {
                 return new RecapEpochPlanningDecision.NoBuild("fresh");
             }
             return new RecapEpochPlanningDecision.Build(first);
+        }
+    }
+
+    private sealed class MutatingNoBuildPolicy(
+        CampaignFixture fixture
+    ) : IRecapEpochPlanningPolicy {
+        public string Id => "tests.mutating-no-build-policy";
+        public int Calls { get; private set; }
+
+        public RecapEpochPlanningDecision Decide(
+            RecapEpochPlanningFacts facts
+        ) {
+            _ = facts;
+            Calls++;
+            if (Calls == 1) {
+                _ = fixture.AppendPair("drift");
+            }
+            return new RecapEpochPlanningDecision.NoBuild("fresh");
         }
     }
 

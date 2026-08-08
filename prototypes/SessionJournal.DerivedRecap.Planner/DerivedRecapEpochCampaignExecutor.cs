@@ -57,6 +57,12 @@ public sealed class DerivedRecapEpochCampaignExecutor {
 
         EventAddress? rawHead = _engine.ReadCurrentHead();
         if (rawHead is null) {
+            if (_engine.ReadCurrentHead() is not null) {
+                return Unavailable(
+                    "RawHeadChanged",
+                    "Raw head appeared while checking an empty SessionJournal."
+                );
+            }
             return new DerivedRecapEpochOperationResult.Fresh(
                 null,
                 0,
@@ -241,6 +247,9 @@ public sealed class DerivedRecapEpochCampaignExecutor {
             }
 
             if (source.StartSeed.Address == prefix.CapturedHead) {
+                if (_engine.ReadCurrentHead() != prefix.CapturedHead) {
+                    continue;
+                }
                 return new DerivedRecapEpochOperationResult.Fresh(
                     latest,
                     epochsPublished,
@@ -297,6 +306,9 @@ public sealed class DerivedRecapEpochCampaignExecutor {
                 return Unavailable("PolicyUnavailable", exception.Message);
             }
             if (decision is RecapEpochPlanningDecision.NoBuild noBuild) {
+                if (_engine.ReadCurrentHead() != prefix.CapturedHead) {
+                    continue;
+                }
                 return new DerivedRecapEpochOperationResult.Fresh(
                     latest,
                     epochsPublished,
