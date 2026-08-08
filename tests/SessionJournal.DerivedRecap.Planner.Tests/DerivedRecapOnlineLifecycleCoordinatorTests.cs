@@ -261,6 +261,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                     fixture.Engine.BranchRefId,
                     plan.CatchUpBoundaries[^1].Address,
                     plan.CatchUpBoundaries[^1].Setups,
+                    EmptyRecapPriorContext.Instance,
                     [plan]
                 )
             )
@@ -1191,7 +1192,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                         anchor
                     )
                 ],
-                EmptyRecapPriorContext.Instance,
+                RecapPlannerWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance),
                 MaxContent
             );
         }
@@ -1209,6 +1210,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                             Engine.BranchRefId,
                             anchor,
                             plan.CatchUpBoundaries[^1].Setups,
+                            EmptyRecapPriorContext.Instance,
                             [plan]
                         )
                     )

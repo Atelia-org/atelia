@@ -62,7 +62,7 @@ public sealed class RecapCatalogShapeTests {
                             address
                         )
                     ],
-                    EmptyRecapPriorContext.Instance,
+                    RecapPlannerWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance),
                     4096
                 )
             ]);

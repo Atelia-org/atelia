@@ -168,7 +168,7 @@ public sealed class MaintainRecapBlockPlan : RecapBlockPlan {
         string maintainerCapabilityFingerprint,
         RecapMaintainSource source,
         IReadOnlyList<RecapReplayBoundary> catchUpBoundaries,
-        RecapPriorContext priorContext,
+        string priorContextPayloadSha256,
         int maxContentUtf8Bytes =
             SessionContextContributionContract.MaxContributionUtf8Bytes
     ) : base(recapBlockId, target, maxContentUtf8Bytes) {
@@ -180,15 +180,14 @@ public sealed class MaintainRecapBlockPlan : RecapBlockPlan {
         CatchUpBoundaries = Array.AsReadOnly(
             catchUpBoundaries.ToArray()
         );
-        PriorContext = priorContext
-            ?? throw new ArgumentNullException(nameof(priorContext));
+        PriorContextPayloadSha256 = priorContextPayloadSha256;
     }
 
     public string MaintainerId { get; }
     public string MaintainerCapabilityFingerprint { get; }
     public RecapMaintainSource Source { get; }
     public IReadOnlyList<RecapReplayBoundary> CatchUpBoundaries { get; }
-    public RecapPriorContext PriorContext { get; }
+    public string PriorContextPayloadSha256 { get; }
 }
 
 public sealed record DerivedRecapSetManifest(
@@ -196,6 +195,8 @@ public sealed record DerivedRecapSetManifest(
     RefId RefId,
     EventAddress SetAdmissionAnchor,
     SessionContextAnchorSetupReferences SetAdmissionAnchorSetups,
+    RecapPriorContext PriorContext,
+    string PriorContextPayloadSha256,
     IReadOnlyList<RecapBlockPlan> Blocks,
     string ManifestPayloadSha256
 );

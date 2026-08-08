@@ -31,6 +31,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     fixture.Engine,
                     admission
                 ),
+                EmptyRecapPriorContext.Instance,
                 [plan]
             );
 
@@ -468,6 +469,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             await RecapMaintainerStepRunner.RunAsync(
                 maintainer,
                 plan,
+                ContextHeaderSnapshot.Empty,
                 currentBlock: null,
                 window,
                 admission,
@@ -512,6 +514,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             await RecapMaintainerStepRunner.RunAsync(
                 maintainer,
                 plan,
+                ContextHeaderSnapshot.Empty,
                 currentBlock: null,
                 window,
                 admission,
@@ -1086,6 +1089,19 @@ public sealed class DerivedRecapPlannerExecutorTests {
             Assert.Single(peer.Requests)
                 .RecentHistory.PriorContext.IsEmpty
         );
+        PublishedRecapSourceSnapshot firstSource =
+            await fixture.ReadSourceAsync(
+                first.Descriptor,
+                [fixture.SelfId, peerId]
+            );
+        DerivedRecapSetManifest firstFrozen =
+            firstSource.Publication.FrozenPlanSnapshot;
+        Assert.IsType<EmptyRecapPriorContext>(firstFrozen.PriorContext);
+        Assert.All(firstFrozen.Blocks, plan => Assert.Equal(
+            firstFrozen.PriorContextPayloadSha256,
+            Assert.IsType<MaintainRecapBlockPlan>(plan)
+                .PriorContextPayloadSha256
+        ));
         self.Reset();
         peer.Reset();
         fixture.AppendPair("cycle-2-B-D");
@@ -1118,22 +1134,21 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 second.Descriptor,
                 [fixture.SelfId, peerId]
             );
-        Assert.All(
-            source.Publication.FrozenPlanSnapshot.Blocks,
-            plan => {
-                InlineRecapPriorContext prior = Assert.IsType<
-                    InlineRecapPriorContext
-                >(
-                    Assert.IsType<MaintainRecapBlockPlan>(plan)
-                        .PriorContext
-                );
-                Assert.Equal(
-                    first.Descriptor.SetAdmissionAnchor,
-                    prior.AdmissionAnchor
-                );
-                Assert.Equal(expectedPrior, prior.Snapshot);
-            }
+        DerivedRecapSetManifest frozen =
+            source.Publication.FrozenPlanSnapshot;
+        InlineRecapPriorContext prior = Assert.IsType<
+            InlineRecapPriorContext
+        >(frozen.PriorContext);
+        Assert.Equal(
+            first.Descriptor.SetAdmissionAnchor,
+            prior.AdmissionAnchor
         );
+        Assert.Equal(expectedPrior, prior.Snapshot);
+        Assert.All(frozen.Blocks, plan => Assert.Equal(
+            frozen.PriorContextPayloadSha256,
+            Assert.IsType<MaintainRecapBlockPlan>(plan)
+                .PriorContextPayloadSha256
+        ));
     }
 
     [Fact]
@@ -1388,8 +1403,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                         new RecapPlanningMaintainSource.Existing(
                             recent.Source
                         ),
-                        [secondAdmission],
-                        EmptyRecapPriorContext.Instance
+                        [secondAdmission]
                     ),
                     new RecapBlockPlanningDecision.Inherit(
                         oldId,
@@ -1433,6 +1447,9 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 inherited.Descriptor,
                 [recentId, oldId]
             );
+        Assert.IsType<EmptyRecapPriorContext>(
+            source.Publication.FrozenPlanSnapshot.PriorContext
+        );
         DerivedRecapFrozenInput recentInput = source.FrozenInputs.Single(
             input => input.RecapBlockId == recentId
         );
@@ -1533,8 +1550,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         ) => new(
             id,
             new RecapPlanningMaintainSource.Empty(start),
-            [admission],
-            EmptyRecapPriorContext.Instance
+            [admission]
         );
 
         RecapBlockPlanningDecision.Inherit Inherit(
@@ -1594,8 +1610,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     new RecapBlockPlanningDecision.Maintain(
                         fixture.SelfId,
                         new RecapPlanningMaintainSource.Empty(start),
-                        [admission],
-                        EmptyRecapPriorContext.Instance
+                        [admission]
                     )
                 ]
             ));
@@ -1640,8 +1655,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     new RecapBlockPlanningDecision.Maintain(
                         fixture.SelfId,
                         new RecapPlanningMaintainSource.Empty(start),
-                        [firstAdmission],
-                        EmptyRecapPriorContext.Instance
+                        [firstAdmission]
                     )
                 ]
             ));
@@ -1709,8 +1723,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                         new RecapPlanningMaintainSource.Empty(
                             fixture.ReplayStart()
                         ),
-                        [firstAdmission],
-                        EmptyRecapPriorContext.Instance
+                        [firstAdmission]
                     )
                 ]
             ));
@@ -2334,42 +2347,47 @@ public sealed class DerivedRecapPlannerExecutorTests {
         int proofPrefixHeaderCount =
             RecapFrozenPlanBarrier.ProofPrefixHeaderCount(hardCaps);
         using TestFixture fixture = await TestFixture.CreateAsync(
-            historyPairs: (proofPrefixHeaderCount + 1) / 2 + 2,
+            historyPairs: 2,
             hooks: new RecapStoreTestHooks(
                 BeforeAtomicFileReplace: _ => mutations++,
                 BeforeBuildingComponentRead: () => componentReads++
             )
         );
-        _ = fixture.Engine.AppendRuntimeConfigSetup(
-            new SessionRuntimeConfiguration(
-                "model-inline-beyond-v4",
-                "surface-inline-beyond-v4",
-                SessionJournalDefaults.Schema,
-                new(0)
-            )
-        );
-        _ = fixture.Engine.AppendSystemPromptSetup(
-            "system-inline-beyond-v4"
-        );
-        EventAddress start = fixture.AppendPair("inline-beyond-v4-start");
+        EventAddress sourceAnchor =
+            fixture.Engine.ReadCurrentHead()!.Value;
+        (PublishedRecapDescriptor source, DerivedRecapFrozenInput input) =
+            await fixture.PublishSourceAsync(
+                sourceAnchor,
+                fixture.ReplayStart(),
+                "source-inline-beyond-v4"
+            );
+        for (int index = 0;
+             index < (proofPrefixHeaderCount + 1) / 2 + 2;
+             index++) {
+            fixture.AppendPair($"inline-beyond-v4-{index}");
+        }
         EventAddress admission =
-            fixture.AppendPair("inline-beyond-v4-admission");
+            fixture.Engine.ReadCurrentHead()!.Value;
         SessionCurrentLineageSnapshot full =
             fixture.Engine.ReadCurrentLineageHeaders();
-        EventAddress inlineBeyond = full.HeadToRoot[
-            proofPrefixHeaderCount
-        ].Address;
+        Assert.Contains(
+            full.HeadToRoot.Skip(proofPrefixHeaderCount),
+            node => node.Address == sourceAnchor
+        );
+        var priorContext = new InlineRecapPriorContext(
+            sourceAnchor,
+            ContextHeaderSnapshot.Empty
+        );
         var plan = new MaintainRecapBlockPlan(
             fixture.SelfId,
             fixture.SelfTarget,
             "self-maintainer",
             RecapPlannerTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(
-                start,
-                RecapPlannerWireTestFacts.SetupsAt(
-                    fixture.Engine,
-                    start
-                )
+            new ExistingRecapMaintainSource(
+                sourceAnchor,
+                input.AbsorbedThroughSetups,
+                source.EnvelopeSha256,
+                input.PayloadSha256
             ),
             [new RecapReplayBoundary(
                 admission,
@@ -2378,13 +2396,14 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     admission
                 )
             )],
-            new InlineRecapPriorContext(
-                inlineBeyond,
-                ContextHeaderSnapshot.Empty
-            ),
+            RecapPlannerWireTestFacts.PriorDigest(priorContext),
             TestFixture.MaxContent
         );
-        _ = await fixture.CreateBuildingAsync(admission, [plan]);
+        _ = await fixture.CreateBuildingAsync(
+            admission,
+            [plan],
+            priorContext
+        );
         var maintainer = new ScriptedMaintainer(
             "self-maintainer",
             fixture.SelfTarget,
@@ -2409,9 +2428,9 @@ public sealed class DerivedRecapPlannerExecutorTests {
             DerivedRecapBeyondPrefixStage.ResumePendingWindow,
             beyond.Stage
         );
-        Assert.Equal(inlineBeyond, beyond.Evidence.RequiredAnchor);
+        Assert.Equal(sourceAnchor, beyond.Evidence.RequiredAnchor);
         Assert.Equal(
-            inlineBeyond,
+            full.HeadToRoot[proofPrefixHeaderCount].Address,
             beyond.Evidence.NextAddress
         );
         Assert.Equal(
@@ -2434,34 +2453,50 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 BeforeBuildingComponentRead: () => componentReads++
             )
         );
-        EventAddress start = fixture.ReplayStart();
-        EventAddress admission = fixture.Engine.ReadCurrentHead()!.Value;
+        EventAddress sourceAnchor =
+            fixture.Engine.ReadCurrentHead()!.Value;
+        (PublishedRecapDescriptor source, DerivedRecapFrozenInput input) =
+            await fixture.PublishSourceAsync(
+                sourceAnchor,
+                fixture.ReplayStart(),
+                "source-off-lineage-prior"
+            );
+        EventAddress admission = fixture.AppendPair("off-lineage-target");
         EventAddress offLineage = admission with {
             SegmentNumber = admission.SegmentNumber == uint.MaxValue
                 ? uint.MaxValue - 1
                 : uint.MaxValue
         };
-        MaintainRecapBlockPlan valid = fixture.CreateEmptyPlan(
+        var priorContext = new InlineRecapPriorContext(
+            offLineage,
+            ContextHeaderSnapshot.Empty
+        );
+        var plan = new MaintainRecapBlockPlan(
             fixture.SelfId,
             fixture.SelfTarget,
             "self-maintainer",
-            start,
-            [admission]
-        );
-        var plan = new MaintainRecapBlockPlan(
-            valid.RecapBlockId,
-            valid.Target,
-            valid.MaintainerId,
-            valid.MaintainerCapabilityFingerprint,
-            valid.Source,
-            valid.CatchUpBoundaries,
-            new InlineRecapPriorContext(
-                offLineage,
-                ContextHeaderSnapshot.Empty
+            RecapPlannerTestIdentity.CapabilityFingerprint,
+            new ExistingRecapMaintainSource(
+                sourceAnchor,
+                input.AbsorbedThroughSetups,
+                source.EnvelopeSha256,
+                input.PayloadSha256
             ),
-            valid.MaxContentUtf8Bytes
+            [new RecapReplayBoundary(
+                admission,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    admission
+                )
+            )],
+            RecapPlannerWireTestFacts.PriorDigest(priorContext),
+            TestFixture.MaxContent
         );
-        _ = await fixture.CreateBuildingAsync(admission, [plan]);
+        _ = await fixture.CreateBuildingAsync(
+            admission,
+            [plan],
+            priorContext
+        );
         var maintainer = new ScriptedMaintainer(
             "self-maintainer",
             fixture.SelfTarget,
@@ -2609,8 +2644,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     new RecapBlockPlanningDecision.Maintain(
                         fixture.SelfId,
                         new RecapPlanningMaintainSource.Empty(start),
-                        [captured],
-                        EmptyRecapPriorContext.Instance
+                        [captured]
                     )
                 ]
             );
@@ -2656,8 +2690,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                         new RecapBlockPlanningDecision.Maintain(
                             fixture.SelfId,
                             new RecapPlanningMaintainSource.Empty(start),
-                            [admission],
-                            EmptyRecapPriorContext.Instance
+                            [admission]
                         )
                     ]
                 ));
@@ -2713,8 +2746,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     new RecapBlockPlanningDecision.Maintain(
                         fixture.SelfId,
                         new RecapPlanningMaintainSource.Empty(start),
-                        [targetAnchor],
-                        EmptyRecapPriorContext.Instance
+                        [targetAnchor]
                     )
                 ]
             ));
@@ -2782,7 +2814,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     )
                 )
             ],
-            EmptyRecapPriorContext.Instance,
+            RecapPlannerWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance),
             TestFixture.MaxContent
         );
         BuildingSnapshot building =
@@ -2893,19 +2925,29 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 BeforeBuildingComponentRead: () => componentReads++
             )
         );
-        EventAddress start = fixture.ReplayStart();
-        EventAddress admission = fixture.Engine.ReadCurrentHead()!.Value;
+        EventAddress sourceAnchor =
+            fixture.Engine.ReadCurrentHead()!.Value;
+        (PublishedRecapDescriptor source, DerivedRecapFrozenInput input) =
+            await fixture.PublishSourceAsync(
+                sourceAnchor,
+                fixture.ReplayStart(),
+                "source-non-ancestor-prior"
+            );
+        EventAddress admission = fixture.AppendPair("non-ancestor-target");
+        var priorContext = new InlineRecapPriorContext(
+            admission,
+            ContextHeaderSnapshot.Empty
+        );
         var plan = new MaintainRecapBlockPlan(
             fixture.SelfId,
             fixture.SelfTarget,
             "self-maintainer",
             RecapPlannerTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(
-                start,
-                RecapPlannerWireTestFacts.SetupsAt(
-                    fixture.Engine,
-                    start
-                )
+            new ExistingRecapMaintainSource(
+                sourceAnchor,
+                input.AbsorbedThroughSetups,
+                source.EnvelopeSha256,
+                input.PayloadSha256
             ),
             [
                 new RecapReplayBoundary(
@@ -2916,13 +2958,14 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     )
                 )
             ],
-            new InlineRecapPriorContext(
-                admission,
-                ContextHeaderSnapshot.Empty
-            ),
+            RecapPlannerWireTestFacts.PriorDigest(priorContext),
             TestFixture.MaxContent
         );
-        await fixture.CreateBuildingAsync(admission, [plan]);
+        await fixture.CreateBuildingAsync(
+            admission,
+            [plan],
+            priorContext
+        );
         var maintainer = new ScriptedMaintainer(
             "self-maintainer",
             fixture.SelfTarget,
@@ -3008,8 +3051,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                         new RecapPlanningMaintainSource.Empty(
                             raw.StartExclusive
                         ),
-                        [sourceAdmission],
-                        EmptyRecapPriorContext.Instance
+                        [sourceAdmission]
                     )
                 ]
             ));
@@ -3071,8 +3113,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                         new RecapPlanningMaintainSource.Empty(
                             fixture.ReplayStart()
                         ),
-                        [sourceAdmission],
-                        EmptyRecapPriorContext.Instance
+                        [sourceAdmission]
                     )
                 ]
             ));
@@ -3992,13 +4033,14 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     )
                 ))
             ],
-            EmptyRecapPriorContext.Instance,
+            RecapPlannerWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance),
             MaxContent
         );
 
         public async ValueTask<BuildingSnapshot> CreateBuildingAsync(
             EventAddress admission,
-            IReadOnlyList<RecapBlockPlan> plans
+            IReadOnlyList<RecapBlockPlan> plans,
+            RecapPriorContext? priorContext = null
         ) {
             var created = Assert.IsType<CreateBuildingResult.Created>(
                 await Store.CreateBuildingAsync(
@@ -4009,6 +4051,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                             Engine,
                             admission
                         ),
+                        priorContext ?? EmptyRecapPriorContext.Instance,
                         plans
                     )
                 )
@@ -4018,6 +4061,71 @@ public sealed class DerivedRecapPlannerExecutorTests {
             );
             Assert.Equal(created.Descriptor, read.Snapshot.Descriptor);
             return read.Snapshot;
+        }
+
+        public async ValueTask<(
+            PublishedRecapDescriptor Descriptor,
+            DerivedRecapFrozenInput Input
+        )> PublishSourceAsync(
+            EventAddress anchor,
+            EventAddress replayStart,
+            string content
+        ) {
+            MaintainRecapBlockPlan plan = CreateEmptyPlan(
+                SelfId,
+                SelfTarget,
+                "self-maintainer",
+                replayStart,
+                [anchor]
+            );
+            BuildingSnapshot building = await CreateBuildingAsync(
+                anchor,
+                [plan]
+            );
+            BuildingBlockInspection inspection =
+                await Store.InspectBuildingBlockAsync(
+                    building.Descriptor,
+                    SelfId
+                );
+            DerivedRecapBlock block = DerivedRecapCodec.CreateBlock(
+                plan,
+                anchor,
+                content
+            );
+            _ = Assert.IsType<CheckpointWriteResult.Updated>(
+                await Store.AdvanceRollingCheckpointAsync(
+                    building.Descriptor,
+                    SelfId,
+                    inspection.Checkpoint.StateToken,
+                    block
+                )
+            );
+            inspection = await Store.InspectBuildingBlockAsync(
+                building.Descriptor,
+                SelfId
+            );
+            _ = Assert.IsType<FinalBlockWriteResult.Installed>(
+                await Store.EnsureFinalBlockAsync(
+                    building.Descriptor,
+                    SelfId,
+                    inspection.Final.StateToken,
+                    block
+                )
+            );
+            var published = Assert.IsType<PublishRecapResult.Published>(
+                await new DerivedRecapPublisher(Store, Engine.ReadView)
+                    .PublishAsync(anchor)
+            );
+            return (
+                published.Descriptor,
+                DerivedRecapCodec.CreateFrozenInput(
+                    SelfId,
+                    SelfTarget,
+                    anchor,
+                    RecapPlannerWireTestFacts.SetupsAt(Engine, anchor),
+                    content
+                )
+            );
         }
 
         public DerivedRecapPlannerExecutor CreateExecutor(

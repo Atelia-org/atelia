@@ -195,7 +195,7 @@ public sealed class DerivedRecapPublisherTests {
             maintain.MaintainerCapabilityFingerprint,
             maintain.Source,
             maintain.CatchUpBoundaries,
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         string finalPath = Path.Combine(
             fixture.Store.GetBuildingPathForTest(anchor),

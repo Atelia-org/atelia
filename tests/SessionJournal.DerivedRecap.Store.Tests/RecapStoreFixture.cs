@@ -85,6 +85,7 @@ internal sealed class RecapStoreFixture : IDisposable {
                 Engine.BranchRefId,
                 anchor,
                 Setups(anchor),
+                EmptyRecapPriorContext.Instance,
                 [plan]
             );
         await Store.CreateBuildingAsync(manifest);
@@ -120,7 +121,7 @@ internal sealed class RecapStoreFixture : IDisposable {
             Setups(replayStart)
         ),
         [Boundary(anchor)],
-        EmptyRecapPriorContext.Instance
+        RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
     );
 
     public SessionContextAnchorSetupReferences Setups(

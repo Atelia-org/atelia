@@ -118,6 +118,12 @@ internal static class RecapFrozenPlanBarrier {
         var emptyStarts = new List<FrozenAnchorRequirement>();
         var endpoints = new List<FrozenAnchorRequirement>();
         var routes = new List<PendingMaintainRoute>();
+        if (manifest.PriorContext is InlineRecapPriorContext inlinePrior) {
+            inlinePriors.Add(new FrozenAnchorRequirement(
+                inlinePrior.AdmissionAnchor,
+                "manifest inline prior"
+            ));
+        }
         foreach (RecapBlockPlan plan in manifest.Blocks) {
             if (sourceAuthorities.TryGetValue(
                     plan.RecapBlockId,
@@ -159,13 +165,6 @@ internal static class RecapFrozenPlanBarrier {
                     $"block '{plan.RecapBlockId}' empty replay start"
                 ));
                 directBoundaries.Add(start);
-            }
-            if (maintain.PriorContext
-                is InlineRecapPriorContext inline) {
-                inlinePriors.Add(new FrozenAnchorRequirement(
-                    inline.AdmissionAnchor,
-                    $"block '{plan.RecapBlockId}' inline prior"
-                ));
             }
             foreach (RecapReplayBoundary endpoint
                      in maintain.CatchUpBoundaries) {
@@ -544,7 +543,7 @@ internal static class RecapFrozenPlanBarrier {
                     + "newer than its target admission."
                 );
             }
-            if (maintain.PriorContext
+            if (manifest.PriorContext
                     is InlineRecapPriorContext inline
                 && lineageIndexes[inline.AdmissionAnchor]
                     < startIndex) {

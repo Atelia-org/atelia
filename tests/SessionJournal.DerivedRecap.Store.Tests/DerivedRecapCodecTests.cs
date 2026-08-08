@@ -43,7 +43,7 @@ public sealed class DerivedRecapCodecTests {
             DerivedRecapCodec.StoreSchema
         );
         Assert.Equal(
-            "atelia.session-journal.derived-recap-manifest.v6",
+            "atelia.session-journal.derived-recap-manifest.v7",
             DerivedRecapCodec.ManifestSchema
         );
         Assert.Equal(
@@ -55,7 +55,7 @@ public sealed class DerivedRecapCodecTests {
             DerivedRecapCodec.BlockSchema
         );
         Assert.Equal(
-            "atelia.session-journal.published-recap-set.v6",
+            "atelia.session-journal.published-recap-set.v7",
             DerivedRecapCodec.PublicationSchema
         );
     }
@@ -77,6 +77,203 @@ public sealed class DerivedRecapCodecTests {
         );
     }
 
+    [Fact]
+    public void InlinePriorIsEncodedOnceAndAllMaintainPlansBindItsDigest() {
+        var prior = new InlineRecapPriorContext(
+            A1,
+            new ContextHeaderSnapshot(
+                "shared-system",
+                "shared-observation",
+                "shared-action"
+            )
+        );
+        string digest =
+            DerivedRecapCodec.ComputePriorContextPayloadSha256(prior);
+        RecapBlockPlan[] plans = [
+            ExistingPlan("shared.one", digest),
+            ExistingPlan("shared.two", digest)
+        ];
+
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                new RefId(0x55),
+                A2,
+                S2,
+                prior,
+                plans
+            );
+        string json = Encoding.UTF8.GetString(
+            DerivedRecapCodec.EncodeManifest(manifest)
+        );
+
+        Assert.Equal(1, Count(json, "\"snapshot\":"));
+        Assert.Equal(
+            3,
+            Count(json, "\"priorContextPayloadSha256\":")
+        );
+        Assert.Equal(
+            1,
+            Count(json, "\"priorContext\":")
+        );
+        Assert.All(
+            manifest.Blocks.OfType<MaintainRecapBlockPlan>(),
+            plan => Assert.Equal(
+                manifest.PriorContextPayloadSha256,
+                plan.PriorContextPayloadSha256
+            )
+        );
+    }
+
+    [Fact]
+    public void MaintainDigestMismatchIsRejected() {
+        var prior = new InlineRecapPriorContext(
+            A1,
+            ContextHeaderSnapshot.Empty
+        );
+        MaintainRecapBlockPlan valid = ExistingPlan(
+            "digest.valid",
+            DerivedRecapCodec.ComputePriorContextPayloadSha256(prior)
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                new RefId(0x56),
+                A2,
+                S2,
+                prior,
+                [valid]
+            );
+        var mismatched = new MaintainRecapBlockPlan(
+            valid.RecapBlockId,
+            valid.Target,
+            valid.MaintainerId,
+            valid.MaintainerCapabilityFingerprint,
+            valid.Source,
+            valid.CatchUpBoundaries,
+            new string('f', 64),
+            valid.MaxContentUtf8Bytes
+        );
+
+        Assert.Throws<InvalidDataException>(() =>
+            DerivedRecapCodec.ValidateManifest(manifest with {
+                Blocks = [mismatched]
+            })
+        );
+    }
+
+    [Fact]
+    public void ManifestPriorPhaseRulesRejectMixedSeedsAndNonEmptyInheritOnly() {
+        var inline = new InlineRecapPriorContext(
+            A1,
+            ContextHeaderSnapshot.Empty
+        );
+        string inlineDigest =
+            DerivedRecapCodec.ComputePriorContextPayloadSha256(inline);
+        var empty = new MaintainRecapBlockPlan(
+            new RecapBlockId("phase.empty"),
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.System,
+                "phase.empty"
+            ),
+            "phase.empty",
+            RecapTestIdentity.CapabilityFingerprint,
+            new EmptyRecapMaintainSource(A1, S1),
+            [new RecapReplayBoundary(A2, S2)],
+            inlineDigest
+        );
+        MaintainRecapBlockPlan existing = ExistingPlan(
+            "phase.existing",
+            inlineDigest
+        );
+        var inherit = new InheritRecapBlockPlan(
+            new RecapBlockId("phase.inherit"),
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.System,
+                "phase.inherit"
+            ),
+            A1,
+            S1,
+            new string('a', 64),
+            new string('b', 64)
+        );
+
+        InvalidDataException mixed = Assert.Throws<InvalidDataException>(
+            () => DerivedRecapCodec.CreateManifest(
+                new RefId(0x58),
+                A2,
+                S2,
+                inline,
+                [existing, empty]
+            )
+        );
+        Assert.Contains("cannot mix existing and empty", mixed.Message);
+
+        _ = DerivedRecapCodec.CreateManifest(
+            new RefId(0x58),
+            A2,
+            S2,
+            EmptyRecapPriorContext.Instance,
+            [inherit]
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            DerivedRecapCodec.CreateManifest(
+                new RefId(0x58),
+                A2,
+                S2,
+                inline,
+                [inherit]
+            )
+        );
+
+        _ = DerivedRecapCodec.CreateManifest(
+            new RefId(0x58),
+            A2,
+            S2,
+            inline,
+            [existing, inherit]
+        );
+    }
+
+    [Fact]
+    public void PriorMutationChangesManifestPlanAndBlockCommitments() {
+        var firstPrior = new InlineRecapPriorContext(
+            A1,
+            new ContextHeaderSnapshot("system-a", "observation", "action")
+        );
+        var secondPrior = new InlineRecapPriorContext(
+            A1,
+            new ContextHeaderSnapshot("system-b", "observation", "action")
+        );
+        MaintainRecapBlockPlan firstPlan = ExistingPlan(
+            "commitment.prior",
+            DerivedRecapCodec.ComputePriorContextPayloadSha256(firstPrior)
+        );
+        MaintainRecapBlockPlan secondPlan = ExistingPlan(
+            "commitment.prior",
+            DerivedRecapCodec.ComputePriorContextPayloadSha256(secondPrior)
+        );
+        DerivedRecapSetManifest firstManifest =
+            DerivedRecapCodec.CreateManifest(
+                new RefId(0x57), A2, S2, firstPrior, [firstPlan]
+            );
+        DerivedRecapSetManifest secondManifest =
+            DerivedRecapCodec.CreateManifest(
+                new RefId(0x57), A2, S2, secondPrior, [secondPlan]
+            );
+
+        Assert.NotEqual(
+            firstManifest.ManifestPayloadSha256,
+            secondManifest.ManifestPayloadSha256
+        );
+        Assert.NotEqual(
+            DerivedRecapCodec.ComputeBlockPlanSha256(firstPlan),
+            DerivedRecapCodec.ComputeBlockPlanSha256(secondPlan)
+        );
+        Assert.NotEqual(
+            DerivedRecapCodec.CreateBlock(firstPlan, A2, "same").PayloadSha256,
+            DerivedRecapCodec.CreateBlock(secondPlan, A2, "same").PayloadSha256
+        );
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("../escape")]
@@ -88,7 +285,7 @@ public sealed class DerivedRecapCodecTests {
     }
 
     [Fact]
-    public void V6ManifestAndPublication_HaveLiteralCanonicalGoldens() {
+    public void V7ManifestAndPublication_HaveLiteralCanonicalGoldens() {
         var refId = new RefId(0x1234);
         RecapBlockPlan plan = new MaintainRecapBlockPlan(
             new RecapBlockId("roleplay.self"),
@@ -100,19 +297,27 @@ public sealed class DerivedRecapCodecTests {
             RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(A1, S1),
             [new RecapReplayBoundary(A2, S2)],
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(refId, A2, S2, [plan]);
+            DerivedRecapCodec.CreateManifest(
+                refId,
+                A2,
+                S2,
+                EmptyRecapPriorContext.Instance,
+                [plan]
+            );
 
         string actual = Encoding.UTF8.GetString(
             DerivedRecapCodec.EncodeManifest(manifest)
         );
         const string ExpectedManifest =
-            "{\"schema\":\"atelia.session-journal.derived-recap-manifest.v6\","
+            "{\"schema\":\"atelia.session-journal.derived-recap-manifest.v7\","
             + "\"refId\":\"0000000000001234\","
             + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
             + "\"setAdmissionAnchorSetups\":" + S2Json + ","
+            + "\"priorContext\":{\"kind\":\"empty\"},"
+            + "\"priorContextPayloadSha256\":\"e35b48e84654ad51a5b1ee607e3f203550707c71e3d5017aa212ff3aa1fc578b\","
             + "\"blocks\":[{\"mode\":\"maintain\","
             + "\"recapBlockId\":\"roleplay.self\","
             + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
@@ -122,12 +327,12 @@ public sealed class DerivedRecapCodecTests {
             + "\"replayStartSetups\":" + S1Json + "},"
             + "\"catchUpBoundaries\":[{\"address\":\"ej1:11121314151617181a1b1c1d00000000\","
             + "\"setups\":" + S2Json + "}],"
-            + "\"priorContext\":{\"kind\":\"empty\"},"
+            + "\"priorContextPayloadSha256\":\"e35b48e84654ad51a5b1ee607e3f203550707c71e3d5017aa212ff3aa1fc578b\","
             + "\"maxContentUtf8Bytes\":262144}],"
-            + "\"manifestPayloadSha256\":\"da7ea99188960f8497a7a9e228f0b0d15e84a6e1b6507f26b47f082ae4b4ac28\"}";
+            + "\"manifestPayloadSha256\":\"d3672ff750ce4122e9fa5b891ad07180e72dbec1c53f2814ffba06b2facd4883\"}";
 
         Assert.Equal(
-            "da7ea99188960f8497a7a9e228f0b0d15e84a6e1b6507f26b47f082ae4b4ac28",
+            "d3672ff750ce4122e9fa5b891ad07180e72dbec1c53f2814ffba06b2facd4883",
             manifest.ManifestPayloadSha256
         );
         Assert.Equal(ExpectedManifest, actual);
@@ -148,17 +353,17 @@ public sealed class DerivedRecapCodecTests {
                 [DerivedRecapCodec.CreateBlock(plan, A2, "recap")]
             );
         const string ExpectedPublication =
-            "{\"schema\":\"atelia.session-journal.published-recap-set.v6\","
+            "{\"schema\":\"atelia.session-journal.published-recap-set.v7\","
             + "\"refId\":\"0000000000001234\","
             + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
             + "\"frozenPlanSnapshot\":" + ExpectedManifest + ","
             + "\"blockCommitments\":[{\"recapBlockId\":\"roleplay.self\","
             + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
             + "\"absorbedThrough\":\"ej1:11121314151617181a1b1c1d00000000\","
-            + "\"payloadSha256\":\"cbceee4ef1fd3519991e61ee320b538d39dc85479b8c924e94510cbfd0cd58ec\"}],"
-            + "\"envelopeSha256\":\"facea6130590a48676a8ced1d3361e39fbbe7834e3fcffb65ebf819fb1717078\"}";
+            + "\"payloadSha256\":\"c340abf148dd0c03b7a8d1f4cf77801e349d2228a06e722cbe047a0baac2fec1\"}],"
+            + "\"envelopeSha256\":\"d0bdee0ec99e9eb35536a4c4b5100c5535a2cece1ce74c48645b707a64ea1bc1\"}";
         Assert.Equal(
-            "facea6130590a48676a8ced1d3361e39fbbe7834e3fcffb65ebf819fb1717078",
+            "d0bdee0ec99e9eb35536a4c4b5100c5535a2cece1ce74c48645b707a64ea1bc1",
             publication.EnvelopeSha256
         );
         Assert.Equal(
@@ -225,12 +430,14 @@ public sealed class DerivedRecapCodecTests {
                 new RefId(8),
                 A2,
                 S2,
+                EmptyRecapPriorContext.Instance,
                 [first]
             ).ManifestPayloadSha256,
             DerivedRecapCodec.CreateManifest(
                 new RefId(8),
                 A2,
                 S2,
+                EmptyRecapPriorContext.Instance,
                 [second]
             ).ManifestPayloadSha256
         );
@@ -246,6 +453,7 @@ public sealed class DerivedRecapCodecTests {
                     new RefId(8),
                     A2,
                     S2,
+                    EmptyRecapPriorContext.Instance,
                     [MaintainPlan(invalid)]
                 )
             );
@@ -280,6 +488,7 @@ public sealed class DerivedRecapCodecTests {
                 new RefId(8),
                 A2,
                 invalidSetups,
+                EmptyRecapPriorContext.Instance,
                 [MaintainPlan(RecapTestIdentity.CapabilityFingerprint)]
             )
         );
@@ -299,7 +508,7 @@ public sealed class DerivedRecapCodecTests {
             [
                 new RecapReplayBoundary(A2, S1)
             ],
-            baseline.PriorContext,
+            baseline.PriorContextPayloadSha256,
             baseline.MaxContentUtf8Bytes
         );
 
@@ -308,6 +517,7 @@ public sealed class DerivedRecapCodecTests {
                 new RefId(8),
                 A2,
                 S2,
+                EmptyRecapPriorContext.Instance,
                 [mismatched]
             )
         );
@@ -369,12 +579,14 @@ public sealed class DerivedRecapCodecTests {
                 new RefId(8),
                 A2,
                 S2,
+                EmptyRecapPriorContext.Instance,
                 [firstPlan]
             ).ManifestPayloadSha256,
             DerivedRecapCodec.CreateManifest(
                 new RefId(8),
                 A2,
                 S2,
+                EmptyRecapPriorContext.Instance,
                 [crossBoundPlan]
             ).ManifestPayloadSha256
         );
@@ -454,12 +666,13 @@ public sealed class DerivedRecapCodecTests {
     }
 
     [Fact]
-    public void DurableV6_RejectsV5AndFingerprintFieldMutation() {
+    public void DurableV7_RejectsV6AndFingerprintFieldMutation() {
         DerivedRecapSetManifest manifest =
             DerivedRecapCodec.CreateManifest(
                 new RefId(9),
                 A2,
                 S2,
+                EmptyRecapPriorContext.Instance,
                 [MaintainPlan(
                     RecapTestIdentity.CapabilityFingerprint
                 )]
@@ -470,7 +683,7 @@ public sealed class DerivedRecapCodecTests {
 
         string oldSchema = json.Replace(
             DerivedRecapCodec.ManifestSchema,
-            "atelia.session-journal.derived-recap-manifest.v5",
+            "atelia.session-journal.derived-recap-manifest.v6",
             StringComparison.Ordinal
         );
         Assert.Throws<NotSupportedException>(() =>
@@ -516,7 +729,7 @@ public sealed class DerivedRecapCodecTests {
         );
         string oldPublicationSchema = publicationJson.Replace(
             DerivedRecapCodec.PublicationSchema,
-            "atelia.session-journal.published-recap-set.v5",
+            "atelia.session-journal.published-recap-set.v6",
             StringComparison.Ordinal
         );
         Assert.Throws<NotSupportedException>(() =>
@@ -524,6 +737,41 @@ public sealed class DerivedRecapCodecTests {
                 Encoding.UTF8.GetBytes(oldPublicationSchema)
             )
         );
+    }
+
+    private static MaintainRecapBlockPlan ExistingPlan(
+        string blockId,
+        string priorDigest
+    ) => new(
+        new RecapBlockId(blockId),
+        new ContextHeaderBlockPath(
+            ContextHeaderCarrier.System,
+            blockId
+        ),
+        "roleplay.autobiographical",
+        RecapTestIdentity.CapabilityFingerprint,
+        new ExistingRecapMaintainSource(
+            A1,
+            S1,
+            new string('a', 64),
+            new string('b', 64)
+        ),
+        [new RecapReplayBoundary(A2, S2)],
+        priorDigest
+    );
+
+    private static int Count(string text, string value) {
+        int count = 0;
+        int start = 0;
+        while ((start = text.IndexOf(
+                   value,
+                   start,
+                   StringComparison.Ordinal
+               )) >= 0) {
+            count++;
+            start += value.Length;
+        }
+        return count;
     }
 
     private static MaintainRecapBlockPlan MaintainPlan(
@@ -538,7 +786,7 @@ public sealed class DerivedRecapCodecTests {
         capabilityFingerprint,
         new EmptyRecapMaintainSource(A1, S1),
         [new RecapReplayBoundary(A2, S2)],
-        EmptyRecapPriorContext.Instance
+        RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
     );
 
     [Fact]
@@ -553,13 +801,14 @@ public sealed class DerivedRecapCodecTests {
             RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(A1, S1),
             [new RecapReplayBoundary(A2, S2)],
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         DerivedRecapSetManifest manifest =
             DerivedRecapCodec.CreateManifest(
                 new RefId(7),
                 A2,
                 S2,
+                EmptyRecapPriorContext.Instance,
                 [plan]
             );
         string json = Encoding.UTF8.GetString(
@@ -628,6 +877,7 @@ public sealed class DerivedRecapCodecTests {
                 new RefId(9),
                 A2,
                 S2,
+                EmptyRecapPriorContext.Instance,
                 [plan]
             );
         DerivedRecapBlock block =
@@ -683,13 +933,14 @@ public sealed class DerivedRecapCodecTests {
             RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(A1, S1),
             [new RecapReplayBoundary(A2, S2)],
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         DerivedRecapSetManifest manifest =
             DerivedRecapCodec.CreateManifest(
                 new RefId(12),
                 A2,
                 S2,
+                EmptyRecapPriorContext.Instance,
                 [plan]
             );
         PublishedRecapSet publication =

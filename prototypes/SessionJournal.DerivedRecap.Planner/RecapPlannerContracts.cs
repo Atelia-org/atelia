@@ -615,8 +615,7 @@ public abstract record RecapBlockPlanningDecision {
         public Maintain(
             RecapBlockId recapBlockId,
             RecapPlanningMaintainSource source,
-            IReadOnlyList<EventAddress> catchUpThrough,
-            RecapPriorContext priorContext
+            IReadOnlyList<EventAddress> catchUpThrough
         ) {
             RecapBlockId = recapBlockId
                 ?? throw new ArgumentNullException(nameof(recapBlockId));
@@ -625,14 +624,11 @@ public abstract record RecapBlockPlanningDecision {
             );
             ArgumentNullException.ThrowIfNull(catchUpThrough);
             CatchUpThrough = Array.AsReadOnly([.. catchUpThrough]);
-            PriorContext = priorContext
-                ?? throw new ArgumentNullException(nameof(priorContext));
         }
 
         public RecapBlockId RecapBlockId { get; }
         public RecapPlanningMaintainSource Source { get; }
         public IReadOnlyList<EventAddress> CatchUpThrough { get; }
-        public RecapPriorContext PriorContext { get; }
     }
 }
 
@@ -767,14 +763,17 @@ public abstract record RecapPlanIntentResult {
     public sealed record IntentReady : RecapPlanIntentResult {
         internal IntentReady(
             RecapSchedulingResult.Ready schedule,
-            RecapPlanningPolicyDecision.Build intent
+            RecapPlanningPolicyDecision.Build intent,
+            RecapPriorContext effectivePriorContext
         ) {
             Schedule = schedule;
             Intent = intent;
+            EffectivePriorContext = effectivePriorContext;
         }
 
         public RecapSchedulingResult.Ready Schedule { get; }
         public RecapPlanningPolicyDecision.Build Intent { get; }
+        public RecapPriorContext EffectivePriorContext { get; }
     }
 }
 
@@ -790,16 +789,19 @@ public abstract record RecapPlanResult {
         internal PlanReady(
             RecapSchedulingResult.Ready schedule,
             RecapPlanningPolicyDecision.Build intent,
-            RecapPlanPreflightFacts preflight
+            RecapPlanPreflightFacts preflight,
+            RecapPriorContext effectivePriorContext
         ) {
             Schedule = schedule;
             Intent = intent;
             Preflight = preflight;
+            EffectivePriorContext = effectivePriorContext;
         }
 
         public RecapSchedulingResult.Ready Schedule { get; }
         public RecapPlanningPolicyDecision.Build Intent { get; }
         public RecapPlanPreflightFacts Preflight { get; }
+        public RecapPriorContext EffectivePriorContext { get; }
     }
 }
 

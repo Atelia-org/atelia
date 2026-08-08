@@ -123,7 +123,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
                 ? maintain.Source
                 : throw new InvalidOperationException(),
             [fixture.Boundary(anchor)],
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         DerivedRecapSetManifest conflictingManifest =
             RecapWireTestFacts.CreateManifest(
@@ -509,7 +509,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
                 fixture.Setups(replayStart)
             ),
             [fixture.Boundary(firstEndpoint), fixture.Boundary(anchor)],
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         await PublishAsync(
             fixture,
@@ -587,7 +587,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             plan.MaintainerCapabilityFingerprint,
             plan.Source,
             plan.CatchUpBoundaries,
-            plan.PriorContext
+            plan.PriorContextPayloadSha256
         );
         await File.WriteAllBytesAsync(
             finalPath,
@@ -662,7 +662,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
                 fixture.Setups(replayStart)
             ),
             [fixture.Boundary(anchor)],
-            EmptyRecapPriorContext.Instance,
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance),
             maxContentUtf8Bytes: 8
         );
         DerivedRecapSetManifest manifest =
@@ -1054,7 +1054,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
                 plan.MaintainerCapabilityFingerprint,
                 plan.Source,
                 plan.CatchUpBoundaries,
-                plan.PriorContext
+                plan.PriorContextPayloadSha256
             );
             persisted = [DerivedRecapCodec.CreateBlock(
                 wrongPlan,

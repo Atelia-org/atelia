@@ -944,6 +944,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
         new RefId(1),
         Head,
         RecapPlannerWireTestFacts.SyntheticSetups(Head),
+        EmptyRecapPriorContext.Instance,
         [
             new MaintainRecapBlockPlan(
                 blockId,
@@ -959,7 +960,9 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
                 [
                     RecapPlannerWireTestFacts.SyntheticBoundary(Head)
                 ],
-                EmptyRecapPriorContext.Instance,
+                RecapPlannerWireTestFacts.PriorDigest(
+                    EmptyRecapPriorContext.Instance
+                ),
                 32_768
             )
         ]

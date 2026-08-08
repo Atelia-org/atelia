@@ -144,7 +144,7 @@ public sealed class DerivedRecapStoreAcceptanceTests {
                 .MaintainerCapabilityFingerprint,
             ((MaintainRecapBlockPlan)originalFirstPlan).Source,
             ((MaintainRecapBlockPlan)originalFirstPlan).CatchUpBoundaries,
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         PublishedRecapSet changedFirst =
             DerivedRecapCodec.CreatePublication(

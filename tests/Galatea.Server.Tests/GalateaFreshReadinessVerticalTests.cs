@@ -163,7 +163,10 @@ public sealed class GalateaFreshReadinessVerticalTests {
                         buildingAnchor,
                         anchorSetups
                     )],
-                    EmptyRecapPriorContext.Instance
+                    DerivedRecapCodec
+                        .ComputePriorContextPayloadSha256(
+                            EmptyRecapPriorContext.Instance
+                        )
                 );
                 DerivedRecapStore store = DerivedRecapStore.Open(
                     host.SessionDirectory,
@@ -178,6 +181,7 @@ public sealed class GalateaFreshReadinessVerticalTests {
                             engine.BranchRefId,
                             buildingAnchor,
                             anchorSetups,
+                            EmptyRecapPriorContext.Instance,
                             [plan]
                         ),
                         buildingAnchor

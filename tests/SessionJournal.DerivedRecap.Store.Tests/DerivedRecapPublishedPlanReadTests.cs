@@ -388,7 +388,7 @@ public sealed class DerivedRecapPublishedPlanReadTests {
                 original.MaintainerCapabilityFingerprint,
                 original.Source,
                 original.CatchUpBoundaries,
-                original.PriorContext,
+                original.PriorContextPayloadSha256,
                 original.MaxContentUtf8Bytes
             );
         return DerivedRecapCodec.CreatePublication(

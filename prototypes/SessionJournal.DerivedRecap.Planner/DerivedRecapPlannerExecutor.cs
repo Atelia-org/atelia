@@ -335,6 +335,7 @@ internal sealed class DerivedRecapPlannerExecutor {
             is RecapPlanResult.Unavailable planUnavailable) {
             return Unavailable(planUnavailable.Defects);
         }
+        var planReady = (RecapPlanResult.PlanReady)prepared.PlanResult;
 
         if (_engine.ReadCurrentHead() != lineage.CapturedHead) {
             return RetryableRawHead(lineage.CapturedHead);
@@ -387,6 +388,7 @@ internal sealed class DerivedRecapPlannerExecutor {
 
         DerivedRecapSetManifest manifest = CreateManifest(
             intentReady.Intent,
+            planReady.EffectivePriorContext,
             sourceSnapshot,
             provenPlanningWindow!
         );
@@ -640,6 +642,7 @@ internal sealed class DerivedRecapPlannerExecutor {
 
     private DerivedRecapSetManifest CreateManifest(
         RecapPlanningPolicyDecision.Build intent,
+        RecapPriorContext effectivePriorContext,
         PublishedRecapSourceSnapshot? sourceSnapshot,
         SessionHistoryPlanningWindow planningWindow
     ) {
@@ -647,6 +650,10 @@ internal sealed class DerivedRecapPlannerExecutor {
             sourceSnapshot?.FrozenInputs.ToDictionary(
                 static input => input.RecapBlockId
             ) ?? [];
+        string priorContextPayloadSha256 =
+            DerivedRecapCodec.ComputePriorContextPayloadSha256(
+                effectivePriorContext
+            );
         RecapBlockPlan[] plans = intent.Blocks
             .Select((decision, index) => decision switch {
                 RecapBlockPlanningDecision.Inherit inherit =>
@@ -701,7 +708,7 @@ internal sealed class DerivedRecapPlannerExecutor {
                                     ))
                                 .ToArray()
                         ),
-                        maintain.PriorContext,
+                        priorContextPayloadSha256,
                         _inputs.OrderedCatalog[index]
                             .MaxContentUtf8Bytes
                     ),
@@ -714,6 +721,7 @@ internal sealed class DerivedRecapPlannerExecutor {
             _store.RefId,
             intent.SetAdmissionAnchor,
             SetupsAt(planningWindow, intent.SetAdmissionAnchor),
+            effectivePriorContext,
             plans
         );
     }
@@ -1800,6 +1808,9 @@ internal sealed class DerivedRecapBuildingExecutor {
                 await RecapMaintainerStepRunner.RunAsync(
                         maintainer,
                         maintain,
+                        RecapMaintainerStepRunner.GetPriorContext(
+                            building.Manifest.PriorContext
+                        ),
                         currentBlock,
                         window,
                         maintain.CatchUpBoundaries[nextEndpoint].Address,

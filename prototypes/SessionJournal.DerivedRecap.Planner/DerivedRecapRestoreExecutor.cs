@@ -257,6 +257,9 @@ public sealed class DerivedRecapRestoreExecutor {
                     await ExecuteBlockAsync(
                             inspection.Handle,
                             action,
+                            RecapMaintainerStepRunner.GetPriorContext(
+                                inspection.FrozenPlan.PriorContext
+                            ),
                             prepared.Windows,
                             cancellationToken
                         )
@@ -683,6 +686,7 @@ public sealed class DerivedRecapRestoreExecutor {
         ExecuteBlockAsync(
         PublishedRestoreHandle handle,
         RestoreBlockAction action,
+        ContextHeaderSnapshot priorContext,
         IReadOnlyDictionary<
             (RecapBlockId BlockId, int EndpointIndex),
             SessionHistoryPlanningWindow
@@ -705,6 +709,7 @@ public sealed class DerivedRecapRestoreExecutor {
                 return await ExecuteMaintainAsync(
                         handle,
                         maintain,
+                        priorContext,
                         windows,
                         cancellationToken
                     )
@@ -720,6 +725,7 @@ public sealed class DerivedRecapRestoreExecutor {
         ExecuteMaintainAsync(
         PublishedRestoreHandle handle,
         MaintainRestoreAction action,
+        ContextHeaderSnapshot priorContext,
         IReadOnlyDictionary<
             (RecapBlockId BlockId, int EndpointIndex),
             SessionHistoryPlanningWindow
@@ -737,6 +743,7 @@ public sealed class DerivedRecapRestoreExecutor {
                 await RecapMaintainerStepRunner.RunAsync(
                         action.Maintainer,
                         action.MaintainPlan,
+                        priorContext,
                         currentBlock,
                         windows[(action.Plan.RecapBlockId, index)],
                         action.MaintainPlan

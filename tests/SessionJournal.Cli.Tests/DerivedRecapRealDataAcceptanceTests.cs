@@ -787,7 +787,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
             publication.RootElement.GetProperty("schema").GetString()
         );
         Assert.Equal(
-            "atelia.session-journal.published-recap-set.v6",
+            "atelia.session-journal.published-recap-set.v7",
             DerivedRecapCodec.PublicationSchema
         );
     }

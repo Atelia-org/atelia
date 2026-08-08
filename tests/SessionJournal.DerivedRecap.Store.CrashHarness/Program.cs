@@ -201,7 +201,10 @@ internal static class Program {
                             )
                         )
                     ],
-                    EmptyRecapPriorContext.Instance
+                    DerivedRecapCodec
+                        .ComputePriorContextPayloadSha256(
+                            EmptyRecapPriorContext.Instance
+                        )
                 );
                 await store.CreateBuildingAsync(
                     DerivedRecapCodec.CreateManifest(
@@ -210,6 +213,7 @@ internal static class Program {
                         engine.ResolveContextAnchorSetupReferences(
                             buildingAnchor
                         ),
+                        EmptyRecapPriorContext.Instance,
                         [buildingPlan]
                     )
                 );
@@ -466,7 +470,10 @@ internal static class Program {
                 Id,
                 ordinal + 1,
                 request.OldBlock.Text,
-                request.RecentHistory.SourceId ?? string.Empty
+                request.RecentHistory.SourceId ?? string.Empty,
+                request.RecentHistory.PriorContext.SystemPromptFragment,
+                request.RecentHistory.PriorContext.ObservationMessage,
+                request.RecentHistory.PriorContext.ActionMessage
             );
             byte[] line = Encoding.UTF8.GetBytes(
                 JsonSerializer.Serialize(entry) + "\n"
@@ -509,6 +516,9 @@ internal static class Program {
         string MaintainerId,
         int Ordinal,
         string OldContent,
-        string SourceDescription
+        string SourceDescription,
+        string PriorSystem,
+        string PriorObservation,
+        string PriorAction
     );
 }

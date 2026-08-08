@@ -90,7 +90,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     anchor
                 )
             )],
-            template.PriorContext,
+            template.PriorContextPayloadSha256,
             template.MaxContentUtf8Bytes
         );
         _ = await fixture.PublishAsync(
@@ -205,6 +205,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     fixture.Engine,
                     target
                 ),
+                EmptyRecapPriorContext.Instance,
                 [inherit]
             );
         SessionCurrentLineagePrefix prefix =
@@ -309,6 +310,10 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 "source-content"
             );
         EventAddress target = fixture.AppendPair("forged-target");
+        var priorContext = new InlineRecapPriorContext(
+            sourceAnchor,
+            ContextHeaderSnapshot.Empty
+        );
         var targetPlan = new MaintainRecapBlockPlan(
             sourcePlan.RecapBlockId,
             sourcePlan.Target,
@@ -327,7 +332,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     target
                 )
             )],
-            EmptyRecapPriorContext.Instance,
+            RecapPlannerWireTestFacts.PriorDigest(priorContext),
             RestoreFixture.MaxContent
         );
         DerivedRecapSetManifest targetManifest =
@@ -338,6 +343,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     fixture.Engine,
                     target
                 ),
+                priorContext,
                 [targetPlan]
             );
 
@@ -400,7 +406,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 )
             ),
             valid.CatchUpBoundaries,
-            valid.PriorContext,
+            valid.PriorContextPayloadSha256,
             valid.MaxContentUtf8Bytes
         );
         EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
@@ -478,7 +484,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             validPlan.MaintainerCapabilityFingerprint,
             validPlan.Source,
             [new RecapReplayBoundary(anchor, forgedAdmission)],
-            validPlan.PriorContext,
+            validPlan.PriorContextPayloadSha256,
             validPlan.MaxContentUtf8Bytes
         );
         _ = await fixture.PublishAsync(
@@ -678,7 +684,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             valid.MaintainerCapabilityFingerprint,
             valid.Source,
             [new RecapReplayBoundary(offLineage, validAdmission.Setups)],
-            valid.PriorContext,
+            valid.PriorContextPayloadSha256,
             valid.MaxContentUtf8Bytes
         );
         DerivedRecapSetManifest manifest =
@@ -686,6 +692,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 fixture.Engine.BranchRefId,
                 offLineage,
                 validAdmission.Setups,
+                EmptyRecapPriorContext.Instance,
                 [plan]
             );
 
@@ -945,7 +952,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     )
                 )
             ],
-            template.PriorContext,
+            template.PriorContextPayloadSha256,
             template.MaxContentUtf8Bytes
         );
         Assert.IsType<SessionGoverningSetupProofResult.BeyondPrefix>(
@@ -1180,44 +1187,15 @@ public sealed class DerivedRecapRestoreExecutorTests {
     public async Task SuffixRestorePreservesFrozenPlanCanonicalBytes() {
         using RestoreFixture fixture =
             await RestoreFixture.CreateAsync();
-        SessionHistoryPlanningWindow raw =
-            fixture.Engine.ReadHistoryPlanningWindow();
-        EventAddress[] route = raw.ReplaySafeBoundaries
-            .Select(static boundary => boundary.Address)
-            .TakeLast(2)
-            .ToArray();
-        EventAddress anchor = route[^1];
         var priorSnapshot = new ContextHeaderSnapshot(
             "frozen-system",
             "frozen-observation",
             "frozen-action"
         );
-        var plan = new MaintainRecapBlockPlan(
-            new RecapBlockId("frozen.rich"),
-            new ContextHeaderBlockPath(
-                ContextHeaderCarrier.System,
-                "frozen.rich"
-            ),
-            "frozen-rich-maintainer",
-            RecapPlannerTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(
-                raw.StartExclusive,
-                raw.StartSetups
-            ),
-            RecapPlannerWireTestFacts.Boundaries(raw, route),
-            new InlineRecapPriorContext(
-                raw.StartExclusive,
-                priorSnapshot
-            ),
-            RestoreFixture.MaxContent - 123
-        );
-        PublishedRecapDescriptor originalDescriptor =
-            await fixture.PublishAsync(
-                anchor,
-                [plan],
-                new Dictionary<RecapBlockId, string> {
-                    [plan.RecapBlockId] = "committed"
-                }
+        (MaintainRecapBlockPlan plan, EventAddress anchor) =
+            await fixture.PublishExistingTwoStepAsync(
+                useStaleMidBoundarySetup: false,
+                priorSnapshot: priorSnapshot
             );
         PublishedRecapSet originalPublication =
             DerivedRecapCodec.DecodePublication(
@@ -1225,6 +1203,11 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     fixture.PublicationPath(anchor)
                 )
             );
+        var originalDescriptor = new PublishedRecapDescriptor(
+            fixture.Engine.BranchRefId,
+            anchor,
+            originalPublication.EnvelopeSha256
+        );
         byte[] originalFrozenPlan =
             DerivedRecapCodec.EncodeManifest(
                 originalPublication.FrozenPlanSnapshot
@@ -1233,7 +1216,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         DerivedRecapBlock checkpoint =
             DerivedRecapCodec.CreateBlock(
                 plan,
-                route[0],
+                plan.CatchUpBoundaries[0].Address,
                 "checkpoint"
             );
         await File.WriteAllBytesAsync(
@@ -1274,12 +1257,12 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     restoredPublication.FrozenPlanSnapshot.Blocks
                 )
             );
-        Assert.IsType<EmptyRecapMaintainSource>(
+        Assert.IsType<ExistingRecapMaintainSource>(
             restoredPlan.Source
         );
         var restoredPrior =
             Assert.IsType<InlineRecapPriorContext>(
-                restoredPlan.PriorContext
+                restoredPublication.FrozenPlanSnapshot.PriorContext
             );
         Assert.Equal(priorSnapshot, restoredPrior.Snapshot);
         Assert.Equal(
@@ -1540,7 +1523,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     anchor
                 )
             )],
-            template.PriorContext,
+            template.PriorContextPayloadSha256,
             template.MaxContentUtf8Bytes
         );
         _ = await fixture.PublishAsync(
@@ -1565,7 +1548,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     .ReplayStartSetups
             ),
             original.CatchUpBoundaries,
-            original.PriorContext,
+            original.PriorContextPayloadSha256,
             original.MaxContentUtf8Bytes
         );
         PublishedPlanSnapshot originalPlan = Assert.IsType<
@@ -1578,6 +1561,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 fixture.Engine.BranchRefId,
                 anchor,
                 originalPlan.FrozenPlan.SetAdmissionAnchorSetups,
+                originalPlan.FrozenPlan.PriorContext,
                 [mutated]
             );
         DerivedRecapBlock mutatedFinal =
@@ -2011,7 +1995,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     window,
                     boundaries[^endpointCount..]
                 ),
-                EmptyRecapPriorContext.Instance,
+                RecapPlannerWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance),
                 MaxContent
             );
         }
@@ -2057,7 +2041,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     window.StartSetups
                 ),
                 [RecapPlannerWireTestFacts.Boundary(window, source)],
-                EmptyRecapPriorContext.Instance,
+                RecapPlannerWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance),
                 MaxContent
             );
             PublishedRecapDescriptor sourceDescriptor =
@@ -2128,7 +2112,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                         source
                     )
                 ],
-                EmptyRecapPriorContext.Instance,
+                RecapPlannerWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance),
                 MaxContent
             );
             PublishedRecapDescriptor sourceDescriptor =
@@ -2151,6 +2135,10 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     "source-content"
                 );
             EventAddress target = CurrentHead;
+            var priorContext = new InlineRecapPriorContext(
+                source,
+                ContextHeaderSnapshot.Empty
+            );
             var existing = new MaintainRecapBlockPlan(
                 sourcePlan.RecapBlockId,
                 sourcePlan.Target,
@@ -2171,7 +2159,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                         )
                     )
                 ],
-                EmptyRecapPriorContext.Instance,
+                RecapPlannerWireTestFacts.PriorDigest(priorContext),
                 MaxContent
             );
             _ = await PublishAsync(
@@ -2179,7 +2167,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 [existing],
                 new Dictionary<RecapBlockId, string> {
                     [existing.RecapBlockId] = "target-content"
-                }
+                },
+                priorContext: priorContext
             );
             return (existing, target);
         }
@@ -2188,7 +2177,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan Plan,
             EventAddress Target
         )> PublishExistingTwoStepAsync(
-            bool useStaleMidBoundarySetup
+            bool useStaleMidBoundarySetup,
+            ContextHeaderSnapshot? priorSnapshot = null
         ) {
             EventAddress source = CurrentHead;
             SessionHistoryPlanningWindow sourceWindow =
@@ -2208,7 +2198,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     sourceWindow.StartSetups
                 ),
                 [new RecapReplayBoundary(source, sourceSetups)],
-                EmptyRecapPriorContext.Instance,
+                RecapPlannerWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance),
                 MaxContent
             );
             PublishedRecapDescriptor sourceDescriptor =
@@ -2245,6 +2235,10 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     : RecapPlannerWireTestFacts.SetupsAt(Engine, mid);
             SessionContextAnchorSetupReferences targetSetups =
                 RecapPlannerWireTestFacts.SetupsAt(Engine, target);
+            var priorContext = new InlineRecapPriorContext(
+                source,
+                priorSnapshot ?? ContextHeaderSnapshot.Empty
+            );
             var existing = new MaintainRecapBlockPlan(
                 sourcePlan.RecapBlockId,
                 sourcePlan.Target,
@@ -2260,7 +2254,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     new RecapReplayBoundary(mid, midSetups),
                     new RecapReplayBoundary(target, targetSetups)
                 ],
-                EmptyRecapPriorContext.Instance,
+                RecapPlannerWireTestFacts.PriorDigest(priorContext),
                 MaxContent
             );
             _ = await PublishAsync(
@@ -2269,7 +2263,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 new Dictionary<RecapBlockId, string> {
                     [existing.RecapBlockId] = "target-content"
                 },
-                admissionSetups: targetSetups
+                admissionSetups: targetSetups,
+                priorContext: priorContext
             );
             return (existing, target);
         }
@@ -2280,7 +2275,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
             IReadOnlyDictionary<RecapBlockId, string> contents,
             IReadOnlyDictionary<RecapBlockId, EventAddress>? cursors =
                 null,
-            SessionContextAnchorSetupReferences? admissionSetups = null
+            SessionContextAnchorSetupReferences? admissionSetups = null,
+            RecapPriorContext? priorContext = null
         ) {
             DerivedRecapSetManifest manifest =
                 DerivedRecapCodec.CreateManifest(
@@ -2291,6 +2287,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                             Engine,
                             anchor
                         ),
+                    priorContext ?? EmptyRecapPriorContext.Instance,
                     plans
                 );
             _ = await Store.CreateBuildingAsync(manifest);

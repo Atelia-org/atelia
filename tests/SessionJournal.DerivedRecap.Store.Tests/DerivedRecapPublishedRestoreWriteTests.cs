@@ -281,7 +281,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 plan.MaintainerCapabilityFingerprint,
                 plan.Source,
                 plan.CatchUpBoundaries,
-                plan.PriorContext
+                plan.PriorContextPayloadSha256
             );
             persisted = DerivedRecapCodec.CreateBlock(
                 wrongPlan,
@@ -1072,7 +1072,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 fixture.Engine,
                 endpoints
             ),
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         DerivedRecapSetManifest manifest =
             RecapWireTestFacts.CreateManifest(

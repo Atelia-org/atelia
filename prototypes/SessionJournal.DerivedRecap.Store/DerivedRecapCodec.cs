@@ -10,13 +10,13 @@ public static class DerivedRecapCodec {
     public const string StoreSchema =
         "atelia.session-journal.derived-recap-store.v4";
     public const string ManifestSchema =
-        "atelia.session-journal.derived-recap-manifest.v6";
+        "atelia.session-journal.derived-recap-manifest.v7";
     public const string FrozenInputSchema =
         "atelia.session-journal.derived-recap-frozen-input.v5";
     public const string BlockSchema =
         "atelia.session-journal.derived-recap-block.v4";
     public const string PublicationSchema =
-        "atelia.session-journal.published-recap-set.v6";
+        "atelia.session-journal.published-recap-set.v7";
 
     private static readonly JsonWriterOptions WriterOptions = new() {
         Indented = false,
@@ -30,14 +30,20 @@ public static class DerivedRecapCodec {
         RefId refId,
         EventAddress setAdmissionAnchor,
         SessionContextAnchorSetupReferences setAdmissionAnchorSetups,
+        RecapPriorContext priorContext,
         IReadOnlyList<RecapBlockPlan> blocks
     ) {
+        ArgumentNullException.ThrowIfNull(priorContext);
         ArgumentNullException.ThrowIfNull(blocks);
+        string priorContextPayloadSha256 =
+            ComputePriorContextPayloadSha256(priorContext);
         var provisional = new DerivedRecapSetManifest(
             ManifestSchema,
             refId,
             setAdmissionAnchor,
             setAdmissionAnchorSetups,
+            priorContext,
+            priorContextPayloadSha256,
             Array.AsReadOnly(blocks.ToArray()),
             string.Empty
         );
@@ -126,6 +132,14 @@ public static class DerivedRecapCodec {
         ArgumentNullException.ThrowIfNull(plan);
         ValidatePlanShape(plan);
         return Sha256Hex(EncodePlan(plan));
+    }
+
+    public static string ComputePriorContextPayloadSha256(
+        RecapPriorContext priorContext
+    ) {
+        ValidatePriorContext(priorContext);
+        return Sha256Hex(Write(writer =>
+            WritePriorContext(writer, priorContext)));
     }
 
     internal static byte[] EncodeStoreHeader(RefId refId) {
@@ -312,6 +326,12 @@ public static class DerivedRecapCodec {
             "setAdmissionAnchorSetups",
             manifest.SetAdmissionAnchorSetups
         );
+        writer.WritePropertyName("priorContext");
+        WritePriorContext(writer, manifest.PriorContext);
+        writer.WriteString(
+            "priorContextPayloadSha256",
+            manifest.PriorContextPayloadSha256
+        );
         writer.WriteStartArray("blocks");
         foreach (RecapBlockPlan plan in manifest.Blocks) {
             WritePlan(writer, plan);
@@ -384,8 +404,10 @@ public static class DerivedRecapCodec {
                     writer.WriteEndObject();
                 }
                 writer.WriteEndArray();
-                writer.WritePropertyName("priorContext");
-                WritePriorContext(writer, maintain.PriorContext);
+                writer.WriteString(
+                    "priorContextPayloadSha256",
+                    maintain.PriorContextPayloadSha256
+                );
                 writer.WriteNumber(
                     "maxContentUtf8Bytes",
                     maintain.MaxContentUtf8Bytes
@@ -685,6 +707,8 @@ public static class DerivedRecapCodec {
             "refId",
             "setAdmissionAnchor",
             "setAdmissionAnchorSetups",
+            "priorContext",
+            "priorContextPayloadSha256",
             "blocks",
             "manifestPayloadSha256"
         );
@@ -693,6 +717,8 @@ public static class DerivedRecapCodec {
             ReadRefId(root, "refId"),
             ReadAddress(root, "setAdmissionAnchor"),
             ReadSetups(ReadObject(root, "setAdmissionAnchorSetups")),
+            ReadPriorContext(ReadObject(root, "priorContext")),
+            ReadString(root, "priorContextPayloadSha256"),
             Array.AsReadOnly(
                 ReadArray(root, "blocks")
                     .Select(ReadPlan)
@@ -758,7 +784,7 @@ public static class DerivedRecapCodec {
             "maintainerCapabilityFingerprint",
             "source",
             "catchUpBoundaries",
-            "priorContext",
+            "priorContextPayloadSha256",
             "maxContentUtf8Bytes"
         );
         return new MaintainRecapBlockPlan(
@@ -775,7 +801,7 @@ public static class DerivedRecapCodec {
                     .Select(ReadReplayBoundary)
                     .ToArray()
             ),
-            ReadPriorContext(ReadObject(element, "priorContext")),
+            ReadString(element, "priorContextPayloadSha256"),
             ReadInt32(element, "maxContentUtf8Bytes")
         );
     }
@@ -1072,6 +1098,22 @@ public static class DerivedRecapCodec {
             manifest.SetAdmissionAnchorSetups,
             "manifest.setAdmissionAnchorSetups"
         );
+        ValidatePriorContext(manifest.PriorContext);
+        ValidateSha256(
+            manifest.PriorContextPayloadSha256,
+            "manifest.priorContextPayloadSha256"
+        );
+        string actualPriorContextPayloadSha256 =
+            ComputePriorContextPayloadSha256(manifest.PriorContext);
+        if (!string.Equals(
+                manifest.PriorContextPayloadSha256,
+                actualPriorContextPayloadSha256,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "Recap manifest prior-context digest does not match its payload."
+            );
+        }
         ArgumentNullException.ThrowIfNull(manifest.Blocks);
         if (manifest.Blocks.Count is 0
             or > SessionContextContributionContract
@@ -1083,8 +1125,28 @@ public static class DerivedRecapCodec {
         var ids = new HashSet<RecapBlockId>();
         var targets =
             new HashSet<(ContextHeaderCarrier Carrier, string Key)>();
+        bool hasInherit = false;
+        bool hasExistingMaintain = false;
+        bool hasEmptyMaintain = false;
         foreach (RecapBlockPlan plan in manifest.Blocks) {
             ValidatePlanShape(plan);
+            hasInherit |= plan is InheritRecapBlockPlan;
+            hasExistingMaintain |= plan is MaintainRecapBlockPlan {
+                Source: ExistingRecapMaintainSource
+            };
+            hasEmptyMaintain |= plan is MaintainRecapBlockPlan {
+                Source: EmptyRecapMaintainSource
+            };
+            if (plan is MaintainRecapBlockPlan digestConsumer
+                && !string.Equals(
+                    digestConsumer.PriorContextPayloadSha256,
+                    manifest.PriorContextPayloadSha256,
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    "Maintain prior-context digest must equal the manifest root digest."
+                );
+            }
             if (plan is MaintainRecapBlockPlan maintain
                 && (maintain.CatchUpBoundaries[^1].Address
                         != manifest.SetAdmissionAnchor
@@ -1108,6 +1170,28 @@ public static class DerivedRecapCodec {
                     "Recap manifest contains duplicate targets."
                 );
             }
+        }
+        if (hasExistingMaintain && hasEmptyMaintain) {
+            throw new InvalidDataException(
+                "Recap manifest cannot mix existing and empty maintain sources."
+            );
+        }
+        if (hasExistingMaintain
+            && manifest.PriorContext is not InlineRecapPriorContext) {
+            throw new InvalidDataException(
+                "Existing maintain plans require an inline manifest prior context."
+            );
+        }
+        if (!hasExistingMaintain
+            && manifest.PriorContext is not EmptyRecapPriorContext) {
+            throw new InvalidDataException(
+                "A manifest without existing maintain plans requires an empty prior context."
+            );
+        }
+        if (hasInherit && hasEmptyMaintain) {
+            throw new InvalidDataException(
+                "A first-build manifest cannot mix inherit and empty maintain plans."
+            );
         }
         if (requireHash) {
             ValidateSha256(
@@ -1179,7 +1263,10 @@ public static class DerivedRecapCodec {
                         "maintain.catchUpBoundaries.setups"
                     );
                 }
-                ValidatePriorContext(maintain.PriorContext);
+                ValidateSha256(
+                    maintain.PriorContextPayloadSha256,
+                    "maintain.priorContextPayloadSha256"
+                );
                 break;
             default:
                 throw new InvalidDataException(

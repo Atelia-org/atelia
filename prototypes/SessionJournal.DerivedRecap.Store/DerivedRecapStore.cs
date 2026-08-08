@@ -542,6 +542,17 @@ public sealed class DerivedRecapStore {
                 + "supplied together."
             );
         }
+        byte[] manifestBytes =
+            DerivedRecapCodec.EncodeManifest(manifest);
+        if (manifestBytes.LongLength > MaxManifestBytes) {
+            return new CreateBuildingResult.InvalidPlan([
+                new RecapStructuralDefect(
+                    "ManifestTooLarge",
+                    $"Canonical recap manifest is {manifestBytes.LongLength} "
+                    + $"bytes; limit is {MaxManifestBytes} bytes."
+                )
+            ]);
+        }
         FileStream writeLock;
         if (currentLineage is null) {
             EnsureScaffolding();
@@ -815,7 +826,7 @@ public sealed class DerivedRecapStore {
         // every frozen input is durable.
         await _fileSystem.WriteFileCreateNewAsync(
                 Path.Combine(stagingPath, "manifest.json"),
-                DerivedRecapCodec.EncodeManifest(manifest),
+                manifestBytes,
                 cancellationToken
             )
             .ConfigureAwait(false);
@@ -1596,6 +1607,16 @@ public sealed class DerivedRecapStore {
                 DerivedRecapCodec.CreatePublication(manifest, blocks);
             byte[] publicationBytes =
                 DerivedRecapCodec.EncodePublication(publication);
+            if (publicationBytes.LongLength > MaxPublicationBytes) {
+                return new PublishRecapResult.NotPublishable([
+                    new RecapStructuralDefect(
+                        "PublicationTooLarge",
+                        $"Canonical recap publication is "
+                        + $"{publicationBytes.LongLength} bytes; limit is "
+                        + $"{MaxPublicationBytes} bytes."
+                    )
+                ]);
+            }
             string publicationPath =
                 Path.Combine(buildPath, "publication.json");
             try {
@@ -2752,6 +2773,16 @@ public sealed class DerivedRecapStore {
             );
         byte[] nextBytes =
             DerivedRecapCodec.EncodePublication(next);
+        if (nextBytes.LongLength > MaxPublicationBytes) {
+            return new PublishedEnvelopeCommitResult.Unavailable([
+                new RecapStructuralDefect(
+                    "PublicationTooLarge",
+                    $"Canonical recap publication is "
+                    + $"{nextBytes.LongLength} bytes; limit is "
+                    + $"{MaxPublicationBytes} bytes."
+                )
+            ]);
+        }
         if (capture.Publication is { } current
             && nextBytes.SequenceEqual(
                 DerivedRecapCodec.EncodePublication(current)
@@ -3464,7 +3495,7 @@ public sealed class DerivedRecapStore {
                             + "is not SetAdmissionAnchor."
                         );
                     }
-                    if (maintain.PriorContext
+                    if (manifest.PriorContext
                             is InlineRecapPriorContext inline
                         && (!lineage.TryGetValue(
                                 inline.AdmissionAnchor,
@@ -3586,6 +3617,7 @@ public sealed class DerivedRecapStore {
                     ValidateExistingMaintainRoute(
                         maintain,
                         plan,
+                        manifest.PriorContext,
                         inputsById,
                         lineage,
                         defects
@@ -3703,6 +3735,7 @@ public sealed class DerivedRecapStore {
     private static void ValidateExistingMaintainRoute(
         MaintainRecapBlockPlan maintain,
         RecapBlockPlan plan,
+        RecapPriorContext priorContext,
         IReadOnlyDictionary<RecapBlockId, DerivedRecapFrozenInput>
             inputsById,
         IReadOnlyDictionary<EventAddress, int> lineage,
@@ -3738,7 +3771,7 @@ public sealed class DerivedRecapStore {
             }
             previousIndex = endpointIndex;
         }
-        if (maintain.PriorContext is InlineRecapPriorContext inline
+        if (priorContext is InlineRecapPriorContext inline
             && (!lineage.TryGetValue(
                     inline.AdmissionAnchor,
                     out int priorContextIndex
@@ -4701,6 +4734,7 @@ public sealed class DerivedRecapStore {
                     ValidateExistingMaintainRoute(
                         maintain,
                         plan,
+                        manifest.PriorContext,
                         healthyInputs,
                         lineage,
                         defects
@@ -6377,6 +6411,11 @@ public sealed class DerivedRecapStore {
         DerivedRecapSetManifest manifest,
         SessionCurrentLineagePrefix prefix
     ) {
+        if (manifest.PriorContext is InlineRecapPriorContext inlinePrior
+            && FindBeyondPrefix([inlinePrior.AdmissionAnchor], prefix)
+                is { } priorBeyond) {
+            return priorBeyond;
+        }
         foreach (RecapBlockPlan plan in manifest.Blocks) {
             switch (plan) {
                 case InheritRecapBlockPlan inherit:
@@ -6407,10 +6446,6 @@ public sealed class DerivedRecapStore {
                             static boundary => boundary.Address
                         )
                     );
-                    if (maintain.PriorContext
-                        is InlineRecapPriorContext inline) {
-                        anchors.Add(inline.AdmissionAnchor);
-                    }
                     if (FindBeyondPrefix(anchors, prefix)
                         is { } maintainBeyond) {
                         return maintainBeyond;

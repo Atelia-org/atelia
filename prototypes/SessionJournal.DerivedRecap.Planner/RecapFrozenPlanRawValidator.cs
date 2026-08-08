@@ -149,7 +149,7 @@ internal static class RecapFrozenPlanRawValidator {
                         return defects;
                 }
 
-                if (maintain.PriorContext
+                if (manifest.PriorContext
                         is InlineRecapPriorContext inline
                     && (!lineageIndex.TryGetValue(
                             inline.AdmissionAnchor,

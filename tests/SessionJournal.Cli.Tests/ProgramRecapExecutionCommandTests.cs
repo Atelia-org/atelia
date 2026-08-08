@@ -1018,7 +1018,10 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                         )
                     )
                 ],
-                EmptyRecapPriorContext.Instance,
+                DerivedRecapCodec
+                    .ComputePriorContextPayloadSha256(
+                        EmptyRecapPriorContext.Instance
+                    ),
                 entry.MaxContentUtf8Bytes
             );
             DerivedRecapStore store = DerivedRecapStore.Open(
@@ -1037,6 +1040,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                             engine.ResolveContextAnchorSetupReferences(
                                 fixture.Head
                             ),
+                            EmptyRecapPriorContext.Instance,
                             [plan]
                         ),
                         fixture.Head

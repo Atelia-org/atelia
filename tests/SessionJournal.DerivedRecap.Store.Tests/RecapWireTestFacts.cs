@@ -3,6 +3,11 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 
 internal static class RecapWireTestFacts {
+    public static string PriorDigest(RecapPriorContext priorContext)
+        => DerivedRecapCodec.ComputePriorContextPayloadSha256(
+            priorContext
+        );
+
     private const string RuntimeHash =
         "0000000000000000000000000000000000000000000000000000000000000000";
     private const string PromptHash =
@@ -21,11 +26,13 @@ internal static class RecapWireTestFacts {
     public static DerivedRecapSetManifest CreateManifest(
         SessionJournalEngine engine,
         EventAddress setAdmissionAnchor,
-        IReadOnlyList<RecapBlockPlan> blocks
+        IReadOnlyList<RecapBlockPlan> blocks,
+        RecapPriorContext? priorContext = null
     ) => DerivedRecapCodec.CreateManifest(
         engine.BranchRefId,
         setAdmissionAnchor,
         ResolveSetups(engine, setAdmissionAnchor),
+        priorContext ?? EmptyRecapPriorContext.Instance,
         blocks
     );
 

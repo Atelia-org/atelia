@@ -4,6 +4,12 @@ using Atelia.SessionJournal.DerivedRecap.Store;
 namespace Atelia.SessionJournal.DerivedRecap.Planner.Tests;
 
 internal static class RecapPlannerWireTestFacts {
+    internal static string PriorDigest(
+        RecapPriorContext priorContext
+    ) => DerivedRecapCodec.ComputePriorContextPayloadSha256(
+        priorContext
+    );
+
     internal static SessionContextAnchorSetupReferences SetupsAt(
         SessionJournalEngine engine,
         EventAddress address

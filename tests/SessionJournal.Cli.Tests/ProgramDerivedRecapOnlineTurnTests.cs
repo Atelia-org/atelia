@@ -730,7 +730,10 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                                     )
                                 )
                             ],
-                            EmptyRecapPriorContext.Instance,
+                            DerivedRecapCodec
+                                .ComputePriorContextPayloadSha256(
+                                    EmptyRecapPriorContext.Instance
+                                ),
                             entry.MaxContentUtf8Bytes
                         )
                     )
@@ -747,6 +750,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                             engine.ResolveContextAnchorSetupReferences(
                                 admissionAnchor
                             ),
+                            EmptyRecapPriorContext.Instance,
                             plans
                         ),
                         admissionAnchor

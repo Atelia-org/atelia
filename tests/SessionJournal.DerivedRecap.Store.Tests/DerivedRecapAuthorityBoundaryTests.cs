@@ -1028,6 +1028,12 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         }
         SessionContextAnchorSetupReferences targetSetups =
             fixture.Setups(target);
+        RecapPriorContext manifestPrior = defectKind == "prior"
+            ? new InlineRecapPriorContext(
+                target,
+                ContextHeaderSnapshot.Empty
+            )
+            : EmptyRecapPriorContext.Instance;
 
         RecapBlockPlan plan = defectKind switch {
             "admission" => new MaintainRecapBlockPlan(
@@ -1040,7 +1046,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                     fixture.Setups(replayStart)
                 ),
                 [new RecapReplayBoundary(offLineage, targetSetups)],
-                EmptyRecapPriorContext.Instance
+                RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
             ),
             "source" => new InheritRecapBlockPlan(
                 new RecapBlockId("roleplay.self"),
@@ -1056,15 +1062,19 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 replayStart,
                 [target, target]
             ),
-            "prior" => Maintain(
-                fixture,
-                target,
-                replayStart,
-                [target],
-                new InlineRecapPriorContext(
-                    target,
-                    ContextHeaderSnapshot.Empty
-                )
+            "prior" => new MaintainRecapBlockPlan(
+                new RecapBlockId("roleplay.self"),
+                Target("roleplay.self"),
+                "roleplay.autobiographical",
+                RecapTestIdentity.CapabilityFingerprint,
+                new ExistingRecapMaintainSource(
+                    replayStart,
+                    fixture.Setups(replayStart),
+                    new string('a', 64),
+                    new string('b', 64)
+                ),
+                [new RecapReplayBoundary(target, targetSetups)],
+                RecapWireTestFacts.PriorDigest(manifestPrior)
             ),
             _ => Maintain(fixture, target, replayStart, [target])
         };
@@ -1078,6 +1088,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 defectKind == "admission"
                     ? targetSetups
                     : fixture.Setups(admission),
+                manifestPrior,
                 [plan]
             );
         string[] before = Directory.EnumerateFileSystemEntries(
@@ -1116,6 +1127,69 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         );
     }
 
+    [Fact]
+    public async Task OversizedCanonicalManifestIsRejectedBeforeBuildingExists() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 5);
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress target = lineage.CapturedHead;
+        EventAddress source =
+            lineage.CurrentPrefix.HeadToOldest[4].Address;
+        var prior = new InlineRecapPriorContext(
+            source,
+            new ContextHeaderSnapshot(
+                new string('x', (int)DerivedRecapStore.MaxManifestBytes),
+                string.Empty,
+                string.Empty
+            )
+        );
+        var plan = new MaintainRecapBlockPlan(
+            new RecapBlockId("roleplay.self"),
+            Target("roleplay.self"),
+            "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
+            new ExistingRecapMaintainSource(
+                source,
+                fixture.Setups(source),
+                new string('a', 64),
+                new string('b', 64)
+            ),
+            [fixture.Boundary(target)],
+            RecapWireTestFacts.PriorDigest(prior)
+        );
+        DerivedRecapSetManifest manifest =
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
+                target,
+                [plan],
+                prior
+            );
+        string buildingRoot = Path.Combine(
+            fixture.Store.StoreRootPathForTest,
+            "building"
+        );
+        string[] before = Directory.EnumerateFileSystemEntries(
+            buildingRoot
+        ).ToArray();
+
+        CreateBuildingResult.InvalidPlan invalid =
+            Assert.IsType<CreateBuildingResult.InvalidPlan>(
+                await fixture.Store.CreateBuildingAsync(manifest)
+            );
+
+        Assert.Contains(
+            invalid.Defects,
+            static defect => defect.Code == "ManifestTooLarge"
+        );
+        Assert.Equal(
+            before,
+            Directory.EnumerateFileSystemEntries(buildingRoot).ToArray()
+        );
+        Assert.IsType<BuildingReadResult.Missing>(
+            await fixture.Store.ReadBuildingAsync(target)
+        );
+    }
+
     [Theory]
     [InlineData("empty")]
     [InlineData("existing")]
@@ -1132,6 +1206,8 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         var id = new RecapBlockId("roleplay.self");
         ContextHeaderBlockPath targetPath = Target(id.Value);
         RecapBlockPlan plan;
+        RecapPriorContext priorContext =
+            EmptyRecapPriorContext.Instance;
         if (sourceKind == "empty") {
             plan = Maintain(fixture, target, replayStart, [target]);
         }
@@ -1170,14 +1246,20 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                         input.PayloadSha256
                     ),
                     [fixture.Boundary(target)],
-                    EmptyRecapPriorContext.Instance
+                    RecapWireTestFacts.PriorDigest(
+                        priorContext = new InlineRecapPriorContext(
+                            source,
+                            ContextHeaderSnapshot.Empty
+                        )
+                    )
                 );
         }
         DerivedRecapSetManifest manifest =
             RecapWireTestFacts.CreateManifest(
                 fixture.Engine,
                 target,
-                [plan]
+                [plan],
+                priorContext
             );
 
         Assert.IsType<CreateBuildingResult.Created>(
@@ -1208,7 +1290,9 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
             fixture.Engine,
             catchUpThrough
         ),
-        priorContext ?? EmptyRecapPriorContext.Instance
+        RecapWireTestFacts.PriorDigest(
+            priorContext ?? EmptyRecapPriorContext.Instance
+        )
     );
 
     private static ContextHeaderBlockPath Target(string blockId)

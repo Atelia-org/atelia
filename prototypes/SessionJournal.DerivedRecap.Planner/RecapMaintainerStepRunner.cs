@@ -25,6 +25,7 @@ internal static class RecapMaintainerStepRunner {
     public static async ValueTask<RecapMaintainerStepResult> RunAsync(
         IRecapBlockMaintainer maintainer,
         MaintainRecapBlockPlan plan,
+        ContextHeaderSnapshot priorContext,
         DerivedRecapBlock? currentBlock,
         SessionHistoryPlanningWindow window,
         EventAddress endpoint,
@@ -32,6 +33,7 @@ internal static class RecapMaintainerStepRunner {
     ) {
         ArgumentNullException.ThrowIfNull(maintainer);
         ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(priorContext);
         ArgumentNullException.ThrowIfNull(window);
 
         RecapBlockMaintenanceResult result;
@@ -39,7 +41,7 @@ internal static class RecapMaintainerStepRunner {
             result = await maintainer.MaintainAsync(
                     new RecapBlockMaintenanceRequest(
                         new RecentHistorySlice(
-                            GetPriorContext(plan.PriorContext),
+                            priorContext,
                             window.Units
                                 .Select(static unit => unit.Message)
                                 .ToArray(),
@@ -84,7 +86,7 @@ internal static class RecapMaintainerStepRunner {
         );
     }
 
-    private static ContextHeaderSnapshot GetPriorContext(
+    internal static ContextHeaderSnapshot GetPriorContext(
         RecapPriorContext prior
     ) => prior switch {
         EmptyRecapPriorContext => ContextHeaderSnapshot.Empty,

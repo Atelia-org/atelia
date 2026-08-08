@@ -26,10 +26,8 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
         Assert.Equal(model.At(10), empty.ReplayStartExclusive);
         Assert.Equal([model.At(6), model.At(4)],
             maintain.CatchUpThrough);
-        Assert.Same(
-            EmptyRecapPriorContext.Instance,
-            maintain.PriorContext
-        );
+        Assert.Null(typeof(RecapBlockPlanningDecision.Maintain)
+            .GetProperty("PriorContext"));
     }
 
     [Fact]
@@ -76,7 +74,7 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
     }
 
     [Fact]
-    public void ExistingBlocksShareExactInlinePriorContext() {
+    public void ExistingBlocksDoNotEmbedSharedInlinePriorContext() {
         PolicyModel model = PolicyModel.Existing(
             cursorIndices: [6, 6],
             replaySafeIndices: [10, 8, 6, 4, 2, 0],
@@ -95,14 +93,9 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
         RecapPlanningPolicyDecision.Build build =
             model.Build(shared);
 
-        Assert.All(build.Blocks, decision =>
-            Assert.Same(
-                shared,
-                Assert.IsType<
-                    RecapBlockPlanningDecision.Maintain
-                >(decision).PriorContext
-            )
-        );
+        Assert.Equal(2, build.Blocks.Count);
+        Assert.Null(typeof(RecapBlockPlanningDecision.Maintain)
+            .GetProperty("PriorContext"));
     }
 
     [Fact]

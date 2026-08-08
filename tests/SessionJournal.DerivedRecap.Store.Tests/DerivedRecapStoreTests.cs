@@ -814,6 +814,10 @@ public sealed class DerivedRecapStoreTests {
                 absorbedThrough,
                 "source recap"
             );
+        var priorContext = new InlineRecapPriorContext(
+            source,
+            ContextHeaderSnapshot.Empty
+        );
         var plan = new MaintainRecapBlockPlan(
             id,
             targetPath,
@@ -826,13 +830,14 @@ public sealed class DerivedRecapStoreTests {
                 input.PayloadSha256
             ),
             [fixture.Boundary(earlyEndpoint), fixture.Boundary(target)],
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(priorContext)
         );
         DerivedRecapSetManifest manifest =
             RecapWireTestFacts.CreateManifest(
                 fixture.Engine,
                 target,
-                [plan]
+                [plan],
+                priorContext
             );
         DerivedRecapSetManifest decoded =
             DerivedRecapCodec.DecodeManifest(

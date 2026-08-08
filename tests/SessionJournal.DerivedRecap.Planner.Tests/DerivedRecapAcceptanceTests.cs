@@ -10,7 +10,7 @@ public sealed class DerivedRecapAcceptanceTests {
     private const int MaxContent = 4096;
 
     [Fact]
-    public async Task GalateaMultiCursorPublishesOnlySetAdmissions() {
+    public async Task MultiEndpointMaintenancePublishesOnlySetAdmissions() {
         using AcceptanceFixture fixture =
             await AcceptanceFixture.CreateAsync();
         EventAddress[] a = fixture.AppendNumberedPairs(20);
@@ -37,14 +37,11 @@ public sealed class DerivedRecapAcceptanceTests {
                             new RecapPlanningMaintainSource.Empty(
                                 replayStart
                             ),
-                            [a[1]],
-                            EmptyRecapPriorContext.Instance
+                            [a[1]]
                         )
                     ]
                 ),
-                2 => Inherit(context, a[8]),
-                3 => Inherit(context, a[12]),
-                4 => MaintainExisting(
+                2 => MaintainExisting(
                     context,
                     a[20],
                     [a[5], a[11], a[20]]
@@ -53,21 +50,6 @@ public sealed class DerivedRecapAcceptanceTests {
                     "Unexpected Galatea planning phase."
                 )
             };
-
-            RecapPlanningPolicyDecision.Build Inherit(
-                RecapPlanningPolicyContext current,
-                EventAddress admission
-            ) => new(
-                admission,
-                [
-                    new RecapBlockPlanningDecision.Inherit(
-                        id,
-                        Assert.Single(
-                            current.PolicyFacts.AvailableSources
-                        ).Source
-                    )
-                ]
-            );
 
             RecapPlanningPolicyDecision.Build MaintainExisting(
                 RecapPlanningPolicyContext current,
@@ -83,8 +65,7 @@ public sealed class DerivedRecapAcceptanceTests {
                                 current.PolicyFacts.AvailableSources
                             ).Source
                         ),
-                        route,
-                        EmptyRecapPriorContext.Instance
+                        route
                     )
                 ]
             );
@@ -107,22 +88,6 @@ public sealed class DerivedRecapAcceptanceTests {
         Assert.Equal(a[1], atA1.SetAdmissionAnchor);
         Assert.Equal(1, maintainer.CallCount);
 
-        PublishedRecapDescriptor atA8 =
-            await RunPublishedAsync(executor);
-        PublishedRecapDescriptor atA12 =
-            await RunPublishedAsync(executor);
-        Assert.Equal(a[8], atA8.SetAdmissionAnchor);
-        Assert.Equal(a[12], atA12.SetAdmissionAnchor);
-        Assert.Equal(1, maintainer.CallCount);
-        Assert.Equal(
-            a[1],
-            await ReadCursorAsync(fixture.Store, atA8, id)
-        );
-        Assert.Equal(
-            a[1],
-            await ReadCursorAsync(fixture.Store, atA12, id)
-        );
-
         PublishedRecapDescriptor atA20 =
             await RunPublishedAsync(executor);
         Assert.Equal(a[20], atA20.SetAdmissionAnchor);
@@ -142,8 +107,8 @@ public sealed class DerivedRecapAcceptanceTests {
         ExistingRecapMaintainSource finalSource =
             Assert.IsType<ExistingRecapMaintainSource>(
                 finalPlan.Source
-            );
-        Assert.Equal(a[12], finalSource.SourceSetAnchor);
+        );
+        Assert.Equal(a[1], finalSource.SourceSetAnchor);
         Assert.Equal(
             [a[5], a[11], a[20]],
             finalPlan.CatchUpBoundaries.Select(
@@ -158,8 +123,6 @@ public sealed class DerivedRecapAcceptanceTests {
             );
         EventAddress[] expectedOrdinals = [
             a[20],
-            a[12],
-            a[8],
             a[1]
         ];
         for (int ordinal = 0;
@@ -212,23 +175,120 @@ public sealed class DerivedRecapAcceptanceTests {
         );
         SessionHistoryPlanningWindow planningWindow =
             fixture.Engine.ReadHistoryPlanningWindow();
-        var plan = new MaintainRecapBlockPlan(
+        var sourcePlan = new MaintainRecapBlockPlan(
             id,
             target,
             "roleplay.client-maintainer",
             RecapPlannerTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(
-                a[1],
+                planningWindow.StartExclusive,
                 RecapPlannerWireTestFacts.SetupsAt(
                     planningWindow,
-                    a[1]
+                    planningWindow.StartExclusive
                 )
+            ),
+            RecapPlannerWireTestFacts.Boundaries(
+                planningWindow,
+                [a[1]]
+            ),
+            RecapPlannerWireTestFacts.PriorDigest(
+                EmptyRecapPriorContext.Instance
+            ),
+            MaxContent
+        );
+        var createdSource = Assert.IsType<CreateBuildingResult.Created>(
+            await fixture.Store.CreateBuildingAsync(
+                DerivedRecapCodec.CreateManifest(
+                    fixture.Engine.BranchRefId,
+                    a[1],
+                    RecapPlannerWireTestFacts.SetupsAt(
+                        planningWindow,
+                        a[1]
+                    ),
+                    EmptyRecapPriorContext.Instance,
+                    [sourcePlan]
+                )
+            )
+        );
+        BuildingSnapshot sourceBuilding =
+            Assert.IsType<BuildingReadResult.Available>(
+                await fixture.Store.ReadBuildingAsync(
+                    createdSource.Descriptor.SetAdmissionAnchor
+                )
+            ).Snapshot;
+        BuildingBlockInspection sourceInspection =
+            await fixture.Store.InspectBuildingBlockAsync(
+                sourceBuilding.Descriptor,
+                id
+            );
+        const string sourceContent = "crash-source";
+        DerivedRecapBlock sourceBlock =
+            DerivedRecapCodec.CreateBlock(
+                sourcePlan,
+                a[1],
+                sourceContent
+            );
+        _ = Assert.IsType<CheckpointWriteResult.Updated>(
+            await fixture.Store.AdvanceRollingCheckpointAsync(
+                sourceBuilding.Descriptor,
+                id,
+                sourceInspection.Checkpoint.StateToken,
+                sourceBlock
+            )
+        );
+        sourceInspection =
+            await fixture.Store.InspectBuildingBlockAsync(
+                sourceBuilding.Descriptor,
+                id
+            );
+        _ = Assert.IsType<FinalBlockWriteResult.Installed>(
+            await fixture.Store.EnsureFinalBlockAsync(
+                sourceBuilding.Descriptor,
+                id,
+                sourceInspection.Final.StateToken,
+                sourceBlock
+            )
+        );
+        var sourcePublished = Assert.IsType<PublishRecapResult.Published>(
+            await new DerivedRecapPublisher(
+                    fixture.Store,
+                    fixture.Engine.ReadView
+                )
+                .PublishAsync(a[1])
+        );
+        var sourceRead = Assert.IsType<
+            PublishedRecapSourceReadResult.Available
+        >(await fixture.Store.ReadPublishedSourceAsync(
+            sourcePublished.Descriptor,
+            [id]
+        ));
+        DerivedRecapFrozenInput sourceInput = Assert.Single(
+            sourceRead.Snapshot.FrozenInputs
+        );
+        var prior = new InlineRecapPriorContext(
+            a[1],
+            new ContextHeaderSnapshot(
+                "crash-prior-system",
+                "crash-prior-observation",
+                "crash-prior-action"
+            )
+        );
+        var plan = new MaintainRecapBlockPlan(
+            id,
+            target,
+            "roleplay.client-maintainer",
+            RecapPlannerTestIdentity.CapabilityFingerprint,
+            new ExistingRecapMaintainSource(
+                a[1],
+                sourceInput.AbsorbedThroughSetups,
+                sourcePublished.Descriptor.EnvelopeSha256,
+                sourceInput.PayloadSha256
             ),
             RecapPlannerWireTestFacts.Boundaries(
                 planningWindow,
                 [a[5], a[11], a[20]]
             ),
-            EmptyRecapPriorContext.Instance,
+            RecapPlannerWireTestFacts.PriorDigest(prior),
             MaxContent
         );
         CreateBuildingResult.Created created =
@@ -241,6 +301,7 @@ public sealed class DerivedRecapAcceptanceTests {
                             planningWindow,
                             a[20]
                         ),
+                        prior,
                         [plan]
                     )
                 )
@@ -271,6 +332,14 @@ public sealed class DerivedRecapAcceptanceTests {
             fixture.ReadCallCount()
         );
         Assert.Equal(3, fixture.ReadCallCount());
+        Assert.All(
+            fixture.ReadCallLines(),
+            static line => Assert.Contains(
+                "\"PriorSystem\":\"crash-prior-system\"",
+                line,
+                StringComparison.Ordinal
+            )
+        );
 
         fixture.ReopenEngine();
         var selected =
@@ -282,8 +351,19 @@ public sealed class DerivedRecapAcceptanceTests {
                     ),
                     0
                 )
-            );
+        );
         Assert.Equal(a[20], selected.Descriptor.SetAdmissionAnchor);
+        var reopenedSource = Assert.IsType<
+            PublishedRecapSourceReadResult.Available
+        >(await fixture.Store.ReadPublishedSourceAsync(
+            selected.Descriptor,
+            [id]
+        ));
+        var reopenedPrior = Assert.IsType<InlineRecapPriorContext>(
+            reopenedSource.Snapshot.Publication
+                .FrozenPlanSnapshot.PriorContext
+        );
+        Assert.Equal(prior.Snapshot, reopenedPrior.Snapshot);
         Assert.IsType<BuildingReadResult.Missing>(
             await fixture.Store.ReadBuildingAsync(
                 created.Descriptor.SetAdmissionAnchor
@@ -328,6 +408,7 @@ public sealed class DerivedRecapAcceptanceTests {
                         planningWindow,
                         admission
                     ),
+                    EmptyRecapPriorContext.Instance,
                     plans
                 )
             )
@@ -395,7 +476,7 @@ public sealed class DerivedRecapAcceptanceTests {
                         admission
                     )
                 ],
-                EmptyRecapPriorContext.Instance,
+                RecapPlannerWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance),
                 MaxContent
             );
         }
@@ -419,15 +500,6 @@ public sealed class DerivedRecapAcceptanceTests {
             Assert.IsType<DerivedRecapExecutionResult.Published>(result);
         return published.Descriptor;
     }
-
-    private static async ValueTask<EventAddress> ReadCursorAsync(
-        DerivedRecapStore store,
-        PublishedRecapDescriptor descriptor,
-        RecapBlockId blockId
-    ) => Assert.Single(
-        (await ReadSourceAsync(store, descriptor, blockId))
-            .FrozenInputs
-    ).AbsorbedThrough;
 
     private static async ValueTask<PublishedRecapSourceSnapshot>
         ReadSourceAsync(
@@ -685,6 +757,16 @@ public sealed class DerivedRecapAcceptanceTests {
             return File.Exists(path)
                 ? File.ReadLines(path).Count()
                 : 0;
+        }
+
+        public string[] ReadCallLines() {
+            string path = System.IO.Path.Combine(
+                Path,
+                "recap-maintainer-calls.jsonl"
+            );
+            return File.Exists(path)
+                ? File.ReadAllLines(path)
+                : [];
         }
 
         public int ReadCallCount(string maintainerId) {

@@ -119,7 +119,7 @@ public sealed class DerivedRecapStoreR1Tests {
                         fixture.Setups(replayStart)
                     ),
                     [fixture.Boundary(source)],
-                    EmptyRecapPriorContext.Instance
+                    RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
                 )
             ];
             PublishedRecapSet changed =
@@ -168,6 +168,10 @@ public sealed class DerivedRecapStoreR1Tests {
                     source,
                     blocks[1].Content
                 );
+            var priorContext = new InlineRecapPriorContext(
+                source,
+                ContextHeaderSnapshot.Empty
+            );
             RecapBlockPlan[] targetPlans = [
                 new InheritRecapBlockPlan(
                     blocks[0].RecapBlockId,
@@ -189,14 +193,15 @@ public sealed class DerivedRecapStoreR1Tests {
                         selfInput.PayloadSha256
                     ),
                     [fixture.Boundary(target)],
-                    EmptyRecapPriorContext.Instance
+                    RecapWireTestFacts.PriorDigest(priorContext)
                 )
             ];
             DerivedRecapSetManifest targetManifest =
                 RecapWireTestFacts.CreateManifest(
-                fixture.Engine,
+                    fixture.Engine,
                     target,
-                    targetPlans
+                    targetPlans,
+                    priorContext
                 );
             Assert.IsType<CreateBuildingResult.SourceChanged>(
                 await fixture.Store.CreateBuildingAsync(
@@ -299,7 +304,7 @@ public sealed class DerivedRecapStoreR1Tests {
                 fixture.Setups(replayStart)
             ),
             [fixture.Boundary(endpoint), fixture.Boundary(target)],
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         DerivedRecapSetManifest manifest =
             RecapWireTestFacts.CreateManifest(
@@ -343,7 +348,7 @@ public sealed class DerivedRecapStoreR1Tests {
             plan.MaintainerCapabilityFingerprint,
             plan.Source,
             plan.CatchUpBoundaries,
-            plan.PriorContext,
+            plan.PriorContextPayloadSha256,
             plan.MaxContentUtf8Bytes
         );
         DerivedRecapBlock wrong =
@@ -454,7 +459,7 @@ public sealed class DerivedRecapStoreR1Tests {
                 )
             ),
             [fixture.Boundary(firstEndpoint), fixture.Boundary(target)],
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         DerivedRecapSetManifest manifest =
             RecapWireTestFacts.CreateManifest(
@@ -540,7 +545,7 @@ public sealed class DerivedRecapStoreR1Tests {
                 )
             ),
             [fixture.Boundary(firstEndpoint), fixture.Boundary(target)],
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         DerivedRecapSetManifest manifest =
             RecapWireTestFacts.CreateManifest(

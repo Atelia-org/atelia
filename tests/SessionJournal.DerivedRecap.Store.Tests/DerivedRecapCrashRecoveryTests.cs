@@ -514,7 +514,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
                 )
             ),
             [RecapWireTestFacts.ResolveBoundary(engine, anchor)],
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         DerivedRecapSetManifest manifest =
             RecapWireTestFacts.CreateManifest(
@@ -572,7 +572,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
                 engine,
                 [firstEndpoint, target]
             ),
-            EmptyRecapPriorContext.Instance
+            RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
         );
         DerivedRecapSetManifest manifest =
             RecapWireTestFacts.CreateManifest(

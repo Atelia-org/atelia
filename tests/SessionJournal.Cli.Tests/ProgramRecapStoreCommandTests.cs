@@ -683,6 +683,7 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
                         engine.ResolveContextAnchorSetupReferences(
                             fixture.Anchor
                         ),
+                        EmptyRecapPriorContext.Instance,
                         [plan]
                     ),
                     fixture.Anchor
@@ -715,6 +716,7 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
                         engine.ResolveContextAnchorSetupReferences(
                             fixture.Anchor
                         ),
+                        EmptyRecapPriorContext.Instance,
                         [plan]
                     ),
                     fixture.Anchor
@@ -840,7 +842,9 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
                     )
                 )
             ],
-            EmptyRecapPriorContext.Instance
+            DerivedRecapCodec.ComputePriorContextPayloadSha256(
+                EmptyRecapPriorContext.Instance
+            )
         );
 
     private static async ValueTask InstallFinalAsync(

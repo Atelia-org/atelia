@@ -598,11 +598,7 @@ public sealed class RecapPlanEvaluatorTests {
                 new RecapBlockPlanningDecision.Maintain(
                     model.ClientId,
                     new RecapPlanningMaintainSource.Existing(source),
-                    [model.SourceSet, model.Admission],
-                    new InlineRecapPriorContext(
-                        model.A11,
-                        ContextHeaderSnapshot.Empty
-                    )
+                    [model.SourceSet, model.Admission]
                 )
             ]
         );
@@ -838,8 +834,7 @@ public sealed class RecapPlanEvaluatorTests {
                 new RecapBlockPlanningDecision.Maintain(
                     model.ClientId,
                     new RecapPlanningMaintainSource.Empty(model.A5),
-                    [model.A11, model.Admission],
-                    EmptyRecapPriorContext.Instance
+                    [model.A11, model.Admission]
                 )
             ]
         );
@@ -866,8 +861,7 @@ public sealed class RecapPlanEvaluatorTests {
                 new RecapBlockPlanningDecision.Maintain(
                     model.ClientId,
                     new RecapPlanningMaintainSource.Empty(model.A1),
-                    [model.A5, model.A11, model.Admission],
-                    EmptyRecapPriorContext.Instance
+                    [model.A5, model.A11, model.Admission]
                 )
             ]
         );
@@ -966,8 +960,7 @@ public sealed class RecapPlanEvaluatorTests {
                 new RecapBlockPlanningDecision.Maintain(
                     model.SelfId,
                     new RecapPlanningMaintainSource.Existing(source),
-                    [model.A5, model.A11, model.Admission],
-                    model.ExistingPrior()
+                    [model.A5, model.A11, model.Admission]
                 )
             ]
         );
@@ -985,7 +978,7 @@ public sealed class RecapPlanEvaluatorTests {
     }
 
     [Fact]
-    public void MaintainPriorMustEqualAuthoritativeSharedPriorByValue() {
+    public void MaintainEffectivePriorIsTheAuthoritativeSharedValue() {
         TestModel model = TestModel.Create();
         var snapshot = new ContextHeaderSnapshot(
             "previous-system",
@@ -997,68 +990,31 @@ public sealed class RecapPlanEvaluatorTests {
             snapshot
         );
 
-        RecapPlanIntentResult empty = RecapPlanEvaluator.EvaluateIntent(
+        RecapPlanIntentResult result = RecapPlanEvaluator.EvaluateIntent(
             model.Schedule(new StubPolicy(
-                model.ValidMaintainIntent(
-                    EmptyRecapPriorContext.Instance
-                )
+                model.ValidMaintainIntent()
             )),
             model.PolicyFacts(),
             authoritative
         );
-        RecapPlanIntentResult different =
-            RecapPlanEvaluator.EvaluateIntent(
-                model.Schedule(new StubPolicy(
-                    model.ValidMaintainIntent(
-                        new InlineRecapPriorContext(
-                            model.SourceSet,
-                            snapshot with {
-                                ActionMessage = "different-action"
-                            }
-                        )
-                    )
-                )),
-                model.PolicyFacts(),
-                authoritative
-            );
-        RecapPlanIntentResult equalIndependent =
-            RecapPlanEvaluator.EvaluateIntent(
-                model.Schedule(new StubPolicy(
-                    model.ValidMaintainIntent(
-                        new InlineRecapPriorContext(
-                            model.SourceSet,
-                            snapshot with { }
-                        )
-                    )
-                )),
-                model.PolicyFacts(),
-                authoritative
-            );
-
-        AssertDefect(empty, RecapPlanDefectCodes.PriorContextInvalid);
-        AssertDefect(
-            different,
-            RecapPlanDefectCodes.PriorContextInvalid
+        var ready = Assert.IsType<RecapPlanIntentResult.IntentReady>(
+            result
         );
-        Assert.IsType<RecapPlanIntentResult.IntentReady>(
-            equalIndependent
-        );
+        Assert.Same(authoritative, ready.EffectivePriorContext);
     }
 
     [Fact]
     public void AuthoritativeSharedPriorMustMatchPlanningPhase() {
         TestModel model = TestModel.Create();
         var existingEmptyPolicy = new StubPolicy(
-            model.ValidMaintainIntent(
-                EmptyRecapPriorContext.Instance
-            )
+            model.ValidMaintainIntent()
         );
         var wrongAnchor = new InlineRecapPriorContext(
             model.A11,
             ContextHeaderSnapshot.Empty
         );
         var existingWrongAnchorPolicy = new StubPolicy(
-            model.ValidMaintainIntent(wrongAnchor)
+            model.ValidMaintainIntent()
         );
 
         RecapPlanIntentResult existingEmpty =
@@ -1113,8 +1069,7 @@ public sealed class RecapPlanEvaluatorTests {
                             model.A11,
                             model.SourceSet,
                             model.Admission
-                        ],
-                        firstInline
+                        ]
                     )
                 ]
             )
@@ -1173,9 +1128,7 @@ public sealed class RecapPlanEvaluatorTests {
             ContextHeaderSnapshot.Empty
         );
         RecapPlanIntentResult.IntentReady intent =
-            model.IntentReady(model.ValidMaintainIntent(
-                prior
-            ), prior);
+            model.IntentReady(model.ValidMaintainIntent(), prior);
 
         RecapPlanResult result = RecapPlanEvaluator.ValidatePlan(
             intent,
@@ -1528,8 +1481,7 @@ public sealed class RecapPlanEvaluatorTests {
             );
 
         public RecapPlanningPolicyDecision.Build MaintainIntent(
-            IReadOnlyList<EventAddress> route,
-            RecapPriorContext? prior = null
+            IReadOnlyList<EventAddress> route
         ) => new(
             Admission,
             [
@@ -1538,15 +1490,13 @@ public sealed class RecapPlanEvaluatorTests {
                     new RecapPlanningMaintainSource.Existing(
                         AvailableSource.Source
                     ),
-                    route,
-                    prior ?? ExistingPrior()
+                    route
                 )
             ]
         );
 
-        public RecapPlanningPolicyDecision.Build ValidMaintainIntent(
-            RecapPriorContext? prior = null
-        ) => MaintainIntent([A5, A11, Admission], prior);
+        public RecapPlanningPolicyDecision.Build ValidMaintainIntent()
+            => MaintainIntent([A5, A11, Admission]);
 
         public RecapPlanIntentResult EvaluateIntent(
             RecapPlanningPolicyDecision decision
