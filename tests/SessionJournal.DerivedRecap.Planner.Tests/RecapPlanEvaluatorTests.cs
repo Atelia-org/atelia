@@ -606,7 +606,11 @@ public sealed class RecapPlanEvaluatorTests {
 
         maliciousPolicy.Decision = malicious;
         RecapPlanIntentResult result =
-            RecapPlanEvaluator.EvaluateIntent(ready, policyFacts);
+            RecapPlanEvaluator.EvaluateIntent(
+                ready,
+                policyFacts,
+                EmptyRecapPriorContext.Instance
+            );
 
         AssertDefect(result, RecapPlanDefectCodes.AdmissionInvalid);
     }
@@ -714,7 +718,8 @@ public sealed class RecapPlanEvaluatorTests {
         RecapPlanIntentResult result =
             RecapPlanEvaluator.EvaluateIntent(
                 schedule,
-                conflicting
+                conflicting,
+                EmptyRecapPriorContext.Instance
             );
 
         AssertDefect(
@@ -738,7 +743,8 @@ public sealed class RecapPlanEvaluatorTests {
         RecapPlanIntentResult missingResult =
             RecapPlanEvaluator.EvaluateIntent(
                 twoBlocks.Schedule(missingPolicy),
-                missing
+                missing,
+                EmptyRecapPriorContext.Instance
             );
 
         TestModel oneBlock = TestModel.Create();
@@ -756,7 +762,8 @@ public sealed class RecapPlanEvaluatorTests {
         RecapPlanIntentResult cursorResult =
             RecapPlanEvaluator.EvaluateIntent(
                 oneBlock.Schedule(cursorPolicy),
-                newerCursor
+                newerCursor,
+                EmptyRecapPriorContext.Instance
             );
 
         AssertDefect(
@@ -783,7 +790,8 @@ public sealed class RecapPlanEvaluatorTests {
         RecapPlanIntentResult result =
             RecapPlanEvaluator.EvaluateIntent(
                 model.Schedule(policy),
-                mixed
+                mixed,
+                EmptyRecapPriorContext.Instance
             );
 
         AssertDefect(
@@ -834,7 +842,11 @@ public sealed class RecapPlanEvaluatorTests {
             model.Schedule(policy, firstBuildScheduling);
 
         RecapPlanIntentResult result =
-            RecapPlanEvaluator.EvaluateIntent(schedule, facts);
+            RecapPlanEvaluator.EvaluateIntent(
+                schedule,
+                facts,
+                EmptyRecapPriorContext.Instance
+            );
 
         AssertDefect(result, RecapPlanDefectCodes.SourceInvalid);
     }
@@ -874,7 +886,8 @@ public sealed class RecapPlanEvaluatorTests {
         RecapPlanIntentResult result =
             RecapPlanEvaluator.EvaluateIntent(
                 model.Schedule(policy),
-                model.PolicyFacts()
+                model.PolicyFacts(),
+                EmptyRecapPriorContext.Instance
             );
 
         AssertDefect(
@@ -893,7 +906,8 @@ public sealed class RecapPlanEvaluatorTests {
 
         RecapPlanIntentResult result = RecapPlanEvaluator.EvaluateIntent(
             model.Schedule(failed),
-            model.PolicyFacts()
+            model.PolicyFacts(),
+            EmptyRecapPriorContext.Instance
         );
 
         AssertDefect(result, RecapPlanDefectCodes.PolicyFailed);
@@ -903,7 +917,8 @@ public sealed class RecapPlanEvaluatorTests {
         Assert.Throws<OperationCanceledException>(() =>
             RecapPlanEvaluator.EvaluateIntent(
                 model.Schedule(canceled),
-                model.PolicyFacts()
+                model.PolicyFacts(),
+                EmptyRecapPriorContext.Instance
             )
         );
         var outOfMemory = new ThrowingPolicy(
@@ -912,7 +927,8 @@ public sealed class RecapPlanEvaluatorTests {
         Assert.Throws<OutOfMemoryException>(() =>
             RecapPlanEvaluator.EvaluateIntent(
                 model.Schedule(outOfMemory),
-                model.PolicyFacts()
+                model.PolicyFacts(),
+                EmptyRecapPriorContext.Instance
             )
         );
 
@@ -1381,7 +1397,8 @@ public sealed class RecapPlanEvaluatorTests {
             RecapPlanningPolicyDecision decision
         ) => RecapPlanEvaluator.EvaluateIntent(
             Schedule(new StubPolicy(decision)),
-            PolicyFacts()
+            PolicyFacts(),
+            EmptyRecapPriorContext.Instance
         );
 
         public RecapPolicyFacts PolicyFacts() => new(

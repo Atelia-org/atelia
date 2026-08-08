@@ -678,7 +678,8 @@ public sealed record RecapPlanningPolicyContext(
     RecapPlanningLimits Limits,
     RecapSchedulingFacts Scheduling,
     RecapCadenceFacts Cadence,
-    RecapPolicyFacts PolicyFacts
+    RecapPolicyFacts PolicyFacts,
+    RecapPriorContext SharedPriorContext
 );
 
 /// <summary>

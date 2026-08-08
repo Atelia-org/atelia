@@ -193,14 +193,17 @@ workflow authority。
 - stable MaintainerId；
 - ordered `CatchUpBoundaries[]`，每项冻结 `(Address, Setups)`；
 - source replay start 与 frozen input cursor 的 exact governing setup refs；
-- per-block frozen prior context 或显式 Empty；
+- frozen shared prior context：首轮显式 Empty；后续build把exact previous Published set的全部
+  frozen blocks投影成同一个`ContextHeaderPack` snapshot，并复制到每个Maintain plan；
 - content limit。
 
 每步 start 由 source replay boundary 或前一 frozen boundary 推导；address 与 setups共同构成
 replay authority，执行时不得重新发现后静默替换。
 
-prior context 不得读取当前 Building 的 partial results。非空 snapshot 的 admission anchor 必须不晚于
-first replay start，保证 parallel order 与 crash/reopen 不改变输入。
+非空 prior context必须来自planning时同一次exact Published source snapshot，包含当前block和其他
+blocks的上一版；不得读取当前Building的partial results。其admission anchor必须不晚于first replay
+start，保证block执行顺序与crash/reopen不改变输入。neutral maintenance request仍携带`OldBlock`，
+但current rewrite以shared prior context作为旧recap唯一prompt表示，避免当前block重复出现。
 
 ## 6. Published membership 与 strict ordinal
 

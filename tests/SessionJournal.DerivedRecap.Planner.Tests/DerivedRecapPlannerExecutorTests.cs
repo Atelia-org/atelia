@@ -1028,6 +1028,115 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
+    public async Task SecondCycleFreezesOnePreviousPackForAllMaintainers() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2
+        );
+        var peerId = new RecapBlockId("peer");
+        var peerTarget = new ContextHeaderBlockPath(
+            ContextHeaderCarrier.Observation,
+            "peer"
+        );
+        var self = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, request) => request.OldBlock.Text.Length == 0
+                ? "fact-A"
+                : "fact-A+fact-B"
+        );
+        var peer = new ScriptedMaintainer(
+            "peer-maintainer",
+            peerTarget,
+            static (_, request) => request.OldBlock.Text.Length == 0
+                ? "fact-C"
+                : "fact-C+fact-D"
+        );
+        RecapBlockCatalogEntry[] catalog = [
+            new(
+                fixture.SelfId,
+                fixture.SelfTarget,
+                self.Id,
+                self.CapabilityFingerprint,
+                TestFixture.MaxContent
+            ),
+            new(
+                peerId,
+                peerTarget,
+                peer.Id,
+                peer.CapabilityFingerprint,
+                TestFixture.MaxContent
+            )
+        ];
+        DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
+            new BoundedMaintainAllRecapPlanningPolicy(),
+            [self, peer],
+            catalog: catalog
+        );
+
+        var first = Assert.IsType<
+            DerivedRecapExecutionResult.Published
+        >(
+            await executor.RunAsync()
+        );
+        Assert.True(
+            Assert.Single(self.Requests)
+                .RecentHistory.PriorContext.IsEmpty
+        );
+        Assert.True(
+            Assert.Single(peer.Requests)
+                .RecentHistory.PriorContext.IsEmpty
+        );
+        self.Reset();
+        peer.Reset();
+        fixture.AppendPair("cycle-2-B-D");
+
+        var second = Assert.IsType<
+            DerivedRecapExecutionResult.Published
+        >(await executor.RunAsync());
+
+        var expectedPrior = new ContextHeaderSnapshot(
+            "## self\n\nfact-A",
+            "## peer\n\nfact-C",
+            string.Empty
+        );
+        RecapBlockMaintenanceRequest selfRequest =
+            Assert.Single(self.Requests);
+        RecapBlockMaintenanceRequest peerRequest =
+            Assert.Single(peer.Requests);
+        Assert.Equal(expectedPrior, selfRequest.RecentHistory.PriorContext);
+        Assert.Equal(expectedPrior, peerRequest.RecentHistory.PriorContext);
+        Assert.Equal("fact-A", selfRequest.OldBlock.Text);
+        Assert.Equal("fact-C", peerRequest.OldBlock.Text);
+        Assert.DoesNotContain(
+            "fact-A+fact-B",
+            peerRequest.RecentHistory.PriorContext.SystemPromptFragment,
+            StringComparison.Ordinal
+        );
+
+        PublishedRecapSourceSnapshot source =
+            await fixture.ReadSourceAsync(
+                second.Descriptor,
+                [fixture.SelfId, peerId]
+            );
+        Assert.All(
+            source.Publication.FrozenPlanSnapshot.Blocks,
+            plan => {
+                InlineRecapPriorContext prior = Assert.IsType<
+                    InlineRecapPriorContext
+                >(
+                    Assert.IsType<MaintainRecapBlockPlan>(plan)
+                        .PriorContext
+                );
+                Assert.Equal(
+                    first.Descriptor.SetAdmissionAnchor,
+                    prior.AdmissionAnchor
+                );
+                Assert.Equal(expectedPrior, prior.Snapshot);
+            }
+        );
+    }
+
+    [Fact]
     public async Task CadenceBuildPreservesMinimumRecentHistoryLoad() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 3
@@ -3717,6 +3826,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         public ContextHeaderBlockPath Target { get; }
         public int CallCount { get; private set; }
         public List<string> OldBlocks { get; } = [];
+        public List<RecapBlockMaintenanceRequest> Requests { get; } = [];
 
         public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
             RecapBlockMaintenanceRequest request,
@@ -3725,6 +3835,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             ct.ThrowIfCancellationRequested();
             CallCount++;
             OldBlocks.Add(request.OldBlock.Text);
+            Requests.Add(request);
             string content = _maintain(CallCount, request);
             _beforeReturn?.Invoke();
             return ValueTask.FromResult(
@@ -3739,6 +3850,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         public void Reset() {
             CallCount = 0;
             OldBlocks.Clear();
+            Requests.Clear();
         }
     }
 

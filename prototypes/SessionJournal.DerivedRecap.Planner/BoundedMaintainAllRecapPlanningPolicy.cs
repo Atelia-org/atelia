@@ -66,7 +66,8 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
                 limits,
                 starts,
                 replaySafe,
-                admissionIndex
+                admissionIndex,
+                context.SharedPriorContext
             );
             if (candidate.Blocks is { } blocks) {
                 return new RecapPlanningPolicyDecision.Build(
@@ -123,7 +124,8 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
         RecapPlanningLimits limits,
         IReadOnlyList<BlockStart> starts,
         IReadOnlyDictionary<int, EventAddress> replaySafe,
-        int admissionIndex
+        int admissionIndex,
+        RecapPriorContext sharedPriorContext
     ) {
         var blocks = new List<RecapBlockPlanningDecision>(
             starts.Count
@@ -165,7 +167,7 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
                 start.Catalog.RecapBlockId,
                 start.Source,
                 route,
-                EmptyRecapPriorContext.Instance
+                sharedPriorContext
             ));
         }
 

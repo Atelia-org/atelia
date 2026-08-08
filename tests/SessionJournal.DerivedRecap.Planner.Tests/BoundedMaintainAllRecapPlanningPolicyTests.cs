@@ -76,6 +76,36 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
     }
 
     [Fact]
+    public void ExistingBlocksShareExactInlinePriorContext() {
+        PolicyModel model = PolicyModel.Existing(
+            cursorIndices: [6, 6],
+            replaySafeIndices: [10, 8, 6, 4, 2, 0],
+            latestPublishedIndex: 6,
+            maxRawEventsPerStep: 2
+        );
+        var shared = new InlineRecapPriorContext(
+            model.At(6),
+            new ContextHeaderSnapshot(
+                "shared-system",
+                "shared-observation",
+                "shared-action"
+            )
+        );
+
+        RecapPlanningPolicyDecision.Build build =
+            model.Build(shared);
+
+        Assert.All(build.Blocks, decision =>
+            Assert.Same(
+                shared,
+                Assert.IsType<
+                    RecapBlockPlanningDecision.Maintain
+                >(decision).PriorContext
+            )
+        );
+    }
+
+    [Fact]
     public void IrregularReplayBoundariesUseMinimumGreedyRoute() {
         PolicyModel model = PolicyModel.FirstBuild(
             replaySafeIndices: [10, 8, 7, 4, 3, 0],
@@ -334,7 +364,9 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
             );
         }
 
-        public RecapPlanIntentResult Evaluate() {
+        public RecapPlanIntentResult Evaluate(
+            RecapPriorContext? sharedPriorContext = null
+        ) {
             var ready = Assert.IsType<RecapSchedulingResult.Ready>(
                 RecapPlanEvaluator.EvaluateSchedule(
                     Inputs,
@@ -344,14 +376,18 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
             );
             return RecapPlanEvaluator.EvaluateIntent(
                 ready,
-                PolicyFacts
+                PolicyFacts,
+                sharedPriorContext
+                    ?? EmptyRecapPriorContext.Instance
             );
         }
 
-        public RecapPlanningPolicyDecision.Build Build() {
+        public RecapPlanningPolicyDecision.Build Build(
+            RecapPriorContext? sharedPriorContext = null
+        ) {
             var ready =
                 Assert.IsType<RecapPlanIntentResult.IntentReady>(
-                    Evaluate()
+                    Evaluate(sharedPriorContext)
                 );
             return ready.Intent;
         }

@@ -185,6 +185,8 @@ internal sealed class DerivedRecapPlannerExecutor {
         PublishedRecapSourceSnapshot? sourceSnapshot = null;
         Dictionary<RecapBlockId, DerivedRecapFrozenInput>
             sourceInputsById = [];
+        RecapPriorContext sharedPriorContext =
+            EmptyRecapPriorContext.Instance;
 
         if (latest is not null) {
             PublishedRecapSourceReadResult sourceRead;
@@ -211,9 +213,21 @@ internal sealed class DerivedRecapPlannerExecutor {
                 return SourceReadUnavailable(sourceRead);
             }
             sourceSnapshot = available.Snapshot;
-            sourceInputsById = sourceSnapshot.FrozenInputs.ToDictionary(
-                static input => input.RecapBlockId
-            );
+            try {
+                sharedPriorContext = BuildSharedPriorContext(
+                    sourceSnapshot
+                );
+                sourceInputsById = sourceSnapshot.FrozenInputs
+                    .ToDictionary(static input => input.RecapBlockId);
+            }
+            catch (Exception exception)
+                when (IsAvailabilityException(exception)) {
+                return Unavailable(
+                    DerivedRecapExecutionDefectCodes
+                        .PublishedSourceUnavailable,
+                    exception.Message
+                );
+            }
             foreach (RecapBlockCatalogEntry entry
                      in _inputs.OrderedCatalog) {
                 if (!sourceInputsById.TryGetValue(
@@ -261,7 +275,8 @@ internal sealed class DerivedRecapPlannerExecutor {
         RecapPlanIntentResult intentResult =
             RecapPlanEvaluator.EvaluateIntent(
                 schedule,
-                policyFacts
+                policyFacts,
+                sharedPriorContext
             );
         switch (intentResult) {
             case RecapPlanIntentResult.NoBuild noBuild:
@@ -585,6 +600,42 @@ internal sealed class DerivedRecapPlannerExecutor {
                 input.AbsorbedThrough
             );
         }
+    }
+
+    private static RecapPriorContext BuildSharedPriorContext(
+        PublishedRecapSourceSnapshot sourceSnapshot
+    ) {
+        ArgumentNullException.ThrowIfNull(sourceSnapshot);
+        IReadOnlyList<RecapBlockPlan> sourcePlans =
+            sourceSnapshot.Publication.FrozenPlanSnapshot.Blocks;
+        IReadOnlyList<DerivedRecapFrozenInput> sourceInputs =
+            sourceSnapshot.FrozenInputs;
+        if (sourcePlans.Count != sourceInputs.Count) {
+            throw new InvalidDataException(
+                "Published source frozen plan and inputs have different "
+                + "block counts."
+            );
+        }
+
+        var draft = new ContextHeaderPackDraft(
+            new ContextHeaderPack()
+        );
+        for (int index = 0; index < sourcePlans.Count; index++) {
+            RecapBlockPlan sourcePlan = sourcePlans[index];
+            DerivedRecapFrozenInput sourceInput = sourceInputs[index];
+            if (sourcePlan.RecapBlockId != sourceInput.RecapBlockId
+                || sourcePlan.Target != sourceInput.Target) {
+                throw new InvalidDataException(
+                    "Published source frozen plan and inputs do not have "
+                    + $"the same block at index {index}."
+                );
+            }
+            draft.UpsertBlock(sourcePlan.Target, sourceInput.Content);
+        }
+        return new InlineRecapPriorContext(
+            sourceSnapshot.Source.SetAdmissionAnchor,
+            draft.Build().Render()
+        );
     }
 
     private DerivedRecapSetManifest CreateManifest(

@@ -209,8 +209,11 @@ RecapBlockPlan =
 - 只持久化 ordered `CatchUpThrough[]`；step start 由 source cursor/previous endpoint 推导；
 - endpoints 同 lineage、strictly increasing、dependency-closed bounded materializable；
 - final endpoint 等于 `SetAdmissionAnchor`；
-- per-block prior context整条 route复用，Inline anchor 是 first replay start 的同-lineage ancestor；
-- prior context 不读取当前 Building 的 partial output；
+- first build的prior context显式Empty；已有source时，从同一次exact previous Published snapshot按
+  frozen plan顺序投影全部frozen blocks，得到所有Maintain plans共享的Inline snapshot；
+- shared prior context整条route复用，包含当前block及其他blocks的上一版；Inline anchor是first
+  replay start的同-lineage ancestor；
+- prior context不读取当前Building的partial output；current rewrite不再把`OldBlock`重复放入prompt；
 - raw-core candidate limits 与 Store publication gate 使用同一 versioned validator。
 
 ### 3.1 Exact source snapshot
@@ -440,7 +443,7 @@ open exact raw boundary + healthy Recap Store
   -> select strict-later SetAdmissionAnchor，admission后至少保留 reserve
   -> decide each block Maintain/Inherit
   -> exact-envelope copy frozen sources
-  -> freeze route + per-block prior context
+  -> project previous Published pack once + freeze route/shared prior context
   -> write manifest
   -> execute phase-specific final-block actions
   -> CanPublish + latest revalidation

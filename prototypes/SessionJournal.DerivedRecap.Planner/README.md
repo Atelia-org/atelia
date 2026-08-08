@@ -463,6 +463,13 @@ new planning与frozen-plan raw validation先生成bounded metadata proof，再�
 window。线上路径不调用full-lineage header/setup discovery；无法证明时返回typed、带stage的
 `BeyondPrefix`。
 
+`bounded-maintain-all-v1`在首轮使用显式Empty prior context。已有Published source时，Planner在
+exact envelope double-read所得的同一个`PublishedRecapSourceSnapshot`上，按其frozen plan顺序把
+全部frozen block inputs投影成一个`ContextHeaderPack`，并将同一个Inline snapshot冻结到所有
+Maintain plans。它包含每个Maintainer自己的上一版和其他blocks的上一版，但不读取当前Building的
+partial output；因此block执行顺序和crash/reopen不会改变输入。`OldBlock`仍作为neutral request
+contract交付，但current rewrite只消费上述shared prior context，避免当前block正文重复进入prompt。
+
 `None`、`Multiple`、`Stale`、`Invalid`和 `StoreUnavailable`必须分别处理，不要按目录时间选择
 “最新 Building”。
 
@@ -729,6 +736,8 @@ JSON fragment。
 - 不要让 Store解析 planner config或 estimator identity。
 - 不要让 Planner引用 concrete Maintainers assembly；由 Host composition root解析 profiles。
 - 不要在 Resume/Restore读取 active config、重新选择 roster或重新计算 admission。
+- 不要从当前Building的checkpoint/final block拼装prior context；它只能来自planning时捕获并冻结的
+  previous Published source，首轮则显式Empty。
 - 不要把 Building当作 Published，也不要用 filesystem timestamp实现 latest。
 - 不要缓存 provider token count来替代 HistoryLoad。未来 load cache也只能是可删除重建的
   Planner/Host optimization。

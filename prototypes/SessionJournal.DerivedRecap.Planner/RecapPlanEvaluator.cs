@@ -195,10 +195,12 @@ public static class RecapPlanEvaluator {
 
     public static RecapPlanIntentResult EvaluateIntent(
         RecapSchedulingResult.Ready schedule,
-        RecapPolicyFacts policyFacts
+        RecapPolicyFacts policyFacts,
+        RecapPriorContext sharedPriorContext
     ) {
         ArgumentNullException.ThrowIfNull(schedule);
         ArgumentNullException.ThrowIfNull(policyFacts);
+        ArgumentNullException.ThrowIfNull(sharedPriorContext);
         List<RecapPlanDefect> sourceDefects =
             ValidateSourceIntents(schedule, policyFacts);
         if (sourceDefects.Count != 0) {
@@ -213,7 +215,8 @@ public static class RecapPlanEvaluator {
                     schedule.Limits,
                     schedule.Facts,
                     schedule.Cadence,
-                    policyFacts
+                    policyFacts,
+                    sharedPriorContext
                 )
             );
         }

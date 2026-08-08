@@ -36,6 +36,67 @@ public class WorldUnderstandingRewriteProfileTests {
     }
 
     [Fact]
+    public async Task MaintainAsync_UsesSharedPriorPackWithoutOldBlockDuplication() {
+        var completionClient = new ScriptedCompletionClient();
+        completionClient.Enqueue(request => {
+            Assert.Equal(
+                1,
+                CountContextOccurrences(request.Context, "previous-self-A")
+            );
+            Assert.Equal(
+                1,
+                CountContextOccurrences(request.Context, "previous-peer-C")
+            );
+            Assert.Equal(
+                1,
+                CountContextOccurrences(request.Context, "new-history-B")
+            );
+            Assert.Equal(
+                0,
+                CountContextOccurrences(
+                    request.Context,
+                    "old-block-must-not-be-injected"
+                )
+            );
+            return new CompletionResult(
+                new ActionMessage([
+                    new ActionBlock.Text("rewritten")
+                ]),
+                new CompletionDescriptor(
+                    "scripted",
+                    "openai-chat-v1",
+                    request.ModelId
+                )
+            );
+        });
+        var prior = new ContextHeaderPack();
+        prior.Observation.Add(
+            RolePlayRecapBlockPaths.WorldUnderstanding.BlockKey,
+            new ContextHeaderBlock("previous-self-A")
+        );
+        prior.Action.Add(
+            RolePlayRecapBlockPaths.FirstPersonAutobiography.BlockKey,
+            new ContextHeaderBlock("previous-peer-C")
+        );
+        var request = new RecapBlockMaintenanceRequest(
+            new RecentHistorySlice(
+                prior.Render(),
+                [new ObservationMessage("new-history-B")]
+            ),
+            new ContextHeaderBlock(
+                "old-block-must-not-be-injected"
+            )
+        );
+
+        RecapBlockMaintenanceResult result = await CreateMaintainer(
+                completionClient
+            )
+            .MaintainAsync(request, CancellationToken.None);
+
+        Assert.Equal("rewritten", result.NewBlock.Text);
+    }
+
+    [Fact]
     public void Prompts_DefaultToSimplifiedChinese_AndKeepEnglishAvailable() {
         Assert.Same(WorldUnderstandingRewriteProfiles.SimplifiedChinese, WorldUnderstandingRewriteProfiles.Default);
         Assert.StartsWith("你是Galatea的认知制图师", WorldUnderstandingRewriteProfiles.Default.SystemPrompt);
