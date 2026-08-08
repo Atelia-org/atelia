@@ -88,6 +88,7 @@ public sealed class DerivedRecapRebuildSpoolTests : IDisposable {
             engine.BeginSelectedLineageAudit();
         DerivedRecapRebuildSpoolDescriptor descriptor =
             await spool.CreateCampaignAsync(
+                NewCampaignId(),
                 initial.Capture,
                 Limits(pageEventCount: 3)
             );
@@ -147,6 +148,7 @@ public sealed class DerivedRecapRebuildSpoolTests : IDisposable {
                 partialEngine.BeginSelectedLineageAudit();
             DerivedRecapRebuildSpoolDescriptor descriptor =
                 await partialStore.CreateCampaignAsync(
+                    NewCampaignId(),
                     capture.Capture,
                     Limits(pageEventCount: 2)
                 );
@@ -198,6 +200,7 @@ public sealed class DerivedRecapRebuildSpoolTests : IDisposable {
             engine.BeginSelectedLineageAudit();
         DerivedRecapRebuildSpoolDescriptor descriptor =
             await spool.CreateCampaignAsync(
+                NewCampaignId(),
                 capture.Capture,
                 new DerivedRecapRebuildSpoolLimits(
                     PageEventCount: 1,
@@ -247,6 +250,7 @@ public sealed class DerivedRecapRebuildSpoolTests : IDisposable {
             engine.BeginSelectedLineageAudit();
         DerivedRecapRebuildSpoolDescriptor descriptor =
             await spool.CreateCampaignAsync(
+                NewCampaignId(),
                 capture.Capture,
                 Limits(pageEventCount: 2)
             );
@@ -318,6 +322,7 @@ public sealed class DerivedRecapRebuildSpoolTests : IDisposable {
             engine.BeginSelectedLineageAudit();
         DerivedRecapRebuildSpoolDescriptor descriptor =
             await spool.CreateCampaignAsync(
+                NewCampaignId(),
                 capture.Capture,
                 new DerivedRecapRebuildSpoolLimits(
                     PageEventCount: 1,
@@ -430,6 +435,7 @@ public sealed class DerivedRecapRebuildSpoolTests : IDisposable {
                 tempEngine.BeginSelectedLineageAudit();
             DerivedRecapRebuildSpoolDescriptor descriptor =
                 await tempStore.CreateCampaignAsync(
+                    NewCampaignId(),
                     capture.Capture,
                     Limits(pageEventCount: 2)
                 );
@@ -457,6 +463,7 @@ public sealed class DerivedRecapRebuildSpoolTests : IDisposable {
             futureEngine.BeginSelectedLineageAudit();
         DerivedRecapRebuildSpoolDescriptor futureDescriptor =
             await futureStore.CreateCampaignAsync(
+                NewCampaignId(),
                 futureCapture.Capture,
                 Limits(pageEventCount: 2)
             );
@@ -498,6 +505,7 @@ public sealed class DerivedRecapRebuildSpoolTests : IDisposable {
             engine.BeginSelectedLineageAudit();
         DerivedRecapRebuildSpoolDescriptor descriptor =
             await spool.CreateCampaignAsync(
+                NewCampaignId(),
                 capture.Capture,
                 Limits(pageEventCount)
             );
@@ -548,6 +556,9 @@ public sealed class DerivedRecapRebuildSpoolTests : IDisposable {
         MaximumEventCount: 100_000,
         MaximumTotalEncodedBytes: 32 * 1024 * 1024
     );
+
+    private static string NewCampaignId() =>
+        Guid.NewGuid().ToString("N");
 
     private static string CampaignRoot(
         RawFixture raw,

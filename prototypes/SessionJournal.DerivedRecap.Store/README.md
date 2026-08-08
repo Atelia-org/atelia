@@ -12,8 +12,11 @@ contain only selected-lineage capture identity, content-free address/header
 entries, page-chain checkpoints, and a completion seal; they never contain raw
 event bodies, recap content, prompts, epoch boundaries, or policy decisions.
 
-A partial campaign may be reopened after a crash, but cannot be consumed until
-sealed. Even a sealed spool is only evidence: a read-only SessionJournal engine
+A caller supplies the safe campaign id before creation; repeating creation with
+the same exact capture and limits returns the already durable campaign, while a
+different request under that id fails closed. A partial campaign may be reopened
+after a crash, but cannot be consumed until sealed. Reopening a sealed campaign
+returns its revalidated authority instead of attempting another write. Even a sealed spool is only evidence: a read-only SessionJournal engine
 must revalidate its exact RefId/head and both page orders before it issues a
 forward cursor. Campaigns may be deleted and rebuilt from raw authority.
 Page/event/encoded-byte limits, canonical decoding, temp inventory bounds, and

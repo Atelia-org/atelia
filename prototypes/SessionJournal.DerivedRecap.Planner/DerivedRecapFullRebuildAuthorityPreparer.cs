@@ -3,7 +3,7 @@ using Atelia.SessionJournal.DerivedRecap.Store;
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
 public sealed record DerivedRecapFullRebuildAuthorityPreparation(
-    DerivedRecapRebuildSpoolDescriptor Spool,
+    string CampaignId,
     SessionSelectedLineageAuditAuthority RawAuthority
 );
 
@@ -18,6 +18,7 @@ public static class DerivedRecapFullRebuildAuthorityPreparer {
     > BeginAsync(
         SessionJournalEngine engine,
         DerivedRecapRebuildSpoolStore spool,
+        string campaignId,
         DerivedRecapRebuildSpoolLimits limits,
         CancellationToken cancellationToken = default
     ) {
@@ -27,6 +28,7 @@ public static class DerivedRecapFullRebuildAuthorityPreparer {
             engine.BeginSelectedLineageAudit(cancellationToken);
         DerivedRecapRebuildSpoolDescriptor descriptor =
             await spool.CreateCampaignAsync(
+                    campaignId,
                     audit.Capture,
                     limits,
                     cancellationToken
@@ -44,24 +46,54 @@ public static class DerivedRecapFullRebuildAuthorityPreparer {
         CancellationToken cancellationToken = default
     ) {
         RequireSameBinding(engine, spool);
-        await using DerivedRecapRebuildSpoolWriter writer =
-            await spool.OpenWriterAsync(
+        ISessionSelectedLineageAuditPageSnapshot? sealedSnapshot =
+            await spool.TryOpenSealedSnapshotAsync(
                     campaignId,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-        SessionSelectedLineageAuditSession audit =
-            engine.ResumeSelectedLineageAudit(
-                writer.Checkpoint.Descriptor.Capture,
-                writer.ReadCommittedPages(),
+        if (sealedSnapshot is not null) {
+            return ReopenSealed(
+                engine,
+                campaignId,
+                sealedSnapshot,
                 cancellationToken
             );
-        return await CaptureAndSealUnderWriterAsync(
-                writer,
-                audit,
+        }
+        try {
+            await using DerivedRecapRebuildSpoolWriter writer =
+                await spool.OpenWriterAsync(
+                        campaignId,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            SessionSelectedLineageAuditSession audit =
+                engine.ResumeSelectedLineageAudit(
+                    writer.Checkpoint.Descriptor.Capture,
+                    writer.ReadCommittedPages(),
+                    cancellationToken
+                );
+            return await CaptureAndSealUnderWriterAsync(
+                    writer,
+                    audit,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (DerivedRecapRebuildSpoolSealedException) {
+            ISessionSelectedLineageAuditPageSnapshot snapshot =
+                await spool.OpenSealedSnapshotAsync(
+                        campaignId,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            return ReopenSealed(
+                engine,
+                campaignId,
+                snapshot,
                 cancellationToken
-            )
-            .ConfigureAwait(false);
+            );
+        }
     }
 
     public static async ValueTask<
@@ -109,8 +141,26 @@ public static class DerivedRecapFullRebuildAuthorityPreparer {
         await writer.SealAsync(authority, cancellationToken)
             .ConfigureAwait(false);
         return new DerivedRecapFullRebuildAuthorityPreparation(
-            writer.Checkpoint.Descriptor,
+            writer.Checkpoint.Descriptor.CampaignId,
             authority
+        );
+    }
+
+    private static DerivedRecapFullRebuildAuthorityPreparation
+        ReopenSealed(
+        SessionJournalEngine engine,
+        string campaignId,
+        ISessionSelectedLineageAuditPageSnapshot snapshot,
+        CancellationToken cancellationToken
+    ) {
+        using SessionSelectedLineageForwardCursor cursor =
+            engine.OpenSelectedLineageForwardCursor(
+                snapshot,
+                cancellationToken
+            );
+        return new(
+            campaignId,
+            cursor.Authority
         );
     }
 

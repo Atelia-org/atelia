@@ -35,10 +35,12 @@ public sealed class DerivedRecapFullRebuildAuthorityPreparerTests
             DerivedRecapRebuildSpoolStore.Open(path, refId);
         SessionJournalReadDiagnostics before =
             engine.CaptureReadDiagnostics();
+        string campaignId = Guid.NewGuid().ToString("N");
         DerivedRecapRebuildSpoolDescriptor descriptor =
             await DerivedRecapFullRebuildAuthorityPreparer.BeginAsync(
                 engine,
                 spool,
+                campaignId,
                 new DerivedRecapRebuildSpoolLimits(
                     PageEventCount: 64,
                     MaximumPageBytes: 512 * 1024,
@@ -46,11 +48,19 @@ public sealed class DerivedRecapFullRebuildAuthorityPreparerTests
                     MaximumTotalEncodedBytes: 16 * 1024 * 1024
                 )
             );
+        DerivedRecapRebuildSpoolDescriptor repeatedBegin =
+            await DerivedRecapFullRebuildAuthorityPreparer.BeginAsync(
+                engine,
+                spool,
+                campaignId,
+                descriptor.Limits
+            );
         SessionJournalReadDiagnostics beginReads =
             engine.CaptureReadDiagnostics() - before;
 
         Assert.Equal(0, beginReads.HeaderPreviewReadCount);
         Assert.Equal(0, beginReads.PayloadReadCount);
+        Assert.Equal(descriptor, repeatedBegin);
         await using (DerivedRecapRebuildSpoolWriter unstarted =
                      await spool.OpenWriterAsync(
                          descriptor.CampaignId
@@ -67,6 +77,21 @@ public sealed class DerivedRecapFullRebuildAuthorityPreparerTests
             );
         Assert.Equal(523, prepared.RawAuthority.EventCount);
         Assert.Equal(64, prepared.RawAuthority.MaximumResidentEntryCount);
+        DerivedRecapFullRebuildAuthorityPreparation repeatedResume =
+            await DerivedRecapFullRebuildAuthorityPreparer.ResumeAsync(
+                engine,
+                spool,
+                descriptor.CampaignId
+            );
+        Assert.Equal(campaignId, repeatedResume.CampaignId);
+        Assert.Equal(
+            prepared.RawAuthority.Capture,
+            repeatedResume.RawAuthority.Capture
+        );
+        Assert.Equal(
+            prepared.RawAuthority.EventCount,
+            repeatedResume.RawAuthority.EventCount
+        );
 
         using SessionSelectedLineageForwardCursor cursor =
             await DerivedRecapFullRebuildAuthorityPreparer

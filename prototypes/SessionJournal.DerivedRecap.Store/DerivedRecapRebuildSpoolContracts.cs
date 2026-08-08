@@ -45,6 +45,13 @@ public sealed record DerivedRecapRebuildSpoolSeal(
     SessionEventKind? HeadKind
 );
 
+public sealed class DerivedRecapRebuildSpoolSealedException
+    : InvalidOperationException {
+    internal DerivedRecapRebuildSpoolSealedException()
+        : base("Sealed rebuild spool cannot be reopened for writing.") {
+    }
+}
+
 public sealed class DerivedRecapRebuildSpoolWriter : IAsyncDisposable {
     private readonly DerivedRecapRebuildSpoolStore _owner;
     private readonly FileStream _lock;

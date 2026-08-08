@@ -70,8 +70,9 @@ stage-qualified `FullRebuildRequired`；不会创建rebuild spool或退回full-l
 Building Resume与Published Restore仍保留各自stage-qualified `BeyondPrefix`，因为它们必须恢复已冻结的
 exact artifact，而不是启动新rebuild campaign。
 
-显式operator/rebuild流程另走`DerivedRecapFullRebuildAuthorityPreparer`：`BeginAsync`只冻结exact
-`RefId + raw head`并创建零页campaign，caller先取得campaign id；`ResumeAsync`分页审计并seal；
+显式operator/rebuild流程另走`DerivedRecapFullRebuildAuthorityPreparer`：caller先持有一个safe campaign id，
+`BeginAsync`只冻结exact `RefId + raw head`并幂等创建零页campaign；`ResumeAsync`分页审计并seal，且在
+seal已durable、response尚未返回的crash后可幂等重开；
 `OpenForwardCursorAsync`在重新绑定当前raw authority后，从bootstrap到captured head顺序物化bounded
 range。spool只保存content-free address/header/provenance，不保存event body、prompt、recap或epoch/policy
 决定。R3A尚不选择cadence epoch、不运行Maintainer，也不reset或写Building；这些consumer语义属于R3C。

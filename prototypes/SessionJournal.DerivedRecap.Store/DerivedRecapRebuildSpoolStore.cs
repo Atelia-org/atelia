@@ -73,12 +73,15 @@ public sealed class DerivedRecapRebuildSpoolStore {
 
     public async ValueTask<DerivedRecapRebuildSpoolDescriptor>
         CreateCampaignAsync(
+        string campaignId,
         SessionSelectedLineageAuditCapture capture,
         DerivedRecapRebuildSpoolLimits limits,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(capture);
         ArgumentNullException.ThrowIfNull(limits);
+        campaignId = DerivedRecapRebuildSpoolCodec
+            .ValidateCampaignId(campaignId);
         if (capture.BranchRefId != RefId) {
             throw new ArgumentException(
                 "Rebuild capture belongs to another RefId.",
@@ -93,13 +96,23 @@ public sealed class DerivedRecapRebuildSpoolStore {
                 )
                 .ConfigureAwait(false);
         CleanupAbandonedStagingDirectories();
-        string campaignId = Guid.NewGuid().ToString("N");
         var descriptor = new DerivedRecapRebuildSpoolDescriptor(
             campaignId,
             capture,
             limits
         );
         DerivedRecapRebuildSpoolCodec.ValidateDescriptor(descriptor);
+        string final = CampaignRoot(campaignId);
+        if (Directory.Exists(final)) {
+            DerivedRecapRebuildSpoolCheckpoint existing =
+                ReadAndValidateCheckpoint(campaignId);
+            if (existing.Descriptor != descriptor) {
+                throw new InvalidDataException(
+                    "Existing rebuild campaign does not match the requested capture and limits."
+                );
+            }
+            return existing.Descriptor;
+        }
         var checkpoint = new DerivedRecapRebuildSpoolCheckpoint(
             descriptor,
             CommittedPageCount: 0,
@@ -114,7 +127,6 @@ public sealed class DerivedRecapRebuildSpoolStore {
             _refCampaignsRoot,
             $".{campaignId}.{Guid.NewGuid():N}.tmp"
         );
-        string final = CampaignRoot(campaignId);
         try {
             _fileSystem.EnsureDirectoryDurable(staging);
             _fileSystem.EnsureDirectoryDurable(
@@ -165,9 +177,7 @@ public sealed class DerivedRecapRebuildSpoolStore {
             DerivedRecapRebuildSpoolCheckpoint checkpoint =
                 ReadAndValidateCheckpoint(campaignId);
             if (File.Exists(SealPath(campaignId))) {
-                throw new InvalidOperationException(
-                    "Sealed rebuild spool cannot be reopened for writing."
-                );
+                throw new DerivedRecapRebuildSpoolSealedException();
             }
             return new DerivedRecapRebuildSpoolWriter(
                 this,
@@ -186,6 +196,32 @@ public sealed class DerivedRecapRebuildSpoolStore {
     > OpenSealedSnapshotAsync(
         string campaignId,
         CancellationToken cancellationToken = default
+    ) => await OpenSealedSnapshotCoreAsync(
+            campaignId,
+            requireSealed: true,
+            cancellationToken
+        )
+        .ConfigureAwait(false)
+        ?? throw new InvalidDataException(
+            "Rebuild spool is not sealed."
+        );
+
+    public ValueTask<ISessionSelectedLineageAuditPageSnapshot?>
+        TryOpenSealedSnapshotAsync(
+        string campaignId,
+        CancellationToken cancellationToken = default
+    ) => OpenSealedSnapshotCoreAsync(
+        campaignId,
+        requireSealed: false,
+        cancellationToken
+    );
+
+    private async ValueTask<
+        ISessionSelectedLineageAuditPageSnapshot?
+    > OpenSealedSnapshotCoreAsync(
+        string campaignId,
+        bool requireSealed,
+        CancellationToken cancellationToken
     ) {
         campaignId = DerivedRecapRebuildSpoolCodec
             .ValidateCampaignId(campaignId);
@@ -198,9 +234,20 @@ public sealed class DerivedRecapRebuildSpoolStore {
         try {
             DerivedRecapRebuildSpoolCheckpoint checkpoint =
                 ReadAndValidateCheckpoint(campaignId);
-            if (!checkpoint.IsCaptureComplete) {
+            bool hasSeal = File.Exists(SealPath(campaignId));
+            if (!hasSeal) {
+                if (!requireSealed) {
+                    await readLock.DisposeAsync()
+                        .ConfigureAwait(false);
+                    return null;
+                }
                 throw new InvalidDataException(
                     "Unsealed or partial rebuild spool cannot be consumed."
+                );
+            }
+            if (!checkpoint.IsCaptureComplete) {
+                throw new InvalidDataException(
+                    "Rebuild spool has a seal before capture completion."
                 );
             }
             byte[] sealBytes = ReadBounded(
