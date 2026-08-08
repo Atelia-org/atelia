@@ -52,16 +52,40 @@ internal static class CoherentArtifactSetTestFixture {
             "Coherent request is missing the exact derived context prefix."
         );
         var world = Assert.IsType<ObservationMessage>(request.Context[0]);
-        Assert.Contains(
-            "## fixture.world-understanding",
-            world.Content,
-            StringComparison.Ordinal
-        );
+        AssertRecapBlock(world.Content, "bounded world ");
         var autobiography =
             Assert.IsType<ActionMessage>(request.Context[1]);
-        Assert.Contains(
-            "## fixture.autobiography",
+        AssertRecapBlock(
             autobiography.GetFlattenedText(),
+            "bounded self "
+        );
+    }
+
+    private static void AssertRecapBlock(
+        string? rendered,
+        string expectedBodyPrefix
+    ) {
+        Assert.NotNull(rendered);
+        const string InfoLineSuffix = "recap-block\n";
+        int infoLineStart = rendered.IndexOf(
+            InfoLineSuffix,
+            StringComparison.Ordinal
+        );
+        Assert.True(
+            infoLineStart >= 4,
+            "Recap block is missing its minimum tilde fence."
+        );
+        string fence = rendered[..infoLineStart];
+        Assert.All(fence, static character => Assert.Equal('~', character));
+        int bodyStart = infoLineStart + InfoLineSuffix.Length;
+        Assert.StartsWith(
+            expectedBodyPrefix,
+            rendered[bodyStart..],
+            StringComparison.Ordinal
+        );
+        Assert.EndsWith(
+            "\n" + fence,
+            rendered,
             StringComparison.Ordinal
         );
     }

@@ -70,11 +70,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Collection(
             request.Context,
             first => Assert.Equal(
-                "## roleplay.world-understanding\n\nmemory observation",
+                "~~~~recap-block\nmemory observation\n~~~~",
                 Assert.IsType<ObservationMessage>(first).Content
             ),
             second => Assert.Equal(
-                "## roleplay.first-person-autobiography\n\nmemory action",
+                "~~~~recap-block\nmemory action\n~~~~",
                 Assert.IsType<ActionMessage>(second).GetFlattenedText()
             ),
             third => Assert.Equal("new observation", Assert.IsType<ObservationMessage>(third).Content)
@@ -107,7 +107,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             observation => {
                 Assert.Equal("", observation.ContextSnapshot.SystemPromptFragment);
                 Assert.Equal(
-                    "## roleplay.world-understanding\n\nmemory observation",
+                    "~~~~recap-block\nmemory observation\n~~~~",
                     observation.ContextSnapshot.ObservationMessage
                 );
                 Assert.Equal("", observation.ContextSnapshot.ActionMessage);
@@ -116,7 +116,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 Assert.Equal("", autobiography.ContextSnapshot.SystemPromptFragment);
                 Assert.Equal("", autobiography.ContextSnapshot.ObservationMessage);
                 Assert.Equal(
-                    "## roleplay.first-person-autobiography\n\nmemory action",
+                    "~~~~recap-block\nmemory action\n~~~~",
                     autobiography.ContextSnapshot.ActionMessage
                 );
             }
@@ -189,17 +189,17 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             return currentResponse switch {
                 0 => new CompletionResult(
                     new ActionMessage([
-                        new ActionBlock.ToolCall(
-                        new RawToolCall("noop", "call-1", "{}")
-                    )
+                            new ActionBlock.ToolCall(
+                                new RawToolCall("noop", "call-1", "{}")
+                            )
                     ]),
                     new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
                 ),
                 1 => new CompletionResult(
                     new ActionMessage([
-                        new ActionBlock.ToolCall(
-                        new RawToolCall("noop", "call-2", "{}")
-                    )
+                            new ActionBlock.ToolCall(
+                                new RawToolCall("noop", "call-2", "{}")
+                            )
                     ]),
                     new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
                 ),
@@ -370,7 +370,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         var client = new CapturingCompletionClient(request => {
             ActionMessage message = responseIndex++ == 0
                 ? new ActionMessage([
-                    new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
+                        new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
                 ])
                 : new ActionMessage([new ActionBlock.Text("recovered answer")]);
             return new CompletionResult(
@@ -1037,6 +1037,101 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             second => Assert.IsType<ActionMessage>(second)
         );
         Assert.DoesNotContain(context, static message => message is SessionContextHeader);
+    }
+
+    [Theory]
+    [InlineData(
+        "plain recap",
+        "~~~~recap-block\nplain recap\n~~~~"
+    )]
+    [InlineData(
+        "before\n~~~~\nafter",
+        "~~~~~recap-block\nbefore\n~~~~\nafter\n~~~~~"
+    )]
+    [InlineData(
+        "already terminated\n",
+        "~~~~recap-block\nalready terminated\n~~~~"
+    )]
+    [InlineData(
+        "```markdown\n<x>&y\n```",
+        "~~~~recap-block\n```markdown\n<x>&y\n```\n~~~~"
+    )]
+    public void CoherentRecipeCreateOneHotSnapshot_UsesIndependentDynamicTildeFence(
+        string exactText,
+        string expected
+    ) {
+        SessionRequestArtifactContextSnapshot snapshot =
+            SessionCoherentRequestRecipe.CreateOneHotSnapshot(
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.Observation,
+                    "routing.identity-is-not-a-title"
+                ),
+                exactText
+            );
+
+        Assert.Equal(expected, snapshot.ObservationMessage);
+        Assert.Equal("", snapshot.SystemPromptFragment);
+        Assert.Equal("", snapshot.ActionMessage);
+        Assert.DoesNotContain(
+            "routing.identity-is-not-a-title",
+            snapshot.ObservationMessage,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Theory]
+    [InlineData(ContextHeaderCarrier.System)]
+    [InlineData(ContextHeaderCarrier.Observation)]
+    [InlineData(ContextHeaderCarrier.Action)]
+    public void CoherentRecipeCreateOneHotSnapshot_PopulatesOnlyTargetCarrier(
+        ContextHeaderCarrier carrier
+    ) {
+        SessionRequestArtifactContextSnapshot snapshot =
+            SessionCoherentRequestRecipe.CreateOneHotSnapshot(
+                new ContextHeaderBlockPath(carrier, "routing-key"),
+                "recap"
+            );
+        const string Expected = "~~~~recap-block\nrecap\n~~~~";
+
+        Assert.Equal(
+            carrier is ContextHeaderCarrier.System ? Expected : "",
+            snapshot.SystemPromptFragment
+        );
+        Assert.Equal(
+            carrier is ContextHeaderCarrier.Observation ? Expected : "",
+            snapshot.ObservationMessage
+        );
+        Assert.Equal(
+            carrier is ContextHeaderCarrier.Action ? Expected : "",
+            snapshot.ActionMessage
+        );
+    }
+
+    [Fact]
+    public void CoherentRecipeAggregate_PreservesPerBlockFenceLength() {
+        var first = SessionCoherentRequestRecipe.CreateOneHotSnapshot(
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.Observation,
+                "first"
+            ),
+            "plain"
+        );
+        var second = SessionCoherentRequestRecipe.CreateOneHotSnapshot(
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.Observation,
+                "second"
+            ),
+            "contains ~~~~ run"
+        );
+
+        SessionRequestArtifactContextSnapshot aggregate =
+            SessionCoherentRequestRecipe.Aggregate([first, second]);
+
+        Assert.Equal(
+            "~~~~recap-block\nplain\n~~~~\n\n"
+            + "~~~~~recap-block\ncontains ~~~~ run\n~~~~~",
+            aggregate.ObservationMessage
+        );
     }
 
 

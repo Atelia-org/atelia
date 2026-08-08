@@ -369,6 +369,28 @@ Legacy importer必须通过public create-only `SessionJournalLegacyImportWriter`
 导入当前必需的 observation、system-prompt和imported-action追加能力。产品迁移流程优先使用
 [`SessionJournal.Cli import-legacy-json`](../SessionJournal.Cli/README.md#import-legacy-json)。
 
+## Recap block request framing
+
+`SessionContextContribution.ExactText`与DerivedRecap Store中的block content保持裸文本。只在新request
+进入Prepared之前，core-owned `SessionCoherentRequestRecipe`才把每个contribution单独包成动态
+tilde fence，再按`ContextHeaderCarrier`放入System、Observation或Action：
+
+```text
+~~~~recap-block
+exact recap content
+~~~~
+```
+
+- `recap-block`只是结构性info string；routing `BlockKey`不渲染成标题。需要面向模型的语义或文学性
+  标题时，由concrete Maintainer把它写进block正文。
+- 每块独立扫描正文中的最长连续`~` run；fence长度为`max(4, longestRun + 1)`。因此一块中的
+  delimiter选择不会扩大相邻块的delimiter。
+- 正文不转义、不规范化换行。正文没有以LF结束时，renderer只在closing fence前补一个framing LF。
+- Store block、manifest、publication与capability fingerprint均不包含这层request decoration，故其
+  schema和identity不变。
+- `CompletionRequestPrepared` v5保存并commit already-rendered exact context snapshots。Prepared/Started
+  recovery直接使用冻结snapshot，不读取Store，也不按current renderer重新包裹。
+
 ## Current wire 快速检查
 
 repo schema：
