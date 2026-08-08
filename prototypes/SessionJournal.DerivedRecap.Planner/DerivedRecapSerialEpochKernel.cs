@@ -151,8 +151,7 @@ internal static class DerivedRecapSerialEpochKernel {
             ));
         }
 
-        int requiredCalls = pending.Count(static item =>
-            item.PreflightFailure is null);
+        int requiredCalls = pending.Count;
         if (requiredCalls > maxMaintainerCallsPerEpoch) {
             throw new InvalidDataException(
                 $"Pending epoch roster requires {requiredCalls} calls; "

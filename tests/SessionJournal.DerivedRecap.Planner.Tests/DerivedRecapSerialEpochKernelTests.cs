@@ -116,6 +116,39 @@ public sealed class DerivedRecapSerialEpochKernelTests {
     }
 
     [Fact]
+    public async Task PendingRosterCapPrecedesMissingBindingResult() {
+        RecapEpochBlockDefinition[] roster = Roster();
+        DerivedRecapEpochInput input = DerivedRecapV8Codec.CreateEpochInput(
+            Boundary(A1),
+            Boundary(A2),
+            rawEventCount: 1,
+            Hash0,
+            [new ObservationMessage("A")],
+            RecapEpochPrevious.Empty.Instance
+        );
+        DerivedRecapEpochManifest manifest = Manifest(input, roster);
+        var self = new FakeMaintainer(
+            roster[0],
+            new RecapMaintenanceSuccess.Updated("self")
+        );
+
+        InvalidDataException exception = await Assert.ThrowsAsync<
+            InvalidDataException
+        >(async () => await DerivedRecapSerialEpochKernel.ExecuteAsync(
+            Snapshot(manifest, input),
+            new RecapBlockMaintainerRegistry([self]),
+            maxMaintainerCallsPerEpoch: 1,
+            (_, _, _) => throw new InvalidOperationException(
+                "must not install"
+            ),
+            CancellationToken.None
+        ));
+
+        Assert.Contains("requires 2 calls", exception.Message);
+        Assert.Empty(self.Inputs);
+    }
+
+    [Fact]
     public async Task UnavailableFinalSlotMakesZeroCalls() {
         RecapEpochBlockDefinition[] roster = Roster();
         DerivedRecapEpochInput input = DerivedRecapV8Codec.CreateEpochInput(
