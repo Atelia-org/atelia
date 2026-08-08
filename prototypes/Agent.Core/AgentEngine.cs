@@ -657,7 +657,15 @@ public partial class AgentEngine {
         );
         var toolDefinitions = session.VisibleDefinitions;
 
-        var request = new CompletionRequest(resolvedProfile.ModelId, SystemPrompt, liveContext, toolDefinitions);
+        var request = new CompletionRequest(
+            resolvedProfile.ModelId,
+            new CompletionPromptPrefix(
+                SystemPrompt,
+                CompletionOutputContract.ProviderDefault(toolDefinitions),
+                liveContext
+            ),
+            tailMessages: []
+        );
 
         var result = await resolvedProfile.Client.StreamCompletionAsync(request, completionObserver, cancellationToken).ConfigureAwait(false);
         EnsureCompletionInvocationMatchesExpected(invocation, result.Invocation);

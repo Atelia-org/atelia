@@ -173,8 +173,10 @@ public sealed class SessionRequestManifestCodecTests {
         var descriptor = new CompletionDescriptor("provider", "api", "model-A");
         var request = new CompletionRequest(
             "model-A",
-            "system",
-            [
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault([new ToolDefinition("sample", "sample tool", new ToolSchema.Object())]),
+                [
                 new ObservationMessage("observe"),
                 new ActionMessage(
                     [
@@ -193,9 +195,10 @@ public sealed class SessionRequestManifestCodecTests {
                         "result"
                     )]
                 )
-            ],
-            [new ToolDefinition("sample", "sample tool", new ToolSchema.Object())],
-            512
+            ]
+            ),
+            tailMessages: [],
+            maxTokens: 512
         );
 
         byte[] canonical = SessionRequestCanonicalizer.Canonicalize(request);
@@ -317,8 +320,10 @@ public sealed class SessionRequestManifestCodecTests {
         ImmutableArray<ToolDefinition> tools = CreateToolDefinitions();
         var request = new CompletionRequest(
             "model-α",
-            "system <raw> & prompt",
-            [
+            new CompletionPromptPrefix(
+                "system <raw> & prompt",
+                CompletionOutputContract.ProviderDefault(tools),
+                [
                 new ObservationMessage("observe"),
                 new ActionMessage(
                     [
@@ -346,9 +351,10 @@ public sealed class SessionRequestManifestCodecTests {
                         "ok"
                     )]
                 )
-            ],
-            tools,
-            4096
+            ]
+            ),
+            tailMessages: [],
+            maxTokens: 4096
         );
 
         byte[] canonical = SessionRequestCanonicalizer.Canonicalize(request);
@@ -367,10 +373,13 @@ public sealed class SessionRequestManifestCodecTests {
     public void CanonicalRequest_CommitmentChangesForEachOfFiveFields() {
         var baseline = new CompletionRequest(
             "model",
-            "system",
-            [new ObservationMessage("observation")],
-            [],
-            100
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault([]),
+                [new ObservationMessage("observation")]
+            ),
+            tailMessages: [],
+            maxTokens: 100
         );
         string hash = SessionRequestCanonicalizer.CreateCommitment(
             baseline
@@ -381,32 +390,82 @@ public sealed class SessionRequestManifestCodecTests {
 
         Assert.NotEqual(hash,
             SessionRequestCanonicalizer.CreateCommitment(
-                baseline with { ModelId = "model-2" }
+                RebuildRequest(baseline, modelId: "model-2")
             ).Sha256
         );
         Assert.NotEqual(hash,
             SessionRequestCanonicalizer.CreateCommitment(
-                baseline with { SystemPrompt = "system-2" }
+                RebuildRequest(baseline, systemPrompt: "system-2")
             ).Sha256
         );
         Assert.NotEqual(hash,
             SessionRequestCanonicalizer.CreateCommitment(
-                baseline with {
-                    Context = [new ObservationMessage("observation-2")]
-                }
+                RebuildRequest(
+                    baseline,
+                    sharedContextMessages: [
+                        new ObservationMessage("observation-2")
+                    ]
+                )
             ).Sha256
         );
         Assert.NotEqual(hash,
             SessionRequestCanonicalizer.CreateCommitment(
-                baseline with { Tools = changedTools }
+                RebuildRequest(baseline, tools: changedTools)
             ).Sha256
         );
         Assert.NotEqual(hash,
             SessionRequestCanonicalizer.CreateCommitment(
-                baseline with { MaxTokens = 101 }
+                RebuildRequest(baseline, maxTokens: 101)
             ).Sha256
         );
     }
+
+    [Fact]
+    public void CanonicalRequestV1_RejectsNonDefaultOutputPolicy() {
+        var request = new CompletionRequest(
+            "model",
+            new CompletionPromptPrefix(
+                "system",
+                new CompletionOutputContract(
+                    [],
+                    CompletionToolChoice.Auto
+                ),
+                [new ObservationMessage("observation")]
+            ),
+            tailMessages: []
+        );
+
+        NotSupportedException exception = Assert.Throws<NotSupportedException>(
+            () => SessionRequestCanonicalizer.Canonicalize(request)
+        );
+
+        Assert.Contains(
+            "canonical-json v1",
+            exception.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    private static CompletionRequest RebuildRequest(
+        CompletionRequest source,
+        string? modelId = null,
+        string? systemPrompt = null,
+        IReadOnlyList<IHistoryMessage>? sharedContextMessages = null,
+        ImmutableArray<ToolDefinition>? tools = null,
+        int? maxTokens = null
+    ) => new(
+        modelId ?? source.ModelId,
+        new CompletionPromptPrefix(
+            systemPrompt ?? source.PromptPrefix.SystemPrompt,
+            CompletionOutputContract.ProviderDefault(
+                tools ?? source.PromptPrefix.OutputContract.Tools
+            ),
+            sharedContextMessages
+                ?? source.PromptPrefix.SharedContextMessages
+        ),
+        source.TailMessages,
+        maxTokens ?? source.MaxTokens
+    );
 
     [Fact]
     public void CanonicalRequest_RejectsContextHeaderUnknownAndDerivedHistoryMessages() {
@@ -415,10 +474,13 @@ public sealed class SessionRequestManifestCodecTests {
             SessionRequestCanonicalizer.Canonicalize(
                 new CompletionRequest(
                     "model",
-                    "system",
-                    [new UnsupportedHistoryMessage(HistoryMessageKind.ContextHeader)],
-                    [],
-                    null
+                    new CompletionPromptPrefix(
+                        "system",
+                        CompletionOutputContract.ProviderDefault([]),
+                        [new UnsupportedHistoryMessage(HistoryMessageKind.ContextHeader)]
+                    ),
+                    tailMessages: [],
+                    maxTokens: null
                 )
             )
         );
@@ -427,10 +489,13 @@ public sealed class SessionRequestManifestCodecTests {
             SessionRequestCanonicalizer.Canonicalize(
                 new CompletionRequest(
                     "model",
-                    "system",
-                    [new UnsupportedHistoryMessage(HistoryMessageKind.Observation)],
-                    [],
-                    null
+                    new CompletionPromptPrefix(
+                        "system",
+                        CompletionOutputContract.ProviderDefault([]),
+                        [new UnsupportedHistoryMessage(HistoryMessageKind.Observation)]
+                    ),
+                    tailMessages: [],
+                    maxTokens: null
                 )
             )
         );
@@ -439,10 +504,13 @@ public sealed class SessionRequestManifestCodecTests {
             SessionRequestCanonicalizer.Canonicalize(
                 new CompletionRequest(
                     "model",
-                    "system",
-                    [new DerivedObservationMessage("derived")],
-                    [],
-                    null
+                    new CompletionPromptPrefix(
+                        "system",
+                        CompletionOutputContract.ProviderDefault([]),
+                        [new DerivedObservationMessage("derived")]
+                    ),
+                    tailMessages: [],
+                    maxTokens: null
                 )
             )
         );

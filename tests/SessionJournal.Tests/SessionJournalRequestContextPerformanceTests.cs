@@ -267,7 +267,7 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
         Assert.Equal("tool-complete", result.Message.GetFlattenedText());
         Assert.Equal(3, client.Requests.Count);
         Assert.All(client.Requests, request =>
-            Assert.Single(request.Tools)
+            Assert.Single(request.PromptPrefix.OutputContract.Tools)
         );
         Assert.Equal(2, tool.OperationIds.Count);
         Assert.All(tool.OperationIds, operationId =>

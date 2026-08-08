@@ -5045,7 +5045,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     private static void AssertSingleObservationRequestContent(CompletionRequest request, string expectedContent) {
-        var observation = Assert.IsType<ObservationMessage>(Assert.Single(request.Context));
+        var observation = Assert.IsType<ObservationMessage>(Assert.Single(request.PromptPrefix.SharedContextMessages));
         Assert.Equal(expectedContent, observation.Content);
     }
 
@@ -5054,7 +5054,7 @@ public sealed class AgentWorkspacePersistenceTests {
         string expectedContent,
         params string[] expectedToolCallIds
     ) {
-        var toolResults = Assert.IsType<ToolResultsMessage>(request.Context[^1]);
+        var toolResults = Assert.IsType<ToolResultsMessage>(request.PromptPrefix.SharedContextMessages[^1]);
         Assert.Equal(expectedContent, toolResults.Content);
         Assert.Equal(expectedToolCallIds, toolResults.Results.Select(static result => result.ToolCallId));
     }

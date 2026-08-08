@@ -32,7 +32,7 @@ public sealed class AgentEngineCompactionInjectionTests {
         await engine.StepAsync(profile);
 
         var request = Assert.Single(client.Requests);
-        var actionMessages = request.Context.OfType<ActionMessage>().ToArray();
+        var actionMessages = request.PromptPrefix.SharedContextMessages.OfType<ActionMessage>().ToArray();
         Assert.Contains(actionMessages, static message => message.GetFlattenedText().Contains("injected-thought", StringComparison.Ordinal));
         Assert.IsType<RecapEntry>(engine.State.RecentHistory[0]);
     }

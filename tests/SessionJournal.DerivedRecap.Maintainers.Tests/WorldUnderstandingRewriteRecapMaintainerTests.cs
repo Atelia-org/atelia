@@ -12,13 +12,13 @@ public class WorldUnderstandingRewriteProfileTests {
         completionClient.Enqueue(
             request => {
                 // Rewrite maintainer 固定为单次调用，不暴露工具。
-                Assert.Empty(request.Tools);
+                Assert.Empty(request.PromptPrefix.OutputContract.Tools);
                 // system prompt 来自嵌入的 world-understanding rewrite 资源，且能被正确加载（非空）。
-                Assert.Equal(WorldUnderstandingRewriteProfiles.Default.SystemPrompt, request.SystemPrompt);
-                Assert.False(string.IsNullOrWhiteSpace(request.SystemPrompt));
+                Assert.Equal(WorldUnderstandingRewriteProfiles.Default.SystemPrompt, request.PromptPrefix.SystemPrompt);
+                Assert.False(string.IsNullOrWhiteSpace(request.PromptPrefix.SystemPrompt));
                 // 旧世界理解只存在于 ContextHeader；末尾 instruction 不再重复注入。
-                var instruction = Assert.IsType<ObservationMessage>(request.Context[^1]);
-                Assert.Equal(1, CountContextOccurrences(request.Context, "### 刘世超\n\n开发者。"));
+                var instruction = Assert.IsType<ObservationMessage>(request.PromptPrefix.SharedContextMessages[^1]);
+                Assert.Equal(1, CountContextOccurrences(request.PromptPrefix.SharedContextMessages, "### 刘世超\n\n开发者。"));
                 Assert.DoesNotContain("### 刘世超\n\n开发者。", instruction.Content);
                 Assert.DoesNotContain("Current block:", instruction.Content);
                 Assert.Contains("上下文开头呈现了Galatea目前版本的世界理解", instruction.Content);
@@ -41,20 +41,20 @@ public class WorldUnderstandingRewriteProfileTests {
         completionClient.Enqueue(request => {
             Assert.Equal(
                 1,
-                CountContextOccurrences(request.Context, "previous-self-A")
+                CountContextOccurrences(request.PromptPrefix.SharedContextMessages, "previous-self-A")
             );
             Assert.Equal(
                 1,
-                CountContextOccurrences(request.Context, "previous-peer-C")
+                CountContextOccurrences(request.PromptPrefix.SharedContextMessages, "previous-peer-C")
             );
             Assert.Equal(
                 1,
-                CountContextOccurrences(request.Context, "new-history-B")
+                CountContextOccurrences(request.PromptPrefix.SharedContextMessages, "new-history-B")
             );
             Assert.Equal(
                 0,
                 CountContextOccurrences(
-                    request.Context,
+                    request.PromptPrefix.SharedContextMessages,
                     "old-block-must-not-be-injected"
                 )
             );

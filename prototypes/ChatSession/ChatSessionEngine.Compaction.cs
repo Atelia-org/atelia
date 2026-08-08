@@ -120,10 +120,15 @@ public sealed partial class ChatSessionEngine {
         var summarizeMessages = ProjectForSummarization(prefix, summarizePrompt);
 
         var completionRequest = new CompletionRequest(
-            ModelId: _runtime.ModelId,
-            SystemPrompt: summarizeSystemPrompt,
-            Context: summarizeMessages,
-            Tools: System.Collections.Immutable.ImmutableArray<ToolDefinition>.Empty
+            _runtime.ModelId,
+            new CompletionPromptPrefix(
+                summarizeSystemPrompt,
+                CompletionOutputContract.ProviderDefault(
+                    System.Collections.Immutable.ImmutableArray<ToolDefinition>.Empty
+                ),
+                summarizeMessages
+            ),
+            tailMessages: []
         );
 
         var result = await _runtime.CompletionClient.StreamCompletionAsync(completionRequest, null, ct)

@@ -2847,11 +2847,14 @@ public sealed partial class SessionJournalEngine : IDisposable {
             )).ToImmutableArray()
         );
         var request = new CompletionRequest(
-            ModelId: governingSetup.RuntimeConfig.ModelId,
-            SystemPrompt: materialization.SystemPrompt,
-            Context: materialization.Context,
-            Tools: tools,
-            MaxTokens: runtime.MaxTokens
+            governingSetup.RuntimeConfig.ModelId,
+            new CompletionPromptPrefix(
+                materialization.SystemPrompt,
+                CompletionOutputContract.ProviderDefault(tools),
+                materialization.Context
+            ),
+            tailMessages: [],
+            maxTokens: runtime.MaxTokens
         );
         if (runtime.MaximumCanonicalRequestBytes
                 is long maximumCanonicalRequestBytes
@@ -4249,9 +4252,12 @@ public sealed partial class SessionJournalEngine : IDisposable {
         }
         return new CompletionRequest(
             governingSetup.RuntimeConfig.ModelId,
-            systemPrompt,
-            context.MoveToImmutable(),
-            tools,
+            new CompletionPromptPrefix(
+                systemPrompt,
+                CompletionOutputContract.ProviderDefault(tools),
+                context.MoveToImmutable()
+            ),
+            tailMessages: [],
             runtime.MaxTokens
         );
     }

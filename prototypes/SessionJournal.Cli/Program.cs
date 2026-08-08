@@ -253,11 +253,13 @@ internal static class Program {
             new CompletionCallLogContext(Command: "llm-smoke")
         );
         var request = new CompletionRequest(
-            ModelId: connection.ModelId,
-            SystemPrompt:
+            connection.ModelId,
+            new CompletionPromptPrefix(
                 "You are a concise smoke-test assistant. Reply briefly.",
-            Context: [new ObservationMessage(message)],
-            Tools: []
+                CompletionOutputContract.ProviderDefault([]),
+                [new ObservationMessage(message)]
+            ),
+            tailMessages: []
         );
 
         CompletionResult result =

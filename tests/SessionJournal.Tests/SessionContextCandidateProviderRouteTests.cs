@@ -743,10 +743,13 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         int exactBytes = SessionRequestCanonicalizer.Canonicalize(
             new CompletionRequest(
                 "model-A",
-                "system-A",
-                [new ObservationMessage(observation)],
-                [],
-                MaxTokens: 256
+                new CompletionPromptPrefix(
+                    "system-A",
+                    CompletionOutputContract.ProviderDefault([]),
+                    [new ObservationMessage(observation)]
+                ),
+                tailMessages: [],
+                maxTokens: 256
             )
         ).Length;
         SessionRuntime runtime = CreateRuntime(client, source) with {
@@ -951,7 +954,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         Assert.Equal(0, source.MaterializationCount);
         CompletionRequest request = Assert.Single(client.Requests);
         Assert.Collection(
-            request.Context,
+            request.PromptPrefix.SharedContextMessages,
             message => Assert.Equal(
                 "settled observation",
                 Assert.IsType<ObservationMessage>(message).Content
@@ -1006,7 +1009,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         Assert.Equal(0, source.MaterializationCount);
         CompletionRequest request = Assert.Single(client.Requests);
         Assert.Collection(
-            request.Context,
+            request.PromptPrefix.SharedContextMessages,
             message => Assert.Equal(
                 "settled observation",
                 Assert.IsType<ObservationMessage>(message).Content

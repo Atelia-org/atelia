@@ -68,7 +68,7 @@ public sealed class AgentEngineEventAndToolAccessTests {
         await engine.StepAsync(profile);
 
         var request = Assert.Single(client.Requests);
-        var visibleTool = Assert.Single(request.Tools);
+        var visibleTool = Assert.Single(request.PromptPrefix.OutputContract.Tools);
         Assert.Equal("alpha", visibleTool.Name);
     }
 
@@ -96,7 +96,7 @@ public sealed class AgentEngineEventAndToolAccessTests {
         await engine.StepAsync(profile);
 
         var request = Assert.Single(client.Requests);
-        var visibleTool = Assert.Single(request.Tools);
+        var visibleTool = Assert.Single(request.PromptPrefix.OutputContract.Tools);
         Assert.Equal("gamma", visibleTool.Name);
     }
 

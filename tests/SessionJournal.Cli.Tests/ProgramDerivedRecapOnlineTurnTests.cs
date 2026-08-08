@@ -907,19 +907,19 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             );
         }
         CompletionRequest request = Assert.Single(factory.Requests);
-        Assert.Equal(33, request.Context.Count);
+        Assert.Equal(33, request.PromptPrefix.SharedContextMessages.Length);
         Assert.Equal(
             "observation 0",
-            Assert.IsType<ObservationMessage>(request.Context[0]).Content
+            Assert.IsType<ObservationMessage>(request.PromptPrefix.SharedContextMessages[0]).Content
         );
         Assert.Equal(
             "action 0",
-            Assert.IsType<ActionMessage>(request.Context[1])
+            Assert.IsType<ActionMessage>(request.PromptPrefix.SharedContextMessages[1])
                 .GetFlattenedText()
         );
         Assert.Equal(
             "new online observation",
-            Assert.IsType<ObservationMessage>(request.Context[^1]).Content
+            Assert.IsType<ObservationMessage>(request.PromptPrefix.SharedContextMessages[^1]).Content
         );
         using var reopened =
             SJ.SessionJournalEngine.OpenReadOnly(path);

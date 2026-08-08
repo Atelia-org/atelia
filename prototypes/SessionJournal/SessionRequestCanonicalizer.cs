@@ -16,20 +16,30 @@ internal static class SessionRequestCanonicalizer {
 
     public static byte[] Canonicalize(CompletionRequest request) {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.Context);
+        CompletionOutputContract outputContract =
+            request.PromptPrefix.OutputContract;
+        if (!outputContract.IsProviderDefault) {
+            throw new NotSupportedException(
+                "Completion request canonical-json v1 cannot represent non-default tool-choice or parallel-call policy."
+            );
+        }
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
             writer.WriteStartObject();
             writer.WriteString("modelId", request.ModelId);
-            writer.WriteString("systemPrompt", request.SystemPrompt);
+            writer.WriteString("systemPrompt", request.PromptPrefix.SystemPrompt);
             writer.WriteStartArray("context");
-            foreach (IHistoryMessage message in request.Context) {
+            foreach (IHistoryMessage message
+                in request.PromptPrefix.SharedContextMessages) {
+                WriteHistoryMessage(writer, message);
+            }
+            foreach (IHistoryMessage message in request.TailMessages) {
                 WriteHistoryMessage(writer, message);
             }
             writer.WriteEndArray();
             writer.WriteStartArray("tools");
-            foreach (ToolDefinition definition in request.Tools) {
+            foreach (ToolDefinition definition in outputContract.Tools) {
                 WriteToolDefinition(writer, definition);
             }
             writer.WriteEndArray();

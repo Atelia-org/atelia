@@ -328,7 +328,7 @@ public sealed class FamilyChatServerTests {
             var scriptFactory = new ScriptedCompletionClientFactory();
             scriptFactory.For("alice").Enqueue(
                 (request, observer, ct) => {
-                    var lastObservation = Assert.IsType<ObservationMessage>(request.Context[^1]);
+                    var lastObservation = Assert.IsType<ObservationMessage>(request.PromptPrefix.SharedContextMessages[^1]);
                     Assert.Contains("麦林炮手", lastObservation.Content, StringComparison.Ordinal);
                     Assert.DoesNotContain("买林炮手", lastObservation.Content, StringComparison.Ordinal);
 
@@ -389,7 +389,7 @@ public sealed class FamilyChatServerTests {
             var scriptFactory = new ScriptedCompletionClientFactory();
             scriptFactory.For("alice").Enqueue(
                 (request, observer, ct) => {
-                    var lastObservation = Assert.IsType<ObservationMessage>(request.Context[^1]);
+                    var lastObservation = Assert.IsType<ObservationMessage>(request.PromptPrefix.SharedContextMessages[^1]);
                     Assert.Contains("买林炮手", lastObservation.Content, StringComparison.Ordinal);
 
                     return Task.FromResult(
@@ -450,7 +450,7 @@ public sealed class FamilyChatServerTests {
             var scriptFactory = new ScriptedCompletionClientFactory();
             scriptFactory.For("alice").Enqueue(
                 (request, observer, ct) => {
-                    var lastObservation = Assert.IsType<ObservationMessage>(request.Context[^1]);
+                    var lastObservation = Assert.IsType<ObservationMessage>(request.PromptPrefix.SharedContextMessages[^1]);
                     Assert.Contains("买林炮手", lastObservation.Content, StringComparison.Ordinal);
 
                     return Task.FromResult(

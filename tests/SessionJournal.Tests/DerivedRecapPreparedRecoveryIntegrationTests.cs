@@ -348,8 +348,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
                     new RecapBlockPlanningDecision.Maintain(
                         blockId,
                         new RecapPlanningMaintainSource.Empty(start),
-                        [admission],
-                        EmptyRecapPriorContext.Instance
+                        [admission]
                     )
                 ]
             );

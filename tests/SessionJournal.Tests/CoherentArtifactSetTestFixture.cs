@@ -42,19 +42,19 @@ internal static class CoherentArtifactSetTestFixture {
         CompletionRequest request
     ) {
         AssertArtifactPrefix(request);
-        return [.. request.Context.Skip(ArtifactContextMessageCount)];
+        return [.. request.PromptPrefix.SharedContextMessages.Skip(ArtifactContextMessageCount)];
     }
 
     internal static void AssertArtifactPrefix(CompletionRequest request) {
         ArgumentNullException.ThrowIfNull(request);
         Assert.True(
-            request.Context.Count >= ArtifactContextMessageCount,
+            request.PromptPrefix.SharedContextMessages.Length >= ArtifactContextMessageCount,
             "Coherent request is missing the exact derived context prefix."
         );
-        var world = Assert.IsType<ObservationMessage>(request.Context[0]);
+        var world = Assert.IsType<ObservationMessage>(request.PromptPrefix.SharedContextMessages[0]);
         AssertRecapBlock(world.Content, "bounded world ");
         var autobiography =
-            Assert.IsType<ActionMessage>(request.Context[1]);
+            Assert.IsType<ActionMessage>(request.PromptPrefix.SharedContextMessages[1]);
         AssertRecapBlock(
             autobiography.GetFlattenedText(),
             "bounded self "

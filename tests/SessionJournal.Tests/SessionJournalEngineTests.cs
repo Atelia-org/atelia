@@ -1255,8 +1255,8 @@ public sealed class SessionJournalEngineTests : IDisposable {
         client.Enqueue(
             request => {
                 Assert.Equal("model-A", request.ModelId);
-                Assert.Equal("system-A", request.SystemPrompt);
-                Assert.Empty(request.Tools);
+                Assert.Equal("system-A", request.PromptPrefix.SystemPrompt);
+                Assert.Empty(request.PromptPrefix.OutputContract.Tools);
                 var observation = Assert.IsType<ObservationMessage>(
                     Assert.Single(
                         CoherentArtifactSetTestFixture.RawSuffix(request)
@@ -1591,7 +1591,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         ));
         client.Enqueue(request => {
             Assert.Equal("model-B", request.ModelId);
-            Assert.Equal("system-B", request.SystemPrompt);
+            Assert.Equal("system-B", request.PromptPrefix.SystemPrompt);
             return new CompletionResult(
                 new ActionMessage([new ActionBlock.Text("recovered")]),
                 new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
@@ -1935,7 +1935,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         client.Enqueue(
             request => {
                 Assert.Equal("model-B", request.ModelId);
-                Assert.Equal("system-B", request.SystemPrompt);
+                Assert.Equal("system-B", request.PromptPrefix.SystemPrompt);
                 return new CompletionResult(
                     new ActionMessage(new ActionBlock[] { new ActionBlock.Text("answer-B") }),
                     new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
@@ -2099,7 +2099,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         client.Enqueue(
             request => {
-                Assert.Single(request.Tools);
+                Assert.Single(request.PromptPrefix.OutputContract.Tools);
                 var observation = Assert.IsType<ObservationMessage>(
                     Assert.Single(
                         CoherentArtifactSetTestFixture.RawSuffix(request)
@@ -2770,7 +2770,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         );
         client.Enqueue(
             request => {
-                var results = Assert.IsType<ToolResultsMessage>(request.Context[^1]);
+                var results = Assert.IsType<ToolResultsMessage>(request.PromptPrefix.SharedContextMessages[^1]);
                 Assert.Equal("seq:2", Assert.Single(results.Results).GetFlattenedText());
                 return new CompletionResult(
                     new ActionMessage(new ActionBlock[] { new ActionBlock.Text("second done") }),

@@ -179,9 +179,9 @@ public sealed class SessionRecapContextContractsTests {
         var client = new ScriptedCompletionClient();
         client.Enqueue(
             request => {
-                Assert.Contains(request.Context, message => message is ObservationMessage observation && observation.Content == "system fragment");
-                Assert.Contains(request.Context, message => message is ObservationMessage observation && observation.Content == "observation fragment");
-                Assert.Contains(request.Context, message => message is ActionMessage action && action.GetFlattenedText() == "action fragment");
+                Assert.Contains(request.PromptPrefix.SharedContextMessages, message => message is ObservationMessage observation && observation.Content == "system fragment");
+                Assert.Contains(request.PromptPrefix.SharedContextMessages, message => message is ObservationMessage observation && observation.Content == "observation fragment");
+                Assert.Contains(request.PromptPrefix.SharedContextMessages, message => message is ActionMessage action && action.GetFlattenedText() == "action fragment");
                 return new CompletionResult(
                     new ActionMessage([new ActionBlock.Text("updated block")]),
                     new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)

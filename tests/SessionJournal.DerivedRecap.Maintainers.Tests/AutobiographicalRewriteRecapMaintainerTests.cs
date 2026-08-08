@@ -12,13 +12,13 @@ public class AutobiographicalRewriteProfileTests {
         completionClient.Enqueue(
             request => {
                 // Rewrite maintainer 固定为单次调用，不暴露工具。
-                Assert.Empty(request.Tools);
+                Assert.Empty(request.PromptPrefix.OutputContract.Tools);
                 // system prompt 来自嵌入的 rewrite 资源，且能被正确加载（非空）。
-                Assert.Equal(AutobiographicalRewriteProfiles.Default.SystemPrompt, request.SystemPrompt);
-                Assert.False(string.IsNullOrWhiteSpace(request.SystemPrompt));
+                Assert.Equal(AutobiographicalRewriteProfiles.Default.SystemPrompt, request.PromptPrefix.SystemPrompt);
+                Assert.False(string.IsNullOrWhiteSpace(request.PromptPrefix.SystemPrompt));
                 // 旧自传只存在于 ContextHeader；末尾 instruction 不再重复注入。
-                var instruction = Assert.IsType<ObservationMessage>(request.Context[^1]);
-                Assert.Equal(1, CountContextOccurrences(request.Context, "从前，我还不明白。"));
+                var instruction = Assert.IsType<ObservationMessage>(request.PromptPrefix.SharedContextMessages[^1]);
+                Assert.Equal(1, CountContextOccurrences(request.PromptPrefix.SharedContextMessages, "从前，我还不明白。"));
                 Assert.DoesNotContain("从前，我还不明白。", instruction.Content);
                 Assert.DoesNotContain("Current block:", instruction.Content);
                 Assert.Contains("上下文开头呈现了Galatea截至目前的自传", instruction.Content);

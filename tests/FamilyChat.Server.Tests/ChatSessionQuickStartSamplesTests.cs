@@ -71,7 +71,7 @@ public sealed class ChatSessionQuickStartSamplesTests {
             var completionClient = new ScriptedCompletionClient("openai-chat-v1");
             completionClient.Enqueue(
                 async (request, observer, ct) => {
-                    Assert.Equal("workspace.echo", Assert.Single(request.Tools).Name);
+                    Assert.Equal("workspace.echo", Assert.Single(request.PromptPrefix.OutputContract.Tools).Name);
 
                     var call = new RawToolCall("workspace.echo", "call-1", """{"text":"alpha"}""");
                     observer?.OnToolCall(call);
@@ -85,7 +85,7 @@ public sealed class ChatSessionQuickStartSamplesTests {
             );
             completionClient.Enqueue(
                 async (request, observer, ct) => {
-                    var toolResults = Assert.IsType<ToolResultsMessage>(request.Context[^1]);
+                    var toolResults = Assert.IsType<ToolResultsMessage>(request.PromptPrefix.SharedContextMessages[^1]);
                     var toolResult = Assert.Single(toolResults.Results);
                     Assert.Equal("workspace.echo", toolResult.ToolName);
                     Assert.Equal("echo:alpha|demo", toolResult.GetFlattenedText());
@@ -147,9 +147,9 @@ public sealed class ChatSessionQuickStartSamplesTests {
             var completionClient = new ScriptedCompletionClient("openai-chat-v1");
             completionClient.Enqueue(
                 (request, observer, ct) => {
-                    Assert.Equal("base-system\n\nheader-system", request.SystemPrompt);
+                    Assert.Equal("base-system\n\nheader-system", request.PromptPrefix.SystemPrompt);
                     Assert.Collection(
-                        request.Context,
+                        request.PromptPrefix.SharedContextMessages,
                         message => Assert.Equal("header-user", Assert.IsType<ObservationMessage>(message).Content),
                         message => Assert.Equal("header-assistant", Assert.IsType<ActionMessage>(message).GetFlattenedText()),
                         message => Assert.Equal("fresh-user", Assert.IsType<ObservationMessage>(message).Content)

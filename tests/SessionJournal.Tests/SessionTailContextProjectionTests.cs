@@ -64,11 +64,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
 
         CompletionRequest request = Assert.Single(client.Requests);
         Assert.Equal("model-B", request.ModelId);
-        Assert.Equal("system-B", request.SystemPrompt);
-        Assert.DoesNotContain("stale", request.SystemPrompt, StringComparison.Ordinal);
-        Assert.DoesNotContain(request.Context, static message => message is SessionContextHeader);
+        Assert.Equal("system-B", request.PromptPrefix.SystemPrompt);
+        Assert.DoesNotContain("stale", request.PromptPrefix.SystemPrompt, StringComparison.Ordinal);
+        Assert.DoesNotContain(request.PromptPrefix.SharedContextMessages, static message => message is SessionContextHeader);
         Assert.Collection(
-            request.Context,
+            request.PromptPrefix.SharedContextMessages,
             first => Assert.Equal(
                 "~~~~recap-block\nmemory observation\n~~~~",
                 Assert.IsType<ObservationMessage>(first).Content
@@ -80,7 +80,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             third => Assert.Equal("new observation", Assert.IsType<ObservationMessage>(third).Content)
         );
         Assert.DoesNotContain(
-            request.Context,
+            request.PromptPrefix.SharedContextMessages,
             message => (
                 message is ActionMessage action
                     ? action.GetFlattenedText()
@@ -220,11 +220,15 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
 
         Assert.Equal("after tool", result.Message.GetFlattenedText());
         Assert.Equal(3, client.Requests.Count);
-        Assert.All(client.Requests, request => Assert.Single(request.Tools));
+        Assert.All(client.Requests, request => Assert.Single(request.PromptPrefix.OutputContract.Tools));
         AssertToolDependencyTail(client.Requests[1], "call-1");
         AssertToolDependencyTail(client.Requests[2], "call-2");
-        Assert.IsType<ActionMessage>(client.Requests[2].Context[^4]);
-        Assert.IsType<ToolResultsMessage>(client.Requests[2].Context[^3]);
+        Assert.IsType<ActionMessage>(
+            client.Requests[2].PromptPrefix.SharedContextMessages[^4]
+        );
+        Assert.IsType<ToolResultsMessage>(
+            client.Requests[2].PromptPrefix.SharedContextMessages[^3]
+        );
         engine.Dispose();
         CompletionRequestPreparedBody[] manifests = ReadAddressesByKind(
                 path,
@@ -251,10 +255,10 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         CompletionRequest request,
         string expectedCallId
     ) {
-        ActionMessage action = Assert.IsType<ActionMessage>(request.Context[^2]);
+        ActionMessage action = Assert.IsType<ActionMessage>(request.PromptPrefix.SharedContextMessages[^2]);
         Assert.Equal(expectedCallId, Assert.Single(action.ToolCalls).ToolCallId);
         ToolResultsMessage results =
-            Assert.IsType<ToolResultsMessage>(request.Context[^1]);
+            Assert.IsType<ToolResultsMessage>(request.PromptPrefix.SharedContextMessages[^1]);
         Assert.Equal(expectedCallId, Assert.Single(results.Results).ToolCallId);
     }
 
@@ -756,7 +760,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
 
         CompletionRequest request = Assert.Single(client.Requests);
         Assert.Equal(mutateRuntime ? "model-B" : "model-A", request.ModelId);
-        Assert.Equal(mutateRuntime ? "system-A" : "system-B", request.SystemPrompt);
+        Assert.Equal(mutateRuntime ? "system-A" : "system-B", request.PromptPrefix.SystemPrompt);
     }
 
     [Theory]

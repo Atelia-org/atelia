@@ -53,7 +53,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             completion.LastRequest
         );
         ObservationMessage requestedObservation = Assert.Single(
-            request.Context.OfType<ObservationMessage>()
+            request.PromptPrefix.SharedContextMessages.OfType<ObservationMessage>()
         );
         Assert.Equal(wrapped, requestedObservation.Content);
 

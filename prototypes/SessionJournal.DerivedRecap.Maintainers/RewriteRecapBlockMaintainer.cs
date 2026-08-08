@@ -72,10 +72,13 @@ public sealed class RewriteRecapBlockMaintainer : IRecapBlockMaintainer {
         var workingContext = BuildWorkingContext(request);
         var result = await CompletionClient.StreamCompletionAsync(
             new CompletionRequest(
-                ModelId: ModelId,
-                SystemPrompt: _profile.SystemPrompt,
-                Context: workingContext,
-                Tools: []
+                ModelId,
+                new CompletionPromptPrefix(
+                    _profile.SystemPrompt,
+                    CompletionOutputContract.ProviderDefault([]),
+                    workingContext
+                ),
+                tailMessages: []
             ),
             InvocationOptions,
             observer: null,

@@ -179,9 +179,12 @@ public sealed class GalateaCallLoggingTests {
             _ = await maintainer.StreamCompletionAsync(
                 new CompletionRequest(
                     connection.ModelId,
-                    "maintainer test",
-                    [new ObservationMessage("fixture")],
-                    []
+                    new CompletionPromptPrefix(
+                        "maintainer test",
+                        CompletionOutputContract.ProviderDefault([]),
+                        [new ObservationMessage("fixture")]
+                    ),
+                    tailMessages: []
                 ),
                 new CompletionInvocationOptions {
                     PromptCacheReuseHint =

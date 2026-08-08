@@ -467,7 +467,7 @@ public sealed class GalateaG2AStagingHostAcceptanceTests {
                         connectionId,
                         StringComparison.Ordinal
                     )
-                    && entry.Request.Context
+                    && entry.Request.PromptPrefix.SharedContextMessages
                         .OfType<ObservationMessage>()
                         .Any(observation =>
                             observation.Content?.Contains(

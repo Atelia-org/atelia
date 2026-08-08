@@ -115,12 +115,15 @@ public sealed class DeepSeekFamilyChatUserMessageNormalizer : IFamilyChatUserMes
 
         try {
             var request = new CompletionRequest(
-                ModelId: NormalizerModelId,
-                SystemPrompt: NormalizerSystemPrompt,
-                Context: [
-                    new ObservationMessage(BuildNormalizationPrompt(userMessage))
-                ],
-                Tools: ImmutableArray<ToolDefinition>.Empty
+                NormalizerModelId,
+                new CompletionPromptPrefix(
+                    NormalizerSystemPrompt,
+                    CompletionOutputContract.ProviderDefault(
+                        ImmutableArray<ToolDefinition>.Empty
+                    ),
+                    [new ObservationMessage(BuildNormalizationPrompt(userMessage))]
+                ),
+                tailMessages: []
             );
 
             var result = await _completionClient.StreamCompletionAsync(request, observer: null, cancellationToken: ct)

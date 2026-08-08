@@ -37,10 +37,13 @@ public sealed partial class ChatSessionEngine {
             ct.ThrowIfCancellationRequested();
 
             var request = new CompletionRequest(
-                ModelId: _runtime.ModelId,
-                SystemPrompt: projectedContext.SystemPrompt,
-                Context: workingContext,
-                Tools: tools
+                _runtime.ModelId,
+                new CompletionPromptPrefix(
+                    projectedContext.SystemPrompt,
+                    CompletionOutputContract.ProviderDefault(tools),
+                    workingContext
+                ),
+                tailMessages: []
             );
 
             var result = await _runtime.CompletionClient.StreamCompletionAsync(request, observer, ct)

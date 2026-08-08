@@ -236,9 +236,14 @@ internal static class SessionPreparedRequestReconstructor {
         context.AddRange(folded.Context);
         return new CompletionRequest(
             manifest.Parameters.ModelId,
-            expandedSystemPrompt,
-            context.MoveToImmutable(),
-            manifest.ToolSet.Definitions,
+            new CompletionPromptPrefix(
+                expandedSystemPrompt,
+                CompletionOutputContract.ProviderDefault(
+                    manifest.ToolSet.Definitions
+                ),
+                context.MoveToImmutable()
+            ),
+            tailMessages: [],
             manifest.Parameters.MaxTokens
         );
     }

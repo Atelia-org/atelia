@@ -61,12 +61,12 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 committed.Request
             )
         );
-        var action = Assert.IsType<ActionMessage>(committed.Request.Context[^2]);
+        var action = Assert.IsType<ActionMessage>(committed.Request.PromptPrefix.SharedContextMessages[^2]);
         var reasoning = Assert.IsType<OpaqueReasoningBlock>(action.Blocks[0]);
         Assert.Equal([0, 1, 2, 254, 255], reasoning.Payload);
         Assert.Single(action.ToolCalls);
         var results = Assert.IsType<ToolResultsMessage>(
-            committed.Request.Context[^1]
+            committed.Request.PromptPrefix.SharedContextMessages[^1]
         );
         Assert.Equal("exact result", results.Results.Single().GetFlattenedText());
     }
@@ -156,14 +156,17 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         );
         var forgedRequest = new CompletionRequest(
             "model-side",
-            scenario.ExpectedRequest.SystemPrompt.Replace(
+            new CompletionPromptPrefix(
+                scenario.ExpectedRequest.PromptPrefix.SystemPrompt.Replace(
                 "system-A",
                 "system-side",
                 StringComparison.Ordinal
             ),
-            scenario.ExpectedRequest.Context,
-            scenario.ExpectedRequest.Tools,
-            scenario.ExpectedRequest.MaxTokens
+                CompletionOutputContract.ProviderDefault(scenario.ExpectedRequest.PromptPrefix.OutputContract.Tools),
+                scenario.ExpectedRequest.PromptPrefix.SharedContextMessages
+            ),
+            tailMessages: [],
+            maxTokens: scenario.ExpectedRequest.MaxTokens
         );
         CompletionRequestPreparedBody forged = scenario.Manifest with {
             Plan = scenario.Manifest.Plan with {
@@ -213,12 +216,18 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             CreateSetupReference(journal, staleRuntime),
             CreateSetupReference(journal, stalePrompt)
         );
-        var forgedRequest = scenario.ExpectedRequest with {
-            ModelId = "model-A",
-            SystemPrompt = scenario.ExpectedRequest.SystemPrompt.Replace(
-                "system-B", "system-A", StringComparison.Ordinal
-            )
-        };
+        var forgedRequest = new CompletionRequest(
+            "model-A",
+            new CompletionPromptPrefix(
+                scenario.ExpectedRequest.PromptPrefix.SystemPrompt.Replace(
+                    "system-B", "system-A", StringComparison.Ordinal
+                ),
+                scenario.ExpectedRequest.PromptPrefix.OutputContract,
+                scenario.ExpectedRequest.PromptPrefix.SharedContextMessages
+            ),
+            scenario.ExpectedRequest.TailMessages,
+            scenario.ExpectedRequest.MaxTokens
+        );
         CompletionRequestPreparedBody forged = scenario.Manifest with {
             Plan = scenario.Manifest.Plan with { RawStartSetups = staleSetups },
             Setups = staleSetups,
@@ -472,9 +481,12 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         initialContext.Add(new ObservationMessage("hello"));
         var initialRequest = new CompletionRequest(
             modelId,
-            systemPrompt,
-            initialContext.ToImmutable(),
-            tools
+            new CompletionPromptPrefix(
+                systemPrompt,
+                CompletionOutputContract.ProviderDefault(tools),
+                initialContext.ToImmutable()
+            ),
+            tailMessages: []
         );
         string correlation =
             $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(observation)}";
@@ -569,9 +581,12 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         continuationContext.Add(new ToolResultsMessage(null, [result]));
         var continuationRequest = new CompletionRequest(
             modelId,
-            systemPrompt,
-            continuationContext.ToImmutable(),
-            tools
+            new CompletionPromptPrefix(
+                systemPrompt,
+                CompletionOutputContract.ProviderDefault(tools),
+                continuationContext.ToImmutable()
+            ),
+            tailMessages: []
         );
         EventAddress[] rawAddresses = [
             observation,
@@ -637,9 +652,9 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         new SessionRequestParameters(request.ModelId, request.MaxTokens),
         new SessionRequestToolSet(
             SessionRequestManifestDefaults.ToolCodecId,
-            SessionRequestCanonicalizer.ComputeToolSetSha256(request.Tools),
-            request.Tools,
-            request.Tools.IsEmpty ? null : ToolIdentity
+            SessionRequestCanonicalizer.ComputeToolSetSha256(request.PromptPrefix.OutputContract.Tools),
+            request.PromptPrefix.OutputContract.Tools,
+            request.PromptPrefix.OutputContract.Tools.IsEmpty ? null : ToolIdentity
         ),
         new SessionRequestRecipe(
             SessionRequestManifestDefaults.RecipeId,

@@ -45,10 +45,15 @@ public static class ContextSummarizer {
         if (messages.Count == 0) { return string.Empty; }
 
         var request = new CompletionRequest(
-            ModelId: profile.ModelId,
-            SystemPrompt: systemPrompt,
-            Context: messages,
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            profile.ModelId,
+            new CompletionPromptPrefix(
+                systemPrompt,
+                CompletionOutputContract.ProviderDefault(
+                    ImmutableArray<ToolDefinition>.Empty
+                ),
+                messages
+            ),
+            tailMessages: []
         );
 
         var result = await profile.Client.StreamCompletionAsync(request, null, cancellationToken).ConfigureAwait(false);
