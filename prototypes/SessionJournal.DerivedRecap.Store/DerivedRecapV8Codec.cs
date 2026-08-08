@@ -236,9 +236,11 @@ public static class DerivedRecapV8Codec {
 
     public static int GetCanonicalPriorPackByteCount(
         PriorRecapPackSnapshot pack
-    ) {
+    ) => EncodePriorPack(pack).Length;
+
+    public static byte[] EncodePriorPack(PriorRecapPackSnapshot pack) {
         ValidatePriorPack(pack);
-        return Serialize(ToWire(pack, includeHash: true)).Length;
+        return Serialize(ToWire(pack, includeHash: true));
     }
 
     public static int GetTotalRecapPackUtf8Bytes(
@@ -352,6 +354,16 @@ public static class DerivedRecapV8Codec {
             throw new InvalidDataException(
                 "Manifest and epoch input identify different shared epochs."
             );
+        }
+        for (int ordinal = 1; ordinal < manifest.Blocks.Count; ordinal++) {
+            if (CompareTargets(
+                    manifest.Blocks[ordinal - 1].Target,
+                    manifest.Blocks[ordinal].Target
+                ) >= 0) {
+                throw new InvalidDataException(
+                    "Manifest roster must use canonical target order."
+                );
+            }
         }
         if (input.Previous is not RecapEpochPrevious.Prior prior) {
             return;
@@ -737,6 +749,28 @@ public static class DerivedRecapV8Codec {
         }
         RequireUtf8(target.BlockKey, "recap block key");
     }
+
+    private static int CompareTargets(
+        ContextHeaderBlockPath left,
+        ContextHeaderBlockPath right
+    ) {
+        int carrier = CarrierRank(left.Carrier).CompareTo(
+            CarrierRank(right.Carrier)
+        );
+        return carrier != 0
+            ? carrier
+            : StringComparer.Ordinal.Compare(left.BlockKey, right.BlockKey);
+    }
+
+    private static int CarrierRank(ContextHeaderCarrier carrier)
+        => carrier switch {
+            ContextHeaderCarrier.System => 0,
+            ContextHeaderCarrier.Observation => 1,
+            ContextHeaderCarrier.Action => 2,
+            _ => throw new InvalidDataException(
+                "Recap target carrier is unsupported."
+            )
+        };
 
     private static void RequireHashMatch(
         string expected,

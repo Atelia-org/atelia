@@ -204,6 +204,29 @@ public sealed class DerivedRecapV8CodecCandidateTests {
                 [mismatched]
             )
         );
+
+        RecapEpochBlockDefinition later = new(
+            new RecapBlockId("later"),
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.Observation,
+                "later"
+            ),
+            "later",
+            RecapTestIdentity.CapabilityFingerprint,
+            1024,
+            0
+        );
+        RecapEpochBlockDefinition earlier = Definition("earlier", 1);
+        DerivedRecapEpochManifest reversed =
+            DerivedRecapV8Codec.CreateManifest(
+                manifest.RefId,
+                manifest.AdmissionAnchor,
+                input.PayloadSha256,
+                [later, earlier]
+            );
+        Assert.Throws<InvalidDataException>(() =>
+            DerivedRecapV8Codec.ValidateEpochSet(reversed, input)
+        );
     }
 
     [Fact]
