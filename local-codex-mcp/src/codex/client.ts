@@ -10,6 +10,7 @@ interface Connection {
   lines: readline.Interface;
   failed: boolean;
   expectedStop: boolean;
+  stderrTail: string;
   closed: Promise<void>;
   resolveClosed(): void;
   writeRejectors: Set<(error: Error) => void>;
@@ -22,6 +23,15 @@ interface PendingRequest {
   resolve(value: unknown): void;
   reject(error: Error): void;
   timer: NodeJS.Timeout;
+}
+
+const maxStderrCaptureBytes = 8 * 1024;
+
+function appendStderrTail(current: string, chunk: string): string {
+  const combined = Buffer.concat([Buffer.from(current), Buffer.from(chunk)]);
+  return combined.length <= maxStderrCaptureBytes
+    ? combined.toString("utf8")
+    : combined.subarray(-maxStderrCaptureBytes).toString("utf8");
 }
 
 export interface CodexClientOptions {
@@ -127,6 +137,7 @@ export class CodexAppServerClient {
       lines: readline.createInterface({ input: child.stdout }),
       failed: false,
       expectedStop: false,
+      stderrTail: "",
       closed,
       resolveClosed,
       writeRejectors: new Set(),
@@ -135,6 +146,7 @@ export class CodexAppServerClient {
     connection.lines.on("line", (line) => this.handleLine(connection, line));
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
+      connection.stderrTail = appendStderrTail(connection.stderrTail, chunk);
       this.options.logger.log("debug", "codex_stderr", { bytes: Buffer.byteLength(chunk) });
     });
     child.stdin.on("error", (error) => this.handleProcessFailure(connection, error, true));
@@ -411,6 +423,10 @@ export class CodexAppServerClient {
     if (terminate) void this.beginTermination(connection, false);
     if (!connection.expectedStop) {
       this.options.logger.log("error", "codex_process_exit", { code: bridgeError.code });
+      this.options.logger.log("debug", "codex_start_failed", {
+        error_code: bridgeError.code,
+        stderr_tail: connection.stderrTail || undefined,
+      });
     }
     if (wasActive) {
       for (const subscriber of this.subscribers) {

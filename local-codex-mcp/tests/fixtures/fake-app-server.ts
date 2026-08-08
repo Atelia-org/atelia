@@ -164,6 +164,9 @@ lines.on("line", (line) => {
     case "test/hang":
       break;
     case "test/crash":
+      if (process.argv.includes("--stderr-on-crash")) {
+        process.stderr.write(`${"x".repeat(10_000)} fake stderr tail`);
+      }
       process.exit(23);
       break;
     case "test/malformed":

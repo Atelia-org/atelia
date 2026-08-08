@@ -85,10 +85,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   return {
     allowedRoots: parseJsonStringArray(env.CODEX_BRIDGE_ALLOWED_ROOTS, "CODEX_BRIDGE_ALLOWED_ROOTS"),
     defaultCwd: env.CODEX_BRIDGE_DEFAULT_CWD,
-    codexCommand: env.CODEX_BRIDGE_CODEX_COMMAND ?? "codex",
+    codexCommand: env.CODEX_BRIDGE_CODEX_COMMAND || "codex",
     codexArgs: parseJsonStringArray(env.CODEX_BRIDGE_CODEX_ARGS, "CODEX_BRIDGE_CODEX_ARGS", [
       "app-server",
-      "--stdio",
+      "--listen",
+      "stdio://",
       "-c",
       "mcp_servers={}",
       "-c",

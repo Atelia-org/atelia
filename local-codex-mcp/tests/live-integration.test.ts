@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { CodexBackend } from "../src/codex/backend.js";
 import { CodexAppServerClient } from "../src/codex/client.js";
+import { loadConfig } from "../src/config.js";
 import { TaskStore } from "../src/codex/task-store.js";
 import { NullLogger } from "../src/logger.js";
 import { PathPolicy } from "../src/security/paths.js";
@@ -14,9 +15,12 @@ const runLive = process.env.CODEX_BRIDGE_RUN_LIVE === "1";
 
 function makeBackend(root: string, pathPolicy: PathPolicy): CodexBackend {
   const logger = new NullLogger();
+  const env: NodeJS.ProcessEnv = { ...process.env, CODEX_BRIDGE_ALLOWED_ROOTS: JSON.stringify([root]) };
+  delete env.CODEX_BRIDGE_CODEX_ARGS;
+  const config = loadConfig(env);
   const client = new CodexAppServerClient({
-    command: process.env.CODEX_BRIDGE_CODEX_COMMAND ?? "codex",
-    args: ["app-server", "--stdio", "-c", "mcp_servers={}", "-c", "features.apps=false"],
+    command: config.codexCommand,
+    args: config.codexArgs,
     requestTimeoutMs: 60_000,
     logger,
   });

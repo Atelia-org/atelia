@@ -2,9 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { CodexAppServerClient } from "../src/codex/client.js";
-import { NullLogger } from "../src/logger.js";
+import { NullLogger, type BridgeLogger, type LogLevel } from "../src/logger.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-app-server.js", import.meta.url));
+
+class RecordingLogger implements BridgeLogger {
+  readonly entries: Array<{ level: LogLevel; event: string; fields: Record<string, unknown> | undefined }> = [];
+
+  log(level: LogLevel, event: string, fields?: Record<string, unknown>): void {
+    this.entries.push({ level, event, fields });
+  }
+}
 
 function client(timeout = 1_000): CodexAppServerClient {
   return new CodexAppServerClient({
@@ -110,6 +118,26 @@ test("process crash rejects pending requests", async (t) => {
   const value = client();
   t.after(() => value.stop());
   await assert.rejects(value.request("test/crash", {}), /exited unexpectedly/);
+});
+
+test("process failure logs bounded stderr locally", async (t) => {
+  const logger = new RecordingLogger();
+  const value = new CodexAppServerClient({
+    command: process.execPath,
+    args: [fixture, "--stderr-on-crash"],
+    requestTimeoutMs: 1_000,
+    logger,
+  });
+  t.after(() => value.stop());
+
+  await assert.rejects(value.request("test/crash", {}), /exited unexpectedly/);
+
+  const failure = logger.entries.find((entry) => entry.event === "codex_start_failed");
+  assert.equal(failure?.level, "debug");
+  const stderrTail = failure?.fields?.stderr_tail;
+  assert.equal(typeof stderrTail, "string");
+  assert.match(stderrTail as string, /fake stderr tail/);
+  assert.ok(Buffer.byteLength(stderrTail as string) <= 8 * 1024);
 });
 
 test("malformed stdout terminates the failed child and a new generation can start", async (t) => {

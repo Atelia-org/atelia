@@ -23,7 +23,7 @@ MVP 暴露五个 tools：
 - 一个或多个允许 ChatGPT 委派任务的绝对目录。
 - Secure MCP Tunnel 还需要 Platform tunnel 权限、`tunnel_id` 与 runtime/control-plane API key。
 
-本工程当前用 Codex `0.147.0-alpha.6.5` 生成了 `schemas/`。升级 Codex 后应重新生成并跑测试。
+本工程当前用 Codex `0.147.0` 生成了 `schemas/`。升级 Codex 后应重新生成并跑测试。
 
 ## 1. 安装、生成 schema 与构建
 
