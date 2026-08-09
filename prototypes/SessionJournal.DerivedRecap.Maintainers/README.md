@@ -36,7 +36,9 @@ cache hint都不进入 durable capability。
 
 本assembly不持有Completion client/model，也不构造完整request或dispatch。production execution由
 `SessionJournal.DerivedRecap.Runtime`中的shared `RecapExecutionLane`、interned `RecapRuntimeGroup`与
-`BoundRecapBlockMaintainer`唯一完成；lane固定使用`PromptCacheReuseHint.NoReuseExpected`。
+`BoundRecapBlockMaintainer`唯一完成；lane固定使用`PromptCacheReuseHint.ReuseExpectedSoon`。provider-specific
+cache boundary mapping与usage telemetry由Completion adapter拥有，不进入family/member capability或durable
+recap identity。
 
 Host composition继续通过`RecapMaintainerProfileCatalog`解析profile metadata并绑定shared runtime lane；Planner
 只依赖neutral Abstractions与opaque executable capability，不引用本concrete assembly或Runtime。

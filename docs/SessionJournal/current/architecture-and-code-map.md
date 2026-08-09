@@ -26,7 +26,7 @@ raw events是append-only事实源。`derived/recap/v8`是可删除、可重建si
 | SessionJournal | raw replay、selected Parent lineage、setup authority、bounded planning windows、paged audit/forward cursor、Send/Resume/context contracts |
 | DerivedRecap.Abstractions | Maintainer epoch input、Updated/Keep、registry contract |
 | DerivedRecap.Store | v8 canonical artifacts、atomic Building/final/publication、repair authority、selection/materialization、rebuild spool |
-| DerivedRecap.Planner | NoBuild/Build policy、serial complete-roster kernel、multi-epoch campaign、explicit rebuild consumer、v3 config |
+| DerivedRecap.Planner | NoBuild/Build policy、parallel runtime-group complete-roster kernel、multi-epoch campaign、explicit rebuild consumer、v3 config |
 | DerivedRecap.Maintainers | family/member definitions、shared prompt/tool shape、structured output |
 | DerivedRecap.Runtime | connection lane、family runtime group、bound maintainer |
 | CLI / Galatea | Host composition、provider connection、operator surface |
@@ -41,7 +41,7 @@ raw events是append-only事实源。`derived/recap/v8`是可删除、可重建si
 | v8 Store/recovery | `DerivedRecapEpochStore.cs` | `DerivedRecapEpochStoreCandidateTests.cs` |
 | context candidate | `DerivedRecapContextCandidateSource.cs` | `DerivedRecapEpochStoreCandidateTests.cs` |
 | rebuild spool | `DerivedRecapRebuildSpoolStore.cs` | `DerivedRecapRebuildSpoolTests.cs` |
-| serial roster kernel | `DerivedRecapSerialEpochKernel.cs` | `DerivedRecapSerialEpochKernelTests.cs` |
+| parallel runtime-group roster kernel | `DerivedRecapSerialEpochKernel.cs` | `DerivedRecapSerialEpochKernelTests.cs` |
 | online/multi-epoch campaign | `DerivedRecapEpochCampaignExecutor.cs` | `DerivedRecapEpochCampaignExecutorTests.cs` |
 | explicit rebuild execution | `DerivedRecapExplicitRebuildExecutor.cs` | `DerivedRecapExplicitRebuildExecutorTests.cs` |
 | online lifecycle | `DerivedRecapOnlineLifecycleCoordinator.cs` | `DerivedRecapOnlineLifecycleCoordinatorTests.cs` |
@@ -53,7 +53,9 @@ raw events是append-only事实源。`derived/recap/v8`是可删除、可重建si
 
 1. Host captures exact raw head and opens v8 Store with code-owned recovery caps.
 2. Campaign first selects Building. Frozen snapshot validation replays exact Start→Admission raw commitment and governing setups.
-3. Serial kernel pre-resolves every pending roster binding before the first call; healthy finals are skipped.
+3. Kernel pre-resolves every pending roster binding before the first call；healthy finals are skipped；不同runtime-group
+   leaders并行启动，同group在leader Maintainer调用成功或非caller-cancellation terminal failure后并行释放
+   followers，并共同服从lane cap与leader priority；caller cancellation不启动新followers，只drain已started work。
 4. Updated writes new content；Keep copies the matching structured prior block；first-cycle Keep rejects。
 5. complete roster publishes atomically with expected raw-head fence。
 6. Only when no frozen recovery remains does the executor load active v3 and measure HistoryLoad。
@@ -71,11 +73,15 @@ raw events是append-only事实源。`derived/recap/v8`是可删除、可重建si
 - context candidate descriptor绑定exact publication、setup和completion raw head；strict ordinal不跳slot。
 - spool seal不是raw authority本身；使用前仍需当前engine/read-view验证captured RefId/head/provenance。
 
-## Current non-goals
+## Current boundaries
 
-- R4之前不做parallel/family cache scheduling；当前kernel故意serial。
+- R4 runtime-group parallel scheduling、R5 typed cache boundary/usage telemetry与R6 Galatea/CLI production
+  composition已有deterministic evidence；当前同group采用leader Maintainer调用成功或非caller-cancellation
+  terminal failure后再释放followers；caller cancellation不启动新followers，只drain已started work；不做
+  warm-up或response-start release。
 - dynamic topology onboarding、不同member频率和retrieval working memory不在当前production机制内。
-- R6 real-provider/staging acceptance尚未重跑；deterministic green不能表述为external acceptance。
+- R7 official-provider canary因TLS/authentication环境失败而没有response usage；cache write/read与经济性结论仍为
+  `Environment-blocked`，不能由deterministic evidence代替。
 
 详细规则见[concepts](derived-recap/concepts.md)、[durable target](derived-recap/durable-target.md)、
 [planner config](derived-recap/planner-config.md)，以及Store/Planner/Maintainers各README。

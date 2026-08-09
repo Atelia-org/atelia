@@ -11,11 +11,12 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 ```
 
 首次启动会生成 `.atelia/galatea/config.json` 和同目录的 `connections.json` 模板，然后退出。
-Galatea 不会在第一次 Send 时自动创建或补齐会话仓库。每个 `sessionDir` 必须由 operator 预先准备：
+Galatea 不会在第一次 Send 时创建raw SessionJournal repository。每个 `sessionDir` 必须由 operator 预先准备
+一个有效的 SessionJournal main branch。DerivedRecap v8 sidecar与Planner config边界是：
 
-- 一个有效的 SessionJournal main branch；
-- 对应 RefId 的 `derived/recap/v4` Store；
-- repository-owned `config/recap-planner-config.json`。
+- 第一次writable recap preparation会为exact RefId验证或创建`derived/recap/v8` Store；
+- `config/recap-planner-config.json`缺失时使用built-in v3 defaults；需要固定非默认cadence/limits时由operator
+  预先写入repository-owned config。
 
 可使用 `prototypes/SessionJournal.Cli` 的 import/provision/config 命令完成这一步。Host启动只加载并
 验证配置，不会遍历或打开各账号的raw repo。某个账号第一次访问需要session的endpoint时，Host才按
@@ -56,10 +57,11 @@ repo之外且按敏感数据管理。日志是best-effort operational evidence�
 或cleanup失败都不会令agent Send或Maintainer调用失败，也不会替换provider异常；相应调用可能没有
 call-log文件。初始化失败会在该wrapper的剩余生命周期禁用日志；cleanup失败可能留下未登记且不完整的
 orphan文件。只有完成serialize/write/flush/close并成功登记的文件才计为成功日志，orphan不得用于推断
-调用次数、provider结果或recovery状态。call-log v7结构化记录request的prompt prefix、output contract、
+调用次数、provider结果或recovery状态。call-log v8结构化记录request的prompt prefix、output contract、
 shared context、tail与max tokens，并在connection snapshot之外另行记录每次调用请求的
-`invocationOptions.promptCacheReuseHint`，因此可以区分继承connection默认值与workload显式override；
-该运行hint不会改变wrapper透传的dispatch identity。
+`invocationOptions.promptCacheReuseHint`；response存在时还记录provider-neutral usage/cache telemetry。
+Recap调用另带member/target/source/family、Leader/Follower和dispatch/lane wait attribution。运行hint与usage
+均不会改变wrapper透传的dispatch identity或durable recap identity。
 
 `maintenanceMode`是startup-time只读开关，默认`false`。设为`true`后，fresh send、durable
 resume、Undo与stop endpoint都会在打开session前返回typed `503 maintenance-mode`。登录、页面和
@@ -108,12 +110,13 @@ Anthropic route 可以通过 `anthropicPromptCacheTtl` 选择 prompt cache 的�
 ```
 
 允许值为 `provider-default|5m|1h`。缺省的 `provider-default` 保持厂商默认行为，并在 wire 中省略
-`ttl`；非 Anthropic connection 配置非默认值会 fail fast。该值会写入Completion call-log v7的
+`ttl`；非 Anthropic connection 配置非默认值会 fail fast。该值会写入Completion call-log v8的
 connection snapshot，但作为可调整的运行策略不进入durable dispatch fingerprint。Galatea agent当前
-使用`ConnectionDefault` invocation hint，所以继续继承connection配置的一小时TTL；single-shot的
-shared recap `RecapExecutionLane`则显式传递`NoReuseExpected`，在Anthropic上不创建这份one-shot prompt
-cache。连续tool-loop采用短TTL、停下来等待用户时采用长TTL的动态策略尚未实现；connection配置仍在
-创建client时确定。
+使用`ConnectionDefault` invocation hint，所以继续继承所选connection配置（上例为一小时TTL）；single-shot的
+shared recap `RecapExecutionLane`则显式传递`ReuseExpectedSoon`，Anthropic adapter把它映射为5分钟
+typed prefix cache boundary。该hint只证明cache request intent；实际write/read必须由response usage证明。
+连续tool-loop采用短TTL、停下来等待用户时采用长TTL的动态策略尚未实现；connection配置仍在创建client时
+确定。
 
 Galatea的`connections.json`还可在shared Completion connection字段之外，显式绑定每个built-in
 Recap Maintainer所用的connection：
@@ -183,23 +186,22 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   recap materialize-inspect --input <sessionDir> --branch main
 ```
 
-若 defect 是`Unsupported publication schema`或`Unsupported manifest schema`，说明
-DerivedRecap payload来自旧 wire schema。`derived/recap/v4`目录名和Store header仍为v4，但当前
-manifest/publication payload是v6；项目不提供旧 payload兼容读取。先确认当前branch的exact RefId，
-再显式隔离旧Store并从raw journal重建：
+当前production root是`derived/recap/v8`，Store header、epoch input、manifest、direct final与publication
+均使用strict v8 wire。若出现`Unsupported ... schema`，说明selected v8 sidecar含旧或损坏payload；旧v4-v7
+sidecar/wire只属于historical evidence，current reader不读取、迁移或fallback。先确认当前branch的exact
+RefId，再通过显式rebuild先seal raw authority、reset current v8 Store并从raw journal重建：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
-  recap reset --input <sessionDir> --branch main --confirm-ref <exact-ref-id>
-
-dotnet run --project prototypes/SessionJournal.Cli -- \
-  recap run --input <sessionDir> --branch main \
+  recap rebuild --input <sessionDir> --branch main \
+  --campaign <safe-id> --reset --confirm-ref <exact-ref-id> \
   --connections <connections.json> --connection <id>
 ```
 
-`reset`会把旧branch-local Store原子移动到同一`refs/`目录下的quarantine，而不修改raw
-SessionJournal或repo-owned Planner config；`recap run`可能产生Maintainer LLM调用。若当前schema
-的Published block损坏，应优先检查是否可用exact `recap restore`，不要把所有损坏都等同于旧schema。
+若返回`MoreWorkPending`，使用相同campaign且不再传`--reset`继续。rebuild在destructive reset前完成sealed
+selected-lineage audit；reset只隔离current v8 branch-local Store，不修改raw SessionJournal或repo-owned
+Planner config。若current v8 Published block损坏，普通`recap run`会先尝试exact frozen repair；不要把所有
+损坏都等同于旧schema。
 
 ## Durable recovery
 

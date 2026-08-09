@@ -29,7 +29,9 @@
 - `archive/`：已完成、被替代或历史材料；正常实现任务不得从这里推导 current API。
 - 当前 active plan：
   [DerivedRecap Shared Epoch / Maintainer Family 并行重构计划](work/active/derived-recap-shared-epoch-parallel-maintainer-refactor-plan.md)。
-  R3A/R3B/R3C shared-epoch serial机制已进入current code；R4 parallel/family cache与后续acceptance仍是target。
+  R3 shared-epoch v8、R4 runtime-group并行调度、R5 cache boundary/usage telemetry与R6
+  Galatea/CLI production composition已进入current code；R7 real-provider cache/economic proof仍为
+  `Environment-blocked`。
   精确事实仍以owning code/tests与`current/`文档为准。
 
 目录、标题、日期、`README.md` 或 `public` 均不自动授予 authority。

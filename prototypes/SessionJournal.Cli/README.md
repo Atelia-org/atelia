@@ -25,5 +25,7 @@ RefId/head；head变化fail closed。
 unknown/duplicate字段和非canonical bytes。frozen recovery不依赖该文件可用。
 
 `run-online-turn`使用同一个`DerivedRecapOnlineLifecycleCoordinator`和deferred Maintainer registry；
-NoBuild、全healthy Resume或选择失败前不会构造provider client。R6 production acceptance仍待重跑，
-因此本README不声称real-provider/staging已经通过。
+NoBuild、全healthy Resume或选择失败前不会构造provider client。R6 production-composition acceptance已覆盖
+Galatea real-session lifecycle与CLI exact-ref reset、多operation/multi-epoch rebuild、per-member attribution和
+raw/non-derived bytes不变。R7 official-provider canary因TLS/authentication环境失败而没有response usage，
+因此真实cache write/read与经济性结论仍为`Environment-blocked`。

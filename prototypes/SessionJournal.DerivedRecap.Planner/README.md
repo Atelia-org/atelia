@@ -22,8 +22,8 @@ events，online prefix最多513个headers；active v3只能收紧，不能扩界
 `RawEventCount`重放exact slab，不再使用进程启动时的default/config snapshot截断合法Building。
 
 显式 rebuild 由 `DerivedRecapFullRebuildAuthorityPreparer`建立sealed selected-lineage authority，
-`RunExplicitRebuildAsync`从bootstrap顺序选择bounded replay-safe slabs，并复用同一serial kernel与v8
-Store。cadence boundary不写入spool；crash后从latest Published admission重新定位。
+`RunExplicitRebuildAsync`从bootstrap顺序选择bounded replay-safe slabs，并复用同一parallel runtime-group
+kernel与v8 Store。cadence boundary不写入spool；crash后从latest Published admission重新定位。
 
 `RecapEpochConfigCodec`是strict canonical v3。旧schema、unknown/duplicate字段、旧的
 `MaxMaintainerCallsPerBuild`与`MaxRouteEndpointsPerBlock`直接拒绝。当前执行字段为
@@ -38,4 +38,8 @@ Store。cadence boundary不写入spool；crash后从latest Published admission�
 - `DerivedRecapOnlineLifecycleCoordinator.cs`
 - `RecapEpochConfigDocument.cs`
 
-R4之前执行刻意保持serial；parallel/family cache调度尚未进入production。
+当前kernel在第一次remote call前完成complete pending roster与shared-prefix preflight。不同runtime-group的
+leaders并行；同group的leader Maintainer调用成功或非caller-cancellation terminal failure后释放followers并行
+执行；caller cancellation不启动新followers，只drain已started work。lane cap、leader priority与
+manifest-order outcomes由同一kernel处理。R5的provider cache mapping与usage telemetry由Completion/Runtime
+拥有，不进入Planner durable authority。
