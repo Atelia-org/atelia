@@ -124,12 +124,15 @@ public sealed record RecapEpochOperationLimits {
             nameof(maxRebuildForwardRangeEventCount)
         );
         if (MaxRawEventsPerEpoch > MaxRawGrowthEventCount
+            || MaxRawGrowthEventCount
+                > DerivedRecapRawAuthorityLimits
+                    .MaximumFrozenEpochRawEventCount
             || MaxRecapBlockCount
                 > SessionContextContributionContract
                     .MaxContributionCount) {
             throw new ArgumentOutOfRangeException(
-                nameof(maxRawEventsPerEpoch),
-                "Epoch/raw/catalog limits are internally inconsistent."
+                nameof(maxRawGrowthEventCount),
+                "Epoch/raw/catalog limits exceed their binary safety bounds."
             );
         }
         if (MaxRebuildForwardRangeEventCount < MaxRawEventsPerEpoch

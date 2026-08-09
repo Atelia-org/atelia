@@ -296,7 +296,16 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                     RecapPlanReasons.BelowCadenceThreshold
                 );
             }
-            RecapEpochOperationLimits activeLimits = ActiveLimits;
+            RecapEpochOperationLimits activeLimits;
+            try {
+                activeLimits = ActiveLimits;
+            }
+            catch (Exception exception) when (IsAvailability(exception)) {
+                return Unavailable(
+                    "ActiveConfigurationUnavailable",
+                    exception.Message
+                );
+            }
             SessionHistoryPlanningWindowReadResult rawRead =
                 _engine.ReadHistoryPlanningWindowAtBounded(
                     prefix.CapturedHead,
@@ -617,84 +626,87 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
         EventAddress capturedRawHead,
         CancellationToken cancellationToken
     ) {
-        foreach (EventAddress boundary in new[] {
-                     snapshot.EpochInput.StartBoundary.Address,
-                     snapshot.EpochInput.AdmissionBoundary.Address
-                 }) {
-            switch (prefix.Lookup(boundary)) {
-                case SessionCurrentLineageAnchorLookup.Found:
-                    break;
-                case SessionCurrentLineageAnchorLookup.BeyondPrefix:
-                    return FullRebuild(
-                        RecapEpochFullRebuildReason
-                            .BoundedRawAuthorityInsufficient,
-                        capturedRawHead,
-                        "Frozen epoch boundary lies beyond the bounded online prefix."
-                    );
-                case SessionCurrentLineageAnchorLookup.OffLineage:
-                    return Unavailable(
-                        "SourceChanged",
-                        "Frozen epoch boundary is outside the selected raw lineage."
-                    );
-            }
-        }
-        try {
-            var setupProofs = new List<SessionGoverningSetupProof>(2);
-            foreach (RecapEpochBoundary boundary in new[] {
-                         snapshot.EpochInput.StartBoundary,
-                         snapshot.EpochInput.AdmissionBoundary
-                     }) {
-                SessionGoverningSetupProofResult proof =
-                    _engine.ProveGoverningSetupInPrefix(
-                        prefix,
-                        boundary.Address,
-                        boundary.Setups
-                    );
-                if (proof
-                    is SessionGoverningSetupProofResult.BeyondPrefix) {
-                    return FullRebuild(
-                        RecapEpochFullRebuildReason
-                            .BoundedRawAuthorityInsufficient,
-                        capturedRawHead,
-                        "Frozen epoch setup authority lies beyond the bounded online prefix."
-                    );
-                }
-                setupProofs.Add(
-                    ((SessionGoverningSetupProofResult.Available)proof)
-                        .Proof
-                );
-            }
-            _engine.ValidateGoverningSetupPayloads(
-                setupProofs,
-                cancellationToken
-            );
-            SessionHistoryPlanningSeed seed =
-                _engine.CreateHistoryPlanningSeed(
-                    snapshot.EpochInput.StartBoundary.Address,
-                    snapshot.EpochInput.StartBoundary.Setups,
-                    cancellationToken
-                );
-            SessionHistoryPlanningWindowReadResult read =
-                _engine.ReadHistoryPlanningWindowAtBounded(
-                    snapshot.EpochInput.AdmissionBoundary.Address,
-                    seed,
-                    _limits.MaxRawEventsPerEpoch,
-                    cancellationToken
-                );
-            if (read
-                is not SessionHistoryPlanningWindowReadResult.Available
-                    available) {
+        RecapEpochBoundary start = snapshot.EpochInput.StartBoundary;
+        RecapEpochBoundary admission =
+            snapshot.EpochInput.AdmissionBoundary;
+        switch (prefix.Lookup(admission.Address)) {
+            case SessionCurrentLineageAnchorLookup.Found:
+                break;
+            case SessionCurrentLineageAnchorLookup.BeyondPrefix:
                 return FullRebuild(
                     RecapEpochFullRebuildReason
                         .BoundedRawAuthorityInsufficient,
                     capturedRawHead,
-                    "Frozen epoch raw slab exceeds its bounded proof cap."
+                    "Frozen epoch admission lies beyond the bounded online prefix."
+                );
+            case SessionCurrentLineageAnchorLookup.OffLineage:
+                return Unavailable(
+                    "SourceChanged",
+                    "Frozen epoch admission is outside the selected raw lineage."
+                );
+        }
+        try {
+            SessionGoverningSetupProofResult startProofResult =
+                _engine.ProveGoverningSetupAtBounded(
+                    start.Address,
+                    start.Setups,
+                    DerivedRecapRawAuthorityLimits
+                        .MaximumFrozenSetupProofHeaderCount,
+                    cancellationToken
+                );
+            if (startProofResult
+                is SessionGoverningSetupProofResult.BeyondPrefix) {
+                return FullRebuild(
+                    RecapEpochFullRebuildReason
+                        .BoundedRawAuthorityInsufficient,
+                    capturedRawHead,
+                    "Frozen epoch start setup exceeds the binary proof bound."
                 );
             }
-            SessionHistoryPlanningWindow window = available.Window;
+            SessionGoverningSetupProof startProof =
+                ((SessionGoverningSetupProofResult.Available)
+                    startProofResult).Proof;
+            SessionHistoryPlanningWindowProofResult windowProofResult =
+                _engine.ProveHistoryPlanningWindowAtBounded(
+                    admission.Address,
+                    start.Address,
+                    snapshot.EpochInput.RawEventCount,
+                    cancellationToken
+                );
+            if (windowProofResult
+                is SessionHistoryPlanningWindowProofResult.BeyondPrefix) {
+                return Unavailable(
+                    "SourceChanged",
+                    "Frozen epoch raw count no longer reaches its start boundary."
+                );
+            }
+            SessionHistoryPlanningWindowProof windowProof =
+                ((SessionHistoryPlanningWindowProofResult.Available)
+                    windowProofResult).Proof;
+            SessionGoverningSetupProof admissionProof =
+                _engine.ProveGoverningSetupTransition(
+                    windowProof,
+                    startProof,
+                    admission.Setups
+                );
+            _engine.ValidateGoverningSetupPayloads(
+                [startProof, admissionProof],
+                cancellationToken
+            );
+            SessionHistoryPlanningSeed seed =
+                _engine.MaterializeHistoryPlanningSeed(
+                    startProof,
+                    cancellationToken
+                );
+            SessionHistoryPlanningWindow window =
+                _engine.MaterializeHistoryPlanningWindow(
+                    windowProof,
+                    seed,
+                    cancellationToken
+                );
             DerivedRecapEpochInput observed =
                 DerivedRecapV8Codec.CreateEpochInput(
-                    snapshot.EpochInput.StartBoundary,
+                    start,
                     new RecapEpochBoundary(
                         window.ObservedRawHead,
                         window.EndSetups
@@ -911,7 +923,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
     private SessionCurrentLineagePrefix CapturePrefix(
         CancellationToken cancellationToken
     ) => _engine.ReadCurrentLineagePrefix(
-        checked(_limits.MaxRawGrowthEventCount + 1),
+        DerivedRecapRawAuthorityLimits.MaximumOnlineLineageHeaderCount,
         cancellationToken
     );
 

@@ -258,6 +258,158 @@ public sealed class DerivedRecapEpochCampaignExecutorTests {
     }
 
     [Fact]
+    public async Task FrozenRawCountSurvivesSmallerRecoveryLimitOnReopen() {
+        using var fixture = new CampaignFixture();
+        EventAddress admission = default;
+        for (int index = 0; index < 150; index++) {
+            admission = fixture.AppendPair($"large-{index}");
+        }
+        _ = fixture.AppendPair("recent");
+        RecapEpochBlockDefinition[] definitions = fixture.Definitions();
+        var self = new RecordingMaintainer(
+            definitions[0],
+            call => new RecapMaintenanceSuccess.Updated($"self-{call}")
+        );
+        var world = new RecordingMaintainer(
+            definitions[1],
+            call => call == 1
+                ? throw new IOException("first attempt")
+                : new RecapMaintenanceSuccess.Updated($"world-{call}")
+        );
+        DerivedRecapEpochCampaignExecutor initial = fixture.Executor(
+            new BoundaryPolicy(admission, second: null),
+            [self, world],
+            maxEpochsPerOperation: 2,
+            maxCallsPerOperation: 2,
+            maxRawEventsPerEpoch: 384
+        );
+        Assert.IsType<DerivedRecapEpochOperationResult.BlockFailed>(
+            await initial.RunOnlineAsync()
+        );
+        RecapEpochStoreSnapshot partial = Assert.IsType<
+            RecapEpochBuildingSelectionResult.Selected
+        >(await fixture.Store.SelectBuildingAsync()).Snapshot;
+        Assert.True(partial.EpochInput.RawEventCount > 128);
+        Assert.True(partial.EpochInput.RawEventCount < 512);
+
+        fixture.Engine.Dispose();
+        using SessionJournalEngine reopenedEngine =
+            SessionJournalEngine.OpenReadOnly(fixture.Path);
+        DerivedRecapEpochStore reopenedStore = DerivedRecapEpochStore.Open(
+            fixture.Path,
+            reopenedEngine.BranchRefId
+        );
+        var recoveryLimits = new RecapEpochOperationLimits(
+            maxRawGrowthEventCount: 512,
+            maxRawEventsPerEpoch: 128,
+            maxMaintainerCallsPerEpoch: 2,
+            maxEpochsPerOperation: 2,
+            maxMaintainerCallsPerOperation: 2,
+            maxRecapBlockCount: 2
+        );
+        static RecapEpochActiveConfiguration UnavailableConfiguration()
+            => throw new IOException("active config unavailable");
+        var resumed = new DerivedRecapEpochCampaignExecutor(
+            reopenedEngine.ReadView,
+            reopenedStore,
+            (Func<RecapEpochActiveConfiguration>)UnavailableConfiguration,
+            recoveryLimits,
+            new RecapBlockMaintainerRegistry([self, world])
+        );
+        Assert.IsType<DerivedRecapEpochOperationResult.Unavailable>(
+            await resumed.RunOnlineAsync()
+        );
+        Assert.IsType<RecapEpochBuildingSelectionResult.Empty>(
+            await reopenedStore.SelectBuildingAsync()
+        );
+        _ = Assert.IsType<RecapEpochStoreReadResult.Available>(
+            await reopenedStore.ReadPublishedForRepairAsync(admission)
+        );
+
+        await File.WriteAllTextAsync(
+            fixture.FinalPath(admission, "self"),
+            "damaged"
+        );
+        var repaired = new DerivedRecapEpochCampaignExecutor(
+            reopenedEngine.ReadView,
+            reopenedStore,
+            (Func<RecapEpochActiveConfiguration>)UnavailableConfiguration,
+            recoveryLimits,
+            new RecapBlockMaintainerRegistry([self, world])
+        );
+        Assert.IsType<DerivedRecapEpochOperationResult.Unavailable>(
+            await repaired.RunOnlineAsync()
+        );
+        RecapEpochStoreSnapshot healthy = Assert.IsType<
+            RecapEpochStoreReadResult.Available
+        >(await reopenedStore.ReadPublishedForRepairAsync(admission))
+            .Snapshot;
+        Assert.All(
+            healthy.Blocks,
+            block => Assert.IsType<RecapEpochFinalHealth.Healthy>(
+                block.Final
+            )
+        );
+        Assert.Equal(2, self.Inputs.Count);
+        Assert.Equal(2, world.Inputs.Count);
+    }
+
+    [Fact]
+    public async Task BinaryRawCapRejectsConfigurationBeforeCallsOrWrites() {
+        using var fixture = new CampaignFixture();
+        _ = fixture.AppendPair("raw");
+        RecapEpochBlockDefinition definition = fixture.Definitions()[0];
+        var maintainer = new RecordingMaintainer(
+            definition,
+            _ => new RecapMaintenanceSuccess.Updated("unused")
+        );
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new RecapEpochOperationLimits(
+                maxRawGrowthEventCount: 513,
+                maxRawEventsPerEpoch: 513,
+                maxMaintainerCallsPerEpoch: 1,
+                maxEpochsPerOperation: 1,
+                maxMaintainerCallsPerOperation: 1,
+                maxRecapBlockCount: 1
+            )
+        );
+        var executor = new DerivedRecapEpochCampaignExecutor(
+            fixture.Engine.ReadView,
+            fixture.Store,
+            (Func<RecapEpochActiveConfiguration>)(() => {
+                _ = new RecapEpochOperationLimits(
+                    maxRawGrowthEventCount: 513,
+                    maxRawEventsPerEpoch: 513,
+                    maxMaintainerCallsPerEpoch: 1,
+                    maxEpochsPerOperation: 1,
+                    maxMaintainerCallsPerOperation: 1,
+                    maxRecapBlockCount: 1
+                );
+                throw new InvalidOperationException("unreachable");
+            }),
+            new RecapEpochOperationLimits(
+                maxRawGrowthEventCount: 512,
+                maxRawEventsPerEpoch: 64,
+                maxMaintainerCallsPerEpoch: 1,
+                maxEpochsPerOperation: 1,
+                maxMaintainerCallsPerOperation: 1,
+                maxRecapBlockCount: 1
+            ),
+            new RecapBlockMaintainerRegistry([maintainer])
+        );
+
+        var rejected = Assert.IsType<
+            DerivedRecapEpochOperationResult.Unavailable
+        >(await executor.RunOnlineAsync());
+        Assert.Equal("ActiveConfigurationUnavailable", rejected.Code);
+        Assert.Empty(maintainer.Inputs);
+        Assert.IsType<RecapEpochBuildingSelectionResult.Empty>(
+            await fixture.Store.SelectBuildingAsync()
+        );
+    }
+
+    [Fact]
     public async Task PublishedRestoreUsesSameKernelAndRepairsOnlyCommitmentMismatch() {
         using var fixture = new CampaignFixture();
         EventAddress admission = fixture.AppendPair("A");
@@ -598,11 +750,13 @@ public sealed class DerivedRecapEpochCampaignExecutorTests {
                 Path,
                 Engine.BranchRefId
             );
+            RefId = Engine.BranchRefId;
             Store.CreateAsync().AsTask().GetAwaiter().GetResult();
         }
 
         public string Path { get; }
         public SessionJournalEngine Engine { get; }
+        public RefId RefId { get; }
         public DerivedRecapEpochStore Store { get; }
 
         public EventAddress AppendPair(string name) {
@@ -624,7 +778,8 @@ public sealed class DerivedRecapEpochCampaignExecutorTests {
             IRecapEpochPlanningPolicy policy,
             IReadOnlyList<IRecapBlockMaintainer> maintainers,
             int maxEpochsPerOperation,
-            int maxCallsPerOperation
+            int maxCallsPerOperation,
+            int maxRawEventsPerEpoch = 64
         ) {
             RecapEpochBlockDefinition[] definitions = Definitions();
             return new DerivedRecapEpochCampaignExecutor(
@@ -652,7 +807,7 @@ public sealed class DerivedRecapEpochCampaignExecutorTests {
                 ),
                 new RecapEpochOperationLimits(
                     maxRawGrowthEventCount: 512,
-                    maxRawEventsPerEpoch: 64,
+                    maxRawEventsPerEpoch,
                     maxMaintainerCallsPerEpoch: 2,
                     maxEpochsPerOperation,
                     maxCallsPerOperation,
@@ -675,7 +830,7 @@ public sealed class DerivedRecapEpochCampaignExecutorTests {
                 "recap",
                 "v8",
                 "refs",
-                Engine.BranchRefId.ToHexString(),
+                RefId.ToHexString(),
                 "published",
                 EventAddressFileNameCodec.Format(admission),
                 "blocks",

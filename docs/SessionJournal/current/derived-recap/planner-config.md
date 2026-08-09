@@ -18,6 +18,12 @@ aggregate byte caps。旧v2 schema与旧字段没有compat reader。
 实际StartedCallCount；pre-dispatch budget仍按完整pending count。正常path超过raw cap只报告
 FullRebuildRequired，不隐式创建rebuild spool。
 
+raw authority另有code-owned binary hard bound，由candidate bounded prefix、Planner proof、frozen epoch
+codec与recovery共同引用：512 raw events / 513 lineage headers。v3的
+`MaxRawGrowthEventCount`/`MaxRawEventsPerEpoch`只能在该bound内收紧；Building/Published recovery使用
+artifact自身的exact `RawEventCount`，不使用启动时default重新截断。explicit rebuild通过多个
+不超过512 events的epochs消费任意长sealed backlog。
+
 Store aggregate byte/count caps是当前binary的durable hard limits；v3文档必须精确声明这组值，
 但不能在active reload中改变它们。变更这组caps需要新Store generation或显式reset决策；
 `inspect`会拒绝与binary hard limits不同的文档。

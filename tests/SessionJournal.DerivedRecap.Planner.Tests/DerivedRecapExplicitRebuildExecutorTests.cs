@@ -251,7 +251,7 @@ public sealed class DerivedRecapExplicitRebuildExecutorTests
             )
         )) {
             refId = writer.BranchRefId;
-            for (int index = 0; index < 256; index++) {
+            for (int index = 0; index < 257; index++) {
                 _ = writer.AppendObservation($"observation-{index}");
                 rawHead = writer.AppendImportedAgentAction(
                     new ActionMessage([
@@ -359,12 +359,15 @@ public sealed class DerivedRecapExplicitRebuildExecutorTests
             DerivedRecapEpochOperationResult.Fresh
         >(result);
         Assert.Equal(rawHead, fresh.Latest!.AdmissionAnchor);
-        Assert.Equal(8, self.Inputs.Count);
-        Assert.Equal(8, world.Inputs.Count);
-        Assert.Equal(4, operations);
+        Assert.Equal(9, self.Inputs.Count);
+        Assert.Equal(9, world.Inputs.Count);
+        Assert.Equal(5, operations);
         for (int index = 0; index < self.Inputs.Count; index++) {
             Assert.Same(self.Inputs[index], world.Inputs[index]);
-            Assert.Equal(64, self.Inputs[index].HistoryMessages.Count);
+            Assert.Equal(
+                index == 8 ? 2 : 64,
+                self.Inputs[index].HistoryMessages.Count
+            );
             if (index == 0) {
                 Assert.Empty(
                     self.Inputs[index].PriorContext.SystemPromptFragment
@@ -388,7 +391,7 @@ public sealed class DerivedRecapExplicitRebuildExecutorTests
         IReadOnlyList<EventAddress> anchors =
             await store.ListPublishedAnchorsAsync();
         Assert.True(deletedPreviousSource);
-        Assert.Equal(7, anchors.Count);
+        Assert.Equal(8, anchors.Count);
         var snapshots = new Dictionary<
             EventAddress,
             RecapEpochStoreSnapshot
@@ -424,7 +427,7 @@ public sealed class DerivedRecapExplicitRebuildExecutorTests
             latest = predecessor;
         }
         Assert.True(reachedDeletedSource);
-        Assert.Equal(7, chainCount);
+        Assert.Equal(8, chainCount);
     }
 
     public void Dispose() {

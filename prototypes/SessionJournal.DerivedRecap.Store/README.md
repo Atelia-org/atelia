@@ -21,6 +21,10 @@ publication missing/canonical damage可由 ManifestWitness envelope-last reseal�
 
 `DerivedRecapContextCandidateSource`按 selected raw lineage做 strict ordinal selection，descriptor绑定
 RefId、admission、publication envelope、setup与completion raw head；materialize前后二次验证。
+candidate selection、Planner与frozen epoch codec共用`DerivedRecapRawAuthorityLimits`；active config只能
+选择更小的raw cap。单epochhard cap为512 raw events、online lineage cap为513 headers；frozen
+`RawEventCount`不由recovery时配置重新解释。explicit rebuild通过多个bounded epochs跨越backlog，
+不会扩大单epoch wire bound。
 
 显式 full rebuild 使用独立 `derived/recap/rebuild/v1` execution-aid spool。spool只保存地址/header/
 provenance/index，不保存 event body、prompt、recap或epoch policy；seal后仍须与当前 raw read view、
@@ -34,4 +38,5 @@ captured head及RefId重新绑定。删除spool不改变raw authority，也不�
 - `DerivedRecapRebuildSpoolStore.cs`
 
 Focused tests：`DerivedRecapEpochStoreCandidateTests`、`DerivedRecapV8CodecCandidateTests`、
-`DerivedRecapRebuildSpoolTests`。CrashHarness只覆盖v8 final/publish/reset failpoints。
+`DerivedRecapRebuildSpoolTests`。CrashHarness以真实child-process FailFast覆盖v8 Building install、
+direct-final atomic replace、publication install/promotion与reset quarantine failpoints。

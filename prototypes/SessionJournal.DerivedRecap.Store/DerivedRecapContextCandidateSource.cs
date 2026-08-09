@@ -9,7 +9,6 @@ namespace Atelia.SessionJournal.DerivedRecap.Store;
 public sealed class DerivedRecapContextCandidateSource
     : ICoherentContextCandidateSource {
     private const string HandlePrefix = "eadr8";
-    private const int MaximumOnlineLineageHeaders = 513;
 
     private readonly DerivedRecapEpochStore _store;
     private readonly SessionJournalReadView _readView;
@@ -32,7 +31,8 @@ public sealed class DerivedRecapContextCandidateSource
         request.ValidateShape();
         SessionCurrentLineagePrefix prefix =
             _readView.ReadCurrentLineagePrefix(
-                MaximumOnlineLineageHeaders,
+                DerivedRecapRawAuthorityLimits
+                    .MaximumOnlineLineageHeaderCount,
                 cancellationToken
             );
         if (prefix.CapturedHead != request.CompletionBoundary) {

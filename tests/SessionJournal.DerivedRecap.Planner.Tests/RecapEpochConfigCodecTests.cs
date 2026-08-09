@@ -1,4 +1,5 @@
 using System.Text;
+using Atelia.SessionJournal.DerivedRecap.Store;
 using Xunit;
 
 namespace Atelia.SessionJournal.DerivedRecap.Planner.Tests;
@@ -70,6 +71,34 @@ public sealed class RecapEpochConfigCodecTests {
 
         Assert.False(RecapEpochConfigLoader.TryLoad(root, out _));
         Assert.False(Directory.Exists(root));
+    }
+
+    [Fact]
+    public void OperationLimitsCannotEnlargeBinaryRawAuthority() {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new RecapEpochOperationLimits(
+                checked(
+                    DerivedRecapRawAuthorityLimits
+                        .MaximumFrozenEpochRawEventCount + 1
+                ),
+                maxRawEventsPerEpoch: 512,
+                maxMaintainerCallsPerEpoch: 2,
+                maxEpochsPerOperation: 4,
+                maxMaintainerCallsPerOperation: 8,
+                maxRecapBlockCount: 2
+            )
+        );
+        RecapEpochConfigDocument oversized = CreateDocument() with {
+            Limits = CreateDocument().Limits with {
+                MaxRawGrowthEventCount = checked(
+                    DerivedRecapRawAuthorityLimits
+                        .MaximumFrozenEpochRawEventCount + 1
+                )
+            }
+        };
+        Assert.Throws<InvalidDataException>(() =>
+            RecapEpochConfigCodec.Encode(oversized)
+        );
     }
 
     private static RecapEpochConfigDocument CreateDocument() => new(

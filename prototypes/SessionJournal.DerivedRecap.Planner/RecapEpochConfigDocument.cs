@@ -1,6 +1,7 @@
 using Microsoft.Win32.SafeHandles;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Atelia.SessionJournal.DerivedRecap.Store;
 
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
@@ -269,6 +270,20 @@ public static class RecapEpochConfigCodec {
         if (positive.Any(static value => value <= 0)) {
             throw new InvalidDataException(
                 "Recap epoch config limits must be positive."
+            );
+        }
+        if (limits.MaxRawGrowthEventCount
+                > DerivedRecapRawAuthorityLimits
+                    .MaximumFrozenEpochRawEventCount
+            || limits.MaxRawEventsPerEpoch
+                > limits.MaxRawGrowthEventCount
+            || limits.MaxRebuildForwardRangeEventCount
+                < limits.MaxRawEventsPerEpoch
+            || limits.MaxRebuildForwardRangeEventCount
+                > SessionSelectedLineageAuditLimits
+                    .MaximumForwardRangeEventCount) {
+            throw new InvalidDataException(
+                "Recap epoch raw limits exceed their binary authority bounds."
             );
         }
     }

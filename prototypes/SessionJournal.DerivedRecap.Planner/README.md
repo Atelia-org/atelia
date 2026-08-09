@@ -17,6 +17,10 @@ normal online path只读bounded prefix/window。超过raw growth或authority cap
 FullRebuildRequired，零spool、零full scan。一个operation可连续发布多个无gap/overlap epoch；预算不足
 时保留已发布进度并返回MoreWorkPending，不能把中间publication当Ready。
 
+online lineage proof与frozen epoch wire共享code-owned binary raw authority bound：单epoch最多512个raw
+events，online prefix最多513个headers；active v3只能收紧，不能扩界。恢复按frozen
+`RawEventCount`重放exact slab，不再使用进程启动时的default/config snapshot截断合法Building。
+
 显式 rebuild 由 `DerivedRecapFullRebuildAuthorityPreparer`建立sealed selected-lineage authority，
 `RunExplicitRebuildAsync`从bootstrap顺序选择bounded replay-safe slabs，并复用同一serial kernel与v8
 Store。cadence boundary不写入spool；crash后从latest Published admission重新定位。

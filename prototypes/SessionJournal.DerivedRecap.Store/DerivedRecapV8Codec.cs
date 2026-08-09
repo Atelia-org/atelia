@@ -449,9 +449,11 @@ public static class DerivedRecapV8Codec {
                 "Epoch start and admission boundaries must differ."
             );
         }
-        if (input.RawEventCount <= 0) {
+        if (input.RawEventCount is <= 0
+            or > DerivedRecapRawAuthorityLimits
+                .MaximumFrozenEpochRawEventCount) {
             throw new InvalidDataException(
-                "Epoch raw event count must be positive."
+                "Epoch raw event count is outside the protocol bounds."
             );
         }
         RequireSha256(input.RawRangeCommitmentSha256, "raw range commitment");

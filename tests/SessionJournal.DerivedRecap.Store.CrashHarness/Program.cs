@@ -1,3 +1,4 @@
+using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.DerivedRecap.Store;
@@ -8,7 +9,7 @@ internal static class Program {
     public static async Task<int> Main(string[] args) {
         if (args.Length != 3) {
             Console.Error.WriteLine(
-                "usage: <final|publish|reset> <failpoint> <repository>"
+                "usage: <building|final|publish|reset> <failpoint> <repository>"
             );
             return 2;
         }
@@ -46,6 +47,9 @@ internal static class Program {
             );
 
         switch (operation) {
+            case "building":
+                await InstallBuildingAsync(engine, store);
+                break;
             case "final":
                 await WriteFirstPendingFinalAsync(store);
                 break;
@@ -62,6 +66,67 @@ internal static class Program {
 
         Console.Error.WriteLine($"failpoint '{failpoint}' was not reached");
         return 3;
+    }
+
+    private static async ValueTask InstallBuildingAsync(
+        SessionJournalEngine engine,
+        DerivedRecapEpochStore store
+    ) {
+        SessionCurrentLineageSnapshot lineage =
+            engine.ReadCurrentLineageHeaders();
+        if (lineage.HeadToRoot.Count < 3) {
+            throw new InvalidDataException(
+                "Crash fixture raw lineage is too short."
+            );
+        }
+        EventAddress admission = lineage.HeadToRoot[0].Address;
+        EventAddress start = lineage.HeadToRoot[2].Address;
+        DerivedRecapEpochInput input = DerivedRecapV8Codec.CreateEpochInput(
+            new RecapEpochBoundary(
+                start,
+                engine.ResolveContextAnchorSetupReferences(start)
+            ),
+            new RecapEpochBoundary(
+                admission,
+                engine.ResolveContextAnchorSetupReferences(admission)
+            ),
+            rawEventCount: 2,
+            rawRangeCommitmentSha256:
+                "3333333333333333333333333333333333333333333333333333333333333333",
+            historyMessages: [
+                new ObservationMessage("crash-harness-history")
+            ],
+            RecapEpochPrevious.Empty.Instance
+        );
+        DerivedRecapEpochManifest manifest =
+            DerivedRecapV8Codec.CreateManifest(
+                engine.BranchRefId,
+                admission,
+                input.PayloadSha256,
+                [new RecapEpochBlockDefinition(
+                    new RecapBlockId("crash"),
+                    new ContextHeaderBlockPath(
+                        ContextHeaderCarrier.System,
+                        "crash"
+                    ),
+                    "crash",
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    1024,
+                    0
+                )]
+            );
+        InstallRecapEpochBuildingResult result =
+            await store.InstallBuildingAsync(
+                manifest,
+                input,
+                lineage.CapturedHead,
+                () => engine.ReadCurrentLineageHeaders().CapturedHead
+            );
+        if (result is not InstallRecapEpochBuildingResult.Installed) {
+            throw new InvalidDataException(
+                $"Crash fixture Building install failed: {result}."
+            );
+        }
     }
 
     private static async ValueTask WriteFirstPendingFinalAsync(

@@ -2,6 +2,18 @@ using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal.DerivedRecap.Store;
 
+/// <summary>
+/// Binary safety bounds shared by online selection, frozen epoch wire
+/// validation, and recovery. Active planning may choose smaller limits, but
+/// cannot enlarge these protocol authorities.
+/// </summary>
+public static class DerivedRecapRawAuthorityLimits {
+    public const int MaximumFrozenEpochRawEventCount = 512;
+    public const int MaximumOnlineLineageHeaderCount = 513;
+    public const int MaximumFrozenSetupProofHeaderCount =
+        MaximumOnlineLineageHeaderCount;
+}
+
 public sealed record DerivedRecapEpochStoreLimits {
     public DerivedRecapEpochStoreLimits(
         int maxRecapBlockCount =

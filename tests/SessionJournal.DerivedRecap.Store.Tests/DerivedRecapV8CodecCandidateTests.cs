@@ -286,6 +286,19 @@ public sealed class DerivedRecapV8CodecCandidateTests {
                 RecapEpochPrevious.Empty.Instance
             )
         );
+        Assert.Throws<InvalidDataException>(() =>
+            DerivedRecapV8Codec.CreateEpochInput(
+                Boundary(A1),
+                Boundary(A2),
+                rawEventCount: checked(
+                    DerivedRecapRawAuthorityLimits
+                        .MaximumFrozenEpochRawEventCount + 1
+                ),
+                ZeroHash,
+                [new ObservationMessage("oversized raw range")],
+                RecapEpochPrevious.Empty.Instance
+            )
+        );
     }
 
     private static RecapEpochBoundary Boundary(EventAddress address)

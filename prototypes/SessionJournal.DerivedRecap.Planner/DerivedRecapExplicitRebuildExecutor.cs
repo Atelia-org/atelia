@@ -515,7 +515,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
             cancellationToken
         );
         SessionSelectedLineageForwardRange range = cursor.ReadNextRange(
-                _limits.MaxRawEventsPerEpoch,
+                snapshot.EpochInput.RawEventCount,
                 cancellationToken
             )
             ?? throw new InvalidDataException(
