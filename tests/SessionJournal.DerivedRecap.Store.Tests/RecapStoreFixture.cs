@@ -6,24 +6,17 @@ namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 internal sealed class RecapStoreFixture : IDisposable {
     private RecapStoreFixture(
         string path,
-        SessionJournalEngine engine,
-        DerivedRecapStore store
+        SessionJournalEngine engine
     ) {
         Path = path;
         Engine = engine;
-        Store = store;
-        Publisher = new DerivedRecapPublisher(store, engine.ReadView);
     }
 
     public string Path { get; }
     public SessionJournalEngine Engine { get; private set; }
-
     public SessionJournalReadView ReadView => Engine.ReadView;
-    public DerivedRecapStore Store { get; }
-    public DerivedRecapPublisher Publisher { get; private set; }
 
-    public static async ValueTask<RecapStoreFixture> CreateAsync(
-        RecapStoreTestHooks? hooks = null,
+    public static ValueTask<RecapStoreFixture> CreateAsync(
         int historyPairs = 3
     ) {
         string path = System.IO.Path.Combine(
@@ -45,91 +38,18 @@ internal sealed class RecapStoreFixture : IDisposable {
                 new ActionMessage([
                     new ActionBlock.Text($"answer {index}")
                 ]),
-                new CompletionDescriptor(
-                    "import",
-                    "v1",
-                    "model-a"
-                )
+                new CompletionDescriptor("import", "v1", "model-a")
             );
         }
-        DerivedRecapStore store = hooks is null
-            ? DerivedRecapStore.Open(path, engine.BranchRefId)
-            : DerivedRecapStore.OpenForTest(
-                path,
-                engine.BranchRefId,
-                hooks
-            );
-        await store.CreateAsync();
-        return new RecapStoreFixture(path, engine, store);
+        return ValueTask.FromResult(new RecapStoreFixture(path, engine));
     }
-
-    public DerivedRecapLineageView Lineage()
-        => DerivedRecapLineageView.Capture(Store, ReadView);
 
     public SessionCurrentLineageSnapshot RawLineage()
         => Engine.ReadCurrentLineageHeaders();
 
-    public async ValueTask<PublishedRecapDescriptor> PublishAsync(
-        EventAddress anchor,
-        EventAddress replayStart,
-        string blockId = "roleplay.self",
-        string content = "recap"
-    ) {
-        RecapBlockPlan plan = CreateMaintainPlan(
-            anchor,
-            replayStart,
-            blockId
-        );
-        DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                Engine.BranchRefId,
-                anchor,
-                Setups(anchor),
-                EmptyRecapPriorContext.Instance,
-                [plan]
-            );
-        await Store.CreateBuildingAsync(manifest);
-        await RecapStoreTestDriver.InstallFinalAsync(
-            Store,
-
-            anchor,
-            DerivedRecapCodec.CreateBlock(plan, anchor, content)
-        );
-        PublishRecapResult result =
-            await Publisher.PublishAsync(anchor);
-        return result is PublishRecapResult.Published published
-            ? published.Descriptor
-            : throw new InvalidDataException(
-                $"Fixture publication failed with '{result.GetType().Name}'."
-            );
-    }
-
-    public RecapBlockPlan CreateMaintainPlan(
-        EventAddress anchor,
-        EventAddress replayStart,
-        string blockId = "roleplay.self"
-    ) => new MaintainRecapBlockPlan(
-        new RecapBlockId(blockId),
-        new ContextHeaderBlockPath(
-            ContextHeaderCarrier.System,
-            blockId
-        ),
-        "roleplay.autobiographical",
-        RecapTestIdentity.CapabilityFingerprint,
-        new EmptyRecapMaintainSource(
-            replayStart,
-            Setups(replayStart)
-        ),
-        [Boundary(anchor)],
-        RecapWireTestFacts.PriorDigest(EmptyRecapPriorContext.Instance)
-    );
-
     public SessionContextAnchorSetupReferences Setups(
         EventAddress address
-    ) => RecapWireTestFacts.ResolveSetups(Engine, address);
-
-    public RecapReplayBoundary Boundary(EventAddress address)
-        => new(address, Setups(address));
+    ) => Engine.ResolveContextAnchorSetupReferences(address);
 
     public EventAddress AppendPair(string suffix) {
         Engine.AppendObservation($"observation {suffix}");
@@ -137,18 +57,13 @@ internal sealed class RecapStoreFixture : IDisposable {
             new ActionMessage([
                 new ActionBlock.Text($"answer {suffix}")
             ]),
-            new CompletionDescriptor(
-                "import",
-                "v1",
-                "model-a"
-            )
+            new CompletionDescriptor("import", "v1", "model-a")
         );
     }
 
     public void ReopenEngine() {
         Engine.Dispose();
         Engine = SessionJournalEngine.Open(Path);
-        Publisher = new DerivedRecapPublisher(Store, ReadView);
     }
 
     public void CloseEngine() => Engine.Dispose();

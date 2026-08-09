@@ -3,6 +3,12 @@ using Atelia.SessionJournal.DerivedRecap.Store;
 
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
+public sealed record RecapEpochActiveConfiguration(
+    RecapEpochPlanningConfiguration Planning,
+    RecapEpochOperationLimits OperationLimits,
+    DerivedRecapEpochStoreLimits StoreLimits
+);
+
 public sealed record RecapEpochPlanningConfiguration {
     public RecapEpochPlanningConfiguration(
         IReadOnlyList<RecapBlockCatalogEntry> orderedCatalog,

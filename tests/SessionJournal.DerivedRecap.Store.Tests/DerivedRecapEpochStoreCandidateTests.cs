@@ -9,6 +9,115 @@ public sealed class DerivedRecapEpochStoreCandidateTests {
         "3333333333333333333333333333333333333333333333333333333333333333";
 
     [Fact]
+    public async Task IncompleteBoundedLineageReturnsTypedBeyondPrefix() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 1);
+        DerivedRecapEpochStore store = DerivedRecapEpochStore.Open(
+            fixture.Path,
+            fixture.Engine.BranchRefId
+        );
+        await store.CreateAsync();
+        for (int index = 0; index < 514; index++) {
+            _ = fixture.Engine.AppendSystemPromptSetup(
+                $"bounded-prefix-padding-{index}"
+            );
+        }
+        EventAddress rawHead = fixture.RawLineage().CapturedHead;
+        var source = new DerivedRecapContextCandidateSource(
+            store,
+            fixture.ReadView
+        );
+
+        SessionContextCandidateSelection selected =
+            await source.SelectAsync(
+                new SessionContextSelectionRequest(rawHead, 0),
+                CancellationToken.None
+            );
+
+        Assert.Equal(
+            SessionContextCandidateSelectionStatus.BeyondPrefix,
+            selected.Status
+        );
+        Assert.Null(selected.Candidate);
+        Assert.False(string.IsNullOrWhiteSpace(selected.Detail));
+    }
+
+    [Fact]
+    public async Task ContextCandidateIsExactOrdinalAndRawHeadBound() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 4);
+        DerivedRecapEpochStore store = DerivedRecapEpochStore.Open(
+            fixture.Path,
+            fixture.Engine.BranchRefId
+        );
+        await store.CreateAsync();
+        SessionCurrentLineageSnapshot lineage = fixture.RawLineage();
+        EventAddress admission = lineage.HeadToRoot[2].Address;
+        EventAddress start = lineage.HeadToRoot[6].Address;
+        EpochFacts epoch = CreateEpoch(
+            fixture,
+            start,
+            admission,
+            RecapEpochPrevious.Empty.Instance,
+            "history"
+        );
+        Assert.IsType<InstallRecapEpochBuildingResult.Installed>(
+            await store.InstallBuildingAsync(
+                epoch.Manifest,
+                epoch.Input,
+                lineage.CapturedHead,
+                () => fixture.RawLineage().CapturedHead
+            )
+        );
+        _ = await CompleteAsync(
+            store,
+            epoch.Manifest,
+            ["self recap", "world recap"]
+        );
+
+        var source = new DerivedRecapContextCandidateSource(
+            store,
+            fixture.ReadView
+        );
+        var request = new SessionContextSelectionRequest(
+            lineage.CapturedHead,
+            0
+        );
+        SessionContextCandidateSelection selected =
+            await source.SelectAsync(request, CancellationToken.None);
+        Assert.Equal(
+            SessionContextCandidateSelectionStatus.Selected,
+            selected.Status
+        );
+        SessionContextCandidate candidate = await source.MaterializeAsync(
+            selected.Candidate!,
+            CancellationToken.None
+        );
+        Assert.Equal(admission, candidate.SetAdmissionAnchor);
+        Assert.Equal(
+            ["self recap", "world recap"],
+            candidate.Contributions.Select(static item => item.ExactText)
+        );
+
+        SessionContextCandidateSelection beyond =
+            await source.SelectAsync(
+                request with { NthPrevious = 1 },
+                CancellationToken.None
+            );
+        Assert.Equal(
+            SessionContextCandidateSelectionStatus.OrdinalUnavailable,
+            beyond.Status
+        );
+        _ = fixture.AppendPair("head-drift");
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await source.MaterializeAsync(
+                selected.Candidate!,
+                CancellationToken.None
+            )
+        );
+    }
+
+    [Fact]
     public async Task BuildingSelectionRecoversBoundedStagingBacklogAcrossRetries() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 1);

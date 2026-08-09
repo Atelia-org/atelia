@@ -80,45 +80,56 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                        "openai-chat/strict"
                    )
                )) {
-            DerivedRecapStore.Open(
+            DerivedRecapEpochStore.Open(
                     sessionDirectory,
                     engine.BranchRefId
                 )
-                .CreateAsync()
+                .EnsureCreatedAsync()
                 .AsTask()
                 .GetAwaiter()
                 .GetResult();
         }
-        _ = RecapPlannerConfigInitializer.Initialize(
-            sessionDirectory,
-            new RecapPlannerConfigDocument(
-                RecapPlannerConfigCodec.SchemaV2,
-                RecapPlanningPolicyIds.BoundedMaintainAllV1,
-                new RecapCadenceConfigDocument(
+        string recapConfigPath =
+            RecapEpochConfigLoader.GetCanonicalPath(sessionDirectory);
+        Directory.CreateDirectory(Path.GetDirectoryName(recapConfigPath)!);
+        File.WriteAllBytes(
+            recapConfigPath,
+            RecapEpochConfigCodec.Encode(new RecapEpochConfigDocument(
+                RecapEpochConfigCodec.SchemaV3,
+                MaintainCompleteRosterEpochPolicy.PolicyId,
+                new RecapEpochCadenceConfigDocument(
                     O200kBaseHistoryUnitLoadEstimator.EstimatorId,
                     MinimumRecentHistoryLoad: 1_000_000,
                     RecapBuildIntervalHistoryLoad: 1_000_000
                 ),
                 [
-                    new RecapPlannerCatalogEntryDocument(
+                    new RecapEpochCatalogEntryDocument(
                         RecapMaintainerProfileCatalog
                             .WorldUnderstandingRewrite,
                         32_768
                     ),
-                    new RecapPlannerCatalogEntryDocument(
+                    new RecapEpochCatalogEntryDocument(
                         RecapMaintainerProfileCatalog
                             .AutobiographicalRewrite,
                         32_768
                     )
                 ],
-                new RecapPlannerLimitsDocument(
+                new RecapEpochLimitsDocument(
                     MaxRawGrowthEventCount: 512,
-                    MaxRouteEndpointsPerBlock: 4,
-                    MaxMaintainerCallsPerBuild: 8,
-                    MaxRawEventsPerStep: 64,
-                    MaxRawEventsPerBuild: 512
+                    MaxRawEventsPerEpoch: 512,
+                    MaxMaintainerCallsPerEpoch: 2,
+                    MaxEpochsPerOperation: 4,
+                    MaxMaintainerCallsPerOperation: 8,
+                    MaxRecapBlockCount: 2,
+                    MaxRebuildForwardRangeEventCount: 65_536,
+                    MaxTotalRecapPackUtf8Bytes: 2 * 1024 * 1024,
+                    MaxCanonicalPriorPackBytes: 5 * 1024 * 1024,
+                    MaxEpochInputBytes: 8 * 1024 * 1024,
+                    MaxManifestBytes: 2 * 1024 * 1024,
+                    MaxFinalBlockBytes: 512 * 1024,
+                    MaxPublicationBytes: 3 * 1024 * 1024
                 )
-            )
+            ))
         );
         string configPath = WriteConfiguration(
             configDirectory,

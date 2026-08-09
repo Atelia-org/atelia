@@ -134,9 +134,8 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             session.Engine.InspectExecutionBoundary().Phase
         );
         Assert.NotEqual(failedHead, session.Engine.ReadCurrentHead());
-        SessionCompletedTurnProjection completed = Assert.Single(
-            session.Engine.ReadRecentCompletedTurns().Turns
-        );
+        SessionCompletedTurnProjection completed =
+            session.Engine.ReadRecentCompletedTurns().Turns[^1];
         Assert.Equal(
             GalateaUserMessageEnvelope.Wrap("continue after failure"),
             completed.ObservationContent
@@ -267,7 +266,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "AfterRequestPreparedCommitted",
             SessionExecutionPhase.AwaitingCompletionDispatch
         );
-        File.Delete(RecapPlannerConfigLoader.GetCanonicalPath(sessionPath));
+        File.Delete(RecapEpochConfigLoader.GetCanonicalPath(sessionPath));
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
 
@@ -293,7 +292,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.Equal(1, completionFactory.CreateCallCount);
         Assert.Equal(1, completionFactory.Client.DispatchCallCount);
         Assert.False(File.Exists(
-            RecapPlannerConfigLoader.GetCanonicalPath(sessionPath)
+            RecapEpochConfigLoader.GetCanonicalPath(sessionPath)
         ));
         Assert.Single(Directory.EnumerateFiles(
             Path.Combine(callLogs.Path, "agent"),
@@ -324,7 +323,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "AfterCompletionAttemptStartedCommitted",
             SessionExecutionPhase.AwaitingCompletion
         );
-        File.Delete(RecapPlannerConfigLoader.GetCanonicalPath(sessionPath));
+        File.Delete(RecapEpochConfigLoader.GetCanonicalPath(sessionPath));
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
 
@@ -351,7 +350,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.Equal(0, completionFactory.CreateCallCount);
         Assert.Equal(0, completionFactory.Client.DispatchCallCount);
         Assert.False(File.Exists(
-            RecapPlannerConfigLoader.GetCanonicalPath(sessionPath)
+            RecapEpochConfigLoader.GetCanonicalPath(sessionPath)
         ));
 
         GalateaHostService service = host.Factory.Services
@@ -393,7 +392,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "AfterCompletionAttemptStartedCommitted",
             SessionExecutionPhase.AwaitingCompletion
         );
-        File.Delete(RecapPlannerConfigLoader.GetCanonicalPath(sessionPath));
+        File.Delete(RecapEpochConfigLoader.GetCanonicalPath(sessionPath));
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
 
@@ -427,7 +426,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.Equal(1, completionFactory.CreateCallCount);
         Assert.Equal(1, completionFactory.Client.DispatchCallCount);
         Assert.False(File.Exists(
-            RecapPlannerConfigLoader.GetCanonicalPath(sessionPath)
+            RecapEpochConfigLoader.GetCanonicalPath(sessionPath)
         ));
         Assert.Equal(
             SessionExecutionPhase.Idle,
@@ -435,9 +434,8 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         Assert.Equal(
             "restarted answer",
-            Assert.Single(
-                session.Engine.ReadRecentCompletedTurns().Turns
-            ).TerminalAction.Message.GetFlattenedText()
+            session.Engine.ReadRecentCompletedTurns().Turns[^1]
+                .TerminalAction.Message.GetFlattenedText()
         );
     }
 

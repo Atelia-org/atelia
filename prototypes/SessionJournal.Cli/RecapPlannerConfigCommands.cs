@@ -1,379 +1,158 @@
 using Atelia.SessionJournal.DerivedRecap.Planner;
-using SJ = Atelia.SessionJournal;
 
 namespace Atelia.SessionJournal.Cli;
 
 internal static class RecapPlannerConfigCommands {
     private const string ReportSchema =
-        "atelia.session-journal.recap-planner-config-operation.v2";
+        "atelia.session-journal.recap-epoch-config-operation.v3";
 
     internal static Task<int> RunAsync(string[] args) {
-        ArgumentNullException.ThrowIfNull(args);
         if (args.Length == 0
-            || args[0] is "-h" or "--help"
-            || args[0].StartsWith("--", StringComparison.Ordinal)) {
+            || args[0] is "-h" or "--help") {
             throw new ArgumentException(
-                "recap planner-config requires one subcommand: "
-                + "init or inspect."
+                "recap planner-config requires init or inspect."
             );
         }
-
-        string operation = args[0];
-        CliOptions options =
-            CliOptions.Parse(args.Skip(1).ToArray());
-        return Task.FromResult(operation switch {
-            "init" => Initialize(options),
-            "inspect" => Inspect(options),
+        CliOptions options = CliOptions.Parse(args[1..]);
+        return args[0] switch {
+            "init" => InitAsync(options),
+            "inspect" => InspectAsync(options),
             _ => throw new ArgumentException(
-                $"Unknown recap planner-config subcommand "
-                + $"'{operation}'."
-            )
-        });
-    }
-
-    private static int Initialize(CliOptions options) {
-        (string input, string? reportPath) = ReadOptions(options);
-        ResolvedRecapPlannerComposition composition =
-            RecapCliComposition.DefaultComposition;
-        RecapPlannerConfigInitializeResult result =
-            RecapPlannerConfigInitializer.Initialize(
-                input,
-                composition.Snapshot.Document
-            );
-        RecapPlannerConfigCommandReport report = result switch {
-            RecapPlannerConfigInitializeResult.Initialized initialized =>
-                InitializedReport(initialized, composition),
-            RecapPlannerConfigInitializeResult.AlreadyExists existing =>
-                FailureReport(
-                    "init",
-                    "AlreadyExists",
-                    existing.Path,
-                    []
-                ),
-            RecapPlannerConfigInitializeResult.Invalid invalid =>
-                FailureReport(
-                    "init",
-                    "Invalid",
-                    invalid.Path,
-                    Map(invalid.Defects)
-                ),
-            RecapPlannerConfigInitializeResult.Unavailable unavailable =>
-                FailureReport(
-                    "init",
-                    "Unavailable",
-                    unavailable.Path,
-                    [new("Unavailable", unavailable.Reason)]
-                ),
-            _ => throw new InvalidDataException(
-                "Unknown planner config initialize result."
+                $"Unknown recap planner-config subcommand '{args[0]}'."
             )
         };
-        int exitCode = result
-            is RecapPlannerConfigInitializeResult.Initialized
-            ? 0
-            : 2;
-        return Finish(report, reportPath, exitCode);
     }
 
-    private static RecapPlannerConfigCommandReport InitializedReport(
-        RecapPlannerConfigInitializeResult.Initialized initialized,
-        ResolvedRecapPlannerComposition composition
-    ) {
-        if (!string.Equals(
-                initialized.ConfigSha256,
-                composition.Snapshot.ConfigSha256,
-                StringComparison.Ordinal
-            )) {
-            throw new InvalidDataException(
-                "Initialized planner config hash does not match the "
-                + "resolved composition snapshot."
+    private static Task<int> InitAsync(CliOptions options) {
+        (string input, string? report) = Parse(options);
+        string path = RecapEpochConfigLoader.GetCanonicalPath(input);
+        if (File.Exists(path)) {
+            throw new InvalidOperationException(
+                $"Recap epoch config already exists at '{path}'."
             );
         }
-        return ResolvedReport(
-            "init",
-            "Initialized",
-            initialized.Path,
-            composition
-        );
+        string directory = Path.GetDirectoryName(path)!;
+        Directory.CreateDirectory(directory);
+        CliIo.EnsurePathChainHasNoReparsePoint(directory, "config");
+        string staging = path + $".{Guid.NewGuid():N}.tmp";
+        try {
+            byte[] bytes = RecapEpochConfigCodec.Encode(
+                BuiltInRecapPlannerConfig.Document
+            );
+            using (var stream = new FileStream(
+                staging,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None
+            )) {
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(staging, path, overwrite: false);
+        }
+        finally {
+            if (File.Exists(staging)) {
+                File.Delete(staging);
+            }
+        }
+        return Task.FromResult(Finish(
+            new RecapPlannerConfigReport(
+                ReportSchema,
+                "init",
+                path,
+                RecapEpochConfigCodec.SchemaV3,
+                "Initialized",
+                null
+            ),
+            report
+        ));
     }
 
-    private static int Inspect(CliOptions options) {
-        (string input, string? reportPath) = ReadOptions(options);
-        RecapPlannerCompositionLoadResult load =
-            RecapPlannerCompositionLoader.Load(input);
-        RecapPlannerConfigCommandReport report;
+    private static Task<int> InspectAsync(CliOptions options) {
+        (string input, string? report) = Parse(options);
+        string path = RecapEpochConfigLoader.GetCanonicalPath(input);
+        RecapPlannerConfigReport result;
         int exitCode;
-        switch (load) {
-            case RecapPlannerCompositionLoadResult.Resolved resolved:
-                report = ResolvedReport(
+        try {
+            if (!RecapEpochConfigLoader.TryLoad(
+                    input,
+                    out RecapEpochConfigDocument document
+                )) {
+                result = new RecapPlannerConfigReport(
+                    ReportSchema,
                     "inspect",
-                    "Resolved",
-                    resolved.Composition.Snapshot.CanonicalPath!,
-                    resolved.Composition
+                    path,
+                    null,
+                    "Missing",
+                    null
+                );
+                exitCode = 2;
+            }
+            else {
+                _ = BuiltInRecapPlannerConfig.Resolve(document);
+                result = new RecapPlannerConfigReport(
+                    ReportSchema,
+                    "inspect",
+                    path,
+                    document.Schema,
+                    "Valid",
+                    null
                 );
                 exitCode = 0;
-                break;
-            case RecapPlannerCompositionLoadResult.Missing missing:
-                report = FailureReport(
-                    "inspect",
-                    "Missing",
-                    missing.Path,
-                    []
-                );
-                exitCode = 2;
-                break;
-            case RecapPlannerCompositionLoadResult.Invalid invalid:
-                report = FailureReport(
-                    "inspect",
-                    "Invalid",
-                    invalid.Path,
-                    Map(invalid.Defects),
-                    invalid.Snapshot
-                );
-                exitCode = 2;
-                break;
-            case RecapPlannerCompositionLoadResult.Unavailable unavailable:
-                report = FailureReport(
-                    "inspect",
-                    "Unavailable",
-                    unavailable.Path,
-                    [new("Unavailable", unavailable.Reason)],
-                    unavailable.Snapshot
-                );
-                exitCode = 2;
-                break;
-            default:
-                throw new InvalidDataException(
-                    "Unknown planner config load result."
-                );
+            }
         }
-        return Finish(report, reportPath, exitCode);
+        catch (Exception exception) when (
+            exception is IOException
+                or UnauthorizedAccessException
+                or InvalidDataException
+                or ArgumentException
+        ) {
+            result = new RecapPlannerConfigReport(
+                ReportSchema,
+                "inspect",
+                path,
+                null,
+                "Invalid",
+                exception.Message
+            );
+            exitCode = 2;
+        }
+        Finish(result, report);
+        return Task.FromResult(exitCode);
     }
 
-    private static (string Input, string? ReportPath) ReadOptions(
+    private static (string Input, string? Report) Parse(
         CliOptions options
     ) {
         options.EnsureOnly("input", "report-json");
         string input = options.RequireSingle("input");
-        string? reportPath =
-            options.GetOptionalSingle("report-json");
-        if (reportPath is not null) {
-            CliIo.ValidateFileOutputPath(
-                input,
-                reportPath,
-                "--report-json"
-            );
+        string? report = options.GetOptionalSingle("report-json");
+        CliIo.EnsurePathChainHasNoReparsePoint(input, "--input");
+        if (report is not null) {
+            CliIo.ValidateFileOutputPath(input, report, "--report-json");
         }
-        return (input, reportPath);
+        return (input, report);
     }
-
-    private static RecapPlannerConfigCommandReport ResolvedReport(
-        string operation,
-        string status,
-        string path,
-        ResolvedRecapPlannerComposition composition
-    ) {
-        RecapPlannerConfigDocument document =
-            composition.Snapshot.Document;
-        return new RecapPlannerConfigCommandReport(
-            ReportSchema,
-            operation,
-            status,
-            SafeFullPath(path),
-            document.Schema,
-            composition.Snapshot.ConfigSha256,
-            document.PlanningPolicy,
-            new RecapPlannerConfigCadenceReport(
-                document.Cadence.HistoryUnitLoadEstimatorId,
-                document.Cadence.MinimumRecentHistoryLoad,
-                document.Cadence.RecapBuildIntervalHistoryLoad
-            ),
-            Array.AsReadOnly([
-                .. composition.ActiveProfiles.Select(
-                    static profile =>
-                        new RecapPlannerConfigCatalogReport(
-                            profile.ProfileName,
-                            profile.CatalogEntry.RecapBlockId.Value,
-                            SJ.ContextHeaderCarrierTokens
-                                .ToStorageToken(
-                                    profile.CatalogEntry
-                                        .Target.Carrier
-                                ),
-                            profile.CatalogEntry.Target.BlockKey,
-                            profile.CatalogEntry.MaintainerId,
-                            profile.CatalogEntry
-                                .MaxContentUtf8Bytes,
-                            profile.Capability.FamilyFingerprint,
-                            profile.Capability.CapabilityFingerprint
-                        )
-                )
-            ]),
-            new RecapPlannerConfigLimitsReport(
-                document.Limits.MaxRawGrowthEventCount,
-                document.Limits.MaxRouteEndpointsPerBlock,
-                document.Limits.MaxMaintainerCallsPerBuild,
-                document.Limits.MaxRawEventsPerStep,
-                document.Limits.MaxRawEventsPerBuild
-            ),
-            []
-        );
-    }
-
-    private static RecapPlannerConfigCommandReport FailureReport(
-        string operation,
-        string status,
-        string path,
-        IReadOnlyList<RecapPlannerConfigCommandDefect> defects,
-        RecapPlannerConfigSnapshot? snapshot = null
-    ) {
-        RecapPlannerConfigDocument? document =
-            snapshot?.Document;
-        return new RecapPlannerConfigCommandReport(
-            ReportSchema,
-            operation,
-            status,
-            SafeFullPath(path),
-            document?.Schema,
-            snapshot?.ConfigSha256,
-            document?.PlanningPolicy,
-            document is null
-                ? null
-                : new RecapPlannerConfigCadenceReport(
-                    document.Cadence.HistoryUnitLoadEstimatorId,
-                    document.Cadence.MinimumRecentHistoryLoad,
-                    document.Cadence.RecapBuildIntervalHistoryLoad
-                ),
-            [],
-            document is null
-                ? null
-                : new RecapPlannerConfigLimitsReport(
-                    document.Limits.MaxRawGrowthEventCount,
-                    document.Limits.MaxRouteEndpointsPerBlock,
-                    document.Limits.MaxMaintainerCallsPerBuild,
-                    document.Limits.MaxRawEventsPerStep,
-                    document.Limits.MaxRawEventsPerBuild
-                ),
-            defects
-        );
-    }
-
-    private static IReadOnlyList<RecapPlannerConfigCommandDefect> Map(
-        IEnumerable<RecapPlannerConfigDefect> defects
-    ) => Array.AsReadOnly([
-        .. defects.Select(static defect =>
-            new RecapPlannerConfigCommandDefect(
-                defect.Code,
-                defect.Detail
-            )
-        )
-    ]);
-
-    private static IReadOnlyList<RecapPlannerConfigCommandDefect> Map(
-        IEnumerable<RecapPlannerConfigResolveDefect> defects
-    ) => Array.AsReadOnly([
-        .. defects.Select(static defect =>
-            new RecapPlannerConfigCommandDefect(
-                defect.Code,
-                defect.Detail
-            )
-        )
-    ]);
-
-    private static IReadOnlyList<RecapPlannerConfigCommandDefect> Map(
-        IEnumerable<RecapPlannerCompositionLoadDefect> defects
-    ) => Array.AsReadOnly([
-        .. defects.Select(static defect =>
-            new RecapPlannerConfigCommandDefect(
-                defect.Code,
-                defect.Detail
-            )
-        )
-    ]);
 
     private static int Finish(
-        RecapPlannerConfigCommandReport report,
-        string? reportPath,
-        int exitCode
+        RecapPlannerConfigReport report,
+        string? reportPath
     ) {
         if (reportPath is not null) {
             CliIo.WriteJsonAtomically(reportPath, report);
         }
-        Console.WriteLine($"operation: planner-config {report.Operation}");
+        Console.WriteLine($"operation: recap planner-config {report.Operation}");
         Console.WriteLine($"status: {report.Status}");
         Console.WriteLine($"path: {report.Path}");
-        if (report.ConfigSha256 is not null) {
-            Console.WriteLine(
-                $"configSha256: {report.ConfigSha256}"
-            );
-        }
-        foreach (RecapPlannerConfigCommandDefect defect
-                 in report.Defects) {
-            Console.WriteLine(
-                $"defect: {defect.Code}: {defect.Detail}"
-            );
-        }
-        if (reportPath is not null) {
-            Console.WriteLine(
-                $"report: {Path.GetFullPath(reportPath)}"
-            );
-        }
-        return exitCode;
-    }
-
-    private static string SafeFullPath(string path) {
-        try {
-            return Path.GetFullPath(path);
-        }
-        catch (Exception exception) when (
-            exception is ArgumentException
-                or NotSupportedException
-                or PathTooLongException
-        ) {
-            return path;
-        }
+        return report.Status is "Initialized" or "Valid" ? 0 : 2;
     }
 }
 
-internal sealed record RecapPlannerConfigCommandReport(
+internal sealed record RecapPlannerConfigReport(
     string Schema,
     string Operation,
-    string Status,
     string Path,
     string? ConfigSchema,
-    string? ConfigSha256,
-    string? PlanningPolicy,
-    RecapPlannerConfigCadenceReport? Cadence,
-    IReadOnlyList<RecapPlannerConfigCatalogReport> Catalog,
-    RecapPlannerConfigLimitsReport? Limits,
-    IReadOnlyList<RecapPlannerConfigCommandDefect> Defects
-);
-
-internal sealed record RecapPlannerConfigCadenceReport(
-    string HistoryUnitLoadEstimatorId,
-    long MinimumRecentHistoryLoad,
-    long RecapBuildIntervalHistoryLoad
-);
-
-internal sealed record RecapPlannerConfigCatalogReport(
-    string MaintainerProfile,
-    string RecapBlockId,
-    string TargetCarrier,
-    string TargetBlockKey,
-    string MaintainerId,
-    int MaxContentUtf8Bytes,
-    string FamilyFingerprint,
-    string CapabilityFingerprint
-);
-
-internal sealed record RecapPlannerConfigLimitsReport(
-    int MaxRawGrowthEventCount,
-    int MaxRouteEndpointsPerBlock,
-    int MaxMaintainerCallsPerBuild,
-    int MaxRawEventsPerStep,
-    int MaxRawEventsPerBuild
-);
-
-internal sealed record RecapPlannerConfigCommandDefect(
-    string Code,
-    string Detail
+    string Status,
+    string? Detail
 );

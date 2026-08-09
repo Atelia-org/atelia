@@ -326,7 +326,6 @@ internal static class Program {
         );
         Console.WriteLine(
             "  recap inspect --input <repo-dir> --branch <name> "
-            + "--anchor <event-address> "
             + "[--report-json <path-outside-repo>]"
         );
         Console.WriteLine(
@@ -341,22 +340,10 @@ internal static class Program {
             + "[--report-json <path-outside-repo>]"
         );
         Console.WriteLine(
-            "  recap resume --input <repo-dir> --branch <name> "
-            + "--anchor <event-address> --connections <path> "
-            + "[--connection <id>] [--call-log-dir <dir>] "
-            + "[--report-json <path-outside-repo>]"
-        );
-        Console.WriteLine(
-            "  recap restore --input <repo-dir> --branch <name> "
-            + "--anchor <event-address> "
-            + "--expected-raw-head <event-address> "
+            "  recap rebuild --input <repo-dir> --branch <name> "
+            + "--campaign <safe-id> [--reset --confirm-ref <exact-ref-id>] "
             + "--connections <path> [--connection <id>] "
             + "[--call-log-dir <dir>] "
-            + "[--report-json <path-outside-repo>]"
-        );
-        Console.WriteLine(
-            "  recap abandon-building --input <repo-dir> "
-            + "--branch <name> --anchor <event-address> "
             + "[--report-json <path-outside-repo>]"
         );
         Console.WriteLine(

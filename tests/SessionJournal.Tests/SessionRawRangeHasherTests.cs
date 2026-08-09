@@ -62,4 +62,16 @@ public sealed class SessionRawRangeHasherTests {
 
         Assert.Throws<ArgumentException>(() => SessionRawRangeHasher.Compute(null, B, disconnected));
     }
+
+    [Fact]
+    public void Compute_AllowsCanonicalEmptyRangeAtOneBoundary() {
+        string first = SessionRawRangeHasher.Compute(A, A, []);
+        string second = SessionRawRangeHasher.Compute(A, A, []);
+
+        Assert.Equal(first, second);
+        Assert.Equal(64, first.Length);
+        Assert.Throws<ArgumentException>(() =>
+            SessionRawRangeHasher.Compute(A, B, [])
+        );
+    }
 }

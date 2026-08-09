@@ -91,7 +91,7 @@ public sealed class GalateaG2AStagingHostAcceptanceTests {
         );
 
         var source = new DerivedRecapContextCandidateSource(
-            DerivedRecapStore.Open(
+            DerivedRecapEpochStore.Open(
                 clone.SessionDirectory,
                 session.Engine.BranchRefId
             ),

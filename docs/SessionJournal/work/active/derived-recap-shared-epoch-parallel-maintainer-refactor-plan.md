@@ -14,7 +14,9 @@ Context baseline：`6a80afdda7f12d6c9ce432066dfb51d1b3326762`
 | R2A | Complete | new DerivedRecap Abstractions; immutable family/member/output-protocol single source; structured `Updated \| KeepUnchanged`; old per-block request/result path removed; focused Maintainers/Planner/Host tests and solution build validated |
 | R2B | Complete | shared ExecutionLane、reference-interned RuntimeGroup、BoundMaintainer single dispatch path；Galatea/CLI route sharing与per-call attribution wired，仍串行且NoReuseExpected |
 | R3A | Complete | explicit paged selected-lineage audit、independent strict content-free rebuild spool、authority-owned sequential forward cursor、normal-path typed `FullRebuildRequired`; cadence epoch consumer remains R3C |
-| R3B–R7 | Pending | follow the package gates in §11; do not infer implementation from this target document |
+| R3B | Complete | v8 direct-cut Store：one epoch input、structured prior、complete roster、epoch-bound direct finals、strict publication/repair authority；旧Store owner与wire已删除 |
+| R3C | Complete | serial complete-roster kernel、bounded multi-epoch online campaign、explicit rebuild consumer、MoreWorkPending gating、strict config v3与Host/CLI direct cut；以current code/tests为事实 |
+| R4–R7 | Pending | follow the package gates in §11; parallel/cache/provider acceptance尚未实施 |
 
 R1 deterministic evidence: Completion 456 non-live tests, SessionJournal 409, Agent.Core 117, Galatea 94 passed / 4
 environment-skipped, solution build 0 warnings/errors. The existing full CLI baseline still has 16 recap fakes that reject the
@@ -34,7 +36,7 @@ above, which R2A does not rewrite.
 1. 本文；
 2. [`docs/SessionJournal/README.md`](../../README.md) 与
    [`current architecture and code map`](../../current/architecture-and-code-map.md)；
-3. [`current DerivedRecap concepts`](../../current/derived-recap/concepts.md)，只用于识别重构前事实；
+3. [`current DerivedRecap concepts`](../../current/derived-recap/concepts.md)，用于核对当前 v8 事实；
 4. [`Planner README`](../../../../prototypes/SessionJournal.DerivedRecap.Planner/README.md) 与
    [`Maintainers README`](../../../../prototypes/SessionJournal.DerivedRecap.Maintainers/README.md)；
 5. 本文对应工作包列出的 owning code/tests。

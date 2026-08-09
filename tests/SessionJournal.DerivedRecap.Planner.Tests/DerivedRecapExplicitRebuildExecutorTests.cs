@@ -124,6 +124,120 @@ public sealed class DerivedRecapExplicitRebuildExecutorTests
     }
 
     [Fact]
+    public async Task FrozenBuildingPublishesBeforeActiveConfigIsLoaded() {
+        string path = NewPath();
+        RefId refId;
+        EventAddress admission;
+        using (var writer = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-a", "system-a", "surface-a")
+        )) {
+            refId = writer.BranchRefId;
+            _ = writer.AppendObservation("A");
+            admission = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("B")]),
+                new CompletionDescriptor("import", "v1", "model-a")
+            );
+        }
+        DerivedRecapEpochStore store = DerivedRecapEpochStore.Open(
+            path,
+            refId
+        );
+        await store.CreateAsync();
+        using var offline = SessionJournalEngine.OpenReadOnly(path);
+        SessionHistoryPlanningSeed start = Assert.IsType<
+            SessionCreatedPlanningSeedReadResult.Available
+        >(offline.ReadView.ReadSessionCreatedPlanningSeedAtBounded(
+            admission,
+            16
+        )).Seed;
+        SessionHistoryPlanningWindow window = Assert.IsType<
+            SessionHistoryPlanningWindowReadResult.Available
+        >(offline.ReadView.ReadHistoryPlanningWindowAtBounded(
+            admission,
+            start,
+            16
+        )).Window;
+        DerivedRecapEpochInput input = DerivedRecapV8Codec
+            .CreateEpochInput(
+                new RecapEpochBoundary(start.Address, start.Setups),
+                new RecapEpochBoundary(admission, window.EndSetups),
+                window.RawAddresses.Count,
+                window.RawRangeSha256,
+                Array.AsReadOnly([
+                    .. window.Units.Select(static unit => unit.Message)
+                ]),
+                RecapEpochPrevious.Empty.Instance
+            );
+        RecapEpochBlockDefinition[] definitions = Definitions();
+        DerivedRecapEpochManifest manifest = DerivedRecapV8Codec
+            .CreateManifest(
+                refId,
+                admission,
+                input.PayloadSha256,
+                definitions
+            );
+        _ = await store.InstallBuildingAsync(manifest, input);
+        RecapEpochStoreSnapshot building = Assert.IsType<
+            RecapEpochStoreReadResult.Available
+        >(await store.ReadBuildingAsync(admission)).Snapshot;
+        Assert.IsType<WriteRecapEpochFinalResult.Installed>(
+            await store.WriteFinalAsync(
+                building.Blocks[0].WriteAuthority!,
+                DerivedRecapV8Codec.CreateFinalBlock(
+                    manifest,
+                    definitions[0],
+                    "already healthy"
+                )
+            )
+        );
+        DerivedRecapRebuildSpoolStore spool =
+            DerivedRecapRebuildSpoolStore.Open(path, refId);
+        string campaign = Guid.NewGuid().ToString("N");
+        await DerivedRecapFullRebuildAuthorityPreparer.BeginAsync(
+            offline,
+            spool,
+            campaign,
+            DerivedRecapRebuildSpoolLimits.Default
+        );
+        _ = await DerivedRecapFullRebuildAuthorityPreparer.ResumeAsync(
+            offline,
+            spool,
+            campaign
+        );
+        var self = new RecordingMaintainer(definitions[0]);
+        var world = new RecordingMaintainer(definitions[1]);
+        int activeLoads = 0;
+        var executor = new DerivedRecapEpochCampaignExecutor(
+            offline.ReadView,
+            store,
+            (Func<RecapEpochActiveConfiguration>)(() => {
+                activeLoads++;
+                throw new IOException("active config unavailable");
+            }),
+            new RecapEpochOperationLimits(64, 64, 2, 2, 4, 2, 128),
+            new RecapBlockMaintainerRegistry([self, world])
+        );
+
+        Assert.IsType<DerivedRecapEpochOperationResult.Unavailable>(
+            await executor.RunExplicitRebuildAsync(
+                offline,
+                spool,
+                campaign
+            )
+        );
+        Assert.Equal(1, activeLoads);
+        Assert.Empty(self.Inputs);
+        Assert.Single(world.Inputs);
+        Assert.IsType<RecapEpochBuildingSelectionResult.Empty>(
+            await store.SelectBuildingAsync()
+        );
+        Assert.IsType<RecapEpochStoreReadResult.Available>(
+            await store.ReadPublishedForRepairAsync(admission)
+        );
+    }
+
+    [Fact]
     public async Task OverCapRawRequiresExplicitSpoolAndResumesContiguousEpochs() {
         string path = NewPath();
         RefId refId;

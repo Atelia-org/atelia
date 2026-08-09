@@ -99,17 +99,11 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
             EventAddress capturedHead =
                 cursor.Authority.Capture.CapturedHead;
             PublishedRecapEpochDescriptor? latest = null;
+            DerivedRecapEpochManifest? latestManifest = null;
             RecapEpochPrevious previous = RecapEpochPrevious.Empty.Instance;
             SessionSelectedLineageForwardRange? pendingRange = null;
             if (buildingSelection
                 is RecapEpochBuildingSelectionResult.Selected building) {
-                if (!TopologyMatches(building.Snapshot.Manifest)) {
-                    return FullRebuild(
-                        RecapEpochFullRebuildReason.TopologyChanged,
-                        capturedHead,
-                        "Frozen Building roster differs from the active complete roster."
-                    );
-                }
                 DerivedRecapEpochOperationResult? budget = CheckBudget(
                     building.Snapshot,
                     epochsPublished,
@@ -162,6 +156,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                     );
                 }
                 epochsPublished = checked(epochsPublished + 1);
+                latestManifest = building.Snapshot.Manifest;
                 try {
                     previous = new RecapEpochPrevious.Prior(
                         await _store.ReadPriorPackAsync(
@@ -181,13 +176,6 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
             else {
                 RecapEpochStoreSnapshot? source = publishedSource;
                 if (source is not null) {
-                    if (!TopologyMatches(source.Manifest)) {
-                        return FullRebuild(
-                            RecapEpochFullRebuildReason.TopologyChanged,
-                            capturedHead,
-                            "Published rebuild roster differs from the active complete roster."
-                        );
-                    }
                     bool healthy = source.Publication is not null
                         && source.Blocks.All(static block =>
                             block.Final is RecapEpochFinalHealth.Healthy);
@@ -289,14 +277,33 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                             );
                         }
                     }
+                    latestManifest = source.Manifest;
                 }
             }
 
             while (true) {
                 cancellationToken.ThrowIfCancellationRequested();
+                RecapEpochOperationLimits activeLimits;
+                try {
+                    activeLimits = ActiveLimits;
+                    if (latestManifest is not null
+                        && !TopologyMatches(latestManifest)) {
+                        return FullRebuild(
+                            RecapEpochFullRebuildReason.TopologyChanged,
+                            capturedHead,
+                            "Latest frozen roster differs from the active complete roster."
+                        );
+                    }
+                }
+                catch (Exception exception) when (IsAvailability(exception)) {
+                    return Unavailable(
+                        "RebuildPlanningUnavailable",
+                        exception.Message
+                    );
+                }
                 SessionSelectedLineageForwardRange? range = pendingRange
                     ?? cursor.ReadNextRange(
-                        _limits.MaxRebuildForwardRangeEventCount,
+                        activeLimits.MaxRebuildForwardRangeEventCount,
                         cancellationToken
                     );
                 pendingRange = null;
@@ -323,14 +330,14 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                     measurement = RecapHistoryLoadProjector.Measure(
                         preview,
                         range.StartExclusive,
-                        _configuration.HistoryUnitLoadEstimator
+                        Configuration.HistoryUnitLoadEstimator
                     );
-                    decision = _configuration.Policy.Decide(
+                    decision = Configuration.Policy.Decide(
                         new RecapEpochPlanningFacts(
                             preview,
                             measurement,
-                            _configuration.Cadence,
-                            _limits.MaxRawEventsPerEpoch
+                            Configuration.Cadence,
+                            activeLimits.MaxRawEventsPerEpoch
                         )
                     ) ?? throw new InvalidDataException(
                         "Epoch planning policy returned null."
@@ -390,7 +397,8 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                     );
                 }
                 SessionHistoryPlanningWindow slab = consumed.Window;
-                if (slab.RawAddresses.Count > _limits.MaxRawEventsPerEpoch
+                if (slab.RawAddresses.Count
+                        > activeLimits.MaxRawEventsPerEpoch
                     || slab.RawAddresses.Count == 0
                     || string.IsNullOrEmpty(slab.RawRangeSha256)) {
                     return Unavailable(
@@ -469,6 +477,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                     );
                 }
                 epochsPublished = checked(epochsPublished + 1);
+                latestManifest = manifest;
                 try {
                     previous = new RecapEpochPrevious.Prior(
                         await _store.ReadPriorPackAsync(
@@ -594,16 +603,17 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
         int epochsPublished,
         int maintainerCalls
     ) {
-        int rosterCount = _configuration.OrderedCatalog.Count;
-        if (rosterCount > _limits.MaxMaintainerCallsPerEpoch
-            || rosterCount > _limits.MaxMaintainerCallsPerOperation) {
+        int rosterCount = Configuration.OrderedCatalog.Count;
+        RecapEpochOperationLimits activeLimits = ActiveLimits;
+        if (rosterCount > activeLimits.MaxMaintainerCallsPerEpoch
+            || rosterCount > activeLimits.MaxMaintainerCallsPerOperation) {
             return new DerivedRecapEpochOperationResult.ConfigurationLimit(
                 "A complete epoch roster cannot fit the configured call budget."
             );
         }
-        if (epochsPublished >= _limits.MaxEpochsPerOperation
+        if (epochsPublished >= activeLimits.MaxEpochsPerOperation
             || checked(maintainerCalls + rosterCount)
-                > _limits.MaxMaintainerCallsPerOperation) {
+                > activeLimits.MaxMaintainerCallsPerOperation) {
             return latest is null
                 ? new DerivedRecapEpochOperationResult.ConfigurationLimit(
                     "The first explicit epoch cannot fit this operation budget."

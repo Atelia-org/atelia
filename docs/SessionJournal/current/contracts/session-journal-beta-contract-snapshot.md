@@ -1,10 +1,13 @@
-# SessionJournal Beta contract snapshot
+# SessionJournal Beta contract snapshot (v7 evidence)
 
-状态：Current contract；manifest/publication v7 candidate-specific gate **NotRun**，见 §7  
-Product candidate：尚未冻结  
-Prior Beta-supported candidate：`49ebb4634e5b4136032db983dd92a9a4560b33eb`
+状态：历史 evidence snapshot；DerivedRecap v7 candidate-specific gate **NotRun**，见 §7  
+Prior Beta-supported candidate：`49ebb4634e5b4136032db983dd92a9a4560b33eb`  
+Current DerivedRecap contract：v8 shared epoch，见
+[`../derived-recap/durable-target.md`](../derived-recap/durable-target.md)与
+[`../derived-recap/concepts.md`](../derived-recap/concepts.md)。
 
-本文维护当前 Beta contract shape。它不是所有当前 `public` 类型的兼容性承诺；未列入角色 allowlist 的
+本文保留 v7 时点的 Beta contract/evidence，不再描述当前 DerivedRecap Store/Planner wire。
+其他 SessionJournal contract 内容仍可作该时点证据参考。它不是所有当前 `public` 类型的兼容性承诺；未列入角色 allowlist 的
 diagnostic、low-level 或 first-party cross-assembly mechanics 仍可在 Beta 前后按明确决策收窄。§7保留
 prior candidate的exact历史证据，并明确它不能认证本次v7 direct cut。
 

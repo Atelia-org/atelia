@@ -269,7 +269,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 == GalateaRecapComposition.StaleFreshness
             && string.Equals(
                 recapPlanning.Code,
-                DerivedRecapExecutionDefectCodes.RawHeadChanged,
+                "RawHeadChanged",
                 StringComparison.Ordinal
             );
         if (headMismatch) {
@@ -607,7 +607,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-        if (prepared.Authority.Lineage.CapturedHead
+        if (prepared.CapturedRawHead
             != setupReady.GoverningSetup.Head) {
             throw new GalateaTurnException(
                 "会话在前情提要准备前发生变化，请重试。",
@@ -652,7 +652,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             SessionUncertainCompletionRecoveryPolicy.Refuse
         ));
         TurnResult result = await host.Engine.SendAsync(
-                prepared.Authority.Lineage.CapturedHead,
+                prepared.CapturedRawHead,
                 promptedUserMessage,
                 observer,
                 cancellationToken
@@ -704,7 +704,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         cancellationToken
                     )
                     .ConfigureAwait(false);
-            if (prepared.Authority.Lineage.CapturedHead
+            if (prepared.CapturedRawHead
                 != capturedHead) {
                 throw new GalateaTurnException(
                     "会话在恢复准备期间发生变化，请重试。",

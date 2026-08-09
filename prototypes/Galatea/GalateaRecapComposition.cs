@@ -1,6 +1,7 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Diagnostics;
+using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.DerivedRecap.Abstractions;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
@@ -11,16 +12,17 @@ using Atelia.SessionJournal.DerivedRecap.Store;
 namespace Atelia.Galatea.Server;
 
 internal sealed record GalateaPreparedRecap(
-    DerivedRecapStore Store,
-    PreparedRecapOperationAuthority Authority,
-    RecapMaintainerProfileCatalog CapabilityCatalog
+    DerivedRecapEpochStore Store,
+    Func<RecapEpochActiveConfiguration> ConfigurationFactory,
+    RecapEpochOperationLimits Limits,
+    RecapMaintainerProfileCatalog CapabilityCatalog,
+    EventAddress CapturedRawHead
 );
 
 /// <summary>
-/// Galatea's thin composition root over the public Building-first contracts.
-/// It projects concrete profile metadata before creating either an agent client
-/// or a concrete Maintainer; the latter remain lazy until an actual binding is
-/// requested by the lifecycle executor.
+/// Galatea's v8 shared-epoch composition root. Runtime clients remain lazy;
+/// preparation only validates/creates the direct-final Store and freezes the
+/// complete built-in roster/configuration for this online operation.
 /// </summary>
 internal static class GalateaRecapComposition {
     internal const string ExactFreshness = "exact";
@@ -41,31 +43,41 @@ internal static class GalateaRecapComposition {
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(engine);
-
         try {
-            RecapMaintainerProfileCatalog catalog =
-                RecapMaintainerProfileCatalog.BuiltIn;
-            RecapMaintainerCapabilitySnapshot capabilities =
-                ProjectCapabilities(catalog);
-            DerivedRecapStore store = DerivedRecapStore.Open(
+            DerivedRecapEpochStore store = DerivedRecapEpochStore.Open(
                 engine.Path,
                 engine.BranchRefId
             );
-            var source =
-                new RepositoryRecapActivePlanningConfigurationSource(
-                    store.SessionRepositoryPath,
-                    capabilities
-                );
-            DerivedRecapPlanningProgressInspectionResult result =
-                await DerivedRecapPlanningProgressInspector.InspectAsync(
-                        engine.ReadView,
-                        store,
-                        capabilities,
-                        source,
-                        cancellationToken
-                    )
+            RecapEpochBuildingSelectionResult building =
+                await store.SelectBuildingAsync(cancellationToken)
                     .ConfigureAwait(false);
-            return MapPlanningInspection(result);
+            if (building is RecapEpochBuildingSelectionResult.Selected selected) {
+                return new RecapPlanningSnapshotDto(
+                    ExactFreshness,
+                    FrozenBuildingState,
+                    ObservedRawHead: EventAddressTextCodec.FormatNullable(
+                        engine.ReadView.ReadCurrentHead()
+                    ),
+                    CadenceBaseline: EventAddressTextCodec.Format(
+                        selected.Snapshot.EpochInput.StartBoundary.Address
+                    ),
+                    Detail: "存在v8 shared-epoch Building；下次lifecycle将恢复健康final并补齐pending roster。"
+                );
+            }
+            if (building is RecapEpochBuildingSelectionResult.Invalid invalid) {
+                return UnavailablePlanningSnapshot(
+                    "building-invalid",
+                    invalid.Detail
+                );
+            }
+            return new RecapPlanningSnapshotDto(
+                ExactFreshness,
+                NotObservedState,
+                ObservedRawHead: EventAddressTextCodec.FormatNullable(
+                    engine.ReadView.ReadCurrentHead()
+                ),
+                Detail: "v8 Store可用；精确HistoryLoad由下一次shared-epoch planning pass判定。"
+            );
         }
         catch (OperationCanceledException) when (
             cancellationToken.IsCancellationRequested
@@ -77,12 +89,12 @@ internal static class GalateaRecapComposition {
         ) {
             DebugUtil.Warning(
                 "Galatea.Recap",
-                "Read-only DerivedRecap planning inspection failed.",
+                "Read-only v8 DerivedRecap inspection failed.",
                 exception
             );
             return UnavailablePlanningSnapshot(
                 "recap-planning-inspection-failed",
-                "DerivedRecap进度暂时不可用。"
+                "DerivedRecap v8进度暂时不可用。"
             );
         }
     }
@@ -92,228 +104,50 @@ internal static class GalateaRecapComposition {
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(engine);
-
         RecapMaintainerProfileCatalog catalog =
             RecapMaintainerProfileCatalog.BuiltIn;
-        RecapMaintainerCapabilitySnapshot capabilities =
-            ProjectCapabilities(catalog);
-        DerivedRecapStore store = DerivedRecapStore.Open(
+        RecapEpochConfigDocument defaults = CreateDefaultDocument();
+        RecapEpochOperationLimits recoveryLimits =
+            CreateOperationLimits(defaults);
+        DerivedRecapEpochStoreLimits storeLimits =
+            CreateStoreLimits(defaults);
+        EventAddress capturedRawHead = engine.ReadView.ReadCurrentHead()
+            ?? throw new InvalidOperationException(
+                "DerivedRecap preparation requires a non-empty raw head."
+            );
+        DerivedRecapEpochStore store = DerivedRecapEpochStore.Open(
             engine.Path,
-            engine.BranchRefId
+            engine.BranchRefId,
+            storeLimits
         );
-        var source =
-            new RepositoryRecapActivePlanningConfigurationSource(
-                store.SessionRepositoryPath,
-                capabilities
+        await store.EnsureCreatedAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (engine.ReadView.ReadCurrentHead() != capturedRawHead) {
+            throw new InvalidOperationException(
+                "Raw head changed while preparing DerivedRecap v8."
             );
-        DerivedRecapOperationPreparationResult result =
-            await DerivedRecapOperationPreparer.PrepareAsync(
-                    engine.ReadView,
-                    store,
-                    capabilities,
-                    source,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-
-        return result switch {
-            DerivedRecapOperationPreparationResult.Ready ready =>
-                new GalateaPreparedRecap(
-                    store,
-                    ready.Authority,
-                    catalog
-                ),
-            DerivedRecapOperationPreparationResult.Retryable retryable =>
-                throw new GalateaTurnException(
-                    "会话在准备前情提要时发生并发变化，请重试。",
-                    retryable.Code
-                ),
-            DerivedRecapOperationPreparationResult.Unavailable unavailable =>
-                throw new GalateaTurnException(
-                    FormatUnavailableMessage(unavailable.Defects),
-                    unavailable.Defects[0].Code
-                ),
-            DerivedRecapOperationPreparationResult.BeyondPrefix beyond =>
-                throw RecapBeyondPrefix(beyond),
-            _ => throw new InvalidDataException(
-                "Unknown DerivedRecap preparation result."
-            )
-        };
-    }
-
-    private static string FormatUnavailableMessage(
-        IReadOnlyList<DerivedRecapOperationPreparationDefect> defects
-    ) {
-        string message = "会话的前情提要配置或存储当前不可用："
-            + string.Join(
-                "; ",
-                defects.Select(static defect =>
-                    $"{defect.Code}: {defect.Detail}"
-                )
-            );
-        if (defects.Any(static defect =>
-                defect.Detail.StartsWith(
-                    "Unsupported publication schema ",
-                    StringComparison.Ordinal
-                )
-                || defect.Detail.StartsWith(
-                    "Unsupported manifest schema ",
-                    StringComparison.Ordinal
-                ))) {
-            message += "。检测到旧版DerivedRecap sidecar；请先用"
-                + "SessionJournal.Cli的recap inspect确认，再按Store契约"
-                + "显式执行recap reset与recap run重建。";
         }
-        return message;
-    }
-
-    private static GalateaTurnException RecapBeyondPrefix(
-        DerivedRecapOperationPreparationResult.BeyondPrefix beyond
-    ) => new(
-        "会话的前情提要所需raw lineage超出bounded prefix："
-        + $"stage={beyond.Stage}; requiredAnchor="
-        + EventAddressTextCodec.FormatNullable(
-            beyond.Evidence.RequiredAnchor
-        )
-        + "; capturedHead="
-        + EventAddressTextCodec.Format(beyond.Evidence.CapturedHead)
-        + $"; headerCount={beyond.Evidence.HeaderCount}; nextAddress="
-        + EventAddressTextCodec.Format(beyond.Evidence.NextAddress)
-        + ".",
-        "recap-beyond-prefix"
-    );
-
-    private static RecapPlanningSnapshotDto MapPlanningInspection(
-        DerivedRecapPlanningProgressInspectionResult result
-    ) {
-        ArgumentNullException.ThrowIfNull(result);
-        return result switch {
-            DerivedRecapPlanningProgressInspectionResult
-                .BelowCadenceThreshold below => MapProgress(
-                    below.Snapshot,
-                    BelowCadenceThresholdState
-                ),
-            DerivedRecapPlanningProgressInspectionResult
-                .AwaitingReplaySafeAdmission awaiting => MapProgress(
-                    awaiting.Snapshot,
-                    AwaitingReplaySafeAdmissionState
-                ),
-            DerivedRecapPlanningProgressInspectionResult
-                .CadenceReady ready => MapProgress(
-                    ready.Snapshot,
-                    CadenceReadyState
-                ),
-            DerivedRecapPlanningProgressInspectionResult
-                .FrozenBuilding frozen => new RecapPlanningSnapshotDto(
-                    ExactFreshness,
-                    FrozenBuildingState,
-                    ObservedRawHead: EventAddressTextCodec.Format(
-                        frozen.CapturedRawHead
-                    ),
-                    Detail: "存在frozen Building；下次lifecycle将尝试恢复。"
-                ),
-            DerivedRecapPlanningProgressInspectionResult
-                .RawSafetyRejected rejected => new RecapPlanningSnapshotDto(
-                    ExactFreshness,
-                    RawSafetyRejectedState,
-                    ObservedRawHead: EventAddressTextCodec.Format(
-                        rejected.CapturedRawHead
-                    ),
-                    CadenceBaseline: EventAddressTextCodec.Format(
-                        rejected.CadenceBaseline
-                    ),
-                    MinimumRecentHistoryLoad: rejected.Cadence
-                        .MinimumRecentHistoryLoad.Value,
-                    RecapBuildIntervalHistoryLoad: rejected.Cadence
-                        .RecapBuildIntervalHistoryLoad.Value,
-                    BuildThresholdHistoryLoad: rejected.Cadence
-                        .BuildThresholdHistoryLoad.Value,
-                    Code: FirstDefectCode(rejected.Defects),
-                    Detail: "DerivedRecap进度因raw safety限制而不可用。"
-                ),
-            DerivedRecapPlanningProgressInspectionResult.Retryable
-                retryable => UnavailablePlanningSnapshot(
-                    retryable.Code,
-                    retryable.Kind switch {
-                        DerivedRecapOperationPreparationRetryKind
-                            .RawHeadChanged =>
-                            "会话边界在DerivedRecap进度检查期间发生变化，请重试。",
-                        DerivedRecapOperationPreparationRetryKind
-                            .SourceChanged =>
-                            "DerivedRecap来源在进度检查期间发生变化，请重试。",
-                        _ => "DerivedRecap进度检查需要重试。"
-                    }
-                ),
-            DerivedRecapPlanningProgressInspectionResult.Unavailable
-                unavailable => unavailable.Snapshot is { } snapshot
-                    ? MapProgress(
-                        snapshot,
-                        UnavailableState,
-                        FirstDefectCode(unavailable.Defects),
-                        "DerivedRecap进度当前不可用。"
+        return new GalateaPreparedRecap(
+            store,
+            () => {
+                RecapEpochConfigDocument active =
+                    RecapEpochConfigLoader.TryLoad(
+                        engine.Path,
+                        out RecapEpochConfigDocument loaded
                     )
-                    : UnavailablePlanningSnapshot(
-                        FirstDefectCode(unavailable.Defects),
-                        "DerivedRecap进度当前不可用。"
-                    ),
-            DerivedRecapPlanningProgressInspectionResult.BeyondPrefix
-                beyond => new RecapPlanningSnapshotDto(
-                    ExactFreshness,
-                    UnavailableState,
-                    ObservedRawHead: EventAddressTextCodec.Format(
-                        beyond.Evidence.CapturedHead
-                    ),
-                    Code: "recap-beyond-prefix",
-                    Detail: "DerivedRecap进度所需raw lineage超出bounded prefix"
-                        + $"（stage={beyond.Stage}）。"
-                ),
-            _ => throw new InvalidDataException(
-                "Unknown DerivedRecap planning inspection result."
-            )
-        };
+                        ? loaded
+                        : defaults;
+                return new RecapEpochActiveConfiguration(
+                    CreatePlanningConfiguration(catalog, active),
+                    CreateOperationLimits(active),
+                    CreateStoreLimits(active)
+                );
+            },
+            recoveryLimits,
+            catalog,
+            capturedRawHead
+        );
     }
-
-    private static RecapPlanningSnapshotDto MapProgress(
-        DerivedRecapPlanningProgressSnapshot snapshot,
-        string state,
-        string? code = null,
-        string? detail = null
-    ) => new(
-        ExactFreshness,
-        state,
-        ObservedRawHead: EventAddressTextCodec.Format(
-            snapshot.CapturedRawHead
-        ),
-        CadenceBaseline: EventAddressTextCodec.Format(
-            snapshot.CadenceBaseline
-        ),
-        RecentHistoryUnitCount: snapshot.Measurement
-            .GrowthHistoryUnitCount,
-        RecentHistoryLoad: snapshot.Measurement.GrowthHistoryLoad.Value,
-        MinimumRecentHistoryLoad: snapshot.Cadence
-            .MinimumRecentHistoryLoad.Value,
-        RecapBuildIntervalHistoryLoad: snapshot.Cadence
-            .RecapBuildIntervalHistoryLoad.Value,
-        BuildThresholdHistoryLoad: snapshot.BuildThresholdHistoryLoad.Value,
-        RemainingHistoryLoad: snapshot.RemainingHistoryLoad.Value,
-        Code: code,
-        Detail: detail
-    );
-
-    private static RecapPlanningSnapshotDto UnavailablePlanningSnapshot(
-        string code,
-        string detail
-    ) => new(
-        StaleFreshness,
-        UnavailableState,
-        Code: code,
-        Detail: detail
-    );
-
-    private static string FirstDefectCode(
-        IReadOnlyList<DerivedRecapExecutionDefect> defects
-    ) => defects.FirstOrDefault()?.Code
-        ?? "recap-planning-unavailable";
 
     internal static DerivedRecapOnlineLifecycleCoordinator
         CreateLifecycle(
@@ -337,10 +171,11 @@ internal static class GalateaRecapComposition {
                 lanes,
                 groups
             );
-        return DerivedRecapOnlineLifecycleCoordinator.Create(
+        return new DerivedRecapOnlineLifecycleCoordinator(
             engine.ReadView,
             prepared.Store,
-            prepared.Authority,
+            prepared.ConfigurationFactory,
+            prepared.Limits,
             maintainers
         );
     }
@@ -361,35 +196,142 @@ internal static class GalateaRecapComposition {
         ArgumentNullException.ThrowIfNull(agentConnection);
         ArgumentNullException.ThrowIfNull(lanes);
         ArgumentNullException.ThrowIfNull(groups);
-
         return new DeferredRecapBlockMaintainerRegistry(
-            () => {
-                return new RecapBlockMaintainerRegistry([
-                    .. capabilityCatalog.All.Select(descriptor => {
-                    CompletionConnectionConfig connection =
-                        ResolveMaintainerConnection(
-                            descriptor,
-                            connections,
-                            agentConnection,
-                            recapMaintainerConnections
-                        );
-                    RecapExecutionLane lane = GalateaCompletionLogging
-                        .CreateMaintainerLane(
-                            lanes,
-                            connections.GetClient(connection.Id),
-                            connection,
-                            callLogDirectory
+            () => new RecapBlockMaintainerRegistry([
+                .. capabilityCatalog.All.Select(descriptor => {
+                CompletionConnectionConfig connection =
+                    ResolveMaintainerConnection(
+                        descriptor,
+                        connections,
+                        agentConnection,
+                        recapMaintainerConnections
                     );
-                    return groups.GetOrAdd(
-                            lane,
-                            descriptor.Definition.Family
-                        )
-                        .Bind(descriptor.Definition);
-                })
-                ]);
-            }
+                RecapExecutionLane lane = GalateaCompletionLogging
+                    .CreateMaintainerLane(
+                        lanes,
+                        connections.GetClient(connection.Id),
+                        connection,
+                        callLogDirectory
+                    );
+                return groups.GetOrAdd(
+                        lane,
+                        descriptor.Definition.Family
+                    )
+                    .Bind(descriptor.Definition);
+            })
+            ])
         );
     }
+
+    internal static RecapEpochPlanningConfiguration
+        CreatePlanningConfiguration(
+        RecapMaintainerProfileCatalog catalog,
+        RecapEpochConfigDocument? document = null
+    ) {
+        document ??= CreateDefaultDocument();
+        RecapBlockCatalogEntry[] roster = [
+            .. document.Catalog
+                .Select(entry => (
+                    Entry: entry,
+                    Descriptor: catalog.Resolve(entry.ProfileName)
+                ))
+                .Select(static pair => new RecapBlockCatalogEntry(
+                    new RecapBlockId(pair.Descriptor.RecapBlockIdValue),
+                    pair.Descriptor.Target,
+                    pair.Descriptor.MaintainerId,
+                    pair.Descriptor.CapabilityFingerprint,
+                    pair.Entry.MaxContentUtf8Bytes
+                ))
+                .OrderBy(static entry => entry.Target.Carrier)
+                .ThenBy(static entry => entry.Target.BlockKey,
+                    StringComparer.Ordinal)
+        ];
+        return new RecapEpochPlanningConfiguration(
+            roster,
+            new RecapCadenceConfig(
+                document.Cadence.HistoryUnitLoadEstimatorId,
+                new HistoryLoadUnit(
+                    document.Cadence.MinimumRecentHistoryLoad
+                ),
+                new HistoryLoadUnit(
+                    document.Cadence.RecapBuildIntervalHistoryLoad
+                )
+            ),
+            new O200kBaseHistoryUnitLoadEstimator()
+        );
+    }
+
+    internal static RecapEpochOperationLimits CreateOperationLimits(
+        RecapEpochConfigDocument document
+    ) => new(
+        document.Limits.MaxRawGrowthEventCount,
+        document.Limits.MaxRawEventsPerEpoch,
+        document.Limits.MaxMaintainerCallsPerEpoch,
+        document.Limits.MaxEpochsPerOperation,
+        document.Limits.MaxMaintainerCallsPerOperation,
+        document.Limits.MaxRecapBlockCount,
+        document.Limits.MaxRebuildForwardRangeEventCount
+    );
+
+    internal static DerivedRecapEpochStoreLimits CreateStoreLimits(
+        RecapEpochConfigDocument document
+    ) => new(
+        document.Limits.MaxRecapBlockCount,
+        document.Limits.MaxTotalRecapPackUtf8Bytes,
+        document.Limits.MaxCanonicalPriorPackBytes,
+        document.Limits.MaxEpochInputBytes,
+        document.Limits.MaxManifestBytes,
+        document.Limits.MaxFinalBlockBytes,
+        document.Limits.MaxPublicationBytes
+    );
+
+    private static RecapEpochConfigDocument CreateDefaultDocument()
+        => new(
+            RecapEpochConfigCodec.SchemaV3,
+            MaintainCompleteRosterEpochPolicy.PolicyId,
+            new RecapEpochCadenceConfigDocument(
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                18_000,
+                21_000
+            ),
+            Array.AsReadOnly([
+                new RecapEpochCatalogEntryDocument(
+                    RecapMaintainerProfileCatalog
+                        .WorldUnderstandingRewrite,
+                    32_768
+                ),
+                new RecapEpochCatalogEntryDocument(
+                    RecapMaintainerProfileCatalog
+                        .AutobiographicalRewrite,
+                    32_768
+                )
+            ]),
+            new RecapEpochLimitsDocument(
+                512,
+                512,
+                2,
+                4,
+                8,
+                2,
+                65_536,
+                2 * 1024 * 1024,
+                5 * 1024 * 1024,
+                8 * 1024 * 1024,
+                2 * 1024 * 1024,
+                512 * 1024,
+                3 * 1024 * 1024
+            )
+        );
+
+    private static RecapPlanningSnapshotDto UnavailablePlanningSnapshot(
+        string code,
+        string detail
+    ) => new(
+        StaleFreshness,
+        UnavailableState,
+        Code: code,
+        Detail: detail
+    );
 
     private static CompletionConnectionConfig
         ResolveMaintainerConnection(
@@ -407,20 +349,19 @@ internal static class GalateaRecapComposition {
                 out string? connectionId
             )) {
             throw new InvalidOperationException(
-                "Validated Galatea recap maintainer routing is missing "
-                + $"maintainer '{descriptor.MaintainerId}'."
+                "Validated Galatea recap routing is missing maintainer "
+                + $"'{descriptor.MaintainerId}'."
             );
         }
-        if (!connections.TryGet(
-                connectionId,
-                out CompletionConnectionConfig? connection
-            )) {
-            throw new InvalidOperationException(
-                "Validated Galatea recap maintainer routing references "
-                + $"unknown connection '{connectionId}'."
+        return connections.TryGet(
+            connectionId,
+            out CompletionConnectionConfig? connection
+        )
+            ? connection
+            : throw new InvalidOperationException(
+                "Validated Galatea recap routing references unknown "
+                + $"connection '{connectionId}'."
             );
-        }
-        return connection;
     }
 
     internal static SessionCompletionTargetIdentity
@@ -429,10 +370,7 @@ internal static class GalateaRecapComposition {
         ICompletionClient client
     ) {
         CompletionDispatchIdentity identity =
-            CompletionDispatchIdentityFactory.Create(
-                connection,
-                client
-            );
+            CompletionDispatchIdentityFactory.Create(connection, client);
         return new SessionCompletionTargetIdentity(
             identity.ConnectionId,
             identity.Kind,
@@ -440,18 +378,4 @@ internal static class GalateaRecapComposition {
             identity.RequestAdapterFingerprint
         );
     }
-
-    private static RecapMaintainerCapabilitySnapshot
-        ProjectCapabilities(RecapMaintainerProfileCatalog catalog)
-        => new([
-            .. catalog.All.Select(static descriptor =>
-                new RecapProfilePlanningDescriptor(
-                    descriptor.ProfileName,
-                    new RecapBlockId(descriptor.RecapBlockIdValue),
-                    descriptor.Target,
-                    descriptor.MaintainerId,
-                    descriptor.CapabilityFingerprint
-                )
-            )
-        ]);
 }

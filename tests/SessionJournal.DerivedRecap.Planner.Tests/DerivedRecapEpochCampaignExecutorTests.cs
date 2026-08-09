@@ -202,6 +202,62 @@ public sealed class DerivedRecapEpochCampaignExecutorTests {
     }
 
     [Fact]
+    public async Task FrozenBuildingPublishesBeforeUnavailableActiveConfigurationIsLoaded() {
+        using var fixture = new CampaignFixture();
+        EventAddress admission = fixture.AppendPair("A");
+        _ = fixture.AppendPair("recent");
+        RecapEpochBlockDefinition[] definitions = fixture.Definitions();
+        var self = new RecordingMaintainer(
+            definitions[0],
+            _ => new RecapMaintenanceSuccess.Updated("self")
+        );
+        var world = new RecordingMaintainer(
+            definitions[1],
+            call => call == 1
+                ? throw new IOException("first attempt")
+                : new RecapMaintenanceSuccess.Updated("world")
+        );
+        DerivedRecapEpochCampaignExecutor initial = fixture.Executor(
+            new BoundaryPolicy(admission, second: null),
+            [self, world],
+            maxEpochsPerOperation: 2,
+            maxCallsPerOperation: 2
+        );
+        Assert.IsType<DerivedRecapEpochOperationResult.BlockFailed>(
+            await initial.RunOnlineAsync()
+        );
+        int configurationLoads = 0;
+        var frozenFirst = new DerivedRecapEpochCampaignExecutor(
+            fixture.Engine.ReadView,
+            fixture.Store,
+            (Func<RecapEpochActiveConfiguration>)(() => {
+                configurationLoads++;
+                throw new IOException("active config unavailable");
+            }),
+            new RecapEpochOperationLimits(
+                maxRawGrowthEventCount: 512,
+                maxRawEventsPerEpoch: 64,
+                maxMaintainerCallsPerEpoch: 2,
+                maxEpochsPerOperation: 2,
+                maxMaintainerCallsPerOperation: 2,
+                maxRecapBlockCount: 2
+            ),
+            new RecapBlockMaintainerRegistry([self, world])
+        );
+
+        Assert.IsType<DerivedRecapEpochOperationResult.Unavailable>(
+            await frozenFirst.RunOnlineAsync()
+        );
+        Assert.Equal(1, configurationLoads);
+        Assert.Single(self.Inputs);
+        Assert.Equal(2, world.Inputs.Count);
+        Assert.IsType<RecapEpochBuildingSelectionResult.Empty>(
+            await fixture.Store.SelectBuildingAsync()
+        );
+        _ = await fixture.Published(admission);
+    }
+
+    [Fact]
     public async Task PublishedRestoreUsesSameKernelAndRepairsOnlyCommitmentMismatch() {
         using var fixture = new CampaignFixture();
         EventAddress admission = fixture.AppendPair("A");

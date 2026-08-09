@@ -19,7 +19,7 @@ public sealed class GalateaFreshReadinessVerticalTests {
         TimeSpan.FromSeconds(10);
 
     [Fact]
-    public async Task MissingPlannerConfig_BlocksBeforeNormalizerClientAndObservation() {
+    public async Task MissingPlannerConfigUsesBuiltInV3AndCompletesTurn() {
         var factory = new TrackingFactory(
             CompletionTermination.Completed()
         );
@@ -28,7 +28,7 @@ public sealed class GalateaFreshReadinessVerticalTests {
             factory,
             normalizer
         );
-        File.Delete(RecapPlannerConfigLoader.GetCanonicalPath(
+        File.Delete(RecapEpochConfigLoader.GetCanonicalPath(
             host.SessionDirectory
         ));
         using HttpClient client = host.CreateClient();
@@ -44,18 +44,16 @@ public sealed class GalateaFreshReadinessVerticalTests {
             "must remain unconsumed"
         );
 
-        Assert.Equal("failed", liveTurn.Status);
-        Assert.Equal(0, normalizer.NormalizeCallCount);
-        Assert.Equal(0, factory.CreateCallCount);
-        Assert.Equal(0, factory.Client.DispatchCallCount);
-        Assert.Equal(initialHead, session.Engine.ReadCurrentHead());
-        Assert.Empty(
-            session.Engine.ReadRecentCompletedTurns().Turns
-        );
+        Assert.Equal("completed", liveTurn.Status);
+        Assert.Equal(1, normalizer.NormalizeCallCount);
+        Assert.Equal(1, factory.CreateCallCount);
+        Assert.Equal(1, factory.Client.DispatchCallCount);
+        Assert.NotEqual(initialHead, session.Engine.ReadCurrentHead());
+        Assert.Single(session.Engine.ReadRecentCompletedTurns().Turns);
     }
 
     [Fact]
-    public async Task OldPublishedSchema_BlocksBeforeProviderWithRebuildGuidance() {
+    public async Task OldV4SidecarIsIgnoredByV8AndTurnCompletes() {
         var factory = new TrackingFactory(
             CompletionTermination.Completed()
         );
@@ -96,176 +94,11 @@ public sealed class GalateaFreshReadinessVerticalTests {
             "must remain unconsumed"
         );
 
-        Assert.Equal("failed", liveTurn.Status);
-        Assert.Equal(0, normalizer.NormalizeCallCount);
-        Assert.Equal(0, factory.CreateCallCount);
-        Assert.Equal(0, factory.Client.DispatchCallCount);
-        Assert.Equal(initialHead, session.Engine.ReadCurrentHead());
-        using GalateaTurnSubscription subscription =
-            liveTurn.Subscribe();
-        StreamEventDto error = Assert.Single(
-            subscription.ReplayEvents,
-            static item => item.Type == "error"
-        );
-        string payload = JsonSerializer.Serialize(error.Payload);
-        Assert.Contains("PublishedPlanUnavailable", payload);
-        Assert.Contains("Unsupported publication schema", payload);
-        Assert.Contains("recap reset", payload);
-        Assert.Contains("recap run", payload);
-    }
-
-    [Fact]
-    public async Task BeyondPrefixFailsClosedBeforeProviderMaintainerLogOrBuildingMutation() {
-        string callLogDirectory = Path.Combine(
-            Path.GetTempPath(),
-            "atelia-galatea-beyond-prefix-logs",
-            Guid.NewGuid().ToString("N")
-        );
-        var factory = new TrackingFactory(
-            CompletionTermination.Completed()
-        );
-        var normalizer = new TrackingNormalizer();
-        try {
-            await using var host = GalateaTestHost.Create(
-                factory,
-                normalizer,
-                callLogDirectory: callLogDirectory
-            );
-            EventAddress buildingAnchor;
-            EventAddress expectedHead;
-            IReadOnlyDictionary<string, string> derivedBefore;
-            using (SessionJournalEngine engine =
-                   SessionJournalEngine.Open(host.SessionDirectory)) {
-                buildingAnchor = engine.AppendSystemPromptSetup(
-                    "test system prompt"
-                );
-                SessionHistoryPlanningWindow window =
-                    engine.ReadHistoryPlanningWindow();
-                RecapMaintainerProfileDescriptor profile =
-                    RecapMaintainerProfileCatalog.BuiltIn.Resolve(
-                        RecapMaintainerProfileCatalog
-                            .WorldUnderstandingRewrite
-                    );
-                SessionContextAnchorSetupReferences anchorSetups =
-                    engine.ResolveContextAnchorSetupReferences(
-                        buildingAnchor
-                    );
-                var plan = new MaintainRecapBlockPlan(
-                    new RecapBlockId(profile.RecapBlockIdValue),
-                    profile.Target,
-                    profile.MaintainerId,
-                    profile.CapabilityFingerprint,
-                    new EmptyRecapMaintainSource(
-                        window.StartExclusive,
-                        window.StartSetups
-                    ),
-                    [new RecapReplayBoundary(
-                        buildingAnchor,
-                        anchorSetups
-                    )],
-                    DerivedRecapCodec
-                        .ComputePriorContextPayloadSha256(
-                            EmptyRecapPriorContext.Instance
-                        )
-                );
-                DerivedRecapStore store = DerivedRecapStore.Open(
-                    host.SessionDirectory,
-                    engine.BranchRefId
-                );
-                Assert.IsType<CreateBuildingResult.Created>(
-                    await new DerivedRecapBuildingInstaller(
-                        store,
-                        engine.ReadView
-                    ).InstallAsync(
-                        DerivedRecapCodec.CreateManifest(
-                            engine.BranchRefId,
-                            buildingAnchor,
-                            anchorSetups,
-                            EmptyRecapPriorContext.Instance,
-                            [plan]
-                        ),
-                        buildingAnchor
-                    )
-                );
-
-                for (int index = 0; index < 514; index++) {
-                    _ = engine.AppendSystemPromptSetup(
-                        $"bounded-prefix-padding-{index}"
-                    );
-                }
-                _ = engine.AppendSystemPromptSetup(
-                    "test system prompt"
-                );
-                expectedHead = Assert.IsType<EventAddress>(
-                    engine.ReadCurrentHead()
-                );
-                var aligned = Assert.IsType<
-                    SessionDesiredSetupReconciliationResult.Ready
-                >(engine.ReconcileDesiredSetup(
-                    expectedHead,
-                    new SessionDesiredSetup(
-                        "model-a",
-                        "openai-chat/strict",
-                        "test system prompt"
-                    )
-                ));
-                Assert.False(aligned.RuntimeConfigChanged);
-                Assert.False(aligned.SystemPromptChanged);
-                Assert.IsType<
-                    SessionCurrentLineageAnchorLookup.BeyondPrefix
-                >(engine.ReadView
-                    .ReadCurrentLineagePrefix(513)
-                    .Lookup(buildingAnchor));
-                Assert.Equal(expectedHead, engine.ReadCurrentHead());
-                derivedBefore = SnapshotDerivedFiles(
-                    host.SessionDirectory
-                );
-            }
-
-            using HttpClient client = host.CreateClient();
-            GalateaHostService service = host.Factory.Services
-                .GetRequiredService<GalateaHostService>();
-            UserSessionHost session = await service.GetSessionAsync(
-                "alice",
-                CancellationToken.None
-            );
-            GalateaLiveTurn turn = service.StartTurn(
-                session,
-                "must remain unconsumed",
-                new GalateaTurnOptions("test")
-            );
-
-            GalateaTurnException failure = await Assert.ThrowsAsync<
-                GalateaTurnException
-            >(() => service.RunTurnAsync(
-                session,
-                turn,
-                CancellationToken.None
-            ));
-
-            Assert.Equal("recap-beyond-prefix", failure.FailureReason);
-            Assert.Contains("stage=PreparationBuildingAdmission", failure.Message);
-            Assert.Contains(
-                EventAddressTextCodec.Format(buildingAnchor),
-                failure.Message
-            );
-            Assert.Equal(0, normalizer.ShouldNormalizeCallCount);
-            Assert.Equal(0, normalizer.NormalizeCallCount);
-            Assert.Equal(0, factory.CreateCallCount);
-            Assert.Equal(0, factory.Client.DispatchCallCount);
-            Assert.False(Directory.Exists(callLogDirectory));
-            Assert.Equal(expectedHead, session.Engine.ReadCurrentHead());
-            Assert.Equal(
-                derivedBefore.OrderBy(static item => item.Key),
-                SnapshotDerivedFiles(host.SessionDirectory)
-                    .OrderBy(static item => item.Key)
-            );
-        }
-        finally {
-            if (Directory.Exists(callLogDirectory)) {
-                Directory.Delete(callLogDirectory, recursive: true);
-            }
-        }
+        Assert.Equal("completed", liveTurn.Status);
+        Assert.Equal(1, normalizer.NormalizeCallCount);
+        Assert.Equal(1, factory.CreateCallCount);
+        Assert.Equal(1, factory.Client.DispatchCallCount);
+        Assert.NotEqual(initialHead, session.Engine.ReadCurrentHead());
     }
 
     [Fact]
@@ -301,9 +134,7 @@ public sealed class GalateaFreshReadinessVerticalTests {
             SessionExecutionPhase.Idle,
             session.Engine.InspectExecutionBoundary().Phase
         );
-        Assert.Empty(
-            session.Engine.ReadRecentCompletedTurns().Turns
-        );
+        Assert.Empty(session.Engine.ReadRecentCompletedTurns().Turns);
     }
 
     private static async Task<GalateaLiveTurn> StartAndAwaitAsync(

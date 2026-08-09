@@ -15,7 +15,8 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner;
 public sealed partial class DerivedRecapEpochCampaignExecutor {
     private readonly SessionJournalReadView _engine;
     private readonly DerivedRecapEpochStore _store;
-    private readonly RecapEpochPlanningConfiguration _configuration;
+    private readonly Lazy<RecapEpochActiveConfiguration>
+        _activeConfiguration;
     private readonly RecapEpochOperationLimits _limits;
     private readonly IRecapBlockMaintainerRegistry _maintainers;
 
@@ -25,27 +26,64 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
         RecapEpochPlanningConfiguration configuration,
         RecapEpochOperationLimits limits,
         IRecapBlockMaintainerRegistry maintainers
+    ) : this(
+        engine,
+        store,
+        () => new RecapEpochActiveConfiguration(
+            configuration,
+            limits,
+            store.Limits
+        ),
+        limits,
+        maintainers
+    ) {
+        ArgumentNullException.ThrowIfNull(configuration);
+    }
+
+    public DerivedRecapEpochCampaignExecutor(
+        SessionJournalReadView engine,
+        DerivedRecapEpochStore store,
+        Func<RecapEpochPlanningConfiguration> configurationFactory,
+        RecapEpochOperationLimits limits,
+        IRecapBlockMaintainerRegistry maintainers
+    ) : this(
+        engine,
+        store,
+        () => new RecapEpochActiveConfiguration(
+            configurationFactory(),
+            limits,
+            store.Limits
+        ),
+        limits,
+        maintainers
+    ) {
+        ArgumentNullException.ThrowIfNull(configurationFactory);
+    }
+
+    public DerivedRecapEpochCampaignExecutor(
+        SessionJournalReadView engine,
+        DerivedRecapEpochStore store,
+        Func<RecapEpochActiveConfiguration> configurationFactory,
+        RecapEpochOperationLimits recoveryLimits,
+        IRecapBlockMaintainerRegistry maintainers
     ) {
         _engine = engine
             ?? throw new ArgumentNullException(nameof(engine));
         _store = store
             ?? throw new ArgumentNullException(nameof(store));
-        _configuration = configuration
-            ?? throw new ArgumentNullException(nameof(configuration));
-        _limits = limits
-            ?? throw new ArgumentNullException(nameof(limits));
+        ArgumentNullException.ThrowIfNull(configurationFactory);
+        _activeConfiguration = new Lazy<RecapEpochActiveConfiguration>(
+            () => configurationFactory()
+                ?? throw new InvalidDataException(
+                    "Active recap epoch configuration factory returned null."
+                ),
+            LazyThreadSafetyMode.ExecutionAndPublication
+        );
+        _limits = recoveryLimits
+            ?? throw new ArgumentNullException(nameof(recoveryLimits));
         _maintainers = maintainers
             ?? throw new ArgumentNullException(nameof(maintainers));
         RequireSameBinding(engine, store);
-        if (configuration.OrderedCatalog.Count
-                > limits.MaxRecapBlockCount
-            || configuration.OrderedCatalog.Count
-                > store.Limits.MaxRecapBlockCount) {
-            throw new ArgumentException(
-                "Complete recap roster exceeds its configured cap.",
-                nameof(configuration)
-            );
-        }
     }
 
     public async ValueTask<DerivedRecapEpochOperationResult>
@@ -257,11 +295,12 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                     RecapPlanReasons.BelowCadenceThreshold
                 );
             }
+            RecapEpochOperationLimits activeLimits = ActiveLimits;
             SessionHistoryPlanningWindowReadResult rawRead =
                 _engine.ReadHistoryPlanningWindowAtBounded(
                     prefix.CapturedHead,
                     source.StartSeed,
-                    _limits.MaxRawGrowthEventCount,
+                    activeLimits.MaxRawGrowthEventCount,
                     cancellationToken
                 );
             if (rawRead
@@ -269,7 +308,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                 return FullRebuild(
                     RecapEpochFullRebuildReason.RawGrowthLimitExceeded,
                     prefix.CapturedHead,
-                    $"Raw growth exceeds the bounded online cap {_limits.MaxRawGrowthEventCount}."
+                    $"Raw growth exceeds the bounded online cap {activeLimits.MaxRawGrowthEventCount}."
                 );
             }
             SessionHistoryPlanningWindow allRaw =
@@ -280,7 +319,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                 measurement = RecapHistoryLoadProjector.Measure(
                     allRaw,
                     source.StartSeed.Address,
-                    _configuration.HistoryUnitLoadEstimator
+                    Configuration.HistoryUnitLoadEstimator
                 );
             }
             catch (Exception exception) when (IsAvailability(exception)) {
@@ -291,12 +330,12 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
             }
             RecapEpochPlanningDecision decision;
             try {
-                decision = _configuration.Policy.Decide(
+                decision = Configuration.Policy.Decide(
                     new RecapEpochPlanningFacts(
                         allRaw,
                         measurement,
-                        _configuration.Cadence,
-                        _limits.MaxRawEventsPerEpoch
+                        Configuration.Cadence,
+                        activeLimits.MaxRawEventsPerEpoch
                     )
                 ) ?? throw new InvalidDataException(
                     "Epoch planning policy returned null."
@@ -317,18 +356,18 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                 );
             }
 
-            if (_configuration.OrderedCatalog.Count
-                > _limits.MaxMaintainerCallsPerOperation) {
+            if (Configuration.OrderedCatalog.Count
+                > activeLimits.MaxMaintainerCallsPerOperation) {
                 return new DerivedRecapEpochOperationResult
                     .ConfigurationLimit(
                         "A complete epoch roster cannot fit any operation budget."
                     );
             }
-            if (epochsPublished >= _limits.MaxEpochsPerOperation
+            if (epochsPublished >= activeLimits.MaxEpochsPerOperation
                 || checked(
                     maintainerCalls
-                    + _configuration.OrderedCatalog.Count
-                ) > _limits.MaxMaintainerCallsPerOperation) {
+                    + Configuration.OrderedCatalog.Count
+                ) > activeLimits.MaxMaintainerCallsPerOperation) {
                 if (latest is null) {
                     return new DerivedRecapEpochOperationResult
                         .ConfigurationLimit(
@@ -342,8 +381,8 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                         maintainerCalls
                     );
             }
-            if (_configuration.OrderedCatalog.Count
-                > _limits.MaxMaintainerCallsPerEpoch) {
+            if (Configuration.OrderedCatalog.Count
+                > activeLimits.MaxMaintainerCallsPerEpoch) {
                 return new DerivedRecapEpochOperationResult
                     .ConfigurationLimit(
                         "Complete roster exceeds MaxMaintainerCallsPerEpoch."
@@ -367,7 +406,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                 _engine.ReadHistoryPlanningWindowAtBounded(
                     admission,
                     source.StartSeed,
-                    _limits.MaxRawEventsPerEpoch,
+                    activeLimits.MaxRawEventsPerEpoch,
                     cancellationToken
                 );
             if (slabRead
@@ -575,13 +614,6 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
         EventAddress capturedRawHead,
         CancellationToken cancellationToken
     ) {
-        if (!TopologyMatches(snapshot.Manifest)) {
-            return FullRebuild(
-                RecapEpochFullRebuildReason.TopologyChanged,
-                capturedRawHead,
-                "Frozen epoch roster differs from the active complete roster."
-            );
-        }
         foreach (EventAddress boundary in new[] {
                      snapshot.EpochInput.StartBoundary.Address,
                      snapshot.EpochInput.AdmissionBoundary.Address
@@ -823,7 +855,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
 
     private IReadOnlyList<RecapEpochBlockDefinition> CreateRoster()
         => Array.AsReadOnly([
-            .. _configuration.OrderedCatalog.Select((entry, ordinal) =>
+            .. Configuration.OrderedCatalog.Select((entry, ordinal) =>
                 new RecapEpochBlockDefinition(
                     entry.RecapBlockId,
                     entry.Target,
@@ -836,7 +868,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
 
     private bool TopologyMatches(DerivedRecapEpochManifest manifest) {
         if (manifest.Blocks.Count
-            != _configuration.OrderedCatalog.Count) {
+            != Configuration.OrderedCatalog.Count) {
             return false;
         }
         for (int ordinal = 0;
@@ -844,7 +876,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
              ordinal++) {
             RecapEpochBlockDefinition frozen = manifest.Blocks[ordinal];
             RecapBlockCatalogEntry active =
-                _configuration.OrderedCatalog[ordinal];
+                Configuration.OrderedCatalog[ordinal];
             if (frozen.Ordinal != ordinal
                 || frozen.RecapBlockId != active.RecapBlockId
                 || frozen.Target != active.Target
@@ -872,6 +904,28 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
         checked(_limits.MaxRawGrowthEventCount + 1),
         cancellationToken
     );
+
+    private RecapEpochPlanningConfiguration Configuration {
+        get {
+            RecapEpochActiveConfiguration active =
+                _activeConfiguration.Value;
+            RecapEpochPlanningConfiguration configuration =
+                active.Planning;
+            if (configuration.OrderedCatalog.Count
+                    > active.OperationLimits.MaxRecapBlockCount
+                || configuration.OrderedCatalog.Count
+                    > _store.Limits.MaxRecapBlockCount
+                || active.StoreLimits != _store.Limits) {
+                throw new InvalidDataException(
+                    "Active complete roster or Store limits do not match this operation."
+                );
+            }
+            return configuration;
+        }
+    }
+
+    private RecapEpochOperationLimits ActiveLimits =>
+        _activeConfiguration.Value.OperationLimits;
 
     private static IReadOnlyList<IHistoryMessage> FreezeHistory(
         SessionHistoryPlanningWindow window

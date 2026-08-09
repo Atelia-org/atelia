@@ -16,7 +16,7 @@ public sealed class GalateaHostSmokeTests {
         var stale = new RecapPlanningSnapshotDto(
             "stale",
             "unavailable",
-            Code: DerivedRecapExecutionDefectCodes.RawHeadChanged,
+            Code: "RawHeadChanged",
             Detail: "retry the read-only inspection"
         );
 
@@ -35,7 +35,7 @@ public sealed class GalateaHostSmokeTests {
         Assert.Equal("stale", boundRecap.Freshness);
         Assert.Equal("unavailable", boundRecap.State);
         Assert.Equal(
-            DerivedRecapExecutionDefectCodes.RawHeadChanged,
+            "RawHeadChanged",
             boundRecap.Code
         );
         Assert.Equal(

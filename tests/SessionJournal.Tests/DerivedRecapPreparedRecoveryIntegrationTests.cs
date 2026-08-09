@@ -1,7 +1,6 @@
 using System.Text;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
-using Atelia.SessionJournal.DerivedRecap.Planner;
 using Atelia.SessionJournal.DerivedRecap.Store;
 using Xunit;
 
@@ -11,8 +10,6 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
     : IDisposable {
     private const string RecapText =
         "durable recap survives derived Store deletion";
-    private const string ProfileName = "fixed-recap-profile";
-    private const string PolicyId = "atelia.tests.first-build-v1";
 
     private static readonly SessionCompletionTargetIdentity Target =
         new(
@@ -25,18 +22,14 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
     private readonly List<string> _paths = [];
 
     [Fact]
-    public async Task PreparedReopenDoesNotReadDeletedRecapStore() {
+    public async Task PreparedReopenDoesNotReadDeletedV8RecapStore() {
         string path = NewPath();
         var sourceClient = new CapturingClient("must not run");
         EventAddress preparedAddress;
 
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
-            new SessionCreateOptions(
-                "model-a",
-                "system-a",
-                "surface-a"
-            ),
+            new SessionCreateOptions("model-a", "system-a", "surface-a"),
             runtime: null!,
             new SessionJournalTestHooks(
                 SessionJournalFailpoint.AfterRequestPreparedCommitted
@@ -47,112 +40,105 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
                 new ActionMessage([
                     new ActionBlock.Text("old answer")
                 ]),
-                new CompletionDescriptor(
-                    "import",
-                    "import-v1",
-                    "model-a"
-                )
+                new CompletionDescriptor("import", "import-v1", "model-a")
             );
 
-            DerivedRecapStore store = DerivedRecapStore.Open(
+            DerivedRecapEpochStore store = DerivedRecapEpochStore.Open(
                 path,
                 engine.BranchRefId
             );
             await store.CreateAsync();
-            RecapBlockId blockId = new("roleplay.self");
-            var target = new ContextHeaderBlockPath(
-                ContextHeaderCarrier.System,
-                "roleplay.self"
+            EventAddress idleHead = engine.ReadCurrentHead()!.Value;
+            SessionHistoryPlanningSeed start = Assert.IsType<
+                SessionCreatedPlanningSeedReadResult.Available
+            >(engine.ReadView.ReadSessionCreatedPlanningSeedAtBounded(
+                idleHead,
+                32
+            )).Seed;
+            SessionHistoryPlanningWindow window = Assert.IsType<
+                SessionHistoryPlanningWindowReadResult.Available
+            >(engine.ReadView.ReadHistoryPlanningWindowAtBounded(
+                idleHead,
+                start,
+                32
+            )).Window;
+            var definition = new RecapEpochBlockDefinition(
+                new RecapBlockId("roleplay.self"),
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.System,
+                    "roleplay.self"
+                ),
+                "fixed-recap",
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                4096,
+                0
             );
-            var maintainer = new FixedRecapMaintainer(target);
-            var policy = new FirstBuildPolicy(blockId);
-            RecapMaintainerCapabilitySnapshot capabilities = new([
-                new RecapProfilePlanningDescriptor(
-                    ProfileName,
-                    blockId,
-                    target,
-                    maintainer.Id,
-                    maintainer.CapabilityFingerprint
-                )
-            ]);
-            ResolvedRecapPlanningConfiguration configuration =
-                CreateConfiguration(
-                policy,
-                capabilities
-            );
-            var source = new FixedConfigurationSource(configuration);
-            var ready = Assert.IsType<
-                DerivedRecapOperationPreparationResult.Ready
-            >(await DerivedRecapOperationPreparer.PrepareAsync(
-                engine.ReadView,
-                store,
-                capabilities,
-                source,
-                CancellationToken.None
-            ));
-            var coordinator =
-                DerivedRecapOnlineLifecycleCoordinator.Create(
-                    engine.ReadView,
-                    store,
-                    ready.Authority,
-                    new RecapBlockMaintainerRegistry([maintainer])
+            DerivedRecapEpochInput input = DerivedRecapV8Codec
+                .CreateEpochInput(
+                    new RecapEpochBoundary(start.Address, start.Setups),
+                    new RecapEpochBoundary(idleHead, window.EndSetups),
+                    window.RawAddresses.Count,
+                    window.RawRangeSha256,
+                    Array.AsReadOnly([
+                        .. window.Units.Select(static unit => unit.Message)
+                    ]),
+                    RecapEpochPrevious.Empty.Instance
                 );
-
-            SessionExecutionBoundaryInspection boundary =
-                engine.InspectExecutionBoundary();
-            EventAddress idleHead = boundary.Head!.Value;
-            SessionGoverningSetup setup =
-                engine.ResolveGoverningSetup(idleHead);
-            var selectionRequest =
-                new SessionContextSelectionRequest(
+            DerivedRecapEpochManifest manifest = DerivedRecapV8Codec
+                .CreateManifest(
+                    engine.BranchRefId,
                     idleHead,
-                    setup.RuntimeConfig.DerivedContext.NthPrevious
+                    input.PayloadSha256,
+                    [definition]
                 );
-            SessionContextLifecycleResult prepared =
-                await coordinator.PrepareAsync(
-                    engine.ReadView,
-                    new SessionContextLifecycleRequest(
-                        selectionRequest,
-                        boundary.Phase
-                    ),
-                    CancellationToken.None
-                );
-            Assert.Equal(
-                SessionContextLifecycleStatus.Ready,
-                prepared.Status
-            );
-            Assert.Equal(1, maintainer.CallCount);
-
-            SessionContextCandidateSelection selected =
-                await coordinator.SelectAsync(
-                    selectionRequest,
-                    CancellationToken.None
-                );
-            SessionContextCandidateDescriptor descriptor =
-                Assert.IsType<SessionContextCandidateDescriptor>(
-                    selected.Candidate
-                );
-            SessionContextCandidate candidate =
-                await coordinator.MaterializeAsync(
-                    descriptor,
-                    CancellationToken.None
-                );
-            Assert.Equal(
-                RecapText,
-                Assert.Single(candidate.Contributions).ExactText
-            );
-
-            engine.UseRuntime(
-                CreateRuntime(
-                    sourceClient,
-                    coordinator,
-                    coordinator
+            _ = Assert.IsType<InstallRecapEpochBuildingResult.Installed>(
+                await store.InstallBuildingAsync(
+                    manifest,
+                    input,
+                    idleHead,
+                    engine.ReadView.ReadCurrentHead
                 )
             );
+            RecapEpochStoreSnapshot building = Assert.IsType<
+                RecapEpochStoreReadResult.Available
+            >(await store.ReadBuildingAsync(idleHead)).Snapshot;
+            Assert.IsType<WriteRecapEpochFinalResult.Installed>(
+                await store.WriteFinalAsync(
+                    Assert.Single(building.Blocks).WriteAuthority!,
+                    DerivedRecapV8Codec.CreateFinalBlock(
+                        manifest,
+                        definition,
+                        RecapText
+                    )
+                )
+            );
+            Assert.IsType<PublishRecapEpochResult.Published>(
+                await store.PublishBuildingAsync(
+                    building.Descriptor,
+                    idleHead,
+                    engine.ReadView.ReadCurrentHead
+                )
+            );
+            engine.AppendObservation("recent observation");
+            _ = engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text("recent answer")
+                ]),
+                new CompletionDescriptor("import", "import-v1", "model-a")
+            );
+
+            var candidates = new DerivedRecapContextCandidateSource(
+                store,
+                engine.ReadView
+            );
+            var lifecycle = new ReadyContextLifecycle();
+            engine.UseRuntime(CreateRuntime(
+                sourceClient,
+                candidates,
+                lifecycle
+            ));
             SessionJournalFailpointException failure =
-                await Assert.ThrowsAsync<
-                    SessionJournalFailpointException
-                >(
+                await Assert.ThrowsAsync<SessionJournalFailpointException>(
                     () => engine.SendAsync(
                         "durable observation",
                         CancellationToken.None
@@ -163,13 +149,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
                 failure.Failpoint
             );
             Assert.Empty(sourceClient.Requests);
-            SessionExecutionBoundaryInspection preparedBoundary =
-                engine.InspectExecutionBoundary();
-            Assert.Equal(
-                SessionExecutionPhase.AwaitingCompletionDispatch,
-                preparedBoundary.Phase
-            );
-            preparedAddress = preparedBoundary.Head!.Value;
+            preparedAddress = engine.InspectExecutionBoundary().Head!.Value;
         }
 
         byte[] expectedCanonical;
@@ -188,12 +168,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
             );
         }
 
-        string recapRoot = Path.Combine(
-            path,
-            "derived",
-            "recap",
-            "v4"
-        );
+        string recapRoot = Path.Combine(path, "derived", "recap", "v8");
         Assert.True(Directory.Exists(recapRoot));
         Directory.Delete(recapRoot, recursive: true);
 
@@ -201,9 +176,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
         var recoveryClient = new CapturingClient("recovered answer");
         ResumeOutcome outcome;
         using (var reopened = SessionJournalTestRuntime.Attach(
-            SessionJournalEngine.Open(
-                path
-            ),
+            SessionJournalEngine.Open(path),
             CreateRuntime(
                 recoveryClient,
                 forbidden,
@@ -214,9 +187,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
                         .RestartWithNewAttempt
             }
         )) {
-            outcome = await reopened.ResumeAsync(
-                CancellationToken.None
-            );
+            outcome = await reopened.ResumeAsync(CancellationToken.None);
         }
 
         Assert.True(outcome.Advanced);
@@ -228,9 +199,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
             Assert.Single(recoveryClient.Requests);
         Assert.Equal(
             expectedCanonical,
-            SessionRequestCanonicalizer.Canonicalize(
-                recoveredRequest
-            )
+            SessionRequestCanonicalizer.Canonicalize(recoveredRequest)
         );
         Assert.Equal(0, forbidden.LifecycleCalls);
         Assert.Equal(0, forbidden.SelectionCalls);
@@ -251,45 +220,6 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
         }
     }
 
-    private static ResolvedRecapPlanningConfiguration
-        CreateConfiguration(
-        IRecapPlanningPolicy policy,
-        RecapMaintainerCapabilitySnapshot capabilities
-    ) {
-        var estimator = new ConstantHistoryUnitLoadEstimator();
-        var document = new RecapPlannerConfigDocument(
-            RecapPlannerConfigCodec.SchemaV2,
-            PolicyId,
-            new RecapCadenceConfigDocument(
-                estimator.Id,
-                MinimumRecentHistoryLoad: 0,
-                RecapBuildIntervalHistoryLoad: 2
-            ),
-            [new RecapPlannerCatalogEntryDocument(ProfileName, 4096)],
-            new RecapPlannerLimitsDocument(512, 4, 4, 64, 512)
-        );
-        var catalog = new RecapPlannerConfigResolutionCatalog(
-            [policy],
-            [estimator]
-        );
-        return Assert.IsType<RecapPlannerConfigResolveResult.Resolved>(
-            RecapPlannerConfigResolver.Resolve(
-                RecapPlannerConfigSnapshot.FromDocument(document),
-                catalog,
-                capabilities
-            )
-        ).Configuration;
-    }
-
-    private sealed class FixedConfigurationSource(
-        ResolvedRecapPlanningConfiguration configuration
-    ) : IRecapActivePlanningConfigurationSource {
-        public RecapActivePlanningConfigurationLoadResult Load()
-            => new RecapActivePlanningConfigurationLoadResult.Available(
-                configuration
-            );
-    }
-
     private static SessionRuntime CreateRuntime(
         ICompletionClient client,
         ICoherentContextCandidateSource candidates,
@@ -302,20 +232,6 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
         ContextLifecycle: lifecycle
     );
 
-    private sealed class ConstantHistoryUnitLoadEstimator
-        : IHistoryUnitLoadEstimator {
-        public string Id =>
-            "atelia.tests.history-load.constant-v1";
-
-        public HistoryUnitLoadMeasurement Measure(
-            SessionHistoryPlanningUnit unit,
-            int maxRenderedUtf8Bytes
-        ) => new(
-            new HistoryLoadUnit(1),
-            RenderedUtf8Bytes: 1
-        );
-    }
-
     private string NewPath() {
         string path = Path.Combine(
             Path.GetTempPath(),
@@ -326,57 +242,16 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
         return path;
     }
 
-    private sealed class FirstBuildPolicy(RecapBlockId blockId)
-        : IRecapPlanningPolicy {
-        public string Id => PolicyId;
-
-        public RecapPlanningPolicyDecision Decide(
-            RecapPlanningPolicyContext context
+    private sealed class ReadyContextLifecycle
+        : ISessionContextLifecycleCoordinator {
+        public ValueTask<SessionContextLifecycleResult> PrepareAsync(
+            SessionJournalReadView readView,
+            SessionContextLifecycleRequest request,
+            CancellationToken cancellationToken
         ) {
-            if (context.Scheduling.LatestPublishedSetAnchor is not null) {
-                return new RecapPlanningPolicyDecision.NoBuild(
-                    "latest-exists"
-                );
-            }
-            EventAddress start =
-                context.Scheduling.HistoryWindow.StartExclusive;
-            EventAddress admission =
-                context.Scheduling.CapturedHead;
-            return new RecapPlanningPolicyDecision.Build(
-                admission,
-                [
-                    new RecapBlockPlanningDecision.Maintain(
-                        blockId,
-                        new RecapPlanningMaintainSource.Empty(start),
-                        [admission]
-                    )
-                ]
-            );
-        }
-    }
-
-    private sealed class FixedRecapMaintainer(
-        ContextHeaderBlockPath target
-    ) : IRecapBlockMaintainer {
-        public string Id => "fixed-recap";
-        public string CapabilityFingerprint =>
-            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-
-        public ContextHeaderBlockPath Target { get; } = target;
-
-        public object RuntimeGroupAffinity => this;
-
-        public int CallCount { get; private set; }
-
-        public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
-            RecapMaintenanceEpochInput request,
-            CancellationToken ct
-        ) {
-            ct.ThrowIfCancellationRequested();
-            CallCount++;
+            cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult(
-                (RecapMaintenanceSuccess)new
-                    RecapMaintenanceSuccess.Updated(RecapText)
+                SessionContextLifecycleResult.Ready
             );
         }
     }
@@ -384,9 +259,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
     private sealed class CapturingClient(string response)
         : ICompletionClient {
         public string Name => "derived-recap-integration";
-
         public string ApiSpecId => "derived-recap-integration-v1";
-
         public List<CompletionRequest> Requests { get; } = [];
 
         public Task<CompletionResult> StreamCompletionAsync(
@@ -400,11 +273,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
                 new ActionMessage([
                     new ActionBlock.Text(response)
                 ]),
-                new CompletionDescriptor(
-                    Name,
-                    ApiSpecId,
-                    request.ModelId
-                )
+                new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
             ));
         }
     }

@@ -37,7 +37,7 @@ public sealed class DerivedRecapRebuildSpoolTests : IDisposable {
             StringComparison.Ordinal
         );
 
-        DerivedRecapStore truthStore = DerivedRecapStore.Open(
+        DerivedRecapEpochStore truthStore = DerivedRecapEpochStore.Open(
             raw.Path,
             raw.RefId
         );

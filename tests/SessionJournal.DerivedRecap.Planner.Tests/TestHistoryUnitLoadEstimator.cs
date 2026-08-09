@@ -1,5 +1,4 @@
 using SJ = Atelia.SessionJournal;
-using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal.DerivedRecap.Planner.Tests;
 
@@ -53,67 +52,5 @@ internal sealed class TestHistoryUnitLoadEstimator
     ) {
         MeasureCallCount++;
         return _measure(unit, maxRenderedUtf8Bytes);
-    }
-}
-
-internal static class TestHistoryLoadMeasurement {
-    public static RecapHistoryLoadMeasurement UnitCountEquivalent(
-        RecapHistoryWindowFacts window,
-        EventAddress baselineAddress,
-        string estimatorId =
-            TestHistoryUnitLoadEstimator.DefaultId
-    ) {
-        int baselineCompletedUnitCount = 0;
-        int firstLaterBoundaryIndex = 0;
-        if (baselineAddress != window.StartExclusive) {
-            firstLaterBoundaryIndex = -1;
-            for (int index = 0;
-                 index < window.ReplaySafeBoundaries.Count;
-                 index++) {
-                SessionHistoryPlanningBoundary boundary =
-                    window.ReplaySafeBoundaries[index];
-                if (boundary.Address != baselineAddress) {
-                    continue;
-                }
-                baselineCompletedUnitCount =
-                    boundary.CompletedUnitCount;
-                firstLaterBoundaryIndex = index + 1;
-                break;
-            }
-            if (firstLaterBoundaryIndex < 0) {
-                throw new ArgumentException(
-                    "Baseline must be the exact window start or a "
-                    + "replay-safe boundary.",
-                    nameof(baselineAddress)
-                );
-            }
-        }
-
-        return new RecapHistoryLoadMeasurement(
-            estimatorId,
-            baselineAddress,
-            baselineCompletedUnitCount,
-            new HistoryLoadUnit(
-                window.TotalHistoryUnitCount
-                - baselineCompletedUnitCount
-            ),
-            renderedUtf8Bytes:
-                window.TotalHistoryUnitCount
-                - baselineCompletedUnitCount,
-            [
-                .. window.ReplaySafeBoundaries
-                    .Skip(firstLaterBoundaryIndex)
-                    .Select(boundary =>
-                        new RecapHistoryLoadBoundary(
-                            boundary.Address,
-                            boundary.CompletedUnitCount
-                            - baselineCompletedUnitCount,
-                            new HistoryLoadUnit(
-                                boundary.CompletedUnitCount
-                                - baselineCompletedUnitCount
-                            )
-                        ))
-            ]
-        );
     }
 }

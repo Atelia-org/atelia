@@ -22,8 +22,14 @@ internal static class SessionRawRangeHasher {
         IReadOnlyList<SessionRawRangeHashEntry> entries
     ) {
         ArgumentNullException.ThrowIfNull(entries);
-        if (entries.Count == 0 || entries[^1].Address != rawEndInclusive) {
-            throw new ArgumentException("Raw range entries must be non-empty and end at rawEndInclusive.", nameof(entries));
+        if ((entries.Count == 0
+                && rawStartExclusive != rawEndInclusive)
+            || (entries.Count != 0
+                && entries[^1].Address != rawEndInclusive)) {
+            throw new ArgumentException(
+                "Raw range entries must be parent-contiguous through rawEndInclusive; an empty range requires equal start and end boundaries.",
+                nameof(entries)
+            );
         }
         EventAddress? expectedParent = rawStartExclusive;
         foreach (SessionRawRangeHashEntry entry in entries) {

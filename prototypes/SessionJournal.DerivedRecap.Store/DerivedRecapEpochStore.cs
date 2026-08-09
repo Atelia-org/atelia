@@ -12,12 +12,13 @@ internal sealed record RecapEpochStoreTestHooks(
     Action? BeforeFinalReplace = null,
     Action? AfterFinalReplace = null,
     Action? BeforePublicationInstall = null,
-    Action? BeforePublishedPromotion = null
+    Action? BeforePublishedPromotion = null,
+    Action? AfterResetQuarantineRename = null
 );
 
 /// <summary>
-/// R3B v8 Store candidate. It is intentionally disconnected from the v4
-/// production facade until Planner and Store can switch atomically.
+/// Production v8 shared-epoch Store. Each Building owns one immutable epoch
+/// input, one complete roster, and direct epoch-bound final blocks.
 /// </summary>
 public sealed class DerivedRecapEpochStore {
     private const int MaxInventoryEntries = 1024;
@@ -125,12 +126,33 @@ public sealed class DerivedRecapEpochStore {
                 )
                 .ConfigureAwait(false);
         RecoverRootStaging();
+        RecoverResetQuarantine();
         if (PathEntryExists(_storeRoot)) {
             throw new IOException(
                 $"DerivedRecap v8 Store already exists for RefId {RefId}."
             );
         }
         await CreateRootCoreAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask EnsureCreatedAsync(
+        CancellationToken cancellationToken = default
+    ) {
+        EnsureScaffolding();
+        await using FileStream writeLock =
+            await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        RecoverRootStaging();
+        RecoverResetQuarantine();
+        if (!PathEntryExists(_storeRoot)) {
+            await CreateRootCoreAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+        await RequireReadyAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask ResetAsync(
@@ -144,6 +166,7 @@ public sealed class DerivedRecapEpochStore {
                 )
                 .ConfigureAwait(false);
         RecoverRootStaging();
+        RecoverResetQuarantine();
         string? quarantine = null;
         if (PathEntryExists(_storeRoot)) {
             if (!Directory.Exists(_storeRoot)) {
@@ -158,6 +181,7 @@ public sealed class DerivedRecapEpochStore {
             );
             _fileSystem.MoveDirectoryCreateNew(_storeRoot, quarantine);
             _fileSystem.FlushDirectory(_refsRoot);
+            _testHooks.AfterResetQuarantineRename?.Invoke();
         }
         await CreateRootCoreAsync(cancellationToken).ConfigureAwait(false);
         if (quarantine is not null) {
@@ -759,11 +783,27 @@ public sealed class DerivedRecapEpochStore {
     public async ValueTask<RecapEpochSelectionResult> SelectLatestAsync(
         IReadOnlyList<EventAddress> headToRoot,
         CancellationToken cancellationToken = default
+    ) => await SelectNthPublishedAsync(
+            headToRoot,
+            nthPrevious: 0,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
+
+    public async ValueTask<RecapEpochSelectionResult>
+        SelectNthPublishedAsync(
+        IReadOnlyList<EventAddress> headToRoot,
+        int nthPrevious,
+        CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(headToRoot);
+        if (nthPrevious < 0) {
+            throw new ArgumentOutOfRangeException(nameof(nthPrevious));
+        }
         await using FileStream readLock =
             await AcquireReadyReadLockAsync(cancellationToken)
                 .ConfigureAwait(false);
+        int observed = 0;
         foreach (EventAddress address in headToRoot) {
             string path = StagePath(
                 RecapEpochFinalStage.Published,
@@ -779,9 +819,11 @@ public sealed class DerivedRecapEpochStore {
                             cancellationToken
                         )
                         .ConfigureAwait(false);
-                return new RecapEpochSelectionResult.Selected(
-                    committed.Descriptor
-                );
+                if (observed++ == nthPrevious) {
+                    return new RecapEpochSelectionResult.Selected(
+                        committed.Descriptor
+                    );
+                }
             }
             catch (InvalidDataException exception) {
                 return new RecapEpochSelectionResult.Invalid(
@@ -1529,6 +1571,39 @@ public sealed class DerivedRecapEpochStore {
             if (!Directory.Exists(entry)) {
                 throw new InvalidDataException(
                     "Recap root staging entry is not a directory."
+                );
+            }
+            _fileSystem.DeleteDirectoryTree(entry);
+        }
+    }
+
+    private void RecoverResetQuarantine() {
+        if (!Directory.Exists(_quarantineRoot)) {
+            return;
+        }
+        string prefix = $"{RefId.ToHexString()}.";
+        int count = 0;
+        foreach (string entry in Directory.EnumerateFileSystemEntries(
+                     _quarantineRoot
+                 )) {
+            if (++count > MaxInventoryEntries) {
+                throw new InvalidDataException(
+                    "Recap reset quarantine inventory exceeds the Store bound."
+                );
+            }
+            string name = Path.GetFileName(entry);
+            if (!name.StartsWith(prefix, StringComparison.Ordinal)) {
+                continue;
+            }
+            string suffix = name[prefix.Length..];
+            if (suffix.Length != 32 || !IsLowerHex(suffix)) {
+                throw new InvalidDataException(
+                    "Recap reset quarantine entry has an invalid name."
+                );
+            }
+            if (!Directory.Exists(entry)) {
+                throw new InvalidDataException(
+                    "Recap reset quarantine entry is not a directory."
                 );
             }
             _fileSystem.DeleteDirectoryTree(entry);
