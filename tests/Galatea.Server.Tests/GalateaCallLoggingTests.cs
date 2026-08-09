@@ -196,7 +196,7 @@ public sealed class GalateaCallLoggingTests {
                 maintainerLog,
                 "galatea/maintenance",
                 descriptor.MaintainerId,
-                "noReuseExpected"
+                "reuseExpectedSoon"
             );
             Assert.DoesNotContain(
                 Directory.EnumerateFiles(
@@ -368,7 +368,7 @@ public sealed class GalateaCallLoggingTests {
             File.ReadAllText(path)
         );
         Assert.Equal(
-            "atelia.completion.call-log.v7",
+            "atelia.completion.call-log.v8",
             document.RootElement.GetProperty("schema").GetString()
         );
         Assert.Equal(

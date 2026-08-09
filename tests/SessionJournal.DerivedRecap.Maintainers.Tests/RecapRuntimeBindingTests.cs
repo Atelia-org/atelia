@@ -173,7 +173,7 @@ public sealed class RecapRuntimeBindingTests : IDisposable {
             );
             JsonElement root = log.RootElement;
             Assert.Equal(
-                "atelia.completion.call-log.v7",
+                "atelia.completion.call-log.v8",
                 root.GetProperty("schema").GetString()
             );
             JsonElement context = root.GetProperty("context");
@@ -192,6 +192,21 @@ public sealed class RecapRuntimeBindingTests : IDisposable {
             Assert.Equal(
                 "test/recap",
                 context.GetProperty("command").GetString()
+            );
+            Assert.Equal(
+                BuiltInRecapMaintainerFamilies.Default.SemanticFingerprint,
+                context.GetProperty("familyFingerprint").GetString()
+            );
+            Assert.Equal(
+                index == 0 ? "Leader" : "Follower",
+                context.GetProperty("callRole").GetString()
+            );
+            Assert.True(
+                context.GetProperty("dispatchPermissionWaitMs").GetInt64()
+                    >= 0
+            );
+            Assert.True(
+                context.GetProperty("laneAdmissionWaitMs").GetInt64() >= 0
             );
         }
     }

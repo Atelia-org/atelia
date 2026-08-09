@@ -175,7 +175,12 @@ public sealed class BoundRecapBlockMaintainer
         CompletionResult result = await RuntimeGroup.Lane.SendAsync(
             promptPrefix,
             Definition.CreateTaskTailMessages(),
-            new RecapCallContext(Id, Target, input.SourceId),
+            new RecapCallContext(
+                Id,
+                Target,
+                input.SourceId,
+                family.SemanticFingerprint
+            ),
             callControl,
             cancellationToken
         ).ConfigureAwait(false);

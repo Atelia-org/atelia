@@ -121,7 +121,7 @@ public sealed class BoundRecapBlockMaintainerTests {
         Assert.All(
             client.InvocationOptions,
             static options => Assert.Equal(
-                PromptCacheReuseHint.NoReuseExpected,
+                PromptCacheReuseHint.ReuseExpectedSoon,
                 options.PromptCacheReuseHint
             )
         );

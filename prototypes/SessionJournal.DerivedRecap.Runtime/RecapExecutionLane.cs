@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.DerivedRecap.Abstractions;
@@ -12,7 +13,8 @@ public sealed record RecapCallContext {
     public RecapCallContext(
         string maintainerId,
         ContextHeaderBlockPath target,
-        string? sourceId = null
+        string? sourceId = null,
+        string? familyFingerprint = null
     ) {
         MaintainerId = string.IsNullOrWhiteSpace(maintainerId)
             ? throw new ArgumentException(
@@ -22,6 +24,7 @@ public sealed record RecapCallContext {
             : maintainerId;
         Target = target ?? throw new ArgumentNullException(nameof(target));
         SourceId = sourceId;
+        FamilyFingerprint = familyFingerprint;
     }
 
     public string MaintainerId { get; }
@@ -29,6 +32,8 @@ public sealed record RecapCallContext {
     public ContextHeaderBlockPath Target { get; }
 
     public string? SourceId { get; }
+
+    public string? FamilyFingerprint { get; }
 }
 
 /// <summary>
@@ -97,7 +102,7 @@ public sealed class RecapExecutionLane {
             )
             : command;
         _invocationOptions = new CompletionInvocationOptions {
-            PromptCacheReuseHint = PromptCacheReuseHint.NoReuseExpected
+            PromptCacheReuseHint = PromptCacheReuseHint.ReuseExpectedSoon
         };
     }
 
@@ -159,13 +164,17 @@ public sealed class RecapExecutionLane {
             tailMessages,
             MaxTokens
         );
+        var dispatchWait = Stopwatch.StartNew();
         await callControl.WaitForDispatchPermissionAsync(
                 cancellationToken
             )
             .ConfigureAwait(false);
+        dispatchWait.Stop();
+        var laneWait = Stopwatch.StartNew();
         using PriorityAdmissionGate.Lease lease = await _admission
             .AcquireAsync(callControl, cancellationToken)
             .ConfigureAwait(false);
+        laneWait.Stop();
         cancellationToken.ThrowIfCancellationRequested();
         callControl.MarkDispatchStarted();
         return await (_loggingClient is null
@@ -178,14 +187,22 @@ public sealed class RecapExecutionLane {
             : _loggingClient.StreamCompletionAsync(
                 request,
                 _invocationOptions,
-                ToLogContext(callContext),
+                ToLogContext(
+                    callContext,
+                    callControl,
+                    dispatchWait.Elapsed,
+                    laneWait.Elapsed
+                ),
                 observer: null,
                 cancellationToken
             )).ConfigureAwait(false);
     }
 
     private CompletionCallLogContext ToLogContext(
-        RecapCallContext context
+        RecapCallContext context,
+        IRecapMaintainerCallControl callControl,
+        TimeSpan dispatchPermissionWait,
+        TimeSpan laneAdmissionWait
     ) => new(
         Command: _command,
         MaintainerId: context.MaintainerId,
@@ -193,7 +210,11 @@ public sealed class RecapExecutionLane {
             context.Target.Carrier
         ),
         TargetBlockId: context.Target.BlockKey,
-        SourceId: context.SourceId
+        SourceId: context.SourceId,
+        FamilyFingerprint: context.FamilyFingerprint,
+        CallRole: callControl.Role.ToString(),
+        DispatchPermissionWaitMs: (long)dispatchPermissionWait.TotalMilliseconds,
+        LaneAdmissionWaitMs: (long)laneAdmissionWait.TotalMilliseconds
     );
 
     internal static string BuildLoggingIdentity(
