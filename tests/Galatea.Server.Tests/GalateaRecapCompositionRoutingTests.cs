@@ -189,13 +189,161 @@ public sealed class GalateaRecapCompositionRoutingTests {
                     .GetString()
             );
             Assert.Equal(
-                "noReuseExpected",
+                "reuseExpectedSoon",
                 root.GetProperty("invocationOptions")
                     .GetProperty("promptCacheReuseHint")
                     .GetString()
             );
         }
         finally {
+            if (Directory.Exists(callLogDirectory)) {
+                Directory.Delete(callLogDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ProductionLifecycle_DifferentRouteLeadersOverlapOnRealSession() {
+        string repository = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-galatea-recap-parallel-session",
+            Guid.NewGuid().ToString("N")
+        );
+        string callLogDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-galatea-recap-parallel-logs",
+            Guid.NewGuid().ToString("N")
+        );
+        try {
+            using (SessionJournalEngine engine = SessionJournalEngine.Create(
+                repository,
+                new SessionCreateOptions(
+                    "agent-model",
+                    "test system prompt",
+                    "openai-chat/strict"
+                )
+            )) {
+                for (int index = 0; index < 3; index++) {
+                    _ = engine.AppendObservation($"history-{index}");
+                    _ = engine.AppendImportedAgentAction(
+                        new ActionMessage([
+                            new ActionBlock.Text($"answer-{index}")
+                        ]),
+                        new CompletionDescriptor(
+                            "import",
+                            "test",
+                            "agent-model"
+                        )
+                    );
+                }
+            }
+            WriteRecapConfig(repository);
+
+            var factory = new OverlappingRoutingFactory();
+            await using var host = GalateaTestHost.OpenExisting(
+                repository,
+                [
+                    Connection("agent", "agent-model"),
+                    Connection("world", "world-model"),
+                    Connection("autobiography", "autobiography-model")
+                ],
+                "agent",
+                factory,
+                DisabledGalateaUserMessageNormalizer.Instance,
+                callLogDirectory: callLogDirectory,
+                recapMaintainerConnections: [
+                    new(
+                        WorldUnderstandingRecapMaintainers.MaintainerId,
+                        "world"
+                    ),
+                    new(
+                        AutobiographicalRecapMaintainers.MaintainerId,
+                        "autobiography"
+                    )
+                ]
+            );
+            using HttpClient client = host.CreateClient();
+            using HttpResponseMessage login =
+                await GalateaTestHost.LoginAsync(client);
+            Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
+
+            using HttpResponseMessage response = await client.PostAsJsonAsync(
+                "/api/chat/turns",
+                new ChatStreamRequest("parallel recap probe", "agent")
+            );
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            StartTurnResponseDto? started = await response.Content
+                .ReadFromJsonAsync<StartTurnResponseDto>();
+            Assert.NotNull(started);
+            GalateaHostService service = host.Factory.Services
+                .GetRequiredService<GalateaHostService>();
+            UserSessionHost session = await service.GetSessionAsync(
+                "alice",
+                CancellationToken.None
+            );
+            GalateaLiveTurn turn = Assert.IsType<GalateaLiveTurn>(
+                service.FindTurn(session, started!.TurnId)
+            );
+            await Assert.IsAssignableFrom<Task>(turn.RunTask)
+                .WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal("completed", turn.Status);
+            Assert.True(factory.MaximumConcurrentMaintainers >= 2);
+            Assert.True(factory.MaintainerCallCount >= 2);
+            Assert.Equal(0, factory.MaintainerCallCount % 2);
+            Assert.Equal(3, factory.CreateCallCount);
+
+            string[] logs = [
+                .. Directory.EnumerateFiles(
+                    Path.Combine(callLogDirectory, "maintenance"),
+                    "*.json",
+                    SearchOption.AllDirectories
+                )
+            ];
+            Assert.Equal(factory.MaintainerCallCount, logs.Length);
+            var connectionIds = new HashSet<string>(StringComparer.Ordinal);
+            var maintainerIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string path in logs) {
+                using JsonDocument log = JsonDocument.Parse(
+                    File.ReadAllText(path)
+                );
+                JsonElement root = log.RootElement;
+                connectionIds.Add(
+                    root.GetProperty("connection")
+                        .GetProperty("id")
+                        .GetString()!
+                );
+                JsonElement context = root.GetProperty("context");
+                maintainerIds.Add(
+                    context.GetProperty("maintainerId").GetString()!
+                );
+                Assert.Equal(
+                    "Leader",
+                    context.GetProperty("callRole").GetString()
+                );
+                Assert.Equal(
+                    "reuseExpectedSoon",
+                    root.GetProperty("invocationOptions")
+                        .GetProperty("promptCacheReuseHint")
+                        .GetString()
+                );
+            }
+            Assert.Equal(
+                new HashSet<string>(["world", "autobiography"]),
+                connectionIds
+            );
+            Assert.Equal(
+                new HashSet<string>([
+                    WorldUnderstandingRecapMaintainers.MaintainerId,
+                    AutobiographicalRecapMaintainers.MaintainerId
+                ]),
+                maintainerIds
+            );
+        }
+        finally {
+            if (Directory.Exists(repository)) {
+                Directory.Delete(repository, recursive: true);
+            }
             if (Directory.Exists(callLogDirectory)) {
                 Directory.Delete(callLogDirectory, recursive: true);
             }
@@ -395,6 +543,50 @@ public sealed class GalateaRecapCompositionRoutingTests {
         ApiKey: "test-key"
     );
 
+    private static void WriteRecapConfig(string repository) {
+        string path = RecapEpochConfigLoader.GetCanonicalPath(repository);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(
+            path,
+            RecapEpochConfigCodec.Encode(new RecapEpochConfigDocument(
+                RecapEpochConfigCodec.SchemaV3,
+                MaintainCompleteRosterEpochPolicy.PolicyId,
+                new RecapEpochCadenceConfigDocument(
+                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                    MinimumRecentHistoryLoad: 1,
+                    RecapBuildIntervalHistoryLoad: 1
+                ),
+                [
+                    new RecapEpochCatalogEntryDocument(
+                        RecapMaintainerProfileCatalog
+                            .WorldUnderstandingRewrite,
+                        32_768
+                    ),
+                    new RecapEpochCatalogEntryDocument(
+                        RecapMaintainerProfileCatalog
+                            .AutobiographicalRewrite,
+                        32_768
+                    )
+                ],
+                new RecapEpochLimitsDocument(
+                    MaxRawGrowthEventCount: 512,
+                    MaxRawEventsPerEpoch: 512,
+                    MaxMaintainerCallsPerEpoch: 2,
+                    MaxEpochsPerOperation: 4,
+                    MaxMaintainerCallsPerOperation: 8,
+                    MaxRecapBlockCount: 2,
+                    MaxRebuildForwardRangeEventCount: 65_536,
+                    MaxTotalRecapPackUtf8Bytes: 2 * 1024 * 1024,
+                    MaxCanonicalPriorPackBytes: 5 * 1024 * 1024,
+                    MaxEpochInputBytes: 8 * 1024 * 1024,
+                    MaxManifestBytes: 2 * 1024 * 1024,
+                    MaxFinalBlockBytes: 512 * 1024,
+                    MaxPublicationBytes: 3 * 1024 * 1024
+                )
+            ))
+        );
+    }
+
     private sealed class RecordingFactory : ICompletionClientFactory {
         private int _createCallCount;
 
@@ -407,6 +599,146 @@ public sealed class GalateaRecapCompositionRoutingTests {
         ) {
             Interlocked.Increment(ref _createCallCount);
             return new RoutingClient(connection.Id);
+        }
+    }
+
+    private sealed class OverlappingRoutingFactory
+        : ICompletionClientFactory {
+        private readonly TaskCompletionSource _bothMaintainersEntered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _activeMaintainers;
+        private int _createCallCount;
+        private int _maintainerCallCount;
+        private int _maximumConcurrentMaintainers;
+
+        internal int CreateCallCount => Volatile.Read(
+            ref _createCallCount
+        );
+
+        internal int MaintainerCallCount => Volatile.Read(
+            ref _maintainerCallCount
+        );
+
+        internal int MaximumConcurrentMaintainers => Volatile.Read(
+            ref _maximumConcurrentMaintainers
+        );
+
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) {
+            Interlocked.Increment(ref _createCallCount);
+            return new OverlappingRoutingClient(this, connection.Id);
+        }
+
+        private async Task<CompletionResult> CompleteAsync(
+            OverlappingRoutingClient client,
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken
+        ) {
+            if (!request.PromptPrefix.OutputContract.Tools.Any(
+                    static tool => string.Equals(
+                        tool.Name,
+                        StructuredRecapMaintainerOutputProtocol
+                            .SubmitToolName,
+                        StringComparison.Ordinal
+                    )
+                )) {
+                const string text = "agent response";
+                observer?.OnTextDelta(text);
+                return new CompletionResult(
+                    new ActionMessage([new ActionBlock.Text(text)]),
+                    CompletionDescriptor.From(client, request)
+                );
+            }
+
+            int active = Interlocked.Increment(
+                ref _activeMaintainers
+            );
+            UpdateMaximum(active);
+            int call = Interlocked.Increment(
+                ref _maintainerCallCount
+            );
+            if (call >= 2) {
+                _bothMaintainersEntered.TrySetResult();
+            }
+            try {
+                await _bothMaintainersEntered.Task.WaitAsync(
+                    TimeSpan.FromSeconds(5),
+                    cancellationToken
+                );
+                var toolCall = new RawToolCall(
+                    StructuredRecapMaintainerOutputProtocol
+                        .SubmitToolName,
+                    $"call-{call}",
+                    "{\"outcome\":\"updated\",\"content\":"
+                        + JsonSerializer.Serialize(
+                            $"{client.ConnectionId}-recap"
+                        )
+                        + "}"
+                );
+                observer?.OnToolCall(toolCall);
+                return new CompletionResult(
+                    new ActionMessage([
+                        new ActionBlock.ToolCall(toolCall)
+                    ]),
+                    CompletionDescriptor.From(client, request)
+                );
+            }
+            finally {
+                Interlocked.Decrement(ref _activeMaintainers);
+            }
+        }
+
+        private void UpdateMaximum(int candidate) {
+            int observed;
+            do {
+                observed = Volatile.Read(
+                    ref _maximumConcurrentMaintainers
+                );
+                if (observed >= candidate) { return; }
+            } while (Interlocked.CompareExchange(
+                         ref _maximumConcurrentMaintainers,
+                         candidate,
+                         observed
+                     ) != observed);
+        }
+
+        private sealed class OverlappingRoutingClient(
+            OverlappingRoutingFactory owner,
+            string connectionId
+        ) : ICompletionClient {
+            internal string ConnectionId { get; } = connectionId;
+
+            public string Name => $"client/{ConnectionId}";
+
+            public string ApiSpecId => "openai-chat-v1";
+
+            public Task<CompletionResult> StreamCompletionAsync(
+                CompletionRequest request,
+                CompletionStreamObserver? observer,
+                CancellationToken cancellationToken = default
+            ) => owner.CompleteAsync(
+                this,
+                request,
+                observer,
+                cancellationToken
+            );
+
+            public Task<CompletionResult> StreamCompletionAsync(
+                CompletionRequest request,
+                CompletionInvocationOptions invocationOptions,
+                CompletionStreamObserver? observer,
+                CancellationToken cancellationToken = default
+            ) {
+                invocationOptions.Validate();
+                return owner.CompleteAsync(
+                    this,
+                    request,
+                    observer,
+                    cancellationToken
+                );
+            }
         }
     }
 

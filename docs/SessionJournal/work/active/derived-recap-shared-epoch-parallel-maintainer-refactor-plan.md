@@ -14,20 +14,30 @@ Context baseline：`6a80afdda7f12d6c9ce432066dfb51d1b3326762`
 | R2A | Complete | new DerivedRecap Abstractions; immutable family/member/output-protocol single source; structured `Updated \| KeepUnchanged`; old per-block request/result path removed; focused Maintainers/Planner/Host tests and solution build validated |
 | R2B | Complete | shared ExecutionLane、reference-interned RuntimeGroup、BoundMaintainer single dispatch path；Galatea/CLI route sharing与per-call attribution wired，仍串行且NoReuseExpected |
 | R3A | Complete | explicit paged selected-lineage audit、independent strict content-free rebuild spool、authority-owned sequential forward cursor、normal-path typed `FullRebuildRequired`; cadence epoch consumer remains R3C |
-| R3B | Complete | v8 direct-cut Store：one epoch input、structured prior、complete roster、epoch-bound direct finals、strict publication/repair authority；旧Store owner与wire已删除 |
-| R3C | Complete | serial complete-roster kernel、bounded multi-epoch online campaign、explicit rebuild consumer、MoreWorkPending gating、strict config v3与Host/CLI direct cut；以current code/tests为事实 |
-| R4–R7 | Pending | follow the package gates in §11; parallel/cache/provider acceptance尚未实施 |
+| R3B | Complete | `5c80c76b` production cut + `84ef97f4` recovery tail；v8 one-epoch input、structured prior、complete roster、epoch-bound direct finals与strict frozen recovery authority |
+| R3C | Complete | `5c80c76b` production cut + `84ef97f4` cap/recovery tail；serial complete-roster kernel、bounded multi-epoch campaign、explicit rebuild、MoreWorkPending、strict config v3与Host/CLI direct cut |
+| R4 | Complete | `14b732b9`；operation-local exact-reference group+epoch prefix、leader/follower parallel kernel、lane cap、cancellation/drain、deterministic indexed outcomes，shared by fresh/repair/resume |
+| R5 | Complete | `2a885b4e`；recap lane `ReuseExpectedSoon`、Anthropic typed-prefix cache boundary、provider-neutral usage telemetry、call-log v8；unsupported/best-effort providers不伪报cache hit |
+| R6 | Complete | Galatea real-session production lifecycle证明different-route leaders overlap且保留per-member logs；CLI exact-ref reset + bounded multi-epoch campaign resume从raw history重建，raw head/selected lineage/non-derived bytes不变 |
+| R7 | Pending | bounded live-provider canary and economic decision remain intentionally out of scope |
 
 R1 deterministic evidence: Completion 456 non-live tests, SessionJournal 409, Agent.Core 117, Galatea 94 passed / 4
-environment-skipped, solution build 0 warnings/errors. The existing full CLI baseline still has 16 recap fakes that reject the
-already-production `NoReuseExpected` options overload and one stale connection-fingerprint golden; these were independently
-shown not to originate in R1 and remain visible gates for the R2/R6 test migration rather than accepted final-state failures.
+environment-skipped, solution build 0 warnings/errors. At that package boundary, the full CLI baseline still had 16 recap
+fakes rejecting the then-production `NoReuseExpected` options overload and one stale connection-fingerprint golden; later
+R2/R6 migration closed those historical test gates.
 
 R2A deterministic evidence: Completion 456 non-live tests and Maintainers 24 tests passed; Planner full suite passed in the
 independent review run and the two new KeepUnchanged regressions passed again after the review tail. Galatea recap tests
 18/18, CLI recap execution 15/15, two online recap/agent routing tests, and CLI recap-config 5/5 passed. The prior
-`NoReuseExpected` recap fakes are migrated; CLI still retains the pre-existing stale connection-fingerprint golden noted
-above, which R2A does not rewrite.
+`NoReuseExpected` recap fakes were migrated in that package; the remaining historical CLI golden was closed by later work.
+
+R3–R6 deterministic acceptance evidence: frozen online recovery is bound to artifact `RawEventCount` under the shared
+512-raw-event/513-header hard boundary; R4 Planner/Maintainers/Galatea suites and solution build were green at `14b732b9`;
+R5 Completion 467/467, Maintainers 29/29, Planner focused 22/22 and Galatea 3/3 were green at `2a885b4e`. R6 adds a
+Galatea HTTP production-lifecycle real-session test for two-route overlap and a CLI production-composition test covering
+wrong-ref rejection, old-Building reset, two-operation/four-epoch campaign completion, per-member call attribution, and
+byte-for-byte hashes of every non-derived repository file. R6 focused results: Galatea routing/config/logging 22/22, CLI
+recap/cutover 5/5, Planner kernel/rebuild/deferred-registry 25/25.
 
 ## 1. 新会话快速入口
 
