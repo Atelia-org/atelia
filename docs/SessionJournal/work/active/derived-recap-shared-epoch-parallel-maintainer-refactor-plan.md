@@ -19,7 +19,7 @@ Context baseline：`6a80afdda7f12d6c9ce432066dfb51d1b3326762`
 | R4 | Complete | `14b732b9`；operation-local exact-reference group+epoch prefix、leader/follower parallel kernel、lane cap、cancellation/drain、deterministic indexed outcomes，shared by fresh/repair/resume |
 | R5 | Complete | `2a885b4e`；recap lane `ReuseExpectedSoon`、Anthropic typed-prefix cache boundary、provider-neutral usage telemetry、call-log v8；unsupported/best-effort providers不伪报cache hit |
 | R6 | Complete | Galatea real-session production lifecycle证明different-route leaders overlap且保留per-member logs；CLI exact-ref reset + bounded multi-epoch campaign resume从raw history重建，raw head/selected lineage/non-derived bytes不变 |
-| R7 | Pending | bounded live-provider canary and economic decision remain intentionally out of scope |
+| R7 | Environment-blocked | bounded official Anthropic canary dispatched exactly one shared epoch/two calls with no retry; TLS/authentication failures yielded no provider usage, so leader-write/follower-read proof and economic decision remain incomplete |
 
 R1 deterministic evidence: Completion 456 non-live tests, SessionJournal 409, Agent.Core 117, Galatea 94 passed / 4
 environment-skipped, solution build 0 warnings/errors. At that package boundary, the full CLI baseline still had 16 recap
@@ -38,6 +38,17 @@ Galatea HTTP production-lifecycle real-session test for two-route overlap and a 
 wrong-ref rejection, old-Building reset, two-operation/four-epoch campaign completion, per-member call attribution, and
 byte-for-byte hashes of every non-derived repository file. R6 focused results: Galatea routing/config/logging 22/22, CLI
 recap/cutover 5/5, Planner kernel/rebuild/deferred-registry 25/25.
+
+R7 environment evidence (2026-08-09): a disposable `SessionJournal.Cli recap run` used official Anthropic Messages,
+`claude-opus-5`, one epoch, a two-member same-family/same-lane roster, `MaxTokens=512`, and hard operation/epoch caps of
+two maintainer calls. The synthetic slab was 3,803 rendered UTF-8 bytes / 805 `HistoryLoad`; no real session data was used.
+Call-log v8 recorded exactly one Leader and one Follower with the same family fingerprint and byte-equivalent structured
+`PromptPrefix` canonical hash, different member tails, and `ReuseExpectedSoon`. The Leader failed during TLS establishment;
+after that terminal settlement, the Follower reached the provider but received an authentication rejection. There was no
+retry or warm-up, no epoch was published, and the recoverable Building remains. Neither call produced a response usage
+object: the cache request is structurally Requested, while Supported/Observed and write/read/uncached/output counters remain
+Unknown rather than a fabricated miss. The Building was recoverable when the call ended; after independent evidence review,
+the disposable synthetic repo, config, and call logs were safely deleted without touching any real session.
 
 ## 1. 新会话快速入口
 
@@ -740,6 +751,12 @@ In scope：有界真实provider调用、call logs、cache hit/write token和late
 Out of scope：根据单次样本自动调参、provider价格长期承诺。  
 Done when：至少一个production provider证明leader写入、followers读取；若未命中，报告真实原因并保持
 correctness，不用估算值冒充证据。
+
+Current gate：2026-08-09的disposable production-CLI canary已严格发出one epoch / two calls且无retry；它证明
+same-family canonical prefix、distinct tails、Leader/Follower sequencing与`ReuseExpectedSoon`日志结构，但因Leader
+TLS失败、Follower认证拒绝而没有response usage。R7因此保持`Environment-blocked`，不能据此声称cache write/read
+或完成经济性决策；call结束时Published为Empty、Building保留且可从synthetic raw重建，review后已随disposable
+synthetic evidence安全删除。
 
 ## 12. 最小 regression matrix
 
