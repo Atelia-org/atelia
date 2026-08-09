@@ -218,9 +218,19 @@ public sealed class DeferredRecapBlockMaintainerRegistryTests {
         public ContextHeaderBlockPath Target { get; } = target;
         public object RuntimeGroupAffinity => this;
 
+        public IRecapMaintenanceGroupExecution CreateGroupExecution(
+            RecapMaintenanceEpochInput input
+        ) => new StubGroupExecution(this, input);
+
         public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
-            RecapMaintenanceEpochInput request,
-            CancellationToken ct
+            IRecapMaintenanceGroupExecution groupExecution,
+            IRecapMaintainerCallControl callControl,
+            CancellationToken cancellationToken
         ) => throw new NotSupportedException();
     }
+
+    private sealed record StubGroupExecution(
+        object RuntimeGroupAffinity,
+        RecapMaintenanceEpochInput Input
+    ) : IRecapMaintenanceGroupExecution;
 }

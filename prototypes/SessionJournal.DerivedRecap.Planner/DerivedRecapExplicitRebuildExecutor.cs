@@ -128,6 +128,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                 SerialEpochKernelResult resumed =
                     await ExecuteSnapshotAsync(
                             building.Snapshot,
+                            maintainerCalls,
                             cancellationToken
                         )
                         .ConfigureAwait(false);
@@ -233,6 +234,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                         SerialEpochKernelResult repaired =
                             await ExecuteSnapshotAsync(
                                     source,
+                                    maintainerCalls,
                                     cancellationToken
                                 )
                                 .ConfigureAwait(false);
@@ -453,7 +455,11 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                         .ConfigureAwait(false)
                 );
                 SerialEpochKernelResult execution =
-                    await ExecuteSnapshotAsync(snapshot, cancellationToken)
+                    await ExecuteSnapshotAsync(
+                            snapshot,
+                            maintainerCalls,
+                            cancellationToken
+                        )
                         .ConfigureAwait(false);
                 maintainerCalls = checked(
                     maintainerCalls + execution.StartedCallCount

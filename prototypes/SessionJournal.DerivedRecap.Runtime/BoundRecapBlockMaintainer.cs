@@ -21,6 +21,41 @@ public sealed class RecapRuntimeGroup {
     public BoundRecapBlockMaintainer Bind(
         RecapMaintainerDefinition definition
     ) => new(definition, this);
+
+    internal IRecapMaintenanceGroupExecution CreateExecution(
+        RecapMaintenanceEpochInput input
+    ) => new GroupExecution(
+        this,
+        input,
+        Family.CreatePromptPrefix(input)
+    );
+
+    private sealed record GroupExecution(
+        RecapRuntimeGroup RuntimeGroup,
+        RecapMaintenanceEpochInput Input,
+        CompletionPromptPrefix PromptPrefix
+    ) : IRecapMaintenanceGroupExecution {
+        public object RuntimeGroupAffinity => RuntimeGroup;
+    }
+
+    internal static CompletionPromptPrefix RequirePromptPrefix(
+        IRecapMaintenanceGroupExecution execution,
+        RecapRuntimeGroup expectedGroup
+    ) {
+        ArgumentNullException.ThrowIfNull(execution);
+        if (execution is not GroupExecution concrete
+            || !ReferenceEquals(concrete.RuntimeGroup, expectedGroup)
+            || !ReferenceEquals(
+                concrete.RuntimeGroupAffinity,
+                expectedGroup
+            )) {
+            throw new ArgumentException(
+                "Group execution does not belong to the exact runtime group.",
+                nameof(execution)
+            );
+        }
+        return concrete.PromptPrefix;
+    }
 }
 
 /// <summary>
@@ -115,16 +150,33 @@ public sealed class BoundRecapBlockMaintainer
 
     public object RuntimeGroupAffinity => RuntimeGroup;
 
-    public async ValueTask<RecapMaintenanceSuccess> MaintainAsync(
-        RecapMaintenanceEpochInput input,
-        CancellationToken cancellationToken
+    public IRecapMaintenanceGroupExecution CreateGroupExecution(
+        RecapMaintenanceEpochInput input
     ) {
         ArgumentNullException.ThrowIfNull(input);
+        return RuntimeGroup.CreateExecution(input);
+    }
+
+    public async ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+        IRecapMaintenanceGroupExecution groupExecution,
+        IRecapMaintainerCallControl callControl,
+        CancellationToken cancellationToken
+    ) {
+        ArgumentNullException.ThrowIfNull(groupExecution);
+        ArgumentNullException.ThrowIfNull(callControl);
+        CompletionPromptPrefix promptPrefix = RecapRuntimeGroup
+            .RequirePromptPrefix(groupExecution, RuntimeGroup);
+        RecapMaintenanceEpochInput input = groupExecution.Input
+            ?? throw new ArgumentException(
+                "Group execution input cannot be null.",
+                nameof(groupExecution)
+            );
         RecapMaintainerFamilyDefinition family = RuntimeGroup.Family;
         CompletionResult result = await RuntimeGroup.Lane.SendAsync(
-            family.CreatePromptPrefix(input),
+            promptPrefix,
             Definition.CreateTaskTailMessages(),
             new RecapCallContext(Id, Target, input.SourceId),
+            callControl,
             cancellationToken
         ).ConfigureAwait(false);
 

@@ -63,6 +63,49 @@ public abstract record RecapMaintenanceSuccess {
     }
 }
 
+/// <summary>
+/// Scheduling role of one logical Maintainer invocation. The role affects
+/// runtime admission only; it is not durable recap identity or prompt input.
+/// </summary>
+public enum RecapMaintainerCallRole {
+    Leader,
+    Follower
+}
+
+/// <summary>
+/// One operation-local execution aggregate shared by every pending Maintainer
+/// in the same runtime group and maintenance epoch.
+/// </summary>
+public interface IRecapMaintenanceGroupExecution {
+    /// <summary>
+    /// Exact process-local runtime group identity. Compare by reference only.
+    /// </summary>
+    object RuntimeGroupAffinity { get; }
+
+    /// <summary>
+    /// Exact shared epoch input instance from which the execution was built.
+    /// </summary>
+    RecapMaintenanceEpochInput Input { get; }
+}
+
+/// <summary>
+/// Scheduler-owned authority for exactly one logical remote attempt.
+/// Implementations of <see cref="IRecapBlockMaintainer"/> must wait for
+/// dispatch permission, acquire their runtime lane, then mark dispatch started
+/// immediately before sending the provider request.
+/// </summary>
+public interface IRecapMaintainerCallControl {
+    RecapMaintainerCallRole Role { get; }
+
+    ValueTask WaitForDispatchPermissionAsync(
+        CancellationToken cancellationToken
+    );
+
+    void MarkLaneAdmissionRequested();
+
+    void MarkDispatchStarted();
+}
+
 public interface IRecapBlockMaintainer {
     string Id { get; }
 
@@ -79,8 +122,17 @@ public interface IRecapBlockMaintainer {
     /// </summary>
     object RuntimeGroupAffinity { get; }
 
+    /// <summary>
+    /// Builds the one operation-local group execution shared by all pending
+    /// members with this exact runtime group affinity and epoch input.
+    /// </summary>
+    IRecapMaintenanceGroupExecution CreateGroupExecution(
+        RecapMaintenanceEpochInput input
+    );
+
     ValueTask<RecapMaintenanceSuccess> MaintainAsync(
-        RecapMaintenanceEpochInput input,
+        IRecapMaintenanceGroupExecution groupExecution,
+        IRecapMaintainerCallControl callControl,
         CancellationToken cancellationToken
     );
 }

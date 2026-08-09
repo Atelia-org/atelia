@@ -152,8 +152,10 @@ public sealed class GalateaRecapCompositionRoutingTests {
                 autobiography.RuntimeGroup.Lane.RawClient.Name
             );
 
+            RecapMaintenanceEpochInput input = CreateRequest(world.Target);
             _ = await world.MaintainAsync(
-                CreateRequest(world.Target),
+                world.CreateGroupExecution(input),
+                new ImmediateCallControl(),
                 CancellationToken.None
             );
 
@@ -350,6 +352,25 @@ public sealed class GalateaRecapCompositionRoutingTests {
         ),
         factory
     );
+
+    private sealed class ImmediateCallControl
+        : IRecapMaintainerCallControl {
+        public RecapMaintainerCallRole Role =>
+            RecapMaintainerCallRole.Leader;
+
+        public ValueTask WaitForDispatchPermissionAsync(
+            CancellationToken cancellationToken
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public void MarkDispatchStarted() {
+        }
+
+        public void MarkLaneAdmissionRequested() {
+        }
+    }
 
     private static CompletionConnectionConfig Get(
         CompletionConnectionRegistry registry,

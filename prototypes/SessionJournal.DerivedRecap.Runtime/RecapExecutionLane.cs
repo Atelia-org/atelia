@@ -1,5 +1,6 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.SessionJournal.DerivedRecap.Abstractions;
 
 namespace Atelia.SessionJournal.DerivedRecap.Runtime;
 
@@ -35,20 +36,25 @@ public sealed record RecapCallContext {
 /// options, and send authority.
 /// </summary>
 public sealed class RecapExecutionLane {
+    public const int DefaultMaxConcurrentCalls = 8;
+
     private readonly ICompletionClient _rawClient;
     private readonly LoggingCompletionClient? _loggingClient;
     private readonly CompletionInvocationOptions _invocationOptions;
     private readonly string _command;
     private readonly string? _loggingIdentity;
+    private readonly PriorityAdmissionGate _admission;
 
     internal RecapExecutionLane(
         ICompletionClient rawClient,
         string modelId,
-        int? maxTokens = null
+        int? maxTokens = null,
+        int maxConcurrentCalls = DefaultMaxConcurrentCalls
     ) : this(
         rawClient,
         modelId,
         maxTokens,
+        maxConcurrentCalls,
         loggingClient: null,
         "derived-recap/maintenance",
         loggingIdentity: null
@@ -58,6 +64,7 @@ public sealed class RecapExecutionLane {
         ICompletionClient rawClient,
         string modelId,
         int? maxTokens,
+        int maxConcurrentCalls,
         LoggingCompletionClient? loggingClient,
         string command,
         string? loggingIdentity
@@ -74,6 +81,13 @@ public sealed class RecapExecutionLane {
             throw new ArgumentOutOfRangeException(nameof(maxTokens));
         }
         MaxTokens = maxTokens;
+        if (maxConcurrentCalls <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxConcurrentCalls)
+            );
+        }
+        MaxConcurrentCalls = maxConcurrentCalls;
+        _admission = new PriorityAdmissionGate(maxConcurrentCalls);
         _loggingClient = loggingClient;
         _loggingIdentity = loggingIdentity;
         _command = string.IsNullOrWhiteSpace(command)
@@ -91,6 +105,8 @@ public sealed class RecapExecutionLane {
 
     public int? MaxTokens { get; }
 
+    public int MaxConcurrentCalls { get; }
+
     public PromptCacheReuseHint PromptCacheReuseHint =>
         _invocationOptions.PromptCacheReuseHint;
 
@@ -103,7 +119,8 @@ public sealed class RecapExecutionLane {
         ICompletionClient rawClient,
         CompletionConnectionConfig connection,
         string callLogDirectory,
-        string command
+        string command,
+        int maxConcurrentCalls = DefaultMaxConcurrentCalls
     ) {
         ArgumentNullException.ThrowIfNull(rawClient);
         ArgumentNullException.ThrowIfNull(connection);
@@ -118,28 +135,40 @@ public sealed class RecapExecutionLane {
             rawClient,
             connection.ModelId,
             connection.MaxTokens,
+            maxConcurrentCalls,
             loggingClient,
             command,
             BuildLoggingIdentity(callLogDirectory, command)
         );
     }
 
-    internal Task<CompletionResult> SendAsync(
+    internal async Task<CompletionResult> SendAsync(
         CompletionPromptPrefix promptPrefix,
         IReadOnlyList<IHistoryMessage> tailMessages,
         RecapCallContext callContext,
+        IRecapMaintainerCallControl callControl,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(promptPrefix);
         ArgumentNullException.ThrowIfNull(tailMessages);
         ArgumentNullException.ThrowIfNull(callContext);
+        ArgumentNullException.ThrowIfNull(callControl);
         var request = new CompletionRequest(
             ModelId,
             promptPrefix,
             tailMessages,
             MaxTokens
         );
-        return _loggingClient is null
+        await callControl.WaitForDispatchPermissionAsync(
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        using PriorityAdmissionGate.Lease lease = await _admission
+            .AcquireAsync(callControl, cancellationToken)
+            .ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        callControl.MarkDispatchStarted();
+        return await (_loggingClient is null
             ? _rawClient.StreamCompletionAsync(
                 request,
                 _invocationOptions,
@@ -152,7 +181,7 @@ public sealed class RecapExecutionLane {
                 ToLogContext(callContext),
                 observer: null,
                 cancellationToken
-            );
+            )).ConfigureAwait(false);
     }
 
     private CompletionCallLogContext ToLogContext(
@@ -180,6 +209,147 @@ public sealed class RecapExecutionLane {
             expected,
             StringComparison.Ordinal
         );
+
+    private sealed class PriorityAdmissionGate {
+        private readonly object _gate = new();
+        private readonly int _capacity;
+        private readonly LinkedList<Waiter> _leaders = new();
+        private readonly LinkedList<Waiter> _followers = new();
+        private int _active;
+
+        internal PriorityAdmissionGate(int capacity) {
+            _capacity = capacity;
+        }
+
+        internal ValueTask<Lease> AcquireAsync(
+            IRecapMaintainerCallControl callControl,
+            CancellationToken cancellationToken
+        ) {
+            ArgumentNullException.ThrowIfNull(callControl);
+            if (cancellationToken.IsCancellationRequested) {
+                return ValueTask.FromCanceled<Lease>(cancellationToken);
+            }
+            lock (_gate) {
+                if (cancellationToken.IsCancellationRequested) {
+                    return ValueTask.FromCanceled<Lease>(
+                        cancellationToken
+                    );
+                }
+                DiscardCancelledWaiters(_leaders);
+                DiscardCancelledWaiters(_followers);
+                if (_active < _capacity
+                    && _leaders.Count == 0
+                    && _followers.Count == 0) {
+                    _active++;
+                    try {
+                        callControl.MarkLaneAdmissionRequested();
+                    }
+                    catch {
+                        _active--;
+                        throw;
+                    }
+                    return ValueTask.FromResult(new Lease(this));
+                }
+                var waiter = new Waiter(cancellationToken);
+                LinkedList<Waiter> waiters =
+                    callControl.Role == RecapMaintainerCallRole.Leader
+                    ? _leaders
+                    : _followers;
+                LinkedListNode<Waiter> node = waiters.AddLast(waiter);
+                try {
+                    callControl.MarkLaneAdmissionRequested();
+                }
+                catch {
+                    waiters.Remove(node);
+                    waiter.Abandon();
+                    throw;
+                }
+                return new ValueTask<Lease>(waiter.Task);
+            }
+        }
+
+        private void Release() {
+            while (true) {
+                Waiter? waiter;
+                lock (_gate) {
+                    DiscardCancelledWaiters(_leaders);
+                    DiscardCancelledWaiters(_followers);
+                    waiter = _leaders.Count > 0
+                        ? RemoveFirst(_leaders)
+                        : _followers.Count > 0
+                            ? RemoveFirst(_followers)
+                            : null;
+                    if (waiter is null) {
+                        _active--;
+                        return;
+                    }
+                }
+                if (waiter.TryAdmit(new Lease(this))) {
+                    return;
+                }
+            }
+        }
+
+        private static void DiscardCancelledWaiters(
+            LinkedList<Waiter> waiters
+        ) {
+            while (waiters.First is { Value: { } waiter }
+                   && waiter.IsCompleted) {
+                waiters.RemoveFirst();
+                waiter.Abandon();
+            }
+        }
+
+        private static Waiter RemoveFirst(
+            LinkedList<Waiter> waiters
+        ) {
+            Waiter waiter = waiters.First!.Value;
+            waiters.RemoveFirst();
+            return waiter;
+        }
+
+        internal sealed class Lease : IDisposable {
+            private PriorityAdmissionGate? _owner;
+
+            internal Lease(PriorityAdmissionGate owner) {
+                _owner = owner;
+            }
+
+            public void Dispose() => Interlocked.Exchange(
+                    ref _owner,
+                    null
+                )
+                ?.Release();
+        }
+
+        private sealed class Waiter {
+            private readonly TaskCompletionSource<Lease> _completion =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
+            private readonly CancellationTokenRegistration _registration;
+
+            internal Waiter(CancellationToken cancellationToken) {
+                _registration = cancellationToken.Register(
+                    static state => {
+                        var value = ((Waiter Waiter,
+                            CancellationToken Token))state!;
+                        value.Waiter._completion.TrySetCanceled(value.Token);
+                    },
+                    (this, cancellationToken)
+                );
+            }
+
+            internal Task<Lease> Task => _completion.Task;
+
+            internal bool IsCompleted => _completion.Task.IsCompleted;
+
+            internal bool TryAdmit(Lease lease) {
+                _registration.Dispose();
+                return _completion.TrySetResult(lease);
+            }
+
+            internal void Abandon() => _registration.Dispose();
+        }
+    }
 }
 
 /// <summary>
@@ -195,17 +365,21 @@ public sealed class RecapExecutionLaneInterner {
         object routeAffinity,
         ICompletionClient rawClient,
         string modelId,
-        int? maxTokens = null
+        int? maxTokens = null,
+        int maxConcurrentCalls =
+            RecapExecutionLane.DefaultMaxConcurrentCalls
     ) => GetOrAddCore(
         routeAffinity,
         rawClient,
         modelId,
         maxTokens,
+        maxConcurrentCalls,
         loggingIdentity: null,
         factory: () => new RecapExecutionLane(
             rawClient,
             modelId,
-            maxTokens
+            maxTokens,
+            maxConcurrentCalls
         )
     );
 
@@ -214,7 +388,9 @@ public sealed class RecapExecutionLaneInterner {
         ICompletionClient rawClient,
         CompletionConnectionConfig connection,
         string callLogDirectory,
-        string command
+        string command,
+        int maxConcurrentCalls =
+            RecapExecutionLane.DefaultMaxConcurrentCalls
     ) {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentException.ThrowIfNullOrWhiteSpace(callLogDirectory);
@@ -224,6 +400,7 @@ public sealed class RecapExecutionLaneInterner {
             rawClient,
             connection.ModelId,
             connection.MaxTokens,
+            maxConcurrentCalls,
             RecapExecutionLane.BuildLoggingIdentity(
                 callLogDirectory,
                 command
@@ -232,7 +409,8 @@ public sealed class RecapExecutionLaneInterner {
                 rawClient,
                 connection,
                 callLogDirectory,
-                command
+                command,
+                maxConcurrentCalls
             )
         );
     }
@@ -242,6 +420,7 @@ public sealed class RecapExecutionLaneInterner {
         ICompletionClient rawClient,
         string modelId,
         int? maxTokens,
+        int maxConcurrentCalls,
         string? loggingIdentity,
         Func<RecapExecutionLane> factory
     ) {
@@ -250,6 +429,11 @@ public sealed class RecapExecutionLaneInterner {
         ArgumentException.ThrowIfNullOrWhiteSpace(modelId);
         if (maxTokens is <= 0) {
             throw new ArgumentOutOfRangeException(nameof(maxTokens));
+        }
+        if (maxConcurrentCalls <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxConcurrentCalls)
+            );
         }
         ArgumentNullException.ThrowIfNull(factory);
         lock (_gate) {
@@ -264,9 +448,10 @@ public sealed class RecapExecutionLaneInterner {
                         StringComparison.Ordinal
                     )
                     || existing.MaxTokens != maxTokens
+                    || existing.MaxConcurrentCalls != maxConcurrentCalls
                     || !existing.HasLoggingIdentity(loggingIdentity)) {
                     throw new InvalidOperationException(
-                        "The same recap route affinity was rebound to a different raw client, model, max-token, or logging policy."
+                        "The same recap route affinity was rebound to a different raw client, model, max-token, concurrency, or logging policy."
                     );
                 }
                 return existing;

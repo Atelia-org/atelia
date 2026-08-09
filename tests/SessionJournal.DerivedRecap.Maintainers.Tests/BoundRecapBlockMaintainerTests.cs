@@ -33,14 +33,25 @@ public sealed class BoundRecapBlockMaintainerTests {
             sourceId: "source"
         );
 
-        await world.MaintainAsync(epoch, CancellationToken.None);
-        await autobiography.MaintainAsync(epoch, CancellationToken.None);
+        IRecapMaintenanceGroupExecution groupExecution =
+            world.CreateGroupExecution(epoch);
+        await world.MaintainAsync(
+            groupExecution,
+            new ImmediateCallControl(),
+            CancellationToken.None
+        );
+        await autobiography.MaintainAsync(
+            groupExecution,
+            new ImmediateCallControl(RecapMaintainerCallRole.Follower),
+            CancellationToken.None
+        );
 
         Assert.Same(world.RuntimeGroup, autobiography.RuntimeGroup);
         Assert.Same(group, world.RuntimeGroupAffinity);
         Assert.Same(group, autobiography.RuntimeGroupAffinity);
         CompletionRequest first = client.Requests[0];
         CompletionRequest second = client.Requests[1];
+        Assert.Same(first.PromptPrefix, second.PromptPrefix);
         Assert.Equal("model", first.ModelId);
         Assert.Equal(321, first.MaxTokens);
         Assert.Equal(
@@ -100,15 +111,12 @@ public sealed class BoundRecapBlockMaintainerTests {
         );
 
         var updated = Assert.IsType<RecapMaintenanceSuccess.Updated>(
-            await maintainer.MaintainAsync(input, CancellationToken.None)
+            await InvokeAsync(maintainer, input)
         );
         Assert.Equal("new content", updated.Content);
         Assert.Same(
             RecapMaintenanceSuccess.KeepUnchanged.Instance,
-            await maintainer.MaintainAsync(
-                input,
-                CancellationToken.None
-            )
+            await InvokeAsync(maintainer, input)
         );
         Assert.All(
             client.InvocationOptions,
@@ -133,12 +141,12 @@ public sealed class BoundRecapBlockMaintainerTests {
         );
 
         await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
-            async () => await maintainer.MaintainAsync(
+            async () => await InvokeAsync(
+                maintainer,
                 new RecapMaintenanceEpochInput(
                     ContextHeaderSnapshot.Empty,
                     []
-                ),
-                CancellationToken.None
+                )
             )
         );
     }
@@ -157,15 +165,24 @@ public sealed class BoundRecapBlockMaintainerTests {
         );
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await maintainer.MaintainAsync(
+            async () => await InvokeAsync(
+                maintainer,
                 new RecapMaintenanceEpochInput(
                     ContextHeaderSnapshot.Empty,
                     []
-                ),
-                CancellationToken.None
+                )
             )
         );
     }
+
+    private static ValueTask<RecapMaintenanceSuccess> InvokeAsync(
+        BoundRecapBlockMaintainer maintainer,
+        RecapMaintenanceEpochInput input
+    ) => maintainer.MaintainAsync(
+        maintainer.CreateGroupExecution(input),
+        new ImmediateCallControl(),
+        CancellationToken.None
+    );
 
     private static BoundRecapBlockMaintainer Bind(
         RecapMaintainerDefinition definition,
@@ -272,6 +289,30 @@ public sealed class BoundRecapBlockMaintainerTests {
             Requests.Add(request);
             InvocationOptions.Add(invocationOptions);
             return Task.FromResult(_responses.Dequeue()(request));
+        }
+    }
+
+    private sealed class ImmediateCallControl(
+        RecapMaintainerCallRole role = RecapMaintainerCallRole.Leader
+    ) : IRecapMaintainerCallControl {
+        private bool _permitted;
+
+        public RecapMaintainerCallRole Role { get; } = role;
+
+        public ValueTask WaitForDispatchPermissionAsync(
+            CancellationToken cancellationToken
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            _permitted = true;
+            return ValueTask.CompletedTask;
+        }
+
+        public void MarkDispatchStarted() {
+            Assert.True(_permitted);
+        }
+
+        public void MarkLaneAdmissionRequested() {
+            Assert.True(_permitted);
         }
     }
 }

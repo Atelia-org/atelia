@@ -47,11 +47,18 @@ public sealed class RecapRuntimeBindingTests : IDisposable {
         Assert.NotSame(routeA, routeAEqualButDistinct);
         Assert.Same(laneA, laneAAgain);
         Assert.NotSame(laneA, distinctLane);
+        Assert.True(laneA.MaxConcurrentCalls > 1);
         Assert.Same(client, laneA.RawClient);
         Assert.Throws<InvalidOperationException>(() => lanes.GetOrAdd(
             routeA,
             new ScriptedCompletionClient(),
             "model-a"
+        ));
+        Assert.Throws<InvalidOperationException>(() => lanes.GetOrAdd(
+            routeA,
+            client,
+            "model-a",
+            maxConcurrentCalls: 2
         ));
 
         RecapMaintainerFamilyDefinition family =
@@ -132,8 +139,18 @@ public sealed class RecapRuntimeBindingTests : IDisposable {
             sourceId: "epoch-source"
         );
 
-        await world.MaintainAsync(input, CancellationToken.None);
-        await autobiography.MaintainAsync(input, CancellationToken.None);
+        IRecapMaintenanceGroupExecution execution =
+            world.CreateGroupExecution(input);
+        await world.MaintainAsync(
+            execution,
+            new ImmediateCallControl(),
+            CancellationToken.None
+        );
+        await autobiography.MaintainAsync(
+            execution,
+            new ImmediateCallControl(RecapMaintainerCallRole.Follower),
+            CancellationToken.None
+        );
 
         Assert.Same(group, world.RuntimeGroup);
         Assert.Same(group, autobiography.RuntimeGroup);
@@ -179,7 +196,179 @@ public sealed class RecapRuntimeBindingTests : IDisposable {
         }
     }
 
+    [Fact]
+    public async Task LaneCapAdmitsQueuedLeaderBeforeFollower() {
+        var client = new PriorityCompletionClient();
+        var lane = new RecapExecutionLane(
+            client,
+            "model",
+            maxConcurrentCalls: 1
+        );
+        var input = new RecapMaintenanceEpochInput(
+            ContextHeaderSnapshot.Empty,
+            [new ObservationMessage("history")]
+        );
+        CompletionPromptPrefix prefix = BuiltInRecapMaintainerFamilies
+            .Default.CreatePromptPrefix(input);
+
+        Task firstLeader = SendAsync(
+            lane,
+            prefix,
+            "leader-a",
+            RecapMaintainerCallRole.Leader
+        );
+        await client.WaitForNextStartAsync();
+
+        Task queuedFollower = SendAsync(
+            lane,
+            prefix,
+            "follower-a",
+            RecapMaintainerCallRole.Follower
+        );
+        Task queuedLeader = SendAsync(
+            lane,
+            prefix,
+            "leader-b",
+            RecapMaintainerCallRole.Leader
+        );
+
+        client.ReleaseOne();
+        await client.WaitForNextStartAsync();
+        Assert.Equal(["leader-a", "leader-b"], client.StartOrder);
+
+        client.ReleaseOne();
+        await client.WaitForNextStartAsync();
+        Assert.Equal(
+            ["leader-a", "leader-b", "follower-a"],
+            client.StartOrder
+        );
+        client.ReleaseOne();
+        await Task.WhenAll(firstLeader, queuedFollower, queuedLeader);
+    }
+
+    [Fact]
+    public async Task LeaderAdmissionSignalAndLaneRegistrationAreAtomic() {
+        var client = new PriorityCompletionClient();
+        var lane = new RecapExecutionLane(
+            client,
+            "model",
+            maxConcurrentCalls: 1
+        );
+        var input = new RecapMaintenanceEpochInput(
+            ContextHeaderSnapshot.Empty,
+            [new ObservationMessage("history")]
+        );
+        CompletionPromptPrefix prefix = BuiltInRecapMaintainerFamilies
+            .Default.CreatePromptPrefix(input);
+        using var leaderControl = new BlockingAdmissionControl();
+
+        Task leader = Task.Run(() => SendAsync(
+            lane,
+            prefix,
+            "leader",
+            leaderControl
+        ));
+        await leaderControl.AdmissionSignalEntered.Task.WaitAsync(
+            TimeSpan.FromSeconds(5)
+        );
+        Task follower = Task.Run(() => SendAsync(
+            lane,
+            prefix,
+            "follower",
+            new ImmediateCallControl(RecapMaintainerCallRole.Follower)
+        ));
+
+        leaderControl.AllowLaneRegistration();
+        await client.WaitForNextStartAsync();
+        Assert.Equal(["leader"], client.StartOrder);
+
+        client.ReleaseOne();
+        await client.WaitForNextStartAsync();
+        Assert.Equal(["leader", "follower"], client.StartOrder);
+        client.ReleaseOne();
+        await Task.WhenAll(leader, follower);
+    }
+
+    private static async Task SendAsync(
+        RecapExecutionLane lane,
+        CompletionPromptPrefix prefix,
+        string label,
+        RecapMaintainerCallRole role
+    ) => await SendAsync(
+        lane,
+        prefix,
+        label,
+        new ImmediateCallControl(role)
+    );
+
+    private static async Task SendAsync(
+        RecapExecutionLane lane,
+        CompletionPromptPrefix prefix,
+        string label,
+        IRecapMaintainerCallControl callControl
+    ) => _ = await lane.SendAsync(
+        prefix,
+        [new ObservationMessage(label)],
+        new RecapCallContext(label, new ContextHeaderBlockPath(
+            ContextHeaderCarrier.Observation,
+            label
+        )),
+        callControl,
+        CancellationToken.None
+    );
+
     private sealed record EqualAffinity(string Value);
+
+    private sealed class ImmediateCallControl(
+        RecapMaintainerCallRole role = RecapMaintainerCallRole.Leader
+    ) : IRecapMaintainerCallControl {
+        public RecapMaintainerCallRole Role { get; } = role;
+
+        public ValueTask WaitForDispatchPermissionAsync(
+            CancellationToken cancellationToken
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public void MarkDispatchStarted() {
+        }
+
+        public void MarkLaneAdmissionRequested() {
+        }
+    }
+
+    private sealed class BlockingAdmissionControl
+        : IRecapMaintainerCallControl,
+          IDisposable {
+        private readonly ManualResetEventSlim _allowRegistration = new();
+
+        public RecapMaintainerCallRole Role =>
+            RecapMaintainerCallRole.Leader;
+
+        internal TaskCompletionSource AdmissionSignalEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask WaitForDispatchPermissionAsync(
+            CancellationToken cancellationToken
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public void MarkLaneAdmissionRequested() {
+            AdmissionSignalEntered.TrySetResult();
+            Assert.True(_allowRegistration.Wait(TimeSpan.FromSeconds(5)));
+        }
+
+        public void MarkDispatchStarted() {
+        }
+
+        internal void AllowLaneRegistration() =>
+            _allowRegistration.Set();
+
+        public void Dispose() => _allowRegistration.Dispose();
+    }
 
     private sealed class ScriptedCompletionClient : ICompletionClient {
         private readonly Queue<string> _contents = new();
@@ -222,6 +411,53 @@ public sealed class RecapRuntimeBindingTests : IDisposable {
                     request.ModelId
                 )
             ));
+        }
+    }
+
+    private sealed class PriorityCompletionClient : ICompletionClient {
+        private readonly System.Collections.Concurrent
+            .ConcurrentQueue<string> _startOrder = new();
+        private readonly SemaphoreSlim _started = new(0);
+        private readonly SemaphoreSlim _release = new(0);
+
+        public string Name => "priority";
+
+        public string ApiSpecId => "test-v1";
+
+        internal IReadOnlyList<string> StartOrder => [.. _startOrder];
+
+        internal async Task WaitForNextStartAsync() => Assert.True(
+            await _started.WaitAsync(TimeSpan.FromSeconds(5))
+        );
+
+        internal void ReleaseOne() => _release.Release();
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) => throw new InvalidOperationException(
+            "Explicit invocation options are required."
+        );
+
+        public async Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionInvocationOptions invocationOptions,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            string? content = Assert.IsType<ObservationMessage>(
+                Assert.Single(request.TailMessages)
+            ).Content;
+            Assert.NotNull(content);
+            string label = content;
+            _startOrder.Enqueue(label);
+            _started.Release();
+            await _release.WaitAsync(cancellationToken);
+            return new CompletionResult(
+                new ActionMessage([new ActionBlock.Text(label)]),
+                CompletionDescriptor.From(this, request)
+            );
         }
     }
 }

@@ -177,12 +177,12 @@ public sealed class GalateaCallLoggingTests {
                 )
                 .Bind(descriptor.Definition);
             await Assert.ThrowsAsync<InvalidDataException>(async () =>
-                await maintainer.MaintainAsync(
+                await MaintainAsync(
+                    maintainer,
                     new RecapMaintenanceEpochInput(
                         ContextHeaderSnapshot.Empty,
                         [new ObservationMessage("fixture")]
-                    ),
-                    CancellationToken.None
+                    )
                 )
             );
             string maintainerLog = Assert.Single(
@@ -389,6 +389,34 @@ public sealed class GalateaCallLoggingTests {
                 expectedMaintainerId,
                 context.GetProperty("maintainerId").GetString()
             );
+        }
+    }
+
+    private static ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+        BoundRecapBlockMaintainer maintainer,
+        RecapMaintenanceEpochInput input
+    ) => maintainer.MaintainAsync(
+        maintainer.CreateGroupExecution(input),
+        new ImmediateCallControl(),
+        CancellationToken.None
+    );
+
+    private sealed class ImmediateCallControl
+        : IRecapMaintainerCallControl {
+        public RecapMaintainerCallRole Role =>
+            RecapMaintainerCallRole.Leader;
+
+        public ValueTask WaitForDispatchPermissionAsync(
+            CancellationToken cancellationToken
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public void MarkDispatchStarted() {
+        }
+
+        public void MarkLaneAdmissionRequested() {
         }
     }
 

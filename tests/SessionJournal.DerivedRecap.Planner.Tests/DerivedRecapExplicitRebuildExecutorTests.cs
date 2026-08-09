@@ -558,17 +558,30 @@ public sealed class DerivedRecapExplicitRebuildExecutorTests
         public object RuntimeGroupAffinity => this;
         public List<RecapMaintenanceEpochInput> Inputs { get; } = [];
 
-        public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
-            RecapMaintenanceEpochInput request,
+        public IRecapMaintenanceGroupExecution CreateGroupExecution(
+            RecapMaintenanceEpochInput input
+        ) => new TestGroupExecution(this, input);
+
+        public async ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+            IRecapMaintenanceGroupExecution groupExecution,
+            IRecapMaintainerCallControl callControl,
             CancellationToken cancellationToken
         ) {
+            await callControl.WaitForDispatchPermissionAsync(
+                cancellationToken
+            );
+            callControl.MarkLaneAdmissionRequested();
+            callControl.MarkDispatchStarted();
             cancellationToken.ThrowIfCancellationRequested();
-            Inputs.Add(request);
-            return ValueTask.FromResult<RecapMaintenanceSuccess>(
-                new RecapMaintenanceSuccess.Updated(
-                    $"{definition.RecapBlockId.Value}-{Inputs.Count}"
-                )
+            Inputs.Add(groupExecution.Input);
+            return new RecapMaintenanceSuccess.Updated(
+                $"{definition.RecapBlockId.Value}-{Inputs.Count}"
             );
         }
     }
+
+    private sealed record TestGroupExecution(
+        object RuntimeGroupAffinity,
+        RecapMaintenanceEpochInput Input
+    ) : IRecapMaintenanceGroupExecution;
 }

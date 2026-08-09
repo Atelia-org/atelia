@@ -554,15 +554,30 @@ public sealed class DerivedRecapEpochCampaignExecutorTests {
         public object RuntimeGroupAffinity => this;
         public List<RecapMaintenanceEpochInput> Inputs { get; } = [];
 
-        public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
-            RecapMaintenanceEpochInput request,
+        public IRecapMaintenanceGroupExecution CreateGroupExecution(
+            RecapMaintenanceEpochInput input
+        ) => new TestGroupExecution(this, input);
+
+        public async ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+            IRecapMaintenanceGroupExecution groupExecution,
+            IRecapMaintainerCallControl callControl,
             CancellationToken cancellationToken
         ) {
+            await callControl.WaitForDispatchPermissionAsync(
+                cancellationToken
+            );
+            callControl.MarkLaneAdmissionRequested();
+            callControl.MarkDispatchStarted();
             cancellationToken.ThrowIfCancellationRequested();
-            Inputs.Add(request);
-            return ValueTask.FromResult(result(++_calls));
+            Inputs.Add(groupExecution.Input);
+            return result(++_calls);
         }
     }
+
+    private sealed record TestGroupExecution(
+        object RuntimeGroupAffinity,
+        RecapMaintenanceEpochInput Input
+    ) : IRecapMaintenanceGroupExecution;
 
     private sealed class CampaignFixture : IDisposable {
         public CampaignFixture() {

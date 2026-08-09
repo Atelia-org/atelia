@@ -156,6 +156,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
             }
             SerialEpochKernelResult resumed = await ExecuteSnapshotAsync(
                     selectedBuilding.Snapshot,
+                    maintainerCalls,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -497,6 +498,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
             SerialEpochKernelResult execution =
                 await ExecuteSnapshotAsync(
                         buildingAvailable.Snapshot,
+                        maintainerCalls,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
@@ -580,6 +582,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
         }
         SerialEpochKernelResult execution = await ExecuteSnapshotAsync(
                 available.Snapshot,
+                priorCalls,
                 cancellationToken
             )
             .ConfigureAwait(false);
@@ -807,11 +810,17 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
     private async ValueTask<SerialEpochKernelResult>
         ExecuteSnapshotAsync(
         RecapEpochStoreSnapshot snapshot,
+        int priorCalls,
         CancellationToken cancellationToken
-    ) => await DerivedRecapSerialEpochKernel.ExecuteAsync(
+    ) {
+        int remainingOperationCalls = checked(
+            _limits.MaxMaintainerCallsPerOperation - priorCalls
+        );
+        return await DerivedRecapSerialEpochKernel.ExecuteAsync(
             snapshot,
             _maintainers,
             _limits.MaxMaintainerCallsPerEpoch,
+            remainingOperationCalls,
             (inspection, block, token) => _store.WriteFinalAsync(
                 inspection.WriteAuthority
                     ?? throw new InvalidOperationException(
@@ -823,6 +832,7 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
             cancellationToken
         )
         .ConfigureAwait(false);
+    }
 
     private DerivedRecapEpochOperationResult? CheckBudget(
         RecapEpochStoreSnapshot snapshot,
