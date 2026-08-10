@@ -20,7 +20,7 @@ DerivedRecap不只是“从旧History召回事实”的缓存，也是一套纵�
 - 一组 cells 恰好共享 prompt prefix 或一次并行执行，只是 runtime 优化，不决定 durable identity。
 
 本设计先定义理想目标，不保留 current complete-roster epoch、v8/v9 wire、repair/reseal 或 migration 兼容层。
-实现迁移另行规划。
+实现迁移由[`Grid Rewrite 总施工计划`](derived-recap-grid-rewrite-master-plan.md)及其分包文档约束。
 
 ## 2. Goals and non-goals
 
@@ -29,7 +29,7 @@ DerivedRecap不只是“从旧History召回事实”的缓存，也是一套纵�
 1. `HistoryTimeline` 不知道有哪些 Maintainer 存在，只确定性地划分 raw History。
 2. 新 Maintainer 可以从 Timeline 起点逐 row 回放，只填自己的 column。
 3. 单个 Maintainer 的 prompt/capability 新版本可以独立 rebuild、比较和 promotion。
-4. 需要 cross-maintainer 信息融合时，可以从某 row 起逐 row rebuild 一个完整 Grid recipe chain。
+4. 需要 cross-maintainer 信息融合时，首版可以从Timeline起点逐 row rebuild 一个完整 Grid recipe chain。
 5. 主线 Context 可以读取某个 row 对exact BuildTarget membership-complete的视图，并分别检查其GridBuildRecipe
    provenance与当前row的prior-view alignment。
 6. 缺失、损坏或取消的 derived cell 可重新生成；raw selected lineage 仍是正文事实 authority，Timeline ledger
@@ -41,7 +41,8 @@ DerivedRecap不只是“从旧History召回事实”的缓存，也是一套纵�
 
 ### 2.2 Non-goals
 
-- 不在本设计中决定旧 DerivedRecap 如何迁移或兼容；旧 sidecar 可以 reset/rebuild。
+- 不迁移或兼容旧DerivedRecap roots；它们对新runtime保持inert，只能由独立offline exact-confirm procedure归档/删除。
+  `reset/rebuild`只针对新Grid artifacts。
 - 不让 Agent 在运行时生成任意代码、system prompt 或 tool schema；动态创建首先是受控 family 的声明式实例。
 - 不承诺 exactly-once Maintainer 调用。cell 未 durable commit 时允许安全重试并产生重复远端调用。
 - 不让 Timeline 持久化 `HistorySegmentContent` 正文。
@@ -109,6 +110,22 @@ branch/rewind下形成row DAG：若fork落在旧row内部，只复用共同bound
 Timeline ledger为每条选定path维护CAS更新的`TimelineHeadRef`；同一predecessor出现多个合法successor时，只有显式
 head选择决定哪条chain服务当前selected raw ref。
 
+每个Ref另有一个canonical `ActiveTimelineLocator`选择当前TimelineId。它只通过expected locator generation CAS改变；
+abandon必须在Host关闭时以exact `<RefId, TimelineId, locator generation>`确认并原子切到显式initial policy创建的新
+TimelineId。旧ledger与backup变成inert bytes，runtime永不扫描它们找“latest”。restore只接受绑定exact
+TimelineId/RefId/schema/generation/head且包含当前active head的verified backup，在Host关闭与expected version通过后原子替换；
+更旧backup只能通过abandon建立new Timeline，不能回滚当前authority。
+
+首版partition规则固定为：从上一row的`EndInclusive`之后开始，沿selected lineage选择累计
+`MeasuredHistoryLoad >= TargetHistoryLoadAtCreation`的**第一个**replay-safe boundary。这样同一raw path和policy的row
+边界不受某次后台任务启动早晚影响。`MinimumRecentHistoryLoad`不属于Timeline partition；若主线Context需要保留recent
+tail，由ContextComposer/SessionJournal raw-tail policy负责。达到`MaxRawEventsPerSegment`或
+`MaxRenderedBytesPerSegment`仍无法到达目标时返回typed limit failure；online bounded evidence不足时返回
+`OfflineBootstrapRequired`，不得偷偷打开全History scan。
+
+Timeline拥有HistoryLoad estimator的provider-neutral contracts、metric identity和goldens；provider token/cost估算仍与
+HistoryLoad分离。旧Planner中的同类pure contracts在施工时迁到这个单一owner，不能复制第二套EstimatorId或算法。
+
 首版`TimelineId`绑定一个exact `RefId`，只在同一Ref内复用row prefix；不同Ref即使共享raw prefix也各自建立
 descriptor chain。跨Ref dedup延后，避免把Ref selection从row identity中再拆出一层映射。
 
@@ -116,19 +133,16 @@ descriptor chain。跨Ref dedup延后，避免把Ref selection从row identity中
 
 `MaintainerControlPlane` 是definition、Grid build recipe与active recipe选择的唯一逻辑authority；它不要求实现成一套
 独立append-only log。
-`MaintainerManager` 是执行协调器：
-
-- 注册 logical column 与 definition revisions；
-- 区分 runtime capability catalog、active/live definition 与 candidate definition；
-- 查询缺失 cells，按 row wavefront 调度；
-- 为同 row 的 work items做 family/lane/shared-prefix batching；
-- 管理单列 bootstrap/rebuild、full-grid rebuild、A/B candidate 与 promotion；
-- 不决定 History row 边界，不拥有 raw History。
+`MaintainerControlPlane`注册Family/definition/recipe并执行active CAS；`MaintainerManager`只派生RowBuildSpec、查询missing、
+按row wavefront调用opaque batch executor、commit artifacts并产出promotable proof。single-column/full/A-B的语义来自recipe；
+promotion由caller拿proof显式CAS。family/lane/shared-prefix scheduling只属于runtime batch executor。Manager不决定History row
+边界，不拥有raw History，也不实现第二套scheduler或active authority。
 
 definition和recipe都是content-addressed immutable values；只有active pointer是真正可变状态：
 
 ```text
-PutDefinition(definition) -> DefinitionDigest
+PutFamilyDefinition(family) -> FamilyDefinitionDigest
+PutMaintainerDefinition(definition) -> MaintainerDefinitionDigest
 PutBuildRecipe(recipe) -> RecipeDigest
 CompareExchangeActiveRecipe(expectedRecipeDigest, nextRecipeDigest)
 ReadSnapshot() -> definitions + recipes + ActiveRecipeDigest
@@ -141,6 +155,19 @@ Galatea 自主创建 Maintainer 的决定必须进入该control plane。raw Sess
 versioned operator config只是三种候选物理carrier；一次production composition必须且只能选择其中一个，不能同时成为
 authority。Derived Grid Store不能成为该决定的唯一真相源，否则 reset 后定义与active选择会丢失。
 
+一个ControlPlane实例绑定exact `(canonical colocated repository runtime binding, RefId, TimelineId)` scope；repository path只
+用于找到同库旁置carrier，不进入artifact identity。不得用全repository唯一
+`ActiveRecipeDigest`含糊覆盖不同branch/timeline。它必须保存FamilyDefinition、MaintainerDefinition与GridBuildRecipe三类
+完整canonical values，而不是只保存不可逆digest。注册recipe时使用Timeline只读witness验证bootstrap row位于exact selected
+head chain；该witness不进入RecipeDigest，ControlPlane也不读取Grid。
+
+runtime对该tuple只打开一个确定性的canonical carrier/path；backup、quarantine或export永不参与discovery。restore只允许在
+Host关闭、expected scope/version验证通过后原子替换canonical carrier；显式reinitialize也只替换同一canonical carrier并
+推进generation，crash后只允许old或new完整状态，旧副本永久inert。allowlist/scope/budget/capability policy只裁决新的
+Put/activate mutation，不在`ReadSnapshot`时过滤、重解释或自动deactivate已接受state；budget只是admission ceiling，不形成
+durable spent-call/campaign counter。runtime缺少active definition的exact family implementation时typed
+`BindingUnavailable`，不得fallback到当前catalog或旧recipe。
+
 动态注册只允许引用allow-listed `FamilyDefinitionDigest`并提交受限DeclarativeSpec；control plane必须校验column count、
 topic/prompt data长度、replay/call预算、可读数据scope以及create/activate/promotion capability。topic data不能改变
 FamilyDefinition拥有的system prompt、tool schema或output protocol。
@@ -149,7 +176,7 @@ FamilyDefinition拥有的system prompt、tool schema或output protocol。
 
 只保存 immutable cells、row views及可重建索引：
 
-- cell commit 是唯一业务写入；
+- Cell commit 是唯一模型输出写入；RowView与fulfilled ref只是derived selection/projection writes；
 - 已 committed cell 不原地 rewrite/repair；
 - prompt、definition或输入变化产生新的 cell identity；
 - partial progress表现为某些 cells存在、另一些缺失，不需要整 row transaction；
@@ -164,7 +191,7 @@ FamilyDefinition拥有的system prompt、tool schema或output protocol。
 - `FindMissingAssignments(rowBuildSpec)`；
 - `TryReadCell(evaluationKeyDigest)`；
 - `ReadView(rowViewDigest)`；
-- `ResolveFulfilledView(selectedRawRef, timelineHeadRef, activeGridBuildRecipe)`。
+- `ResolveFulfilledView(selectedRawRef, completionBoundary, timelineHeadRef, activeGridBuildRecipe, nthPrevious)`。
 
 “row 是否完整”永远相对于一个明确的 `BuildTarget`，不是 row 的绝对属性。`BuildTarget`是由MaintainerControlPlane
 和本次operation冻结出的`LogicalColumnId -> MaintainerDefinitionDigest`值；它只表达membership，不表达overlay/full
@@ -172,9 +199,17 @@ rebuild的provenance。
 
 ### 4.5 DerivedRecapContextComposer
 
-在composition root中一次性解析selected raw ref、TimelineHead与authoritative `GridBuildRecipe`，再要求Grid提供exact
-healthy fulfilled view；随后独立从Timeline读取raw tail，组合成主线Context。它是无状态composer，不允许GridReader
-扫描“latest”、逐列找最新cell或委托Timeline读取History。
+在composition root中解析selected raw ref、TimelineHead与authoritative `GridBuildRecipe`，再要求Grid提供exact healthy
+fulfilled view，并把row contributions、anchor setups与completion boundary交给neutral SessionJournal candidate contract。
+它是无状态composer，不允许GridReader扫描“latest”或逐列找最新cell。
+
+组合raw tail的最终owner仍是SessionJournal core：SessionJournal独立fold completion boundary之后的raw tail并把结果冻结进
+Prepared。无active nonempty recipe时可以显式授权raw-only，无论Timeline是否已有sealed rows；active recipe存在但
+partial/unfulfilled/Invalid时不得fallback到raw-only或旧recipe。
+
+`NthPrevious`不要求Store为旧row合成新的current-head fulfillment key：先exact解析current Timeline head + active recipe的
+fulfilled RowView，再沿该view的`PreviousRowViewDigest`链走n步；每一步都复验same RecipeDigest和exact Timeline
+predecessor descriptor。broken/missing/damaged predecessor chain立即fail closed，不扫描任意RowView找替代品。
 
 ### 4.6 Campaign and live selection
 
@@ -191,7 +226,8 @@ Timeline head的可重建projection/cache，不是promotion authority。
 - family/lane 分组；
 - shared system prompt、tool schema、previous row view 与 history segment prefix；
 - leader/follower cache策略、并行上限、调用计数与取消；
-- 返回按 work item identity索引的结果。
+- drain后返回每个ordered work item的closed outcome：`Updated | KeepUnchanged | Failed | NotStartedDueToCallerCancellation`。
+  只有首dispatch前global preflight/caller cancellation可以整体返回且保证zero-started；单个throw/cancel不得丢失已成功siblings。
 
 这些信息不进入 Timeline、cell semantic identity或 row completeness。
 
@@ -202,10 +238,11 @@ Timeline head的可重建projection/cache，不是promotion authority。
 ```text
 PartitionPolicyRevision {
   TimelineId
-  PartitionPolicyRevisionId
   PartitionPolicyId
   HistoryLoadEstimatorId
   DefaultTargetHistoryLoad
+  MaxRawEventsPerSegment
+  MaxRenderedBytesPerSegment
   PolicyDigest
 }
 ```
@@ -221,13 +258,15 @@ HistorySegmentDescriptor {
   RowId
   PreviousRowId?
   RefId
-  StartBoundary
-  EndBoundary
-  GoverningSetups
+  StartExclusive
+  EndInclusive
+  StartSetups
+  EndSetups
+  HistoryLoadEstimatorId
   TargetHistoryLoadAtCreation
   MeasuredHistoryLoad
   RawEventCount
-  RawRangeCommitment
+  RawRangeSha256
   DescriptorDigest
 }
 ```
@@ -235,6 +274,8 @@ HistorySegmentDescriptor {
 边界、创建时目标长度和实际长度都是已经发生的值事实。以后修改 BuildInterval不能改变旧 descriptor。
 正文始终按 Start/End 从 raw读取，不保存在 descriptor。同一Timeline row chain允许相邻rows采用不同
 `PartitionPolicyDigestAtCreation`，但不得跨`TimelineId`或脱离selected `TimelineHeadRef` chain。
+`RowId`必须由不含`RowId/DescriptorDigest`自循环的identity preimage确定性导出，或明确作为ledger opaque identity；
+Grid只把`DescriptorDigest`当semantic commitment。
 
 ### 5.3 TimelineHeadRef
 
@@ -243,19 +284,31 @@ TimelineHeadRef {
   TimelineId
   RefId
   HeadRowId?
-  RawAnchor
+  ActivePartitionPolicyDigest
+  SelectedRawHeadAtCommit?
   Generation
 }
 ```
 
-append row与切换partition policy都以expected generation/head CAS；fork产生另一条显式head/path，不覆盖旧rows。
+append row与切换partition policy都以expected generation/head/policy CAS；fork产生另一条显式head/path，不覆盖旧rows。
+`SelectedRawHeadAtCommit`只是该次head transition观察到的fence，不代替每次operation由composition root重新冻结的raw head。
+
+```text
+ActiveTimelineLocator {
+  RefId
+  ActiveTimelineId
+  LocatorGeneration
+}
+```
+
+empty ref的canonical head是`HeadRowId=null, SelectedRawHeadAtCommit=null, Generation=0`并引用显式initial policy。policy value
+content-addressed持久化，只有一个active policy pointer；它不是另一套operation lifecycle。
 
 ### 5.4 MaintainerDefinitionRevision
 
 ```text
 MaintainerDefinitionRevision {
   LogicalColumnId
-  DefinitionRevisionId
   FamilyDefinitionDigest
   Target
   CapabilityFingerprint
@@ -470,8 +523,12 @@ PriorInputAligned，但recipe provenance仍是overlay。
 4. 在首个remote call前解析全部待执行definition/runtime bindings。
 5. 同 row cells并行执行并分别commit。
 6. exact完整后创建RecapRowView。
-7. 主线模型通过`ResolveFulfilledView(selectedRawRef, timelineHeadRef, activeGridBuildRecipe)`取得exact fulfilled view，
+7. 主线模型通过`ResolveFulfilledView(selectedRawRef, completionBoundary, timelineHeadRef, activeGridBuildRecipe, nthPrevious)`取得
+   exact fulfilled view，
    再加该row之后尚未封段的raw tail。
+
+同一个`Send`可在pre-observation、ObservationAccepted和每个ToolResultObserved后的安全未Prepared边界多次调用这一
+lifecycle。Timeline只在replay-safe boundary封row；Manager operation必须幂等，不能假设“一次Send只调用一次”。
 
 ### 6.2 Add one Maintainer
 
@@ -523,6 +580,11 @@ wavefront rebuild全部columns。
 12. 只有FulfilledViewRef、进程内cache与普通查询索引可由healthy canonical artifacts重建；canonical bytes与
     row_view_member/locator不一致必须使whole Store Invalid，不得在线补表形成第二authority。
 13. committed artifact损坏使whole Grid Store invalid；不得为绕过unique EvaluationKey删除单cell再补写。
+14. `Prepared`/`Started` request已经冻结exact context与completion recipe；恢复这两相时不得读取Timeline、Grid、
+    ControlPlane或DerivedRecap active/current route config。Prepared仍按frozen completion identity从Host registry exact bind；
+    `Started`默认Refuse在client creation前零derived write，显式restart只从Prepared frozen bytes产生新attempt。
+15. `DerivedContext.NthPrevious=n`沿exact selected Timeline predecessor chain选择第n个sealed row，再要求同一active
+    recipe的exact fulfillment；missing/damaged/off-lineage不得跳过邻居或按全局ordinal猜测。
 
 ## 8. Persistence backend decision
 
@@ -678,13 +740,16 @@ contention与bounded `SQLITE_BUSY` local-commit retry；read-only/no-create CLI�
 
 - HistorySegmentDescriptor
 - TimelineHeadRef
+- ActiveTimelineLocator
+- FamilyDefinition
 - MaintainerDefinitionRevision
 - GridBuildRecipe
 - RecapCellArtifact
 - RecapRowView
 
 `MaintainerControlPlane`是以上definition/recipe的authority service，必须选择单一物理carrier；
-`PartitionPolicyRevision`、`BuildTarget`、campaign和Manager不再各自扩张成一套durable artifact lifecycle。Grid是immutable
+`PartitionPolicyRevision`只包含content-addressed policy values与TimelineHead上的一个active pointer，不扩张成operation
+lifecycle；`BuildTarget`、campaign和Manager也不各自扩张durable lifecycle。Grid是immutable
 dependency DAG的二维投影视图，不是每个坐标只有一个可变值的Excel；
 同一`(RowId, LogicalColumnId)`可以因definition或prior input projection不同拥有多个cell artifacts。
 
@@ -742,20 +807,25 @@ dependency DAG的二维投影视图，不是每个坐标只有一个可变值的
 14. Agent请求未知FamilyDefinition、越权scope或超预算创建column时，control plane零变化；合法control event在Grid reset后仍在。
 15. 悬疑分析fixture中，`XSuspicion` overlay回填不改旧`CulpritHypothesis` cells；激活后的新rows允许后者读取前一row的
     X疑点而更新。full-grid recipe则从Row 0重算全部columns，证明新专题发现可沿wavefront逐row传播，同时不存在同row循环。
+16. `NthPrevious=1`严格选择exact selected Timeline chain上的前一sealed row及同一active recipe fulfillment；目标slot
+    missing/damaged时fail closed，不跳到更早healthy row或同ordinal sibling branch。
+17. Prepared后删除Grid、改变active recipe并使Timeline/Control不可用，request仍按frozen bytes byte-identical恢复；Started
+    Refuse零client/零derived write，explicit restart只产生新的provider attempt。
 
 ## 11. Open decisions before implementation
 
 1. SQLite spike是否通过查询、crash、版本、可观察性与复杂度gate；若失败才重新打开Directory+JSON候选。
-2. Timeline ledger的物理backend、backup与operator reset边界；它不能和可随意reset的Grid数据库同生命周期。
+2. Timeline ledger的物理backend、backup与operator abandon边界；它不能和可随意reset的Grid数据库同生命周期。
 3. `MaintainerControlPlane`采用raw SessionJournal action、独立control journal还是versioned operator config；production必须
    选且只选一个carrier，并明确Host/Agent写权限。
-4. Timeline row descriptor的最小raw commitment与可重建索引形状。
+4. WP-01A锁定canonical raw commitment/preimage；WP-01C只裁决durable locator与可重建索引形状。
 5. candidate/旧cell retention与GC规则。
 
 ## 12. Implementation boundary
 
 本文通过只表示Shape/Rule锁定及SQLite目标选择，不表示旧系统迁移方案或production implementation已经批准。
-下一步应先完成SQLite backend spike、Timeline ledger spike与contract fixture，再写migration/work-package计划。
+施工计划已经拆为WP-00至WP-08；下一步从WP-00 fresh baseline/walking skeleton开始。每个backend、carrier或cutover选择仍
+必须在所属工作包取得实证Go，不因本文或计划存在而预先视为implemented/production-ready。
 
 ## 13. Independent review record
 
@@ -766,5 +836,12 @@ dependency DAG的二维投影视图，不是每个坐标只有一个可变值的
 - complexity：authority、durable lifecycle、concept/state/API budget及runtime optimization隔离。
 
 当时最终gate均为P0=0/P1=0。其后本文按用户裁决把ControlLog/Revision收缩为content-addressed
-ControlPlane/BuildRecipe，并以`PriorInputProjectionDigest`替代整份RowView identity作为Cell输入key；该refinement尚未进行
-新的独立tail review。本文不认证SQLite spike、Timeline implementation、migration或production readiness。
+ControlPlane/BuildRecipe，并以`PriorInputProjectionDigest`替代整份RowView identity作为Cell输入key。
+
+2026-08-10又由三条独立只读review线对该refinement及施工计划完成tail closure，最终P0=0/P1=0，覆盖：
+
+- Timeline partition/head/active-locator、captured raw authority、HistoryLoad owner与01A/B/C边界；
+- Control canonical carrier/scope/allowlist authority、SQLite opaque fulfillment/reset/concurrency/CLI与project dependency；
+- row-batch scheduler ownership、strict NthPrevious、Prepared/Started frozen recovery、Agent control入口与atomic cutover ledger。
+
+该review只批准Shape/Rule与可施工计划，不认证SQLite/Timeline spike、implementation、migration或production readiness。

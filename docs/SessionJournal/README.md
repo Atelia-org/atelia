@@ -31,6 +31,9 @@
   [DerivedRecap Sparse Versioned Grid 目标设计](work/active/derived-recap-grid-target-design.md)
   记录下一代Timeline rows、Maintainer analysis columns、content-addressed immutable cells与minimal control plane的理想
   Shape/Rule；尚未实施，也不描述current production。
+  [DerivedRecap Grid Rewrite 总施工计划](work/active/derived-recap-grid-rewrite-master-plan.md)
+  将新目标拆为WP-00至WP-08（其中Timeline为01A/B/C、vertical为07A/B）的旁路施工与最终一次direct cut；每包只加载
+  相邻handoff并执行fresh review、focused validation和独立tail gate。
   [DerivedRecap Shared Epoch / Maintainer Family 并行重构计划](work/active/derived-recap-shared-epoch-parallel-maintainer-refactor-plan.md)。
   R3 shared-epoch v8、R4 runtime-group并行调度、R5 cache boundary/usage telemetry与R6
   Galatea/CLI production composition已进入current code；R7 real-provider cache/economic proof仍为
