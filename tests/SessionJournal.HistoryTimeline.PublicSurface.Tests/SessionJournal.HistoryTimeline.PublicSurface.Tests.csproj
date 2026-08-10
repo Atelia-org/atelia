@@ -17,9 +17,6 @@
   <ItemGroup>
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
-    <ProjectReference Include="../../prototypes/Completion.Abstractions/Completion.Abstractions.csproj" />
-    <ProjectReference Include="../SessionJournal.HistoryTimeline.CrashHarness/SessionJournal.HistoryTimeline.CrashHarness.csproj"
-                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

@@ -32,7 +32,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ledger,
             _estimator
         );
-        TimelineHeadRef before = coordinator.ReadSnapshot();
+        TimelineHeadRef before = coordinator.ReadSnapshotRequired();
         OnlineSelectedRawCapture capture = Capture(
             coordinator,
             before,
@@ -61,7 +61,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             committed.Head.ActivePartitionPolicyDigest);
         Assert.Equal(capture.CapturedHead,
             committed.Head.SelectedRawHeadAtCommit);
-        Assert.Same(descriptor, ledger.ReadRow(descriptor.RowId));
+        Assert.Same(descriptor, ledger.ReadRowOrNull(descriptor.RowId));
     }
 
     [Fact]
@@ -88,11 +88,113 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
         var result = Assert.IsType<
             OnlineSelectedRawCaptureResult.Empty
         >(coordinator.CaptureOnline(
-            coordinator.ReadSnapshot(),
+            coordinator.ReadSnapshotRequired(),
             empty.ReadView
         ));
 
         Assert.Equal(emptyRef, result.RefId);
+    }
+
+    [Fact]
+    public void Coordinator_MapsUnsupportedSchemaFromSnapshotPolicyAndRowReads() {
+        string path = NewPath();
+        using var writer = CreateWriter(path);
+        _ = writer.AppendObservation("unsupported schema");
+        _ = writer.AppendImportedAgentAction(
+            new ActionMessage([new ActionBlock.Text("answer")]),
+            new CompletionDescriptor("import", "v1", "model-A")
+        );
+        PartitionPolicyRevision policy = Policy('e', maxRawEvents: 8);
+        var ledger = new InMemoryHistoryTimelineLedger(
+            writer.BranchRefId,
+            policy
+        );
+        var coordinator = new HistoryTimelineCoordinator(
+            path,
+            ledger,
+            _estimator
+        );
+        TimelineHeadRef fresh = coordinator.ReadSnapshotRequired();
+        OnlineSelectedRawCapture freshCapture = Capture(
+            coordinator,
+            fresh,
+            writer.ReadView
+        );
+
+        ledger.ReadSnapshotOverride = () =>
+            new HistoryTimelineStoreReadResult<TimelineHeadRef>
+                .UnsupportedSchema(2);
+        Assert.Equal(
+            "TimelineStoreUnsupportedSchema",
+            Assert.IsType<OnlineSelectedRawCaptureResult.Invalid>(
+                coordinator.CaptureOnline(fresh, writer.ReadView)
+            ).Code
+        );
+        Assert.Equal(
+            "TimelineStoreUnsupportedSchema",
+            Assert.IsType<HistoryTimelinePlanResult.Invalid>(
+                coordinator.PlanNextRow(fresh, freshCapture)
+            ).Code
+        );
+
+        int captureHeadReads = 0;
+        ledger.ReadSnapshotOverride = () => ++captureHeadReads == 1
+            ? new HistoryTimelineStoreReadResult<TimelineHeadRef>
+                .Found(fresh)
+            : new HistoryTimelineStoreReadResult<TimelineHeadRef>
+                .UnsupportedSchema(2);
+        Assert.Equal(
+            "TimelineStoreUnsupportedSchema",
+            Assert.IsType<OnlineSelectedRawCaptureResult.Invalid>(
+                coordinator.CaptureOnline(fresh, writer.ReadView)
+            ).Code
+        );
+
+        ledger.ReadSnapshotOverride = null;
+        ledger.ReadPolicyOverride = _ =>
+            new HistoryTimelineStoreReadResult<PartitionPolicyRevision>
+                .UnsupportedSchema(2);
+        Assert.Equal(
+            "TimelineStoreUnsupportedSchema",
+            Assert.IsType<HistoryTimelinePlanResult.Invalid>(
+                coordinator.PlanNextRow(fresh, freshCapture)
+            ).Code
+        );
+
+        ledger.ReadPolicyOverride = null;
+        HistoryTimelinePlanResult.Selected selected = Assert.IsType<
+            HistoryTimelinePlanResult.Selected
+        >(coordinator.PlanNextRow(fresh, freshCapture));
+        TimelineHeadRef committed = Assert.IsType<
+            HistoryTimelineCommitResult.Committed
+        >(coordinator.CommitRow(selected.Candidate)).Head;
+        OnlineSelectedRawCapture committedCapture = Capture(
+            coordinator,
+            committed,
+            writer.ReadView
+        );
+        ledger.ReadRowOverride = _ =>
+            new HistoryTimelineStoreReadResult<HistorySegmentDescriptor>
+                .UnsupportedSchema(2);
+        Assert.Equal(
+            "TimelineStoreUnsupportedSchema",
+            Assert.IsType<HistorySegmentOpenResult.Invalid>(
+                coordinator.OpenSegment(
+                    committed,
+                    committedCapture,
+                    selected.Candidate.Proposal.Descriptor.RowId
+                )
+            ).Code
+        );
+        Assert.Equal(
+            "TimelineStoreUnsupportedSchema",
+            Assert.IsType<HistoryTimelineReconcileResult.Invalid>(
+                coordinator.ReconcileSelectedPath(
+                    committed,
+                    writer.ReadView
+                )
+            ).Code
+        );
     }
 
     [Fact]
@@ -127,7 +229,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ),
             _estimator
         );
-        TimelineHeadRef expected = coordinator.ReadSnapshot();
+        TimelineHeadRef expected = coordinator.ReadSnapshotRequired();
 
         using (SessionJournalEngine empty =
                SessionJournalEngine.OpenReadOnly(
@@ -173,7 +275,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
         var rejected = Assert.IsType<
             OnlineSelectedRawCaptureResult.Invalid
         >(coordinator.CaptureOnline(
-            coordinator.ReadSnapshot(),
+            coordinator.ReadSnapshotRequired(),
             clone.ReadView
         ));
 
@@ -202,7 +304,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ),
             _estimator
         );
-        TimelineHeadRef oldHead = coordinator.ReadSnapshot();
+        TimelineHeadRef oldHead = coordinator.ReadSnapshotRequired();
         OnlineSelectedRawCapture oldCapture = Capture(
             coordinator,
             oldHead,
@@ -237,7 +339,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ),
             estimator
         );
-        TimelineHeadRef expected = coordinator.ReadSnapshot();
+        TimelineHeadRef expected = coordinator.ReadSnapshotRequired();
 
         var invalid = Assert.IsType<HistoryTimelinePlanResult.Invalid>(
             coordinator.PlanNextRow(
@@ -281,7 +383,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ledger,
             estimator
         );
-        expected = coordinator.ReadSnapshot();
+        expected = coordinator.ReadSnapshotRequired();
         _ = coordinator.PutPolicy(next);
         OnlineSelectedRawCapture capture = Capture(
             coordinator,
@@ -317,7 +419,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ledger,
             _estimator
         );
-        TimelineHeadRef initialHead = coordinator.ReadSnapshot();
+        TimelineHeadRef initialHead = coordinator.ReadSnapshotRequired();
         HistoryTimelinePlanResult.Selected firstPlan = Assert.IsType<
             HistoryTimelinePlanResult.Selected
         >(coordinator.PlanNextRow(
@@ -335,7 +437,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             new ActionMessage([new ActionBlock.Text("two")]),
             new CompletionDescriptor("import", "v1", "model-A")
         );
-        TimelineHeadRef selectedHead = coordinator.ReadSnapshot();
+        TimelineHeadRef selectedHead = coordinator.ReadSnapshotRequired();
         HistoryTimelinePlanResult found = coordinator.PlanNextRow(
             selectedHead,
             Capture(coordinator, selectedHead, writer.ReadView)
@@ -385,7 +487,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ledger,
             _estimator
         );
-        TimelineHeadRef before = coordinator.ReadSnapshot();
+        TimelineHeadRef before = coordinator.ReadSnapshotRequired();
         HistoryTimelinePlanResult.Selected selected = Assert.IsType<
             HistoryTimelinePlanResult.Selected
         >(coordinator.PlanNextRow(
@@ -400,8 +502,8 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
 
         Assert.Equal(action, changed.Expected);
         Assert.Equal(observation, changed.Observed);
-        Assert.Equal(before, ledger.ReadSnapshot());
-        Assert.Null(ledger.ReadRow(
+        Assert.Equal(before, ledger.ReadSnapshotRequired());
+        Assert.Null(ledger.ReadRowOrNull(
             selected.Candidate.Proposal.Descriptor.RowId
         ));
     }
@@ -424,7 +526,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ),
             _estimator
         );
-        TimelineHeadRef expected = coordinator.ReadSnapshot();
+        TimelineHeadRef expected = coordinator.ReadSnapshotRequired();
         OnlineSelectedRawCapture capture = Capture(
             coordinator,
             expected,
@@ -467,7 +569,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ),
             estimator
         );
-        TimelineHeadRef expected = coordinator.ReadSnapshot();
+        TimelineHeadRef expected = coordinator.ReadSnapshotRequired();
         OnlineSelectedRawCapture capture = Capture(
             coordinator,
             expected,
@@ -509,7 +611,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ledger,
             _estimator
         );
-        TimelineHeadRef generationZero = coordinator.ReadSnapshot();
+        TimelineHeadRef generationZero = coordinator.ReadSnapshotRequired();
         Assert.IsType<HistoryTimelinePolicyPutResult.Stored>(
             coordinator.PutPolicy(next)
         );
@@ -557,7 +659,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ),
             _estimator
         );
-        TimelineHeadRef generationZero = coordinator.ReadSnapshot();
+        TimelineHeadRef generationZero = coordinator.ReadSnapshotRequired();
         OnlineSelectedRawCapture oldCapture = Capture(
             coordinator,
             generationZero,
@@ -605,7 +707,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ),
             estimator
         );
-        TimelineHeadRef createdHead = createdCoordinator.ReadSnapshot();
+        TimelineHeadRef createdHead = createdCoordinator.ReadSnapshotRequired();
 
         var createdNotEnough = Assert.IsType<
             HistoryTimelinePlanResult.NotEnough
@@ -631,7 +733,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             estimator
         );
         TimelineHeadRef notEnoughHead =
-            notEnoughCoordinator.ReadSnapshot();
+            notEnoughCoordinator.ReadSnapshotRequired();
         var notEnough = Assert.IsType<
             HistoryTimelinePlanResult.NotEnough
         >(notEnoughCoordinator.PlanNextRow(
@@ -665,7 +767,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ),
             estimator
         );
-        TimelineHeadRef limitHead = limitCoordinator.ReadSnapshot();
+        TimelineHeadRef limitHead = limitCoordinator.ReadSnapshotRequired();
         var limit = Assert.IsType<
             HistoryTimelinePlanResult.LimitExceeded
         >(limitCoordinator.PlanNextRow(
@@ -704,7 +806,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             ledger,
             estimator
         );
-        TimelineHeadRef expected = coordinator.ReadSnapshot();
+        TimelineHeadRef expected = coordinator.ReadSnapshotRequired();
         using var offline = SessionJournalEngine.OpenReadOnly(path);
         OnlineSelectedRawCapture unknownCapture = Capture(
             coordinator,
@@ -717,7 +819,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
         >(coordinator.PlanNextRow(expected, unknownCapture));
         Assert.Equal(unknown.PartitionAlgorithmId,
             planUnavailable.AlgorithmId);
-        Assert.Equal(expected, coordinator.ReadSnapshot());
+        Assert.Equal(expected, coordinator.ReadSnapshotRequired());
 
         using SessionSelectedLineageForwardCursor cursor =
             OpenCursor(offline, pageSize: 2);
@@ -730,7 +832,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
         >(builder.BuildNextRow(expected));
         Assert.Equal(unknown.PartitionAlgorithmId,
             offlineUnavailable.AlgorithmId);
-        Assert.Equal(expected, coordinator.ReadSnapshot());
+        Assert.Equal(expected, coordinator.ReadSnapshotRequired());
 
         PartitionPolicyRevision supported = PartitionPolicyRevision.Create(
             timelineId,
@@ -747,7 +849,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
             estimator
         );
         TimelineHeadRef supportedHead =
-            supportedCoordinator.ReadSnapshot();
+            supportedCoordinator.ReadSnapshotRequired();
         OnlineSelectedRawCapture supportedCapture = Capture(
             supportedCoordinator,
             supportedHead,
@@ -817,7 +919,7 @@ public sealed class HistoryTimelineOnlineRawIntegrationTests
         ));
         Assert.Equal(unknown.PartitionAlgorithmId,
             openUnavailable.AlgorithmId);
-        Assert.Equal(committed, coordinator.ReadSnapshot());
+        Assert.Equal(committed, coordinator.ReadSnapshotRequired());
     }
 
     public void Dispose() {

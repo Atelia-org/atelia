@@ -258,6 +258,9 @@ public sealed record TimelineHeadRef {
     public string ActivePartitionPolicyDigest { get; }
     public EventAddress? SelectedRawHeadAtCommit { get; }
     public long Generation { get; }
+
+    public byte[] ToCanonicalBytes()
+        => HistoryTimelineCanonicalCodec.Encode(this);
 }
 
 public sealed record HistoryPartitionPoint {

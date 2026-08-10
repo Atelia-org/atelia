@@ -43,7 +43,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
         TimelineHeadRef policyHead = Assert.IsType<
             HistoryTimelinePolicyCasResult.Applied
         >(coordinator.CompareExchangePolicy(
-            coordinator.ReadSnapshot(),
+            coordinator.ReadSnapshotRequired(),
             next.PolicyDigest
         )).Head;
         _ = writer.AppendImportedAgentAction(
@@ -58,7 +58,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
         _ = coordinator.PutPolicy(latest);
         _ = Assert.IsType<HistoryTimelinePolicyCasResult.Applied>(
             coordinator.CompareExchangePolicy(
-                coordinator.ReadSnapshot(),
+                coordinator.ReadSnapshotRequired(),
                 latest.PolicyDigest
             )
         );
@@ -68,7 +68,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
             writer.ReadView
         );
         Assert.Equal(second.RowId, third.PreviousRowId);
-        TimelineHeadRef selectedHead = coordinator.ReadSnapshot();
+        TimelineHeadRef selectedHead = coordinator.ReadSnapshotRequired();
         OnlineSelectedRawCapture capture = Capture(
             coordinator,
             selectedHead,
@@ -130,7 +130,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
             coordinator,
             writer.ReadView
         );
-        TimelineHeadRef oldTimelineHead = coordinator.ReadSnapshot();
+        TimelineHeadRef oldTimelineHead = coordinator.ReadSnapshotRequired();
         Assert.True(writer.MoveCurrentHeadForTest(
             oldHead,
             first.EndInclusive
@@ -151,7 +151,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
             coordinator,
             writer.ReadView
         );
-        TimelineHeadRef siblingHead = coordinator.ReadSnapshot();
+        TimelineHeadRef siblingHead = coordinator.ReadSnapshotRequired();
         OnlineSelectedRawCapture sameCapture = Capture(
             coordinator,
             siblingHead,
@@ -203,7 +203,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
             writer.ReadView
         );
         Assert.Equal(action, row.EndInclusive);
-        TimelineHeadRef selected = coordinator.ReadSnapshot();
+        TimelineHeadRef selected = coordinator.ReadSnapshotRequired();
 
         Assert.True(writer.MoveCurrentHeadForTest(
             action,
@@ -253,7 +253,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
             new CompletionDescriptor("import", "v1", "model-A")
         );
         _ = PlanAndCommit(coordinator, writer.ReadView);
-        TimelineHeadRef before = coordinator.ReadSnapshot();
+        TimelineHeadRef before = coordinator.ReadSnapshotRequired();
         Assert.True(writer.MoveCurrentHeadForTest(
             oldRawHead,
             first.EndInclusive
@@ -274,7 +274,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
         ));
 
         Assert.NotNull(offline.Evidence);
-        Assert.Equal(before, coordinator.ReadSnapshot());
+        Assert.Equal(before, coordinator.ReadSnapshotRequired());
     }
 
     [Fact]
@@ -296,7 +296,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
         );
         _ = writer.AppendObservation("first");
         _ = PlanAndCommit(coordinator, writer.ReadView);
-        TimelineHeadRef expected = coordinator.ReadSnapshot();
+        TimelineHeadRef expected = coordinator.ReadSnapshotRequired();
         _ = coordinator.PutPolicy(next);
         TimelineHeadRef winner = Assert.IsType<
             HistoryTimelinePolicyCasResult.Applied
@@ -313,7 +313,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
         ));
 
         Assert.Equal(winner, stale.Actual);
-        Assert.Equal(winner, coordinator.ReadSnapshot());
+        Assert.Equal(winner, coordinator.ReadSnapshotRequired());
     }
 
     [Fact]
@@ -366,20 +366,20 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
             for (int index = 0; index < 8; index++) {
                 _ = writer.AppendSystemPromptSetup($"fork-{index}");
             }
-            TimelineHeadRef selected = coordinator.ReadSnapshot();
+            TimelineHeadRef selected = coordinator.ReadSnapshotRequired();
             Assert.IsType<
                 HistoryTimelineReconcileResult.OfflineBootstrapRequired
             >(coordinator.ReconcileSelectedPath(
                 selected,
                 writer.ReadView
             ));
-            Assert.Equal(selected, coordinator.ReadSnapshot());
+            Assert.Equal(selected, coordinator.ReadSnapshotRequired());
         }
 
         using var offline = SessionJournalEngine.OpenReadOnly(path);
         using SessionSelectedLineageForwardCursor cursor =
             OpenCursor(offline, pageSize: 7);
-        TimelineHeadRef before = coordinator!.ReadSnapshot();
+        TimelineHeadRef before = coordinator!.ReadSnapshotRequired();
         long rowProbesBefore = ledger!.SelectedPathRowProbeCount;
         long boundaryProbesBefore =
             ledger.SelectedPathBoundaryProbeCount;
@@ -442,7 +442,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
         using var offline = SessionJournalEngine.OpenReadOnly(path);
         using SessionSelectedLineageForwardCursor cursor =
             OpenCursor(offline, pageSize: 2);
-        TimelineHeadRef before = coordinator!.ReadSnapshot();
+        TimelineHeadRef before = coordinator!.ReadSnapshotRequired();
 
         TimelineHeadRef reconciled = Assert.IsType<
             HistoryTimelineReconcileResult.Reconciled
@@ -485,7 +485,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
         TimelineHeadRef reconciled = Assert.IsType<
             HistoryTimelineReconcileResult.Reconciled
         >(coordinator!.ReconcileSelectedPathOffline(
-            coordinator.ReadSnapshot(),
+            coordinator.ReadSnapshotRequired(),
             cursor
         )).Head;
 
@@ -521,12 +521,12 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
         using SessionSelectedLineageForwardCursor cursor =
             OpenCursor(offline, pageSize: 2);
         rewritten = cursor.Authority.BootstrapSeed.Address;
-        TimelineHeadRef before = coordinator!.ReadSnapshot();
+        TimelineHeadRef before = coordinator!.ReadSnapshotRequired();
 
         Assert.IsType<HistoryTimelineReconcileResult.RawHeadChanged>(
             coordinator.ReconcileSelectedPathOffline(before, cursor)
         );
-        Assert.Equal(before, coordinator.ReadSnapshot());
+        Assert.Equal(before, coordinator.ReadSnapshotRequired());
     }
 
     [Fact]
@@ -564,7 +564,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
             }),
             _estimator
         );
-        expected = coordinator.ReadSnapshot();
+        expected = coordinator.ReadSnapshotRequired();
         using var offline = SessionJournalEngine.OpenReadOnly(path);
         using SessionSelectedLineageForwardCursor cursor =
             OpenCursor(offline, pageSize: 2);
@@ -575,7 +575,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
 
         Assert.Equal(next.PolicyDigest,
             stale.Actual.ActivePartitionPolicyDigest);
-        Assert.Equal(stale.Actual, coordinator.ReadSnapshot());
+        Assert.Equal(stale.Actual, coordinator.ReadSnapshotRequired());
     }
 
     [Fact]
@@ -605,7 +605,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
             }),
             _estimator
         );
-        TimelineHeadRef expected = coordinator.ReadSnapshot();
+        TimelineHeadRef expected = coordinator.ReadSnapshotRequired();
         using var offline = SessionJournalEngine.OpenReadOnly(path);
         OnlineSelectedRawCapture capture = Capture(
             coordinator,
@@ -621,7 +621,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
         Assert.IsType<HistoryTimelineReconcileResult.StaleTimelineHead>(
             coordinator.ReconcileSelectedPathOffline(expected, cursor)
         );
-        Assert.NotNull(coordinator.ReadSnapshot().HeadRowId);
+        Assert.NotNull(coordinator.ReadSnapshotRequired().HeadRowId);
     }
 
     [Fact]
@@ -649,7 +649,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
                 new CompletionDescriptor("import", "v1", "model-A")
             );
         }
-        TimelineHeadRef expected = coordinator!.ReadSnapshot();
+        TimelineHeadRef expected = coordinator!.ReadSnapshotRequired();
         using var offline = SessionJournalEngine.OpenReadOnly(path);
         bool raced = false;
         var racing = new HistoryTimelineCoordinator(
@@ -675,7 +675,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
         Assert.IsType<HistoryTimelineReconcileResult.StaleTimelineHead>(
             racing.ReconcileSelectedPathOffline(expected, cursor)
         );
-        Assert.NotEqual(expected, coordinator.ReadSnapshot());
+        Assert.NotEqual(expected, coordinator.ReadSnapshotRequired());
     }
 
     public void Dispose() {
@@ -717,7 +717,7 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
         HistoryTimelineCoordinator coordinator,
         SessionJournalReadView readView
     ) {
-        TimelineHeadRef expected = coordinator.ReadSnapshot();
+        TimelineHeadRef expected = coordinator.ReadSnapshotRequired();
         OnlineSelectedRawCapture capture = Capture(
             coordinator,
             expected,

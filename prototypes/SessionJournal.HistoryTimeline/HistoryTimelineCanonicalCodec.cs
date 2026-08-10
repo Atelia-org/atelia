@@ -13,6 +13,220 @@ public static class HistoryTimelineCanonicalCodec {
     public const int MaximumPolicyUtf8Bytes = 4 * 1024;
     public const int MaximumDescriptorUtf8Bytes = 16 * 1024;
 
+    public static byte[] Encode(TimelineHeadRef value) {
+        ArgumentNullException.ThrowIfNull(value);
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
+            writer.WriteStartObject();
+            writer.WriteNumber("v", 1);
+            writer.WriteString("timelineId", value.TimelineId.Value);
+            writer.WriteString("refId", value.RefId.ToHexString());
+            if (value.HeadRowId is { } rowId) {
+                writer.WriteString("headRowId", rowId.Value);
+            }
+            else {
+                writer.WriteNull("headRowId");
+            }
+            writer.WriteString(
+                "activePartitionPolicyDigest",
+                value.ActivePartitionPolicyDigest
+            );
+            if (value.SelectedRawHeadAtCommit is { } rawHead) {
+                writer.WriteString(
+                    "selectedRawHeadAtCommit",
+                    SJ.EventAddressTextCodec.Format(rawHead)
+                );
+            }
+            else {
+                writer.WriteNull("selectedRawHeadAtCommit");
+            }
+            writer.WriteNumber("generation", value.Generation);
+            writer.WriteEndObject();
+        }
+        return RequireEncodedBound(
+            buffer.WrittenMemory.ToArray(),
+            HistoryTimelineStoreLimits.MaximumHeadUtf8Bytes,
+            "Timeline head"
+        );
+    }
+
+    public static TimelineHeadRef DecodeTimelineHead(
+        ReadOnlySpan<byte> bytes
+    ) => DecodeCanonical(
+        bytes,
+        HistoryTimelineStoreLimits.MaximumHeadUtf8Bytes,
+        static root => {
+            RequireVersion(root, "Timeline head");
+            string? row = ReadNullableString(root, "headRowId");
+            string? raw = ReadNullableString(
+                root,
+                "selectedRawHeadAtCommit"
+            );
+            return new TimelineHeadRef(
+                new TimelineId(ReadString(root, "timelineId")),
+                ReadRefId(root, "refId"),
+                row is null ? null : new HistoryRowId(row),
+                ReadString(root, "activePartitionPolicyDigest"),
+                raw is null
+                    ? null
+                    : SJ.EventAddressTextCodec.Parse(raw),
+                ReadInt64(root, "generation")
+            );
+        },
+        Encode,
+        "Timeline head"
+    );
+
+    public static byte[] Encode(ActiveTimelineLocator value) {
+        ArgumentNullException.ThrowIfNull(value);
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
+            writer.WriteStartObject();
+            writer.WriteNumber("v", 1);
+            writer.WriteString("refId", value.RefId.ToHexString());
+            writer.WriteString(
+                "activeTimelineId",
+                value.ActiveTimelineId.Value
+            );
+            writer.WriteNumber("generation", value.Generation);
+            writer.WriteEndObject();
+        }
+        return RequireEncodedBound(
+            buffer.WrittenMemory.ToArray(),
+            HistoryTimelineStoreLimits.MaximumLocatorUtf8Bytes,
+            "active Timeline locator"
+        );
+    }
+
+    public static ActiveTimelineLocator DecodeActiveTimelineLocator(
+        ReadOnlySpan<byte> bytes
+    ) => DecodeCanonical(
+        bytes,
+        HistoryTimelineStoreLimits.MaximumLocatorUtf8Bytes,
+        static root => {
+            RequireVersion(root, "active Timeline locator");
+            return new ActiveTimelineLocator(
+                ReadRefId(root, "refId"),
+                new TimelineId(ReadString(root, "activeTimelineId")),
+                ReadInt64(root, "generation")
+            );
+        },
+        Encode,
+        "active Timeline locator"
+    );
+
+    public static byte[] Encode(HistoryTimelineBackupManifest value) {
+        ArgumentNullException.ThrowIfNull(value);
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
+            writer.WriteStartObject();
+            writer.WriteNumber("v", 1);
+            writer.WriteString(
+                "locatorCanonical",
+                Encoding.UTF8.GetString(
+                    value.Locator.ToCanonicalBytes()
+                )
+            );
+            writer.WriteString(
+                "headCanonical",
+                Encoding.UTF8.GetString(
+                    value.Head.ToCanonicalBytes()
+                )
+            );
+            writer.WriteString("headSha256", value.HeadSha256);
+            writer.WriteString(
+                "databaseSha256",
+                value.DatabaseSha256
+            );
+            writer.WriteNumber(
+                "databaseBytes",
+                value.DatabaseBytes
+            );
+            writer.WriteEndObject();
+        }
+        return RequireEncodedBound(
+            buffer.WrittenMemory.ToArray(),
+            HistoryTimelineStoreLimits
+                .MaximumBackupManifestUtf8Bytes,
+            "Timeline backup manifest"
+        );
+    }
+
+    public static HistoryTimelineBackupManifest
+        DecodeHistoryTimelineBackupManifest(
+        ReadOnlySpan<byte> bytes
+    ) => DecodeCanonical(
+        bytes,
+        HistoryTimelineStoreLimits.MaximumBackupManifestUtf8Bytes,
+        static root => {
+            RequireVersion(root, "Timeline backup manifest");
+            ActiveTimelineLocator locator =
+                DecodeActiveTimelineLocator(Encoding.UTF8.GetBytes(
+                    ReadString(root, "locatorCanonical")
+                ));
+            TimelineHeadRef head = DecodeTimelineHead(
+                Encoding.UTF8.GetBytes(
+                    ReadString(root, "headCanonical")
+                )
+            );
+            return new HistoryTimelineBackupManifest(
+                locator,
+                head,
+                ReadString(root, "headSha256"),
+                ReadString(root, "databaseSha256"),
+                ReadInt64(root, "databaseBytes")
+            );
+        },
+        Encode,
+        "Timeline backup manifest"
+    );
+
+    internal static byte[] Encode(
+        HistoryTimelineSelectedPathSnapshotBody value
+    ) {
+        ArgumentNullException.ThrowIfNull(value);
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
+            writer.WriteStartObject();
+            writer.WriteNumber("v", 1);
+            writer.WriteString("headRowId", value.HeadRowId.Value);
+            writer.WriteString(
+                "rowRootDigest",
+                value.RowRootDigest
+            );
+            writer.WriteString(
+                "endRootDigest",
+                value.EndRootDigest
+            );
+            writer.WriteNumber("memberCount", value.MemberCount);
+            writer.WriteEndObject();
+        }
+        return RequireEncodedBound(
+            buffer.WrittenMemory.ToArray(),
+            HistoryTimelineStoreLimits.MaximumHeadUtf8Bytes,
+            "selected-path snapshot"
+        );
+    }
+
+    internal static HistoryTimelineSelectedPathSnapshotBody
+        DecodeSelectedPathSnapshot(
+        ReadOnlySpan<byte> bytes
+    ) => DecodeCanonical(
+        bytes,
+        HistoryTimelineStoreLimits.MaximumHeadUtf8Bytes,
+        static root => {
+            RequireVersion(root, "selected-path snapshot");
+            return new HistoryTimelineSelectedPathSnapshotBody(
+                new HistoryRowId(ReadString(root, "headRowId")),
+                ReadString(root, "rowRootDigest"),
+                ReadString(root, "endRootDigest"),
+                ReadInt32(root, "memberCount")
+            );
+        },
+        Encode,
+        "selected-path snapshot"
+    );
+
     private static readonly JsonWriterOptions WriterOptions = new() {
         Indented = false,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,

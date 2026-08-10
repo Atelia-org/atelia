@@ -19,6 +19,11 @@ read-only/no-secret diagnostics与各durability domain的destructive authority�
 - bounded progress：active recipe、Timeline head、fulfilled-through、missing assignments；HistoryLoad仅表示Timeline cadence；
 - current CLI自写parser的strict command/confirmation/error mapping。
 
+WP-01C已经提供typed library actions：`OpenReader/Inspect/Verify/Backup/Restore/Abandon`。本包只做System.CommandLine/文本
+映射与operator confirmation，不重开backend选择、codec、path discovery或transaction；CLI normal discovery只用canonical locator，
+不能扫描orphan/backup/latest。Restore要求current canonical schema/head仍可读且与manifest exact；head/schema不可读时只允许
+explicit Abandon，不把restore降格成reset。
+
 ## Candidate boundary
 
 CLI入口必须是明确candidate command group，不能成为long-livedfeature flag。diagnostic命令read-only/no-create且Completion

@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-02：Content-addressed Contracts 与 MaintainerControlPlane
 
-状态：Planned；依赖 WP-01 stable Timeline contracts
+状态：Ready；WP-01 stable Timeline handoff complete；尚未开工
 
 只需加载：目标设计、总计划、WP-01 handoff、本文和 WP-03 摘要。
 
@@ -25,6 +25,11 @@ mutable CAS；Cell 输入identity由exact visible contents计算。本包不存C
 - exact active recipe与Timeline path/bootstrap binding；
 - exact control scope `(repository/session identity, RefId, TimelineId)`；
 - `PutBuildRecipe`使用WP-01只读Timeline witness验证bootstrap ancestor，不读取Grid且witness不进入digest。
+
+WP-02只能消费WP-01C public `HistoryTimelineReader`/`HistoryTimelineReaderHandle`：从closed snapshot读取whole head，通过
+`ReadSelectedRow`或bounded newest-to-oldest path page取得不可伪造的selected row/witness，并由同一Reader的`ValidateWitness`
+复验canonical repository/Ref/Timeline/whole-head/row/descriptor commitment。不得引用SQLite、ledger port、locator codec或
+Coordinator mutation capability；backend Busy/Invalid/Stale保持typed，不按message或global End lookup猜ancestor。
 
 ## Physical carrier decision
 
@@ -92,6 +97,8 @@ fingerprint是telemetry，不是Cell identity。model/connection仅在被明确�
 10. A-v1/A-v2与overlay/full same target产生不同definition/recipe identities；
 11. Family/Maintainer/Recipe完整canonical values在Grid reset和进程重启后仍可重建runtime语义；
 12. `DefinitionRevisionId`从identity model删除；若实现保留human label，只能是明确非authority metadata且不得进入artifact wire。
+13. Timeline selected-path root/snapshot corruption、Reader `Busy`、whole-head `Stale`与handle `Disposed`均在control mutation前typed
+    fail closed；不得重新open、扫描global End或把损坏witness降级成caller fields。
 
 ## No-Go
 

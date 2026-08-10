@@ -31,14 +31,20 @@ public abstract record OnlineSelectedRawCaptureResult {
     public sealed record PartitionPolicyUnavailable(string PolicyDigest)
         : OnlineSelectedRawCaptureResult;
 
+    public sealed record BackendBusy : OnlineSelectedRawCaptureResult;
+
     public sealed record Invalid(string Code, string Detail)
         : OnlineSelectedRawCaptureResult;
 }
 
 internal interface IHistoryTimelineLedgerPort {
-    TimelineHeadRef ReadSnapshot();
-    PartitionPolicyRevision? ReadPolicy(string policyDigest);
-    HistorySegmentDescriptor? ReadRow(HistoryRowId rowId);
+    HistoryTimelineStoreReadResult<TimelineHeadRef> ReadSnapshot();
+    HistoryTimelineStoreReadResult<PartitionPolicyRevision> ReadPolicy(
+        string policyDigest
+    );
+    HistoryTimelineStoreReadResult<HistorySegmentDescriptor> ReadRow(
+        HistoryRowId rowId
+    );
     HistoryTimelinePolicyPutResult PutPolicy(
         PartitionPolicyRevision policy
     );
@@ -57,9 +63,71 @@ internal interface IHistoryTimelineLedgerPort {
         TimelineHeadRef expectedWholeHead,
         EventAddress endInclusive
     );
+    HistoryTimelineBoundaryProbeOpenResult OpenBoundaryProbe(
+        TimelineHeadRef expectedWholeHead
+    );
     HistoryTimelineReconcileResult ReconcileSelectedPath(
         HistoryTimelineReconcileCandidate candidate
     );
+    HistoryTimelineStorePathPageResult ReadSelectedPathPage(
+        TimelineHeadRef expectedWholeHead,
+        HistoryRowId? startAt,
+        int maximumRows
+    );
+}
+
+internal interface IHistoryTimelineBoundaryProbe : IDisposable {
+    SelectedHistoryBoundaryResult Probe(EventAddress endInclusive);
+}
+
+internal abstract record HistoryTimelineBoundaryProbeOpenResult {
+    private HistoryTimelineBoundaryProbeOpenResult() { }
+
+    internal sealed record Opened(IHistoryTimelineBoundaryProbe Probe)
+        : HistoryTimelineBoundaryProbeOpenResult;
+
+    internal sealed record StaleTimelineHead(TimelineHeadRef Actual)
+        : HistoryTimelineBoundaryProbeOpenResult;
+
+    internal sealed record Busy
+        : HistoryTimelineBoundaryProbeOpenResult;
+
+    internal sealed record Invalid(string Code, string Detail)
+        : HistoryTimelineBoundaryProbeOpenResult;
+}
+
+internal abstract record HistoryTimelineStoreReadResult<T> {
+    private HistoryTimelineStoreReadResult() { }
+
+    internal sealed record Found(T Value)
+        : HistoryTimelineStoreReadResult<T>;
+
+    internal sealed record Absent : HistoryTimelineStoreReadResult<T>;
+
+    internal sealed record Busy : HistoryTimelineStoreReadResult<T>;
+
+    internal sealed record UnsupportedSchema(int SchemaVersion)
+        : HistoryTimelineStoreReadResult<T>;
+
+    internal sealed record Invalid(string Code, string Detail)
+        : HistoryTimelineStoreReadResult<T>;
+}
+
+internal abstract record HistoryTimelineStorePathPageResult {
+    private HistoryTimelineStorePathPageResult() { }
+
+    internal sealed record Page(
+        IReadOnlyList<HistorySegmentDescriptor> Rows,
+        HistoryRowId? Next
+    ) : HistoryTimelineStorePathPageResult;
+
+    internal sealed record StaleTimelineHead(TimelineHeadRef Actual)
+        : HistoryTimelineStorePathPageResult;
+
+    internal sealed record Busy : HistoryTimelineStorePathPageResult;
+
+    internal sealed record Invalid(string Code, string Detail)
+        : HistoryTimelineStorePathPageResult;
 }
 
 /// <summary>
@@ -189,6 +257,8 @@ public abstract record SelectedHistoryRowResult {
     public sealed record StaleTimelineHead(TimelineHeadRef Actual)
         : SelectedHistoryRowResult;
 
+    public sealed record BackendBusy : SelectedHistoryRowResult;
+
     public sealed record Invalid(string Code, string Detail)
         : SelectedHistoryRowResult;
 }
@@ -203,6 +273,8 @@ internal abstract record SelectedHistoryBoundaryResult {
 
     public sealed record StaleTimelineHead(TimelineHeadRef Actual)
         : SelectedHistoryBoundaryResult;
+
+    public sealed record BackendBusy : SelectedHistoryBoundaryResult;
 
     public sealed record Invalid(string Code, string Detail)
         : SelectedHistoryBoundaryResult;
@@ -243,6 +315,8 @@ public abstract record HistorySegmentOpenResult {
     public sealed record PartitionAlgorithmUnavailable(string AlgorithmId)
         : HistorySegmentOpenResult;
 
+    public sealed record BackendBusy : HistorySegmentOpenResult;
+
     public sealed record Invalid(string Code, string Detail)
         : HistorySegmentOpenResult;
 }
@@ -271,6 +345,8 @@ public abstract record HistoryTimelineReconcileResult {
     public sealed record PartitionPolicyUnavailable(string PolicyDigest)
         : HistoryTimelineReconcileResult;
 
+    public sealed record BackendBusy : HistoryTimelineReconcileResult;
+
     public sealed record Invalid(string Code, string Detail)
         : HistoryTimelineReconcileResult;
 }
@@ -288,6 +364,8 @@ public abstract record HistoryTimelineOfflineBuilderOpenResult {
 
     public sealed record StaleTimelineHead(TimelineHeadRef Actual)
         : HistoryTimelineOfflineBuilderOpenResult;
+
+    public sealed record BackendBusy : HistoryTimelineOfflineBuilderOpenResult;
 
     public sealed record Invalid(string Code, string Detail)
         : HistoryTimelineOfflineBuilderOpenResult;
@@ -309,6 +387,9 @@ public abstract record HistoryTimelineOfflineStepResult {
         HistoryPartitionResult.LimitExceeded Partition
     ) : HistoryTimelineOfflineStepResult;
 
+    public sealed record StoreLimitExceeded(string Limit)
+        : HistoryTimelineOfflineStepResult;
+
     public sealed record RawHeadChanged(
         EventAddress Expected,
         EventAddress? Observed
@@ -325,6 +406,8 @@ public abstract record HistoryTimelineOfflineStepResult {
 
     public sealed record PartitionAlgorithmUnavailable(string AlgorithmId)
         : HistoryTimelineOfflineStepResult;
+
+    public sealed record BackendBusy : HistoryTimelineOfflineStepResult;
 
     public sealed record Invalid(string Code, string Detail)
         : HistoryTimelineOfflineStepResult;
@@ -370,6 +453,8 @@ public abstract record HistoryTimelinePlanResult {
     public sealed record PartitionAlgorithmUnavailable(string AlgorithmId)
         : HistoryTimelinePlanResult;
 
+    public sealed record BackendBusy : HistoryTimelinePlanResult;
+
     public sealed record Invalid(string Code, string Detail)
         : HistoryTimelinePlanResult;
 }
@@ -386,6 +471,8 @@ public abstract record HistoryTimelinePolicyCasResult {
     public sealed record PartitionPolicyUnavailable(string PolicyDigest)
         : HistoryTimelinePolicyCasResult;
 
+    public sealed record BackendBusy : HistoryTimelinePolicyCasResult;
+
     public sealed record Invalid(string Code, string Detail)
         : HistoryTimelinePolicyCasResult;
 }
@@ -395,6 +482,9 @@ public abstract record HistoryTimelinePolicyPutResult {
 
     public sealed record Stored : HistoryTimelinePolicyPutResult;
     public sealed record AlreadyPresent : HistoryTimelinePolicyPutResult;
+    public sealed record LimitExceeded(string Limit)
+        : HistoryTimelinePolicyPutResult;
+    public sealed record BackendBusy : HistoryTimelinePolicyPutResult;
     public sealed record Invalid(string Code, string Detail)
         : HistoryTimelinePolicyPutResult;
 }
@@ -415,6 +505,11 @@ public abstract record HistoryTimelineCommitResult {
 
     public sealed record PartitionPolicyUnavailable(string PolicyDigest)
         : HistoryTimelineCommitResult;
+
+    public sealed record LimitExceeded(string Limit)
+        : HistoryTimelineCommitResult;
+
+    public sealed record BackendBusy : HistoryTimelineCommitResult;
 
     public sealed record Invalid(string Code, string Detail)
         : HistoryTimelineCommitResult;

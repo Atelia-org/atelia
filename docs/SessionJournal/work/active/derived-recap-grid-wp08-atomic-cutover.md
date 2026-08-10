@@ -22,6 +22,8 @@ migration、feature flag或compatibility layer。
 ## In scope
 
 - normal Galatea/CLI composition切新Timeline/Grid/ControlPlane/Manager/Composer；
+- normal composition只经`HistoryTimelineFactory.Create/Open(SessionJournalReadView, ...)`与public Reader/Coordinator capability；
+  不引用SQLite/internal ledger、不注入backend selector，并在Host lifecycle结束时dispose handle；
 - strict new config与operator messages；
 - Prepared/Started fast path保持先于DerivedRecap active composition；Prepared按frozen identity exact bind Host registry，Started
   Refuse先于client creation；
@@ -71,6 +73,7 @@ archive/evidence与migration ledger自身。current `host-integration`若与exac
   control carrier按正式契约写各自authority，不套用错误的全E2E raw不变断言；
 - Timeline/control survive Grid reset；
 - old sidecar bytes inert，不被normal path扫描/修改；
+- abandoned Timeline DB、backup与orphan同样inert；normal path只跟随exact per-Ref locator，不按mtime/目录枚举找latest；
 - wrong confirmation/reset target零mutation；
 - Prepared/Started删除DerivedRecap active config/Grid后仍按frozen identity恢复成功。
 - old v8 sidecar即使corrupt也inert，normal new path不scan/mutate；

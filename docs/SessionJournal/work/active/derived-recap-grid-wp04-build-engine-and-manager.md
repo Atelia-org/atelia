@@ -22,6 +22,8 @@
 - progress完全由Store missing query恢复；
 - operation开始冻结`{whole TimelineHeadRef, canonical recipe+definitions, through row}`；whole head包括Timeline/Ref/head row/
   active policy/selected raw fence/generation，RowBuildSpec直接携带typed `HistorySegmentDescriptorDigest`；
+- operation的Timeline输入只来自WP-01C Reader snapshot/path/witness；composition可持有factory handle，但Manager不得接触
+  Coordinator、SQLite、ledger port或自行从global End/ordinal解析row；
 - candidate catch-up与可promote proof；active recipe CAS是显式后续control operation，不由Manager自动完成；
 - 同一Send多个safe lifecycle boundary下的幂等re-entry。
 
@@ -84,6 +86,8 @@ item throw/cancel不得抹掉已成功siblings。
 9. one sibling failure：drain started siblings、无partial RowView；
 10. caller cancel与budget preflight零超额dispatch；
 11. branch/head/recipe stale在首call前fail closed；
+    Timeline handle已dispose、Reader Busy/Invalid、selected-path root/snapshot corruption、whole-head Stale或witness不属于exact frozen
+    whole head也必须在首call前typed fail closed；
 12. mystery fixture：`XSuspicion` overlay、future interaction、full rebuild retroactive wavefront。
 13. Idle/pre-observation、ObservationAccepted、ToolResultObserved重复进入均幂等；非replay-safe边界零row commit；
 14. build fulfilled后先返回promotable proof；ControlPlane CAS crash/conflict不会污染active view，active暂时unfulfilled时Getter fail closed。

@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：Proposed target design；WP-00、WP-01A、WP-01B complete，WP-01C Ready；尚未切换 current production
+状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C complete，WP-02 Ready；尚未切换 current production
 
 ## 1. Intent
 
@@ -827,17 +827,21 @@ dependency DAG的二维投影视图，不是每个坐标只有一个可变值的
 ## 11. Open decisions before implementation
 
 1. SQLite spike是否通过查询、crash、版本、可观察性与复杂度gate；若失败才重新打开Directory+JSON候选。
-2. Timeline ledger的物理backend、backup与operator abandon边界；它不能和可随意reset的Grid数据库同生命周期。
-3. `MaintainerControlPlane`采用raw SessionJournal action、独立control journal还是versioned operator config；production必须
+2. `MaintainerControlPlane`采用raw SessionJournal action、独立control journal还是versioned operator config；production必须
    选且只选一个carrier，并明确Host/Agent写权限。
-4. WP-01A锁定canonical raw commitment/preimage；WP-01C只裁决durable locator与可重建索引形状。
-5. candidate/旧cell retention与GC规则。
+3. candidate/旧cell retention与GC规则。
+
+Timeline durable decision已由WP-01C关闭：唯一production backend是独立SQLite ledger（`DELETE` +
+`synchronous=EXTRA`），per-Ref canonical locator、verified backup/restore与explicit abandon各自有closed typed library action；它与
+可reset的Grid数据库保持独立lifecycle。两路independent review与final serial validation均GO，现已成为WP-02的complete handoff；
+这不表示production cutover，且Timeline V1 durable lease/fsync仍只在Linux上启用。
 
 ## 12. Implementation boundary
 
 本文通过只表示Shape/Rule锁定及SQLite目标选择，不表示旧系统迁移方案或production implementation已经批准。
 施工计划已经拆为WP-00至WP-08；WP-00 baseline/walking skeleton、WP-01A Timeline contracts/partition与WP-01B raw
-integration已经完成，WP-01C durable ledger处于Ready（仍待implementation）。
+integration、WP-01C durable ledger均已完成，WP-02 Ready。WP-01C final evidence为Timeline 156/156、raw 19/19、walking 13/13、
+public surface 2/2、solution build 0 warning / 0 error、docs 15/0、diff clean与两路independent GO；commit evidence由containing commit提供。
 每个backend、carrier或cutover选择仍
 必须在所属工作包取得实证Go，不因本文或计划存在而预先视为implemented/production-ready。
 

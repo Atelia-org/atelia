@@ -30,6 +30,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
+                "Microsoft.Data.Sqlite@10.0.10",
                 "Microsoft.Bcl.Memory@9.0.17",
                 "Microsoft.ML.Tokenizers@2.0.0",
                 "Microsoft.ML.Tokenizers.Data.O200kBase@2.0.0"
@@ -54,6 +55,65 @@ public sealed class AssemblyDependencyBoundaryTests {
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RecapGrid.Manager", combined,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SqliteIsTheOnlyProductionTimelineBackendAndHasOneDirectPin() {
+        string root = FindRepositoryRoot();
+        string timelineProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.HistoryTimeline",
+            "SessionJournal.HistoryTimeline.csproj"
+        );
+        string[] newProjects = [.. new[] {
+            Path.Combine(root, "prototypes"),
+            Path.Combine(root, "tests")
+        }.SelectMany(static parent => Directory.EnumerateDirectories(
+            parent,
+            "SessionJournal.*",
+            SearchOption.TopDirectoryOnly
+        )).Where(static directory => directory.Contains(
+            "SessionJournal.HistoryTimeline",
+            StringComparison.Ordinal
+        ) || directory.Contains(
+            "SessionJournal.RecapGrid",
+            StringComparison.Ordinal
+        )).SelectMany(static directory => Directory.EnumerateFiles(
+            directory,
+            "*.csproj",
+            SearchOption.TopDirectoryOnly
+        ))];
+        string sqliteOwner = Assert.Single(newProjects, project =>
+            DirectPackageReferences(project).Contains(
+                "Microsoft.Data.Sqlite@10.0.10",
+                StringComparer.Ordinal
+            )
+        );
+        Assert.Equal(
+            Path.GetFullPath(timelineProject),
+            Path.GetFullPath(sqliteOwner)
+        );
+
+        Assembly product = Assembly.LoadFrom(Path.Combine(
+            AppContext.BaseDirectory,
+            "Atelia.SessionJournal.HistoryTimeline.dll"
+        ));
+        Assert.Null(product.GetType(
+            "Atelia.SessionJournal.HistoryTimeline.InMemoryHistoryTimelineLedger",
+            throwOnError: false
+        ));
+        Assert.DoesNotContain(
+            product.GetExportedTypes(),
+            static type => type.Name.Contains(
+                "Sqlite",
+                StringComparison.OrdinalIgnoreCase
+            ) || string.Equals(
+                type.Name,
+                "IHistoryTimelineLedgerPort",
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
     }
 
     [Fact]

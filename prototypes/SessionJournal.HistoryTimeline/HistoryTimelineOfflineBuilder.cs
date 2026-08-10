@@ -26,13 +26,50 @@ public sealed class HistoryTimelineOfflineBuilder {
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(expectedWholeHead);
+        using HistoryTimelineLifetime.Operation? operation =
+            _coordinator.TryEnterOperationForOffline();
+        if (operation is null) {
+            return Fail(new HistoryTimelineOfflineStepResult.Invalid(
+                "HistoryTimelineDisposed",
+                "The HistoryTimeline handle has been disposed."
+            ));
+        }
         if (_terminal) {
             return new HistoryTimelineOfflineStepResult.Invalid(
                 "OfflineBuilderTerminal",
                 "The offline builder must be reopened after a terminal or failed step."
             );
         }
-        TimelineHeadRef actual = _coordinator.ReadSnapshot();
+        HistoryTimelineSnapshotResult snapshot =
+            _coordinator.ReadSnapshot();
+        if (snapshot is HistoryTimelineSnapshotResult.Busy) {
+            return Fail(new HistoryTimelineOfflineStepResult
+                .BackendBusy());
+        }
+        if (snapshot is HistoryTimelineSnapshotResult
+                .UnsupportedSchema snapshotSchema) {
+            return Fail(new HistoryTimelineOfflineStepResult.Invalid(
+                "TimelineStoreUnsupportedSchema",
+                HistoryTimelineCoordinator.UnsupportedSchemaDetail(
+                    snapshotSchema.SchemaVersion
+                )
+            ));
+        }
+        if (snapshot is HistoryTimelineSnapshotResult.Invalid
+            snapshotInvalid) {
+            return Fail(new HistoryTimelineOfflineStepResult.Invalid(
+                snapshotInvalid.Code,
+                snapshotInvalid.Detail
+            ));
+        }
+        if (snapshot is not HistoryTimelineSnapshotResult
+                .Available available) {
+            return Fail(new HistoryTimelineOfflineStepResult.Invalid(
+                "TimelineHeadUnavailable",
+                "The Timeline ledger has no canonical head."
+            ));
+        }
+        TimelineHeadRef actual = available.Head;
         if (actual != expectedWholeHead) {
             return Fail(new HistoryTimelineOfflineStepResult
                 .StaleTimelineHead(actual));
@@ -44,15 +81,40 @@ public sealed class HistoryTimelineOfflineBuilder {
             return Fail(new HistoryTimelineOfflineStepResult
                 .RawHeadChanged(capturedHead, observedBefore));
         }
-        PartitionPolicyRevision? policy =
+        HistoryTimelineStoreReadResult<PartitionPolicyRevision>
+            policyRead =
             _coordinator.ReadPolicyForOffline(
                 expectedWholeHead.ActivePartitionPolicyDigest
             );
-        if (policy is null) {
-            return Fail(new HistoryTimelineOfflineStepResult
-                .PartitionPolicyUnavailable(
-                    expectedWholeHead.ActivePartitionPolicyDigest
+        PartitionPolicyRevision policy;
+        switch (policyRead) {
+            case HistoryTimelineStoreReadResult<
+                    PartitionPolicyRevision>.Found found:
+                policy = found.Value;
+                break;
+            case HistoryTimelineStoreReadResult<
+                    PartitionPolicyRevision>.Busy:
+                return Fail(new HistoryTimelineOfflineStepResult
+                    .BackendBusy());
+            case HistoryTimelineStoreReadResult<
+                    PartitionPolicyRevision>.Invalid invalid:
+                return Fail(new HistoryTimelineOfflineStepResult.Invalid(
+                    invalid.Code,
+                    invalid.Detail
                 ));
+            case HistoryTimelineStoreReadResult<
+                    PartitionPolicyRevision>.UnsupportedSchema policySchema:
+                return Fail(new HistoryTimelineOfflineStepResult.Invalid(
+                    "TimelineStoreUnsupportedSchema",
+                    HistoryTimelineCoordinator.UnsupportedSchemaDetail(
+                        policySchema.SchemaVersion
+                    )
+                ));
+            default:
+                return Fail(new HistoryTimelineOfflineStepResult
+                    .PartitionPolicyUnavailable(
+                        expectedWholeHead.ActivePartitionPolicyDigest
+                    ));
         }
         if (!HistoryPartitionAlgorithms.IsSupported(
                 policy.PartitionAlgorithmId)) {
@@ -73,12 +135,33 @@ public sealed class HistoryTimelineOfflineBuilder {
         }
         HistorySegmentDescriptor? predecessor = null;
         if (expectedWholeHead.HeadRowId is { } previousRowId) {
-            predecessor = _coordinator.ReadRowForOffline(
-                previousRowId
-            );
-            if (predecessor is null) {
-                return Fail(new HistoryTimelineOfflineStepResult
-                    .Invalid(
+            HistoryTimelineStoreReadResult<HistorySegmentDescriptor>
+                predecessorRead = _coordinator.ReadRowForOffline(
+                    previousRowId
+                );
+            switch (predecessorRead) {
+                case HistoryTimelineStoreReadResult<
+                        HistorySegmentDescriptor>.Found found:
+                    predecessor = found.Value;
+                    break;
+                case HistoryTimelineStoreReadResult<
+                        HistorySegmentDescriptor>.Busy:
+                    return Fail(new HistoryTimelineOfflineStepResult
+                        .BackendBusy());
+                case HistoryTimelineStoreReadResult<
+                        HistorySegmentDescriptor>.Invalid invalid:
+                    return Fail(new HistoryTimelineOfflineStepResult
+                        .Invalid(invalid.Code, invalid.Detail));
+                case HistoryTimelineStoreReadResult<
+                        HistorySegmentDescriptor>.UnsupportedSchema rowSchema:
+                    return Fail(new HistoryTimelineOfflineStepResult.Invalid(
+                        "TimelineStoreUnsupportedSchema",
+                        HistoryTimelineCoordinator.UnsupportedSchemaDetail(
+                            rowSchema.SchemaVersion
+                        )
+                    ));
+                default:
+                    return Fail(new HistoryTimelineOfflineStepResult.Invalid(
                         "OfflinePredecessorUnavailable",
                         "The exact selected Timeline predecessor is unavailable."
                     ));
@@ -240,6 +323,12 @@ public sealed class HistoryTimelineOfflineBuilder {
                         .PartitionPolicyUnavailable(
                             unavailable.PolicyDigest
                         )),
+                HistoryTimelineCommitResult.BackendBusy
+                    => Fail(new HistoryTimelineOfflineStepResult
+                        .BackendBusy()),
+                HistoryTimelineCommitResult.LimitExceeded limited
+                    => Fail(new HistoryTimelineOfflineStepResult
+                        .StoreLimitExceeded(limited.Limit)),
                 HistoryTimelineCommitResult.Invalid invalid
                     => Fail(new HistoryTimelineOfflineStepResult.Invalid(
                         invalid.Code,
@@ -284,7 +373,36 @@ public sealed class HistoryTimelineOfflineBuilder {
             return Fail(new HistoryTimelineOfflineStepResult
                 .RawHeadChanged(capturedHead, observed));
         }
-        TimelineHeadRef actual = _coordinator.ReadSnapshot();
+        HistoryTimelineSnapshotResult snapshot =
+            _coordinator.ReadSnapshot();
+        if (snapshot is HistoryTimelineSnapshotResult.Busy) {
+            return Fail(new HistoryTimelineOfflineStepResult
+                .BackendBusy());
+        }
+        if (snapshot is HistoryTimelineSnapshotResult
+                .UnsupportedSchema terminalSchema) {
+            return Fail(new HistoryTimelineOfflineStepResult.Invalid(
+                "TimelineStoreUnsupportedSchema",
+                HistoryTimelineCoordinator.UnsupportedSchemaDetail(
+                    terminalSchema.SchemaVersion
+                )
+            ));
+        }
+        if (snapshot is HistoryTimelineSnapshotResult.Invalid
+            snapshotInvalid) {
+            return Fail(new HistoryTimelineOfflineStepResult.Invalid(
+                snapshotInvalid.Code,
+                snapshotInvalid.Detail
+            ));
+        }
+        if (snapshot is not HistoryTimelineSnapshotResult
+                .Available available) {
+            return Fail(new HistoryTimelineOfflineStepResult.Invalid(
+                "TimelineHeadUnavailable",
+                "The Timeline ledger has no canonical head."
+            ));
+        }
+        TimelineHeadRef actual = available.Head;
         if (actual != expectedWholeHead) {
             return Fail(new HistoryTimelineOfflineStepResult
                 .StaleTimelineHead(actual));

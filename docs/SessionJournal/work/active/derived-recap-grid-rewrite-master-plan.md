@@ -1,6 +1,6 @@
 # DerivedRecap Grid Rewrite 总施工计划
 
-状态：Implementation program active；WP-00、WP-01A、WP-01B complete，WP-01C Ready；current production尚未切换
+状态：Implementation program active；WP-00、WP-01A、WP-01B、WP-01C complete，WP-02 Ready；current production尚未切换
 
 目标设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)
 
@@ -63,9 +63,9 @@ WP-01A Timeline contracts/partition [complete]
   |
 WP-01B Timeline raw integration [complete]
   |
-WP-01C Timeline durable ledger [Ready; implementation planned]
+WP-01C Timeline durable ledger [complete]
   |
-WP-02 Content-addressed contracts + MaintainerControlPlane
+WP-02 Content-addressed contracts + MaintainerControlPlane [Ready]
   |
 WP-03 SQLite RecapGridStore
   |
@@ -81,6 +81,9 @@ WP-07B Galatea/online vertical candidate
   |
 WP-08 Atomic production cutover + legacy deletion
 ```
+
+WP-01C已取得两路independent review GO与final serial validation，WP-02现为Ready。该handoff不改变current production；
+production cutover仍只属于WP-08。
 
 工作包文档：
 

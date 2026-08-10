@@ -117,11 +117,21 @@ rg -n "derived/recap/v4|old v4|v4-v7" \
 
 New Grid `reset/rebuild`只处理new Grid artifacts。它不得扫描、解释、fallback、auto-delete或声称已经处理上述old roots。
 
+WP-01C新增的target root是`<repo>/derived/history-timeline/v1/`，exact inventory只有
+`locks/<ref>.lock`、`refs/<ref>/locator.json`与`refs/<ref>/timelines/<timeline>.sqlite`。它不是old-root migration对象：normal
+runtime只跟随canonical locator，不扫描old recap roots、orphan Timeline DB或backup；Grid reset也不处理它。single SQLite backend、
+backup/restore/abandon与public factory/Reader已完成并取得两路independent review GO；final serial evidence为Timeline 156/156、raw 19/19、
+walking 13/13、public surface 2/2、solution build 0 warning / 0 error、docs 15/0与diff clean。包含本次变更的containing commit作为
+commit evidence，不在提交前虚构hash。current production仍未cutover，因此不提前关闭任何WP-08 deletion entry。
+这里的exact inventory只列normal canonical slots：crash可留下unreferenced Timeline SQLite、dot-temp或exact SQLite rollback journal；它们
+不参与normal discovery/latest选择，只能由SQLite recovery或后续explicit inventory/retention action处理。V1 durable lease/fsync为
+Linux-only，其他platform返回typed unsupported，不提供弱durability fallback。
+
 ## 5. Source and production ledger
 
 | ID | Legacy symbol/path | Current callers/evidence | Behavior/invariant worth preserving | Target owner | Disposition | Target WP | Closure/deletion gate | Status |
 |---|---|---|---|---|---|---|---|---|
-| L01 | `SessionHistoryPlanning*`、`SessionCurrentLineagePrefix`、bounded window/setup proofs | `SessionHistoryPlanning.cs:9-724`；`SessionJournalReadView.cs:52-172`；old Planner campaign/rebuild consumers | raw selected Parent lineage、bounded planning window、setup proof、typed BeyondPrefix | SessionJournal raw API + HistoryTimeline consumer | Preserve | WP-01A/B | 原raw/lineage/setup tests green；Timeline不复制raw authority | Open — WP-01A/B narrow gate complete：Timeline 90/90、raw audit 19/19、walking architecture 12/12、两条independent GO；按ledger规则等待commit evidence再标Closed |
+| L01 | `SessionHistoryPlanning*`、`SessionCurrentLineagePrefix`、bounded window/setup proofs | `SessionHistoryPlanning.cs:9-724`；`SessionJournalReadView.cs:52-172`；old Planner campaign/rebuild consumers | raw selected Parent lineage、bounded planning window、setup proof、typed BeyondPrefix | SessionJournal raw API + HistoryTimeline consumer | Preserve | WP-01A/B | 原raw/lineage/setup tests green；Timeline不复制raw authority | Closed — WP-01 complete：Timeline 156/156、raw audit 19/19、walking architecture 13/13、public surface 2/2、solution 0W/0E、docs 15/0、diff clean、两路independent GO；containing commit为commit evidence |
 | L02 | `ICoherentContextCandidateSource`、`ISessionContextLifecycleCoordinator`、candidate/contribution contracts | `SessionContextCandidateContracts.cs:12-229`；SessionJournal Engine与两个Hosts | neutral selection/materialization、strict status、bounded contributions、SessionJournal-owned raw-tail fold | SessionJournal core + neutral Grid adapter | Preserve | WP-05 | new adapter通过neutral contract；SessionJournal csproj无concrete Grid reference | Open |
 | L03 | Prepared/request reconstruction：`SessionCoherentRequestRecipe`、`SessionPreparedRequestReconstructor`、snapshot/request hashing、runtime recovery | SessionJournal Engine/audit/recovery；Galatea/CLI frozen branches | Prepared bytes自足；Started Refuse；frozen completion identity exact bind；不重新读取active derived state | SessionJournal core + Host registry | Preserve | WP-05/07B/08 | Prepared/Started matrix byte-identical、零active Grid/control/current-route read | Open |
 | L04 | `HistoryLoadUnit`、`IHistoryUnitLoadEstimator`、`RecapHistoryLoadProjector`、`O200kBaseHistoryUnitLoadEstimator` | baseline：old Planner三文件及Planner/CLI/Galatea defaults；WP-01A：`SessionJournal.HistoryTimeline/HistoryLoadContracts.cs`、`HistoryLoadProjector.cs`、`O200kBaseHistoryUnitLoadEstimator.cs` | provider-neutral HistoryLoad identity、framing、bounds、goldens；不等同provider token | HistoryTimeline | Move | WP-01A | estimator/projector 25-case baseline与new Timeline tests green；old Planner declaration/path与duplicate `EstimatorId` scan zero | Closed — final tail Timeline 54/54、Planner 42/42、solution build 0/0，independent gate P0/P1=0 |
@@ -151,7 +161,7 @@ New Grid `reset/rebuild`只处理new Grid artifacts。它不得扫描、解释�
 
 | ID | Current tests/project | Preserved behavior or disposition reason | Disposition | Target WP | Closure gate | Status |
 |---|---|---|---|---|---|---|
-| T01 | `SessionHistoryPlanningTests`、`SessionBoundedLineageTests`、`SessionSelectedLineageAuditTests`、`SessionRawRangeHasherTests`、`SessionHistorySemanticCommitmentTests`、`SessionTailContextProjectionTests`、`SessionPrepared*`、candidate contract/route tests | raw lineage/setup/range commitment、semantic identity、SessionJournal-owned tail fold、neutral candidate、Prepared/Started contracts | Preserve | WP-01/05/07B/08 | 持续green；无concrete Grid dependency进入SessionJournal | Open — WP-01 raw/audit slice complete（19/19且independent GO）；WP-05/07B/08 neutral/recovery/cutover slices仍未实施 |
+| T01 | `SessionHistoryPlanningTests`、`SessionBoundedLineageTests`、`SessionSelectedLineageAuditTests`、`SessionRawRangeHasherTests`、`SessionHistorySemanticCommitmentTests`、`SessionTailContextProjectionTests`、`SessionPrepared*`、candidate contract/route tests | raw lineage/setup/range commitment、semantic identity、SessionJournal-owned tail fold、neutral candidate、Prepared/Started contracts | Preserve | WP-01/05/07B/08 | 持续green；无concrete Grid dependency进入SessionJournal | Open — WP-01 slice complete（Timeline 156/156、raw 19/19、walking 13/13、public 2/2、两路independent GO）；WP-05/07B/08 neutral/recovery/cutover slices仍未实施 |
 | T02 | `DerivedRecapPreparedRecoveryIntegrationTests` | 保留“Prepared后derived Store删除仍exact resume”，替换v8 fixture | Rewrite | WP-07B/08 | Grid/control删除与throwing collaborators版本green；移除old Store/Planner project refs | Open |
 | T03 | `DerivedRecapV8CodecCandidateTests` | v8 wire/layout-specific | Delete | WP-08 | WP-02/03 new canonical codec/schema tests先green | Open |
 | T04 | `DerivedRecapEpochStoreCandidateTests`、`DerivedRecapEpochCrashRecoveryTests` | immutable/crash/reset/strict read行为迁到SQLite/Grid；Building/Published mechanics不保留 | Rewrite | WP-03/05 | new Store crash/contention/corruption/Getter tests green | Open |
@@ -169,7 +179,9 @@ New Grid `reset/rebuild`只处理new Grid artifacts。它不得扫描、解释�
 Test project/ref inventory：
 
 ```text
-SessionJournal.HistoryTimeline.Tests (WP-01A current HistoryLoad/partition/contracts/codec owner)
+SessionJournal.HistoryTimeline.Tests (WP-01A/B/C HistoryLoad/partition/raw/durable/crash owner；in-memory ledger仅在此test assembly)
+SessionJournal.HistoryTimeline.PublicSurface.Tests (无IVT external Create/Open/Reader/Dispose gate)
+SessionJournal.HistoryTimeline.CrashHarness (WP-01C child-process transaction/locator/backup/restore crash gate)
 SessionJournal.DerivedRecap.Store.Tests
 SessionJournal.DerivedRecap.Store.CrashHarness
 SessionJournal.DerivedRecap.Planner.Tests

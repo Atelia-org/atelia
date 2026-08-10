@@ -27,7 +27,8 @@
 ## Ownership
 
 - GridReader只读取Grid artifacts/fulfilled refs；
-- TimelineReader只读取row descriptors与selection witness；
+- TimelineReader只通过WP-01C public Reader读取closed whole-head snapshot、exact selected row、bounded path page与selection witness；
+  witness必须回到同一Reader `ValidateWitness`，不得构造、拼接或只比公开字段；
 - select/materialize两个phase各读一次ControlPlane snapshot；materialize要求handle-bound active recipe digest仍exact相等；
 - Grid candidate adapter只返回exact row contributions、anchor setups与completion boundary；SessionJournal core继续独立fold raw tail，
   ContextComposer不得接管Prepared/raw request reconstruction；
@@ -65,6 +66,8 @@
     算法先解析current head/active recipe的exact fulfilled view，再沿`PreviousRowViewDigest`链走n步，逐步复验same recipe与
     Timeline predecessor，不扫描任意RowView；
 12. select/materialize间Timeline advance或active recipe promotion返回typed stale；
+    Timeline Reader handle dispose、Busy/Invalid、selected-path root/snapshot corruption、whole-head Stale或locator切换也必须fail closed，
+    不得重新open后把另一Timeline当同一selection；
 13. overlay bootstrap的membership-complete mixed view可读；`PriorInputAligned`/`FullRebuildChain`只是provenance，不是read gate；
 14. 无active nonempty recipe时显式`RawHistoryAuthorized/EmptyLineage`，不以Timeline是否已有sealed row为条件；active recipe
     partial/unfulfilled/Invalid绝不raw fallback；

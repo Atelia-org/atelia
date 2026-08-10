@@ -465,6 +465,116 @@ public sealed class HistoryTimelineContractAndCodecTests {
     }
 
     [Fact]
+    public void DurableEnvelopeCodecsAreExactBoundedAndRejectNonCanonicalJson() {
+        PartitionPolicyRevision policy = Policy(
+            "atelia.tests.history-load.numeric-v1"
+        );
+        var head = new TimelineHeadRef(
+            policy.TimelineId,
+            new RefId(1),
+            headRowId: null,
+            policy.PolicyDigest,
+            selectedRawHeadAtCommit: null,
+            generation: 0
+        );
+        var locator = new ActiveTimelineLocator(
+            head.RefId,
+            head.TimelineId,
+            generation: 0
+        );
+        var manifest = new HistoryTimelineBackupManifest(
+            locator,
+            head,
+            HistoryTimelineHash.Compute(
+                SqliteHistoryTimelineLedger.HeadHashDomain,
+                head.ToCanonicalBytes()
+            ),
+            new string('a', 64),
+            databaseBytes: 1
+        );
+
+        Assert.Equal(
+            head,
+            HistoryTimelineCanonicalCodec.DecodeTimelineHead(
+                head.ToCanonicalBytes()
+            )
+        );
+        Assert.Equal(
+            locator,
+            HistoryTimelineCanonicalCodec.DecodeActiveTimelineLocator(
+                locator.ToCanonicalBytes()
+            )
+        );
+        Assert.Equal(
+            manifest,
+            HistoryTimelineCanonicalCodec
+                .DecodeHistoryTimelineBackupManifest(
+                    HistoryTimelineCanonicalCodec.Encode(manifest)
+                )
+        );
+
+        AssertNonCanonicalRejected(
+            head.ToCanonicalBytes(),
+            static bytes => _ = HistoryTimelineCanonicalCodec
+                .DecodeTimelineHead(bytes)
+        );
+        AssertNonCanonicalRejected(
+            locator.ToCanonicalBytes(),
+            static bytes => _ = HistoryTimelineCanonicalCodec
+                .DecodeActiveTimelineLocator(bytes)
+        );
+        AssertNonCanonicalRejected(
+            HistoryTimelineCanonicalCodec.Encode(manifest),
+            static bytes => _ = HistoryTimelineCanonicalCodec
+                .DecodeHistoryTimelineBackupManifest(bytes)
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            HistoryTimelineCanonicalCodec.DecodeTimelineHead(
+                new byte[
+                    HistoryTimelineStoreLimits.MaximumHeadUtf8Bytes + 1
+                ]
+            )
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            HistoryTimelineCanonicalCodec.DecodeActiveTimelineLocator(
+                new byte[
+                    HistoryTimelineStoreLimits.MaximumLocatorUtf8Bytes + 1
+                ]
+            )
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            HistoryTimelineCanonicalCodec
+                .DecodeHistoryTimelineBackupManifest(
+                    new byte[
+                        HistoryTimelineStoreLimits
+                            .MaximumBackupManifestUtf8Bytes + 1
+                    ]
+                )
+        );
+
+        static void AssertNonCanonicalRejected(
+            byte[] canonical,
+            Action<byte[]> decode
+        ) {
+            byte[] withWhitespace = [.. canonical, (byte)'\n'];
+            Assert.Throws<InvalidDataException>(() => decode(
+                withWhitespace
+            ));
+            string json = Encoding.UTF8.GetString(canonical);
+            byte[] duplicateVersion = Encoding.UTF8.GetBytes(
+                json.Replace(
+                    "{\"v\":1,",
+                    "{\"v\":1,\"v\":1,",
+                    StringComparison.Ordinal
+                )
+            );
+            Assert.Throws<InvalidDataException>(() => decode(
+                duplicateVersion
+            ));
+        }
+    }
+
+    [Fact]
     public void RowProposalRejectsEachExpectedHeadMismatchIndependently() {
         PartitionPolicyRevision policy = Policy(
             "atelia.tests.history-load.numeric-v1"

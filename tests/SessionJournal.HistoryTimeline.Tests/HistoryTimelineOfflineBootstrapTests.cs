@@ -49,14 +49,14 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
         HistoryTimelineOfflineBuilder builder = Assert.IsType<
             HistoryTimelineOfflineBuilderOpenResult.Opened
         >(coordinator.OpenOfflineBuilder(
-            coordinator.ReadSnapshot(),
+            coordinator.ReadSnapshotRequired(),
             cursor
         )).Builder;
 
         HistoryTimelineOfflineStepResult.Committed first =
             Assert.IsType<
                 HistoryTimelineOfflineStepResult.Committed
-            >(builder.BuildNextRow(coordinator.ReadSnapshot()));
+            >(builder.BuildNextRow(coordinator.ReadSnapshotRequired()));
         Assert.Equal(2, first.Descriptor.RawEventCount);
         Assert.Equal(initial.PolicyDigest,
             first.Descriptor.PartitionPolicyDigestAtCreation);
@@ -127,7 +127,7 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
         var rejected = Assert.IsType<
             HistoryTimelineOfflineBuilderOpenResult.Invalid
         >(coordinator.OpenOfflineBuilder(
-            coordinator.ReadSnapshot(),
+            coordinator.ReadSnapshotRequired(),
             cloneCursor
         ));
 
@@ -163,7 +163,7 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
         var rejected = Assert.IsType<
             HistoryTimelineOfflineBuilderOpenResult.Invalid
         >(coordinator.OpenOfflineBuilder(
-            coordinator.ReadSnapshot(),
+            coordinator.ReadSnapshotRequired(),
             cursor
         ));
 
@@ -209,13 +209,13 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
             HistoryTimelineOfflineBuilder firstBuilder = Assert.IsType<
                 HistoryTimelineOfflineBuilderOpenResult.Opened
             >(coordinator.OpenOfflineBuilder(
-                coordinator.ReadSnapshot(),
+                coordinator.ReadSnapshotRequired(),
                 firstCursor
             )).Builder;
             first = Assert.IsType<
                 HistoryTimelineOfflineStepResult.Committed
             >(firstBuilder.BuildNextRow(
-                coordinator.ReadSnapshot()
+                coordinator.ReadSnapshotRequired()
             ));
         }
 
@@ -275,7 +275,7 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
             new InMemoryHistoryTimelineLedger(refId, initial),
             estimator
         );
-        TimelineHeadRef oldHead = coordinator.ReadSnapshot();
+        TimelineHeadRef oldHead = coordinator.ReadSnapshotRequired();
         HistoryTimelineOfflineBuilder builder = Assert.IsType<
             HistoryTimelineOfflineBuilderOpenResult.Opened
         >(coordinator.OpenOfflineBuilder(oldHead, cursor)).Builder;
@@ -332,7 +332,7 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
             new InMemoryHistoryTimelineLedger(refId, policy),
             estimator
         );
-        TimelineHeadRef before = coordinator.ReadSnapshot();
+        TimelineHeadRef before = coordinator.ReadSnapshotRequired();
         HistoryTimelineOfflineBuilder builder = Assert.IsType<
             HistoryTimelineOfflineBuilderOpenResult.Opened
         >(coordinator.OpenOfflineBuilder(before, cursor)).Builder;
@@ -340,7 +340,7 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
         Assert.IsType<HistoryTimelineOfflineStepResult.RawHeadChanged>(
             builder.BuildNextRow(before)
         );
-        Assert.Equal(before, coordinator.ReadSnapshot());
+        Assert.Equal(before, coordinator.ReadSnapshotRequired());
         var terminal = Assert.IsType<
             HistoryTimelineOfflineStepResult.Invalid
         >(builder.BuildNextRow(before));
@@ -393,13 +393,13 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
         HistoryTimelineOfflineBuilder builder = Assert.IsType<
             HistoryTimelineOfflineBuilderOpenResult.Opened
         >(coordinator.OpenOfflineBuilder(
-            coordinator.ReadSnapshot(),
+            coordinator.ReadSnapshotRequired(),
             cursor
         )).Builder;
         HistoryTimelineOfflineStepResult.Committed first =
             Assert.IsType<
                 HistoryTimelineOfflineStepResult.Committed
-            >(builder.BuildNextRow(coordinator.ReadSnapshot()));
+            >(builder.BuildNextRow(coordinator.ReadSnapshotRequired()));
         _ = coordinator.PutPolicy(shrink);
         TimelineHeadRef scheduled = Assert.IsType<
             HistoryTimelinePolicyCasResult.Applied
@@ -414,7 +414,326 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
 
         Assert.Equal("OfflinePolicyRangeCapIncompatible",
             invalid.Code);
-        Assert.Equal(scheduled, coordinator.ReadSnapshot());
+        Assert.Equal(scheduled, coordinator.ReadSnapshotRequired());
+    }
+
+    [Theory]
+    [InlineData("busy")]
+    [InlineData("invalid")]
+    [InlineData("unsupported")]
+    [InlineData("absent")]
+    public void OfflineStep_PreservesPolicyReadOutcome(string outcome) {
+        string path = NewPath();
+        RefId refId;
+        using (SessionJournalEngine writer = CreateWriter(path)) {
+            refId = writer.BranchRefId;
+            _ = writer.AppendObservation("policy outcome");
+        }
+        using var offline = SessionJournalEngine.OpenReadOnly(path);
+        using SessionSelectedLineageForwardCursor cursor =
+            OpenCursor(offline, pageSize: 2);
+        var estimator = new FixedEstimator();
+        PartitionPolicyRevision policy = Policy(
+            new TimelineId(new string('7', 32)),
+            estimator.Id,
+            maxRawEvents: 4
+        );
+        var ledger = new InMemoryHistoryTimelineLedger(refId, policy);
+        var coordinator = new HistoryTimelineCoordinator(
+            path,
+            ledger,
+            estimator
+        );
+        TimelineHeadRef expected = coordinator.ReadSnapshotRequired();
+        HistoryTimelineOfflineBuilder builder = Assert.IsType<
+            HistoryTimelineOfflineBuilderOpenResult.Opened
+        >(coordinator.OpenOfflineBuilder(expected, cursor)).Builder;
+        ledger.ReadPolicyOverride = _ => outcome switch {
+            "busy" => new HistoryTimelineStoreReadResult<
+                PartitionPolicyRevision>.Busy(),
+            "invalid" => new HistoryTimelineStoreReadResult<
+                PartitionPolicyRevision>.Invalid(
+                    "InjectedPolicyInvalid",
+                    "injected"
+                ),
+            "unsupported" => new HistoryTimelineStoreReadResult<
+                PartitionPolicyRevision>.UnsupportedSchema(2),
+            _ => new HistoryTimelineStoreReadResult<
+                PartitionPolicyRevision>.Absent()
+        };
+
+        HistoryTimelineOfflineStepResult result =
+            builder.BuildNextRow(expected);
+
+        if (outcome == "busy") {
+            Assert.IsType<HistoryTimelineOfflineStepResult.BackendBusy>(
+                result
+            );
+        }
+        else if (outcome == "invalid") {
+            Assert.Equal(
+                "InjectedPolicyInvalid",
+                Assert.IsType<HistoryTimelineOfflineStepResult.Invalid>(
+                    result
+                ).Code
+            );
+        }
+        else if (outcome == "unsupported") {
+            Assert.Equal(
+                "TimelineStoreUnsupportedSchema",
+                Assert.IsType<HistoryTimelineOfflineStepResult.Invalid>(
+                    result
+                ).Code
+            );
+        }
+        else {
+            Assert.IsType<HistoryTimelineOfflineStepResult
+                .PartitionPolicyUnavailable>(result);
+        }
+    }
+
+    [Fact]
+    public void OfflineEntryPoints_MapUnsupportedSnapshotSchemaToInvalid() {
+        string path = NewPath();
+        RefId refId;
+        using (SessionJournalEngine writer = CreateWriter(path)) {
+            refId = writer.BranchRefId;
+            _ = writer.AppendObservation("unsupported snapshot");
+        }
+        using var offline = SessionJournalEngine.OpenReadOnly(path);
+        using SessionSelectedLineageForwardCursor cursor =
+            OpenCursor(offline, pageSize: 2);
+        var estimator = new FixedEstimator();
+        PartitionPolicyRevision policy = Policy(
+            new TimelineId(new string('9', 32)),
+            estimator.Id,
+            maxRawEvents: 4
+        );
+        var ledger = new InMemoryHistoryTimelineLedger(refId, policy);
+        var coordinator = new HistoryTimelineCoordinator(
+            path,
+            ledger,
+            estimator
+        );
+        TimelineHeadRef expected = coordinator.ReadSnapshotRequired();
+        ledger.ReadSnapshotOverride = () =>
+            new HistoryTimelineStoreReadResult<TimelineHeadRef>
+                .UnsupportedSchema(2);
+
+        Assert.Equal(
+            "TimelineStoreUnsupportedSchema",
+            Assert.IsType<HistoryTimelineReconcileResult.Invalid>(
+                coordinator.ReconcileSelectedPathOffline(expected, cursor)
+            ).Code
+        );
+
+        ledger.ReadSnapshotOverride = null;
+        HistoryTimelineOfflineBuilder builder = Assert.IsType<
+            HistoryTimelineOfflineBuilderOpenResult.Opened
+        >(coordinator.OpenOfflineBuilder(expected, cursor)).Builder;
+        ledger.ReadSnapshotOverride = () =>
+            new HistoryTimelineStoreReadResult<TimelineHeadRef>
+                .UnsupportedSchema(2);
+
+        Assert.Equal(
+            "TimelineStoreUnsupportedSchema",
+            Assert.IsType<HistoryTimelineOfflineStepResult.Invalid>(
+                builder.BuildNextRow(expected)
+            ).Code
+        );
+    }
+
+    [Fact]
+    public void OfflineTerminalFence_MapsUnsupportedSnapshotSchemaToInvalid() {
+        string path = NewPath();
+        RefId refId;
+        using (SessionJournalEngine writer = CreateWriter(path)) {
+            refId = writer.BranchRefId;
+        }
+        using var offline = SessionJournalEngine.OpenReadOnly(path);
+        using SessionSelectedLineageForwardCursor cursor =
+            OpenCursor(offline, pageSize: 2);
+        var estimator = new FixedEstimator();
+        PartitionPolicyRevision policy = Policy(
+            new TimelineId(new string('a', 32)),
+            estimator.Id,
+            maxRawEvents: 4
+        );
+        var ledger = new InMemoryHistoryTimelineLedger(refId, policy);
+        var coordinator = new HistoryTimelineCoordinator(
+            path,
+            ledger,
+            estimator
+        );
+        TimelineHeadRef expected = coordinator.ReadSnapshotRequired();
+        HistoryTimelineOfflineBuilder builder = Assert.IsType<
+            HistoryTimelineOfflineBuilderOpenResult.Opened
+        >(coordinator.OpenOfflineBuilder(expected, cursor)).Builder;
+        int reads = 0;
+        ledger.ReadSnapshotOverride = () => ++reads == 1
+            ? new HistoryTimelineStoreReadResult<TimelineHeadRef>
+                .Found(expected)
+            : new HistoryTimelineStoreReadResult<TimelineHeadRef>
+                .UnsupportedSchema(2);
+
+        Assert.Equal(
+            "TimelineStoreUnsupportedSchema",
+            Assert.IsType<HistoryTimelineOfflineStepResult.Invalid>(
+                builder.BuildNextRow(expected)
+            ).Code
+        );
+        Assert.Equal(2, reads);
+    }
+
+    [Theory]
+    [InlineData("busy")]
+    [InlineData("invalid")]
+    [InlineData("unsupported")]
+    [InlineData("absent")]
+    public void OfflineStep_PreservesPredecessorReadOutcome(
+        string outcome
+    ) {
+        string path = NewPath();
+        RefId refId;
+        using (SessionJournalEngine writer = CreateWriter(path)) {
+            refId = writer.BranchRefId;
+            _ = writer.AppendObservation("first");
+            _ = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("first answer")]),
+                new CompletionDescriptor("import", "v1", "model-A")
+            );
+            _ = writer.AppendObservation("second");
+        }
+        using var offline = SessionJournalEngine.OpenReadOnly(path);
+        using SessionSelectedLineageForwardCursor cursor =
+            OpenCursor(offline, pageSize: 2);
+        var estimator = new FixedEstimator();
+        PartitionPolicyRevision policy = Policy(
+            new TimelineId(new string('8', 32)),
+            estimator.Id,
+            maxRawEvents: 3
+        );
+        var ledger = new InMemoryHistoryTimelineLedger(refId, policy);
+        var coordinator = new HistoryTimelineCoordinator(
+            path,
+            ledger,
+            estimator
+        );
+        HistoryTimelineOfflineBuilder builder = Assert.IsType<
+            HistoryTimelineOfflineBuilderOpenResult.Opened
+        >(coordinator.OpenOfflineBuilder(
+            coordinator.ReadSnapshotRequired(),
+            cursor
+        )).Builder;
+        TimelineHeadRef first = Assert.IsType<
+            HistoryTimelineOfflineStepResult.Committed
+        >(builder.BuildNextRow(
+            coordinator.ReadSnapshotRequired()
+        )).Head;
+        ledger.ReadRowOverride = _ => outcome switch {
+            "busy" => new HistoryTimelineStoreReadResult<
+                HistorySegmentDescriptor>.Busy(),
+            "invalid" => new HistoryTimelineStoreReadResult<
+                HistorySegmentDescriptor>.Invalid(
+                    "InjectedRowInvalid",
+                    "injected"
+                ),
+            "unsupported" => new HistoryTimelineStoreReadResult<
+                HistorySegmentDescriptor>.UnsupportedSchema(2),
+            _ => new HistoryTimelineStoreReadResult<
+                HistorySegmentDescriptor>.Absent()
+        };
+
+        HistoryTimelineOfflineStepResult result =
+            builder.BuildNextRow(first);
+
+        if (outcome == "busy") {
+            Assert.IsType<HistoryTimelineOfflineStepResult.BackendBusy>(
+                result
+            );
+        }
+        else if (outcome == "invalid") {
+            Assert.Equal(
+                "InjectedRowInvalid",
+                Assert.IsType<HistoryTimelineOfflineStepResult.Invalid>(
+                    result
+                ).Code
+            );
+        }
+        else if (outcome == "unsupported") {
+            Assert.Equal(
+                "TimelineStoreUnsupportedSchema",
+                Assert.IsType<HistoryTimelineOfflineStepResult.Invalid>(
+                    result
+                ).Code
+            );
+        }
+        else {
+            Assert.Equal(
+                "OfflinePredecessorUnavailable",
+                Assert.IsType<HistoryTimelineOfflineStepResult.Invalid>(
+                    result
+                ).Code
+            );
+        }
+    }
+
+    [Theory]
+    [InlineData("busy")]
+    [InlineData("store-limit")]
+    public void OfflineStep_PreservesCommitBackendOutcome(
+        string outcome
+    ) {
+        string path = NewPath();
+        RefId refId;
+        using (SessionJournalEngine writer = CreateWriter(path)) {
+            refId = writer.BranchRefId;
+            _ = writer.AppendObservation("commit outcome");
+            _ = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("commit answer")]),
+                new CompletionDescriptor("import", "v1", "model-A")
+            );
+        }
+        using var offline = SessionJournalEngine.OpenReadOnly(path);
+        using SessionSelectedLineageForwardCursor cursor =
+            OpenCursor(offline, pageSize: 2);
+        var estimator = new FixedEstimator();
+        PartitionPolicyRevision policy = Policy(
+            new TimelineId(new string('9', 32)),
+            estimator.Id,
+            maxRawEvents: 4
+        );
+        var ledger = new InMemoryHistoryTimelineLedger(refId, policy);
+        var coordinator = new HistoryTimelineCoordinator(
+            path,
+            ledger,
+            estimator
+        );
+        TimelineHeadRef expected = coordinator.ReadSnapshotRequired();
+        HistoryTimelineOfflineBuilder builder = Assert.IsType<
+            HistoryTimelineOfflineBuilderOpenResult.Opened
+        >(coordinator.OpenOfflineBuilder(expected, cursor)).Builder;
+        ledger.CommitOverride = _ => outcome == "busy"
+            ? new HistoryTimelineCommitResult.BackendBusy()
+            : new HistoryTimelineCommitResult.LimitExceeded(
+                "MaximumRowCount"
+            );
+
+        HistoryTimelineOfflineStepResult result =
+            builder.BuildNextRow(expected);
+
+        if (outcome == "busy") {
+            Assert.IsType<HistoryTimelineOfflineStepResult.BackendBusy>(
+                result
+            );
+        }
+        else {
+            Assert.Equal(
+                "MaximumRowCount",
+                Assert.IsType<HistoryTimelineOfflineStepResult
+                    .StoreLimitExceeded>(result).Limit
+            );
+        }
     }
 
     [Fact]
@@ -441,13 +760,13 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
         HistoryTimelineOfflineBuilder builder = Assert.IsType<
             HistoryTimelineOfflineBuilderOpenResult.Opened
         >(coordinator.OpenOfflineBuilder(
-            coordinator.ReadSnapshot(),
+            coordinator.ReadSnapshotRequired(),
             cursor
         )).Builder;
 
         var notEnough = Assert.IsType<
             HistoryTimelineOfflineStepResult.NotEnough
-        >(builder.BuildNextRow(coordinator.ReadSnapshot()));
+        >(builder.BuildNextRow(coordinator.ReadSnapshotRequired()));
 
         Assert.Equal(0, notEnough.Partition.RawEventCount);
         Assert.Equal(0, notEnough.Partition.CompletedUnitCount);
@@ -486,7 +805,7 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
         );
         var onlineRows = new List<HistorySegmentDescriptor>();
         for (int index = 0; index < 2; index++) {
-            TimelineHeadRef expected = online.ReadSnapshot();
+            TimelineHeadRef expected = online.ReadSnapshotRequired();
             OnlineSelectedRawCapture capture = Assert.IsType<
                 OnlineSelectedRawCaptureResult.Captured
             >(online.CaptureOnline(expected, offline.ReadView)).Capture;
@@ -509,7 +828,7 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
         HistoryTimelineOfflineBuilder builder = Assert.IsType<
             HistoryTimelineOfflineBuilderOpenResult.Opened
         >(rebuilt.OpenOfflineBuilder(
-            rebuilt.ReadSnapshot(),
+            rebuilt.ReadSnapshotRequired(),
             cursor
         )).Builder;
         var offlineRows = new List<HistorySegmentDescriptor>();
@@ -517,7 +836,7 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
             HistoryTimelineOfflineStepResult.Committed committed =
                 Assert.IsType<
                     HistoryTimelineOfflineStepResult.Committed
-                >(builder.BuildNextRow(rebuilt.ReadSnapshot()));
+                >(builder.BuildNextRow(rebuilt.ReadSnapshotRequired()));
             offlineRows.Add(committed.Descriptor);
         }
 

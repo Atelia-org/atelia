@@ -4,8 +4,8 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal.HistoryTimeline;
 
 /// <summary>
-/// WP-01B semantic ledger. It deliberately has no durability behavior; WP-01C
-/// replaces only this carrier while preserving these whole-head operations.
+/// WP-01B test-only semantic ledger. Production construction is exclusively
+/// backed by the durable SQLite port owned by WP-01C.
 /// </summary>
 internal sealed class InMemoryHistoryTimelineLedger
     : IHistoryTimelineLedgerPort {
@@ -23,6 +23,18 @@ internal sealed class InMemoryHistoryTimelineLedger
     private long _selectedPathSwitchCount;
     private TimelineHeadRef _head;
 
+    internal Func<HistoryTimelineStoreReadResult<TimelineHeadRef>>?
+        ReadSnapshotOverride { get; set; }
+
+    internal Func<string, HistoryTimelineStoreReadResult<
+        PartitionPolicyRevision>>? ReadPolicyOverride { get; set; }
+
+    internal Func<HistoryRowId, HistoryTimelineStoreReadResult<
+        HistorySegmentDescriptor>>? ReadRowOverride { get; set; }
+
+    internal Func<HistoryRowCommitCandidate, HistoryTimelineCommitResult>?
+        CommitOverride { get; set; }
+
     public InMemoryHistoryTimelineLedger(
         RefId refId,
         PartitionPolicyRevision initialPolicy
@@ -39,9 +51,14 @@ internal sealed class InMemoryHistoryTimelineLedger
         );
     }
 
-    public TimelineHeadRef ReadSnapshot() {
+    public HistoryTimelineStoreReadResult<TimelineHeadRef>
+        ReadSnapshot() {
+        if (ReadSnapshotOverride is { } readOverride) {
+            return readOverride();
+        }
         lock (_gate) {
-            return _head;
+            return new HistoryTimelineStoreReadResult<TimelineHeadRef>
+                .Found(_head);
         }
     }
 
@@ -69,16 +86,38 @@ internal sealed class InMemoryHistoryTimelineLedger
         }
     }
 
-    public PartitionPolicyRevision? ReadPolicy(string policyDigest) {
+    public HistoryTimelineStoreReadResult<PartitionPolicyRevision>
+        ReadPolicy(string policyDigest) {
         ArgumentException.ThrowIfNullOrWhiteSpace(policyDigest);
+        if (ReadPolicyOverride is { } readOverride) {
+            return readOverride(policyDigest);
+        }
         lock (_gate) {
-            return _policies.GetValueOrDefault(policyDigest);
+            return _policies.TryGetValue(
+                policyDigest,
+                out PartitionPolicyRevision? policy
+            )
+                ? new HistoryTimelineStoreReadResult<
+                    PartitionPolicyRevision>.Found(policy)
+                : new HistoryTimelineStoreReadResult<
+                    PartitionPolicyRevision>.Absent();
         }
     }
 
-    public HistorySegmentDescriptor? ReadRow(HistoryRowId rowId) {
+    public HistoryTimelineStoreReadResult<HistorySegmentDescriptor>
+        ReadRow(HistoryRowId rowId) {
+        if (ReadRowOverride is { } readOverride) {
+            return readOverride(rowId);
+        }
         lock (_gate) {
-            return _rows.GetValueOrDefault(rowId);
+            return _rows.TryGetValue(
+                rowId,
+                out HistorySegmentDescriptor? row
+            )
+                ? new HistoryTimelineStoreReadResult<
+                    HistorySegmentDescriptor>.Found(row)
+                : new HistoryTimelineStoreReadResult<
+                    HistorySegmentDescriptor>.Absent();
         }
     }
 
@@ -154,6 +193,9 @@ internal sealed class InMemoryHistoryTimelineLedger
         HistoryRowCommitCandidate candidate
     ) {
         ArgumentNullException.ThrowIfNull(candidate);
+        if (CommitOverride is { } commitOverride) {
+            return commitOverride(candidate);
+        }
         lock (_gate) {
             HistoryRowProposal proposal = candidate.Proposal;
             if (_head != proposal.ExpectedHead) {
@@ -412,6 +454,80 @@ internal sealed class InMemoryHistoryTimelineLedger
         }
     }
 
+    public HistoryTimelineBoundaryProbeOpenResult OpenBoundaryProbe(
+        TimelineHeadRef expectedWholeHead
+    ) {
+        ArgumentNullException.ThrowIfNull(expectedWholeHead);
+        lock (_gate) {
+            if (_head != expectedWholeHead) {
+                return new HistoryTimelineBoundaryProbeOpenResult
+                    .StaleTimelineHead(_head);
+            }
+            return new HistoryTimelineBoundaryProbeOpenResult.Opened(
+                new InMemoryBoundaryProbe(
+                    _selectedPath.RowsByEnd,
+                    () => {
+                        lock (_gate) {
+                            if (_selectedPathBoundaryProbeCount
+                                < long.MaxValue) {
+                                _selectedPathBoundaryProbeCount++;
+                            }
+                        }
+                    }
+                )
+            );
+        }
+    }
+
+    public HistoryTimelineStorePathPageResult ReadSelectedPathPage(
+        TimelineHeadRef expectedWholeHead,
+        HistoryRowId? startAt,
+        int maximumRows
+    ) {
+        ArgumentNullException.ThrowIfNull(expectedWholeHead);
+        if (maximumRows is < 1
+            or > HistoryTimelineStoreLimits.MaximumPathPageRows) {
+            return new HistoryTimelineStorePathPageResult.Invalid(
+                "PathPageLimitInvalid",
+                "Path pages must use the code-owned row bound."
+            );
+        }
+        lock (_gate) {
+            if (_head != expectedWholeHead) {
+                return new HistoryTimelineStorePathPageResult
+                    .StaleTimelineHead(_head);
+            }
+            HistoryRowId? cursor = startAt ?? _head.HeadRowId;
+            if (cursor is { } requested
+                && !_selectedPath.RowsById.ContainsKey(requested)) {
+                return new HistoryTimelineStorePathPageResult.Invalid(
+                    "PathCursorNotSelected",
+                    "The path cursor is not on the exact selected path."
+                );
+            }
+            var rows = new List<HistorySegmentDescriptor>(
+                maximumRows
+            );
+            while (cursor is { } rowId
+                && rows.Count < maximumRows) {
+                if (!_rows.TryGetValue(
+                        rowId,
+                        out HistorySegmentDescriptor? descriptor)) {
+                    return new HistoryTimelineStorePathPageResult.Invalid(
+                        "SelectedRowUnavailable",
+                        "The selected path references a missing row."
+                    );
+                }
+                rows.Add(descriptor);
+                cursor = descriptor.PreviousRowId;
+            }
+            return new HistoryTimelineStorePathPageResult.Page(
+                rows.AsReadOnly(),
+                cursor
+            );
+        }
+    }
+
     private SelectedHistoryRowResult ReadSelectedRowUnderLock(
         TimelineHeadRef expectedWholeHead,
         HistoryRowId requiredRowId
@@ -458,5 +574,36 @@ internal sealed class InMemoryHistoryTimelineLedger
             RowsById.Add(descriptor.RowId, descriptor),
             RowsByEnd.Add(descriptor.EndInclusive, descriptor)
         );
+    }
+
+    private sealed class InMemoryBoundaryProbe(
+        ImmutableDictionary<
+            EventAddress,
+            HistorySegmentDescriptor
+        > rowsByEnd,
+        Action onProbe
+    ) : IHistoryTimelineBoundaryProbe {
+        private bool _disposed;
+
+        public SelectedHistoryBoundaryResult Probe(
+            EventAddress endInclusive
+        ) {
+            if (_disposed) {
+                return new SelectedHistoryBoundaryResult.Invalid(
+                    "BoundaryProbeDisposed",
+                    "The operation-scoped boundary probe is disposed."
+                );
+            }
+            onProbe();
+            return rowsByEnd.TryGetValue(
+                endInclusive,
+                out HistorySegmentDescriptor? descriptor)
+                    ? new SelectedHistoryBoundaryResult.Found(
+                        descriptor
+                    )
+                    : new SelectedHistoryBoundaryResult.NotFound();
+        }
+
+        public void Dispose() => _disposed = true;
     }
 }

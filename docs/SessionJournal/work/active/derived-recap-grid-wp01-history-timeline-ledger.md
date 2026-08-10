@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-01：HistoryTimeline 总览
 
-状态：In progress；WP-01A、WP-01B complete，WP-01C Ready（implementation planned）
+状态：Complete；WP-01A、WP-01B、WP-01C均complete；WP-02 Ready
 
 只需加载：[`Grid target`](derived-recap-grid-target-design.md)、[`Master`](derived-recap-grid-rewrite-master-plan.md)、
 [`WP-00 handoff`](derived-recap-grid-wp00-baseline-and-walking-skeleton.md) 与本文。实际施工再只加载对应子包。
@@ -17,14 +17,14 @@ WP-01A contracts + partition semantics + HistoryLoad owner [complete]
   |
 WP-01B raw integration + branch reconciliation [complete]
   |
-WP-01C single durable ledger + crash/operator surface [Ready]
+WP-01C single durable ledger + crash/operator surface [complete]
 ```
 
 - [`WP-01A`](derived-recap-grid-wp01a-timeline-contracts-and-partition.md)
 - [`WP-01B`](derived-recap-grid-wp01b-timeline-raw-integration.md)
 - [`WP-01C`](derived-recap-grid-wp01c-timeline-durable-ledger.md)
 
-子包允许独立commit，但WP-01C结束前不得留下competing estimator、backend或半连接public surface。
+子包允许独立commit；WP-01C completion gate已确认没有留下competing estimator、backend或半连接public surface。
 
 ## Locked semantic boundary
 
@@ -64,8 +64,9 @@ descriptor identity。`PlanNextRow`只能使用`ReadSnapshot`中的exact active 
 initial empty head为generation 0；empty head上的policy CAS仍保持row/raw fence为null但推进到generation 1+。
 即使next policy digest与当前digest相同，成功CAS也必须推进generation，使旧capture与同expected contender变stale。
 
-WP-01B只冻结public operation/result contract candidate；production factory、`ActiveTimelineLocator` create/open与new Ref创建new
-TimelineId的composition gate由WP-01C交付，不能让caller直接选择临时in-memory carrier。
+WP-01B只冻结public operation/result contract candidate；WP-01C已交付production factory、`ActiveTimelineLocator`
+create/open与new Ref创建new TimelineId，并把in-memory semantic carrier迁到test assembly。public surface不暴露ledger/backend selector；
+两路independent review均GO后，该交付现为stable WP-02 handoff。
 
 ## Global write boundary
 
@@ -84,6 +85,10 @@ history-message neutral contract间接引用Completion abstractions；不得因�
 - 01C single backend/CAS/crash/backup/operator green；
 - zero Maintainer fixture能建立、读取Timeline；
 - independent review确认WP-02只需opaque Timeline values和read witness。
+
+Completion evidence：Timeline full 156/156、raw audit 19/19、walking architecture/package gates 13/13、public surface 2/2、
+solution build 0 warning / 0 error、docs checker 15/0、diff check clean、两路independent review GO。commit evidence由包含本次变更的
+containing commit提供，不预写hash。current production仍未cutover；Timeline V1 durability为Linux-only。
 
 ## Handoff to WP-02
 

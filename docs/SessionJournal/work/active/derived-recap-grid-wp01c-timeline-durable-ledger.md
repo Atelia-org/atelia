@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-01C：Single Durable Timeline Ledger
 
-状态：Ready（implementation仍Planned）；依赖 WP-01B complete
+状态：Complete；两路independent review均GO；依赖 WP-01B complete
 
 只需加载：Grid target、Master、WP-01 overview、WP-01B handoff与本文。
 
@@ -11,9 +11,32 @@ CAS、selected-path reconciliation whole-head CAS，以及backup/restore与bound
 
 ## Backend decision gate
 
-Directory+canonical files与独立SQLite ledger使用同一fixture比较：row insert/head CAS、two-writer、crash before/after commit、
-canonical corruption、branch/path query、backup/restore、file/state/API budget。选择winner后删除loser code/dependency/tests；禁止双写、
-fallback或configurable dual backend。Timeline与Grid即使用同种技术也必须是独立durability domains，禁止跨库transaction。
+Directory+canonical files与独立SQLite ledger先按同一组语义维度做结构性A0比较：row insert/head CAS、two-writer、crash
+before/after commit、canonical corruption、branch/path query、backup/restore、file/state/API budget。A0不声称Directory候选已有一套
+可执行的同fixture实现；选择winner后删除loser code/dependency/tests，禁止双写、fallback或configurable dual backend。Timeline与Grid
+即使用同种技术也必须是独立durability domains，禁止跨库transaction。
+
+本包裁决：唯一production backend为同assembly内SQLite，direct pin `Microsoft.Data.Sqlite 10.0.10`，`Pooling=false`、
+rollback journal `DELETE`、`synchronous=EXTRA`、短`BEGIN IMMEDIATE` writer transaction。Directory+canonical files经结构性A0分析后
+淘汰：它需要另造multi-file atomic CAS、index-root publication与restore protocol，却没有减少authority或failure mode；可执行的
+四transaction、two-writer、crash、branch snapshot与backup/restore fixture只用于winner SQLite。最终Directory loser的code/dependency/
+test/config均为零；
+WP-01B `InMemoryHistoryTimelineLedger`已迁到test assembly，只保留语义测试载体，不存在production backend selector。
+
+canonical inventory固定为：
+
+```text
+<repository>/derived/history-timeline/v1/
+  locks/<ref-id>.lock
+  refs/<ref-id>/locator.json
+  refs/<ref-id>/timelines/<timeline-id>.sqlite
+```
+
+normal create/open只按exact Ref locator与exact Timeline slot工作；不扫描orphan、backup、mtime或“latest”。
+V1 durability/lease只在Linux上验证并启用；其他platform必须返回typed `TimelineStorePlatformUnsupported`，不得降级成无fsync或
+无`flock`模式。上表是normal canonical slots，不是所有crash残留清单：process death可留下unreferenced Timeline SQLite、locator/restore
+dot-temp或SQLite exact-slot旁的rollback journal；它们只能由SQLite exact-slot recovery或后续explicit inventory/retention action处理，
+normal create/open绝不把它们当候选、backup或“latest”。
 
 ## In scope
 
@@ -56,8 +79,9 @@ fallback或configurable dual backend。Timeline与Grid即使用同种技术也�
 6. 从same expected whole head竞争的policy CAS、row append与reconcile只能一个胜出，loser零mutation；同类two-writer亦然，且只匹配
    generation但其他head field不同必须失败；
 7. crash/reopen重新计算strict canonical whole-head digest，只见old或完整new head；
-8. backup manifest提交TimelineId/RefId/schema/generation、canonical whole-head digest与whole-backup digest；restore先复算head
-   digest与全部hard caps，仅在Host关闭、expected active scope/version exact且backup包含active head时atomic old-or-new替换；
+8. backup manifest提交TimelineId/RefId/schema/generation、canonical whole-head digest与whole-backup digest；restore先把外部backup复制到
+   canonical root内private temp，再只以该私有副本复算size/digest、strict schema与全部hard caps，仅在Host关闭、expected active
+   scope/version exact且backup包含active head时atomic old-or-new替换；
    更旧backup只能走abandon；
 9. corrupt descriptor/head/locator/selected-boundary index或digest mismatch使ledger Invalid，normal path零mutation；
 10. abandon错误确认零mutation；正确确认的locator crash只见old或new，旧bytes不改且旧Grid/control scope自然失配；
@@ -76,6 +100,48 @@ fallback或configurable dual backend。Timeline与Grid即使用同种技术也�
 ## Done when
 
 single backend、operator action、crash/backup/branch tests、affected build/docs/diff与independent review全部green。
+
+## Production surface and lifecycle
+
+- `HistoryTimelineFactory.Create(SessionJournalReadView, InitialPolicySpec, estimators)`只创建fresh identity；已有locator返回
+  `AlreadyExists`且不按caller spec切policy。caller随后用`Open`取得`HistoryTimelineHandle`；
+- `HistoryTimelineFactory.Open(SessionJournalReadView, estimators)`exact验证locator、SQLite scope/schema/head与active policy/estimator，
+  返回同时含`Coordinator`与`Reader`的disposable capability；两者共享operation-refcount lifetime guard，dispose先进入closing、拒绝新
+  operation、等待已进入operation退出后才释放shared lease；dispose后所有operation closed fail；
+- `HistoryTimelineMaintenance.OpenReader(repositoryPath, RefId)`只给WP-02/04/05所需的read-only handle；`SelectedRow`不可由assembly
+  外构造，ancestor witness绑定canonical repository/Ref/Timeline/whole head/row/descriptor digest并由同一Reader复验；
+- 所有backend types、port与test hooks均为internal；无IVT的external-composition fixture证明public caller无需也无法选择backend；
+- per-Ref normal handle持shared lifetime lease；Create/Restore/Abandon需要exclusive lease。locator第一次为generation 0；abandon先
+  durable-create新DB再atomic locator generation+1，旧DB bytes不改且normal path不再发现；
+- Restore只要求current schema与canonical head仍可strict读取并exact等于manifest，而非要求whole current store healthy；因此可用
+  same-head verified backup修复row/trie corruption。current head/schema不可读时Restore拒绝，只能exact-confirm Abandon。
+
+## Durable indexes and hard caps
+
+selected path由两棵content-addressed immutable fixed-depth byte-radix trie组成，key分别为32-byte `RowId`与16-byte
+`EndInclusive`；每个committed row保存snapshot roots。append结构共享且最多新增50个nodes；reconcile只能切到expected selected
+predecessor chain已提交root或empty，不存在global End-to-candidate authority，也不回扫head/root。相同End、不同policy的合法candidate
+可共存；只有expected selected chain决定authority。
+
+production caps为：policy/head/locator 4 KiB、descriptor/backup manifest 16 KiB、policies/rows各65,536、trie nodes 3,276,800、
+path page 128 rows / 4 MiB、DB与restore copy各8 GiB。常量不可由config放宽；internal small-limit fixture覆盖exact cap与cap+1。
+
+## Implementation record
+
+- product：strict HeadRef/locator/manifest codecs、SQLite ledger/trie、factory/lifetime/Reader、inspect/verify/backup/restore/abandon；
+- tail hardening：snapshot canonical commitment按exact predecessor递推验证；hot open不做physical recount；online/offline reconcile每次只开
+  一个fixed-root boundary probe；Restore只验证private copy；strict sqlite_schema/PRAGMA/FK/historical reference与paged trie verify；
+  lifetime drain、fresh lock fsync、exact locator existence和offline Busy/Invalid/Absent/store-limit typed mapping均已有focused fixture；
+- tests：真实SQLite reopen/branch snapshot/same-End/mixed CAS、caps/root/index/schema/PRAGMA corruption、long divergence writer interleave、
+  read-only、无IVT public surface、16窗口child crash harness；
+- architecture：只有HistoryTimeline product direct pin SQLite 10.0.10，product assembly不存在in-memory backend或公开backend selector；
+- scope：未修改old DerivedRecap、Galatea、CLI composition或current production behavior；WP-07A只负责把既有typed library actions映射成CLI；
+- final serial validation：Timeline full 156/156、SessionJournal raw audit 19/19、walking architecture/package gates 13/13、
+  assembly-external public surface 2/2、`Atelia.sln` build 0 warning / 0 error、docs checker 15/0、diff check clean；
+- review/commit evidence：冻结candidate经两路独立只读review均为GO；包含本次变更的containing commit作为commit evidence，
+  不在提交前虚构commit hash；
+- cutover/platform boundary：current production仍由old DerivedRecap composition承载，尚未cutover；Timeline V1 durable lease/fsync
+  仍为Linux-only，其他platform只返回typed unsupported，不提供弱durability fallback。
 
 ## Handoff to WP-02
 
