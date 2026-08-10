@@ -2,16 +2,22 @@ using System.Buffers.Binary;
 using System.Collections.Immutable;
 using System.Security.Cryptography;
 using System.Text;
+using Atelia.EventJournal;
+using Atelia.Data;
+using Atelia.SessionJournal.HistoryTimeline;
+using SJ = Atelia.SessionJournal;
 
 namespace Atelia.SessionJournal.RecapGrid.WalkingSkeleton.Tests;
 
 /// <summary>
-/// This fixture is deliberately test-only. WP-01A and WP-02 must replace its
-/// shapes with the formal canonical owners instead of promoting these helpers
-/// into production.
+/// This fixture is deliberately test-only. Timeline identity uses the formal
+/// WP-01A owner; WP-02 must replace the remaining Grid-only shapes.
 /// </summary>
 public sealed class GridWalkingSkeletonTests {
     private const string FirstRowSentinel = "first-row-v1";
+    private static readonly TimelineId SkeletonTimeline = new(
+        "00112233445566778899aabbccddeeff"
+    );
     private static readonly UTF8Encoding StrictUtf8 = new(
         encoderShouldEmitUTF8Identifier: false,
         throwOnInvalidBytes: true
@@ -23,9 +29,9 @@ public sealed class GridWalkingSkeletonTests {
         DefinitionShape world = Definition("world", "family-analysis-v1");
         RecipeShape recipe = Recipe("full", culprit, world);
 
-        HistorySegmentDescriptorShape row0 = Descriptor(
+        HistorySegmentDescriptor row0 = Descriptor(
             rowId: "row-0",
-            previousRowId: null,
+            predecessor: null,
             rawRangeCommitment: "raw-range-0"
         );
         RowBuildSpecShape spec0 = BuildSpec(row0, recipe, null);
@@ -42,9 +48,9 @@ public sealed class GridWalkingSkeletonTests {
         );
 
         PriorProjectionShape prior = Project(view0);
-        HistorySegmentDescriptorShape row1 = Descriptor(
+        HistorySegmentDescriptor row1 = Descriptor(
             rowId: "row-1",
-            previousRowId: row0.RowId,
+            predecessor: row0,
             rawRangeCommitment: "raw-range-1"
         );
         RowBuildSpecShape spec1 = BuildSpec(row1, recipe, view0);
@@ -69,7 +75,7 @@ public sealed class GridWalkingSkeletonTests {
         DefinitionShape world = Definition("world", "family-analysis-v1");
         RecipeShape firstRecipe = Recipe("full-a", culprit, world);
         RecipeShape secondRecipe = Recipe("full-b", culprit, world);
-        HistorySegmentDescriptorShape priorRow = Descriptor(
+        HistorySegmentDescriptor priorRow = Descriptor(
             "row-prior",
             null,
             "raw-prior"
@@ -106,9 +112,9 @@ public sealed class GridWalkingSkeletonTests {
             Project(secondView).ProjectionDigest
         );
 
-        HistorySegmentDescriptorShape nextRow = Descriptor(
+        HistorySegmentDescriptor nextRow = Descriptor(
             "row-next",
-            priorRow.RowId,
+            priorRow,
             "raw-next"
         );
         RowBuildSpecShape firstSpec = BuildSpec(
@@ -131,7 +137,7 @@ public sealed class GridWalkingSkeletonTests {
     public void VisibleOrderContentOrDefinitionChangesEvaluationIdentity() {
         DefinitionShape culprit = Definition("culprit", "family-analysis-v1");
         DefinitionShape world = Definition("world", "family-analysis-v1");
-        HistorySegmentDescriptorShape priorRow = Descriptor(
+        HistorySegmentDescriptor priorRow = Descriptor(
             "row-prior",
             null,
             "raw-prior"
@@ -154,7 +160,7 @@ public sealed class GridWalkingSkeletonTests {
             reversedSpec,
             [Evaluate(reversedSpec, world), Evaluate(reversedSpec, culprit)]
         );
-        HistorySegmentDescriptorShape changedRow = Descriptor(
+        HistorySegmentDescriptor changedRow = Descriptor(
             "row-prior-changed",
             null,
             "raw-prior-changed"
@@ -200,7 +206,7 @@ public sealed class GridWalkingSkeletonTests {
         DefinitionShape culprit = Definition("culprit", "family-analysis-v1");
         DefinitionShape world = Definition("world", "family-analysis-v1");
         RecipeShape recipe = Recipe("full", culprit, world);
-        HistorySegmentDescriptorShape priorRow = Descriptor(
+        HistorySegmentDescriptor priorRow = Descriptor(
             "row-0",
             null,
             "raw-range-0"
@@ -210,9 +216,9 @@ public sealed class GridWalkingSkeletonTests {
             priorSpec,
             [Evaluate(priorSpec, culprit), Evaluate(priorSpec, world)]
         );
-        HistorySegmentDescriptorShape row = Descriptor(
+        HistorySegmentDescriptor row = Descriptor(
             "row-1",
-            priorRow.RowId,
+            priorRow,
             "raw-range-1"
         );
         RowBuildSpecShape spec = BuildSpec(row, recipe, priorView);
@@ -244,7 +250,7 @@ public sealed class GridWalkingSkeletonTests {
         DefinitionShape world = Definition("world", "family-analysis-v1");
         DefinitionShape worldV2 = Definition("world", "family-analysis-v2");
         RecipeShape recipe = Recipe("full", culprit, world);
-        HistorySegmentDescriptorShape row = Descriptor(
+        HistorySegmentDescriptor row = Descriptor(
             "row-0",
             null,
             "raw-range-0"
@@ -265,7 +271,10 @@ public sealed class GridWalkingSkeletonTests {
         ));
         Assert.Throws<InvalidDataException>(() => View(
             spec,
-            [culpritCell with { RowDescriptorDigest = "wrong-row" }, worldCell]
+            [culpritCell with {
+                RowDescriptorDigest =
+                    new HistorySegmentDescriptorDigest(new string('f', 64))
+            }, worldCell]
         ));
         Assert.Throws<InvalidDataException>(() => View(
             spec,
@@ -282,14 +291,14 @@ public sealed class GridWalkingSkeletonTests {
             ]
         ));
 
-        HistorySegmentDescriptorShape secondRow = Descriptor(
+        HistorySegmentDescriptor secondRow = Descriptor(
             "row-1",
-            row.RowId,
+            row,
             "raw-range-1"
         );
         Assert.Throws<InvalidDataException>(() =>
             BuildSpec(secondRow, recipe, null));
-        HistorySegmentDescriptorShape sibling = Descriptor(
+        HistorySegmentDescriptor sibling = Descriptor(
             "row-sibling",
             null,
             "raw-sibling"
@@ -303,7 +312,12 @@ public sealed class GridWalkingSkeletonTests {
             BuildSpec(secondRow, recipe, siblingView));
         Assert.Throws<InvalidDataException>(() => BuildSpec(
             row,
-            RecipeForTimeline("timeline-other", "full", culprit, world),
+            RecipeForTimeline(
+                new TimelineId("ffeeddccbbaa99887766554433221100"),
+                "full",
+                culprit,
+                world
+            ),
             null
         ));
         RecipeShape otherRecipe = Recipe("other-mode", culprit, world);
@@ -327,10 +341,10 @@ public sealed class GridWalkingSkeletonTests {
     private static RecipeShape Recipe(
         string mode,
         params DefinitionShape[] definitions
-    ) => RecipeForTimeline("timeline-main", mode, definitions);
+    ) => RecipeForTimeline(SkeletonTimeline, mode, definitions);
 
     private static RecipeShape RecipeForTimeline(
-        string timelineId,
+        TimelineId timelineId,
         string mode,
         params DefinitionShape[] definitions
     ) {
@@ -353,37 +367,101 @@ public sealed class GridWalkingSkeletonTests {
             timelineId,
             mode,
             target,
-            Digest("recipe-v1", timelineId, mode, target.TargetDigest)
+            Digest(
+                "recipe-v1",
+                timelineId.Value,
+                mode,
+                target.TargetDigest
+            )
         );
     }
 
-    private static HistorySegmentDescriptorShape Descriptor(
+    private static HistorySegmentDescriptor Descriptor(
         string rowId,
-        string? previousRowId,
+        HistorySegmentDescriptor? predecessor,
         string rawRangeCommitment
-    ) => new(
-        TimelineId: "timeline-main",
-        RowId: rowId,
-        PreviousRowId: previousRowId,
-        RawRangeCommitment: rawRangeCommitment,
-        DescriptorDigest: Digest(
-            "history-segment-v1",
-            "timeline-main",
-            rowId,
-            previousRowId ?? "first-row",
-            rawRangeCommitment
+    ) {
+        PartitionPolicyRevision policy =
+            PartitionPolicyRevision.Create(
+                SkeletonTimeline,
+                HistoryPartitionAlgorithms
+                    .FirstReplaySafeBoundaryAtTargetV1,
+                "atelia.walking-skeleton.history-load.v1",
+                new HistoryLoadUnit(1),
+                maxRawEvents: 8,
+                maxRenderedBytes: 1024
+            );
+        EventAddress start = predecessor?.EndInclusive
+            ?? Address(100);
+        EventAddress end = Address(RowAddressToken(rowId));
+        SJ.SessionContextAnchorSetupReferences setups = Setups();
+        var point = new HistoryPartitionPoint(
+            policy.TimelineId,
+            policy.PolicyDigest,
+            start,
+            end,
+            predecessor?.EndSetups ?? setups,
+            setups,
+            baselineCompletedUnitCount: predecessor is null ? 0 : 1,
+            endCompletedUnitCount: predecessor is null ? 1 : 2,
+            new HistoryLoadUnit(1),
+            rawEventCount: 1,
+            measuredRenderedUtf8Bytes: 1
+        );
+        var range = new BoundHistorySegmentRange(
+            new RefId(1),
+            point.StartExclusive,
+            point.EndInclusive,
+            point.StartSetups,
+            point.EndSetups,
+            point.BaselineCompletedUnitCount,
+            point.EndCompletedUnitCount,
+            point.RawEventCount,
+            Digest("raw-range-fixture-v1", rawRangeCommitment)
+        );
+        return HistorySegmentDescriptorFactory.Create(
+            point,
+            range,
+            policy,
+            predecessor
+        );
+    }
+
+    private static ulong RowAddressToken(string rowId) => rowId switch {
+        "row-0" => 101,
+        "row-1" => 102,
+        "row-prior" => 103,
+        "row-next" => 104,
+        "row-prior-changed" => 105,
+        "row-sibling" => 106,
+        _ => throw new ArgumentOutOfRangeException(nameof(rowId))
+    };
+
+    private static EventAddress Address(ulong packed) => new(
+        SizedPtr.FromPacked(packed),
+        1,
+        AddressHint.None
+    );
+
+    private static SJ.SessionContextAnchorSetupReferences Setups() => new(
+        new SJ.SessionContextSetupReference(
+            Address(10),
+            2,
+            new string('a', 64)
+        ),
+        new SJ.SessionContextSetupReference(
+            Address(11),
+            1,
+            new string('b', 64)
         )
     );
 
     private static RowBuildSpecShape BuildSpec(
-        HistorySegmentDescriptorShape row,
+        HistorySegmentDescriptor row,
         RecipeShape recipe,
         RowViewShape? previousView
     ) {
-        if (!string.Equals(
-                row.TimelineId,
-                recipe.TimelineId,
-                StringComparison.Ordinal)) {
+        if (row.TimelineId != recipe.TimelineId) {
             throw new InvalidDataException(
                 "A skeleton RowBuildSpec must use its recipe timeline."
             );
@@ -394,14 +472,8 @@ public sealed class GridWalkingSkeletonTests {
             );
         }
         if (previousView is not null
-            && (!string.Equals(
-                    row.TimelineId,
-                    previousView.TimelineId,
-                    StringComparison.Ordinal)
-                || !string.Equals(
-                    row.PreviousRowId,
-                    previousView.RowId,
-                    StringComparison.Ordinal)
+            && (row.TimelineId != previousView.TimelineId
+                || row.PreviousRowId != previousView.RowId
                 || !string.Equals(
                     recipe.RecipeDigest,
                     previousView.RecipeDigest,
@@ -419,7 +491,7 @@ public sealed class GridWalkingSkeletonTests {
             : Project(previousView).ProjectionDigest;
         var specFields = new List<string> {
             recipe.RecipeDigest,
-            row.DescriptorDigest,
+            row.DescriptorDigest.Value,
             previousView?.ViewDigest ?? FirstRowSentinel,
             priorProjectionDigest
         };
@@ -460,7 +532,7 @@ public sealed class GridWalkingSkeletonTests {
             spec.PriorProjectionDigest,
             Digest(
                 "evaluation-key-v1",
-                spec.Row.DescriptorDigest,
+                spec.Row.DescriptorDigest.Value,
                 definition.DefinitionDigest,
                 spec.PriorProjectionDigest
             )
@@ -478,12 +550,12 @@ public sealed class GridWalkingSkeletonTests {
             definition,
             key.EvaluationKeyDigest,
             $"summary:{definition.LogicalColumnId}:"
-            + $"{spec.Row.RawRangeCommitment}:{spec.PriorProjectionDigest}"
+            + $"{spec.Row.RawRangeSha256}:{spec.PriorProjectionDigest}"
         );
     }
 
     private static CellShape CellWithContent(
-        string rowDescriptorDigest,
+        HistorySegmentDescriptorDigest rowDescriptorDigest,
         string priorProjectionDigest,
         DefinitionShape definition,
         string evaluationKeyDigest,
@@ -519,7 +591,7 @@ public sealed class GridWalkingSkeletonTests {
         var fields = new List<string> {
             spec.Recipe.RecipeDigest,
             spec.Recipe.Target.TargetDigest,
-            spec.Row.DescriptorDigest,
+            spec.Row.DescriptorDigest.Value,
             spec.PreviousViewDigest ?? FirstRowSentinel
         };
         for (int index = 0; index < cells.Length; index++) {
@@ -533,10 +605,7 @@ public sealed class GridWalkingSkeletonTests {
                 assignment.DefinitionDigest,
                 expectedContentDigest
             );
-            if (!string.Equals(
-                    spec.Row.DescriptorDigest,
-                    cell.RowDescriptorDigest,
-                    StringComparison.Ordinal)
+            if (spec.Row.DescriptorDigest != cell.RowDescriptorDigest
                 || !string.Equals(
                     spec.PriorProjectionDigest,
                     cell.PriorProjectionDigest,
@@ -639,23 +708,15 @@ public sealed class GridWalkingSkeletonTests {
     );
 
     private sealed record RecipeShape(
-        string TimelineId,
+        TimelineId TimelineId,
         string Mode,
         BuildTargetShape Target,
         string RecipeDigest
     );
 
-    private sealed record HistorySegmentDescriptorShape(
-        string TimelineId,
-        string RowId,
-        string? PreviousRowId,
-        string RawRangeCommitment,
-        string DescriptorDigest
-    );
-
     private sealed record RowBuildSpecShape(
         RecipeShape Recipe,
-        HistorySegmentDescriptorShape Row,
+        HistorySegmentDescriptor Row,
         string? PreviousViewDigest,
         string PriorProjectionDigest,
         ImmutableArray<DefinitionShape> Assignments,
@@ -663,14 +724,14 @@ public sealed class GridWalkingSkeletonTests {
     );
 
     private sealed record EvaluationKeyShape(
-        string RowDescriptorDigest,
+        HistorySegmentDescriptorDigest RowDescriptorDigest,
         string DefinitionDigest,
         string PriorProjectionDigest,
         string EvaluationKeyDigest
     );
 
     private sealed record CellShape(
-        string RowDescriptorDigest,
+        HistorySegmentDescriptorDigest RowDescriptorDigest,
         string LogicalColumnId,
         string DefinitionDigest,
         string PriorProjectionDigest,
@@ -681,11 +742,11 @@ public sealed class GridWalkingSkeletonTests {
     );
 
     private sealed record RowViewShape(
-        string TimelineId,
-        string RowId,
+        TimelineId TimelineId,
+        HistoryRowId RowId,
         string RecipeDigest,
         string BuildTargetDigest,
-        string RowDescriptorDigest,
+        HistorySegmentDescriptorDigest RowDescriptorDigest,
         string? PreviousViewDigest,
         ImmutableArray<CellShape> Cells,
         string ViewDigest
@@ -708,7 +769,7 @@ public sealed class GridWalkingSkeletonTests {
     );
 
     private sealed record ContextValueShape(
-        string RowDescriptorDigest,
+        HistorySegmentDescriptorDigest RowDescriptorDigest,
         ImmutableArray<ContextContributionShape> Contributions
     );
 }

@@ -1,43 +1,25 @@
 using Atelia.EventJournal;
 using SJ = Atelia.SessionJournal;
 
-namespace Atelia.SessionJournal.DerivedRecap.Planner;
+namespace Atelia.SessionJournal.HistoryTimeline;
 
 /// <summary>
 /// Projects exact replay-safe SessionJournal boundaries onto additive H0
 /// HistoryLoad values without changing production cadence behavior.
 /// </summary>
-public static class RecapHistoryLoadProjector {
-    public static RecapHistoryLoadMeasurement Measure(
+public static class HistoryLoadProjector {
+    public static HistoryLoadProjection Measure(
         SJ.SessionHistoryPlanningWindow window,
         EventAddress baselineAddress,
         IHistoryUnitLoadEstimator estimator
     ) {
         ArgumentNullException.ThrowIfNull(window);
         ArgumentNullException.ThrowIfNull(estimator);
-        string estimatorId;
-        try {
-            estimatorId = estimator.Id;
-        }
-        catch (Exception exception) when (
-            RecapNonFatalException.IsCatchable(exception)
-        ) {
-            throw Invalid(
-                HistoryLoadMeasurementDefectCodes.EstimatorFailed,
-                "History-load estimator ID could not be read.",
-                exception
-            );
-        }
-        if (string.IsNullOrWhiteSpace(estimatorId)) {
-            throw Invalid(
-                HistoryLoadMeasurementDefectCodes.MeasurementInvalid,
-                "History-load estimator ID cannot be empty."
-            );
-        }
-
-        ValidateWindowCollections(window);
-        RecapHistoryLoadBaseline baseline =
-            RecapHistoryLoadBaselineResolver.Resolve(
+        string estimatorId =
+            HistoryLoadMeasurementEngine.RequireEstimatorId(estimator);
+        HistoryLoadWindowValidator.ValidateCollections(window);
+        HistoryLoadBaseline baseline =
+            HistoryLoadBaselineResolver.Resolve(
                 window.StartExclusive,
                 window.Units.Count,
                 window.ReplaySafeBoundaries,
@@ -47,11 +29,12 @@ public static class RecapHistoryLoadProjector {
             baseline.CompletedUnitCount;
         int firstOutputBoundaryIndex =
             baseline.FirstLaterBoundaryIndex;
-        ValidateWindowShape(window);
+        _ = HistoryLoadWindowValidator.Validate(window);
 
         int suffixUnitCount =
             window.Units.Count - baselineCompletedUnitCount;
         var loadPrefix = new long[suffixUnitCount + 1];
+        var bytePrefix = new int[suffixUnitCount + 1];
         int renderedWindowBytes = 0;
         for (int suffixIndex = 0;
              suffixIndex < suffixUnitCount;
@@ -65,25 +48,10 @@ public static class RecapHistoryLoadProjector {
                     "Planning window contains a null HistoryUnit."
                 );
             HistoryUnitLoadMeasurement measured =
-                MeasureUnit(estimator, unit);
-            if (measured.Load.Value < 1) {
-                throw Invalid(
-                    HistoryLoadMeasurementDefectCodes
-                        .MeasurementInvalid,
-                    "History-load estimator returned a load below one."
+                HistoryLoadMeasurementEngine.MeasureUnit(
+                    estimator,
+                    unit
                 );
-            }
-            if (measured.RenderedUtf8Bytes < 0
-                || measured.RenderedUtf8Bytes
-                    > HistoryLoadMeasurementSafety.V1
-                        .MaxRenderedHistoryUnitUtf8Bytes) {
-                throw Invalid(
-                    HistoryLoadMeasurementDefectCodes
-                        .MeasurementInvalid,
-                    "History-load estimator returned an invalid "
-                    + "rendered UTF-8 byte count."
-                );
-            }
             try {
                 loadPrefix[suffixIndex + 1] = checked(
                     loadPrefix[suffixIndex]
@@ -93,6 +61,8 @@ public static class RecapHistoryLoadProjector {
                     renderedWindowBytes
                     + measured.RenderedUtf8Bytes
                 );
+                bytePrefix[suffixIndex + 1] =
+                    renderedWindowBytes;
             }
             catch (OverflowException exception) {
                 throw Invalid(
@@ -116,7 +86,7 @@ public static class RecapHistoryLoadProjector {
             }
         }
 
-        var projected = new List<RecapHistoryLoadBoundary>();
+        var projected = new List<HistoryLoadBoundaryProjection>();
         for (int index = firstOutputBoundaryIndex;
              index < window.ReplaySafeBoundaries.Count;
              index++) {
@@ -147,10 +117,11 @@ public static class RecapHistoryLoadProjector {
                     + "an invalid completed-unit count."
                 );
             }
-            projected.Add(new RecapHistoryLoadBoundary(
+            projected.Add(new HistoryLoadBoundaryProjection(
                 boundary.Address,
                 relativeUnitCount,
-                new HistoryLoadUnit(loadPrefix[relativeUnitCount])
+                new HistoryLoadUnit(loadPrefix[relativeUnitCount]),
+                bytePrefix[relativeUnitCount]
             ));
         }
 
@@ -164,7 +135,7 @@ public static class RecapHistoryLoadProjector {
                 + "baseline-relative HistoryLoad."
             );
         }
-        return new RecapHistoryLoadMeasurement(
+        return new HistoryLoadProjection(
             estimatorId,
             baselineAddress,
             baselineCompletedUnitCount,
@@ -172,106 +143,6 @@ public static class RecapHistoryLoadProjector {
             renderedWindowBytes,
             projected
         );
-    }
-
-    private static HistoryUnitLoadMeasurement MeasureUnit(
-        IHistoryUnitLoadEstimator estimator,
-        SJ.SessionHistoryPlanningUnit unit
-    ) {
-        try {
-            return estimator.Measure(
-                    unit,
-                    HistoryLoadMeasurementSafety.V1
-                        .MaxRenderedHistoryUnitUtf8Bytes
-                )
-                ?? throw Invalid(
-                    HistoryLoadMeasurementDefectCodes
-                        .MeasurementInvalid,
-                    "History-load estimator returned null."
-                );
-        }
-        catch (HistoryLoadMeasurementException) {
-            throw;
-        }
-        catch (OverflowException exception) {
-            throw Invalid(
-                HistoryLoadMeasurementDefectCodes
-                    .MeasurementOverflow,
-                "History-load estimator overflowed.",
-                exception
-            );
-        }
-        catch (Exception exception) when (
-            RecapNonFatalException.IsCatchable(exception)
-        ) {
-            throw Invalid(
-                HistoryLoadMeasurementDefectCodes.EstimatorFailed,
-                "History-load estimator failed.",
-                exception
-            );
-        }
-    }
-
-    private static void ValidateWindowShape(
-        SJ.SessionHistoryPlanningWindow window
-    ) {
-        var rawPositions = new Dictionary<EventAddress, int>();
-        for (int index = 0;
-             index < window.RawAddresses.Count;
-             index++) {
-            EventAddress address = window.RawAddresses[index];
-            if (!rawPositions.TryAdd(address, index)) {
-                throw Invalid(
-                    HistoryLoadMeasurementDefectCodes
-                        .PlanningWindowInvalid,
-                    $"Planning raw range repeats address "
-                    + $"'{address}'."
-                );
-            }
-        }
-
-        var boundaryAddresses = new HashSet<EventAddress>();
-        int previousRawPosition = -1;
-        int previousCompletedUnitCount = 0;
-        foreach (SJ.SessionHistoryPlanningBoundary? boundary
-                 in window.ReplaySafeBoundaries) {
-            if (boundary is null
-                || !boundaryAddresses.Add(boundary.Address)
-                || !rawPositions.TryGetValue(
-                    boundary.Address,
-                    out int rawPosition
-                )
-                || rawPosition <= previousRawPosition
-                || boundary.CompletedUnitCount < 0
-                || boundary.CompletedUnitCount
-                    > window.Units.Count
-                || boundary.CompletedUnitCount
-                    < previousCompletedUnitCount) {
-                throw Invalid(
-                    HistoryLoadMeasurementDefectCodes
-                        .PlanningWindowInvalid,
-                    "Planning window has malformed replay-safe "
-                    + "boundary order or completed-unit counts."
-                );
-            }
-            previousRawPosition = rawPosition;
-            previousCompletedUnitCount =
-                boundary.CompletedUnitCount;
-        }
-    }
-
-    private static void ValidateWindowCollections(
-        SJ.SessionHistoryPlanningWindow window
-    ) {
-        if (window.Units is null
-            || window.RawAddresses is null
-            || window.ReplaySafeBoundaries is null) {
-            throw Invalid(
-                HistoryLoadMeasurementDefectCodes
-                    .PlanningWindowInvalid,
-                "Planning window collections cannot be null."
-            );
-        }
     }
 
     private static HistoryLoadMeasurementException Invalid(
@@ -282,14 +153,24 @@ public static class RecapHistoryLoadProjector {
 
 }
 
-internal sealed record RecapHistoryLoadBaseline(
-    EventAddress Address,
-    int CompletedUnitCount,
-    int FirstLaterBoundaryIndex
-);
+public sealed record HistoryLoadBaseline {
+    internal HistoryLoadBaseline(
+        EventAddress address,
+        int completedUnitCount,
+        int firstLaterBoundaryIndex
+    ) {
+        Address = address;
+        CompletedUnitCount = completedUnitCount;
+        FirstLaterBoundaryIndex = firstLaterBoundaryIndex;
+    }
 
-internal static class RecapHistoryLoadBaselineResolver {
-    internal static RecapHistoryLoadBaseline Resolve(
+    public EventAddress Address { get; }
+    public int CompletedUnitCount { get; }
+    public int FirstLaterBoundaryIndex { get; }
+}
+
+public static class HistoryLoadBaselineResolver {
+    public static HistoryLoadBaseline Resolve(
         EventAddress startExclusive,
         int totalHistoryUnitCount,
         IReadOnlyList<SJ.SessionHistoryPlanningBoundary>
@@ -306,10 +187,10 @@ internal static class RecapHistoryLoadBaselineResolver {
             );
         }
         if (baselineAddress == startExclusive) {
-            return new RecapHistoryLoadBaseline(
+            return new HistoryLoadBaseline(
                 baselineAddress,
-                CompletedUnitCount: 0,
-                FirstLaterBoundaryIndex: 0
+                completedUnitCount: 0,
+                firstLaterBoundaryIndex: 0
             );
         }
 
@@ -355,7 +236,7 @@ internal static class RecapHistoryLoadBaselineResolver {
                 "has an out-of-range completed-unit count"
             );
         }
-        return new RecapHistoryLoadBaseline(
+        return new HistoryLoadBaseline(
             baselineAddress,
             completedUnitCount,
             matchIndex + 1

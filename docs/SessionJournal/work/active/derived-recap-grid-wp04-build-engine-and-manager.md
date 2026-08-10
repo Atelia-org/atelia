@@ -20,7 +20,8 @@
 - row内并行接口与row间barrier；
 - operation call/row/time budgets、cancellation与typed failure；
 - progress完全由Store missing query恢复；
-- operation开始冻结`{RefId, TimelineHead generation/head, canonical recipe+definitions, through row}`；
+- operation开始冻结`{whole TimelineHeadRef, canonical recipe+definitions, through row}`；whole head包括Timeline/Ref/head row/
+  active policy/selected raw fence/generation，RowBuildSpec直接携带typed `HistorySegmentDescriptorDigest`；
 - candidate catch-up与可promote proof；active recipe CAS是显式后续control operation，不由Manager自动完成；
 - 同一Send多个safe lifecycle boundary下的幂等re-entry。
 

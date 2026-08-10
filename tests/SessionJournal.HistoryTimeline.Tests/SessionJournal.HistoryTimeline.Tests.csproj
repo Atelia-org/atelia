@@ -15,10 +15,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Planner/SessionJournal.DerivedRecap.Planner.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
-    <ProjectReference Include="../SessionJournal.DerivedRecap.Store.CrashHarness/SessionJournal.DerivedRecap.Store.CrashHarness.csproj"
-                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
+    <ProjectReference Include="../../prototypes/Completion.Abstractions/Completion.Abstractions.csproj" />
   </ItemGroup>
 
 </Project>

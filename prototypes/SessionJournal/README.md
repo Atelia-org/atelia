@@ -10,7 +10,11 @@ Agent session core。它负责：
 - 为 context/recap实现提供 neutral、event-addressed 的读取与生命周期接口。
 
 它不负责具体 Completion provider配置、DerivedRecap持久化、Recap planning policy或
-具体 Maintainer。生产 Host通常把本项目与
+具体 Maintainer。provider-neutral HistoryLoad contracts、O200k estimator与window projector已由
+[`SessionJournal.HistoryTimeline`](../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj)
+唯一拥有；该项目direct reference SessionJournal，而SessionJournal不反向引用Timeline。其csproj唯一承接
+`Microsoft.Bcl.Memory 9.0.17`、`Microsoft.ML.Tokenizers 2.0.0`与
+`Microsoft.ML.Tokenizers.Data.O200kBase 2.0.0`三个exact pins，old Planner不再直接pin。生产 Host通常把本项目与
 [`SessionJournal.DerivedRecap.Store`](../SessionJournal.DerivedRecap.Store/README.md)、
 [`SessionJournal.DerivedRecap.Planner`](../SessionJournal.DerivedRecap.Planner/README.md)和
 [`SessionJournal.DerivedRecap.Maintainers`](../SessionJournal.DerivedRecap.Maintainers/README.md)

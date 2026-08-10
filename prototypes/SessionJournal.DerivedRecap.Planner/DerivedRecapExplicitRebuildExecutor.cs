@@ -325,11 +325,11 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
                 }
 
                 SessionHistoryPlanningWindow preview;
-                RecapHistoryLoadMeasurement measurement;
+                HistoryLoadProjection measurement;
                 RecapEpochPlanningDecision decision;
                 try {
                     preview = cursor.Preview(range, cancellationToken);
-                    measurement = RecapHistoryLoadProjector.Measure(
+                    measurement = HistoryLoadProjector.Measure(
                         preview,
                         range.StartExclusive,
                         Configuration.HistoryUnitLoadEstimator

@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：Proposed target design；content-addressed refinement；尚未实施，不描述 current production
+状态：Proposed target design；WP-01A complete、WP-01B ready；尚未切换 current production
 
 ## 1. Intent
 
@@ -119,15 +119,15 @@ TimelineId/RefId/schema/generation/head且包含当前active head的verified bac
 首版partition规则固定为：从上一row的`EndInclusive`之后开始，沿selected lineage选择累计
 `MeasuredHistoryLoad >= TargetHistoryLoadAtCreation`的**第一个**replay-safe boundary。这样同一raw path和policy的row
 边界不受某次后台任务启动早晚影响。`MinimumRecentHistoryLoad`不属于Timeline partition；若主线Context需要保留recent
-tail，由ContextComposer/SessionJournal raw-tail policy负责。达到`MaxRawEventsPerSegment`或
-`MaxRenderedBytesPerSegment`仍无法到达目标时返回typed limit failure；online bounded evidence不足时返回
+tail，由ContextComposer/SessionJournal raw-tail policy负责。达到该policy revision记录的`MaxRawEvents`或
+`MaxRenderedBytes` segment cap仍无法到达目标时返回typed limit failure；online bounded evidence不足时返回
 `OfflineBootstrapRequired`，不得偷偷打开全History scan。
 
 Timeline拥有HistoryLoad estimator的provider-neutral contracts、metric identity和goldens；provider token/cost估算仍与
 HistoryLoad分离。旧Planner中的同类pure contracts在施工时迁到这个单一owner，不能复制第二套EstimatorId或算法。
 
-assembly ownership从`SessionJournal <- HistoryTimeline <- RecapGrid.Abstractions`开始。`TimelineId`、`RowId`与
-`DescriptorDigest`由HistoryTimeline定义，Grid只消费这些typed values，不能重新包装一套字符串identity；是否将来再拆
+assembly ownership从`SessionJournal <- HistoryTimeline <- RecapGrid.Abstractions`开始。`TimelineId`、`HistoryRowId`与
+`HistorySegmentDescriptorDigest`由HistoryTimeline定义，Grid只消费这些typed values，不能重新包装一套字符串identity；是否将来再拆
 轻量contracts assembly只能由实测依赖重量驱动，首版不预建第三个项目。
 
 首版`TimelineId`绑定一个exact `RefId`，只在同一Ref内复用row prefix；不同Ref即使共享raw prefix也各自建立
@@ -242,14 +242,17 @@ Timeline head的可重建projection/cache，不是promotion authority。
 ```text
 PartitionPolicyRevision {
   TimelineId
-  PartitionPolicyId
+  PartitionAlgorithmId
   HistoryLoadEstimatorId
-  DefaultTargetHistoryLoad
-  MaxRawEventsPerSegment
-  MaxRenderedBytesPerSegment
+  TargetHistoryLoad
+  MaxRawEvents
+  MaxRenderedBytes
   PolicyDigest
 }
 ```
+
+`MaxRawEvents`与`MaxRenderedBytes`是每个revision自己的segment caps；V1 construction以code-owned upper limits约束为
+`1 <= MaxRawEvents <= 65,536`与`1 <= MaxRenderedBytes <= 32 MiB`，不能由config放宽这些upper limits。
 
 修改默认分段大小或算法只影响尚未形成的新 rows。已经形成的 row不会重切。
 
@@ -269,17 +272,18 @@ HistorySegmentDescriptor {
   HistoryLoadEstimatorId
   TargetHistoryLoadAtCreation
   MeasuredHistoryLoad
+  MeasuredRenderedUtf8Bytes
   RawEventCount
   RawRangeSha256
-  DescriptorDigest
+  DescriptorDigest: HistorySegmentDescriptorDigest
 }
 ```
 
 边界、创建时目标长度和实际长度都是已经发生的值事实。以后修改 BuildInterval不能改变旧 descriptor。
 正文始终按 Start/End 从 raw读取，不保存在 descriptor。同一Timeline row chain允许相邻rows采用不同
 `PartitionPolicyDigestAtCreation`，但不得跨`TimelineId`或脱离selected `TimelineHeadRef` chain。
-`RowId`必须由不含`RowId/DescriptorDigest`自循环的identity preimage确定性导出，或明确作为ledger opaque identity；
-Grid只把`DescriptorDigest`当semantic commitment。
+`RowId`与`HistorySegmentDescriptorDigest`必须由不含二者自循环的同一canonical identity body、以不同domain hash确定性导出；
+Grid只把typed `HistorySegmentDescriptorDigest`当semantic commitment。
 
 ### 5.3 TimelineHeadRef
 
@@ -294,7 +298,8 @@ TimelineHeadRef {
 }
 ```
 
-append row与切换partition policy都以expected generation/head/policy CAS；fork产生另一条显式head/path，不覆盖旧rows。
+append row与切换partition policy都以whole expected `TimelineHeadRef` CAS，但属于两个transaction：append保留active policy，
+policy CAS不追加row，只替换active policy并推进generation。fork产生另一条显式head/path，不覆盖旧rows。
 `SelectedRawHeadAtCommit`只是该次head transition观察到的fence，不代替每次operation由composition root重新冻结的raw head。
 
 ```text
@@ -305,8 +310,9 @@ ActiveTimelineLocator {
 }
 ```
 
-empty ref的canonical head是`HeadRowId=null, SelectedRawHeadAtCommit=null, Generation=0`并引用显式initial policy。policy value
-content-addressed持久化，只有一个active policy pointer；它不是另一套operation lifecycle。
+initial empty ref的canonical head是`HeadRowId=null, SelectedRawHeadAtCommit=null, Generation=0`并引用显式initial policy。
+empty head执行policy CAS后仍保持两个nullable field为null，但`Generation > 0`；policy value content-addressed持久化，只有一个
+active policy pointer；它不是另一套operation lifecycle。
 
 ### 5.4 MaintainerDefinitionRevision
 
@@ -410,7 +416,7 @@ Manager为每个待构建row产生一个非durable纯值，而不是把recipe语
 ```text
 RowBuildSpec {
   GridBuildRecipeDigest
-  RowDescriptorDigest
+  RowDescriptorDigest: HistorySegmentDescriptorDigest
   PreviousRowViewDigest?
   PriorInputProjectionDigest | FirstRowSentinel
   OutputBuildTarget
@@ -457,7 +463,7 @@ column subset，必须升级projection schema并只提交exact可见字段，不
 
 ```text
 RecapCellArtifact {
-  RowDescriptorDigest
+  RowDescriptorDigest: HistorySegmentDescriptorDigest
   LogicalColumnId
   MaintainerDefinitionDigest
   PriorInputProjectionDigest | FirstRowSentinel
@@ -490,7 +496,7 @@ previous RowView identity和runtime route不进入key，除非Maintainer实际�
 ```text
 RecapRowView {
   GridBuildRecipeDigest
-  RowDescriptorDigest
+  RowDescriptorDigest: HistorySegmentDescriptorDigest
   PreviousRowViewDigest?
   BuildTargetDigest
   Columns [LogicalColumnId -> {MaintainerDefinitionDigest, CellDigest}]
@@ -828,7 +834,8 @@ dependency DAG的二维投影视图，不是每个坐标只有一个可变值的
 ## 12. Implementation boundary
 
 本文通过只表示Shape/Rule锁定及SQLite目标选择，不表示旧系统迁移方案或production implementation已经批准。
-施工计划已经拆为WP-00至WP-08；WP-00 baseline/walking skeleton已完成，下一步是WP-01A Timeline contracts/partition。
+施工计划已经拆为WP-00至WP-08；WP-00 baseline/walking skeleton与WP-01A Timeline contracts/partition已经完成，
+WP-01B raw integration处于Ready。
 每个backend、carrier或cutover选择仍
 必须在所属工作包取得实证Go，不因本文或计划存在而预先视为implemented/production-ready。
 

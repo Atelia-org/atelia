@@ -11,7 +11,7 @@
 
 ## In scope
 
-- `ResolveFulfilledView(selectedRawRef, completionBoundary, timelineHead, activeRecipe, nthPrevious)`；其中
+- `ResolveFulfilledView(selectedRawRef, completionBoundary, TimelineHeadRef, activeRecipe, nthPrevious)`；其中
   `completionBoundary`就是neutral request冻结的exact raw-head fence，不另立同义authority；
 - membership complete、PriorInputAligned、可选FullRebuildChain provenance；
 - exact Cell内容materialization与ordered contributions；
@@ -21,7 +21,8 @@
 - neutral SessionJournal context-candidate adapter；
 - bounded read-only diagnostics。
 - strict `DerivedContext.NthPrevious`：沿exact Timeline predecessor chain选择第n个sealed row，再解析同一active recipe fulfillment；
-- selection handle提交Ref/Timeline/head generation+row/recipe/target/view/completion boundary并在materialize时全量复验。
+- selection handle提交whole `TimelineHeadRef`、recipe/target/view/completion boundary及typed
+  `HistorySegmentDescriptorDigest`并在materialize时全量复验；不得拆成只比较generation/head-row的弱快照。
 
 ## Ownership
 

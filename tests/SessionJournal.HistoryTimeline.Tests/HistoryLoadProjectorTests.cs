@@ -4,16 +4,16 @@ using Atelia.EventJournal;
 using Xunit;
 using SJ = Atelia.SessionJournal;
 
-namespace Atelia.SessionJournal.DerivedRecap.Planner.Tests;
+namespace Atelia.SessionJournal.HistoryTimeline.Tests;
 
-public sealed class RecapHistoryLoadProjectorTests {
+public sealed class HistoryLoadProjectorTests {
     [Fact]
     public void StartBaselineProjectsAdditivePrefixAndSharedCounts() {
         SJ.SessionHistoryPlanningWindow window = StandardWindow();
         var estimator = new ContentEstimator();
 
-        RecapHistoryLoadMeasurement measured =
-            RecapHistoryLoadProjector.Measure(
+        HistoryLoadProjection measured =
+            HistoryLoadProjector.Measure(
                 window,
                 window.StartExclusive,
                 estimator
@@ -39,6 +39,12 @@ public sealed class RecapHistoryLoadProjectorTests {
                     item.HistoryUnitCountSinceBaseline
                 )
         );
+        Assert.Equal(
+            [1, 1, 2, 2, 3, 3],
+            measured.ReplaySafeBoundaries.Select(static item =>
+                item.CumulativeRenderedUtf8Bytes
+            )
+        );
     }
 
     [Fact]
@@ -50,8 +56,8 @@ public sealed class RecapHistoryLoadProjectorTests {
             failContent: "2"
         );
 
-        RecapHistoryLoadMeasurement measured =
-            RecapHistoryLoadProjector.Measure(
+        HistoryLoadProjection measured =
+            HistoryLoadProjector.Measure(
                 window,
                 baseline,
                 estimator
@@ -80,15 +86,15 @@ public sealed class RecapHistoryLoadProjectorTests {
     public void BaselineResolverPreservesExactSharedCountOrdinal() {
         SJ.SessionHistoryPlanningWindow window = StandardWindow();
 
-        RecapHistoryLoadBaseline first =
-            RecapHistoryLoadBaselineResolver.Resolve(
+        HistoryLoadBaseline first =
+            HistoryLoadBaselineResolver.Resolve(
                 window.StartExclusive,
                 window.Units.Count,
                 window.ReplaySafeBoundaries,
                 window.ReplaySafeBoundaries[0].Address
             );
-        RecapHistoryLoadBaseline second =
-            RecapHistoryLoadBaselineResolver.Resolve(
+        HistoryLoadBaseline second =
+            HistoryLoadBaselineResolver.Resolve(
                 window.StartExclusive,
                 window.Units.Count,
                 window.ReplaySafeBoundaries,
@@ -112,15 +118,15 @@ public sealed class RecapHistoryLoadProjectorTests {
         ];
 
         foreach (EventAddress baselineAddress in baselines) {
-            RecapHistoryLoadBaseline resolved =
-                RecapHistoryLoadBaselineResolver.Resolve(
+            HistoryLoadBaseline resolved =
+                HistoryLoadBaselineResolver.Resolve(
                     window.StartExclusive,
                     window.Units.Count,
                     window.ReplaySafeBoundaries,
                     baselineAddress
                 );
-            RecapHistoryLoadMeasurement projected =
-                RecapHistoryLoadProjector.Measure(
+            HistoryLoadProjection projected =
+                HistoryLoadProjector.Measure(
                     window,
                     baselineAddress,
                     new ContentEstimator()
@@ -146,14 +152,14 @@ public sealed class RecapHistoryLoadProjectorTests {
         EventAddress baseline =
             window.ReplaySafeBoundaries[0].Address;
 
-        RecapHistoryLoadMeasurement measured =
-            RecapHistoryLoadProjector.Measure(
+        HistoryLoadProjection measured =
+            HistoryLoadProjector.Measure(
                 window,
                 baseline,
                 new ContentEstimator()
             );
 
-        RecapHistoryLoadBoundary first =
+        HistoryLoadBoundaryProjection first =
             measured.ReplaySafeBoundaries[0];
         Assert.Equal(
             window.ReplaySafeBoundaries[1].Address,
@@ -167,16 +173,16 @@ public sealed class RecapHistoryLoadProjectorTests {
     public void RangeAdditivityMatchesIndependentSuffixes() {
         SJ.SessionHistoryPlanningWindow window = StandardWindow();
         var estimator = new ContentEstimator();
-        RecapHistoryLoadMeasurement whole =
-            RecapHistoryLoadProjector.Measure(
+        HistoryLoadProjection whole =
+            HistoryLoadProjector.Measure(
                 window,
                 window.StartExclusive,
                 estimator
             );
         EventAddress split =
             window.ReplaySafeBoundaries[1].Address;
-        RecapHistoryLoadMeasurement suffix =
-            RecapHistoryLoadProjector.Measure(
+        HistoryLoadProjection suffix =
+            HistoryLoadProjector.Measure(
                 window,
                 split,
                 new ContentEstimator()
@@ -195,7 +201,7 @@ public sealed class RecapHistoryLoadProjectorTests {
         SJ.SessionHistoryPlanningWindow window = StandardWindow();
         HistoryLoadMeasurementException outside =
             Assert.Throws<HistoryLoadMeasurementException>(() =>
-                RecapHistoryLoadProjector.Measure(
+                HistoryLoadProjector.Measure(
                     window,
                     Address(99),
                     new ContentEstimator()
@@ -213,7 +219,7 @@ public sealed class RecapHistoryLoadProjectorTests {
             };
         HistoryLoadMeasurementException outOfRange =
             Assert.Throws<HistoryLoadMeasurementException>(() =>
-                RecapHistoryLoadProjector.Measure(
+                HistoryLoadProjector.Measure(
                     malformed,
                     boundaries[1].Address,
                     new ContentEstimator()
@@ -236,7 +242,7 @@ public sealed class RecapHistoryLoadProjectorTests {
     public void ProjectorPassesExactUnitCapAndRejectsZeroLoad() {
         SJ.SessionHistoryPlanningWindow window = StandardWindow();
         var observing = new ContentEstimator();
-        _ = RecapHistoryLoadProjector.Measure(
+        _ = HistoryLoadProjector.Measure(
             window,
             window.StartExclusive,
             observing
@@ -252,7 +258,7 @@ public sealed class RecapHistoryLoadProjectorTests {
 
         HistoryLoadMeasurementException failure =
             Assert.Throws<HistoryLoadMeasurementException>(() =>
-                RecapHistoryLoadProjector.Measure(
+                HistoryLoadProjector.Measure(
                     window,
                     window.StartExclusive,
                     new DelegateEstimator(static _ =>
@@ -281,7 +287,7 @@ public sealed class RecapHistoryLoadProjectorTests {
 
         HistoryLoadMeasurementException failure =
             Assert.Throws<HistoryLoadMeasurementException>(() =>
-                RecapHistoryLoadProjector.Measure(
+                HistoryLoadProjector.Measure(
                     window,
                     window.StartExclusive,
                     estimator
@@ -310,15 +316,15 @@ public sealed class RecapHistoryLoadProjectorTests {
         SJ.SessionHistoryPlanningWindow oversized =
             LinearWindow(unitCount: 9);
 
-        RecapHistoryLoadMeasurement accepted =
-            RecapHistoryLoadProjector.Measure(
+        HistoryLoadProjection accepted =
+            HistoryLoadProjector.Measure(
                 exact,
                 exact.StartExclusive,
                 estimator
             );
         HistoryLoadMeasurementException failure =
             Assert.Throws<HistoryLoadMeasurementException>(() =>
-                RecapHistoryLoadProjector.Measure(
+                HistoryLoadProjector.Measure(
                     oversized,
                     oversized.StartExclusive,
                     estimator
@@ -338,7 +344,7 @@ public sealed class RecapHistoryLoadProjectorTests {
         SJ.SessionHistoryPlanningWindow window = StandardWindow();
         HistoryLoadMeasurementException thrown =
             Assert.Throws<HistoryLoadMeasurementException>(() =>
-                RecapHistoryLoadProjector.Measure(
+                HistoryLoadProjector.Measure(
                     window,
                     window.StartExclusive,
                     new DelegateEstimator(static _ =>
@@ -348,7 +354,7 @@ public sealed class RecapHistoryLoadProjectorTests {
             );
         HistoryLoadMeasurementException invalid =
             Assert.Throws<HistoryLoadMeasurementException>(() =>
-                RecapHistoryLoadProjector.Measure(
+                HistoryLoadProjector.Measure(
                     window,
                     window.StartExclusive,
                     new DelegateEstimator(static _ =>
@@ -371,6 +377,148 @@ public sealed class RecapHistoryLoadProjectorTests {
     }
 
     [Fact]
+    public void ProjectorPreservesLegacyZeroRenderedByteMeasurement() {
+        SJ.SessionHistoryPlanningWindow window = StandardWindow();
+        var estimator = new DelegateEstimator(static _ =>
+            new HistoryUnitLoadMeasurement(
+                new HistoryLoadUnit(1),
+                0
+            )
+        );
+
+        HistoryLoadProjection measured = HistoryLoadProjector.Measure(
+            window,
+            window.StartExclusive,
+            estimator
+        );
+
+        Assert.Equal(0, measured.RenderedUtf8Bytes);
+        Assert.All(
+            measured.ReplaySafeBoundaries,
+            static boundary => Assert.Equal(
+                0,
+                boundary.CumulativeRenderedUtf8Bytes
+            )
+        );
+    }
+
+    [Fact]
+    public void ProjectorPreservesLegacyNonBlankEstimatorIdSemantics() {
+        SJ.SessionHistoryPlanningWindow window = StandardWindow();
+        foreach (string id in new[] {
+            new string('x', 129),
+            "legacy-\uD800-id"
+        }) {
+            var estimator = new DelegateEstimator(
+                static _ => new HistoryUnitLoadMeasurement(
+                    new HistoryLoadUnit(1),
+                    1
+                ),
+                id
+            );
+
+            HistoryLoadProjection measured =
+                HistoryLoadProjector.Measure(
+                    window,
+                    window.StartExclusive,
+                    estimator
+                );
+
+            Assert.Equal(id, measured.EstimatorId);
+        }
+    }
+
+    [Fact]
+    public void EstimatorExceptionsUseTheLockedFatalAndTypedMapping() {
+        SJ.SessionHistoryPlanningWindow window = StandardWindow();
+        foreach (Exception fatal in new Exception[] {
+            new OutOfMemoryException("measure-fatal"),
+            new StackOverflowException("measure-fatal"),
+            new AccessViolationException("measure-fatal")
+        }) {
+            Exception thrown = Assert.Throws(
+                fatal.GetType(),
+                () => HistoryLoadProjector.Measure(
+                    window,
+                    window.StartExclusive,
+                    new DelegateEstimator(_ => throw fatal)
+                )
+            );
+            Assert.Same(fatal, thrown);
+        }
+        foreach (Exception fatal in new Exception[] {
+            new OutOfMemoryException("id-fatal"),
+            new StackOverflowException("id-fatal"),
+            new AccessViolationException("id-fatal")
+        }) {
+            Exception thrown = Assert.Throws(
+                fatal.GetType(),
+                () => HistoryLoadProjector.Measure(
+                    window,
+                    window.StartExclusive,
+                    new ThrowingIdEstimator(fatal)
+                )
+            );
+            Assert.Same(fatal, thrown);
+        }
+
+        HistoryLoadMeasurementException idFailure = Assert.Throws<
+            HistoryLoadMeasurementException
+        >(() => HistoryLoadProjector.Measure(
+            window,
+            window.StartExclusive,
+            new ThrowingIdEstimator(
+                new InvalidOperationException("id failed")
+            )
+        ));
+        Assert.Equal(
+            HistoryLoadMeasurementDefectCodes.EstimatorFailed,
+            idFailure.Code
+        );
+
+        HistoryLoadMeasurementException cancellation = Assert.Throws<
+            HistoryLoadMeasurementException
+        >(() => HistoryLoadProjector.Measure(
+            window,
+            window.StartExclusive,
+            new DelegateEstimator(static _ =>
+                throw new OperationCanceledException("not caller cancellation")
+            )
+        ));
+        Assert.Equal(
+            HistoryLoadMeasurementDefectCodes.EstimatorFailed,
+            cancellation.Code
+        );
+
+        HistoryLoadMeasurementException overflow = Assert.Throws<
+            HistoryLoadMeasurementException
+        >(() => HistoryLoadProjector.Measure(
+            window,
+            window.StartExclusive,
+            new DelegateEstimator(static _ =>
+                throw new OverflowException("overflow")
+            )
+        ));
+        Assert.Equal(
+            HistoryLoadMeasurementDefectCodes.MeasurementOverflow,
+            overflow.Code
+        );
+
+        var typed = new HistoryLoadMeasurementException(
+            "TestTyped",
+            "typed"
+        );
+        HistoryLoadMeasurementException passthrough = Assert.Throws<
+            HistoryLoadMeasurementException
+        >(() => HistoryLoadProjector.Measure(
+            window,
+            window.StartExclusive,
+            new DelegateEstimator(_ => throw typed)
+        ));
+        Assert.Same(typed, passthrough);
+    }
+
+    [Fact]
     public void NullReplaySafeBoundaryFailsTypedBeforeBaselineLookup() {
         SJ.SessionHistoryPlanningWindow window = StandardWindow();
         SJ.SessionHistoryPlanningBoundary[] boundaries = [
@@ -380,7 +528,7 @@ public sealed class RecapHistoryLoadProjectorTests {
 
         HistoryLoadMeasurementException failure =
             Assert.Throws<HistoryLoadMeasurementException>(() =>
-                RecapHistoryLoadProjector.Measure(
+                HistoryLoadProjector.Measure(
                     window with {
                         ReplaySafeBoundaries = boundaries
                     },
@@ -533,13 +681,26 @@ public sealed class RecapHistoryLoadProjectorTests {
         Func<
             SJ.SessionHistoryPlanningUnit,
             HistoryUnitLoadMeasurement
-        > measure
+        > measure,
+        string id = "test.delegate-load.v1"
     ) : IHistoryUnitLoadEstimator {
-        public string Id => "test.delegate-load.v1";
+        public string Id { get; } = id;
 
         public HistoryUnitLoadMeasurement Measure(
             SJ.SessionHistoryPlanningUnit unit,
             int maxRenderedUtf8Bytes
         ) => measure(unit);
+    }
+
+    private sealed class ThrowingIdEstimator(Exception exception)
+        : IHistoryUnitLoadEstimator {
+        public string Id => throw exception;
+
+        public HistoryUnitLoadMeasurement Measure(
+            SJ.SessionHistoryPlanningUnit unit,
+            int maxRenderedUtf8Bytes
+        ) => throw new InvalidOperationException(
+            "Measure must not run when reading Id fails."
+        );
     }
 }

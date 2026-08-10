@@ -55,9 +55,11 @@ FamilyDefinitionDigest = H(SystemPrompt, OrderedTools, OutputProtocol, InputRend
 DefinitionDigest       = H(LogicalColumnId, FamilyDigest, Target, Capability, DeclarativeSpec, MaxBytes)
 RecipeDigest           = H(TimelineId, BootstrapRow, BuildTarget, BaseRecipe, RecomputedColumns)
 PriorProjectionDigest  = H(ordered LogicalColumnId + visible ContentDigest)
+RowDescriptorDigest    : HistorySegmentDescriptorDigest
 EvaluationKeyDigest    = H(RowDescriptorDigest, DefinitionDigest, PriorProjection | FirstRow)
 ```
 
+`RowDescriptorDigest`必须直接使用HistoryTimeline的typed `HistorySegmentDescriptorDigest`，不得重新包装裸string。
 Hasher只接受canonical typed values，不接受caller-provided digest/pre-rendered provider JSON作为authority。provider request
 fingerprint是telemetry，不是Cell identity。model/connection仅在被明确声明为A/B语义时进入Definition。
 

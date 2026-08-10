@@ -1,7 +1,7 @@
 using Atelia.EventJournal;
 using SJ = Atelia.SessionJournal;
 
-namespace Atelia.SessionJournal.DerivedRecap.Planner;
+namespace Atelia.SessionJournal.HistoryTimeline;
 
 /// <summary>
 /// A non-negative, estimator-scoped internal history-load value.
@@ -35,14 +35,14 @@ public sealed record HistoryUnitLoadMeasurement(
     int RenderedUtf8Bytes
 );
 
-public sealed record RecapHistoryLoadMeasurement {
-    public RecapHistoryLoadMeasurement(
+public sealed record HistoryLoadProjection {
+    public HistoryLoadProjection(
         string estimatorId,
         EventAddress baselineAddress,
         int baselineCompletedUnitCount,
         HistoryLoadUnit growth,
         int renderedUtf8Bytes,
-        IReadOnlyList<RecapHistoryLoadBoundary>
+        IReadOnlyList<HistoryLoadBoundaryProjection>
             replaySafeBoundaries
     ) {
         EstimatorId = string.IsNullOrWhiteSpace(estimatorId)
@@ -86,30 +86,39 @@ public sealed record RecapHistoryLoadMeasurement {
     public int BaselineCompletedUnitCount { get; }
     public HistoryLoadUnit Growth { get; }
     public int RenderedUtf8Bytes { get; }
-    public IReadOnlyList<RecapHistoryLoadBoundary>
+    public IReadOnlyList<HistoryLoadBoundaryProjection>
         ReplaySafeBoundaries { get; }
 }
 
-public sealed record RecapHistoryLoadBoundary {
-    public RecapHistoryLoadBoundary(
+public sealed record HistoryLoadBoundaryProjection {
+    public HistoryLoadBoundaryProjection(
         EventAddress address,
         int historyUnitCountSinceBaseline,
-        HistoryLoadUnit absorbedSinceBaseline
+        HistoryLoadUnit absorbedSinceBaseline,
+        int cumulativeRenderedUtf8Bytes
     ) {
         if (historyUnitCountSinceBaseline < 0) {
             throw new ArgumentOutOfRangeException(
                 nameof(historyUnitCountSinceBaseline)
             );
         }
+        if (cumulativeRenderedUtf8Bytes < 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(cumulativeRenderedUtf8Bytes)
+            );
+        }
         Address = address;
         HistoryUnitCountSinceBaseline =
             historyUnitCountSinceBaseline;
         AbsorbedSinceBaseline = absorbedSinceBaseline;
+        CumulativeRenderedUtf8Bytes =
+            cumulativeRenderedUtf8Bytes;
     }
 
     public EventAddress Address { get; }
     public int HistoryUnitCountSinceBaseline { get; }
     public HistoryLoadUnit AbsorbedSinceBaseline { get; }
+    public int CumulativeRenderedUtf8Bytes { get; }
 }
 
 /// <summary>

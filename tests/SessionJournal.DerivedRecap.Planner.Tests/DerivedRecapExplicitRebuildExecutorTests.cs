@@ -540,7 +540,7 @@ public sealed class DerivedRecapExplicitRebuildExecutorTests
                     static item => item.address,
                     static item => item.index
                 );
-            RecapHistoryLoadBoundary? boundary = facts.HistoryLoad
+            HistoryLoadBoundaryProjection? boundary = facts.HistoryLoad
                 .ReplaySafeBoundaries
                 .LastOrDefault(candidate =>
                     rawPositions[candidate.Address] + 1

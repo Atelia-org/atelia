@@ -324,9 +324,9 @@ public sealed partial class DerivedRecapEpochCampaignExecutor {
             SessionHistoryPlanningWindow allRaw =
                 ((SessionHistoryPlanningWindowReadResult.Available)
                     rawRead).Window;
-            RecapHistoryLoadMeasurement measurement;
+            HistoryLoadProjection measurement;
             try {
-                measurement = RecapHistoryLoadProjector.Measure(
+                measurement = HistoryLoadProjector.Measure(
                     allRaw,
                     source.StartSeed.Address,
                     Configuration.HistoryUnitLoadEstimator

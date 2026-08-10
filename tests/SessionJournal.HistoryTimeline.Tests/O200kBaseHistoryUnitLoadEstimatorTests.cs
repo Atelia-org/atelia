@@ -5,7 +5,7 @@ using Atelia.EventJournal;
 using Xunit;
 using SJ = Atelia.SessionJournal;
 
-namespace Atelia.SessionJournal.DerivedRecap.Planner.Tests;
+namespace Atelia.SessionJournal.HistoryTimeline.Tests;
 
 public sealed class O200kBaseHistoryUnitLoadEstimatorTests {
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator =

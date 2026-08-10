@@ -3,7 +3,7 @@ using Atelia.Completion.Abstractions;
 using Microsoft.ML.Tokenizers;
 using SJ = Atelia.SessionJournal;
 
-namespace Atelia.SessionJournal.DerivedRecap.Planner;
+namespace Atelia.SessionJournal.HistoryTimeline;
 
 /// <summary>
 /// The fixed H0 reference estimator. Each HistoryUnit is framed and
@@ -47,7 +47,7 @@ public sealed class O200kBaseHistoryUnitLoadEstimator
             );
         }
         catch (Exception exception) when (
-            RecapNonFatalException.IsCatchable(exception)
+            HistoryLoadNonFatalException.IsCatchable(exception)
         ) {
             throw new HistoryLoadMeasurementException(
                 HistoryLoadMeasurementDefectCodes.EstimatorFailed,

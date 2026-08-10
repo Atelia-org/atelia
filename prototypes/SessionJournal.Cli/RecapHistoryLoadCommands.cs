@@ -58,9 +58,9 @@ internal static class RecapHistoryLoadCommands {
             var estimator = new RecordingHistoryUnitLoadEstimator(
                 new O200kBaseHistoryUnitLoadEstimator()
             );
-            RecapHistoryLoadMeasurement measurement;
+            HistoryLoadProjection measurement;
             try {
-                measurement = RecapHistoryLoadProjector.Measure(
+                measurement = HistoryLoadProjector.Measure(
                     window,
                     window.StartExclusive,
                     estimator
@@ -174,13 +174,13 @@ internal static class RecapHistoryLoadCommands {
     private static HistoryMessageKind ParseHistoryKind(string value)
         => Enum.Parse<HistoryMessageKind>(value);
 
-    private static IReadOnlyList<RecapHistoryLoadBoundaryReport>
+    private static IReadOnlyList<HistoryLoadBoundaryProjectionReport>
         MapBoundaries(
-        RecapHistoryLoadMeasurement measurement
+        HistoryLoadProjection measurement
     ) => Array.AsReadOnly([
         .. measurement.ReplaySafeBoundaries.Select(
             static boundary =>
-                new RecapHistoryLoadBoundaryReport(
+                new HistoryLoadBoundaryProjectionReport(
                     SJ.EventAddressTextCodec.Format(
                         boundary.Address
                     ),
@@ -343,7 +343,7 @@ internal sealed record RecapHistoryLoadCalibrationReport(
     IReadOnlyList<RecapHistoryLoadByKindReport> ByKind,
     RecapHistoryLoadUnitDistributionsReport UnitDistributions,
     IReadOnlyList<RecapHistoryLoadUnitReport> Units,
-    IReadOnlyList<RecapHistoryLoadBoundaryReport> Boundaries,
+    IReadOnlyList<HistoryLoadBoundaryProjectionReport> Boundaries,
     IReadOnlyList<RecapContinuousWindowLoadDistributionReport>
         ContinuousWindowLoadDistributions
 );
@@ -389,7 +389,7 @@ internal sealed record RecapHistoryLoadUnitReport(
     int RenderedUtf8Bytes
 );
 
-internal sealed record RecapHistoryLoadBoundaryReport(
+internal sealed record HistoryLoadBoundaryProjectionReport(
     string Address,
     int CompletedHistoryUnitCountSinceBaseline,
     long AbsorbedHistoryLoadSinceBaseline

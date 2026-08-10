@@ -1,6 +1,6 @@
 # DerivedRecap Grid Rewrite 总施工计划
 
-状态：Implementation program active；WP-00 complete，WP-01A ready；current production尚未切换
+状态：Implementation program active；WP-00、WP-01A complete，WP-01B ready；current production尚未切换
 
 目标设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)
 
@@ -42,7 +42,7 @@ WP-00采用上述exact名称，并把两个ref都建立在`5e1ba46e`。必须保
 3. MaintainerControlPlane 是 definitions、GridBuildRecipes 与 active recipe CAS 的唯一逻辑 authority；只选一个物理 carrier。
 4. RecapGridStore 只保存 immutable cells/views 与可重建 fulfillment/index；whole-store corruption 只 reset/rebuild。
 5. production project graph从`SessionJournal <- HistoryTimeline <- RecapGrid.Abstractions`开始：Timeline独占
-   `TimelineId/RowId/DescriptorDigest`，Grid不得复制第二套identity。`HistoryTimeline`不直接引用Maintainer、Grid、
+   `TimelineId/HistoryRowId/HistorySegmentDescriptorDigest`，Grid不得复制第二套identity。`HistoryTimeline`不直接引用Maintainer、Grid、
    Completion runtime/provider或Galatea；允许消费SessionJournal暴露的provider-neutral history-message contract。
 6. Cell semantic identity 只提交 Maintainer 实际可见输入；runtime connection/model/lane/cache 不进入 identity。
 7. Completion call 不持有 durable transaction；commit 只发生在成功结果返回后。
@@ -50,6 +50,8 @@ WP-00采用上述exact名称，并把两个ref都建立在`5e1ba46e`。必须保
    config；Prepared仍按frozen completion identity从Host registry exact bind，Started Refuse先于client creation。
 9. old/new production paths 不并存为长期 feature flag；WP-07A/07B candidate 只用于隔离验收，WP-08 一次 direct cut。
 10. unknown schema、hash mismatch、wrong lineage/head、duplicate/unknown fields 全部 typed fail closed。
+11. Timeline row append与partition-policy CAS是两个transaction：append保留whole expected head的active policy；policy CAS不追加row，
+    即使empty head也只推进generation并保持row/raw fence为null。
 
 ## 4. Work-package graph
 

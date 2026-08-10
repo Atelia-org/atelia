@@ -28,7 +28,14 @@ public sealed class AssemblyDependencyBoundaryTests {
             ["../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"],
             DirectProjectReferences(abstractionsProject)
         );
-        Assert.Empty(DirectPackageReferences(timelineProject));
+        Assert.Equal(
+            [
+                "Microsoft.Bcl.Memory@9.0.17",
+                "Microsoft.ML.Tokenizers@2.0.0",
+                "Microsoft.ML.Tokenizers.Data.O200kBase@2.0.0"
+            ],
+            DirectPackageReferences(timelineProject)
+        );
         Assert.Empty(DirectPackageReferences(abstractionsProject));
 
         string combined = File.ReadAllText(timelineProject)
@@ -50,21 +57,141 @@ public sealed class AssemblyDependencyBoundaryTests {
     }
 
     [Fact]
-    public void WalkingSkeletonShapesStayOutsideProductAssemblies() {
+    public void WalkingSkeletonHasNoPrivateTimelineIdentityOwner() {
         string root = FindRepositoryRoot();
-        foreach (string relativeDirectory in new[] {
-            "prototypes/SessionJournal.HistoryTimeline",
-            "prototypes/SessionJournal.RecapGrid.Abstractions"
+        string skeleton = File.ReadAllText(Path.Combine(
+            root,
+            "tests",
+            "SessionJournal.RecapGrid.WalkingSkeleton.Tests",
+            "GridWalkingSkeletonTests.cs"
+        ));
+        foreach (string forbidden in new[] {
+            "HistorySegmentDescriptorShape",
+            "record TimelineId",
+            "record HistoryRowId",
+            "history-segment-v1",
+            "history-timeline.row-id",
+            "history-timeline.descriptor"
         }) {
-            string directory = Path.Combine(
-                root,
-                relativeDirectory.Replace('/', Path.DirectorySeparatorChar)
+            Assert.DoesNotContain(
+                forbidden,
+                skeleton,
+                StringComparison.Ordinal
             );
-            Assert.DoesNotContain(Directory.EnumerateFiles(
-                directory,
-                "*.cs",
-                SearchOption.AllDirectories
-            ), static path => !IsBuildOutput(path));
+        }
+    }
+
+    [Fact]
+    public void HistoryLoadDeclarationsHaveOneProductionOwner() {
+        string root = FindRepositoryRoot();
+        string[] sourceFiles = [.. Directory.EnumerateFiles(
+            Path.Combine(root, "prototypes"),
+            "*.cs",
+            SearchOption.AllDirectories
+        ).Select(static path => path.Replace('\\', '/'))
+            .Where(static path => !IsBuildOutput(path))];
+        foreach (string declaration in new[] {
+            "public readonly record struct HistoryLoadUnit",
+            "public interface IHistoryUnitLoadEstimator",
+            "public sealed class O200kBaseHistoryUnitLoadEstimator",
+            "public static class HistoryLoadProjector",
+            "public const string EstimatorId"
+        }) {
+            string owner = Assert.Single(sourceFiles, path =>
+                File.ReadAllText(path).Contains(
+                    declaration,
+                    StringComparison.Ordinal
+                )
+            );
+            Assert.Contains(
+                "/prototypes/SessionJournal.HistoryTimeline/",
+                owner,
+                StringComparison.Ordinal
+            );
+        }
+        foreach (string legacyDeclaration in new[] {
+            "record RecapHistoryLoadMeasurement",
+            "record RecapHistoryLoadBoundary",
+            "class RecapHistoryLoadProjector",
+            "record RecapHistoryLoadBaseline",
+            "class RecapHistoryLoadBaselineResolver"
+        }) {
+            Assert.DoesNotContain(sourceFiles, path =>
+                File.ReadAllText(path).Contains(
+                    legacyDeclaration,
+                    StringComparison.Ordinal
+                )
+            );
+        }
+        const string o200kIdentity =
+            "atelia.history-load.o200k-base.history-unit-v1";
+        string o200kOwner = Assert.Single(sourceFiles, path =>
+            File.ReadAllText(path).Contains(
+                o200kIdentity,
+                StringComparison.Ordinal
+            )
+        );
+        Assert.EndsWith(
+            "/prototypes/SessionJournal.HistoryTimeline/O200kBaseHistoryUnitLoadEstimator.cs",
+            o200kOwner,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(sourceFiles, path =>
+            path.EndsWith(
+                "/SessionJournal.DerivedRecap.Planner/HistoryLoadContracts.cs",
+                StringComparison.Ordinal
+            )
+            || path.EndsWith(
+                "/SessionJournal.DerivedRecap.Planner/O200kBaseHistoryUnitLoadEstimator.cs",
+                StringComparison.Ordinal
+            )
+            || path.EndsWith(
+                "/SessionJournal.DerivedRecap.Planner/RecapHistoryLoadProjector.cs",
+                StringComparison.Ordinal
+            )
+        );
+    }
+
+    [Fact]
+    public void LegacyConsumersReferenceTimelineDirectlyWithoutTokenizerPins() {
+        string root = FindRepositoryRoot();
+        string plannerProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.DerivedRecap.Planner",
+            "SessionJournal.DerivedRecap.Planner.csproj"
+        );
+        Assert.Empty(DirectPackageReferences(plannerProject));
+
+        foreach ((string project, string expectedReference) in new[] {
+            (
+                plannerProject,
+                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"
+            ),
+            (
+                Path.Combine(
+                    root,
+                    "prototypes",
+                    "SessionJournal.Cli",
+                    "SessionJournal.Cli.csproj"
+                ),
+                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"
+            ),
+            (
+                Path.Combine(
+                    root,
+                    "prototypes",
+                    "Galatea",
+                    "Galatea.Server.csproj"
+                ),
+                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"
+            )
+        }) {
+            Assert.Contains(
+                expectedReference,
+                DirectProjectReferences(project),
+                StringComparer.Ordinal
+            );
         }
     }
 
@@ -163,9 +290,13 @@ public sealed class AssemblyDependencyBoundaryTests {
         XDocument document = XDocument.Load(projectPath);
         return [.. document
             .Descendants("PackageReference")
-            .Select(element => (string?)element.Attribute("Include"))
-            .Where(static value => value is not null)
-            .Select(static value => value!)];
+            .Select(element => new {
+                Include = (string?)element.Attribute("Include"),
+                Version = (string?)element.Attribute("Version")
+            })
+            .Where(static value => value.Include is not null)
+            .Select(static value =>
+                $"{value.Include}@{value.Version}")];
     }
 
     private static bool IsBuildOutput(string path) {

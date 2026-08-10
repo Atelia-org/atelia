@@ -5,7 +5,9 @@
 > **实施状态**：H0～H2与 C3 已完成。Production cadence已唯一切换到
 > config V2 + `o200k_base` HistoryLoad；旧 count scheduling authority、header cadence
 > prefilter与 config V1均已删除。
-> **适用范围**：`prototypes/SessionJournal.DerivedRecap.Planner`
+> **适用范围**：provider-neutral contracts/estimator/projector由
+> `prototypes/SessionJournal.HistoryTimeline`唯一拥有；current cadence consumer仍在
+> `prototypes/SessionJournal.DerivedRecap.Planner`
 > **上位设计**：
 > [Event-addressed Derived Recap V4](durable-target.md)
 > **前置实现**：
@@ -47,7 +49,7 @@ atelia.history-load.o200k-base.history-unit-v1
 
 它以 `o200k_base`作为稳定、跨语言的正文分段尺度。Estimator identity冻结 vocabulary、
 字段选择、framing与单 HistoryUnit数值语义；window additivity与boundary projection由
-`RecapHistoryLoadProjector` contract冻结。任一数值语义改变都必须发布新 identity并重新校准
+`HistoryLoadProjector` contract冻结。任一数值语义改变都必须发布新 identity并重新校准
 thresholds。不同 identity的 HistoryLoad不可比较。
 
 ## 1. Authority 与计量对象
@@ -57,8 +59,11 @@ raw SessionJournal
   owns: immutable events, Parent lineage, dependency-closed HistoryUnits,
         replay-safe boundaries
 
+HistoryTimeline
+  owns: unit-estimator contract/O200k identity, full-window projector, partition measurement primitives
+
 DerivedRecap Planner/Host
-  owns: unit-estimator registry, window projector, thresholds, trigger, admission
+  owns: current thresholds, trigger, admission与runtime estimator selection
 
 DerivedRecap Store
   owns: Building/Published set与blocks
@@ -139,27 +144,28 @@ Estimator不理解 cadence baseline、raw lineage、replay-safe boundary、recen
 Planner用独立的、tokenizer-neutral projector聚合 window：
 
 ```csharp
-public static class RecapHistoryLoadProjector {
-    public static RecapHistoryLoadMeasurement Measure(
+public static class HistoryLoadProjector {
+    public static HistoryLoadProjection Measure(
         SessionHistoryPlanningWindow window,
         EventAddress baselineAddress,
         IHistoryUnitLoadEstimator estimator
     );
 }
 
-public sealed record RecapHistoryLoadMeasurement(
+public sealed record HistoryLoadProjection(
     string EstimatorId,
     EventAddress BaselineAddress,
     int BaselineCompletedUnitCount,
     HistoryLoadUnit Growth,
     int RenderedUtf8Bytes,
-    IReadOnlyList<RecapHistoryLoadBoundary> ReplaySafeBoundaries
+    IReadOnlyList<HistoryLoadBoundaryProjection> ReplaySafeBoundaries
 );
 
-public sealed record RecapHistoryLoadBoundary(
+public sealed record HistoryLoadBoundaryProjection(
     EventAddress Address,
     int HistoryUnitCountSinceBaseline,
-    HistoryLoadUnit AbsorbedSinceBaseline
+    HistoryLoadUnit AbsorbedSinceBaseline,
+    int CumulativeRenderedUtf8Bytes
 );
 ```
 
@@ -168,7 +174,8 @@ Unit estimator必须满足：
 - `Load >= 1`；
 - `maxRenderedUtf8Bytes > 0`；
 - rendering过程中一旦将超过该 cap立即 typed-fail，不先构造超限字符串；
-- `RenderedUtf8Bytes >= 0`且不超过传入 cap；
+- legacy full-window projector兼容`RenderedUtf8Bytes >= 0`且不超过传入 cap；
+- 新Timeline partition用于sealed-row evidence时进一步要求每个已消费unit的`RenderedUtf8Bytes >= 1`；
 - 相同 message与 estimator identity产生相同结果；
 - unknown message/block、invalid Unicode、overflow或超限 typed-fail，不 fallback。
 
@@ -196,7 +203,7 @@ Projector必须满足：
 - window rendered bytes是相同 unit measurements的 checked sum；
 - malformed output、overflow或异常是 typed planning unavailable，零 Building/LLM side effect。
 
-Address到unit offset的解析由一个 Planner-internal baseline resolver作为单一实现；projector与后续
+Address到unit offset的解析由一个 HistoryTimeline-internal baseline resolver作为单一实现；projector与后续
 evaluator validation复用它，不各自维护 `SingleOrDefault`/ordinal算法。Resolver还必须返回
 baseline boundary ordinal，以保证 baseline之后、与其共享同一 `CompletedUnitCount`的boundary
 仍保留在输出中。
@@ -270,7 +277,7 @@ dependency closure可能使 recent load大于 R；Planner只承诺 `recent >= R`
 
 ### 4.1 Dependency 与生命周期
 
-Planner直接 pin：
+HistoryTimeline owner直接 pin；Planner通过direct project reference消费且自身保持这三个package为零：
 
 ```text
 Microsoft.ML.Tokenizers 2.0.0
@@ -289,8 +296,8 @@ TiktokenTokenizer.CreateForEncoding("o200k_base")
 ```
 
 Tokenizer实例在进程内缓存复用。具体实现建议命名为
-`O200kBaseHistoryUnitLoadEstimator`。PackageReference、asset pin与golden vectors属于 H0
-Craft清单；首版不提前拆新 project。
+`O200kBaseHistoryUnitLoadEstimator`。PackageReference、asset pin与golden vectors属于
+`SessionJournal.HistoryTimeline` H0 Craft清单。
 
 参考：
 [Microsoft使用指南](https://learn.microsoft.com/en-us/dotnet/ai/how-to/use-tokenizers)、
@@ -378,11 +385,12 @@ MaxRenderedHistoryUnitUtf8Bytes = 4 MiB
 MaxBaselineRelativeWindowUtf8Bytes = 32 MiB
 ```
 
-Projector是 measurement caps的唯一调用 authority：它把4 MiB传给每次
+full-window Projector与Timeline partitioner共享同一measurement/fatal-mapping helper；它把4 MiB传给每次
 `IHistoryUnitLoadEstimator.Measure(unit, maxRenderedUtf8Bytes)`。Unit estimator边生成边以
 strict UTF-8累计 bytes，不构造超限 unit rendering。Projector再累加各
 `HistoryUnitLoadMeasurement.RenderedUtf8Bytes`并执行32 MiB baseline-relative window cap。
-任一超限返回 `HistoryLoadInputTooLarge`。
+旧Projector为迁移前兼容接受零byte measurement；partition在共享helper返回后独立拒绝零byte，确保sealed-row
+partition evidence逐unit为正。任一超限返回 `HistoryLoadInputTooLarge`。
 
 这些 caps不属于 estimator数值 identity，不是 provider context limit，也不写 config/manifest；
 调整它们必须独立版本化、审阅并保留旧有效输入的兼容性。

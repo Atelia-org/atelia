@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-01：HistoryTimeline 总览
 
-状态：Planned；依赖 WP-00 complete
+状态：In progress；WP-01A complete，WP-01B ready
 
 只需加载：[`Grid target`](derived-recap-grid-target-design.md)、[`Master`](derived-recap-grid-rewrite-master-plan.md)、
 [`WP-00 handoff`](derived-recap-grid-wp00-baseline-and-walking-skeleton.md) 与本文。实际施工再只加载对应子包。
@@ -32,6 +32,7 @@ WP-01C single durable ledger + crash/operator surface
 - `MinimumRecentHistoryLoad`不进入Timeline；recent raw tail由SessionJournal context policy负责；
 - online bounded proof不足返回`OfflineBootstrapRequired`，不会暗中全History scan；
 - descriptor提交exact start/end setups、count/load、raw-range hash、estimator/policy identity；
+- `DescriptorDigest`的formal type是HistoryTimeline独占的`HistorySegmentDescriptorDigest`，Grid不得以裸string重定义；
 - 同Ref也可能rewind/retarget，所有plan/open/reconcile都绑定captured raw head；
 - sealed row不随当前B、estimator、Maintainer或Grid reset重新解释；
 - Timeline损坏不做普通reset：restore包含当前active head的verified backup，或通过canonical `ActiveTimelineLocator` CAS显式
@@ -41,22 +42,25 @@ WP-01C single durable ledger + crash/operator surface
 
 ```text
 ReadSnapshot()
-PutPartitionPolicy(canonicalPolicy)
-CompareExchangeActivePolicy(expectedTimelineHead, expectedPolicy, nextPolicy)
+PutPolicy(canonicalPolicy)
+CompareExchangePolicy(expectedWholeTimelineHead, nextPolicyDigest)
 PlanNextRow(expectedTimelineHead, capturedSelectedRawHead)
-CommitRow(proposal, boundSelectedRawAuthority)
+CommitRow(proposal)
 ReconcileSelectedPath(expectedTimelineHead, capturedSelectedRawHead)
 OpenSegment(selectedTimelineHead, capturedSelectedRawHead, rowId)
 ListPath(head, cursor, limit)
 ```
 
-`Proposal`冻结Timeline/Ref、captured raw head、expected generation/head/policy及canonical descriptor bytes。commit coordinator
-必须内部重读bound raw ref的current head，不能信caller值；row insert + Timeline head/policy CAS是单一ledger transaction。
+`Proposal`冻结whole expected `TimelineHeadRef`、outer captured raw head及canonical descriptor bytes。commit coordinator必须内部重读
+bound raw ref的current head，不能信caller或`BoundHistorySegmentRange`充当authority；row insert + whole-head CAS是单一ledger
+transaction，append保留expected active policy。`PutPolicy`只存immutable value；`CompareExchangePolicy`是独立transaction，
+只切active policy并推进generation，不追加row。
 若commit后raw立即MoveRef，immutable row只成为合法candidate，post-fence/下一次reconcile fail closed并选择共同prefix，不把它
 当selected path。普通append增长不使已sealed range自动非法。
 
 Timeline artifact scope只提交`RefId + TimelineId`；canonical colocated repository path只是runtime binding/locator，不进入
 descriptor identity。`PlanNextRow`只能使用`ReadSnapshot`中的exact active policy，不能接受未注册policy bytes。
+initial empty head为generation 0；empty head上的policy CAS仍保持row/raw fence为null但推进到generation 1+。
 
 ## Global write boundary
 

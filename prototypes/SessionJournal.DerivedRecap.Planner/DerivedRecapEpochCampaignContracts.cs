@@ -161,7 +161,7 @@ public sealed record RecapEpochOperationLimits {
 
 public sealed record RecapEpochPlanningFacts(
     SessionHistoryPlanningWindow Window,
-    RecapHistoryLoadMeasurement HistoryLoad,
+    HistoryLoadProjection HistoryLoad,
     RecapCadenceConfig Cadence,
     int MaxRawEventsPerEpoch
 );
@@ -209,7 +209,7 @@ public sealed class MaintainCompleteRosterEpochPolicy
                 static pair => pair.address,
                 static pair => pair.index
             );
-        RecapHistoryLoadBoundary? selected = facts.HistoryLoad
+        HistoryLoadBoundaryProjection? selected = facts.HistoryLoad
             .ReplaySafeBoundaries
             .Where(boundary =>
                 rawPositions.TryGetValue(
