@@ -27,7 +27,9 @@
 - `operations/`：可重复 procedure，不是执行成功证明。
 - `evidence/`：exact run、candidate 或 review 的记录，不随 HEAD 自动续期。
 - `archive/`：已完成、被替代或历史材料；正常实现任务不得从这里推导 current API。
-- 当前 active plan：
+- 当前 active plans：
+  [DerivedRecap Sparse Versioned Grid 目标设计](work/active/derived-recap-grid-target-design.md)
+  记录下一代Timeline rows、Maintainer columns与immutable cells的理想Shape/Rule；尚未实施，也不描述current production。
   [DerivedRecap Shared Epoch / Maintainer Family 并行重构计划](work/active/derived-recap-shared-epoch-parallel-maintainer-refactor-plan.md)。
   R3 shared-epoch v8、R4 runtime-group并行调度、R5 cache boundary/usage telemetry与R6
   Galatea/CLI production composition已进入current code；R7 real-provider cache/economic proof仍为
