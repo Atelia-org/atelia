@@ -16,7 +16,9 @@ before/after commit、canonical corruption、branch/path query、backup/restore�
 可执行的同fixture实现；选择winner后删除loser code/dependency/tests，禁止双写、fallback或configurable dual backend。Timeline与Grid
 即使用同种技术也必须是独立durability domains，禁止跨库transaction。
 
-本包裁决：唯一production backend为同assembly内SQLite，direct pin `Microsoft.Data.Sqlite 10.0.10`，`Pooling=false`、
+本包裁决：唯一production backend为同assembly内SQLite，direct pin `Microsoft.Data.Sqlite 10.0.10`；因其传递native bundle
+`SQLitePCLRaw.lib.e_sqlite3 2.1.11`命中GHSA-2m69-gcr7-jv3q（影响`<=2.1.11`），同一owner另加security override direct pin
+`SQLitePCLRaw.bundle_e_sqlite3 2.1.12`。实测native SQLite为3.53.3且NuGet audit零warning；Control不重复pin。`Pooling=false`、
 rollback journal `DELETE`、`synchronous=EXTRA`、短`BEGIN IMMEDIATE` writer transaction。Directory+canonical files经结构性A0分析后
 淘汰：它需要另造multi-file atomic CAS、index-root publication与restore protocol，却没有减少authority或failure mode；可执行的
 四transaction、two-writer、crash、branch snapshot与backup/restore fixture只用于winner SQLite。最终Directory loser的code/dependency/
@@ -134,7 +136,8 @@ path page 128 rows / 4 MiB、DB与restore copy各8 GiB。常量不可由config�
   lifetime drain、fresh lock fsync、exact locator existence和offline Busy/Invalid/Absent/store-limit typed mapping均已有focused fixture；
 - tests：真实SQLite reopen/branch snapshot/same-End/mixed CAS、caps/root/index/schema/PRAGMA corruption、long divergence writer interleave、
   read-only、无IVT public surface、16窗口child crash harness；
-- architecture：只有HistoryTimeline product direct pin SQLite 10.0.10，product assembly不存在in-memory backend或公开backend selector；
+- architecture：只有HistoryTimeline product direct pinSQLite packages（`Microsoft.Data.Sqlite 10.0.10`与security override
+  `SQLitePCLRaw.bundle_e_sqlite3 2.1.12`），product assembly不存在in-memory backend或公开backend selector；
 - scope：未修改old DerivedRecap、Galatea、CLI composition或current production behavior；WP-07A只负责把既有typed library actions映射成CLI；
 - final serial validation：Timeline full 156/156、SessionJournal raw audit 19/19、walking architecture/package gates 13/13、
   assembly-external public surface 2/2、`Atelia.sln` build 0 warning / 0 error、docs checker 15/0、diff check clean；

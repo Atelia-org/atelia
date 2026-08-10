@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C complete，WP-02 Ready；尚未切换 current production
+状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C、WP-02 complete，WP-03 Ready；尚未切换 current production
 
 ## 1. Intent
 
@@ -826,22 +826,29 @@ dependency DAG的二维投影视图，不是每个坐标只有一个可变值的
 
 ## 11. Open decisions before implementation
 
-1. SQLite spike是否通过查询、crash、版本、可观察性与复杂度gate；若失败才重新打开Directory+JSON候选。
-2. `MaintainerControlPlane`采用raw SessionJournal action、独立control journal还是versioned operator config；production必须
-   选且只选一个carrier，并明确Host/Agent写权限。
-3. candidate/旧cell retention与GC规则。
+1. candidate/旧cell retention与GC规则。
 
 Timeline durable decision已由WP-01C关闭：唯一production backend是独立SQLite ledger（`DELETE` +
 `synchronous=EXTRA`），per-Ref canonical locator、verified backup/restore与explicit abandon各自有closed typed library action；它与
 可reset的Grid数据库保持独立lifecycle。两路independent review与final serial validation均GO，现已成为WP-02的complete handoff；
 这不表示production cutover，且Timeline V1 durable lease/fsync仍只在Linux上启用。
 
+Control carrier decision已由WP-02关闭：V1只使用
+`<repo>/control/recap-grid/v1/refs/<ref>/timelines/<timeline>/control.json` bounded canonical whole-state carrier与双lock；不写raw
+SessionJournal、不读取old operator config、不放在可reset的`derived` root。public factory内部跟随exact Timeline locator，backup/export/temp
+不参与normal discovery；restore/reinitialize只在strict-readable current+exact expected head+exclusive lease下安装new instance并令
+generation等于current generation + 1。两条independent review与final serial validation已GO，现为WP-03的complete handoff；
+这仍不表示production cutover。
+
 ## 12. Implementation boundary
 
 本文通过只表示Shape/Rule锁定及SQLite目标选择，不表示旧系统迁移方案或production implementation已经批准。
 施工计划已经拆为WP-00至WP-08；WP-00 baseline/walking skeleton、WP-01A Timeline contracts/partition与WP-01B raw
-integration、WP-01C durable ledger均已完成，WP-02 Ready。WP-01C final evidence为Timeline 156/156、raw 19/19、walking 13/13、
+integration、WP-01C durable ledger与WP-02 content-addressed ControlPlane均已完成，WP-03 Ready。WP-01C final evidence为Timeline 156/156、raw 19/19、walking 13/13、
 public surface 2/2、solution build 0 warning / 0 error、docs 15/0、diff clean与两路independent GO；commit evidence由containing commit提供。
+其后WP-02 final evidence为Abstractions 15/15、Control 26/26、Control public surface 2/2、Walking/architecture 13/13，
+并重跑Timeline 156/156与Timeline public surface 2/2；solution build 0 warning / 0 error、vulnerable package scan零命中、
+docs 15/0、diff clean与两路independent GO。
 每个backend、carrier或cutover选择仍
 必须在所属工作包取得实证Go，不因本文或计划存在而预先视为implemented/production-ready。
 

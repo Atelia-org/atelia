@@ -30,6 +30,9 @@
 - TimelineReader只通过WP-01C public Reader读取closed whole-head snapshot、exact selected row、bounded path page与selection witness；
   witness必须回到同一Reader `ValidateWitness`，不得构造、拼接或只比公开字段；
 - select/materialize两个phase各读一次ControlPlane snapshot；materialize要求handle-bound active recipe digest仍exact相等；
+- pure-read composition只用`RecapGridControlFactory.OpenReader(repositoryPath, RefId)`取得owned handle；snapshot返回完整已接受closure且不按
+  当前admission过滤。`TimelineUnsupportedSchema`、Control `UnsupportedSchema`、Busy、Disposed、Invalid均typed fail closed，selection期间
+  不重新open或fallback另一Timeline/old config；
 - Grid candidate adapter只返回exact row contributions、anchor setups与completion boundary；SessionJournal core继续独立fold raw tail，
   ContextComposer不得接管Prepared/raw request reconstruction；
 - SessionJournal core只依赖neutral context candidate contract，不依赖concrete Grid projects。

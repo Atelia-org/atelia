@@ -19,6 +19,12 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Abstractions",
             "SessionJournal.RecapGrid.Abstractions.csproj"
         );
+        string controlProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Control",
+            "SessionJournal.RecapGrid.Control.csproj"
+        );
 
         Assert.Equal(
             ["../SessionJournal/SessionJournal.csproj"],
@@ -30,7 +36,15 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
+                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
+                "../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj"
+            ],
+            DirectProjectReferences(controlProject)
+        );
+        Assert.Equal(
+            [
                 "Microsoft.Data.Sqlite@10.0.10",
+                "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
                 "Microsoft.Bcl.Memory@9.0.17",
                 "Microsoft.ML.Tokenizers@2.0.0",
                 "Microsoft.ML.Tokenizers.Data.O200kBase@2.0.0"
@@ -38,9 +52,11 @@ public sealed class AssemblyDependencyBoundaryTests {
             DirectPackageReferences(timelineProject)
         );
         Assert.Empty(DirectPackageReferences(abstractionsProject));
+        Assert.Empty(DirectPackageReferences(controlProject));
 
-        string combined = File.ReadAllText(timelineProject)
+        string upstream = File.ReadAllText(timelineProject)
             + File.ReadAllText(abstractionsProject);
+        string combined = upstream + File.ReadAllText(controlProject);
         Assert.DoesNotContain("../Completion/", combined,
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Completion.Tools", combined,
@@ -51,7 +67,7 @@ public sealed class AssemblyDependencyBoundaryTests {
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RecapGrid.Store", combined,
             StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("RecapGrid.Control", combined,
+        Assert.DoesNotContain("RecapGrid.Control", upstream,
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RecapGrid.Manager", combined,
             StringComparison.OrdinalIgnoreCase);
@@ -93,6 +109,16 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Equal(
             Path.GetFullPath(timelineProject),
             Path.GetFullPath(sqliteOwner)
+        );
+        string bundleOwner = Assert.Single(newProjects, project =>
+            DirectPackageReferences(project).Contains(
+                "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
+                StringComparer.Ordinal
+            )
+        );
+        Assert.Equal(
+            Path.GetFullPath(timelineProject),
+            Path.GetFullPath(bundleOwner)
         );
 
         Assembly product = Assembly.LoadFrom(Path.Combine(
@@ -139,6 +165,36 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparison.Ordinal
             );
         }
+    }
+
+    [Fact]
+    public void WalkingSkeletonHasNoPrivateGridShapeOrHasherOwner() {
+        string root = FindRepositoryRoot();
+        string skeleton = File.ReadAllText(Path.Combine(
+            root,
+            "tests",
+            "SessionJournal.RecapGrid.WalkingSkeleton.Tests",
+            "GridWalkingSkeletonTests.cs"
+        ));
+        foreach (string forbidden in new[] {
+            "record DefinitionShape",
+            "record RecipeShape",
+            "record RowBuildSpecShape",
+            "IncrementalHash",
+            "SHA256.HashData"
+        }) {
+            Assert.DoesNotContain(
+                forbidden,
+                skeleton,
+                StringComparison.Ordinal
+            );
+        }
+        string solution = File.ReadAllText(Path.Combine(root, "Atelia.sln"));
+        Assert.Contains(
+            "SessionJournal.RecapGrid.Abstractions.Tests.csproj",
+            solution,
+            StringComparison.Ordinal
+        );
     }
 
     [Fact]
@@ -270,9 +326,16 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Abstractions",
             "SessionJournal.RecapGrid.Abstractions.csproj"
         );
+        string controlProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Control",
+            "SessionJournal.RecapGrid.Control.csproj"
+        );
         HashSet<string> closure = ProjectClosure(
             timelineProject,
-            abstractionsProject
+            abstractionsProject,
+            controlProject
         );
 
         Assert.DoesNotContain(closure, path => path.EndsWith(
@@ -293,7 +356,8 @@ public sealed class AssemblyDependencyBoundaryTests {
     public void ProductAssembliesDoNotActuallyReferenceForbiddenOwners() {
         foreach (string assemblyFileName in new[] {
             "Atelia.SessionJournal.HistoryTimeline.dll",
-            "Atelia.SessionJournal.RecapGrid.Abstractions.dll"
+            "Atelia.SessionJournal.RecapGrid.Abstractions.dll",
+            "Atelia.SessionJournal.RecapGrid.Control.dll"
         }) {
             Assembly assembly = Assembly.LoadFrom(Path.Combine(
                 AppContext.BaseDirectory,

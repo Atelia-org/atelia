@@ -24,6 +24,11 @@
   active policy/selected raw fence/generation，RowBuildSpec直接携带typed `HistorySegmentDescriptorDigest`；
 - operation的Timeline输入只来自WP-01C Reader snapshot/path/witness；composition可持有factory handle，但Manager不得接触
   Coordinator、SQLite、ledger port或自行从global End/ordinal解析row；
+- Control由composition用`RecapGridControlFactory.Open(repositoryPath, RefId, admission)`取得owned handle；Manager消费其frozen snapshot，
+  promotion只调用whole `ControlHeadRef` + whole `TimelineHeadRef` CAS并显式选择`ActivationPurpose.Promotion`。Busy/Stale/
+  TimelineUnsupportedSchema/Disposed/Invalid均在首dispatch前closed fail；不得注入external Timeline Reader或持久化promotion proof；
+  mutation返回`CommitIndeterminate(Intended, Observed?)`时不得自动重试或当作Invalid；先按Observed/reopen whole head reconcile，再由caller
+  决定是否以fresh expected head继续；
 - candidate catch-up与可promote proof；active recipe CAS是显式后续control operation，不由Manager自动完成；
 - 同一Send多个safe lifecycle boundary下的幂等re-entry。
 

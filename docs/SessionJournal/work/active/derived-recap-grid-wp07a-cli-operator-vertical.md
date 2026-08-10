@@ -13,6 +13,8 @@ read-only/no-secret diagnostics与各durability domain的destructive authority�
 
 - `timeline inspect/export/verify/backup/restore/abandon`；
 - `recap-control inspect/export`、register Family/Definition/Recipe、explicit activate CAS；
+- `recap-control verify/backup/restore/reinitialize`直接映射WP-02 typed library actions；normal Control无普通reset，corrupt current不能在线
+  restore/reinitialize，必须走offline exact archive/delete+Create；
 - `recap-grid inspect/export/verify/reset`；
 - build recipe/candidate fulfill/full rebuild commands；
 - materialization inspect的strict `--nth-previous`；
@@ -29,6 +31,8 @@ explicit Abandon，不把restore降格成reset。
 CLI入口必须是明确candidate command group，不能成为long-livedfeature flag。diagnostic命令read-only/no-create且Completion
 factory throwing；destructive action要求exact store/timeline scope确认。Grid reset只删Grid，raw/Timeline/Control bytes exact不变；
 Timeline abandon是另一条高权操作，不能借Grid reset触发。
+Control V1同样为Linux-only；CLI只映射typed platform/schema/busy/stale结果，不增加弱durability fallback或扫描backup/temp/latest。
+Control `CommitIndeterminate`/backup `PublishIndeterminate`必须显示intended与observed scope/head并要求重新inspect，不得自动重试写操作。
 
 ## Acceptance matrix
 

@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-03：SQLite RecapGridStore
 
-状态：Planned；依赖 WP-02 canonical contracts
+状态：Ready；WP-02 complete handoff已通过independent review与final serial gates，尚未开工
 
 只需加载：目标设计、总计划、WP-02 handoff、本文和 WP-04 摘要。
 
@@ -25,6 +25,9 @@ A0失败时按target design重新打开Directory+JSON决策；不得把失败spi
 - `PutRowView(RowBuildSpec, canonicalView)`并验证exact winners/reused cells；
 - `ReadView(viewDigest)`与atomic RowView header+exact members commit；
 - opaque exact `FulfilledViewKey` read/commit；Store不读取Timeline/Control，组合解析属于WP-05；
+- direct reference只允许`SessionJournal.RecapGrid.Abstractions`；WP-02的Control carrier、Reader、admission与locks均不得进入Store；
+- restart读取只用`RecapRowView.DecodeCanonical(bytes)`与`FulfilledViewKey.DecodeCanonical(bytes)`恢复typed manifest/key；RowBuildSpec与
+  selected cells只用于commit时contextual membership validation，不得作为额外durable preimage或逼Store重写codec；
 - canonical bytes重算与locator/member/FK exact validation；
 - operation-specific typed results：Cell `Inserted | AlreadyFilled(winner) | Invalid | Busy`；RowView/Fulfillment同key不同view为
   `Invalid`而非general Conflict；RowView/Fulfillment使用`Inserted | AlreadyPresent | Invalid | Busy`；

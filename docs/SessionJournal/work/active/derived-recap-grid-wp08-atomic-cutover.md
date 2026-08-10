@@ -24,6 +24,8 @@ migration、feature flag或compatibility layer。
 - normal Galatea/CLI composition切新Timeline/Grid/ControlPlane/Manager/Composer；
 - normal composition只经`HistoryTimelineFactory.Create/Open(SessionJournalReadView, ...)`与public Reader/Coordinator capability；
   不引用SQLite/internal ledger、不注入backend selector，并在Host lifecycle结束时dispose handle；
+- normal Control composition只经`RecapGridControlFactory.Create/Open/OpenReader(repositoryPath, RefId, ...)`；不得注入Timeline Reader、
+  backend selector或扫描old config。Control canonical root位于`<repo>/control/recap-grid/v1/`，与Grid reset root分离；
 - strict new config与operator messages；
 - Prepared/Started fast path保持先于DerivedRecap active composition；Prepared按frozen identity exact bind Host registry，Started
   Refuse先于client creation；
