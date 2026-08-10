@@ -79,7 +79,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
 
     internal bool MoveCurrentHeadForTest(
         EventAddress expectedOldHead,
-        EventAddress newHead
+        EventAddress? newHead
     ) {
         using MutationLease mutation = EnterMutation(
             nameof(MoveCurrentHeadForTest)
@@ -210,6 +210,16 @@ public sealed partial class SessionJournalEngine : IDisposable {
         path,
         SessionJournalDefaults.MainBranchName,
         runtime,
+        testHooks
+    );
+
+    internal static SessionJournalEngine OpenReadOnlyForTest(
+        string path,
+        SessionJournalTestHooks testHooks
+    ) => OpenReadOnlyCore(
+        path,
+        SessionJournalDefaults.MainBranchName,
+        runtime: null,
         testHooks
     );
 

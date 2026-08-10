@@ -282,6 +282,17 @@ public sealed record SessionSelectedLineageForwardConsumption(
     SessionSelectedLineageForwardRange? RemainingRange
 );
 
+public enum SessionSelectedLineageBoundaryProbeDecision {
+    Continue = 1,
+    Match = 2,
+    Stop = 3
+}
+
+public sealed record SessionSelectedLineageBoundaryProbeResult(
+    EventAddress? LatestMatchingBoundary,
+    bool Stopped
+);
+
 /// <summary>
 /// Sequential root-to-captured-head reader over one revalidated sealed spool.
 /// It begins immediately after the SessionCreated bootstrap boundary.
@@ -296,6 +307,8 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
     private SessionSelectedLineageForwardRange? _previewedRange;
     private SessionHistoryPlanningWindow? _previewedWindow;
     private bool _finished;
+    private bool _forwardEnumerationInvalid;
+    private bool _inspectionExhausted;
     private bool _disposed;
 
     internal SessionSelectedLineageForwardCursor(
@@ -316,6 +329,34 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
 
     public SessionSelectedLineageAuditAuthority Authority { get; }
     public EventAddress CurrentBoundary => _currentSeed.Address;
+    public SessionContextAnchorSetupReferences CurrentSetups
+        => _currentSeed.Setups;
+
+    /// <summary>
+    /// Checks this cursor's owner-bound repository, Ref, and immutable audit
+    /// head without trusting a separately supplied read view. An exhausted
+    /// inspection is not reusable as authority for a new operation.
+    /// </summary>
+    public bool IsBoundTo(
+        string repositoryPath,
+        RefId refId,
+        EventAddress capturedHead
+    ) => _owner.IsSelectedLineageForwardCursorBoundTo(
+        this,
+        repositoryPath,
+        refId,
+        capturedHead
+    );
+
+    /// <summary>
+    /// Reads the current head through the exact offline engine that issued
+    /// this cursor. Offline promotion fences must use this owner-bound read.
+    /// This remains available after one-shot inspection exhaustion so the
+    /// operation that consumed the inspection can perform its final
+    /// ledger-lock raw-head fence.
+    /// </summary>
+    public EventAddress? ReadCurrentHead()
+        => _owner.ReadSelectedLineageForwardCursorCurrentHead(this);
 
     public SessionSelectedLineageForwardRange? ReadNextRange(
         int maxRawEventCount,
@@ -323,6 +364,25 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
     ) => _owner.ReadNextSelectedLineageForwardRange(
         this,
         maxRawEventCount,
+        cancellationToken
+    );
+
+    /// <summary>
+    /// Replaces the exact current pending suffix with an authority-bound
+    /// range extended from the same boundary. The total cap includes every
+    /// event already retained by <paramref name="exactPending"/> and cannot
+    /// be smaller than that suffix. If cancellation or validation fails
+    /// after consuming the underlying forward enumeration, this cursor is
+    /// fail-closed and the caller must reopen it from its sealed snapshot.
+    /// </summary>
+    public SessionSelectedLineageForwardRange ExtendPendingRange(
+        SessionSelectedLineageForwardRange exactPending,
+        int maxTotalRawEventCount,
+        CancellationToken cancellationToken = default
+    ) => _owner.ExtendPendingSelectedLineageForwardRange(
+        this,
+        exactPending,
+        maxTotalRawEventCount,
         cancellationToken
     );
 
@@ -368,7 +428,8 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
     /// <summary>
     /// Replays content-free audited entries to one exact selected-lineage
     /// boundary. This is used only to resume an explicit rebuild from a
-    /// previously Published admission.
+    /// previously Published admission. It rejects a cursor already consumed
+    /// by a membership inspection.
     /// </summary>
     public void SeekToBoundary(
         EventAddress boundary,
@@ -396,6 +457,26 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
         cancellationToken
     );
 
+    /// <summary>
+    /// Performs one content-free bootstrap-to-captured-head pass. The probe
+    /// sees only already-validated selected-lineage addresses and may retain
+    /// its latest match without supplying a candidate collection. Normal
+    /// completion, Stop, callback failure, and cancellation all exhaust this
+    /// cursor for further materialization; callback failure/cancellation also
+    /// fail-close the underlying forward enumeration.
+    /// </summary>
+    public SessionSelectedLineageBoundaryProbeResult ProbeBoundaries(
+        Func<
+            EventAddress,
+            SessionSelectedLineageBoundaryProbeDecision
+        > probe,
+        CancellationToken cancellationToken = default
+    ) => _owner.ProbeSelectedLineageForwardBoundaries(
+        this,
+        probe,
+        cancellationToken
+    );
+
     public void Dispose() {
         if (_disposed) {
             return;
@@ -410,6 +491,9 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
     internal SessionSelectedLineageForwardRange? PendingRange =>
         _pendingRange;
     internal bool Finished => _finished;
+    internal bool IsForwardEnumerationInvalid =>
+        _forwardEnumerationInvalid;
+    internal bool InspectionExhausted => _inspectionExhausted;
     internal bool IsDisposed => _disposed;
     internal SessionSelectedLineageForwardRange? PreviewedRange =>
         _previewedRange;
@@ -426,6 +510,23 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
         }
         _pendingRange = range;
     }
+
+    internal void ReplacePending(
+        SessionSelectedLineageForwardRange expected,
+        SessionSelectedLineageForwardRange replacement
+    ) {
+        if (!ReferenceEquals(_pendingRange, expected)
+            || _previewedRange is not null
+            || _previewedWindow is not null) {
+            throw new InvalidOperationException(
+                "Only the exact unpreviewed pending range may be replaced."
+            );
+        }
+        _pendingRange = replacement;
+    }
+
+    internal void InvalidateForwardEnumeration()
+        => _forwardEnumerationInvalid = true;
 
     internal void Advance(
         SessionSelectedLineageForwardRange range,
@@ -510,12 +611,18 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
                 "Cannot complete inspection while a range is pending."
             );
         }
+        _inspectionExhausted = true;
         _finished = true;
     }
 
     internal bool MoveNext(
         out SessionSelectedLineageAuditEntry entry
     ) {
+        if (_forwardEnumerationInvalid) {
+            throw new InvalidOperationException(
+                "The forward cursor must be reopened after an interrupted enumeration."
+            );
+        }
         if (_entries.MoveNext()) {
             entry = _entries.Current;
             return true;

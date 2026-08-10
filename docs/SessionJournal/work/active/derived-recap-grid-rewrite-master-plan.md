@@ -1,6 +1,6 @@
 # DerivedRecap Grid Rewrite 总施工计划
 
-状态：Implementation program active；WP-00、WP-01A complete，WP-01B ready；current production尚未切换
+状态：Implementation program active；WP-00、WP-01A、WP-01B complete，WP-01C Ready；current production尚未切换
 
 目标设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)
 
@@ -50,19 +50,20 @@ WP-00采用上述exact名称，并把两个ref都建立在`5e1ba46e`。必须保
    config；Prepared仍按frozen completion identity从Host registry exact bind，Started Refuse先于client creation。
 9. old/new production paths 不并存为长期 feature flag；WP-07A/07B candidate 只用于隔离验收，WP-08 一次 direct cut。
 10. unknown schema、hash mismatch、wrong lineage/head、duplicate/unknown fields 全部 typed fail closed。
-11. Timeline row append与partition-policy CAS是两个transaction：append保留whole expected head的active policy；policy CAS不追加row，
-    即使empty head也只推进generation并保持row/raw fence为null。
+11. Timeline有四种分离transaction：immutable policy put不改head；partition-policy CAS不追加row；row append原子插row并保留
+    whole expected head的active policy；selected-path reconcile不插row、不切policy，只在owner-bound raw fence与whole expected head
+    同时匹配后回指共同ancestor/empty。empty policy CAS或reconcile都保持row/raw fence为null。
 
 ## 4. Work-package graph
 
 ```text
-WP-00 Baseline + migration ledger + walking skeleton
+WP-00 Baseline + migration ledger + walking skeleton [complete]
   |
-WP-01A Timeline contracts/partition
+WP-01A Timeline contracts/partition [complete]
   |
-WP-01B Timeline raw integration
+WP-01B Timeline raw integration [complete]
   |
-WP-01C Timeline durable ledger
+WP-01C Timeline durable ledger [Ready; implementation planned]
   |
 WP-02 Content-addressed contracts + MaintainerControlPlane
   |

@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-01：HistoryTimeline 总览
 
-状态：In progress；WP-01A complete，WP-01B ready
+状态：In progress；WP-01A、WP-01B complete，WP-01C Ready（implementation planned）
 
 只需加载：[`Grid target`](derived-recap-grid-target-design.md)、[`Master`](derived-recap-grid-rewrite-master-plan.md)、
 [`WP-00 handoff`](derived-recap-grid-wp00-baseline-and-walking-skeleton.md) 与本文。实际施工再只加载对应子包。
@@ -13,11 +13,11 @@
 ## Subpackage graph
 
 ```text
-WP-01A contracts + partition semantics + HistoryLoad owner
+WP-01A contracts + partition semantics + HistoryLoad owner [complete]
   |
-WP-01B raw integration + branch reconciliation
+WP-01B raw integration + branch reconciliation [complete]
   |
-WP-01C single durable ledger + crash/operator surface
+WP-01C single durable ledger + crash/operator surface [Ready]
 ```
 
 - [`WP-01A`](derived-recap-grid-wp01a-timeline-contracts-and-partition.md)
@@ -47,6 +47,7 @@ CompareExchangePolicy(expectedWholeTimelineHead, nextPolicyDigest)
 PlanNextRow(expectedTimelineHead, capturedSelectedRawHead)
 CommitRow(proposal)
 ReconcileSelectedPath(expectedTimelineHead, capturedSelectedRawHead)
+ReconcileSelectedPathOffline(expectedTimelineHead, auditedForwardCursor)
 OpenSegment(selectedTimelineHead, capturedSelectedRawHead, rowId)
 ListPath(head, cursor, limit)
 ```
@@ -61,6 +62,10 @@ transaction，append保留expected active policy。`PutPolicy`只存immutable va
 Timeline artifact scope只提交`RefId + TimelineId`；canonical colocated repository path只是runtime binding/locator，不进入
 descriptor identity。`PlanNextRow`只能使用`ReadSnapshot`中的exact active policy，不能接受未注册policy bytes。
 initial empty head为generation 0；empty head上的policy CAS仍保持row/raw fence为null但推进到generation 1+。
+即使next policy digest与当前digest相同，成功CAS也必须推进generation，使旧capture与同expected contender变stale。
+
+WP-01B只冻结public operation/result contract candidate；production factory、`ActiveTimelineLocator` create/open与new Ref创建new
+TimelineId的composition gate由WP-01C交付，不能让caller直接选择临时in-memory carrier。
 
 ## Global write boundary
 

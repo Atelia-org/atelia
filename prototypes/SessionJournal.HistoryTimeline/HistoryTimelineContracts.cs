@@ -6,6 +6,13 @@ namespace Atelia.SessionJournal.HistoryTimeline;
 public static class HistoryPartitionAlgorithms {
     public const string FirstReplaySafeBoundaryAtTargetV1 =
         "atelia.history-timeline.partition.first-replay-safe-at-target.v1";
+
+    internal static bool IsSupported(string algorithmId)
+        => string.Equals(
+            algorithmId,
+            FirstReplaySafeBoundaryAtTargetV1,
+            StringComparison.Ordinal
+        );
 }
 
 public readonly record struct TimelineId {
@@ -420,7 +427,7 @@ public abstract record HistoryPartitionResult {
 }
 
 public sealed record BoundHistorySegmentRange {
-    public BoundHistorySegmentRange(
+    internal BoundHistorySegmentRange(
         RefId refId,
         EventAddress startExclusive,
         EventAddress endInclusive,
@@ -683,7 +690,7 @@ public static class HistorySegmentDescriptorFactory {
 }
 
 public sealed record HistoryRowProposal {
-    public HistoryRowProposal(
+    internal HistoryRowProposal(
         TimelineHeadRef expectedHead,
         EventAddress capturedSelectedRawHead,
         HistorySegmentDescriptor descriptor

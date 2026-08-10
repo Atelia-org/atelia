@@ -3,6 +3,55 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal;
 
 public sealed partial class SessionJournalEngine {
+    internal bool IsSelectedLineageForwardCursorBoundTo(
+        SessionSelectedLineageForwardCursor cursor,
+        string repositoryPath,
+        RefId refId,
+        EventAddress capturedHead
+    ) {
+        ThrowIfDisposed();
+        RequireOfflineAuditEngine();
+        ArgumentNullException.ThrowIfNull(cursor);
+        ArgumentException.ThrowIfNullOrWhiteSpace(repositoryPath);
+        if (!ReferenceEquals(cursor.Owner, this)
+            || cursor.IsDisposed
+            || cursor.InspectionExhausted) {
+            return false;
+        }
+        return string.Equals(
+                System.IO.Path.TrimEndingDirectorySeparator(
+                    System.IO.Path.GetFullPath(repositoryPath)
+                ),
+                System.IO.Path.TrimEndingDirectorySeparator(
+                    System.IO.Path.GetFullPath(Path)
+                ),
+                OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal)
+            && cursor.Authority.Capture.BranchRefId == refId
+            && cursor.Authority.Capture.CapturedHead == capturedHead;
+    }
+
+    internal EventAddress?
+        ReadSelectedLineageForwardCursorCurrentHead(
+        SessionSelectedLineageForwardCursor cursor
+    ) {
+        ThrowIfDisposed();
+        RequireOfflineAuditEngine();
+        ArgumentNullException.ThrowIfNull(cursor);
+        if (!ReferenceEquals(cursor.Owner, this)
+            || cursor.IsDisposed) {
+            throw new ArgumentException(
+                "Forward cursor is unavailable for raw-head fencing.",
+                nameof(cursor)
+            );
+        }
+        EventAddress? observed = ReadCurrentHead();
+        return _testHooks.RewriteForwardCursorObservedHead
+            ?.Invoke(observed)
+            ?? observed;
+    }
+
     /// <summary>
     /// Begins an explicitly requested offline audit of the complete selected
     /// Parent lineage. Normal online/read-view paths cannot call this API.
@@ -390,6 +439,11 @@ public sealed partial class SessionJournalEngine {
         if (cursor.Finished) {
             return null;
         }
+        if (cursor.InspectionExhausted) {
+            throw new InvalidOperationException(
+                "The forward cursor inspection is exhausted; reopen a fresh cursor."
+            );
+        }
         if (cursor.PendingRange is not null) {
             throw new InvalidOperationException(
                 "The pending forward range must be materialized before another range can be read."
@@ -443,6 +497,114 @@ public sealed partial class SessionJournalEngine {
         );
         cursor.SetPending(range);
         return range;
+    }
+
+    internal SessionSelectedLineageForwardRange
+        ExtendPendingSelectedLineageForwardRange(
+        SessionSelectedLineageForwardCursor cursor,
+        SessionSelectedLineageForwardRange exactPending,
+        int maxTotalRawEventCount,
+        CancellationToken cancellationToken
+    ) {
+        ValidateForwardCursorRange(cursor, exactPending);
+        if (cursor.PreviewedRange is not null
+            || cursor.PreviewedWindow is not null) {
+            throw new InvalidOperationException(
+                "A previewed forward range must be consumed before it can be extended."
+            );
+        }
+        if (maxTotalRawEventCount is <= 0
+            or > SessionSelectedLineageAuditLimits
+                .MaximumForwardRangeEventCount
+            || maxTotalRawEventCount
+                < exactPending.Entries.Count) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxTotalRawEventCount)
+            );
+        }
+
+        RequireSelectedLineageCaptureCurrent(
+            cursor.Authority.Capture
+        );
+        var entries = new List<SessionSelectedLineageAuditEntry>(
+            maxTotalRawEventCount
+        );
+        EventAddress expectedParent = exactPending.StartExclusive;
+        ulong priorSequence = 0;
+        foreach (SessionSelectedLineageAuditEntry entry
+                 in exactPending.Entries) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (entry.Parent != expectedParent
+                || entry.SequenceNumber <= priorSequence) {
+                throw new InvalidDataException(
+                    $"Pending forward range has a gap, overlap, or invalid sequence at {entry.Address}."
+                );
+            }
+            ValidateSelectedLineageEntryAgainstRaw(
+                entry,
+                reconstructPrepared: false,
+                cancellationToken
+            );
+            entries.Add(entry);
+            expectedParent = entry.Address;
+            priorSequence = entry.SequenceNumber;
+        }
+
+        bool consumedNewEntry = false;
+        try {
+            bool isFinal = exactPending.IsFinal;
+            while (!isFinal
+                   && entries.Count < maxTotalRawEventCount) {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!cursor.MoveNext(out
+                        SessionSelectedLineageAuditEntry entry)) {
+                    break;
+                }
+                consumedNewEntry = true;
+                cancellationToken.ThrowIfCancellationRequested();
+                if (entry.Parent != expectedParent
+                    || entry.SequenceNumber <= priorSequence) {
+                    throw new InvalidDataException(
+                        $"Forward spool enumeration has a gap, overlap, or invalid sequence at {entry.Address}."
+                    );
+                }
+                ValidateSelectedLineageEntryAgainstRaw(
+                    entry,
+                    reconstructPrepared: false,
+                    cancellationToken
+                );
+                entries.Add(entry);
+                expectedParent = entry.Address;
+                priorSequence = entry.SequenceNumber;
+                isFinal = entry.Address
+                    == cursor.Authority.Capture.CapturedHead;
+            }
+            if (!isFinal
+                && entries.Count < maxTotalRawEventCount) {
+                throw new InvalidDataException(
+                    "Forward spool enumeration ended before the captured raw head."
+                );
+            }
+
+            RequireSelectedLineageCaptureCurrent(
+                cursor.Authority.Capture,
+                _testHooks.RewritePendingRangeExtendObservedHead
+            );
+            var replacement = new SessionSelectedLineageForwardRange(
+                cursor.Authority,
+                exactPending.StartExclusive,
+                entries.AsReadOnly(),
+                isFinal
+            );
+            cursor.ReplacePending(exactPending, replacement);
+            return replacement;
+        }
+        catch {
+            if (consumedNewEntry) {
+                cursor.InvalidateForwardEnumeration();
+            }
+            throw;
+        }
     }
 
     internal SessionHistoryPlanningWindow
@@ -541,14 +703,12 @@ public sealed partial class SessionJournalEngine {
                     ]),
                     range.IsFinal
                 );
-        SessionHistoryPlanningSeed? nextSeed = remaining is null
-            && range.IsFinal
-                ? null
-                : CreateHistoryPlanningSeed(
-                    endInclusive,
-                    window.EndSetups,
-                    cancellationToken
-                );
+        SessionHistoryPlanningSeed nextSeed =
+            CreateHistoryPlanningSeed(
+                endInclusive,
+                window.EndSetups,
+                cancellationToken
+            );
         cursor.AdvancePrefix(range, nextSeed, remaining);
         return new SessionSelectedLineageForwardConsumption(
             window,
@@ -572,6 +732,12 @@ public sealed partial class SessionJournalEngine {
             throw new ArgumentException(
                 "Forward cursor is unavailable for seeking.",
                 nameof(cursor)
+            );
+        }
+        if (cursor.InspectionExhausted
+            || cursor.IsForwardEnumerationInvalid) {
+            throw new InvalidOperationException(
+                "The forward cursor inspection is exhausted or invalid; reopen a fresh cursor."
             );
         }
         if (boundary == cursor.CurrentSeed.Address) {
@@ -656,6 +822,12 @@ public sealed partial class SessionJournalEngine {
                 nameof(cursor)
             );
         }
+        if (cursor.InspectionExhausted
+            || cursor.IsForwardEnumerationInvalid) {
+            throw new InvalidOperationException(
+                "The forward cursor inspection is exhausted or invalid; reopen a fresh cursor."
+            );
+        }
         if (candidates.Count
             > SessionSelectedLineageAuditLimits
                 .MaximumForwardRangeEventCount
@@ -665,25 +837,153 @@ public sealed partial class SessionJournalEngine {
                 nameof(candidates)
             );
         }
-        EventAddress? latest = candidates.Contains(
-            cursor.CurrentSeed.Address
-        )
-            ? cursor.CurrentSeed.Address
-            : null;
-        while (cursor.MoveNext(out SessionSelectedLineageAuditEntry entry)) {
-            cancellationToken.ThrowIfCancellationRequested();
-            ValidateSelectedLineageEntryAgainstRaw(
-                entry,
-                reconstructPrepared: false,
-                cancellationToken
-            );
-            if (candidates.Contains(entry.Address)) {
-                latest = entry.Address;
+        try {
+            EventAddress? latest = candidates.Contains(
+                cursor.CurrentSeed.Address
+            )
+                ? cursor.CurrentSeed.Address
+                : null;
+            while (cursor.MoveNext(out
+                       SessionSelectedLineageAuditEntry entry)) {
+                cancellationToken.ThrowIfCancellationRequested();
+                ValidateSelectedLineageEntryAgainstRaw(
+                    entry,
+                    reconstructPrepared: false,
+                    cancellationToken
+                );
+                if (candidates.Contains(entry.Address)) {
+                    latest = entry.Address;
+                }
             }
+            RequireSelectedLineageCaptureCurrent(
+                cursor.Authority.Capture
+            );
+            cursor.CompleteInspection();
+            return latest;
         }
-        RequireSelectedLineageCaptureCurrent(cursor.Authority.Capture);
-        cursor.CompleteInspection();
-        return latest;
+        catch {
+            cursor.InvalidateForwardEnumeration();
+            cursor.CompleteInspection();
+            throw;
+        }
+    }
+
+    internal SessionSelectedLineageBoundaryProbeResult
+        ProbeSelectedLineageForwardBoundaries(
+        SessionSelectedLineageForwardCursor cursor,
+        Func<
+            EventAddress,
+            SessionSelectedLineageBoundaryProbeDecision
+        > probe,
+        CancellationToken cancellationToken
+    ) {
+        ThrowIfDisposed();
+        RequireOfflineAuditEngine();
+        ArgumentNullException.ThrowIfNull(cursor);
+        ArgumentNullException.ThrowIfNull(probe);
+        if (!ReferenceEquals(cursor.Owner, this)
+            || cursor.IsDisposed
+            || cursor.PendingRange is not null) {
+            throw new ArgumentException(
+                "Forward cursor is unavailable for a bootstrap boundary probe.",
+                nameof(cursor)
+            );
+        }
+        if (cursor.InspectionExhausted
+            || cursor.IsForwardEnumerationInvalid) {
+            throw new InvalidOperationException(
+                "The forward cursor inspection is exhausted or invalid; reopen a fresh cursor."
+            );
+        }
+        if (cursor.CurrentBoundary
+                != cursor.Authority.BootstrapSeed.Address
+            || cursor.CurrentSetups
+                != cursor.Authority.BootstrapSeed.Setups) {
+            throw new ArgumentException(
+                "A boundary probe requires a fresh cursor at its audited bootstrap seed.",
+                nameof(cursor)
+            );
+        }
+
+        EventAddress? latest = null;
+        bool stopped = false;
+        EventAddress expectedParent = cursor.CurrentBoundary;
+        ulong priorSequence = 0;
+        try {
+            cancellationToken.ThrowIfCancellationRequested();
+            SessionSelectedLineageBoundaryProbeDecision bootstrap =
+                probe(cursor.CurrentBoundary);
+            ValidateBoundaryProbeDecision(bootstrap);
+            if (bootstrap
+                == SessionSelectedLineageBoundaryProbeDecision.Match) {
+                latest = cursor.CurrentBoundary;
+            }
+            else if (bootstrap
+                == SessionSelectedLineageBoundaryProbeDecision.Stop) {
+                stopped = true;
+            }
+
+            while (!stopped
+                   && cursor.MoveNext(out
+                       SessionSelectedLineageAuditEntry entry)) {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (entry.Parent != expectedParent
+                    || entry.SequenceNumber <= priorSequence) {
+                    throw new InvalidDataException(
+                        $"Forward boundary probe has a gap, overlap, or invalid sequence at {entry.Address}."
+                    );
+                }
+                ValidateSelectedLineageEntryAgainstRaw(
+                    entry,
+                    reconstructPrepared: false,
+                    cancellationToken
+                );
+                expectedParent = entry.Address;
+                priorSequence = entry.SequenceNumber;
+                SessionSelectedLineageBoundaryProbeDecision decision =
+                    probe(entry.Address);
+                ValidateBoundaryProbeDecision(decision);
+                if (decision
+                    == SessionSelectedLineageBoundaryProbeDecision.Match) {
+                    latest = entry.Address;
+                }
+                else if (decision
+                    == SessionSelectedLineageBoundaryProbeDecision.Stop) {
+                    stopped = true;
+                }
+            }
+            if (!stopped
+                && expectedParent
+                    != cursor.Authority.Capture.CapturedHead) {
+                throw new InvalidDataException(
+                    "Forward boundary probe ended before the captured raw head."
+                );
+            }
+            RequireSelectedLineageCaptureCurrent(
+                cursor.Authority.Capture,
+                _testHooks.RewriteForwardBoundaryProbeObservedHead
+            );
+            cursor.CompleteInspection();
+            return new SessionSelectedLineageBoundaryProbeResult(
+                latest,
+                stopped
+            );
+        }
+        catch {
+            cursor.InvalidateForwardEnumeration();
+            cursor.CompleteInspection();
+            throw;
+        }
+    }
+
+    private static void ValidateBoundaryProbeDecision(
+        SessionSelectedLineageBoundaryProbeDecision decision
+    ) {
+        if (!Enum.IsDefined(decision)) {
+            throw new InvalidDataException(
+                "Forward boundary probe returned an unknown decision."
+            );
+        }
     }
 
     private void ValidateForwardCursorRange(
@@ -694,6 +994,19 @@ public sealed partial class SessionJournalEngine {
         RequireOfflineAuditEngine();
         ArgumentNullException.ThrowIfNull(cursor);
         ArgumentNullException.ThrowIfNull(range);
+        if (cursor.IsDisposed) {
+            throw new ObjectDisposedException(nameof(cursor));
+        }
+        if (cursor.IsForwardEnumerationInvalid) {
+            throw new InvalidOperationException(
+                "The forward cursor must be reopened after an interrupted enumeration."
+            );
+        }
+        if (cursor.InspectionExhausted) {
+            throw new InvalidOperationException(
+                "The forward cursor inspection is exhausted; reopen a fresh cursor."
+            );
+        }
         if (!ReferenceEquals(cursor.Owner, this)
             || !ReferenceEquals(range.Owner, cursor.Authority)
             || !ReferenceEquals(range, cursor.PendingRange)) {
@@ -936,7 +1249,8 @@ public sealed partial class SessionJournalEngine {
     }
 
     private void RequireSelectedLineageCaptureCurrent(
-        SessionSelectedLineageAuditCapture capture
+        SessionSelectedLineageAuditCapture capture,
+        Func<EventAddress?, EventAddress?>? rewriteObservedHead = null
     ) {
         if (capture.BranchRefId != _branchRefId) {
             throw new SessionSelectedLineageAuditChangedException(
@@ -946,8 +1260,10 @@ public sealed partial class SessionJournalEngine {
                 "Selected-lineage audit branch/ref identity changed."
             );
         }
-        EventAddress? observedHead =
-            _journal.GetHead(_branchRefId);
+        EventAddress? observedHead = _journal.GetHead(_branchRefId);
+        if (rewriteObservedHead is not null) {
+            observedHead = rewriteObservedHead(observedHead);
+        }
         if (observedHead != capture.CapturedHead) {
             throw new SessionSelectedLineageAuditChangedException(
                 SessionSelectedLineageAuditChangeKind.RawHeadChanged,

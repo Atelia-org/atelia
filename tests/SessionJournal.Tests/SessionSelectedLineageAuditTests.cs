@@ -168,6 +168,201 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
     }
 
     [Fact]
+    public void ForwardCursor_ExtendsExactConsumedRemainderAcrossLaterEntries() {
+        string path = NewPath();
+        EventAddress firstAction;
+        EventAddress finalAction;
+        using (var writer = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        )) {
+            _ = writer.AppendObservation("first");
+            firstAction = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("one")]),
+                new CompletionDescriptor("import", "v1", "model-A")
+            );
+            _ = writer.AppendObservation("second");
+            _ = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("two")]),
+                new CompletionDescriptor("import", "v1", "model-A")
+            );
+            _ = writer.AppendObservation("third");
+            finalAction = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("three")]),
+                new CompletionDescriptor("import", "v1", "model-A")
+            );
+        }
+        using var engine = SessionJournalEngine.OpenReadOnly(path);
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        var pages = new List<SessionSelectedLineageAuditPage>();
+        while (!audit.IsCaptureComplete) {
+            pages.Add(audit.ReadNextPage(2));
+        }
+        _ = audit.Complete();
+        using SessionSelectedLineageForwardCursor cursor =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages)
+            );
+        SessionSelectedLineageForwardRange initial = Assert.IsType<
+            SessionSelectedLineageForwardRange
+        >(cursor.ReadNextRange(4));
+
+        _ = cursor.Preview(initial);
+        Assert.Throws<InvalidOperationException>(() =>
+            cursor.ExtendPendingRange(initial, 6));
+        SessionSelectedLineageForwardRange remainder = Assert.IsType<
+            SessionSelectedLineageForwardRange
+        >(cursor.ConsumePreviewedPrefix(initial, firstAction)
+            .RemainingRange);
+        Assert.Equal(2, remainder.Entries.Count);
+        Assert.False(remainder.IsFinal);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            cursor.ExtendPendingRange(remainder, 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            cursor.ExtendPendingRange(
+                remainder,
+                SessionSelectedLineageAuditLimits
+                    .MaximumForwardRangeEventCount + 1
+            ));
+
+        SessionSelectedLineageForwardRange extended =
+            cursor.ExtendPendingRange(remainder, 4);
+
+        Assert.NotSame(remainder, extended);
+        Assert.Equal(firstAction, extended.StartExclusive);
+        Assert.Equal(4, extended.Entries.Count);
+        Assert.Equal(finalAction, extended.EndInclusive);
+        Assert.True(extended.IsFinal);
+        Assert.Throws<ArgumentException>(() =>
+            cursor.Materialize(remainder));
+        SessionHistoryPlanningWindow exact = cursor.Materialize(
+            extended
+        );
+        Assert.Equal(firstAction, exact.StartExclusive);
+        Assert.Equal(finalAction, exact.ObservedRawHead);
+        Assert.Equal(4, exact.RawAddresses.Count);
+        Assert.Null(cursor.ReadNextRange(1));
+    }
+
+    [Fact]
+    public void ForwardCursor_ExtendRejectsRangeOwnedByAnotherCursor() {
+        string path = CreateLongFixture(extraEventCount: 6);
+        using var engine = SessionJournalEngine.OpenReadOnly(path);
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        var pages = new List<SessionSelectedLineageAuditPage>();
+        while (!audit.IsCaptureComplete) {
+            pages.Add(audit.ReadNextPage(2));
+        }
+        _ = audit.Complete();
+        using SessionSelectedLineageForwardCursor first =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages)
+            );
+        using SessionSelectedLineageForwardCursor second =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages)
+            );
+        SessionSelectedLineageForwardRange firstRange = Assert.IsType<
+            SessionSelectedLineageForwardRange
+        >(first.ReadNextRange(2));
+        _ = second.ReadNextRange(2);
+
+        Assert.Throws<ArgumentException>(() =>
+            second.ExtendPendingRange(firstRange, 4));
+    }
+
+    [Fact]
+    public void ForwardCursor_ExtendRejectsDisposedCursor() {
+        string path = CreateLongFixture(extraEventCount: 3);
+        using var engine = SessionJournalEngine.OpenReadOnly(path);
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        var pages = new List<SessionSelectedLineageAuditPage>();
+        while (!audit.IsCaptureComplete) {
+            pages.Add(audit.ReadNextPage(2));
+        }
+        _ = audit.Complete();
+        SessionSelectedLineageForwardCursor cursor =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages)
+            );
+        SessionSelectedLineageForwardRange pending = Assert.IsType<
+            SessionSelectedLineageForwardRange
+        >(cursor.ReadNextRange(2));
+        cursor.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() =>
+            cursor.ExtendPendingRange(pending, 3));
+        Assert.Throws<ObjectDisposedException>(() =>
+            cursor.Preview(pending));
+        Assert.Throws<ObjectDisposedException>(() =>
+            cursor.Materialize(pending));
+    }
+
+    [Fact]
+    public void ForwardCursor_ExtendRejectsRawHeadDrift() {
+        string path = CreateLongFixture(extraEventCount: 6);
+        EventAddress rewrittenHead = default;
+        var source = new TestContextCandidateSource();
+        using var engine = SessionJournalEngine.OpenReadOnlyForTest(
+            path,
+            new SessionRuntime(
+                new UnusedCompletionClient(),
+                CompletionTarget: new SessionCompletionTargetIdentity(
+                    "audit-extend-test",
+                    "test",
+                    "audit-extend-v1",
+                    "audit-extend-adapter-v1"
+                ),
+                ContextCandidateSource: source
+            ),
+            new SessionJournalTestHooks(
+                RewritePendingRangeExtendObservedHead:
+                    observed => rewrittenHead == default
+                        ? observed
+                        : rewrittenHead
+            )
+        );
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        var pages = new List<SessionSelectedLineageAuditPage>();
+        while (!audit.IsCaptureComplete) {
+            pages.Add(audit.ReadNextPage(2));
+        }
+        _ = audit.Complete();
+        using SessionSelectedLineageForwardCursor cursor =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages)
+            );
+        SessionSelectedLineageForwardRange range = Assert.IsType<
+            SessionSelectedLineageForwardRange
+        >(cursor.ReadNextRange(4));
+        SessionHistoryPlanningWindow preview = cursor.Preview(range);
+        EventAddress firstBoundary = preview.ReplaySafeBoundaries[0]
+            .Address;
+        SessionSelectedLineageForwardRange pending = Assert.IsType<
+            SessionSelectedLineageForwardRange
+        >(cursor.ConsumePreviewedPrefix(range, firstBoundary)
+            .RemainingRange);
+        rewrittenHead = pending.EndInclusive;
+
+        SessionSelectedLineageAuditChangedException error =
+            Assert.Throws<SessionSelectedLineageAuditChangedException>(
+                () => cursor.ExtendPendingRange(pending, 4)
+            );
+        Assert.Equal(
+            SessionSelectedLineageAuditChangeKind.RawHeadChanged,
+            error.Kind
+        );
+    }
+
+    [Fact]
     public void ForwardCursor_SeekRequiresExactGoverningSetupsAndContinuesAfterBoundary() {
         string path = NewPath();
         EventAddress firstAction;
@@ -247,6 +442,212 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
             )
         );
         Assert.Null(membership.ReadNextRange(1));
+        AssertInspectionOperationsRejected(membership);
+    }
+
+    [Fact]
+    public void ForwardCursor_BoundaryProbeStreamsLatestMatchAndExhaustsInspection() {
+        string path = CreateLongFixture(extraEventCount: 6);
+        using var engine = SessionJournalEngine.OpenReadOnly(path);
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        var pages = new List<SessionSelectedLineageAuditPage>();
+        while (!audit.IsCaptureComplete) {
+            pages.Add(audit.ReadNextPage(2));
+        }
+        _ = audit.Complete();
+        using SessionSelectedLineageForwardCursor cursor =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages)
+            );
+        EventAddress first = cursor.Authority.BootstrapSeed.Address;
+        EventAddress captured = cursor.Authority.Capture.CapturedHead;
+        int inspected = 0;
+
+        SessionSelectedLineageBoundaryProbeResult result =
+            cursor.ProbeBoundaries(address => {
+                inspected++;
+                return address == first || address == captured
+                    ? SessionSelectedLineageBoundaryProbeDecision.Match
+                    : SessionSelectedLineageBoundaryProbeDecision.Continue;
+            });
+
+        Assert.Equal(captured, result.LatestMatchingBoundary);
+        Assert.False(result.Stopped);
+        Assert.True(inspected > 1);
+        Assert.Null(cursor.ReadNextRange(1));
+        AssertInspectionOperationsRejected(cursor);
+    }
+
+    [Fact]
+    public void ForwardCursor_BoundaryProbeStopAndFailureAreFailClosed() {
+        string path = CreateLongFixture(extraEventCount: 4);
+        using var engine = SessionJournalEngine.OpenReadOnly(path);
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        var pages = new List<SessionSelectedLineageAuditPage>();
+        while (!audit.IsCaptureComplete) {
+            pages.Add(audit.ReadNextPage(2));
+        }
+        _ = audit.Complete();
+        var snapshot = new InMemoryPageSnapshot(audit.Capture, pages);
+        using (SessionSelectedLineageForwardCursor stopped =
+               engine.OpenSelectedLineageForwardCursor(snapshot)) {
+            SessionSelectedLineageBoundaryProbeResult result =
+                stopped.ProbeBoundaries(_ =>
+                    SessionSelectedLineageBoundaryProbeDecision.Stop
+                );
+            Assert.True(result.Stopped);
+            Assert.Null(stopped.ReadNextRange(1));
+            AssertInspectionOperationsRejected(stopped);
+        }
+
+        using (SessionSelectedLineageForwardCursor stoppedMid =
+               engine.OpenSelectedLineageForwardCursor(
+                   new InMemoryPageSnapshot(audit.Capture, pages)
+               )) {
+            int inspected = 0;
+            SessionSelectedLineageBoundaryProbeResult result =
+                stoppedMid.ProbeBoundaries(_ => ++inspected == 2
+                    ? SessionSelectedLineageBoundaryProbeDecision.Stop
+                    : SessionSelectedLineageBoundaryProbeDecision.Continue
+                );
+            Assert.True(result.Stopped);
+            Assert.Equal(2, inspected);
+            Assert.Null(stoppedMid.ReadNextRange(1));
+            AssertInspectionOperationsRejected(stoppedMid);
+        }
+
+        using SessionSelectedLineageForwardCursor failed =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages)
+            );
+        _ = Assert.Throws<InvalidOperationException>(() =>
+            failed.ProbeBoundaries(_ =>
+                throw new InvalidOperationException("probe failed")
+            )
+        );
+        Assert.Null(failed.ReadNextRange(1));
+        AssertInspectionOperationsRejected(failed);
+
+        using SessionSelectedLineageForwardCursor canceled =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages)
+            );
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Assert.Throws<OperationCanceledException>(() =>
+            canceled.ProbeBoundaries(
+                _ => SessionSelectedLineageBoundaryProbeDecision.Continue,
+                cancellation.Token
+            )
+        );
+        Assert.Null(canceled.ReadNextRange(1));
+        AssertInspectionOperationsRejected(canceled);
+    }
+
+    [Fact]
+    public void ForwardCursor_BoundaryProbeFinalHeadDriftFailsTyped() {
+        string path = CreateLongFixture(extraEventCount: 4);
+        EventAddress rewritten = default;
+        using var engine = SessionJournalEngine.OpenReadOnlyForTest(
+            path,
+            new SessionJournalTestHooks(
+                RewriteForwardBoundaryProbeObservedHead: observed =>
+                    rewritten == default ? observed : rewritten
+            )
+        );
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        var pages = new List<SessionSelectedLineageAuditPage>();
+        while (!audit.IsCaptureComplete) {
+            pages.Add(audit.ReadNextPage(2));
+        }
+        _ = audit.Complete();
+        using SessionSelectedLineageForwardCursor cursor =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages)
+            );
+        rewritten = cursor.Authority.BootstrapSeed.Address;
+
+        SessionSelectedLineageAuditChangedException error =
+            Assert.Throws<SessionSelectedLineageAuditChangedException>(
+                () => cursor.ProbeBoundaries(_ =>
+                    SessionSelectedLineageBoundaryProbeDecision.Continue
+                )
+            );
+
+        Assert.Equal(
+            SessionSelectedLineageAuditChangeKind.RawHeadChanged,
+            error.Kind
+        );
+        Assert.Null(cursor.ReadNextRange(1));
+        AssertInspectionOperationsRejected(cursor);
+    }
+
+    [Fact]
+    public async Task ForwardCursor_FinalNonReplaySafeHeadMaterializesWithoutNextSeed() {
+        string path = NewPath();
+        var source = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        var runtime = new SessionRuntime(
+            new UnusedCompletionClient(),
+            CompletionTarget: new SessionCompletionTargetIdentity(
+                "audit-final-range",
+                "test",
+                "audit-final-range-v1",
+                "audit-final-range-adapter-v1"
+            ),
+            ContextCandidateSource: source
+        );
+        using (SessionJournalEngine writer =
+               SessionJournalEngine.CreateForTest(
+                   path,
+                   new SessionCreateOptions(
+                       "model-A",
+                       "system-A",
+                       "surface-A"
+                   ),
+                   runtime,
+                   new SessionJournalTestHooks(
+                       SessionJournalFailpoint
+                           .AfterRequestPreparedCommitted
+                   )
+               )) {
+            _ = await Assert.ThrowsAsync<
+                SessionJournalFailpointException
+            >(() => writer.SendAsync("prepare only"));
+        }
+
+        using var engine = SessionJournalEngine.OpenReadOnlyForTest(
+            path,
+            runtime
+        );
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        var pages = new List<SessionSelectedLineageAuditPage>();
+        while (!audit.IsCaptureComplete) {
+            pages.Add(audit.ReadNextPage(2));
+        }
+        _ = audit.Complete();
+        using SessionSelectedLineageForwardCursor cursor =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages)
+            );
+        SessionSelectedLineageForwardRange final = Assert.IsType<
+            SessionSelectedLineageForwardRange
+        >(cursor.ReadNextRange(8));
+
+        SessionHistoryPlanningWindow window = cursor.Materialize(final);
+
+        Assert.True(final.IsFinal);
+        Assert.Equal(
+            SessionEventKind.CompletionRequestPrepared,
+            cursor.Authority.ExecutionStateAtCapturedHead.HeadKind
+        );
+        Assert.Equal(final.EndInclusive, window.ObservedRawHead);
+        Assert.Null(cursor.ReadNextRange(1));
     }
 
     [Fact]
@@ -491,6 +892,27 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
         Assert.Null(expectedPageHead);
     }
 
+    private static void AssertInspectionOperationsRejected(
+        SessionSelectedLineageForwardCursor cursor
+    ) {
+        Assert.Throws<InvalidOperationException>(() =>
+            cursor.ProbeBoundaries(_ =>
+                SessionSelectedLineageBoundaryProbeDecision.Continue
+            )
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            cursor.FindLatestMatchingBoundary(
+                new HashSet<EventAddress>()
+            )
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            cursor.SeekToBoundary(
+                cursor.Authority.BootstrapSeed.Address,
+                cursor.Authority.BootstrapSeed.Setups
+            )
+        );
+    }
+
     private string NewPath() {
         string temporaryRoot = Directory.Exists("/dev/shm")
             ? "/dev/shm"
@@ -558,5 +980,18 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
 
         public void Dispose() {
         }
+    }
+
+    private sealed class UnusedCompletionClient : ICompletionClient {
+        public string Name => "unused-audit-extend";
+        public string ApiSpecId => "unused-audit-extend-v1";
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) => throw new InvalidOperationException(
+            "The read-only audit fixture must not call Completion."
+        );
     }
 }

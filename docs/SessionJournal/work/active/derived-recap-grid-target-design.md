@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：Proposed target design；WP-01A complete、WP-01B ready；尚未切换 current production
+状态：Proposed target design；WP-00、WP-01A、WP-01B complete，WP-01C Ready；尚未切换 current production
 
 ## 1. Intent
 
@@ -298,8 +298,10 @@ TimelineHeadRef {
 }
 ```
 
-append row与切换partition policy都以whole expected `TimelineHeadRef` CAS，但属于两个transaction：append保留active policy，
-policy CAS不追加row，只替换active policy并推进generation。fork产生另一条显式head/path，不覆盖旧rows。
+Timeline明确分成四种write transaction：immutable policy put不改head；partition-policy CAS只切active policy；row append原子插row并
+推进head；selected-path reconcile只回指共同ancestor/empty。后三者都比较whole expected `TimelineHeadRef`；append保留active
+policy，policy CAS与reconcile都不追加row，reconcile也不切policy。即使next digest与active policy相同，成功policy CAS仍推进
+generation。fork产生另一条显式head/path，不覆盖旧rows。
 `SelectedRawHeadAtCommit`只是该次head transition观察到的fence，不代替每次operation由composition root重新冻结的raw head。
 
 ```text
@@ -834,8 +836,8 @@ dependency DAG的二维投影视图，不是每个坐标只有一个可变值的
 ## 12. Implementation boundary
 
 本文通过只表示Shape/Rule锁定及SQLite目标选择，不表示旧系统迁移方案或production implementation已经批准。
-施工计划已经拆为WP-00至WP-08；WP-00 baseline/walking skeleton与WP-01A Timeline contracts/partition已经完成，
-WP-01B raw integration处于Ready。
+施工计划已经拆为WP-00至WP-08；WP-00 baseline/walking skeleton、WP-01A Timeline contracts/partition与WP-01B raw
+integration已经完成，WP-01C durable ledger处于Ready（仍待implementation）。
 每个backend、carrier或cutover选择仍
 必须在所属工作包取得实证Go，不因本文或计划存在而预先视为implemented/production-ready。
 

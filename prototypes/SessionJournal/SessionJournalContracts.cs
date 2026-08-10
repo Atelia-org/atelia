@@ -185,7 +185,13 @@ internal sealed record SessionJournalTestHooks(
     Action<EventJournal.EventJournal>? BeforeTurnRefMove = null,
     Action? AfterBoundedHistoryProof = null,
     Func<EventFrameHeader, EventFrameHeader>?
-        RewriteBoundedHistoryProofHeader = null
+        RewriteBoundedHistoryProofHeader = null,
+    Func<EventAddress?, EventAddress?>?
+        RewritePendingRangeExtendObservedHead = null,
+    Func<EventAddress?, EventAddress?>?
+        RewriteForwardCursorObservedHead = null,
+    Func<EventAddress?, EventAddress?>?
+        RewriteForwardBoundaryProbeObservedHead = null
 );
 
 internal sealed class SessionJournalFailpointException(SessionJournalFailpoint failpoint)
