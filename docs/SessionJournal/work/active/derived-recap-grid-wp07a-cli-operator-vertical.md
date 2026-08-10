@@ -26,6 +26,9 @@ WP-01C已经提供typed library actions：`OpenReader/Inspect/Verify/Backup/Rest
 不能扫描orphan/backup/latest。Restore要求current canonical schema/head仍可读且与manifest exact；head/schema不可读时只允许
 explicit Abandon，不把restore降格成reset。
 
+WP-03已经交付stable store-only顶层`recap-grid inspect|export|verify|reset`和typed library mapping，且没有接provider；本包只在
+完整operator vertical中复用/验收该surface并补Manager/Getter commands，不重写Store path、witness、cursor或error taxonomy。
+
 ## Candidate boundary
 
 CLI入口必须是明确candidate command group，不能成为long-livedfeature flag。diagnostic命令read-only/no-create且Completion
@@ -36,7 +39,8 @@ Control `CommitIndeterminate`/backup `PublishIndeterminate`必须显示intended�
 
 ## Acceptance matrix
 
-1. absent/existing inspect前后filesystem snapshot一致，正文默认隐藏并有limit/max-errors；
+1. absent/existing inspect前后filesystem snapshot一致，正文默认隐藏；V1使用WP-03 code-owned page/error bounds，不宣称未实现的
+   `--limit/--max-errors`；
 2. Agent/developer注册definition、overlay/full/A-B recipe，build与activate分离；
 3. same recipe restart只调用missing cells；partial candidate不出现在materialize；
 4. strict nth=0/1/N、branch sibling、missing/damaged slot不跳邻居；

@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-03：SQLite RecapGridStore
 
-状态：Ready；WP-02 complete handoff已通过independent review与final serial gates，尚未开工
+状态：Complete；A0-A5、两路independent review与final serial gate已完成；WP-04 Ready；current production尚未切换
 
 只需加载：目标设计、总计划、WP-02 handoff、本文和 WP-04 摘要。
 
@@ -11,10 +11,29 @@ fulfillment refs。没有remote call、Manager policy、targeted repair或文件
 
 ## Internal slices
 
-- **A0 disconnected spike**：dependency/version、checked-in schema、queries、crash/contention、CLI；
-- **A1 production store**：strict repository、whole-store Invalid/reset、public narrow API。
+- **A0 schema/native/query**：dependency/version、checked-in strict schema、PRAGMA与query plan；
+- **A1 lifecycle + Cell**：factory/owned handle、first-winner Cell与sticky Invalid；
+- **A2 missing + RowView**：exact prerequisite、header/member atomic commit；
+- **A3 fulfillment**：formal five-field key与idempotent ref；
+- **A4 maintenance/reset/crash/CLI**：read-only actions、exact witness、child FailFast与stable command group；
+- **A5 public/architecture/docs**：assembly-external surface、package graph、solution与handoff。
 
-A0失败时按target design重新打开Directory+JSON决策；不得把失败spike包装成可配置第二backend。
+A0对Directory+JSON只做了结构性反证：它会引入第二套transaction/orphan/index协议；没有虚构“同fixture实跑”的对比证据。
+SQLite gate已经成立，因此production代码、dependency与tests中不保留Directory loser或backend selector。
+
+## Plan lock（2026-08-11）
+
+- 唯一backend为Store assembly自有SQLite；canonical slot是
+  `<repo>/derived/recap-grid/v1/{grid.sqlite,lifetime.lock}`，V1 Linux-only；
+- direct project只引用`SessionJournal.RecapGrid.Abstractions`；direct package固定
+  `Microsoft.Data.Sqlite 10.0.10`与security override `SQLitePCLRaw.bundle_e_sqlite3 2.1.12`；
+- 选定rollback journal `DELETE` + `synchronous=EXTRA`、page 4096、private cache、pooling false、FK ON、
+  `trusted_schema=OFF`、temp MEMORY、busy timeout 0与code-owned `max_page_count`；不再保留WAL候选代码或配置；
+- normal handle持shared lifetime lease，mutation只重试已经物化的短local transaction；reset持exclusive lifetime，使用exact
+  physical witness与同目录empty DB atomic replace，crash只允许old或empty-valid；
+- schema以WP-02 formal canonical types为authority：Fulfilled key没有Target字段，RowView包含TimelineId/HistoryRowId，first-row
+  predecessor使用injective tagged BLOB；target文档中的旧示例仅作历史Shape说明；
+- CLI只新增独立顶层`recap-grid`组，不改旧`recap`命令或production composition。
 
 ## In scope
 
@@ -31,7 +50,7 @@ A0失败时按target design重新打开Directory+JSON决策；不得把失败spi
 - canonical bytes重算与locator/member/FK exact validation；
 - operation-specific typed results：Cell `Inserted | AlreadyFilled(winner) | Invalid | Busy`；RowView/Fulfillment同key不同view为
   `Invalid`而非general Conflict；RowView/Fulfillment使用`Inserted | AlreadyPresent | Invalid | Busy`；
-- `recap-grid inspect/export/verify/reset`；
+- `recap-grid inspect/export/verify/reset --prepare/reset`；
 - bounded query/materialization与query-plan evidence。
 
 ## Durable rules
@@ -74,7 +93,7 @@ pathname冒充同时处理WAL/SHM或在失败后升级破坏力度。
 - unique `EvaluationKeyDigest`；
 - Cell digest + column + definition exact association；
 - unique `(Recipe, RowDescriptor, Target, PreviousViewKey)` RowView；
-- fulfilled composite key/FK绑定 exact recipe/row/target/view；
+- fulfilled five-field composite key/FK绑定 exact recipe/row/view；
 - first-row sentinel规避SQLite NULL unique语义；
 - primary reads/missing/completeness不做unbounded full scan；
 - large fixture `EXPLAIN QUERY PLAN`使用预期index。
@@ -89,7 +108,7 @@ pathname冒充同时处理WAL/SHM或在失败后升级破坏力度。
 6. same fulfillment key same view idempotent；different view Invalid；
 7. bounded `SQLITE_BUSY`只重试local commit，不触发业务回调；
 8. canonical BLOB、locator、member ordinal/set、FK orphan、unknown schema、truncated/page/integrity统一Invalid；本实例随后拒绝writes；
-9. inspect/export/verify `Mode=ReadOnly`、no-create、bounded `--limit/--max-errors`、默认隐藏Cell正文，provider factory零调用；
+9. inspect/export/verify `Mode=ReadOnly`、no-create、code-owned 128-item/4MiB page与128-error bounds、默认隐藏Cell正文，provider factory零调用；V1不暴露`--limit/--max-errors`；
 10. runtime SQLite version、schema与connection PRAGMAs可诊断；
 11. 三种commit原语各覆盖before BEGIN、after statements-before COMMIT、after COMMIT-before return；
 12. 大fixture分页/流式，`EXPLAIN QUERY PLAN`为SEARCH/index而非脆弱墙钟gate；
@@ -109,6 +128,37 @@ pathname冒充同时处理WAL/SHM或在失败后升级破坏力度。
 - child-process crash、contention、query-plan、CLI gates green；
 - builds/docs/diff green；
 - reviewer确认Store不含Manager/Completion policy。
+
+## Implementation record（final，2026-08-11）
+
+- 新增唯一production owner `SessionJournal.RecapGrid.Store`，direct project只引用Abstractions，direct pins为
+  `Microsoft.Data.Sqlite 10.0.10`与`SQLitePCLRaw.bundle_e_sqlite3 2.1.12`；checked-in `SchemaV1.sql`、strict
+  schema/metadata/count caps、DELETE+EXTRA、private/no-pool、FK/trusted-schema/temp/page/max-page gates均由Store持有；
+- canonical layout固定为`<repo>/derived/recap-grid/v1/{grid.sqlite,lifetime.lock}`。normal只跟随exact slots，不扫描temp、orphan、
+  old recap roots或其他durability domains；V1 durable flock/fsync明确Linux-only；
+- public factory交付`Create/Open/OpenReader`与owned disposable Reader/Writer；三种write transaction均有first-winner/idempotence、
+  prerequisite、Busy/Limit/Disposed/Invalid及`CommitIndeterminate(Intended, Observed?)` closed results；
+- provider command会在执行前重装busy handler，故writer control改由native SQLite handle明确安装`busy_timeout=0`并执行
+  `BEGIN IMMEDIATE/COMMIT/ROLLBACK`；`max_page_count`只在取得writer后设置/复验，local retry不跨业务物化或远程调用；
+- maintenance交付read-only/no-create `Inspect/Export/Verify`和closed-store exact physical witness `PrepareReset/Reset`；Export page
+  按Cell/View PK与Fulfilled五字段composite PK逐表keyset，使用可逆typed cursor；每个物理row复用strict validator，Fulfilled诊断携带
+  `ViewDigest`。page受128 item/4MiB约束且默认不返回canonical正文；reset只替换Grid DB，发布后不清理moved source，crash只允许old或empty-valid；
+- CLI新增顶层`recap-grid inspect|export|verify|reset`，其中`reset --prepare`先输出exact physical `length/sha256`；throwing provider
+  factory fixture已证明absent/no-create与prepare -> wrong -> exact reset全流程零provider creation；
+  old `recap`命令与current production composition没有切换；
+- child harness覆盖Cell、RowView、Fulfilled三种transaction的before BEGIN、after statements-before COMMIT、after COMMIT，以及
+  reset before/after publish；reset fixture建立真实SessionJournal、HistoryTimeline与Control stores，并逐文件复验Grid root外inventory/bytes exact；
+- repository path从existing ancestors到repo root及Grid descendants逐段拒绝symlink/reparse；四个Create/Inspect/PrepareReset/Reset入口
+  在symlink repo root上fail closed且external target零mutation；
+- 三种write在native COMMIT开始后只把可确认ROLLBACK的BUSY降回普通retry；其他IO/FULL/hook failure关闭旧connection再返回
+  `CommitIndeterminate(Intended, Observed?)`，native-return与settled-flag窗口都有三类回归；
+- final serial evidence：Store full 40/40（含Cell/View/Fulfilled三页Export、首续页query-plan、assignment collision、8类corruption、
+  commit/reset child crash）、CLI store-only E2E 1/1、public surface 2/2、Walking 14/14、Abstractions 15/15、
+  solution build 0 warning / 0 error、vulnerable package scan零命中、docs 15/0与diff check clean。CLI full为67/68，唯一
+  `CompletionTargetIdentityFactoryTests` fingerprint失败与冻结基线一致，且对应production/test files与HEAD exact无diff；新CLI fixture独立1/1。
+- 两条independent review经首轮发现并闭合symlink root、indexed Export/Verify、reset witness、exact RowView spec、
+  native COMMIT settlement、真实raw/Timeline/Control bytes与architecture gates后，最终均给出GO（P0=0，P1=0）。
+  containing commit是本记录的commit evidence；这不表示current production已cutover。
 
 ## Handoff to WP-04
 

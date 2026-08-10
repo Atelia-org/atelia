@@ -11,7 +11,17 @@ recap materialize-inspect
 recap run
 recap rebuild --campaign <id> [--reset --confirm-ref <ref-id>]
 recap reset --confirm-ref <ref-id>
+
+recap-grid inspect|verify --input <repo-dir>
+recap-grid export --input <repo-dir> [--after <opaque-cursor>] [--include-content]
+recap-grid reset --prepare --input <repo-dir>
+recap-grid reset --input <repo-dir> --confirm-length <bytes> --confirm-sha256 <sha256>
 ```
+
+`recap-grid` 是Derived Recap Grid rewrite的candidate operator surface，尚未切换
+Galatea/current production。`reset --prepare`只读输出当前exact physical
+`length`/`sha256`；将这两个值原样传给reset确认。inspect/export/verify/reset使用
+code-owned分页与错误上限，首版不提供`--limit`或`--max-errors`选项。
 
 旧 `resume`、`restore`、`abandon-building`命令已删除。`recap run`内部自动优先恢复Building或修复
 Published，随后才惰性加载active config并规划新shared epoch。正常run超过bounded raw authority只返回

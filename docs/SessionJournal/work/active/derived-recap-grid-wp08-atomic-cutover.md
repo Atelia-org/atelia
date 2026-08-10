@@ -15,6 +15,7 @@ migration、feature flag或compatibility layer。
 - WP-01..07B commits与handoffs完整；
 - frozen pre-grid branch/tag存在且clean；
 - migration/deletion ledger无Unknown；
+- WP-03 Store V1 Linux-only contract、exact Grid-only reset root与Busy/Invalid/Disposed/CommitIndeterminate mapping已被WP-04..07消费者保持；
 - target/current config与operator actions已审阅；
 - disposable vertical candidate通过；
 - exact cutover HEAD重新盘点，无并行uncommitted writer。
@@ -27,6 +28,8 @@ migration、feature flag或compatibility layer。
 - normal Control composition只经`RecapGridControlFactory.Create/Open/OpenReader(repositoryPath, RefId, ...)`；不得注入Timeline Reader、
   backend selector或扫描old config。Control canonical root位于`<repo>/control/recap-grid/v1/`，与Grid reset root分离；
 - strict new config与operator messages；
+- 已交付的stable store-only `recap-grid inspect|export|verify|reset --prepare/reset`命令名在cutover后继续保留；WP-08只接入完整
+  composition与删除legacy命令，不重命名或另造第二组Grid maintenance surface；
 - Prepared/Started fast path保持先于DerivedRecap active composition；Prepared按frozen identity exact bind Host registry，Started
   Refuse先于client creation；
 - old derived roots检测策略：新production不读取；旧roots只由offline exact-confirm procedure归档/删除，operator只对new

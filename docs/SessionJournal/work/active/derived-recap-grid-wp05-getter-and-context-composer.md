@@ -11,6 +11,11 @@
 
 ## In scope
 
+- 只消费WP-03 public `OpenReader`/owned ReaderHandle与closed `Found|Missing|Busy|Disposed|Invalid`结果；不得引用SQLite、schema、
+  maintenance/reset或注入backend selector；whole-store locator/canonical/member/FK mismatch必须原样fail closed；
+- select fulfilled ref与materialize RowView/Cells必须使用同一个owned Store ReaderHandle，并提交该handle的exact `StoreIdentity`到selection；
+  两phase之间不得reopen。若caller在typed settlement后显式重开，新identity必须使旧selection stale；
+
 - `ResolveFulfilledView(selectedRawRef, completionBoundary, TimelineHeadRef, activeRecipe, nthPrevious)`；其中
   `completionBoundary`就是neutral request冻结的exact raw-head fence，不另立同义authority；
 - membership complete、PriorInputAligned、可选FullRebuildChain provenance；

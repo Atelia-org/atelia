@@ -1,6 +1,6 @@
 # DerivedRecap Grid Rewrite 总施工计划
 
-状态：Implementation program active；WP-00、WP-01A、WP-01B、WP-01C、WP-02 complete，WP-03 Ready；current production尚未切换
+状态：Implementation program active；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03 complete，WP-04 Ready；current production尚未切换
 
 目标设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)
 
@@ -83,7 +83,11 @@ WP-08 Atomic production cutover + legacy deletion
 ```
 
 WP-02已完成formal contracts、单一canonical Control carrier、public factory/Reader、maintenance、crash/settlement与
-independent review/final serial validation；WP-03已Ready。该旁路owner不改变current production；production cutover仍只属于WP-08。
+independent review/final serial validation。WP-03已交付单一SQLite Store、public factory/Reader/Writer、maintenance/reset、
+child crash/contention、per-table typed keyset/query-plan与stable store-only CLI（含`reset --prepare` exact witness）；final Store 40/40、
+CLI 1/1、public 2/2、Walking 14/14、Abstractions 15/15、solution build 0 warning / 0 error、包漏洞扫描零命中，
+两路independent review最终GO（P0=0，P1=0）。WP-04现为Ready。
+这些旁路owner不改变current production；production cutover仍只属于WP-08。
 
 工作包文档：
 

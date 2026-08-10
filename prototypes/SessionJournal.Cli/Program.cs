@@ -38,6 +38,15 @@ internal static class Program {
                     .GetAwaiter()
                     .GetResult();
             }
+            if (string.Equals(
+                    command,
+                    "recap-grid",
+                    StringComparison.Ordinal
+                )) {
+                return RecapGridStoreCommands.Run(
+                    args.Skip(1).ToArray()
+                );
+            }
             CliOptions options = CliOptions.Parse(args.Skip(1).ToArray());
             return command switch {
                 "import-legacy-json" => RunImportLegacyJson(options),
@@ -307,6 +316,17 @@ internal static class Program {
         Console.WriteLine("SessionJournal.Cli");
         Console.WriteLine();
         Console.WriteLine("Commands:");
+        Console.WriteLine(
+            "  recap-grid inspect|verify|export --input <repo-dir> "
+            + "[--after <opaque-cursor>] [--include-content]"
+        );
+        Console.WriteLine(
+            "  recap-grid reset --prepare --input <repo-dir>"
+        );
+        Console.WriteLine(
+            "  recap-grid reset --input <repo-dir> "
+            + "--confirm-length <bytes> --confirm-sha256 <sha256>"
+        );
         Console.WriteLine(
             "  recap planner-config init --input <repo-dir> "
             + "[--report-json <path-outside-repo>]"

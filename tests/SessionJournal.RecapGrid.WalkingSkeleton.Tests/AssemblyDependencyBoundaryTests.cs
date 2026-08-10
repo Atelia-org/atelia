@@ -25,6 +25,12 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Control",
             "SessionJournal.RecapGrid.Control.csproj"
         );
+        string storeProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Store",
+            "SessionJournal.RecapGrid.Store.csproj"
+        );
 
         Assert.Equal(
             ["../SessionJournal/SessionJournal.csproj"],
@@ -42,6 +48,10 @@ public sealed class AssemblyDependencyBoundaryTests {
             DirectProjectReferences(controlProject)
         );
         Assert.Equal(
+            ["../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj"],
+            DirectProjectReferences(storeProject)
+        );
+        Assert.Equal(
             [
                 "Microsoft.Data.Sqlite@10.0.10",
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
@@ -53,6 +63,13 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Empty(DirectPackageReferences(abstractionsProject));
         Assert.Empty(DirectPackageReferences(controlProject));
+        Assert.Equal(
+            [
+                "Microsoft.Data.Sqlite@10.0.10",
+                "SQLitePCLRaw.bundle_e_sqlite3@2.1.12"
+            ],
+            DirectPackageReferences(storeProject)
+        );
 
         string upstream = File.ReadAllText(timelineProject)
             + File.ReadAllText(abstractionsProject);
@@ -74,13 +91,19 @@ public sealed class AssemblyDependencyBoundaryTests {
     }
 
     [Fact]
-    public void SqliteIsTheOnlyProductionTimelineBackendAndHasOneDirectPin() {
+    public void SqliteOwnersAndDirectPinsAreExact() {
         string root = FindRepositoryRoot();
         string timelineProject = Path.Combine(
             root,
             "prototypes",
             "SessionJournal.HistoryTimeline",
             "SessionJournal.HistoryTimeline.csproj"
+        );
+        string storeProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Store",
+            "SessionJournal.RecapGrid.Store.csproj"
         );
         string[] newProjects = [.. new[] {
             Path.Combine(root, "prototypes"),
@@ -100,25 +123,29 @@ public sealed class AssemblyDependencyBoundaryTests {
             "*.csproj",
             SearchOption.TopDirectoryOnly
         ))];
-        string sqliteOwner = Assert.Single(newProjects, project =>
+        string[] sqliteOwners = [.. newProjects.Where(project =>
             DirectPackageReferences(project).Contains(
                 "Microsoft.Data.Sqlite@10.0.10",
                 StringComparer.Ordinal
             )
-        );
+        ).Select(Path.GetFullPath).Order(StringComparer.Ordinal)];
         Assert.Equal(
-            Path.GetFullPath(timelineProject),
-            Path.GetFullPath(sqliteOwner)
+            new[] { timelineProject, storeProject }
+                .Select(Path.GetFullPath)
+                .Order(StringComparer.Ordinal),
+            sqliteOwners
         );
-        string bundleOwner = Assert.Single(newProjects, project =>
+        string[] bundleOwners = [.. newProjects.Where(project =>
             DirectPackageReferences(project).Contains(
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
                 StringComparer.Ordinal
             )
-        );
+        ).Select(Path.GetFullPath).Order(StringComparer.Ordinal)];
         Assert.Equal(
-            Path.GetFullPath(timelineProject),
-            Path.GetFullPath(bundleOwner)
+            new[] { timelineProject, storeProject }
+                .Select(Path.GetFullPath)
+                .Order(StringComparer.Ordinal),
+            bundleOwners
         );
 
         Assembly product = Assembly.LoadFrom(Path.Combine(
@@ -139,6 +166,75 @@ public sealed class AssemblyDependencyBoundaryTests {
                 "IHistoryTimelineLedgerPort",
                 StringComparison.OrdinalIgnoreCase
             )
+        );
+        Assembly store = Assembly.LoadFrom(Path.Combine(
+            AppContext.BaseDirectory,
+            "Atelia.SessionJournal.RecapGrid.Store.dll"
+        ));
+        Assert.DoesNotContain(
+            store.GetExportedTypes(),
+            static type => type.Name.Contains(
+                "Sqlite",
+                StringComparison.OrdinalIgnoreCase
+            ) || type.Name.Contains(
+                "BackendSelector",
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
+    }
+
+    [Fact]
+    public void RecapGridStoreHasNoRuntimeAuthorityBackEdge() {
+        string root = FindRepositoryRoot();
+        string storeRoot = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Store"
+        );
+        string product = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                storeRoot,
+                "*.cs",
+                SearchOption.AllDirectories
+            ).Select(static path => path.Replace('\\', '/'))
+                .Where(static path => !IsBuildOutput(path))
+                .Select(File.ReadAllText)
+        );
+        foreach (string forbidden in new[] {
+                     "Atelia.SessionJournal.HistoryTimeline",
+                     "HistoryTimelineFactory",
+                     "HistoryTimelineCoordinator",
+                     "SessionJournalReadView",
+                     "SessionJournalEngine",
+                     "RecapGrid.Control",
+                     "Completion",
+                     "DerivedRecap"
+                 }) {
+            Assert.DoesNotContain(
+                forbidden,
+                product,
+                StringComparison.Ordinal
+            );
+        }
+        string project = File.ReadAllText(Path.Combine(
+            storeRoot,
+            "SessionJournal.RecapGrid.Store.csproj"
+        ));
+        Assert.DoesNotContain(
+            "SessionJournal.HistoryTimeline.csproj",
+            project,
+            StringComparison.OrdinalIgnoreCase
+        );
+        Assert.DoesNotContain(
+            "SessionJournal.RecapGrid.Control.csproj",
+            project,
+            StringComparison.OrdinalIgnoreCase
+        );
+        Assert.DoesNotContain(
+            "SessionJournal.csproj",
+            project,
+            StringComparison.OrdinalIgnoreCase
         );
     }
 
@@ -332,10 +428,17 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Control",
             "SessionJournal.RecapGrid.Control.csproj"
         );
+        string storeProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Store",
+            "SessionJournal.RecapGrid.Store.csproj"
+        );
         HashSet<string> closure = ProjectClosure(
             timelineProject,
             abstractionsProject,
-            controlProject
+            controlProject,
+            storeProject
         );
 
         Assert.DoesNotContain(closure, path => path.EndsWith(
@@ -357,7 +460,8 @@ public sealed class AssemblyDependencyBoundaryTests {
         foreach (string assemblyFileName in new[] {
             "Atelia.SessionJournal.HistoryTimeline.dll",
             "Atelia.SessionJournal.RecapGrid.Abstractions.dll",
-            "Atelia.SessionJournal.RecapGrid.Control.dll"
+            "Atelia.SessionJournal.RecapGrid.Control.dll",
+            "Atelia.SessionJournal.RecapGrid.Store.dll"
         }) {
             Assembly assembly = Assembly.LoadFrom(Path.Combine(
                 AppContext.BaseDirectory,

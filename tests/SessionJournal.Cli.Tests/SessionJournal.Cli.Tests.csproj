@@ -24,6 +24,7 @@
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Runtime/SessionJournal.DerivedRecap.Runtime.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-04：Grid Build Engine 与 MaintainerManager
 
-状态：Planned；依赖 WP-01/02/03
+状态：Ready；WP-01/02/03 complete且independent GO；尚未开始implementation
 
 只需加载：目标设计、总计划、WP-03 handoff、本文和 WP-05 摘要。
 
@@ -10,6 +10,12 @@
 逐row wavefront执行并提交Cell/RowView。先证明分析语义，再接真实Completion。
 
 ## In scope
+
+WP-03 handoff固定为public `RecapGridStoreFactory` owned handle及Reader/Writer typed results；本包不得引用Store internal SQLite、
+schema、test hook或backend selector。`Busy`只允许caller以fresh operation重试；`CommitIndeterminate`必须按Observed/reopen结算，
+不得把可能已提交的Cell/RowView/Fulfilled自动重放成普通failure。
+一次build operation持有同一个owned Store handle及其`StoreIdentity`；若为settlement重开，只能在reopen identity与冻结identity exact
+相等时继续核对Observed。reset产生的新InstanceId即使同path也必须使旧operation stale，不能跨identity复用missing/progress结论。
 
 - pure recipe-to-RowBuildSpec derivation；
 - exact prior content projection与EvaluationKey；

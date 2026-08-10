@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C、WP-02 complete，WP-03 Ready；尚未切换 current production
+状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03 complete，WP-04 Ready；尚未切换 current production
 
 ## 1. Intent
 
@@ -648,6 +648,8 @@ cell_artifact(
 
 row_view(
   view_digest primary key,
+  timeline_id,
+  history_row_id,
   grid_build_recipe_digest,
   row_descriptor_digest,
   previous_view_key not null,
@@ -677,12 +679,11 @@ fulfilled_view_ref(
   timeline_head_generation,
   through_row_descriptor_digest,
   grid_build_recipe_digest,
-  build_target_digest,
   view_digest,
   primary key(ref_id, timeline_id, timeline_head_generation,
               through_row_descriptor_digest, grid_build_recipe_digest),
   foreign key(view_digest, grid_build_recipe_digest,
-              through_row_descriptor_digest, build_target_digest) to row_view
+              through_row_descriptor_digest) to row_view
 )
 ```
 
@@ -704,24 +705,26 @@ GridBuildRecipe重建RowBuildSpec并解析唯一EvaluationKey winners；whole Gr
 即使模型非确定性使新view digest变化，也不改变control-plane active recipe。
 
 Completion调用、History materialization和prompt构造全部在transaction外并行；成功结果只执行短transaction。
-correctness来自SQLite transaction、unique/FK constraints和CAS，不依赖进程内single-writer queue。connection PRAGMA、
-bounded `SQLITE_BUSY` commit retry、rollback journal/WAL与backup策略属于后续spike，不在Shape文档锁死；retry只能重试
-本地commit，不能重新触发remote call。Spike还必须考虑两个官方边界：`Microsoft.Data.Sqlite` async方法实际同步执行
-（[Async limitations](https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/async)）；WAL候选必须运行时核验已包含
-WAL-reset修复的SQLite版本或官方backport（[SQLite WAL](https://www.sqlite.org/wal.html#the_wal_reset_bug)）。
+correctness来自SQLite transaction、unique/FK constraints和CAS，不依赖进程内single-writer queue。WP-03 candidate已选择
+rollback journal `DELETE` + `synchronous=EXTRA`、private cache、pooling false、`busy_timeout=0`与code-owned bounded local retry；
+retry只能重试已物化的本地commit，不能重新触发remote call。`Microsoft.Data.Sqlite` async方法实际同步执行
+（[Async limitations](https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/async)），因此Store V1诚实保留同步repository API，
+不引入`Task.Run`包装；WAL候选及其reset边界不再进入V1 code/config。
 
 当前开发环境没有`sqlite3` executable，因此first-party可观察性属于首批contract，不是后补便利功能：
 
 ```text
 recap-grid inspect
-recap-grid export --canonical-json
+recap-grid export [--after <opaque-cursor>] [--include-content]
 recap-grid verify
-recap-grid reset
+recap-grid reset --prepare
+recap-grid reset --confirm-length <bytes> --confirm-sha256 <sha256>
 ```
 
 Coding Agent日常通过稳定CLI、checked-in SQL、canonical export和golden审阅；不得手工编辑live数据库。除`reset`外，
-所有inspect/verify/export命令必须read-only/no-create、bounded输出；数据库不存在返回typed Absent，正文导出需要显式
-选项。`reset`只允许在Grid Store已关闭后执行。数据库损坏走`verify -> reset/rebuild`，不设计SQLite page级salvage或
+所有inspect/verify/export命令必须read-only/no-create、bounded输出；V1 bounds由code固定，不暴露`--limit`或`--max-errors`。
+数据库不存在返回typed Absent，正文导出需要显式选项。`reset --prepare`是first-party exact physical witness入口；`reset`只允许在
+Grid Store已关闭后执行。数据库损坏走`verify -> reset/rebuild`，不设计SQLite page级salvage或
 Published repair。
 
 首个spike不实现cell/view GC：除whole-store reset外不得删除committed artifacts。retention、generation与忘记
@@ -843,12 +846,15 @@ generation等于current generation + 1。两条independent review与final serial
 ## 12. Implementation boundary
 
 本文通过只表示Shape/Rule锁定及SQLite目标选择，不表示旧系统迁移方案或production implementation已经批准。
-施工计划已经拆为WP-00至WP-08；WP-00 baseline/walking skeleton、WP-01A Timeline contracts/partition与WP-01B raw
-integration、WP-01C durable ledger与WP-02 content-addressed ControlPlane均已完成，WP-03 Ready。WP-01C final evidence为Timeline 156/156、raw 19/19、walking 13/13、
+施工计划已经拆为WP-00至WP-08；WP-00 baseline/walking skeleton、WP-01A Timeline contracts/partition、WP-01B raw
+integration、WP-01C durable ledger、WP-02 content-addressed ControlPlane与WP-03 SQLite Grid Store均已完成；WP-04 Ready。
+WP-01C final evidence为Timeline 156/156、raw 19/19、walking 13/13、
 public surface 2/2、solution build 0 warning / 0 error、docs 15/0、diff clean与两路independent GO；commit evidence由containing commit提供。
 其后WP-02 final evidence为Abstractions 15/15、Control 26/26、Control public surface 2/2、Walking/architecture 13/13，
 并重跑Timeline 156/156与Timeline public surface 2/2；solution build 0 warning / 0 error、vulnerable package scan零命中、
 docs 15/0、diff clean与两路independent GO。
+其后WP-03 final evidence为Store 40/40、store-only CLI 1/1、Store public surface 2/2、Walking 14/14、
+Abstractions 15/15、solution build 0 warning / 0 error、vulnerable package scan零命中、docs 15/0、diff clean与两路independent GO。
 每个backend、carrier或cutover选择仍
 必须在所属工作包取得实证Go，不因本文或计划存在而预先视为implemented/production-ready。
 
