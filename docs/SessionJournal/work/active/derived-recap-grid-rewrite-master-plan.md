@@ -1,6 +1,6 @@
 # DerivedRecap Grid Rewrite 总施工计划
 
-状态：Draft implementation program；尚未开始 production implementation
+状态：Implementation program active；WP-00 complete，WP-01A ready；current production尚未切换
 
 目标设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)
 
@@ -20,8 +20,10 @@
 
 ## 2. Planning baseline and freshness
 
-本计划起草基线为 `9274fec7`。开始 WP-00 时必须重新记录 exact HEAD、branch、worktree、solution projects、
-production call sites、durable paths 与 test inventory；本文的路径是导航，不替代 fresh evidence。
+本计划起草基线为 `9274fec7`。WP-00 fresh inventory已经把实际cut-start锁为
+`5e1ba46eb84f784a6fa481829a0cabc14b73781f`：该提交包含目标设计与施工计划，但没有Grid production实现。
+production call sites、durable paths 与 test inventory由
+[`DRGRID-CUTOVER migration ledger`](derived-recap-grid-migration-ledger.md)记录；本文的路径仍只作导航。
 
 旧实现通过 Git branch/tag 冻结，不复制到新的 source archive：
 
@@ -30,7 +32,7 @@ archive/derived-recap-pre-grid       exact cut-start baseline
 feature/derived-recap-grid-rewrite   green incremental integration branch
 ```
 
-名称可在 WP-00 按仓库规则微调，但必须保持“一个冻结 baseline + 一个集成分支”。并行 writer 使用独立 worktree；同一
+WP-00采用上述exact名称，并把两个ref都建立在`5e1ba46e`。必须保持“一个冻结 baseline + 一个集成分支”。并行 writer 使用独立 worktree；同一
 文件树只允许一个 writer，其他 agent 只读 review。
 
 ## 3. Global architecture rules
@@ -39,8 +41,9 @@ feature/derived-recap-grid-rewrite   green incremental integration branch
 2. Timeline ledger 是已经封口 row 边界、长度、predecessor 与 selected head 的 authority；不保存 History 正文。
 3. MaintainerControlPlane 是 definitions、GridBuildRecipes 与 active recipe CAS 的唯一逻辑 authority；只选一个物理 carrier。
 4. RecapGridStore 只保存 immutable cells/views 与可重建 fulfillment/index；whole-store corruption 只 reset/rebuild。
-5. `HistoryTimeline` 不引用Maintainer、Grid、Completion runtime/provider或Galatea；允许消费SessionJournal暴露的
-   provider-neutral history-message contract。
+5. production project graph从`SessionJournal <- HistoryTimeline <- RecapGrid.Abstractions`开始：Timeline独占
+   `TimelineId/RowId/DescriptorDigest`，Grid不得复制第二套identity。`HistoryTimeline`不直接引用Maintainer、Grid、
+   Completion runtime/provider或Galatea；允许消费SessionJournal暴露的provider-neutral history-message contract。
 6. Cell semantic identity 只提交 Maintainer 实际可见输入；runtime connection/model/lane/cache 不进入 identity。
 7. Completion call 不持有 durable transaction；commit 只发生在成功结果返回后。
 8. Prepared/Started frozen completion recovery不打开active Timeline/Grid/ControlPlane，也不读取DerivedRecap active/current route
@@ -116,7 +119,7 @@ Legacy owner/symbol/path
 Production callers
 Behavior/invariant worth preserving
 Replacement WP/owner
-Disposition: Preserve | Rewrite | Delete
+Disposition: Preserve | Move | Rewrite | Delete | Retarget | Keep-connected-until-WP08
 Status and proof
 ```
 

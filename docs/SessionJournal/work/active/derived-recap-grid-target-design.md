@@ -126,6 +126,10 @@ tail，由ContextComposer/SessionJournal raw-tail policy负责。达到`MaxRawEv
 Timeline拥有HistoryLoad estimator的provider-neutral contracts、metric identity和goldens；provider token/cost估算仍与
 HistoryLoad分离。旧Planner中的同类pure contracts在施工时迁到这个单一owner，不能复制第二套EstimatorId或算法。
 
+assembly ownership从`SessionJournal <- HistoryTimeline <- RecapGrid.Abstractions`开始。`TimelineId`、`RowId`与
+`DescriptorDigest`由HistoryTimeline定义，Grid只消费这些typed values，不能重新包装一套字符串identity；是否将来再拆
+轻量contracts assembly只能由实测依赖重量驱动，首版不预建第三个项目。
+
 首版`TimelineId`绑定一个exact `RefId`，只在同一Ref内复用row prefix；不同Ref即使共享raw prefix也各自建立
 descriptor chain。跨Ref dedup延后，避免把Ref selection从row identity中再拆出一层映射。
 
@@ -824,7 +828,8 @@ dependency DAG的二维投影视图，不是每个坐标只有一个可变值的
 ## 12. Implementation boundary
 
 本文通过只表示Shape/Rule锁定及SQLite目标选择，不表示旧系统迁移方案或production implementation已经批准。
-施工计划已经拆为WP-00至WP-08；下一步从WP-00 fresh baseline/walking skeleton开始。每个backend、carrier或cutover选择仍
+施工计划已经拆为WP-00至WP-08；WP-00 baseline/walking skeleton已完成，下一步是WP-01A Timeline contracts/partition。
+每个backend、carrier或cutover选择仍
 必须在所属工作包取得实证Go，不因本文或计划存在而预先视为implemented/production-ready。
 
 ## 13. Independent review record

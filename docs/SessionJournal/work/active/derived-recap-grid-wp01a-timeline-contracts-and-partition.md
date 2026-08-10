@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-01A：Timeline Contracts 与 Partition Semantics
 
-状态：Planned；依赖 WP-00 complete
+状态：Ready；WP-00 implementation handoff complete
 
 只需加载：Grid target、Master、WP-00 handoff、WP-01 overview与本文。
 
@@ -17,6 +17,20 @@
 - `RowId`/`DescriptorDigest`无循环的identity preimage；
 - canonical codec、strict decode、hash goldens与bounds；
 - 将old Planner的HistoryLoad unit/estimator/projector/O200k goldens迁到唯一neutral owner；old Planner暂时引用新owner，禁止复制。
+
+WP-00已经锁定`HistoryTimeline -> SessionJournal` direct edge；Timeline identity的正式types归本项目独占，后续
+`RecapGrid.Abstractions`只消费这些typed values。迁移HistoryLoad时还必须处理三个已知handoff：
+
+- `RecapHistoryLoadProjector`/O200k estimator当前依赖Planner内部`RecapNonFatalException`；新owner必须保留等价的
+  fatal-exception filter，不能反向引用old Planner；
+- `MaxRenderedBytesPerSegment`需要每个replay-safe boundary的累计rendered bytes或等价partition evidence，不能只保留
+  整个suffix总数；
+- current planning window的`RawRangeSha256`覆盖整窗；当首个`>=B` boundary早于captured head时，选中segment的exact
+  range commitment必须由WP-01B rematerialize/verify，WP-01A不得把整窗hash冒充selected range hash。
+- 正式Timeline types落地时删除/替换walking skeleton中的private descriptor/hash shapes；不得复制test-only preimage或留下
+  第二套identity算法。architecture gate同步从“product无`.cs`”改为“无遗留test-only Shape/hash owner”；
+- WP-00锁定的空`PackageReference` allowlist必须改成HistoryLoad迁移实际需要的exact tokenizer package allowlist，不能为
+  施工方便删除该gate。
 
 本包write scope显式允许old Planner/CLI/Galatea的csproj、using/import和对应HistoryLoad tests做机械owner迁移，但不改变
 cadence behavior或production composition；任何业务改写仍留到cutover。
