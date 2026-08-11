@@ -1,6 +1,6 @@
 # DerivedRecap Grid Rewrite 总施工计划
 
-状态：Implementation program active；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03 complete，WP-04 Ready；current production尚未切换
+状态：Implementation program active；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04 complete，WP-05 Ready；current production尚未切换
 
 目标设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)
 
@@ -67,9 +67,9 @@ WP-01C Timeline durable ledger [complete]
   |
 WP-02 Content-addressed contracts + MaintainerControlPlane [complete]
   |
-WP-03 SQLite RecapGridStore
+WP-03 SQLite RecapGridStore [complete]
   |
-WP-04 Grid build engine + MaintainerManager + fake runtime
+WP-04 Grid build engine + MaintainerManager + fake runtime [complete]
   |
 WP-05 Getter + ContextComposer
   |
@@ -86,7 +86,13 @@ WP-02已完成formal contracts、单一canonical Control carrier、public factor
 independent review/final serial validation。WP-03已交付单一SQLite Store、public factory/Reader/Writer、maintenance/reset、
 child crash/contention、per-table typed keyset/query-plan与stable store-only CLI（含`reset --prepare` exact witness）；final Store 40/40、
 CLI 1/1、public 2/2、Walking 14/14、Abstractions 15/15、solution build 0 warning / 0 error、包漏洞扫描零命中，
-两路independent review最终GO（P0=0，P1=0）。WP-04现为Ready。
+两路independent review最终GO（P0=0，P1=0）。WP-04已交付complete旁路Manager implementation：owner-bound Timeline build read session、
+exact recipe-to-spec wavefront、missing-only recovery、closed batch settlement与non-durable proof；前一轮focused证据为Manager 33/33、
+external public surface 1/1、Walking architecture 15/15、Timeline public surface 3/3及Manager build 0 warning / 0 error。
+independent tail后Manager focused已扩至57/57，覆盖head-only proof/partial receipt、settlement intended authority、lifetime/cancellation/
+ordinal/final-fence defenses；同轮Manager external public surface 1/1、Walking architecture 15/15、Timeline public surface 3/3、
+`Atelia.sln` build 0 warning / 0 error，scoped docs checker 15/0，diff clean；两路independent closure review均为
+GO（P0=0，P1=0）。WP-04现为complete handoff，WP-05 Ready。
 这些旁路owner不改变current production；production cutover仍只属于WP-08。
 
 工作包文档：

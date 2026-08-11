@@ -20,6 +20,10 @@ migration、feature flag或compatibility layer。
 - disposable vertical candidate通过；
 - exact cutover HEAD重新盘点，无并行uncommitted writer。
 
+WP-04 Manager旁路实现已complete，但旧Planner/Runtime/Maintainers、Galatea与CLI callers均未切换。它必须与旧
+production并存至WP-07 vertical Go；WP-08才在同一atomic cut中切composition并删除legacy owners，
+不得提前把candidate presence解释为current production cutover。
+
 ## In scope
 
 - normal Galatea/CLI composition切新Timeline/Grid/ControlPlane/Manager/Composer；

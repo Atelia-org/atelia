@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-05：Getter 与 ContextComposer
 
-状态：Planned；依赖 WP-04 fulfilled-view semantics
+状态：Ready；WP-04 complete handoff已取得两路independent Go；current production尚未切换
 
 只需加载：目标设计、总计划、WP-04 handoff、本文和 WP-06 摘要。
 
@@ -41,6 +41,16 @@
 - Grid candidate adapter只返回exact row contributions、anchor setups与completion boundary；SessionJournal core继续独立fold raw tail，
   ContextComposer不得接管Prepared/raw request reconstruction；
 - SessionJournal core只依赖neutral context candidate contract，不依赖concrete Grid projects。
+
+## WP-04 complete handoff lock
+
+- head-through build可提供non-durable `RecapGridPromotableProof`；ancestor-through只有不含ControlHead expected tuple的
+  `RecapGridFulfillmentReceipt`。二者都不是WP-05 read authority。
+- WP-05从current active Control snapshot + current exact Timeline head独立构造Fulfilled key并resolve；不得调用Manager mutation、
+  Timeline Coordinator/ledger，也不得消费proof/receipt推断active或current head。
+- Fulfilled selection与RowView/Cell materialization必须使用同一个owned Store ReaderHandle和同一个StoreIdentity；两阶段间不reopen。
+- Manager已完成两路independent review；本节是WP-05的可施工baseline，但不表示production cutover。
+- old-head Fulfilled cache可以因post-put authority drift而存在；current active/head exact key不匹配时它天然inert，Getter不得扫描或fallback。
 
 ## Out of scope
 

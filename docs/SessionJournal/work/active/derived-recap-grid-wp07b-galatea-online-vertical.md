@@ -9,6 +9,11 @@
 以明确candidate composition验证Galatea及CLI `run-online-turn`两个Host的fresh/new-request lifecycle、主线context、动态
 Maintainer与frozen completion recovery；仍不切production default。
 
+WP-04 complete Manager只证明同一frozen request重复进入的幂等性；真实Idle/pre-observation、ObservationAccepted与
+ToolResultObserved lifecycle仍由本包在两个Host上验证，不能用WP-04 fake/runtime fixture替代。Mystery candidate已经证明base active、
+`XSuspicion` overlay bootstrap reuse、future normal-row interaction与candidate build不提前切active；本包仍须用真实lifecycle和
+explicit promotion重演该行为。
+
 ## In scope
 
 - fresh/NewRequestRequired：Timeline reconcile/seal -> Manager fulfill -> Grid candidate -> SessionJournal raw-tail composition；

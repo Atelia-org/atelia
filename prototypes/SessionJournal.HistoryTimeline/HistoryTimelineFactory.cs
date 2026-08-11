@@ -6,6 +6,40 @@ using SJ = Atelia.SessionJournal;
 namespace Atelia.SessionJournal.HistoryTimeline;
 
 public static class HistoryTimelineFactory {
+    public static HistoryTimelineBuildReadSessionOpenResult
+        OpenBuildReadSession(
+            SJ.SessionJournalReadView selectedRef,
+            params IHistoryUnitLoadEstimator[] estimators
+        ) {
+        ArgumentNullException.ThrowIfNull(selectedRef);
+        HistoryTimelineOpenResult opened = Open(selectedRef, estimators);
+        return opened switch {
+            HistoryTimelineOpenResult.Opened success
+                => new HistoryTimelineBuildReadSessionOpenResult.Opened(
+                    new HistoryTimelineBuildReadSession(
+                        success.Handle,
+                        selectedRef
+                    )
+                ),
+            HistoryTimelineOpenResult.Absent
+                => new HistoryTimelineBuildReadSessionOpenResult.Absent(),
+            HistoryTimelineOpenResult.Busy
+                => new HistoryTimelineBuildReadSessionOpenResult.Busy(),
+            HistoryTimelineOpenResult.UnsupportedSchema unsupported
+                => new HistoryTimelineBuildReadSessionOpenResult
+                    .UnsupportedSchema(unsupported.SchemaVersion),
+            HistoryTimelineOpenResult.Invalid invalid
+                => new HistoryTimelineBuildReadSessionOpenResult.Invalid(
+                    invalid.Code,
+                    invalid.Detail
+                ),
+            _ => new HistoryTimelineBuildReadSessionOpenResult.Invalid(
+                "TimelineOpenOutcomeInvalid",
+                "The Timeline factory returned an unknown open outcome."
+            )
+        };
+    }
+
     public static HistoryTimelineCreateResult Create(
         SJ.SessionJournalReadView selectedRef,
         HistoryTimelineInitialPolicySpec initialPolicy,

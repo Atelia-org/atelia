@@ -31,6 +31,12 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Store",
             "SessionJournal.RecapGrid.Store.csproj"
         );
+        string managerProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Manager",
+            "SessionJournal.RecapGrid.Manager.csproj"
+        );
 
         Assert.Equal(
             ["../SessionJournal/SessionJournal.csproj"],
@@ -53,6 +59,15 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
+                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
+                "../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj",
+                "../SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj",
+                "../SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj"
+            ],
+            DirectProjectReferences(managerProject)
+        );
+        Assert.Equal(
+            [
                 "Microsoft.Data.Sqlite@10.0.10",
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
                 "Microsoft.Bcl.Memory@9.0.17",
@@ -70,6 +85,7 @@ public sealed class AssemblyDependencyBoundaryTests {
             ],
             DirectPackageReferences(storeProject)
         );
+        Assert.Empty(DirectPackageReferences(managerProject));
 
         string upstream = File.ReadAllText(timelineProject)
             + File.ReadAllText(abstractionsProject);
@@ -88,6 +104,52 @@ public sealed class AssemblyDependencyBoundaryTests {
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RecapGrid.Manager", combined,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RecapGridManagerUsesOnlyPublicBoundedAuthorities() {
+        string root = FindRepositoryRoot();
+        string managerRoot = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Manager"
+        );
+        string product = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                managerRoot,
+                "*.cs",
+                SearchOption.AllDirectories
+            ).Select(static path => path.Replace('\\', '/'))
+                .Where(static path => !IsBuildOutput(path))
+                .Select(File.ReadAllText)
+        );
+        foreach (string forbidden in new[] {
+                     "HistoryTimelineCoordinator",
+                     "IHistoryTimelineLedgerPort",
+                     "SqliteHistoryTimelineLedger",
+                     "RecapGridControlCoordinator",
+                     "Microsoft.Data.Sqlite",
+                     "Atelia.Completion",
+                     "Galatea",
+                     "DerivedRecap"
+                 }) {
+            Assert.DoesNotContain(
+                forbidden,
+                product,
+                StringComparison.Ordinal
+            );
+        }
+        Assembly manager = Assembly.LoadFrom(Path.Combine(
+            AppContext.BaseDirectory,
+            "Atelia.SessionJournal.RecapGrid.Manager.dll"
+        ));
+        Assert.DoesNotContain(manager.GetExportedTypes(), static type =>
+            type.Name.Contains("Backend", StringComparison.OrdinalIgnoreCase)
+            || type.Name.Contains(
+                "Coordinator",
+                StringComparison.OrdinalIgnoreCase
+            ));
     }
 
     [Fact]
@@ -434,11 +496,18 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Store",
             "SessionJournal.RecapGrid.Store.csproj"
         );
+        string managerProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Manager",
+            "SessionJournal.RecapGrid.Manager.csproj"
+        );
         HashSet<string> closure = ProjectClosure(
             timelineProject,
             abstractionsProject,
             controlProject,
-            storeProject
+            storeProject,
+            managerProject
         );
 
         Assert.DoesNotContain(closure, path => path.EndsWith(
@@ -461,7 +530,8 @@ public sealed class AssemblyDependencyBoundaryTests {
             "Atelia.SessionJournal.HistoryTimeline.dll",
             "Atelia.SessionJournal.RecapGrid.Abstractions.dll",
             "Atelia.SessionJournal.RecapGrid.Control.dll",
-            "Atelia.SessionJournal.RecapGrid.Store.dll"
+            "Atelia.SessionJournal.RecapGrid.Store.dll",
+            "Atelia.SessionJournal.RecapGrid.Manager.dll"
         }) {
             Assembly assembly = Assembly.LoadFrom(Path.Combine(
                 AppContext.BaseDirectory,

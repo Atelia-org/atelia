@@ -100,6 +100,100 @@ public sealed class HistoryTimelinePublicSurfaceTests : IDisposable {
         Assert.Empty(typeof(HistoryTimelineReader).GetConstructors());
     }
 
+    [Fact]
+    public void ExternalBuildReadSessionCanOpenSelectedContentWithoutCoordinatorSurface() {
+        using (SessionJournalLegacyImportWriter writer =
+               SessionJournalLegacyImportWriter.Create(
+            _path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-build-reader"
+            )
+        )) {
+            _ = writer.AppendObservation("build-reader-observation");
+        }
+        using SessionJournalEngine journal =
+            SessionJournalEngine.OpenReadOnly(_path);
+        var estimator = new O200kBaseHistoryUnitLoadEstimator();
+        var policy = new HistoryTimelineInitialPolicySpec(
+            HistoryPartitionAlgorithms
+                .FirstReplaySafeBoundaryAtTargetV1,
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            new HistoryLoadUnit(1),
+            maxRawEvents: 8,
+            maxRenderedBytes: 1024 * 1024
+        );
+        Assert.IsType<HistoryTimelineCreateResult.Created>(
+            HistoryTimelineFactory.Create(
+                journal.ReadView,
+                policy,
+                estimator
+            )
+        );
+        TimelineHeadRef committed;
+        using (HistoryTimelineHandle writer = Assert.IsType<
+                   HistoryTimelineOpenResult.Opened
+               >(HistoryTimelineFactory.Open(
+                   journal.ReadView,
+                   estimator
+               )).Handle) {
+            TimelineHeadRef before = Assert.IsType<
+                HistoryTimelineSnapshotResult.Available
+            >(writer.Reader.ReadSnapshot()).Head;
+            OnlineSelectedRawCapture capture = Assert.IsType<
+                OnlineSelectedRawCaptureResult.Captured
+            >(writer.Coordinator.CaptureOnline(
+                before,
+                journal.ReadView
+            )).Capture;
+            HistoryRowCommitCandidate candidate = Assert.IsType<
+                HistoryTimelinePlanResult.Selected
+            >(writer.Coordinator.PlanNextRow(
+                before,
+                capture
+            )).Candidate;
+            committed = Assert.IsType<
+                HistoryTimelineCommitResult.Committed
+            >(writer.Coordinator.CommitRow(candidate)).Head;
+        }
+
+        using HistoryTimelineBuildReadSession session = Assert.IsType<
+            HistoryTimelineBuildReadSessionOpenResult.Opened
+        >(HistoryTimelineFactory.OpenBuildReadSession(
+            journal.ReadView,
+            estimator
+        )).Session;
+        HistoryTimelineSelectedRow row = Assert.IsType<
+            HistoryTimelineReaderRowResult.Selected
+        >(session.Reader.ReadSelectedRow(
+            committed,
+            committed.HeadRowId!.Value
+        )).Row;
+        OnlineSelectedRawCapture raw = Assert.IsType<
+            OnlineSelectedRawCaptureResult.Captured
+        >(session.CaptureRaw(committed)).Capture;
+        HistorySegmentContent content = Assert.IsType<
+            HistorySegmentOpenResult.Opened
+        >(session.OpenSelectedSegment(
+            committed,
+            raw,
+            row
+        )).Content;
+
+        Assert.Equal(row.Descriptor, content.Descriptor);
+        Assert.Null(typeof(HistoryTimelineBuildReadSession).GetProperty(
+            "Coordinator"
+        ));
+        session.Dispose();
+        Assert.Equal(
+            "HistoryTimelineDisposed",
+            Assert.IsType<HistoryTimelineSnapshotResult.Invalid>(
+                session.Reader.ReadSnapshot()
+            ).Code
+        );
+    }
+
     public void Dispose() {
         if (Directory.Exists(_path)) {
             Directory.Delete(_path, recursive: true);

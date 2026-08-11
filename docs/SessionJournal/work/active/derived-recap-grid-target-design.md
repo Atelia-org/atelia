@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03 complete，WP-04 Ready；尚未切换 current production
+状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04 complete，WP-05 Ready；尚未切换 current production
 
 ## 1. Intent
 
@@ -138,8 +138,9 @@ descriptor chain。跨Ref dedup延后，避免把Ref selection从row identity中
 `MaintainerControlPlane` 是definition、Grid build recipe与active recipe选择的唯一逻辑authority；它不要求实现成一套
 独立append-only log。
 `MaintainerControlPlane`注册Family/definition/recipe并执行active CAS；`MaintainerManager`只派生RowBuildSpec、查询missing、
-按row wavefront调用opaque batch executor、commit artifacts并产出promotable proof。single-column/full/A-B的语义来自recipe；
-promotion由caller拿proof显式CAS。family/lane/shared-prefix scheduling只属于runtime batch executor。Manager不决定History row
+按row wavefront调用opaque batch executor并commit artifacts。只有through exact等于frozen selected head时才产出promotable proof；
+ancestor-through只产出不含ControlHead expected tuple的fulfillment receipt。single-column/full/A-B的语义来自recipe；promotion由caller拿
+head proof显式CAS。family/lane/shared-prefix scheduling只属于runtime batch executor。Manager不决定History row
 边界，不拥有raw History，也不实现第二套scheduler或active authority。
 
 definition和recipe都是content-addressed immutable values；只有active pointer是真正可变状态：
@@ -847,7 +848,10 @@ generation等于current generation + 1。两条independent review与final serial
 
 本文通过只表示Shape/Rule锁定及SQLite目标选择，不表示旧系统迁移方案或production implementation已经批准。
 施工计划已经拆为WP-00至WP-08；WP-00 baseline/walking skeleton、WP-01A Timeline contracts/partition、WP-01B raw
-integration、WP-01C durable ledger、WP-02 content-addressed ControlPlane与WP-03 SQLite Grid Store均已完成；WP-04 Ready。
+integration、WP-01C durable ledger、WP-02 content-addressed ControlPlane、WP-03 SQLite Grid Store与WP-04
+build-engine/Manager均已完成；WP-05 Ready。WP-04 final evidence为Manager 57/57、Manager public 1/1、
+Walking 15/15、HistoryTimeline public 3/3、solution build 0 warning / 0 error、docs 15/0、diff clean与两路
+independent GO（P0=0，P1=0）。
 WP-01C final evidence为Timeline 156/156、raw 19/19、walking 13/13、
 public surface 2/2、solution build 0 warning / 0 error、docs 15/0、diff clean与两路independent GO；commit evidence由containing commit提供。
 其后WP-02 final evidence为Abstractions 15/15、Control 26/26、Control public surface 2/2、Walking/architecture 13/13，

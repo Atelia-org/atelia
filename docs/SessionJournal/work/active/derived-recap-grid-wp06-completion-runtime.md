@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-06：Completion Runtime、Family 与 Shared Prefix
 
-状态：Planned；依赖 WP-04 runtime seam，WP-05不依赖本包实现
+状态：Planned；WP-04 runtime handoff已complete，按总计划在WP-05之后施工；WP-05不依赖本包实现
 
 只需加载：目标设计、总计划、WP-04 runtime handoff、本文和 WP-07A摘要。
 
@@ -9,6 +9,14 @@
 把真实Completion适配到`IRecapCellBatchExecutor.ExecuteAsync(FrozenRowBatch)`，保留同row并行、family结构共享与
 prefix-cache优化，同时证明
 provider/runtime信息不会污染Timeline、Recipe、Cell identity或Store。
+
+## WP-04 complete handoff lock
+
+- Manager拥有`IRecapCellBatchExecutor`、`FrozenRowBatch`、whole-batch call-budget preflight、ordinal settlement和row barrier；WP-06
+  只提供provider-neutral executor implementation。
+- WP-06负责runtime timeout、route/family lane、leader/follower、provider parsing与started sibling drain；不得直接写
+  Cell/RowView/Fulfilled，也不得新增durable attempt/campaign或把provider types带入Manager。
+- WP-04已取得两路independent review GO；本节冻结接口责任，WP-06仍按总计划在WP-05之后施工。
 
 ## In scope
 
