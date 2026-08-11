@@ -1044,19 +1044,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
             }
             else if (requirement is SessionRuntimeRecoveryRequirements
                          .FrozenCompletionRequired frozen) {
-                string emptyTools =
-                    SessionVisibleToolSetFingerprint.ComputeSha256(
-                        System.Collections.Immutable.ImmutableArray<
-                            ToolDefinition>.Empty);
-                if (frozen.ToolRuntimeIdentity is not null
-                    || !string.Equals(
-                        frozen.VisibleToolSetSha256,
-                        emptyTools,
-                        StringComparison.Ordinal)) {
-                    throw new GalateaTurnException(
-                        "候选RecapGrid不支持工具runtime恢复。",
-                        "tool-recovery-unsupported");
-                }
                 if (frozen.DispatchState
                         == SessionDurableDispatchState
                             .StartedOutcomeUncertain
@@ -1065,24 +1052,43 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         "上次模型调用结果不确定；必须明确选择重新调用。",
                         "uncertain-completion-restart-required");
                 }
-                turn = candidate.BindPrepared(frozen);
+                turn = candidate.BindPrepared(host.Engine, frozen);
                 liveTurn.StopController.EnterObserverOnlyOrThrow(
                     cancellationToken);
                 host.Engine.UseRuntime(new SessionRuntime(
                     turn.Client,
+                    turn.AgentControl?.ToolSession,
                     CompletionTarget: frozen.CompletionTarget,
                     MaxTokens: turn.Connection.MaxTokens,
                     UncertainCompletionRecoveryPolicy:
                         liveTurn.Options.RestartUncertainCompletion
                             ? SessionUncertainCompletionRecoveryPolicy
                                 .RestartWithNewAttempt
-                            : SessionUncertainCompletionRecoveryPolicy.Refuse));
+                            : SessionUncertainCompletionRecoveryPolicy.Refuse,
+                    ToolRuntimeIdentity:
+                        turn.AgentControl?.RuntimeIdentity));
             }
             else if (requirement is SessionRuntimeRecoveryRequirements
-                         .ToolContinuationRequired) {
-                throw new GalateaTurnException(
-                    "候选RecapGrid工具延续属于WP-07C。",
-                    "tool-recovery-unsupported");
+                         .ToolContinuationRequired toolContinuation) {
+                turn = candidate.BindToolContinuation(
+                    host.Engine,
+                    liveTurn.Options.ConnectionId,
+                    toolContinuation
+                );
+                RecapGridOnlineContextHandle online = turn.Online
+                    ?? throw new InvalidDataException(
+                        "Tool continuation has no Online context."
+                    );
+                var lifecycle = new GalateaRecoveryLifecycleGate(
+                    online.Lifecycle,
+                    liveTurn.StopController
+                );
+                host.Engine.UseRuntime(CreateCandidateRuntime(
+                    turn,
+                    online.CandidateSource,
+                    lifecycle,
+                    SessionUncertainCompletionRecoveryPolicy.Refuse
+                ));
             }
             else {
                 throw RecoveryRequired(requirement);
@@ -1118,6 +1124,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         SessionUncertainCompletionRecoveryPolicy recoveryPolicy
     ) => new(
         turn.Client,
+        turn.AgentControl?.ToolSession,
         CompletionTarget: new SessionCompletionTargetIdentity(
             turn.Identity.ConnectionId,
             turn.Identity.Kind,
@@ -1125,6 +1132,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             turn.Identity.RequestAdapterFingerprint),
         MaxTokens: turn.Connection.MaxTokens,
         UncertainCompletionRecoveryPolicy: recoveryPolicy,
+        ToolRuntimeIdentity: turn.AgentControl?.RuntimeIdentity,
         ContextCandidateSource: candidates,
         ContextLifecycle: lifecycle);
 

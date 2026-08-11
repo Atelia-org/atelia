@@ -23,6 +23,7 @@
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Getter/SessionJournal.RecapGrid.Getter.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Runtime/SessionJournal.RecapGrid.Runtime.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Hosting/SessionJournal.RecapGrid.Hosting.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.AgentControl/SessionJournal.RecapGrid.AgentControl.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Online/SessionJournal.RecapGrid.Online.csproj" />
   </ItemGroup>
 

@@ -55,6 +55,12 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Hosting",
             "SessionJournal.RecapGrid.Hosting.csproj"
         );
+        string agentControlProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.AgentControl",
+            "SessionJournal.RecapGrid.AgentControl.csproj"
+        );
         string onlineProject = Path.Combine(
             root,
             "prototypes",
@@ -111,9 +117,21 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Equal(
             [
                 "../SessionJournal.RecapGrid.Runtime/SessionJournal.RecapGrid.Runtime.csproj",
+                "../SessionJournal.RecapGrid.AgentControl/SessionJournal.RecapGrid.AgentControl.csproj",
                 "../Completion/Completion.csproj"
             ],
             DirectProjectReferences(hostingProject)
+        );
+        Assert.Equal(
+            [
+                "../Completion.Tools/Completion.Tools.csproj",
+                "../SessionJournal/SessionJournal.csproj",
+                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
+                "../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj",
+                "../SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj",
+                "../SessionJournal.RecapGrid.Manager/SessionJournal.RecapGrid.Manager.csproj"
+            ],
+            DirectProjectReferences(agentControlProject)
         );
         Assert.Equal(
             [
@@ -147,6 +165,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Empty(DirectPackageReferences(getterProject));
         Assert.Empty(DirectPackageReferences(runtimeProject));
         Assert.Empty(DirectPackageReferences(hostingProject));
+        Assert.Empty(DirectPackageReferences(agentControlProject));
         Assert.Empty(DirectPackageReferences(onlineProject));
 
         string upstream = File.ReadAllText(timelineProject)
@@ -166,6 +185,65 @@ public sealed class AssemblyDependencyBoundaryTests {
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RecapGrid.Manager", combined,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AgentControlOwnsOnlyProviderNeutralBoundedToolMutation() {
+        string root = FindRepositoryRoot();
+        string agentControlRoot = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.AgentControl"
+        );
+        string product = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                agentControlRoot,
+                "*.cs",
+                SearchOption.AllDirectories
+            ).Where(static path => !IsBuildOutput(path))
+                .Select(File.ReadAllText)
+        );
+        foreach (string forbidden in new[] {
+                     "Microsoft.Data.Sqlite",
+                     "SQLitePCLRaw",
+                     "Atelia.Completion.OpenAI",
+                     "Atelia.Completion.Anthropic",
+                     "Atelia.Completion.Gemini",
+                     "CompletionConnectionRegistry",
+                     "Galatea",
+                     "DerivedRecap"
+                 }) {
+            Assert.DoesNotContain(
+                forbidden,
+                product,
+                StringComparison.Ordinal
+            );
+        }
+        Assembly productAssembly = Assembly.LoadFrom(Path.Combine(
+            AppContext.BaseDirectory,
+            "Atelia.SessionJournal.RecapGrid.AgentControl.dll"
+        ));
+        Assert.DoesNotContain(
+            productAssembly.GetExportedTypes(),
+            static type => type.Name.Contains(
+                "Backend",
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
+        XDocument project = XDocument.Load(Path.Combine(
+            agentControlRoot,
+            "SessionJournal.RecapGrid.AgentControl.csproj"
+        ));
+        Assert.Equal(
+            ["Atelia.SessionJournal.RecapGrid.AgentControl.Tests"],
+            project.Descendants("InternalsVisibleTo")
+                .Select(static element =>
+                    (string?)element.Attribute("Include"))
+                .Where(static value => value is not null)
+                .Select(static value => value!)
+                .ToArray()
+        );
     }
 
     [Fact]

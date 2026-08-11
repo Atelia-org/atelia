@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
@@ -8,6 +9,7 @@ using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Runtime;
 using Atelia.SessionJournal.RecapGrid.Store;
+using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Xunit;
 
 namespace Atelia.SessionJournal.Cli.Tests;
@@ -19,6 +21,136 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
         "atelia-recap-grid-candidate-cli-tests",
         Guid.NewGuid().ToString("N")
     );
+
+    [Fact]
+    public void OperatorProvisionBuiltInIsExplicitReplayableAndAdmitted() {
+        CreateJournal();
+        Assert.True(RecapGridAgentControlBuiltIns
+            .TryCreateRegistrationBundle(
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV1,
+                out RecapGridControlRegistrationBundle? bundle
+            ));
+        string createOnly = WriteAdmission(["create"]);
+        RefId refId;
+        using (SessionJournalEngine journal =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            refId = journal.BranchRefId;
+        }
+        Assert.Equal(0, RunInit(
+            SessionJournalDefaults.MainBranchName,
+            refId,
+            createOnly
+        ));
+        ControlHeadRef initial = ReadControlHead(refId.ToHexString());
+
+        (int unauthorizedCode, JsonElement unauthorized) = RunCaptured(
+            "control", "provision-built-in",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", createOnly,
+            "--asset",
+            RecapGridAgentControlBuiltIns.MysteryInvestigationV1
+        );
+        Assert.Equal(2, unauthorizedCode);
+        Assert.Equal(
+            "unauthorized",
+            unauthorized.GetProperty("status").GetString()
+        );
+        Assert.Equal(initial, ReadControlHead(refId.ToHexString()));
+
+        string admitted = WriteAdmission(
+            ["create", "register-family", "register-definition"],
+            bundle!.Families.Select(static value => value.Digest.Value)
+                .ToArray(),
+            bundle.Definitions.Select(static value =>
+                value.Capability.CapabilityFingerprint).Distinct().ToArray(),
+            [ContextHeaderCarrierTokens.System]
+        );
+        (int appliedCode, JsonElement applied) = RunCaptured(
+            "control", "provision-built-in",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", admitted,
+            "--asset",
+            RecapGridAgentControlBuiltIns.MysteryInvestigationV1
+        );
+        Assert.Equal(0, appliedCode);
+        Assert.Equal("applied", applied.GetProperty("status").GetString());
+        ControlHeadRef provisioned = ReadControlHead(refId.ToHexString());
+        Assert.Equal(initial.Generation + 1, provisioned.Generation);
+
+        (int replayCode, JsonElement replay) = RunCaptured(
+            "control", "provision-built-in",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", admitted,
+            "--asset",
+            RecapGridAgentControlBuiltIns.MysteryInvestigationV1
+        );
+        Assert.Equal(0, replayCode);
+        Assert.Equal("replayed", replay.GetProperty("status").GetString());
+        Assert.Equal(provisioned, ReadControlHead(refId.ToHexString()));
+
+        (int unknownCode, JsonElement unknown) = RunCaptured(
+            "control", "provision-built-in",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", admitted,
+            "--asset", "unknown-built-in"
+        );
+        Assert.Equal(2, unknownCode);
+        Assert.Equal(
+            "built-in-asset-absent",
+            unknown.GetProperty("status").GetString()
+        );
+        Assert.Equal(provisioned, ReadControlHead(refId.ToHexString()));
+
+        Assert.Equal(0, Run([
+            "control", "reinitialize",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            .. ControlHeadArguments(provisioned)
+        ]));
+        ControlHeadRef reinitialized = ReadControlHead(
+            refId.ToHexString()
+        );
+        Assert.NotEqual(provisioned.InstanceId, reinitialized.InstanceId);
+        (int reappliedCode, JsonElement reapplied) = RunCaptured(
+            "control", "provision-built-in",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", admitted,
+            "--asset",
+            RecapGridAgentControlBuiltIns.MysteryInvestigationV1
+        );
+        Assert.Equal(0, reappliedCode);
+        Assert.Equal("applied", reapplied.GetProperty("status").GetString());
+        ControlHeadRef reprovisioned = ReadControlHead(
+            refId.ToHexString()
+        );
+        Assert.Equal(reinitialized.Generation + 1,
+            reprovisioned.Generation);
+        (int retryCode, JsonElement retry) = RunCaptured(
+            "control", "provision-built-in",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", admitted,
+            "--asset",
+            RecapGridAgentControlBuiltIns.MysteryInvestigationV1
+        );
+        Assert.Equal(0, retryCode);
+        Assert.Equal("replayed", retry.GetProperty("status").GetString());
+        Assert.Equal(reprovisioned, ReadControlHead(refId.ToHexString()));
+
+        using RecapGridControlReaderHandle reader = Assert.IsType<
+            RecapGridControlReaderOpenResult.Opened
+        >(RecapGridControlFactory.OpenReader(_root, refId)).Handle;
+        RecapGridControlSnapshot snapshot = Assert.IsType<
+            RecapGridControlSnapshotResult.Available
+        >(reader.Reader.ReadSnapshot()).Snapshot;
+        Assert.Single(snapshot.Families);
+        Assert.Equal(2, snapshot.Definitions.Count);
+    }
 
     [Fact]
     public void InitSyncDiagnosticsProgressAndMaterializeNeverConstructProvider() {
@@ -621,6 +753,34 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
                 ),
                 16 * 1024
             );
+        MaintainerDefinitionRevision suspicion =
+            MaintainerDefinitionRevision.Create(
+                new LogicalColumnId("case.x-suspicion"),
+                family.Digest,
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.System,
+                    "x-suspicion"
+                ),
+                new MaintainerCapabilitySpec(
+                    RecapCompletionProtocolV1.RuntimeProtocolId,
+                    MaintainerReadableScope
+                        .FullPriorBuildTargetAndCurrentHistorySegmentV1
+                ),
+                new MaintainerDeclarativeSpec(
+                    "Is X suspicious?",
+                    "Maintain the exact evidence for and against X."
+                ),
+                16 * 1024
+            );
+        var admissionValue = new RecapGridControlAdmission(
+            RecapGridControlPermission.All,
+            [family.Digest],
+            [definition.Capability.CapabilityFingerprint],
+            [ContextHeaderCarrier.System],
+            ["case."],
+            maximumBootstrapRows: 64,
+            maximumProjectedCalls: 1024
+        );
         string admission = WriteAdmission(
             [
                 "create", "register-family", "register-definition",
@@ -667,7 +827,7 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
                 )
             ).Row;
         }
-        GridBuildRecipe recipe = GridBuildRecipe.CreateFull(
+        GridBuildRecipe baseRecipe = GridBuildRecipe.CreateFull(
             timelineHead.TimelineId,
             selectedRow.Descriptor.RowId,
             BuildTarget.Create([
@@ -677,27 +837,74 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
                 )
             ])
         );
-        string familyFile = WriteBytes("family.json", family.ToCanonicalBytes());
-        string definitionFile = WriteBytes(
-            "definition.json",
-            definition.ToCanonicalBytes()
+        GridBuildRecipe recipe = GridBuildRecipe.CreateOverlay(
+            baseRecipe,
+            selectedRow.Descriptor.RowId,
+            BuildTarget.Create([
+                new BuildTargetColumn(
+                    definition.LogicalColumnId,
+                    definition.Digest
+                ),
+                new BuildTargetColumn(
+                    suspicion.LogicalColumnId,
+                    suspicion.Digest
+                )
+            ]),
+            [suspicion.LogicalColumnId]
         );
-        string recipeFile = WriteBytes("recipe.json", recipe.ToCanonicalBytes());
-        Assert.Equal(0, Run(
-            "control", "put-family", "--input", _root,
-            "--confirm-ref", refId, "--admission", admission,
-            "--family", familyFile
-        ));
-        Assert.Equal(0, Run(
-            "control", "put-definition", "--input", _root,
-            "--confirm-ref", refId, "--admission", admission,
-            "--definition", definitionFile
-        ));
-        Assert.Equal(0, Run(
-            "control", "put-recipe", "--input", _root,
-            "--confirm-ref", refId, "--admission", admission,
-            "--recipe", recipeFile
-        ));
+        RecapGridAgentControlProfile agentProfile =
+            RecapGridAgentControlProfile.Create(
+                "candidate-build-v1",
+                admissionValue
+            );
+        async Task AgentApply(
+            RecapGridAgentControlHandle agent,
+            string action,
+            byte[] canonicalBytes,
+            string suffix,
+            int operationSequence
+        ) {
+            ToolCallExecutionResult result = await agent.ToolSession
+                .ExecuteReservedAsync(
+                    new RawToolCall(
+                        "recap_grid.control",
+                        $"control-{suffix}",
+                        JsonSerializer.Serialize(new {
+                            action,
+                            canonicalValueBase64 = Convert.ToBase64String(
+                                canonicalBytes
+                            )
+                        })
+                    ),
+                    operationSequence,
+                    $"candidate-build:{suffix}",
+                    CancellationToken.None
+                );
+            Assert.Equal(ToolExecutionStatus.Success,
+                result.ExecuteResult.Status);
+            Assert.Contains("\"status\":\"applied\"",
+                result.ExecuteResult.GetFlattenedText());
+        }
+        using (SessionJournalEngine agentOwner =
+               SessionJournalEngine.OpenReadOnly(_root))
+        using (RecapGridAgentControlHandle agent = Assert.IsType<
+                   RecapGridAgentControlOpenResult.Opened
+               >(RecapGridAgentControlFactory.Bind(
+                   agentOwner.ReadView,
+                   agentProfile,
+                   new O200kBaseHistoryUnitLoadEstimator()
+               )).Handle) {
+            await AgentApply(agent, "register-family",
+                family.ToCanonicalBytes(), "family", 1);
+            await AgentApply(agent, "register-definition",
+                definition.ToCanonicalBytes(), "culprit-definition", 2);
+            await AgentApply(agent, "register-definition",
+                suspicion.ToCanonicalBytes(), "suspicion-definition", 3);
+            await AgentApply(agent, "register-recipe",
+                baseRecipe.ToCanonicalBytes(), "base-recipe", 4);
+            await AgentApply(agent, "register-recipe",
+                recipe.ToCanonicalBytes(), "overlay-recipe", 5);
+        }
 
         ControlHeadRef inactiveHead = ReadControlHead(refId);
         Assert.Equal(0, Run(DirectActivationArgs(
@@ -837,31 +1044,13 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
         Assert.Equal("complete", progress.GetProperty("status").GetString());
         Assert.Equal(1, factory.CallCount);
 
-        Assert.Equal(0, Run(
-            "control", "promote", "--input", _root,
-            "--confirm-ref", refId, "--admission", admission,
-            "--recipe", recipe.Digest.Value,
-            "--max-selected-rows", "64", "--max-recipe-row-steps", "64",
-            "--max-new-calls", "0", "--max-elapsed-ms", "10000"
-        ));
-        Assert.Equal(recipe.Digest, ReadControlHead(refId).ActiveRecipeDigest);
-        Assert.Equal(1, factory.CallCount);
-
-        (int materializeCode, JsonElement materialized) = RunCaptured(
-            "materialize", "--input", _root,
-            "--boundary", EventAddressTextCodec.Format(
-                selectedRow.Descriptor.EndInclusive
-            ),
-            "--nth-previous", "0", "--include-content"
-        );
-        Assert.Equal(0, materializeCode);
-        Assert.Equal(
-            "available",
-            materialized.GetProperty("status").GetString()
-        );
-        Assert.Equal(1, factory.CallCount);
-
         int requestsBeforeOnline = factory.RequestCount;
+        int recapRequestsBeforePromotion = factory.RecapRequestCount;
+        int receiptsBeforePromotion = ReadControlReceiptCount(
+            refId,
+            timelineHead.TimelineId
+        );
+        factory.EmitAgentControlPromoteRecipeOnce = recipe.Digest.Value;
         string oldV8 = Path.Combine(
             _root, "derived", "recap", "v8", "corrupt-sentinel.bin");
         Directory.CreateDirectory(Path.GetDirectoryName(oldV8)!);
@@ -875,13 +1064,60 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
                 "--confirm-ref", refId,
                 "--message", "continue the investigation",
                 "--connection", "test",
+                "--admission", admission,
                 "--connections", connections,
                 "--routes", routes);
         Assert.Equal(0, firstOnlineCode);
         Assert.Equal("completed",
             firstOnline.GetProperty("status").GetString());
-        Assert.Equal(requestsBeforeOnline + 1, factory.RequestCount);
+        Assert.Equal(requestsBeforeOnline + 2, factory.RequestCount);
+        Assert.Equal(1, factory.PromoteToolCallCount);
+        Assert.Null(factory.EmitAgentControlPromoteRecipeOnce);
+        Assert.Equal(
+            recapRequestsBeforePromotion,
+            factory.RecapRequestCount
+        );
+        Assert.Equal(recipe.Digest,
+            ReadControlHead(refId).ActiveRecipeDigest);
+        Assert.Equal(
+            receiptsBeforePromotion + 1,
+            ReadControlReceiptCount(refId, timelineHead.TimelineId)
+        );
+        Assert.Contains(
+            factory.Requests.Skip(requestsBeforeOnline),
+            static request => request.PromptPrefix.OutputContract.Tools.All(
+                    static tool => !string.Equals(
+                        tool.Name,
+                        "submit",
+                        StringComparison.Ordinal
+                    ))
+                && request.PromptPrefix.SystemPrompt.Contains(
+                    "candidate result",
+                    StringComparison.Ordinal
+                )
+        );
+        int clientsAfterFirstOnline = factory.CallCount;
         Assert.Equal(oldV8Before, File.ReadAllBytes(oldV8));
+        EventAddress materializeBoundary;
+        using (SessionJournalEngine current =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            materializeBoundary = current.ReadCurrentHead()
+                ?? throw new InvalidOperationException(
+                    "Candidate Host left no current raw head."
+                );
+        }
+
+        (int materializeCode, JsonElement materialized) = RunCaptured(
+            "materialize", "--input", _root,
+            "--boundary", EventAddressTextCodec.Format(materializeBoundary),
+            "--nth-previous", "0", "--include-content"
+        );
+        Assert.True(materializeCode == 0, materialized.GetRawText());
+        Assert.Equal(
+            "available",
+            materialized.GetProperty("status").GetString()
+        );
+        Assert.Equal(clientsAfterFirstOnline, factory.CallCount);
 
         int beforeSecondOnline = factory.RequestCount;
         (int secondOnlineCode, JsonElement secondOnline) =
@@ -892,17 +1128,26 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
                 "--confirm-ref", refId,
                 "--message", "reconsider X",
                 "--connection", "test",
+                "--admission", admission,
                 "--connections", connections,
                 "--routes", routes);
         Assert.Equal(0, secondOnlineCode);
         Assert.Equal("completed",
             secondOnline.GetProperty("status").GetString());
         Assert.True(factory.RequestCount >= beforeSecondOnline + 2);
+        Assert.Contains(factory.Requests, static request =>
+            request.PromptPrefix.OutputContract.Tools.All(static tool =>
+                !string.Equals(tool.Name, "submit", StringComparison.Ordinal))
+            && request.PromptPrefix.SystemPrompt.Contains(
+                "candidate result",
+                StringComparison.Ordinal
+            ));
         Assert.Equal(oldV8Before, File.ReadAllBytes(oldV8));
         Atelia.SessionJournal.Offline.SessionJournalOfflineValidationReport
             raw = await Atelia.SessionJournal.Offline
                 .SessionJournalOfflineValidator.ValidateAsync(_root);
         Assert.True(raw.PreparedRequestCount >= 2);
+        Assert.True(raw.ToolResultHistoryCount >= 1);
         Assert.Equal(SessionExecutionPhase.Idle, raw.ExecutionPhase);
     }
 
@@ -934,6 +1179,199 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
         Assert.Equal(1, factory.CallCount);
         Assert.Equal(1, factory.RequestCount);
         Assert.False(Directory.Exists(Path.Combine(_root, "derived")));
+    }
+
+    [Fact]
+    public async Task ToolContinuationBindsFrozenProfileAndReplaysReceiptAfterRewind() {
+        CompletionConnectionConfig connection = CandidateConnection();
+        Assert.True(RecapGridAgentControlBuiltIns
+            .TryCreateRegistrationBundle(
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV1,
+                out RecapGridControlRegistrationBundle? builtIn
+            ));
+        var admissionValue = new RecapGridControlAdmission(
+            RecapGridControlPermission.All,
+            [builtIn!.Families[0].Digest],
+            builtIn.Definitions.Select(static value =>
+                value.Capability.CapabilityFingerprint),
+            [ContextHeaderCarrier.System],
+            ["case."],
+            maximumBootstrapRows: 64,
+            maximumProjectedCalls: 1_024
+        );
+        using (SessionJournalEngine.Create(
+                   _root,
+                   new SessionCreateOptions(
+                       connection.ModelId,
+                       "system",
+                       connection.CompletionSurfaceId))) { }
+        string admission = WriteAdmission(
+            [
+                "create", "register-family", "register-definition",
+                "register-recipe", "activate", "promote"
+            ],
+            [builtIn.Families[0].Digest.Value],
+            builtIn.Definitions.Select(static value =>
+                value.Capability.CapabilityFingerprint).ToArray(),
+            [ContextHeaderCarrierTokens.System]
+        );
+        string refId;
+        using (SessionJournalEngine reader =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            refId = reader.BranchRefId.ToHexString();
+        }
+        Assert.Equal(0, Run(
+            "init", "--input", _root, "--confirm-ref", refId,
+            "--admission", admission,
+            "--partition-algorithm",
+            HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+            "--history-load-estimator",
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--target-history-load", "1",
+            "--max-raw-events", "64",
+            "--max-rendered-bytes", "1048576"
+        ));
+
+        EventAddress actionHead;
+        RecapGridAgentControlHandle agent;
+        using (SessionJournalEngine bindingOwner =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            agent = Assert.IsType<RecapGridAgentControlOpenResult.Opened>(
+                RecapGridAgentControlFactory.Bind(
+                    bindingOwner.ReadView,
+                    RecapGridAgentControlProfile.Create(
+                        "candidate-cli-v1",
+                        admissionValue
+                    ),
+                    new O200kBaseHistoryUnitLoadEstimator()
+                )
+            ).Handle;
+        }
+        using (agent) {
+            var fixtureClient = new ControlToolCallClient();
+            CompletionDispatchIdentity identity =
+                CompletionDispatchIdentityFactory.Create(
+                    connection,
+                    fixtureClient
+                );
+            var runtime = new SessionRuntime(
+                fixtureClient,
+                agent.ToolSession,
+                CompletionTargetIdentityFactory.Create(identity),
+                ToolRuntimeIdentity: agent.RuntimeIdentity,
+                ContextCandidateSource: new EmptyCandidateSource()
+            );
+            using SessionJournalEngine engine =
+                SessionJournalEngine.OpenForTest(
+                    _root,
+                    runtime,
+                    new SessionJournalTestHooks(
+                        SessionJournalFailpoint.AfterActionCommitted
+                    )
+                );
+            _ = await Assert.ThrowsAsync<
+                SessionJournalFailpointException>(() => engine.SendAsync(
+                    engine.ReadCurrentHead()!.Value,
+                    "provision from tool"
+                ));
+            actionHead = engine.ReadCurrentHead()!.Value;
+        }
+
+        string connections = WriteConnections();
+        string routes = WriteBytes(
+            "tool-continuation-routes.json",
+            RecapGridRouteManifest.Create([]).ToCanonicalBytes()
+        );
+        var provider = new DeterministicCompletionClientFactory();
+        Assert.Equal(1, RunWithFactory(
+            provider,
+            "run-online-turn",
+            "--input", _root,
+            "--branch", SessionJournalDefaults.MainBranchName,
+            "--confirm-ref", refId,
+            "--connection", connection.Id,
+            "--admission", admission,
+            "--connections", connections
+        ));
+        Assert.Equal(0, provider.CallCount);
+        Assert.Equal(0, RunWithFactory(
+            provider,
+            "run-online-turn",
+            "--input", _root,
+            "--branch", SessionJournalDefaults.MainBranchName,
+            "--confirm-ref", refId,
+            "--connection", connection.Id,
+            "--admission", admission,
+            "--connections", connections,
+            "--routes", routes
+        ));
+        ControlHeadRef applied = ReadControlHead(refId);
+        Assert.Equal(1, applied.Generation);
+
+        EventAddress toolResult = ReadLatestSelectedAddressByKind(
+            SessionEventKind.ToolResultObserved
+        );
+        using (var journal = Atelia.EventJournal.EventJournal.OpenExisting(
+                   _root)) {
+            RefId main = journal.OpenBranch(
+                SessionJournalDefaults.MainBranchName
+            ).Unwrap();
+            EventAddress completed = journal.GetHead(main)!.Value;
+            Assert.True(journal.MoveRef(
+                main,
+                completed,
+                toolResult
+            ).Unwrap());
+        }
+        int callsBeforeToolResultResume = provider.CallCount;
+        Assert.Equal(1, RunWithFactory(
+            provider,
+            "run-online-turn",
+            "--input", _root,
+            "--branch", SessionJournalDefaults.MainBranchName,
+            "--confirm-ref", refId,
+            "--connection", connection.Id,
+            "--admission", admission,
+            "--connections", connections
+        ));
+        Assert.Equal(callsBeforeToolResultResume, provider.CallCount);
+        Assert.Equal(0, RunWithFactory(
+            provider,
+            "run-online-turn",
+            "--input", _root,
+            "--branch", SessionJournalDefaults.MainBranchName,
+            "--confirm-ref", refId,
+            "--connection", connection.Id,
+            "--admission", admission,
+            "--connections", connections,
+            "--routes", routes
+        ));
+        Assert.Equal(1, ReadControlHead(refId).Generation);
+
+        using (var journal = Atelia.EventJournal.EventJournal.OpenExisting(
+                   _root)) {
+            RefId main = journal.OpenBranch(
+                SessionJournalDefaults.MainBranchName
+            ).Unwrap();
+            EventAddress completed = journal.GetHead(main)!.Value;
+            Assert.True(journal.MoveRef(
+                main,
+                completed,
+                actionHead
+            ).Unwrap());
+        }
+        Assert.Equal(0, RunWithFactory(
+            provider,
+            "run-online-turn",
+            "--input", _root,
+            "--branch", SessionJournalDefaults.MainBranchName,
+            "--confirm-ref", refId,
+            "--connection", connection.Id,
+            "--admission", admission,
+            "--connections", connections,
+            "--routes", routes
+        ));
+        Assert.Equal(1, ReadControlHead(refId).Generation);
     }
 
     [Fact]
@@ -997,8 +1435,11 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
         CompletionConnectionConfig connection
     ) {
         var client = new DeterministicCompletionClient(
+            static _ => { },
             static () => { },
-            static () => { });
+            static _ => new ActionMessage([
+                new ActionBlock.Text("prepared")
+            ]));
         CompletionDispatchIdentity identity =
             CompletionDispatchIdentityFactory.Create(connection, client);
         var runtime = new SessionRuntime(
@@ -1061,6 +1502,28 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
         return checked((int)audit.EventCount);
     }
 
+    private EventAddress ReadLatestSelectedAddressByKind(
+        SessionEventKind kind
+    ) {
+        using SessionJournalEngine engine =
+            SessionJournalEngine.OpenReadOnly(_root);
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        EventAddress? found = null;
+        while (!audit.IsCaptureComplete) {
+            SessionSelectedLineageAuditPage page = audit.ReadNextPage(
+                SessionSelectedLineageAuditLimits.MaximumPageEventCount
+            );
+            found ??= page.HeadToOldest.FirstOrDefault(
+                entry => entry.Kind == kind
+            )?.Address;
+        }
+        _ = audit.Complete();
+        return found ?? throw new InvalidOperationException(
+            $"Selected lineage does not contain {kind}."
+        );
+    }
+
     private string WriteAdmission(
         string[] permissions,
         string[]? families = null,
@@ -1068,18 +1531,46 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
         string[]? carriers = null
     ) {
         string path = Path.Combine(_root, "admission.json");
-        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(new {
-            v = 1,
-            permissions,
-            familyAllowlist = families ?? Array.Empty<string>(),
-            capabilityFingerprintAllowlist = capabilities
-                ?? Array.Empty<string>(),
-            targetCarrierAllowlist = carriers ?? Array.Empty<string>(),
-            logicalColumnPrefixes = new[] { "case." },
-            maximumBootstrapRows = 64,
-            maximumProjectedCalls = 1024
-        });
-        File.WriteAllBytes(path, bytes);
+        RecapGridControlPermission permissionSet =
+            RecapGridControlPermission.None;
+        foreach (string permission in permissions) {
+            permissionSet |= permission switch {
+                "create" => RecapGridControlPermission.Create,
+                "register-family" => RecapGridControlPermission
+                    .RegisterFamily,
+                "register-definition" => RecapGridControlPermission
+                    .RegisterDefinition,
+                "register-recipe" => RecapGridControlPermission
+                    .RegisterRecipe,
+                "activate" => RecapGridControlPermission.Activate,
+                "promote" => RecapGridControlPermission.Promote,
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(permissions),
+                    permission,
+                    "Unknown test admission permission."
+                )
+            };
+        }
+        ContextHeaderCarrier[] parsedCarriers = (carriers
+                ?? Array.Empty<string>())
+            .Select(static token => ContextHeaderCarrierTokens
+                .TryParseStorageToken(token, out ContextHeaderCarrier carrier)
+                    ? carrier
+                    : throw new ArgumentException(
+                        "Unknown test admission carrier."
+                    ))
+            .ToArray();
+        var admission = new RecapGridControlAdmission(
+            permissionSet,
+            (families ?? Array.Empty<string>()).Select(
+                static value => new FamilyDefinitionDigest(value)),
+            capabilities ?? Array.Empty<string>(),
+            parsedCarriers,
+            ["case."],
+            maximumBootstrapRows: 64,
+            maximumProjectedCalls: 1024
+        );
+        File.WriteAllBytes(path, admission.ToCanonicalBytes());
         return path;
     }
 
@@ -1265,6 +1756,26 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
         ).Snapshot.Head;
     }
 
+    private int ReadControlReceiptCount(string refId, TimelineId timelineId) {
+        string path = Path.Combine(
+            _root,
+            "control",
+            "recap-grid",
+            "v1",
+            "refs",
+            refId,
+            "timelines",
+            timelineId.Value,
+            "control.json"
+        );
+        using JsonDocument document = JsonDocument.Parse(
+            File.ReadAllBytes(path)
+        );
+        return document.RootElement
+            .GetProperty("operationReceipts")
+            .GetArrayLength();
+    }
+
     private static int Run(params string[] args) => Program.MainCore(
         ["recap-grid", "candidate", .. args],
         ThrowingCompletionClientFactory.Instance
@@ -1380,20 +1891,74 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
         : ICompletionClientFactory {
         internal int CallCount { get; private set; }
         internal int RequestCount { get; private set; }
+        internal int RecapRequestCount { get; private set; }
         internal int DisposeCount { get; private set; }
+        internal int PromoteToolCallCount { get; private set; }
+        internal string? EmitAgentControlPromoteRecipeOnce { get; set; }
+        internal List<CompletionRequest> Requests { get; } = [];
 
         public ICompletionClient Create(CompletionConnectionConfig connection) {
             CallCount++;
             return new DeterministicCompletionClient(
-                () => RequestCount++,
-                () => DisposeCount++
+                request => {
+                    RequestCount++;
+                    if (request.PromptPrefix.OutputContract.Tools.Any(
+                            static tool => string.Equals(
+                                tool.Name,
+                                "submit",
+                                StringComparison.Ordinal))) {
+                        RecapRequestCount++;
+                    }
+                    Requests.Add(request);
+                },
+                () => DisposeCount++,
+                CreateAction
             );
+        }
+
+        private ActionMessage CreateAction(CompletionRequest request) {
+            if (request.PromptPrefix.OutputContract.Tools.Any(static tool =>
+                    string.Equals(
+                        tool.Name,
+                        "submit",
+                        StringComparison.Ordinal))) {
+                return new ActionMessage([
+                    new ActionBlock.ToolCall(new RawToolCall(
+                        "submit",
+                        "candidate-call",
+                        "{\"outcome\":\"updated\",\"content\":\"candidate result\"}"
+                    ))
+                ]);
+            }
+            if (EmitAgentControlPromoteRecipeOnce is { } recipeDigest
+                && request.PromptPrefix.OutputContract.Tools.Any(
+                    static tool => string.Equals(
+                        tool.Name,
+                        "recap_grid.control",
+                        StringComparison.Ordinal))) {
+                EmitAgentControlPromoteRecipeOnce = null;
+                PromoteToolCallCount++;
+                return new ActionMessage([
+                    new ActionBlock.ToolCall(new RawToolCall(
+                        "recap_grid.control",
+                        "promote-candidate-call",
+                        JsonSerializer.Serialize(new {
+                            action = "promote",
+                            recipeDigest
+                        })
+                    ))
+                ]);
+            }
+            return new ActionMessage([
+                new ActionBlock.Text("candidate agent answer")
+            ]);
         }
     }
 
     private sealed class DeterministicCompletionClient(
-        Action onRequest,
-        Action onDispose
+        Action<CompletionRequest> onRequest,
+        Action onDispose,
+        Func<CompletionRequest, ActionMessage> createAction
     )
         : ICompletionClient, IDisposable {
         private int _disposed;
@@ -1405,19 +1970,8 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
             CompletionStreamObserver? observer,
             CancellationToken cancellationToken = default
         ) {
-            onRequest();
-            ActionMessage action = request.PromptPrefix.OutputContract.Tools
-                    .Length > 0
-                ? new ActionMessage([
-                    new ActionBlock.ToolCall(new RawToolCall(
-                        "submit",
-                        "candidate-call",
-                        "{\"outcome\":\"updated\",\"content\":\"candidate result\"}"
-                    ))
-                ])
-                : new ActionMessage([
-                    new ActionBlock.Text("candidate agent answer")
-                ]);
+            onRequest(request);
+            ActionMessage action = createAction(request);
             return Task.FromResult(new CompletionResult(
                 action,
                 new CompletionDescriptor(Name, ApiSpecId, request.ModelId)));
@@ -1435,6 +1989,25 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
                 onDispose();
             }
         }
+    }
+
+    private sealed class ControlToolCallClient : ICompletionClient {
+        public string Name => "candidate-test";
+        public string ApiSpecId => "candidate-test-v1";
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) => Task.FromResult(new CompletionResult(
+            new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(
+                "recap_grid.control",
+                "control-call",
+                "{\"action\":\"provision-built-in\","
+                + "\"builtInAssetId\":\"mystery-investigation-v1\"}"
+            ))]),
+            new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
+        ));
     }
 
     private sealed class EmptyCandidateSource

@@ -2494,6 +2494,91 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
+    public async Task UnsettledToolLeavesDurableStartedContinuationWithoutResult() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        client.Enqueue(request => new CompletionResult(
+            new ActionMessage([
+                new ActionBlock.ToolCall(new RawToolCall(
+                    "lookup",
+                    "call-1",
+                    "{}"
+                ))
+            ]),
+            new CompletionDescriptor(
+                "scripted",
+                "test-api-v1",
+                request.ModelId
+            )
+        ));
+        var tool = new RecordingTool(
+            "lookup",
+            _ => throw new ToolExecutionUnsettledException(
+                "ControlCommitIndeterminate",
+                "Inspect the durable operation receipt before resuming."
+            )
+        );
+
+        using (var engine = SessionJournalTestRuntime.Attach(
+                   SessionJournalEngine.Create(
+                       path,
+                       new SessionCreateOptions(
+                           "model-A",
+                           "system-A",
+                           "surface-A"
+                       )
+                   ),
+                   CreateRuntime(
+                       client,
+                       new ToolRegistry([tool]).CreateSession()
+                   )
+               )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine,
+                _candidateSource
+            );
+
+            ToolExecutionUnsettledException error = await Assert.ThrowsAsync<
+                ToolExecutionUnsettledException
+            >(() => engine.SendAsync("need lookup", CancellationToken.None));
+
+            Assert.Equal("ControlCommitIndeterminate", error.Code);
+            Assert.Equal(1, tool.Calls);
+            SessionExecutionState state = engine.ResolveExecutionTail().State;
+            Assert.Equal(
+                SessionExecutionPhase.AwaitingToolExecution,
+                state.Phase
+            );
+            Assert.True(state.PendingToolExecutionStarted);
+            Assert.Equal(1, state.ToolExecutionSequenceCheckpoint);
+            Assert.False(string.IsNullOrWhiteSpace(state.PendingOperationId));
+
+            SessionRuntimeRecoveryRequirements.ToolContinuationRequired
+                requirement = Assert.IsType<
+                    SessionRuntimeRecoveryRequirements.ToolContinuationRequired
+                >(engine.InspectRuntimeRecoveryRequirements());
+            Assert.Equal(
+                SessionDurableDispatchState.StartedOutcomeUncertain,
+                requirement.DispatchState
+            );
+            Assert.Equal(
+                ToolRuntimeIdentity,
+                requirement.ToolRuntimeIdentity
+            );
+        }
+
+        Assert.Single(ReadJournalPayloadJsonByKind(
+            path,
+            SessionEventKind.ToolExecutionStarted
+        ));
+        Assert.Empty(ReadJournalPayloadJsonByKind(
+            path,
+            SessionEventKind.ToolResultObserved
+        ));
+    }
+
+    [Fact]
     public async Task ResumeAsync_AfterExternalToolExecutionBeforeResult_RetriesSameReservedSequenceAndOperation() {
         string path = NewJournalPath();
         SessionContextCandidate candidate;

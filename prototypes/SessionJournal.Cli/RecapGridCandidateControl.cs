@@ -1,6 +1,7 @@
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
+using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
 
 namespace Atelia.SessionJournal.Cli;
@@ -199,6 +200,88 @@ internal static partial class RecapGridCandidateCommands {
                         witness
                     );
                 return PrintControlPut("control.put-recipe", result);
+            }
+        }
+    }
+
+    private static int ControlProvisionBuiltIn(CliOptions options) {
+        options.EnsureOnly(
+            "input", "branch", "confirm-ref", "admission", "asset"
+        );
+        string assetId = options.RequireSingle("asset");
+        if (!RecapGridAgentControlBuiltIns.TryCreateRegistrationBundle(
+                assetId,
+                out RecapGridControlRegistrationBundle? bundle)
+            || bundle is null) {
+            return Print(
+                "control.provision-built-in",
+                "built-in-asset-absent",
+                new { assetId },
+                2
+            );
+        }
+        RecapGridControlAdmission admission = ReadAdmission(options);
+        using SessionJournalEngine engine = OpenBranch(options);
+        RequireConfirmedRef(options, engine.BranchRefId);
+        RecapGridControlOpenResult controlResult =
+            RecapGridControlFactory.Open(
+                engine.ReadView.Path,
+                engine.BranchRefId,
+                admission
+            );
+        if (controlResult is not RecapGridControlOpenResult.Opened control) {
+            return PrintControlOpenFailure(
+                "control.provision-built-in",
+                controlResult
+            );
+        }
+        using (control.Handle) {
+            RecapGridControlSnapshotResult controlSnapshot =
+                control.Handle.Reader.ReadSnapshot();
+            if (controlSnapshot is not RecapGridControlSnapshotResult
+                    .Available currentControl) {
+                return PrintControlSnapshotFailure(
+                    "control.provision-built-in",
+                    controlSnapshot
+                );
+            }
+            RecapGridControlOperation operation =
+                RecapGridAgentControlBuiltIns
+                    .CreateOperatorProvisionOperation(
+                        assetId,
+                        currentControl.Snapshot.Head.InstanceId
+                    );
+            HistoryTimelineReaderOpenResult timelineResult =
+                HistoryTimelineMaintenance.OpenReader(
+                    engine.ReadView.Path,
+                    engine.BranchRefId
+                );
+            if (timelineResult is not HistoryTimelineReaderOpenResult.Opened
+                    timeline) {
+                return PrintTimelineReaderOpenFailure(
+                    "control.provision-built-in",
+                    timelineResult
+                );
+            }
+            using (timeline.Handle) {
+                HistoryTimelineSnapshotResult timelineSnapshot =
+                    timeline.Handle.Reader.ReadSnapshot();
+                if (timelineSnapshot is not HistoryTimelineSnapshotResult
+                        .Available currentTimeline) {
+                    return PrintTimelineSnapshotFailure(
+                        "control.provision-built-in",
+                        timelineSnapshot
+                    );
+                }
+                return PrintControlOperation(
+                    "control.provision-built-in",
+                    control.Handle.Coordinator.ApplyRegistrationBundle(
+                        currentControl.Snapshot.Head,
+                        currentTimeline.Head,
+                        operation,
+                        bundle
+                    )
+                );
             }
         }
     }
@@ -518,6 +601,30 @@ internal static partial class RecapGridCandidateCommands {
         _ => Print(command, ControlActivateStatus(result), result, 2)
     };
 
+    private static int PrintControlOperation(
+        string command,
+        RecapGridControlOperationResult result
+    ) => result switch {
+        RecapGridControlOperationResult.Applied applied => Print(
+            command,
+            "applied",
+            applied
+        ),
+        RecapGridControlOperationResult.Replayed replayed => Print(
+            command,
+            "replayed",
+            replayed
+        ),
+        RecapGridControlOperationResult.CommitIndeterminate uncertain
+            => PrintIndeterminate(
+                command,
+                "commit-indeterminate",
+                uncertain.Intended,
+                uncertain.Observed
+            ),
+        _ => Print(command, ControlOperationStatus(result), result, 2)
+    };
+
     private static int PrintIndeterminate(
         string command,
         string status,
@@ -621,6 +728,27 @@ internal static partial class RecapGridCandidateCommands {
             => "timeline-unsupported-schema",
         RecapGridControlActivateResult.Disposed => "disposed",
         RecapGridControlActivateResult.Invalid => "invalid",
+        _ => "invalid-outcome"
+        };
+
+    private static string ControlOperationStatus(
+        RecapGridControlOperationResult result
+    ) => result switch {
+        RecapGridControlOperationResult.Conflict => "operation-conflict",
+        RecapGridControlOperationResult.Unauthorized => "unauthorized",
+        RecapGridControlOperationResult.RecipeAbsent => "recipe-absent",
+        RecapGridControlOperationResult.StaleControlHead
+            => "stale-control-head",
+        RecapGridControlOperationResult.StaleTimelineHead
+            => "stale-timeline-head",
+        RecapGridControlOperationResult.NotOnSelectedPath
+            => "not-on-selected-path",
+        RecapGridControlOperationResult.Busy => "busy",
+        RecapGridControlOperationResult.TimelineUnsupportedSchema
+            => "timeline-unsupported-schema",
+        RecapGridControlOperationResult.Disposed => "disposed",
+        RecapGridControlOperationResult.LimitExceeded => "limit-exceeded",
+        RecapGridControlOperationResult.Invalid => "invalid",
         _ => "invalid-outcome"
     };
 

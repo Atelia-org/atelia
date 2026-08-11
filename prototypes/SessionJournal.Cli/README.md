@@ -19,7 +19,7 @@ recap-grid reset --input <repo-dir> --confirm-length <bytes> --confirm-sha256 <s
 
 recap-grid candidate init ...
 recap-grid candidate timeline create|sync|inspect|verify|export|backup|restore|abandon ...
-recap-grid candidate control create|inspect|verify|export|put-family|put-definition|put-recipe|activate|promote|backup|restore|reinitialize ...
+recap-grid candidate control create|inspect|verify|export|put-family|put-definition|put-recipe|provision-built-in|activate|promote|backup|restore|reinitialize ...
 recap-grid candidate build|progress|materialize ...
 recap-grid candidate run-online-turn ...
 ```
@@ -31,18 +31,20 @@ code-owned分页与错误上限，首版不提供`--limit`或`--max-errors`选�
 
 完整Grid operator vertical仍只在明确的`recap-grid candidate`子树中。所有branch mutation都要求与selected
 SessionJournal branch相同的`--confirm-ref`；`init`显式按Timeline、Control、Grid三域创建，其他命令不自动创建。
-Family/Definition/Recipe输入必须是各自formal canonical bytes；Control admission是独立strict V1文件，不能从payload自授权。
-只有`candidate build`会读取strict route manifest与Completion connections：route按
-`(FamilyDigest, RuntimeProtocolId, SemanticModelId?)` exact匹配，显式`null`也不fallback；connections在Manager/Store/provider前执行
-whole-file、count、field strict UTF-8 bounds以及duplicate/unknown/BOM检查。`progress`不构造provider；
+Family/Definition/Recipe输入必须是各自formal canonical bytes；`provision-built-in`只接受code-owned exact asset ID并复用同一
+AgentControl bundle resolver。Control admission是`RecapGridControlAdmission.ToCanonicalBytes()`产生的独立strict文件，不能从payload自授权。
+`candidate build`与Fresh/NewRequest/ToolResult/ToolContinuation online只在各自lazy dispatch boundary读取strict route manifest与
+Completion connections：route按`(FamilyDigest, RuntimeProtocolId, SemanticModelId?)` exact匹配，显式`null`也不fallback；connections
+在Manager/Store/provider mutation前执行whole-file、count、field strict UTF-8 bounds以及duplicate/unknown/BOM检查。`progress`不构造provider；
 `promote`在同一进程用`--max-new-calls 0`重证head-through proof后才执行Promotion CAS，build本身永不activate；
 `materialize`只走Getter strict `--nth-previous`，不在CLI拼raw tail。build report附带bounded operational call evidence；no-work与
 其他provider-free命令不materialize该collector。`candidate run-online-turn`只在Fresh/NewRequest打开provider-neutral Online
 composition；Prepared按frozen identity exact bind，Started/Refuse在读取connections/routes和创建client前typed终止。它与旧top-level
-`run-online-turn`是隔离candidate，不改变旧命令语义。
+`run-online-turn`是隔离candidate，不改变旧命令语义。Fresh/NewRequest、`ToolResultObserved`恢复与tool continuation都会启动新的
+completion request，因此都必须显式提供`--routes`；只有Prepared frozen completion resume不得读取route manifest。
 
 candidate JSON report使用`atelia.session-journal.recap-grid-candidate-cli.v1`；syntax/confirmation返回1，typed operational failure
-返回2，success/idempotent返回0。Busy/Stale/Unsupported/Indeterminate均不自动retry。WP-07B candidate尚待独立review，并未切换
+返回2，success/idempotent返回0。Busy/Stale/Unsupported/Indeterminate均不自动retry。WP-07C implementation candidate仍待独立review，并未切换
 Galatea public/default composition、旧top-level `run-online-turn`、旧`recap`命令或current production。
 
 旧 `resume`、`restore`、`abandon-building`命令已删除。`recap run`内部自动优先恢复Building或修复

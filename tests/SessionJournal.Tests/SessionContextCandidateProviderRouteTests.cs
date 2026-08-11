@@ -1360,17 +1360,21 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task EmptyLineageToolResultContinuation_IsNotFreshBootstrap() {
+    public async Task EmptyLineageToolResultContinuation_UsesTypedReadinessAndRawBootstrap() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         client.Enqueue(ToolCall("lookup", "call-1"));
+        client.Enqueue(Terminal("continued from tool result"));
         var source = new TestContextCandidateSource();
+        var lifecycle = new TestContextLifecycle {
+            Result = SessionContextLifecycleResult.RawHistoryAuthorized
+        };
         var tool = new RecordingTool("lookup");
         SessionRuntime runtime = CreateRuntime(
             client,
             source,
             new ToolRegistry([tool]).CreateSession()
-        );
+        ) with { ContextLifecycle = lifecycle };
         using (var engine =
                SessionJournalEngine.CreateForTest(
                    path,
@@ -1404,21 +1408,26 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         EventAddress toolResultHead =
             reopened.InspectExecutionBoundary().Head!.Value;
 
-        SessionJournalNotReadyException error =
-            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
-                () => reopened.ResumeAsync(CancellationToken.None)
-            );
+        ResumeOutcome result = await reopened.ResumeAsync(
+            CancellationToken.None
+        );
 
-        Assert.Contains(
-            "active first ObservationAccepted",
-            error.Message,
-            StringComparison.Ordinal
-        );
+        Assert.True(result.Advanced);
         Assert.Equal(
-            toolResultHead,
-            reopened.InspectExecutionBoundary().Head
+            "continued from tool result",
+            result.Message?.GetFlattenedText()
         );
-        Assert.Equal(1, client.Calls);
+        Assert.Equal(2, client.Calls);
+        Assert.Equal(
+            SessionContextLifecycleTrigger.ToolResultObserved,
+            lifecycle.Requests[^1].Trigger
+        );
+        Assert.Equal(toolResultHead, lifecycle.Requests[^1].Boundary);
+        Assert.Equal(
+            SessionExecutionPhase.AwaitingAgentAction,
+            lifecycle.Requests[^1].Phase
+        );
+        Assert.Null(lifecycle.Requests[^1].PendingObservation);
     }
 
     [Fact]
@@ -1797,12 +1806,20 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             lifecycle.Requests,
             idle => {
                 Assert.Equal(SessionExecutionPhase.Idle, idle.Phase);
+                Assert.Equal(
+                    SessionContextLifecycleTrigger.PreObservation,
+                    idle.Trigger
+                );
                 Assert.Equal("use one tool", idle.PendingObservation);
             },
             observation => {
                 Assert.Equal(
                     SessionExecutionPhase.AwaitingAgentAction,
                     observation.Phase
+                );
+                Assert.Equal(
+                    SessionContextLifecycleTrigger.ObservationAccepted,
+                    observation.Trigger
                 );
                 Assert.Null(observation.PendingObservation);
             },
@@ -1811,10 +1828,91 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                     SessionExecutionPhase.AwaitingAgentAction,
                     toolResult.Phase
                 );
+                Assert.Equal(
+                    SessionContextLifecycleTrigger.ToolResultObserved,
+                    toolResult.Trigger
+                );
                 Assert.Null(toolResult.PendingObservation);
             }
         );
         Assert.Equal(6, source.SelectionCount);
+    }
+
+    [Fact]
+    public void LifecycleRequestRejectsEveryIllegalTriggerPhasePendingShape() {
+        string path = NewJournalPath();
+        using SessionJournalEngine engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions()
+        );
+        var selection = new SessionContextSelectionRequest(
+            engine.ReadCurrentHead()!.Value,
+            0
+        );
+
+        _ = new SessionContextLifecycleRequest(
+            selection,
+            SessionExecutionPhase.Idle,
+            SessionContextLifecycleTrigger.PreObservation,
+            "pending"
+        );
+        _ = new SessionContextLifecycleRequest(
+            selection,
+            SessionExecutionPhase.AwaitingAgentAction,
+            SessionContextLifecycleTrigger.ObservationAccepted
+        );
+        _ = new SessionContextLifecycleRequest(
+            selection,
+            SessionExecutionPhase.AwaitingAgentAction,
+            SessionContextLifecycleTrigger.ToolResultObserved
+        );
+
+        Assert.Throws<ArgumentException>(() =>
+            new SessionContextLifecycleRequest(
+                selection,
+                SessionExecutionPhase.Idle,
+                SessionContextLifecycleTrigger.PreObservation
+            ));
+        Assert.Throws<ArgumentException>(() =>
+            new SessionContextLifecycleRequest(
+                selection,
+                SessionExecutionPhase.AwaitingAgentAction,
+                SessionContextLifecycleTrigger.PreObservation,
+                "pending"
+            ));
+        Assert.Throws<ArgumentException>(() =>
+            new SessionContextLifecycleRequest(
+                selection,
+                SessionExecutionPhase.Idle,
+                SessionContextLifecycleTrigger.ObservationAccepted
+            ));
+        Assert.Throws<ArgumentException>(() =>
+            new SessionContextLifecycleRequest(
+                selection,
+                SessionExecutionPhase.AwaitingAgentAction,
+                SessionContextLifecycleTrigger.ObservationAccepted,
+                "pending"
+            ));
+        Assert.Throws<ArgumentException>(() =>
+            new SessionContextLifecycleRequest(
+                selection,
+                SessionExecutionPhase.Idle,
+                SessionContextLifecycleTrigger.ToolResultObserved
+            ));
+        Assert.Throws<ArgumentException>(() =>
+            new SessionContextLifecycleRequest(
+                selection,
+                SessionExecutionPhase.AwaitingAgentAction,
+                SessionContextLifecycleTrigger.ToolResultObserved,
+                "pending"
+            ));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new SessionContextLifecycleRequest(
+                selection,
+                SessionExecutionPhase.Idle,
+                (SessionContextLifecycleTrigger)int.MaxValue,
+                "pending"
+            ));
     }
 
     [Fact]

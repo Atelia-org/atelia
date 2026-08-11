@@ -62,19 +62,56 @@ public sealed record SessionContextLifecycleRequest {
     public SessionContextLifecycleRequest(
         SessionContextSelectionRequest selection,
         SessionExecutionPhase phase,
+        SessionContextLifecycleTrigger trigger,
         string? pendingObservation = null
     ) {
         Selection = selection
             ?? throw new ArgumentNullException(nameof(selection));
         Selection.ValidateShape();
+        if (!Enum.IsDefined(phase)) {
+            throw new ArgumentOutOfRangeException(nameof(phase));
+        }
+        if (!Enum.IsDefined(trigger)) {
+            throw new ArgumentOutOfRangeException(nameof(trigger));
+        }
+        bool validBoundary = trigger switch {
+            SessionContextLifecycleTrigger.PreObservation
+                => phase == SessionExecutionPhase.Idle
+                    && pendingObservation is not null,
+            SessionContextLifecycleTrigger.ObservationAccepted
+                => phase == SessionExecutionPhase.AwaitingAgentAction
+                    && pendingObservation is null,
+            SessionContextLifecycleTrigger.ToolResultObserved
+                => phase == SessionExecutionPhase.AwaitingAgentAction
+                    && pendingObservation is null,
+            _ => false
+        };
+        if (!validBoundary) {
+            throw new ArgumentException(
+                "Lifecycle trigger, execution phase, and pending observation do not form a legal boundary."
+            );
+        }
         Phase = phase;
+        Trigger = trigger;
         PendingObservation = pendingObservation;
     }
 
     public SessionContextSelectionRequest Selection { get; }
     public EventAddress Boundary => Selection.CompletionBoundary;
     public SessionExecutionPhase Phase { get; }
+    public SessionContextLifecycleTrigger Trigger { get; }
     public string? PendingObservation { get; }
+}
+
+/// <summary>
+/// The exact raw lifecycle boundary that requested derived-context readiness.
+/// Only <see cref="PreObservation"/> may seal raw history; accepted observations
+/// and observed tool results remain in the SessionJournal-owned raw tail.
+/// </summary>
+public enum SessionContextLifecycleTrigger {
+    PreObservation = 0,
+    ObservationAccepted = 1,
+    ToolResultObserved = 2,
 }
 
 public enum SessionContextLifecycleStatus {

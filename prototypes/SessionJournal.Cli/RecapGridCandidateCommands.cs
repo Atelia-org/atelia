@@ -92,6 +92,7 @@ internal static partial class RecapGridCandidateCommands {
             "put-family" => ControlPutFamily(options),
             "put-definition" => ControlPutDefinition(options),
             "put-recipe" => ControlPutRecipe(options),
+            "provision-built-in" => ControlProvisionBuiltIn(options),
             "activate" => ControlActivate(options),
             "promote" => ControlPromote(options),
             "backup" => ControlBackup(options),
@@ -228,7 +229,7 @@ internal static partial class RecapGridCandidateCommands {
 
     private static RecapGridControlAdmission ReadAdmission(
         CliOptions options
-    ) => AdmissionCodec.Decode(ReadBoundedFile(
+    ) => RecapGridControlAdmission.DecodeCanonical(ReadBoundedFile(
         options.RequireSingle("admission"),
         MaximumInputUtf8Bytes
     ));

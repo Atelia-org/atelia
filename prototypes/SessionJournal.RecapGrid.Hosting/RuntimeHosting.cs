@@ -2,6 +2,8 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Runtime;
+using Atelia.SessionJournal.RecapGrid.AgentControl;
+using Atelia.SessionJournal.HistoryTimeline;
 using System.Text;
 
 namespace Atelia.SessionJournal.RecapGrid.Hosting;
@@ -313,17 +315,20 @@ public abstract record RecapGridAgentConnectionResult {
 /// </summary>
 public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
     private readonly CompletionConnectionRegistry _registry;
+    private readonly RecapGridAgentControlProfileRegistry? _agentControl;
     private readonly object _disposeGate = new();
     private Task? _disposeTask;
 
     private RecapGridCompletionHost(
         CompletionConnectionRegistry registry,
         RecapCompletionRuntime runtime,
-        BoundedRecapCompletionTelemetry telemetry
+        BoundedRecapCompletionTelemetry telemetry,
+        RecapGridAgentControlProfileRegistry? agentControl
     ) {
         _registry = registry;
         Runtime = runtime;
         Telemetry = telemetry;
+        _agentControl = agentControl;
     }
 
     public RecapCompletionRuntime Runtime { get; }
@@ -336,6 +341,41 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         ICompletionClientFactory clientFactory,
         RecapCompletionRuntimeOptions? runtimeOptions = null,
         int maximumTelemetryEvents = 1_024
+    ) => CreateCore(
+        routeManifestLoader,
+        connections,
+        clientFactory,
+        agentControl: null,
+        runtimeOptions,
+        maximumTelemetryEvents
+    );
+
+    public static RecapGridCompletionHost Create(
+        Func<RecapGridRouteManifest> routeManifestLoader,
+        CompletionConnectionsFileConfig connections,
+        ICompletionClientFactory clientFactory,
+        RecapGridAgentControlProfileRegistry agentControl,
+        RecapCompletionRuntimeOptions? runtimeOptions = null,
+        int maximumTelemetryEvents = 1_024
+    ) {
+        ArgumentNullException.ThrowIfNull(agentControl);
+        return CreateCore(
+            routeManifestLoader,
+            connections,
+            clientFactory,
+            agentControl,
+            runtimeOptions,
+            maximumTelemetryEvents
+        );
+    }
+
+    private static RecapGridCompletionHost CreateCore(
+        Func<RecapGridRouteManifest> routeManifestLoader,
+        CompletionConnectionsFileConfig connections,
+        ICompletionClientFactory clientFactory,
+        RecapGridAgentControlProfileRegistry? agentControl,
+        RecapCompletionRuntimeOptions? runtimeOptions,
+        int maximumTelemetryEvents
     ) {
         ArgumentNullException.ThrowIfNull(routeManifestLoader);
         ArgumentNullException.ThrowIfNull(connections);
@@ -351,12 +391,56 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
                 registry);
             var runtime = new RecapCompletionRuntime(
                 resolver, runtimeOptions, telemetry);
-            return new RecapGridCompletionHost(registry, runtime, telemetry);
+            return new RecapGridCompletionHost(
+                registry,
+                runtime,
+                telemetry,
+                agentControl
+            );
         }
         catch {
             registry.Dispose();
             throw;
         }
+    }
+
+    public RecapGridAgentControlOpenResult OpenAgentControl(
+        SessionJournalReadView selectedRef,
+        string profileId,
+        params IHistoryUnitLoadEstimator[] estimators
+    ) {
+        ArgumentNullException.ThrowIfNull(selectedRef);
+        if (_agentControl is null
+            || !_agentControl.TryGet(profileId, out var profile)) {
+            return new RecapGridAgentControlOpenResult.ProfileAbsent(
+                profileId
+            );
+        }
+        return RecapGridAgentControlFactory.Bind(
+            selectedRef,
+            profile,
+            estimators
+        );
+    }
+
+    public RecapGridAgentControlOpenResult BindAgentControlExact(
+        SessionJournalReadView selectedRef,
+        SessionToolRuntimeIdentity runtimeIdentity,
+        params IHistoryUnitLoadEstimator[] estimators
+    ) {
+        ArgumentNullException.ThrowIfNull(selectedRef);
+        ArgumentNullException.ThrowIfNull(runtimeIdentity);
+        if (_agentControl is null
+            || !_agentControl.TryBindExact(runtimeIdentity, out var profile)) {
+            return new RecapGridAgentControlOpenResult.ProfileAbsent(
+                runtimeIdentity.CapabilitySetFingerprint
+            );
+        }
+        return RecapGridAgentControlFactory.Bind(
+            selectedRef,
+            profile,
+            estimators
+        );
     }
 
     public RecapGridAgentConnectionResult BindAgentExact(

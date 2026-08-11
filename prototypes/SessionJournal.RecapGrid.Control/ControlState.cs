@@ -11,23 +11,27 @@ using Atelia.SessionJournal.HistoryTimeline;
 namespace Atelia.SessionJournal.RecapGrid.Control;
 
 internal sealed class ControlState {
-    internal const int SchemaVersion = 1;
+    internal const int SchemaVersion = 2;
     private readonly SortedDictionary<string, FamilyDefinition> _families;
     private readonly SortedDictionary<string, MaintainerDefinitionRevision>
         _definitions;
     private readonly SortedDictionary<string, RegisteredGridRecipe> _recipes;
+    private readonly SortedDictionary<string, ControlOperationReceipt>
+        _operationReceipts;
 
     private ControlState(
         ControlHeadRef head,
         SortedDictionary<string, FamilyDefinition> families,
         SortedDictionary<string, MaintainerDefinitionRevision> definitions,
         SortedDictionary<string, RegisteredGridRecipe> recipes,
+        SortedDictionary<string, ControlOperationReceipt> operationReceipts,
         byte[] canonicalBytes
     ) {
         Head = head;
         _families = families;
         _definitions = definitions;
         _recipes = recipes;
+        _operationReceipts = operationReceipts;
         CanonicalBytes = canonicalBytes;
     }
 
@@ -36,6 +40,8 @@ internal sealed class ControlState {
     internal IReadOnlyDictionary<string, MaintainerDefinitionRevision>
         Definitions => _definitions;
     internal IReadOnlyDictionary<string, RegisteredGridRecipe> Recipes => _recipes;
+    internal IReadOnlyDictionary<string, ControlOperationReceipt>
+        OperationReceipts => _operationReceipts;
     internal byte[] CanonicalBytes { get; }
 
     internal static ControlState CreateEmpty(
@@ -54,6 +60,9 @@ internal sealed class ControlState {
             StringComparer.Ordinal
         ),
         new SortedDictionary<string, RegisteredGridRecipe>(
+            StringComparer.Ordinal
+        ),
+        new SortedDictionary<string, ControlOperationReceipt>(
             StringComparer.Ordinal
         )
     );
@@ -78,6 +87,7 @@ internal sealed class ControlState {
             families: Add(_families, value.Digest.Value, value),
             definitions: _definitions,
             recipes: _recipes,
+            operationReceipts: _operationReceipts,
             active: Head.ActiveRecipeDigest
         );
     }
@@ -105,6 +115,7 @@ internal sealed class ControlState {
             families: _families,
             definitions: Add(_definitions, value.Digest.Value, value),
             recipes: _recipes,
+            operationReceipts: _operationReceipts,
             active: Head.ActiveRecipeDigest
         );
     }
@@ -129,6 +140,7 @@ internal sealed class ControlState {
             families: _families,
             definitions: _definitions,
             recipes: Add(_recipes, value.Recipe.Digest.Value, value),
+            operationReceipts: _operationReceipts,
             active: Head.ActiveRecipeDigest
         );
     }
@@ -138,6 +150,7 @@ internal sealed class ControlState {
             _families,
             _definitions,
             _recipes,
+            _operationReceipts,
             digest
         );
 
@@ -150,8 +163,80 @@ internal sealed class ControlState {
             Head.ActiveRecipeDigest,
             Clone(_families),
             Clone(_definitions),
-            Clone(_recipes)
+            Clone(_recipes),
+            Clone(_operationReceipts)
         );
+
+    internal bool TryGetOperationReceipt(
+        string operationKey,
+        out ControlOperationReceipt? receipt
+    ) => _operationReceipts.TryGetValue(operationKey, out receipt);
+
+    internal ControlState WithTerminalOperation(
+        ControlOperationReceipt receipt,
+        long generation
+    ) => WithTerminalOperation(
+        receipt,
+        generation,
+        ControlStorageLimits.MaximumOperationReceiptCount
+    );
+
+    internal ControlState WithTerminalOperationForTest(
+        ControlOperationReceipt receipt,
+        long generation,
+        int maximumCount
+    ) => WithTerminalOperation(receipt, generation, maximumCount);
+
+    private ControlState WithTerminalOperation(
+        ControlOperationReceipt receipt,
+        long generation,
+        int maximumCount
+    ) {
+        ArgumentNullException.ThrowIfNull(receipt);
+        if (_operationReceipts.ContainsKey(receipt.OperationKey)) {
+            throw new ControlStoreException(
+                "ControlOperationReceiptDuplicate",
+                "A terminal operation receipt already exists."
+            );
+        }
+        if (_operationReceipts.Count >= maximumCount) {
+            throw new ControlLimitException("ControlOperationReceiptCount");
+        }
+        return Create(
+            Head.InstanceId,
+            Head.RefId,
+            Head.TimelineId,
+            generation,
+            Head.ActiveRecipeDigest,
+            Clone(_families),
+            Clone(_definitions),
+            Clone(_recipes),
+            Add(_operationReceipts, receipt.OperationKey, receipt)
+        );
+    }
+
+    internal ControlState WithGenerationAndReceipts(
+        ControlInstanceId instanceId,
+        long generation,
+        IReadOnlyDictionary<string, ControlOperationReceipt> receipts
+    ) => Create(
+        instanceId,
+        Head.RefId,
+        Head.TimelineId,
+        generation,
+        Head.ActiveRecipeDigest,
+        Clone(_families),
+        Clone(_definitions),
+        Clone(_recipes),
+        new SortedDictionary<string, ControlOperationReceipt>(
+            receipts.ToDictionary(
+                static pair => pair.Key,
+                static pair => pair.Value,
+                StringComparer.Ordinal
+            ),
+            StringComparer.Ordinal
+        )
+    );
 
     internal RecapGridControlSnapshot Snapshot() => new(
         Head,
@@ -198,9 +283,13 @@ internal sealed class ControlState {
         RequireSortedUnique(dto.Families.Select(static entry => entry.Digest));
         RequireSortedUnique(dto.Definitions.Select(static entry => entry.Digest));
         RequireSortedUnique(dto.Recipes.Select(static entry => entry.Digest));
+        RequireSortedUnique(dto.OperationReceipts.Select(
+            static entry => entry.OperationKey));
         if (dto.Families.Length > ControlStorageLimits.MaximumFamilyCount
             || dto.Definitions.Length > ControlStorageLimits.MaximumDefinitionCount
-            || dto.Recipes.Length > ControlStorageLimits.MaximumRecipeCount) {
+            || dto.Recipes.Length > ControlStorageLimits.MaximumRecipeCount
+            || dto.OperationReceipts.Length
+                > ControlStorageLimits.MaximumOperationReceiptCount) {
             throw new ControlStoreException(
                 "ControlStateCountLimitExceeded",
                 "A Control state collection exceeds its code-owned count cap."
@@ -259,6 +348,13 @@ internal sealed class ControlState {
                 )
             );
         }
+        var receipts = new SortedDictionary<string, ControlOperationReceipt>(
+            StringComparer.Ordinal
+        );
+        foreach (ControlOperationReceiptDto entry in dto.OperationReceipts) {
+            ControlOperationReceipt receipt = DecodeReceipt(entry);
+            receipts.Add(receipt.OperationKey, receipt);
+        }
         foreach (MaintainerDefinitionRevision definition in definitions.Values) {
             if (!families.ContainsKey(definition.FamilyDigest.Value)) {
                 throw new ControlStoreException(
@@ -310,7 +406,8 @@ internal sealed class ControlState {
             active,
             families,
             definitions,
-            recipes
+            recipes,
+            receipts
         );
         if (!string.Equals(
                 valueState.Head.StateDigest.Value,
@@ -328,6 +425,7 @@ internal sealed class ControlState {
         SortedDictionary<string, FamilyDefinition> families,
         SortedDictionary<string, MaintainerDefinitionRevision> definitions,
         SortedDictionary<string, RegisteredGridRecipe> recipes,
+        SortedDictionary<string, ControlOperationReceipt> operationReceipts,
         GridBuildRecipeDigest? active
     ) => Create(
         Head.InstanceId,
@@ -337,7 +435,8 @@ internal sealed class ControlState {
         active,
         Clone(families),
         Clone(definitions),
-        Clone(recipes)
+        Clone(recipes),
+        Clone(operationReceipts)
     );
 
     private static ControlState Create(
@@ -348,7 +447,8 @@ internal sealed class ControlState {
         GridBuildRecipeDigest? activeRecipeDigest,
         SortedDictionary<string, FamilyDefinition> families,
         SortedDictionary<string, MaintainerDefinitionRevision> definitions,
-        SortedDictionary<string, RegisteredGridRecipe> recipes
+        SortedDictionary<string, RegisteredGridRecipe> recipes,
+        SortedDictionary<string, ControlOperationReceipt> operationReceipts
     ) {
         ValidateGraph(
             refId,
@@ -356,7 +456,8 @@ internal sealed class ControlState {
             activeRecipeDigest,
             families,
             definitions,
-            recipes
+            recipes,
+            operationReceipts
         );
         ControlBodyDto body = Body(
             instanceId,
@@ -366,10 +467,11 @@ internal sealed class ControlState {
             activeRecipeDigest,
             families,
             definitions,
-            recipes
+            recipes,
+            operationReceipts
         );
         ControlStateDigest digest = new(Hash(
-            "atelia.recap-grid.control-state.v1",
+            "atelia.recap-grid.control-state.v2",
             JsonSerializer.SerializeToUtf8Bytes(body, ControlJson.Options)
         ));
         ControlHeadRef head = new(
@@ -393,7 +495,8 @@ internal sealed class ControlState {
                 ),
                 body.Families,
                 body.Definitions,
-                body.Recipes
+                body.Recipes,
+                body.OperationReceipts
             ),
             ControlJson.Options
         );
@@ -406,6 +509,7 @@ internal sealed class ControlState {
             families,
             definitions,
             recipes,
+            operationReceipts,
             canonical
         );
     }
@@ -416,12 +520,15 @@ internal sealed class ControlState {
         GridBuildRecipeDigest? activeRecipeDigest,
         SortedDictionary<string, FamilyDefinition> families,
         SortedDictionary<string, MaintainerDefinitionRevision> definitions,
-        SortedDictionary<string, RegisteredGridRecipe> recipes
+        SortedDictionary<string, RegisteredGridRecipe> recipes,
+        SortedDictionary<string, ControlOperationReceipt> operationReceipts
     ) {
         if (families.Count > ControlStorageLimits.MaximumFamilyCount
             || definitions.Count
                 > ControlStorageLimits.MaximumDefinitionCount
-            || recipes.Count > ControlStorageLimits.MaximumRecipeCount) {
+            || recipes.Count > ControlStorageLimits.MaximumRecipeCount
+            || operationReceipts.Count
+                > ControlStorageLimits.MaximumOperationReceiptCount) {
             throw new ControlLimitException("ControlStateEntryCount");
         }
         foreach ((string key, FamilyDefinition family) in families) {
@@ -496,6 +603,10 @@ internal sealed class ControlState {
                 "The active recipe is absent from the Control state."
             );
         }
+        foreach ((string key, ControlOperationReceipt receipt)
+                 in operationReceipts) {
+            ValidateReceipt(key, receipt);
+        }
     }
 
     private static void RequireBoundedBaseDepth(
@@ -528,7 +639,8 @@ internal sealed class ControlState {
         GridBuildRecipeDigest? activeRecipeDigest,
         SortedDictionary<string, FamilyDefinition> families,
         SortedDictionary<string, MaintainerDefinitionRevision> definitions,
-        SortedDictionary<string, RegisteredGridRecipe> recipes
+        SortedDictionary<string, RegisteredGridRecipe> recipes,
+        SortedDictionary<string, ControlOperationReceipt> operationReceipts
     ) => new(
         SchemaVersion,
         instanceId.Value,
@@ -552,7 +664,9 @@ internal sealed class ControlState {
                 pair.Value.Bootstrap.RowId?.Value,
                 pair.Value.Bootstrap.DescriptorDigest?.Value
             )
-        )).ToArray()
+        )).ToArray(),
+        operationReceipts.Select(static pair => ReceiptDto(pair.Value))
+            .ToArray()
     );
 
     private static SortedDictionary<string, T> Add<T>(
@@ -591,6 +705,85 @@ internal sealed class ControlState {
             );
         }
     }
+
+    private static ControlOperationReceipt DecodeReceipt(
+        ControlOperationReceiptDto value
+    ) {
+        ControlOperationReceipt receipt;
+        try {
+            receipt = new ControlOperationReceipt(
+                value.OperationKey,
+                value.ExecutionSequence,
+                value.RuntimeIdentityDigest,
+                value.CommandDigest,
+                value.ResultIdentity,
+                new ControlInstanceId(value.OriginalInstanceId),
+                value.OriginalGeneration
+            );
+        }
+        catch (ArgumentException exception) {
+            throw new ControlStoreException(
+                "ControlOperationReceiptInvalid",
+                "A terminal operation receipt contains an invalid identity.",
+                exception
+            );
+        }
+        ValidateReceipt(value.OperationKey, receipt);
+        return receipt;
+    }
+
+    private static void ValidateReceipt(
+        string key,
+        ControlOperationReceipt receipt
+    ) {
+        try {
+            RecapGridControlOperation.RequireSha256(
+                key,
+                nameof(receipt.OperationKey)
+            );
+            RecapGridControlOperation.RequireSha256(
+                receipt.RuntimeIdentityDigest,
+                nameof(receipt.RuntimeIdentityDigest)
+            );
+            RecapGridControlOperation.RequireSha256(
+                receipt.CommandDigest,
+                nameof(receipt.CommandDigest)
+            );
+            RecapGridControlOperation.RequireSha256(
+                receipt.ResultIdentity,
+                nameof(receipt.ResultIdentity)
+            );
+        }
+        catch (ArgumentException exception) {
+            throw new ControlStoreException(
+                "ControlOperationReceiptInvalid",
+                "A terminal operation receipt contains a non-canonical digest.",
+                exception
+            );
+        }
+        if (!string.Equals(key, receipt.OperationKey,
+                StringComparison.Ordinal)
+            || receipt.ExecutionSequence <= 0
+            || receipt.OriginalInstanceId.Value is null
+            || receipt.OriginalGeneration < 0) {
+            throw new ControlStoreException(
+                "ControlOperationReceiptInvalid",
+                "A terminal operation receipt is structurally invalid."
+            );
+        }
+    }
+
+    private static ControlOperationReceiptDto ReceiptDto(
+        ControlOperationReceipt value
+    ) => new(
+        value.OperationKey,
+        value.ExecutionSequence,
+        value.RuntimeIdentityDigest,
+        value.CommandDigest,
+        value.ResultIdentity,
+        value.OriginalInstanceId.Value,
+        value.OriginalGeneration
+    );
 
     private static TimelineHeadDto TimelineHead(TimelineHeadRef value) => new(
         value.TimelineId.Value,
@@ -670,6 +863,7 @@ internal static class ControlStorageLimits {
     internal const int MaximumFamilyCount = 256;
     internal const int MaximumDefinitionCount = 4_096;
     internal const int MaximumRecipeCount = 4_096;
+    internal const int MaximumOperationReceiptCount = 16_384;
     internal const int MaximumRecipeBaseDepth = 256;
     internal const int MaximumBackupManifestUtf8Bytes = 16 * 1024;
 }
@@ -684,6 +878,15 @@ internal sealed record RecipeBootstrapDto(
     TimelineHeadDto TimelineHead,
     string? RowId,
     string? DescriptorDigest
+);
+internal sealed record ControlOperationReceiptDto(
+    string OperationKey,
+    long ExecutionSequence,
+    string RuntimeIdentityDigest,
+    string CommandDigest,
+    string ResultIdentity,
+    string OriginalInstanceId,
+    long OriginalGeneration
 );
 internal sealed record TimelineHeadDto(
     string TimelineId,
@@ -712,14 +915,26 @@ internal sealed record ControlBodyDto(
     string? ActiveRecipeDigest,
     CanonicalEntryDto[] Families,
     CanonicalEntryDto[] Definitions,
-    RecipeEntryDto[] Recipes
+    RecipeEntryDto[] Recipes,
+    ControlOperationReceiptDto[] OperationReceipts
 );
 internal sealed record ControlFileDto(
     int SchemaVersion,
     ControlHeadDto Head,
     CanonicalEntryDto[] Families,
     CanonicalEntryDto[] Definitions,
-    RecipeEntryDto[] Recipes
+    RecipeEntryDto[] Recipes,
+    ControlOperationReceiptDto[] OperationReceipts
+);
+
+internal sealed record ControlOperationReceipt(
+    string OperationKey,
+    long ExecutionSequence,
+    string RuntimeIdentityDigest,
+    string CommandDigest,
+    string ResultIdentity,
+    ControlInstanceId OriginalInstanceId,
+    long OriginalGeneration
 );
 
 internal sealed class ControlStoreException : Exception {

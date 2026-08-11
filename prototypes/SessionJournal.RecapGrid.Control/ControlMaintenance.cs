@@ -351,17 +351,30 @@ public static class RecapGridControlMaintenance {
                                     "The backup belongs to another Ref or Timeline."
                                 );
                             }
-                            next = replacement.WithNewInstance(
-                                checked(current.Head.Generation + 1)
+                            IReadOnlyDictionary<string,
+                                ControlOperationReceipt> mergedReceipts =
+                                MergeOperationReceipts(
+                                    current.OperationReceipts,
+                                    replacement.OperationReceipts
+                                );
+                            next = replacement.WithGenerationAndReceipts(
+                                ControlInstanceId.Generate(),
+                                checked(current.Head.Generation + 1),
+                                mergedReceipts
                             );
                         }
                         else {
-                            next = ControlState.CreateEmpty(
+                            ControlState empty = ControlState.CreateEmpty(
                                 refId,
                                 scope.Paths.TimelineId,
                                 generation: checked(
                                     current.Head.Generation + 1
                                 )
+                            );
+                            next = empty.WithGenerationAndReceipts(
+                                empty.Head.InstanceId,
+                                empty.Head.Generation,
+                                current.OperationReceipts
                             );
                         }
                         try {
@@ -407,6 +420,39 @@ public static class RecapGridControlMaintenance {
                     }
                 }
         }
+    }
+
+    private static IReadOnlyDictionary<string, ControlOperationReceipt>
+        MergeOperationReceipts(
+        IReadOnlyDictionary<string, ControlOperationReceipt> current,
+        IReadOnlyDictionary<string, ControlOperationReceipt> replacement
+    ) {
+        var merged = new SortedDictionary<string, ControlOperationReceipt>(
+            StringComparer.Ordinal
+        );
+        foreach ((string key, ControlOperationReceipt receipt) in current) {
+            merged.Add(key, receipt);
+        }
+        foreach ((string key, ControlOperationReceipt receipt)
+                 in replacement) {
+            if (merged.TryGetValue(key, out ControlOperationReceipt? found)) {
+                if (found != receipt) {
+                    throw new ControlStoreException(
+                        "ControlOperationReceiptConflict",
+                        "Current and backup Control states contain conflicting operation receipts."
+                    );
+                }
+                continue;
+            }
+            if (merged.Count
+                >= ControlStorageLimits.MaximumOperationReceiptCount) {
+                throw new ControlLimitException(
+                    "ControlOperationReceiptCount"
+                );
+            }
+            merged.Add(key, receipt);
+        }
+        return merged;
     }
 
     private static AdminScopeResult OpenScope(

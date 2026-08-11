@@ -372,7 +372,12 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
                 ),
             NthPrevious: 0
         ),
-        SessionExecutionPhase.Idle,
+        pendingObservation is null
+            ? SessionExecutionPhase.AwaitingAgentAction
+            : SessionExecutionPhase.Idle,
+        pendingObservation is null
+            ? SessionContextLifecycleTrigger.ObservationAccepted
+            : SessionContextLifecycleTrigger.PreObservation,
         pendingObservation
     );
 

@@ -1,6 +1,6 @@
 # DerivedRecap Grid Rewrite 总施工计划
 
-状态：Implementation program active；WP-00至WP-07B complete，WP-07C Ready；current production尚未切换
+状态：Implementation program active；WP-00至WP-07C complete，WP-08 Ready / Planned；current production尚未切换
 
 目标设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)
 
@@ -79,9 +79,9 @@ WP-07A CLI/operator vertical candidate [complete]
   |
 WP-07B Galatea/online vertical candidate [complete]
   |
-WP-07C Agent control + tool continuation candidate [ready]
+WP-07C Agent control + tool continuation candidate [complete]
   |
-WP-08 Atomic production cutover + legacy deletion [blocked on WP-07C GO]
+WP-08 Atomic production cutover + legacy deletion [ready / planned]
 ```
 
 WP-02已完成formal contracts、单一canonical Control carrier、public factory/Reader、maintenance、crash/settlement与
@@ -111,7 +111,14 @@ solution build 0 warning / 0 error、docs 15/0、diff clean，两路independent 
 Galatea/CLI disposable online vertical；Galatea、`run-online-turn`与旧`recap`production路径仍未切换。
 WP-07B final evidence为Hosting 19/19、Online 21/21、Galatea actual candidate 7/7、CLI candidate 10/10、raw audit
 19/19、两个public-surface suites 3/3、Walking 22/22、solution build 0 warning / 0 error、包漏洞扫描零命中、docs 15/0与
-diff clean；两路independent closure均GO（P0=0，P1=0）。WP-07C现为Ready。
+diff clean；两路independent closure均GO（P0=0，P1=0）。WP-07C现已complete。
+WP-07C已交付Control V2 terminal receipts、strict AgentControl/MethodToolWrapper、显式built-in provision、
+ToolResult/ToolContinuation frozen binding，以及真实CLI Host内的definition/overlay precondition -> Runtime build -> AgentControl
+ToolCall -> zero-call promotion -> receipt/ToolResult -> next-completion纵向。当前串行
+focused证据为Control 45/45、AgentControl 20/20、AgentControl public 1/1、Completion 482/482、SessionJournal targeted
+7/7、Online 22/22、Hosting 19/19、CLI candidate 12/12、Galatea candidate + stop/lifecycle targeted 23/23、Online/Hosting public
+3/3与Walking 23/23；solution build 0 warning / 0 error、vulnerable package scan零命中、docs 15/0、diff clean，
+两路independent closure均GO（P0=0，P1=0）。WP-08现为Ready / Planned。
 这些旁路owner不改变current production；production cutover仍只属于WP-08。
 
 工作包文档：

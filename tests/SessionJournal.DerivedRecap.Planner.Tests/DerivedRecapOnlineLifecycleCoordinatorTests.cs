@@ -78,7 +78,9 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                     engine.ReadView,
                     new SessionContextLifecycleRequest(
                         new SessionContextSelectionRequest(head, 0),
-                        SessionExecutionPhase.Idle
+                        SessionExecutionPhase.Idle,
+                        SessionContextLifecycleTrigger.PreObservation,
+                        "pending"
                     ),
                     CancellationToken.None
                 );
@@ -102,7 +104,9 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                     engine.ReadView,
                     new SessionContextLifecycleRequest(
                         new SessionContextSelectionRequest(head, 0),
-                        SessionExecutionPhase.Idle
+                        SessionExecutionPhase.Idle,
+                        SessionContextLifecycleTrigger.PreObservation,
+                        "pending"
                     ),
                     CancellationToken.None
                 )

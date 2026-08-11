@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-08：Atomic Production Cutover 与 Legacy Deletion
 
-状态：Blocked / Planned；WP-07B 已 GO，等待 WP-07C GO 后才可开始
+状态：Ready / Planned；WP-07B与WP-07C均已取得两路independent GO；尚未开始production cutover
 
 只需加载：目标设计、总计划、WP-07B handoff、WP-07C handoff、本文、current architecture map与migration ledger。
 
@@ -20,8 +20,8 @@ migration、feature flag或compatibility layer。
 - target/current config与operator actions已审阅；
 - disposable vertical candidate通过；
 - WP-07A Hosting strict bounded route/connections、lazy bounded evidence与Runtime-before-registry drain合同已取得independent GO；
-- WP-07B必须证明两个production Hosts均复用该owner，且没有旧unbounded config/fallback旁路；WP-07C必须补齐Agent-facing
-  Control、built-in provision与ToolResult/ToolContinuation；
+- WP-07B已证明两个candidate Hosts复用同一owner且没有旧unbounded config/fallback旁路；WP-07C已补齐Agent-facing
+  Control、built-in provision与ToolResult/ToolContinuation，并取得两路independent GO；
 - exact cutover HEAD重新盘点，无并行uncommitted writer。
 
 WP-04 Manager旁路实现已complete，但旧Planner/Runtime/Maintainers、Galatea与CLI callers均未切换。它必须与旧
@@ -68,8 +68,8 @@ production并存至WP-07 vertical Go；WP-08才在同一atomic cut中切composit
 
 | Host | Current production caller | 已验证candidate caller | WP-08原子切换 | 切换后删除 |
 |---|---|---|---|---|
-| CLI | `SessionJournal.Cli/Program.cs`顶层`run-online-turn` -> `OnlineTurnCommand`；旧`recap`子树仍由old DerivedRecap commands拥有 | `recap-grid candidate run-online-turn` -> `RecapGridCandidateCommands` / `RecapGridCandidateOnlineTurn` -> `RecapGridCompletionHost` + `RecapGridOnlineFactory` | 把顶层production caller直接接到经WP-07B/07C闭合的Hosting/Online/agent-control组合；stable store-only `recap-grid inspect|export|verify|reset`保持原名 | `OnlineTurnCommand`的old DerivedRecap composition、旧`recap` owners，以及仅用于旁路的`candidate`命令层；不得删除正式Hosting/Online owners |
-| Galatea | public `GalateaHostService` constructor与`Program` DI构造old `GalateaRecapComposition` | internal/test-only constructor -> `GalateaRecapGridCandidateComposition` -> per-turn Online + host-wide `RecapGridCompletionHost` | public constructor/`Program` DI一次切到经WP-07B/07C闭合的正式composition，Frozen Prepared/Started仍先走outer exact recovery | internal candidate constructor/composition seam与old `GalateaRecapComposition`；不得保留env/config feature switch或双registry |
+| CLI | `SessionJournal.Cli/Program.cs`顶层`run-online-turn` -> `OnlineTurnCommand`；旧`recap`子树仍由old DerivedRecap commands拥有 | `recap-grid candidate run-online-turn` -> `RecapGridCandidateCommands` / `RecapGridCandidateOnlineTurn` -> `RecapGridCompletionHost` + `RecapGridOnlineFactory` + lazy exact AgentControl binding | 把顶层production caller直接接到经WP-07B/07C闭合的Hosting/Online/agent-control组合；stable store-only `recap-grid inspect|export|verify|reset`保持原名 | `OnlineTurnCommand`的old DerivedRecap composition、旧`recap` owners，以及仅用于旁路的`candidate`命令层；不得删除正式Hosting/Online/AgentControl owners |
+| Galatea | public `GalateaHostService` constructor与`Program` DI构造old `GalateaRecapComposition` | internal/test-only constructor -> `GalateaRecapGridCandidateComposition` -> per-turn Online + host-wide `RecapGridCompletionHost` + lazy exact AgentControl binding | public constructor/`Program` DI一次切到经WP-07B/07C闭合的正式composition；ToolContinuation先exact bind frozen tool profile，再current completion，最后Online；Prepared/Started仍先走outer exact recovery | internal candidate constructor/composition seam与old `GalateaRecapComposition`；不得删除正式AgentControl product，也不得保留env/config feature switch或双registry |
 
 删除顺序必须是“production caller已切且同一behavior矩阵green”之后再删candidate shim/legacy owner，不能先删测试旁路再猜测正式composition。
 

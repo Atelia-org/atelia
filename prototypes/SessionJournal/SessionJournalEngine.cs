@@ -3603,7 +3603,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
 
         FreshBootstrapBoundary expectedBoundary =
             pendingObservation is null
-                ? FreshBootstrapBoundary.ActiveFirstObservation
+                ? FreshBootstrapBoundary.ActiveCompletionBoundary
                 : FreshBootstrapBoundary.PreAppend;
         EmptyLineageTopology topology =
             ClassifyEmptyLineageTopology(
@@ -3652,14 +3652,14 @@ public sealed partial class SessionJournalEngine : IDisposable {
         CancellationToken cancellationToken
     ) {
         if (expectedBoundary
-                == FreshBootstrapBoundary.ActiveFirstObservation
-            && !IsExactActiveObservationBoundary(
+                == FreshBootstrapBoundary.ActiveCompletionBoundary
+            && !IsExactActiveCompletionBoundary(
                 selectedHead,
                 recovery
             )) {
             throw FreshBootstrapUnavailable(
-                "Recovery bootstrap requires the exact active first "
-                + "ObservationAccepted boundary."
+                "Recovery bootstrap requires the exact active "
+                + "ObservationAccepted or ToolResultObserved boundary."
             );
         }
         EmptyLineageTopology topology =
@@ -3702,22 +3702,19 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 }
                 cursor = selectedHead;
                 break;
-            case FreshBootstrapBoundary.ActiveFirstObservation:
+            case FreshBootstrapBoundary.ActiveCompletionBoundary:
                 if (recovery.State.Phase
-                        != SessionExecutionPhase.AwaitingAgentAction
-                    || recovery.Boundary.SourcePrepared is not null) {
+                        != SessionExecutionPhase.AwaitingAgentAction) {
                     throw FreshBootstrapUnavailable(
-                        "Recovery bootstrap requires an unprepared "
-                        + "completion boundary."
+                        "Recovery bootstrap requires an active "
+                        + "AwaitingAgentAction boundary."
                     );
                 }
-                if (!IsExactActiveObservationBoundary(
-                    selectedHead,
-                    recovery
-                )) {
-                    // A non-observation completion boundary can only be mature.
-                    // Starting at its head makes the first checked non-setup
-                    // event establish that fact.
+                if (recovery.State.HeadKind
+                        == SessionEventKind.ToolResultObserved) {
+                    // ToolResultObserved is necessarily mature raw history.
+                    // Starting at its head lets the checked walk establish that
+                    // fact while preserving the result in the raw tail.
                     cursor = selectedHead;
                     break;
                 }
@@ -3806,15 +3803,19 @@ public sealed partial class SessionJournalEngine : IDisposable {
         );
     }
 
-    private static bool IsExactActiveObservationBoundary(
+    private static bool IsExactActiveCompletionBoundary(
         EventAddress selectedHead,
         SessionExecutionRecovery recovery
     ) => recovery.State.Phase
             == SessionExecutionPhase.AwaitingAgentAction
-        && recovery.State.HeadKind
-            == SessionEventKind.ObservationAccepted
-        && recovery.Boundary.SourcePrepared is null
-        && recovery.Boundary.SourceObservation == selectedHead;
+        && recovery.State.HeadKind switch {
+            SessionEventKind.ObservationAccepted
+                => recovery.Boundary.SourcePrepared is null
+                    && recovery.Boundary.SourceObservation == selectedHead,
+            SessionEventKind.ToolResultObserved
+                => recovery.Head == selectedHead,
+            _ => false,
+        };
 
     private static SessionJournalNotReadyException
         FreshBootstrapUnavailable(string detail) => new(
@@ -3854,6 +3855,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
                         )
                     ),
                     recovery.State.Phase,
+                    DeriveContextLifecycleTrigger(
+                        recovery,
+                        pendingObservation
+                    ),
                     pendingObservation
                 ),
                 cancellationToken
@@ -3882,6 +3887,25 @@ public sealed partial class SessionJournalEngine : IDisposable {
                     $"Unknown context lifecycle status '{result.Status}'."
                 );
         }
+    }
+
+    private static SessionContextLifecycleTrigger
+        DeriveContextLifecycleTrigger(
+        SessionExecutionRecovery recovery,
+        string? pendingObservation
+    ) {
+        if (pendingObservation is not null) {
+            return SessionContextLifecycleTrigger.PreObservation;
+        }
+        return recovery.State.HeadKind switch {
+            SessionEventKind.ObservationAccepted
+                => SessionContextLifecycleTrigger.ObservationAccepted,
+            SessionEventKind.ToolResultObserved
+                => SessionContextLifecycleTrigger.ToolResultObserved,
+            _ => throw new InvalidDataException(
+                $"Online context lifecycle cannot derive a trigger from '{recovery.State.HeadKind}'."
+            ),
+        };
     }
 
     private async ValueTask
@@ -4054,7 +4078,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
             _ = ValidateEmptyLineageRawHistoryTopology(
                 completionBoundary,
                 recovery,
-                FreshBootstrapBoundary.ActiveFirstObservation,
+                FreshBootstrapBoundary.ActiveCompletionBoundary,
                 allowMatureRawHistory,
                 cancellationToken
             );
@@ -4860,7 +4884,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
 
     private enum FreshBootstrapBoundary {
         PreAppend,
-        ActiveFirstObservation,
+        ActiveCompletionBoundary,
     }
 
     private enum EmptyLineageTopologyKind {

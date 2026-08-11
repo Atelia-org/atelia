@@ -132,7 +132,9 @@ public sealed partial class GetterVerticalTests : IDisposable {
                 noActive.Journal.ReadView,
                 new SessionContextLifecycleRequest(
                     new SessionContextSelectionRequest(mature, 0),
-                    SessionExecutionPhase.Idle
+                    SessionExecutionPhase.Idle,
+                    SessionContextLifecycleTrigger.PreObservation,
+                    "pending"
                 ),
                 CancellationToken.None
             )).Status

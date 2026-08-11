@@ -1435,10 +1435,11 @@ public sealed partial class ControlVerticalTests : IDisposable {
             source.Head.ActiveRecipeDigest,
             source.Families,
             source.Definitions,
-            source.Recipes
+            source.Recipes,
+            source.OperationReceipts
         );
         string digest = Hash(
-            "atelia.recap-grid.control-state.v1",
+            "atelia.recap-grid.control-state.v2",
             JsonSerializer.SerializeToUtf8Bytes(body, ControlJson.Options)
         );
         return source with {

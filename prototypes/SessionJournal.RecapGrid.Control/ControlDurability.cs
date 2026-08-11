@@ -204,7 +204,8 @@ internal static class ControlDurableFiles {
             FlushDirectory(paths.DirectoryPath);
         }
         catch (Exception exception) when (published
-            && exception is not ControlStatePublishIndeterminateException) {
+            && exception is not ControlStatePublishIndeterminateException
+            && !ControlError.IsFatal(exception)) {
             throw new ControlStatePublishIndeterminateException(exception);
         }
         finally {

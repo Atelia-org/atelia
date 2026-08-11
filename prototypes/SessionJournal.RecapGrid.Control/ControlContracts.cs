@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 
@@ -129,6 +130,194 @@ public enum RecapGridControlActivationPurpose {
     Promotion
 }
 
+/// <summary>
+/// Stable authority for one recoverable Control mutation. The raw operation
+/// id is validated and reduced to a bounded domain-separated digest before it
+/// can enter Control persistence.
+/// </summary>
+public sealed class RecapGridControlOperation {
+    private const int MaximumOperationIdUtf8Bytes = 512;
+
+    private RecapGridControlOperation(
+        string operationKey,
+        long executionSequence,
+        string runtimeIdentityDigest
+    ) {
+        OperationKey = operationKey;
+        ExecutionSequence = executionSequence;
+        RuntimeIdentityDigest = runtimeIdentityDigest;
+    }
+
+    public string OperationKey { get; }
+    public long ExecutionSequence { get; }
+    public string RuntimeIdentityDigest { get; }
+
+    public static RecapGridControlOperation Create(
+        string operationId,
+        long executionSequence,
+        string runtimeIdentityDigest
+    ) {
+        ArgumentNullException.ThrowIfNull(operationId);
+        if (executionSequence <= 0) {
+            throw new ArgumentOutOfRangeException(nameof(executionSequence));
+        }
+        if (string.IsNullOrWhiteSpace(operationId)
+            || !string.Equals(operationId, operationId.Trim(),
+                StringComparison.Ordinal)
+            || operationId.Any(char.IsControl)) {
+            throw new ArgumentException(
+                "Operation id must be non-empty canonical text.",
+                nameof(operationId)
+            );
+        }
+        int operationBytes;
+        try {
+            operationBytes = new UTF8Encoding(false, true)
+                .GetByteCount(operationId);
+        }
+        catch (EncoderFallbackException exception) {
+            throw new ArgumentException(
+                "Operation id must be strict UTF-8 text.",
+                nameof(operationId),
+                exception
+            );
+        }
+        if (operationBytes > MaximumOperationIdUtf8Bytes) {
+            throw new ArgumentOutOfRangeException(nameof(operationId));
+        }
+        RequireSha256(runtimeIdentityDigest, nameof(runtimeIdentityDigest));
+        return new RecapGridControlOperation(
+            DomainHash(
+                "atelia.recap-grid.control-operation-key.v1",
+                Encoding.UTF8.GetBytes(operationId)
+            ),
+            executionSequence,
+            runtimeIdentityDigest
+        );
+    }
+
+    internal static void RequireSha256(string value, string parameterName) {
+        ArgumentNullException.ThrowIfNull(value, parameterName);
+        if (value.Length != 64
+            || value.Any(static character =>
+                character is not (>= '0' and <= '9')
+                    and not (>= 'a' and <= 'f'))) {
+            throw new ArgumentException(
+                "The value must be a lowercase SHA-256 digest.",
+                parameterName
+            );
+        }
+    }
+
+    internal static string DomainHash(
+        string domain,
+        ReadOnlySpan<byte> value
+    ) {
+        using IncrementalHash hash = IncrementalHash.CreateHash(
+            HashAlgorithmName.SHA256
+        );
+        Append(Encoding.UTF8.GetBytes(domain));
+        Append(value);
+        return Convert.ToHexStringLower(hash.GetHashAndReset());
+
+        void Append(ReadOnlySpan<byte> bytes) {
+            Span<byte> length = stackalloc byte[sizeof(int)];
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(
+                length,
+                bytes.Length
+            );
+            hash.AppendData(length);
+            hash.AppendData(bytes);
+        }
+    }
+}
+
+public sealed record RecapGridControlRecipeRegistration(
+    GridBuildRecipe Recipe,
+    HistoryTimelineAncestorWitness? BootstrapWitness
+);
+
+/// <summary>
+/// One atomic registration command. Collections are defensively materialized;
+/// ordering is part of the canonical command and recipes must be base-first.
+/// </summary>
+public sealed class RecapGridControlRegistrationBundle {
+    public RecapGridControlRegistrationBundle(
+        IEnumerable<FamilyDefinition> families,
+        IEnumerable<MaintainerDefinitionRevision> definitions,
+        IEnumerable<RecapGridControlRecipeRegistration> recipes
+    ) {
+        Families = Materialize(families,
+            ControlStorageLimits.MaximumFamilyCount, nameof(families));
+        Definitions = Materialize(definitions,
+            ControlStorageLimits.MaximumDefinitionCount, nameof(definitions));
+        Recipes = Materialize(recipes,
+            ControlStorageLimits.MaximumRecipeCount, nameof(recipes));
+        if (Families.Count + Definitions.Count + Recipes.Count == 0) {
+            throw new ArgumentException(
+                "A registration bundle must contain at least one value."
+            );
+        }
+        if (Families.Any(static value => value is null)
+            || Definitions.Any(static value => value is null)
+            || Recipes.Any(static value => value is null
+                || value.Recipe is null)) {
+            throw new ArgumentException(
+                "Registration bundle values must not be null."
+            );
+        }
+        RequireUnique(Families.Select(static value => value.Digest.Value));
+        RequireUnique(Definitions.Select(static value => value.Digest.Value));
+        RequireUnique(Recipes.Select(static value => value.Recipe.Digest.Value));
+    }
+
+    public IReadOnlyList<FamilyDefinition> Families { get; }
+    public IReadOnlyList<MaintainerDefinitionRevision> Definitions { get; }
+    public IReadOnlyList<RecapGridControlRecipeRegistration> Recipes { get; }
+
+    /// <summary>
+    /// Control-owned digest of the exact canonical registration command.
+    /// Consumers may bind this value into a capability identity, but must not
+    /// reproduce the registration command codec or hashing domain.
+    /// </summary>
+    public string CanonicalCommandDigest =>
+        ControlOperationCanonicalizer.RegistrationDigest(this);
+
+    /// <summary>
+    /// Exact Control-owned canonical registration command bytes. The returned
+    /// array is a fresh defensive value so capability owners can bind the
+    /// command without reproducing this codec.
+    /// </summary>
+    public byte[] ToCanonicalCommandBytes() =>
+        ControlOperationCanonicalizer.EncodeRegistration(this);
+
+    private static IReadOnlyList<T> Materialize<T>(
+        IEnumerable<T> source,
+        int maximumCount,
+        string parameterName
+    ) {
+        ArgumentNullException.ThrowIfNull(source, parameterName);
+        using IEnumerator<T> enumerator = source.GetEnumerator();
+        var values = new List<T>(Math.Min(maximumCount, 16));
+        while (values.Count <= maximumCount && enumerator.MoveNext()) {
+            values.Add(enumerator.Current);
+        }
+        if (values.Count > maximumCount) {
+            throw new ArgumentOutOfRangeException(parameterName);
+        }
+        return Array.AsReadOnly(values.ToArray());
+    }
+
+    private static void RequireUnique(IEnumerable<string> values) {
+        if (values.Distinct(StringComparer.Ordinal).Count()
+            != values.Count()) {
+            throw new ArgumentException(
+                "Registration bundle identities must be unique."
+            );
+        }
+    }
+}
+
 public sealed class RecapGridControlAdmission {
     private readonly HashSet<FamilyDefinitionDigest> _familyAllowlist;
     private readonly HashSet<string> _capabilityAllowlist;
@@ -220,6 +409,91 @@ public sealed class RecapGridControlAdmission {
     public int MaximumBootstrapRows { get; }
     public int MaximumProjectedCalls { get; }
 
+    public byte[] ToCanonicalBytes() => JsonSerializer.SerializeToUtf8Bytes(
+        new ControlAdmissionDto(
+            1,
+            (int)Permissions,
+            _familyAllowlist.Select(static value => value.Value)
+                .Order(StringComparer.Ordinal)
+                .ToArray(),
+            _capabilityAllowlist.Order(StringComparer.Ordinal).ToArray(),
+            _targetCarrierAllowlist.Select(static value => (int)value)
+                .Order()
+                .ToArray(),
+            _logicalColumnPrefixes.Order(StringComparer.Ordinal).ToArray(),
+            MaximumBootstrapRows,
+            MaximumProjectedCalls
+        ),
+        ControlJson.Options
+    );
+
+    public static RecapGridControlAdmission DecodeCanonical(
+        ReadOnlySpan<byte> bytes
+    ) {
+        if (bytes.Length is < 2 or > 64 * 1024) {
+            throw new InvalidDataException(
+                "Control admission canonical bytes exceed the V1 bound."
+            );
+        }
+        ControlAdmissionDto? value;
+        try {
+            value = JsonSerializer.Deserialize<ControlAdmissionDto>(
+                bytes,
+                ControlJson.Options
+            );
+        }
+        catch (JsonException exception) {
+            throw new InvalidDataException(
+                "Control admission is not strict JSON.",
+                exception
+            );
+        }
+        if (value is null
+            || value.SchemaVersion != 1
+            || !bytes.SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(
+                value,
+                ControlJson.Options
+            ))) {
+            throw new InvalidDataException(
+                "Control admission is not exact canonical V1 bytes."
+            );
+        }
+        if (value.FamilyDigests is null
+            || value.CapabilityFingerprints is null
+            || value.TargetCarriers is null
+            || value.LogicalColumnPrefixes is null) {
+            throw new InvalidDataException(
+                "Control admission sets must not be null."
+            );
+        }
+        RequireSortedUnique(value.FamilyDigests);
+        RequireSortedUnique(value.CapabilityFingerprints);
+        RequireSortedUnique(value.LogicalColumnPrefixes);
+        RequireSortedUnique(value.TargetCarriers);
+        return new RecapGridControlAdmission(
+            (RecapGridControlPermission)value.Permissions,
+            value.FamilyDigests.Select(static digest =>
+                new FamilyDefinitionDigest(digest)),
+            value.CapabilityFingerprints,
+            value.TargetCarriers.Select(static carrier =>
+                (ContextHeaderCarrier)carrier),
+            value.LogicalColumnPrefixes,
+            value.MaximumBootstrapRows,
+            value.MaximumProjectedCalls
+        );
+
+        static void RequireSortedUnique<T>(IReadOnlyList<T> values)
+            where T : IComparable<T> {
+            for (int index = 1; index < values.Count; index++) {
+                if (values[index - 1].CompareTo(values[index]) >= 0) {
+                    throw new InvalidDataException(
+                        "Control admission sets must be strictly sorted."
+                    );
+                }
+            }
+        }
+    }
+
     internal bool Allows(RecapGridControlPermission permission)
         => (Permissions & permission) == permission;
 
@@ -270,6 +544,17 @@ public sealed class RecapGridControlAdmission {
         }
     }
 }
+
+internal sealed record ControlAdmissionDto(
+    int SchemaVersion,
+    int Permissions,
+    string[] FamilyDigests,
+    string[] CapabilityFingerprints,
+    int[] TargetCarriers,
+    string[] LogicalColumnPrefixes,
+    int MaximumBootstrapRows,
+    int MaximumProjectedCalls
+);
 
 public sealed class RegisteredRecipeBootstrap {
     internal RegisteredRecipeBootstrap(
@@ -443,6 +728,50 @@ public abstract record RecapGridControlActivateResult {
     public sealed record Disposed : RecapGridControlActivateResult;
     public sealed record Invalid(string Code, string Detail)
         : RecapGridControlActivateResult;
+}
+
+public abstract record RecapGridControlOperationResult {
+    private RecapGridControlOperationResult() { }
+
+    public sealed record Applied(
+        ControlHeadRef Head,
+        string ResultIdentity
+    ) : RecapGridControlOperationResult;
+
+    public sealed record Replayed(
+        ControlHeadRef CurrentHead,
+        ControlInstanceId OriginalInstanceId,
+        long OriginalGeneration,
+        string ResultIdentity,
+        bool HeadAdvancedSinceApply,
+        bool InstanceReplaced
+    ) : RecapGridControlOperationResult;
+
+    public sealed record Conflict(string OperationKey)
+        : RecapGridControlOperationResult;
+    public sealed record Unauthorized(string Rule)
+        : RecapGridControlOperationResult;
+    public sealed record RecipeAbsent(GridBuildRecipeDigest RecipeDigest)
+        : RecapGridControlOperationResult;
+    public sealed record StaleControlHead(ControlHeadRef Actual)
+        : RecapGridControlOperationResult;
+    public sealed record StaleTimelineHead(TimelineHeadRef Actual)
+        : RecapGridControlOperationResult;
+    public sealed record NotOnSelectedPath(HistoryRowId RowId)
+        : RecapGridControlOperationResult;
+    public sealed record Busy : RecapGridControlOperationResult;
+    public sealed record TimelineUnsupportedSchema(int SchemaVersion)
+        : RecapGridControlOperationResult;
+    public sealed record Disposed : RecapGridControlOperationResult;
+    public sealed record LimitExceeded(string Limit)
+        : RecapGridControlOperationResult;
+    public sealed record CommitIndeterminate(
+        string OperationKey,
+        ControlHeadRef Intended,
+        ControlHeadRef? Observed
+    ) : RecapGridControlOperationResult;
+    public sealed record Invalid(string Code, string Detail)
+        : RecapGridControlOperationResult;
 }
 
 public sealed class RecapGridControlHandle : IDisposable {

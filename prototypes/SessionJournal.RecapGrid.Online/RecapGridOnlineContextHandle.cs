@@ -149,7 +149,8 @@ public sealed class RecapGridOnlineContextHandle :
             // following AwaitingAgentAction pass must leave that Observation
             // in the SessionJournal-owned raw tail; sealing it would create
             // an empty prepared raw range and lose the request boundary.
-            if (request.Phase == SessionExecutionPhase.Idle) {
+            if (request.Trigger
+                    == SessionContextLifecycleTrigger.PreObservation) {
                 TimelineSyncResult synchronized = SynchronizeTimeline(
                     cancellationToken
                 );
@@ -179,12 +180,16 @@ public sealed class RecapGridOnlineContextHandle :
 
     private static bool IsSupportedPhase(
         SessionContextLifecycleRequest request
-    ) => request.Phase switch {
-        SessionExecutionPhase.Idle
-            => request.PendingObservation is not null,
-        SessionExecutionPhase.AwaitingAgentAction
-            => request.PendingObservation is null,
-        _ => false
+    ) => request.Trigger switch {
+        SessionContextLifecycleTrigger.PreObservation
+            => request.Phase == SessionExecutionPhase.Idle
+                && request.PendingObservation is not null,
+        SessionContextLifecycleTrigger.ObservationAccepted
+            or SessionContextLifecycleTrigger.ToolResultObserved
+            => request.Phase
+                    == SessionExecutionPhase.AwaitingAgentAction
+                && request.PendingObservation is null,
+        _ => false,
     };
 
     private TimelineSyncResult SynchronizeTimeline(

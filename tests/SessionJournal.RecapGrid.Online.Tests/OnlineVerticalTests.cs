@@ -148,6 +148,7 @@ public sealed class OnlineVerticalTests : IDisposable {
             new SessionContextLifecycleRequest(
                 new SessionContextSelectionRequest(boundary, 0),
                 SessionExecutionPhase.Idle,
+                SessionContextLifecycleTrigger.PreObservation,
                 "pending"
             )
         );
@@ -190,6 +191,46 @@ public sealed class OnlineVerticalTests : IDisposable {
         Assert.Equal(0, executor.CallCount);
         Assert.False(File.Exists(Path.Combine(
             path, "derived", "recap-grid", "v1", "grid.sqlite")));
+    }
+
+    [Fact]
+    public async Task ToolResultReadinessLeavesCurrentRawTailUnsealed() {
+        string path = NewPath();
+        using SessionJournalEngine writer = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model", "system", "online")
+        );
+        _ = writer.AppendObservation("observation");
+        _ = writer.AppendImportedAgentAction(
+            new ActionMessage([new ActionBlock.Text("answer")]),
+            new CompletionDescriptor("import", "v1", "model")
+        );
+        ProvisionTimelineAndControl(writer);
+        TimelineHeadRef before = ReadTimelineHead(writer);
+        Assert.Null(before.HeadRowId);
+        var executor = new RejectingExecutor();
+        await using RecapGridOnlineContextHandle online = Assert.IsType<
+            RecapGridOnlineOpenResult.Opened
+        >(RecapGridOnlineFactory.Open(
+            writer,
+            executor,
+            RecapGridOnlineLimits.Production,
+            _estimator
+        )).Handle;
+        EventAddress boundary = writer.ReadCurrentHead()!.Value;
+
+        RecapGridOnlinePassResult result = await online.PreparePassAsync(
+            writer.ReadView,
+            new SessionContextLifecycleRequest(
+                new SessionContextSelectionRequest(boundary, 0),
+                SessionExecutionPhase.AwaitingAgentAction,
+                SessionContextLifecycleTrigger.ToolResultObserved
+            )
+        );
+
+        Assert.IsType<RecapGridOnlinePassResult.RawHistoryAuthorized>(result);
+        Assert.Equal(before, ReadTimelineHead(writer));
+        Assert.Equal(0, executor.CallCount);
     }
 
     [Fact]
@@ -941,14 +982,11 @@ public sealed class OnlineVerticalTests : IDisposable {
         TimelineHeadRef before = ReadTimelineHead(writer);
         EventAddress boundary = writer.ReadCurrentHead()!.Value;
 
-        RecapGridOnlinePassResult invalidPhase = await online.PreparePassAsync(
-            writer.ReadView,
+        Assert.Throws<ArgumentException>(() =>
             new SessionContextLifecycleRequest(
                 new SessionContextSelectionRequest(boundary, 0),
-                SessionExecutionPhase.AwaitingCompletionDispatch)
-        );
-        Assert.Equal("LifecyclePhaseInvalid", Assert.IsType<
-            RecapGridOnlinePassResult.Unavailable>(invalidPhase).Code);
+                SessionExecutionPhase.AwaitingCompletionDispatch,
+                SessionContextLifecycleTrigger.PreObservation));
 
         string otherPath = NewPath();
         using SessionJournalEngine other = SessionJournalEngine.Create(
@@ -960,6 +998,7 @@ public sealed class OnlineVerticalTests : IDisposable {
             new SessionContextLifecycleRequest(
                 new SessionContextSelectionRequest(boundary, 0),
                 SessionExecutionPhase.Idle,
+                SessionContextLifecycleTrigger.PreObservation,
                 "pending")
         );
         Assert.Equal("RawAuthorityOwnerMismatch", Assert.IsType<
@@ -1070,6 +1109,7 @@ public sealed class OnlineVerticalTests : IDisposable {
     ) => new(
         new SessionContextSelectionRequest(boundary, 0),
         SessionExecutionPhase.Idle,
+        SessionContextLifecycleTrigger.PreObservation,
         "pending");
 
     private static (FamilyDefinition, MaintainerDefinitionRevision)

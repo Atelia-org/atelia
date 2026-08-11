@@ -639,6 +639,451 @@ public sealed class RecapGridControlCoordinator {
         }
     }
 
+    /// <summary>
+    /// Atomically registers an exact bundle and its terminal durable operation
+    /// receipt. This is the only Control entry point used by the Agent-facing
+    /// recoverable tool.
+    /// </summary>
+    public RecapGridControlOperationResult ApplyRegistrationBundle(
+        ControlHeadRef expectedWholeControlHead,
+        TimelineHeadRef expectedWholeTimelineHead,
+        RecapGridControlOperation durableOperation,
+        RecapGridControlRegistrationBundle bundle
+    ) {
+        ArgumentNullException.ThrowIfNull(expectedWholeControlHead);
+        ArgumentNullException.ThrowIfNull(expectedWholeTimelineHead);
+        ArgumentNullException.ThrowIfNull(durableOperation);
+        ArgumentNullException.ThrowIfNull(bundle);
+        string commandDigest = ControlOperationCanonicalizer
+            .RegistrationDigest(
+                bundle
+            );
+        using ControlLifetime.Operation? lifetimeOperation =
+            _lifetime.TryEnter();
+        if (lifetimeOperation is null) {
+            return new RecapGridControlOperationResult.Disposed();
+        }
+        try {
+            using FileStream writer = ControlDurableFiles.AcquireWriter(
+                _paths,
+                create: false
+            );
+            ControlState state = ReadCurrent();
+            RecapGridControlOperationResult? replay = TryReplay(
+                state,
+                durableOperation,
+                commandDigest
+            );
+            if (replay is not null) {
+                return replay;
+            }
+            if (state.Head != expectedWholeControlHead) {
+                return new RecapGridControlOperationResult.StaleControlHead(
+                    state.Head
+                );
+            }
+            RecapGridControlOperationResult? permission =
+                ValidateBundlePermissions(bundle);
+            if (permission is not null) {
+                return permission;
+            }
+            RecapGridControlOperationResult? timeline = MapOperation(
+                ValidateTimelineHead(expectedWholeTimelineHead)
+            );
+            if (timeline is not null) {
+                return timeline;
+            }
+
+            ControlState working = state;
+            foreach (FamilyDefinition family in bundle.Families) {
+                RecapGridControlPutResult? validation = ValidateFamily(
+                    working,
+                    family
+                );
+                if (validation is RecapGridControlPutResult.AlreadyPresent) {
+                    continue;
+                }
+                if (validation is not null) {
+                    return MapOperation(validation)!;
+                }
+                working = working.WithFamily(family);
+            }
+            foreach (MaintainerDefinitionRevision definition
+                     in bundle.Definitions) {
+                RecapGridControlPutResult? validation = ValidateDefinition(
+                    working,
+                    definition
+                );
+                if (validation is RecapGridControlPutResult.AlreadyPresent) {
+                    continue;
+                }
+                if (validation is not null) {
+                    return MapOperation(validation)!;
+                }
+                working = working.WithDefinition(definition);
+            }
+            foreach (RecapGridControlRecipeRegistration registration
+                     in bundle.Recipes) {
+                GridBuildRecipe recipe = registration.Recipe;
+                if (recipe.TimelineId != _paths.TimelineId) {
+                    return new RecapGridControlOperationResult.Unauthorized(
+                        "RecipeTimelineScope"
+                    );
+                }
+                RecapGridControlPutResult? validation = ValidateRecipe(
+                    working,
+                    expectedWholeTimelineHead,
+                    recipe,
+                    registration.BootstrapWitness
+                );
+                if (validation is not null) {
+                    return MapOperation(validation)!;
+                }
+                if (working.Recipes.TryGetValue(
+                        recipe.Digest.Value,
+                        out RegisteredGridRecipe? existing)) {
+                    if (!existing.Recipe.ToCanonicalBytes().SequenceEqual(
+                            recipe.ToCanonicalBytes())) {
+                        return new RecapGridControlOperationResult.Invalid(
+                            "ControlDigestCollision",
+                            "A recipe digest maps to different canonical bytes."
+                        );
+                    }
+                    continue;
+                }
+                working = working.WithRecipe(new RegisteredGridRecipe(
+                    recipe,
+                    new RegisteredRecipeBootstrap(
+                        expectedWholeTimelineHead,
+                        recipe.BootstrapThroughRowId,
+                        registration.BootstrapWitness?.DescriptorDigest
+                    )
+                ));
+            }
+            return PublishTerminalOperation(
+                state,
+                working,
+                durableOperation,
+                commandDigest,
+                "registration"
+            );
+        }
+        catch (Exception exception) when (!ControlError.IsFatal(exception)) {
+            return ControlError.Operation(exception);
+        }
+    }
+
+    /// <summary>
+    /// Atomically promotes one exact recipe and records the durable tool
+    /// operation. The caller must independently possess a fresh non-durable
+    /// Manager proof; Control still revalidates its own whole heads/admission.
+    /// </summary>
+    public RecapGridControlOperationResult CompareExchangeAgentPromotion(
+        ControlHeadRef expectedWholeControlHead,
+        TimelineHeadRef expectedWholeTimelineHead,
+        GridBuildRecipeDigest recipeDigest,
+        RecapGridControlOperation durableOperation
+    ) {
+        ArgumentNullException.ThrowIfNull(expectedWholeControlHead);
+        ArgumentNullException.ThrowIfNull(expectedWholeTimelineHead);
+        ArgumentNullException.ThrowIfNull(durableOperation);
+        if (recipeDigest.Value is null) {
+            throw new ArgumentException(
+                "Recipe digest must not be default.",
+                nameof(recipeDigest)
+            );
+        }
+        string commandDigest = ControlOperationCanonicalizer.PromotionDigest(
+            recipeDigest
+        );
+        using ControlLifetime.Operation? lifetimeOperation =
+            _lifetime.TryEnter();
+        if (lifetimeOperation is null) {
+            return new RecapGridControlOperationResult.Disposed();
+        }
+        try {
+            using FileStream writer = ControlDurableFiles.AcquireWriter(
+                _paths,
+                create: false
+            );
+            ControlState state = ReadCurrent();
+            RecapGridControlOperationResult? replay = TryReplay(
+                state,
+                durableOperation,
+                commandDigest
+            );
+            if (replay is not null) {
+                return replay;
+            }
+            if (state.Head != expectedWholeControlHead) {
+                return new RecapGridControlOperationResult.StaleControlHead(
+                    state.Head
+                );
+            }
+            if (!_admission.Allows(RecapGridControlPermission.Promote)) {
+                return new RecapGridControlOperationResult.Unauthorized(
+                    "Promote"
+                );
+            }
+            RecapGridControlOperationResult? timeline = MapOperation(
+                ValidateTimelineForActivation(expectedWholeTimelineHead)
+            );
+            if (timeline is not null) {
+                return timeline;
+            }
+            if (!state.Recipes.TryGetValue(
+                    recipeDigest.Value,
+                    out RegisteredGridRecipe? registered)) {
+                return new RecapGridControlOperationResult.RecipeAbsent(
+                    recipeDigest
+                );
+            }
+            if (registered.Recipe.Target.OrderedColumns.Count == 0) {
+                return new RecapGridControlOperationResult.Unauthorized(
+                    "ActiveRecipeTargetEmpty"
+                );
+            }
+            RecapGridControlOperationResult? context = MapOperation(
+                ValidateContextComposable(state, registered.Recipe)
+            );
+            if (context is not null) {
+                return context;
+            }
+            RecapGridControlOperationResult? admission = MapOperation(
+                ValidateStoredRecipeAdmission(
+                    state,
+                    expectedWholeTimelineHead,
+                    registered
+                )
+            );
+            if (admission is not null) {
+                return admission;
+            }
+            ControlState working = state.Head.ActiveRecipeDigest
+                    == recipeDigest
+                ? state
+                : state.WithActive(recipeDigest);
+            return PublishTerminalOperation(
+                state,
+                working,
+                durableOperation,
+                commandDigest,
+                "promotion"
+            );
+        }
+        catch (Exception exception) when (!ControlError.IsFatal(exception)) {
+            return ControlError.Operation(exception);
+        }
+    }
+
+    private RecapGridControlOperationResult PublishTerminalOperation(
+        ControlState original,
+        ControlState semanticState,
+        RecapGridControlOperation operation,
+        string commandDigest,
+        string terminalKind
+    ) {
+        long generation = checked(original.Head.Generation + 1);
+        string resultIdentity = ControlOperationCanonicalizer.ResultIdentity(
+            commandDigest,
+            terminalKind
+        );
+        var receipt = new ControlOperationReceipt(
+            operation.OperationKey,
+            operation.ExecutionSequence,
+            operation.RuntimeIdentityDigest,
+            commandDigest,
+            resultIdentity,
+            original.Head.InstanceId,
+            generation
+        );
+        ControlState next = semanticState.WithTerminalOperation(
+            receipt,
+            generation
+        );
+        try {
+            ControlDurableFiles.WriteState(
+                _paths,
+                next.CanonicalBytes,
+                createNew: false,
+                _hooks
+            );
+            return new RecapGridControlOperationResult.Applied(
+                next.Head,
+                resultIdentity
+            );
+        }
+        catch (ControlStatePublishIndeterminateException exception) {
+            ControlError.ThrowIfFatal(exception);
+            ControlState? observed = TryReadCurrent();
+            if (observed is not null) {
+                RecapGridControlOperationResult? settled = TryReplay(
+                    observed,
+                    operation,
+                    commandDigest
+                );
+                if (settled is RecapGridControlOperationResult.Replayed replay) {
+                    return new RecapGridControlOperationResult.Applied(
+                        replay.CurrentHead,
+                        replay.ResultIdentity
+                    );
+                }
+                if (settled is RecapGridControlOperationResult.Conflict) {
+                    return settled;
+                }
+            }
+            return new RecapGridControlOperationResult.CommitIndeterminate(
+                operation.OperationKey,
+                next.Head,
+                observed?.Head
+            );
+        }
+    }
+
+    private static RecapGridControlOperationResult? TryReplay(
+        ControlState state,
+        RecapGridControlOperation operation,
+        string commandDigest
+    ) {
+        if (!state.TryGetOperationReceipt(
+                operation.OperationKey,
+                out ControlOperationReceipt? receipt)) {
+            return null;
+        }
+        if (receipt is null
+            || receipt.ExecutionSequence != operation.ExecutionSequence
+            || !string.Equals(
+                receipt.RuntimeIdentityDigest,
+                operation.RuntimeIdentityDigest,
+                StringComparison.Ordinal)
+            || !string.Equals(
+                receipt.CommandDigest,
+                commandDigest,
+                StringComparison.Ordinal)) {
+            return new RecapGridControlOperationResult.Conflict(
+                operation.OperationKey
+            );
+        }
+        bool instanceReplaced = state.Head.InstanceId
+            != receipt.OriginalInstanceId;
+        bool headAdvancedSinceApply = state.Head.Generation
+                != receipt.OriginalGeneration
+            || instanceReplaced;
+        return new RecapGridControlOperationResult.Replayed(
+            state.Head,
+            receipt.OriginalInstanceId,
+            receipt.OriginalGeneration,
+            receipt.ResultIdentity,
+            headAdvancedSinceApply,
+            instanceReplaced
+        );
+    }
+
+    private RecapGridControlOperationResult? ValidateBundlePermissions(
+        RecapGridControlRegistrationBundle bundle
+    ) {
+        if (bundle.Families.Count != 0
+            && !_admission.Allows(
+                RecapGridControlPermission.RegisterFamily)) {
+            return new RecapGridControlOperationResult.Unauthorized(
+                "RegisterFamily"
+            );
+        }
+        if (bundle.Definitions.Count != 0
+            && !_admission.Allows(
+                RecapGridControlPermission.RegisterDefinition)) {
+            return new RecapGridControlOperationResult.Unauthorized(
+                "RegisterDefinition"
+            );
+        }
+        if (bundle.Recipes.Count != 0
+            && !_admission.Allows(
+                RecapGridControlPermission.RegisterRecipe)) {
+            return new RecapGridControlOperationResult.Unauthorized(
+                "RegisterRecipe"
+            );
+        }
+        return null;
+    }
+
+    private ControlState? TryReadCurrent() {
+        try {
+            return ReadCurrent();
+        }
+        catch (Exception exception) when (!ControlError.IsFatal(exception)) {
+            return null;
+        }
+    }
+
+    private static RecapGridControlOperationResult? MapOperation(
+        RecapGridControlPutResult? result
+    ) => result switch {
+        null => null,
+        RecapGridControlPutResult.Unauthorized value
+            => new RecapGridControlOperationResult.Unauthorized(value.Rule),
+        RecapGridControlPutResult.StaleControlHead value
+            => new RecapGridControlOperationResult.StaleControlHead(
+                value.Actual),
+        RecapGridControlPutResult.StaleTimelineHead value
+            => new RecapGridControlOperationResult.StaleTimelineHead(
+                value.Actual),
+        RecapGridControlPutResult.NotOnSelectedPath value
+            => new RecapGridControlOperationResult.NotOnSelectedPath(
+                value.RowId),
+        RecapGridControlPutResult.Busy
+            => new RecapGridControlOperationResult.Busy(),
+        RecapGridControlPutResult.TimelineUnsupportedSchema value
+            => new RecapGridControlOperationResult.TimelineUnsupportedSchema(
+                value.SchemaVersion),
+        RecapGridControlPutResult.Disposed
+            => new RecapGridControlOperationResult.Disposed(),
+        RecapGridControlPutResult.LimitExceeded value
+            => new RecapGridControlOperationResult.LimitExceeded(value.Limit),
+        RecapGridControlPutResult.Invalid value
+            => new RecapGridControlOperationResult.Invalid(
+                value.Code, value.Detail),
+        RecapGridControlPutResult.AlreadyPresent => null,
+        _ => new RecapGridControlOperationResult.Invalid(
+            "ControlOperationOutcomeInvalid",
+            "Control returned an unexpected registration outcome."
+        )
+    };
+
+    private static RecapGridControlOperationResult? MapOperation(
+        RecapGridControlActivateResult? result
+    ) => result switch {
+        null => null,
+        RecapGridControlActivateResult.Unauthorized value
+            => new RecapGridControlOperationResult.Unauthorized(value.Rule),
+        RecapGridControlActivateResult.RecipeAbsent value
+            => new RecapGridControlOperationResult.RecipeAbsent(
+                value.RecipeDigest),
+        RecapGridControlActivateResult.StaleControlHead value
+            => new RecapGridControlOperationResult.StaleControlHead(
+                value.Actual),
+        RecapGridControlActivateResult.StaleTimelineHead value
+            => new RecapGridControlOperationResult.StaleTimelineHead(
+                value.Actual),
+        RecapGridControlActivateResult.BootstrapNotSelected value
+            => new RecapGridControlOperationResult.NotOnSelectedPath(
+                value.RowId),
+        RecapGridControlActivateResult.Busy
+            => new RecapGridControlOperationResult.Busy(),
+        RecapGridControlActivateResult.TimelineUnsupportedSchema value
+            => new RecapGridControlOperationResult.TimelineUnsupportedSchema(
+                value.SchemaVersion),
+        RecapGridControlActivateResult.Disposed
+            => new RecapGridControlOperationResult.Disposed(),
+        RecapGridControlActivateResult.Invalid value
+            => new RecapGridControlOperationResult.Invalid(
+                value.Code, value.Detail),
+        RecapGridControlActivateResult.AlreadyActive => null,
+        _ => new RecapGridControlOperationResult.Invalid(
+            "ControlOperationOutcomeInvalid",
+            "Control returned an unexpected promotion outcome."
+        )
+    };
+
     private RecapGridControlPutResult Put(
         ControlHeadRef expectedWholeHead,
         RecapGridControlPermission permission,
@@ -1218,8 +1663,33 @@ public sealed class RecapGridControlCoordinator {
 }
 
 internal static class ControlError {
+    internal static bool IsFatal(Exception exception) {
+        ArgumentNullException.ThrowIfNull(exception);
+        if (exception is OutOfMemoryException
+            or StackOverflowException
+            or AccessViolationException) {
+            return true;
+        }
+        if (exception is AggregateException aggregate) {
+            return aggregate.InnerExceptions.Any(IsFatal);
+        }
+        return exception.InnerException is { } inner && IsFatal(inner);
+    }
+
+    internal static void ThrowIfFatal(Exception exception) {
+        ArgumentNullException.ThrowIfNull(exception);
+        Exception? fatal = FindFatal(exception);
+        if (fatal is not null) {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                .Capture(fatal)
+                .Throw();
+        }
+    }
+
     internal static RecapGridControlCreateResult Create(Exception exception)
-        => exception switch {
+    {
+        ThrowIfFatal(exception);
+        return exception switch {
             ControlBusyException => new RecapGridControlCreateResult.Busy(),
             ControlLimitException limit
                 => new RecapGridControlCreateResult.LimitExceeded(
@@ -1227,25 +1697,52 @@ internal static class ControlError {
                 ),
             _ => InvalidCreate(exception)
         };
+    }
 
     internal static RecapGridControlPutResult Put(Exception exception)
-        => exception switch {
+    {
+        ThrowIfFatal(exception);
+        return exception switch {
             ControlBusyException => new RecapGridControlPutResult.Busy(),
             ControlLimitException limit
                 => new RecapGridControlPutResult.LimitExceeded(limit.Limit),
             _ => InvalidPut(exception)
         };
+    }
 
     internal static RecapGridControlActivateResult Activate(
         Exception exception
-    ) => exception switch {
+    ) {
+        ThrowIfFatal(exception);
+        return exception switch {
         ControlBusyException => new RecapGridControlActivateResult.Busy(),
-        _ => InvalidActivate(exception)
+            _ => InvalidActivate(exception)
+        };
+    }
+
+    internal static RecapGridControlOperationResult Operation(
+        Exception exception
+    ) {
+        ThrowIfFatal(exception);
+        return exception switch {
+        ControlBusyException
+            => new RecapGridControlOperationResult.Busy(),
+        ControlLimitException limit
+            => new RecapGridControlOperationResult.LimitExceeded(limit.Limit),
+        ControlUnsupportedSchemaException schema
+            => new RecapGridControlOperationResult.Invalid(
+                "ControlUnsupportedSchema",
+                $"The Control schema version {schema.Version} is unsupported."
+            ),
+        _ => InvalidOperation(exception)
     };
+    }
 
     internal static (string Code, string Detail) Invalid(
         Exception exception
-    ) => exception switch {
+    ) {
+        ThrowIfFatal(exception);
+        return exception switch {
         ControlStoreException stored => (stored.Code, stored.Message),
         ControlUnsupportedSchemaException schema => (
             "ControlUnsupportedSchema",
@@ -1265,6 +1762,25 @@ internal static class ControlError {
         OverflowException => ("ControlStateLimitExceeded", exception.Message),
         _ => ("ControlOperationInvalid", exception.Message)
     };
+    }
+
+    private static Exception? FindFatal(Exception exception) {
+        if (exception is OutOfMemoryException
+            or StackOverflowException
+            or AccessViolationException) {
+            return exception;
+        }
+        if (exception is AggregateException aggregate) {
+            foreach (Exception inner in aggregate.InnerExceptions) {
+                if (FindFatal(inner) is { } fatal) {
+                    return fatal;
+                }
+            }
+        }
+        return exception.InnerException is { } cause
+            ? FindFatal(cause)
+            : null;
+    }
 
     private static RecapGridControlCreateResult.Invalid InvalidCreate(
         Exception exception
@@ -1285,5 +1801,12 @@ internal static class ControlError {
     ) {
         (string code, string detail) = Invalid(exception);
         return new RecapGridControlActivateResult.Invalid(code, detail);
+    }
+
+    private static RecapGridControlOperationResult.Invalid InvalidOperation(
+        Exception exception
+    ) {
+        (string code, string detail) = Invalid(exception);
+        return new RecapGridControlOperationResult.Invalid(code, detail);
     }
 }

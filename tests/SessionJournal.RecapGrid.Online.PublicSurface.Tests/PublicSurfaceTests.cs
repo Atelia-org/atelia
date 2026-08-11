@@ -58,6 +58,7 @@ public sealed class PublicSurfaceTests {
                 new SessionContextLifecycleRequest(
                     new SessionContextSelectionRequest(head, 0),
                     SessionExecutionPhase.Idle,
+                    SessionContextLifecycleTrigger.PreObservation,
                     "pending"));
 
             Assert.IsType<RecapGridOnlinePassResult.RawHistoryAuthorized>(

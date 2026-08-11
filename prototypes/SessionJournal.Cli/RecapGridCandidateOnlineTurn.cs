@@ -4,6 +4,7 @@ using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Online;
+using Atelia.SessionJournal.RecapGrid.AgentControl;
 
 namespace Atelia.SessionJournal.Cli;
 
@@ -21,7 +22,8 @@ internal static partial class RecapGridCandidateCommands {
             "connection",
             "message",
             "maximum-canonical-request-bytes",
-            "uncertain-recovery"
+            "uncertain-recovery",
+            "admission"
         );
         string repositoryPath = options.RequireSingle("input");
         string branchName = options.RequireSingle("branch");
@@ -58,6 +60,24 @@ internal static partial class RecapGridCandidateCommands {
             );
         }
 
+        RecapGridAgentControlProfile? agentProfile = null;
+        if (options.GetOptionalSingle("admission") is not null) {
+            agentProfile = RecapGridAgentControlProfile.Create(
+                "candidate-cli-v1",
+                ReadAdmission(options)
+            );
+        }
+        if (mode is not CandidateOnlineMode.ResumePrepared
+            && agentProfile is null) {
+            throw new ArgumentException(
+                "--admission is required for an Agent Control candidate turn."
+            );
+        }
+        RecapGridAgentControlProfileRegistry? agentProfiles =
+            agentProfile is null
+                ? null
+                : new RecapGridAgentControlProfileRegistry([agentProfile]);
+
         EventAddress expectedHead = recovery.CapturedHead
             ?? throw new InvalidDataException(
                 "The supported online phase has no captured raw head."
@@ -75,6 +95,8 @@ internal static partial class RecapGridCandidateCommands {
         string? routesPath = options.GetOptionalSingle("routes");
         if (mode is CandidateOnlineMode.SendNewTurn
                 or CandidateOnlineMode.CompleteObservation
+                or CandidateOnlineMode.CompleteToolResult
+                or CandidateOnlineMode.ResumeTool
             && routesPath is null) {
             throw new ArgumentException(
                 "--routes is required when starting a new completion request."
@@ -85,7 +107,8 @@ internal static partial class RecapGridCandidateCommands {
         }
 
         await using RecapGridCompletionHost completionHost =
-            RecapGridCompletionHost.Create(
+            agentProfiles is null
+                ? RecapGridCompletionHost.Create(
                 () => RecapGridRouteManifest.DecodeCanonical(
                     ReadBoundedFile(
                         routesPath ?? throw new InvalidOperationException(
@@ -96,12 +119,27 @@ internal static partial class RecapGridCandidateCommands {
                 ),
                 connections,
                 completionClientFactory
-            );
+            )
+                : RecapGridCompletionHost.Create(
+                    () => RecapGridRouteManifest.DecodeCanonical(
+                        ReadBoundedFile(
+                            routesPath ?? throw new InvalidOperationException(
+                                "Prepared recovery must not resolve recap routes."
+                            ),
+                            RecapGridRouteManifestLimits
+                                .MaximumCanonicalUtf8Bytes
+                        )
+                    ),
+                    connections,
+                    completionClientFactory,
+                    agentProfiles
+                );
 
         CompletionConnectionConfig connection;
         ICompletionClient agentClient;
         CompletionDispatchIdentity dispatchIdentity;
         RecapGridOnlineContextHandle? online = null;
+        RecapGridAgentControlHandle? agentControl = null;
         try {
             if (recovery is SessionRuntimeRecoveryRequirements
                     .FrozenCompletionRequired frozen) {
@@ -143,8 +181,49 @@ internal static partial class RecapGridCandidateCommands {
                     );
                 connection = bound.Connection;
                 agentClient = bound.Client;
+                if (frozen.ToolRuntimeIdentity is { } toolIdentity) {
+                    RecapGridAgentControlOpenResult toolBinding =
+                        completionHost.BindAgentControlExact(
+                            engine.ReadView,
+                            toolIdentity,
+                            new O200kBaseHistoryUnitLoadEstimator()
+                        );
+                    if (toolBinding is not RecapGridAgentControlOpenResult
+                            .Opened toolOpened) {
+                        return MapAgentControlBinding(toolBinding);
+                    }
+                    agentControl = toolOpened.Handle;
+                    if (!string.Equals(
+                            SessionVisibleToolSetFingerprint.ComputeSha256(
+                                agentControl.ToolSession.VisibleDefinitions
+                            ),
+                            frozen.VisibleToolSetSha256,
+                            StringComparison.Ordinal
+                        )) {
+                        return Print(
+                            "run-online-turn",
+                            "tool-set-fingerprint-mismatch",
+                            new { nextAction = "inspect" },
+                            exitCode: 2
+                        );
+                    }
+                }
             }
             else {
+                if (recovery is SessionRuntimeRecoveryRequirements
+                        .ToolContinuationRequired toolContinuation) {
+                    RecapGridAgentControlOpenResult frozenTool =
+                        completionHost.BindAgentControlExact(
+                            engine.ReadView,
+                            toolContinuation.ToolRuntimeIdentity,
+                            new O200kBaseHistoryUnitLoadEstimator()
+                        );
+                    if (frozenTool is not RecapGridAgentControlOpenResult
+                            .Opened frozenOpened) {
+                        return MapAgentControlBinding(frozenTool);
+                    }
+                    agentControl = frozenOpened.Handle;
+                }
                 string requested = options.RequireSingle("connection");
                 RecapGridAgentConnectionResult agent =
                     completionHost.BindAgentExact(requested);
@@ -154,6 +233,20 @@ internal static partial class RecapGridCandidateCommands {
                 connection = bound.Connection;
                 agentClient = bound.Client;
                 dispatchIdentity = bound.Identity;
+
+                if (agentControl is null) {
+                    RecapGridAgentControlOpenResult currentTool =
+                        completionHost.OpenAgentControl(
+                            engine.ReadView,
+                            agentProfile!.ProfileId,
+                            new O200kBaseHistoryUnitLoadEstimator()
+                        );
+                    if (currentTool is not RecapGridAgentControlOpenResult
+                            .Opened currentOpened) {
+                        return MapAgentControlBinding(currentTool);
+                    }
+                    agentControl = currentOpened.Handle;
+                }
 
                 if (mode == CandidateOnlineMode.SendNewTurn) {
                     expectedHead = ReconcileOnlineSetup(
@@ -180,10 +273,12 @@ internal static partial class RecapGridCandidateCommands {
 
             engine.UseRuntime(new SessionRuntime(
                 agentClient,
+                agentControl?.ToolSession,
                 CompletionTarget:
                     CompletionTargetIdentityFactory.Create(dispatchIdentity),
                 MaxTokens: connection.MaxTokens,
                 UncertainCompletionRecoveryPolicy: recoveryPolicy,
+                ToolRuntimeIdentity: agentControl?.RuntimeIdentity,
                 ContextCandidateSource: online?.CandidateSource,
                 MaximumCanonicalRequestBytes: ParsePositiveOnlineLong(
                     options.GetOptionalSingle(
@@ -269,6 +364,7 @@ internal static partial class RecapGridCandidateCommands {
             if (online is not null) {
                 await online.DisposeAsync().ConfigureAwait(false);
             }
+            agentControl?.Dispose();
         }
     }
 
@@ -294,13 +390,9 @@ internal static partial class RecapGridCandidateCommands {
             ),
         SessionRuntimeRecoveryRequirements.NewRequestRequired
             when value.HeadKind == SessionEventKind.ToolResultObserved
-            => throw new NotSupportedException(
-                "Tool-result continuation is reserved for WP-07C."
-            ),
+            => CandidateOnlineMode.CompleteToolResult,
         SessionRuntimeRecoveryRequirements.ToolContinuationRequired
-            => throw new NotSupportedException(
-                "Tool continuation is reserved for WP-07C."
-            ),
+            => CandidateOnlineMode.ResumeTool,
         SessionRuntimeRecoveryRequirements.FailedTurnMustBeAbandoned
             => throw new InvalidOperationException(
                 "The failed turn must be abandoned before a new request."
@@ -479,6 +571,50 @@ internal static partial class RecapGridCandidateCommands {
             )
         };
 
+    private static int MapAgentControlBinding(
+        RecapGridAgentControlOpenResult result
+    ) => result switch {
+        RecapGridAgentControlOpenResult.ProfileAbsent value => Print(
+            "run-online-turn",
+            "tool-runtime-profile-absent",
+            new { value.ProfileId, nextAction = "inspect" },
+            exitCode: 2
+        ),
+        RecapGridAgentControlOpenResult.Busy value => Print(
+            "run-online-turn",
+            "busy",
+            new { component = value.Component },
+            exitCode: 2
+        ),
+        RecapGridAgentControlOpenResult.UnsupportedSchema value => Print(
+            "run-online-turn",
+            "unsupported-schema",
+            new { component = value.Component, value.SchemaVersion },
+            exitCode: 2
+        ),
+        RecapGridAgentControlOpenResult.ControlAbsent => Print(
+            "run-online-turn",
+            "derived-state-absent",
+            new { component = "control" },
+            exitCode: 2
+        ),
+        RecapGridAgentControlOpenResult.TimelineAbsent => Print(
+            "run-online-turn",
+            "derived-state-absent",
+            new { component = "timeline" },
+            exitCode: 2
+        ),
+        RecapGridAgentControlOpenResult.Invalid value => Print(
+            "run-online-turn",
+            "invalid",
+            new { value.Component, value.Code, value.Detail },
+            exitCode: 2
+        ),
+        _ => throw new InvalidDataException(
+            "Unknown Agent Control binding outcome."
+        )
+    };
+
     private static string? FormatAddress(EventAddress? value)
         => value is { } address
             ? EventAddressTextCodec.Format(address)
@@ -487,7 +623,9 @@ internal static partial class RecapGridCandidateCommands {
     private enum CandidateOnlineMode {
         SendNewTurn,
         CompleteObservation,
+        CompleteToolResult,
         ResumePrepared,
-        ResumeStarted
+        ResumeStarted,
+        ResumeTool
     }
 }
