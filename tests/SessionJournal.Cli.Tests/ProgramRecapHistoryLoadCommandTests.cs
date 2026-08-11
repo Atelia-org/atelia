@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.SessionJournal.DerivedRecap.Planner;
+using Atelia.SessionJournal.HistoryTimeline;
 using Xunit;
 using SJ = Atelia.SessionJournal;
 
@@ -36,12 +36,12 @@ public sealed class ProgramRecapHistoryLoadCommandTests : IDisposable {
         var factory = new CountingCompletionClientFactory();
 
         Assert.Equal(0, Run([
-            "recap", "history-load", "inspect",
+            "recap-grid", "timeline", "history-load", "inspect",
             "--input", repoPath,
             "--report-json", report1
         ], factory));
         Assert.Equal(0, Run([
-            "recap", "history-load", "inspect",
+            "recap-grid", "timeline", "history-load", "inspect",
             "--input", repoPath,
             "--branch", "main",
             "--report-json", report2
@@ -236,7 +236,7 @@ public sealed class ProgramRecapHistoryLoadCommandTests : IDisposable {
         var factory = new CountingCompletionClientFactory();
 
         Assert.Equal(1, Run([
-            "recap", "history-load", "inspect",
+            "recap-grid", "timeline", "history-load", "inspect",
             "--input", repoPath,
             "--report-json", reportPath
         ], factory));
@@ -252,12 +252,12 @@ public sealed class ProgramRecapHistoryLoadCommandTests : IDisposable {
         var factory = new CountingCompletionClientFactory();
 
         Assert.Equal(1, Run([
-            "recap", "history-load", "inspect",
+            "recap-grid", "timeline", "history-load", "inspect",
             "--input", repoPath,
             "--connections", "must-not-be-read.json"
         ], factory));
         Assert.Equal(1, Run([
-            "recap", "history-load", "build",
+            "recap-grid", "timeline", "history-load", "build",
             "--input", repoPath
         ], factory));
         Assert.Equal(0, factory.CreateCallCount);

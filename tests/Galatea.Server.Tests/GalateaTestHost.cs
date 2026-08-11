@@ -1,9 +1,10 @@
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.DerivedRecap.Maintainers;
-using Atelia.SessionJournal.DerivedRecap.Planner;
-using Atelia.SessionJournal.DerivedRecap.Store;
+using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid;
+using Atelia.SessionJournal.RecapGrid.AgentControl;
+using Atelia.SessionJournal.RecapGrid.Control;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -52,8 +53,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         bool deleteFilesOnDispose = true,
         string? callLogDirectory = null,
         bool maintenanceMode = false,
-        IReadOnlyList<GalateaRecapMaintainerConnectionBinding>?
-            recapMaintainerConnections = null
+        RecapGridAgentControlProfile? agentControlProfile = null,
+        bool provisionRawOnly = true
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizer);
@@ -71,66 +72,17 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         Directory.CreateDirectory(configDirectory);
 
         string sessionDirectory = Path.Combine(tempRoot, "session");
-        using (SessionJournalEngine engine =
-               SessionJournalEngine.Create(
+        using (SessionJournalEngine engine = SessionJournalEngine.Create(
                    sessionDirectory,
                    new SessionCreateOptions(
                        "model-a",
                        "test system prompt",
                        "openai-chat/strict"
-                   )
-               )) {
-            DerivedRecapEpochStore.Open(
-                    sessionDirectory,
-                    engine.BranchRefId
-                )
-                .EnsureCreatedAsync()
-                .AsTask()
-                .GetAwaiter()
-                .GetResult();
+                   ))) {
+            if (provisionRawOnly) {
+                ProvisionRawOnlyRecapGrid(engine);
+            }
         }
-        string recapConfigPath =
-            RecapEpochConfigLoader.GetCanonicalPath(sessionDirectory);
-        Directory.CreateDirectory(Path.GetDirectoryName(recapConfigPath)!);
-        File.WriteAllBytes(
-            recapConfigPath,
-            RecapEpochConfigCodec.Encode(new RecapEpochConfigDocument(
-                RecapEpochConfigCodec.SchemaV3,
-                MaintainCompleteRosterEpochPolicy.PolicyId,
-                new RecapEpochCadenceConfigDocument(
-                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
-                    MinimumRecentHistoryLoad: 1_000_000,
-                    RecapBuildIntervalHistoryLoad: 1_000_000
-                ),
-                [
-                    new RecapEpochCatalogEntryDocument(
-                        RecapMaintainerProfileCatalog
-                            .WorldUnderstandingRewrite,
-                        32_768
-                    ),
-                    new RecapEpochCatalogEntryDocument(
-                        RecapMaintainerProfileCatalog
-                            .AutobiographicalRewrite,
-                        32_768
-                    )
-                ],
-                new RecapEpochLimitsDocument(
-                    MaxRawGrowthEventCount: 512,
-                    MaxRawEventsPerEpoch: 512,
-                    MaxMaintainerCallsPerEpoch: 2,
-                    MaxEpochsPerOperation: 4,
-                    MaxMaintainerCallsPerOperation: 8,
-                    MaxRecapBlockCount: 2,
-                    MaxRebuildForwardRangeEventCount: 65_536,
-                    MaxTotalRecapPackUtf8Bytes: 2 * 1024 * 1024,
-                    MaxCanonicalPriorPackBytes: 5 * 1024 * 1024,
-                    MaxEpochInputBytes: 8 * 1024 * 1024,
-                    MaxManifestBytes: 2 * 1024 * 1024,
-                    MaxFinalBlockBytes: 512 * 1024,
-                    MaxPublicationBytes: 3 * 1024 * 1024
-                )
-            ))
-        );
         string configPath = WriteConfiguration(
             configDirectory,
             Path.GetFullPath(sessionDirectory),
@@ -148,7 +100,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             "test system prompt",
             callLogDirectory,
             maintenanceMode,
-            recapMaintainerConnections
+            agentControlProfile
         );
 
         return new GalateaTestHost(
@@ -176,8 +128,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string systemPrompt = "test system prompt",
         string? callLogDirectory = null,
         bool maintenanceMode = false,
-        IReadOnlyList<GalateaRecapMaintainerConnectionBinding>?
-            recapMaintainerConnections = null
+        RecapGridAgentControlProfile? agentControlProfile = null
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionDirectory);
         ArgumentNullException.ThrowIfNull(connections);
@@ -211,7 +162,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 systemPrompt,
                 callLogDirectory,
                 maintenanceMode,
-                recapMaintainerConnections
+                agentControlProfile
             );
             return new GalateaTestHost(
                 configurationRoot,
@@ -263,9 +214,18 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string systemPrompt,
         string? callLogDirectory,
         bool maintenanceMode,
-        IReadOnlyList<GalateaRecapMaintainerConnectionBinding>?
-            recapMaintainerConnections
+        RecapGridAgentControlProfile? agentControlProfile
     ) {
+        string agentControlProfileFile = "recap-grid-profile.json";
+        RecapGridAgentControlProfile profile = agentControlProfile
+            ?? AssertBuiltInProfile();
+        File.WriteAllBytes(
+            Path.Combine(
+                configurationDirectory,
+                agentControlProfileFile
+            ),
+            profile.ToCanonicalBytes()
+        );
         var users = new GalateaUsersFileConfig(
             [
                 new GalateaUserConfig(
@@ -276,12 +236,16 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 )
             ],
             CallLogDir: callLogDirectory,
-            MaintenanceMode: maintenanceMode
+            MaintenanceMode: maintenanceMode,
+            RecapGrid: new GalateaRecapGridFileConfig(
+                "recap-grid-routes.json",
+                [agentControlProfileFile],
+                profile.ProfileId
+            )
         );
         var connectionsFile = new GalateaConnectionsFileConfig(
             connections,
-            defaultConnectionId,
-            recapMaintainerConnections
+            defaultConnectionId
         );
         var jsonOptions = new JsonSerializerOptions(
             JsonSerializerDefaults.Web
@@ -302,6 +266,75 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             JsonSerializer.Serialize(connectionsFile, jsonOptions)
         );
         return configPath;
+    }
+
+    private static RecapGridAgentControlProfile AssertBuiltInProfile() {
+        if (!RecapGridAgentControlBuiltIns.TryCreateRegistrationBundle(
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV1,
+                out RecapGridControlRegistrationBundle? bundle)
+            || bundle is null) {
+            throw new InvalidOperationException(
+                "The code-owned RecapGrid test asset is unavailable."
+            );
+        }
+        return RecapGridAgentControlProfile.Create(
+            "test-profile",
+            new RecapGridControlAdmission(
+                RecapGridControlPermission.All,
+                bundle.Families.Select(static value => value.Digest),
+                bundle.Definitions.Select(static value =>
+                    value.Capability.CapabilityFingerprint).Distinct(),
+                [ContextHeaderCarrier.System],
+                ["case."],
+                maximumBootstrapRows: 64,
+                maximumProjectedCalls: 1_024
+            )
+        );
+    }
+
+    private static void ProvisionRawOnlyRecapGrid(
+        SessionJournalEngine engine
+    ) {
+        HistoryTimelineCreateResult timeline =
+            HistoryTimelineFactory.Create(
+                engine.ReadView,
+                new HistoryTimelineInitialPolicySpec(
+                    HistoryPartitionAlgorithms
+                        .FirstReplaySafeBoundaryAtTargetV1,
+                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                    new HistoryLoadUnit(1),
+                    maxRawEvents: 64,
+                    maxRenderedBytes: 1024 * 1024
+                ),
+                new O200kBaseHistoryUnitLoadEstimator()
+            );
+        if (timeline is not HistoryTimelineCreateResult.Created) {
+            throw new InvalidOperationException(
+                $"The Galatea test Timeline could not be provisioned: "
+                + timeline.GetType().Name
+            );
+        }
+
+        RecapGridControlCreateResult control =
+            RecapGridControlFactory.Create(
+                engine.Path,
+                engine.BranchRefId,
+                new RecapGridControlAdmission(
+                    RecapGridControlPermission.Create,
+                    Array.Empty<FamilyDefinitionDigest>(),
+                    Array.Empty<string>(),
+                    Array.Empty<ContextHeaderCarrier>(),
+                    ["test."],
+                    maximumBootstrapRows: 64,
+                    maximumProjectedCalls: 1_024
+                )
+            );
+        if (control is not RecapGridControlCreateResult.Created) {
+            throw new InvalidOperationException(
+                $"The Galatea test Control could not be provisioned: "
+                + control.GetType().Name
+            );
+        }
     }
 }
 

@@ -12,9 +12,8 @@ docs/SessionJournal/current/host-integration/derived-recap-host-integration.md
 docs/SessionJournal/current/recovery/uncertain-external-effects.md
 docs/SessionJournal/operations/galatea-g2a-staging-acceptance.md
 prototypes/SessionJournal/README.md
-prototypes/SessionJournal.DerivedRecap.Store/README.md
-prototypes/SessionJournal.DerivedRecap.Planner/README.md
-prototypes/SessionJournal.DerivedRecap.Maintainers/README.md
+prototypes/SessionJournal.Cli/README.md
+prototypes/Galatea/README.md
 
 # Evidence/archive records are intentionally not default-scanned. Their links
 # remain observable with:

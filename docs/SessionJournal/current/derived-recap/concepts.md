@@ -1,23 +1,27 @@
-# DerivedRecap current concepts
+# RecapGrid current concepts
 
-状态：v8 direct-cut current shape；raw selected `RefId` Parent lineage仍是唯一事实源。
+状态：WP-08 formal source cutover Complete；raw selected `RefId` Parent lineage仍是唯一历史事实源。
 
-1. Recap是可删除、可重建的derived artifact，不回写raw event history。
-2. 一个epoch对应一个shared history slab、一个frozen ordered projection和一个complete roster。
-3. `Previous`只允许Empty或structured prior pack；没有flattened PriorContext、per-block old payload或
-   live previous publication读取。
-4. `NoBuild`表示整轮零调用；Build后每个member恰好一次，结果Updated或KeepUnchanged。
-5. final由manifest hash、ordinal、canonical block definition绑定；Keep相同正文也推进execution identity。
-6. publication只有complete roster；统一以root AdmissionBoundary表示coverage。
-7. normal online只用bounded raw authority；FullRebuildRequired与MoreWorkPending语义不同。
-8. explicit rebuild spool是可删除execution aid，不保存event body、recap、prompt或epoch decision。
-9. frozen recovery先于active config；新的topology不匹配要求full rebuild。
-10. 当前kernel按exact runtime-group reference分组：不同group的leaders并行，同group在leader Maintainer调用
-    成功或非caller-cancellation terminal failure后并行释放followers；caller cancellation不启动新followers，
-    只drain已started work；所有调用继续服从shared lane cap与leader priority。
-11. 同一runtime-group/epoch只构造一个shared `CompletionPromptPrefix`；lane使用`ReuseExpectedSoon`，provider
-    cache mapping与usage telemetry不进入durable recap identity。
-12. R4/R5/R6已进入production composition；R7 real-provider cache write/read与经济性证明仍为
-    `Environment-blocked`。
+1. HistoryTimeline、Control 与 RecapGrid Store 是独立 companion authorities；都不能替代 raw history。
+2. Timeline row 绑定 exact raw range、partition policy、descriptor digest 与 previous-row chain。
+3. Control 保存完整 canonical Family/Definition/Recipe graph、active recipe 与 terminal operation receipts；
+   mutation 比较 whole `ControlHeadRef`。
+4. Full recipe 对目标列全部求值；Overlay bootstrap 对 recomputed columns 求值并对其余列复用 same-row
+   base cells；bootstrap 后走 normal full-row evaluation。
+5. Manager 以一个 frozen Timeline/Control/Store authority 做 row-major base-to-candidate wavefront；
+   missing-only restart 不重发已有 exact cells。
+6. Runtime 的 route key 是 exact `(FamilyDigest, RuntimeProtocolId, SemanticModelId?)`；null 也是 exact key，
+   没有 wildcard 或 default fallback。
+7. Getter 只沿 exact `PreviousViewDigest + PreviousRowId` chain 选择 current active fulfillment；旧
+   fulfillment、sibling 或 latest scan 均不可回退。
+8. empty Timeline 或 no-active recipe 是 raw-only；non-empty active 且缺 current fulfillment才是
+   `Unfulfilled`。
+9. Online 在合法 lifecycle boundary 先 reconcile/seal Timeline，再做 pure-read readiness；只有
+   `Unfulfilled` 才惰性打开 Manager/Store/provider。
+10. AgentControl 的 terminal receipt提供 operation replay/settlement，不承诺外部工具 effect exactly-once。
+11. candidate build 与 promotion分离；promotion必须 fresh re-prove head-through fulfillment，并以
+    `MaximumNewCalls = 0` 保证不在 promotion阶段启动 recap provider。
+12. old `derived/recap` v4-v8 与 rebuild/v1 都是 inert legacy slots；只有显式 manifest-confirmed
+    legacy-root archive/delete会触碰它们。
 
-Owning code见[架构与代码地图](../architecture-and-code-map.md)和Store/Planner README。
+Owning code 与 tests见[架构与代码地图](../architecture-and-code-map.md)。

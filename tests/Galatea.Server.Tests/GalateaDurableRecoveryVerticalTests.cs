@@ -6,7 +6,6 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.DerivedRecap.Planner;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -246,7 +245,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     }
 
     [Fact]
-    public async Task ResumePrepared_ExactBindsAndDoesNotReadDeletedPlannerConfig() {
+    public async Task ResumePrepared_ExactBindsWithoutOpeningRecapGridRoutes() {
         var completionFactory = new TrackingCompletionClientFactory(
             "prepared recovery answer"
         );
@@ -266,7 +265,6 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "AfterRequestPreparedCommitted",
             SessionExecutionPhase.AwaitingCompletionDispatch
         );
-        File.Delete(RecapEpochConfigLoader.GetCanonicalPath(sessionPath));
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
 
@@ -291,11 +289,8 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.Equal(0, normalizer.NormalizeCallCount);
         Assert.Equal(1, completionFactory.CreateCallCount);
         Assert.Equal(1, completionFactory.Client.DispatchCallCount);
-        Assert.False(File.Exists(
-            RecapEpochConfigLoader.GetCanonicalPath(sessionPath)
-        ));
         Assert.Single(Directory.EnumerateFiles(
-            Path.Combine(callLogs.Path, "agent"),
+            Path.Combine(callLogs.Path, "completion"),
             "*.json"
         ));
         Assert.Equal(
@@ -323,7 +318,6 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "AfterCompletionAttemptStartedCommitted",
             SessionExecutionPhase.AwaitingCompletion
         );
-        File.Delete(RecapEpochConfigLoader.GetCanonicalPath(sessionPath));
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
 
@@ -349,9 +343,6 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.Equal(0, normalizer.NormalizeCallCount);
         Assert.Equal(0, completionFactory.CreateCallCount);
         Assert.Equal(0, completionFactory.Client.DispatchCallCount);
-        Assert.False(File.Exists(
-            RecapEpochConfigLoader.GetCanonicalPath(sessionPath)
-        ));
 
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
@@ -392,7 +383,6 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "AfterCompletionAttemptStartedCommitted",
             SessionExecutionPhase.AwaitingCompletion
         );
-        File.Delete(RecapEpochConfigLoader.GetCanonicalPath(sessionPath));
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
 
@@ -425,9 +415,6 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.Equal(0, normalizer.NormalizeCallCount);
         Assert.Equal(1, completionFactory.CreateCallCount);
         Assert.Equal(1, completionFactory.Client.DispatchCallCount);
-        Assert.False(File.Exists(
-            RecapEpochConfigLoader.GetCanonicalPath(sessionPath)
-        ));
         Assert.Equal(
             SessionExecutionPhase.Idle,
             session.Engine.InspectExecutionBoundary().Phase
@@ -486,16 +473,14 @@ public sealed class GalateaDurableRecoveryVerticalTests {
                 | BindingFlags.Public
                 | BindingFlags.NonPublic
             ),
-            constructor => constructor.GetParameters().Length == 6
+            constructor => constructor.GetParameters() is { Length: > 0 }
+                parameters
+                && parameters[0].ParameterType == failpointType
         );
-        object hooks = hooksConstructor.Invoke([
-            failpoint,
-            null,
-            null,
-            null,
-            null,
-            null
-        ]);
+        ParameterInfo[] hookParameters = hooksConstructor.GetParameters();
+        object?[] hookArguments = new object?[hookParameters.Length];
+        hookArguments[0] = failpoint;
+        object hooks = hooksConstructor.Invoke(hookArguments);
         MethodInfo openForTest = Assert.Single(
             typeof(SessionJournalEngine).GetMethods(
                 BindingFlags.Static | BindingFlags.NonPublic

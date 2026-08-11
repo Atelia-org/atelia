@@ -1,6 +1,6 @@
 # DerivedRecap Grid Rewrite 总施工计划
 
-状态：Implementation program active；WP-00至WP-07C complete，WP-08 Ready / Planned；current production尚未切换
+状态：Implementation program Complete；WP-00至WP-08 complete，independent closure Closed
 
 目标设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)
 
@@ -81,7 +81,7 @@ WP-07B Galatea/online vertical candidate [complete]
   |
 WP-07C Agent control + tool continuation candidate [complete]
   |
-WP-08 Atomic production cutover + legacy deletion [ready / planned]
+WP-08 Atomic production cutover + legacy deletion [complete]
 ```
 
 WP-02已完成formal contracts、单一canonical Control carrier、public factory/Reader、maintenance、crash/settlement与
@@ -102,8 +102,8 @@ WP-06随后交付唯一real `IRecapCellBatchExecutor`、code-owned V1 renderer/p
 barrier、batch fatal drain、Owned/Borrowed lifetime与bounded operational evidence；final evidence为Runtime 56/56、Completion 471/471、
 Runtime public 2/2、Walking 18/18、`Atelia.sln` build 0 warning / 0 error、docs 15/0、diff clean，两路independent closure均GO
 （P0=0，P1=0）。
-WP-07A已完成独立Hosting exact-route owner、Manager pure-read progress与明确
-`recap-grid candidate`子树；closure-tail CLI focused 8/8覆盖online/offline cap与raw drift、new Ref isolation、真实WP-06 Runtime build、
+WP-07A当时完成独立Hosting exact-route owner、Manager pure-read progress与临时operator旁路；closure-tail CLI focused
+8/8覆盖online/offline cap与raw drift、new Ref isolation、真实WP-06 Runtime build、
 provider-free progress、zero-call promotion、strict materialization、malformed connections全repo零mutation及真实四域maintenance byte
 isolation/Busy。Hosting strict bounded connections/evidence与Manager MaximumNewCalls progress亦已落；最终Hosting 16/16、Hosting public 1/1、
 Manager 60/60、Completion registry lifetime 6/6、CLI candidate 8/8、Walking 20/20、Timeline cursor 2/2、stable/old CLI targeted 7/7、
@@ -118,8 +118,20 @@ ToolCall -> zero-call promotion -> receipt/ToolResult -> next-completion纵向�
 focused证据为Control 45/45、AgentControl 20/20、AgentControl public 1/1、Completion 482/482、SessionJournal targeted
 7/7、Online 22/22、Hosting 19/19、CLI candidate 12/12、Galatea candidate + stop/lifecycle targeted 23/23、Online/Hosting public
 3/3与Walking 23/23；solution build 0 warning / 0 error、vulnerable package scan零命中、docs 15/0、diff clean，
-两路independent closure均GO（P0=0，P1=0）。WP-08现为Ready / Planned。
-这些旁路owner不改变current production；production cutover仍只属于WP-08。
+两路independent closure均GO（P0=0，P1=0）。
+
+WP-08已把CLI/Galatea production callers升格到formal RecapGrid，删除nested candidate层、五个old
+`SessionJournal.DerivedRecap.*` products、四个old test/harness projects、refs/IVTs/solution entries，并交付
+seven-slot legacy-root exact archive/delete、formal readiness与single connection owner。新增restart gate证明partial
+build后dispose/reopen只补missing rows且不创建legacy spool。focused evidence：Walking 25/25、CLI formal
+13/13、legacy-root 11/11、HistoryLoad CLI 3/3、Galatea composition/readiness 9/9、Manager restart 1/1、HistoryTimeline
+tool node fixtures 6/6、scoped docs 14/0。final source evidence为36个solution test projects合计4658/4658 green、
+package vulnerability audit退出0且所有项目无已知漏洞、两路independent closure P0=0/P1=0，以及deterministic
+disposable legacy-import canary完成。real-provider canary与actual cyber activation仍为外部`NotRun` gate，不阻止
+source implementation标Complete，也不得被deterministic tests冒充。
+fresh no-local checkout已在provisional containing source tree `913fd8fa`上完成：全新restore成功、Release solution
+build 0 warning / 0 error、36个test projects合计4658/4658 green、package vulnerability audit零命中、scoped docs
+14/0、all-tracked docs 71/0且checkout status clean。最终containing commit只回写该fresh evidence，没有再改变product/test source。
 
 工作包文档：
 

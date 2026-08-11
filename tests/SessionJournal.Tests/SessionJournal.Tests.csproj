@@ -16,8 +16,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../../prototypes/Completion.Tools/Completion.Tools.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Planner/SessionJournal.DerivedRecap.Planner.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Store/SessionJournal.DerivedRecap.Store.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.Offline/SessionJournal.Offline.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
   </ItemGroup>

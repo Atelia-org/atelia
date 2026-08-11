@@ -14,9 +14,10 @@ using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.DerivedRecap.Maintainers;
-using Atelia.SessionJournal.DerivedRecap.Planner;
-using Atelia.SessionJournal.DerivedRecap.Runtime;
+using Atelia.SessionJournal.RecapGrid.AgentControl;
+using Atelia.SessionJournal.RecapGrid.Hosting;
+using Atelia.SessionJournal.RecapGrid.Manager;
+using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Online;
 
 namespace Atelia.Galatea.Server;
@@ -24,54 +25,121 @@ namespace Atelia.Galatea.Server;
 public sealed class GalateaHostService : IAsyncDisposable {
     internal const int RecentTurnLimit = 6;
 
-    private readonly CompletionConnectionRegistry _connections;
     private readonly GalateaInputPreprocessor _inputPreprocessor;
-    private readonly string? _callLogDirectory;
     private readonly bool _maintenanceMode;
-    private readonly IReadOnlyDictionary<string, string>?
-        _recapMaintainerConnections;
-    private readonly GalateaRecapGridCandidateComposition?
-        _recapGridCandidate;
+    private readonly GalateaRecapGridComposition _recapGrid;
     internal GalateaDisposeTestHooks? DisposeHooksForTest { get; set; }
-    private readonly RecapExecutionLaneInterner _recapExecutionLanes =
-        new();
-    private readonly RecapRuntimeGroupInterner _recapRuntimeGroups =
-        new();
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
+    private readonly IReadOnlyDictionary<string, CompletionConnectionConfig>
+        _connectionCatalog;
+    private readonly string _defaultConnectionId;
 
     public GalateaHostService(
         GalateaConfig config,
-        CompletionConnectionRegistry connections,
+        ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer userMessageNormalizer
     ) {
         ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(completionClientFactory);
         GalateaConfigValidation.RequireDistinctSessionDirectories(
             config.Users
         );
-        _connections = connections ?? throw new ArgumentNullException(nameof(connections));
+        GalateaRecapGridRuntimeConfig recapGrid = config.RecapGrid
+            ?? throw new InvalidOperationException(
+                "Galatea requires strict RecapGrid runtime configuration."
+            );
+        ICompletionClientFactory ownedFactory =
+            GalateaCompletionLogging.CreateOwnedFactory(
+                completionClientFactory,
+                config.CallLogDir
+            );
+        RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
+            () => GalateaConfigLoader.LoadRouteManifest(
+                recapGrid.RouteManifestPath
+            ),
+            new CompletionConnectionsFileConfig(
+                config.Connections,
+                config.DefaultConnectionId
+            ),
+            ownedFactory,
+            recapGrid.AgentControlProfiles
+        );
+        try {
+            _recapGrid = new GalateaRecapGridComposition(
+                completion,
+                recapGrid.CurrentAgentControlProfileId,
+                estimators: [new O200kBaseHistoryUnitLoadEstimator()]
+            );
+        }
+        catch {
+            completion.Dispose();
+            throw;
+        }
         _inputPreprocessor = new GalateaInputPreprocessor(
             userMessageNormalizer
         );
-        _callLogDirectory = config.CallLogDir;
         _maintenanceMode = config.MaintenanceMode;
-        _recapMaintainerConnections =
-            config.RecapMaintainerConnections;
-        _users = config.Users.ToDictionary(x => x.UserId, StringComparer.Ordinal);
+        _users = config.Users.ToDictionary(
+            static value => value.UserId,
+            StringComparer.Ordinal
+        );
+        _connectionCatalog = config.Connections.ToDictionary(
+            static value => value.Id,
+            StringComparer.Ordinal
+        );
+        _defaultConnectionId = config.DefaultConnectionId;
     }
 
     internal GalateaHostService(
         GalateaConfig config,
-        CompletionConnectionRegistry connections,
         IGalateaUserMessageNormalizer userMessageNormalizer,
-        GalateaRecapGridCandidateComposition recapGridCandidate
-    ) : this(config, connections, userMessageNormalizer) {
-        _recapGridCandidate = recapGridCandidate
-            ?? throw new ArgumentNullException(nameof(recapGridCandidate));
+        GalateaRecapGridComposition recapGrid
+    ) {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(recapGrid);
+        GalateaConfigValidation.RequireDistinctSessionDirectories(
+            config.Users
+        );
+        _recapGrid = recapGrid;
+        _inputPreprocessor = new GalateaInputPreprocessor(
+            userMessageNormalizer
+        );
+        _maintenanceMode = config.MaintenanceMode;
+        _users = config.Users.ToDictionary(
+            static value => value.UserId,
+            StringComparer.Ordinal
+        );
+        _connectionCatalog = config.Connections.ToDictionary(
+            static value => value.Id,
+            StringComparer.Ordinal
+        );
+        _defaultConnectionId = config.DefaultConnectionId;
     }
 
     public bool TryGetUser(string userId, out GalateaUserConfig user)
         => _users.TryGetValue(userId, out user!);
+
+    public IReadOnlyList<GalateaConnectionInfoDto> Connections => [
+        .. _connectionCatalog.Values
+            .OrderBy(static value => value.Id, StringComparer.Ordinal)
+            .Select(static value => new GalateaConnectionInfoDto(
+                value.Id,
+                value.ModelId
+            ))
+    ];
+
+    public string DefaultConnectionId => _defaultConnectionId;
+
+    public bool TryGetConnection(
+        string? requestedConnectionId,
+        out CompletionConnectionConfig connection
+    ) {
+        string id = string.IsNullOrWhiteSpace(requestedConnectionId)
+            ? _defaultConnectionId
+            : requestedConnectionId;
+        return _connectionCatalog.TryGetValue(id, out connection!);
+    }
 
     public bool ValidatePassword(GalateaUserConfig user, string password) {
         ArgumentNullException.ThrowIfNull(user);
@@ -105,7 +173,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
     private StableRecentTurnsProjection BuildRecentTurnsResponse(
         SessionJournalEngine engine,
-        RecapPlanningSnapshotDto? recapPlanning = null,
         int maxTurns = RecentTurnLimit
     ) {
         ArgumentNullException.ThrowIfNull(engine);
@@ -128,8 +195,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return new StableRecentTurnsProjection(
             new RecentTurnsResponseDto(
                 turns,
-                rewindLatestToken,
-                recapPlanning ?? NotObservedRecapPlanning()
+                rewindLatestToken
             ),
             snapshot.CapturedHead
         );
@@ -250,87 +316,29 @@ public sealed class GalateaHostService : IAsyncDisposable {
         StableRecentTurnsProjection projection = BuildRecentTurnsResponse(
             host.Engine
         );
-        if (_recapGridCandidate is not null) {
-            // Candidate composition must never scan or repair the production
-            // v8 sidecar. WP-07B keeps the existing DTO shape only as an
-            // operational projection; readiness itself is owned by the
-            // per-turn Online composition.
-            RecentTurnsResponseDto candidateRecent =
-                projection.Response with {
-                    RecapPlanning = new RecapPlanningSnapshotDto(
-                        Freshness: GalateaRecapComposition.ExactFreshness,
-                        State: "recap-grid-candidate",
-                        ObservedRawHead:
-                            EventAddressTextCodec.FormatNullable(
-                                projection.CapturedHead))
-                };
-            host.SetRecentTurns(candidateRecent);
-            return candidateRecent;
-        }
-        RecapPlanningSnapshotDto recapPlanning =
-            await GalateaRecapComposition.InspectPlanningAsync(
-                    host.Engine,
+        RecapGridReadinessSnapshotDto readiness =
+            projection.CapturedHead is { } capturedHead
+                ? GalateaRecapGridReadiness.Inspect(
+                    host.Engine.ReadView,
+                    capturedHead,
                     cancellationToken
                 )
-                .ConfigureAwait(false);
-        RecentTurnsResponseDto recent = BindRecapPlanningSnapshot(
-            projection.Response,
-            projection.CapturedHead,
-            recapPlanning
-        );
+                : new RecapGridReadinessSnapshotDto(
+                    GalateaRecapGridReadiness.ExactFreshness,
+                    "unprovisioned",
+                    null,
+                    Code: "raw-head-absent"
+                );
+        RecentTurnsResponseDto recent = projection.Response with {
+            RecapGridReadiness = readiness,
+            RewindLatestToken = readiness.Freshness
+                    == GalateaRecapGridReadiness.ExactFreshness
+                ? projection.Response.RewindLatestToken
+                : null
+        };
         host.SetRecentTurns(recent);
         return recent;
     }
-
-    internal static RecentTurnsResponseDto BindRecapPlanningSnapshot(
-        RecentTurnsResponseDto recent,
-        EventAddress? recentCapturedHead,
-        RecapPlanningSnapshotDto recapPlanning
-    ) {
-        ArgumentNullException.ThrowIfNull(recent);
-        ArgumentNullException.ThrowIfNull(recapPlanning);
-        bool headMismatch = recapPlanning.Freshness
-                == GalateaRecapComposition.ExactFreshness
-            && (recentCapturedHead is not { } capturedHead
-                || !string.Equals(
-                    recapPlanning.ObservedRawHead,
-                    EventAddressTextCodec.Format(capturedHead),
-                    StringComparison.Ordinal
-                ));
-        bool rawHeadChanged = recapPlanning.Freshness
-                == GalateaRecapComposition.StaleFreshness
-            && string.Equals(
-                recapPlanning.Code,
-                "RawHeadChanged",
-                StringComparison.Ordinal
-            );
-        if (headMismatch) {
-            DebugUtil.Warning(
-                "Galatea.Session",
-                "Discarding exact DerivedRecap progress because its raw "
-                + "head differs from the recent-turn projection."
-            );
-            recapPlanning = new RecapPlanningSnapshotDto(
-                GalateaRecapComposition.StaleFreshness,
-                GalateaRecapComposition.UnavailableState,
-                Code: "session-head-changed",
-                Detail: "会话边界在稳定快照读取期间发生变化，请刷新重试。"
-            );
-        }
-        return recent with {
-            RewindLatestToken = headMismatch || rawHeadChanged
-                ? null
-                : recent.RewindLatestToken,
-            RecapPlanning = recapPlanning
-        };
-    }
-
-    private static RecapPlanningSnapshotDto NotObservedRecapPlanning()
-        => new(
-            GalateaRecapComposition.StaleFreshness,
-            GalateaRecapComposition.NotObservedState,
-            Detail: "DerivedRecap进度尚未在稳定会话边界读取。"
-        );
 
     private sealed record StableRecentTurnsProjection(
         RecentTurnsResponseDto Response,
@@ -613,98 +621,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
             throw RecoveryRequired(requirement);
         }
 
-        if (_recapGridCandidate is not null) {
-            return await RunCandidateFreshSendAsync(
-                    host,
-                    liveTurn,
-                    observer,
-                    capturedHead,
-                    cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        CompletionConnectionConfig connection =
-            _connections.Resolve(liveTurn.Options.ConnectionId);
-        SessionDesiredSetupReconciliationResult reconciled =
-            host.Engine.ReconcileDesiredSetup(
-                capturedHead,
-                new SessionDesiredSetup(
-                    connection.ModelId,
-                    connection.CompletionSurfaceId,
-                    host.User.SystemPrompt
-                ),
-                cancellationToken
-            );
-        if (reconciled is not SessionDesiredSetupReconciliationResult
-                .Ready setupReady) {
-            throw new GalateaTurnException(
-                "会话设置无法在当前边界安全更新，请刷新后重试。",
-                "desired-setup-unavailable"
-            );
-        }
-
-        GalateaPreparedRecap prepared =
-            await GalateaRecapComposition.PrepareAsync(
-                    host.Engine,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        if (prepared.CapturedRawHead
-            != setupReady.GoverningSetup.Head) {
-            throw new GalateaTurnException(
-                "会话在前情提要准备前发生变化，请重试。",
-                "session-head-changed"
-            );
-        }
-        string effectiveUserMessage = await _inputPreprocessor
-            .ProcessAsync(liveTurn, cancellationToken)
-            .ConfigureAwait(false);
-        string promptedUserMessage = WrapUserMessageForEngine(
-            effectiveUserMessage
-        );
-
-        ICompletionClient innerClient =
-            _connections.GetClient(connection.Id);
-        ICompletionClient agentClient =
-            GalateaCompletionLogging.CreateAgentClient(
-                innerClient,
-                connection,
-                _callLogDirectory
-            );
-        DerivedRecapOnlineLifecycleCoordinator recap =
-            GalateaRecapComposition.CreateLifecycle(
-                host.Engine,
-                prepared,
-                _connections,
-                connection,
-                _recapMaintainerConnections,
-                _callLogDirectory,
-                _recapExecutionLanes,
-                _recapRuntimeGroups
-            );
-        var lifecycleGate = new GalateaFreshSendLifecycleGate(
-            recap,
-            liveTurn.StopController
-        );
-        host.Engine.UseRuntime(CreateRuntime(
-            connection,
-            agentClient,
-            recap,
-            lifecycleGate,
-            SessionUncertainCompletionRecoveryPolicy.Refuse
-        ));
-        TurnResult result = await host.Engine.SendAsync(
-                prepared.CapturedRawHead,
-                promptedUserMessage,
+        return await RunRecapGridFreshSendAsync(
+                host,
+                liveTurn,
                 observer,
-                cancellationToken
-            )
+                capturedHead,
+                cancellationToken)
             .ConfigureAwait(false);
-        return new GalateaCompletedOperation(
-            result.Message,
-            result.Invocation,
-            result.Errors
-        );
     }
 
     private async Task<GalateaCompletedOperation> RunRecoveryAsync(
@@ -728,182 +651,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
         }
 
-        if (_recapGridCandidate is not null) {
-            return await RunCandidateRecoveryAsync(
-                    host,
-                    liveTurn,
-                    observer,
-                    requirement,
-                    capturedHead,
-                    cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        CompletionConnectionConfig connection;
-        ICompletionClient innerClient;
-        if (requirement is SessionRuntimeRecoveryRequirements
-                .NewRequestRequired) {
-            connection = _connections.Resolve(
-                liveTurn.Options.ConnectionId
-            );
-            ValidateRecoveryConnection(
-                host.Engine,
-                capturedHead,
-                connection
-            );
-            GalateaPreparedRecap prepared =
-                await GalateaRecapComposition.PrepareAsync(
-                        host.Engine,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
-            if (prepared.CapturedRawHead
-                != capturedHead) {
-                throw new GalateaTurnException(
-                    "会话在恢复准备期间发生变化，请重试。",
-                    "recovery-head-changed"
-                );
-            }
-            innerClient = _connections.GetClient(connection.Id);
-            DerivedRecapOnlineLifecycleCoordinator recap =
-                GalateaRecapComposition.CreateLifecycle(
-                    host.Engine,
-                    prepared,
-                    _connections,
-                    connection,
-                    _recapMaintainerConnections,
-                    _callLogDirectory,
-                    _recapExecutionLanes,
-                    _recapRuntimeGroups
-                );
-            var lifecycleGate = new GalateaRecoveryLifecycleGate(
-                recap,
-                liveTurn.StopController
-            );
-            ICompletionClient agentClient =
-                GalateaCompletionLogging.CreateAgentClient(
-                    innerClient,
-                    connection,
-                    _callLogDirectory
-                );
-            host.Engine.UseRuntime(CreateRuntime(
-                connection,
-                agentClient,
-                recap,
-                lifecycleGate,
-                SessionUncertainCompletionRecoveryPolicy.Refuse
-            ));
-        }
-        else if (requirement is SessionRuntimeRecoveryRequirements
-                     .FrozenCompletionRequired frozen) {
-            string emptyToolSetSha256 =
-                SessionVisibleToolSetFingerprint.ComputeSha256(
-                    System.Collections.Immutable
-                        .ImmutableArray<ToolDefinition>.Empty
-                );
-            if (frozen.ToolRuntimeIdentity is not null
-                || !string.Equals(
-                    frozen.VisibleToolSetSha256,
-                    emptyToolSetSha256,
-                    StringComparison.Ordinal
-                )) {
-                throw new GalateaTurnException(
-                    "已冻结请求包含Galatea G1不支持的工具runtime。",
-                    "tool-recovery-unsupported"
-                );
-            }
-            if (frozen.DispatchState
-                    == SessionDurableDispatchState
-                        .StartedOutcomeUncertain
-                && !liveTurn.Options.RestartUncertainCompletion) {
-                throw new GalateaTurnException(
-                    "上次模型调用结果不确定；必须明确选择重新调用，且可能产生重复请求。",
-                    "uncertain-completion-restart-required"
-                );
-            }
-            CompletionDispatchBindingResult binding =
-                _connections.BindExact(new CompletionDispatchIdentity(
-                    frozen.CompletionTarget.ConnectionId,
-                    frozen.CompletionTarget.Kind,
-                    frozen.CompletionTarget.ConnectionFingerprint,
-                    frozen.ClientName,
-                    frozen.ApiSpecId,
-                    frozen.CompletionTarget.RequestAdapterFingerprint
-                ));
-            if (binding is not CompletionDispatchBindingResult.Bound bound) {
-                var unavailable =
-                    (CompletionDispatchBindingResult.Unavailable)binding;
-                throw new GalateaTurnException(
-                    "无法精确绑定已冻结的模型调用："
-                    + unavailable.Detail,
-                    unavailable.Reason.ToString()
-                );
-            }
-            connection = bound.Connection;
-            innerClient = bound.Client;
-            ICompletionClient agentClient =
-                GalateaCompletionLogging.CreateAgentClient(
-                    innerClient,
-                    connection,
-                    _callLogDirectory
-                );
-            liveTurn.StopController.EnterObserverOnlyOrThrow(
-                cancellationToken
-            );
-            host.Engine.UseRuntime(new SessionRuntime(
-                agentClient,
-                CompletionTarget: frozen.CompletionTarget,
-                MaxTokens: connection.MaxTokens,
-                UncertainCompletionRecoveryPolicy:
-                    liveTurn.Options.RestartUncertainCompletion
-                        ? SessionUncertainCompletionRecoveryPolicy
-                            .RestartWithNewAttempt
-                        : SessionUncertainCompletionRecoveryPolicy.Refuse
-            ));
-        }
-        else if (requirement is SessionRuntimeRecoveryRequirements
-                     .ToolContinuationRequired) {
-            throw new GalateaTurnException(
-                "当前会话停在工具执行阶段；Galatea G1 尚不支持工具恢复。",
-                "tool-recovery-unsupported"
-            );
-        }
-        else if (requirement is SessionRuntimeRecoveryRequirements
-                     .FailedTurnMustBeAbandoned) {
-            throw new GalateaTurnException(
-                "失败轮次必须通过新消息入口在精确边界安全放弃。",
-                "failed-turn-must-be-abandoned"
-            );
-        }
-        else if (requirement is SessionRuntimeRecoveryRequirements
-                     .NoRuntimeRequired) {
-            throw RecoveryRequired(requirement);
-        }
-        else {
-            throw new InvalidDataException(
-                "Unknown runtime recovery requirement."
-            );
-        }
-
-        ResumeOutcome outcome = await host.Engine.ResumeAsync(
-                capturedHead,
+        return await RunRecapGridRecoveryAsync(
+                host,
+                liveTurn,
                 observer,
-                cancellationToken
-            )
+                requirement,
+                capturedHead,
+                cancellationToken)
             .ConfigureAwait(false);
-        if (!outcome.Advanced
-            || outcome.Message is null
-            || outcome.Invocation is null) {
-            throw new GalateaTurnException(
-                "当前持久化阶段没有可继续的模型调用。",
-                "recovery-did-not-advance"
-            );
-        }
-        return new GalateaCompletedOperation(
-            outcome.Message,
-            outcome.Invocation,
-            outcome.Errors
-        );
     }
 
     public async ValueTask DisposeAsync() {
@@ -924,16 +679,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
             }
             sessionIndex++;
         }
-        if (_recapGridCandidate is not null) {
-            try {
-                await _recapGridCandidate.DisposeAsync()
-                    .ConfigureAwait(false);
-                DisposeHooksForTest?.AfterCandidateDisposed?.Invoke();
-            }
-            catch (Exception exception) when (
-                GalateaExceptionClassifier.IsNonFatal(exception)) {
-                (failures ??= []).Add(exception);
-            }
+        try {
+            await _recapGrid.DisposeAsync().ConfigureAwait(false);
+            DisposeHooksForTest?.AfterRecapGridDisposed?.Invoke();
+        }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
+            (failures ??= []).Add(exception);
         }
         if (failures is { Count: 1 }) {
             ExceptionDispatchInfo.Capture(failures[0]).Throw();
@@ -945,22 +697,20 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
     internal sealed record GalateaDisposeTestHooks(
         Action<int>? AfterSessionDisposed = null,
-        Action? AfterCandidateDisposed = null
+        Action? AfterRecapGridDisposed = null
     );
 
     private async Task<GalateaCompletedOperation>
-        RunCandidateFreshSendAsync(
+        RunRecapGridFreshSendAsync(
         UserSessionHost host,
         GalateaLiveTurn liveTurn,
         CompletionStreamObserver observer,
         EventAddress capturedHead,
         CancellationToken cancellationToken
     ) {
-        GalateaRecapGridCandidateComposition candidate =
-            _recapGridCandidate ?? throw new InvalidOperationException(
-                "Candidate composition is unavailable.");
+        GalateaRecapGridComposition recapGrid = _recapGrid;
         CompletionConnectionConfig inspected =
-            candidate.InspectConnectionExact(liveTurn.Options.ConnectionId);
+            recapGrid.InspectConnectionExact(liveTurn.Options.ConnectionId);
         SessionDesiredSetupReconciliationResult reconciled =
             host.Engine.ReconcileDesiredSetup(
                 capturedHead,
@@ -972,23 +722,23 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (reconciled is not SessionDesiredSetupReconciliationResult
                 .Ready ready) {
             throw new GalateaTurnException(
-                "候选RecapGrid会话设置无法在当前边界安全更新。",
-                "candidate-desired-setup-unavailable");
+                "RecapGrid会话设置无法在当前边界安全更新。",
+                "recap-grid-desired-setup-unavailable");
         }
         string effective = await _inputPreprocessor.ProcessAsync(
             liveTurn, cancellationToken).ConfigureAwait(false);
         string prompted = WrapUserMessageForEngine(effective);
-        await using GalateaRecapGridCandidateTurn turn =
-            candidate.OpenFresh(
+        await using GalateaRecapGridTurn turn =
+            recapGrid.OpenFresh(
                 host.Engine,
                 liveTurn.Options.ConnectionId);
         RecapGridOnlineContextHandle online = turn.Online
             ?? throw new InvalidDataException(
-                "Fresh candidate binding has no Online context.");
+                "Fresh RecapGrid binding has no Online context.");
         var lifecycle = new GalateaFreshSendLifecycleGate(
             online.Lifecycle,
             liveTurn.StopController);
-        host.Engine.UseRuntime(CreateCandidateRuntime(
+        host.Engine.UseRuntime(CreateRecapGridRuntime(
             turn,
             online.CandidateSource,
             lifecycle,
@@ -1005,7 +755,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     }
 
     private async Task<GalateaCompletedOperation>
-        RunCandidateRecoveryAsync(
+        RunRecapGridRecoveryAsync(
         UserSessionHost host,
         GalateaLiveTurn liveTurn,
         CompletionStreamObserver observer,
@@ -1013,30 +763,28 @@ public sealed class GalateaHostService : IAsyncDisposable {
         EventAddress capturedHead,
         CancellationToken cancellationToken
     ) {
-        GalateaRecapGridCandidateComposition candidate =
-            _recapGridCandidate ?? throw new InvalidOperationException(
-                "Candidate composition is unavailable.");
-        GalateaRecapGridCandidateTurn? turn = null;
+        GalateaRecapGridComposition recapGrid = _recapGrid;
+        GalateaRecapGridTurn? turn = null;
         try {
             if (requirement is SessionRuntimeRecoveryRequirements
                     .NewRequestRequired) {
                 CompletionConnectionConfig inspected =
-                    candidate.InspectConnectionExact(
+                    recapGrid.InspectConnectionExact(
                         liveTurn.Options.ConnectionId);
                 ValidateRecoveryConnection(
                     host.Engine,
                     capturedHead,
                     inspected);
-                turn = candidate.OpenFresh(
+                turn = recapGrid.OpenFresh(
                     host.Engine,
                     liveTurn.Options.ConnectionId);
                 RecapGridOnlineContextHandle online = turn.Online
                     ?? throw new InvalidDataException(
-                        "New-request candidate binding has no Online context.");
+                        "New-request RecapGrid binding has no Online context.");
                 var lifecycle = new GalateaRecoveryLifecycleGate(
                     online.Lifecycle,
                     liveTurn.StopController);
-                host.Engine.UseRuntime(CreateCandidateRuntime(
+                host.Engine.UseRuntime(CreateRecapGridRuntime(
                     turn,
                     online.CandidateSource,
                     lifecycle,
@@ -1052,7 +800,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         "上次模型调用结果不确定；必须明确选择重新调用。",
                         "uncertain-completion-restart-required");
                 }
-                turn = candidate.BindPrepared(host.Engine, frozen);
+                turn = recapGrid.BindPrepared(host.Engine, frozen);
                 liveTurn.StopController.EnterObserverOnlyOrThrow(
                     cancellationToken);
                 host.Engine.UseRuntime(new SessionRuntime(
@@ -1070,7 +818,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             }
             else if (requirement is SessionRuntimeRecoveryRequirements
                          .ToolContinuationRequired toolContinuation) {
-                turn = candidate.BindToolContinuation(
+                turn = recapGrid.BindToolContinuation(
                     host.Engine,
                     liveTurn.Options.ConnectionId,
                     toolContinuation
@@ -1083,7 +831,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     online.Lifecycle,
                     liveTurn.StopController
                 );
-                host.Engine.UseRuntime(CreateCandidateRuntime(
+                host.Engine.UseRuntime(CreateRecapGridRuntime(
                     turn,
                     online.CandidateSource,
                     lifecycle,
@@ -1102,7 +850,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 || outcome.Message is null
                 || outcome.Invocation is null) {
                 throw new GalateaTurnException(
-                    "候选RecapGrid恢复未推进。",
+                    "RecapGrid恢复未推进。",
                     "recovery-did-not-advance");
             }
             return new GalateaCompletedOperation(
@@ -1117,8 +865,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
     }
 
-    private static SessionRuntime CreateCandidateRuntime(
-        GalateaRecapGridCandidateTurn turn,
+    private static SessionRuntime CreateRecapGridRuntime(
+        GalateaRecapGridTurn turn,
         ICoherentContextCandidateSource candidates,
         ISessionContextLifecycleCoordinator lifecycle,
         SessionUncertainCompletionRecoveryPolicy recoveryPolicy
@@ -1175,25 +923,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
             .Response;
         return Task.FromResult(new UserSessionHost(user, engine, recent));
     }
-
-    private static SessionRuntime CreateRuntime(
-        CompletionConnectionConfig connection,
-        ICompletionClient client,
-        ICoherentContextCandidateSource candidates,
-        ISessionContextLifecycleCoordinator lifecycle,
-        SessionUncertainCompletionRecoveryPolicy recoveryPolicy
-    ) => new(
-        client,
-        CompletionTarget:
-            GalateaRecapComposition.CreateCompletionTarget(
-                connection,
-                client
-            ),
-        MaxTokens: connection.MaxTokens,
-        UncertainCompletionRecoveryPolicy: recoveryPolicy,
-        ContextCandidateSource: candidates,
-        ContextLifecycle: lifecycle
-    );
 
     private static void ValidateRecoveryConnection(
         SessionJournalEngine engine,
@@ -1395,15 +1124,14 @@ public sealed class UserSessionHost : IAsyncDisposable {
         RecentTurnsResponseDto recent
     ) => recent with {
         RewindLatestToken = null,
-        RecapPlanning = recent.RecapPlanning is { } recap
-            ? recap with {
-                Freshness = GalateaRecapComposition.StaleFreshness
+        RecapGridReadiness = recent.RecapGridReadiness is { } readiness
+            ? readiness with {
+                Freshness = GalateaRecapGridReadiness.StaleFreshness,
+                State = "stale",
+                Code = "not-observed",
+                Detail = "RecapGrid readiness has not been read at the current raw head."
             }
-            : new RecapPlanningSnapshotDto(
-                GalateaRecapComposition.StaleFreshness,
-                GalateaRecapComposition.NotObservedState,
-                Detail: "DerivedRecap进度尚未在稳定会话边界读取。"
-            )
+            : null
     };
 
     internal GalateaLiveTurn? GetCurrentTurn() {
@@ -1451,6 +1179,8 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
 internal static class GalateaConfigLoader {
     public const string ConnectionsFileName = "connections.json";
+    private const int MaximumAgentControlProfileCount = 256;
+    private const int MaximumAgentControlProfileUtf8Bytes = 128 * 1024;
 
     public static GalateaConfig Load(string configPath) {
         if (string.IsNullOrWhiteSpace(configPath)) { throw new InvalidOperationException("Galatea config path must not be blank."); }
@@ -1466,7 +1196,12 @@ internal static class GalateaConfigLoader {
         string configDir = Path.GetDirectoryName(resolvedPath)
             ?? throw new InvalidOperationException($"Cannot determine config directory for: {resolvedPath}");
         string connectionsPath = Path.Combine(configDir, ConnectionsFileName);
-        var usersFile = JsonSerializer.Deserialize(File.ReadAllText(resolvedPath), GalateaJsonContext.Default.GalateaUsersFileConfig);
+        byte[] usersBytes = GalateaStrictConfigReader.ReadAndValidate(
+            resolvedPath,
+            GalateaStrictConfigReader.MaximumConfigUtf8Bytes,
+            GalateaStrictDocumentKind.Users
+        );
+        var usersFile = JsonSerializer.Deserialize(usersBytes, GalateaJsonContext.Default.GalateaUsersFileConfig);
         if (usersFile is null) { throw new InvalidOperationException($"Failed to deserialize Galatea config: {resolvedPath}"); }
 
         if (!File.Exists(connectionsPath)) {
@@ -1475,26 +1210,11 @@ internal static class GalateaConfigLoader {
                 connectionsPath
             );
         }
-        string connectionsJson = File.ReadAllText(connectionsPath);
-        using JsonDocument connectionsDocument = JsonDocument.Parse(
-            connectionsJson
+        byte[] connectionsJson = GalateaStrictConfigReader.ReadAndValidate(
+            connectionsPath,
+            GalateaStrictConfigReader.MaximumConnectionsUtf8Bytes,
+            GalateaStrictDocumentKind.Connections
         );
-        int recapMaintainerConnectionsPropertyCount =
-            connectionsDocument.RootElement
-                .EnumerateObject()
-                .Count(static property => string.Equals(
-                    property.Name,
-                    "recapMaintainerConnections",
-                    StringComparison.OrdinalIgnoreCase
-                ));
-        if (recapMaintainerConnectionsPropertyCount > 1) {
-            throw new InvalidOperationException(
-                "Galatea connections file contains "
-                + "recapMaintainerConnections more than once."
-            );
-        }
-        bool recapMaintainerConnectionsSpecified =
-            recapMaintainerConnectionsPropertyCount == 1;
         var galateaConnectionsFile = JsonSerializer.Deserialize(
             connectionsJson,
             GalateaJsonContext.Default.GalateaConnectionsFileConfig
@@ -1508,15 +1228,6 @@ internal static class GalateaConfigLoader {
                     galateaConnectionsFile.DefaultConnectionId
                 )
             );
-        IReadOnlyDictionary<string, string>?
-            recapMaintainerConnections =
-                NormalizeRecapMaintainerConnections(
-                    galateaConnectionsFile
-                        .RecapMaintainerConnections,
-                    recapMaintainerConnectionsSpecified,
-                    connectionsFile.Connections
-                );
-
         if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("Galatea config must contain at least one user."); }
 
         var config = new GalateaConfig(
@@ -1529,8 +1240,7 @@ internal static class GalateaConfigLoader {
                 configDir
             ),
             MaintenanceMode: usersFile.MaintenanceMode,
-            RecapMaintainerConnections:
-                recapMaintainerConnections
+            RecapGrid: LoadRecapGridConfig(usersFile.RecapGrid, configDir)
         );
 
         config = ResolveSystemPromptFiles(config, resolvedPath);
@@ -1538,92 +1248,120 @@ internal static class GalateaConfigLoader {
         return config;
     }
 
-    private static IReadOnlyDictionary<string, string>?
-        NormalizeRecapMaintainerConnections(
-        IReadOnlyList<GalateaRecapMaintainerConnectionBinding>?
-            configuredBindings,
-        bool configuredBindingsSpecified,
-        IReadOnlyList<CompletionConnectionConfig> connections
+    private static GalateaRecapGridRuntimeConfig LoadRecapGridConfig(
+        GalateaRecapGridFileConfig? configured,
+        string configDirectory
     ) {
-        if (!configuredBindingsSpecified) { return null; }
-        if (configuredBindings is null) {
+        if (configured is null) {
             throw new InvalidOperationException(
-                "Galatea recapMaintainerConnections must be an array "
-                + "when specified."
+                "Galatea config must contain an exact recapGrid object."
             );
         }
-
-        HashSet<string> requiredMaintainerIds =
-            RecapMaintainerProfileCatalog.BuiltIn.All
-                .Select(static descriptor => descriptor.MaintainerId)
-                .ToHashSet(StringComparer.Ordinal);
-        var connectionIds = connections
-            .Select(static connection => connection.Id)
-            .ToHashSet(StringComparer.Ordinal);
-        var normalized = new Dictionary<string, string>(
-            StringComparer.Ordinal
+        string routeManifestPath = ResolveRequiredFilePath(
+            configured.RouteManifestPath,
+            configDirectory,
+            "recapGrid.routeManifestPath",
+            requireExistingFile: false
         );
-
-        for (int index = 0; index < configuredBindings.Count; index++) {
-            GalateaRecapMaintainerConnectionBinding binding =
-                configuredBindings[index]
-                ?? throw new InvalidOperationException(
-                    "Galatea recapMaintainerConnections"
-                    + $"[{index}] must not be null."
-                );
-            if (string.IsNullOrWhiteSpace(binding.MaintainerId)) {
-                throw new InvalidOperationException(
-                    "Galatea recapMaintainerConnections"
-                    + $"[{index}] must have a non-empty maintainerId."
-                );
-            }
-            if (string.IsNullOrWhiteSpace(binding.ConnectionId)) {
-                throw new InvalidOperationException(
-                    "Galatea recapMaintainerConnections entry for "
-                    + $"maintainer '{binding.MaintainerId}' must have "
-                    + "a non-empty connectionId."
-                );
-            }
-            if (!requiredMaintainerIds.Contains(binding.MaintainerId)) {
-                throw new InvalidOperationException(
-                    "Galatea recapMaintainerConnections contains "
-                    + $"unknown maintainerId '{binding.MaintainerId}'."
-                );
-            }
-            if (!connectionIds.Contains(binding.ConnectionId)) {
-                throw new InvalidOperationException(
-                    "Galatea recapMaintainerConnections entry for "
-                    + $"maintainer '{binding.MaintainerId}' references "
-                    + $"unknown connectionId '{binding.ConnectionId}'."
-                );
-            }
-            if (!normalized.TryAdd(
-                    binding.MaintainerId,
-                    binding.ConnectionId
-                )) {
-                throw new InvalidOperationException(
-                    "Galatea recapMaintainerConnections contains "
-                    + $"duplicate maintainerId '{binding.MaintainerId}'."
-                );
-            }
-        }
-
-        string[] missing = [
-            .. requiredMaintainerIds
-                .Where(id => !normalized.ContainsKey(id))
-                .Order(StringComparer.Ordinal)
-        ];
-        if (missing.Length > 0) {
+        IReadOnlyList<string>? profileFiles =
+            configured.AgentControlProfileFiles;
+        if (profileFiles is null
+            || profileFiles.Count is < 1
+                or > MaximumAgentControlProfileCount) {
             throw new InvalidOperationException(
-                "Galatea recapMaintainerConnections must completely "
-                + "cover the built-in recap maintainers; missing: "
-                + string.Join(", ", missing)
-                + "."
+                "recapGrid.agentControlProfileFiles must contain between "
+                + "1 and 256 exact profile paths."
             );
         }
-
-        return new ReadOnlyDictionary<string, string>(normalized);
+        var resolvedProfiles = new HashSet<string>(
+            OperatingSystem.IsWindows()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal
+        );
+        var profiles = new List<RecapGridAgentControlProfile>(
+            profileFiles.Count
+        );
+        for (int index = 0; index < profileFiles.Count; index++) {
+            string path = ResolveRequiredFilePath(
+                profileFiles[index],
+                configDirectory,
+                $"recapGrid.agentControlProfileFiles[{index}]",
+                requireExistingFile: true
+            );
+            if (!resolvedProfiles.Add(path)) {
+                throw new InvalidOperationException(
+                    "recapGrid.agentControlProfileFiles contains a "
+                    + "duplicate canonical path."
+                );
+            }
+            profiles.Add(RecapGridAgentControlProfile.DecodeCanonical(
+                ReadBoundedFile(
+                    path,
+                    MaximumAgentControlProfileUtf8Bytes,
+                    "Agent Control profile"
+                )
+            ));
+        }
+        var registry = new RecapGridAgentControlProfileRegistry(profiles);
+        if (string.IsNullOrWhiteSpace(
+                configured.CurrentAgentControlProfileId)
+            || !registry.TryGet(
+                configured.CurrentAgentControlProfileId,
+                out _)) {
+            throw new InvalidOperationException(
+                "recapGrid.currentAgentControlProfileId must exactly name "
+                + "one configured profile."
+            );
+        }
+        return new GalateaRecapGridRuntimeConfig(
+            routeManifestPath,
+            registry,
+            configured.CurrentAgentControlProfileId
+        );
     }
+
+    private static string ResolveRequiredFilePath(
+        string configuredPath,
+        string configDirectory,
+        string field,
+        bool requireExistingFile
+    ) {
+        if (string.IsNullOrWhiteSpace(configuredPath)) {
+            throw new InvalidOperationException(
+                $"{field} must be non-empty."
+            );
+        }
+        string resolved = Path.GetFullPath(configuredPath, configDirectory);
+        RejectReparsePointsOnExistingPath(resolved, field);
+        if (requireExistingFile && !File.Exists(resolved)) {
+            throw new FileNotFoundException(
+                $"{field} was not found: {resolved}",
+                resolved
+            );
+        }
+        return resolved;
+    }
+
+    private static byte[] ReadBoundedFile(
+        string path,
+        int maximumBytes,
+        string kind
+    ) {
+        RejectReparsePointsOnExistingPath(path, kind);
+        return GalateaStrictConfigReader.ReadBoundedRegularFile(
+            path,
+            maximumBytes,
+            kind
+        );
+    }
+
+    internal static RecapGridRouteManifest LoadRouteManifest(
+        string canonicalPath
+    ) => RecapGridRouteManifest.DecodeCanonical(ReadBoundedFile(
+        canonicalPath,
+        RecapGridRouteManifestLimits.MaximumCanonicalUtf8Bytes,
+        "RecapGrid route manifest"
+    ));
 
     private static GalateaConfig ResolveSystemPromptFiles(GalateaConfig config, string configPath) {
         string configDir = Path.GetDirectoryName(configPath)
@@ -1637,14 +1375,25 @@ internal static class GalateaConfigLoader {
             }
 
             string promptPath = Path.GetFullPath(user.SystemPromptFile, configDir);
-            if (!File.Exists(promptPath)) {
-                throw new FileNotFoundException(
-                    $"Galatea user '{user.UserId}' systemPromptFile was not found: {promptPath}",
-                    promptPath
+            byte[] promptBytes = GalateaStrictConfigReader
+                .ReadBoundedRegularFile(
+                    promptPath,
+                    GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
+                    $"systemPromptFile for user '{user.UserId}'"
+                );
+            string promptText;
+            try {
+                promptText = new UTF8Encoding(
+                    encoderShouldEmitUTF8Identifier: false,
+                    throwOnInvalidBytes: true
+                ).GetString(promptBytes).Trim();
+            }
+            catch (DecoderFallbackException exception) {
+                throw new InvalidDataException(
+                    $"Galatea user '{user.UserId}' systemPromptFile is not strict UTF-8.",
+                    exception
                 );
             }
-
-            string promptText = File.ReadAllText(promptPath).Trim();
             resolvedUsers.Add(user with { SystemPrompt = promptText });
         }
 
@@ -1794,6 +1543,10 @@ internal static class GalateaConfigBootstrapper {
         string resolvedPath = Path.GetFullPath(configPath);
         string? parentDir = Path.GetDirectoryName(resolvedPath);
         if (string.IsNullOrWhiteSpace(parentDir)) { throw new InvalidOperationException($"Cannot determine parent directory for Galatea config path: {resolvedPath}"); }
+        GalateaStrictConfigReader.RequireExistingAncestorsNoReparse(
+            resolvedPath,
+            "Galatea config bootstrap"
+        );
 
         string connectionsPath = Path.Combine(parentDir, GalateaConfigLoader.ConnectionsFileName);
         bool configExists = File.Exists(resolvedPath);
@@ -1851,7 +1604,14 @@ internal static class GalateaConfigTemplateFactory {
                 CreateUser("alice", "alice123", ".atelia/galatea/sessions/alice"),
                 CreateUser("bob", "bob123", ".atelia/galatea/sessions/bob"),
             ],
-            ListenUrls: ["http://0.0.0.0:3510"]
+            ListenUrls: ["http://0.0.0.0:3510"],
+            RecapGrid: new GalateaRecapGridFileConfig(
+                RouteManifestPath: "recap-grid-routes.json",
+                AgentControlProfileFiles: [
+                    "recap-grid-agent-control-profile.json"
+                ],
+                CurrentAgentControlProfileId: "default"
+            )
         );
     }
 
@@ -1920,23 +1680,22 @@ internal static class GalateaHtml {
 
     public static string RenderAppPage(
         GalateaUserConfig user,
-        CompletionConnectionRegistry connections,
+        IReadOnlyList<GalateaConnectionInfoDto> connections,
+        string defaultConnectionId,
         bool maintenanceMode,
         string assetVersion
     ) {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(connections);
-
-        var connectionInfos = connections.Connections
-            .Select(
-            static c => new GalateaConnectionInfoDto(
-                c.Id,
-                c.ModelId
-            )
-        )
-            .ToArray();
-        string connectionsJson = JsonSerializer.Serialize(connectionInfos, GalateaJson.Options);
-        string defaultConnectionJson = JsonSerializer.Serialize(connections.DefaultConnectionId, GalateaJson.Options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(defaultConnectionId);
+        string connectionsJson = JsonSerializer.Serialize(
+            connections,
+            GalateaJson.Options
+        );
+        string defaultConnectionJson = JsonSerializer.Serialize(
+            defaultConnectionId,
+            GalateaJson.Options
+        );
         string maintenanceBanner = maintenanceMode
             ? "<p class=\"maintenance-banner\" role=\"status\">维护模式：会话只读，发送、恢复、撤销与停止已禁用。</p>"
             : string.Empty;
@@ -1965,7 +1724,7 @@ internal static class GalateaHtml {
         <fieldset id="connection-picker" class="connection-picker" aria-label="模型连接">
           <legend>模型连接</legend>
         </fieldset>
-        <section id="recap-planning-status" class="recap-planning-status hidden" aria-live="polite" title="HistoryLoad 是 DerivedRecap cadence 的内部度量，不是模型 token 数。">
+        <section id="recap-planning-status" class="recap-planning-status hidden" aria-live="polite" title="HistoryLoad 是 Timeline cadence 的内部度量，不是模型 token 数。">
           <div id="recap-planning-summary" class="recap-planning-summary"></div>
           <progress id="recap-planning-progress" class="recap-planning-progress hidden" max="1" value="0"></progress>
           <div id="recap-planning-detail" class="recap-planning-detail"></div>
@@ -2061,6 +1820,6 @@ internal static class GalateaJson {
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(GalateaUsersFileConfig))]
 [JsonSerializable(typeof(GalateaUserConfig))]
+[JsonSerializable(typeof(GalateaRecapGridFileConfig))]
 [JsonSerializable(typeof(GalateaConnectionsFileConfig))]
-[JsonSerializable(typeof(GalateaRecapMaintainerConnectionBinding))]
 internal sealed partial class GalateaJsonContext : JsonSerializerContext;

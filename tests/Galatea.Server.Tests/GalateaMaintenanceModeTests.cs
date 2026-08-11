@@ -19,7 +19,8 @@ public sealed class GalateaMaintenanceModeTests {
         await using var host = GalateaTestHost.Create(
             factory,
             normalizer,
-            maintenanceMode: true
+            maintenanceMode: true,
+            provisionRawOnly: false
         );
         EventAddress initialHead;
         using (SessionJournalEngine before =
@@ -95,11 +96,11 @@ public sealed class GalateaMaintenanceModeTests {
             );
         Assert.NotNull(recent);
         Assert.Empty(recent!.Turns);
-        RecapPlanningSnapshotDto recap = Assert.IsType<
-            RecapPlanningSnapshotDto
-        >(recent.RecapPlanning);
+        RecapGridReadinessSnapshotDto recap = Assert.IsType<
+            RecapGridReadinessSnapshotDto
+        >(recent.RecapGridReadiness);
         Assert.Equal("exact", recap.Freshness);
-        Assert.Equal("below-cadence-threshold", recap.State);
+        Assert.Equal("unprovisioned", recap.State);
         Assert.Equal(
             EventAddressTextCodec.Format(initialHead),
             recap.ObservedRawHead

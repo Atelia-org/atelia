@@ -174,7 +174,12 @@ public sealed class GalateaEndpointLockTopologyTests {
 
     [Fact]
     public async Task ActiveTurn_ReadSurfacesUseOnlyLiveStateAndCachedRecentTurns() {
-        await using var host = CreateHost();
+        var completionFactory =
+            new NonDispatchingCompletionClientFactory();
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            new PassThroughNormalizer()
+        );
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
 
@@ -203,10 +208,21 @@ public sealed class GalateaEndpointLockTopologyTests {
             );
         Assert.NotNull(idleRecent);
         Assert.NotNull(idleRecent!.RewindLatestToken);
-        RecapPlanningSnapshotDto idleRecap = Assert.IsType<
-            RecapPlanningSnapshotDto
-        >(idleRecent.RecapPlanning);
+        RecapGridReadinessSnapshotDto idleRecap = Assert.IsType<
+            RecapGridReadinessSnapshotDto
+        >(idleRecent.RecapGridReadiness);
         Assert.Equal("exact", idleRecap.Freshness);
+        Assert.Equal("raw-only", idleRecap.State);
+        Assert.Null(idleRecap.Authority);
+        Assert.Null(idleRecap.Metrics);
+        Assert.Equal(0, completionFactory.CreateCallCount);
+        Assert.False(File.Exists(Path.Combine(
+            host.SessionDirectory,
+            "derived",
+            "recap-grid",
+            "v1",
+            "grid.sqlite"
+        )));
 
         GalateaLiveTurn? liveTurn = null;
         bool lockHeld = false;
@@ -246,9 +262,9 @@ public sealed class GalateaEndpointLockTopologyTests {
             );
             Assert.Equal("completed user", cachedTurn.UserText);
             Assert.Null(activeRecent.RewindLatestToken);
-            RecapPlanningSnapshotDto activeRecap = Assert.IsType<
-                RecapPlanningSnapshotDto
-            >(activeRecent.RecapPlanning);
+            RecapGridReadinessSnapshotDto activeRecap = Assert.IsType<
+                RecapGridReadinessSnapshotDto
+            >(activeRecent.RecapGridReadiness);
             Assert.Equal("stale", activeRecap.Freshness);
             Assert.Equal(
                 idleRecap.ObservedRawHead,
@@ -361,7 +377,7 @@ public sealed class GalateaEndpointLockTopologyTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "state.recapPlanning = payload?.recapPlanning ?? null;",
+            "state.recapGridReadiness = payload?.recapGridReadiness ?? null;",
             script,
             StringComparison.Ordinal
         );
@@ -371,37 +387,37 @@ public sealed class GalateaEndpointLockTopologyTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "Math.min(Math.max(currentLoad, 0), threshold)",
+            "metrics.selectedRows",
             script,
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "snapshot.minimumRecentHistoryLoad",
+            "metrics.recipeRowSteps",
             script,
             StringComparison.Ordinal
         );
         Assert.Contains(
+            "metrics.missingAssignments",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "snapshot.orderedMissing?.length",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "当前authority尚未重新确认。",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "payload?.recapPlanning",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
             "snapshot.recapBuildIntervalHistoryLoad",
-            script,
-            StringComparison.Ordinal
-        );
-        Assert.Contains(
-            "距 cadence 阈值：",
-            script,
-            StringComparison.Ordinal
-        );
-        Assert.Contains(
-            "显示上一稳定边界；当前进度尚未重新确认。",
-            script,
-            StringComparison.Ordinal
-        );
-        Assert.DoesNotContain(
-            "距下次 Recap：",
-            script,
-            StringComparison.Ordinal
-        );
-        Assert.DoesNotContain(
-            "生成中；显示上一稳定边界。",
             script,
             StringComparison.Ordinal
         );
@@ -521,10 +537,17 @@ public sealed class GalateaEndpointLockTopologyTests {
 
     private sealed class NonDispatchingCompletionClientFactory
         : ICompletionClientFactory {
+        private int _createCallCount;
+
+        internal int CreateCallCount => Volatile.Read(
+            ref _createCallCount
+        );
+
         public ICompletionClient Create(
             CompletionConnectionConfig connection
         ) {
             ArgumentNullException.ThrowIfNull(connection);
+            Interlocked.Increment(ref _createCallCount);
             return new NonDispatchingCompletionClient();
         }
     }

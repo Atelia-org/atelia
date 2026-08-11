@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.DerivedRecap.Planner;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -11,79 +10,13 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaHostSmokeTests {
     [Fact]
-    public void StaleRawHeadChanged_ClearsRewindAuthorityWithoutRemappingRecap() {
-        var recent = new RecentTurnsResponseDto([], "rewind-authority");
-        var stale = new RecapPlanningSnapshotDto(
-            "stale",
-            "unavailable",
-            Code: "RawHeadChanged",
-            Detail: "retry the read-only inspection"
-        );
-
-        RecentTurnsResponseDto bound =
-            GalateaHostService.BindRecapPlanningSnapshot(
-                recent,
-                recentCapturedHead: null,
-                stale
-            );
-
-        Assert.Null(bound.RewindLatestToken);
-        RecapPlanningSnapshotDto boundRecap = Assert.IsType<
-            RecapPlanningSnapshotDto
-        >(bound.RecapPlanning);
-        Assert.Same(stale, boundRecap);
-        Assert.Equal("stale", boundRecap.Freshness);
-        Assert.Equal("unavailable", boundRecap.State);
-        Assert.Equal(
-            "RawHeadChanged",
-            boundRecap.Code
-        );
-        Assert.Equal(
-            "retry the read-only inspection",
-            boundRecap.Detail
-        );
-    }
-
-    [Fact]
-    public async Task RecapHeadMismatch_DowngradesSnapshotAndClearsRewindAuthority() {
-        var completionFactory = new TrackingCompletionClientFactory();
-        await using var host = GalateaTestHost.Create(
-            completionFactory,
-            DisabledGalateaUserMessageNormalizer.Instance
-        );
-        GalateaHostService service = host.Factory.Services
-            .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        var recent = new RecentTurnsResponseDto([], "rewind-authority");
-        var mismatched = new RecapPlanningSnapshotDto(
-            "exact",
-            "below-cadence-threshold",
-            ObservedRawHead: "not-the-recent-head"
-        );
-
-        RecentTurnsResponseDto bound =
-            GalateaHostService.BindRecapPlanningSnapshot(
-                recent,
-                session.Engine.ReadCurrentHead(),
-                mismatched
-            );
-
-        Assert.Null(bound.RewindLatestToken);
-        Assert.Equal("stale", bound.RecapPlanning?.Freshness);
-        Assert.Equal("unavailable", bound.RecapPlanning?.State);
-        Assert.Equal("session-head-changed", bound.RecapPlanning?.Code);
-    }
-
-    [Fact]
     public async Task ActualProgram_UsesAuthenticationAndInjectedServices() {
         var completionFactory = new TrackingCompletionClientFactory();
         var normalizer = new TrackingNormalizer();
         await using var host = GalateaTestHost.Create(
             completionFactory,
-            normalizer
+            normalizer,
+            provisionRawOnly: false
         );
         using HttpClient client = host.CreateClient();
 
@@ -120,17 +53,11 @@ public sealed class GalateaHostSmokeTests {
             .GetFromJsonAsync<RecentTurnsResponseDto>("/api/recent-turns");
         Assert.NotNull(recent);
         Assert.Empty(recent!.Turns);
-        RecapPlanningSnapshotDto recap = Assert.IsType<
-            RecapPlanningSnapshotDto
-        >(recent.RecapPlanning);
+        RecapGridReadinessSnapshotDto recap = Assert.IsType<
+            RecapGridReadinessSnapshotDto
+        >(recent.RecapGridReadiness);
         Assert.Equal("exact", recap.Freshness);
-        Assert.Equal("below-cadence-threshold", recap.State);
-        Assert.Equal(0, recap.RecentHistoryUnitCount);
-        Assert.Equal(0, recap.RecentHistoryLoad);
-        Assert.Equal(1_000_000, recap.MinimumRecentHistoryLoad);
-        Assert.Equal(1_000_000, recap.RecapBuildIntervalHistoryLoad);
-        Assert.Equal(2_000_000, recap.BuildThresholdHistoryLoad);
-        Assert.Equal(2_000_000, recap.RemainingHistoryLoad);
+        Assert.Equal("unprovisioned", recap.State);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
         UserSessionHost session = await service.GetSessionAsync(
@@ -151,11 +78,12 @@ public sealed class GalateaHostSmokeTests {
     }
 
     [Fact]
-    public async Task PlannerUnavailable_DoesNotSuppressRecentTurns() {
+    public async Task RecapGridUnprovisioned_DoesNotSuppressRecentTurns() {
         var completionFactory = new TrackingCompletionClientFactory();
         await using var host = GalateaTestHost.Create(
             completionFactory,
-            DisabledGalateaUserMessageNormalizer.Instance
+            DisabledGalateaUserMessageNormalizer.Instance,
+            provisionRawOnly: false
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
@@ -176,12 +104,6 @@ public sealed class GalateaHostSmokeTests {
                 "model-a"
             )
         );
-        File.Delete(Path.Combine(
-            host.SessionDirectory,
-            "config",
-            "recap-planner-config.json"
-        ));
-
         using HttpClient client = host.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(
             client
@@ -199,12 +121,11 @@ public sealed class GalateaHostSmokeTests {
         Assert.Equal("visible user", turn.UserText);
         Assert.Equal("visible assistant", turn.Assistant.Text);
         Assert.NotNull(recent.RewindLatestToken);
-        RecapPlanningSnapshotDto recap = Assert.IsType<
-            RecapPlanningSnapshotDto
-        >(recent.RecapPlanning);
-        Assert.Equal("stale", recap.Freshness);
-        Assert.Equal("unavailable", recap.State);
-        Assert.Equal("PlannerConfigMissing", recap.Code);
+        RecapGridReadinessSnapshotDto recap = Assert.IsType<
+            RecapGridReadinessSnapshotDto
+        >(recent.RecapGridReadiness);
+        Assert.Equal("exact", recap.Freshness);
+        Assert.Equal("unprovisioned", recap.State);
         Assert.Equal(0, completionFactory.CreateCallCount);
     }
 

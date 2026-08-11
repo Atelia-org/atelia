@@ -1,6 +1,6 @@
 # SessionJournal current architecture and code map
 
-状态：current discovery map。源码、strict codecs与focused tests仍是最终事实。
+状态：WP-08 formal source cutover Complete，independent closure Closed。源码、strict codecs 与final tests是当前事实。
 
 ## Mental model
 
@@ -9,79 +9,77 @@ raw EventJournal events + selected RefId Parent lineage  (authority)
                          |
                  SessionJournalEngine
                          |
-          bounded online planning / explicit paged audit
+              HistoryTimeline ledger
                          |
-            DerivedRecap v8 shared epoch Store
+       Control recipe graph + RecapGrid Store
                          |
-             context candidate materialization
+          Manager / Runtime / Getter / Online
+                         |
+                  CLI / Galatea
 ```
 
-raw events是append-only事实源。`derived/recap/v8`是可删除、可重建sidecar；
-`derived/recap/rebuild/v1`只是content-free execution aid。
+raw events 是 append-only 事实源。HistoryTimeline、Control 和 RecapGrid Store 都是有明确
+identity、head fence 与重建边界的 companion state；它们不回写 raw history。
 
 ## Ownership
 
 | Assembly | Owns |
 |---|---|
-| SessionJournal | raw replay、selected Parent lineage、setup authority、bounded planning windows、paged audit/forward cursor、Send/Resume/context contracts |
-| DerivedRecap.Abstractions | Maintainer epoch input、Updated/Keep、registry contract |
-| DerivedRecap.Store | v8 canonical artifacts、atomic Building/final/publication、repair authority、selection/materialization、rebuild spool |
-| DerivedRecap.Planner | NoBuild/Build policy、parallel runtime-group complete-roster kernel、multi-epoch campaign、explicit rebuild consumer、v3 config |
-| DerivedRecap.Maintainers | family/member definitions、shared prompt/tool shape、structured output |
-| DerivedRecap.Runtime | connection lane、family runtime group、bound maintainer |
-| CLI / Galatea | Host composition、provider connection、operator surface |
+| `SessionJournal` | raw replay、selected Parent lineage、setup authority、bounded planning/audit、neutral context lifecycle |
+| `SessionJournal.HistoryTimeline` | immutable timeline rows、selected-path head、policy、branch reconcile、owner-bound build reads |
+| `SessionJournal.RecapGrid.Abstractions` | Family/Definition/Recipe、projection、cell、row-view 与 fulfilled-key canonical contracts |
+| `SessionJournal.RecapGrid.Control` | registered families/definitions/recipes、active recipe、operation receipts、whole-head CAS |
+| `SessionJournal.RecapGrid.Store` | cells、row views、fulfilled entries、store identity、verification/reset |
+| `SessionJournal.RecapGrid.Manager` | recipe closure wavefront、exact row-build derivation、progress、fulfillment proof |
+| `SessionJournal.RecapGrid.Runtime` | provider-neutral batch executor、route/lane scheduling、strict output protocol |
+| `SessionJournal.RecapGrid.Getter` | exact active+head fulfilled resolution、NthPrevious、context contribution materialization |
+| `SessionJournal.RecapGrid.AgentControl` | strict `recap_grid.control` tool、built-in asset catalog、operation replay |
+| `SessionJournal.RecapGrid.Hosting` | strict completion/route composition、single connection owner、runtime lifetime |
+| `SessionJournal.RecapGrid.Online` | Timeline reconcile/seal、readiness、lazy build 与 composite lifecycle |
+| CLI / Galatea | operator surface、application phase gate、provider and UI composition |
 
-## Key code and tests
+## Key code and focused evidence
 
-| Concern | Owner | Focused tests |
-|---|---|---|
-| bounded raw history | `SessionHistoryPlanning.cs` | `SessionBoundedLineageTests.cs` |
-| paged selected-lineage audit | `SessionJournalEngine.SelectedLineageAudit.cs` | `SessionSelectedLineageAuditTests.cs` |
-| v8 wire | `DerivedRecapV8Contracts.cs`, `DerivedRecapV8Codec.cs` | `DerivedRecapV8CodecCandidateTests.cs` |
-| v8 Store/recovery | `DerivedRecapEpochStore.cs` | `DerivedRecapEpochStoreCandidateTests.cs` |
-| context candidate | `DerivedRecapContextCandidateSource.cs` | `DerivedRecapEpochStoreCandidateTests.cs` |
-| rebuild spool | `DerivedRecapRebuildSpoolStore.cs` | `DerivedRecapRebuildSpoolTests.cs` |
-| parallel runtime-group roster kernel | `DerivedRecapSerialEpochKernel.cs` | `DerivedRecapSerialEpochKernelTests.cs` |
-| online/multi-epoch campaign | `DerivedRecapEpochCampaignExecutor.cs` | `DerivedRecapEpochCampaignExecutorTests.cs` |
-| explicit rebuild execution | `DerivedRecapExplicitRebuildExecutor.cs` | `DerivedRecapExplicitRebuildExecutorTests.cs` |
-| online lifecycle | `DerivedRecapOnlineLifecycleCoordinator.cs` | `DerivedRecapOnlineLifecycleCoordinatorTests.cs` |
-| strict config v3 | `RecapEpochConfigDocument.cs` | `RecapEpochConfigCodecTests.cs` |
-| Host CLI | `RecapExecutionCommands.cs`, `OnlineTurnCommand.cs` | `ProgramRecapV8CommandTests.cs`, architecture boundary tests |
-| Galatea Host | `GalateaRecapComposition.cs` | Galatea server tests |
+| Concern | Owner / tests |
+|---|---|
+| bounded raw history and lifecycle audit | `SessionJournal`, `SessionJournal.Tests` |
+| durable Timeline and branch reconcile | `HistoryTimeline`, `HistoryTimeline.Tests` |
+| canonical Grid values | `RecapGrid.Abstractions`, `RecapGrid.Abstractions.Tests` |
+| Control state and receipts | `RecapGrid.Control`, `RecapGrid.Control.Tests` |
+| SQLite artifact Store | `RecapGrid.Store`, `RecapGrid.Store.Tests` |
+| wavefront build/progress | `RecapGrid.Manager`, `RecapGrid.Manager.Tests` |
+| provider-neutral runtime | `RecapGrid.Runtime`, `RecapGrid.Runtime.Tests` |
+| pure-read context selection | `RecapGrid.Getter`, `RecapGrid.Getter.Tests` |
+| online lifecycle | `RecapGrid.Online`, `RecapGrid.Online.Tests` |
+| formal CLI / Galatea composition | `SessionJournal.Cli.Tests`, `Galatea.Server.Tests` |
+| dependency and retired-owner absence | `SessionJournal.RecapGrid.WalkingSkeleton.Tests` |
 
-## Current flow
+## Authority and recovery rules
 
-1. Host captures exact raw head and opens v8 Store with code-owned recovery caps.
-2. Campaign first selects Building. Frozen snapshot validation replays exact Start→Admission raw commitment and governing setups.
-3. Kernel pre-resolves every pending roster binding before the first call；healthy finals are skipped；不同runtime-group
-   leaders并行启动，同group在leader Maintainer调用成功或非caller-cancellation terminal failure后并行释放
-   followers，并共同服从lane cap与leader priority；caller cancellation不启动新followers，只drain已started work。
-4. Updated writes new content；Keep copies the matching structured prior block；first-cycle Keep rejects。
-5. complete roster publishes atomically with expected raw-head fence。
-6. Only when no frozen recovery remains does the executor load active v3 and measure HistoryLoad。
-7. `NoBuild` makes zero calls. `Build` freezes one shared slab and invokes the entire ordered roster。
-8. One online operation may publish multiple contiguous epochs. Budget exhaustion after progress is MoreWorkPending, not Ready。
-9. bounded online authority/growth failure is FullRebuildRequired and does not scan/spool。
-10. explicit rebuild seals a paged raw audit, optionally resets v8, then consumes efficient bounded forward ranges through the same Store/kernel path。
-
-## Recovery and authority rules
-
-- Building install后prompt input self-contained；Resume/Restore不live-read previous publication。
-- active config missing/invalid不阻止先完成frozen recovery；新planning才需要它。
-- final/publication repair authority只来自missing或完整bounded captured damage；I/O、permission、oversize fail closed。
-- publication ManifestWitness只修复missing/canonical-damaged envelope；path/manifest identity conflict不可降级。
-- context candidate descriptor绑定exact publication、setup和completion raw head；strict ordinal不跳slot。
-- spool seal不是raw authority本身；使用前仍需当前engine/read-view验证captured RefId/head/provenance。
+- Selection and materialization always bind exact repository, `RefId`, Timeline whole head,
+  Control whole head and Store identity; no latest/global scan or cross-handle fallback is an authority source.
+- A missing active recipe or an empty Timeline is a raw-only state and does not open the Grid Store or provider.
+- A non-empty active recipe with missing current fulfillment is `Unfulfilled`; Online may invoke Manager only at
+  an allowed lifecycle boundary.
+- Frozen Prepared/Started recovery binds the frozen completion/tool identity before current configuration;
+  Prepared performs no derived open and Started refuses before connection construction.
+- Timeline/Control/Store failures remain typed Busy/Stale/Invalid/Unsupported/Indeterminate outcomes. Hosts do
+  not message-map exceptions or blindly retry.
+- Old `derived/recap` generations are inert legacy data. The formal legacy-root operator is the only path that
+  inventories, archives or confirms their deletion; normal Grid operation never reads them.
 
 ## Current boundaries
 
-- R4 runtime-group parallel scheduling、R5 typed cache boundary/usage telemetry与R6 Galatea/CLI production
-  composition已有deterministic evidence；当前同group采用leader Maintainer调用成功或非caller-cancellation
-  terminal failure后再释放followers；caller cancellation不启动新followers，只drain已started work；不做
-  warm-up或response-start release。
-- dynamic topology onboarding、不同member频率和retrieval working memory不在当前production机制内。
-- R7 official-provider canary因TLS/authentication环境失败而没有response usage；cache write/read与经济性结论仍为
-  `Environment-blocked`，不能由deterministic evidence代替。
+- WP-08 source implementation and independent closure are complete. The real-provider canary and actual cyber
+  repository activation remain external `NotRun` gates.
+- A fresh no-local checkout is a post-commit identity gate and has not run; it does not replace or weaken the
+  completed source/independent closure.
+- Operator provisioning/composition/activation is explicit. There is no implicit autobiographical or
+  world-understanding default roster.
+- The formal CLI surface is `recap-grid ...` plus top-level `run-online-turn`; Galatea owns one
+  `RecapGridCompletionHost` and one formal RecapGrid composition.
+- Provider cache/economic claims require a real authenticated canary and cannot be inferred from deterministic
+  tests.
 
-详细规则见[concepts](derived-recap/concepts.md)、[durable target](derived-recap/durable-target.md)、
-[planner config](derived-recap/planner-config.md)，以及Store/Planner/Maintainers各README。
+See [concepts](derived-recap/concepts.md), [durable target](derived-recap/durable-target.md),
+[HistoryLoad](derived-recap/history-load.md), and [host integration](host-integration/derived-recap-host-integration.md).

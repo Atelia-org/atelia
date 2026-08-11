@@ -24,8 +24,6 @@ if (config.ListenUrls is { Count: > 0 }) {
 
 builder.Services.AddSingleton(config);
 builder.Services.AddSingleton<ICompletionClientFactory, DefaultCompletionClientFactory>();
-builder.Services.AddSingleton(_ => new CompletionConnectionsFileConfig(config.Connections, config.DefaultConnectionId));
-builder.Services.AddSingleton<CompletionConnectionRegistry>();
 builder.Services.AddSingleton<IGalateaUserMessageNormalizer>(_ => GalateaUserMessageNormalizerFactory.CreateFromEnvironment());
 builder.Services.AddSingleton<GalateaHostService>();
 builder.Services.AddAuthentication(CookieScheme)
@@ -144,7 +142,7 @@ app.MapPost(
 
 app.MapGet(
     "/",
-    (ClaimsPrincipal user, GalateaHostService hostService, CompletionConnectionRegistry connections) => {
+    (ClaimsPrincipal user, GalateaHostService hostService) => {
         string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         if (!hostService.TryGetUser(userId, out var configUser)) { return Results.Unauthorized(); }
@@ -152,7 +150,8 @@ app.MapGet(
         return Results.Content(
             GalateaHtml.RenderAppPage(
                 configUser,
-                connections,
+                hostService.Connections,
+                hostService.DefaultConnectionId,
                 config.MaintenanceMode,
                 assetVersion
             ),
@@ -198,7 +197,6 @@ api.MapPost(
         HttpContext httpContext,
         ClaimsPrincipal user,
         GalateaHostService hostService,
-        CompletionConnectionRegistry connections,
         IHostApplicationLifetime applicationLifetime,
         ChatStreamRequest request
     ) => {
@@ -249,8 +247,7 @@ api.MapPost(
                     "当前会话存在待恢复的持久化轮次；新消息未被接收。"
                 );
             }
-            if (!TryResolveRequestedConnection(
-                    connections,
+            if (!hostService.TryGetConnection(
                     request.ConnectionId,
                     out CompletionConnectionConfig connection
                 )) {
@@ -300,7 +297,6 @@ api.MapPost(
         HttpContext httpContext,
         ClaimsPrincipal user,
         GalateaHostService hostService,
-        CompletionConnectionRegistry connections,
         IHostApplicationLifetime applicationLifetime,
         ResumeTurnRequest request
     ) => {
@@ -357,18 +353,6 @@ api.MapPost(
                 );
             }
             if (recovery is SessionRuntimeRecoveryRequirements
-                    .ToolContinuationRequired
-                || recovery is SessionRuntimeRecoveryRequirements
-                    .NewRequestRequired {
-                        HeadKind: SessionEventKind.ToolResultObserved
-                    }) {
-                return RecoveryConflict(
-                    recovery,
-                    "tool-recovery-unsupported",
-                    "Galatea G1尚不支持工具阶段恢复。"
-                );
-            }
-            if (recovery is SessionRuntimeRecoveryRequirements
                     .FrozenCompletionRequired {
                         DispatchState:
                             SessionDurableDispatchState
@@ -385,8 +369,7 @@ api.MapPost(
             string connectionId;
             if (recovery is SessionRuntimeRecoveryRequirements
                     .NewRequestRequired) {
-                if (!TryResolveRequestedConnection(
-                        connections,
+                if (!hostService.TryGetConnection(
                         request.ConnectionId,
                         out CompletionConnectionConfig connection
                     )) {
@@ -396,6 +379,18 @@ api.MapPost(
                     });
                 }
                 connectionId = connection.Id;
+            }
+            else if (recovery is SessionRuntimeRecoveryRequirements
+                         .ToolContinuationRequired) {
+                // Do not inspect or construct the current completion client
+                // here. The formal composition must bind the frozen tool
+                // identity first, then this exact current connection, then
+                // Online.
+                connectionId = string.IsNullOrWhiteSpace(
+                    request.ConnectionId
+                )
+                    ? hostService.DefaultConnectionId
+                    : request.ConnectionId;
             }
             else if (recovery is SessionRuntimeRecoveryRequirements
                          .FrozenCompletionRequired frozen) {
@@ -653,21 +648,6 @@ static IResult StartAcceptedTurn(
     return Results.Json(
         new StartTurnResponseDto(liveTurn.TurnId, "running"),
         statusCode: StatusCodes.Status202Accepted
-    );
-}
-
-static bool TryResolveRequestedConnection(
-    CompletionConnectionRegistry connections,
-    string? requestedConnectionId,
-    out CompletionConnectionConfig connection
-) {
-    if (string.IsNullOrWhiteSpace(requestedConnectionId)) {
-        connection = connections.Resolve(null);
-        return true;
-    }
-    return connections.TryGet(
-        requestedConnectionId,
-        out connection!
     );
 }
 

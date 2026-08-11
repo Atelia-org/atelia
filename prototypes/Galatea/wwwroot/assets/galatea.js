@@ -16,7 +16,7 @@
     activeTurnId: null,
     streamGeneration: 0,
     selectedConnectionId: null,
-    recapPlanning: null,
+    recapGridReadiness: null,
   };
 
   function resolveConnectionId(candidate) {
@@ -246,18 +246,18 @@
   function applyRecentTurnsPayload(payload) {
     state.recentTurns = payload?.turns ?? [];
     state.rewindLatestToken = payload?.rewindLatestToken ?? null;
-    state.recapPlanning = payload?.recapPlanning ?? null;
-    renderRecapPlanning();
+    state.recapGridReadiness = payload?.recapGridReadiness ?? null;
+    renderRecapGridReadiness();
   }
 
-  const historyLoadFormatter = new Intl.NumberFormat("zh-CN");
+  const recapGridCountFormatter = new Intl.NumberFormat("zh-CN");
 
-  function renderRecapPlanning() {
+  function renderRecapGridReadiness() {
     if (!recapPlanningStatus || !recapPlanningSummary || !recapPlanningDetail) {
       return;
     }
 
-    const snapshot = state.recapPlanning;
+    const snapshot = state.recapGridReadiness;
     if (!snapshot) {
       recapPlanningStatus.classList.add("hidden");
       return;
@@ -268,73 +268,64 @@
     recapPlanningDetail.textContent = "";
     recapPlanningProgress?.classList.add("hidden");
 
-    const unitCount = snapshot.recentHistoryUnitCount;
-    const currentLoad = snapshot.recentHistoryLoad;
-    const minimumLoad = snapshot.minimumRecentHistoryLoad;
-    const intervalLoad = snapshot.recapBuildIntervalHistoryLoad;
-    const threshold = snapshot.buildThresholdHistoryLoad;
-    const remaining = snapshot.remainingHistoryLoad;
-    const hasMeasurement = Number.isFinite(unitCount)
-      && Number.isFinite(currentLoad)
-      && Number.isFinite(threshold)
-      && threshold > 0;
-
-    if (hasMeasurement) {
-      const cadence = Number.isFinite(minimumLoad) && Number.isFinite(intervalLoad)
-        ? `（R ${historyLoadFormatter.format(minimumLoad)} + B ${historyLoadFormatter.format(intervalLoad)}）`
-        : "";
-      recapPlanningSummary.textContent = `近期历史：${historyLoadFormatter.format(unitCount)} 个 PlanningUnit · HistoryLoad ${historyLoadFormatter.format(currentLoad)} / ${historyLoadFormatter.format(threshold)}${cadence}`;
-      if (recapPlanningProgress) {
-        recapPlanningProgress.max = threshold;
-        recapPlanningProgress.value = Math.min(Math.max(currentLoad, 0), threshold);
-        recapPlanningProgress.classList.remove("hidden");
-      }
+    const metrics = snapshot.metrics;
+    if (metrics) {
+      recapPlanningSummary.textContent = `RecapGrid：${recapGridCountFormatter.format(metrics.selectedRows)} rows · ${recapGridCountFormatter.format(metrics.recipeRowSteps)} recipe steps · ${recapGridCountFormatter.format(metrics.missingAssignments)} missing`;
     }
 
     switch (snapshot.state) {
-      case "below-cadence-threshold":
-        recapPlanningDetail.textContent = Number.isFinite(remaining)
-          ? `距 cadence 阈值：${historyLoadFormatter.format(remaining)} HistoryLoad`
-          : "尚未达到 DerivedRecap cadence。";
+      case "ready":
+        recapPlanningSummary.textContent ||= "RecapGrid 已就绪";
+        recapPlanningDetail.textContent = "当前 active recipe 与 Timeline head 已有精确 fulfilled view。";
         break;
-      case "awaiting-replay-safe-admission":
-        recapPlanningDetail.textContent = "已达 cadence，等待 replay-safe boundary。";
+      case "raw-only":
+      case "no-active":
+      case "no-rows":
+        recapPlanningSummary.textContent = "RecapGrid raw-only";
+        recapPlanningDetail.textContent = "当前没有可组合的 active recap；请求仍可使用 raw history。";
         break;
-      case "cadence-ready":
-        recapPlanningDetail.textContent = "已达 cadence；下次 lifecycle 将尝试 build。";
+      case "frontier":
+        recapPlanningSummary.textContent ||= "RecapGrid 存在待构建 frontier";
+        recapPlanningDetail.textContent = `${snapshot.orderedMissing?.length ?? 0} 个有界 assignment 等待构建。`;
         break;
-      case "frozen-building":
-        recapPlanningSummary.textContent = "DerivedRecap：frozen Building";
-        recapPlanningDetail.textContent = "下次 lifecycle 将尝试恢复。";
+      case "fulfillment-missing":
+        recapPlanningSummary.textContent ||= "RecapGrid view 已完成但 fulfillment 尚未发布";
+        recapPlanningDetail.textContent = "下一次 lifecycle 可在精确 authority 下补齐 fulfillment。";
         break;
-      case "raw-safety-rejected":
-        recapPlanningSummary.textContent = "DerivedRecap 进度触及 raw safety 限制";
+      case "blocked":
+      case "limited":
+        recapPlanningSummary.textContent ||= "RecapGrid 构建受限";
         recapPlanningDetail.textContent = snapshot.code
-          ? `需要先处理 Planner raw safety 状态。（${snapshot.code}）`
-          : "需要先处理 Planner raw safety 状态。";
+          ? `${snapshot.detail || "需要operator处理。"}（${snapshot.code}）`
+          : (snapshot.detail || "需要operator处理。");
         break;
+      case "unprovisioned":
       case "unavailable":
-        if (!hasMeasurement) {
-          recapPlanningSummary.textContent = "DerivedRecap 进度暂时不可用";
-        }
+      case "busy":
+      case "cancelled":
+        recapPlanningSummary.textContent ||= "RecapGrid readiness 暂时不可用";
         recapPlanningDetail.textContent = snapshot.code
           ? `${snapshot.detail || "请稍后重试。"}（${snapshot.code}）`
           : (snapshot.detail || "请稍后重试。");
         break;
-      case "not-observed":
-        recapPlanningSummary.textContent = "DerivedRecap 进度尚未读取";
-        recapPlanningDetail.textContent = snapshot.detail || "等待稳定会话边界。";
+      case "invalid":
+        recapPlanningSummary.textContent = "RecapGrid authority 无效";
+        recapPlanningDetail.textContent = snapshot.code
+          ? `${snapshot.detail || "请运行只读 verify。"}（${snapshot.code}）`
+          : (snapshot.detail || "请运行只读 verify。");
+        break;
+      case "stale":
+        recapPlanningSummary.textContent = "RecapGrid readiness 已过期";
+        recapPlanningDetail.textContent = snapshot.detail || "请刷新后重试。";
         break;
       default:
-        recapPlanningSummary.textContent = "DerivedRecap 进度状态未知";
+        recapPlanningSummary.textContent = "RecapGrid readiness 状态未知";
         recapPlanningDetail.textContent = "请刷新页面后重试。";
         break;
     }
 
-    if (snapshot.freshness === "stale" && hasMeasurement) {
-      recapPlanningDetail.textContent += " 显示上一稳定边界；当前进度尚未重新确认。";
-    } else if (snapshot.freshness === "stale" && snapshot.state === "unavailable") {
-      recapPlanningDetail.textContent += " 当前无法确认精确边界。";
+    if (snapshot.freshness === "stale" && snapshot.state !== "stale") {
+      recapPlanningDetail.textContent += " 当前authority尚未重新确认。";
     }
   }
 

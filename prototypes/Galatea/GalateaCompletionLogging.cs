@@ -1,6 +1,5 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.SessionJournal.DerivedRecap.Runtime;
 
 namespace Atelia.Galatea.Server;
 
@@ -10,65 +9,117 @@ namespace Atelia.Galatea.Server;
 /// completion-target identity remains independent of logging configuration.
 /// </summary>
 internal static class GalateaCompletionLogging {
-    internal static ICompletionClient CreateAgentClient(
-        ICompletionClient inner,
-        CompletionConnectionConfig connection,
+    internal static ICompletionClientFactory CreateOwnedFactory(
+        ICompletionClientFactory inner,
         string? callLogDirectory
     ) {
         ArgumentNullException.ThrowIfNull(inner);
-        ArgumentNullException.ThrowIfNull(connection);
         return callLogDirectory is null
             ? inner
-            : new LoggingCompletionClient(
+            : new OwnedLoggingCompletionClientFactory(
                 inner,
-                connection,
-                Path.Combine(callLogDirectory, "agent"),
-                new CompletionCallLogContext(
-                    Command: "galatea/agent"
-                )
+                callLogDirectory
             );
     }
 
-    internal static RecapExecutionLane CreateMaintainerLane(
-        RecapExecutionLaneInterner lanes,
-        ICompletionClient inner,
-        CompletionConnectionConfig connection,
-        string? callLogDirectory
-    ) {
-        ArgumentNullException.ThrowIfNull(lanes);
-        ArgumentNullException.ThrowIfNull(inner);
+}
+
+internal sealed class OwnedLoggingCompletionClientFactory(
+    ICompletionClientFactory inner,
+    string callLogDirectory
+) : ICompletionClientFactory {
+    public ICompletionClient Create(CompletionConnectionConfig connection) {
         ArgumentNullException.ThrowIfNull(connection);
-        return callLogDirectory is null
-            ? lanes.GetOrAdd(
+        ICompletionClient created = inner.Create(connection);
+        try {
+            return new OwnedLoggingCompletionClient(
+                created,
                 connection,
-                inner,
-                connection.ModelId,
-                connection.MaxTokens
-            )
-            : lanes.GetOrAddWithLogging(
-                connection,
-                inner,
-                connection,
-                Path.Combine(
-                    callLogDirectory,
-                    "maintenance",
-                    SafePathSegment(connection.Id)
-                ),
-                "galatea/maintenance"
+                callLogDirectory
             );
+        }
+        catch {
+            DisposeOwned(created);
+            throw;
+        }
     }
 
-    private static string SafePathSegment(string value) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        char[] characters = value.ToCharArray();
-        for (int index = 0; index < characters.Length; index++) {
-            char current = characters[index];
-            if (!(char.IsAsciiLetterOrDigit(current)
-                    || current is '-' or '_' or '.')) {
-                characters[index] = '_';
-            }
+    private static void DisposeOwned(ICompletionClient client) {
+        if (client is IAsyncDisposable asyncDisposable) {
+            asyncDisposable.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
-        string result = new(characters);
-        return result is "." or ".." ? $"_{result}_" : result;
+        else if (client is IDisposable disposable) {
+            disposable.Dispose();
+        }
+    }
+}
+
+internal sealed class OwnedLoggingCompletionClient
+    : ICompletionClient, IDisposable, IAsyncDisposable {
+    private readonly ICompletionClient _owned;
+    private readonly LoggingCompletionClient _logging;
+    private int _disposed;
+
+    internal OwnedLoggingCompletionClient(
+        ICompletionClient owned,
+        CompletionConnectionConfig connection,
+        string callLogDirectory
+    ) {
+        _owned = owned ?? throw new ArgumentNullException(nameof(owned));
+        _logging = new LoggingCompletionClient(
+            owned,
+            connection,
+            Path.Combine(callLogDirectory, "completion"),
+            new CompletionCallLogContext(Command: "galatea/completion-v9")
+        );
+    }
+
+    public string Name => _logging.Name;
+    public string ApiSpecId => _logging.ApiSpecId;
+
+    public Task<CompletionResult> StreamCompletionAsync(
+        CompletionRequest request,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) => _logging.StreamCompletionAsync(
+        request,
+        observer,
+        cancellationToken
+    );
+
+    public Task<CompletionResult> StreamCompletionAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) => _logging.StreamCompletionAsync(
+        request,
+        invocationOptions,
+        observer,
+        cancellationToken
+    );
+
+    public void Dispose() {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) {
+            return;
+        }
+        if (_owned is IDisposable disposable) {
+            disposable.Dispose();
+        }
+        else if (_owned is IAsyncDisposable asyncDisposable) {
+            asyncDisposable.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    public async ValueTask DisposeAsync() {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) {
+            return;
+        }
+        if (_owned is IAsyncDisposable asyncDisposable) {
+            await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+        }
+        else if (_owned is IDisposable disposable) {
+            disposable.Dispose();
+        }
     }
 }

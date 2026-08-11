@@ -1,467 +1,58 @@
-# Atelia.SessionJournal
+# SessionJournal
 
-`Atelia.SessionJournal` 是建立在 `Atelia.EventJournal` 之上的 raw、event-sourced
-Agent session core。它负责：
+SessionJournal 是 provider-neutral、event-addressed 的会话 authority。raw EventJournal
+events 与 selected `RefId` parent lineage 决定 durable truth；Timeline、RecapGrid 与 UI
+projection 都不能反向修改 raw history。
 
-- 追加不可变 session events，并用 `Parent` lineage 表达 branch-local 历史；
-- 把 observation、completion request、attempt、action 与 tool execution 写成可恢复协议；
-- 在崩溃后从 exact raw tail 判定 phase，并继续尚未完成的操作；
-- 以 canonical request commitment证明 Prepared request 可重建；
-- 为 context/recap实现提供 neutral、event-addressed 的读取与生命周期接口。
+## Public lifecycle
 
-它不负责具体 Completion provider配置、DerivedRecap持久化、Recap planning policy或
-具体 Maintainer。provider-neutral HistoryLoad contracts、O200k estimator与window projector已由
-[`SessionJournal.HistoryTimeline`](../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj)
-唯一拥有；该项目direct reference SessionJournal，而SessionJournal不反向引用Timeline。其csproj唯一承接
-`Microsoft.Bcl.Memory 9.0.17`、`Microsoft.ML.Tokenizers 2.0.0`与
-`Microsoft.ML.Tokenizers.Data.O200kBase 2.0.0`三个exact pins，old Planner不再直接pin。生产 Host通常把本项目与
-[`SessionJournal.DerivedRecap.Store`](../SessionJournal.DerivedRecap.Store/README.md)、
-[`SessionJournal.DerivedRecap.Planner`](../SessionJournal.DerivedRecap.Planner/README.md)和
-[`SessionJournal.DerivedRecap.Maintainers`](../SessionJournal.DerivedRecap.Maintainers/README.md)
-组合起来。
+普通消费者通过 `SessionJournalEngine.Create/Open/OpenReadOnly` 获得 owner-bound handle。
+writer operation 必须提交 exact expected raw head；Prepared、Started、ToolContinuation 与
+ToolResult recovery 都由 `InspectRuntimeRecoveryRequirements` 返回 closed typed shape。
 
-## 30 秒心智模型
+一次新请求的 durable phases 为：
 
-```text
-SessionJournal repo
-  raw EventJournal events + refs       <- correctness source
-       |
-       +-- SessionJournalEngine
-             |- Create / Open / OpenReadOnly
-             |- InspectExecutionBoundary
-             |- SendAsync / ResumeAsync
-             |- exact lineage/setup/history planning reads
-             `- neutral context candidate/lifecycle contracts
+1. Idle + pending observation
+2. ObservationAccepted
+3. CompletionRequestPrepared
+4. CompletionAttemptStarted
+5. ToolExecutionStarted / ToolResultObserved（若有 tool）
+6. terminal AgentAction 或 TurnFailed
 
-  config/recap-planner-config.json     <- Host/Planner intent，不是 raw event
-  derived/recap/v4/...                 <- 可删除重建的 sidecar，不是 raw authority
-```
+Started 表示外部 effect 可能已经发生，不能被自动重试伪装成 exactly-once。调用方只能
+Refuse，或在明确 operator/user 决策后按 exact frozen identity 开始新 attempt。
 
-一次正常 online turn大致产生：
+## Context extension points
 
-```text
-ObservationAccepted
-  -> CompletionRequestPrepared
-  -> CompletionAttemptStarted
-  -> AgentActionProduced
-```
+`ICoherentContextCandidateSource` 负责 pure-read selection/materialization；
+`ISessionContextLifecycleCoordinator` 负责在 safe boundary 协调 readiness。核心只接收
+provider-neutral contribution、exact anchor 与 closed materialization result，不认识具体
+RecapGrid backend。
 
-若 action包含 tool call，则继续写入 `ToolExecutionStarted`、`ToolResultObserved`，再进入下一次
-completion。provider failure写入 `CompletionAttemptFailed`；这些 durable phase允许 reopen 后
-`ResumeAsync`继续，而不是猜测或重发整轮。
+正式 RecapGrid online composition 位于 `SessionJournal.RecapGrid.Online`：它用
+HistoryTimeline reconcile/seal、Manager build 与 Getter readiness 组成单一 lifecycle。
+empty Timeline 或 no-active recipe 必须走 raw-only，不能被缺失/损坏的 Grid Store 阻断；
+nonempty active 但 current fulfillment 缺失则 fail closed 或在显式 budget 下补建。
 
-## 引用
+raw tail 仍由 SessionJournal core 从 candidate `EndInclusive/EndSetups` 之后 fold，candidate
+不得重复包含 tail，也不得越过 anchor。selected contribution 与 raw tail 的拼接必须在
+materialize 后重新校验 whole Timeline head、Control head、raw boundary 与 Store identity。
 
-```xml
-<ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
-```
+## Replay and branches
 
-目标框架是 .NET 10 / C# 14。主要 namespace：
+- 使用 `ReplayHistory()` / reducer 保留 EventAddress provenance；`Project()` 只适合展示。
+- branch rewind/retarget 只改变 selected lineage，不删除 raw events。
+- 任何 derived row、view、receipt 或 cache 都必须能由 raw lineage 与 canonical contracts
+  重新验证；离开 selected lineage 的 artifact 不能通过 latest/global scan 重新获得权限。
+- `OpenReadOnly` 不创建 sidecar；normal host 也不自动 provision derived stores。
 
-```csharp
-using Atelia.SessionJournal;
-```
+## Operator surfaces
 
-调用方通常还需要：
+- `SessionJournal.Cli recap-grid timeline ...`：Timeline lifecycle/maintenance
+- `SessionJournal.Cli recap-grid control ...`：Family/Definition/Recipe/activation
+- `SessionJournal.Cli recap-grid build|progress|materialize`：explicit build/read
+- `SessionJournal.Cli run-online-turn`：正式 disposable online vertical
+- `SessionJournal.Cli recap-grid legacy-root ...`：旧 slot 的 inspect/archive/delete
 
-```csharp
-using Atelia.Completion.Abstractions;
-using Atelia.EventJournal;
-```
-
-## 创建与只读打开
-
-创建一个新的 raw repo不要求立刻提供 runtime：
-
-```csharp
-using var engine = SessionJournalEngine.Create(
-    repositoryPath,
-    new SessionCreateOptions(
-        ModelId: "model-id",
-        SystemPrompt: "You are an assistant.",
-        CompletionSurfaceId: "responses",
-        DerivedContextNthPrevious: 0
-    )
-);
-```
-
-`Create`只接受一个尚不存在的 repository path，并创建 `main` branch。初始化时依次提交
-`RuntimeConfigSetup`、`SystemPromptSetup`和 `SessionCreated`。`SessionCreateOptions.Schema`
-通常保持 `SessionJournalDefaults.Schema`。public `SessionJournalEngine.Create`始终把
-`SessionCreated`标记为`Native`；调用方不能通过 create options伪造导入来源。
-
-只读检查使用：
-
-```csharp
-using var engine = SessionJournalEngine.OpenReadOnly(
-    repositoryPath,
-    SessionJournalDefaults.MainBranchName
-);
-
-SessionExecutionBoundaryInspection boundary =
-    engine.InspectExecutionBoundary();
-EventAddress? head = engine.ReadCurrentHead();
-SessionCurrentLineagePrefix lineage =
-    engine.ReadCurrentLineagePrefix(maxHeaderCount: 513);
-```
-
-`ReadCurrentLineagePrefix`最多读取给定数量的 header。未到 root时只返回显式
-`Continuation.NextAddress`，不会自动翻页；`Lookup(anchor)`只有在已到 root时才能返回
-`OffLineage`，否则返回带 `RequiredAnchor/CapturedHead/HeaderCount/NextAddress`的
-`BeyondPrefix`证据。需要完整 head-to-root scan的离线工具才使用
-`ReadCurrentLineageHeaders()`。
-
-`OpenReadOnly`不会执行 tail recovery，也禁止 `UseRuntime`、`SendAsync`、`ResumeAsync`和 append。
-离线审计优先使用
-[`SessionJournal.Offline`](../SessionJournal.Offline/README.md)，不要在应用层重新实现 raw
-state machine。
-
-## Online runtime
-
-`SessionRuntime`是 Host提供的进程内 capability，不会把 client、endpoint或 secret写进 raw
-journal：
-
-```csharp
-var runtime = new SessionRuntime(
-    CompletionClient: completionClient,
-    CompletionTarget: new SessionCompletionTargetIdentity(
-        ConnectionId: "primary",
-        Kind: "openai-compatible",
-        ConnectionFingerprint: connectionFingerprint,
-        RequestAdapterFingerprint: requestAdapterFingerprint
-    ),
-    MaxTokens: 4096,
-    ContextCandidateSource: candidateSource,
-    ContextLifecycle: lifecycle,
-    MaximumCanonicalRequestBytes: 200_000
-);
-
-using var engine = SessionJournalEngine.Open(
-    repositoryPath,
-    branchName
-);
-engine.UseRuntime(runtime);
-```
-
-关键约束：
-
-- `CompletionTarget`是非 secret、稳定的 connection/adapter identity；Prepared recovery要求
-  当前 runtime与 durable identity exact匹配。
-- online completion必须提供 `ICoherentContextCandidateSource`。当前 production实现通常是
-  `DerivedRecapOnlineLifecycleCoordinator`，它同时实现 candidate source和 lifecycle。
-- 有 visible tools时还必须提供 `ToolSession`和 exact `SessionToolRuntimeIdentity`。
-- `MaximumCanonicalRequestBytes`是最终 canonical request JSON的 UTF-8 byte guard，不是
-  provider token limit。
-- `SessionUncertainCompletionRecoveryPolicy.Refuse`是默认值。只有 Host明确接受潜在重复
-  provider调用时才使用 `RestartWithNewAttempt`。
-
-完整 DerivedRecap online装配见
-[`SessionJournal.DerivedRecap.Planner` README](../SessionJournal.DerivedRecap.Planner/README.md)；
-可运行参考实现位于
-[`SessionJournal.Cli/OnlineTurnCommand.cs`](../SessionJournal.Cli/OnlineTurnCommand.cs)。
-
-## Send 与 recovery
-
-启动或重开时先检查最小 runtime recovery requirement：
-
-```csharp
-SessionRuntimeRecoveryRequirements requirement =
-    engine.InspectRuntimeRecoveryRequirements(cancellationToken);
-```
-
-- `NoRuntimeRequired`仅表示`Empty`或`Idle`没有 pending dispatch；`Idle`上的新Send由Host另行
-  选择runtime。
-- `FailedTurnMustBeAbandoned`只携带exact `CompletionAttemptFailed` head；Host必须先用
-  `AbandonFailedTurn(FailedHead)`回到`Idle`，再同步setup或Send。
-- `NewRequestRequired`表示已接受Observation但尚未冻结completion target；Host提供与该head
-  governing setup匹配的新runtime，不能在active turn中append setup。
-- `FrozenCompletionRequired`携带Prepared/Started恢复所需的non-secret exact target、client/API、
-  visible-tool-set hash及可选tool runtime identity。inspection会先走与`ResumeAsync`相同的Prepared v5
-  full reconstruction、raw-range与commitment acceptance gate，再暴露这些identity；全过程不创建
-  provider client、不会调用provider/tool，也不写raw。Host必须exact bind，不能fallback到default。
-- `ToolContinuationRequired`只冻结tool runtime；它不会谎称旧completion connection也被冻结。
-
-`FrozenCompletionRequired.DispatchState == StartedOutcomeUncertain`时，默认先返回给operator；不要
-为了检查identity而提前创建provider client。`SessionVisibleToolSetFingerprint.ComputeSha256(...)`
-可用于在调用`ResumeAsync`前验证Host提供的visible tool definitions。
-
-完成runtime/Recap composition后，Host应把inspection的exact head带入bound overload：
-
-```csharp
-await engine.SendAsync(requirement.CapturedHead!.Value, message, cancellationToken);
-await engine.ResumeAsync(requirement.CapturedHead!.Value, cancellationToken);
-```
-
-这四个带`EventAddress expectedHead`的overload是external consumer唯一可见的Send/Resume
-mutation overload；不带head的Send/Resume overload只保留给raw core内部与白盒测试，production Host不能绕过
-inspection/prepare所得的freshness boundary。
-
-入口resolve发现head已经变化时抛出`SessionJournalExpectedHeadMismatchException`。入口检查之后
-发生的竞争仍由既有lifecycle/head CAS fence拒绝，可能保留其原有operational exception类型；两种
-情况都不会把先前组合的runtime用于后来tail。调用方应从inspection重新开始，而不是仅重试最后
-一次方法调用。
-
-规则：
-
-- raw-core `SendAsync`只允许`Idle`；`TurnFailed`会在runtime、candidate、lifecycle和provider
-  访问前要求exact abandon，避免失败Observation进入后续history。
-- 非 idle phase必须先 `ResumeAsync`；不要为了“恢复”再次调用 `SendAsync`。
-- `ResumeOutcome.Advanced == false`表示当前没有待恢复工作。
-- `Prepared` / `Started` recovery使用 durable frozen request，不重新读取 active Recap config。
-- `SessionJournalNotReadyException`表示 raw lineage合法，但 context/recap prerequisite当前不可用；
-  `Reason`可用于 typed Host handling。
-- `SessionJournalTurnAbortedException`表示 completion已形成 terminal abort；它携带 termination与
-  errors。
-
-不要根据 exception文本、文件是否存在或 head event名称自行发明恢复逻辑；Host以
-`InspectRuntimeRecoveryRequirements`选择runtime，再进入`SendAsync`或`ResumeAsync`。
-
-## Completed turn投影与exact retract
-
-Recent UI只需要raw、已完成的visible turn，不应看见Prepared/Started/tool protocol或
-DerivedRecap sidecar。core提供exact-head projector：
-
-```csharp
-SessionCompletedTurnsSnapshot snapshot =
-    engine.ReadRecentCompletedTurns(maximumCount: 12);
-
-SessionCompletedTurnsSnapshot historical =
-    engine.ReadRecentCompletedTurnsAt(capturedHead, maximumCount: 12);
-```
-
-`Turns`按newest-first排序。每个`SessionCompletedTurnProjection`保留raw observation content、
-Observation/terminal Action地址以及完整结构化`ActionMessage`；Host再负责user wrapper、inline
-`<think>`和reasoning display normalization。tool loop无论包含多少轮，只投影一个turn，并且只把
-最终`ToolCalls.Count == 0`的Action作为terminal Action。Imported Action遵守同一规则。
-
-`ReadRecentCompletedTurnsAt`先验证exact captured tail。Observation、Prepared、Started、settled
-tool result、TurnFailed和Idle/setup tail都完整forward-fold到captured head；只有
-`AwaitingToolExecution`会cut到当前tool-calling Action的predecessor，再由tail resolver验证Action
-及其active tool suffix。这样既能读取更早completed turns，又不会放宽history planning对
-unresolved tool dependency的拒绝，也不会用bounded tail recovery冒充完整prefix validation。
-
-两种写操作共享一个窄result union，但不暴露通用`MoveRef`：
-
-```csharp
-SessionTurnRetractionResult abandoned =
-    engine.AbandonFailedTurn(expectedTurnFailedHead);
-
-SessionTurnRetractionResult rewound =
-    engine.RewindLatestCompletedTurn(expectedTerminalActionHead);
-```
-
-- `AbandonFailedTurn`只接受exact `CompletionAttemptFailed` / `TurnFailed` head；
-- `RewindLatestCompletedTurn`只接受current head本身就是最新terminal no-tool Action；
-- setup-only suffix、Prepared/Started、tool-active、错误operation与stale head都不会向后扫描；
-- `Moved`返回`PreviousHead`、本次CAS的`NewHead`、被移出lineage的raw observation，以及
-  completed rewind时的structured terminal Action；`NewHead`不是返回时freshness proof；
-- `Unavailable`携带exact boundary，`Retryable`携带expected/observed head；corrupt raw继续fail fast；
-- 成功只CAS移动selected branch ref到该turn Observation的predecessor，不删除raw event bytes，也不
-  删除或重编号DerivedRecap sidecar。离开current lineage的sidecar由Store membership规则自然忽略。
-
-同一个`SessionJournalEngine`实例一次只允许一个outer mutation operation。`SendAsync`、
-`ResumeAsync`、setup reconciliation、abandon/rewind、runtime attachment与dispose发生并发或回入时，
-第二个入口会在产生它自己的provider、raw journal或runtime side effect前抛出
-`SessionJournalConcurrentMutationException`；`AttemptedOperation`与`ActiveOperation`提供稳定的typed
-诊断。operation无论成功、取消或抛错都会释放ownership；`Dispose`竞争失败时不会关闭底层journal，
-成功dispose后的既有`ObjectDisposedException`语义不变。
-
-这个same-instance fail-closed guard不能替代产品Host的per-session writer lock。Host仍必须让
-inspect → compose → send/resume/reconcile/abandon/rewind构成一个串行operation，因为guard不覆盖调用
-入口之前的inspection/config/runtime composition，也不协调同一路径上的两个engine实例或不同进程。
-多engine/多进程竞争仍由exact-head/ref CAS与既有Store fence处理。known failure或已知stop只有在
-`AbandonFailedTurn`成功后，才能承诺失败Observation不会进入后续request；uncertain Started不能伪装成
-known failure。
-
-## Context / Recap 扩展点
-
-raw core只定义 neutral contracts：
-
-```csharp
-public interface ICoherentContextCandidateSource {
-    ValueTask<SessionContextCandidateSelection> SelectAsync(...);
-    ValueTask<SessionContextCandidate> MaterializeAsync(...);
-}
-
-public interface ISessionContextLifecycleCoordinator {
-    ValueTask<SessionContextLifecycleResult> PrepareAsync(...);
-}
-```
-
-职责分离：
-
-- candidate source按 governing `derivedContext.nthPrevious`选择 strict ordinal，并 materialize
-  exact contribution；
-- Core现已提供target-aware bounded lineage/window foundation与neutral `BeyondPrefix`状态；Store/
-  Planner迁移到该foundation后，bounded lineage不足必须返回`BeyondPrefix`，online preflight/
-  append/completion会把它视为`ContextCandidateUnavailable` backpressure，不得伪装成
-  `EmptyLineage`并退回完整raw history；
-- lifecycle可在新 request前执行一次 bounded maintenance/Restore；
-- raw core负责验证 candidate descriptor、setup refs、contribution hashes与 raw suffix；
-- Published exact slot损坏不能跳到更旧 slot，必须恢复同一 slot或返回 not-ready。
-
-`DerivedRecapOnlineLifecycleCoordinator`同时实现这两个接口。它必须绑定到与 Store相同
-repository path和 `RefId`的同一个 `SessionJournalEngine`实例。
-
-## 面向 Planner / 离线工具的读取
-
-常用 read API：
-
-| API | 用途 |
-|---|---|
-| `ReadCurrentHead()` | 不投影 payload的 exact head读取 |
-| `InspectExecutionBoundary()` | 当前 phase/head-kind |
-| `ReadCurrentLineagePrefix(maxHeaderCount)` | current head上的header-only bounded prefix |
-| `ReadLineagePrefixAt(head, maxHeaderCount)` | exact historical head上的header-only bounded prefix |
-| `ReadCurrentLineageHeaders()` | 显式unbounded/offline的head-to-root snapshot |
-| `ResolveGoverningSetup(head)` | exact head上的 runtime/system-prompt setup |
-| `ReadHistoryPlanningWindowAtBounded(...)` | payload前证明raw interval上限；返回Available或BeyondPrefix |
-| `ReadHistoryPlanningWindow(...)` | 显式unbounded/offline的dependency-closed planning window |
-| `ReadHistoryPlanningWindowAt(...)` | 含seeded overload；均为显式unbounded/offline重放 |
-| `ReadHistoryPlanningSeeds(...)` | 显式unbounded/offline地为多个cursor准备verified seeds |
-| `ScanCheckedAuditEvents(...)` | read-only完整审计 scan；供 Offline companion使用 |
-
-`SessionHistoryPlanningUnit`不是 raw event：多个 raw events可能闭合为一个 ToolResults unit，
-Prepared/Started/Failed等 protocol events也可能不产生 HistoryUnit。Planner不得用 raw event
-distance冒充 context/history长度。bounded planning的`maxRawEventCount = N`会先读取至多
-`N + 1`个header来证明exact `startExclusive`；如果证明不足，返回`BeyondPrefix`且该次调用的
-`PayloadReads == 0`，不会继续到root或materialize部分window。
-EventJournal writer会拒绝missing Parent，而append-only address顺序不能构造指向未来event的
-Parent cycle；corruption gate因此用截断的历史Parent frame与payload CRC锁定可达storage损坏，
-并在internal authority shape测试中单独锁定cycle拒绝。
-
-## Setup 变更
-
-普通Host在新Send前应使用exact-head desired reconciliation：
-
-```csharp
-SessionRuntimeRecoveryRequirements requirement =
-    engine.InspectRuntimeRecoveryRequirements();
-
-var result = engine.ReconcileDesiredSetup(
-    requirement.CapturedHead,
-    new SessionDesiredSetup(
-        ModelId: selectedConnection.ModelId,
-        CompletionSurfaceId: selectedConnection.CompletionSurfaceId,
-        SystemPrompt: desiredSystemPrompt
-    )
-);
-```
-
-该入口只允许exact `Idle`，自动保留governing `Schema`和`DerivedContext`，按runtime setup再system
-prompt的顺序幂等追加。`TurnFailed`返回`FailedTurnMustBeAbandoned`；Prepared、Started、
-AwaitingAgentAction和tool-active phase返回`ActiveTurn`且不写raw。`Retryable`表示captured head已经
-变化，Host应重新inspect整条决策链。
-
-如果第二次prompt append失败，前一条runtime intent不回滚；下次retry只补缺失prompt。这是raw
-operator intent的自然幂等收敛，不需要setup transaction state machine。
-
-setup是 raw、branch-local、event-addressed facts。`ResolveGoverningSetup(exactHead)`沿 Parent
-lineage解析最近的两种 setup；不要用 repo级 mutable config替代历史 setup authority。
-低层setup append seam现在是assembly-internal；普通Host只使用
-`ReconcileDesiredSetup`。pre-Beta采用direct cut：旧`TurnFailed + setup/Observation suffix`不做
-兼容扫描，runtime inspection与新Send会fail-closed；operator必须显式迁移或重建这类历史tail。
-
-## Low-level append API
-
-`SessionJournalEngine`的低层 observation/setup/imported-action append seam是
-assembly-internal，供白盒测试和实现内部的受控流程使用。普通 online Agent只使用
-`SendAsync` / `ResumeAsync`；普通Host使用`ReconcileDesiredSetup`同步setup。
-
-Legacy importer必须通过public create-only `SessionJournalLegacyImportWriter`创建repo。该authority
-没有`Open`、runtime-config append或底层engine escape，始终写入`LegacyImport` origin，并只暴露
-导入当前必需的 observation、system-prompt和imported-action追加能力。产品迁移流程优先使用
-[`SessionJournal.Cli import-legacy-json`](../SessionJournal.Cli/README.md#import-legacy-json)。
-
-## Recap block request framing
-
-`SessionContextContribution.ExactText`与DerivedRecap Store中的block content保持裸文本。只在新request
-进入Prepared之前，core-owned `SessionCoherentRequestRecipe`才把每个contribution单独包成动态
-tilde fence，再按`ContextHeaderCarrier`放入System、Observation或Action：
-
-```text
-~~~~recap-block
-exact recap content
-~~~~
-```
-
-- `recap-block`只是结构性info string；routing `BlockKey`不渲染成标题。需要面向模型的语义或文学性
-  标题时，由concrete Maintainer把它写进block正文。
-- 每块独立扫描正文中的最长连续`~` run；fence长度为`max(4, longestRun + 1)`。因此一块中的
-  delimiter选择不会扩大相邻块的delimiter。
-- 正文不转义、不规范化换行。正文没有以LF结束时，renderer只在closing fence前补一个framing LF。
-- Store block、manifest、publication与capability fingerprint均不包含这层request decoration，故其
-  schema和identity不变。
-- `CompletionRequestPrepared` v5保存并commit already-rendered exact context snapshots。Prepared/Started
-  recovery直接使用冻结snapshot，不读取Store，也不按current renderer重新包裹。
-
-## Current wire 快速检查
-
-repo schema：
-
-```text
-atelia.session-journal.trunk.v1
-```
-
-current writer把 event payload编码为 JSON envelope：
-
-```json
-{"v":1,"body":{}}
-```
-
-`v`是每种 event kind自己的 body schema version，不等于 repo schema。所有current raw reader都对
-envelope、body以及Action/reasoning/tool-result等nested discriminated object执行exact-shape decode：
-unknown property、duplicate property、缺失required property与writer semantic domain之外的值一律
-fail closed。当前 code-owned版本：
-
-| Event kind | Body version |
-|---|---:|
-| `RuntimeConfigSetup` | 2 |
-| `SystemPromptSetup` | 1 |
-| `SessionCreated` | 2 |
-| `ObservationAccepted` | 1 |
-| `AgentActionProduced` / `ImportedAgentAction` | 1 |
-| `ToolExecutionStarted` / `ToolResultObserved` | 1 |
-| `CompletionRequestPrepared` | 5 |
-| `CompletionAttemptStarted` | 1 |
-| `CompletionAttemptFailed` | 2 |
-
-`SessionEventCodec`与 `SessionRequestManifestCodec`是 internal wire authority。调用方不要手写
-event JSON，也不要依赖 JSON property顺序以外的非合同细节。原型期 wire升级采用 direct cut；
-旧实验 repo若不再被 current codec接受，应显式 import/rebuild，不增加 silent fallback。
-
-Prepared v5的两个hash字段没有另带wire-visible codec id；其含义由body version隐式冻结：
-
-- `plan.rawRangeSha256`固定使用`atelia.session-journal.raw-range.v1`；
-- `plan.exactContextInputs[].contentSha256`固定使用
-  `atelia.session-journal.artifact-context-snapshot.sha256.v1`。
-
-改变任一算法/域分隔/字段framing必须升级`CompletionRequestPrepared` body version并同步golden，不能
-在v5 reader中按环境猜测或增加fallback。
-
-EventAddress显示格式统一使用 `EventAddressTextCodec`：
-
-```csharp
-string text = EventAddressTextCodec.Format(address);
-EventAddress parsed = EventAddressTextCodec.Parse(text);
-```
-
-## 验证
-
-```bash
-dotnet test tests/SessionJournal.Tests/SessionJournal.Tests.csproj \
-  -m:1 -nr:false --no-restore
-
-dotnet test tests/SessionJournal.Cli.Tests/SessionJournal.Cli.Tests.csproj \
-  -m:1 -nr:false --no-restore
-
-dotnet run --project prototypes/SessionJournal.Cli -- \
-  validate --input <repo-dir> --branch main \
-  --report-json <path-outside-repo>
-```
-
-进一步设计背景：
-
-- [Tail execution recovery](../../docs/SessionJournal/archive/completed-plans/tail-execution-recovery-design.md)
-- [Tail operational semantics simplification](../../docs/SessionJournal/archive/completed-plans/tail-operational-semantics-simplification-plan.md)
-- [Event-addressed Derived Recap concepts](../../docs/SessionJournal/current/derived-recap/concepts.md)
+旧 recap product 与 runtime owner 已移除；旧 on-disk slot 只由 `legacy-root` 的 exact
+witness workflow 处理，normal runtime 永不扫描或 fallback 到它们。

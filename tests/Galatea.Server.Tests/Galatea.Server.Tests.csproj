@@ -22,10 +22,6 @@
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.Offline/SessionJournal.Offline.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Store/SessionJournal.DerivedRecap.Store.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Planner/SessionJournal.DerivedRecap.Planner.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Maintainers/SessionJournal.DerivedRecap.Maintainers.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Runtime/SessionJournal.DerivedRecap.Runtime.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Getter/SessionJournal.RecapGrid.Getter.csproj" />

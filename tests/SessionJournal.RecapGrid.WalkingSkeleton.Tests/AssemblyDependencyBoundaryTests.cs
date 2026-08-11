@@ -301,29 +301,29 @@ public sealed class AssemblyDependencyBoundaryTests {
     }
 
     [Fact]
-    public void GalateaCandidateCompositionIsInternalAndNotDefaultRegistered() {
+    public void GalateaFormalCompositionIsInternalAndOwnedByHostService() {
         string root = FindRepositoryRoot();
-        string candidatePath = Path.Combine(
+        string compositionPath = Path.Combine(
             root,
             "prototypes",
             "Galatea",
-            "GalateaRecapGridCandidateComposition.cs"
+            "GalateaRecapGridComposition.cs"
         );
-        string program = File.ReadAllText(Path.Combine(
-            root, "prototypes", "Galatea", "Program.cs"));
-        string candidate = File.ReadAllText(candidatePath);
+        string host = File.ReadAllText(Path.Combine(
+            root, "prototypes", "Galatea", "GalateaServices.cs"));
+        string composition = File.ReadAllText(compositionPath);
 
         Assert.Contains(
-            "internal sealed class GalateaRecapGridCandidateComposition",
-            candidate,
+            "internal sealed class GalateaRecapGridComposition",
+            composition,
             StringComparison.Ordinal);
-        Assert.DoesNotContain(
-            "GalateaRecapGridCandidateComposition",
-            program,
+        Assert.Contains(
+            "new GalateaRecapGridComposition",
+            host,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
             "Environment.GetEnvironmentVariable",
-            candidate,
+            composition,
             StringComparison.Ordinal);
 
         XDocument galateaProject = XDocument.Load(Path.Combine(
@@ -352,6 +352,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Equal(
             [
                 "[assembly: InternalsVisibleTo(\"Atelia.SessionJournal.Cli.Tests\")]",
+                "[assembly: InternalsVisibleTo(\"Atelia.SessionJournal.Cli.LegacyRoot.CrashHarness\")]",
                 "[assembly: InternalsVisibleTo(\"Atelia.Galatea.Server.Tests\")]"
             ],
             cliFriends);
@@ -401,13 +402,13 @@ public sealed class AssemblyDependencyBoundaryTests {
     }
 
     [Fact]
-    public void CandidateCliDelegatesToGridOwnersWithoutLegacyOrProviderAlgorithms() {
+    public void FormalCliDelegatesToGridOwnersWithoutLegacyOrProviderAlgorithms() {
         string root = FindRepositoryRoot();
-        string candidateSource = string.Join(
+        string recapGridSource = string.Join(
             "\n",
             Directory.EnumerateFiles(
                 Path.Combine(root, "prototypes", "SessionJournal.Cli"),
-                "RecapGridCandidate*.cs",
+                "RecapGrid*.cs",
                 SearchOption.TopDirectoryOnly
             ).Order(StringComparer.Ordinal)
                 .Select(File.ReadAllText)
@@ -426,10 +427,14 @@ public sealed class AssemblyDependencyBoundaryTests {
                  }) {
             Assert.DoesNotContain(
                 forbidden,
-                candidateSource,
+                recapGridSource,
                 StringComparison.Ordinal
             );
         }
+        Assert.Empty(Directory.EnumerateFiles(
+            Path.Combine(root, "prototypes", "SessionJournal.Cli"),
+            "RecapGridCandidate*.cs",
+            SearchOption.TopDirectoryOnly));
     }
 
     [Fact]
@@ -920,21 +925,9 @@ public sealed class AssemblyDependencyBoundaryTests {
     }
 
     [Fact]
-    public void LegacyConsumersReferenceTimelineDirectlyWithoutTokenizerPins() {
+    public void FormalConsumersReferenceTimelineDirectlyWithoutTokenizerPins() {
         string root = FindRepositoryRoot();
-        string plannerProject = Path.Combine(
-            root,
-            "prototypes",
-            "SessionJournal.DerivedRecap.Planner",
-            "SessionJournal.DerivedRecap.Planner.csproj"
-        );
-        Assert.Empty(DirectPackageReferences(plannerProject));
-
         foreach ((string project, string expectedReference) in new[] {
-            (
-                plannerProject,
-                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"
-            ),
             (
                 Path.Combine(
                     root,
@@ -960,6 +953,95 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparer.Ordinal
             );
         }
+    }
+
+    [Fact]
+    public void LegacyDerivedRecapProjectsAndReferencesAreAbsent() {
+        string root = FindRepositoryRoot();
+        Assert.Empty(Directory.EnumerateFiles(
+            Path.Combine(root, "prototypes"),
+            "SessionJournal.DerivedRecap.*.csproj",
+            SearchOption.AllDirectories));
+        Assert.Empty(Directory.EnumerateFiles(
+            Path.Combine(root, "tests"),
+            "SessionJournal.DerivedRecap.*.csproj",
+            SearchOption.AllDirectories));
+        foreach (string sourceRoot in new[] {
+                     Path.Combine(root, "prototypes"),
+                     Path.Combine(root, "tests")
+                 }) {
+            foreach (string project in Directory.EnumerateFiles(
+                         sourceRoot, "*.csproj", SearchOption.AllDirectories)) {
+                if (project.Contains("/bin/", StringComparison.Ordinal)
+                    || project.Contains("/obj/", StringComparison.Ordinal)) {
+                    continue;
+                }
+                Assert.DoesNotContain(
+                    "SessionJournal.DerivedRecap",
+                    File.ReadAllText(project),
+                    StringComparison.Ordinal);
+            }
+        }
+    }
+
+    [Fact]
+    public void ProductionConfigCurrentDocsAndSolutionHaveZeroLegacyLedger() {
+        string root = FindRepositoryRoot();
+        var files = new List<string> {
+            Path.Combine(root, "Atelia.sln"),
+            Path.Combine(root, "prototypes", "SessionJournal.Cli", "README.md"),
+            Path.Combine(root, "prototypes", "Galatea", "README.md")
+        };
+        files.AddRange(Directory.EnumerateFiles(
+            Path.Combine(root, "prototypes"),
+            "*",
+            SearchOption.AllDirectories
+        ).Where(static path =>
+            !path.Contains("/bin/", StringComparison.Ordinal)
+            && !path.Contains("/obj/", StringComparison.Ordinal)
+            && !path.Contains("/.atelia/", StringComparison.Ordinal)
+            && Path.GetExtension(path) is ".cs" or ".csproj" or ".json"));
+        files.AddRange(Directory.EnumerateFiles(
+            Path.Combine(root, "docs", "SessionJournal", "current"),
+            "*.md",
+            SearchOption.AllDirectories
+        ));
+
+        string combined = string.Join('\n', files.Select(File.ReadAllText));
+        foreach (string forbidden in new[] {
+                     "SessionJournal.DerivedRecap",
+                     "DerivedRecapEpoch",
+                     "DerivedRecapRebuildSpool",
+                     "recapMaintainerConnections",
+                     "GalateaRecapComposition",
+                     "RecapGridCandidateComposition",
+                     "RecapGridCandidateCommands"
+                 }) {
+            Assert.DoesNotContain(forbidden, combined, StringComparison.Ordinal);
+        }
+
+        string legacyOwner = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.Cli",
+            "RecapGridLegacyRootCommands.cs"
+        );
+        string[] oldRootOwners = [.. files
+        .Append(legacyOwner)
+        .Distinct(StringComparer.Ordinal)
+        .Where(path => new[] {
+            "derived/recap/v4",
+            "derived/recap/v5",
+            "derived/recap/v6",
+            "derived/recap/v7",
+            "derived/recap/v8",
+            "derived/recap/v9",
+            "derived/recap/rebuild/v1",
+            "config/recap-planner-config.json"
+        }.Any(token => File.ReadAllText(path).Contains(
+            token,
+            StringComparison.Ordinal)))];
+        Assert.Equal([legacyOwner], oldRootOwners);
     }
 
     [Fact]

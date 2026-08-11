@@ -1,12 +1,12 @@
 # SessionJournal Beta contract snapshot (v7 evidence)
 
-状态：历史 evidence snapshot；DerivedRecap v7 candidate-specific gate **NotRun**，见 §7  
+状态：Archived-in-place historical evidence snapshot；DerivedRecap v7 candidate-specific gate **NotRun**，见 §7  
 Prior Beta-supported candidate：`49ebb4634e5b4136032db983dd92a9a4560b33eb`  
-Current DerivedRecap contract：v8 shared epoch，见
+Current recap contract已由WP-08 formal RecapGrid source cutover取代v8；见
 [`../derived-recap/durable-target.md`](../derived-recap/durable-target.md)与
 [`../derived-recap/concepts.md`](../derived-recap/concepts.md)。
 
-本文保留 v7 时点的 Beta contract/evidence，不再描述当前 DerivedRecap Store/Planner wire。
+本文只保留v7时点的Beta contract/evidence，不描述当前RecapGrid wire、owner或production caller。
 其他 SessionJournal contract 内容仍可作该时点证据参考。它不是所有当前 `public` 类型的兼容性承诺；未列入角色 allowlist 的
 diagnostic、low-level 或 first-party cross-assembly mechanics 仍可在 Beta 前后按明确决策收窄。§7保留
 prior candidate的exact历史证据，并明确它不能认证本次v7 direct cut。
@@ -14,7 +14,7 @@ prior candidate的exact历史证据，并明确它不能认证本次v7 direct cu
 ## 1. Authority model
 
 1. raw events 与 selected `RefId` 的 Parent lineage 是会话事实和恢复的唯一 authority。
-2. DerivedRecap 是可删除、可重建的 sidecar；Store 管 structure/membership/strict ordinal，Planner 管
+2. 在本snapshot的historical v7系统中，DerivedRecap是可删除、可重建的sidecar；Store管structure/membership/strict ordinal，Planner管
    schedule/frozen execution，Maintainers 管 concrete profile/prompt。
 3. active Planner config 只决定 NewPlanning；Resume/Restore 服从 frozen plan。
 4. Host 必须串行驱动同一 writable Engine，并使用 exact-head mutation；final reread 是 fence，不是 CAS。
@@ -80,9 +80,9 @@ nullable 的字段接受 null。
 
 Prior candidate `49ebb463`没有A-level raw/recovery wire变化；本次v7 cut同样不修改A-level wire。
 
-## 4. B-level repo-owned Planner config
+## 4. Historical B-level repo-owned Planner config
 
-- path：`<repo>/config/recap-planner-config.json`
+- path：retired B-level Planner config slot；exact path只由formal legacy-root inventory持有
 - schema：`atelia.session-journal.recap-planner-config.v2`
 - 最大 64 KiB，JSON depth 32，禁止 comments/trailing comma
 - writer 输出 canonical bytes；reader 可接受合法的非 canonical whitespace/property order
@@ -99,9 +99,9 @@ config snapshot 每次 operation 只解析一次。Building/Resume/Restore 不�
 `EstimatorIdentityMismatch`。两个registration wrapper/key type是direct cut。此变化只收窄in-memory public
 catalog：config v2 bytes、reader language、path/hash/caps及active/frozen routing均不变。
 
-## 5. C-level DerivedRecap filesystem wire
+## 5. Historical C-level DerivedRecap filesystem wire
 
-root：`<repo>/derived/recap/v4/refs/<ref-id>/`
+root：retired C-level DerivedRecap filesystem root；exact path只由formal legacy-root inventory持有
 
 | Artifact | Schema | Read cap |
 |---|---|---:|
@@ -172,5 +172,5 @@ Release solution build为0 warnings、0 errors，CLI全套116 passed、1 expecte
 v6 fixture全套70 passed、0 skipped、0 failed。这些scripted gates不包含real-provider dispatch或real Host canary；
 本轮provider request construction未变，external provider calls为0。因此`49ebb463`是prior
 Beta-supported candidate。上述build/tests/fixture均早于set-level prior与manifest/publication v7 direct cut，
-不能认证current contract；current v7 candidate-specific gate状态为**NotRun**。完整历史证据边界见
+不能认证current contract；该historical v7 candidate-specific gate状态为**NotRun**。完整历史证据边界见
 [`contract-normalization-review.md`](../../evidence/contract-normalization-review.md)。

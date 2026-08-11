@@ -66,15 +66,16 @@
   库本身不提供 cadence 默认）：
   `minimumRecentHistoryLoad = 18000`、`recapBuildIntervalHistoryLoad = 21000`，
   触发条件是 `G >= R + B`，即**自 cadence baseline 起累计 ≥ 39,000 HistoryLoad token**。
-- raw safety 门（[RecapPlanEvaluator.cs](../../../../prototypes/SessionJournal.DerivedRecap.Planner/RecapPlanEvaluator.cs#L66-L80)）：
+- raw safety 门（historical `SessionJournal.DerivedRecap.Planner/RecapPlanEvaluator.cs` L66-L80；
+  该owner已在WP-08 cutover退役）：
   `rawGrowthEventCount` = cadence baseline 在 lineage 中的**下标**（raw event 个数），
   `> limits.MaxRawGrowthEventCount` 即返回 `Unavailable(MaxRawGrowthEventCountExceeded)`。
 - 硬上限 `RecapProtocolHardCaps.V4.MaxRawGrowthEventCount = 512`
-  （[RecapPlannerContracts.cs](../../../../prototypes/SessionJournal.DerivedRecap.Planner/RecapPlannerContracts.cs#L231-L243)），
+  （historical `SessionJournal.DerivedRecap.Planner/RecapPlannerContracts.cs` L231-L243），
   且 `ValidatePlanningLimits` 用 `RequireAtMost` 只允许 config **收紧**
-  （[RecapPlannerContracts.cs](../../../../prototypes/SessionJournal.DerivedRecap.Planner/RecapPlannerContracts.cs#L292-L318)）。
-- 该 defect 在 online 路径被映射为 `Backpressure`
-  （[DerivedRecapOnlineLifecycleCoordinator.cs](../../../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapOnlineLifecycleCoordinator.cs#L680-L688)），
+  （同一historical contract L292-L318）。
+- 该 defect 在 historical online 路径被映射为 `Backpressure`
+  （`DerivedRecapOnlineLifecycleCoordinator.cs` L680-L688），
   即**拒绝本次 completion**。
 - raw safety 在 cadence/estimator **之前**执行，因此一旦越界，无论 cadence 配置如何都不再进入 build。
 
@@ -142,9 +143,9 @@
 
 | 位置 | 表达式 | 所属程序集 |
 |---|---|---|
-| [DerivedRecapLineageView.cs](../../../../prototypes/SessionJournal.DerivedRecap.Store/DerivedRecapLineageView.cs#L12) | `internal const int MaxHeaderCount = 513;` | Store |
-| [RecapFrozenPlanBarrier.cs](../../../../prototypes/SessionJournal.DerivedRecap.Planner/RecapFrozenPlanBarrier.cs#L41) | `internal const int MaxHeaderCount = 513;` | Planner |
-| [DerivedRecapOnlineLifecycleCoordinator.cs](../../../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapOnlineLifecycleCoordinator.cs#L302) | `RecapProtocolHardCaps.V4.MaxRawGrowthEventCount + 1` | Planner |
+| historical `DerivedRecapLineageView.cs` L12 | `internal const int MaxHeaderCount = 513;` | Store |
+| historical `RecapFrozenPlanBarrier.cs` L41 | `internal const int MaxHeaderCount = 513;` | Planner |
+| historical `DerivedRecapOnlineLifecycleCoordinator.cs` L302 | `RecapProtocolHardCaps.V4.MaxRawGrowthEventCount + 1` | Planner |
 
 **问题**
 

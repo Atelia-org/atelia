@@ -148,6 +148,69 @@ public sealed class ManagerVerticalTests : IDisposable {
     }
 
     [Fact]
+    public async Task PartialBuildDisposeReopenFinishesMissingOnlyWithoutLegacySpool() {
+        Fixture fixture = CreateFullFixture(turns: 2, zeroColumns: false);
+        using (fixture.Journal) {
+            var firstExecutor = new RecordingExecutor();
+            using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+                RecapGridBuildResult.BudgetExceeded partial = Assert.IsType<
+                    RecapGridBuildResult.BudgetExceeded
+                >(await manager.Manager.BuildAsync(
+                    Request(maximumNewCalls: 1),
+                    firstExecutor
+                ));
+                Assert.Equal(RecapGridBuildBudgetKind.NewCalls, partial.Kind);
+                Assert.Equal(1, partial.Metrics.NewCalls);
+                Assert.Equal(1, partial.Metrics.RowViewsCommitted);
+                FrozenRowBatch firstBatch = Assert.Single(
+                    firstExecutor.Batches
+                );
+                Assert.Equal(
+                    fixture.Rows[0].Descriptor.RowId,
+                    firstBatch.HistorySegment.Descriptor.RowId
+                );
+            }
+
+            string legacySpool = Path.Combine(
+                fixture.Path,
+                "derived",
+                "recap",
+                "rebuild",
+                "v1"
+            );
+            Assert.False(Directory.Exists(legacySpool));
+
+            var resumedExecutor = new RecordingExecutor();
+            using (RecapGridManagerHandle reopened = OpenManager(fixture)) {
+                RecapGridBuildResult.Fulfilled resumed = Assert.IsType<
+                    RecapGridBuildResult.Fulfilled
+                >(await reopened.Manager.BuildAsync(
+                    Request(),
+                    resumedExecutor
+                ));
+                int remaining = fixture.Rows.Count - 1;
+                Assert.Equal(remaining, resumed.Metrics.NewCalls);
+                Assert.Equal(remaining, resumed.Metrics.RowViewsCommitted);
+                Assert.Equal(
+                    fixture.Rows.Skip(1).Select(row => row.Descriptor.RowId),
+                    resumedExecutor.Batches.Select(batch =>
+                        batch.HistorySegment.Descriptor.RowId)
+                );
+            }
+            Assert.False(Directory.Exists(legacySpool));
+
+            var thirdExecutor = new RecordingExecutor();
+            using RecapGridManagerHandle third = OpenManager(fixture);
+            RecapGridBuildResult.Fulfilled cached = Assert.IsType<
+                RecapGridBuildResult.Fulfilled
+            >(await third.Manager.BuildAsync(Request(), thirdExecutor));
+            Assert.Equal(0, cached.Metrics.NewCalls);
+            Assert.Empty(thirdExecutor.Batches);
+            Assert.False(Directory.Exists(legacySpool));
+        }
+    }
+
+    [Fact]
     public async Task ZeroColumnFullBuildCreatesViewsWithoutExecutorCalls() {
         Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: true);
         using (fixture.Journal)

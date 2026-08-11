@@ -15,10 +15,9 @@
 | 任务 | 首读入口 | 必要时再读 |
 |---|---|---|
 | Core API、raw wire、Prepared/Resume 与 crash recovery | [Beta contract snapshot](current/contracts/session-journal-beta-contract-snapshot.md)、[Core guide](../../prototypes/SessionJournal/README.md) | [Uncertain external effects contract](current/recovery/uncertain-external-effects.md) 与 current codec/recovery tests |
-| EADR 术语、Store selection/publication/materialization/Restore | [EADR concepts](current/derived-recap/concepts.md)、[Store guide](../../prototypes/SessionJournal.DerivedRecap.Store/README.md) | [Durable target](current/derived-recap/durable-target.md) 与 Store code/tests |
-| HistoryLoad contracts、projector、partition 与 estimator | [HistoryLoad](current/derived-recap/history-load.md)、[HistoryTimeline code](../../prototypes/SessionJournal.HistoryTimeline/)、[HistoryTimeline tests](../../tests/SessionJournal.HistoryTimeline.Tests/) | Planner只拥有cadence/config；参见[Planner guide](../../prototypes/SessionJournal.DerivedRecap.Planner/README.md)与[Planner config](current/derived-recap/planner-config.md) |
-| Planner config、cadence、NewPlanning/Resume/Restore | [Planner guide](../../prototypes/SessionJournal.DerivedRecap.Planner/README.md)、[Planner config](current/derived-recap/planner-config.md) | HistoryLoad数值与partition规则回到上行HistoryTimeline入口 |
-| Maintainers、Host composition 或 Galatea integration | [Maintainers guide](../../prototypes/SessionJournal.DerivedRecap.Maintainers/README.md)、[Host integration](current/host-integration/derived-recap-host-integration.md) | current Galatea composition/code/tests |
+| Timeline、partition、HistoryLoad 与 branch reconcile | [HistoryLoad](current/derived-recap/history-load.md)、[HistoryTimeline code](../../prototypes/SessionJournal.HistoryTimeline/)、[HistoryTimeline tests](../../tests/SessionJournal.HistoryTimeline.Tests/) | [Durable authority](current/derived-recap/durable-target.md) |
+| Grid Store、Control、Manager、Getter 与 Runtime | [Grid concepts](current/derived-recap/concepts.md)、[target design](work/active/derived-recap-grid-target-design.md) | owning product/tests；不要从旧slot推导current contract |
+| CLI operator 或 Galatea integration | [CLI guide](../../prototypes/SessionJournal.Cli/README.md)、[Galatea guide](../../prototypes/Galatea/README.md)、[Host integration](current/host-integration/derived-recap-host-integration.md) | current composition/code/tests |
 | 重跑 Galatea G2A staging acceptance | [G2A runbook](operations/galatea-g2a-staging-acceptance.md) | 本轮新生成的 acceptance evidence；runbook 存在不等于本轮 Passed |
 | 审计历史 candidate、review 或交付 | [Evidence index](evidence/README.md)、[`archive/`](archive/) | [冻结的旧 router 与 claim ledger](archive/superseded/session-journal-router-and-claim-ledger-2026-08-04.md) 只用于 cut-time 审计 |
 
@@ -30,15 +29,9 @@
 - `archive/`：已完成、被替代或历史材料；正常实现任务不得从这里推导 current API。
 - 当前 active plans：
   [DerivedRecap Sparse Versioned Grid 目标设计](work/active/derived-recap-grid-target-design.md)
-  记录下一代Timeline rows、Maintainer analysis columns、content-addressed immutable cells与minimal control plane的理想
-  Shape/Rule；尚未实施，也不描述current production。
+  记录Timeline rows、analysis columns、content-addressed immutable cells与Control/Store/Manager/Getter的current Rule/Shape。
   [DerivedRecap Grid Rewrite 总施工计划](work/active/derived-recap-grid-rewrite-master-plan.md)
-  将新目标拆为WP-00至WP-08（其中Timeline为01A/B/C、vertical为07A/B）的旁路施工与最终一次direct cut；每包只加载
-  相邻handoff并执行fresh review、focused validation和独立tail gate。
-  [DerivedRecap Shared Epoch / Maintainer Family 并行重构计划](work/active/derived-recap-shared-epoch-parallel-maintainer-refactor-plan.md)。
-  R3 shared-epoch v8、R4 runtime-group并行调度、R5 cache boundary/usage telemetry与R6
-  Galatea/CLI production composition已进入current code；R7 real-provider cache/economic proof仍为
-  `Environment-blocked`。
+  记录WP-00至WP-08的implementation/review evidence；WP-08负责正式caller cutover与旧owner删除。
   精确事实仍以owning code/tests与`current/`文档为准。
 
 目录、标题、日期、`README.md` 或 `public` 均不自动授予 authority。

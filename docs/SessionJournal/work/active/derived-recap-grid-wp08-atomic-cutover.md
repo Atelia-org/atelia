@@ -1,6 +1,7 @@
 # DerivedRecap Grid WP-08：Atomic Production Cutover 与 Legacy Deletion
 
-状态：Ready / Planned；WP-07B与WP-07C均已取得两路independent GO；尚未开始production cutover
+状态：Complete / independent closure Closed；production caller、formal operator surface与legacy owner deletion均已完成。
+real-provider canary与actual cyber repository activation仍是外部`NotRun` gate，不属于source closure证据。
 
 只需加载：目标设计、总计划、WP-07B handoff、WP-07C handoff、本文、current architecture map与migration ledger。
 
@@ -24,9 +25,9 @@ migration、feature flag或compatibility layer。
   Control、built-in provision与ToolResult/ToolContinuation，并取得两路independent GO；
 - exact cutover HEAD重新盘点，无并行uncommitted writer。
 
-WP-04 Manager旁路实现已complete，但旧Planner/Runtime/Maintainers、Galatea与CLI callers均未切换。它必须与旧
-production并存至WP-07 vertical Go；WP-08才在同一atomic cut中切composition并删除legacy owners，
-不得提前把candidate presence解释为current production cutover。
+WP-04..07C的旁路已作为本包输入。WP-08已把CLI/Galatea caller切到formal products并删除legacy
+owners；source implementation与independent closure均已完成。是否对actual cyber repository执行operator
+activation仍由外部部署gate决定，不能由source tests替代。
 
 ## In scope
 
@@ -68,8 +69,8 @@ production并存至WP-07 vertical Go；WP-08才在同一atomic cut中切composit
 
 | Host | Current production caller | 已验证candidate caller | WP-08原子切换 | 切换后删除 |
 |---|---|---|---|---|
-| CLI | `SessionJournal.Cli/Program.cs`顶层`run-online-turn` -> `OnlineTurnCommand`；旧`recap`子树仍由old DerivedRecap commands拥有 | `recap-grid candidate run-online-turn` -> `RecapGridCandidateCommands` / `RecapGridCandidateOnlineTurn` -> `RecapGridCompletionHost` + `RecapGridOnlineFactory` + lazy exact AgentControl binding | 把顶层production caller直接接到经WP-07B/07C闭合的Hosting/Online/agent-control组合；stable store-only `recap-grid inspect|export|verify|reset`保持原名 | `OnlineTurnCommand`的old DerivedRecap composition、旧`recap` owners，以及仅用于旁路的`candidate`命令层；不得删除正式Hosting/Online/AgentControl owners |
-| Galatea | public `GalateaHostService` constructor与`Program` DI构造old `GalateaRecapComposition` | internal/test-only constructor -> `GalateaRecapGridCandidateComposition` -> per-turn Online + host-wide `RecapGridCompletionHost` + lazy exact AgentControl binding | public constructor/`Program` DI一次切到经WP-07B/07C闭合的正式composition；ToolContinuation先exact bind frozen tool profile，再current completion，最后Online；Prepared/Started仍先走outer exact recovery | internal candidate constructor/composition seam与old `GalateaRecapComposition`；不得删除正式AgentControl product，也不得保留env/config feature switch或双registry |
+| CLI | historical `OnlineTurnCommand`与old `recap`子树（已删除） | WP-07A/07C candidate command（已formalize） | `Program.cs`唯一顶层`run-online-turn`直达`RecapGridCommands.RunOnlineTurnAsync`；`recap-grid`统一Store/Timeline/Control/build/progress/materialize/legacy-root | old callers、old `recap` owners和nested `candidate`层均已删除；formal Hosting/Online/AgentControl保留 |
+| Galatea | historical `GalateaRecapComposition`与direct connection-registry DI（已删除） | WP-07B/07C internal candidate composition（已formalize） | `Program`只构造一个`RecapGridCompletionHost`，`GalateaHostService`唯一拥有`GalateaRecapGridComposition`；frozen tool → current completion → Online顺序保留 | old composition、candidate naming/branch与双registry均已删除 |
 
 删除顺序必须是“production caller已切且同一behavior矩阵green”之后再删candidate shim/legacy owner，不能先删测试旁路再猜测正式composition。
 
@@ -120,7 +121,8 @@ archive/evidence与migration ledger自身。current `host-integration`若与exac
 
 - affected project tests与solution build 0 warnings/errors；
 - crash harness与disposable Galatea vertical；
-- docs checker scoped 0 diagnostics；all-tracked仅允许另有owner的known archive findings；
+- docs checker scoped 0 diagnostics；最终 `--all-tracked` 必须为0；未提交移动产生的
+  临时source-missing只能记录为中间态，不能算Done证据；
 - `git diff --check`；
 - fresh checkout重跑核心gate；
 - production source/config/docs old-symbol/path `rg`为零。
@@ -145,3 +147,45 @@ archive/evidence与migration ledger自身。current `host-integration`若与exac
 - all gates green或外部canary明确environment-blocked；
 - current docs成为唯一导航，计划与旧设计材料按治理规则归档；
 - worktree clean，cutover commit与rollback baseline可定位。
+
+## Implementation completion record（2026-08-12）
+
+本轮以`archive/pre-wp08-cutover-20260811 = 804bc551`为rollback baseline，已完成：
+
+该baseline只提供source rollback定位：在cutover后首次新raw event写入前，可整体回退
+code/derived state；一旦已有新raw event，禁止把repository raw authority回滚到旧副本，
+只能保留raw并用forward fix/明确兼容审计恢复。任何rollback都不得用旧derived sidecar覆盖raw。
+
+- CLI stable surface formalize：`recap-grid`统一scaffold/Store/Timeline/Control/build/progress/materialize/legacy-root，
+  顶层唯一`run-online-turn`走formal Online；HistoryLoad迁到`recap-grid timeline history-load inspect`；
+- Galatea single-owner cut：strict RecapGrid config、one `RecapGridCompletionHost`、formal readiness DTO与
+  Prepared/Started/ToolContinuation phase order；
+- provider-free create-only `scaffold`（Control admission + AgentControl profile + Hosting route manifest）、
+  `control compose-full-recipe`与owner-bound seven-slot legacy-root
+  inspect/archive/delete；archive V2 manifest提交selected branch/RefId/raw head，mutation要求
+  Idle mutable owner与fresh whole authority；normal path对old roots inert；
+- 删除五个`SessionJournal.DerivedRecap.*` products、四个old test/harness projects、old callers、refs、IVTs与
+  solution entries；HistoryLoad tooling迁到HistoryTimeline；
+- current architecture/concepts/durable/config/HistoryLoad/host docs改为formal Timeline/Control/Store链；
+- restart evidence新增：partial build后dispose全部Manager handle，reopen仅补exact missing rows，第三次0 calls，
+  全程不创建legacy rebuild spool。
+
+Focused evidence：Walking 25/25；CLI formal 13/13；legacy-root 11/11（与Walking独立计数，含四个child crash窗口、
+8 GiB hash-before-cap、Busy/ref/raw/non-Idle/drift、foreign branch、FIFO/symlink、publication settlement与partial retry）；Galatea strict config
+7/7、readiness direct 2/2、ready→fulfillment-missing→reset→frontier vertical 1/1；HistoryLoad CLI 3/3；
+Galatea composition/readiness 9/9；scaffold CLI 4/4、Galatea strict scaffold load并入config 8/8；Manager restart 1/1；HistoryTimeline tool node fixtures 6/6；scoped docs
+checker 14/0。`--all-tracked`在未commit source move期间允许报告待提交的source-missing，
+但containing commit后必须重跑为0；不能把中间诊断列作最终允许残留。historical missing-target为0。
+
+Final source evidence：`Atelia.sln`串行build为0 warning / 0 error；第二轮solution test完整退出0，36个test projects
+合计4658/4658 green；package vulnerability audit退出0且所有项目无已知漏洞；两路independent closure最终均为
+P0=0/P1=0。deterministic disposable legacy-import canary已完成，未调用真实provider，也未写入actual cyber repository。
+
+外部`NotRun` gate保持不变：real-provider authenticated canary与actual cyber repository的provision/compose/activate
+均未执行。它们不得被上述deterministic证据冒充；同样不得改变`archive/pre-wp08-cutover-20260811 = 804bc551`
+的rollback边界：首次new raw write前才允许整体source/derived rollback，之后只能保留raw并forward-fix。
+
+fresh no-local checkout已在provisional containing source tree `913fd8fa`上完成：全新restore成功，Release
+solution build为0 warning / 0 error，36个test projects合计4658/4658 green，package vulnerability audit零命中，
+scoped docs 14/0、all-tracked docs 71/0，checkout status clean。最终containing commit只在该source tree上回写本段
+fresh evidence；没有再改变product/test source。

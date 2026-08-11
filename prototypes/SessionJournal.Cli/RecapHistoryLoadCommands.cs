@@ -1,5 +1,5 @@
 using Atelia.Completion.Abstractions;
-using Atelia.SessionJournal.DerivedRecap.Planner;
+using Atelia.SessionJournal.HistoryTimeline;
 using SJ = Atelia.SessionJournal;
 
 namespace Atelia.SessionJournal.Cli;
@@ -14,7 +14,7 @@ internal static class RecapHistoryLoadCommands {
             || args[0] is "-h" or "--help"
             || args[0].StartsWith("--", StringComparison.Ordinal)) {
             throw new ArgumentException(
-                "recap history-load requires the inspect subcommand."
+                "recap-grid timeline history-load requires the inspect subcommand."
             );
         }
         if (!string.Equals(
@@ -23,7 +23,7 @@ internal static class RecapHistoryLoadCommands {
                 StringComparison.Ordinal
             )) {
             throw new ArgumentException(
-                $"Unknown recap history-load subcommand '{args[0]}'."
+                $"Unknown recap-grid timeline history-load subcommand '{args[0]}'."
             );
         }
 

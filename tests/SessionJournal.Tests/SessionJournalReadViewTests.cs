@@ -56,6 +56,12 @@ public sealed class SessionJournalReadViewTests : IDisposable {
         }
 
         MethodContract[] expectedMethods = [
+            Method<SessionHistoryPlanningSeed>(
+                nameof(SessionJournalReadView.CreateHistoryPlanningSeed),
+                Required<EventAddress>(),
+                Required<SessionContextAnchorSetupReferences>(),
+                Optional<CancellationToken>()
+            ),
             Method<SessionExecutionBoundaryInspection>(
                 nameof(SessionJournalReadView.InspectExecutionBoundary),
                 Optional<CancellationToken>()

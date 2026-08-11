@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：Proposed target design；WP-00至WP-07C complete，WP-08 Ready / Planned；尚未切换 current production
+状态：Implemented target；WP-00至WP-08 complete，independent closure Closed
 
 ## 1. Intent
 
@@ -744,17 +744,20 @@ Coding Agent日常通过稳定CLI、checked-in SQL、canonical export和golden�
 Grid Store已关闭后执行。数据库损坏走`verify -> reset/rebuild`，不设计SQLite page级salvage或
 Published repair。
 
-完整operator vertical当前只以明确candidate子树存在，不替换上述stable store-only命令或旧production入口：
+WP-08已把完整operator vertical升格为stable `recap-grid`命令树，并删除nested candidate与old production
+commands：
 
 ```text
-recap-grid candidate init
-recap-grid candidate timeline create|sync|inspect|verify|export|backup|restore|abandon
-recap-grid candidate control create|inspect|verify|export|put-family|put-definition|put-recipe|activate|promote|backup|restore|reinitialize
-recap-grid candidate build|progress|materialize
-recap-grid candidate run-online-turn
+recap-grid init
+recap-grid timeline create|sync|inspect|verify|export|backup|restore|abandon
+recap-grid timeline history-load inspect
+recap-grid control create|inspect|verify|export|put-family|put-definition|compose-full-recipe|put-recipe|provision-built-in|activate|promote|backup|restore|reinitialize
+recap-grid build|progress|materialize
+recap-grid legacy-root inspect|archive|delete
+run-online-turn
 ```
 
-candidate命令内部从selected `SessionJournalReadView`取得canonical repository/Ref authority；mutation要求exact Ref确认。
+branch命令内部从selected `SessionJournalReadView`取得canonical repository/Ref authority；mutation要求exact Ref确认。
 `build`与Fresh/NewRequest/ToolResult/ToolContinuation online只在各自lazy dispatch boundary读取strict route/connection inputs并构造
 所需Runtime/clients。route必须exact匹配`(FamilyDigest, RuntimeProtocolId, SemanticModelId?)`，含显式`null`且无fallback；
 Prepared frozen resume不读current route，Started/Refuse在connections前终止。`progress`是Manager pure read；
@@ -891,14 +894,14 @@ Walking 15/15、HistoryTimeline public 3/3、solution build 0 warning / 0 error�
 independent GO（P0=0，P1=0）。
 WP-06 final evidence为Runtime 56/56、Completion 471/471、Runtime public surface 2/2、Walking 18/18、solution build
 0 warning / 0 error、docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0）；exact route、V1 renderer/parser、
-leader/follower scheduler与operational evidence现为WP-07A的complete handoff。WP-07A已把exact deferred
-route落到独立Hosting owner，把pure-read progress落到Manager，并新增明确的`recap-grid candidate`operator子树；focused CLI 5/5
+leader/follower scheduler与operational evidence成为WP-07A的complete handoff。WP-07A当时把exact deferred
+route落到独立Hosting owner，把pure-read progress落到Manager，并新增临时candidate operator子树；focused CLI 5/5
 已在closure tail扩为8/8，覆盖online/offline cap与raw drift、Ref隔离、真实Runtime build、zero-call promotion、strict materialization、
 strict bounded connections零mutation与Timeline/Control/Grid maintenance的raw/四域byte isolation。Hosting operational evidence只在首次
 真实work materialize并按field/event/retained-total bytes限界；最终Hosting 16/16、Hosting public 1/1、Manager 60/60、Completion registry
 lifetime 6/6、CLI candidate 8/8、Walking 20/20、Timeline cursor 2/2、stable/old CLI targeted 7/7、solution build 0 warning / 0 error、
-docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0）。WP-07B已完成Galatea/CLI disposable online vertical；
-Agent-facing Control与Tool continuation已由WP-07C complete handoff承接；current production仍未切换。
+docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0）。WP-07B完成Galatea/CLI disposable online vertical；
+Agent-facing Control与Tool continuation由WP-07C complete handoff承接。
 WP-07B final evidence为Hosting 19/19、Online 21/21、Galatea actual candidate 7/7、CLI candidate 10/10、raw audit
 19/19、public surfaces 3/3、Walking 22/22、solution build 0 warning / 0 error、包漏洞扫描零命中、docs 15/0与diff clean；
 两路independent closure均GO（P0=0，P1=0）。
@@ -906,11 +909,12 @@ WP-07C已加入Control V2 terminal receipts、strict AgentControl、显式built-
 ToolResult/ToolContinuation exact frozen binding。receipt保存Control-owned canonical command/result identity与原instance/generation，
 不保存whole next head；replay只报告current head及head-advanced/instance-replaced证据。当前tail focused证据记录在WP-07C implementation
 record；其中Family/Definition/overlay登记是明确fixture precondition，真实CLI Host随后经Runtime missing build，并在
-`candidate run-online-turn`内由main provider发出AgentControl promotion ToolCall；同一Host以zero-call重证、提交receipt、保留
+当时的candidate `run-online-turn`内由main provider发出AgentControl promotion ToolCall；同一Host以zero-call重证、提交receipt、保留
 ToolResult raw-tail，且紧随其后的completion读取active contribution。Galatea继续覆盖同一frozen recovery/authority等价边界。
 最终证据为Control 45/45、AgentControl 20/20、Completion 482/482、CLI candidate 12/12、Walking 23/23、solution build
 0 warning / 0 error、vulnerable package scan零命中、docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0）。
-该complete handoff不等于production cutover；WP-08现为Ready / Planned。
+WP-08现已formalize这些callers、删除candidate nesting和old owners；final source evidence与外部`NotRun` gates见
+[`WP-08 completion record`](derived-recap-grid-wp08-atomic-cutover.md#implementation-completion-record2026-08-12)。
 WP-01C final evidence为Timeline 156/156、raw 19/19、walking 13/13、
 public surface 2/2、solution build 0 warning / 0 error、docs 15/0、diff clean与两路independent GO；commit evidence由containing commit提供。
 其后WP-02 final evidence为Abstractions 15/15、Control 26/26、Control public surface 2/2、Walking/architecture 13/13，

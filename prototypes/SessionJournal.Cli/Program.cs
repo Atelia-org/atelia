@@ -28,36 +28,15 @@ internal static class Program {
             string command = args[0];
             if (string.Equals(
                     command,
-                    "recap",
+                    "recap-grid",
                     StringComparison.Ordinal
                 )) {
-                return RecapStoreCommands.RunAsync(
+                return RecapGridCommands.RunAsync(
                         args.Skip(1).ToArray(),
                         completionClientFactory
                     )
                     .GetAwaiter()
                     .GetResult();
-            }
-            if (string.Equals(
-                    command,
-                    "recap-grid",
-                    StringComparison.Ordinal
-                )) {
-                if (args.Length > 1
-                    && string.Equals(
-                        args[1],
-                        "candidate",
-                        StringComparison.Ordinal)) {
-                    return RecapGridCandidateCommands.RunAsync(
-                            args.Skip(2).ToArray(),
-                            completionClientFactory
-                        )
-                        .GetAwaiter()
-                        .GetResult();
-                }
-                return RecapGridStoreCommands.Run(
-                    args.Skip(1).ToArray()
-                );
             }
             CliOptions options = CliOptions.Parse(args.Skip(1).ToArray());
             return command switch {
@@ -73,7 +52,7 @@ internal static class Program {
                     )
                     .GetAwaiter()
                     .GetResult(),
-                "run-online-turn" => OnlineTurnCommand.RunAsync(
+                "run-online-turn" => RecapGridCommands.RunOnlineTurnAsync(
                         options,
                         completionClientFactory
                     )
@@ -340,51 +319,15 @@ internal static class Program {
             + "--confirm-length <bytes> --confirm-sha256 <sha256>"
         );
         Console.WriteLine(
-            "  recap-grid candidate <init|timeline|control|build|progress|materialize> ..."
+            "  recap-grid <scaffold|init|timeline|control|build|progress|materialize> ..."
         );
         Console.WriteLine(
-            "  recap planner-config init --input <repo-dir> "
-            + "[--report-json <path-outside-repo>]"
-        );
-        Console.WriteLine(
-            "  recap planner-config inspect --input <repo-dir> "
-            + "[--report-json <path-outside-repo>]"
-        );
-        Console.WriteLine(
-            "  recap history-load inspect --input <repo-dir> "
+            "  recap-grid timeline history-load inspect --input <repo-dir> "
             + "[--branch <name>] "
             + "[--report-json <path-outside-repo>]"
         );
         Console.WriteLine(
-            "  recap create --input <repo-dir> --branch <name> "
-            + "[--report-json <path-outside-repo>]"
-        );
-        Console.WriteLine(
-            "  recap inspect --input <repo-dir> --branch <name> "
-            + "[--report-json <path-outside-repo>]"
-        );
-        Console.WriteLine(
-            "  recap materialize-inspect --input <repo-dir> "
-            + "--branch <name> [--nth-previous <zero-based>] "
-            + "[--report-json <path-outside-repo>]"
-        );
-        Console.WriteLine(
-            "  recap run --input <repo-dir> --branch <name> "
-            + "--connections <path> [--connection <id>] "
-            + "[--call-log-dir <dir>] "
-            + "[--report-json <path-outside-repo>]"
-        );
-        Console.WriteLine(
-            "  recap rebuild --input <repo-dir> --branch <name> "
-            + "--campaign <safe-id> [--reset --confirm-ref <exact-ref-id>] "
-            + "--connections <path> [--connection <id>] "
-            + "[--call-log-dir <dir>] "
-            + "[--report-json <path-outside-repo>]"
-        );
-        Console.WriteLine(
-            "  recap reset --input <repo-dir> --branch <name> "
-            + "--confirm-ref <exact-ref-id> "
-            + "[--report-json <path-outside-repo>]"
+            "  recap-grid legacy-root inspect|archive|delete ..."
         );
         Console.WriteLine(
             "  import-legacy-json --input <json> --output <repo-dir> "

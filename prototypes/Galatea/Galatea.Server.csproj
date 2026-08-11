@@ -10,10 +10,6 @@
     <ProjectReference Include="../Completion/Completion.csproj" />
     <ProjectReference Include="../Completion.Tools/Completion.Tools.csproj" />
     <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
-    <ProjectReference Include="../SessionJournal.DerivedRecap.Store/SessionJournal.DerivedRecap.Store.csproj" />
-    <ProjectReference Include="../SessionJournal.DerivedRecap.Planner/SessionJournal.DerivedRecap.Planner.csproj" />
-    <ProjectReference Include="../SessionJournal.DerivedRecap.Maintainers/SessionJournal.DerivedRecap.Maintainers.csproj" />
-    <ProjectReference Include="../SessionJournal.DerivedRecap.Runtime/SessionJournal.DerivedRecap.Runtime.csproj" />
     <ProjectReference Include="../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Hosting/SessionJournal.RecapGrid.Hosting.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.AgentControl/SessionJournal.RecapGrid.AgentControl.csproj" />

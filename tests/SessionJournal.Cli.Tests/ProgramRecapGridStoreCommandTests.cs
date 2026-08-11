@@ -6,6 +6,7 @@ using Xunit;
 
 namespace Atelia.SessionJournal.Cli.Tests;
 
+[Collection(ConsoleSerialCollection.Name)]
 public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),

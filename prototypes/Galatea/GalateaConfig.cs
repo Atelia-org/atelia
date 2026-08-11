@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Atelia.Completion;
+using Atelia.SessionJournal.RecapGrid.AgentControl;
 
 namespace Atelia.Galatea.Server;
 
@@ -16,8 +17,20 @@ public sealed record GalateaConfig(
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
     bool MaintenanceMode = false,
-    IReadOnlyDictionary<string, string>?
-        RecapMaintainerConnections = null
+    GalateaRecapGridRuntimeConfig? RecapGrid = null
+);
+
+public sealed record GalateaRecapGridRuntimeConfig(
+    string RouteManifestPath,
+    RecapGridAgentControlProfileRegistry AgentControlProfiles,
+    string CurrentAgentControlProfileId
+);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record GalateaRecapGridFileConfig(
+    string RouteManifestPath,
+    IReadOnlyList<string> AgentControlProfileFiles,
+    string CurrentAgentControlProfileId
 );
 
 /// <summary>
@@ -27,16 +40,7 @@ public sealed record GalateaConfig(
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record GalateaConnectionsFileConfig(
     IReadOnlyList<CompletionConnectionConfig> Connections,
-    string? DefaultConnectionId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<GalateaRecapMaintainerConnectionBinding>?
-        RecapMaintainerConnections = null
-);
-
-[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-public sealed record GalateaRecapMaintainerConnectionBinding(
-    string MaintainerId,
-    string ConnectionId
+    string? DefaultConnectionId = null
 );
 
 /// <summary>Shape of config.json: user accounts + server settings, with no LLM binding.</summary>
@@ -44,7 +48,8 @@ public sealed record GalateaUsersFileConfig(
     IReadOnlyList<GalateaUserConfig> Users,
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
-    bool MaintenanceMode = false
+    bool MaintenanceMode = false,
+    GalateaRecapGridFileConfig? RecapGrid = null
 );
 
 public sealed record GalateaUserConfig(
@@ -114,17 +119,42 @@ public sealed record RecentTurnDto(
     AssistantMessageDto Assistant
 );
 
-public sealed record RecapPlanningSnapshotDto(
+public sealed record RecapGridReadinessAuthorityDto(
+    string RefId,
+    string TimelineId,
+    long TimelineGeneration,
+    string? TimelineHeadRowId,
+    long ControlGeneration,
+    string ControlStateDigest,
+    string StoreInstanceId,
+    int StoreSchemaVersion,
+    string RecipeDigest,
+    string ThroughRowId,
+    string ThroughDescriptorDigest
+);
+
+public sealed record RecapGridReadinessMetricsDto(
+    int SelectedRows,
+    int RecipeRowSteps,
+    int ExaminedAssignments,
+    int MissingAssignments
+);
+
+public sealed record RecapGridMissingAssignmentDto(
+    int Ordinal,
+    string RowId,
+    string RecipeDigest,
+    string LogicalColumnId,
+    string EvaluationKey
+);
+
+public sealed record RecapGridReadinessSnapshotDto(
     string Freshness,
     string State,
-    string? ObservedRawHead = null,
-    string? CadenceBaseline = null,
-    int? RecentHistoryUnitCount = null,
-    long? RecentHistoryLoad = null,
-    long? MinimumRecentHistoryLoad = null,
-    long? RecapBuildIntervalHistoryLoad = null,
-    long? BuildThresholdHistoryLoad = null,
-    long? RemainingHistoryLoad = null,
+    string? ObservedRawHead,
+    RecapGridReadinessAuthorityDto? Authority = null,
+    RecapGridReadinessMetricsDto? Metrics = null,
+    IReadOnlyList<RecapGridMissingAssignmentDto>? OrderedMissing = null,
     string? Code = null,
     string? Detail = null
 );
@@ -132,7 +162,7 @@ public sealed record RecapPlanningSnapshotDto(
 public sealed record RecentTurnsResponseDto(
     IReadOnlyList<RecentTurnDto> Turns,
     string? RewindLatestToken,
-    RecapPlanningSnapshotDto? RecapPlanning = null
+    RecapGridReadinessSnapshotDto? RecapGridReadiness = null
 );
 
 public sealed record AssistantMessageDto(

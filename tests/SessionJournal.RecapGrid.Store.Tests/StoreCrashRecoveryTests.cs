@@ -118,6 +118,9 @@ public sealed class StoreCrashRecoveryTests : IDisposable {
         string failpoint,
         string repository
     ) {
+        string configuration = Directory.GetParent(
+            Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory)
+        )?.Name ?? "Debug";
         string harness = Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory,
             "..",
@@ -126,7 +129,7 @@ public sealed class StoreCrashRecoveryTests : IDisposable {
             "..",
             "SessionJournal.RecapGrid.Store.CrashHarness",
             "bin",
-            "Debug",
+            configuration,
             "net10.0",
             "Atelia.SessionJournal.RecapGrid.Store.CrashHarness.dll"
         ));

@@ -1,65 +1,58 @@
 # SessionJournal.Cli
 
-DerivedRecap当前operator surface：
+正式 RecapGrid operator surface：
 
 ```text
-recap planner-config init|inspect
-recap history-load inspect
-recap create
-recap inspect
-recap materialize-inspect
-recap run
-recap rebuild --campaign <id> [--reset --confirm-ref <ref-id>]
-recap reset --confirm-ref <ref-id>
-
-recap-grid inspect|verify --input <repo-dir>
-recap-grid export --input <repo-dir> [--after <opaque-cursor>] [--include-content]
-recap-grid reset --prepare --input <repo-dir>
-recap-grid reset --input <repo-dir> --confirm-length <bytes> --confirm-sha256 <sha256>
-
-recap-grid candidate init ...
-recap-grid candidate timeline create|sync|inspect|verify|export|backup|restore|abandon ...
-recap-grid candidate control create|inspect|verify|export|put-family|put-definition|put-recipe|provision-built-in|activate|promote|backup|restore|reinitialize ...
-recap-grid candidate build|progress|materialize ...
-recap-grid candidate run-online-turn ...
+recap-grid inspect|verify|export|reset ...
+recap-grid scaffold ...
+recap-grid init ...
+recap-grid timeline create|sync|inspect|verify|export|backup|restore|abandon ...
+recap-grid timeline history-load inspect ...
+recap-grid control create|inspect|verify|export|put-family|put-definition|put-recipe|compose-full-recipe|provision-built-in|activate|promote|backup|restore|reinitialize ...
+recap-grid build|progress|materialize ...
+recap-grid legacy-root inspect|archive|delete ...
+run-online-turn ...
 ```
 
-`recap-grid` 是Derived Recap Grid rewrite的candidate operator surface，尚未切换
-Galatea/current production。`reset --prepare`只读输出当前exact physical
-`length`/`sha256`；将这两个值原样传给reset确认。inspect/export/verify/reset使用
-code-owned分页与错误上限，首版不提供`--limit`或`--max-errors`选项。
+`recap-grid` 是唯一 Grid operator root。Store maintenance 与 Timeline、Control、
+build/readiness/materialization 共用正式 owner contracts；旧 `recap` 命令和旧 recap
+product 已移除。`timeline history-load inspect` 是 provider-free 的只读校准工具。
 
-完整Grid operator vertical仍只在明确的`recap-grid candidate`子树中。所有branch mutation都要求与selected
-SessionJournal branch相同的`--confirm-ref`；`init`显式按Timeline、Control、Grid三域创建，其他命令不自动创建。
-Family/Definition/Recipe输入必须是各自formal canonical bytes；`provision-built-in`只接受code-owned exact asset ID并复用同一
-AgentControl bundle resolver。Control admission是`RecapGridControlAdmission.ToCanonicalBytes()`产生的独立strict文件，不能从payload自授权。
-`candidate build`与Fresh/NewRequest/ToolResult/ToolContinuation online只在各自lazy dispatch boundary读取strict route manifest与
-Completion connections：route按`(FamilyDigest, RuntimeProtocolId, SemanticModelId?)` exact匹配，显式`null`也不fallback；connections
-在Manager/Store/provider mutation前执行whole-file、count、field strict UTF-8 bounds以及duplicate/unknown/BOM检查。`progress`不构造provider；
-`promote`在同一进程用`--max-new-calls 0`重证head-through proof后才执行Promotion CAS，build本身永不activate；
-`materialize`只走Getter strict `--nth-previous`，不在CLI拼raw tail。build report附带bounded operational call evidence；no-work与
-其他provider-free命令不materialize该collector。`candidate run-online-turn`只在Fresh/NewRequest打开provider-neutral Online
-composition；Prepared按frozen identity exact bind，Started/Refuse在读取connections/routes和创建client前typed终止。它与旧top-level
-`run-online-turn`是隔离candidate，不改变旧命令语义。Fresh/NewRequest、`ToolResultObserved`恢复与tool continuation都会启动新的
-completion request，因此都必须显式提供`--routes`；只有Prepared frozen completion resume不得读取route manifest。
+所有 branch mutation 都要求与 selected SessionJournal branch 相同的
+`--confirm-ref`。`init` 显式按 Timeline、Control、Grid 三域创建，其他命令不自动
+创建。Family、Definition、Recipe 输入必须是 formal canonical bytes；
+`provision-built-in` 只接受 code-owned exact asset ID。Control admission 是独立 strict
+canonical 文件，不能从 payload 自授权。
 
-candidate JSON report使用`atelia.session-journal.recap-grid-candidate-cli.v1`；syntax/confirmation返回1，typed operational failure
-返回2，success/idempotent返回0。Busy/Stale/Unsupported/Indeterminate均不自动retry。WP-07C implementation candidate仍待独立review，并未切换
-Galatea public/default composition、旧top-level `run-online-turn`、旧`recap`命令或current production。
+`recap-grid scaffold` 是 provider-free、create-only 的operator bootstrap：对一个
+code-owned built-in asset，把operator显式给出的permissions、logical-column prefixes、
+Control budgets和route execution limits组合成三份strict canonical文件——Control admission、
+AgentControl profile、Hosting route manifest。family/capability/carrier只来自code-owned
+registration bundle；三个output必须pairwise distinct且全部不存在，任一existing时零写。
+命令会在每次写前与写后调用正式`DecodeCanonical`做exact self-check，并报告bounded
+length/SHA-256/runtime identity。built-in capability的semantic model为null时必须省略
+`--semantic-model-id`，wire中仍是explicit null；不存在wildcard/default fallback。生成后可把
+admission交给`init`，profile/route路径交给Galatea strict config。
 
-旧 `resume`、`restore`、`abandon-building`命令已删除。`recap run`内部自动优先恢复Building或修复
-Published，随后才惰性加载active config并规划新shared epoch。正常run超过bounded raw authority只返回
-FullRebuildRequired，不创建spool。
+`build` 与 Fresh/NewRequest online 只在 lazy dispatch boundary 读取 strict route manifest
+和 Completion connections；route 按
+`(FamilyDigest, RuntimeProtocolId, SemanticModelId?)` exact 匹配，显式 `null` 也不
+fallback。`progress` 不构造 provider；`promote` 在同一进程用
+`--max-new-calls 0` 重证 head-through proof 后才执行 Promotion CAS；build 本身永不
+activate。`materialize` 只走 Getter strict `--nth-previous`。
 
-`recap rebuild`是显式operator path：首次用`--reset --confirm-ref`在sealed raw audit完成后重置v8
-truth Store；若返回MoreWorkPending，使用相同campaign且不再传`--reset`继续。campaign绑定exact
-RefId/head；head变化fail closed。
+`run-online-turn` 是唯一正式 online CLI。Prepared 按 frozen identity exact bind；
+启动时strict config/connections已经冻结；Started/Refuse早于本次current connection
+selection/client、route与derived owner。报告使用
+`atelia.session-journal.recap-grid-cli.v1`：syntax/confirmation 返回 1，typed
+operational failure 返回 2，success/idempotent 返回 0；Busy、Stale、Unsupported、
+Indeterminate 均不自动 retry。
 
-`planner-config init`写canonical v3到`config/recap-planner-config.json`；inspect严格拒绝旧schema、
-unknown/duplicate字段和非canonical bytes。frozen recovery不依赖该文件可用。
-
-`run-online-turn`使用同一个`DerivedRecapOnlineLifecycleCoordinator`和deferred Maintainer registry；
-NoBuild、全healthy Resume或选择失败前不会构造provider client。R6 production-composition acceptance已覆盖
-Galatea real-session lifecycle与CLI exact-ref reset、多operation/multi-epoch rebuild、per-member attribution和
-raw/non-derived bytes不变。R7 official-provider canary因TLS/authentication环境失败而没有response usage，
-因此真实cache write/read与经济性结论仍为`Environment-blocked`。
+`recap-grid legacy-root` 只处理固定七个旧 slot。`inspect` 产生 bounded opaque
+manifest，并报告 canonical repository、selected branch、RefId 与 raw head；`archive`
+和 `delete` 必须显式提供 `--branch --confirm-ref --confirm-raw-head`，在同一个
+mutable SessionJournal owner 的 Idle 独占窗口内完成。archive 是 repository 外的
+create-only V2 manifest，提交 branch/ref/raw authority；该 V2 operator 是 Linux-only，
+在任何archive/delete写入前要求no-follow/fsync capability；`delete` 还要求 fresh source
+witness 与已验证 archive witness。Busy、non-Idle、raw drift、v9、symlink/device 与未知
+sibling均 fail closed；未知 sibling 一律不触碰。

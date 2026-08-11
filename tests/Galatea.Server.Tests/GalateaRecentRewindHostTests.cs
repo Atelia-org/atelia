@@ -137,7 +137,7 @@ public sealed class GalateaRecentRewindHostTests {
             GalateaJson.Options
         );
         JsonElement recap = payload.GetProperty("recent")
-            .GetProperty("recapPlanning");
+            .GetProperty("recapGridReadiness");
         Assert.Equal("exact", recap.GetProperty("freshness").GetString());
         Assert.Equal(
             EventAddressTextCodec.Format(
@@ -157,7 +157,7 @@ public sealed class GalateaRecentRewindHostTests {
         (GalateaHostService service, UserSessionHost session) =
             await GetSessionAsync(host);
         RecentTurnsResponseDto before = await GetRecentAsync(client);
-        Assert.Equal("exact", before.RecapPlanning?.Freshness);
+        Assert.Equal("exact", before.RecapGridReadiness?.Freshness);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
             "/api/chat/turns",
@@ -175,9 +175,9 @@ public sealed class GalateaRecentRewindHostTests {
 
         Assert.Equal("failed", liveTurn.Status);
         RecentTurnsResponseDto cached = session.GetRecentTurns();
-        RecapPlanningSnapshotDto recap = Assert.IsType<
-            RecapPlanningSnapshotDto
-        >(cached.RecapPlanning);
+        RecapGridReadinessSnapshotDto recap = Assert.IsType<
+            RecapGridReadinessSnapshotDto
+        >(cached.RecapGridReadiness);
         Assert.Equal("exact", recap.Freshness);
         Assert.Equal(
             EventAddressTextCodec.Format(
@@ -228,15 +228,14 @@ public sealed class GalateaRecentRewindHostTests {
                     token,
                     out var oldHead
                 ));
-                RecapPlanningSnapshotDto beforeRecap = Assert.IsType<
-                    RecapPlanningSnapshotDto
-                >(before.RecapPlanning);
+                RecapGridReadinessSnapshotDto beforeRecap = Assert.IsType<
+                    RecapGridReadinessSnapshotDto
+                >(before.RecapGridReadiness);
                 Assert.Equal("exact", beforeRecap.Freshness);
                 Assert.Equal(
                     EventAddressTextCodec.Format(oldHead),
                     beforeRecap.ObservedRawHead
                 );
-                Assert.Equal(4, beforeRecap.RecentHistoryUnitCount);
 
                 PopLatestTurnResponseDto moved =
                     await PopLatestAsync(client, token);
@@ -261,18 +260,13 @@ public sealed class GalateaRecentRewindHostTests {
                     remainingToken,
                     out var newHead
                 ));
-                RecapPlanningSnapshotDto movedRecap = Assert.IsType<
-                    RecapPlanningSnapshotDto
-                >(moved.Recent.RecapPlanning);
+                RecapGridReadinessSnapshotDto movedRecap = Assert.IsType<
+                    RecapGridReadinessSnapshotDto
+                >(moved.Recent.RecapGridReadiness);
                 Assert.Equal("exact", movedRecap.Freshness);
                 Assert.Equal(
                     EventAddressTextCodec.Format(newHead),
                     movedRecap.ObservedRawHead
-                );
-                Assert.Equal(2, movedRecap.RecentHistoryUnitCount);
-                Assert.True(
-                    movedRecap.RecentHistoryLoad
-                    < beforeRecap.RecentHistoryLoad
                 );
                 RecentTurnsResponseDto undoCache =
                     session.GetRecentTurns();
@@ -523,7 +517,7 @@ public sealed class GalateaRecentRewindHostTests {
         RecentTurnDto turn = Assert.Single(fallback.Turns);
         AssertTurn(turn, "cached user", "cached assistant");
         Assert.Null(fallback.RewindLatestToken);
-        Assert.Equal("stale", fallback.RecapPlanning?.Freshness);
+        Assert.Equal("stale", fallback.RecapGridReadiness?.Freshness);
         Assert.Same(fallback, session.GetRecentTurns());
     }
 

@@ -1,31 +1,25 @@
-# DerivedRecap planner config v3
+# RecapGrid configuration and recipes
 
-canonical path：`config/recap-planner-config.json`。schema：
-`atelia.session-journal.recap-epoch-config.v3`。
+状态：WP-08 formal source cutover Complete。旧 `recap-planner-config` v3 owner已退休；此路径保留为
+current documentation redirect，不表示存在compat reader。
 
-文档只描述新的shared epoch：cadence、ordered profile catalog，以及raw/epoch/operation/call/roster和
-aggregate byte caps。旧v2 schema与旧字段没有compat reader。
+Formal configuration分为三类且不互相授权：
 
-加载时序：
+1. Control canonical Family/Definition/Recipe values，由operator显式register/activate；
+2. Control admission document，独立声明permissions、allowed families/capabilities/carriers/prefixes与预算；
+3. Hosting strict connection/route manifests，route以 exact
+   `(FamilyDigest, RuntimeProtocolId, SemanticModelId?)` 唯一匹配，禁止fallback。
 
-1. 先检查/恢复Store内frozen Building或Published damage；
-2. 仅在需要规划新epoch时惰性加载active v3；
-3. 新topology必须与上一完整publication roster相同，否则FullRebuildRequired；
-4. first complete roster永久放不进单epoch/operation预算是ConfigurationLimit；
-5. 已有durable progress但本次剩余预算不足是MoreWorkPending，且新epoch零dispatch。
+`recap-grid control compose-full-recipe` 是 provider-free helper：它从fresh exact Control/Timeline authority
+与ordered definition digests生成 canonical full recipe create-only output；不会注册、激活、打开provider或
+修改Store。`put-family`、`put-definition`、`put-recipe` 与 `activate/promote` 仍是分离的显式mutation。
 
-`MaxMaintainerCallsPerEpoch`约束完整pending roster，不能只数成功binding的members。operation telemetry按
-实际StartedCallCount；pre-dispatch budget仍按完整pending count。正常path超过raw cap只报告
-FullRebuildRequired，不隐式创建rebuild spool。
+`recap-grid scaffold`只对code-owned built-in asset生成三份create-only canonical bootstrap files：
+Control admission、AgentControl profile、Hosting route manifest。operator必须显式给出permissions、
+logical-column prefixes与两类budget/route limits；family/capability/carrier来自同一code-owned
+registration bundle，不能从payload自授权。三个output先整体验证absent/distinct，再分别在写前/后用正式
+decoder exact self-check；该命令不打开provider、Timeline、Control或Store。
 
-raw authority另有code-owned binary hard bound，由candidate bounded prefix、Planner proof、frozen epoch
-codec与recovery共同引用：512 raw events / 513 lineage headers。v3的
-`MaxRawGrowthEventCount`/`MaxRawEventsPerEpoch`只能在该bound内收紧；Building/Published recovery使用
-artifact自身的exact `RawEventCount`，不使用启动时default重新截断。explicit rebuild通过多个
-不超过512 events的epochs消费任意长sealed backlog。
-
-Store aggregate byte/count caps是当前binary的durable hard limits；v3文档必须精确声明这组值，
-但不能在active reload中改变它们。变更这组caps需要新Store generation或显式reset决策；
-`inspect`会拒绝与binary hard limits不同的文档。
-
-CLI `recap planner-config init`写默认canonical v3，`inspect`做strict decode+host profile resolution。
+Build budgets约束 selected rows、recipe-row steps、new calls与elapsed time。Control admission ceilings不是
+runtime spent-state。HistoryLoad/partition policy由HistoryTimeline policy拥有，不能从recipe或provider
+配置推导。
