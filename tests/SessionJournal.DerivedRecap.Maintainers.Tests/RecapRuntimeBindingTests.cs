@@ -173,7 +173,7 @@ public sealed class RecapRuntimeBindingTests : IDisposable {
             );
             JsonElement root = log.RootElement;
             Assert.Equal(
-                "atelia.completion.call-log.v8",
+                "atelia.completion.call-log.v9",
                 root.GetProperty("schema").GetString()
             );
             JsonElement context = root.GetProperty("context");

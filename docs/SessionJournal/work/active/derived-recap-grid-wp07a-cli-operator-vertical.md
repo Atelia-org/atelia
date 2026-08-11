@@ -1,8 +1,13 @@
 # DerivedRecap Grid WP-07A：CLI 与 Operator Vertical Candidate
 
-状态：Planned；依赖 WP-01..06 complete
+状态：Ready；依赖 WP-01..06 complete
 
 只需加载：目标设计、Master、WP-06 handoff、本文与WP-07B摘要。
+
+WP-06已完成implementation、两路independent closure与final serial validation，因此本包现为Ready。后续composition必须消费
+`RecapCompletionRouteKey(FamilyDigest, RuntimeProtocolId, SemanticModelId?)`与deferred exact resolver；`null`不可fallback，
+不得预造client/lane/logger或新增第二scheduler。CLI diagnostics只展示bounded operational route/call状态，不把provider、cache、usage或
+call-log identity写入Grid artifacts。
 
 ## Intent
 

@@ -18,4 +18,8 @@
     <PackageReference Include="Microsoft.ML.Tokenizers.Data.O200kBase" Version="2.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Runtime.Tests" />
+  </ItemGroup>
+
 </Project>

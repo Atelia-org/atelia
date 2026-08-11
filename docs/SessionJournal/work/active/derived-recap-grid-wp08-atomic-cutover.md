@@ -41,6 +41,9 @@ production并存至WP-07 vertical Go；WP-08才在同一atomic cut中切composit
   Timeline/Control/Grid执行其各自明确的restore/abandon/reset/rebuild；
 - 删除old Store/Planner/Runtime/Maintainers **legacy owners/symbols**；若WP-06复用了同名project，只删除epoch-era代码并以
   architecture gate证明新runtime无legacy dependency，不能按项目名误删；
+- 新owner的exact项目名是`SessionJournal.RecapGrid.Runtime`；WP-08删除的是old
+  `SessionJournal.DerivedRecap.Runtime`及epoch-era callers，不得误删新product。cutover后仍只能保留唯一Manager scheduler与exact
+  deferred route resolver，不得留下old/new runtime switch或implicit agent-route fallback；
 -删除old v8/v9 wire/codecs/paths/repair/reseal/spool/config/tests/docs；
 -更新solution、README、current architecture/concepts/config/host docs；
 - archive已完成target/plan/handoff evidence。

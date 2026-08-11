@@ -59,6 +59,14 @@ public sealed class RecapMaintainerFamilyContractTests {
             "你是Galatea的代笔人",
             autobiography.TaskInstruction
         );
+        Assert.Equal(
+            "sha256:9a5d3eba5bb2fa1e486b48594818f3eb105caa630f6d894c310e00a20a55fd1b",
+            world.Family.OutputProtocol.RequestContract.SemanticFingerprint
+        );
+        Assert.Equal(
+            "sha256:beda5eddaaa15886649fc9d6d6bca96c26203b26f7e367c748e26269c781f6b6",
+            world.Family.SemanticFingerprint
+        );
     }
 
     [Fact]

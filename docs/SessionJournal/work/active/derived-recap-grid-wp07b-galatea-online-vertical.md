@@ -4,6 +4,12 @@
 
 只需加载：目标设计、Master、WP-07A handoff、本文与WP-08摘要。
 
+WP-06 complete handoff已把真实Completion执行限定在唯一`IRecapCellBatchExecutor`实现中。两个Host只能在composition root提供exact deferred
+route resolver与owned provider-neutral invoker；动态column按Family/Runtime/Semantic三元key解析，missing/null semantic均无fallback。
+Prepared/Started frozen recovery仍必须早于resolver/client construction，fresh lifecycle由Manager call budget与Runtime started-call accounting
+共同证明，没有warmup或retry。Host registry必须显式区分Owned/Borrowed client；关闭顺序固定为先drain/dispose Runtime，再释放由
+registry持有的borrowed clients，不能由route隐式猜测ownership。
+
 ## Intent
 
 以明确candidate composition验证Galatea及CLI `run-online-turn`两个Host的fresh/new-request lifecycle、主线context、动态

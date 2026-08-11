@@ -167,6 +167,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.RecapGrid.Ge
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.RecapGrid.Getter.PublicSurface.Tests", "tests\SessionJournal.RecapGrid.Getter.PublicSurface.Tests\SessionJournal.RecapGrid.Getter.PublicSurface.Tests.csproj", "{C2A10014-89C7-4F5C-A16C-1DC2AB001014}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.RecapGrid.Runtime", "prototypes\SessionJournal.RecapGrid.Runtime\SessionJournal.RecapGrid.Runtime.csproj", "{C2A10015-89C7-4F5C-A16C-1DC2AB001015}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.RecapGrid.Runtime.Tests", "tests\SessionJournal.RecapGrid.Runtime.Tests\SessionJournal.RecapGrid.Runtime.Tests.csproj", "{C2A10016-89C7-4F5C-A16C-1DC2AB001016}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.RecapGrid.Runtime.PublicSurface.Tests", "tests\SessionJournal.RecapGrid.Runtime.PublicSurface.Tests\SessionJournal.RecapGrid.Runtime.PublicSurface.Tests.csproj", "{C2A10017-89C7-4F5C-A16C-1DC2AB001017}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -1101,6 +1107,42 @@ Global
 		{C2A10014-89C7-4F5C-A16C-1DC2AB001014}.Release|x64.Build.0 = Release|Any CPU
 		{C2A10014-89C7-4F5C-A16C-1DC2AB001014}.Release|x86.ActiveCfg = Release|Any CPU
 		{C2A10014-89C7-4F5C-A16C-1DC2AB001014}.Release|x86.Build.0 = Release|Any CPU
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015}.Debug|x64.Build.0 = Debug|Any CPU
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015}.Debug|x86.Build.0 = Debug|Any CPU
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015}.Release|x64.ActiveCfg = Release|Any CPU
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015}.Release|x64.Build.0 = Release|Any CPU
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015}.Release|x86.ActiveCfg = Release|Any CPU
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015}.Release|x86.Build.0 = Release|Any CPU
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016}.Debug|x64.Build.0 = Debug|Any CPU
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016}.Debug|x86.Build.0 = Debug|Any CPU
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016}.Release|x64.ActiveCfg = Release|Any CPU
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016}.Release|x64.Build.0 = Release|Any CPU
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016}.Release|x86.ActiveCfg = Release|Any CPU
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016}.Release|x86.Build.0 = Release|Any CPU
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017}.Debug|x64.Build.0 = Debug|Any CPU
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017}.Debug|x86.Build.0 = Debug|Any CPU
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017}.Release|x64.ActiveCfg = Release|Any CPU
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017}.Release|x64.Build.0 = Release|Any CPU
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017}.Release|x86.ActiveCfg = Release|Any CPU
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -1184,6 +1226,9 @@ Global
 		{C2A10012-89C7-4F5C-A16C-1DC2AB001012} = {E54166BF-D5A5-D108-1244-AA6816D2859D}
 		{C2A10013-89C7-4F5C-A16C-1DC2AB001013} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{C2A10014-89C7-4F5C-A16C-1DC2AB001014} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{C2A10015-89C7-4F5C-A16C-1DC2AB001015} = {E54166BF-D5A5-D108-1244-AA6816D2859D}
+		{C2A10016-89C7-4F5C-A16C-1DC2AB001016} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{C2A10017-89C7-4F5C-A16C-1DC2AB001017} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {27F8332B-5246-4251-9E70-572DD61ADC4C}

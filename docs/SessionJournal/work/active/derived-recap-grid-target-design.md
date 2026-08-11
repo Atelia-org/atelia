@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04、WP-05 complete，WP-06 Ready；尚未切换 current production
+状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04、WP-05、WP-06 complete，WP-07A Ready；尚未切换 current production
 
 ## 1. Intent
 
@@ -365,6 +365,17 @@ MaintainerDefinitionDigest = Hash(
 实际provider request bytes可以另记fingerprint用于cache/diagnostic，但semantic identity哈希provider-neutral typed inputs；
 不能让provider JSON formatting或connection选择意外改变cell identity。若model版本本身是A/B变量，则必须显式进入
 definition语义，而不是借runtime route偷偷改变。
+
+Completion runtime的唯一public binding key是exact
+`(FamilyDefinitionDigest, Capability.RuntimeProtocolId, Capability.SemanticModelId?)`；nullable semantic model是key的真实成员，
+不是default/fallback。Host只提供deferred resolver与provider-neutral invoker；route object reference拥有跨batch lane affinity与cap，
+Manager仍独占whole-batch budget、row barrier和artifact settlement。Runtime不得读取Control/Store/Timeline coordinator，也不得把
+provider、model connection、cache hint、usage、call-log或lane identity写入Family/Definition/EvaluationKey/Cell。Provider input只允许
+V1 schema marker、有序previous `logicalColumnId/content`、visible History，以及本work的Topic/literal UserPromptTemplate/Target；
+reasoning、inline think与未commit Grid metadata不进入prompt。
+Runtime scheduling使用不持lane的leader pre-admission与真实provider-call start/terminal barrier；followers只能在本batch所有leaders已started
+或形成terminal decision后释放。fatal一旦被观察只drain已started work，不再dispatch任何未started follower；admission wait与dispatch
+lane wait是分离的bounded operational evidence，二者都不进入semantic identity。
 
 ### 5.5 BuildTarget
 
@@ -861,6 +872,9 @@ docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0），现为W
 Manager 57/57、Manager public 1/1、
 Walking 15/15、HistoryTimeline public 3/3、solution build 0 warning / 0 error、docs 15/0、diff clean与两路
 independent GO（P0=0，P1=0）。
+WP-06 final evidence为Runtime 56/56、Completion 471/471、Runtime public surface 2/2、Walking 18/18、solution build
+0 warning / 0 error、docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0）；exact route、V1 renderer/parser、
+leader/follower scheduler与operational evidence现为WP-07A的complete handoff，current production仍未切换。
 WP-01C final evidence为Timeline 156/156、raw 19/19、walking 13/13、
 public surface 2/2、solution build 0 warning / 0 error、docs 15/0、diff clean与两路independent GO；commit evidence由containing commit提供。
 其后WP-02 final evidence为Abstractions 15/15、Control 26/26、Control public surface 2/2、Walking/architecture 13/13，

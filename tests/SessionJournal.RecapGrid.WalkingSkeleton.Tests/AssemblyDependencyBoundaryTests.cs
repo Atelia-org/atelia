@@ -43,6 +43,12 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Getter",
             "SessionJournal.RecapGrid.Getter.csproj"
         );
+        string runtimeProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Runtime",
+            "SessionJournal.RecapGrid.Runtime.csproj"
+        );
 
         Assert.Equal(
             ["../SessionJournal/SessionJournal.csproj"],
@@ -84,6 +90,14 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
+                "../SessionJournal.RecapGrid.Manager/SessionJournal.RecapGrid.Manager.csproj",
+                "../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj",
+                "../Completion.Abstractions/Completion.Abstractions.csproj"
+            ],
+            DirectProjectReferences(runtimeProject)
+        );
+        Assert.Equal(
+            [
                 "Microsoft.Data.Sqlite@10.0.10",
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
                 "Microsoft.Bcl.Memory@9.0.17",
@@ -103,6 +117,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Empty(DirectPackageReferences(managerProject));
         Assert.Empty(DirectPackageReferences(getterProject));
+        Assert.Empty(DirectPackageReferences(runtimeProject));
 
         string upstream = File.ReadAllText(timelineProject)
             + File.ReadAllText(abstractionsProject);
@@ -121,6 +136,122 @@ public sealed class AssemblyDependencyBoundaryTests {
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RecapGrid.Manager", combined,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RecapGridRuntimeUsesOnlyProviderNeutralBoundedContracts() {
+        string root = FindRepositoryRoot();
+        string runtimeRoot = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Runtime"
+        );
+        string product = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                runtimeRoot,
+                "*.cs",
+                SearchOption.AllDirectories
+            ).Select(static path => path.Replace('\\', '/'))
+                .Where(static path => !IsBuildOutput(path))
+                .Select(File.ReadAllText)
+        );
+        foreach (string forbidden in new[] {
+                     "Microsoft.Data.Sqlite",
+                     "SQLitePCLRaw",
+                     "Atelia.Completion.OpenAI",
+                     "Atelia.Completion.Anthropic",
+                     "Atelia.Completion.Gemini",
+                     "Completion.Tools",
+                     "HistoryTimelineCoordinator",
+                     "RecapGridControlCoordinator",
+                     "RecapGridStoreWriter",
+                     "Galatea",
+                     "DerivedRecap"
+                 }) {
+            Assert.DoesNotContain(
+                forbidden,
+                product,
+                StringComparison.Ordinal
+            );
+        }
+        Assembly runtime = Assembly.LoadFrom(Path.Combine(
+            AppContext.BaseDirectory,
+            "Atelia.SessionJournal.RecapGrid.Runtime.dll"
+        ));
+        Assert.DoesNotContain(runtime.GetExportedTypes(), static type =>
+            type.Name.Contains("Backend", StringComparison.OrdinalIgnoreCase)
+            || type.Name.Contains("Coordinator", StringComparison.OrdinalIgnoreCase)
+            || type.Name.Contains("OpenAI", StringComparison.OrdinalIgnoreCase)
+            || type.Name.Contains("Anthropic", StringComparison.OrdinalIgnoreCase)
+            || type.Name.Contains("Gemini", StringComparison.OrdinalIgnoreCase)
+        );
+    }
+
+    [Fact]
+    public void RuntimeWhiteBoxFriendAccessIsTestOnlyAndExact() {
+        string root = FindRepositoryRoot();
+        foreach (string project in new[] {
+                     Path.Combine(
+                         root,
+                         "prototypes",
+                         "SessionJournal.HistoryTimeline",
+                         "SessionJournal.HistoryTimeline.csproj"
+                     ),
+                     Path.Combine(
+                         root,
+                         "prototypes",
+                         "SessionJournal.RecapGrid.Manager",
+                         "SessionJournal.RecapGrid.Manager.csproj"
+                     )
+                 }) {
+            XDocument document = XDocument.Load(project);
+            string[] friends = [.. document
+                .Descendants("InternalsVisibleTo")
+                .Select(static element =>
+                    (string?)element.Attribute("Include"))
+                .Where(static value => value is not null)
+                .Select(static value => value!)];
+            Assert.Contains(
+                "Atelia.SessionJournal.RecapGrid.Runtime.Tests",
+                friends,
+                StringComparer.Ordinal
+            );
+            Assert.DoesNotContain(
+                "Atelia.SessionJournal.RecapGrid.Runtime",
+                friends,
+                StringComparer.Ordinal
+            );
+        }
+        string[] completionFriends = [.. File.ReadLines(Path.Combine(
+                root,
+                "prototypes",
+                "Completion",
+                "Properties",
+                "AssemblyInfo.cs"
+            ))
+            .Where(static line => line.Contains(
+                "InternalsVisibleTo",
+                StringComparison.Ordinal
+            ))];
+        Assert.Equal(
+            [
+                "[assembly: InternalsVisibleTo(\"Atelia.Completion.Tests\")]",
+                "[assembly: InternalsVisibleTo(\"Atelia.SessionJournal.RecapGrid.Runtime.Tests\")]"
+            ],
+            completionFriends
+        );
+        string runtimeTestsProject = Path.Combine(
+            root,
+            "tests",
+            "SessionJournal.RecapGrid.Runtime.Tests",
+            "SessionJournal.RecapGrid.Runtime.Tests.csproj"
+        );
+        Assert.Contains(
+            "../../prototypes/Completion/Completion.csproj",
+            DirectProjectReferences(runtimeTestsProject),
+            StringComparer.Ordinal
+        );
     }
 
     [Fact]
@@ -595,7 +726,8 @@ public sealed class AssemblyDependencyBoundaryTests {
             "Atelia.SessionJournal.RecapGrid.Control.dll",
             "Atelia.SessionJournal.RecapGrid.Store.dll",
             "Atelia.SessionJournal.RecapGrid.Manager.dll",
-            "Atelia.SessionJournal.RecapGrid.Getter.dll"
+            "Atelia.SessionJournal.RecapGrid.Getter.dll",
+            "Atelia.SessionJournal.RecapGrid.Runtime.dll"
         }) {
             Assembly assembly = Assembly.LoadFrom(Path.Combine(
                 AppContext.BaseDirectory,
