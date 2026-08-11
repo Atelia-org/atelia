@@ -24,6 +24,28 @@ public sealed class HistoryTimelineOfflineBuilder {
     public HistoryTimelineOfflineStepResult BuildNextRow(
         TimelineHeadRef expectedWholeHead,
         CancellationToken cancellationToken = default
+    ) => ExecuteNextRow(
+        expectedWholeHead,
+        commitSelectedRow: true,
+        cancellationToken);
+
+    /// <summary>
+    /// Performs the same exact raw rematerialization and partition checks as
+    /// BuildNextRow but never commits a row. Selected means one more row is
+    /// available; NotEnough proves the current cursor is terminal.
+    /// </summary>
+    public HistoryTimelineOfflineStepResult ProbeNextRow(
+        TimelineHeadRef expectedWholeHead,
+        CancellationToken cancellationToken = default
+    ) => ExecuteNextRow(
+        expectedWholeHead,
+        commitSelectedRow: false,
+        cancellationToken);
+
+    private HistoryTimelineOfflineStepResult ExecuteNextRow(
+        TimelineHeadRef expectedWholeHead,
+        bool commitSelectedRow,
+        CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(expectedWholeHead);
         using HistoryTimelineLifetime.Operation? operation =
@@ -291,6 +313,12 @@ public sealed class HistoryTimelineOfflineBuilder {
                     policy,
                     predecessor
                 );
+            if (!commitSelectedRow) {
+                return FinishTerminal(
+                    expectedWholeHead,
+                    new HistoryTimelineOfflineStepResult.Selected(
+                        descriptor));
+            }
             var proposal = new HistoryRowProposal(
                 expectedWholeHead,
                 capturedHead,

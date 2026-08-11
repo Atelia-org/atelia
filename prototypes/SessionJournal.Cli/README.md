@@ -21,6 +21,7 @@ recap-grid candidate init ...
 recap-grid candidate timeline create|sync|inspect|verify|export|backup|restore|abandon ...
 recap-grid candidate control create|inspect|verify|export|put-family|put-definition|put-recipe|activate|promote|backup|restore|reinitialize ...
 recap-grid candidate build|progress|materialize ...
+recap-grid candidate run-online-turn ...
 ```
 
 `recap-grid` 是Derived Recap Grid rewrite的candidate operator surface，尚未切换
@@ -36,11 +37,13 @@ Family/Definition/Recipe输入必须是各自formal canonical bytes；Control ad
 whole-file、count、field strict UTF-8 bounds以及duplicate/unknown/BOM检查。`progress`不构造provider；
 `promote`在同一进程用`--max-new-calls 0`重证head-through proof后才执行Promotion CAS，build本身永不activate；
 `materialize`只走Getter strict `--nth-previous`，不在CLI拼raw tail。build report附带bounded operational call evidence；no-work与
-其他provider-free命令不materialize该collector。
+其他provider-free命令不materialize该collector。`candidate run-online-turn`只在Fresh/NewRequest打开provider-neutral Online
+composition；Prepared按frozen identity exact bind，Started/Refuse在读取connections/routes和创建client前typed终止。它与旧top-level
+`run-online-turn`是隔离candidate，不改变旧命令语义。
 
 candidate JSON report使用`atelia.session-journal.recap-grid-candidate-cli.v1`；syntax/confirmation返回1，typed operational failure
-返回2，success/idempotent返回0。Busy/Stale/Unsupported/Indeterminate均不自动retry。该candidate尚待独立review，并未切换
-Galatea、`run-online-turn`、旧`recap`命令或current production。
+返回2，success/idempotent返回0。Busy/Stale/Unsupported/Indeterminate均不自动retry。WP-07B candidate尚待独立review，并未切换
+Galatea public/default composition、旧top-level `run-online-turn`、旧`recap`命令或current production。
 
 旧 `resume`、`restore`、`abandon-building`命令已删除。`recap run`内部自动优先恢复Building或修复
 Published，随后才惰性加载active config并规划新shared epoch。正常run超过bounded raw authority只返回

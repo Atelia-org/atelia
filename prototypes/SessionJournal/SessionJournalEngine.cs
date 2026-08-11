@@ -3842,9 +3842,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 "Online context lifecycle boundary is stale before preparation."
             );
         }
-        SessionContextLifecycleResult result = await lifecycle
-            .PrepareAsync(
-                ReadView,
+        SessionContextLifecycleResult result = await
+            InvokeLifecycleWithAuditScopeAsync(
+                lifecycle,
                 new SessionContextLifecycleRequest(
                     CreateContextSelectionRequest(
                         boundary,
@@ -3857,9 +3857,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
                     pendingObservation
                 ),
                 cancellationToken
-            )
-            .ConfigureAwait(false);
+            ).ConfigureAwait(false);
         ArgumentNullException.ThrowIfNull(result);
+        _testHooks.AfterContextLifecyclePrepared?.Invoke(_journal);
         EnsureCurrentHead(expectedHead);
         switch (result.Status) {
             case SessionContextLifecycleStatus.Ready:

@@ -158,3 +158,6 @@ disposable CLI E2E、crash/confirmation/read-only gates、build/docs/diff和inde
 `run-online-turn`composition必须复用Hosting，不得另建route fallback或scheduler；Host lifecycle仍须把
 `Timeline reconcile/seal -> Manager fulfill -> Getter readiness`组成composite coordinator。Getter handle直接只注册为candidate source，
 Host只注册composite为lifecycle。关闭顺序仍为Runtime drain -> registry clients。
+
+WP-07B施工裁决把Agent-facing Control tool、code-owned built-in genesis与ToolResult/ToolContinuation明确拆到WP-07C；本包的canonical
+operator provision fixture只证明显式provision可执行，不代表Agent tool或normal Host auto-create已经完成。

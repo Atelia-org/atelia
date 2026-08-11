@@ -393,6 +393,53 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         Assert.Equal(0, client.Calls);
     }
 
+    [Theory]
+    [InlineData(SessionContextLifecycleStatus.Backpressure)]
+    [InlineData(SessionContextLifecycleStatus.Unavailable)]
+    public async Task LifecycleNonReadyResultStillFencesRawHead(
+        SessionContextLifecycleStatus status
+    ) {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource();
+        var lifecycle = new TestContextLifecycle {
+            Result = new SessionContextLifecycleResult(
+                status,
+                "terminal lifecycle result")
+        };
+        SessionJournalEngine? engine = null;
+        EventAddress? expected = null;
+        engine = SessionJournalEngine.CreateForTest(
+            path,
+            CreateOptions(),
+            CreateRuntime(client, source) with {
+                ContextLifecycle = lifecycle
+            },
+            new SessionJournalTestHooks(
+                AfterContextLifecyclePrepared: journal => {
+                    Assert.True(journal.MoveRef(
+                        engine!.BranchRefId,
+                        expected,
+                        null).Unwrap());
+                }));
+        using (engine) {
+            expected = engine.ReadCurrentHead();
+
+            InvalidOperationException stale =
+                await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => engine.SendAsync(
+                        "must fence before mapping lifecycle status",
+                        CancellationToken.None));
+
+            Assert.Contains("stale", stale.Message,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.Null(engine.ReadCurrentHead());
+            Assert.Equal(1, lifecycle.InvocationCount);
+            Assert.Equal(1, source.SelectionCount);
+            Assert.Equal(0, client.Calls);
+        }
+    }
+
     [Fact]
     public async Task InvalidCanonicalRequestByteGuard_FailsBeforeObservationOrSelection() {
         string path = NewJournalPath();

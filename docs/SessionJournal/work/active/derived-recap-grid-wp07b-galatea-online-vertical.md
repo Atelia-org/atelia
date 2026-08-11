@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-07B：Galatea 与 Online Hosts Vertical Candidate
 
-状态：Ready；WP-07A complete并取得两路独立closure GO
+状态：Complete；两路independent closure均GO，final serial gates green；current production未切换
 
 只需加载：目标设计、Master、WP-07A handoff、本文与WP-08摘要。
 
@@ -24,8 +24,9 @@ integration已证明in-flight Runtime operation settle前Host与registry client�
 以明确candidate composition验证Galatea及CLI `run-online-turn`两个Host的fresh/new-request lifecycle、主线context、动态
 Maintainer与frozen completion recovery；仍不切production default。
 
-WP-04 complete Manager只证明同一frozen request重复进入的幂等性；真实Idle/pre-observation、ObservationAccepted与
-ToolResultObserved lifecycle仍由本包在两个Host上验证，不能用WP-04 fake/runtime fixture替代。Mystery candidate已经证明base active、
+WP-04 complete Manager只证明同一frozen request重复进入的幂等性；本包在两个Host上验证真实
+Idle/pre-observation、ObservationAccepted与NewRequest lifecycle。ToolResultObserved/ToolContinuation及Agent-facing Control由
+WP-07C承接，不能用WP-04 fake/runtime fixture或本包operator fixture冒充。Mystery candidate已经证明base active、
 `XSuspicion` overlay bootstrap reuse、future normal-row interaction与candidate build不提前切active；本包仍须用真实lifecycle和
 explicit promotion重演该行为。
 
@@ -42,10 +43,11 @@ explicit promotion重演该行为。
   Timeline nonempty + active missing fulfillment必须保持NotReady/Unfulfilled；
 - Prepared/Started：在active composition之前走frozen path，零Timeline/Grid/DerivedRecap active/control/current route config读取；
   Prepared仍按frozen completion identity从Host registry exact bind；Started Refuse在binding/client creation前返回；
-- Manager lifecycle可在Idle/pre-observation、ObservationAccepted和每个ToolResultObserved多次幂等进入；
-- Agent声明式创建专题Maintainer、overlay/full/A-B activate；
-- Agent创建必须穿过最终选定的真实control capability/command，验证allowlist/scope/budget与operation-idempotency，不能让fixture
-  直接`PutDefinition`冒充；若carrier/tool使用SessionJournal operation，沿用ToolExecutionStarted operationId恢复边界；
+- Manager lifecycle在本包锁定Idle/pre-observation与ObservationAccepted：只有Idle在append新Observation前执行
+  Timeline reconcile/seal；随后AwaitingAgentAction只做readiness，必须把刚写入的Observation保留为SessionJournal-owned raw tail，不能把
+  Prepared raw range封成empty。ToolResultObserved、ToolExecutionStarted与Agent-facing control capability统一拆给WP-07C；
+- built-in/operator genesis本包只复用WP-07A canonical provision fixture与正式Control factories；没有声称Agent tool已经完成，也不在normal
+  Host缺state时auto-create；
 - route按allow-listed family key，dynamic column无需每列静态connection mapping；
 - 两Host progress与operator messages。
 
@@ -56,10 +58,11 @@ explicit promotion重演该行为。
 3. `XSuspicion` overlay追平前不live，激活后future rows影响`CulpritHypothesis`；
 4. full rebuild从Row0 wavefront传播，partial row/view不泄漏；
 5. restart missing-only、sibling failure/cancel/drain、budget zero-overrun；
-6. fresh Idle、AwaitingAgentAction无Prepared、Observation/ToolResult多次lifecycle均幂等；
+6. fresh Idle、AwaitingAgentAction无Prepared与ObservationAccepted recovery幂等；ToolResult/ToolExecutionStarted属于WP-07C；
 7. Prepared删除SQLite Grid、改变active recipe/删除DerivedRecap config后byte-identical resume，frozen connection仍exact bind；
 8. Started Refuse零client/零derived write；explicit restart从frozen bytes建立new attempt；
-9. ToolExecutionStarted existing operation/sequence语义不改；Galatea若仍unsupported必须显式保持；
+9. ToolExecutionStarted existing operation/sequence语义本包零改；Galatea若仍unsupported必须显式保持，其
+   Grid lifecycle接续验收属于WP-07C；
 10. strict NthPrevious、off-lineage rewind、select/materialize head/promotion drift；
 11. old v8 sidecar present/corrupt完全inert；
 12. derived-only Grid rebuild/reset窗口证明raw selected lineage和all non-derived files不变。普通Galatea turn/control action按其
@@ -74,8 +77,53 @@ explicit promotion重演该行为。
 
 ## Done when
 
-两个Host disposable vertical、mystery analysis、recovery、route/cache、raw authority gates green；reviewer批准WP-08 direct cut。
+两个Host disposable vertical、missing-work build、recovery、route/cache、raw authority gates green；reviewer批准本包
+handoff给WP-07C。WP-08必须继续等待WP-07C GO。
+
+## Implementation record（2026-08-11）
+
+- 新增provider-neutral `SessionJournal.RecapGrid.Online`：factory绑定mutable `SessionJournalEngine` exact read view，eager owned
+  Timeline+Getter、active-unfulfilled时才lazy Manager，borrowed executor；同一handle直接提供Getter candidate source和composite lifecycle，
+  Dispose drain等待in-flight build后再释放Store/Control/Timeline leases；
+- mutable owner新增lifecycle-scope-only `CaptureSelectedLineageAuditSnapshot`。现有read-only `BeginSelectedLineageAudit`规则不变；capture
+  与mutation owner、exact head、single capture、cap/cap+1、cancel/failure后的exhaustion均由typed tests锁定；online
+  `OfflineBootstrapRequired`只经该一次性bounded audit完成，不scan orphan或复制raw reducer/hash。`AuditContext`拥有共享snapshot，
+  每个owner-bound cursor只释放自己的enumerator/lease，因此同一capture可先offline reconcile、再从共同ancestor继续bounded suffix build；
+  ordinary read-only offline cursor仍保留原先的独占snapshot ownership；达到`MaximumTimelineRows`后必须做零提交terminal probe，exact N
+  terminal成功、N+1才返回Backpressure；
+- Hosting新增单一`RecapGridCompletionHost`，main agent和Recap Runtime共用同一strict registry；agent exact inspect/bind与Prepared exact bind
+  不经default fallback，route manifest只在首个recap work加载，关闭顺序固定Online/request handles -> Runtime drain -> registry distinct clients；
+- CLI新增可删除candidate入口`recap-grid candidate run-online-turn`；Started/Refuse在connection/route/client之前终止，Prepared只按frozen
+  identity bind，fresh/NewRequest才打开Online；旧top-level `run-online-turn`与`recap`production行为未改；
+- Galatea只增加internal/test-only candidate constructor/composition，public constructor和Program DI/default仍exact旧production。
+  Fresh/NewRequest每turn持有Online；Frozen Prepared沿最外层frozen request，不打开Online/route；Started/Refuse保持零client/零derived。
+  candidate recent-turn projection不再读取old v8 planner，old v8 corrupt sentinel byte-exact inert；
+- 两Host exact-equivalence gate从同一closed canonical raw/Timeline/Control/recipe/Store fixture复制两份，分别走真实CLI和
+  `GalateaHostService`，逐字节比较Timeline head/descriptor、Store content export、fulfilled view与Getter contributions；二者recap
+  call count相等，并捕获真实main-agent `CompletionRequest`：model/system/contract/boundary相同，raw-tail各恰有一个provider-visible
+  observation，CLI保留原文、Galatea只允许其既有显式user-message envelope差异。Galatea actual service另覆盖missing-work real Runtime
+  route、Fresh/ObservationAccepted、Prepared与Started；CLI Fresh/NewRequest与Galatea均证明corrupt old-v8 sentinel byte-exact inert，
+  candidate CLI source gate不引用old DerivedRecap，Galatea legacy registry client creation为0；
+- caller switch map保持为可删candidate旁路：`recap-grid candidate run-online-turn`的Fresh/NewRequest调用Online+Hosting，
+  Galatea仅internal/test constructor调用同一Online+Hosting；top-level `run-online-turn`、Galatea public constructor/Program DI和old
+  `recap`命令仍精确走legacy production。WP-08只能在WP-07C GO后一次性切换这些caller并删除candidate入口；
+- progress语义本包不冒充完整UI迁移：Online只在active+unfulfilled时内部调用Manager
+  `InspectBuildProgress`决定是否build，不公开第二个progress owner；Galatea candidate recent-turn DTO仅报告exact
+  raw-head-bound `recap-grid-candidate`状态且不读v8 planner。完整Grid progress DTO/UI caller switch仍属于WP-08；
+- tail把SessionJournal lifecycle callback之后的raw-head fence提升为所有typed result统一执行；Backpressure/Unavailable也不能在raw漂移后
+  冒充稳定terminal。Online disposal按Manager -> Getter -> Timeline best-effort聚合nonfatal、fatal立即停止，reentrant/unawaited drain fault可由后续
+  Dispose观察；host-wide Completion composition真实等待in-flight Runtime后才exact-once释放client；Galatea session loop同样聚合nonfatal并让
+  OOM/SO/AV立即透传且不继续candidate cleanup；
+- 最终候选冻结前的串行evidence：Hosting 19/19、Hosting public surface 2/2、Online 21/21、Online public
+  surface 1/1、Galatea actual candidate 7/7、CLI candidate 10/10、SessionJournal raw audit 19/19、Walking architecture
+  22/22；Galatea与CLI affected product builds均为0 warning / 0 error，`Atelia.sln` build 0 warning / 0 error，包漏洞扫描零命中，
+  scoped docs checker 15/0，`git diff --check`无whitespace error，Online三项project已在`Atelia.sln`注册；两路independent
+  closure均GO（P0=0，P1=0）。这些证据不表示production cutover。
+
+明确延后：Agent-facing Control tool、code-owned built-in genesis command/asset、ToolResultObserved/ToolContinuation、operation-idempotent
+control carrier属于[`WP-07C`](derived-recap-grid-wp07c-agent-control-and-tool-continuation.md)。
 
 ## Handoff to WP-08
 
-交付exact candidate composition graph、production caller switch list、behavior tests迁移表与环境阻塞的provider canary证据。
+先交付给WP-07C exact candidate composition graph与Host lifetime；WP-07C关闭Agent control/tool continuation后，二者共同向WP-08交付
+production caller switch list、behavior tests迁移表与环境阻塞的provider canary证据。

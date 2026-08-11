@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04、WP-05、WP-06、WP-07A complete，WP-07B Ready；尚未切换 current production
+状态：Proposed target design；WP-00至WP-07B complete，WP-07C Ready；尚未切换 current production
 
 ## 1. Intent
 
@@ -750,6 +750,7 @@ recap-grid candidate init
 recap-grid candidate timeline create|sync|inspect|verify|export|backup|restore|abandon
 recap-grid candidate control create|inspect|verify|export|put-family|put-definition|put-recipe|activate|promote|backup|restore|reinitialize
 recap-grid candidate build|progress|materialize
+recap-grid candidate run-online-turn
 ```
 
 candidate命令内部从selected `SessionJournalReadView`取得canonical repository/Ref authority；mutation要求exact Ref确认。
@@ -894,7 +895,11 @@ route落到独立Hosting owner，把pure-read progress落到Manager，并新增�
 strict bounded connections零mutation与Timeline/Control/Grid maintenance的raw/四域byte isolation。Hosting operational evidence只在首次
 真实work materialize并按field/event/retained-total bytes限界；最终Hosting 16/16、Hosting public 1/1、Manager 60/60、Completion registry
 lifetime 6/6、CLI candidate 8/8、Walking 20/20、Timeline cursor 2/2、stable/old CLI targeted 7/7、solution build 0 warning / 0 error、
-docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0）。WP-07B现为Ready，current production仍未切换。
+docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0）。WP-07B已完成Galatea/CLI disposable online vertical；
+Agent-facing Control与Tool continuation明确由现已Ready的WP-07C承接，current production仍未切换。
+WP-07B final evidence为Hosting 19/19、Online 21/21、Galatea actual candidate 7/7、CLI candidate 10/10、raw audit
+19/19、public surfaces 3/3、Walking 22/22、solution build 0 warning / 0 error、包漏洞扫描零命中、docs 15/0与diff clean；
+两路independent closure均GO（P0=0，P1=0）。
 WP-01C final evidence为Timeline 156/156、raw 19/19、walking 13/13、
 public surface 2/2、solution build 0 warning / 0 error、docs 15/0、diff clean与两路independent GO；commit evidence由containing commit提供。
 其后WP-02 final evidence为Abstractions 15/15、Control 26/26、Control public surface 2/2、Walking/architecture 13/13，

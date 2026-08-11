@@ -25,6 +25,11 @@ DerivedRecap scaffolding或加载active Planner config。`GET /api/recent-turns`
 writer gate后执行一次只读DerivedRecap planning progress inspection；它只打开已有Store、读取repo
 config与bounded raw planning facts，不创建Completion client、Maintainer或lifecycle，也不写Store。
 
+WP-07B另有一个只供internal tests显式构造的RecapGrid candidate composition。它没有注册到Program DI、没有env/config flag，也不改变
+本README上述production default。candidate只在Fresh/NewRequest为每turn创建Online handle；Frozen Prepared沿frozen request exact bind，
+Started/Refuse在client前终止。candidate recent projection不读取old v8 planner。Agent-facing Control tool、built-in genesis与
+ToolResult/ToolContinuation仍属于WP-07C；normal Host不会自动provision Timeline/Control/Grid。
+
 ## 配置
 
 `config.json` 只保存账号、session路径、system prompt与监听地址：

@@ -118,6 +118,19 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
         ));
         Assert.Equal(0, provider.CallCount);
         Assert.False(Directory.Exists(Path.Combine(_root, "derived")));
+        Assert.Equal(1, RunWithFactory(
+            provider,
+            "run-online-turn",
+            "--input", _root,
+            "--branch", SessionJournalDefaults.MainBranchName,
+            "--confirm-ref", new string('0', 16),
+            "--message", "must not run",
+            "--connection", "missing",
+            "--connections", Path.Combine(_root, "missing-connections.json"),
+            "--routes", Path.Combine(_root, "missing-routes.json")
+        ));
+        Assert.Equal(0, provider.CallCount);
+        Assert.False(Directory.Exists(Path.Combine(_root, "derived")));
         Assert.Equal(1, Run(
             "timeline", "inspect", "--input", _root, "--unknown", "x"
         ));
@@ -551,7 +564,7 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
     }
 
     [Fact]
-    public void ExplicitCandidateBuildUsesExactRuntimeRouteAndPromotesOnlyAfterZeroCallRevalidation() {
+    public async Task ExplicitCandidateBuildUsesExactRuntimeRouteAndPromotesOnlyAfterZeroCallRevalidation() {
         CreateJournal();
         FamilyDefinition family = FamilyDefinition.Create(
             "Maintain the inquiry.",
@@ -847,6 +860,120 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
             materialized.GetProperty("status").GetString()
         );
         Assert.Equal(1, factory.CallCount);
+
+        int requestsBeforeOnline = factory.RequestCount;
+        string oldV8 = Path.Combine(
+            _root, "derived", "recap", "v8", "corrupt-sentinel.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(oldV8)!);
+        File.WriteAllBytes(oldV8, [8, 0, 8, 0, 7]);
+        byte[] oldV8Before = File.ReadAllBytes(oldV8);
+        (int firstOnlineCode, JsonElement firstOnline) =
+            RunCapturedWithFactory(factory,
+                "run-online-turn",
+                "--input", _root,
+                "--branch", SessionJournalDefaults.MainBranchName,
+                "--confirm-ref", refId,
+                "--message", "continue the investigation",
+                "--connection", "test",
+                "--connections", connections,
+                "--routes", routes);
+        Assert.Equal(0, firstOnlineCode);
+        Assert.Equal("completed",
+            firstOnline.GetProperty("status").GetString());
+        Assert.Equal(requestsBeforeOnline + 1, factory.RequestCount);
+        Assert.Equal(oldV8Before, File.ReadAllBytes(oldV8));
+
+        int beforeSecondOnline = factory.RequestCount;
+        (int secondOnlineCode, JsonElement secondOnline) =
+            RunCapturedWithFactory(factory,
+                "run-online-turn",
+                "--input", _root,
+                "--branch", SessionJournalDefaults.MainBranchName,
+                "--confirm-ref", refId,
+                "--message", "reconsider X",
+                "--connection", "test",
+                "--connections", connections,
+                "--routes", routes);
+        Assert.Equal(0, secondOnlineCode);
+        Assert.Equal("completed",
+            secondOnline.GetProperty("status").GetString());
+        Assert.True(factory.RequestCount >= beforeSecondOnline + 2);
+        Assert.Equal(oldV8Before, File.ReadAllBytes(oldV8));
+        Atelia.SessionJournal.Offline.SessionJournalOfflineValidationReport
+            raw = await Atelia.SessionJournal.Offline
+                .SessionJournalOfflineValidator.ValidateAsync(_root);
+        Assert.True(raw.PreparedRequestCount >= 2);
+        Assert.Equal(SessionExecutionPhase.Idle, raw.ExecutionPhase);
+    }
+
+    [Fact]
+    public async Task PreparedRecoveryBindsExactConnectionWithoutRoutesOrDerivedState() {
+        var factory = new DeterministicCompletionClientFactory();
+        CompletionConnectionConfig connection = CandidateConnection();
+        await CreatePreparedAsync(connection);
+        string refId;
+        using (SessionJournalEngine reader =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            refId = reader.BranchRefId.ToHexString();
+        }
+        string connections = WriteConnections();
+        string missingRoutes = Path.Combine(_root, "must-not-read-routes.json");
+
+        (int code, JsonElement report) = RunCapturedWithFactory(
+            factory,
+            "run-online-turn",
+            "--input", _root,
+            "--branch", SessionJournalDefaults.MainBranchName,
+            "--confirm-ref", refId,
+            "--connection", connection.Id,
+            "--connections", connections,
+            "--routes", missingRoutes);
+
+        Assert.Equal(0, code);
+        Assert.Equal("completed", report.GetProperty("status").GetString());
+        Assert.Equal(1, factory.CallCount);
+        Assert.Equal(1, factory.RequestCount);
+        Assert.False(Directory.Exists(Path.Combine(_root, "derived")));
+    }
+
+    [Fact]
+    public async Task StartedRefuseReturnsBeforeConnectionsOrProvider() {
+        var factory = new DeterministicCompletionClientFactory();
+        CompletionConnectionConfig connection = CandidateConnection();
+        EventAddress prepared = await CreatePreparedAsync(connection);
+        using (var journal = Atelia.EventJournal.EventJournal.OpenExisting(
+                   _root)) {
+            _ = journal.CommitToRef(
+                SessionJournalDefaults.MainBranchName,
+                prepared,
+                SessionEventCodec.Encode(
+                    SessionEventKind.CompletionAttemptStarted,
+                    new CompletionAttemptStartedBody()),
+                opaqueEventKind:
+                    (uint)SessionEventKind.CompletionAttemptStarted,
+                hint: default).Unwrap();
+        }
+        string refId;
+        using (SessionJournalEngine reader =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            refId = reader.BranchRefId.ToHexString();
+        }
+
+        (int code, JsonElement report) = RunCapturedWithFactory(
+            factory,
+            "run-online-turn",
+            "--input", _root,
+            "--branch", SessionJournalDefaults.MainBranchName,
+            "--confirm-ref", refId,
+            "--connections", Path.Combine(_root, "missing-connections.json"),
+            "--routes", Path.Combine(_root, "missing-routes.json"));
+
+        Assert.Equal(2, code);
+        Assert.Equal(
+            "started-outcome-uncertain",
+            report.GetProperty("status").GetString());
+        Assert.Equal(0, factory.CallCount);
+        Assert.False(Directory.Exists(Path.Combine(_root, "derived")));
     }
 
     private void CreateJournal(int turns = 1) {
@@ -865,6 +992,60 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
             );
         }
     }
+
+    private async Task<EventAddress> CreatePreparedAsync(
+        CompletionConnectionConfig connection
+    ) {
+        var client = new DeterministicCompletionClient(
+            static () => { },
+            static () => { });
+        CompletionDispatchIdentity identity =
+            CompletionDispatchIdentityFactory.Create(connection, client);
+        var runtime = new SessionRuntime(
+            client,
+            CompletionTarget:
+                CompletionTargetIdentityFactory.Create(identity),
+            ContextCandidateSource: new EmptyCandidateSource());
+        using SessionJournalEngine engine =
+            SessionJournalEngine.CreateForTest(
+                _root,
+                new SessionCreateOptions(
+                    connection.ModelId,
+                    "system",
+                    "candidate-online"),
+                runtime,
+                new SessionJournalTestHooks(
+                    SessionJournalFailpoint
+                        .AfterRequestPreparedCommitted));
+        await Assert.ThrowsAsync<SessionJournalFailpointException>(() =>
+            engine.SendAsync(
+                engine.ReadCurrentHead()!.Value,
+                "prepared recovery"));
+        return engine.ReadCurrentHead()!.Value;
+    }
+
+    private string WriteConnections() {
+        string path = Path.Combine(_root, "connections.json");
+        File.WriteAllText(path, """
+            {
+              "connections": [{
+                "id": "test",
+                "kind": "test",
+                "modelId": "test-model",
+                "completionSurfaceId": "test-v1",
+                "baseAddress": "https://example.invalid"
+              }]
+            }
+            """);
+        return path;
+    }
+
+    private static CompletionConnectionConfig CandidateConnection() => new(
+        "test",
+        "test",
+        "test-model",
+        "test-v1",
+        "https://example.invalid");
 
     private int CountSelectedAuditEvents() {
         using SessionJournalEngine engine =
@@ -1147,19 +1328,26 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
         params string[] args
     ) {
         TextWriter original = Console.Out;
+        TextWriter originalError = Console.Error;
         using var output = new StringWriter();
+        using var error = new StringWriter();
         try {
             Console.SetOut(output);
+            Console.SetError(error);
             int exitCode = RunWithFactory(factory, args);
-            string json = output.ToString().Split(
+            string[] lines = output.ToString().Split(
                 Environment.NewLine,
                 StringSplitOptions.RemoveEmptyEntries
-            )[^1];
+            );
+            Assert.True(lines.Length > 0,
+                $"Candidate command produced no JSON. stderr={error}");
+            string json = lines[^1];
             using JsonDocument document = JsonDocument.Parse(json);
             return (exitCode, document.RootElement.Clone());
         }
         finally {
             Console.SetOut(original);
+            Console.SetError(originalError);
         }
     }
 
@@ -1191,17 +1379,22 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
     private sealed class DeterministicCompletionClientFactory
         : ICompletionClientFactory {
         internal int CallCount { get; private set; }
+        internal int RequestCount { get; private set; }
         internal int DisposeCount { get; private set; }
 
         public ICompletionClient Create(CompletionConnectionConfig connection) {
             CallCount++;
             return new DeterministicCompletionClient(
+                () => RequestCount++,
                 () => DisposeCount++
             );
         }
     }
 
-    private sealed class DeterministicCompletionClient(Action onDispose)
+    private sealed class DeterministicCompletionClient(
+        Action onRequest,
+        Action onDispose
+    )
         : ICompletionClient, IDisposable {
         private int _disposed;
         public string Name => "candidate-test";
@@ -1211,14 +1404,24 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
             CompletionRequest request,
             CompletionStreamObserver? observer,
             CancellationToken cancellationToken = default
-        ) => Task.FromResult(new CompletionResult(
-            new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(
-                "submit",
-                "candidate-call",
-                "{\"outcome\":\"updated\",\"content\":\"candidate result\"}"
-            ))]),
-            new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
-        ));
+        ) {
+            onRequest();
+            ActionMessage action = request.PromptPrefix.OutputContract.Tools
+                    .Length > 0
+                ? new ActionMessage([
+                    new ActionBlock.ToolCall(new RawToolCall(
+                        "submit",
+                        "candidate-call",
+                        "{\"outcome\":\"updated\",\"content\":\"candidate result\"}"
+                    ))
+                ])
+                : new ActionMessage([
+                    new ActionBlock.Text("candidate agent answer")
+                ]);
+            return Task.FromResult(new CompletionResult(
+                action,
+                new CompletionDescriptor(Name, ApiSpecId, request.ModelId)));
+        }
 
         public Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
@@ -1232,5 +1435,22 @@ public sealed class ProgramRecapGridCandidateCommandTests : IDisposable {
                 onDispose();
             }
         }
+    }
+
+    private sealed class EmptyCandidateSource
+        : ICoherentContextCandidateSource {
+        public ValueTask<SessionContextCandidateSelection> SelectAsync(
+            SessionContextSelectionRequest request,
+            CancellationToken cancellationToken
+        ) => ValueTask.FromResult(new SessionContextCandidateSelection(
+            SessionContextCandidateSelectionStatus.EmptyLineage,
+            null));
+
+        public ValueTask<SessionContextCandidateMaterializationResult>
+            MaterializeAsync(
+            SessionContextCandidateDescriptor descriptor,
+            CancellationToken cancellationToken
+        ) => throw new InvalidOperationException(
+            "Empty lineage must not materialize a candidate.");
     }
 }

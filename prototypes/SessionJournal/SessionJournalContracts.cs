@@ -191,7 +191,11 @@ internal sealed record SessionJournalTestHooks(
     Func<EventAddress?, EventAddress?>?
         RewriteForwardCursorObservedHead = null,
     Func<EventAddress?, EventAddress?>?
-        RewriteForwardBoundaryProbeObservedHead = null
+        RewriteForwardBoundaryProbeObservedHead = null,
+    Action<EventJournal.EventJournal>?
+        AfterLifecycleAuditExpectedHeadCaptured = null,
+    Action<EventJournal.EventJournal>?
+        AfterContextLifecyclePrepared = null
 );
 
 internal sealed class SessionJournalFailpointException(SessionJournalFailpoint failpoint)

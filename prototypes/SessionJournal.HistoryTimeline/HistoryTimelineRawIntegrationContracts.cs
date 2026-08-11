@@ -374,6 +374,13 @@ public abstract record HistoryTimelineOfflineBuilderOpenResult {
 public abstract record HistoryTimelineOfflineStepResult {
     private HistoryTimelineOfflineStepResult() { }
 
+    /// <summary>
+    /// A zero-commit probe proved that another exact row is selectable.
+    /// BuildNextRow never returns this outcome; ProbeNextRow does.
+    /// </summary>
+    public sealed record Selected(HistorySegmentDescriptor Descriptor)
+        : HistoryTimelineOfflineStepResult;
+
     public sealed record Committed(
         HistorySegmentDescriptor Descriptor,
         TimelineHeadRef Head

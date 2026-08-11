@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -16,6 +17,7 @@ using Atelia.SessionJournal;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
 using Atelia.SessionJournal.DerivedRecap.Runtime;
+using Atelia.SessionJournal.RecapGrid.Online;
 
 namespace Atelia.Galatea.Server;
 
@@ -28,6 +30,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly bool _maintenanceMode;
     private readonly IReadOnlyDictionary<string, string>?
         _recapMaintainerConnections;
+    private readonly GalateaRecapGridCandidateComposition?
+        _recapGridCandidate;
+    internal GalateaDisposeTestHooks? DisposeHooksForTest { get; set; }
     private readonly RecapExecutionLaneInterner _recapExecutionLanes =
         new();
     private readonly RecapRuntimeGroupInterner _recapRuntimeGroups =
@@ -53,6 +58,16 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _recapMaintainerConnections =
             config.RecapMaintainerConnections;
         _users = config.Users.ToDictionary(x => x.UserId, StringComparer.Ordinal);
+    }
+
+    internal GalateaHostService(
+        GalateaConfig config,
+        CompletionConnectionRegistry connections,
+        IGalateaUserMessageNormalizer userMessageNormalizer,
+        GalateaRecapGridCandidateComposition recapGridCandidate
+    ) : this(config, connections, userMessageNormalizer) {
+        _recapGridCandidate = recapGridCandidate
+            ?? throw new ArgumentNullException(nameof(recapGridCandidate));
     }
 
     public bool TryGetUser(string userId, out GalateaUserConfig user)
@@ -235,6 +250,23 @@ public sealed class GalateaHostService : IAsyncDisposable {
         StableRecentTurnsProjection projection = BuildRecentTurnsResponse(
             host.Engine
         );
+        if (_recapGridCandidate is not null) {
+            // Candidate composition must never scan or repair the production
+            // v8 sidecar. WP-07B keeps the existing DTO shape only as an
+            // operational projection; readiness itself is owned by the
+            // per-turn Online composition.
+            RecentTurnsResponseDto candidateRecent =
+                projection.Response with {
+                    RecapPlanning = new RecapPlanningSnapshotDto(
+                        Freshness: GalateaRecapComposition.ExactFreshness,
+                        State: "recap-grid-candidate",
+                        ObservedRawHead:
+                            EventAddressTextCodec.FormatNullable(
+                                projection.CapturedHead))
+                };
+            host.SetRecentTurns(candidateRecent);
+            return candidateRecent;
+        }
         RecapPlanningSnapshotDto recapPlanning =
             await GalateaRecapComposition.InspectPlanningAsync(
                     host.Engine,
@@ -581,6 +613,16 @@ public sealed class GalateaHostService : IAsyncDisposable {
             throw RecoveryRequired(requirement);
         }
 
+        if (_recapGridCandidate is not null) {
+            return await RunCandidateFreshSendAsync(
+                    host,
+                    liveTurn,
+                    observer,
+                    capturedHead,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         CompletionConnectionConfig connection =
             _connections.Resolve(liveTurn.Options.ConnectionId);
         SessionDesiredSetupReconciliationResult reconciled =
@@ -684,6 +726,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "会话边界已变化，请刷新后重新确认恢复。",
                 "stale-session-head"
             );
+        }
+
+        if (_recapGridCandidate is not null) {
+            return await RunCandidateRecoveryAsync(
+                    host,
+                    liveTurn,
+                    observer,
+                    requirement,
+                    capturedHead,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         CompletionConnectionConfig connection;
@@ -854,18 +907,226 @@ public sealed class GalateaHostService : IAsyncDisposable {
     }
 
     public async ValueTask DisposeAsync() {
+        List<Exception>? failures = null;
+        int sessionIndex = 0;
         foreach (var entry in _sessions.Values) {
             if (!entry.IsValueCreated) { continue; }
 
             try {
                 var session = await entry.Value.ConfigureAwait(false);
                 await session.DisposeAsync().ConfigureAwait(false);
+                DisposeHooksForTest?.AfterSessionDisposed?.Invoke(
+                    sessionIndex);
             }
-            catch {
-                // Ignore teardown failures during host shutdown.
+            catch (Exception exception) when (
+                GalateaExceptionClassifier.IsNonFatal(exception)) {
+                (failures ??= []).Add(exception);
+            }
+            sessionIndex++;
+        }
+        if (_recapGridCandidate is not null) {
+            try {
+                await _recapGridCandidate.DisposeAsync()
+                    .ConfigureAwait(false);
+                DisposeHooksForTest?.AfterCandidateDisposed?.Invoke();
+            }
+            catch (Exception exception) when (
+                GalateaExceptionClassifier.IsNonFatal(exception)) {
+                (failures ??= []).Add(exception);
+            }
+        }
+        if (failures is { Count: 1 }) {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+        if (failures is { Count: > 1 }) {
+            throw new AggregateException(failures);
+        }
+    }
+
+    internal sealed record GalateaDisposeTestHooks(
+        Action<int>? AfterSessionDisposed = null,
+        Action? AfterCandidateDisposed = null
+    );
+
+    private async Task<GalateaCompletedOperation>
+        RunCandidateFreshSendAsync(
+        UserSessionHost host,
+        GalateaLiveTurn liveTurn,
+        CompletionStreamObserver observer,
+        EventAddress capturedHead,
+        CancellationToken cancellationToken
+    ) {
+        GalateaRecapGridCandidateComposition candidate =
+            _recapGridCandidate ?? throw new InvalidOperationException(
+                "Candidate composition is unavailable.");
+        CompletionConnectionConfig inspected =
+            candidate.InspectConnectionExact(liveTurn.Options.ConnectionId);
+        SessionDesiredSetupReconciliationResult reconciled =
+            host.Engine.ReconcileDesiredSetup(
+                capturedHead,
+                new SessionDesiredSetup(
+                    inspected.ModelId,
+                    inspected.CompletionSurfaceId,
+                    host.User.SystemPrompt),
+                cancellationToken);
+        if (reconciled is not SessionDesiredSetupReconciliationResult
+                .Ready ready) {
+            throw new GalateaTurnException(
+                "候选RecapGrid会话设置无法在当前边界安全更新。",
+                "candidate-desired-setup-unavailable");
+        }
+        string effective = await _inputPreprocessor.ProcessAsync(
+            liveTurn, cancellationToken).ConfigureAwait(false);
+        string prompted = WrapUserMessageForEngine(effective);
+        await using GalateaRecapGridCandidateTurn turn =
+            candidate.OpenFresh(
+                host.Engine,
+                liveTurn.Options.ConnectionId);
+        RecapGridOnlineContextHandle online = turn.Online
+            ?? throw new InvalidDataException(
+                "Fresh candidate binding has no Online context.");
+        var lifecycle = new GalateaFreshSendLifecycleGate(
+            online.Lifecycle,
+            liveTurn.StopController);
+        host.Engine.UseRuntime(CreateCandidateRuntime(
+            turn,
+            online.CandidateSource,
+            lifecycle,
+            SessionUncertainCompletionRecoveryPolicy.Refuse));
+        TurnResult result = await host.Engine.SendAsync(
+            ready.GoverningSetup.Head,
+            prompted,
+            observer,
+            cancellationToken).ConfigureAwait(false);
+        return new GalateaCompletedOperation(
+            result.Message,
+            result.Invocation,
+            result.Errors);
+    }
+
+    private async Task<GalateaCompletedOperation>
+        RunCandidateRecoveryAsync(
+        UserSessionHost host,
+        GalateaLiveTurn liveTurn,
+        CompletionStreamObserver observer,
+        SessionRuntimeRecoveryRequirements requirement,
+        EventAddress capturedHead,
+        CancellationToken cancellationToken
+    ) {
+        GalateaRecapGridCandidateComposition candidate =
+            _recapGridCandidate ?? throw new InvalidOperationException(
+                "Candidate composition is unavailable.");
+        GalateaRecapGridCandidateTurn? turn = null;
+        try {
+            if (requirement is SessionRuntimeRecoveryRequirements
+                    .NewRequestRequired) {
+                CompletionConnectionConfig inspected =
+                    candidate.InspectConnectionExact(
+                        liveTurn.Options.ConnectionId);
+                ValidateRecoveryConnection(
+                    host.Engine,
+                    capturedHead,
+                    inspected);
+                turn = candidate.OpenFresh(
+                    host.Engine,
+                    liveTurn.Options.ConnectionId);
+                RecapGridOnlineContextHandle online = turn.Online
+                    ?? throw new InvalidDataException(
+                        "New-request candidate binding has no Online context.");
+                var lifecycle = new GalateaRecoveryLifecycleGate(
+                    online.Lifecycle,
+                    liveTurn.StopController);
+                host.Engine.UseRuntime(CreateCandidateRuntime(
+                    turn,
+                    online.CandidateSource,
+                    lifecycle,
+                    SessionUncertainCompletionRecoveryPolicy.Refuse));
+            }
+            else if (requirement is SessionRuntimeRecoveryRequirements
+                         .FrozenCompletionRequired frozen) {
+                string emptyTools =
+                    SessionVisibleToolSetFingerprint.ComputeSha256(
+                        System.Collections.Immutable.ImmutableArray<
+                            ToolDefinition>.Empty);
+                if (frozen.ToolRuntimeIdentity is not null
+                    || !string.Equals(
+                        frozen.VisibleToolSetSha256,
+                        emptyTools,
+                        StringComparison.Ordinal)) {
+                    throw new GalateaTurnException(
+                        "候选RecapGrid不支持工具runtime恢复。",
+                        "tool-recovery-unsupported");
+                }
+                if (frozen.DispatchState
+                        == SessionDurableDispatchState
+                            .StartedOutcomeUncertain
+                    && !liveTurn.Options.RestartUncertainCompletion) {
+                    throw new GalateaTurnException(
+                        "上次模型调用结果不确定；必须明确选择重新调用。",
+                        "uncertain-completion-restart-required");
+                }
+                turn = candidate.BindPrepared(frozen);
+                liveTurn.StopController.EnterObserverOnlyOrThrow(
+                    cancellationToken);
+                host.Engine.UseRuntime(new SessionRuntime(
+                    turn.Client,
+                    CompletionTarget: frozen.CompletionTarget,
+                    MaxTokens: turn.Connection.MaxTokens,
+                    UncertainCompletionRecoveryPolicy:
+                        liveTurn.Options.RestartUncertainCompletion
+                            ? SessionUncertainCompletionRecoveryPolicy
+                                .RestartWithNewAttempt
+                            : SessionUncertainCompletionRecoveryPolicy.Refuse));
+            }
+            else if (requirement is SessionRuntimeRecoveryRequirements
+                         .ToolContinuationRequired) {
+                throw new GalateaTurnException(
+                    "候选RecapGrid工具延续属于WP-07C。",
+                    "tool-recovery-unsupported");
+            }
+            else {
+                throw RecoveryRequired(requirement);
+            }
+
+            ResumeOutcome outcome = await host.Engine.ResumeAsync(
+                capturedHead,
+                observer,
+                cancellationToken).ConfigureAwait(false);
+            if (!outcome.Advanced
+                || outcome.Message is null
+                || outcome.Invocation is null) {
+                throw new GalateaTurnException(
+                    "候选RecapGrid恢复未推进。",
+                    "recovery-did-not-advance");
+            }
+            return new GalateaCompletedOperation(
+                outcome.Message,
+                outcome.Invocation,
+                outcome.Errors);
+        }
+        finally {
+            if (turn is not null) {
+                await turn.DisposeAsync().ConfigureAwait(false);
             }
         }
     }
+
+    private static SessionRuntime CreateCandidateRuntime(
+        GalateaRecapGridCandidateTurn turn,
+        ICoherentContextCandidateSource candidates,
+        ISessionContextLifecycleCoordinator lifecycle,
+        SessionUncertainCompletionRecoveryPolicy recoveryPolicy
+    ) => new(
+        turn.Client,
+        CompletionTarget: new SessionCompletionTargetIdentity(
+            turn.Identity.ConnectionId,
+            turn.Identity.Kind,
+            turn.Identity.ConnectionFingerprint,
+            turn.Identity.RequestAdapterFingerprint),
+        MaxTokens: turn.Connection.MaxTokens,
+        UncertainCompletionRecoveryPolicy: recoveryPolicy,
+        ContextCandidateSource: candidates,
+        ContextLifecycle: lifecycle);
 
     private Task<UserSessionHost> CreateSessionAsync(
         GalateaUserConfig user,

@@ -43,6 +43,10 @@ internal static partial class RecapGridCandidateCommands {
             "materialize" => ValueTask.FromResult(
                 Materialize(CliOptions.Parse(tail))
             ),
+            "run-online-turn" => RunOnlineTurnAsync(
+                CliOptions.Parse(tail),
+                completionClientFactory
+            ),
             _ => throw new ArgumentException(
                 $"Unknown recap-grid candidate command '{command}'."
             )

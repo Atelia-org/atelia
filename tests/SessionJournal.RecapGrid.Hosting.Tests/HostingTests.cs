@@ -148,6 +148,49 @@ public sealed class HostingTests {
     }
 
     [Fact]
+    public async Task CompletionHostSharesOneRegistryAndDefersRouteManifest() {
+        var factory = new RecordingFactory();
+        FrozenRowBatch batch = Batch();
+        int manifestLoads = 0;
+        await using RecapGridCompletionHost host =
+            RecapGridCompletionHost.Create(
+                () => {
+                    manifestLoads++;
+                    return RecapGridRouteManifest.Create([
+                        new RecapGridRouteManifestEntry(
+                            new RecapCompletionRouteKey(
+                                batch.OrderedMissingWork[0].Family.Digest,
+                                RecapCompletionProtocolV1.RuntimeProtocolId,
+                                null),
+                            "main",
+                            2,
+                            TimeSpan.FromSeconds(30),
+                            1024)
+                    ]);
+                },
+                Connections(),
+                factory);
+
+        Assert.Equal(0, manifestLoads);
+        Assert.Equal(0, factory.CreateCount);
+        RecapGridAgentConnectionResult.Bound agent = Assert.IsType<
+            RecapGridAgentConnectionResult.Bound>(
+            host.BindAgentExact("main"));
+        Assert.Equal(0, manifestLoads);
+        Assert.Equal(1, factory.CreateCount);
+        Assert.Same(agent.Client, Assert.IsType<
+            CompletionDispatchBindingResult.Bound>(
+            host.BindPreparedExact(agent.Identity)).Client);
+
+        RecapCellBatchExecutionResult result = await host.Executor.ExecuteAsync(
+            batch, CancellationToken.None);
+
+        Assert.IsType<RecapCellBatchExecutionResult.Completed>(result);
+        Assert.Equal(1, manifestLoads);
+        Assert.Equal(1, factory.CreateCount);
+    }
+
+    [Fact]
     public async Task Host_DisposeAsyncDrainsRealInFlightRuntimeBeforeClient() {
         FrozenRowBatch batch = Batch();
         var client = new BlockingClient();
@@ -189,6 +232,64 @@ public sealed class HostingTests {
 
         await host.DisposeAsync();
         host.Dispose();
+        Assert.Equal(1, client.DisposeCount);
+    }
+
+    [Fact]
+    public async Task CompletionHost_DisposeAsyncDrainsRealInFlightRuntimeBeforeClient() {
+        FrozenRowBatch batch = Batch();
+        var client = new BlockingClient();
+        var factory = new SingleClientFactory(client);
+        RecapGridCompletionHost host = RecapGridCompletionHost.Create(
+            () => RecapGridRouteManifest.Create([
+                new RecapGridRouteManifestEntry(
+                    new RecapCompletionRouteKey(
+                        batch.OrderedMissingWork[0].Family.Digest,
+                        RecapCompletionProtocolV1.RuntimeProtocolId,
+                        null),
+                    "main",
+                    1,
+                    TimeSpan.FromSeconds(30),
+                    1024)
+            ]),
+            Connections(),
+            factory);
+
+        Task<RecapCellBatchExecutionResult> operation = host.Executor
+            .ExecuteAsync(batch, CancellationToken.None).AsTask();
+        await client.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Task disposing = host.DisposeAsync().AsTask();
+        await Task.Delay(20);
+        Assert.False(disposing.IsCompleted);
+        Assert.Equal(0, client.DisposeCount);
+
+        client.Release.TrySetResult();
+        Assert.IsType<RecapCellBatchExecutionResult.Completed>(
+            await operation.WaitAsync(TimeSpan.FromSeconds(10)));
+        await disposing.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(1, client.DisposeCount);
+        await host.DisposeAsync();
+        host.Dispose();
+        Assert.Equal(1, client.DisposeCount);
+    }
+
+    [Fact]
+    public async Task CompletionHost_FatalRegistryCleanupPropagatesAndRunsExactlyOnce() {
+        var client = new FatalDisposeClient();
+        RecapGridCompletionHost host = RecapGridCompletionHost.Create(
+            () => Manifest(null),
+            Connections(),
+            new SingleClientFactory(client));
+        Assert.IsType<RecapGridAgentConnectionResult.Bound>(
+            host.BindAgentExact("main"));
+
+        OutOfMemoryException first = await Assert.ThrowsAsync<
+            OutOfMemoryException>(() => host.DisposeAsync().AsTask());
+        OutOfMemoryException second = await Assert.ThrowsAsync<
+            OutOfMemoryException>(() => host.DisposeAsync().AsTask());
+
+        Assert.Equal("completion-host-fatal", first.Message);
+        Assert.Equal(first.Message, second.Message);
         Assert.Equal(1, client.DisposeCount);
     }
 
@@ -587,10 +688,28 @@ public sealed class HostingTests {
         }
     }
 
-    private sealed class SingleClientFactory(BlockingClient client)
+    private sealed class SingleClientFactory(ICompletionClient client)
         : ICompletionClientFactory {
         public ICompletionClient Create(CompletionConnectionConfig connection)
             => client;
+    }
+
+    private sealed class FatalDisposeClient : ICompletionClient,
+        IDisposable {
+        internal int DisposeCount { get; private set; }
+        public string Name => "fatal-test";
+        public string ApiSpecId => "fatal-test-v1";
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) => throw new NotSupportedException();
+
+        public void Dispose() {
+            DisposeCount++;
+            throw new OutOfMemoryException("completion-host-fatal");
+        }
     }
 
     private sealed class BlockingClient : ICompletionClient, IDisposable {

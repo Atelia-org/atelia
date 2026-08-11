@@ -18,6 +18,7 @@
     <ProjectReference Include="../SessionJournal.RecapGrid.Getter/SessionJournal.RecapGrid.Getter.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Hosting/SessionJournal.RecapGrid.Hosting.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Manager/SessionJournal.RecapGrid.Manager.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Online/SessionJournal.RecapGrid.Online.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj" />
     <ProjectReference Include="../SessionJournal.Offline/SessionJournal.Offline.csproj" />
     <ProjectReference Include="../Completion/Completion.csproj" />

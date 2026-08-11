@@ -1,4 +1,5 @@
 using Atelia.Completion;
+using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Runtime;
 using System.Text;
@@ -10,6 +11,17 @@ public sealed record RecapCompletionTelemetrySnapshot(
     long DroppedEventCount,
     int RetainedUtf8Bytes
 );
+
+public abstract record RecapGridAgentConnectionLookupResult {
+    private RecapGridAgentConnectionLookupResult() { }
+
+    public sealed record Found(CompletionConnectionConfig Connection)
+        : RecapGridAgentConnectionLookupResult;
+    public sealed record Absent(string ConnectionId)
+        : RecapGridAgentConnectionLookupResult;
+    public sealed record Invalid(string Code, string Detail)
+        : RecapGridAgentConnectionLookupResult;
+}
 
 public sealed class BoundedRecapCompletionTelemetry
     : IRecapCompletionTelemetry {
@@ -275,6 +287,205 @@ public sealed class RecapGridRuntimeHost : IDisposable, IAsyncDisposable {
                     "RouteClientConstructionFailed",
                     exception.GetType().Name
                 );
+            }
+        }
+    }
+}
+
+public abstract record RecapGridAgentConnectionResult {
+    private RecapGridAgentConnectionResult() { }
+
+    public sealed record Bound(
+        CompletionConnectionConfig Connection,
+        ICompletionClient Client,
+        CompletionDispatchIdentity Identity
+    ) : RecapGridAgentConnectionResult;
+    public sealed record Absent(string ConnectionId)
+        : RecapGridAgentConnectionResult;
+    public sealed record Invalid(string Code, string Detail)
+        : RecapGridAgentConnectionResult;
+}
+
+/// <summary>
+/// Candidate-host completion owner. One strict connection registry serves
+/// both the main agent and lazy RecapGrid routes. Runtime disposal drains
+/// before the registry releases its distinct borrowed clients.
+/// </summary>
+public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
+    private readonly CompletionConnectionRegistry _registry;
+    private readonly object _disposeGate = new();
+    private Task? _disposeTask;
+
+    private RecapGridCompletionHost(
+        CompletionConnectionRegistry registry,
+        RecapCompletionRuntime runtime,
+        BoundedRecapCompletionTelemetry telemetry
+    ) {
+        _registry = registry;
+        Runtime = runtime;
+        Telemetry = telemetry;
+    }
+
+    public RecapCompletionRuntime Runtime { get; }
+    public IRecapCellBatchExecutor Executor => Runtime;
+    public BoundedRecapCompletionTelemetry Telemetry { get; }
+
+    public static RecapGridCompletionHost Create(
+        Func<RecapGridRouteManifest> routeManifestLoader,
+        CompletionConnectionsFileConfig connections,
+        ICompletionClientFactory clientFactory,
+        RecapCompletionRuntimeOptions? runtimeOptions = null,
+        int maximumTelemetryEvents = 1_024
+    ) {
+        ArgumentNullException.ThrowIfNull(routeManifestLoader);
+        ArgumentNullException.ThrowIfNull(connections);
+        ArgumentNullException.ThrowIfNull(clientFactory);
+        CompletionConnectionsFileConfig frozen =
+            RecapGridCompletionConnectionsManifest.Freeze(connections);
+        var registry = new CompletionConnectionRegistry(frozen, clientFactory);
+        try {
+            var telemetry = new BoundedRecapCompletionTelemetry(
+                maximumTelemetryEvents);
+            var resolver = new DeferredSharedRegistryRouteResolver(
+                routeManifestLoader,
+                registry);
+            var runtime = new RecapCompletionRuntime(
+                resolver, runtimeOptions, telemetry);
+            return new RecapGridCompletionHost(registry, runtime, telemetry);
+        }
+        catch {
+            registry.Dispose();
+            throw;
+        }
+    }
+
+    public RecapGridAgentConnectionResult BindAgentExact(
+        string connectionId
+    ) {
+        if (string.IsNullOrWhiteSpace(connectionId)) {
+            return new RecapGridAgentConnectionResult.Invalid(
+                "AgentConnectionIdInvalid",
+                "An exact non-empty agent connection ID is required.");
+        }
+        if (!_registry.TryGet(connectionId, out var connection)) {
+            return new RecapGridAgentConnectionResult.Absent(connectionId);
+        }
+        try {
+            ICompletionClient client = _registry.GetClient(connection.Id);
+            return new RecapGridAgentConnectionResult.Bound(
+                connection,
+                client,
+                CompletionDispatchIdentityFactory.Create(connection, client));
+        }
+        catch (Exception exception) when (IsNonFatal(exception)) {
+            return new RecapGridAgentConnectionResult.Invalid(
+                "AgentClientConstructionFailed",
+                exception.GetType().Name);
+        }
+    }
+
+    /// <summary>
+    /// Resolves one exact configured connection without constructing its
+    /// provider client. Candidate hosts use this for setup/admission preflight
+    /// before the first provider-side resource exists.
+    /// </summary>
+    public RecapGridAgentConnectionLookupResult InspectAgentExact(
+        string connectionId
+    ) {
+        if (string.IsNullOrWhiteSpace(connectionId)) {
+            return new RecapGridAgentConnectionLookupResult.Invalid(
+                "AgentConnectionIdInvalid",
+                "An exact non-empty agent connection ID is required.");
+        }
+        return _registry.TryGet(connectionId, out var connection)
+            ? new RecapGridAgentConnectionLookupResult.Found(connection)
+            : new RecapGridAgentConnectionLookupResult.Absent(connectionId);
+    }
+
+    public CompletionDispatchBindingResult BindPreparedExact(
+        CompletionDispatchIdentity required
+    ) => _registry.BindExact(required);
+
+    public void Dispose() => BeginDispose().GetAwaiter().GetResult();
+    public ValueTask DisposeAsync() => new(BeginDispose());
+
+    private Task BeginDispose() {
+        lock (_disposeGate) {
+            return _disposeTask ??= DisposeCoreAsync();
+        }
+    }
+
+    private async Task DisposeCoreAsync() {
+        try {
+            await Runtime.DisposeAsync().ConfigureAwait(false);
+        }
+        finally {
+            await _registry.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private static bool IsNonFatal(Exception exception)
+        => exception is not OutOfMemoryException
+            and not StackOverflowException
+            and not AccessViolationException;
+
+    private sealed class DeferredSharedRegistryRouteResolver
+        : IRecapCompletionRouteResolver {
+        private readonly Lazy<IReadOnlyDictionary<RecapCompletionRouteKey,
+            RecapGridRouteManifestEntry>> _routes;
+        private readonly CompletionConnectionRegistry _registry;
+
+        internal DeferredSharedRegistryRouteResolver(
+            Func<RecapGridRouteManifest> loader,
+            CompletionConnectionRegistry registry
+        ) {
+            _registry = registry;
+            _routes = new Lazy<IReadOnlyDictionary<
+                RecapCompletionRouteKey, RecapGridRouteManifestEntry>>(
+                () => loader().Routes.ToDictionary(static route => route.Key),
+                LazyThreadSafetyMode.ExecutionAndPublication);
+        }
+
+        public RecapCompletionRouteResolution Resolve(
+            RecapCompletionRouteKey key
+        ) {
+            IReadOnlyDictionary<RecapCompletionRouteKey,
+                RecapGridRouteManifestEntry> routes;
+            try {
+                routes = _routes.Value;
+            }
+            catch (Exception exception) when (IsNonFatal(exception)) {
+                return new RecapCompletionRouteResolution.Invalid(
+                    "RouteManifestLoadFailed", exception.GetType().Name);
+            }
+            if (!routes.TryGetValue(key, out var route)) {
+                return new RecapCompletionRouteResolution.Unavailable(
+                    "ExactRouteAbsent",
+                    "No exact recap completion route is configured.");
+            }
+            if (!_registry.TryGet(route.ConnectionId, out var connection)) {
+                return new RecapCompletionRouteResolution.Unavailable(
+                    "RouteConnectionAbsent",
+                    "The exact route connection is not configured.");
+            }
+            try {
+                var invoker = new CompletionClientRecapInvoker(
+                    _registry.GetClient(connection.Id),
+                    RecapCompletionResourceOwnership.Borrowed);
+                return new RecapCompletionRouteResolution.Bound(
+                    RecapCompletionRoute.Create(
+                        key,
+                        connection.ModelId,
+                        invoker,
+                        RecapCompletionResourceOwnership.Owned,
+                        route.MaximumConcurrency,
+                        route.DispatchTimeout,
+                        route.MaximumOutputTokens));
+            }
+            catch (Exception exception) when (IsNonFatal(exception)) {
+                return new RecapCompletionRouteResolution.Invalid(
+                    "RouteClientConstructionFailed",
+                    exception.GetType().Name);
             }
         }
     }

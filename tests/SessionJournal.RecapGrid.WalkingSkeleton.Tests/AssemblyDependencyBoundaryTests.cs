@@ -55,6 +55,12 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Hosting",
             "SessionJournal.RecapGrid.Hosting.csproj"
         );
+        string onlineProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Online",
+            "SessionJournal.RecapGrid.Online.csproj"
+        );
 
         Assert.Equal(
             ["../SessionJournal/SessionJournal.csproj"],
@@ -111,6 +117,15 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
+                "../SessionJournal/SessionJournal.csproj",
+                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
+                "../SessionJournal.RecapGrid.Manager/SessionJournal.RecapGrid.Manager.csproj",
+                "../SessionJournal.RecapGrid.Getter/SessionJournal.RecapGrid.Getter.csproj"
+            ],
+            DirectProjectReferences(onlineProject)
+        );
+        Assert.Equal(
+            [
                 "Microsoft.Data.Sqlite@10.0.10",
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
                 "Microsoft.Bcl.Memory@9.0.17",
@@ -132,6 +147,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Empty(DirectPackageReferences(getterProject));
         Assert.Empty(DirectPackageReferences(runtimeProject));
         Assert.Empty(DirectPackageReferences(hostingProject));
+        Assert.Empty(DirectPackageReferences(onlineProject));
 
         string upstream = File.ReadAllText(timelineProject)
             + File.ReadAllText(abstractionsProject);
@@ -150,6 +166,117 @@ public sealed class AssemblyDependencyBoundaryTests {
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RecapGrid.Manager", combined,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RecapGridOnlineOwnsOnlyBoundedProviderNeutralComposition() {
+        string root = FindRepositoryRoot();
+        string onlineRoot = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Online"
+        );
+        string product = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                onlineRoot,
+                "*.cs",
+                SearchOption.AllDirectories
+            ).Where(static path => !IsBuildOutput(path))
+                .Select(File.ReadAllText)
+        );
+        foreach (string forbidden in new[] {
+                     "IHistoryTimelineLedgerPort",
+                     "SqliteHistoryTimelineLedger",
+                     "Microsoft.Data.Sqlite",
+                     "CompletionConnectionRegistry",
+                     "Atelia.Completion",
+                     "Galatea",
+                     "DerivedRecap"
+                 }) {
+            Assert.DoesNotContain(
+                forbidden,
+                product,
+                StringComparison.Ordinal
+            );
+        }
+        Assembly online = Assembly.LoadFrom(Path.Combine(
+            AppContext.BaseDirectory,
+            "Atelia.SessionJournal.RecapGrid.Online.dll"
+        ));
+        Assert.DoesNotContain(online.GetExportedTypes(), static type =>
+            type.Name.Contains("Backend", StringComparison.OrdinalIgnoreCase)
+            || type.Name.Contains("Ledger", StringComparison.OrdinalIgnoreCase)
+            || type.Name.Contains("Coordinator", StringComparison.OrdinalIgnoreCase)
+        );
+        XDocument onlineProject = XDocument.Load(Path.Combine(
+            onlineRoot,
+            "SessionJournal.RecapGrid.Online.csproj"));
+        Assert.Equal(
+            ["Atelia.SessionJournal.RecapGrid.Online.Tests"],
+            onlineProject.Descendants("InternalsVisibleTo")
+                .Select(static element =>
+                    (string?)element.Attribute("Include"))
+                .Where(static value => value is not null)
+                .Select(static value => value!)
+                .ToArray());
+    }
+
+    [Fact]
+    public void GalateaCandidateCompositionIsInternalAndNotDefaultRegistered() {
+        string root = FindRepositoryRoot();
+        string candidatePath = Path.Combine(
+            root,
+            "prototypes",
+            "Galatea",
+            "GalateaRecapGridCandidateComposition.cs"
+        );
+        string program = File.ReadAllText(Path.Combine(
+            root, "prototypes", "Galatea", "Program.cs"));
+        string candidate = File.ReadAllText(candidatePath);
+
+        Assert.Contains(
+            "internal sealed class GalateaRecapGridCandidateComposition",
+            candidate,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "GalateaRecapGridCandidateComposition",
+            program,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Environment.GetEnvironmentVariable",
+            candidate,
+            StringComparison.Ordinal);
+
+        XDocument galateaProject = XDocument.Load(Path.Combine(
+            root, "prototypes", "Galatea", "Galatea.Server.csproj"));
+        Assert.Equal(
+            ["Atelia.Galatea.Server.Tests"],
+            galateaProject.Descendants("AssemblyAttribute")
+                .Where(static element => string.Equals(
+                    (string?)element.Attribute("Include"),
+                    "System.Runtime.CompilerServices.InternalsVisibleTo",
+                    StringComparison.Ordinal))
+                .SelectMany(static element =>
+                    element.Elements("_Parameter1"))
+                .Select(static element => element.Value)
+                .ToArray());
+
+        string[] cliFriends = [.. File.ReadLines(Path.Combine(
+                root,
+                "prototypes",
+                "SessionJournal.Cli",
+                "Properties",
+                "AssemblyInfo.cs"))
+            .Where(static line => line.Contains(
+                "InternalsVisibleTo",
+                StringComparison.Ordinal))];
+        Assert.Equal(
+            [
+                "[assembly: InternalsVisibleTo(\"Atelia.SessionJournal.Cli.Tests\")]",
+                "[assembly: InternalsVisibleTo(\"Atelia.Galatea.Server.Tests\")]"
+            ],
+            cliFriends);
     }
 
     [Fact]
@@ -821,7 +948,8 @@ public sealed class AssemblyDependencyBoundaryTests {
             "Atelia.SessionJournal.RecapGrid.Store.dll",
             "Atelia.SessionJournal.RecapGrid.Manager.dll",
             "Atelia.SessionJournal.RecapGrid.Getter.dll",
-            "Atelia.SessionJournal.RecapGrid.Runtime.dll"
+            "Atelia.SessionJournal.RecapGrid.Runtime.dll",
+            "Atelia.SessionJournal.RecapGrid.Online.dll"
         }) {
             Assembly assembly = Assembly.LoadFrom(Path.Combine(
                 AppContext.BaseDirectory,

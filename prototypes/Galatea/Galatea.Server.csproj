@@ -15,6 +15,8 @@
     <ProjectReference Include="../SessionJournal.DerivedRecap.Maintainers/SessionJournal.DerivedRecap.Maintainers.csproj" />
     <ProjectReference Include="../SessionJournal.DerivedRecap.Runtime/SessionJournal.DerivedRecap.Runtime.csproj" />
     <ProjectReference Include="../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Hosting/SessionJournal.RecapGrid.Hosting.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Online/SessionJournal.RecapGrid.Online.csproj" />
   </ItemGroup>
 
   <ItemGroup>

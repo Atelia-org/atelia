@@ -91,14 +91,17 @@ public sealed class SessionSelectedLineageAuditSession {
     private SessionContextSetupReference? _headRuntimeSetup;
     private SessionContextSetupReference? _headSystemPromptSetup;
     private bool _authorityIssued;
+    private readonly bool _ownerBoundLifecycleAudit;
 
     internal SessionSelectedLineageAuditSession(
         SessionJournalEngine owner,
-        SessionSelectedLineageAuditCapture capture
+        SessionSelectedLineageAuditCapture capture,
+        bool ownerBoundLifecycleAudit = false
     ) {
         _owner = owner;
         Capture = capture;
         _nextAddress = capture.CapturedHead;
+        _ownerBoundLifecycleAudit = ownerBoundLifecycleAudit;
     }
 
     public SessionSelectedLineageAuditCapture Capture { get; }
@@ -133,6 +136,7 @@ public sealed class SessionSelectedLineageAuditSession {
     internal SessionJournalEngine Owner => _owner;
     internal ulong? ChildSequenceExclusive => _childSequenceExclusive;
     internal bool AuthorityIssued => _authorityIssued;
+    internal bool OwnerBoundLifecycleAudit => _ownerBoundLifecycleAudit;
     internal EventAddress? RootAddress => _rootAddress;
     internal EventAddress? SessionCreatedAddress => _sessionCreatedAddress;
     internal SessionContextAnchorSetupReferences? SessionCreatedSetups =>
@@ -249,6 +253,74 @@ public interface ISessionSelectedLineageAuditPageSnapshot : IDisposable {
 }
 
 /// <summary>
+/// Opaque, content-free complete selected-lineage snapshot captured by the
+/// mutable SessionJournal owner only during its lifecycle callback. It never
+/// grants authority through a read view and cannot outlive that callback as a
+/// usable cursor source.
+/// </summary>
+public sealed class SessionSelectedLineageAuditSnapshot :
+    ISessionSelectedLineageAuditPageSnapshot {
+    private readonly SessionJournalEngine _owner;
+    private readonly IReadOnlyList<SessionSelectedLineageAuditPage> _pages;
+    private int _disposed;
+
+    internal SessionSelectedLineageAuditSnapshot(
+        SessionJournalEngine owner,
+        SessionSelectedLineageAuditCapture capture,
+        IReadOnlyList<SessionSelectedLineageAuditPage> pages
+    ) {
+        _owner = owner;
+        Capture = capture;
+        _pages = pages;
+    }
+
+    public SessionSelectedLineageAuditCapture Capture { get; }
+    public long PageCount => _pages.Count;
+
+    public SessionSelectedLineageForwardCursor OpenForwardCursor(
+        CancellationToken cancellationToken = default
+    ) {
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposed) != 0, this);
+        return _owner.OpenLifecycleSelectedLineageForwardCursor(
+            this, cancellationToken);
+    }
+
+    IEnumerable<SessionSelectedLineageAuditPage>
+        ISessionSelectedLineageAuditPageSnapshot.ReadHeadToOldestPages() {
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposed) != 0, this);
+        return _pages;
+    }
+
+    IEnumerable<SessionSelectedLineageAuditPage>
+        ISessionSelectedLineageAuditPageSnapshot.ReadOldestToHeadPages() {
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposed) != 0, this);
+        return _pages.Reverse();
+    }
+
+    public void Dispose() => Interlocked.Exchange(ref _disposed, 1);
+
+    internal SessionJournalEngine Owner => _owner;
+    internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+}
+
+public abstract record SessionSelectedLineageAuditSnapshotCaptureResult {
+    private SessionSelectedLineageAuditSnapshotCaptureResult() { }
+
+    public sealed record Available(SessionSelectedLineageAuditSnapshot Snapshot)
+        : SessionSelectedLineageAuditSnapshotCaptureResult;
+    public sealed record LimitExceeded(int MaximumEvents, long ObservedEvents)
+        : SessionSelectedLineageAuditSnapshotCaptureResult;
+    public sealed record Busy : SessionSelectedLineageAuditSnapshotCaptureResult;
+    public sealed record RawHeadChanged(
+        EventAddress Expected,
+        EventAddress? Observed
+    ) : SessionSelectedLineageAuditSnapshotCaptureResult;
+}
+
+/// <summary>
 /// Opaque membership-bound range emitted only by a forward cursor whose
 /// complete sealed page snapshot was revalidated against raw authority.
 /// </summary>
@@ -316,13 +388,15 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
         ISessionSelectedLineageAuditPageSnapshot snapshot,
         SessionSelectedLineageAuditAuthority authority,
         IEnumerator<SessionSelectedLineageAuditEntry> entries,
-        SessionHistoryPlanningSeed bootstrapSeed
+        SessionHistoryPlanningSeed bootstrapSeed,
+        bool ownerBoundLifecycleAudit = false
     ) {
         _owner = owner;
         _snapshot = snapshot;
         Authority = authority;
         _entries = entries;
         _currentSeed = bootstrapSeed;
+        OwnerBoundLifecycleAudit = ownerBoundLifecycleAudit;
         _finished = bootstrapSeed.Address
             == authority.Capture.CapturedHead;
     }
@@ -482,11 +556,18 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
             return;
         }
         _entries.Dispose();
-        _snapshot.Dispose();
+        if (!OwnerBoundLifecycleAudit) {
+            // Ordinary read-only offline cursors retain their historical
+            // ownership contract. Lifecycle cursors borrow the shared sealed
+            // snapshot from Online's AuditContext so reconciliation and
+            // suffix construction may open independent cursors in one pass.
+            _snapshot.Dispose();
+        }
         _disposed = true;
     }
 
     internal SessionJournalEngine Owner => _owner;
+    internal bool OwnerBoundLifecycleAudit { get; }
     internal SessionHistoryPlanningSeed CurrentSeed => _currentSeed;
     internal SessionSelectedLineageForwardRange? PendingRange =>
         _pendingRange;

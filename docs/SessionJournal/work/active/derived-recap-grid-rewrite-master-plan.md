@@ -1,6 +1,6 @@
 # DerivedRecap Grid Rewrite 总施工计划
 
-状态：Implementation program active；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04、WP-05、WP-06、WP-07A complete，WP-07B Ready；current production尚未切换
+状态：Implementation program active；WP-00至WP-07B complete，WP-07C Ready；current production尚未切换
 
 目标设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)
 
@@ -77,9 +77,11 @@ WP-06 Completion runtime/family/prefix integration [complete]
   |
 WP-07A CLI/operator vertical candidate [complete]
   |
-WP-07B Galatea/online vertical candidate [Ready]
+WP-07B Galatea/online vertical candidate [complete]
   |
-WP-08 Atomic production cutover + legacy deletion
+WP-07C Agent control + tool continuation candidate [ready]
+  |
+WP-08 Atomic production cutover + legacy deletion [blocked on WP-07C GO]
 ```
 
 WP-02已完成formal contracts、单一canonical Control carrier、public factory/Reader、maintenance、crash/settlement与
@@ -105,8 +107,11 @@ WP-07A已完成独立Hosting exact-route owner、Manager pure-read progress与�
 provider-free progress、zero-call promotion、strict materialization、malformed connections全repo零mutation及真实四域maintenance byte
 isolation/Busy。Hosting strict bounded connections/evidence与Manager MaximumNewCalls progress亦已落；最终Hosting 16/16、Hosting public 1/1、
 Manager 60/60、Completion registry lifetime 6/6、CLI candidate 8/8、Walking 20/20、Timeline cursor 2/2、stable/old CLI targeted 7/7、
-solution build 0 warning / 0 error、docs 15/0、diff clean，两路independent closure均GO（P0=0，P1=0）。WP-07B现为Ready；Galatea、
-`run-online-turn`与旧`recap`production路径仍未切换。
+solution build 0 warning / 0 error、docs 15/0、diff clean，两路independent closure均GO（P0=0，P1=0）。WP-07B随后已完成
+Galatea/CLI disposable online vertical；Galatea、`run-online-turn`与旧`recap`production路径仍未切换。
+WP-07B final evidence为Hosting 19/19、Online 21/21、Galatea actual candidate 7/7、CLI candidate 10/10、raw audit
+19/19、两个public-surface suites 3/3、Walking 22/22、solution build 0 warning / 0 error、包漏洞扫描零命中、docs 15/0与
+diff clean；两路independent closure均GO（P0=0，P1=0）。WP-07C现为Ready。
 这些旁路owner不改变current production；production cutover仍只属于WP-08。
 
 工作包文档：
@@ -122,7 +127,8 @@ solution build 0 warning / 0 error、docs 15/0、diff clean，两路independent 
 6. [`WP-05`](derived-recap-grid-wp05-getter-and-context-composer.md)
 7. [`WP-06`](derived-recap-grid-wp06-completion-runtime.md)
 8. [`WP-07A`](derived-recap-grid-wp07a-cli-operator-vertical.md) ->
-   [`WP-07B`](derived-recap-grid-wp07b-galatea-online-vertical.md)
+   [`WP-07B`](derived-recap-grid-wp07b-galatea-online-vertical.md) ->
+   [`WP-07C`](derived-recap-grid-wp07c-agent-control-and-tool-continuation.md)
 9. [`WP-08`](derived-recap-grid-wp08-atomic-cutover.md)
 
 任何 WP 若证明后一包前提不成立，必须先更新目标设计、本文依赖图和受影响的相邻 WP；不得在实现里静默变更语义。
@@ -180,6 +186,7 @@ Status and proof
 - WP-04：mystery-analysis、overlay/full/A-B、reuse/Keep gate；
 - WP-07A：disposable CLI/operator candidate；
 - WP-07B：disposable Galatea + CLI second-host online candidate；
+- WP-07C：Agent-facing Control、built-in genesis与ToolResult/ToolContinuation candidate；
 - WP-08：solution build、affected full suites、fresh checkout direct-cut gate。
 
 Live provider canary 只证明环境/provider行为；credential/network failure必须诚实标为 environment-blocked，不能阻塞本地

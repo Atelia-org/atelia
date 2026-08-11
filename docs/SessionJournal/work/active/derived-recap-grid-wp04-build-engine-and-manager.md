@@ -152,7 +152,7 @@ item throw/cancel不得抹掉已成功siblings。
     whole head也必须在首call前typed fail closed；
 12. mystery fixture：`XSuspicion` overlay、future interaction、full rebuild retroactive wavefront。
 13. 同一frozen Manager request连续三次进入：首次完成，后两次missing-free且zero-call；真实
-    Idle/pre-observation、ObservationAccepted、ToolResultObserved lifecycle留给WP-07B；
+    Idle/pre-observation、ObservationAccepted lifecycle留给WP-07B；ToolResultObserved/ToolContinuation留给WP-07C；
 14. head-through build返回`RecapGridPromotableProof`，ancestor-through只返回`RecapGridFulfillmentReceipt`；ControlPlane CAS
     crash/conflict不会污染active view，active暂时unfulfilled时Getter fail closed；
 15. PutFulfilled后raw/control/Timeline drift可留下old-head exact Fulfilled cache，但必须返回stale/no proof。
@@ -206,4 +206,5 @@ timeout、route、family lane、leader/follower与drain行为；不得向Manager
   settlement intended authority与lifetime drain；另一路复核cancellation、ordinal/metrics、fatal propagation、old-head
   Fulfilled cache与WP-05 handoff。本包因而标记Complete，WP-05可以以本文的pure-read handoff为基线开工。
 - current old Planner/Runtime/Maintainers、Galatea、CLI composition与production callers均未切换；真实
-  Idle/ObservationAccepted/ToolResultObserved lifecycle属于WP-07B。本包只证明同一frozen Manager request的重复幂等进入。
+  Idle/ObservationAccepted lifecycle属于WP-07B，ToolResultObserved/ToolContinuation属于WP-07C。本包只证明
+  同一frozen Manager request的重复幂等进入。
