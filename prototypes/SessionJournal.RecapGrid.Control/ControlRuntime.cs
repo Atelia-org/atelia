@@ -597,6 +597,11 @@ public sealed class RecapGridControlCoordinator {
                     "ActiveRecipeTargetEmpty"
                 );
             }
+            RecapGridControlActivateResult? contextFailure =
+                ValidateContextComposable(state, registered.Recipe);
+            if (contextFailure is not null) {
+                return contextFailure;
+            }
             RecapGridControlActivateResult? admissionFailure =
                 ValidateStoredRecipeAdmission(
                     state,
@@ -1165,6 +1170,42 @@ public sealed class RecapGridControlCoordinator {
                 "The Timeline reader returned an unknown selected-row outcome."
             )
         };
+    }
+
+    private static RecapGridControlActivateResult?
+        ValidateContextComposable(
+        ControlState state,
+        GridBuildRecipe recipe
+    ) {
+        var targets = new HashSet<(
+            ContextHeaderCarrier Carrier,
+            string BlockKey
+        )>();
+        foreach (BuildTargetColumn column in recipe.Target.OrderedColumns) {
+            if (!state.Definitions.TryGetValue(
+                    column.DefinitionDigest.Value,
+                    out MaintainerDefinitionRevision? definition)) {
+                return new RecapGridControlActivateResult.Invalid(
+                    "ActiveRecipeDefinitionAbsent",
+                    "An active recipe target definition is absent."
+                );
+            }
+            if (definition.MaxContentUtf8Bytes
+                > ControlStorageLimits
+                    .MaximumContextComposableContentUtf8Bytes) {
+                return new RecapGridControlActivateResult.Unauthorized(
+                    "ActiveRecipeContentLimit"
+                );
+            }
+            if (!targets.Add((
+                    definition.Target.Carrier,
+                    definition.Target.BlockKey))) {
+                return new RecapGridControlActivateResult.Unauthorized(
+                    "ActiveRecipeDuplicateContextTarget"
+                );
+            }
+        }
+        return null;
     }
 
     private ControlState ReadCurrent() {

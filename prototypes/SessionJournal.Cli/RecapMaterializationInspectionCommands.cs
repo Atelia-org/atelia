@@ -57,12 +57,19 @@ internal static class RecapMaterializationInspectionCommands {
                     );
                 }
                 else {
-                    SJ.SessionContextCandidate candidate =
-                        await source.MaterializeAsync(
+                    SJ.SessionContextCandidateMaterializationResult
+                        materialized = await source.MaterializeAsync(
                                 descriptor,
                                 CancellationToken.None
                             )
                             .ConfigureAwait(false);
+                    SJ.SessionContextCandidate candidate = materialized is
+                        SJ.SessionContextCandidateMaterializationResult
+                            .Materialized available
+                        ? available.Candidate
+                        : throw new InvalidOperationException(
+                            $"Candidate materialization returned '{materialized.GetType().Name}'."
+                        );
                     report = new RecapMaterializationInspectionReport(
                         ReportSchema,
                         engine.BranchName,

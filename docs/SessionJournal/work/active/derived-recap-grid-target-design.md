@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04 complete，WP-05 Ready；尚未切换 current production
+状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04、WP-05 complete，WP-06 Ready；尚未切换 current production
 
 ## 1. Intent
 
@@ -196,7 +196,10 @@ FamilyDefinition拥有的system prompt、tool schema或output protocol。
 - `FindMissingAssignments(rowBuildSpec)`；
 - `TryReadCell(evaluationKeyDigest)`；
 - `ReadView(rowViewDigest)`；
-- `ResolveFulfilledView(selectedRawRef, completionBoundary, timelineHeadRef, activeGridBuildRecipe, nthPrevious)`。
+- Getter public入口是owner-bound factory，而非caller-supplied authority tuple：
+  `RecapGridContextFactory.Open(selectedSessionJournalReadView)`取得owned handle，再调用
+  `handle.Resolve(completionBoundary, nthPrevious)`；factory内部打开canonical Timeline/Control Readers，Resolve内部读取current whole
+  heads/active recipe并在需要时lazy-open唯一Store ReaderHandle。调用方不能注入heads、recipe、Reader或backend。
 
 “row 是否完整”永远相对于一个明确的 `BuildTarget`，不是 row 的绝对属性。`BuildTarget`是由MaintainerControlPlane
 和本次operation冻结出的`LogicalColumnId -> MaintainerDefinitionDigest`值；它只表达membership，不表达overlay/full
@@ -208,9 +211,11 @@ rebuild的provenance。
 fulfilled view，并把row contributions、anchor setups与completion boundary交给neutral SessionJournal candidate contract。
 它是无状态composer，不允许GridReader扫描“latest”或逐列找最新cell。
 
-组合raw tail的最终owner仍是SessionJournal core：SessionJournal独立fold completion boundary之后的raw tail并把结果冻结进
-Prepared。无active nonempty recipe时可以显式授权raw-only，无论Timeline是否已有sealed rows；active recipe存在但
-partial/unfulfilled/Invalid时不得fallback到raw-only或旧recipe。
+组合raw tail的唯一owner仍是SessionJournal core：Getter只返回contributions与sealed-row anchor；SessionJournal独立fold anchor之后、
+completion boundary之前的raw tail并把结果冻结进Prepared。raw-only只有两条规则：(1) 无active recipe时，无论Timeline是否已有
+sealed rows都授权raw-only且不打开Store；(2) Timeline仍empty时，即使recipe已经active也授权raw-only且不打开Store，以允许原始历史
+继续增长并由lifecycle封出首row，避免“首row fulfillment必须先存在才能继续”的死锁。一旦Timeline nonempty，active recipe的
+partial/unfulfilled/Invalid不得fallback到raw-only、旧recipe或旧head cache。
 
 `NthPrevious`不要求Store为旧row合成新的current-head fulfillment key：先exact解析current Timeline head + active recipe的
 fulfilled RowView，再沿该view的`PreviousRowViewDigest`链走n步；每一步都复验same RecipeDigest和exact Timeline
@@ -536,9 +541,8 @@ PriorInputAligned，但recipe provenance仍是overlay。
 4. 在首个remote call前解析全部待执行definition/runtime bindings。
 5. 同 row cells并行执行并分别commit。
 6. exact完整后创建RecapRowView。
-7. 主线模型通过`ResolveFulfilledView(selectedRawRef, completionBoundary, timelineHeadRef, activeGridBuildRecipe, nthPrevious)`取得
-   exact fulfilled view，
-   再加该row之后尚未封段的raw tail。
+7. composition root由selected `SessionJournalReadView`打开owner-bound Getter，调用`Resolve(completionBoundary, nthPrevious)`取得
+   exact fulfilled candidate与sealed-row anchor；SessionJournal core再独立fold该anchor之后尚未封段的raw tail。
 
 同一个`Send`可在pre-observation、ObservationAccepted和每个ToolResultObserved后的安全未Prepared边界多次调用这一
 lifecycle。Timeline只在replay-safe boundary封row；Manager operation必须幂等，不能假设“一次Send只调用一次”。
@@ -827,6 +831,8 @@ dependency DAG的二维投影视图，不是每个坐标只有一个可变值的
     missing/damaged时fail closed，不跳到更早healthy row或同ordinal sibling branch。
 17. Prepared后删除Grid、改变active recipe并使Timeline/Control不可用，request仍按frozen bytes byte-identical恢复；Started
     Refuse零client/零derived write，explicit restart只产生新的provider attempt。
+18. no-active时无论Timeline empty/nonempty都raw-only且零Store open；empty Timeline + active同样raw-only且零Store open以避免首row
+    lifecycle死锁；nonempty Timeline + active missing fulfillment只能返回`Unfulfilled`，不得raw fallback。
 
 ## 11. Open decisions before implementation
 
@@ -849,7 +855,10 @@ generation等于current generation + 1。两条independent review与final serial
 本文通过只表示Shape/Rule锁定及SQLite目标选择，不表示旧系统迁移方案或production implementation已经批准。
 施工计划已经拆为WP-00至WP-08；WP-00 baseline/walking skeleton、WP-01A Timeline contracts/partition、WP-01B raw
 integration、WP-01C durable ledger、WP-02 content-addressed ControlPlane、WP-03 SQLite Grid Store与WP-04
-build-engine/Manager均已完成；WP-05 Ready。WP-04 final evidence为Manager 57/57、Manager public 1/1、
+build-engine/Manager与WP-05 pure-read Getter/ContextComposer均已完成；WP-05 final evidence为Getter 21/21、Getter public
+surface 2/2、Control composability 3/3、SessionJournal phase2/recovery 3/3、Walking 16/16、solution build 0 warning / 0 error、
+docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0），现为WP-06的complete handoff。WP-04 final evidence为
+Manager 57/57、Manager public 1/1、
 Walking 15/15、HistoryTimeline public 3/3、solution build 0 warning / 0 error、docs 15/0、diff clean与两路
 independent GO（P0=0，P1=0）。
 WP-01C final evidence为Timeline 156/156、raw 19/19、walking 13/13、

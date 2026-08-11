@@ -662,6 +662,10 @@ internal static class ControlJson {
 }
 
 internal static class ControlStorageLimits {
+    // V1 activation policy. Keep this semantic owner local to Control; the
+    // neutral SessionJournal carrier contract is verified equal by a
+    // cross-project contract test.
+    internal const int MaximumContextComposableContentUtf8Bytes = 256 * 1024;
     internal const int MaximumStateCanonicalUtf8Bytes = 32 * 1024 * 1024;
     internal const int MaximumFamilyCount = 256;
     internal const int MaximumDefinitionCount = 4_096;

@@ -89,10 +89,13 @@ public sealed class DerivedRecapEpochStoreCandidateTests {
             SessionContextCandidateSelectionStatus.Selected,
             selected.Status
         );
-        SessionContextCandidate candidate = await source.MaterializeAsync(
-            selected.Candidate!,
-            CancellationToken.None
-        );
+        SessionContextCandidate candidate = Assert.IsType<
+            SessionContextCandidateMaterializationResult.Materialized>(
+            await source.MaterializeAsync(
+                selected.Candidate!,
+                CancellationToken.None
+            )
+        ).Candidate;
         Assert.Equal(admission, candidate.SetAdmissionAnchor);
         Assert.Equal(
             ["self recap", "world recap"],

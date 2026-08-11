@@ -1,6 +1,6 @@
 # DerivedRecap Grid Rewrite 总施工计划
 
-状态：Implementation program active；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04 complete，WP-05 Ready；current production尚未切换
+状态：Implementation program active；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04、WP-05 complete，WP-06 Ready；current production尚未切换
 
 目标设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)
 
@@ -71,9 +71,9 @@ WP-03 SQLite RecapGridStore [complete]
   |
 WP-04 Grid build engine + MaintainerManager + fake runtime [complete]
   |
-WP-05 Getter + ContextComposer
+WP-05 Getter + ContextComposer [complete]
   |
-WP-06 Completion runtime/family/prefix integration
+WP-06 Completion runtime/family/prefix integration [Ready]
   |
 WP-07A CLI/operator vertical candidate
   |
@@ -92,7 +92,10 @@ external public surface 1/1、Walking architecture 15/15、Timeline public surfa
 independent tail后Manager focused已扩至57/57，覆盖head-only proof/partial receipt、settlement intended authority、lifetime/cancellation/
 ordinal/final-fence defenses；同轮Manager external public surface 1/1、Walking architecture 15/15、Timeline public surface 3/3、
 `Atelia.sln` build 0 warning / 0 error，scoped docs checker 15/0，diff clean；两路independent closure review均为
-GO（P0=0，P1=0）。WP-04现为complete handoff，WP-05 Ready。
+GO（P0=0，P1=0）。WP-04现为complete handoff；WP-05已完成pure-read Getter/neutral adapter，owner nonce/original witness、
+semantic-terminal fences、shared provenance budget、Nth>=2/rewind sibling、Dispose drain与neutral UnsupportedSchema mapping均已闭合。
+final evidence为Getter 21/21、Getter public 2/2、Control composability 3/3、SessionJournal phase2/recovery 3/3、Walking 16/16、
+`Atelia.sln` build 0 warning / 0 error、docs 15/0、diff clean；两路independent closure review均GO（P0=0，P1=0），WP-06 Ready。
 这些旁路owner不改变current production；production cutover仍只属于WP-08。
 
 工作包文档：

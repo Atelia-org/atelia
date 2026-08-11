@@ -37,6 +37,12 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Manager",
             "SessionJournal.RecapGrid.Manager.csproj"
         );
+        string getterProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Getter",
+            "SessionJournal.RecapGrid.Getter.csproj"
+        );
 
         Assert.Equal(
             ["../SessionJournal/SessionJournal.csproj"],
@@ -68,6 +74,16 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
+                "../SessionJournal/SessionJournal.csproj",
+                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
+                "../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj",
+                "../SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj",
+                "../SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj"
+            ],
+            DirectProjectReferences(getterProject)
+        );
+        Assert.Equal(
+            [
                 "Microsoft.Data.Sqlite@10.0.10",
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
                 "Microsoft.Bcl.Memory@9.0.17",
@@ -86,6 +102,7 @@ public sealed class AssemblyDependencyBoundaryTests {
             DirectPackageReferences(storeProject)
         );
         Assert.Empty(DirectPackageReferences(managerProject));
+        Assert.Empty(DirectPackageReferences(getterProject));
 
         string upstream = File.ReadAllText(timelineProject)
             + File.ReadAllText(abstractionsProject);
@@ -104,6 +121,52 @@ public sealed class AssemblyDependencyBoundaryTests {
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RecapGrid.Manager", combined,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RecapGridGetterIsPureReadAndUsesOnlyBoundedPublicAuthorities() {
+        string root = FindRepositoryRoot();
+        string getterRoot = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Getter"
+        );
+        string product = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                getterRoot,
+                "*.cs",
+                SearchOption.AllDirectories
+            ).Select(static path => path.Replace('\\', '/'))
+                .Where(static path => !IsBuildOutput(path))
+                .Select(File.ReadAllText)
+        );
+        foreach (string forbidden in new[] {
+                     "HistoryTimelineCoordinator",
+                     "IHistoryTimelineLedgerPort",
+                     "SqliteHistoryTimelineLedger",
+                     "RecapGridControlCoordinator",
+                     "RecapGridStoreWriter",
+                     "Microsoft.Data.Sqlite",
+                     "Atelia.Completion",
+                     "Galatea",
+                     "DerivedRecap",
+                     "RecapGridManager"
+                 }) {
+            Assert.DoesNotContain(
+                forbidden,
+                product,
+                StringComparison.Ordinal
+            );
+        }
+        Assembly getter = Assembly.LoadFrom(Path.Combine(
+            AppContext.BaseDirectory,
+            "Atelia.SessionJournal.RecapGrid.Getter.dll"
+        ));
+        Assert.DoesNotContain(getter.GetExportedTypes(), static type =>
+            type.Name.Contains("Backend", StringComparison.OrdinalIgnoreCase)
+            || type.Name.Contains("Coordinator", StringComparison.OrdinalIgnoreCase)
+        );
     }
 
     [Fact]
@@ -531,7 +594,8 @@ public sealed class AssemblyDependencyBoundaryTests {
             "Atelia.SessionJournal.RecapGrid.Abstractions.dll",
             "Atelia.SessionJournal.RecapGrid.Control.dll",
             "Atelia.SessionJournal.RecapGrid.Store.dll",
-            "Atelia.SessionJournal.RecapGrid.Manager.dll"
+            "Atelia.SessionJournal.RecapGrid.Manager.dll",
+            "Atelia.SessionJournal.RecapGrid.Getter.dll"
         }) {
             Assembly assembly = Assembly.LoadFrom(Path.Combine(
                 AppContext.BaseDirectory,

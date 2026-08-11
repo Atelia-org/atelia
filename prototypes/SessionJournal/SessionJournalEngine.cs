@@ -3972,9 +3972,12 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 seed,
                 cancellationToken
             );
-        SessionContextCandidate candidate = await source
+        SessionContextCandidateMaterializationResult materialization =
+            await source
             .MaterializeAsync(descriptor, cancellationToken)
             .ConfigureAwait(false);
+        SessionContextCandidate candidate =
+            RequireMaterializedCandidate(materialization);
         ImmutableArray<SessionContextContribution> contributions =
             SessionContextCandidateValidator.ValidateMaterializedCandidate(
                 descriptor,
@@ -4087,9 +4090,12 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 seed,
                 cancellationToken
             );
-        SessionContextCandidate candidate = await source
+        SessionContextCandidateMaterializationResult materialization =
+            await source
             .MaterializeAsync(descriptor, cancellationToken)
             .ConfigureAwait(false);
+        SessionContextCandidate candidate =
+            RequireMaterializedCandidate(materialization);
         ImmutableArray<SessionContextContribution> contributions =
             SessionContextCandidateValidator.ValidateMaterializedCandidate(
                 descriptor,
@@ -4147,6 +4153,51 @@ public sealed partial class SessionJournalEngine : IDisposable {
             );
         }
         return descriptor;
+    }
+
+    private static SessionContextCandidate RequireMaterializedCandidate(
+        SessionContextCandidateMaterializationResult result
+    ) {
+        ArgumentNullException.ThrowIfNull(result);
+        return result switch {
+            SessionContextCandidateMaterializationResult.Materialized available
+                => available.Candidate
+                    ?? throw new InvalidDataException(
+                        "A materialized context result requires a candidate."
+                    ),
+            SessionContextCandidateMaterializationResult.Stale stale
+                => throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ContextCandidateUnavailable,
+                    RequireMaterializationDetail(stale.Detail)
+                ),
+            SessionContextCandidateMaterializationResult.Busy busy
+                => throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ContextStoreUnavailable,
+                    RequireMaterializationDetail(busy.Detail)
+                ),
+            SessionContextCandidateMaterializationResult.Disposed disposed
+                => throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ContextStoreUnavailable,
+                    RequireMaterializationDetail(disposed.Detail)
+                ),
+            SessionContextCandidateMaterializationResult.Invalid invalid
+                => throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ContextCandidateInvalid,
+                    RequireMaterializationDetail(invalid.Detail)
+                ),
+            _ => throw new InvalidDataException(
+                "The context source returned an unknown materialization outcome."
+            )
+        };
+    }
+
+    private static string RequireMaterializationDetail(string detail) {
+        if (string.IsNullOrWhiteSpace(detail)) {
+            throw new InvalidDataException(
+                "A non-materialized context result requires detail."
+            );
+        }
+        return detail;
     }
 
     private static void RequireNoSelectedDescriptor(

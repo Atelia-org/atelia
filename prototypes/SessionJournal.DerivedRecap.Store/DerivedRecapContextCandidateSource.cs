@@ -114,7 +114,8 @@ public sealed class DerivedRecapContextCandidateSource
         );
     }
 
-    public async ValueTask<SessionContextCandidate> MaterializeAsync(
+    public async ValueTask<SessionContextCandidateMaterializationResult>
+        MaterializeAsync(
         SessionContextCandidateDescriptor descriptor,
         CancellationToken cancellationToken
     ) {
@@ -155,10 +156,12 @@ public sealed class DerivedRecapContextCandidateSource
                 )
                 .ConfigureAwait(false);
         RequireCurrentBoundary(handle.CompletionBoundary);
-        return new SessionContextCandidate(
-            materialization.SetAdmissionAnchor,
-            descriptor.AnchorSetups,
-            materialization.Contributions
+        return new SessionContextCandidateMaterializationResult.Materialized(
+            new SessionContextCandidate(
+                materialization.SetAdmissionAnchor,
+                descriptor.AnchorSetups,
+                materialization.Contributions
+            )
         );
     }
 

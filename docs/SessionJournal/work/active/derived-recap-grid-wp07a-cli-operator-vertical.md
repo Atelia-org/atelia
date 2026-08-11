@@ -48,7 +48,9 @@ Control `CommitIndeterminate`/backup `PublishIndeterminate`必须显示intended�
 6. closed-store Grid reset crash old-or-empty-valid，raw/Timeline/Control exact不变；
 7. Timeline restore/abandon独立演练；
 8. provider failure保留successful Cells但不commitpartial RowView；retry只补missing；
-9. no active/nonempty BuildTarget明确raw-only；active unfulfilled/Invalid fail closed。
+9. Getter诊断必须显示两条raw-only规则且证明零Store open：(a) no-active时不论Timeline empty/nonempty；(b) Timeline empty时即使
+   recipe active也raw-only，允许raw增长与首row seal而不形成fulfillment先决死锁。Timeline nonempty + active unfulfilled/Invalid必须
+   fail closed，不得raw/旧cache fallback。
 
 ## No-Go
 

@@ -236,6 +236,60 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         Assert.Equal(0, client.Calls);
     }
 
+    [Fact]
+    public async Task TypedPhaseTwoFailureMapsToExactNotReadyReason() {
+        (SessionContextCandidateMaterializationResult Result,
+            SessionJournalNotReadyReason Reason)[] cases = [
+            (
+                new SessionContextCandidateMaterializationResult.Stale(
+                    "stale candidate"
+                ),
+                SessionJournalNotReadyReason.ContextCandidateUnavailable
+            ),
+            (
+                new SessionContextCandidateMaterializationResult.Busy(
+                    "busy store"
+                ),
+                SessionJournalNotReadyReason.ContextStoreUnavailable
+            ),
+            (
+                new SessionContextCandidateMaterializationResult.Disposed(
+                    "disposed reader"
+                ),
+                SessionJournalNotReadyReason.ContextStoreUnavailable
+            ),
+            (
+                new SessionContextCandidateMaterializationResult.Invalid(
+                    "invalid membership"
+                ),
+                SessionJournalNotReadyReason.ContextCandidateInvalid
+            )
+        ];
+        foreach ((SessionContextCandidateMaterializationResult result,
+                  SessionJournalNotReadyReason reason) in cases) {
+            string path = NewJournalPath();
+            var client = new ScriptedClient();
+            var source = new TestContextCandidateSource();
+            using var engine = SessionJournalTestRuntime.Attach(
+                SessionJournalEngine.Create(path, CreateOptions()),
+                CreateRuntime(client, source)
+            );
+            source.Candidate = ContextCandidateTestFixture
+                .CreateAtCurrentHead(engine).Candidate;
+            source.ForcedMaterializationResult = result;
+
+            SessionJournalNotReadyException error = await Assert.ThrowsAsync<
+                SessionJournalNotReadyException>(() => engine.SendAsync(
+                    "phase-two-failure",
+                    CancellationToken.None
+                ));
+
+            Assert.Equal(reason, error.Reason);
+            Assert.Equal(1, source.MaterializationCount);
+            Assert.Equal(0, client.Calls);
+        }
+    }
+
     [Theory]
     [InlineData(
         SessionContextCandidateSelectionStatus.ExactPublishedSetInvalid

@@ -15,10 +15,34 @@ public interface ICoherentContextCandidateSource {
         CancellationToken cancellationToken
     );
 
-    ValueTask<SessionContextCandidate> MaterializeAsync(
+    ValueTask<SessionContextCandidateMaterializationResult> MaterializeAsync(
         SessionContextCandidateDescriptor descriptor,
         CancellationToken cancellationToken
     );
+}
+
+/// <summary>
+/// Closed outcome of the second, content-bearing candidate phase. Selection
+/// and materialization are deliberately separate authority passes; callers
+/// must not infer a materialization failure from exception text.
+/// </summary>
+public abstract record SessionContextCandidateMaterializationResult {
+    private SessionContextCandidateMaterializationResult() { }
+
+    public sealed record Materialized(SessionContextCandidate Candidate)
+        : SessionContextCandidateMaterializationResult;
+
+    public sealed record Stale(string Detail)
+        : SessionContextCandidateMaterializationResult;
+
+    public sealed record Busy(string Detail)
+        : SessionContextCandidateMaterializationResult;
+
+    public sealed record Disposed(string Detail)
+        : SessionContextCandidateMaterializationResult;
+
+    public sealed record Invalid(string Detail)
+        : SessionContextCandidateMaterializationResult;
 }
 
 /// <summary>

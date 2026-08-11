@@ -16,7 +16,15 @@ explicit promotion重演该行为。
 
 ## In scope
 
-- fresh/NewRequestRequired：Timeline reconcile/seal -> Manager fulfill -> Grid candidate -> SessionJournal raw-tail composition；
+- fresh/NewRequestRequired必须由Host组合成一个明确的composite lifecycle：`Timeline reconcile/seal -> Manager fulfill -> Getter
+  readiness/candidate -> SessionJournal raw-tail composition`。Getter只是pure-read readiness与neutral candidate source，不驱动Timeline、
+  不执行Manager build，也不把自身的lifecycle adapter误称为完整maintenance lifecycle；
+- composition root经`RecapGridContextFactory.Open(SessionJournalReadView)`取得同一owned Getter handle，并直接把它注册为neutral candidate
+  source；Host只注册包含Timeline reconcile/seal、Manager fulfill和Getter pure-read readiness调用的composite coordinator作为lifecycle。
+  Getter handle的readiness面只是该composite内部一步，不能单独冒充Host lifecycle；raw-only路径不得预开Store，Selected路径不得在
+  select/materialize间reopen Store；
+  raw-only同时锁两条规则：no-active不论Timeline empty/nonempty均raw-only；Timeline empty即使active也raw-only以允许首row seal。
+  Timeline nonempty + active missing fulfillment必须保持NotReady/Unfulfilled；
 - Prepared/Started：在active composition之前走frozen path，零Timeline/Grid/DerivedRecap active/control/current route config读取；
   Prepared仍按frozen completion identity从Host registry exact bind；Started Refuse在binding/client creation前返回；
 - Manager lifecycle可在Idle/pre-observation、ObservationAccepted和每个ToolResultObserved多次幂等进入；

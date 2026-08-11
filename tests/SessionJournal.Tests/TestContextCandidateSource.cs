@@ -24,6 +24,8 @@ internal sealed class TestContextCandidateSource : ICoherentContextCandidateSour
         set;
     }
     internal string? SelectionDetail { get; set; }
+    internal SessionContextCandidateMaterializationResult?
+        ForcedMaterializationResult { get; set; }
 
     internal IReadOnlyList<SessionContextSelectionRequest> Requests
         => _requests;
@@ -84,13 +86,17 @@ internal sealed class TestContextCandidateSource : ICoherentContextCandidateSour
         ));
     }
 
-    public ValueTask<SessionContextCandidate> MaterializeAsync(
+    public ValueTask<SessionContextCandidateMaterializationResult>
+        MaterializeAsync(
         SessionContextCandidateDescriptor descriptor,
         CancellationToken cancellationToken
     ) {
         cancellationToken.ThrowIfCancellationRequested();
         _materializationCount++;
         _materializedHandles.Add(descriptor.Handle);
+        if (ForcedMaterializationResult is { } forced) {
+            return ValueTask.FromResult(forced);
+        }
         IReadOnlyList<SessionContextCandidate> candidates =
             Candidates
             ?? (Candidate is null
@@ -120,6 +126,11 @@ internal sealed class TestContextCandidateSource : ICoherentContextCandidateSour
                 "The requested test context candidate snapshot changed before materialization."
             );
         }
-        return ValueTask.FromResult(candidates[index]);
+        return ValueTask.FromResult<
+            SessionContextCandidateMaterializationResult>(
+            new SessionContextCandidateMaterializationResult.Materialized(
+                candidates[index]
+            )
+        );
     }
 }

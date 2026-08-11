@@ -21,8 +21,13 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
 
     private readonly List<string> _paths = [];
 
-    [Fact]
-    public async Task PreparedReopenDoesNotReadDeletedV8RecapStore() {
+    [Theory]
+    [InlineData((int)SessionJournalFailpoint.AfterRequestPreparedCommitted)]
+    [InlineData((int)SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted)]
+    public async Task PreparedOrStartedReopenDoesNotReadDeletedV8RecapStore(
+        int failpointValue
+    ) {
+        var failpoint = (SessionJournalFailpoint)failpointValue;
         string path = NewPath();
         var sourceClient = new CapturingClient("must not run");
         EventAddress preparedAddress;
@@ -32,7 +37,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
             new SessionCreateOptions("model-a", "system-a", "surface-a"),
             runtime: null!,
             new SessionJournalTestHooks(
-                SessionJournalFailpoint.AfterRequestPreparedCommitted
+                failpoint
             )
         )) {
             engine.AppendObservation("old observation");
@@ -145,12 +150,15 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
                     )
                 );
             Assert.Equal(
-                SessionJournalFailpoint.AfterRequestPreparedCommitted,
+                failpoint,
                 failure.Failpoint
             );
             Assert.Empty(sourceClient.Requests);
-            preparedAddress = engine.InspectExecutionBoundary().Head!.Value;
         }
+        preparedAddress = Assert.Single(ReadAddressesByKind(
+            path,
+            SessionEventKind.CompletionRequestPrepared
+        ));
 
         byte[] expectedCanonical;
         using (EventJournal.EventJournal journal =
@@ -242,6 +250,23 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
         return path;
     }
 
+    private static EventAddress[] ReadAddressesByKind(
+        string path,
+        SessionEventKind kind
+    ) {
+        using var journal = EventJournal.EventJournal.OpenExisting(path);
+        RefId main = journal.OpenBranch(
+            SessionJournalDefaults.MainBranchName
+        ).Unwrap();
+        EventAddress head = journal.GetHead(main)!.Value;
+        return [
+            .. journal.ReadChronologicalChain(head, checkedRead: true)
+                .Unwrap()
+                .Where(address => journal.ReadEventHeaderPreview(address)
+                    .Unwrap().OpaqueEventKind == (uint)kind)
+        ];
+    }
+
     private sealed class ReadyContextLifecycle
         : ISessionContextLifecycleCoordinator {
         public ValueTask<SessionContextLifecycleResult> PrepareAsync(
@@ -306,7 +331,8 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
             );
         }
 
-        public ValueTask<SessionContextCandidate> MaterializeAsync(
+        public ValueTask<SessionContextCandidateMaterializationResult>
+            MaterializeAsync(
             SessionContextCandidateDescriptor descriptor,
             CancellationToken cancellationToken
         ) {

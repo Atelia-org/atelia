@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-06：Completion Runtime、Family 与 Shared Prefix
 
-状态：Planned；WP-04 runtime handoff已complete，按总计划在WP-05之后施工；WP-05不依赖本包实现
+状态：Ready；WP-04 runtime与WP-05 Getter handoff均complete并取得两路independent GO；本包尚未施工
 
 只需加载：目标设计、总计划、WP-04 runtime handoff、本文和 WP-07A摘要。
 
@@ -17,6 +17,9 @@ provider/runtime信息不会污染Timeline、Recipe、Cell identity或Store。
 - WP-06负责runtime timeout、route/family lane、leader/follower、provider parsing与started sibling drain；不得直接写
   Cell/RowView/Fulfilled，也不得新增durable attempt/campaign或把provider types带入Manager。
 - WP-04已取得两路independent review GO；本节冻结接口责任，WP-06仍按总计划在WP-05之后施工。
+- WP-05 complete handoff没有改变Family/Definition/RowBuildSpec/Store wire；其pure-read Getter只消费current active/head/fulfilled artifacts，
+  neutral adapter与provider executor保持单向隔离。WP-06不得把Completion/provider types反向带入Getter或用runtime scheduler替代
+  SessionJournal-owned raw-tail composition。
 
 ## In scope
 
@@ -24,7 +27,8 @@ provider/runtime信息不会污染Timeline、Recipe、Cell identity或Store。
 - declarative MaintainerDefinition -> bound runtime；
 - exact family/lane reference affinity与lazy route resolution；
 - shared prefix一次构造、leader/follower scheduling、per-lane cap；
-- strict output parser：`Updated | KeepUnchanged`；
+- strict output parser：`Updated | KeepUnchanged`。`Updated`正文必须是strict UTF-8可编码、nonempty，且同时不超过exact
+  `MaintainerDefinition.MaxContentUtf8Bytes`与neutral contribution 256KiB上限；不能把replacement fallback、空正文或截断当成功；
 - drain后按ordered EvaluationKey返回closed per-item outcomes；单item failure/cancel保留successful siblings，deterministic primary
   只影响operation报告，不丢失结果；
 - call budgets、timeouts、caller cancellation、started siblings drain；
@@ -63,7 +67,8 @@ primitive，而不是建立长期legacy bridge。
 3. different lane/connection天然并行隔离；
 4. leaders admission优先、followers不抢占未seed family；
 5. provider output missing/duplicate/wrong tool/unknown fields fail closed；
-6. Updated/Keep正确转换Cell success；
+6. Updated/Keep正确转换Cell success；Updated正文覆盖invalid UTF-16、empty、definition exact cap/cap+1、neutral 256KiB exact cap/cap+1，
+   parser outcome与最终`RecapCellArtifact.Create`使用同一正文和限额；
 7. call budget在首dispatch前完整preflight；
 8. cancellation/timeout/failure选lowest ordinal primary并drain started siblings；
 9. NoBuild/missing-free read path零client/lane/logger construction；

@@ -7,13 +7,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Control.Tests" />
-    <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Control.CrashHarness" />
     <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Getter.Tests" />
   </ItemGroup>
 

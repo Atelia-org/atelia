@@ -76,7 +76,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         CancellationToken cancellationToken
     ) => _candidates.SelectAsync(request, cancellationToken);
 
-    public ValueTask<SessionContextCandidate> MaterializeAsync(
+    public ValueTask<SessionContextCandidateMaterializationResult>
+        MaterializeAsync(
         SessionContextCandidateDescriptor descriptor,
         CancellationToken cancellationToken
     ) => _candidates.MaterializeAsync(descriptor, cancellationToken);

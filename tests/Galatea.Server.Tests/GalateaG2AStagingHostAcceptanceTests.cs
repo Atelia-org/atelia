@@ -106,13 +106,14 @@ public sealed class GalateaG2AStagingHostAcceptanceTests {
             SessionContextCandidateSelectionStatus.Selected,
             selected.Status
         );
-        SessionContextCandidate materialized =
+        SessionContextCandidate materialized = Assert.IsType<
+            SessionContextCandidateMaterializationResult.Materialized>(
             await source.MaterializeAsync(
                 Assert.IsType<SessionContextCandidateDescriptor>(
                     selected.Candidate
                 ),
                 CancellationToken.None
-            );
+            )).Candidate;
         Assert.Equal(2, materialized.Contributions.Count);
 
         RecentTurnsResponseDto after = await GetRecentAsync(client);

@@ -13,6 +13,7 @@ migration、feature flag或compatibility layer。
 ## Preconditions
 
 - WP-01..07B commits与handoffs完整；
+- WP-05 Getter/neutral phase2 contract取得independent GO，且old candidate source只在本包原子切换时删除；
 - frozen pre-grid branch/tag存在且clean；
 - migration/deletion ledger无Unknown；
 - WP-03 Store V1 Linux-only contract、exact Grid-only reset root与Busy/Invalid/Disposed/CommitIndeterminate mapping已被WP-04..07消费者保持；

@@ -2515,7 +2515,8 @@ public sealed class ManagerVerticalTests : IDisposable {
             );
         }
 
-        public ValueTask<SessionContextCandidate> MaterializeAsync(
+        public ValueTask<SessionContextCandidateMaterializationResult>
+            MaterializeAsync(
             SessionContextCandidateDescriptor descriptor,
             CancellationToken cancellationToken
         ) => throw new InvalidOperationException(
