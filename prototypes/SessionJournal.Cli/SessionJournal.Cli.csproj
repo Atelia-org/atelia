@@ -13,6 +13,11 @@
     <ProjectReference Include="../SessionJournal.DerivedRecap.Planner/SessionJournal.DerivedRecap.Planner.csproj" />
     <ProjectReference Include="../SessionJournal.DerivedRecap.Store/SessionJournal.DerivedRecap.Store.csproj" />
     <ProjectReference Include="../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Getter/SessionJournal.RecapGrid.Getter.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Hosting/SessionJournal.RecapGrid.Hosting.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Manager/SessionJournal.RecapGrid.Manager.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj" />
     <ProjectReference Include="../SessionJournal.Offline/SessionJournal.Offline.csproj" />
     <ProjectReference Include="../Completion/Completion.csproj" />

@@ -142,11 +142,15 @@ public sealed class HistoryTimelineReader {
         HistoryRowId? startAt = null;
         if (cursor is { } value) {
             if (value.TimelineId != expectedWholeHead.TimelineId
-                || value.RefId != expectedWholeHead.RefId
-                || value.Generation != expectedWholeHead.Generation) {
+                || value.RefId != expectedWholeHead.RefId) {
                 return new HistoryTimelinePathPageResult.Invalid(
                     "PathCursorScopeMismatch",
-                    "The opaque path cursor belongs to another whole head."
+                    "The opaque path cursor belongs to another Timeline scope."
+                );
+            }
+            if (value.Generation != expectedWholeHead.Generation) {
+                return new HistoryTimelinePathPageResult.StaleTimelineHead(
+                    expectedWholeHead
                 );
             }
             startAt = value.NextRowId;

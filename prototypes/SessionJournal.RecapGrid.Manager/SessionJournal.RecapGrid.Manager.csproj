@@ -16,6 +16,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Manager.Tests" />
     <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Runtime.Tests" />
+    <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Hosting.Tests" />
   </ItemGroup>
 
 </Project>

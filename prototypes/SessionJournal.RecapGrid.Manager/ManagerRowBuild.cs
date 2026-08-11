@@ -4,6 +4,114 @@ using Atelia.SessionJournal.RecapGrid.Store;
 namespace Atelia.SessionJournal.RecapGrid.Manager;
 
 public sealed partial class RecapGridManager {
+    private sealed record DerivedRowPlan(
+        RowBuildSpec Spec,
+        IReadOnlyList<RecapCellArtifact> PreviousCells,
+        PriorInputProjection? Projection
+    );
+
+    private (DerivedRowPlan?, RecapGridBuildResult?) DeriveRowPlan(
+        FrozenOperation frozen,
+        FrozenRecipePlan plan,
+        HistoryTimelineSelectedRow selected,
+        int rowIndex,
+        BuiltRow? previousRow,
+        BuiltRow? baseRow
+    ) {
+        HistorySegmentDescriptor descriptor = selected.Descriptor;
+        if ((rowIndex == 0) != (previousRow is null)) {
+            return (null, Invalid(
+                "PreviousCandidateViewMismatch",
+                "Candidate row provenance does not match Timeline order."
+            ));
+        }
+        PriorInputProjection? projection = null;
+        PriorInputReference prior = PriorInputReference.FirstRow.Value;
+        RowViewDigest? previousDigest = null;
+        IReadOnlyList<RecapCellArtifact> previousCells = [];
+        if (previousRow is not null) {
+            RecapGridBuildResult? previousError = ValidateBuiltRow(
+                previousRow,
+                plan,
+                frozen.RootToThrough[rowIndex - 1].Descriptor
+            );
+            if (previousError is not null) {
+                return (null, previousError);
+            }
+            previousCells = previousRow.Cells;
+            projection = PriorInputProjection.Create(
+                previousCells.Select(cell => new PriorProjectedContent(
+                    cell.LogicalColumnId,
+                    cell.ContentDigest
+                ))
+            );
+            prior = new PriorInputReference.Projection(projection.Digest);
+            previousDigest = previousRow.View.Digest;
+        }
+
+        RowBuildAssignment[] assignments;
+        try {
+            assignments = DeriveAssignments(
+                plan,
+                descriptor,
+                rowIndex,
+                prior,
+                baseRow
+            );
+        }
+        catch (Exception exception) when (IsContractFailure(exception)) {
+            return (null, Invalid(
+                "RowBuildSpecDerivationInvalid",
+                exception.Message
+            ));
+        }
+        try {
+            RowBuildSpec spec = plan.Recipe.Kind switch {
+                GridBuildRecipeKind.Full => RowBuildSpec.CreateFull(
+                    plan.Recipe,
+                    descriptor.RowId,
+                    descriptor.DescriptorDigest,
+                    previousDigest,
+                    prior,
+                    assignments
+                ),
+                GridBuildRecipeKind.Overlay
+                    when rowIndex <= plan.BootstrapIndex
+                    => RowBuildSpec.CreateOverlayBootstrap(
+                        plan.Recipe,
+                        descriptor.RowId,
+                        descriptor.DescriptorDigest,
+                        previousDigest,
+                        prior,
+                        assignments
+                    ),
+                GridBuildRecipeKind.Overlay
+                    => RowBuildSpec.CreateNormal(
+                        plan.Recipe,
+                        descriptor.RowId,
+                        descriptor.DescriptorDigest,
+                        previousDigest,
+                        prior,
+                        assignments
+                    ),
+                _ => throw new InvalidOperationException(
+                    "The recipe kind is unsupported."
+                )
+            };
+            return (new DerivedRowPlan(
+                spec,
+                previousCells,
+                projection
+            ), null);
+        }
+        catch (Exception exception) when (IsContractFailure(exception)) {
+            return (null, Invalid(
+                "RowBuildSpecInvalid",
+                exception.Message
+            ));
+        }
+    }
+
     private RowBuildAssignment[] DeriveAssignments(
         FrozenRecipePlan plan,
         HistorySegmentDescriptor descriptor,

@@ -1074,6 +1074,7 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
 
         var paged = new List<HistoryRowId>();
         HistoryTimelinePathCursor? cursor = null;
+        HistoryTimelinePathCursor? firstContinuation = null;
         do {
             HistoryTimelinePathPage page = Assert.IsType<
                 HistoryTimelinePathPageResult.Page
@@ -1084,10 +1085,25 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             )).Value;
             paged.Add(Assert.Single(page.Rows).Descriptor.RowId);
             cursor = page.Next;
+            firstContinuation ??= cursor;
         } while (cursor is not null);
 
         committedNewestLast.Reverse();
         Assert.Equal(committedNewestLast, paged);
+        Assert.NotNull(firstContinuation);
+        TimelineHeadRef advanced = Assert.IsType<
+            HistoryTimelinePolicyCasResult.Applied
+        >(handle.Coordinator.CompareExchangePolicy(
+            head,
+            head.ActivePartitionPolicyDigest
+        )).Head;
+        Assert.IsType<HistoryTimelinePathPageResult.StaleTimelineHead>(
+            handle.Reader.ReadSelectedPathPage(
+                advanced,
+                firstContinuation,
+                maximumRows: 1
+            )
+        );
     }
 
     [Fact]

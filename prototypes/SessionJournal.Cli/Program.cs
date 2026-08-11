@@ -43,6 +43,18 @@ internal static class Program {
                     "recap-grid",
                     StringComparison.Ordinal
                 )) {
+                if (args.Length > 1
+                    && string.Equals(
+                        args[1],
+                        "candidate",
+                        StringComparison.Ordinal)) {
+                    return RecapGridCandidateCommands.RunAsync(
+                            args.Skip(2).ToArray(),
+                            completionClientFactory
+                        )
+                        .GetAwaiter()
+                        .GetResult();
+                }
                 return RecapGridStoreCommands.Run(
                     args.Skip(1).ToArray()
                 );
@@ -326,6 +338,9 @@ internal static class Program {
         Console.WriteLine(
             "  recap-grid reset --input <repo-dir> "
             + "--confirm-length <bytes> --confirm-sha256 <sha256>"
+        );
+        Console.WriteLine(
+            "  recap-grid candidate <init|timeline|control|build|progress|materialize> ..."
         );
         Console.WriteLine(
             "  recap planner-config init --input <repo-dir> "

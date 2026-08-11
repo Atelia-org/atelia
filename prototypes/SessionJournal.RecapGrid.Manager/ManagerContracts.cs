@@ -443,3 +443,96 @@ public abstract record RecapGridManagerOpenResult {
         string Detail
     ) : RecapGridManagerOpenResult;
 }
+
+public static class RecapGridBuildProgressLimits {
+    public const int MaximumFrontierAssignments =
+        RecapGridLimits.MaximumColumnCount;
+}
+
+public readonly record struct RecapGridBuildProgressMetrics(
+    int SelectedRows,
+    int RecipeRowSteps,
+    int ExaminedAssignments,
+    int MissingAssignments
+);
+
+public sealed record RecapGridBuildProgressAuthority(
+    TimelineHeadRef TimelineHead,
+    ControlHeadRef ControlHead,
+    RecapGridStoreIdentity StoreIdentity,
+    GridBuildRecipeDigest RecipeDigest,
+    HistoryRowId ThroughRowId,
+    HistorySegmentDescriptorDigest ThroughDescriptorDigest
+);
+
+public sealed record RecapGridMissingAssignmentProgress(
+    int Ordinal,
+    HistoryRowId RowId,
+    GridBuildRecipeDigest RecipeDigest,
+    LogicalColumnId LogicalColumnId,
+    EvaluationKeyDigest EvaluationKey
+);
+
+public abstract record RecapGridBuildProgressResult {
+    private RecapGridBuildProgressResult() { }
+
+    public RecapGridBuildProgressMetrics Metrics { get; init; }
+
+    public sealed record Complete(
+        RecapGridBuildProgressAuthority Authority,
+        RowViewDigest ThroughViewDigest,
+        bool FulfillmentPresent
+    ) : RecapGridBuildProgressResult;
+
+    public sealed record Frontier(
+        RecapGridBuildProgressAuthority Authority,
+        HistoryRowId RowId,
+        GridBuildRecipeDigest RecipeDigest,
+        IReadOnlyList<RecapGridMissingAssignmentProgress> OrderedMissing
+    ) : RecapGridBuildProgressResult;
+
+    public sealed record Blocked(
+        RecapGridBuildProgressAuthority Authority,
+        HistoryRowId RowId,
+        GridBuildRecipeDigest RecipeDigest,
+        string Code,
+        string Detail
+    ) : RecapGridBuildProgressResult;
+
+    public sealed record NoRows(
+        TimelineHeadRef TimelineHead,
+        GridBuildRecipeDigest RecipeDigest
+    ) : RecapGridBuildProgressResult;
+
+    public sealed record NoActiveRecipe : RecapGridBuildProgressResult;
+
+    public sealed record RecipeAbsent(GridBuildRecipeDigest RecipeDigest)
+        : RecapGridBuildProgressResult;
+
+    public sealed record ThroughRowNotSelected(HistoryRowId RowId)
+        : RecapGridBuildProgressResult;
+
+    public sealed record BudgetExceeded(
+        RecapGridBuildBudgetKind Kind,
+        HistoryRowId? AtRow
+    ) : RecapGridBuildProgressResult;
+
+    public sealed record Cancelled : RecapGridBuildProgressResult;
+
+    public sealed record Unavailable(
+        RecapGridBuildDependency Dependency,
+        string Code,
+        string Detail
+    ) : RecapGridBuildProgressResult;
+
+    public sealed record StaleTimelineHead(TimelineHeadRef Actual)
+        : RecapGridBuildProgressResult;
+
+    public sealed record StaleControlAuthority(ControlHeadRef Actual)
+        : RecapGridBuildProgressResult;
+
+    public sealed record Disposed : RecapGridBuildProgressResult;
+
+    public sealed record Invalid(string Code, string Detail)
+        : RecapGridBuildProgressResult;
+}

@@ -49,6 +49,12 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Runtime",
             "SessionJournal.RecapGrid.Runtime.csproj"
         );
+        string hostingProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Hosting",
+            "SessionJournal.RecapGrid.Hosting.csproj"
+        );
 
         Assert.Equal(
             ["../SessionJournal/SessionJournal.csproj"],
@@ -98,6 +104,13 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
+                "../SessionJournal.RecapGrid.Runtime/SessionJournal.RecapGrid.Runtime.csproj",
+                "../Completion/Completion.csproj"
+            ],
+            DirectProjectReferences(hostingProject)
+        );
+        Assert.Equal(
+            [
                 "Microsoft.Data.Sqlite@10.0.10",
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
                 "Microsoft.Bcl.Memory@9.0.17",
@@ -118,6 +131,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Empty(DirectPackageReferences(managerProject));
         Assert.Empty(DirectPackageReferences(getterProject));
         Assert.Empty(DirectPackageReferences(runtimeProject));
+        Assert.Empty(DirectPackageReferences(hostingProject));
 
         string upstream = File.ReadAllText(timelineProject)
             + File.ReadAllText(abstractionsProject);
@@ -136,6 +150,81 @@ public sealed class AssemblyDependencyBoundaryTests {
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RecapGrid.Manager", combined,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RecapGridHostingOwnsOnlyExactCompositionAndNoScheduler() {
+        string root = FindRepositoryRoot();
+        string hostingRoot = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Hosting"
+        );
+        string product = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                hostingRoot,
+                "*.cs",
+                SearchOption.AllDirectories
+            ).Where(static path => !IsBuildOutput(path))
+                .Select(File.ReadAllText)
+        );
+        foreach (string forbidden in new[] {
+                     "Microsoft.Data.Sqlite",
+                     "HistoryTimelineCoordinator",
+                     "RecapGridControlCoordinator",
+                     "RecapGridStoreWriter",
+                     "Registry.Resolve",
+                     "CompletionConnectionConfigLoader.LoadFile",
+                     "Galatea",
+                     "DerivedRecap"
+                 }) {
+            Assert.DoesNotContain(
+                forbidden,
+                product,
+                StringComparison.Ordinal
+            );
+        }
+        Assembly hosting = Assembly.LoadFrom(Path.Combine(
+            AppContext.BaseDirectory,
+            "Atelia.SessionJournal.RecapGrid.Hosting.dll"
+        ));
+        Assert.DoesNotContain(hosting.GetExportedTypes(), static type =>
+            type.Name.Contains("Scheduler", StringComparison.OrdinalIgnoreCase)
+            || type.Name.Contains("Backend", StringComparison.OrdinalIgnoreCase)
+        );
+    }
+
+    [Fact]
+    public void CandidateCliDelegatesToGridOwnersWithoutLegacyOrProviderAlgorithms() {
+        string root = FindRepositoryRoot();
+        string candidateSource = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                Path.Combine(root, "prototypes", "SessionJournal.Cli"),
+                "RecapGridCandidate*.cs",
+                SearchOption.TopDirectoryOnly
+            ).Order(StringComparer.Ordinal)
+                .Select(File.ReadAllText)
+        );
+        foreach (string forbidden in new[] {
+                     "SessionJournal.DerivedRecap",
+                     "Galatea",
+                     "Microsoft.Data.Sqlite",
+                     "SQLitePCLRaw",
+                     "CompletionConnectionRegistry.Resolve",
+                     "DefaultConnectionId",
+                     "DerivedRecapRebuildSpool",
+                     "DerivedRecapEpoch",
+                     "RowBuildSpec.Create",
+                     "RecapGridStoreWriter"
+                 }) {
+            Assert.DoesNotContain(
+                forbidden,
+                candidateSource,
+                StringComparison.Ordinal
+            );
+        }
     }
 
     [Fact]
@@ -214,6 +303,11 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Select(static value => value!)];
             Assert.Contains(
                 "Atelia.SessionJournal.RecapGrid.Runtime.Tests",
+                friends,
+                StringComparer.Ordinal
+            );
+            Assert.Contains(
+                "Atelia.SessionJournal.RecapGrid.Hosting.Tests",
                 friends,
                 StringComparer.Ordinal
             );

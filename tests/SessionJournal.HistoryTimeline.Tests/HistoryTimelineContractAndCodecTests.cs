@@ -8,6 +8,34 @@ namespace Atelia.SessionJournal.HistoryTimeline.Tests;
 
 public sealed class HistoryTimelineContractAndCodecTests {
     [Fact]
+    public void PathCursorRoundTripsStrictCanonicalOpaqueValue() {
+        var cursor = new HistoryTimelinePathCursor(
+            new TimelineId(new string('1', 32)),
+            new RefId(42),
+            generation: 17,
+            new HistoryRowId(new string('2', 64))
+        );
+
+        HistoryTimelinePathCursor decoded =
+            HistoryTimelinePathCursor.Parse(cursor.Value);
+
+        Assert.Equal(cursor.Value, decoded.Value);
+        Assert.Equal(cursor.TimelineId, decoded.TimelineId);
+        Assert.Equal(cursor.RefId, decoded.RefId);
+        Assert.Equal(cursor.Generation, decoded.Generation);
+        Assert.Equal(cursor.NextRowId, decoded.NextRowId);
+        Assert.Throws<ArgumentException>(() =>
+            HistoryTimelinePathCursor.Parse(cursor.Value + "=")
+        );
+        Assert.Throws<ArgumentException>(() =>
+            HistoryTimelinePathCursor.Parse(cursor.Value.ToUpperInvariant())
+        );
+        Assert.Throws<ArgumentException>(() =>
+            HistoryTimelinePathCursor.Parse(new string('x', 513))
+        );
+    }
+
+    [Fact]
     public void PolicyCanonicalBytesAndDigestAreGolden() {
         PartitionPolicyRevision policy = Policy(
             "atelia.tests.history-load.numeric-v1"

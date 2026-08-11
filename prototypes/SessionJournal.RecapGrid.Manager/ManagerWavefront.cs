@@ -141,93 +141,22 @@ public sealed partial class RecapGridManager {
         CancellationToken cancellationToken
     ) {
         HistorySegmentDescriptor descriptor = selected.Descriptor;
-        if ((rowIndex == 0) != (previousRow is null)) {
-            return RowError(Invalid(
-                "PreviousCandidateViewMismatch",
-                "Candidate row provenance does not match Timeline order."
-            ));
-        }
-        PriorInputProjection? projection = null;
-        PriorInputReference prior = PriorInputReference.FirstRow.Value;
-        RowViewDigest? previousDigest = null;
-        IReadOnlyList<RecapCellArtifact> previousCells = [];
-        if (previousRow is not null) {
-            RecapGridBuildResult? previousError = ValidateBuiltRow(
-                previousRow,
+        (DerivedRowPlan? derived,
+            RecapGridBuildResult? deriveError) = DeriveRowPlan(
+                frozen,
                 plan,
-                frozen.RootToThrough[rowIndex - 1].Descriptor
-            );
-            if (previousError is not null) {
-                return RowError(previousError);
-            }
-            previousCells = previousRow.Cells;
-            projection = PriorInputProjection.Create(
-                previousCells.Select(cell => new PriorProjectedContent(
-                    cell.LogicalColumnId,
-                    cell.ContentDigest
-                ))
-            );
-            prior = new PriorInputReference.Projection(projection.Digest);
-            previousDigest = previousRow.View.Digest;
-        }
-
-        RowBuildAssignment[] assignments;
-        try {
-            assignments = DeriveAssignments(
-                plan,
-                descriptor,
+                selected,
                 rowIndex,
-                prior,
+                previousRow,
                 baseRow
             );
+        if (deriveError is not null) {
+            return RowError(deriveError);
         }
-        catch (Exception exception) when (IsContractFailure(exception)) {
-            return RowError(Invalid(
-                "RowBuildSpecDerivationInvalid",
-                exception.Message
-            ));
-        }
-        RowBuildSpec spec;
-        try {
-            spec = plan.Recipe.Kind switch {
-                GridBuildRecipeKind.Full => RowBuildSpec.CreateFull(
-                    plan.Recipe,
-                    descriptor.RowId,
-                    descriptor.DescriptorDigest,
-                    previousDigest,
-                    prior,
-                    assignments
-                ),
-                GridBuildRecipeKind.Overlay
-                    when rowIndex <= plan.BootstrapIndex
-                    => RowBuildSpec.CreateOverlayBootstrap(
-                        plan.Recipe,
-                        descriptor.RowId,
-                        descriptor.DescriptorDigest,
-                        previousDigest,
-                        prior,
-                        assignments
-                    ),
-                GridBuildRecipeKind.Overlay
-                    => RowBuildSpec.CreateNormal(
-                        plan.Recipe,
-                        descriptor.RowId,
-                        descriptor.DescriptorDigest,
-                        previousDigest,
-                        prior,
-                        assignments
-                    ),
-                _ => throw new InvalidOperationException(
-                    "The recipe kind is unsupported."
-                )
-            };
-        }
-        catch (Exception exception) when (IsContractFailure(exception)) {
-            return RowError(Invalid(
-                "RowBuildSpecInvalid",
-                exception.Message
-            ));
-        }
+        RowBuildSpec spec = derived!.Spec;
+        IReadOnlyList<RecapCellArtifact> previousCells =
+            derived.PreviousCells;
+        PriorInputProjection? projection = derived.Projection;
 
         RecapGridMissingResult missingRead =
             _store.Reader.FindMissingAssignments(spec);

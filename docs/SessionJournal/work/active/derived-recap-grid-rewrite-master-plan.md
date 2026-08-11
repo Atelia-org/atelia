@@ -1,6 +1,6 @@
 # DerivedRecap Grid Rewrite 总施工计划
 
-状态：Implementation program active；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04、WP-05、WP-06 complete，WP-07A Ready；current production尚未切换
+状态：Implementation program active；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04、WP-05、WP-06、WP-07A complete，WP-07B Ready；current production尚未切换
 
 目标设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)
 
@@ -75,9 +75,9 @@ WP-05 Getter + ContextComposer [complete]
   |
 WP-06 Completion runtime/family/prefix integration [complete]
   |
-WP-07A CLI/operator vertical candidate
+WP-07A CLI/operator vertical candidate [complete]
   |
-WP-07B Galatea/online vertical candidate
+WP-07B Galatea/online vertical candidate [Ready]
   |
 WP-08 Atomic production cutover + legacy deletion
 ```
@@ -99,7 +99,14 @@ final evidence为Getter 21/21、Getter public 2/2、Control composability 3/3、
 WP-06随后交付唯一real `IRecapCellBatchExecutor`、code-owned V1 renderer/parser、exact deferred route、跨batch lane、actual leader-start
 barrier、batch fatal drain、Owned/Borrowed lifetime与bounded operational evidence；final evidence为Runtime 56/56、Completion 471/471、
 Runtime public 2/2、Walking 18/18、`Atelia.sln` build 0 warning / 0 error、docs 15/0、diff clean，两路independent closure均GO
-（P0=0，P1=0）。WP-07A现为Ready。
+（P0=0，P1=0）。
+WP-07A已完成独立Hosting exact-route owner、Manager pure-read progress与明确
+`recap-grid candidate`子树；closure-tail CLI focused 8/8覆盖online/offline cap与raw drift、new Ref isolation、真实WP-06 Runtime build、
+provider-free progress、zero-call promotion、strict materialization、malformed connections全repo零mutation及真实四域maintenance byte
+isolation/Busy。Hosting strict bounded connections/evidence与Manager MaximumNewCalls progress亦已落；最终Hosting 16/16、Hosting public 1/1、
+Manager 60/60、Completion registry lifetime 6/6、CLI candidate 8/8、Walking 20/20、Timeline cursor 2/2、stable/old CLI targeted 7/7、
+solution build 0 warning / 0 error、docs 15/0、diff clean，两路independent closure均GO（P0=0，P1=0）。WP-07B现为Ready；Galatea、
+`run-online-turn`与旧`recap`production路径仍未切换。
 这些旁路owner不改变current production；production cutover仍只属于WP-08。
 
 工作包文档：

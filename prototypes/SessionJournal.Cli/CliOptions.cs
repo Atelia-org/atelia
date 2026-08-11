@@ -93,6 +93,29 @@ internal sealed class CliOptions {
             );
     }
 
+    public bool HasSingleFlag(string key) {
+        if (!_values.TryGetValue(
+                key,
+                out List<string?>? occurrences
+            )) {
+            return false;
+        }
+        if (occurrences.Count != 1) {
+            throw new ArgumentException(
+                $"Flag --{key} must be specified at most once."
+            );
+        }
+        string? value = occurrences[0];
+        if (value is null) {
+            return true;
+        }
+        return bool.TryParse(value, out bool parsed)
+            ? parsed
+            : throw new ArgumentException(
+                $"--{key} accepts only true or false."
+            );
+    }
+
     public void EnsureOnly(params string[] allowedKeys) {
         var allowed = allowedKeys.ToHashSet(StringComparer.Ordinal);
         string? unexpected = _values.Keys

@@ -107,6 +107,11 @@ public sealed class ManagerPublicSurfaceTests {
             >(
                 await manager.Manager.BuildAsync(request, new NoCallExecutor())
             );
+            RecapGridBuildProgressResult.Complete progress = Assert.IsType<
+                RecapGridBuildProgressResult.Complete
+            >(manager.Manager.InspectBuildProgress(request));
+            Assert.True(progress.FulfillmentPresent);
+            Assert.Equal(fulfilled.Proof.ViewDigest, progress.ThroughViewDigest);
             Assert.IsType<RecapGridPromotableProof>(fulfilled.Proof);
             Assert.Equal(1, fulfilled.Metrics.SelectedRows);
             Assert.Null(typeof(RecapGridFulfillmentReceipt).GetProperty(

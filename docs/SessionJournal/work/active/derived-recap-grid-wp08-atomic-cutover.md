@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-08：Atomic Production Cutover 与 Legacy Deletion
 
-状态：Planned；只有 WP-07A/07B Go 后才可开始
+状态：Planned；WP-07A complete，只有 WP-07B Go 后才可开始
 
 只需加载：目标设计、总计划、WP-07B handoff、本文、current architecture map与migration ledger。
 
@@ -19,6 +19,8 @@ migration、feature flag或compatibility layer。
 - WP-03 Store V1 Linux-only contract、exact Grid-only reset root与Busy/Invalid/Disposed/CommitIndeterminate mapping已被WP-04..07消费者保持；
 - target/current config与operator actions已审阅；
 - disposable vertical candidate通过；
+- WP-07A Hosting strict bounded route/connections、lazy bounded evidence与Runtime-before-registry drain合同已取得independent GO；
+- WP-07B必须证明两个production Hosts均复用该owner，且没有旧unbounded config/fallback旁路；
 - exact cutover HEAD重新盘点，无并行uncommitted writer。
 
 WP-04 Manager旁路实现已complete，但旧Planner/Runtime/Maintainers、Galatea与CLI callers均未切换。它必须与旧

@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04、WP-05、WP-06 complete，WP-07A Ready；尚未切换 current production
+状态：Proposed target design；WP-00、WP-01A、WP-01B、WP-01C、WP-02、WP-03、WP-04、WP-05、WP-06、WP-07A complete，WP-07B Ready；尚未切换 current production
 
 ## 1. Intent
 
@@ -743,6 +743,20 @@ Coding Agent日常通过稳定CLI、checked-in SQL、canonical export和golden�
 Grid Store已关闭后执行。数据库损坏走`verify -> reset/rebuild`，不设计SQLite page级salvage或
 Published repair。
 
+完整operator vertical当前只以明确candidate子树存在，不替换上述stable store-only命令或旧production入口：
+
+```text
+recap-grid candidate init
+recap-grid candidate timeline create|sync|inspect|verify|export|backup|restore|abandon
+recap-grid candidate control create|inspect|verify|export|put-family|put-definition|put-recipe|activate|promote|backup|restore|reinitialize
+recap-grid candidate build|progress|materialize
+```
+
+candidate命令内部从selected `SessionJournalReadView`取得canonical repository/Ref authority；mutation要求exact Ref确认。
+只有`build`可读取strict route/connection inputs并构造Runtime。route必须exact匹配
+`(FamilyDigest, RuntimeProtocolId, SemanticModelId?)`，含显式`null`且无fallback。`progress`是Manager pure read；
+`promote`必须同进程以零new-call重证head-through proof后立即CAS，proof不得编码或跨进程保存。
+
 首个spike不实现cell/view GC：除whole-store reset外不得删除committed artifacts。retention、generation与忘记
 EvaluationKey reservation的规则必须另立设计，不能借“清理旧candidate”偷偷引入targeted repair。spike至少覆盖cell
 put-if-absent、row-view header+members atomic commit、fulfillment ref commit三个child-process crash/reopen窗口；两连接
@@ -874,7 +888,13 @@ Walking 15/15、HistoryTimeline public 3/3、solution build 0 warning / 0 error�
 independent GO（P0=0，P1=0）。
 WP-06 final evidence为Runtime 56/56、Completion 471/471、Runtime public surface 2/2、Walking 18/18、solution build
 0 warning / 0 error、docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0）；exact route、V1 renderer/parser、
-leader/follower scheduler与operational evidence现为WP-07A的complete handoff，current production仍未切换。
+leader/follower scheduler与operational evidence现为WP-07A的complete handoff。WP-07A已把exact deferred
+route落到独立Hosting owner，把pure-read progress落到Manager，并新增明确的`recap-grid candidate`operator子树；focused CLI 5/5
+已在closure tail扩为8/8，覆盖online/offline cap与raw drift、Ref隔离、真实Runtime build、zero-call promotion、strict materialization、
+strict bounded connections零mutation与Timeline/Control/Grid maintenance的raw/四域byte isolation。Hosting operational evidence只在首次
+真实work materialize并按field/event/retained-total bytes限界；最终Hosting 16/16、Hosting public 1/1、Manager 60/60、Completion registry
+lifetime 6/6、CLI candidate 8/8、Walking 20/20、Timeline cursor 2/2、stable/old CLI targeted 7/7、solution build 0 warning / 0 error、
+docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0）。WP-07B现为Ready，current production仍未切换。
 WP-01C final evidence为Timeline 156/156、raw 19/19、walking 13/13、
 public surface 2/2、solution build 0 warning / 0 error、docs 15/0、diff clean与两路independent GO；commit evidence由containing commit提供。
 其后WP-02 final evidence为Abstractions 15/15、Control 26/26、Control public surface 2/2、Walking/architecture 13/13，

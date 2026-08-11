@@ -12,6 +12,99 @@ public sealed class ManagerVerticalTests : IDisposable {
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator = new();
 
     [Fact]
+    public void ProgressReportsExactFirstFrontierWithoutRawMaterializationOrWrites() {
+        Fixture fixture = CreateFullFixture(turns: 2, zeroColumns: false);
+        int openSegmentCalls = 0;
+        var hooks = new ManagerTestHooks(OpenSelectedSegment:
+            (_, _) => {
+                openSegmentCalls++;
+                throw new InvalidOperationException(
+                    "Progress must not materialize raw segment content."
+                );
+            });
+        RecapGridStoreInfo before = Assert.IsType<
+            RecapGridStoreInspectResult.Available
+        >(RecapGridStoreMaintenance.Inspect(fixture.Path)).Info;
+        using (fixture.Journal)
+        using (RecapGridManagerHandle manager = OpenManager(fixture, hooks)) {
+            RecapGridBuildProgressResult.Frontier progress = Assert.IsType<
+                RecapGridBuildProgressResult.Frontier
+            >(manager.Manager.InspectBuildProgress(Request()));
+
+            Assert.Equal(0, openSegmentCalls);
+            Assert.Equal(fixture.Rows[0].Descriptor.RowId, progress.RowId);
+            Assert.Equal(fixture.Recipe.Digest, progress.RecipeDigest);
+            RecapGridMissingAssignmentProgress missing = Assert.Single(
+                progress.OrderedMissing
+            );
+            Assert.Equal(0, missing.Ordinal);
+            Assert.Equal(progress.RowId, missing.RowId);
+            Assert.Equal(1, progress.Metrics.MissingAssignments);
+            Assert.True(progress.Metrics.ExaminedAssignments >= 1);
+            Assert.Equal(fixture.TimelineHead, progress.Authority.TimelineHead);
+        }
+        RecapGridStoreInfo after = Assert.IsType<
+            RecapGridStoreInspectResult.Available
+        >(RecapGridStoreMaintenance.Inspect(fixture.Path)).Info;
+        Assert.Equal(before.CellCount, after.CellCount);
+        Assert.Equal(before.RowViewCount, after.RowViewCount);
+        Assert.Equal(before.FulfilledViewCount, after.FulfilledViewCount);
+    }
+
+    [Fact]
+    public void ProgressHonorsNewCallBudgetAtZeroAndExactWithoutDurableWrites() {
+        Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
+        string database = Path.Combine(
+            fixture.Path,
+            "derived",
+            "recap-grid",
+            "v1",
+            "grid.sqlite"
+        );
+        byte[] before = File.ReadAllBytes(database);
+        using (fixture.Journal)
+        using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+            RecapGridBuildProgressResult.BudgetExceeded over = Assert.IsType<
+                RecapGridBuildProgressResult.BudgetExceeded
+            >(manager.Manager.InspectBuildProgress(Request(maximumNewCalls: 0)));
+            Assert.Equal(RecapGridBuildBudgetKind.NewCalls, over.Kind);
+            Assert.Equal(1, over.Metrics.MissingAssignments);
+
+            RecapGridBuildProgressResult.Frontier exact = Assert.IsType<
+                RecapGridBuildProgressResult.Frontier
+            >(manager.Manager.InspectBuildProgress(Request(maximumNewCalls: 1)));
+            Assert.Single(exact.OrderedMissing);
+            Assert.Equal(1, exact.Metrics.MissingAssignments);
+        }
+        Assert.Equal(before, File.ReadAllBytes(database));
+    }
+
+    [Fact]
+    public async Task ProgressReusesExactDerivationAndReportsFulfillmentState() {
+        Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
+        using (fixture.Journal)
+        using (RecapGridManagerHandle manager = OpenManager(fixture)) {
+            Assert.IsType<RecapGridBuildProgressResult.Frontier>(
+                manager.Manager.InspectBuildProgress(Request())
+            );
+            RecapGridBuildResult.Fulfilled built = Assert.IsType<
+                RecapGridBuildResult.Fulfilled
+            >(await manager.Manager.BuildAsync(
+                Request(),
+                new RecordingExecutor()
+            ));
+
+            RecapGridBuildProgressResult.Complete complete = Assert.IsType<
+                RecapGridBuildProgressResult.Complete
+            >(manager.Manager.InspectBuildProgress(Request()));
+            Assert.True(complete.FulfillmentPresent);
+            Assert.Equal(built.Proof.ViewDigest, complete.ThroughViewDigest);
+            Assert.Equal(0, complete.Metrics.MissingAssignments);
+            Assert.Equal(fixture.Rows.Count, complete.Metrics.SelectedRows);
+        }
+    }
+
+    [Fact]
     public async Task FullMultirowBuildAndRepeatedRequestAreExact() {
         Fixture fixture = CreateFullFixture(turns: 2, zeroColumns: false);
         using (fixture.Journal)
@@ -2150,13 +2243,15 @@ public sealed class ManagerVerticalTests : IDisposable {
         }
     }
 
-    private static RecapGridBuildRequest Request() => new(
+    private static RecapGridBuildRequest Request(
+        int maximumNewCalls = 1024
+    ) => new(
         new RecapGridBuildSelection.LiveActive(),
         throughRowId: null,
         new RecapGridBuildBudget(
             64,
             1024,
-            1024,
+            maximumNewCalls,
             TimeSpan.FromMinutes(1)
         )
     );

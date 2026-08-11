@@ -22,6 +22,7 @@
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Manager/SessionJournal.RecapGrid.Manager.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Getter/SessionJournal.RecapGrid.Getter.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Runtime/SessionJournal.RecapGrid.Runtime.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Hosting/SessionJournal.RecapGrid.Hosting.csproj" />
   </ItemGroup>
 
 </Project>

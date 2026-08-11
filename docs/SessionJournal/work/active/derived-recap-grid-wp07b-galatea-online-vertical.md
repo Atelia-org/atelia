@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-07B：Galatea 与 Online Hosts Vertical Candidate
 
-状态：Planned；依赖 WP-07A complete
+状态：Ready；WP-07A complete并取得两路独立closure GO
 
 只需加载：目标设计、Master、WP-07A handoff、本文与WP-08摘要。
 
@@ -9,6 +9,15 @@ route resolver与owned provider-neutral invoker；动态column按Family/Runtime/
 Prepared/Started frozen recovery仍必须早于resolver/client construction，fresh lifecycle由Manager call budget与Runtime started-call accounting
 共同证明，没有warmup或retry。Host registry必须显式区分Owned/Borrowed client；关闭顺序固定为先drain/dispose Runtime，再释放由
 registry持有的borrowed clients，不能由route隐式猜测ownership。
+
+WP-07A candidate已建立独立`SessionJournal.RecapGrid.Hosting`作为这段composition的唯一owner：strict bounded route manifest提交
+exact `(FamilyDigest, RuntimeProtocolId, SemanticModelId?)`，resolver只`TryGet/GetClient`且没有default/fallback，Runtime route借用
+registry-owned client；Completion connections同样由Hosting strict bounded reader冻结，旧unbounded `LoadFile`不得成为active Host旁路。
+Galatea与CLI `run-online-turn`都必须直接复用该Hosting owner；不得复制manifest、resolver、telemetry或
+Runtime lifetime。关闭顺序固定为Runtime drain/dispose在前、registry distinct clients best-effort dispose/rethrow在后；两个Host只读取
+Hosting的bounded operational evidence snapshot，no-work不materialize collector，也不另建scheduler/logger。WP-07A真实blocking-client
+integration已证明in-flight Runtime operation settle前Host与registry client均不会提前完成/dispose；cleanup fatal taxonomy必须继续与Runtime一致，
+不能把OOM/SO/AV包装成Aggregate或继续执行后续cleanup。
 
 ## Intent
 

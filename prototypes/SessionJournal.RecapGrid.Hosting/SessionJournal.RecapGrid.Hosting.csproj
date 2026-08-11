@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SessionJournal.RecapGrid.Runtime/SessionJournal.RecapGrid.Runtime.csproj" />
+    <ProjectReference Include="../Completion/Completion.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Hosting.Tests" />
+  </ItemGroup>
+
+</Project>

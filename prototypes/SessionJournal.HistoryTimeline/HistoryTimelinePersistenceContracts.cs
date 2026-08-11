@@ -1,3 +1,6 @@
+using System.Buffers.Binary;
+using System.Globalization;
+using System.Text;
 using Atelia.EventJournal;
 using SJ = Atelia.SessionJournal;
 
@@ -206,22 +209,128 @@ public sealed class HistoryTimelineReaderHandle : IDisposable {
 }
 
 public readonly record struct HistoryTimelinePathCursor {
+    private const byte WireVersion = 1;
+    private const int WireLength = 1 + 32 + 16 + 8 + 64;
+
     internal HistoryTimelinePathCursor(
         TimelineId timelineId,
         RefId refId,
         long generation,
         HistoryRowId nextRowId
     ) {
+        HistoryTimelineSyntax.RequireTimelineId(timelineId);
+        HistoryTimelineSyntax.RequireRefId(refId);
+        HistoryTimelineSyntax.RequireHistoryRowId(nextRowId);
+        if (generation < 0) {
+            throw new ArgumentOutOfRangeException(nameof(generation));
+        }
         TimelineId = timelineId;
         RefId = refId;
         Generation = generation;
         NextRowId = nextRowId;
+        Value = Encode(timelineId, refId, generation, nextRowId);
     }
 
+    public string Value { get; }
     internal TimelineId TimelineId { get; }
     internal RefId RefId { get; }
     internal long Generation { get; }
     internal HistoryRowId NextRowId { get; }
+
+    public static HistoryTimelinePathCursor Parse(string value) {
+        ArgumentNullException.ThrowIfNull(value);
+        if (value.Length is < 1 or > 512) {
+            throw new ArgumentException(
+                "The Timeline path cursor exceeds its V1 bound.",
+                nameof(value)
+            );
+        }
+        byte[] bytes;
+        try {
+            string padded = value.Replace('-', '+').Replace('_', '/');
+            padded += new string('=', (4 - padded.Length % 4) % 4);
+            bytes = Convert.FromBase64String(padded);
+        }
+        catch (FormatException exception) {
+            throw new ArgumentException(
+                "The Timeline path cursor is not canonical base64url.",
+                nameof(value),
+                exception
+            );
+        }
+        if (bytes.Length != WireLength || bytes[0] != WireVersion) {
+            throw new ArgumentException(
+                "The Timeline path cursor has an invalid V1 shape.",
+                nameof(value)
+            );
+        }
+        string timeline = ReadLowerHex(bytes.AsSpan(1, 32), nameof(value));
+        string refId = ReadLowerHex(bytes.AsSpan(33, 16), nameof(value));
+        long generation = BinaryPrimitives.ReadInt64BigEndian(
+            bytes.AsSpan(49, 8)
+        );
+        string row = ReadLowerHex(bytes.AsSpan(57, 64), nameof(value));
+        var cursor = new HistoryTimelinePathCursor(
+            new TimelineId(timeline),
+            new RefId(ulong.Parse(
+                refId,
+                NumberStyles.HexNumber,
+                CultureInfo.InvariantCulture
+            )),
+            generation,
+            new HistoryRowId(row)
+        );
+        if (!string.Equals(cursor.Value, value, StringComparison.Ordinal)) {
+            throw new ArgumentException(
+                "The Timeline path cursor is not canonical.",
+                nameof(value)
+            );
+        }
+        return cursor;
+    }
+
+    private static string Encode(
+        TimelineId timelineId,
+        RefId refId,
+        long generation,
+        HistoryRowId rowId
+    ) {
+        if (generation < 0) {
+            throw new ArgumentOutOfRangeException(nameof(generation));
+        }
+        var bytes = new byte[WireLength];
+        bytes[0] = WireVersion;
+        WriteAscii(bytes.AsSpan(1, 32), timelineId.Value);
+        WriteAscii(bytes.AsSpan(33, 16), refId.ToHexString());
+        BinaryPrimitives.WriteInt64BigEndian(bytes.AsSpan(49, 8), generation);
+        WriteAscii(bytes.AsSpan(57, 64), rowId.Value);
+        return Convert.ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+    }
+
+    private static string ReadLowerHex(
+        ReadOnlySpan<byte> bytes,
+        string parameterName
+    ) {
+        string value = Encoding.ASCII.GetString(bytes);
+        if (value.Any(static character => character is not (>= '0' and <= '9')
+                and not (>= 'a' and <= 'f'))) {
+            throw new ArgumentException(
+                "The Timeline path cursor contains invalid lowercase hex.",
+                parameterName
+            );
+        }
+        return value;
+    }
+
+    private static void WriteAscii(Span<byte> destination, string value) {
+        if (Encoding.ASCII.GetByteCount(value) != destination.Length) {
+            throw new ArgumentException("Cursor field length is invalid.");
+        }
+        Encoding.ASCII.GetBytes(value, destination);
+    }
 }
 
 public sealed class HistoryTimelineAncestorWitness {
