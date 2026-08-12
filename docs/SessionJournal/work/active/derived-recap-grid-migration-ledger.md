@@ -62,7 +62,7 @@ RecapGrid product。
 | Galatea read-only progress | `GalateaRecapGridReadiness.cs` | Getter Resolve；仅Unfulfilled时Manager InspectProgress；provider/build/write零触达 | formal WP-08 owner |
 | Galatea fresh/NewRequest | `GalateaRecapGridComposition.cs` + `GalateaServices.cs` | per-turn Online + host-wide single `RecapGridCompletionHost` | formal WP-08 owner |
 | Galatea Prepared/Started/ToolContinuation | `GalateaRecapGridComposition.cs` | frozen tool → current completion → Online；Prepared lazy零derived、Started先拒绝 | Preserve/formalize |
-| CLI operator root | `Program.cs` -> `RecapGridCommands.cs` | stable Store + Timeline/Control/build/progress/materialize/legacy-root | formal WP-08 owner |
+| CLI operator root | `Program.cs` -> `RecapGridCommands.cs` | stable Store + Timeline/Control/Cadence/build/progress/materialize/legacy-root | formal WP-08 owner + cadence A3 |
 | CLI online Host | top-level `run-online-turn` -> `RecapGridOnlineTurnCommand.cs` | Fresh/NewRequest formal Online；Prepared/Started frozen gates | formal WP-08 owner |
 
 Project-reference evidence：
@@ -73,6 +73,18 @@ prototypes/Galatea/Galatea.Server.csproj
 prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj
   -> same formal public products; no old DerivedRecap project
 ```
+
+### 3.1 Post-cutover cadence closure
+
+| Slice | Durable/runtime disposition | Status |
+|---|---|---|
+| A0 | 新`SessionJournal.RecapGrid.Cadence`持有per-Ref canonical policy；`control/recap-grid/v1/refs/<ref>/cadence/`独立Linux durability、mutable-owner CAS、reader no-create | Closed — `0af28eea` + authority/durability fixes `397f2ab8`/`b0bce3b3` |
+| A1 | B=60,000 partition保持first replay-safe；R=24,000由Cadence seal proof强制；Online/offline/CLI无public B-only bypass | Closed — `1e8ea927` |
+| A2 | Getter/build-read以同一Cadence/Timeline authority选择latest R-eligible healthy fulfillment；typed `ReserveBootstrapRawOnly`；统一262,144 operation cap | Closed — `bac31986` |
+| A3 | `recap-grid cadence inspect|set-reserve`；pure-read inspect与只改R的exact CAS，不提供修改B入口 | Source candidate — CLI product 0W/0E，新dense 1/1、CLI full 92/92 |
+
+该post-cutover closure不重开旧migration entries，也不宣称C2 rolling built-in、C3 incremental capacity、C4 rollover/GC
+或C5 actual cyber activation完成；这些边界继续由cadence/capacity audit跟踪。
 
 Repo-wide root reproduction：
 

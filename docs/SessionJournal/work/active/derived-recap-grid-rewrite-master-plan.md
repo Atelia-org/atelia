@@ -129,6 +129,12 @@ tool node fixtures 6/6、scoped docs 14/0。final source evidence为36个solutio
 package vulnerability audit退出0且所有项目无已知漏洞、两路independent closure P0=0/P1=0，以及deterministic
 disposable legacy-import canary完成。real-provider canary与actual cyber activation仍为外部`NotRun` gate，不阻止
 source implementation标Complete，也不得被deterministic tests冒充。
+
+Post-cutover cadence A0-A2已完成：独立per-Ref repo-owned Cadence V1是R与expected Timeline policy的durable
+authority；所有Timeline writers经reserve-aware seal，Getter/context按健康artifact选择latest R-eligible anchor。
+目标policy为B=60,000、R=24,000，seal/build-read/anchor共用262,144 raw-event operation cap。operator新增
+provider-free `recap-grid cadence inspect|set-reserve`，后者只CAS改变R。该closure不改变本计划WP-00至WP-08的
+cutover completion，也不关闭长期容量/activation audit中的C2-C5。
 fresh no-local checkout已在provisional containing source tree `913fd8fa`上完成：全新restore成功、Release solution
 build 0 warning / 0 error、36个test projects合计4658/4658 green、package vulnerability audit零命中、scoped docs
 14/0、all-tracked docs 71/0且checkout status clean。最终containing commit只回写该fresh evidence，没有再改变product/test source。

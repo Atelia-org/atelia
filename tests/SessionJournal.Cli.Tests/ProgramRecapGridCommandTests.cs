@@ -5,6 +5,7 @@ using Atelia.Completion.Tools;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Runtime;
@@ -22,6 +23,140 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         "atelia-recap-grid-cli-tests",
         Guid.NewGuid().ToString("N")
     );
+
+    [Fact]
+    public void CadenceInspectAndSetReserveAreProviderFreeExactCas() {
+        CreateJournal();
+        RefId refId;
+        using (SessionJournalEngine reader =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            refId = reader.BranchRefId;
+        }
+        string refText = refId.ToHexString();
+        string cadenceDirectory = Path.Combine(
+            _root,
+            "control",
+            "recap-grid",
+            "v1",
+            "refs",
+            refText,
+            "cadence");
+        string cadencePath = Path.Combine(
+            cadenceDirectory,
+            "cadence.json");
+        var provider = new DeterministicCompletionClientFactory();
+
+        (int absentCode, JsonElement absent) = RunCapturedWithFactory(
+            provider,
+            "cadence", "inspect", "--input", _root);
+        Assert.Equal(2, absentCode);
+        Assert.Equal("absent", absent.GetProperty("status").GetString());
+        Assert.False(Directory.Exists(cadenceDirectory));
+        Assert.Equal(0, provider.CallCount);
+
+        Assert.Equal(0, RunWithFactory(
+            provider,
+            "timeline", "create", "--input", _root,
+            "--confirm-ref", refText,
+            "--partition-algorithm",
+            HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+            "--history-load-estimator",
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
+            "--target-history-load", "60000",
+            "--max-raw-events", "65536",
+            "--max-rendered-bytes", "1048576"));
+        Assert.Equal(0, provider.CallCount);
+
+        (int inspectCode, JsonElement inspected) = RunCapturedWithFactory(
+            provider,
+            "cadence", "inspect", "--input", _root);
+        Assert.Equal(0, inspectCode);
+        Assert.Equal(
+            "available",
+            inspected.GetProperty("status").GetString());
+        JsonElement initial = inspected.GetProperty("detail");
+        JsonElement initialHead = initial.GetProperty("head");
+        Assert.Equal(refText, initialHead.GetProperty("refId").GetString());
+        long generation = initialHead.GetProperty("generation").GetInt64();
+        string digest = initialHead.GetProperty("domainDigest").GetString()!;
+        JsonElement initialPolicy = initial.GetProperty("policy");
+        Assert.Equal(1, initialPolicy.GetProperty(
+            "minimumRecentHistoryLoad").GetInt64());
+        Assert.Equal(60000, initialPolicy.GetProperty(
+            "targetHistoryLoad").GetInt64());
+        Assert.Equal(65536, initialPolicy.GetProperty(
+            "maxRawEvents").GetInt32());
+        byte[] initialBytes = File.ReadAllBytes(cadencePath);
+
+        Assert.Equal(1, RunWithFactory(
+            provider,
+            "cadence", "set-reserve", "--input", _root,
+            "--confirm-ref", new string('0', 32),
+            "--expected-generation", generation.ToString(),
+            "--expected-domain-digest", digest,
+            "--minimum-recent-history-load", "24000"));
+        Assert.Equal(initialBytes, File.ReadAllBytes(cadencePath));
+
+        (int staleCode, JsonElement stale) = RunCapturedWithFactory(
+            provider,
+            "cadence", "set-reserve", "--input", _root,
+            "--confirm-ref", refText,
+            "--expected-generation", (generation + 1).ToString(),
+            "--expected-domain-digest", digest,
+            "--minimum-recent-history-load", "24000");
+        Assert.Equal(2, staleCode);
+        Assert.Equal("stale", stale.GetProperty("status").GetString());
+        Assert.Equal(initialBytes, File.ReadAllBytes(cadencePath));
+
+        (int updatedCode, JsonElement updated) = RunCapturedWithFactory(
+            provider,
+            "cadence", "set-reserve", "--input", _root,
+            "--confirm-ref", refText,
+            "--expected-generation", generation.ToString(),
+            "--expected-domain-digest", digest,
+            "--minimum-recent-history-load", "24000");
+        Assert.Equal(0, updatedCode);
+        Assert.Equal(
+            "updated",
+            updated.GetProperty("status").GetString());
+        JsonElement updatedDetail = updated.GetProperty("detail");
+        JsonElement updatedPolicy = updatedDetail.GetProperty("policy");
+        Assert.Equal(24000, updatedPolicy.GetProperty(
+            "minimumRecentHistoryLoad").GetInt64());
+        Assert.Equal(60000, updatedPolicy.GetProperty(
+            "targetHistoryLoad").GetInt64());
+        Assert.Equal(65536, updatedPolicy.GetProperty(
+            "maxRawEvents").GetInt32());
+        JsonElement updatedHead = updatedDetail.GetProperty("head");
+        Assert.Equal(generation + 1,
+            updatedHead.GetProperty("generation").GetInt64());
+        string updatedDigest = updatedHead.GetProperty(
+            "domainDigest").GetString()!;
+
+        (int oldHeadCode, JsonElement oldHead) = RunCapturedWithFactory(
+            provider,
+            "cadence", "set-reserve", "--input", _root,
+            "--confirm-ref", refText,
+            "--expected-generation", generation.ToString(),
+            "--expected-domain-digest", digest,
+            "--minimum-recent-history-load", "24000");
+        Assert.Equal(2, oldHeadCode);
+        Assert.Equal("stale", oldHead.GetProperty("status").GetString());
+
+        (int unchangedCode, JsonElement unchanged) = RunCapturedWithFactory(
+            provider,
+            "cadence", "set-reserve", "--input", _root,
+            "--confirm-ref", refText,
+            "--expected-generation", (generation + 1).ToString(),
+            "--expected-domain-digest", updatedDigest,
+            "--minimum-recent-history-load", "24000");
+        Assert.Equal(0, unchangedCode);
+        Assert.Equal(
+            "unchanged",
+            unchanged.GetProperty("status").GetString());
+        Assert.Equal(0, provider.CallCount);
+    }
 
     [Fact]
     public void OperatorProvisionBuiltInIsExplicitReplayableAndAdmitted() {

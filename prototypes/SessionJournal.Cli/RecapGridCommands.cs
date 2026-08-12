@@ -36,6 +36,9 @@ internal static partial class RecapGridCommands {
             "timeline" => ValueTask.FromResult(
                 Timeline(tail)
             ),
+            "cadence" => ValueTask.FromResult(
+                Cadence(tail)
+            ),
             "control" => ValueTask.FromResult(
                 Control(tail)
             ),
@@ -113,6 +116,23 @@ internal static partial class RecapGridCommands {
             "reinitialize" => ControlReinitialize(options),
             _ => throw new ArgumentException(
                 $"Unknown recap-grid control command '{action}'."
+            )
+        };
+    }
+
+    private static int Cadence(string[] args) {
+        if (args.Length == 0) {
+            throw new ArgumentException(
+                "recap-grid cadence requires a subcommand."
+            );
+        }
+        string action = args[0];
+        CliOptions options = CliOptions.Parse(args.Skip(1).ToArray());
+        return action switch {
+            "inspect" => CadenceInspect(options),
+            "set-reserve" => CadenceSetReserve(options),
+            _ => throw new ArgumentException(
+                $"Unknown recap-grid cadence command '{action}'."
             )
         };
     }

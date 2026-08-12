@@ -11,14 +11,14 @@ raw EventJournal events + selected RefId Parent lineage  (authority)
                          |
               HistoryTimeline ledger
                          |
-       Control recipe graph + RecapGrid Store
+       Cadence + Control recipe graph + RecapGrid Store
                          |
           Manager / Runtime / Getter / Online
                          |
                   CLI / Galatea
 ```
 
-raw events 是 append-only 事实源。HistoryTimeline、Control 和 RecapGrid Store 都是有明确
+raw events 是 append-only 事实源。HistoryTimeline、Cadence、Control 和 RecapGrid Store 都是有明确
 identity、head fence 与重建边界的 companion state；它们不回写 raw history。
 
 ## Ownership
@@ -27,6 +27,7 @@ identity、head fence 与重建边界的 companion state；它们不回写 raw h
 |---|---|
 | `SessionJournal` | raw replay、selected Parent lineage、setup authority、bounded planning/audit、neutral context lifecycle |
 | `SessionJournal.HistoryTimeline` | immutable timeline rows、selected-path head、policy、branch reconcile、owner-bound build reads |
+| `SessionJournal.RecapGrid.Cadence` | per-Ref R/expected Timeline policy、reserve-aware seal authority、strict CAS/no-create reader |
 | `SessionJournal.RecapGrid.Abstractions` | Family/Definition/Recipe、projection、cell、row-view 与 fulfilled-key canonical contracts |
 | `SessionJournal.RecapGrid.Control` | registered families/definitions/recipes、active recipe、operation receipts、whole-head CAS |
 | `SessionJournal.RecapGrid.Store` | cells、row views、fulfilled entries、store identity、verification/reset |
@@ -44,6 +45,7 @@ identity、head fence 与重建边界的 companion state；它们不回写 raw h
 |---|---|
 | bounded raw history and lifecycle audit | `SessionJournal`, `SessionJournal.Tests` |
 | durable Timeline and branch reconcile | `HistoryTimeline`, `HistoryTimeline.Tests` |
+| durable cadence and recent reserve | `RecapGrid.Cadence`, `RecapGrid.Cadence.Tests` |
 | canonical Grid values | `RecapGrid.Abstractions`, `RecapGrid.Abstractions.Tests` |
 | Control state and receipts | `RecapGrid.Control`, `RecapGrid.Control.Tests` |
 | SQLite artifact Store | `RecapGrid.Store`, `RecapGrid.Store.Tests` |
@@ -61,6 +63,9 @@ identity、head fence 与重建边界的 companion state；它们不回写 raw h
 - A missing active recipe or an empty Timeline is a raw-only state and does not open the Grid Store or provider.
 - A non-empty active recipe with missing current fulfillment is `Unfulfilled`; Online may invoke Manager only at
   an allowed lifecycle boundary.
+- Timeline writers must enter a Cadence-owned reserve-aware seal operation. Getter validates exact Cadence and
+  Timeline policy, then selects the latest healthy R-eligible fulfillment; healthy bootstrap shortage is a
+  distinct `ReserveBootstrapRawOnly` state rather than `Unfulfilled` fallback.
 - Frozen Prepared/Started recovery binds the frozen completion/tool identity before current configuration;
   Prepared performs no derived open and Started refuses before connection construction.
 - Timeline/Control/Store failures remain typed Busy/Stale/Invalid/Unsupported/Indeterminate outcomes. Hosts do

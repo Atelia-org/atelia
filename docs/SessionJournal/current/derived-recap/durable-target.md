@@ -14,6 +14,10 @@ control/recap-grid/v1/refs/<ref>/timelines/<timeline>/
   lifetime.lock
   writer.lock
 
+control/recap-grid/v1/refs/<ref>/cadence/
+  cadence.json
+  cadence.lock
+
 derived/recap-grid/v1/
   grid.sqlite
   lifetime.lock
@@ -21,7 +25,8 @@ derived/recap-grid/v1/
 
 HistoryTimeline 使用 per-Ref locator 和 durable SQLite ledger，保存 policies、rows、whole head 以及
 selected-path persistent indexes。Control 的 single canonical `control.json` 保存完整 state graph、active
-recipe、operation receipts 与 whole head。Grid SQLite保存 canonical cells、row views 与 fulfilled records。
+recipe、operation receipts 与 whole head。Cadence保存per-Ref R、exact expected Timeline partition fields、
+generation/domain digest；它不属于SessionJournal RuntimeConfig。Grid SQLite保存 canonical cells、row views 与 fulfilled records。
 
 ## Durable rules
 

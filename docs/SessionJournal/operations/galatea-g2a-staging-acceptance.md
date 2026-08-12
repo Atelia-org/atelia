@@ -5,9 +5,9 @@
 
 ## 1. Goal and trust zones
 
-从一份exact legacy export创建新的SessionJournal staging，显式provision Timeline/Control/Grid，再从
+从一份exact legacy export创建新的SessionJournal staging，显式provision Timeline/Cadence/Control/Grid，再从
 disposable clones运行deterministic或real-provider Galatea canary。raw events与selected `RefId` lineage是会话
-authority；Timeline/Control/Grid是独立companion authorities。
+authority；Timeline/Cadence/Control/Grid是独立companion authorities。
 
 每轮使用全新的run root：
 
@@ -53,13 +53,14 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 
 准备strict bounded inputs：
 
-- Timeline initial policy：partition algorithm、HistoryLoad estimator、target load、max raw events、max rendered bytes；
+- Timeline/Cadence initial policy：partition algorithm、HistoryLoad estimator、target load、minimum recent load、
+  max raw events、max rendered bytes；本runbook目标值为B=60,000、R=24,000；
 - Control admission：permissions、allowed families/capabilities/carriers/prefixes与budgets；
 - canonical Family/Definition values，或code-owned exact built-in asset id；
 - exact route manifest与Completion connections；`semanticModelId`必须显式，含`null`；
 - Galatea `recapGrid` config：deferred route path、bounded profile files、exact current profile id。
 
-先取得selected RefId，再显式创建三域：
+先取得selected RefId，再显式创建四域：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
@@ -67,6 +68,7 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   --confirm-ref "$ref_id" --admission "$admission" \
   --partition-algorithm "$partition_algorithm" \
   --history-load-estimator "$estimator" \
+  --minimum-recent-history-load "$minimum_recent" \
   --target-history-load "$target_load" \
   --max-raw-events "$max_raw" \
   --max-rendered-bytes "$max_rendered"
@@ -99,6 +101,7 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 recap-grid timeline sync ...
 recap-grid timeline inspect --input "$staging_repo"
 recap-grid timeline verify --input "$staging_repo"
+recap-grid cadence inspect --input "$staging_repo" --branch main
 recap-grid control inspect --input "$staging_repo"
 recap-grid control verify --input "$staging_repo"
 recap-grid inspect --input "$staging_repo"

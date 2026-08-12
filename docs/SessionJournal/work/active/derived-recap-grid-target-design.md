@@ -118,8 +118,9 @@ TimelineId/RefId/schema/generation/head且包含当前active head的verified bac
 
 首版partition规则固定为：从上一row的`EndInclusive`之后开始，沿selected lineage选择累计
 `MeasuredHistoryLoad >= TargetHistoryLoadAtCreation`的**第一个**replay-safe boundary。这样同一raw path和policy的row
-边界不受某次后台任务启动早晚影响。`MinimumRecentHistoryLoad`不属于Timeline partition；若主线Context需要保留recent
-tail，由ContextComposer/SessionJournal raw-tail policy负责。达到该policy revision记录的`MaxRawEvents`或
+边界不受某次后台任务启动早晚影响。`MinimumRecentHistoryLoad`不属于Timeline partition，而由per-Ref repo-owned
+RecapGrid Cadence V1 policy持有；Cadence同时提交exact expected partition fields，并由non-forgeable seal operation
+在first-safe B candidate之外证明recent tail `>=R`。达到该policy revision记录的`MaxRawEvents`或
 `MaxRenderedBytes` segment cap仍无法到达目标时返回typed limit failure；online bounded evidence不足时返回
 `OfflineBootstrapRequired`，不得偷偷打开全History scan。
 
@@ -751,6 +752,7 @@ commands：
 recap-grid init
 recap-grid timeline create|sync|inspect|verify|export|backup|restore|abandon
 recap-grid timeline history-load inspect
+recap-grid cadence inspect|set-reserve
 recap-grid control create|inspect|verify|export|put-family|put-definition|compose-full-recipe|put-recipe|provision-built-in|activate|promote|backup|restore|reinitialize
 recap-grid build|progress|materialize
 recap-grid legacy-root inspect|archive|delete
@@ -915,6 +917,11 @@ ToolResult raw-tail，且紧随其后的completion读取active contribution。Ga
 0 warning / 0 error、vulnerable package scan零命中、docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0）。
 WP-08现已formalize这些callers、删除candidate nesting和old owners；final source evidence与外部`NotRun` gates见
 [`WP-08 completion record`](derived-recap-grid-wp08-atomic-cutover.md#implementation-completion-record2026-08-12)。
+Post-cutover cadence A0-A2随后交付独立repo-owned Cadence authority、reserve-aware online/offline Timeline seal与
+reserve-aware Getter/context selection；target deployment policy为B=60,000、R=24,000。单次seal/build-read/anchor
+共用262,144 raw-event operation cap；它是typed bounded work，不是长期容量方案。C2 rolling built-in、C3 incremental
+Manager、C4 rollover/retention与C5 cyber activation仍由
+[`cadence/capacity audit`](derived-recap-grid-cadence-capacity-and-activation-audit.md)保持Open。
 WP-01C final evidence为Timeline 156/156、raw 19/19、walking 13/13、
 public surface 2/2、solution build 0 warning / 0 error、docs 15/0、diff clean与两路independent GO；commit evidence由containing commit提供。
 其后WP-02 final evidence为Abstractions 15/15、Control 26/26、Control public surface 2/2、Walking/architecture 13/13，

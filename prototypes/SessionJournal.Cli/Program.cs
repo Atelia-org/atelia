@@ -319,7 +319,10 @@ internal static class Program {
             + "--confirm-length <bytes> --confirm-sha256 <sha256>"
         );
         Console.WriteLine(
-            "  recap-grid <scaffold|init|timeline|control|build|progress|materialize> ..."
+            "  recap-grid <scaffold|init|timeline|control|cadence|build|progress|materialize> ..."
+        );
+        Console.WriteLine(
+            "  recap-grid cadence inspect|set-reserve --input <repo-dir> ..."
         );
         Console.WriteLine(
             "  recap-grid timeline history-load inspect --input <repo-dir> "

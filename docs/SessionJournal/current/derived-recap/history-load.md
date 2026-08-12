@@ -40,6 +40,12 @@ HistoryLoad只测量SessionJournal提供的dependency-closed `SessionHistoryPlan
 若尚未到target则返回typed `NotEnough`；若在找到safe boundary前触及raw/rendered hard cap则返回
 `LimitExceeded`。exact-hit terminal probe必须区分“刚好N条且已结束”与“N+1条仍存在”。
 
+`MinimumRecentHistoryLoad`不进入Timeline partition revision。它由per-Ref repo-owned RecapGrid Cadence
+canonical V1 policy持有；同一policy还提交上述五个partition字段的exact期望值。目标部署值是
+`TargetHistoryLoad B=60,000`、`MinimumRecentHistoryLoad R=24,000`。Timeline仍选择first-safe B boundary，
+Cadence-owned seal operation另证明candidate之后的selected raw suffix至少保留R；因此理想首封门槛是84,000，
+replay-safe overshoot时门槛相应上移。
+
 ## 4. Canonical row evidence
 
 一个Timeline row descriptor提交exact raw range、rendered-byte evidence、creation policy digest、estimator
@@ -57,12 +63,17 @@ identity。打开旧row时使用其creation policy和estimator，而不是当前
   captured raw head。同一audit snapshot可以签发独立cursors，但每个cursor都是one-shot且fail closed。
 - policy change、append、reconcile和abandon/restore都比较whole `TimelineHeadRef`。policy CAS即使semantic
   no-op也推进generation，使旧capture失效。
+- Online/offline/CLI writers只经Cadence seal facade提交row；同一次multi-row loop冻结一个Cadence snapshot，
+  raw/Timeline/Cadence任一drift均fail closed。seal、build-read reserve anchor与Getter selection共享
+  `HistoryRecentReserveOperationLimits.MaximumRawEvents = 262,144`；这是单operation work cap，不是segment cap或长期容量。
 
 ## 6. Consumers
 
 RecapGrid Manager通过HistoryTimeline public Reader/build-read-session消费已提交rows与exact selected segment；
 它不重新估算HistoryLoad或复制raw reducer。Getter沿selected row/view chains做pure read。CLI的
 `recap-grid timeline history-load inspect`只报告该owner的measurement，不成为新的cadence authority。
+`recap-grid cadence inspect` pure-read读取durable policy；`cadence set-reserve`要求exact Ref/head并只CAS更新R，
+保留B/estimator/algorithm/caps。
 
 Provider pricing/calibration可把HistoryLoad换算成估算成本，但换算参数属于operational tooling，不能进入
 Timeline row、recipe、cell或fulfilled identity。

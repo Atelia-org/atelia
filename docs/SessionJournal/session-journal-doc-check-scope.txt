@@ -8,6 +8,7 @@ docs/SessionJournal/current/derived-recap/concepts.md
 docs/SessionJournal/current/derived-recap/durable-target.md
 docs/SessionJournal/current/derived-recap/history-load.md
 docs/SessionJournal/current/derived-recap/planner-config.md
+docs/SessionJournal/work/active/derived-recap-grid-cadence-capacity-and-activation-audit.md
 docs/SessionJournal/current/host-integration/derived-recap-host-integration.md
 docs/SessionJournal/current/recovery/uncertain-external-effects.md
 docs/SessionJournal/operations/galatea-g2a-staging-acceptance.md
