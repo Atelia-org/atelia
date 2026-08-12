@@ -115,7 +115,8 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
             path,
             writer.BranchRefId,
             policy,
-            _estimator
+            _estimator,
+            onlineRawCaptureLimit: policy.MaxRawEvents
         );
         _ = writer.AppendObservation("first");
         HistorySegmentDescriptor first = PlanAndCommit(
@@ -241,7 +242,8 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
             path,
             writer.BranchRefId,
             policy,
-            _estimator
+            _estimator,
+            onlineRawCaptureLimit: policy.MaxRawEvents
         );
         _ = writer.AppendObservation("first");
         HistorySegmentDescriptor first = PlanAndCommit(
@@ -337,6 +339,8 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
             coordinator = new HistoryTimelineCoordinator(
                 path,
                 ledger,
+                new HistoryTimelineCoordinatorTestHooks(
+                    OnlineRawCaptureLimit: policy.MaxRawEvents),
                 estimator
             );
             var rows = new List<HistorySegmentDescriptor>();
@@ -690,12 +694,19 @@ public sealed class HistoryTimelineReconciliationAndOpenSegmentTests
         string path,
         RefId refId,
         PartitionPolicyRevision policy,
-        IHistoryUnitLoadEstimator estimator
-    ) => new(
-        path,
-        new InMemoryHistoryTimelineLedger(refId, policy),
-        estimator
-    );
+        IHistoryUnitLoadEstimator estimator,
+        int? onlineRawCaptureLimit = null
+    ) => onlineRawCaptureLimit is null
+        ? new HistoryTimelineCoordinator(
+            path,
+            new InMemoryHistoryTimelineLedger(refId, policy),
+            estimator)
+        : new HistoryTimelineCoordinator(
+            path,
+            new InMemoryHistoryTimelineLedger(refId, policy),
+            new HistoryTimelineCoordinatorTestHooks(
+                OnlineRawCaptureLimit: onlineRawCaptureLimit),
+            estimator);
 
     private static SessionSelectedLineageForwardCursor OpenCursor(
         SessionJournalEngine offline,

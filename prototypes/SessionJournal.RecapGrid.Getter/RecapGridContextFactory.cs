@@ -1,24 +1,29 @@
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 
 namespace Atelia.SessionJournal.RecapGrid.Getter;
 
 public static class RecapGridContextFactory {
     public static RecapGridContextOpenResult Open(
-        SessionJournalReadView selectedRef
-    ) => OpenCore(selectedRef, GetterTestHooks.None);
+        SessionJournalReadView selectedRef,
+        params IHistoryUnitLoadEstimator[] estimators
+    ) => OpenCore(selectedRef, GetterTestHooks.None, estimators);
 
     internal static RecapGridContextOpenResult OpenForTest(
         SessionJournalReadView selectedRef,
-        GetterTestHooks hooks
-    ) => OpenCore(selectedRef, hooks);
+        GetterTestHooks hooks,
+        params IHistoryUnitLoadEstimator[] estimators
+    ) => OpenCore(selectedRef, hooks, estimators);
 
     private static RecapGridContextOpenResult OpenCore(
         SessionJournalReadView selectedRef,
-        GetterTestHooks hooks
+        GetterTestHooks hooks,
+        IHistoryUnitLoadEstimator[] estimators
     ) {
         ArgumentNullException.ThrowIfNull(selectedRef);
         ArgumentNullException.ThrowIfNull(hooks);
+        ArgumentNullException.ThrowIfNull(estimators);
         hooks.ProvenanceBudget?.Validate();
         string repositoryPath;
         Atelia.EventJournal.RefId refId;
@@ -30,23 +35,23 @@ public static class RecapGridContextFactory {
             return new RecapGridContextOpenResult.DisposedRawAuthority();
         }
 
-        HistoryTimelineReaderOpenResult timelineOpened =
-            HistoryTimelineMaintenance.OpenReader(repositoryPath, refId);
-        if (timelineOpened is not HistoryTimelineReaderOpenResult.Opened
+        HistoryTimelineBuildReadSessionOpenResult timelineOpened =
+            HistoryTimelineFactory.OpenBuildReadSession(selectedRef, estimators);
+        if (timelineOpened is not HistoryTimelineBuildReadSessionOpenResult.Opened
                 timeline) {
             return timelineOpened switch {
-                HistoryTimelineReaderOpenResult.Absent
+                HistoryTimelineBuildReadSessionOpenResult.Absent
                     => new RecapGridContextOpenResult.TimelineAbsent(),
-                HistoryTimelineReaderOpenResult.Busy
+                HistoryTimelineBuildReadSessionOpenResult.Busy
                     => new RecapGridContextOpenResult.Busy(
                         RecapGridContextComponent.Timeline
                     ),
-                HistoryTimelineReaderOpenResult.UnsupportedSchema schema
+                HistoryTimelineBuildReadSessionOpenResult.UnsupportedSchema schema
                     => new RecapGridContextOpenResult.UnsupportedSchema(
                         RecapGridContextComponent.Timeline,
                         schema.SchemaVersion
                     ),
-                HistoryTimelineReaderOpenResult.Invalid invalid
+                HistoryTimelineBuildReadSessionOpenResult.Invalid invalid
                     => new RecapGridContextOpenResult.Invalid(
                         RecapGridContextComponent.Timeline,
                         invalid.Code,
@@ -60,11 +65,43 @@ public static class RecapGridContextFactory {
             };
         }
 
+        RecapGridCadenceReaderOpenResult cadenceOpened =
+            RecapGridCadenceFactory.OpenReader(selectedRef);
+        if (cadenceOpened is not RecapGridCadenceReaderOpenResult.Opened
+                cadence) {
+            timeline.Session.Dispose();
+            return cadenceOpened switch {
+                RecapGridCadenceReaderOpenResult.Absent
+                    => new RecapGridContextOpenResult.CadenceAbsent(),
+                RecapGridCadenceReaderOpenResult.Busy
+                    => new RecapGridContextOpenResult.Busy(
+                        RecapGridContextComponent.Cadence),
+                RecapGridCadenceReaderOpenResult.UnsupportedSchema schema
+                    => new RecapGridContextOpenResult.UnsupportedSchema(
+                        RecapGridContextComponent.Cadence, schema.Version),
+                RecapGridCadenceReaderOpenResult.PlatformUnsupported
+                    => new RecapGridContextOpenResult.Invalid(
+                        RecapGridContextComponent.Cadence,
+                        "CadencePlatformUnsupported",
+                        "The RecapGrid Cadence platform is unsupported."),
+                RecapGridCadenceReaderOpenResult.Invalid invalid
+                    => new RecapGridContextOpenResult.Invalid(
+                        RecapGridContextComponent.Cadence,
+                        invalid.Code,
+                        invalid.Detail),
+                _ => new RecapGridContextOpenResult.Invalid(
+                    RecapGridContextComponent.Cadence,
+                    "CadenceOpenOutcomeInvalid",
+                    "RecapGrid Cadence returned an unknown open outcome.")
+            };
+        }
+
         RecapGridControlReaderOpenResult controlOpened =
             RecapGridControlFactory.OpenReader(repositoryPath, refId);
         if (controlOpened is not RecapGridControlReaderOpenResult.Opened
                 control) {
-            timeline.Handle.Dispose();
+            cadence.Handle.Dispose();
+            timeline.Session.Dispose();
             return controlOpened switch {
                 RecapGridControlReaderOpenResult.Absent
                     => new RecapGridContextOpenResult.ControlAbsent(),
@@ -100,7 +137,8 @@ public static class RecapGridContextFactory {
 
         var lifetime = new GetterLifetime(
             repositoryPath,
-            timeline.Handle,
+            timeline.Session,
+            cadence.Handle,
             control.Handle
         );
         return new RecapGridContextOpenResult.Opened(

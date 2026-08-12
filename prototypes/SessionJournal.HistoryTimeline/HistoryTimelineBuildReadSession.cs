@@ -10,24 +10,54 @@ namespace Atelia.SessionJournal.HistoryTimeline;
 public sealed class HistoryTimelineBuildReadSession : IDisposable {
     private readonly HistoryTimelineHandle _ownedHandle;
     private readonly SJ.SessionJournalReadView _selectedRef;
+    private readonly HistoryRecentReserveAnchorReadLimits
+        _recentReserveLimits;
+    private readonly int _rawCaptureLimit;
 
     internal HistoryTimelineBuildReadSession(
         HistoryTimelineHandle ownedHandle,
-        SJ.SessionJournalReadView selectedRef
+        SJ.SessionJournalReadView selectedRef,
+        HistoryRecentReserveAnchorReadLimits? recentReserveLimits = null,
+        int? rawCaptureLimit = null
     ) {
         _ownedHandle = ownedHandle;
         _selectedRef = selectedRef;
+        _recentReserveLimits = recentReserveLimits
+            ?? HistoryRecentReserveAnchorReadLimits.Production;
+        _recentReserveLimits.Validate();
+        _rawCaptureLimit = rawCaptureLimit
+            ?? HistoryRecentReserveOperationLimits.MaximumRawEvents;
+        if (_rawCaptureLimit is < 1
+            or > HistoryRecentReserveOperationLimits.MaximumRawEvents) {
+            throw new ArgumentOutOfRangeException(nameof(rawCaptureLimit));
+        }
     }
 
     public ActiveTimelineLocator Locator => _ownedHandle.Locator;
     public HistoryTimelineReader Reader => _ownedHandle.Reader;
 
+    public HistoryRecentReserveAnchorResult FindRecentReserveAnchor(
+        TimelineHeadRef expectedWholeHead,
+        Atelia.EventJournal.EventAddress completionBoundary,
+        HistoryRecentReserveRequirement requirement,
+        CancellationToken cancellationToken = default
+    ) => HistoryRecentReserveAnchorFinder.Find(
+        _ownedHandle.Coordinator,
+        Reader,
+        _selectedRef,
+        expectedWholeHead,
+        completionBoundary,
+        requirement,
+        _recentReserveLimits,
+        cancellationToken);
+
     public OnlineSelectedRawCaptureResult CaptureRaw(
         TimelineHeadRef expectedWholeHead,
         CancellationToken cancellationToken = default
-    ) => _ownedHandle.Coordinator.CaptureOnline(
+    ) => _ownedHandle.Coordinator.CaptureBuildRead(
         expectedWholeHead,
         _selectedRef,
+        _rawCaptureLimit,
         cancellationToken
     );
 

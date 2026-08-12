@@ -557,6 +557,9 @@ public sealed partial class RecapGridManager {
         OnlineSelectedRawCaptureResult.BackendBusy
             => Unavailable(RecapGridBuildDependency.Timeline,
                 "TimelineBusy"),
+        OnlineSelectedRawCaptureResult.LimitExceeded limit
+            => Unavailable(RecapGridBuildDependency.RawHistory,
+                "RecentReserveOperationLimitExceeded", limit.Limit),
         OnlineSelectedRawCaptureResult.Invalid invalid
             => Unavailable(RecapGridBuildDependency.RawHistory,
                 invalid.Code, invalid.Detail),

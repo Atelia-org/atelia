@@ -63,6 +63,14 @@ public static class HistoryPartitionPolicyLimits {
             .MaxBaselineRelativeWindowUtf8Bytes;
 }
 
+/// <summary>
+/// One repository-wide bound for recent-reserve authority operations. This is
+/// deliberately independent from the per-row partition raw-event cap.
+/// </summary>
+public static class HistoryRecentReserveOperationLimits {
+    public const int MaximumRawEvents = 262_144;
+}
+
 public sealed record PartitionPolicyRevision {
     private PartitionPolicyRevision(
         TimelineId timelineId,

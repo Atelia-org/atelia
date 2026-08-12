@@ -58,7 +58,7 @@ public static class RecapGridOnlineFactory {
             sealAvailable.Operation.Dispose();
 
             RecapGridContextOpenResult getterOpened =
-                RecapGridContextFactory.Open(selectedRef);
+                RecapGridContextFactory.Open(selectedRef, estimators);
             if (getterOpened is not RecapGridContextOpenResult.Opened available) {
                 return MapGetterOpen(getterOpened);
             }
@@ -175,6 +175,9 @@ public static class RecapGridOnlineFactory {
         RecapGridContextOpenResult.TimelineAbsent
             => new RecapGridOnlineOpenResult.Absent(
                 RecapGridOnlineComponent.Timeline),
+        RecapGridContextOpenResult.CadenceAbsent
+            => new RecapGridOnlineOpenResult.Absent(
+                RecapGridOnlineComponent.Cadence),
         RecapGridContextOpenResult.ControlAbsent
             => new RecapGridOnlineOpenResult.Absent(
                 RecapGridOnlineComponent.Control),
@@ -201,6 +204,8 @@ public static class RecapGridOnlineFactory {
             => RecapGridOnlineComponent.RawAuthority,
         RecapGridContextComponent.Timeline
             => RecapGridOnlineComponent.Timeline,
+        RecapGridContextComponent.Cadence
+            => RecapGridOnlineComponent.Cadence,
         RecapGridContextComponent.Control
             => RecapGridOnlineComponent.Control,
         RecapGridContextComponent.Store

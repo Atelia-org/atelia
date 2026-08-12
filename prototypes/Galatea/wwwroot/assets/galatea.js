@@ -284,6 +284,14 @@
         recapPlanningSummary.textContent = "RecapGrid raw-only";
         recapPlanningDetail.textContent = "当前没有可组合的 active recap；请求仍可使用 raw history。";
         break;
+      case "reserve-bootstrap-raw-only": {
+        const reserve = snapshot.reserveBootstrap;
+        recapPlanningSummary.textContent = "RecapGrid reserve bootstrap";
+        recapPlanningDetail.textContent = reserve
+          ? `当前保留 HistoryLoad ${recapGridCountFormatter.format(reserve.retainedHistoryLoad)} / ${recapGridCountFormatter.format(reserve.requiredHistoryLoad)}；本次请求仅使用 raw history。`
+          : "当前 recent reserve 尚不足；本次请求仅使用 raw history。";
+        break;
+      }
       case "frontier":
         recapPlanningSummary.textContent ||= "RecapGrid 存在待构建 frontier";
         recapPlanningDetail.textContent = `${snapshot.orderedMissing?.length ?? 0} 个有界 assignment 等待构建。`;

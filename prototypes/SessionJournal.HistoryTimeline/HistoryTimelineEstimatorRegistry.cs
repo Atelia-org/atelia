@@ -4,7 +4,8 @@ internal sealed record HistoryTimelineCoordinatorTestHooks(
     Action<Atelia.EventJournal.EventAddress>?
         BeforeOfflineReconcileBoundaryProbe = null,
     int? RecentReserveForwardRangeEventCap = null,
-    int? RecentReserveInitialForwardRangeEventCount = null
+    int? RecentReserveInitialForwardRangeEventCount = null,
+    int? OnlineRawCaptureLimit = null
 );
 
 internal interface IHistoryTimelineEstimatorResolver {

@@ -30,7 +30,10 @@ internal static class GalateaRecapGridReadiness {
         ArgumentNullException.ThrowIfNull(selectedRef);
         cancellationToken.ThrowIfCancellationRequested();
         RecapGridContextOpenResult opened =
-            RecapGridContextFactory.Open(selectedRef);
+            RecapGridContextFactory.Open(
+                selectedRef,
+                new O200kBaseHistoryUnitLoadEstimator()
+            );
         if (opened is not RecapGridContextOpenResult.Opened available) {
             return RequireRawHead(
                 selectedRef,
@@ -47,6 +50,8 @@ internal static class GalateaRecapGridReadiness {
         RecapGridReadinessSnapshotDto result = resolved switch {
             RecapGridContextResolveResult.RawHistoryAuthorized
                 => Exact("raw-only", capturedRawHead),
+            RecapGridContextResolveResult.ReserveBootstrapRawOnly bootstrap
+                => ReserveBootstrap(capturedRawHead, bootstrap.Evidence),
             RecapGridContextResolveResult.Selected selected
                 => new RecapGridReadinessSnapshotDto(
                     ExactFreshness,
@@ -114,6 +119,33 @@ internal static class GalateaRecapGridReadiness {
         };
         return RequireRawHead(selectedRef, capturedRawHead, result);
     }
+
+    private static RecapGridReadinessSnapshotDto ReserveBootstrap(
+        EventAddress capturedRawHead,
+        RecapGridReserveBootstrapEvidence evidence
+    ) => new(
+        ExactFreshness,
+        "reserve-bootstrap-raw-only",
+        Format(capturedRawHead),
+        ReserveBootstrap: new RecapGridReserveBootstrapEvidenceDto(
+            evidence.TimelineHead.RefId.ToString(),
+            evidence.TimelineHead.TimelineId.Value!,
+            evidence.TimelineHead.Generation,
+            evidence.TimelineHead.HeadRowId?.Value,
+            evidence.CadenceHead.Generation,
+            evidence.CadenceHead.DomainDigest.Value!,
+            evidence.ControlHead.Generation,
+            evidence.ControlHead.StateDigest.Value!,
+            evidence.StoreIdentity.InstanceId.Value!,
+            evidence.StoreIdentity.SchemaVersion,
+            evidence.RetainedHistoryLoad.Value,
+            evidence.RequiredHistoryLoad.Value,
+            evidence.VerifiedRows,
+            new RecapGridReserveBootstrapMetricsDto(
+                evidence.Metrics.ExaminedTimelineRows,
+                evidence.Metrics.ExaminedRawEvents,
+                evidence.Metrics.ExaminedHistoryUnits,
+                evidence.Metrics.ExaminedRenderedUtf8Bytes)));
 
     private static RecapGridReadinessSnapshotDto InspectUnfulfilled(
         SessionJournalReadView selectedRef,
@@ -257,6 +289,8 @@ internal static class GalateaRecapGridReadiness {
     ) => result switch {
         RecapGridContextOpenResult.TimelineAbsent
             => Exact("unprovisioned", rawHead, code: "timeline-absent"),
+        RecapGridContextOpenResult.CadenceAbsent
+            => Exact("unprovisioned", rawHead, code: "cadence-absent"),
         RecapGridContextOpenResult.ControlAbsent
             => Exact("unprovisioned", rawHead, code: "control-absent"),
         RecapGridContextOpenResult.Busy busy

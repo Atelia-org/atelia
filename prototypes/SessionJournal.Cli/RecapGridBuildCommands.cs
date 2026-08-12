@@ -198,7 +198,8 @@ internal static partial class RecapGridCommands {
         bool includeContent = options.HasSingleFlag("include-content");
         using SessionJournalEngine engine = OpenBranch(options);
         RecapGridContextOpenResult opened = RecapGridContextFactory.Open(
-            engine.ReadView
+            engine.ReadView,
+            new O200kBaseHistoryUnitLoadEstimator()
         );
         if (opened is not RecapGridContextOpenResult.Opened context) {
             return Print("materialize", "open-failed", opened, 2);
@@ -221,6 +222,14 @@ internal static partial class RecapGridCommands {
             );
             if (resolved is RecapGridContextResolveResult.RawHistoryAuthorized) {
                 return Print("materialize", "raw-history-authorized");
+            }
+            if (resolved is RecapGridContextResolveResult.ReserveBootstrapRawOnly
+                    bootstrap) {
+                return Print(
+                    "materialize",
+                    "reserve-bootstrap-raw-only",
+                    bootstrap.Evidence
+                );
             }
             if (resolved is not RecapGridContextResolveResult.Selected selected) {
                 return Print("materialize", ResolveStatus(resolved), resolved, 2);
@@ -382,6 +391,8 @@ internal static partial class RecapGridCommands {
                 => "ordinal-unavailable",
             RecapGridContextResolveResult.LimitExceeded => "limit-exceeded",
             RecapGridContextResolveResult.Unfulfilled => "unfulfilled",
+            RecapGridContextResolveResult.ReserveBootstrapRawOnly
+                => "reserve-bootstrap-raw-only",
             RecapGridContextResolveResult.Stale => "stale",
             RecapGridContextResolveResult.NotOnSelectedPath
                 => "not-on-selected-path",

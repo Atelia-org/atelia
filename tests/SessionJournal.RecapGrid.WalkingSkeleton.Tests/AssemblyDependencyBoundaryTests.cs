@@ -108,6 +108,7 @@ public sealed class AssemblyDependencyBoundaryTests {
                 "../SessionJournal/SessionJournal.csproj",
                 "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
                 "../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj",
+                "../SessionJournal.RecapGrid.Cadence/SessionJournal.RecapGrid.Cadence.csproj",
                 "../SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj",
                 "../SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj"
             ],

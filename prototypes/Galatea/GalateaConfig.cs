@@ -140,6 +140,30 @@ public sealed record RecapGridReadinessMetricsDto(
     int MissingAssignments
 );
 
+public sealed record RecapGridReserveBootstrapMetricsDto(
+    int ExaminedTimelineRows,
+    int ExaminedRawEvents,
+    int ExaminedHistoryUnits,
+    int ExaminedRenderedUtf8Bytes
+);
+
+public sealed record RecapGridReserveBootstrapEvidenceDto(
+    string RefId,
+    string TimelineId,
+    long TimelineGeneration,
+    string? TimelineHeadRowId,
+    long CadenceGeneration,
+    string CadenceDomainDigest,
+    long ControlGeneration,
+    string ControlStateDigest,
+    string StoreInstanceId,
+    int StoreSchemaVersion,
+    long RetainedHistoryLoad,
+    long RequiredHistoryLoad,
+    int VerifiedRows,
+    RecapGridReserveBootstrapMetricsDto Metrics
+);
+
 public sealed record RecapGridMissingAssignmentDto(
     int Ordinal,
     string RowId,
@@ -156,7 +180,8 @@ public sealed record RecapGridReadinessSnapshotDto(
     RecapGridReadinessMetricsDto? Metrics = null,
     IReadOnlyList<RecapGridMissingAssignmentDto>? OrderedMissing = null,
     string? Code = null,
-    string? Detail = null
+    string? Detail = null,
+    RecapGridReserveBootstrapEvidenceDto? ReserveBootstrap = null
 );
 
 public sealed record RecentTurnsResponseDto(

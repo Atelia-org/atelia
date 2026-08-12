@@ -33,6 +33,9 @@ public abstract record OnlineSelectedRawCaptureResult {
 
     public sealed record BackendBusy : OnlineSelectedRawCaptureResult;
 
+    public sealed record LimitExceeded(string Limit)
+        : OnlineSelectedRawCaptureResult;
+
     public sealed record Invalid(string Code, string Detail)
         : OnlineSelectedRawCaptureResult;
 }

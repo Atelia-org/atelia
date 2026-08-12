@@ -4,7 +4,8 @@ using Atelia.SessionJournal.RecapGrid.Cadence;
 namespace Atelia.SessionJournal.Cli;
 
 internal static partial class RecapGridCommands {
-    private const int MaximumRecapGridAuditEvents = 262_144;
+    private const int MaximumRecapGridAuditEvents =
+        HistoryRecentReserveOperationLimits.MaximumRawEvents;
     internal static readonly AsyncLocal<Action?> BeforeAuditCompleteForTest =
         new();
     internal static readonly AsyncLocal<int?> MaximumAuditEventsForTest =

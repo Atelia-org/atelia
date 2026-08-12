@@ -350,6 +350,9 @@ public static class HistoryTimelineFactory {
             var coordinator = new HistoryTimelineCoordinator(
                 repositoryPath,
                 ledger,
+                new HistoryTimelineCoordinatorTestHooks(
+                    OnlineRawCaptureLimit:
+                        hooks.OnlineRawCaptureLimit),
                 lifetime,
                 estimators
             );

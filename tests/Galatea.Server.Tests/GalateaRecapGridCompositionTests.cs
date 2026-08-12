@@ -8,6 +8,7 @@ using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Control;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Manager;
@@ -210,6 +211,40 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             providerCallsBeforeReadiness,
             candidateFactory.Client.DispatchCallCount
         );
+
+        UpdateMinimumRecentHistoryLoad(
+            session.Engine,
+            minimumRecentHistoryLoad: 1_000_000);
+        IReadOnlyDictionary<string, string> bootstrapBytes =
+            SnapshotDomainFiles(path);
+        RecapGridReadinessSnapshotDto bootstrap =
+            GalateaRecapGridReadiness.Inspect(
+                session.Engine.ReadView,
+                rawHead,
+                CancellationToken.None);
+        Assert.Equal("exact", bootstrap.Freshness);
+        Assert.Equal("reserve-bootstrap-raw-only", bootstrap.State);
+        Assert.Null(bootstrap.Authority);
+        RecapGridReserveBootstrapEvidenceDto evidence = Assert.IsType<
+            RecapGridReserveBootstrapEvidenceDto>(
+                bootstrap.ReserveBootstrap);
+        Assert.Equal(fulfilledHead.RefId.ToString(), evidence.RefId);
+        Assert.Equal(fulfilledHead.TimelineId.Value, evidence.TimelineId);
+        Assert.Equal(fulfilledHead.Generation, evidence.TimelineGeneration);
+        Assert.Equal(
+            fulfilledHead.HeadRowId?.Value,
+            evidence.TimelineHeadRowId);
+        Assert.True(
+            evidence.RetainedHistoryLoad < evidence.RequiredHistoryLoad);
+        Assert.True(evidence.VerifiedRows > 0);
+        Assert.True(evidence.Metrics.ExaminedTimelineRows > 0);
+        Assert.Equal(bootstrapBytes, SnapshotDomainFiles(path));
+        Assert.Equal(
+            providerCallsBeforeReadiness,
+            candidateFactory.Client.DispatchCallCount);
+        UpdateMinimumRecentHistoryLoad(
+            session.Engine,
+            minimumRecentHistoryLoad: 1);
 
         RemoveFulfillmentForTest(path);
         IReadOnlyDictionary<string, string> missingFulfillmentBytes =
@@ -414,10 +449,23 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         );
         Assert.Empty(cliRequest.TailMessages);
         Assert.Empty(galateaRequest.TailMessages);
+        Assert.Equal(
+            cliRequest.PromptPrefix.SharedContextMessages.Count(),
+            galateaRequest.PromptPrefix.SharedContextMessages.Count()
+        );
+        Assert.Equal(2, cliRequest.PromptPrefix.SharedContextMessages.Count());
+        Assert.Equal(
+            Assert.IsType<ActionMessage>(
+                cliRequest.PromptPrefix.SharedContextMessages[0]
+            ).GetFlattenedText(),
+            Assert.IsType<ActionMessage>(
+                galateaRequest.PromptPrefix.SharedContextMessages[0]
+            ).GetFlattenedText()
+        );
         ObservationMessage cliTail = Assert.IsType<ObservationMessage>(
-            Assert.Single(cliRequest.PromptPrefix.SharedContextMessages));
+            cliRequest.PromptPrefix.SharedContextMessages[^1]);
         ObservationMessage galateaTail = Assert.IsType<ObservationMessage>(
-            Assert.Single(galateaRequest.PromptPrefix.SharedContextMessages));
+            galateaRequest.PromptPrefix.SharedContextMessages[^1]);
         Assert.Equal(
             "same next clue",
             cliTail.Content);
@@ -1013,6 +1061,20 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                     maxRawEvents: 64,
                     maxRenderedBytes: 1024 * 1024),
                 _estimator));
+        Assert.IsType<RecapGridCadenceCreateResult.Created>(
+            RecapGridCadenceFactory.Create(
+                writer,
+                new RecapGridCadencePolicySpec(
+                    minimumRecentHistoryLoad: 1,
+                    HistoryPartitionAlgorithms
+                        .FirstReplaySafeBoundaryAtTargetV1,
+                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                    targetHistoryLoad: 1,
+                    maxRawEvents: 64,
+                    maxRenderedBytes: 1024 * 1024
+                )
+            )
+        );
         Assert.IsType<RecapGridControlCreateResult.Created>(
             RecapGridControlFactory.Create(
                 writer.Path,
@@ -1025,6 +1087,29 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                     ["galatea."],
                     maximumBootstrapRows: 64,
                     maximumProjectedCalls: 1_024)));
+    }
+
+    private static void UpdateMinimumRecentHistoryLoad(
+        SessionJournalEngine writer,
+        long minimumRecentHistoryLoad
+    ) {
+        using RecapGridCadenceHandle cadence = Assert.IsType<
+            RecapGridCadenceOpenResult.Opened>(
+                RecapGridCadenceFactory.OpenMutable(writer)).Handle;
+        RecapGridCadenceSnapshot current = Assert.IsType<
+            RecapGridCadenceReadResult.Available>(
+                cadence.Reader.ReadSnapshot()).Snapshot;
+        RecapGridCadencePolicySpec policy = current.Policy;
+        Assert.IsType<RecapGridCadenceCompareExchangeResult.Updated>(
+            cadence.Coordinator.CompareExchangePolicy(
+                current.Head,
+                new RecapGridCadencePolicySpec(
+                    minimumRecentHistoryLoad,
+                    policy.PartitionAlgorithmId,
+                    policy.HistoryLoadEstimatorId,
+                    policy.TargetHistoryLoad,
+                    policy.MaxRawEvents,
+                    policy.MaxRenderedBytes)));
     }
 
     private static RecapGridAgentControlProfile AgentProfile() {
@@ -1277,7 +1362,10 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         } while (cursor is not null);
         using RecapGridContextHandle getter = Assert.IsType<
             RecapGridContextOpenResult.Opened>(
-            RecapGridContextFactory.Open(raw.ReadView)).Handle;
+            RecapGridContextFactory.Open(
+                raw.ReadView,
+                new O200kBaseHistoryUnitLoadEstimator()
+            )).Handle;
         RecapGridContextSelection selection = Assert.IsType<
             RecapGridContextResolveResult.Selected>(
             getter.Resolve(raw.ReadCurrentHead()!.Value, 0)).Selection;
@@ -1301,15 +1389,33 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
 
     private static void CopyDirectory(string source, string destination) {
         Directory.CreateDirectory(destination);
+        CopyUnixMode(source, destination);
         foreach (string directory in Directory.EnumerateDirectories(
                      source, "*", SearchOption.AllDirectories)) {
-            Directory.CreateDirectory(Path.Combine(
-                destination, Path.GetRelativePath(source, directory)));
+            string target = Path.Combine(
+                destination,
+                Path.GetRelativePath(source, directory)
+            );
+            Directory.CreateDirectory(target);
+            CopyUnixMode(directory, target);
         }
         foreach (string file in Directory.EnumerateFiles(
                      source, "*", SearchOption.AllDirectories)) {
-            File.Copy(file, Path.Combine(
-                destination, Path.GetRelativePath(source, file)));
+            string target = Path.Combine(
+                destination,
+                Path.GetRelativePath(source, file)
+            );
+            File.Copy(file, target);
+            CopyUnixMode(file, target);
+        }
+    }
+
+    private static void CopyUnixMode(string source, string destination) {
+        if (OperatingSystem.IsLinux()) {
+            File.SetUnixFileMode(
+                destination,
+                File.GetUnixFileMode(source)
+            );
         }
     }
 

@@ -1478,7 +1478,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         if (!scenario.Foldable) {
             // A request-context fold cannot materialize a suffix whose
             // final Action/tool dependency is still open.
-            Assert.Throws<InvalidDataException>(() =>
+            Assert.Throws<SessionSelectedLineageOpenDependencyException>(() =>
                 SessionTailContextProjection.FoldSuffix(
                     seed,
                     suffix

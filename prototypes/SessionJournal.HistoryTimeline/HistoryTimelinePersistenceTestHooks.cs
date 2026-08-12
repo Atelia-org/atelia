@@ -26,7 +26,8 @@ internal sealed record HistoryTimelinePersistenceTestHooks(
     Action? AfterRestoreReplace = null,
     Action? AfterBoundaryProbeOpened = null,
     Action? BeforeBoundaryProbeLookupQuery = null,
-    Action? AfterLifetimeClosing = null
+    Action? AfterLifetimeClosing = null,
+    int? OnlineRawCaptureLimit = null
 ) {
     internal static HistoryTimelinePersistenceTestHooks None { get; }
         = new();

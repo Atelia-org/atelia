@@ -1,4 +1,5 @@
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Getter;
 using Xunit;
@@ -33,6 +34,20 @@ public sealed class GetterPublicSurfaceTests : IDisposable {
                 estimator
             )
         );
+        Assert.IsType<RecapGridCadenceCreateResult.Created>(
+            RecapGridCadenceFactory.Create(
+                journal,
+                new RecapGridCadencePolicySpec(
+                    minimumRecentHistoryLoad: 1,
+                    HistoryPartitionAlgorithms
+                        .FirstReplaySafeBoundaryAtTargetV1,
+                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                    targetHistoryLoad: 1,
+                    maxRawEvents: 8,
+                    maxRenderedBytes: 1024 * 1024
+                )
+            )
+        );
         var admission = new RecapGridControlAdmission(
             RecapGridControlPermission.Create,
             [],
@@ -52,7 +67,7 @@ public sealed class GetterPublicSurfaceTests : IDisposable {
 
         RecapGridContextHandle getter = Assert.IsType<
             RecapGridContextOpenResult.Opened>(
-            RecapGridContextFactory.Open(journal.ReadView)
+            RecapGridContextFactory.Open(journal.ReadView, estimator)
         ).Handle;
         string storePath = Path.Combine(
             _path,

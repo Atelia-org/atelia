@@ -4,6 +4,7 @@ using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
+using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Store;
 using Xunit;
@@ -311,11 +312,19 @@ public sealed class OnlineVerticalTests : IDisposable {
         using SessionJournalEngine writer = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model", "system", "online"));
-        _ = writer.AppendObservation("The behavior of X is suspicious.");
-        _ = writer.AppendImportedAgentAction(
-            new ActionMessage([new ActionBlock.Text("Investigate X.")]),
-            new CompletionDescriptor("import", "v1", "model"));
-        ProvisionTimelineAndControl(writer);
+        for (int index = 0; index < 12; index++) {
+            _ = writer.AppendObservation(
+                $"The behavior of X-{index} is suspicious.");
+            _ = writer.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text($"Investigate X-{index}.")
+                ]),
+                new CompletionDescriptor("import", "v1", "model"));
+        }
+        ProvisionTimelineAndControl(
+            writer,
+            maxRawEvents: 3,
+            minimumRecentHistoryLoad: 30);
         var executor = new FillingExecutor();
         await using RecapGridOnlineContextHandle online = Assert.IsType<
             RecapGridOnlineOpenResult.Opened>(
@@ -323,9 +332,13 @@ public sealed class OnlineVerticalTests : IDisposable {
                 RecapGridOnlineLimits.Production, _estimator)
         ).Handle;
         EventAddress boundary = writer.ReadCurrentHead()!.Value;
-        Assert.IsType<RecapGridOnlinePassResult.RawHistoryAuthorized>(
-            await online.PreparePassAsync(
-                writer.ReadView, IdleRequest(boundary)));
+        var agent = new CountingTextCompletionClient();
+        writer.UseRuntime(Runtime(online, agent));
+        _ = await writer.SendAsync(
+            boundary,
+            "seal the offline Timeline before provisioning recap");
+        boundary = writer.ReadCurrentHead()!.Value;
+        Assert.Equal(0, executor.CallCount);
 
         TimelineHeadRef timelineHead = ReadTimelineHead(writer);
         using HistoryTimelineHandle timeline = Assert.IsType<
@@ -338,6 +351,13 @@ public sealed class OnlineVerticalTests : IDisposable {
                 timelineHead,
                 timelineHead.HeadRowId!.Value)
         ).Row;
+        SessionCurrentLineagePrefix prefix = writer.ReadView
+            .ReadLineagePrefixAt(
+                boundary,
+                HistoryRecentReserveOperationLimits.MaximumRawEvents);
+        Assert.True(Assert.IsType<
+            SessionCurrentLineageAnchorLookup.Found>(
+                prefix.Lookup(row.Descriptor.EndInclusive)).Index > 3);
         Assert.IsType<RecapGridStoreCreateResult.Created>(
             RecapGridStoreFactory.Create(path));
         (FamilyDefinition family, MaintainerDefinitionRevision definition) =
@@ -380,15 +400,27 @@ public sealed class OnlineVerticalTests : IDisposable {
                     RecapGridControlActivationPurpose.Direct));
         }
 
-        Assert.IsType<RecapGridOnlinePassResult.Ready>(
-            await online.PreparePassAsync(
-                writer.ReadView, IdleRequest(boundary)));
+        _ = await writer.SendAsync(
+            boundary,
+            "build recap from the offline-sealed Timeline");
+        boundary = writer.ReadCurrentHead()!.Value;
         int firstBuildCalls = executor.CallCount;
         Assert.True(firstBuildCalls > 0);
         Assert.IsType<RecapGridOnlinePassResult.Ready>(
             await online.PreparePassAsync(
-                writer.ReadView, IdleRequest(boundary)));
+                writer.ReadView,
+                new SessionContextLifecycleRequest(
+                    new SessionContextSelectionRequest(boundary, 0),
+                    SessionExecutionPhase.AwaitingAgentAction,
+                    SessionContextLifecycleTrigger.ObservationAccepted)));
         Assert.Equal(firstBuildCalls, executor.CallCount);
+        using RecapGridContextHandle getter = Assert.IsType<
+            RecapGridContextOpenResult.Opened>(
+                RecapGridContextFactory.Open(
+                    writer.ReadView,
+                    _estimator)).Handle;
+        Assert.IsType<RecapGridContextResolveResult.Selected>(
+            getter.Resolve(boundary, nthPrevious: 0));
     }
 
     [Fact]
@@ -1032,7 +1064,8 @@ public sealed class OnlineVerticalTests : IDisposable {
 
     private void ProvisionTimelineAndControl(
         SessionJournalEngine writer,
-        int maxRawEvents = 64
+        int maxRawEvents = 64,
+        int minimumRecentHistoryLoad = 1
     ) {
         Assert.IsType<HistoryTimelineCreateResult.Created>(
             HistoryTimelineFactory.Create(
@@ -1050,7 +1083,7 @@ public sealed class OnlineVerticalTests : IDisposable {
             RecapGridCadenceFactory.Create(
                 writer,
                 new RecapGridCadencePolicySpec(
-                    minimumRecentHistoryLoad: 1,
+                    minimumRecentHistoryLoad,
                     HistoryPartitionAlgorithms
                         .FirstReplaySafeBoundaryAtTargetV1,
                     O200kBaseHistoryUnitLoadEstimator.EstimatorId,

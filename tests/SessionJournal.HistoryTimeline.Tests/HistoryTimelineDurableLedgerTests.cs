@@ -1788,7 +1788,14 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             ));
             refId = journal.BranchRefId;
             timelineId = created.Locator.ActiveTimelineId;
-            using HistoryTimelineHandle handle = Open(journal);
+            using HistoryTimelineHandle handle = Assert.IsType<
+                HistoryTimelineOpenResult.Opened>(
+                    HistoryTimelineFactory.OpenForTest(
+                        journal.ReadView,
+                        HistoryTimelineStorageLimits.Production,
+                        new HistoryTimelinePersistenceTestHooks(
+                            OnlineRawCaptureLimit: 3),
+                        _estimator)).Handle;
             var rows = new List<HistorySegmentDescriptor>();
             for (int index = 0; index < 10; index++) {
                 _ = journal.AppendObservation($"main-{index}");

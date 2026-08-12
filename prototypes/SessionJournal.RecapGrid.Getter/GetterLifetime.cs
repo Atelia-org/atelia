@@ -1,4 +1,5 @@
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Store;
 using System.Security.Cryptography;
@@ -7,7 +8,9 @@ namespace Atelia.SessionJournal.RecapGrid.Getter;
 
 internal sealed class GetterLifetime : IDisposable {
     private readonly object _gate = new();
-    private readonly HistoryTimelineReaderHandle _timeline;
+    private static readonly AsyncLocal<GetterLifetime?> CallbackOwner = new();
+    private readonly HistoryTimelineBuildReadSession _timeline;
+    private readonly RecapGridCadenceReaderHandle _cadence;
     private readonly RecapGridControlReaderHandle _control;
     private readonly string _repositoryPath;
     private readonly string _ownerNonce = Convert.ToHexStringLower(
@@ -20,15 +23,19 @@ internal sealed class GetterLifetime : IDisposable {
 
     internal GetterLifetime(
         string repositoryPath,
-        HistoryTimelineReaderHandle timeline,
+        HistoryTimelineBuildReadSession timeline,
+        RecapGridCadenceReaderHandle cadence,
         RecapGridControlReaderHandle control
     ) {
         _repositoryPath = repositoryPath;
         _timeline = timeline;
+        _cadence = cadence;
         _control = control;
     }
 
+    internal HistoryTimelineBuildReadSession TimelineSession => _timeline;
     internal HistoryTimelineReader Timeline => _timeline.Reader;
+    internal RecapGridCadenceReader Cadence => _cadence.Reader;
     internal RecapGridControlReader Control => _control.Reader;
     internal string OwnerNonce => _ownerNonce;
 
@@ -38,7 +45,9 @@ internal sealed class GetterLifetime : IDisposable {
                 return null;
             }
             _operations = checked(_operations + 1);
-            return new Operation(this);
+            GetterLifetime? previous = CallbackOwner.Value;
+            CallbackOwner.Value = this;
+            return new Operation(this, previous);
         }
     }
 
@@ -88,6 +97,10 @@ internal sealed class GetterLifetime : IDisposable {
 
     public void Dispose() {
         lock (_gate) {
+            if (ReferenceEquals(CallbackOwner.Value, this)) {
+                _closing = true;
+                return;
+            }
             if (_closing) {
                 while (!_disposed) {
                     Monitor.Wait(_gate);
@@ -98,27 +111,45 @@ internal sealed class GetterLifetime : IDisposable {
             while (_operations != 0) {
                 Monitor.Wait(_gate);
             }
-            _store?.Dispose();
-            _control.Dispose();
-            _timeline.Dispose();
-            _disposed = true;
-            Monitor.PulseAll(_gate);
+            DisposeOwned();
         }
     }
 
-    private void Exit() {
+    private void Exit(GetterLifetime? previous) {
+        CallbackOwner.Value = previous;
         lock (_gate) {
             _operations--;
             if (_operations == 0) {
+                if (_closing && !_disposed) {
+                    DisposeOwned();
+                }
                 Monitor.PulseAll(_gate);
             }
         }
     }
 
+    private void DisposeOwned() {
+        try {
+            _store?.Dispose();
+            _control.Dispose();
+            _cadence.Dispose();
+            _timeline.Dispose();
+        }
+        finally {
+            _disposed = true;
+            Monitor.PulseAll(_gate);
+        }
+    }
+
     internal sealed class Operation : IDisposable {
         private GetterLifetime? _owner;
-        internal Operation(GetterLifetime owner) => _owner = owner;
-        public void Dispose() => Interlocked.Exchange(ref _owner, null)?.Exit();
+        private readonly GetterLifetime? _previous;
+        internal Operation(GetterLifetime owner, GetterLifetime? previous) {
+            _owner = owner;
+            _previous = previous;
+        }
+        public void Dispose() => Interlocked.Exchange(ref _owner, null)
+            ?.Exit(_previous);
     }
 
     internal abstract record StoreOpen {

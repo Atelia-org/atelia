@@ -1128,6 +1128,75 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
+    public async Task MatureReserveBootstrapRequiresSameLifecycleAuthorization() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(Terminal("authorized"));
+        var source = new TestContextCandidateSource {
+            ForcedStatus =
+                SessionContextCandidateSelectionStatus.RawHistoryAuthorized
+        };
+        var lifecycle = new TestContextLifecycle {
+            Result = SessionContextLifecycleResult.RawHistoryAuthorized
+        };
+        using var engine = SessionJournalEngine.Create(path, CreateOptions());
+        engine.AppendObservation("settled observation");
+        _ = engine.AppendImportedAgentAction(
+            new ActionMessage([new ActionBlock.Text("settled action")]),
+            new CompletionDescriptor("import", "v1", "model-A")
+        );
+        engine.UseRuntime(CreateRuntime(client, source) with {
+            ContextLifecycle = lifecycle
+        });
+
+        TurnResult result = await engine.SendAsync(
+            "new observation",
+            CancellationToken.None
+        );
+
+        Assert.Equal("authorized", result.Message.GetFlattenedText());
+        Assert.Equal(2, lifecycle.InvocationCount);
+        Assert.Equal(0, source.MaterializationCount);
+        Assert.Single(client.Requests);
+    }
+
+    [Fact]
+    public async Task MatureReserveBootstrapWithoutSameLifecycleAuthorizationFailsClosed() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource {
+            ForcedStatus =
+                SessionContextCandidateSelectionStatus.RawHistoryAuthorized
+        };
+        var lifecycle = new TestContextLifecycle {
+            Result = SessionContextLifecycleResult.Ready
+        };
+        using var engine = SessionJournalEngine.Create(path, CreateOptions());
+        engine.AppendObservation("settled observation");
+        _ = engine.AppendImportedAgentAction(
+            new ActionMessage([new ActionBlock.Text("settled action")]),
+            new CompletionDescriptor("import", "v1", "model-A")
+        );
+        EventAddress head = engine.InspectExecutionBoundary().Head!.Value;
+        engine.UseRuntime(CreateRuntime(client, source) with {
+            ContextLifecycle = lifecycle
+        });
+
+        SessionJournalNotReadyException error = await Assert.ThrowsAsync<
+            SessionJournalNotReadyException>(() => engine.SendAsync(
+                "must remain ephemeral",
+                CancellationToken.None
+            ));
+
+        Assert.Equal(
+            SessionJournalNotReadyReason.ContextCandidateUnavailable,
+            error.Reason
+        );
+        Assert.Equal(head, engine.InspectExecutionBoundary().Head);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
     public async Task MatureLegacyImport_RawHistoryAuthorizedCanContinueOnline() {
         string path = NewJournalPath();
         var client = new ScriptedClient();

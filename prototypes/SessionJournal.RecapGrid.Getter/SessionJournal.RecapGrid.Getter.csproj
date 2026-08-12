@@ -10,6 +10,7 @@
     <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Cadence/SessionJournal.RecapGrid.Cadence.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj" />
   </ItemGroup>

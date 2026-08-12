@@ -3592,6 +3592,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
             case SessionContextCandidateSelectionStatus.EmptyLineage:
                 RequireNoSelectedDescriptor(selection);
                 break;
+            case SessionContextCandidateSelectionStatus.RawHistoryAuthorized:
+                RequireNoSelectedDescriptor(selection);
+                return;
             case SessionContextCandidateSelectionStatus
                     .ExactPublishedSetInvalid:
                 RequireNoSelectedDescriptor(selection);
@@ -3978,6 +3981,36 @@ public sealed partial class SessionJournalEngine : IDisposable {
             return;
         }
         if (selection.Status
+            == SessionContextCandidateSelectionStatus.RawHistoryAuthorized) {
+            RequireNoSelectedDescriptor(selection);
+            if (!allowMatureRawHistory) {
+                throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ContextCandidateUnavailable,
+                    "Mature raw history requires authorization from the same lifecycle pass before the observation append."
+                );
+            }
+            SessionHistoryPlanningWindow rawHistory =
+                ReadHistoryPlanningWindowAt(
+                    currentBoundary,
+                    startExclusive: null,
+                    cancellationToken
+                );
+            CompletionRequest rawHistoryProjectedRequest =
+                BuildProjectedCompletionRequest(
+                    runtime,
+                    governingSetup,
+                    tools,
+                    rawHistory,
+                    ImmutableArray<SessionContextContribution>.Empty,
+                    projectedObservation
+                );
+            EnforceProjectedCanonicalRequestByteGuard(
+                runtime,
+                rawHistoryProjectedRequest
+            );
+            return;
+        }
+        if (selection.Status
             == SessionContextCandidateSelectionStatus.OrdinalUnavailable) {
             RequireNoSelectedDescriptor(selection);
             throw new SessionJournalNotReadyException(
@@ -4089,6 +4122,20 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 allowMatureRawHistory,
                 cancellationToken
             );
+            return SelectRawHistoryCandidate(
+                completionBoundary,
+                cancellationToken
+            );
+        }
+        if (selection.Status
+            == SessionContextCandidateSelectionStatus.RawHistoryAuthorized) {
+            RequireNoSelectedDescriptor(selection);
+            if (!allowMatureRawHistory) {
+                throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ContextCandidateUnavailable,
+                    "Mature raw history requires authorization from the same lifecycle pass."
+                );
+            }
             return SelectRawHistoryCandidate(
                 completionBoundary,
                 cancellationToken
@@ -4237,6 +4284,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         if (selection.Candidate is not null
             || selection.Status is not (
                 SessionContextCandidateSelectionStatus.EmptyLineage
+                or SessionContextCandidateSelectionStatus.RawHistoryAuthorized
                 or SessionContextCandidateSelectionStatus.OrdinalUnavailable
                 or SessionContextCandidateSelectionStatus
                     .ExactPublishedSetInvalid
@@ -4275,6 +4323,12 @@ public sealed partial class SessionJournalEngine : IDisposable {
                     SessionJournalNotReadyReason.ContextCandidateUnavailable,
                     selection.Detail
                     ?? $"The required context anchor is beyond the configured lineage prefix {phase}."
+                );
+            case SessionContextCandidateSelectionStatus.RawHistoryAuthorized:
+                RequireNoSelectedDescriptor(selection);
+                throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ContextCandidateUnavailable,
+                    $"Mature raw history is not authorized by the same lifecycle pass {phase}."
                 );
         }
     }

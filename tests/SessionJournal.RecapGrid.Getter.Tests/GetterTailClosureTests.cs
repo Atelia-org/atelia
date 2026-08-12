@@ -1,5 +1,6 @@
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Store;
@@ -8,6 +9,154 @@ using Xunit;
 namespace Atelia.SessionJournal.RecapGrid.Getter.Tests;
 
 public sealed partial class GetterVerticalTests {
+    [Fact]
+    public async Task ReserveBootstrapIsDistinctAndSameLifecycleAuthorized() {
+        using Fixture fixture = await CreateBuiltFixture(turns: 2);
+        UpdateCadence(fixture.Journal, minimumRecentHistoryLoad: 1_000_000);
+        using RecapGridContextHandle getter = OpenGetter(fixture.Journal);
+        EventAddress boundary = fixture.Journal.ReadCurrentHead()!.Value;
+
+        RecapGridContextResolveResult.ReserveBootstrapRawOnly bootstrap =
+            Assert.IsType<
+                RecapGridContextResolveResult.ReserveBootstrapRawOnly>(
+                getter.Resolve(boundary, 0)
+            );
+        Assert.Equal(fixture.TimelineHead, bootstrap.Evidence.TimelineHead);
+        Assert.Equal(fixture.Rows.Count, bootstrap.Evidence.VerifiedRows);
+        Assert.True(
+            bootstrap.Evidence.RetainedHistoryLoad.Value
+                < bootstrap.Evidence.RequiredHistoryLoad.Value
+        );
+        Assert.Equal(
+            SessionContextCandidateSelectionStatus.RawHistoryAuthorized,
+            (await getter.SelectAsync(
+                new SessionContextSelectionRequest(boundary, 0),
+                CancellationToken.None
+            )).Status
+        );
+        Assert.Equal(
+            SessionContextLifecycleStatus.RawHistoryAuthorized,
+            (await getter.PrepareAsync(
+                fixture.Journal.ReadView,
+                new SessionContextLifecycleRequest(
+                    new SessionContextSelectionRequest(boundary, 0),
+                    SessionExecutionPhase.Idle,
+                    SessionContextLifecycleTrigger.PreObservation,
+                    "pending"
+                ),
+                CancellationToken.None
+            )).Status
+        );
+    }
+
+    [Fact]
+    public async Task CadenceHeadFencesSelectionAndPolicyMismatchFailsClosed() {
+        using Fixture fixture = await CreateBuiltFixture(turns: 1);
+        using RecapGridContextHandle getter = OpenGetter(fixture.Journal);
+        EventAddress boundary = fixture.Journal.ReadCurrentHead()!.Value;
+        RecapGridContextSelection selected = Select(getter, boundary);
+
+        UpdateCadence(fixture.Journal, minimumRecentHistoryLoad: 2);
+        RecapGridContextMaterializeResult.Stale stale = Assert.IsType<
+            RecapGridContextMaterializeResult.Stale>(
+            getter.Materialize(selected)
+        );
+        Assert.Equal(RecapGridContextComponent.Cadence, stale.Component);
+
+        UpdateCadence(
+            fixture.Journal,
+            minimumRecentHistoryLoad: 2,
+            targetHistoryLoad: 2
+        );
+        using RecapGridContextHandle mismatched = OpenGetter(fixture.Journal);
+        RecapGridContextResolveResult.Invalid invalid = Assert.IsType<
+            RecapGridContextResolveResult.Invalid>(
+            mismatched.Resolve(boundary, 0)
+        );
+        Assert.Equal("CadenceTimelinePolicyMismatch", invalid.Code);
+    }
+
+    [Fact]
+    public async Task ReserveBootstrapNeverMasksUnhealthyCrossedArtifacts() {
+        using Fixture fixture = await CreateBuiltFixture(turns: 2);
+        EventAddress boundary = fixture.Journal.ReadCurrentHead()!.Value;
+        RowViewDigest crossedDigest;
+        CellDigest crossedCell;
+        using (RecapGridContextHandle getter = OpenGetter(fixture.Journal)) {
+            RecapGridContextSelection current = Select(getter, boundary);
+            crossedDigest = current.SelectedView.PreviousViewDigest!.Value;
+        }
+        using (RecapGridStoreReaderHandle store = Assert.IsType<
+               RecapGridStoreReaderOpenResult.Opened>(
+               RecapGridStoreFactory.OpenReader(fixture.Path)).Handle) {
+            RecapRowView crossed = Assert.IsType<
+                RecapGridStoreReadResult<RecapRowView>.Found>(
+                store.Reader.ReadView(crossedDigest)
+            ).Value;
+            crossedCell = Assert.Single(crossed.OrderedCells).CellDigest;
+        }
+        UpdateCadence(fixture.Journal, minimumRecentHistoryLoad: 1_000_000);
+        ExecuteStoreSql(
+            fixture.Path,
+            "PRAGMA foreign_keys=OFF; DELETE FROM cell_artifact WHERE cell_digest=$digest;",
+            ("$digest", crossedCell.Value)
+        );
+
+        using RecapGridContextHandle unhealthy = OpenGetter(fixture.Journal);
+        RecapGridContextResolveResult.Invalid invalid = Assert.IsType<
+            RecapGridContextResolveResult.Invalid>(
+            unhealthy.Resolve(boundary, 0)
+        );
+        Assert.Equal(RecapGridContextComponent.Store, invalid.Component);
+        Assert.NotEmpty(invalid.Code);
+    }
+
+    [Fact]
+    public async Task NthPreviousStartsOnlyAfterRecentReserveAnchor() {
+        using Fixture fixture = await CreateBuiltFixture(turns: 2);
+        EventAddress boundary = fixture.Journal.ReadCurrentHead()!.Value;
+        long crossingRequirement = FindCrossingRequirement(
+            fixture,
+            boundary
+        );
+        UpdateCadence(fixture.Journal, crossingRequirement);
+        using RecapGridContextHandle getter = OpenGetter(fixture.Journal);
+
+        RecapGridContextSelection anchor = Select(getter, boundary, nth: 0);
+        Assert.Equal(
+            fixture.Rows[^2].Descriptor.RowId,
+            anchor.SelectedRowId
+        );
+        RecapGridContextSelection previous = Select(
+            getter,
+            boundary,
+            nth: 1
+        );
+        Assert.Equal(
+            fixture.Rows[^3].Descriptor.RowId,
+            previous.SelectedRowId
+        );
+    }
+
+    [Fact]
+    public async Task ReentrantDisposeClosesAfterCurrentResolve() {
+        using Fixture fixture = await CreateBuiltFixture(turns: 1);
+        RecapGridContextHandle? getter = null;
+        getter = OpenGetterForTest(
+            fixture.Journal,
+            new GetterTestHooks(BeforeTerminalFence: _ => getter!.Dispose())
+        );
+        EventAddress boundary = fixture.Journal.ReadCurrentHead()!.Value;
+
+        Assert.IsType<RecapGridContextResolveResult.Selected>(
+            getter.Resolve(boundary, 0)
+        );
+        Assert.IsType<RecapGridContextResolveResult.Disposed>(
+            getter.Resolve(boundary, 0)
+        );
+        getter.Dispose();
+    }
+
     [Fact]
     public async Task SelectionsAndNeutralDescriptorsAreOwnedByOneGetter() {
         using Fixture fixture = await CreateBuiltFixture(turns: 1);
@@ -57,6 +206,7 @@ public sealed partial class GetterVerticalTests {
             expected.CompletionBoundary,
             expected.NthPrevious,
             expected.TimelineHead,
+            expected.CadenceHead,
             expected.ControlHead,
             expected.StoreIdentity,
             expected.Recipe,
@@ -633,6 +783,75 @@ public sealed partial class GetterVerticalTests {
         SessionJournalEngine journal,
         GetterTestHooks hooks
     ) => Assert.IsType<RecapGridContextOpenResult.Opened>(
-        RecapGridContextFactory.OpenForTest(journal.ReadView, hooks)
+        RecapGridContextFactory.OpenForTest(
+            journal.ReadView,
+            hooks,
+            _estimator
+        )
     ).Handle;
+
+    private static void UpdateCadence(
+        SessionJournalEngine journal,
+        long minimumRecentHistoryLoad,
+        long targetHistoryLoad = 1
+    ) {
+        using RecapGridCadenceHandle cadence = Assert.IsType<
+            RecapGridCadenceOpenResult.Opened>(
+            RecapGridCadenceFactory.OpenMutable(journal)
+        ).Handle;
+        RecapGridCadenceSnapshot current = Assert.IsType<
+            RecapGridCadenceReadResult.Available>(
+            cadence.Reader.ReadSnapshot()
+        ).Snapshot;
+        Assert.IsType<RecapGridCadenceCompareExchangeResult.Updated>(
+            cadence.Coordinator.CompareExchangePolicy(
+                current.Head,
+                new RecapGridCadencePolicySpec(
+                    minimumRecentHistoryLoad,
+                    HistoryPartitionAlgorithms
+                        .FirstReplaySafeBoundaryAtTargetV1,
+                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                    targetHistoryLoad,
+                    maxRawEvents: 64,
+                    maxRenderedBytes: 1024 * 1024
+                )
+            )
+        );
+    }
+
+    private long FindCrossingRequirement(
+        Fixture fixture,
+        EventAddress boundary
+    ) {
+        using HistoryTimelineBuildReadSession session = Assert.IsType<
+            HistoryTimelineBuildReadSessionOpenResult.Opened>(
+            HistoryTimelineFactory.OpenBuildReadSession(
+                fixture.Journal.ReadView,
+                _estimator
+            )
+        ).Session;
+        for (long required = 2; required <= 10_000; required++) {
+            HistoryRecentReserveAnchorResult result =
+                session.FindRecentReserveAnchor(
+                    fixture.TimelineHead,
+                    boundary,
+                    new HistoryRecentReserveRequirement(
+                        fixture.TimelineHead.ActivePartitionPolicyDigest,
+                        O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                        new HistoryLoadUnit(required)
+                    )
+                );
+            if (result is HistoryRecentReserveAnchorResult.Eligible eligible
+                && eligible.HeadThroughAnchor.Count == 2) {
+                return required;
+            }
+            if (result is HistoryRecentReserveAnchorResult
+                    .ReserveBootstrapRequired) {
+                break;
+            }
+        }
+        throw new Xunit.Sdk.XunitException(
+            "The fixture did not expose a two-row recent-reserve anchor."
+        );
+    }
 }

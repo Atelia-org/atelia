@@ -54,6 +54,7 @@ public sealed partial class RecapGridContextHandle {
         RecapGridContextResolveResult? authorityFence = CheckFences(
             expected.CompletionBoundary,
             expected.TimelineHead,
+            expected.CadenceHead,
             expected.ControlHead
         );
         if (authorityFence is not null) {
@@ -230,6 +231,7 @@ public sealed partial class RecapGridContextHandle {
         RecapGridContextResolveResult? fence = CheckFences(
             selection.CompletionBoundary,
             selection.TimelineHead,
+            selection.CadenceHead,
             selection.ControlHead
         );
         if (fence is not null) {

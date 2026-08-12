@@ -56,7 +56,7 @@ public sealed class HistoryTimelineCoordinator {
         estimators
     ) { }
 
-    private HistoryTimelineCoordinator(
+    internal HistoryTimelineCoordinator(
         string repositoryPath,
         IHistoryTimelineLedgerPort ledger,
         HistoryTimelineCoordinatorTestHooks testHooks,
@@ -159,9 +159,40 @@ public sealed class HistoryTimelineCoordinator {
         TimelineHeadRef expectedWholeHead,
         SJ.SessionJournalReadView readView,
         CancellationToken cancellationToken = default
+    ) => CaptureRaw(
+        expectedWholeHead,
+        readView,
+        _testHooks.OnlineRawCaptureLimit
+            ?? HistoryRecentReserveOperationLimits.MaximumRawEvents,
+        requireSelectedHeadBoundary: false,
+        cancellationToken);
+
+    internal OnlineSelectedRawCaptureResult CaptureBuildRead(
+        TimelineHeadRef expectedWholeHead,
+        SJ.SessionJournalReadView readView,
+        int maximumRawEvents,
+        CancellationToken cancellationToken = default
+    ) => CaptureRaw(
+        expectedWholeHead,
+        readView,
+        maximumRawEvents,
+        requireSelectedHeadBoundary: true,
+        cancellationToken);
+
+    private OnlineSelectedRawCaptureResult CaptureRaw(
+        TimelineHeadRef expectedWholeHead,
+        SJ.SessionJournalReadView readView,
+        int maximumRawEvents,
+        bool requireSelectedHeadBoundary,
+        CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(expectedWholeHead);
         ArgumentNullException.ThrowIfNull(readView);
+        if (maximumRawEvents is < 1
+            or > HistoryRecentReserveOperationLimits.MaximumRawEvents) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maximumRawEvents));
+        }
         using HistoryTimelineLifetime.Operation? operation =
             _lifetime.TryEnterOperation();
         if (operation is null) {
@@ -231,7 +262,7 @@ public sealed class HistoryTimelineCoordinator {
                     actual.ActivePartitionPolicyDigest
                 );
         }
-        PartitionPolicyRevision policy = policyFound.Value;
+        _ = policyFound.Value;
         string observedRepositoryPath;
         try {
             observedRepositoryPath = CanonicalRepositoryPath(
@@ -260,7 +291,7 @@ public sealed class HistoryTimelineCoordinator {
             HistoryTimelineOnlineRawPort.Capture(
             readView,
             expectedWholeHead,
-            policy.MaxRawEvents,
+            maximumRawEvents,
             cancellationToken
         );
         RefId capturedRef = result switch {
@@ -275,6 +306,49 @@ public sealed class HistoryTimelineCoordinator {
                 "RawRefMismatch",
                 "The SessionJournal read view belongs to another Ref."
             );
+        }
+        if (requireSelectedHeadBoundary
+            && result is OnlineSelectedRawCaptureResult.Captured buildCaptured
+            && actual.HeadRowId is { } headRowId) {
+            HistoryTimelineStoreReadResult<HistorySegmentDescriptor>
+                rowRead = _ledger.ReadRow(headRowId);
+            if (rowRead is HistoryTimelineStoreReadResult<
+                    HistorySegmentDescriptor>.Busy) {
+                return new OnlineSelectedRawCaptureResult.BackendBusy();
+            }
+            if (rowRead is HistoryTimelineStoreReadResult<
+                    HistorySegmentDescriptor>.UnsupportedSchema rowSchema) {
+                return new OnlineSelectedRawCaptureResult.Invalid(
+                    "TimelineStoreUnsupportedSchema",
+                    UnsupportedSchemaDetail(rowSchema.SchemaVersion));
+            }
+            if (rowRead is HistoryTimelineStoreReadResult<
+                    HistorySegmentDescriptor>.Invalid rowInvalid) {
+                return new OnlineSelectedRawCaptureResult.Invalid(
+                    rowInvalid.Code,
+                    rowInvalid.Detail);
+            }
+            if (rowRead is not HistoryTimelineStoreReadResult<
+                    HistorySegmentDescriptor>.Found rowFound) {
+                return new OnlineSelectedRawCaptureResult.Invalid(
+                    "TimelineHeadRowUnavailable",
+                    "The selected Timeline head row is unavailable.");
+            }
+            SJ.SessionCurrentLineageAnchorLookup lookup =
+                buildCaptured.Capture.Prefix.Lookup(
+                    rowFound.Value.EndInclusive);
+            if (lookup is SJ.SessionCurrentLineageAnchorLookup
+                    .BeyondPrefix) {
+                result = new OnlineSelectedRawCaptureResult.LimitExceeded(
+                    nameof(HistoryRecentReserveOperationLimits
+                        .MaximumRawEvents));
+            }
+            else if (lookup is SJ.SessionCurrentLineageAnchorLookup
+                     .OffLineage) {
+                return new OnlineSelectedRawCaptureResult.Invalid(
+                    "TimelineHeadRawBoundaryOffLineage",
+                    "The selected Timeline head raw boundary is not on the current Ref lineage.");
+            }
         }
         HistoryTimelineStoreReadResult<TimelineHeadRef> afterRead =
             _ledger.ReadSnapshot();
@@ -808,6 +882,10 @@ public sealed class HistoryTimelineCoordinator {
                 );
             case OnlineSelectedRawCaptureResult.BackendBusy:
                 return new HistoryTimelineReconcileResult.BackendBusy();
+            case OnlineSelectedRawCaptureResult.LimitExceeded limit:
+                return new HistoryTimelineReconcileResult.Invalid(
+                    "RecentReserveOperationLimitExceeded",
+                    limit.Limit);
             case OnlineSelectedRawCaptureResult.Empty empty:
                 return _ledger.ReconcileSelectedPath(
                     new HistoryTimelineReconcileCandidate(

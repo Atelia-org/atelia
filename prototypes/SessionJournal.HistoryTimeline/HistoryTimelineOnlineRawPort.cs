@@ -13,7 +13,7 @@ internal static class HistoryTimelineOnlineRawPort {
         ArgumentNullException.ThrowIfNull(readView);
         ArgumentNullException.ThrowIfNull(expectedTimelineHead);
         if (maxRawEventCount is < 1
-            or > HistoryPartitionPolicyLimits.MaximumRawEvents) {
+            or > HistoryRecentReserveOperationLimits.MaximumRawEvents) {
             throw new ArgumentOutOfRangeException(
                 nameof(maxRawEventCount)
             );

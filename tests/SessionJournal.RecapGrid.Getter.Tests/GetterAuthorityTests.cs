@@ -282,13 +282,12 @@ public sealed partial class GetterVerticalTests {
             contentFactory: static _ => string.Empty
         );
         using (RecapGridContextHandle getter = OpenGetter(empty.Journal)) {
-            RecapGridContextSelection selected = Select(
-                getter,
-                empty.Journal.ReadCurrentHead()!.Value
-            );
-            RecapGridContextMaterializeResult.Invalid invalid = Assert.IsType<
-                RecapGridContextMaterializeResult.Invalid>(
-                getter.Materialize(selected)
+            RecapGridContextResolveResult.Invalid invalid = Assert.IsType<
+                RecapGridContextResolveResult.Invalid>(
+                getter.Resolve(
+                    empty.Journal.ReadCurrentHead()!.Value,
+                    0
+                )
             );
             Assert.Equal("SelectedCellContentLimit", invalid.Code);
         }

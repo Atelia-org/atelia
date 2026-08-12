@@ -477,7 +477,8 @@ public sealed class RecapGridOnlineContextHandle :
             request.Boundary,
             request.Selection.NthPrevious,
             cancellationToken);
-        if (resolved is RecapGridContextResolveResult.RawHistoryAuthorized) {
+        if (resolved is RecapGridContextResolveResult.RawHistoryAuthorized
+            or RecapGridContextResolveResult.ReserveBootstrapRawOnly) {
             return new RecapGridOnlinePassResult.RawHistoryAuthorized();
         }
         if (resolved is RecapGridContextResolveResult.Selected
@@ -722,6 +723,9 @@ public sealed class RecapGridOnlineContextHandle :
         OnlineSelectedRawCaptureResult.BackendBusy
             => Backpressure(RecapGridOnlineComponent.Timeline,
                 "TimelineBusy", "HistoryTimeline is busy."),
+        OnlineSelectedRawCaptureResult.LimitExceeded value
+            => Backpressure(RecapGridOnlineComponent.RawAuthority,
+                "RecentReserveOperationLimitExceeded", value.Limit),
         OnlineSelectedRawCaptureResult.Invalid value
             => Unavailable(RecapGridOnlineComponent.Timeline,
                 value.Code, value.Detail),
@@ -871,6 +875,7 @@ public sealed class RecapGridOnlineContextHandle :
         RecapGridContextResolveResult result
     ) => result switch {
         RecapGridContextResolveResult.RawHistoryAuthorized
+            or RecapGridContextResolveResult.ReserveBootstrapRawOnly
             => new RecapGridOnlinePassResult.RawHistoryAuthorized(),
         RecapGridContextResolveResult.Selected
             or RecapGridContextResolveResult.OrdinalUnavailable

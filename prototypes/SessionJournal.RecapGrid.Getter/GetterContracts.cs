@@ -1,5 +1,6 @@
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Store;
 
@@ -16,6 +17,7 @@ public static class RecapGridGetterLimits {
 public enum RecapGridContextComponent {
     RawAuthority,
     Timeline,
+    Cadence,
     Control,
     Store
 }
@@ -41,6 +43,7 @@ public abstract record RecapGridContextOpenResult {
     public sealed record Opened(RecapGridContextHandle Handle)
         : RecapGridContextOpenResult;
     public sealed record TimelineAbsent : RecapGridContextOpenResult;
+    public sealed record CadenceAbsent : RecapGridContextOpenResult;
     public sealed record ControlAbsent : RecapGridContextOpenResult;
     public sealed record Busy(RecapGridContextComponent Component)
         : RecapGridContextOpenResult;
@@ -61,6 +64,7 @@ public sealed class RecapGridContextSelection {
         EventAddress completionBoundary,
         int nthPrevious,
         TimelineHeadRef timelineHead,
+        RecapGridCadenceHeadRef cadenceHead,
         ControlHeadRef controlHead,
         RecapGridStoreIdentity storeIdentity,
         GridBuildRecipe recipe,
@@ -76,6 +80,7 @@ public sealed class RecapGridContextSelection {
         CompletionBoundary = completionBoundary;
         NthPrevious = nthPrevious;
         TimelineHead = timelineHead;
+        CadenceHead = cadenceHead;
         ControlHead = controlHead;
         StoreIdentity = storeIdentity;
         Recipe = recipe;
@@ -92,6 +97,7 @@ public sealed class RecapGridContextSelection {
     public EventAddress CompletionBoundary { get; }
     public int NthPrevious { get; }
     public TimelineHeadRef TimelineHead { get; }
+    public RecapGridCadenceHeadRef CadenceHead { get; }
     public ControlHeadRef ControlHead { get; }
     public RecapGridStoreIdentity StoreIdentity { get; }
     public GridBuildRecipe Recipe { get; }
@@ -143,6 +149,9 @@ public abstract record RecapGridContextResolveResult {
 
     public sealed record RawHistoryAuthorized
         : RecapGridContextResolveResult;
+    public sealed record ReserveBootstrapRawOnly(
+        RecapGridReserveBootstrapEvidence Evidence
+    ) : RecapGridContextResolveResult;
     public sealed record Selected(RecapGridContextSelection Selection)
         : RecapGridContextResolveResult;
     public sealed record OrdinalUnavailable
@@ -171,6 +180,17 @@ public abstract record RecapGridContextResolveResult {
         string Detail
     ) : RecapGridContextResolveResult;
 }
+
+public sealed record RecapGridReserveBootstrapEvidence(
+    TimelineHeadRef TimelineHead,
+    RecapGridCadenceHeadRef CadenceHead,
+    ControlHeadRef ControlHead,
+    RecapGridStoreIdentity StoreIdentity,
+    HistoryLoadUnit RetainedHistoryLoad,
+    HistoryLoadUnit RequiredHistoryLoad,
+    int VerifiedRows,
+    HistoryRecentReserveAnchorMetrics Metrics
+);
 
 public abstract record RecapGridContextMaterializeResult {
     private RecapGridContextMaterializeResult() { }

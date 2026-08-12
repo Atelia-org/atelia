@@ -20,6 +20,11 @@ public sealed partial class RecapGridContextHandle {
                     SessionContextCandidateSelectionStatus.EmptyLineage,
                     null
                 ),
+            RecapGridContextResolveResult.ReserveBootstrapRawOnly
+                => new SessionContextCandidateSelection(
+                    SessionContextCandidateSelectionStatus.RawHistoryAuthorized,
+                    null
+                ),
             RecapGridContextResolveResult.Selected selected
                 => new SessionContextCandidateSelection(
                     SessionContextCandidateSelectionStatus.Selected,
@@ -162,6 +167,7 @@ public sealed partial class RecapGridContextHandle {
         );
         return ValueTask.FromResult(resolved switch {
             RecapGridContextResolveResult.RawHistoryAuthorized
+                or RecapGridContextResolveResult.ReserveBootstrapRawOnly
                 => SessionContextLifecycleResult.RawHistoryAuthorized,
             RecapGridContextResolveResult.Selected
                 or RecapGridContextResolveResult.OrdinalUnavailable
@@ -208,6 +214,8 @@ public sealed partial class RecapGridContextHandle {
     ) => result switch {
         RecapGridContextResolveResult.Unfulfilled
             => "The active recipe is not fulfilled at the current Timeline head.",
+        RecapGridContextResolveResult.ReserveBootstrapRawOnly
+            => "The exact fulfilled lineage is shorter than the current recent-reserve requirement.",
         RecapGridContextResolveResult.Stale stale => stale.Detail,
         RecapGridContextResolveResult.Busy busy
             => $"{busy.Component} is busy.",

@@ -517,7 +517,7 @@ public sealed partial class GetterVerticalTests : IDisposable {
 
     private RecapGridContextHandle OpenGetter(SessionJournalEngine journal)
         => Assert.IsType<RecapGridContextOpenResult.Opened>(
-            RecapGridContextFactory.Open(journal.ReadView)
+            RecapGridContextFactory.Open(journal.ReadView, _estimator)
         ).Handle;
 
     private string NewPath() {

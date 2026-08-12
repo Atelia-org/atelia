@@ -20,7 +20,8 @@ public sealed record RecapGridOnlineLimits {
         int maximumTimelineRows,
         RecapGridBuildBudget buildBudget
     ) {
-        if (maximumAuditEvents is < 1 or > 1_048_576) {
+        if (maximumAuditEvents is < 1
+            or > HistoryRecentReserveOperationLimits.MaximumRawEvents) {
             throw new ArgumentOutOfRangeException(nameof(maximumAuditEvents));
         }
         if (maximumTimelineRows is < 1
@@ -38,7 +39,8 @@ public sealed record RecapGridOnlineLimits {
     public RecapGridBuildBudget BuildBudget { get; }
 
     public static RecapGridOnlineLimits Production { get; } = new(
-        maximumAuditEvents: 262_144,
+        maximumAuditEvents:
+            HistoryRecentReserveOperationLimits.MaximumRawEvents,
         maximumTimelineRows: 4_096,
         new RecapGridBuildBudget(
             maximumSelectedRows: 4_096,

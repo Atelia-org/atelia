@@ -182,6 +182,13 @@ public enum SessionContextCandidateSelectionStatus {
     /// lineage prefix. This is temporary unavailability, not EmptyLineage or OffLineage evidence.
     /// </summary>
     BeyondPrefix = 5,
+    /// <summary>
+    /// A mature selected Timeline exists, but its exact fulfilled history is
+    /// shorter than the current durable recent-reserve requirement. Raw
+    /// history is permitted only when the same lifecycle pass explicitly
+    /// authorizes it.
+    /// </summary>
+    RawHistoryAuthorized = 6,
 }
 
 /// <summary>
