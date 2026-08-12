@@ -234,6 +234,24 @@ public sealed class SessionJournalPublicAuthorityTests : IDisposable {
             typeof(void),
             typeof(SessionRuntime)
         );
+        AssertPublicMethod(
+            engineType,
+            isStatic: false,
+            nameof(SessionJournalEngine.EnterDerivedSidecarMutation),
+            typeof(SessionJournalDerivedMutationScope),
+            typeof(string)
+        );
+        Assert.Empty(typeof(SessionJournalDerivedMutationScope)
+            .GetConstructors());
+        Assert.Equal(
+            ["Dispose", "get_ReadView"],
+            typeof(SessionJournalDerivedMutationScope).GetMethods(
+                    BindingFlags.Public
+                    | BindingFlags.Instance
+                    | BindingFlags.DeclaredOnly)
+                .Select(static method => method.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray());
     }
 
     [Fact]

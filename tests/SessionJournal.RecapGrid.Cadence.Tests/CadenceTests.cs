@@ -105,16 +105,16 @@ public sealed class CadenceTests : IDisposable {
     public void MutableOwnerCanCreateOpenReadCasAndDispose() {
         string path = NewPath();
         using SessionJournalEngine engine = CreateJournal(path);
-        Assert.IsType<RecapGridCadenceOpenResult.Absent>(
-            RecapGridCadenceFactory.Open(engine.ReadView));
+        Assert.IsType<RecapGridCadenceReaderOpenResult.Absent>(
+            RecapGridCadenceFactory.OpenReader(engine.ReadView));
 
         RecapGridCadenceSnapshot created = Assert.IsType<
             RecapGridCadenceCreateResult.Created
-        >(RecapGridCadenceFactory.Create(engine.ReadView, Policy())).Snapshot;
+        >(RecapGridCadenceFactory.Create(engine, Policy())).Snapshot;
         Assert.Equal(0, created.Head.Generation);
         using RecapGridCadenceHandle handle = Assert.IsType<
             RecapGridCadenceOpenResult.Opened
-        >(RecapGridCadenceFactory.Open(engine.ReadView)).Handle;
+        >(RecapGridCadenceFactory.OpenMutable(engine)).Handle;
         Assert.Equal(created.Head, Assert.IsType<
             RecapGridCadenceReadResult.Available
         >(handle.Reader.ReadSnapshot()).Snapshot.Head);
@@ -141,10 +141,10 @@ public sealed class CadenceTests : IDisposable {
         using SessionJournalEngine engine = CreateJournal(path);
         RecapGridCadenceSnapshot original = Assert.IsType<
             RecapGridCadenceCreateResult.Created
-        >(RecapGridCadenceFactory.Create(engine.ReadView, Policy())).Snapshot;
+        >(RecapGridCadenceFactory.Create(engine, Policy())).Snapshot;
         using RecapGridCadenceHandle handle = Assert.IsType<
             RecapGridCadenceOpenResult.Opened
-        >(RecapGridCadenceFactory.Open(engine.ReadView)).Handle;
+        >(RecapGridCadenceFactory.OpenMutable(engine)).Handle;
         RecapGridCadenceSnapshot changed = Assert.IsType<
             RecapGridCadenceCompareExchangeResult.Updated
         >(handle.Coordinator.CompareExchangePolicy(
@@ -177,15 +177,15 @@ public sealed class CadenceTests : IDisposable {
         RecapGridCadenceSnapshot snapshot = Assert.IsType<
             RecapGridCadenceCreateResult.Created
         >(RecapGridCadenceFactory.Create(
-            originalOwner.ReadView, Policy())).Snapshot;
-        Assert.IsType<RecapGridCadenceOpenResult.Absent>(
-            RecapGridCadenceFactory.Open(cloneOwner.ReadView));
+            originalOwner, Policy())).Snapshot;
+        Assert.IsType<RecapGridCadenceReaderOpenResult.Absent>(
+            RecapGridCadenceFactory.OpenReader(cloneOwner.ReadView));
         Assert.IsType<RecapGridCadenceCreateResult.Created>(
             RecapGridCadenceFactory.Create(
-                cloneOwner.ReadView, Policy(target: 60001)));
+                cloneOwner, Policy(target: 60001)));
         using RecapGridCadenceHandle originalHandle = Assert.IsType<
             RecapGridCadenceOpenResult.Opened
-        >(RecapGridCadenceFactory.Open(originalOwner.ReadView)).Handle;
+        >(RecapGridCadenceFactory.OpenMutable(originalOwner)).Handle;
         Assert.Equal(snapshot.Head, Assert.IsType<
             RecapGridCadenceReadResult.Available
         >(originalHandle.Reader.ReadSnapshot()).Snapshot.Head);
@@ -197,8 +197,8 @@ public sealed class CadenceTests : IDisposable {
         RefId refId;
         using (SessionJournalEngine engine = CreateJournal(path)) {
             refId = engine.BranchRefId;
-            Assert.IsType<RecapGridCadenceOpenResult.Absent>(
-                RecapGridCadenceFactory.Open(engine.ReadView));
+            Assert.IsType<RecapGridCadenceReaderOpenResult.Absent>(
+                RecapGridCadenceFactory.OpenReader(engine.ReadView));
             Assert.False(Directory.Exists(CadenceDirectory(path, refId)));
         }
         Assert.IsType<RecapGridCadenceInspectResult.Absent>(
@@ -224,18 +224,18 @@ public sealed class CadenceTests : IDisposable {
         });
         Task<RecapGridCadenceCreateResult> first = Task.Run(() =>
             RecapGridCadenceFactory.CreateForTest(
-                engine.ReadView, Policy(), hooks));
+                engine, Policy(), hooks));
         Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
         try {
             Assert.IsType<RecapGridCadenceCreateResult.Busy>(
-                RecapGridCadenceFactory.Create(engine.ReadView, Policy()));
+                RecapGridCadenceFactory.Create(engine, Policy()));
         }
         finally {
             release.Set();
         }
         Assert.IsType<RecapGridCadenceCreateResult.Created>(await first);
         Assert.IsType<RecapGridCadenceCreateResult.AlreadyExists>(
-            RecapGridCadenceFactory.Create(engine.ReadView, Policy()));
+            RecapGridCadenceFactory.Create(engine, Policy()));
     }
 
     [Fact]
@@ -252,12 +252,12 @@ public sealed class CadenceTests : IDisposable {
         RecapGridCadenceCreateResult.Invalid invalid = Assert.IsType<
             RecapGridCadenceCreateResult.Invalid
         >(RecapGridCadenceFactory.CreateForTest(
-            engine.ReadView, Policy(), hooks));
+            engine, Policy(), hooks));
         Assert.Equal("CadenceTemporaryIdentityChanged", invalid.Code);
         Assert.NotNull(temporary);
         Assert.Equal(foreign, File.ReadAllText(temporary!));
-        Assert.IsType<RecapGridCadenceOpenResult.Absent>(
-            RecapGridCadenceFactory.Open(engine.ReadView));
+        Assert.IsType<RecapGridCadenceReaderOpenResult.Absent>(
+            RecapGridCadenceFactory.OpenReader(engine.ReadView));
     }
 
     [Fact]
@@ -267,25 +267,25 @@ public sealed class CadenceTests : IDisposable {
         RecapGridCadenceCreateResult.Invalid before = Assert.IsType<
             RecapGridCadenceCreateResult.Invalid
         >(RecapGridCadenceFactory.CreateForTest(
-            engine.ReadView,
+            engine,
             Policy(),
             new CadencePersistenceTestHooks(
                 BeforePublish: _ => throw new IOException("before"))));
         Assert.Equal("CadenceCreateInvalid", before.Code);
-        Assert.IsType<RecapGridCadenceOpenResult.Absent>(
-            RecapGridCadenceFactory.Open(engine.ReadView));
+        Assert.IsType<RecapGridCadenceReaderOpenResult.Absent>(
+            RecapGridCadenceFactory.OpenReader(engine.ReadView));
 
         RecapGridCadenceCreateResult.CommitIndeterminate after = Assert.IsType<
             RecapGridCadenceCreateResult.CommitIndeterminate
         >(RecapGridCadenceFactory.CreateForTest(
-            engine.ReadView,
+            engine,
             Policy(),
             new CadencePersistenceTestHooks(
                 AfterPublish: _ => throw new IOException("after"))));
         Assert.Equal(after.Intended, after.Observed);
         using RecapGridCadenceHandle handle = Assert.IsType<
             RecapGridCadenceOpenResult.Opened
-        >(RecapGridCadenceFactory.Open(engine.ReadView)).Handle;
+        >(RecapGridCadenceFactory.OpenMutable(engine)).Handle;
         Assert.Equal(after.Intended, Assert.IsType<
             RecapGridCadenceReadResult.Available
         >(handle.Reader.ReadSnapshot()).Snapshot.Head);
@@ -297,7 +297,7 @@ public sealed class CadenceTests : IDisposable {
         using SessionJournalEngine engine = CreateJournal(path);
         RecapGridCadenceSnapshot created = Assert.IsType<
             RecapGridCadenceCreateResult.Created
-        >(RecapGridCadenceFactory.Create(engine.ReadView, Policy())).Snapshot;
+        >(RecapGridCadenceFactory.Create(engine, Policy())).Snapshot;
         string state = CadenceState(path, engine.BranchRefId);
         byte[] future = Encoding.UTF8.GetBytes(
             Encoding.UTF8.GetString(created.ToCanonicalBytes()).Replace(
@@ -306,11 +306,11 @@ public sealed class CadenceTests : IDisposable {
         File.WriteAllBytes(state, future);
         Assert.Equal(2, Assert.IsType<
             RecapGridCadenceOpenResult.UnsupportedSchema
-        >(RecapGridCadenceFactory.Open(engine.ReadView)).Version);
+        >(RecapGridCadenceFactory.OpenMutable(engine)).Version);
         Assert.Equal(2, Assert.IsType<
             RecapGridCadenceCreateResult.UnsupportedSchema
         >(RecapGridCadenceFactory.Create(
-            engine.ReadView, Policy())).Version);
+            engine, Policy())).Version);
     }
 
     [Fact]
@@ -319,11 +319,11 @@ public sealed class CadenceTests : IDisposable {
         using SessionJournalEngine engine = CreateJournal(path);
         RecapGridCadenceSnapshot created = Assert.IsType<
             RecapGridCadenceCreateResult.Created
-        >(RecapGridCadenceFactory.Create(engine.ReadView, Policy())).Snapshot;
+        >(RecapGridCadenceFactory.Create(engine, Policy())).Snapshot;
         using (RecapGridCadenceHandle beforeHandle = Assert.IsType<
                    RecapGridCadenceOpenResult.Opened
-               >(RecapGridCadenceFactory.OpenForTest(
-                   engine.ReadView,
+               >(RecapGridCadenceFactory.OpenMutableForTest(
+                   engine,
                    new CadencePersistenceTestHooks(
                        BeforePublish: _ => throw new IOException("before"))))
                .Handle) {
@@ -336,8 +336,8 @@ public sealed class CadenceTests : IDisposable {
         }
         using RecapGridCadenceHandle handle = Assert.IsType<
             RecapGridCadenceOpenResult.Opened
-        >(RecapGridCadenceFactory.OpenForTest(
-            engine.ReadView,
+        >(RecapGridCadenceFactory.OpenMutableForTest(
+            engine,
             new CadencePersistenceTestHooks(
                 AfterPublish: _ => throw new IOException("after"))))
             .Handle;
@@ -358,17 +358,17 @@ public sealed class CadenceTests : IDisposable {
         Directory.CreateSymbolicLink(
             Path.Combine(path, "control"), external);
         Assert.IsType<RecapGridCadenceCreateResult.Invalid>(
-            RecapGridCadenceFactory.Create(engine.ReadView, Policy()));
+            RecapGridCadenceFactory.Create(engine, Policy()));
         Assert.Empty(Directory.EnumerateFileSystemEntries(external));
         Directory.Delete(Path.Combine(path, "control"));
 
         Assert.IsType<RecapGridCadenceCreateResult.Created>(
-            RecapGridCadenceFactory.Create(engine.ReadView, Policy()));
+            RecapGridCadenceFactory.Create(engine, Policy()));
         string state = CadenceState(path, engine.BranchRefId);
         File.Delete(state);
         Assert.Equal(0, MkFifo(state, Convert.ToUInt32("600", 8)));
         Assert.IsType<RecapGridCadenceOpenResult.Invalid>(
-            RecapGridCadenceFactory.Open(engine.ReadView));
+            RecapGridCadenceFactory.OpenMutable(engine));
         File.Delete(state);
 
         Assert.IsType<RecapGridCadenceInspectResult.Invalid>(
@@ -382,9 +382,188 @@ public sealed class CadenceTests : IDisposable {
         SessionJournalReadView view = engine.ReadView;
         engine.Dispose();
         Assert.IsType<RecapGridCadenceCreateResult.Invalid>(
-            RecapGridCadenceFactory.Create(view, Policy()));
+            RecapGridCadenceFactory.Create(engine, Policy()));
+        Assert.IsType<RecapGridCadenceReaderOpenResult.Invalid>(
+            RecapGridCadenceFactory.OpenReader(view));
+    }
+
+    [Fact]
+    public void ReadOnlyOwnerCannotCreateOrOpenMutable() {
+        string path = NewPath();
+        using (SessionJournalEngine mutable = CreateJournal(path)) { }
+        using SessionJournalEngine readOnly =
+            SessionJournalEngine.OpenReadOnly(path);
+        Assert.IsType<RecapGridCadenceCreateResult.Invalid>(
+            RecapGridCadenceFactory.Create(readOnly, Policy()));
         Assert.IsType<RecapGridCadenceOpenResult.Invalid>(
-            RecapGridCadenceFactory.Open(view));
+            RecapGridCadenceFactory.OpenMutable(readOnly));
+        Assert.False(Directory.Exists(CadenceDirectory(
+            path, readOnly.BranchRefId)));
+    }
+
+    [Fact]
+    public void DisposedMutableOwnerCannotCommitThroughLeakedHandle() {
+        string path = NewPath();
+        SessionJournalEngine engine = CreateJournal(path);
+        RecapGridCadenceSnapshot created = Assert.IsType<
+            RecapGridCadenceCreateResult.Created
+        >(RecapGridCadenceFactory.Create(engine, Policy())).Snapshot;
+        using RecapGridCadenceHandle handle = Assert.IsType<
+            RecapGridCadenceOpenResult.Opened
+        >(RecapGridCadenceFactory.OpenMutable(engine)).Handle;
+        byte[] before = File.ReadAllBytes(CadenceState(
+            path, engine.BranchRefId));
+        engine.Dispose();
+
+        Assert.IsType<RecapGridCadenceCompareExchangeResult.Invalid>(
+            handle.Coordinator.CompareExchangePolicy(
+                created.Head, Policy(target: 60001)));
+        Assert.Equal(before, File.ReadAllBytes(CadenceState(
+            path, created.Head.RefId)));
+    }
+
+    [Fact]
+    public async Task OwnerDisposeDrainsPublishedCasAndRawMutationIsRefused() {
+        string path = NewPath();
+        SessionJournalEngine engine = CreateJournal(path);
+        RecapGridCadenceSnapshot created = Assert.IsType<
+            RecapGridCadenceCreateResult.Created
+        >(RecapGridCadenceFactory.Create(engine, Policy())).Snapshot;
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        using RecapGridCadenceHandle handle = Assert.IsType<
+            RecapGridCadenceOpenResult.Opened
+        >(RecapGridCadenceFactory.OpenMutableForTest(
+            engine,
+            new CadencePersistenceTestHooks(BeforePublish: _ => {
+                entered.Set();
+                release.Wait();
+            }))).Handle;
+        Task<RecapGridCadenceCompareExchangeResult> cas = Task.Run(() =>
+            handle.Coordinator.CompareExchangePolicy(
+                created.Head, Policy(target: 60001)));
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+        Assert.Throws<SessionJournalConcurrentMutationException>(() =>
+            engine.EnterDerivedSidecarMutation("competing-raw-mutation"));
+        await Assert.ThrowsAsync<SessionJournalConcurrentMutationException>(
+            () => engine.SendAsync(
+                engine.ReadCurrentHead()!.Value,
+                "must-not-append"));
+        Task dispose = Task.Run(engine.Dispose);
+        await Task.Delay(50);
+        Assert.False(dispose.IsCompleted);
+        release.Set();
+        Assert.IsType<RecapGridCadenceCompareExchangeResult.Updated>(
+            await cas);
+        await dispose;
+        Assert.IsType<RecapGridCadenceCompareExchangeResult.Invalid>(
+            handle.Coordinator.CompareExchangePolicy(
+                created.Head, Policy(target: 60002)));
+    }
+
+    [Fact]
+    public void ReentrantOwnerDisposeIsRefusedWithoutDeadlockOrLostPublish() {
+        string path = NewPath();
+        SessionJournalEngine engine = CreateJournal(path);
+        RecapGridCadenceCreateResult result =
+            RecapGridCadenceFactory.CreateForTest(
+                engine,
+                Policy(),
+                new CadencePersistenceTestHooks(BeforePublish: _ =>
+                    Assert.Throws<
+                        SessionJournalConcurrentMutationException>(
+                        engine.Dispose)));
+        Assert.IsType<RecapGridCadenceCreateResult.Created>(result);
+        Assert.NotNull(engine.ReadCurrentHead());
+        engine.Dispose();
+    }
+
+    [Fact]
+    public void HeldDirectoryFdNeverPublishesIntoSwappedAncestor() {
+        string path = NewPath();
+        string external = NewPath();
+        Directory.CreateDirectory(external);
+        using SessionJournalEngine engine = CreateJournal(path);
+        string control = Path.Combine(path, "control");
+        string displaced = Path.Combine(path, "control.displaced");
+        bool swapped = false;
+        RecapGridCadenceCreateResult result =
+            RecapGridCadenceFactory.CreateForTest(
+                engine,
+                Policy(),
+                new CadencePersistenceTestHooks(
+                    AfterDirectoryOpen: _ => {
+                        Directory.Move(control, displaced);
+                        Directory.CreateSymbolicLink(control, external);
+                        swapped = true;
+                    }));
+        Assert.True(swapped);
+        RecapGridCadenceCreateResult.CommitIndeterminate indeterminate =
+            Assert.IsType<RecapGridCadenceCreateResult.CommitIndeterminate>(
+                result);
+        Assert.Null(indeterminate.Observed);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(external));
+        Directory.Delete(control);
+        Directory.Move(displaced, control);
+    }
+
+    [Fact]
+    public void DanglingStateAndLockSlotsAreInvalidRatherThanAbsent() {
+        string statePath = NewPath();
+        using (SessionJournalEngine engine = CreateJournal(statePath)) {
+            Assert.IsType<RecapGridCadenceCreateResult.Created>(
+                RecapGridCadenceFactory.Create(engine, Policy()));
+            string state = CadenceState(statePath, engine.BranchRefId);
+            File.Delete(state);
+            File.CreateSymbolicLink(state, Path.Combine(statePath, "missing"));
+            Assert.IsType<RecapGridCadenceReaderOpenResult.Invalid>(
+                RecapGridCadenceFactory.OpenReader(engine.ReadView));
+        }
+
+        string lockPath = NewPath();
+        using SessionJournalEngine second = CreateJournal(lockPath);
+        Assert.IsType<RecapGridCadenceCreateResult.Created>(
+            RecapGridCadenceFactory.Create(second, Policy()));
+        string cadenceLock = Path.Combine(CadenceDirectory(
+            lockPath, second.BranchRefId), "cadence.lock");
+        File.Delete(cadenceLock);
+        File.CreateSymbolicLink(cadenceLock,
+            Path.Combine(lockPath, "missing"));
+        Assert.IsType<RecapGridCadenceReaderOpenResult.Invalid>(
+            RecapGridCadenceFactory.OpenReader(second.ReadView));
+    }
+
+    [Fact]
+    public void PrepublishFailurePreservesOwnedOrphanWithoutDeletingPath() {
+        string path = NewPath();
+        using SessionJournalEngine engine = CreateJournal(path);
+        Assert.IsType<RecapGridCadenceCreateResult.Invalid>(
+            RecapGridCadenceFactory.CreateForTest(
+                engine,
+                Policy(),
+                new CadencePersistenceTestHooks(
+                    BeforePublish: _ => throw new IOException("before"))));
+        Assert.Single(Directory.EnumerateFiles(
+            CadenceDirectory(path, engine.BranchRefId),
+            ".cadence.json.*.tmp"));
+        Assert.IsType<RecapGridCadenceReaderOpenResult.Absent>(
+            RecapGridCadenceFactory.OpenReader(engine.ReadView));
+    }
+
+    [Fact]
+    public void FutureSchemaDiscriminatorIsTypedBeforeV1ShapeValidation() {
+        string path = NewPath();
+        using SessionJournalEngine engine = CreateJournal(path);
+        Assert.IsType<RecapGridCadenceCreateResult.Created>(
+            RecapGridCadenceFactory.Create(engine, Policy()));
+        File.WriteAllText(CadenceState(path, engine.BranchRefId),
+            "{\"schema\":\"atelia.session-journal.recap-grid.cadence.v2\"}");
+        Assert.Equal(2, Assert.IsType<
+            RecapGridCadenceReaderOpenResult.UnsupportedSchema
+        >(RecapGridCadenceFactory.OpenReader(engine.ReadView)).Version);
+        Assert.Equal(2, Assert.IsType<
+            RecapGridCadenceCreateResult.UnsupportedSchema
+        >(RecapGridCadenceFactory.Create(engine, Policy())).Version);
     }
 
     private static RecapGridCadencePolicySpec Policy(

@@ -7,20 +7,20 @@ public static class RecapGridCadenceMaintenance {
         string repositoryPath,
         RefId refId
     ) {
-        RecapGridCadenceOpenResult opened = RecapGridCadenceFactory.OpenForMaintenance(
+        RecapGridCadenceReaderOpenResult opened = RecapGridCadenceFactory.OpenForMaintenance(
             repositoryPath, refId);
-        if (opened is not RecapGridCadenceOpenResult.Opened available) {
+        if (opened is not RecapGridCadenceReaderOpenResult.Opened available) {
             return opened switch {
-                RecapGridCadenceOpenResult.Absent
+                RecapGridCadenceReaderOpenResult.Absent
                     => new RecapGridCadenceInspectResult.Absent(),
-                RecapGridCadenceOpenResult.Busy
+                RecapGridCadenceReaderOpenResult.Busy
                     => new RecapGridCadenceInspectResult.Busy(),
-                RecapGridCadenceOpenResult.UnsupportedSchema schema
+                RecapGridCadenceReaderOpenResult.UnsupportedSchema schema
                     => new RecapGridCadenceInspectResult.UnsupportedSchema(
                         schema.Version),
-                RecapGridCadenceOpenResult.PlatformUnsupported
+                RecapGridCadenceReaderOpenResult.PlatformUnsupported
                     => new RecapGridCadenceInspectResult.PlatformUnsupported(),
-                RecapGridCadenceOpenResult.Invalid invalid
+                RecapGridCadenceReaderOpenResult.Invalid invalid
                     => new RecapGridCadenceInspectResult.Invalid(
                         invalid.Code, invalid.Detail),
                 _ => new RecapGridCadenceInspectResult.Invalid(

@@ -176,6 +176,20 @@ public abstract record RecapGridCadenceOpenResult {
         : RecapGridCadenceOpenResult;
 }
 
+public abstract record RecapGridCadenceReaderOpenResult {
+    private RecapGridCadenceReaderOpenResult() { }
+    public sealed record Opened(RecapGridCadenceReaderHandle Handle)
+        : RecapGridCadenceReaderOpenResult;
+    public sealed record Absent : RecapGridCadenceReaderOpenResult;
+    public sealed record Busy : RecapGridCadenceReaderOpenResult;
+    public sealed record UnsupportedSchema(int Version)
+        : RecapGridCadenceReaderOpenResult;
+    public sealed record PlatformUnsupported
+        : RecapGridCadenceReaderOpenResult;
+    public sealed record Invalid(string Code, string Detail)
+        : RecapGridCadenceReaderOpenResult;
+}
+
 public abstract record RecapGridCadenceInspectResult {
     private RecapGridCadenceInspectResult() { }
     public sealed record Available(RecapGridCadenceSnapshot Snapshot)

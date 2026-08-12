@@ -57,16 +57,31 @@ internal static class CadenceCanonicalCodec {
             if (root.ValueKind != JsonValueKind.Object) {
                 throw new InvalidDataException("Cadence root must be an object.");
             }
+            JsonProperty[] properties = [.. root.EnumerateObject()];
+            if (properties.Length == 0
+                || !string.Equals(
+                    properties[0].Name,
+                    "schema",
+                    StringComparison.Ordinal)
+                || properties.Count(static property => string.Equals(
+                    property.Name,
+                    "schema",
+                    StringComparison.OrdinalIgnoreCase)) != 1
+                || properties[0].Value.ValueKind
+                    != JsonValueKind.String) {
+                throw new InvalidDataException(
+                    "Cadence requires one exact leading schema discriminator.");
+            }
+            string schema = properties[0].Value.GetString()!;
+            if (!string.Equals(schema, Schema, StringComparison.Ordinal)) {
+                throw new CadenceUnsupportedSchemaException(
+                    ReadSchemaVersion(schema));
+            }
             RequireProperties(root,
                 "schema", "refId", "generation",
                 "minimumRecentHistoryLoad", "partitionAlgorithmId",
                 "historyLoadEstimatorId", "targetHistoryLoad",
                 "maxRawEvents", "maxRenderedBytes", "domainDigest");
-            string schema = ReadString(root, "schema");
-            if (!string.Equals(schema, Schema, StringComparison.Ordinal)) {
-                throw new CadenceUnsupportedSchemaException(
-                    ReadSchemaVersion(schema));
-            }
             RefId refId = RefId.ParseHex(ReadString(root, "refId")).Unwrap();
             long generation = ReadInt64(root, "generation");
             var policy = new RecapGridCadencePolicySpec(

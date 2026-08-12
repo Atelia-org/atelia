@@ -25,13 +25,18 @@ public sealed class CadencePublicSurfaceTests : IDisposable {
             1024 * 1024);
         RecapGridCadenceSnapshot created = Assert.IsType<
             RecapGridCadenceCreateResult.Created
-        >(RecapGridCadenceFactory.Create(engine.ReadView, policy)).Snapshot;
+        >(RecapGridCadenceFactory.Create(engine, policy)).Snapshot;
         using RecapGridCadenceHandle handle = Assert.IsType<
             RecapGridCadenceOpenResult.Opened
-        >(RecapGridCadenceFactory.Open(engine.ReadView)).Handle;
+        >(RecapGridCadenceFactory.OpenMutable(engine)).Handle;
         Assert.Equal(created.Head, Assert.IsType<
             RecapGridCadenceReadResult.Available
         >(handle.Reader.ReadSnapshot()).Snapshot.Head);
+        using RecapGridCadenceReaderHandle readerHandle = Assert.IsType<
+            RecapGridCadenceReaderOpenResult.Opened
+        >(RecapGridCadenceFactory.OpenReader(engine.ReadView)).Handle;
+        Assert.Null(typeof(RecapGridCadenceReaderHandle).GetProperty(
+            "Coordinator"));
 
         Type[] exported = typeof(RecapGridCadenceFactory)
             .Assembly.GetExportedTypes();
@@ -39,9 +44,9 @@ public sealed class CadencePublicSurfaceTests : IDisposable {
             type.Name.Contains("Backend", StringComparison.OrdinalIgnoreCase)
             || type.Name.Contains("FileStream", StringComparison.OrdinalIgnoreCase));
         Assert.All(typeof(RecapGridCadenceFactory).GetMethods(), method => {
-            if (method.Name is "Create" or "Open") {
+            if (method.Name is "Create" or "OpenMutable") {
                 Assert.Contains(method.GetParameters(), parameter =>
-                    parameter.ParameterType == typeof(SessionJournalReadView));
+                    parameter.ParameterType == typeof(SessionJournalEngine));
                 Assert.DoesNotContain(method.GetParameters(), parameter =>
                     parameter.ParameterType == typeof(string));
             }

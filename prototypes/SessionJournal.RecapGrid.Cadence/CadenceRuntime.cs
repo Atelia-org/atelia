@@ -4,32 +4,40 @@ namespace Atelia.SessionJournal.RecapGrid.Cadence;
 
 public static class RecapGridCadenceFactory {
     public static RecapGridCadenceCreateResult Create(
-        SessionJournalReadView readView,
+        SessionJournalEngine mutableOwner,
         RecapGridCadencePolicySpec policy
-    ) => CreateForTest(readView, policy,
+    ) => CreateForTest(mutableOwner, policy,
         CadencePersistenceTestHooks.None);
 
     internal static RecapGridCadenceCreateResult CreateForTest(
-        SessionJournalReadView readView,
+        SessionJournalEngine mutableOwner,
         RecapGridCadencePolicySpec policy,
         CadencePersistenceTestHooks hooks
     ) {
         try {
-            ArgumentNullException.ThrowIfNull(readView);
+            ArgumentNullException.ThrowIfNull(mutableOwner);
             ArgumentNullException.ThrowIfNull(policy);
             ArgumentNullException.ThrowIfNull(hooks);
-            var paths = PathsFrom(readView);
-            LinuxCadenceFiles.EnsureSlots(paths);
+            using SessionJournalDerivedMutationScope ownerScope =
+                mutableOwner.EnterDerivedSidecarMutation(
+                    "RecapGridCadence.Create");
+            CadencePaths paths = PathsFrom(ownerScope.ReadView);
+            using CadenceDirectoryLease directory =
+                LinuxCadenceFiles.OpenDirectory(
+                    paths, create: true, hooks);
+            LinuxCadenceFiles.EnsureSlots(paths, directory);
             using FileStream lease = LinuxCadenceFiles.AcquireLock(
-                paths.LockPath, exclusive: true);
-            if (LinuxCadenceFiles.EntryExists(paths.StatePath)) {
-                RecapGridCadenceSnapshot existing = ReadExact(paths);
+                directory, exclusive: true, paths.LockPath);
+            if (LinuxCadenceFiles.EntryExists(
+                    directory, CadencePaths.StateName, paths.StatePath)) {
+                RecapGridCadenceSnapshot existing = ReadExact(
+                    paths, directory);
                 return new RecapGridCadenceCreateResult.AlreadyExists(existing);
             }
             RecapGridCadenceSnapshot intended = CadenceCanonicalCodec.Create(
                 paths.RefId, generation: 0, policy);
             try {
-                LinuxCadenceFiles.WriteAtomic(paths,
+                LinuxCadenceFiles.WriteAtomic(paths, directory,
                     intended.ToCanonicalBytes(), createNew: true, hooks);
             }
             catch (CadencePublishIndeterminateException) {
@@ -43,73 +51,110 @@ public static class RecapGridCadenceFactory {
         }
     }
 
-    public static RecapGridCadenceOpenResult Open(
-        SessionJournalReadView readView
-    ) => OpenForTest(readView,
+    public static RecapGridCadenceOpenResult OpenMutable(
+        SessionJournalEngine mutableOwner
+    ) => OpenMutableForTest(mutableOwner,
         CadencePersistenceTestHooks.None);
 
-    internal static RecapGridCadenceOpenResult OpenForTest(
-        SessionJournalReadView readView,
+    internal static RecapGridCadenceOpenResult OpenMutableForTest(
+        SessionJournalEngine mutableOwner,
         CadencePersistenceTestHooks hooks
     ) {
         try {
-            ArgumentNullException.ThrowIfNull(readView);
+            ArgumentNullException.ThrowIfNull(mutableOwner);
             ArgumentNullException.ThrowIfNull(hooks);
-            var paths = PathsFrom(readView);
-            return OpenCore(paths, hooks);
+            CadencePaths paths = PathsFromMutable(mutableOwner);
+            RecapGridCadenceReader reader = OpenReaderCore(
+                paths, hooks, out CadenceLifetime lifetime);
+            return new RecapGridCadenceOpenResult.Opened(
+                new RecapGridCadenceHandle(
+                    reader,
+                    new RecapGridCadenceCoordinator(
+                        paths, lifetime, hooks, mutableOwner),
+                    lifetime));
+        }
+        catch (CadenceDirectoryAbsentException) {
+            return new RecapGridCadenceOpenResult.Absent();
         }
         catch (Exception exception) when (!CadenceError.IsFatal(exception)) {
             return MapOpen(exception);
         }
     }
 
-    internal static RecapGridCadenceOpenResult OpenForMaintenance(
+    public static RecapGridCadenceReaderOpenResult OpenReader(
+        SessionJournalReadView readView
+    ) {
+        try {
+            ArgumentNullException.ThrowIfNull(readView);
+            var paths = PathsFrom(readView);
+            RecapGridCadenceReader reader = OpenReaderCore(
+                paths,
+                CadencePersistenceTestHooks.None,
+                out CadenceLifetime lifetime);
+            return new RecapGridCadenceReaderOpenResult.Opened(
+                new RecapGridCadenceReaderHandle(reader, lifetime));
+        }
+        catch (CadenceDirectoryAbsentException) {
+            return new RecapGridCadenceReaderOpenResult.Absent();
+        }
+        catch (Exception exception) when (!CadenceError.IsFatal(exception)) {
+            return MapReaderOpen(exception);
+        }
+    }
+
+    internal static RecapGridCadenceReaderOpenResult OpenForMaintenance(
         string repositoryPath,
         RefId refId
     ) {
         try {
             var paths = new CadencePaths(repositoryPath, refId);
             ValidateRefForMaintenance(paths);
-            return OpenCore(paths, CadencePersistenceTestHooks.None);
+            RecapGridCadenceReader reader = OpenReaderCore(
+                paths,
+                CadencePersistenceTestHooks.None,
+                out CadenceLifetime lifetime);
+            return new RecapGridCadenceReaderOpenResult.Opened(
+                new RecapGridCadenceReaderHandle(reader, lifetime));
+        }
+        catch (CadenceDirectoryAbsentException) {
+            return new RecapGridCadenceReaderOpenResult.Absent();
         }
         catch (Exception exception) when (!CadenceError.IsFatal(exception)) {
-            return MapOpen(exception);
+            return MapReaderOpen(exception);
         }
     }
 
-    private static RecapGridCadenceOpenResult OpenCore(
+    private static RecapGridCadenceReader OpenReaderCore(
         CadencePaths paths,
-        CadencePersistenceTestHooks hooks
+        CadencePersistenceTestHooks hooks,
+        out CadenceLifetime lifetime
     ) {
-            if (!Directory.Exists(paths.DirectoryPath)) {
-                return new RecapGridCadenceOpenResult.Absent();
-            }
-            LinuxCadenceFiles.RequireExistingDirectoryChain(paths.DirectoryPath);
-            if (!LinuxCadenceFiles.EntryExists(paths.StatePath)) {
-                return new RecapGridCadenceOpenResult.Absent();
-            }
-            if (!LinuxCadenceFiles.EntryExists(paths.LockPath)) {
-                return new RecapGridCadenceOpenResult.Invalid(
-                    "CadenceLockAbsent",
-                    "The canonical Cadence state exists without its lock slot.");
-            }
-            using (FileStream lease = LinuxCadenceFiles.AcquireLock(
-                       paths.LockPath, exclusive: false)) {
-                _ = ReadExact(paths);
-            }
-            var lifetime = new CadenceLifetime();
-            var reader = new RecapGridCadenceReader(paths, lifetime);
-            return new RecapGridCadenceOpenResult.Opened(
-                new RecapGridCadenceHandle(
-                    reader,
-                    new RecapGridCadenceCoordinator(
-                        paths, lifetime, hooks),
-                    lifetime));
+        using CadenceDirectoryLease directory =
+            LinuxCadenceFiles.OpenDirectory(paths, create: false, hooks);
+        if (!LinuxCadenceFiles.EntryExists(
+                directory, CadencePaths.StateName, paths.StatePath)) {
+            throw new CadenceDirectoryAbsentException();
+        }
+        if (!LinuxCadenceFiles.EntryExists(
+                directory, CadencePaths.LockName, paths.LockPath)) {
+            throw new CadenceStoreException(
+                "CadenceLockAbsent",
+                "The canonical Cadence state exists without its lock slot.");
+        }
+        using (FileStream lease = LinuxCadenceFiles.AcquireLock(
+                   directory, exclusive: false, paths.LockPath)) {
+            _ = ReadExact(paths, directory);
+        }
+        lifetime = new CadenceLifetime();
+        return new RecapGridCadenceReader(paths, lifetime);
     }
 
-    internal static RecapGridCadenceSnapshot ReadExact(CadencePaths paths) {
+    internal static RecapGridCadenceSnapshot ReadExact(
+        CadencePaths paths,
+        CadenceDirectoryLease directory
+    ) {
         RecapGridCadenceSnapshot snapshot = CadenceCanonicalCodec.Decode(
-            LinuxCadenceFiles.ReadBounded(paths.StatePath));
+            LinuxCadenceFiles.ReadBounded(directory, paths.StatePath));
         if (snapshot.Head.RefId != paths.RefId) {
             throw new CadenceStoreException(
                 "CadenceRefMismatch",
@@ -120,8 +165,13 @@ public static class RecapGridCadenceFactory {
 
     internal static RecapGridCadenceHeadRef? ObserveHead(CadencePaths paths) {
         try {
-            return LinuxCadenceFiles.EntryExists(paths.StatePath)
-                ? ReadExact(paths).Head
+            using CadenceDirectoryLease directory =
+                LinuxCadenceFiles.OpenDirectory(
+                    paths, create: false,
+                    CadencePersistenceTestHooks.None);
+            return LinuxCadenceFiles.EntryExists(
+                    directory, CadencePaths.StateName, paths.StatePath)
+                ? ReadExact(paths, directory).Head
                 : null;
         }
         catch (Exception exception) when (!CadenceError.IsFatal(exception)) {
@@ -138,6 +188,43 @@ public static class RecapGridCadenceFactory {
         return new CadencePaths(repositoryPath, refId);
     }
 
+    private static CadencePaths PathsFromMutable(
+        SessionJournalEngine mutableOwner
+    ) {
+        ArgumentNullException.ThrowIfNull(mutableOwner);
+        if (mutableOwner.IsReadOnly) {
+            throw new CadenceStoreException(
+                "CadenceMutableOwnerRequired",
+                "Cadence mutation requires a mutable SessionJournal owner.");
+        }
+        _ = mutableOwner.ReadCurrentHead();
+        return new CadencePaths(
+            mutableOwner.Path,
+            mutableOwner.BranchRefId);
+    }
+
+    internal static void RequireMutableOwner(
+        SessionJournalEngine mutableOwner,
+        CadencePaths paths
+    ) {
+        if (mutableOwner.IsReadOnly) {
+            throw new CadenceStoreException(
+                "CadenceMutableOwnerRequired",
+                "Cadence mutation requires a mutable SessionJournal owner.");
+        }
+        _ = mutableOwner.ReadCurrentHead();
+        if (mutableOwner.BranchRefId != paths.RefId
+            || !string.Equals(
+                Path.TrimEndingDirectorySeparator(
+                    Path.GetFullPath(mutableOwner.Path)),
+                paths.RepositoryPath,
+                StringComparison.Ordinal)) {
+            throw new CadenceStoreException(
+                "CadenceMutableOwnerScopeMismatch",
+                "The mutable SessionJournal owner no longer matches the Cadence scope.");
+        }
+    }
+
     internal static void ValidateRefForMaintenance(CadencePaths paths) {
         using EventJournal.EventJournal journal =
             EventJournal.EventJournal.OpenReadOnlyExisting(paths.RepositoryPath);
@@ -148,6 +235,8 @@ public static class RecapGridCadenceFactory {
         => exception switch {
             PlatformNotSupportedException
                 => new RecapGridCadenceCreateResult.PlatformUnsupported(),
+            SessionJournalConcurrentMutationException
+                => new RecapGridCadenceCreateResult.Busy(),
             CadenceBusyException
                 => new RecapGridCadenceCreateResult.Busy(),
             CadenceUnsupportedSchemaException schema
@@ -175,6 +264,23 @@ public static class RecapGridCadenceFactory {
             _ => new RecapGridCadenceOpenResult.Invalid(
                 "CadenceOpenInvalid", exception.Message)
         };
+
+    internal static RecapGridCadenceReaderOpenResult MapReaderOpen(
+        Exception exception
+    ) => exception switch {
+        PlatformNotSupportedException
+            => new RecapGridCadenceReaderOpenResult.PlatformUnsupported(),
+        CadenceBusyException
+            => new RecapGridCadenceReaderOpenResult.Busy(),
+        CadenceUnsupportedSchemaException schema
+            => new RecapGridCadenceReaderOpenResult.UnsupportedSchema(
+                schema.Version),
+        CadenceStoreException invalid
+            => new RecapGridCadenceReaderOpenResult.Invalid(
+                invalid.Code, invalid.Message),
+        _ => new RecapGridCadenceReaderOpenResult.Invalid(
+            "CadenceOpenInvalid", exception.Message)
+    };
 }
 
 public sealed class RecapGridCadenceHandle : IDisposable {
@@ -190,6 +296,19 @@ public sealed class RecapGridCadenceHandle : IDisposable {
     }
     public RecapGridCadenceReader Reader { get; }
     public RecapGridCadenceCoordinator Coordinator { get; }
+    public void Dispose() => _lifetime.Dispose();
+}
+
+public sealed class RecapGridCadenceReaderHandle : IDisposable {
+    private readonly CadenceLifetime _lifetime;
+    internal RecapGridCadenceReaderHandle(
+        RecapGridCadenceReader reader,
+        CadenceLifetime lifetime
+    ) {
+        Reader = reader;
+        _lifetime = lifetime;
+    }
+    public RecapGridCadenceReader Reader { get; }
     public void Dispose() => _lifetime.Dispose();
 }
 
@@ -210,10 +329,14 @@ public sealed class RecapGridCadenceReader {
             return new RecapGridCadenceReadResult.Disposed();
         }
         try {
+            using CadenceDirectoryLease directory =
+                LinuxCadenceFiles.OpenDirectory(
+                    _paths, create: false,
+                    CadencePersistenceTestHooks.None);
             using FileStream lease = LinuxCadenceFiles.AcquireLock(
-                _paths.LockPath, exclusive: false);
+                directory, exclusive: false, _paths.LockPath);
             return new RecapGridCadenceReadResult.Available(
-                RecapGridCadenceFactory.ReadExact(_paths));
+                RecapGridCadenceFactory.ReadExact(_paths, directory));
         }
         catch (CadenceBusyException) {
             return new RecapGridCadenceReadResult.Busy();
@@ -236,14 +359,17 @@ public sealed class RecapGridCadenceCoordinator {
     private readonly CadencePaths _paths;
     private readonly CadenceLifetime _lifetime;
     private readonly CadencePersistenceTestHooks _hooks;
+    private readonly SessionJournalEngine _mutableOwner;
     internal RecapGridCadenceCoordinator(
         CadencePaths paths,
         CadenceLifetime lifetime,
-        CadencePersistenceTestHooks hooks
+        CadencePersistenceTestHooks hooks,
+        SessionJournalEngine mutableOwner
     ) {
         _paths = paths;
         _lifetime = lifetime;
         _hooks = hooks;
+        _mutableOwner = mutableOwner;
     }
 
     public RecapGridCadenceCompareExchangeResult CompareExchangePolicy(
@@ -262,10 +388,28 @@ public sealed class RecapGridCadenceCoordinator {
                     "CadenceExpectedRefMismatch",
                     "The expected Cadence head belongs to another Ref.");
             }
+            using SessionJournalDerivedMutationScope ownerScope =
+                _mutableOwner.EnterDerivedSidecarMutation(
+                    "RecapGridCadence.CompareExchangePolicy");
+            CadencePaths ownerPaths = new(
+                ownerScope.ReadView.Path,
+                ownerScope.ReadView.BranchRefId);
+            if (ownerPaths.RefId != _paths.RefId
+                || !string.Equals(
+                    ownerPaths.RepositoryPath,
+                    _paths.RepositoryPath,
+                    StringComparison.Ordinal)) {
+                return new RecapGridCadenceCompareExchangeResult.Invalid(
+                    "CadenceMutableOwnerScopeMismatch",
+                    "The mutable SessionJournal owner no longer matches the Cadence scope.");
+            }
+            using CadenceDirectoryLease directory =
+                LinuxCadenceFiles.OpenDirectory(
+                    _paths, create: false, _hooks);
             using FileStream lease = LinuxCadenceFiles.AcquireLock(
-                _paths.LockPath, exclusive: true);
+                directory, exclusive: true, _paths.LockPath);
             RecapGridCadenceSnapshot actual =
-                RecapGridCadenceFactory.ReadExact(_paths);
+                RecapGridCadenceFactory.ReadExact(_paths, directory);
             if (actual.Head != expected) {
                 return new RecapGridCadenceCompareExchangeResult.Stale(
                     actual.Head);
@@ -279,7 +423,7 @@ public sealed class RecapGridCadenceCoordinator {
                     actual);
             }
             try {
-                LinuxCadenceFiles.WriteAtomic(_paths,
+                LinuxCadenceFiles.WriteAtomic(_paths, directory,
                     desired.ToCanonicalBytes(), createNew: false, _hooks);
             }
             catch (CadencePublishIndeterminateException) {
@@ -291,6 +435,9 @@ public sealed class RecapGridCadenceCoordinator {
             return new RecapGridCadenceCompareExchangeResult.Updated(desired);
         }
         catch (CadenceBusyException) {
+            return new RecapGridCadenceCompareExchangeResult.Busy();
+        }
+        catch (SessionJournalConcurrentMutationException) {
             return new RecapGridCadenceCompareExchangeResult.Busy();
         }
         catch (CadenceUnsupportedSchemaException schema) {

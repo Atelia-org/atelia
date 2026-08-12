@@ -2683,10 +2683,17 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     public void Dispose() {
-        using MutationLease mutation = EnterMutation(nameof(Dispose));
-        if (_disposed) { return; }
-        _journal.Dispose();
-        _disposed = true;
+        BeginDerivedSidecarDispose();
+        try {
+            using MutationLease mutation = EnterMutation(nameof(Dispose));
+            if (_disposed) { return; }
+            _journal.Dispose();
+            _disposed = true;
+        }
+        catch {
+            CancelDerivedSidecarDispose();
+            throw;
+        }
     }
 
     internal static SessionJournalEngine CreateCore(
