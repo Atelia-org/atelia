@@ -21,13 +21,10 @@ public sealed class SessionJournalConcurrentMutationException
     }
 
     public string AttemptedOperation { get; }
-
     public string ActiveOperation { get; }
 }
 
 public sealed partial class SessionJournalEngine {
-    [ThreadStatic]
-    private static SessionJournalEngine? _threadDerivedSidecarOwner;
     private MutationOwnerToken? _activeMutationOwner;
     private readonly object _derivedSidecarGate = new();
     private int _activeDerivedSidecarMutations;
@@ -35,63 +32,61 @@ public sealed partial class SessionJournalEngine {
 
     private MutationLease EnterMutation(string operation) {
         ArgumentException.ThrowIfNullOrWhiteSpace(operation);
-        var owner = new MutationOwnerToken(operation);
+        var owner = new MutationOwnerToken(
+            operation,
+            Environment.CurrentManagedThreadId);
         MutationOwnerToken? active = Interlocked.CompareExchange(
             ref _activeMutationOwner,
             owner,
-            comparand: null
-        );
+            comparand: null);
         if (active is not null) {
             throw new SessionJournalConcurrentMutationException(
                 operation,
-                active.Operation
-            );
+                active.Operation);
         }
         return new MutationLease(this, owner);
     }
 
     /// <summary>
-    /// Holds the mutable SessionJournal owner across one repository-bound
-    /// derived-sidecar publication. The opaque scope serializes with raw
-    /// mutation and prevents owner disposal for the full publication window.
+    /// Executes one synchronous repository-bound sidecar publication while
+    /// holding the mutable SessionJournal owner. The callback cannot escape
+    /// the mutation lease or survive owner disposal.
     /// </summary>
-    public SessionJournalDerivedMutationScope EnterDerivedSidecarMutation(
-        string operation
+    internal T ExecuteDerivedSidecarMutation<T>(
+        string operation,
+        Func<SessionJournalReadView, T> callback
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(operation);
-        if (_threadDerivedSidecarOwner is not null) {
-            throw new SessionJournalConcurrentMutationException(
-                operation,
-                "derived-sidecar-mutation");
-        }
+        ArgumentNullException.ThrowIfNull(callback);
         lock (_derivedSidecarGate) {
             ObjectDisposedException.ThrowIf(
                 _derivedSidecarDisposePending || _disposed,
                 this);
             _activeDerivedSidecarMutations++;
         }
-        MutationLease? lease = null;
         try {
-            lease = EnterMutation(operation);
+            using MutationLease lease = EnterMutation(operation);
             ThrowIfReadOnlyMutation(operation);
-            _threadDerivedSidecarOwner = this;
-            return new SessionJournalDerivedMutationScope(
-                this,
-                lease,
-                _readView);
+            return callback(_readView);
         }
-        catch {
-            lease?.Dispose();
-            ExitDerivedSidecarMutation();
-            throw;
+        finally {
+            lock (_derivedSidecarGate) {
+                _activeDerivedSidecarMutations--;
+                if (_activeDerivedSidecarMutations == 0) {
+                    Monitor.PulseAll(_derivedSidecarGate);
+                }
+            }
         }
     }
 
     private void BeginDerivedSidecarDispose() {
-        if (ReferenceEquals(_threadDerivedSidecarOwner, this)) {
+        MutationOwnerToken? active = Volatile.Read(
+            ref _activeMutationOwner);
+        if (active is not null
+            && active.ThreadId == Environment.CurrentManagedThreadId) {
             throw new SessionJournalConcurrentMutationException(
                 nameof(Dispose),
-                "derived-sidecar-mutation");
+                active.Operation);
         }
         lock (_derivedSidecarGate) {
             _derivedSidecarDisposePending = true;
@@ -110,37 +105,23 @@ public sealed partial class SessionJournalEngine {
         }
     }
 
-    internal void ExitDerivedSidecarMutation() {
-        if (ReferenceEquals(_threadDerivedSidecarOwner, this)) {
-            _threadDerivedSidecarOwner = null;
-        }
-        lock (_derivedSidecarGate) {
-            _activeDerivedSidecarMutations--;
-            if (_activeDerivedSidecarMutations == 0) {
-                Monitor.PulseAll(_derivedSidecarGate);
-            }
-        }
-    }
-
     private void ExitMutation(MutationOwnerToken owner) {
         MutationOwnerToken? released = Interlocked.CompareExchange(
             ref _activeMutationOwner,
             value: null,
-            comparand: owner
-        );
+            comparand: owner);
         if (!ReferenceEquals(released, owner)) {
             throw new InvalidOperationException(
-                "SessionJournalEngine mutation lease owner mismatch."
-            );
+                "SessionJournalEngine mutation lease owner mismatch.");
         }
     }
 
-    private sealed class MutationOwnerToken {
-        internal MutationOwnerToken(string operation) {
-            Operation = operation;
-        }
-
-        internal string Operation { get; }
+    private sealed class MutationOwnerToken(
+        string operation,
+        int threadId
+    ) {
+        internal string Operation { get; } = operation;
+        internal int ThreadId { get; } = threadId;
     }
 
     private sealed class MutationLease : IDisposable {
@@ -158,33 +139,8 @@ public sealed partial class SessionJournalEngine {
         public void Dispose() {
             SessionJournalEngine? engine = Interlocked.Exchange(
                 ref _engine,
-                value: null
-            );
+                value: null);
             engine?.ExitMutation(_owner);
         }
-    }
-}
-
-public sealed class SessionJournalDerivedMutationScope : IDisposable {
-    private SessionJournalEngine? _owner;
-    private IDisposable? _lease;
-
-    internal SessionJournalDerivedMutationScope(
-        SessionJournalEngine owner,
-        IDisposable lease,
-        SessionJournalReadView readView
-    ) {
-        _owner = owner;
-        _lease = lease;
-        ReadView = readView;
-    }
-
-    public SessionJournalReadView ReadView { get; }
-
-    public void Dispose() {
-        SessionJournalEngine? owner = Interlocked.Exchange(
-            ref _owner, null);
-        Interlocked.Exchange(ref _lease, null)?.Dispose();
-        owner?.ExitDerivedSidecarMutation();
     }
 }

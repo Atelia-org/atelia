@@ -18,10 +18,23 @@ public static class RecapGridCadenceFactory {
             ArgumentNullException.ThrowIfNull(mutableOwner);
             ArgumentNullException.ThrowIfNull(policy);
             ArgumentNullException.ThrowIfNull(hooks);
-            using SessionJournalDerivedMutationScope ownerScope =
-                mutableOwner.EnterDerivedSidecarMutation(
-                    "RecapGridCadence.Create");
-            CadencePaths paths = PathsFrom(ownerScope.ReadView);
+            return mutableOwner.ExecuteDerivedSidecarMutation(
+                "RecapGridCadence.Create",
+                readView => CreateUnderOwner(
+                    PathsFrom(readView),
+                    policy,
+                    hooks));
+        }
+        catch (Exception exception) when (!CadenceError.IsFatal(exception)) {
+            return MapCreate(exception);
+        }
+    }
+
+    private static RecapGridCadenceCreateResult CreateUnderOwner(
+        CadencePaths paths,
+        RecapGridCadencePolicySpec policy,
+        CadencePersistenceTestHooks hooks
+    ) {
             using CadenceDirectoryLease directory =
                 LinuxCadenceFiles.OpenDirectory(
                     paths, create: true, hooks);
@@ -45,10 +58,6 @@ public static class RecapGridCadenceFactory {
                     intended.Head, ObserveHead(paths));
             }
             return new RecapGridCadenceCreateResult.Created(intended);
-        }
-        catch (Exception exception) when (!CadenceError.IsFatal(exception)) {
-            return MapCreate(exception);
-        }
     }
 
     public static RecapGridCadenceOpenResult OpenMutable(
@@ -388,12 +397,37 @@ public sealed class RecapGridCadenceCoordinator {
                     "CadenceExpectedRefMismatch",
                     "The expected Cadence head belongs to another Ref.");
             }
-            using SessionJournalDerivedMutationScope ownerScope =
-                _mutableOwner.EnterDerivedSidecarMutation(
-                    "RecapGridCadence.CompareExchangePolicy");
-            CadencePaths ownerPaths = new(
-                ownerScope.ReadView.Path,
-                ownerScope.ReadView.BranchRefId);
+            return _mutableOwner.ExecuteDerivedSidecarMutation(
+                "RecapGridCadence.CompareExchangePolicy",
+                readView => CompareExchangeUnderOwner(
+                    new CadencePaths(readView.Path, readView.BranchRefId),
+                    expected,
+                    policy));
+        }
+        catch (CadenceBusyException) {
+            return new RecapGridCadenceCompareExchangeResult.Busy();
+        }
+        catch (SessionJournalConcurrentMutationException) {
+            return new RecapGridCadenceCompareExchangeResult.Busy();
+        }
+        catch (CadenceUnsupportedSchemaException schema) {
+            return new RecapGridCadenceCompareExchangeResult
+                .UnsupportedSchema(schema.Version);
+        }
+        catch (Exception exception) when (!CadenceError.IsFatal(exception)) {
+            return exception is CadenceStoreException invalid
+                ? new RecapGridCadenceCompareExchangeResult.Invalid(
+                    invalid.Code, invalid.Message)
+                : new RecapGridCadenceCompareExchangeResult.Invalid(
+                    "CadenceCompareExchangeInvalid", exception.Message);
+        }
+    }
+
+    private RecapGridCadenceCompareExchangeResult CompareExchangeUnderOwner(
+        CadencePaths ownerPaths,
+        RecapGridCadenceHeadRef expected,
+        RecapGridCadencePolicySpec policy
+    ) {
             if (ownerPaths.RefId != _paths.RefId
                 || !string.Equals(
                     ownerPaths.RepositoryPath,
@@ -433,24 +467,6 @@ public sealed class RecapGridCadenceCoordinator {
                         RecapGridCadenceFactory.ObserveHead(_paths));
             }
             return new RecapGridCadenceCompareExchangeResult.Updated(desired);
-        }
-        catch (CadenceBusyException) {
-            return new RecapGridCadenceCompareExchangeResult.Busy();
-        }
-        catch (SessionJournalConcurrentMutationException) {
-            return new RecapGridCadenceCompareExchangeResult.Busy();
-        }
-        catch (CadenceUnsupportedSchemaException schema) {
-            return new RecapGridCadenceCompareExchangeResult
-                .UnsupportedSchema(schema.Version);
-        }
-        catch (Exception exception) when (!CadenceError.IsFatal(exception)) {
-            return exception is CadenceStoreException invalid
-                ? new RecapGridCadenceCompareExchangeResult.Invalid(
-                    invalid.Code, invalid.Message)
-                : new RecapGridCadenceCompareExchangeResult.Invalid(
-                    "CadenceCompareExchangeInvalid", exception.Message);
-        }
     }
 }
 

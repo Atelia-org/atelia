@@ -6,3 +6,4 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("Atelia.Galatea.Server.Tests")]
 [assembly: InternalsVisibleTo("Atelia.SessionJournal.HistoryTimeline.Tests")]
 [assembly: InternalsVisibleTo("Atelia.SessionJournal.RecapGrid.Online.Tests")]
+[assembly: InternalsVisibleTo("Atelia.SessionJournal.RecapGrid.Cadence")]

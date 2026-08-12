@@ -17,7 +17,7 @@ internal sealed class CadencePaths {
             Path.GetFullPath(repositoryPath));
         RefId = refId;
         DirectoryPath = Path.Combine(RepositoryPath, "control", "recap-grid",
-            "v1", "refs", refId.ToHexString());
+            "v1", "refs", refId.ToHexString(), "cadence");
         StatePath = Path.Combine(DirectoryPath, StateName);
         LockPath = Path.Combine(DirectoryPath, LockName);
     }
@@ -81,11 +81,14 @@ internal static class LinuxCadenceFiles {
         try {
             string[] components = [
                 "control", "recap-grid", "v1", "refs",
-                paths.RefId.ToHexString()
+                paths.RefId.ToHexString(), "cadence"
             ];
-            foreach (string component in components) {
+            for (int index = 0; index < components.Length; index++) {
+                string component = components[index];
                 SafeFileHandle? next = TryOpenDirectoryAt(
-                    current, component);
+                    current,
+                    component,
+                    requirePrivateOwner: index == components.Length - 1);
                 if (next is null) {
                     if (!create) {
                         throw new CadenceDirectoryAbsentException();
@@ -101,7 +104,10 @@ internal static class LinuxCadenceFiles {
                     else {
                         FlushDirectory(current, paths.DirectoryPath);
                     }
-                    next = TryOpenDirectoryAt(current, component)
+                    next = TryOpenDirectoryAt(
+                        current,
+                        component,
+                        requirePrivateOwner: index == components.Length - 1)
                         ?? throw new CadenceStoreException(
                             "CadenceDirectoryAbsent",
                             "A newly-created Cadence directory is absent.");
@@ -112,6 +118,7 @@ internal static class LinuxCadenceFiles {
             CadenceFileIdentity identity = ReadIdentity(
                 current.DangerousGetHandle().ToInt32(),
                 paths.DirectoryPath);
+            RequirePrivateDirectory(identity);
             var result = new CadenceDirectoryLease(current, identity);
             current = null!;
             hooks.AfterDirectoryOpen?.Invoke(paths.DirectoryPath);
@@ -172,6 +179,7 @@ internal static class LinuxCadenceFiles {
                     "CadenceSlotShapeInvalid",
                     "A canonical Cadence slot is not a regular file.");
             }
+            RequirePrivateFile(identity);
             return true;
         }
         finally {
@@ -191,12 +199,14 @@ internal static class LinuxCadenceFiles {
                 Marshal.GetLastPInvokeError());
         }
         try {
-            if (ReadIdentity(descriptor, diagnosticPath).FileType
-                != RegularFileType) {
+            CadenceFileIdentity identity = ReadIdentity(
+                descriptor, diagnosticPath);
+            if (identity.FileType != RegularFileType) {
                 throw new CadenceStoreException(
                     "CadenceLockShapeInvalid",
                     "The canonical Cadence lock is not a regular file.");
             }
+            RequirePrivateFile(identity);
             if (Flock(descriptor,
                     (exclusive ? LockExclusive : LockShared) | LockNonBlocking)
                 != 0) {
@@ -230,12 +240,14 @@ internal static class LinuxCadenceFiles {
                 Marshal.GetLastPInvokeError());
         }
         try {
-            if (ReadIdentity(descriptor, diagnosticPath).FileType
-                != RegularFileType) {
+            CadenceFileIdentity identity = ReadIdentity(
+                descriptor, diagnosticPath);
+            if (identity.FileType != RegularFileType) {
                 throw new CadenceStoreException(
                     "CadenceStateShapeInvalid",
                     "The canonical Cadence state is not a regular file.");
             }
+            RequirePrivateFile(identity);
             var handle = new SafeFileHandle(new IntPtr(descriptor), true);
             descriptor = -1;
             using var stream = new FileStream(handle, FileAccess.Read,
@@ -374,7 +386,8 @@ internal static class LinuxCadenceFiles {
 
     private static SafeFileHandle? TryOpenDirectoryAt(
         SafeFileHandle parent,
-        string name
+        string name,
+        bool requirePrivateOwner = false
     ) {
         int descriptor = OpenAt(parent.DangerousGetHandle().ToInt32(), name,
             OpenReadOnly | OpenDirectoryFlag | OpenNoFollow | OpenCloseOnExec);
@@ -387,10 +400,14 @@ internal static class LinuxCadenceFiles {
         }
         var handle = new SafeFileHandle(new IntPtr(descriptor), true);
         try {
-            if (ReadIdentity(descriptor, name).FileType != DirectoryType) {
+            CadenceFileIdentity identity = ReadIdentity(descriptor, name);
+            if (identity.FileType != DirectoryType) {
                 throw new CadenceStoreException(
                     "CadenceDirectoryShapeInvalid",
                     "A Cadence path component is not a directory.");
+            }
+            if (requirePrivateOwner) {
+                RequirePrivateDirectory(identity);
             }
             return handle;
         }
@@ -434,13 +451,15 @@ internal static class LinuxCadenceFiles {
             }
             throw Io("CadenceFileCreateInvalid", diagnosticPath, error);
         }
-        if (ReadIdentity(descriptor, diagnosticPath).FileType
-            != RegularFileType) {
+        CadenceFileIdentity identity = ReadIdentity(
+            descriptor, diagnosticPath);
+        if (identity.FileType != RegularFileType) {
             _ = Close(descriptor);
             throw new CadenceStoreException(
                 "CadenceFileShapeInvalid",
                 "A newly-created Cadence slot is not a regular file.");
         }
+        RequirePrivateFile(identity);
         return new FileStream(
             new SafeFileHandle(new IntPtr(descriptor), true),
             FileAccess.Write, bufferSize: 4096, isAsync: false);
@@ -508,14 +527,43 @@ internal static class LinuxCadenceFiles {
                 _ => throw new PlatformNotSupportedException(
                     "Unsupported Linux stat ABI.")
             };
+            int uidOffset = RuntimeInformation.ProcessArchitecture switch {
+                Architecture.X64 => 28,
+                Architecture.Arm64 => 24,
+                _ => throw new PlatformNotSupportedException(
+                    "Unsupported Linux stat ABI.")
+            };
+            uint rawMode = unchecked((uint)Marshal.ReadInt32(
+                buffer, modeOffset));
             return new CadenceFileIdentity(
                 unchecked((ulong)Marshal.ReadInt64(buffer, 0)),
                 unchecked((ulong)Marshal.ReadInt64(buffer, 8)),
-                unchecked((uint)Marshal.ReadInt32(buffer, modeOffset))
-                    & FileTypeMask);
+                rawMode & FileTypeMask,
+                unchecked((uint)Marshal.ReadInt32(buffer, uidOffset)),
+                rawMode & 0x1ff);
         }
         finally {
             Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    private static void RequirePrivateDirectory(
+        CadenceFileIdentity identity
+    ) {
+        if (identity.OwnerUid != GetUid()
+            || identity.PermissionBits != OwnerDirectoryMode) {
+            throw new CadenceStoreException(
+                "CadenceDirectoryPermissionsInvalid",
+                "Cadence directories must be owned by the current user with mode 0700.");
+        }
+    }
+
+    private static void RequirePrivateFile(CadenceFileIdentity identity) {
+        if (identity.OwnerUid != GetUid()
+            || identity.PermissionBits != OwnerFileMode) {
+            throw new CadenceStoreException(
+                "CadenceFilePermissionsInvalid",
+                "Cadence files must be owned by the current user with mode 0600.");
         }
     }
 
@@ -553,12 +601,16 @@ internal static class LinuxCadenceFiles {
     private static extern int Dup(int descriptor);
     [DllImport("libc", EntryPoint = "close", SetLastError = true)]
     private static extern int Close(int descriptor);
+    [DllImport("libc", EntryPoint = "getuid")]
+    private static extern uint GetUid();
 }
 
 internal readonly record struct CadenceFileIdentity(
     ulong Device,
     ulong Inode,
-    uint FileType);
+    uint FileType,
+    uint OwnerUid,
+    uint PermissionBits);
 
 internal sealed class CadenceBusyException : Exception;
 internal sealed class CadenceDirectoryAbsentException : Exception;

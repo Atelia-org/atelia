@@ -443,8 +443,6 @@ public sealed class CadenceTests : IDisposable {
             handle.Coordinator.CompareExchangePolicy(
                 created.Head, Policy(target: 60001)));
         Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
-        Assert.Throws<SessionJournalConcurrentMutationException>(() =>
-            engine.EnterDerivedSidecarMutation("competing-raw-mutation"));
         await Assert.ThrowsAsync<SessionJournalConcurrentMutationException>(
             () => engine.SendAsync(
                 engine.ReadCurrentHead()!.Value,
@@ -551,6 +549,69 @@ public sealed class CadenceTests : IDisposable {
     }
 
     [Fact]
+    public void SharedAncestorsMayBe0755ButPrivateCadenceLeafMustBe0700() {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string path = NewPath();
+        using SessionJournalEngine engine = CreateJournal(path);
+        string sharedRef = Path.Combine(path, "control", "recap-grid", "v1",
+            "refs", engine.BranchRefId.ToHexString());
+        Directory.CreateDirectory(sharedRef);
+        File.SetUnixFileMode(sharedRef,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite
+            | UnixFileMode.UserExecute | UnixFileMode.GroupRead
+            | UnixFileMode.GroupExecute | UnixFileMode.OtherRead
+            | UnixFileMode.OtherExecute);
+        Assert.IsType<RecapGridCadenceCreateResult.Created>(
+            RecapGridCadenceFactory.Create(engine, Policy()));
+
+        string secondPath = NewPath();
+        using SessionJournalEngine second = CreateJournal(secondPath);
+        string leaf = CadenceDirectory(secondPath, second.BranchRefId);
+        Directory.CreateDirectory(leaf);
+        File.SetUnixFileMode(leaf,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite
+            | UnixFileMode.UserExecute | UnixFileMode.GroupRead
+            | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+            | UnixFileMode.OtherRead | UnixFileMode.OtherWrite
+            | UnixFileMode.OtherExecute);
+        RecapGridCadenceCreateResult.Invalid invalid = Assert.IsType<
+            RecapGridCadenceCreateResult.Invalid
+        >(RecapGridCadenceFactory.Create(second, Policy()));
+        Assert.Equal("CadenceDirectoryPermissionsInvalid", invalid.Code);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(leaf));
+    }
+
+    [Fact]
+    public void ExistingStateAndLockMustBePrivateOwnerOnlyFiles() {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string statePath = NewPath();
+        using (SessionJournalEngine engine = CreateJournal(statePath)) {
+            Assert.IsType<RecapGridCadenceCreateResult.Created>(
+                RecapGridCadenceFactory.Create(engine, Policy()));
+            File.SetUnixFileMode(CadenceState(
+                    statePath, engine.BranchRefId),
+                UnixFileMode.UserRead | UnixFileMode.UserWrite
+                | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+            Assert.IsType<RecapGridCadenceReaderOpenResult.Invalid>(
+                RecapGridCadenceFactory.OpenReader(engine.ReadView));
+        }
+        string lockPath = NewPath();
+        using SessionJournalEngine second = CreateJournal(lockPath);
+        Assert.IsType<RecapGridCadenceCreateResult.Created>(
+            RecapGridCadenceFactory.Create(second, Policy()));
+        File.SetUnixFileMode(Path.Combine(CadenceDirectory(
+                lockPath, second.BranchRefId), "cadence.lock"),
+            UnixFileMode.UserRead | UnixFileMode.UserWrite
+            | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+        Assert.IsType<RecapGridCadenceReaderOpenResult.Invalid>(
+            RecapGridCadenceFactory.OpenReader(second.ReadView));
+    }
+
+    [Fact]
     public void FutureSchemaDiscriminatorIsTypedBeforeV1ShapeValidation() {
         string path = NewPath();
         using SessionJournalEngine engine = CreateJournal(path);
@@ -592,7 +653,7 @@ public sealed class CadenceTests : IDisposable {
 
     private static string CadenceDirectory(string path, RefId refId)
         => Path.Combine(path, "control", "recap-grid", "v1", "refs",
-            refId.ToHexString());
+            refId.ToHexString(), "cadence");
 
     private static string CadenceState(string path, RefId refId)
         => Path.Combine(CadenceDirectory(path, refId), "cadence.json");

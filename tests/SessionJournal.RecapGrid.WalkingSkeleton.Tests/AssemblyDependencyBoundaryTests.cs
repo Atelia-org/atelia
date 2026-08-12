@@ -248,6 +248,41 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Select(static value => value!)
                 .ToArray()
         );
+
+        Assert.Equal(
+            2,
+            product.Split(
+                "ExecuteDerivedSidecarMutation",
+                StringSplitOptions.None).Length - 1);
+        foreach (string forbiddenMutationSurface in new[] {
+                     ".SendAsync(",
+                     ".ResumeAsync(",
+                     ".Append(",
+                     "AppendEvent",
+                     "ReadPayloadBytes"
+                 }) {
+            Assert.DoesNotContain(
+                forbiddenMutationSurface,
+                product,
+                StringComparison.Ordinal);
+        }
+
+        string[] sessionJournalProductionFriends = [.. File.ReadLines(
+                Path.Combine(
+                    root,
+                    "prototypes",
+                    "SessionJournal",
+                    "Properties",
+                    "AssemblyInfo.cs"))
+            .Where(static line => line.Contains(
+                "InternalsVisibleTo",
+                StringComparison.Ordinal))
+            .Where(static line => !line.Contains(
+                ".Tests\")",
+                StringComparison.Ordinal))];
+        Assert.Equal(
+            ["[assembly: InternalsVisibleTo(\"Atelia.SessionJournal.RecapGrid.Cadence\")]"],
+            sessionJournalProductionFriends);
     }
 
     [Fact]
