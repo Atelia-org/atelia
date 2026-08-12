@@ -67,6 +67,12 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Online",
             "SessionJournal.RecapGrid.Online.csproj"
         );
+        string cadenceProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Cadence",
+            "SessionJournal.RecapGrid.Cadence.csproj"
+        );
 
         Assert.Equal(
             ["../SessionJournal/SessionJournal.csproj"],
@@ -144,6 +150,14 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
+                "../../src/EventJournal/EventJournal.csproj",
+                "../SessionJournal/SessionJournal.csproj",
+                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"
+            ],
+            DirectProjectReferences(cadenceProject)
+        );
+        Assert.Equal(
+            [
                 "Microsoft.Data.Sqlite@10.0.10",
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
                 "Microsoft.Bcl.Memory@9.0.17",
@@ -167,6 +181,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Empty(DirectPackageReferences(hostingProject));
         Assert.Empty(DirectPackageReferences(agentControlProject));
         Assert.Empty(DirectPackageReferences(onlineProject));
+        Assert.Empty(DirectPackageReferences(cadenceProject));
 
         string upstream = File.ReadAllText(timelineProject)
             + File.ReadAllText(abstractionsProject);
@@ -185,6 +200,54 @@ public sealed class AssemblyDependencyBoundaryTests {
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RecapGrid.Manager", combined,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CadenceOwnsOnlyBoundedProviderNeutralPolicyDurability() {
+        string root = FindRepositoryRoot();
+        string cadenceRoot = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.RecapGrid.Cadence"
+        );
+        string product = string.Join(
+            "\n",
+            Directory.EnumerateFiles(
+                cadenceRoot,
+                "*.cs",
+                SearchOption.AllDirectories
+            ).Where(static path => !IsBuildOutput(path))
+                .Select(File.ReadAllText)
+        );
+        foreach (string forbidden in new[] {
+                     "Microsoft.Data.Sqlite",
+                     "SQLitePCLRaw",
+                     "RecapGrid.Control",
+                     "RecapGrid.Store",
+                     "RecapGrid.Manager",
+                     "CompletionConnectionRegistry",
+                     "Galatea",
+                     "DerivedRecap"
+                 }) {
+            Assert.DoesNotContain(
+                forbidden,
+                product,
+                StringComparison.Ordinal
+            );
+        }
+        XDocument project = XDocument.Load(Path.Combine(
+            cadenceRoot,
+            "SessionJournal.RecapGrid.Cadence.csproj"
+        ));
+        Assert.Equal(
+            ["Atelia.SessionJournal.RecapGrid.Cadence.Tests"],
+            project.Descendants("InternalsVisibleTo")
+                .Select(static element =>
+                    (string?)element.Attribute("Include"))
+                .Where(static value => value is not null)
+                .Select(static value => value!)
+                .ToArray()
+        );
     }
 
     [Fact]
