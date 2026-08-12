@@ -1,5 +1,6 @@
 using System.Xml.Linq;
 using System.Reflection;
+using Atelia.SessionJournal.HistoryTimeline;
 
 namespace Atelia.SessionJournal.RecapGrid.WalkingSkeleton.Tests;
 
@@ -143,6 +144,7 @@ public sealed class AssemblyDependencyBoundaryTests {
             [
                 "../SessionJournal/SessionJournal.csproj",
                 "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
+                "../SessionJournal.RecapGrid.Cadence/SessionJournal.RecapGrid.Cadence.csproj",
                 "../SessionJournal.RecapGrid.Manager/SessionJournal.RecapGrid.Manager.csproj",
                 "../SessionJournal.RecapGrid.Getter/SessionJournal.RecapGrid.Getter.csproj"
             ],
@@ -283,6 +285,69 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Equal(
             ["[assembly: InternalsVisibleTo(\"Atelia.SessionJournal.RecapGrid.Cadence\")]"],
             sessionJournalProductionFriends);
+
+        string timelineRoot = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.HistoryTimeline");
+        string timelineCoordinator = File.ReadAllText(Path.Combine(
+            timelineRoot,
+            "HistoryTimelineCoordinator.cs"));
+        foreach (string mutation in new[] {
+                     "PlanNextRow",
+                     "CommitRow",
+                     "OpenOfflineBuilder"
+                 }) {
+            Assert.DoesNotContain(
+                typeof(HistoryTimelineCoordinator).GetMethods(
+                    BindingFlags.Public
+                    | BindingFlags.Instance
+                    | BindingFlags.DeclaredOnly),
+                method => string.Equals(
+                    method.Name,
+                    mutation,
+                    StringComparison.Ordinal));
+        }
+        Assert.DoesNotContain(
+            typeof(Atelia.SessionJournal.RecapGrid.Cadence
+                .RecapGridCadenceTimelineSealOperation).GetMethods(
+                    BindingFlags.Public
+                    | BindingFlags.Instance
+                    | BindingFlags.DeclaredOnly),
+            static method => method.Name == "OpenOfflineBuilder"
+                && method.GetParameters().Any(parameter =>
+                    parameter.ParameterType == typeof(
+                        Atelia.SessionJournal
+                            .SessionSelectedLineageForwardCursor)));
+        Assert.Contains("CreateNoReservePolicyForTests", timelineCoordinator,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "CreateNoReservePolicyForTests",
+            product,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "CreateForTest",
+            product,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "PlanNextRowForTests",
+            product,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "OpenOfflineBuilderForTests",
+            product,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "HistoryRecentReserveProof",
+            product,
+            StringComparison.Ordinal);
+        Assert.DoesNotMatch(
+            @"new\s+HistoryRowCommitCandidate\s*\(",
+            product);
+        Assert.Contains(".PlanNextRow(", product, StringComparison.Ordinal);
+        Assert.Contains(".CommitRow(", product, StringComparison.Ordinal);
+        Assert.Contains(".OpenOfflineBuilder(", product,
+            StringComparison.Ordinal);
     }
 
     [Fact]

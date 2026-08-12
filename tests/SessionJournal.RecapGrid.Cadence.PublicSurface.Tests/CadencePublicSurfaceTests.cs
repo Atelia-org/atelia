@@ -37,6 +37,12 @@ public sealed class CadencePublicSurfaceTests : IDisposable {
         >(RecapGridCadenceFactory.OpenReader(engine.ReadView)).Handle;
         Assert.Null(typeof(RecapGridCadenceReaderHandle).GetProperty(
             "Coordinator"));
+        Assert.DoesNotContain(
+            typeof(RecapGridCadenceTimelineSealOperation).GetMethods(),
+            static method => method.Name == "OpenOfflineBuilder"
+                && method.GetParameters().Any(parameter =>
+                    parameter.ParameterType
+                        == typeof(SessionSelectedLineageForwardCursor)));
 
         Type[] exported = typeof(RecapGridCadenceFactory)
             .Assembly.GetExportedTypes();

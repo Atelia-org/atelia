@@ -223,7 +223,7 @@ public sealed class CadenceTests : IDisposable {
             release.Wait();
         });
         Task<RecapGridCadenceCreateResult> first = Task.Run(() =>
-            RecapGridCadenceFactory.CreateForTest(
+            RecapGridCadenceFactory.CreateWithHooks(
                 engine, Policy(), hooks));
         Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
         try {
@@ -251,7 +251,7 @@ public sealed class CadenceTests : IDisposable {
         });
         RecapGridCadenceCreateResult.Invalid invalid = Assert.IsType<
             RecapGridCadenceCreateResult.Invalid
-        >(RecapGridCadenceFactory.CreateForTest(
+        >(RecapGridCadenceFactory.CreateWithHooks(
             engine, Policy(), hooks));
         Assert.Equal("CadenceTemporaryIdentityChanged", invalid.Code);
         Assert.NotNull(temporary);
@@ -266,7 +266,7 @@ public sealed class CadenceTests : IDisposable {
         using SessionJournalEngine engine = CreateJournal(path);
         RecapGridCadenceCreateResult.Invalid before = Assert.IsType<
             RecapGridCadenceCreateResult.Invalid
-        >(RecapGridCadenceFactory.CreateForTest(
+        >(RecapGridCadenceFactory.CreateWithHooks(
             engine,
             Policy(),
             new CadencePersistenceTestHooks(
@@ -277,7 +277,7 @@ public sealed class CadenceTests : IDisposable {
 
         RecapGridCadenceCreateResult.CommitIndeterminate after = Assert.IsType<
             RecapGridCadenceCreateResult.CommitIndeterminate
-        >(RecapGridCadenceFactory.CreateForTest(
+        >(RecapGridCadenceFactory.CreateWithHooks(
             engine,
             Policy(),
             new CadencePersistenceTestHooks(
@@ -464,7 +464,7 @@ public sealed class CadenceTests : IDisposable {
         string path = NewPath();
         SessionJournalEngine engine = CreateJournal(path);
         RecapGridCadenceCreateResult result =
-            RecapGridCadenceFactory.CreateForTest(
+            RecapGridCadenceFactory.CreateWithHooks(
                 engine,
                 Policy(),
                 new CadencePersistenceTestHooks(BeforePublish: _ =>
@@ -486,7 +486,7 @@ public sealed class CadenceTests : IDisposable {
         string displaced = Path.Combine(path, "control.displaced");
         bool swapped = false;
         RecapGridCadenceCreateResult result =
-            RecapGridCadenceFactory.CreateForTest(
+            RecapGridCadenceFactory.CreateWithHooks(
                 engine,
                 Policy(),
                 new CadencePersistenceTestHooks(
@@ -536,7 +536,7 @@ public sealed class CadenceTests : IDisposable {
         string path = NewPath();
         using SessionJournalEngine engine = CreateJournal(path);
         Assert.IsType<RecapGridCadenceCreateResult.Invalid>(
-            RecapGridCadenceFactory.CreateForTest(
+            RecapGridCadenceFactory.CreateWithHooks(
                 engine,
                 Policy(),
                 new CadencePersistenceTestHooks(

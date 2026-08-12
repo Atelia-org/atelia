@@ -1,6 +1,7 @@
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Store;
@@ -404,9 +405,16 @@ public sealed partial class GetterVerticalTests : IDisposable {
 
     private (TimelineHeadRef, IReadOnlyList<HistoryTimelineSelectedRow>)
         CommitAllRows(SessionJournalEngine journal) {
+        EnsureCadence(journal);
         using HistoryTimelineHandle timeline = Assert.IsType<
             HistoryTimelineOpenResult.Opened
         >(HistoryTimelineFactory.Open(journal.ReadView, _estimator)).Handle;
+        using RecapGridCadenceHandle cadence = Assert.IsType<
+            RecapGridCadenceOpenResult.Opened
+        >(RecapGridCadenceFactory.OpenMutable(journal)).Handle;
+        using RecapGridCadenceTimelineSealOperation seal = Assert.IsType<
+            RecapGridCadenceTimelineSealOpenResult.Opened
+        >(cadence.BeginTimelineSeal(timeline)).Operation;
         var rows = new List<HistoryTimelineSelectedRow>();
         while (true) {
             TimelineHeadRef before = Assert.IsType<
@@ -418,11 +426,12 @@ public sealed partial class GetterVerticalTests : IDisposable {
                 before,
                 journal.ReadView
             )).Capture;
-            HistoryTimelinePlanResult plan = timeline.Coordinator.PlanNextRow(
+            HistoryTimelinePlanResult plan = seal.PlanNextRow(
                 before,
                 capture
             );
-            if (plan is HistoryTimelinePlanResult.NotEnough) {
+            if (plan is HistoryTimelinePlanResult.NotEnough
+                or HistoryTimelinePlanResult.RecentReserveNotReached) {
                 return (before, rows.AsReadOnly());
             }
             HistoryRowCommitCandidate candidate = Assert.IsType<
@@ -430,7 +439,7 @@ public sealed partial class GetterVerticalTests : IDisposable {
             >(plan).Candidate;
             TimelineHeadRef committed = Assert.IsType<
                 HistoryTimelineCommitResult.Committed
-            >(timeline.Coordinator.CommitRow(candidate)).Head;
+            >(seal.CommitRow(candidate)).Head;
             rows.Add(Assert.IsType<
                 HistoryTimelineReaderRowResult.Selected
             >(timeline.Reader.ReadSelectedRow(
@@ -438,6 +447,21 @@ public sealed partial class GetterVerticalTests : IDisposable {
                 committed.HeadRowId!.Value
             )).Row);
         }
+    }
+
+    private static void EnsureCadence(SessionJournalEngine journal) {
+        RecapGridCadenceCreateResult result = RecapGridCadenceFactory.Create(
+            journal,
+            new RecapGridCadencePolicySpec(
+                minimumRecentHistoryLoad: 1,
+                HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                targetHistoryLoad: 1,
+                maxRawEvents: 64,
+                maxRenderedBytes: 1024 * 1024));
+        Assert.True(result is RecapGridCadenceCreateResult.Created
+            or RecapGridCadenceCreateResult.AlreadyExists,
+            $"Cadence create failed: {result.GetType().Name}");
     }
 
     private static (FamilyDefinition, MaintainerDefinitionRevision) Values(

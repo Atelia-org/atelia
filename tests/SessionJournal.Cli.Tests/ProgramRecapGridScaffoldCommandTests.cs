@@ -135,6 +135,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
             HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
             "--history-load-estimator",
             O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
             "--target-history-load", "1",
             "--max-raw-events", "64",
             "--max-rendered-bytes", "65536"

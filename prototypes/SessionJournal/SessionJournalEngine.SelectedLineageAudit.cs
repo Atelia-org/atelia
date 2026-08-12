@@ -5,6 +5,8 @@ namespace Atelia.SessionJournal;
 public sealed partial class SessionJournalEngine {
     private readonly AsyncLocal<LifecycleAuditToken?>
         _lifecycleAuditToken = new();
+    private readonly AsyncLocal<SessionSelectedLineageDerivedAuditToken?>
+        _derivedAuditToken = new();
 
     internal bool IsSelectedLineageForwardCursorBoundTo(
         SessionSelectedLineageForwardCursor cursor,
@@ -117,9 +119,80 @@ public sealed partial class SessionJournalEngine {
             return new SessionSelectedLineageAuditSnapshotCaptureResult.Busy();
         }
         try {
+            return CaptureSelectedLineageAuditSnapshotCore(
+                maximumEvents,
+                cancellationToken);
+        }
+        finally {
+            Volatile.Write(ref token.ActiveCapture, 0);
+        }
+    }
+
+    internal SessionSelectedLineageAuditSnapshotCaptureResult
+        CaptureSelectedLineageAuditSnapshotForDerivedSidecar(
+        SessionSelectedLineageDerivedAuditToken token,
+        int maximumEvents,
+        CancellationToken cancellationToken = default
+    ) => ExecuteDerivedSelectedLineageAudit(
+        token,
+        "SessionJournal.CaptureSelectedLineageAuditForDerivedSidecar",
+        () => {
+            if (maximumEvents is < 1 or > 1_048_576) {
+                throw new ArgumentOutOfRangeException(nameof(maximumEvents));
+            }
+            if (Interlocked.CompareExchange(
+                    ref token.ActiveCapture, 1, 0) != 0) {
+                return new SessionSelectedLineageAuditSnapshotCaptureResult
+                    .Busy();
+            }
+            try {
+                return CaptureSelectedLineageAuditSnapshotCore(
+                    maximumEvents,
+                    cancellationToken);
+            }
+            finally {
+                Volatile.Write(ref token.ActiveCapture, 0);
+            }
+        });
+
+    internal T ExecuteDerivedSelectedLineageAudit<T>(
+        SessionSelectedLineageDerivedAuditToken token,
+        string operation,
+        Func<T> callback
+    ) {
+        ArgumentNullException.ThrowIfNull(token);
+        ArgumentException.ThrowIfNullOrWhiteSpace(operation);
+        ArgumentNullException.ThrowIfNull(callback);
+        if (!ReferenceEquals(token.Owner, this) || !token.IsActive) {
+            throw new InvalidOperationException(
+                "The derived selected-lineage audit token is inactive or belongs to another owner.");
+        }
+        return ExecuteDerivedSidecarMutation(
+            operation,
+            _ => {
+                if (_derivedAuditToken.Value is not null) {
+                    throw new InvalidOperationException(
+                        "Derived selected-lineage audit scopes cannot be nested.");
+                }
+                _derivedAuditToken.Value = token;
+                try {
+                    return callback();
+                }
+                finally {
+                    _derivedAuditToken.Value = null;
+                }
+            });
+    }
+
+    private SessionSelectedLineageAuditSnapshotCaptureResult
+        CaptureSelectedLineageAuditSnapshotCore(
+        int maximumEvents,
+        CancellationToken cancellationToken
+    ) {
+        try {
             EventAddress expected = ReadCurrentHead()
                 ?? throw new InvalidOperationException(
-                    "Lifecycle audit requires a non-empty SessionJournal."
+                    "Owner-bound audit requires a non-empty SessionJournal."
                 );
             _testHooks.AfterLifecycleAuditExpectedHeadCaptured
                 ?.Invoke(_journal);
@@ -162,9 +235,6 @@ public sealed partial class SessionJournalEngine {
         catch (SessionSelectedLineageAuditChangedException changed) {
             return new SessionSelectedLineageAuditSnapshotCaptureResult
                 .RawHeadChanged(changed.ExpectedHead, changed.ObservedHead);
-        }
-        finally {
-            Volatile.Write(ref token.ActiveCapture, 0);
         }
     }
 
@@ -450,7 +520,9 @@ public sealed partial class SessionJournalEngine {
         ThrowIfDisposed();
         RequireOfflineAuditEngine();
         return OpenSelectedLineageForwardCursorCore(
-            snapshot,
+            new SessionSelectedLineageSnapshotLease(
+                snapshot,
+                disposeSnapshotOnLastRelease: true),
             ownerBoundLifecycleAudit: false,
             cancellationToken);
     }
@@ -462,7 +534,7 @@ public sealed partial class SessionJournalEngine {
     ) {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(snapshot);
-        _ = RequireLifecycleAuditToken();
+        RequireOwnerBoundAuditToken();
         if (!ReferenceEquals(snapshot.Owner, this)
             || snapshot.IsDisposed) {
             throw new ArgumentException(
@@ -470,17 +542,21 @@ public sealed partial class SessionJournalEngine {
                 nameof(snapshot));
         }
         return OpenSelectedLineageForwardCursorCore(
-            snapshot,
+            new SessionSelectedLineageSnapshotLease(
+                snapshot,
+                disposeSnapshotOnLastRelease: false),
             ownerBoundLifecycleAudit: true,
             cancellationToken);
     }
 
     private SessionSelectedLineageForwardCursor
         OpenSelectedLineageForwardCursorCore(
-        ISessionSelectedLineageAuditPageSnapshot snapshot,
+        SessionSelectedLineageSnapshotLease snapshotLease,
         bool ownerBoundLifecycleAudit,
         CancellationToken cancellationToken
     ) {
+        ISessionSelectedLineageAuditPageSnapshot snapshot =
+            snapshotLease.Snapshot;
         ArgumentNullException.ThrowIfNull(snapshot);
         try {
             if (snapshot.PageCount <= 0) {
@@ -537,7 +613,7 @@ public sealed partial class SessionJournalEngine {
             }
             return new SessionSelectedLineageForwardCursor(
                 this,
-                snapshot,
+                snapshotLease,
                 authority,
                 entries,
                 authority.BootstrapSeed,
@@ -545,9 +621,39 @@ public sealed partial class SessionJournalEngine {
             );
         }
         catch {
-            if (!ownerBoundLifecycleAudit) {
-                snapshot.Dispose();
-            }
+            snapshotLease.Release();
+            throw;
+        }
+    }
+
+    internal SessionSelectedLineageForwardCursor
+        ForkSelectedLineageForwardCursorAtBoundary(
+        SessionSelectedLineageForwardCursor source,
+        EventAddress boundary,
+        SessionContextAnchorSetupReferences setups,
+        CancellationToken cancellationToken
+    ) {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(source);
+        RequireOfflineAuditCursor(source);
+        if (!ReferenceEquals(source.Owner, this)
+            || source.IsDisposed
+            || source.InspectionExhausted) {
+            throw new ArgumentException(
+                "The source forward cursor is unavailable for forking.",
+                nameof(source));
+        }
+        SessionSelectedLineageForwardCursor fork =
+            OpenSelectedLineageForwardCursorCore(
+                source.SnapshotLease.AddReference(),
+                source.OwnerBoundLifecycleAudit,
+                cancellationToken);
+        try {
+            fork.SeekToBoundary(boundary, setups, cancellationToken);
+            return fork;
+        }
+        catch {
+            fork.Dispose();
             throw;
         }
     }
@@ -1252,7 +1358,7 @@ public sealed partial class SessionJournalEngine {
             RequireOfflineAuditEngine();
             return;
         }
-        _ = RequireLifecycleAuditToken();
+        RequireOwnerBoundAuditToken();
     }
 
     private void RequireOfflineAuditCursor(
@@ -1265,7 +1371,7 @@ public sealed partial class SessionJournalEngine {
             RequireOfflineAuditEngine();
             return;
         }
-        _ = RequireLifecycleAuditToken();
+        RequireOwnerBoundAuditToken();
     }
 
     private LifecycleAuditToken RequireLifecycleAuditToken() {
@@ -1281,6 +1387,17 @@ public sealed partial class SessionJournalEngine {
             );
         }
         return token;
+    }
+
+    private void RequireOwnerBoundAuditToken() {
+        SessionSelectedLineageDerivedAuditToken? derived =
+            _derivedAuditToken.Value;
+        if (derived is not null
+            && derived.IsActive
+            && ReferenceEquals(derived.Owner, this)) {
+            return;
+        }
+        _ = RequireLifecycleAuditToken();
     }
 
     private async ValueTask<SessionContextLifecycleResult>

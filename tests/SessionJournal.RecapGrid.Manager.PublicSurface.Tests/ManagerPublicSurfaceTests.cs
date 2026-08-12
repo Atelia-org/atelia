@@ -1,5 +1,6 @@
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Store;
@@ -27,9 +28,15 @@ public sealed class ManagerPublicSurfaceTests {
                     new ActionMessage([new ActionBlock.Text("answer")]),
                     new CompletionDescriptor("import", "v1", "model")
                 );
+                _ = import.AppendObservation("recent-reserve");
+                _ = import.AppendImportedAgentAction(
+                    new ActionMessage([
+                        new ActionBlock.Text("recent-reserve-answer")
+                    ]),
+                    new CompletionDescriptor("import", "v1", "model")
+                );
             }
-            using SessionJournalEngine journal =
-                SessionJournalEngine.OpenReadOnly(path);
+            using SessionJournalEngine journal = SessionJournalEngine.Open(path);
             Assert.IsType<HistoryTimelineCreateResult.Created>(
                 HistoryTimelineFactory.Create(
                     journal.ReadView,
@@ -44,6 +51,17 @@ public sealed class ManagerPublicSurfaceTests {
                     estimator
                 )
             );
+            Assert.IsType<RecapGridCadenceCreateResult.Created>(
+                RecapGridCadenceFactory.Create(
+                    journal,
+                    new RecapGridCadencePolicySpec(
+                        minimumRecentHistoryLoad: 1,
+                        HistoryPartitionAlgorithms
+                            .FirstReplaySafeBoundaryAtTargetV1,
+                        O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                        targetHistoryLoad: 1,
+                        maxRawEvents: 64,
+                        maxRenderedBytes: 1024 * 1024)));
             (TimelineHeadRef head, HistoryTimelineSelectedRow row) =
                 CommitFirstRow(journal, estimator);
             Assert.IsType<RecapGridStoreCreateResult.Created>(
@@ -153,6 +171,12 @@ public sealed class ManagerPublicSurfaceTests {
             journal.ReadView,
             estimator
         )).Handle;
+        using RecapGridCadenceHandle cadence = Assert.IsType<
+            RecapGridCadenceOpenResult.Opened
+        >(RecapGridCadenceFactory.OpenMutable(journal)).Handle;
+        using RecapGridCadenceTimelineSealOperation seal = Assert.IsType<
+            RecapGridCadenceTimelineSealOpenResult.Opened
+        >(cadence.BeginTimelineSeal(timeline)).Operation;
         TimelineHeadRef expected = Assert.IsType<
             HistoryTimelineSnapshotResult.Available
         >(timeline.Reader.ReadSnapshot()).Head;
@@ -164,10 +188,10 @@ public sealed class ManagerPublicSurfaceTests {
         )).Capture;
         HistoryRowCommitCandidate candidate = Assert.IsType<
             HistoryTimelinePlanResult.Selected
-        >(timeline.Coordinator.PlanNextRow(expected, capture)).Candidate;
+        >(seal.PlanNextRow(expected, capture)).Candidate;
         TimelineHeadRef committed = Assert.IsType<
             HistoryTimelineCommitResult.Committed
-        >(timeline.Coordinator.CommitRow(candidate)).Head;
+        >(seal.CommitRow(candidate)).Head;
         HistoryTimelineSelectedRow row = Assert.IsType<
             HistoryTimelineReaderRowResult.Selected
         >(timeline.Reader.ReadSelectedRow(

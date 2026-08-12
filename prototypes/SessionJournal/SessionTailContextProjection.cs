@@ -428,7 +428,7 @@ internal static class SessionTailContextProjection {
             priorAddress = ev.Address;
         }
         if (openAction is not null || pendingCall is not null || pendingStarted) {
-            throw new InvalidDataException("Recap raw suffix ends with unresolved tool dependencies.");
+            throw new SessionSelectedLineageOpenDependencyException();
         }
 
         EventAddress finalHead = events.Count == 0 ? seed.Head : events[^1].Address;

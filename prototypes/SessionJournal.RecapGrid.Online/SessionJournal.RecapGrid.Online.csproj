@@ -8,6 +8,7 @@
   <ItemGroup>
     <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Cadence/SessionJournal.RecapGrid.Cadence.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Manager/SessionJournal.RecapGrid.Manager.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Getter/SessionJournal.RecapGrid.Getter.csproj" />
   </ItemGroup>

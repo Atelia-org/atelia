@@ -859,6 +859,160 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
         );
     }
 
+    [Fact]
+    public void RecentReserve_ExtendsAcrossPageToCloseToolDependency() {
+        string path = CreateToolTailFixture(completeDependency: true);
+        using var offline = SessionJournalEngine.OpenReadOnly(path);
+        using SessionSelectedLineageForwardCursor cursor =
+            OpenCursor(offline, pageSize: 2);
+        var estimator = new FixedEstimator();
+        PartitionPolicyRevision policy = Policy(
+            new TimelineId(new string('a', 32)),
+            estimator.Id,
+            maxRawEvents: 2);
+        var coordinator = new HistoryTimelineCoordinator(
+            path,
+            new InMemoryHistoryTimelineLedger(
+                offline.BranchRefId,
+                policy),
+            new HistoryTimelineCoordinatorTestHooks(
+                RecentReserveForwardRangeEventCap: 8,
+                RecentReserveInitialForwardRangeEventCount: 2),
+            estimator);
+        HistoryTimelineOfflineBuilder builder = OpenReserveBuilder(
+            path,
+            offline.BranchRefId,
+            cursor,
+            coordinator,
+            policy,
+            estimator,
+            minimumRecent: 1);
+
+        HistoryTimelineOfflineStepResult.Committed committed =
+            Assert.IsType<HistoryTimelineOfflineStepResult.Committed>(
+                builder.BuildNextRow(
+                    coordinator.ReadSnapshotRequired()));
+
+        Assert.Equal(2, committed.Descriptor.RawEventCount);
+    }
+
+    [Fact]
+    public void RecentReserve_FinalOpenToolDependencyIsProofUnavailable() {
+        string path = CreateToolTailFixture(completeDependency: false);
+        using var offline = SessionJournalEngine.OpenReadOnly(path);
+        using SessionSelectedLineageForwardCursor cursor =
+            OpenCursor(offline, pageSize: 2);
+        var estimator = new FixedEstimator();
+        PartitionPolicyRevision policy = Policy(
+            new TimelineId(new string('b', 32)),
+            estimator.Id,
+            maxRawEvents: 2);
+        var coordinator = new HistoryTimelineCoordinator(
+            path,
+            new InMemoryHistoryTimelineLedger(
+                offline.BranchRefId,
+                policy),
+            new HistoryTimelineCoordinatorTestHooks(
+                RecentReserveForwardRangeEventCap: 8,
+                RecentReserveInitialForwardRangeEventCount: 2),
+            estimator);
+        HistoryTimelineOfflineBuilder builder = OpenReserveBuilder(
+            path,
+            offline.BranchRefId,
+            cursor,
+            coordinator,
+            policy,
+            estimator,
+            minimumRecent: 1);
+
+        var unavailable = Assert.IsType<
+            HistoryTimelineOfflineStepResult.RecentReserveProofUnavailable>(
+                builder.BuildNextRow(
+                    coordinator.ReadSnapshotRequired()));
+
+        Assert.Equal(
+            "RecentReserveTerminalOpenDependency",
+            unavailable.Code);
+    }
+
+    [Fact]
+    public void RecentReserve_NonFinalOpenToolDependencyAtCapIsProofUnavailable() {
+        string path = CreateToolTailFixture(completeDependency: true);
+        using var offline = SessionJournalEngine.OpenReadOnly(path);
+        using SessionSelectedLineageForwardCursor cursor =
+            OpenCursor(offline, pageSize: 2);
+        var estimator = new FixedEstimator();
+        PartitionPolicyRevision policy = Policy(
+            new TimelineId(new string('e', 32)),
+            estimator.Id,
+            maxRawEvents: 2);
+        var coordinator = new HistoryTimelineCoordinator(
+            path,
+            new InMemoryHistoryTimelineLedger(
+                offline.BranchRefId,
+                policy),
+            new HistoryTimelineCoordinatorTestHooks(
+                RecentReserveForwardRangeEventCap: 2,
+                RecentReserveInitialForwardRangeEventCount: 2),
+            estimator);
+        HistoryTimelineOfflineBuilder builder = OpenReserveBuilder(
+            path,
+            offline.BranchRefId,
+            cursor,
+            coordinator,
+            policy,
+            estimator,
+            minimumRecent: 1);
+
+        var unavailable = Assert.IsType<
+            HistoryTimelineOfflineStepResult.RecentReserveProofUnavailable>(
+                builder.BuildNextRow(
+                    coordinator.ReadSnapshotRequired()));
+
+        Assert.Equal(
+            "RecentReserveForwardRangeLimitExceeded",
+            unavailable.Code);
+    }
+
+    [Fact]
+    public void RecentReserve_NearLongMaxThresholdSaturatesWithoutOverflow() {
+        string path = NewPath();
+        using (SessionJournalEngine writer = CreateWriter(path)) {
+            AppendPlainTurn(writer, "first", "first-answer");
+            AppendPlainTurn(writer, "small", "small-answer");
+            AppendPlainTurn(writer, "huge-reserve", "huge-answer");
+        }
+        using var offline = SessionJournalEngine.OpenReadOnly(path);
+        using SessionSelectedLineageForwardCursor cursor =
+            OpenCursor(offline, pageSize: 2);
+        var estimator = new SaturatingEstimator();
+        PartitionPolicyRevision policy = Policy(
+            new TimelineId(new string('c', 32)),
+            estimator.Id,
+            maxRawEvents: 2);
+        var coordinator = new HistoryTimelineCoordinator(
+            path,
+            new InMemoryHistoryTimelineLedger(
+                offline.BranchRefId,
+                policy),
+            estimator);
+        HistoryTimelineOfflineBuilder builder = OpenReserveBuilder(
+            path,
+            offline.BranchRefId,
+            cursor,
+            coordinator,
+            policy,
+            estimator,
+            minimumRecent: long.MaxValue - 1);
+
+        HistoryTimelineOfflineStepResult.Committed committed =
+            Assert.IsType<HistoryTimelineOfflineStepResult.Committed>(
+                builder.BuildNextRow(
+                    coordinator.ReadSnapshotRequired()));
+
+        Assert.Equal(2, committed.Descriptor.RawEventCount);
+    }
+
     public void Dispose() {
         foreach (string path in _paths) {
             if (Directory.Exists(path)) {
@@ -896,6 +1050,112 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
         1024 * 1024
     );
 
+    private static HistoryTimelineOfflineBuilder OpenReserveBuilder(
+        string path,
+        RefId refId,
+        SessionSelectedLineageForwardCursor cursor,
+        HistoryTimelineCoordinator coordinator,
+        PartitionPolicyRevision policy,
+        IHistoryUnitLoadEstimator estimator,
+        long minimumRecent
+    ) {
+        var reserve = new HistoryRecentReservePolicy(
+            path,
+            refId,
+            cadenceGeneration: 1,
+            new string('d', 64),
+            policy,
+            new HistoryLoadUnit(minimumRecent),
+            new HistoryRecentReserveAuthorityToken());
+        return Assert.IsType<
+            HistoryTimelineOfflineBuilderOpenResult.Opened>(
+                coordinator.OpenOfflineBuilder(
+                    coordinator.ReadSnapshotRequired(),
+                    cursor,
+                    reserve)).Builder;
+    }
+
+    private string CreateToolTailFixture(bool completeDependency) {
+        string path = NewPath();
+        EventAddress firstAction;
+        using (SessionJournalEngine writer = CreateWriter(path)) {
+            _ = writer.AppendObservation("first");
+            firstAction = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("first-answer")]),
+                new CompletionDescriptor("import", "v1", "model-A"));
+        }
+        using var journal = EventJournal.EventJournal.OpenExisting(path);
+        EventAddress observation = Commit(
+            journal,
+            firstAction,
+            SessionEventKind.ObservationAccepted,
+            new ObservationAcceptedBody("use tool"));
+        var identity = new SessionToolRuntimeIdentity(
+            "host",
+            "implementations",
+            "capabilities");
+        EventAddress action = Commit(
+            journal,
+            observation,
+            SessionEventKind.ImportedAgentAction,
+            new AgentActionProducedBody(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(
+                        new RawToolCall("lookup", "call-1", "{}"))
+                ]),
+                new CompletionDescriptor("import", "v1", "model-A"),
+                $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(observation)}",
+                new SessionExecutionCheckpoint(0),
+                identity));
+        if (completeDependency) {
+            EventAddress started = Commit(
+                journal,
+                action,
+                SessionEventKind.ToolExecutionStarted,
+                new ToolExecutionStartedBody(
+                    "call-1",
+                    "lookup",
+                    "{}",
+                    "operation-1",
+                    1,
+                    identity));
+            _ = Commit(
+                journal,
+                started,
+                SessionEventKind.ToolResultObserved,
+                new ToolResultObservedBody(
+                    "call-1",
+                    "lookup",
+                    1,
+                    ToolExecutionStatus.Success,
+                    [new ToolResultBlock.Text("result")]));
+        }
+        return path;
+    }
+
+    private static void AppendPlainTurn(
+        SessionJournalEngine writer,
+        string observation,
+        string answer
+    ) {
+        _ = writer.AppendObservation(observation);
+        _ = writer.AppendImportedAgentAction(
+            new ActionMessage([new ActionBlock.Text(answer)]),
+            new CompletionDescriptor("import", "v1", "model-A"));
+    }
+
+    private static EventAddress Commit(
+        EventJournal.EventJournal journal,
+        EventAddress? expectedParent,
+        SessionEventKind kind,
+        object body
+    ) => journal.CommitToRef(
+        SessionJournalDefaults.MainBranchName,
+        expectedParent,
+        SessionEventCodec.Encode(kind, body),
+        opaqueEventKind: (uint)kind,
+        hint: default).Unwrap().EventAddress;
+
     private SessionJournalEngine CreateWriter(string path)
         => SessionJournalEngine.Create(
             path,
@@ -926,6 +1186,21 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
             SessionHistoryPlanningUnit unit,
             int maxRenderedUtf8Bytes
         ) => new(new HistoryLoadUnit(1), 1);
+    }
+
+    private sealed class SaturatingEstimator
+        : IHistoryUnitLoadEstimator {
+        public string Id => "test.history-load.saturating.v1";
+
+        public HistoryUnitLoadMeasurement Measure(
+            SessionHistoryPlanningUnit unit,
+            int maxRenderedUtf8Bytes
+        ) => new(
+            new HistoryLoadUnit(
+                unit.Message is ObservationMessage {
+                    Content: "huge-reserve"
+                } ? long.MaxValue : 1),
+            1);
     }
 
     private sealed class InMemoryPageSnapshot(

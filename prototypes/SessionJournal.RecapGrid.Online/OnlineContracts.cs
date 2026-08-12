@@ -6,6 +6,7 @@ namespace Atelia.SessionJournal.RecapGrid.Online;
 
 public enum RecapGridOnlineComponent {
     RawAuthority,
+    Cadence,
     Timeline,
     Control,
     Store,

@@ -252,6 +252,12 @@ public interface ISessionSelectedLineageAuditPageSnapshot : IDisposable {
         ReadOldestToHeadPages();
 }
 
+public sealed class SessionSelectedLineageOpenDependencyException
+    : IOException {
+    internal SessionSelectedLineageOpenDependencyException()
+        : base("Recap raw suffix ends with unresolved tool dependencies.") { }
+}
+
 /// <summary>
 /// Opaque, content-free complete selected-lineage snapshot captured by the
 /// mutable SessionJournal owner only during its lifecycle callback. It never
@@ -320,6 +326,22 @@ public abstract record SessionSelectedLineageAuditSnapshotCaptureResult {
     ) : SessionSelectedLineageAuditSnapshotCaptureResult;
 }
 
+internal sealed class SessionSelectedLineageDerivedAuditToken {
+    private int _active = 1;
+
+    internal SessionSelectedLineageDerivedAuditToken(
+        SessionJournalEngine owner
+    ) {
+        Owner = owner ?? throw new ArgumentNullException(nameof(owner));
+    }
+
+    internal SessionJournalEngine Owner { get; }
+    internal bool IsActive => Volatile.Read(ref _active) != 0;
+    internal int ActiveCapture;
+
+    internal void Deactivate() => Interlocked.Exchange(ref _active, 0);
+}
+
 /// <summary>
 /// Opaque membership-bound range emitted only by a forward cursor whose
 /// complete sealed page snapshot was revalidated against raw authority.
@@ -365,13 +387,56 @@ public sealed record SessionSelectedLineageBoundaryProbeResult(
     bool Stopped
 );
 
+internal sealed class SessionSelectedLineageSnapshotLease {
+    private readonly bool _disposeSnapshotOnLastRelease;
+    private int _references = 1;
+
+    internal SessionSelectedLineageSnapshotLease(
+        ISessionSelectedLineageAuditPageSnapshot snapshot,
+        bool disposeSnapshotOnLastRelease
+    ) {
+        Snapshot = snapshot
+            ?? throw new ArgumentNullException(nameof(snapshot));
+        _disposeSnapshotOnLastRelease = disposeSnapshotOnLastRelease;
+    }
+
+    internal ISessionSelectedLineageAuditPageSnapshot Snapshot { get; }
+
+    internal SessionSelectedLineageSnapshotLease AddReference() {
+        while (true) {
+            int observed = Volatile.Read(ref _references);
+            if (observed <= 0) {
+                throw new ObjectDisposedException(
+                    nameof(SessionSelectedLineageSnapshotLease));
+            }
+            if (Interlocked.CompareExchange(
+                    ref _references,
+                    observed + 1,
+                    observed) == observed) {
+                return this;
+            }
+        }
+    }
+
+    internal void Release() {
+        int remaining = Interlocked.Decrement(ref _references);
+        if (remaining < 0) {
+            throw new InvalidOperationException(
+                "Selected-lineage snapshot lease was over-released.");
+        }
+        if (remaining == 0 && _disposeSnapshotOnLastRelease) {
+            Snapshot.Dispose();
+        }
+    }
+}
+
 /// <summary>
 /// Sequential root-to-captured-head reader over one revalidated sealed spool.
 /// It begins immediately after the SessionCreated bootstrap boundary.
 /// </summary>
 public sealed class SessionSelectedLineageForwardCursor : IDisposable {
     private readonly SessionJournalEngine _owner;
-    private readonly ISessionSelectedLineageAuditPageSnapshot _snapshot;
+    private readonly SessionSelectedLineageSnapshotLease _snapshotLease;
     private readonly IEnumerator<SessionSelectedLineageAuditEntry>
         _entries;
     private SessionHistoryPlanningSeed _currentSeed;
@@ -381,18 +446,18 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
     private bool _finished;
     private bool _forwardEnumerationInvalid;
     private bool _inspectionExhausted;
-    private bool _disposed;
+    private int _disposed;
 
     internal SessionSelectedLineageForwardCursor(
         SessionJournalEngine owner,
-        ISessionSelectedLineageAuditPageSnapshot snapshot,
+        SessionSelectedLineageSnapshotLease snapshotLease,
         SessionSelectedLineageAuditAuthority authority,
         IEnumerator<SessionSelectedLineageAuditEntry> entries,
         SessionHistoryPlanningSeed bootstrapSeed,
         bool ownerBoundLifecycleAudit = false
     ) {
         _owner = owner;
-        _snapshot = snapshot;
+        _snapshotLease = snapshotLease;
         Authority = authority;
         _entries = entries;
         _currentSeed = bootstrapSeed;
@@ -500,6 +565,23 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
     );
 
     /// <summary>
+    /// Opens an independent owner-bound cursor over this cursor's immutable
+    /// audited snapshot and seeks it to one exact replay-safe boundary. The
+    /// fork borrows the shared snapshot; disposing it never disposes either
+    /// the source cursor or the snapshot owner.
+    /// </summary>
+    public SessionSelectedLineageForwardCursor ForkAtBoundary(
+        EventAddress boundary,
+        SessionContextAnchorSetupReferences setups,
+        CancellationToken cancellationToken = default
+    ) => _owner.ForkSelectedLineageForwardCursorAtBoundary(
+        this,
+        boundary,
+        setups,
+        cancellationToken
+    );
+
+    /// <summary>
     /// Replays content-free audited entries to one exact selected-lineage
     /// boundary. This is used only to resume an explicit rebuild from a
     /// previously Published admission. It rejects a cursor already consumed
@@ -552,22 +634,21 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
     );
 
     public void Dispose() {
-        if (_disposed) {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) {
             return;
         }
-        _entries.Dispose();
-        if (!OwnerBoundLifecycleAudit) {
-            // Ordinary read-only offline cursors retain their historical
-            // ownership contract. Lifecycle cursors borrow the shared sealed
-            // snapshot from Online's AuditContext so reconciliation and
-            // suffix construction may open independent cursors in one pass.
-            _snapshot.Dispose();
+        try {
+            _entries.Dispose();
         }
-        _disposed = true;
+        finally {
+            _snapshotLease.Release();
+        }
     }
 
     internal SessionJournalEngine Owner => _owner;
     internal bool OwnerBoundLifecycleAudit { get; }
+    internal SessionSelectedLineageSnapshotLease SnapshotLease
+        => _snapshotLease;
     internal SessionHistoryPlanningSeed CurrentSeed => _currentSeed;
     internal SessionSelectedLineageForwardRange? PendingRange =>
         _pendingRange;
@@ -575,7 +656,7 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
     internal bool IsForwardEnumerationInvalid =>
         _forwardEnumerationInvalid;
     internal bool InspectionExhausted => _inspectionExhausted;
-    internal bool IsDisposed => _disposed;
+    internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
     internal SessionSelectedLineageForwardRange? PreviewedRange =>
         _previewedRange;
     internal SessionHistoryPlanningWindow? PreviewedWindow =>

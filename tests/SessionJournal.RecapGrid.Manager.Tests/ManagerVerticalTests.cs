@@ -1,5 +1,6 @@
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Store;
@@ -1825,9 +1826,16 @@ public sealed class ManagerVerticalTests : IDisposable {
                     new CompletionDescriptor("import", "v1", "model")
                 );
             }
+            if (turns > 0) {
+                _ = import.AppendObservation("recent-reserve");
+                _ = import.AppendImportedAgentAction(
+                    new ActionMessage([
+                        new ActionBlock.Text("recent-reserve-answer")
+                    ]),
+                    new CompletionDescriptor("import", "v1", "model"));
+            }
         }
-        SessionJournalEngine journal =
-            SessionJournalEngine.OpenReadOnly(path);
+        SessionJournalEngine journal = SessionJournalEngine.Open(path);
         Assert.IsType<HistoryTimelineCreateResult.Created>(
             HistoryTimelineFactory.Create(
                 journal.ReadView,
@@ -1961,6 +1969,9 @@ public sealed class ManagerVerticalTests : IDisposable {
         ));
         for (int index = 0; index < initialTurns; index++) {
             AppendTurn(journal, $"initial-{index}");
+        }
+        if (initialTurns > 0) {
+            AppendTurn(journal, "initial-recent-reserve");
         }
         Assert.IsType<HistoryTimelineCreateResult.Created>(
             HistoryTimelineFactory.Create(
@@ -2144,6 +2155,9 @@ public sealed class ManagerVerticalTests : IDisposable {
         for (int index = 0; index < laterTurns; index++) {
             AppendTurn(journal, $"later-{index}");
         }
+        if (laterTurns > 0) {
+            AppendTurn(journal, "later-recent-reserve");
+        }
         (TimelineHeadRef finalHead,
             IReadOnlyList<HistoryTimelineSelectedRow> laterRows) =
             CommitAllRows(journal);
@@ -2177,12 +2191,19 @@ public sealed class ManagerVerticalTests : IDisposable {
         IReadOnlyList<HistoryTimelineSelectedRow>) CommitAllRows(
         SessionJournalEngine journal
     ) {
+        EnsureCadence(journal, maxRawEvents: 64);
         using HistoryTimelineHandle timeline = Assert.IsType<
             HistoryTimelineOpenResult.Opened
         >(HistoryTimelineFactory.Open(
             journal.ReadView,
             _estimator
         )).Handle;
+        using RecapGridCadenceHandle cadence = Assert.IsType<
+            RecapGridCadenceOpenResult.Opened
+        >(RecapGridCadenceFactory.OpenMutable(journal)).Handle;
+        using RecapGridCadenceTimelineSealOperation seal = Assert.IsType<
+            RecapGridCadenceTimelineSealOpenResult.Opened
+        >(cadence.BeginTimelineSeal(timeline)).Operation;
         var rows = new List<HistoryTimelineSelectedRow>();
         while (true) {
             TimelineHeadRef before = Assert.IsType<
@@ -2194,9 +2215,9 @@ public sealed class ManagerVerticalTests : IDisposable {
                 before,
                 journal.ReadView
             )).Capture;
-            HistoryTimelinePlanResult plan =
-                timeline.Coordinator.PlanNextRow(before, capture);
-            if (plan is HistoryTimelinePlanResult.NotEnough) {
+            HistoryTimelinePlanResult plan = seal.PlanNextRow(before, capture);
+            if (plan is HistoryTimelinePlanResult.NotEnough
+                or HistoryTimelinePlanResult.RecentReserveNotReached) {
                 return (before, rows.AsReadOnly());
             }
             HistoryRowCommitCandidate candidate = Assert.IsType<
@@ -2204,7 +2225,7 @@ public sealed class ManagerVerticalTests : IDisposable {
             >(plan).Candidate;
             TimelineHeadRef committed = Assert.IsType<
                 HistoryTimelineCommitResult.Committed
-            >(timeline.Coordinator.CommitRow(candidate)).Head;
+            >(seal.CommitRow(candidate)).Head;
             rows.Add(Assert.IsType<
                 HistoryTimelineReaderRowResult.Selected
             >(timeline.Reader.ReadSelectedRow(
@@ -2212,6 +2233,24 @@ public sealed class ManagerVerticalTests : IDisposable {
                 committed.HeadRowId!.Value
             )).Row);
         }
+    }
+
+    private static void EnsureCadence(
+        SessionJournalEngine journal,
+        int maxRawEvents
+    ) {
+        RecapGridCadenceCreateResult result = RecapGridCadenceFactory.Create(
+            journal,
+            new RecapGridCadencePolicySpec(
+                minimumRecentHistoryLoad: 1,
+                HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                targetHistoryLoad: 1,
+                maxRawEvents,
+                maxRenderedBytes: 1024 * 1024));
+        Assert.True(result is RecapGridCadenceCreateResult.Created
+            or RecapGridCadenceCreateResult.AlreadyExists,
+            $"Cadence create failed: {result.GetType().Name}");
     }
 
     private RecapGridManagerHandle OpenManager(Fixture fixture)
@@ -2615,7 +2654,7 @@ public sealed class ManagerVerticalTests : IDisposable {
             PreviousViewWasCommitted = reader.Reader.ReadView(
                 batch.PreviousView.Digest
             ) is RecapGridStoreReadResult<RecapRowView>.Found;
-            SecondRowStarted.SetResult();
+            SecondRowStarted.TrySetResult();
             return Updated(batch, $"row-{batchOrdinal}");
         }
 

@@ -101,7 +101,7 @@ public sealed class HistoryTimelinePublicSurfaceTests : IDisposable {
     }
 
     [Fact]
-    public void ExternalBuildReadSessionCanOpenSelectedContentWithoutCoordinatorSurface() {
+    public void ExternalBuildReadSessionExposesNoTimelineMutationSurface() {
         using (SessionJournalLegacyImportWriter writer =
                SessionJournalLegacyImportWriter.Create(
             _path,
@@ -131,60 +131,34 @@ public sealed class HistoryTimelinePublicSurfaceTests : IDisposable {
                 estimator
             )
         );
-        TimelineHeadRef committed;
-        using (HistoryTimelineHandle writer = Assert.IsType<
-                   HistoryTimelineOpenResult.Opened
-               >(HistoryTimelineFactory.Open(
-                   journal.ReadView,
-                   estimator
-               )).Handle) {
-            TimelineHeadRef before = Assert.IsType<
-                HistoryTimelineSnapshotResult.Available
-            >(writer.Reader.ReadSnapshot()).Head;
-            OnlineSelectedRawCapture capture = Assert.IsType<
-                OnlineSelectedRawCaptureResult.Captured
-            >(writer.Coordinator.CaptureOnline(
-                before,
-                journal.ReadView
-            )).Capture;
-            HistoryRowCommitCandidate candidate = Assert.IsType<
-                HistoryTimelinePlanResult.Selected
-            >(writer.Coordinator.PlanNextRow(
-                before,
-                capture
-            )).Candidate;
-            committed = Assert.IsType<
-                HistoryTimelineCommitResult.Committed
-            >(writer.Coordinator.CommitRow(candidate)).Head;
-        }
-
         using HistoryTimelineBuildReadSession session = Assert.IsType<
             HistoryTimelineBuildReadSessionOpenResult.Opened
         >(HistoryTimelineFactory.OpenBuildReadSession(
             journal.ReadView,
             estimator
         )).Session;
-        HistoryTimelineSelectedRow row = Assert.IsType<
-            HistoryTimelineReaderRowResult.Selected
-        >(session.Reader.ReadSelectedRow(
-            committed,
-            committed.HeadRowId!.Value
-        )).Row;
-        OnlineSelectedRawCapture raw = Assert.IsType<
+        TimelineHeadRef head = Assert.IsType<
+            HistoryTimelineSnapshotResult.Available
+        >(session.Reader.ReadSnapshot()).Head;
+        _ = Assert.IsType<
             OnlineSelectedRawCaptureResult.Captured
-        >(session.CaptureRaw(committed)).Capture;
-        HistorySegmentContent content = Assert.IsType<
-            HistorySegmentOpenResult.Opened
-        >(session.OpenSelectedSegment(
-            committed,
-            raw,
-            row
-        )).Content;
-
-        Assert.Equal(row.Descriptor, content.Descriptor);
+        >(session.CaptureRaw(head));
         Assert.Null(typeof(HistoryTimelineBuildReadSession).GetProperty(
             "Coordinator"
         ));
+        string[] forbiddenMutationMethods = [
+            "PlanNextRow",
+            "CommitRow",
+            "OpenOfflineBuilder"
+        ];
+        Assert.DoesNotContain(
+            typeof(HistoryTimelineCoordinator).GetMethods(
+                System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.DeclaredOnly),
+            method => forbiddenMutationMethods.Contains(
+                method.Name,
+                StringComparer.Ordinal));
         session.Dispose();
         Assert.Equal(
             "HistoryTimelineDisposed",

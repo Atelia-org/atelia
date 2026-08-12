@@ -8,6 +8,75 @@ namespace Atelia.SessionJournal.HistoryTimeline;
 /// HistoryLoad values without changing production cadence behavior.
 /// </summary>
 public static class HistoryLoadProjector {
+    internal static HistoryLoadThresholdProjection MeasureAtLeast(
+        SJ.SessionHistoryPlanningWindow window,
+        EventAddress baselineAddress,
+        IHistoryUnitLoadEstimator estimator,
+        HistoryLoadUnit required
+    ) {
+        ArgumentNullException.ThrowIfNull(window);
+        ArgumentNullException.ThrowIfNull(estimator);
+        if (required.Value < 1) {
+            throw new ArgumentOutOfRangeException(nameof(required));
+        }
+        string estimatorId =
+            HistoryLoadMeasurementEngine.RequireEstimatorId(estimator);
+        HistoryLoadWindowValidator.ValidateCollections(window);
+        HistoryLoadBaseline baseline =
+            HistoryLoadBaselineResolver.Resolve(
+                window.StartExclusive,
+                window.Units.Count,
+                window.ReplaySafeBoundaries,
+                baselineAddress);
+        _ = HistoryLoadWindowValidator.Validate(window);
+
+        long measuredLoad = 0;
+        int renderedBytes = 0;
+        int measuredUnitCount = baseline.CompletedUnitCount;
+        for (; measuredUnitCount < window.Units.Count;
+             measuredUnitCount++) {
+            SJ.SessionHistoryPlanningUnit unit =
+                window.Units[measuredUnitCount]
+                ?? throw Invalid(
+                    HistoryLoadMeasurementDefectCodes.PlanningWindowInvalid,
+                    "Planning window contains a null HistoryUnit.");
+            HistoryUnitLoadMeasurement measured =
+                HistoryLoadMeasurementEngine.MeasureUnit(estimator, unit);
+            try {
+                renderedBytes = checked(
+                    renderedBytes + measured.RenderedUtf8Bytes);
+            }
+            catch (OverflowException exception) {
+                throw Invalid(
+                    HistoryLoadMeasurementDefectCodes.MeasurementOverflow,
+                    "Threshold HistoryLoad aggregation overflowed.",
+                    exception);
+            }
+            if (renderedBytes
+                > HistoryLoadMeasurementSafety.V1
+                    .MaxBaselineRelativeWindowUtf8Bytes) {
+                throw Invalid(
+                    HistoryLoadMeasurementDefectCodes.HistoryLoadInputTooLarge,
+                    "Baseline-relative HistoryUnit rendering exceeds "
+                    + $"{HistoryLoadMeasurementSafety.V1.MaxBaselineRelativeWindowUtf8Bytes} UTF-8 bytes before the recent reserve is proven.");
+            }
+            if (measured.Load.Value
+                >= required.Value - measuredLoad) {
+                return new HistoryLoadThresholdProjection(
+                    estimatorId,
+                    required,
+                    renderedBytes,
+                    Reached: true);
+            }
+            measuredLoad += measured.Load.Value;
+        }
+        return new HistoryLoadThresholdProjection(
+            estimatorId,
+            new HistoryLoadUnit(measuredLoad),
+            renderedBytes,
+            Reached: false);
+    }
+
     public static HistoryLoadProjection Measure(
         SJ.SessionHistoryPlanningWindow window,
         EventAddress baselineAddress,
@@ -152,6 +221,12 @@ public static class HistoryLoadProjector {
     ) => new(code, detail, innerException);
 
 }
+
+internal sealed record HistoryLoadThresholdProjection(
+    string EstimatorId,
+    HistoryLoadUnit Growth,
+    int RenderedUtf8Bytes,
+    bool Reached);
 
 public sealed record HistoryLoadBaseline {
     internal HistoryLoadBaseline(

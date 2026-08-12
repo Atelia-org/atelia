@@ -14,6 +14,8 @@ public sealed class HistoryTimelineCoordinator {
     private HistoryTimelineCoordinatorTestHooks _testHooks = null!;
     private HistoryTimelineLifetime _lifetime = null!;
 
+    internal string RepositoryPath => _repositoryPath;
+
     internal HistoryTimelineCoordinator(
         string repositoryPath,
         IHistoryTimelineLedgerPort ledger,
@@ -308,13 +310,25 @@ public sealed class HistoryTimelineCoordinator {
                 .StaleTimelineHead(after);
     }
 
-    public HistoryTimelinePlanResult PlanNextRow(
+    internal HistoryTimelinePlanResult PlanNextRowForTests(
         TimelineHeadRef expectedWholeHead,
         OnlineSelectedRawCapture capture,
+        CancellationToken cancellationToken = default
+    ) => PlanNextRow(
+        expectedWholeHead,
+        capture,
+        CreateNoReservePolicyForTests(expectedWholeHead),
+        cancellationToken);
+
+    internal HistoryTimelinePlanResult PlanNextRow(
+        TimelineHeadRef expectedWholeHead,
+        OnlineSelectedRawCapture capture,
+        HistoryRecentReservePolicy reservePolicy,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(expectedWholeHead);
         ArgumentNullException.ThrowIfNull(capture);
+        ArgumentNullException.ThrowIfNull(reservePolicy);
         using HistoryTimelineLifetime.Operation? operation =
             _lifetime.TryEnterOperation();
         if (operation is null) {
@@ -322,6 +336,16 @@ public sealed class HistoryTimelineCoordinator {
                 "HistoryTimelineDisposed",
                 "The HistoryTimeline handle has been disposed."
             );
+        }
+        if (!string.Equals(
+                capture.ReadView.Path is { } capturePath
+                    ? CanonicalRepositoryPath(capturePath)
+                    : string.Empty,
+                _repositoryPath,
+                RepositoryPathComparison)) {
+            return new HistoryTimelinePlanResult.Invalid(
+                "RawRepositoryMismatch",
+                "The raw capture belongs to another canonical repository.");
         }
         HistoryTimelineStoreReadResult<TimelineHeadRef> headRead =
             _ledger.ReadSnapshot();
@@ -386,6 +410,16 @@ public sealed class HistoryTimelineCoordinator {
                 );
         }
         PartitionPolicyRevision policy = policyFound.Value;
+        if (!string.Equals(
+                reservePolicy.CanonicalRepositoryPath,
+                _repositoryPath,
+                RepositoryPathComparison)
+            || !reservePolicy.IsExactFor(actual, policy)) {
+            return new HistoryTimelinePlanResult.Invalid(
+                "RecentReservePolicyMismatch",
+                "The recent-reserve policy does not bind the exact Ref, active partition policy, and estimator."
+            );
+        }
         if (!HistoryPartitionAlgorithms.IsSupported(
                 policy.PartitionAlgorithmId)) {
             return new HistoryTimelinePlanResult
@@ -438,6 +472,7 @@ public sealed class HistoryTimelineCoordinator {
             capture,
             expectedWholeHead,
             policy,
+            reservePolicy,
             estimator,
             predecessor,
             cancellationToken
@@ -483,17 +518,35 @@ public sealed class HistoryTimelineCoordinator {
             : new HistoryTimelinePlanResult.StaleTimelineHead(after);
     }
 
-    public HistoryTimelineCommitResult CommitRow(
+    internal HistoryTimelineCommitResult CommitRow(
         HistoryRowCommitCandidate candidate
     ) {
+        ArgumentNullException.ThrowIfNull(candidate);
         using HistoryTimelineLifetime.Operation? operation =
             _lifetime.TryEnterOperation();
-        return operation is null
-            ? new HistoryTimelineCommitResult.Invalid(
+        if (operation is null) {
+            return new HistoryTimelineCommitResult.Invalid(
                 "HistoryTimelineDisposed",
                 "The HistoryTimeline handle has been disposed."
-            )
-            : _ledger.CommitRow(candidate);
+            );
+        }
+        if (!string.Equals(
+                candidate.RawFence.CanonicalRepositoryPath,
+                _repositoryPath,
+                RepositoryPathComparison)) {
+            return new HistoryTimelineCommitResult.Invalid(
+                "CommitRepositoryMismatch",
+                "The commit candidate belongs to another canonical repository.");
+        }
+        if (!candidate.ReserveProof.IsExactFor(
+                candidate.Proposal,
+                candidate.RawFence)) {
+            return new HistoryTimelineCommitResult.Invalid(
+                "RecentReserveProofInvalid",
+                "The commit candidate has no exact recent-reserve proof."
+            );
+        }
+        return _ledger.CommitRow(candidate);
     }
 
     public SelectedHistoryRowResult ReadSelectedRow(
@@ -776,12 +829,22 @@ public sealed class HistoryTimelineCoordinator {
         }
     }
 
-    public HistoryTimelineOfflineBuilderOpenResult OpenOfflineBuilder(
+    internal HistoryTimelineOfflineBuilderOpenResult OpenOfflineBuilderForTests(
         TimelineHeadRef expectedWholeHead,
         SJ.SessionSelectedLineageForwardCursor cursor
+    ) => OpenOfflineBuilder(
+        expectedWholeHead,
+        cursor,
+        CreateNoReservePolicyForTests(expectedWholeHead));
+
+    internal HistoryTimelineOfflineBuilderOpenResult OpenOfflineBuilder(
+        TimelineHeadRef expectedWholeHead,
+        SJ.SessionSelectedLineageForwardCursor cursor,
+        HistoryRecentReservePolicy reservePolicy
     ) {
         ArgumentNullException.ThrowIfNull(expectedWholeHead);
         ArgumentNullException.ThrowIfNull(cursor);
+        ArgumentNullException.ThrowIfNull(reservePolicy);
         using HistoryTimelineLifetime.Operation? operation =
             _lifetime.TryEnterOperation();
         if (operation is null) {
@@ -821,6 +884,37 @@ public sealed class HistoryTimelineCoordinator {
         if (actual != expectedWholeHead) {
             return new HistoryTimelineOfflineBuilderOpenResult
                 .StaleTimelineHead(actual);
+        }
+        HistoryTimelineStoreReadResult<PartitionPolicyRevision>
+            policyRead = _ledger.ReadPolicy(
+                actual.ActivePartitionPolicyDigest);
+        if (policyRead is HistoryTimelineStoreReadResult<
+                PartitionPolicyRevision>.Busy) {
+            return new HistoryTimelineOfflineBuilderOpenResult.BackendBusy();
+        }
+        if (policyRead is HistoryTimelineStoreReadResult<
+                PartitionPolicyRevision>.UnsupportedSchema policySchema) {
+            return new HistoryTimelineOfflineBuilderOpenResult.Invalid(
+                "TimelineStoreUnsupportedSchema",
+                UnsupportedSchemaDetail(policySchema.SchemaVersion));
+        }
+        if (policyRead is HistoryTimelineStoreReadResult<
+                PartitionPolicyRevision>.Invalid policyInvalid) {
+            return new HistoryTimelineOfflineBuilderOpenResult.Invalid(
+                policyInvalid.Code,
+                policyInvalid.Detail);
+        }
+        if (policyRead is not HistoryTimelineStoreReadResult<
+                PartitionPolicyRevision>.Found policyFound) {
+            return new HistoryTimelineOfflineBuilderOpenResult.Invalid(
+                "PartitionPolicyUnavailable",
+                actual.ActivePartitionPolicyDigest);
+        }
+        if (!reservePolicy.IsExactFor(actual, policyFound.Value)) {
+            return new HistoryTimelineOfflineBuilderOpenResult.Invalid(
+                "RecentReservePolicyMismatch",
+                "The recent-reserve policy does not bind the exact Ref, active partition policy, and estimator."
+            );
         }
         EventAddress capturedHead =
             cursor.Authority.Capture.CapturedHead;
@@ -883,8 +977,40 @@ public sealed class HistoryTimelineCoordinator {
             );
         }
         return new HistoryTimelineOfflineBuilderOpenResult.Opened(
-            new HistoryTimelineOfflineBuilder(this, cursor)
+            new HistoryTimelineOfflineBuilder(
+                this,
+                cursor,
+                reservePolicy,
+                _testHooks.RecentReserveForwardRangeEventCap
+                    ?? SJ.SessionSelectedLineageAuditLimits
+                        .MaximumForwardRangeEventCount,
+                Math.Min(
+                    _testHooks.RecentReserveInitialForwardRangeEventCount
+                        ?? 128,
+                    _testHooks.RecentReserveForwardRangeEventCap
+                        ?? SJ.SessionSelectedLineageAuditLimits
+                            .MaximumForwardRangeEventCount))
         );
+    }
+
+    private HistoryRecentReservePolicy CreateNoReservePolicyForTests(
+        TimelineHeadRef expectedWholeHead
+    ) {
+        PartitionPolicyRevision policy = PartitionPolicyRevision.Create(
+            expectedWholeHead.TimelineId,
+            HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            new HistoryLoadUnit(1),
+            maxRawEvents: 1,
+            maxRenderedBytes: 1);
+        return new HistoryRecentReservePolicy(
+            _repositoryPath,
+            expectedWholeHead.RefId,
+            cadenceGeneration: 0,
+            new string('0', 64),
+            policy,
+            new HistoryLoadUnit(0),
+            new HistoryRecentReserveAuthorityToken());
     }
 
     public HistoryTimelineReconcileResult ReconcileSelectedPathOffline(
@@ -1112,7 +1238,7 @@ public sealed class HistoryTimelineCoordinator {
             new HistoryTimelineReconcileCandidate(
                 expectedWholeHead,
                 selectedRowId,
-                new OfflineSelectedRawCursorFence(cursor)
+                new OfflineSelectedRawCursorFence(_repositoryPath, cursor)
             )
         );
     }
@@ -1235,6 +1361,7 @@ public sealed class HistoryTimelineCoordinator {
         => Path.TrimEndingDirectorySeparator(
             Path.GetFullPath(path)
         );
+
 
     internal static string UnsupportedSchemaDetail(int schemaVersion)
         => $"The Timeline store schema version {schemaVersion} is unsupported.";

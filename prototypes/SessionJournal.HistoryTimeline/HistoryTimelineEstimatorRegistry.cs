@@ -2,7 +2,9 @@ namespace Atelia.SessionJournal.HistoryTimeline;
 
 internal sealed record HistoryTimelineCoordinatorTestHooks(
     Action<Atelia.EventJournal.EventAddress>?
-        BeforeOfflineReconcileBoundaryProbe = null
+        BeforeOfflineReconcileBoundaryProbe = null,
+    int? RecentReserveForwardRangeEventCap = null,
+    int? RecentReserveInitialForwardRangeEventCount = null
 );
 
 internal interface IHistoryTimelineEstimatorResolver {

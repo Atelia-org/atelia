@@ -35,11 +35,13 @@ public sealed partial class GetterVerticalTests {
         );
         string recap = $"recap-{fixture.Rows.Count - 1}";
         Assert.Equal(1, Count(request.PromptPrefix.SystemPrompt, recap));
-        Assert.Single(request.PromptPrefix.SharedContextMessages);
+        Assert.Equal(2, request.PromptPrefix.SharedContextMessages.Count());
+        Assert.IsType<ActionMessage>(
+            request.PromptPrefix.SharedContextMessages[0]);
         Assert.Equal(
             "tail-observation",
             Assert.IsType<ObservationMessage>(
-                request.PromptPrefix.SharedContextMessages[0]
+                request.PromptPrefix.SharedContextMessages[1]
             ).Content
         );
         Assert.DoesNotContain(
@@ -47,7 +49,7 @@ public sealed partial class GetterVerticalTests {
             request.PromptPrefix.SharedContextMessages
                 .Select(MessageText)
         );
-        Assert.DoesNotContain(
+        Assert.Contains(
             "answer-1",
             request.PromptPrefix.SharedContextMessages
                 .Select(MessageText)

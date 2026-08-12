@@ -7,6 +7,7 @@ using System.Text.Json;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Xunit;
 
@@ -1279,9 +1280,16 @@ public sealed partial class ControlVerticalTests : IDisposable {
         SessionJournalEngine journal,
         int count
     ) {
+        EnsureCadence(journal);
         using HistoryTimelineHandle timeline = Assert.IsType<
             HistoryTimelineOpenResult.Opened
         >(HistoryTimelineFactory.Open(journal.ReadView, _estimator)).Handle;
+        using RecapGridCadenceHandle cadence = Assert.IsType<
+            RecapGridCadenceOpenResult.Opened
+        >(RecapGridCadenceFactory.OpenMutable(journal)).Handle;
+        using RecapGridCadenceTimelineSealOperation seal = Assert.IsType<
+            RecapGridCadenceTimelineSealOpenResult.Opened
+        >(cadence.BeginTimelineSeal(timeline)).Operation;
         var rows = new List<TimelineRow>(count);
         for (int index = 0; index < count; index++) {
             TimelineHeadRef before = Assert.IsType<
@@ -1295,10 +1303,10 @@ public sealed partial class ControlVerticalTests : IDisposable {
             )).Capture;
             HistoryTimelinePlanResult.Selected selected = Assert.IsType<
                 HistoryTimelinePlanResult.Selected
-            >(timeline.Coordinator.PlanNextRow(before, capture));
+            >(seal.PlanNextRow(before, capture));
             TimelineHeadRef committed = Assert.IsType<
                 HistoryTimelineCommitResult.Committed
-            >(timeline.Coordinator.CommitRow(selected.Candidate)).Head;
+            >(seal.CommitRow(selected.Candidate)).Head;
             HistoryTimelineSelectedRow row = Assert.IsType<
                 HistoryTimelineReaderRowResult.Selected
             >(timeline.Reader.ReadSelectedRow(
@@ -1308,6 +1316,21 @@ public sealed partial class ControlVerticalTests : IDisposable {
             rows.Add(new TimelineRow(committed, row));
         }
         return rows;
+    }
+
+    private static void EnsureCadence(SessionJournalEngine journal) {
+        RecapGridCadenceCreateResult result = RecapGridCadenceFactory.Create(
+            journal,
+            new RecapGridCadencePolicySpec(
+                minimumRecentHistoryLoad: 1,
+                HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                targetHistoryLoad: 1,
+                maxRawEvents: 8,
+                maxRenderedBytes: 1024 * 1024));
+        Assert.True(result is RecapGridCadenceCreateResult.Created
+            or RecapGridCadenceCreateResult.AlreadyExists,
+            $"Cadence create failed: {result.GetType().Name}");
     }
 
     private static Values ValuesFor(

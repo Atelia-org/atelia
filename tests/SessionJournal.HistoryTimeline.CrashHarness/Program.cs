@@ -69,10 +69,29 @@ internal static class Program {
                             journal.ReadView
                         )
                     );
+                    PartitionPolicyRevision policy =
+                        PartitionPolicyRevision.Create(
+                            expected.TimelineId,
+                            InitialPolicy().PartitionAlgorithmId,
+                            InitialPolicy().HistoryLoadEstimatorId,
+                            InitialPolicy().TargetHistoryLoad,
+                            InitialPolicy().MaxRawEvents,
+                            InitialPolicy().MaxRenderedBytes);
+                    var authority =
+                        new HistoryRecentReserveAuthorityToken();
+                    var reserve = new HistoryRecentReservePolicy(
+                        journal.ReadView.Path,
+                        expected.RefId,
+                        cadenceGeneration: 0,
+                        new string('a', 64),
+                        policy,
+                        new HistoryLoadUnit(1),
+                        authority);
                     HistoryRowCommitCandidate candidate = RequireSelected(
                         handle.Coordinator.PlanNextRow(
                             expected,
-                            capture
+                            capture,
+                            reserve
                         )
                     );
                     RequireReached(
@@ -302,6 +321,9 @@ internal static class Program {
         RefId refId,
         EventAddress? capturedHead
     ) : IHistoryTimelineRawFence {
+        public string CanonicalRepositoryPath { get; } =
+            Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(readView.Path));
         public RefId RefId { get; } = refId;
         public EventAddress? CapturedHead { get; } = capturedHead;
         public EventAddress? ReadCurrentHead()

@@ -575,6 +575,13 @@ internal sealed class SqliteHistoryTimelineLedger
             _hooks.AfterAppendWriterLockAcquired?.Invoke();
             HistoryRowProposal proposal = candidate.Proposal;
             TimelineHeadRef actual = ReadHead(connection, transaction);
+            if (!candidate.ReserveProof.IsExactFor(
+                    proposal,
+                    candidate.RawFence)) {
+                return new HistoryTimelineCommitResult.Invalid(
+                    "RecentReserveProofInvalid",
+                    "The commit candidate has no active exact recent-reserve proof.");
+            }
             if (actual != proposal.ExpectedHead) {
                 return new HistoryTimelineCommitResult
                     .StaleTimelineHead(actual);

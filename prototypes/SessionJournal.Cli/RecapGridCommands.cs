@@ -3,6 +3,7 @@ using System.Text.Json;
 using Atelia.Completion;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 
 namespace Atelia.SessionJournal.Cli;
@@ -149,6 +150,16 @@ internal static partial class RecapGridCommands {
         return SessionJournalEngine.OpenReadOnly(repository, branch);
     }
 
+    private static SessionJournalEngine OpenMutableBranch(
+        CliOptions options
+    ) {
+        string repository = options.RequireSingle("input");
+        string branch = options.GetOptionalSingle("branch")
+            ?? SessionJournalDefaults.MainBranchName;
+        CliIo.EnsurePathChainHasNoReparsePoint(repository, "--input");
+        return SessionJournalEngine.Open(repository, branch);
+    }
+
     private static void RequireConfirmedRef(
         CliOptions options,
         RefId actual
@@ -175,6 +186,36 @@ internal static partial class RecapGridCommands {
                     .FirstReplaySafeBoundaryAtTargetV1,
                 StringComparison.Ordinal)) {
             throw new ArgumentException(
+                "The RecapGrid CLI supports only the V1 replay-safe partition algorithm.");
+        }
+        if (!string.Equals(
+                estimator,
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                StringComparison.Ordinal)) {
+            throw new ArgumentException(
+                "The RecapGrid CLI supports only the O200k base estimator.");
+        }
+        return new HistoryTimelineInitialPolicySpec(
+            algorithm,
+            estimator,
+            new HistoryLoadUnit(RequirePositiveLong(
+                options,
+                "target-history-load")),
+            RequirePositiveInt(options, "max-raw-events"),
+            RequirePositiveInt(options, "max-rendered-bytes"));
+    }
+
+    private static RecapGridCadencePolicySpec ReadCadencePolicy(
+        CliOptions options
+    ) {
+        string algorithm = options.RequireSingle("partition-algorithm");
+        string estimator = options.RequireSingle("history-load-estimator");
+        if (!string.Equals(
+                algorithm,
+                HistoryPartitionAlgorithms
+                    .FirstReplaySafeBoundaryAtTargetV1,
+                StringComparison.Ordinal)) {
+            throw new ArgumentException(
                 "The RecapGrid CLI supports only the V1 replay-safe partition algorithm."
             );
         }
@@ -186,16 +227,31 @@ internal static partial class RecapGridCommands {
                 "The RecapGrid CLI supports only the O200k base estimator."
             );
         }
-        return new HistoryTimelineInitialPolicySpec(
+        return new RecapGridCadencePolicySpec(
+            RequirePositiveLong(options, "minimum-recent-history-load"),
             algorithm,
             estimator,
-            new HistoryLoadUnit(RequirePositiveInt(
-                options,
-                "target-history-load"
-            )),
+            RequirePositiveLong(options, "target-history-load"),
             RequirePositiveInt(options, "max-raw-events"),
             RequirePositiveInt(options, "max-rendered-bytes")
         );
+    }
+
+    private static HistoryTimelineInitialPolicySpec ToTimelineInitialPolicy(
+        RecapGridCadencePolicySpec policy
+    ) => new(
+        policy.PartitionAlgorithmId,
+        policy.HistoryLoadEstimatorId,
+        new HistoryLoadUnit(policy.TargetHistoryLoad),
+        policy.MaxRawEvents,
+        policy.MaxRenderedBytes);
+
+    private static long RequirePositiveLong(CliOptions options, string key) {
+        string value = options.RequireSingle(key);
+        return long.TryParse(value, out long parsed) && parsed > 0
+            ? parsed
+            : throw new ArgumentException(
+                $"--{key} must be a positive integer.");
     }
 
     private static int RequirePositiveInt(CliOptions options, string key) {

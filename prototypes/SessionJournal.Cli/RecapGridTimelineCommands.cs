@@ -1,4 +1,5 @@
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Store;
 
@@ -12,18 +13,31 @@ internal static partial class RecapGridCommands {
         options.EnsureOnly(
             "input", "branch", "confirm-ref", "admission",
             "partition-algorithm", "history-load-estimator",
-            "target-history-load", "max-raw-events", "max-rendered-bytes"
+            "minimum-recent-history-load", "target-history-load",
+            "max-raw-events", "max-rendered-bytes"
         );
-        using SessionJournalEngine engine = OpenBranch(options);
+        using SessionJournalEngine engine = OpenMutableBranch(options);
         RequireConfirmedRef(options, engine.BranchRefId);
+        RecapGridCadencePolicySpec cadencePolicy = ReadCadencePolicy(options);
         HistoryTimelineInitialPolicySpec initialPolicy =
-            ReadInitialPolicy(options);
+            ToTimelineInitialPolicy(cadencePolicy);
         RecapGridControlAdmission admission = ReadAdmission(options);
         if ((admission.Permissions & RecapGridControlPermission.Create)
             != RecapGridControlPermission.Create) {
             throw new ArgumentException(
                 "The admission does not authorize Control creation."
             );
+        }
+
+        RecapGridCadenceCreateResult cadence =
+            RecapGridCadenceFactory.Create(engine, cadencePolicy);
+        object cadenceStep = DescribeCadenceCreate(cadence);
+        if (!IsCadenceCreated(cadence, cadencePolicy)) {
+            return Print(
+                "init",
+                "cadence-failed",
+                new { cadence = cadenceStep },
+                2);
         }
 
         HistoryTimelineCreateResult timeline = HistoryTimelineFactory.Create(
@@ -67,6 +81,7 @@ internal static partial class RecapGridCommands {
             success ? "ready" : "store-failed",
             new {
                 refId = engine.BranchRefId.ToHexString(),
+                cadence = cadenceStep,
                 timeline = timelineStep,
                 control = controlStep,
                 store = storeStep
@@ -78,24 +93,83 @@ internal static partial class RecapGridCommands {
     private static int TimelineCreate(CliOptions options) {
         options.EnsureOnly(
             "input", "branch", "confirm-ref", "partition-algorithm",
-            "history-load-estimator", "target-history-load",
+            "history-load-estimator", "minimum-recent-history-load",
+            "target-history-load",
             "max-raw-events", "max-rendered-bytes"
         );
-        using SessionJournalEngine engine = OpenBranch(options);
+        using SessionJournalEngine engine = OpenMutableBranch(options);
         RequireConfirmedRef(options, engine.BranchRefId);
+        RecapGridCadencePolicySpec cadencePolicy = ReadCadencePolicy(options);
+        RecapGridCadenceCreateResult cadence =
+            RecapGridCadenceFactory.Create(engine, cadencePolicy);
+        if (!IsCadenceCreated(cadence, cadencePolicy)) {
+            return Print(
+                "timeline.create",
+                "cadence-failed",
+                DescribeCadenceCreate(cadence),
+                2);
+        }
         HistoryTimelineCreateResult result = HistoryTimelineFactory.Create(
             engine.ReadView,
-            ReadInitialPolicy(options),
+            ToTimelineInitialPolicy(cadencePolicy),
             RecapGridHistoryLoadEstimator
         );
         bool success = IsTimelineCreated(result);
         return Print(
             "timeline.create",
             success ? "ready" : "failed",
-            DescribeTimelineCreate(result),
+            new {
+                cadence = DescribeCadenceCreate(cadence),
+                timeline = DescribeTimelineCreate(result)
+            },
             success ? 0 : 2
         );
     }
+
+    private static bool IsCadenceCreated(
+        RecapGridCadenceCreateResult result,
+        RecapGridCadencePolicySpec expected
+    ) => result switch {
+        RecapGridCadenceCreateResult.Created created
+            => CadencePoliciesEqual(created.Snapshot.Policy, expected),
+        RecapGridCadenceCreateResult.AlreadyExists existing
+            => CadencePoliciesEqual(existing.Snapshot.Policy, expected),
+        _ => false
+    };
+
+    private static bool CadencePoliciesEqual(
+        RecapGridCadencePolicySpec left,
+        RecapGridCadencePolicySpec right
+    ) => left.MinimumRecentHistoryLoad
+            == right.MinimumRecentHistoryLoad
+        && string.Equals(left.PartitionAlgorithmId,
+            right.PartitionAlgorithmId, StringComparison.Ordinal)
+        && string.Equals(left.HistoryLoadEstimatorId,
+            right.HistoryLoadEstimatorId, StringComparison.Ordinal)
+        && left.TargetHistoryLoad == right.TargetHistoryLoad
+        && left.MaxRawEvents == right.MaxRawEvents
+        && left.MaxRenderedBytes == right.MaxRenderedBytes;
+
+    private static object DescribeCadenceCreate(
+        RecapGridCadenceCreateResult result
+    ) => result switch {
+        RecapGridCadenceCreateResult.Created value
+            => new { status = "created", value.Snapshot.Head },
+        RecapGridCadenceCreateResult.AlreadyExists value
+            => new { status = "already-exists", value.Snapshot.Head },
+        RecapGridCadenceCreateResult.Busy
+            => new { status = "busy" },
+        RecapGridCadenceCreateResult.CommitIndeterminate value
+            => new { status = "commit-indeterminate", value.Intended,
+                value.Observed },
+        RecapGridCadenceCreateResult.UnsupportedSchema value
+            => new { status = "unsupported-schema", value.Version },
+        RecapGridCadenceCreateResult.PlatformUnsupported
+            => new { status = "platform-unsupported" },
+        RecapGridCadenceCreateResult.Invalid value
+            => new { status = "invalid", value.Code, value.Detail },
+        _ => new { status = "invalid-outcome" }
+    };
 
     private static int TimelineInspect(CliOptions options, bool verify) {
         options.EnsureOnly("input", "branch");

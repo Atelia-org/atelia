@@ -261,6 +261,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
             "--history-load-estimator",
             O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
             "--target-history-load", "1",
             "--max-raw-events", "64",
             "--max-rendered-bytes", "1048576"
@@ -321,6 +322,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
             "--history-load-estimator",
             O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
             "--target-history-load", "1",
             "--max-raw-events", "64",
             "--max-rendered-bytes", "1048576"
@@ -400,6 +402,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
             "--history-load-estimator",
             O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
             "--target-history-load", "1", "--max-raw-events", "3",
             "--max-rendered-bytes", "1048576"
         ));
@@ -504,6 +507,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
             "--history-load-estimator",
             O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
             "--target-history-load", "1", "--max-raw-events", "64",
             "--max-rendered-bytes", "1048576"
         ));
@@ -517,6 +521,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--partition-algorithm", "unknown-partition-v1",
             "--history-load-estimator",
             O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
             "--target-history-load", "1", "--max-raw-events", "64",
             "--max-rendered-bytes", "1048576"
         ));
@@ -892,6 +897,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
             "--history-load-estimator",
             O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
             "--target-history-load", "1", "--max-raw-events", "64",
             "--max-rendered-bytes", "1048576"
         ));
@@ -1317,6 +1323,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
             "--history-load-estimator",
             O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
             "--target-history-load", "1",
             "--max-raw-events", "64",
             "--max-rendered-bytes", "1048576"
@@ -1829,6 +1836,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
         "--history-load-estimator",
         O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+        "--minimum-recent-history-load", "1",
         "--target-history-load", "1",
         "--max-raw-events", maxRawEvents.ToString(),
         "--max-rendered-bytes", "1048576"
@@ -1898,19 +1906,26 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         params string[] args
     ) {
         TextWriter original = Console.Out;
+        TextWriter originalError = Console.Error;
         using var output = new StringWriter();
+        using var error = new StringWriter();
         try {
             Console.SetOut(output);
+            Console.SetError(error);
             int exitCode = Run(args);
-            string json = output.ToString().Split(
+            string[] lines = output.ToString().Split(
                 Environment.NewLine,
                 StringSplitOptions.RemoveEmptyEntries
-            )[^1];
+            );
+            Assert.True(lines.Length > 0,
+                $"CLI emitted no JSON (exit {exitCode}): {error}");
+            string json = lines[^1];
             using JsonDocument document = JsonDocument.Parse(json);
             return (exitCode, document.RootElement.Clone());
         }
         finally {
             Console.SetOut(original);
+            Console.SetError(originalError);
         }
     }
 

@@ -2511,6 +2511,9 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
         EventAddress capturedHead,
         Func<bool> writerLockProbe
     ) : IHistoryTimelineRawFence {
+        public string CanonicalRepositoryPath { get; } =
+            Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(readView.Path));
         public int CallCount { get; private set; }
         public bool WriterLockObserved { get; private set; }
         public RefId RefId { get; } = refId;
@@ -2527,6 +2530,8 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
         RefId refId,
         EventAddress capturedHead
     ) : IHistoryTimelineRawFence {
+        public string CanonicalRepositoryPath { get; } =
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath("."));
         public RefId RefId { get; } = refId;
         public EventAddress? CapturedHead { get; } = capturedHead;
         public EventAddress? ReadCurrentHead() => capturedHead;

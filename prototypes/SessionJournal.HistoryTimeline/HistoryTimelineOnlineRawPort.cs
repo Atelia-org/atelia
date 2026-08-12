@@ -53,6 +53,7 @@ internal static class HistoryTimelineOnlineRawPort {
         OnlineSelectedRawCapture capture,
         TimelineHeadRef expectedHead,
         PartitionPolicyRevision policy,
+        HistoryRecentReservePolicy reservePolicy,
         IHistoryUnitLoadEstimator estimator,
         HistorySegmentDescriptor? predecessor,
         CancellationToken cancellationToken = default
@@ -60,6 +61,7 @@ internal static class HistoryTimelineOnlineRawPort {
         ArgumentNullException.ThrowIfNull(capture);
         ArgumentNullException.ThrowIfNull(expectedHead);
         ArgumentNullException.ThrowIfNull(policy);
+        ArgumentNullException.ThrowIfNull(reservePolicy);
         ArgumentNullException.ThrowIfNull(estimator);
         if (capture.RefId != expectedHead.RefId
             || capture.ExpectedTimelineHead != expectedHead
@@ -77,6 +79,12 @@ internal static class HistoryTimelineOnlineRawPort {
                 .PartitionPolicyUnavailable(
                     expectedHead.ActivePartitionPolicyDigest
                 );
+        }
+        if (!reservePolicy.IsExactFor(expectedHead, policy)) {
+            return Invalid(
+                "RecentReservePolicyMismatch",
+                "The recent-reserve policy does not bind the exact Ref, active partition policy, and estimator."
+            );
         }
         if ((expectedHead.HeadRowId is null) != (predecessor is null)
             || predecessor is not null
@@ -192,6 +200,28 @@ internal static class HistoryTimelineOnlineRawPort {
 
             HistoryPartitionPoint point =
                 ((HistoryPartitionResult.Selected)partition).Point;
+            HistoryLoadThresholdProjection retainedProjection =
+                !reservePolicy.IsRequired
+                ? new HistoryLoadThresholdProjection(
+                    policy.HistoryLoadEstimatorId,
+                    new HistoryLoadUnit(0),
+                    RenderedUtf8Bytes: 0,
+                    Reached: true)
+                : HistoryLoadProjector.MeasureAtLeast(
+                    outer,
+                    point.EndInclusive,
+                    estimator,
+                    reservePolicy.MinimumRecentHistoryLoad);
+            if (!retainedProjection.Reached) {
+                return FinishStable(
+                    capture,
+                    new HistoryTimelinePlanResult
+                        .RecentReserveNotReached(
+                            new HistoryRecentReserveShortfall(
+                                point.MeasuredHistoryLoad,
+                                retainedProjection.Growth,
+                                reservePolicy.MinimumRecentHistoryLoad)));
+            }
             SJ.SessionHistoryPlanningWindowReadResult exactRead =
                 capture.ReadView.ReadHistoryPlanningWindowAtBounded(
                     point.EndInclusive,
@@ -250,6 +280,13 @@ internal static class HistoryTimelineOnlineRawPort {
                 capture.CapturedHead,
                 descriptor
             );
+            HistoryRecentReserveProof reserveProof =
+                HistoryRecentReserveProof.Create(
+                    reservePolicy,
+                    expectedHead,
+                    capture.CapturedHead,
+                    descriptor,
+                    retainedProjection.Growth);
             EventAddress? observedAfter =
                 capture.ReadView.ReadCurrentHead();
             if (observedAfter != capture.CapturedHead) {
@@ -259,7 +296,10 @@ internal static class HistoryTimelineOnlineRawPort {
                 );
             }
             return new HistoryTimelinePlanResult.Selected(
-                new HistoryRowCommitCandidate(proposal, capture)
+                new HistoryRowCommitCandidate(
+                    proposal,
+                    capture,
+                    reserveProof)
             );
         }
         catch (Exception exception) when (IsRawDataFailure(exception)) {

@@ -1,5 +1,6 @@
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using System.Runtime.ExceptionServices;
@@ -12,6 +13,7 @@ public sealed class RecapGridOnlineContextHandle :
     IAsyncDisposable {
     private readonly SessionJournalEngine _owner;
     private readonly SessionJournalReadView _selectedRef;
+    private readonly RecapGridCadenceHandle _cadence;
     private readonly HistoryTimelineHandle _timeline;
     private readonly RecapGridContextHandle _getter;
     private readonly IRecapCellBatchExecutor _executor;
@@ -26,6 +28,7 @@ public sealed class RecapGridOnlineContextHandle :
     internal RecapGridOnlineContextHandle(
         SessionJournalEngine owner,
         SessionJournalReadView selectedRef,
+        RecapGridCadenceHandle cadence,
         HistoryTimelineHandle timeline,
         RecapGridContextHandle getter,
         IRecapCellBatchExecutor executor,
@@ -34,6 +37,7 @@ public sealed class RecapGridOnlineContextHandle :
     ) {
         _owner = owner;
         _selectedRef = selectedRef;
+        _cadence = cadence;
         _timeline = timeline;
         _getter = getter;
         _executor = executor;
@@ -195,11 +199,15 @@ public sealed class RecapGridOnlineContextHandle :
     private TimelineSyncResult SynchronizeTimeline(
         CancellationToken cancellationToken
     ) {
-        HistoryTimelineSnapshotResult snapshot = _timeline.Reader.ReadSnapshot();
-        if (snapshot is not HistoryTimelineSnapshotResult.Available available) {
-            return new TimelineSyncResult(null, MapTimelineSnapshot(snapshot));
+        RecapGridCadenceTimelineSealOpenResult sealOpened =
+            _cadence.BeginTimelineSeal(_timeline);
+        if (sealOpened is not RecapGridCadenceTimelineSealOpenResult
+                .Opened available) {
+            return new TimelineSyncResult(null, MapSealOpen(sealOpened));
         }
-        TimelineHeadRef expected = available.Head;
+        using RecapGridCadenceTimelineSealOperation seal =
+            available.Operation;
+        TimelineHeadRef expected = seal.HeadAtOpen;
         HistoryTimelineReconcileResult reconcile = _timeline.Coordinator
             .ReconcileSelectedPath(expected, _selectedRef, cancellationToken);
         AuditContext? audit = null;
@@ -211,11 +219,10 @@ public sealed class RecapGridOnlineContextHandle :
                     return new TimelineSyncResult(null, auditError);
                 }
                 audit = auditOpened.Context!;
-                using SessionSelectedLineageForwardCursor cursor =
-                    audit.Snapshot.OpenForwardCursor(cancellationToken);
-                reconcile = _timeline.Coordinator
-                    .ReconcileSelectedPathOffline(
-                        expected, cursor, cancellationToken);
+                reconcile = seal.ReconcileSelectedPathOffline(
+                    expected,
+                    audit.Snapshot,
+                    cancellationToken);
             }
             if (reconcile is HistoryTimelineReconcileResult.Unchanged same) {
                 expected = same.Head;
@@ -240,12 +247,13 @@ public sealed class RecapGridOnlineContextHandle :
                 if (raw is not OnlineSelectedRawCaptureResult.Captured captured) {
                     return new TimelineSyncResult(null, MapCapture(raw));
                 }
-                HistoryTimelinePlanResult plan = _timeline.Coordinator
-                    .PlanNextRow(
-                        expected, captured.Capture, cancellationToken);
+                HistoryTimelinePlanResult plan = seal.PlanNextRow(
+                    expected,
+                    captured.Capture,
+                    cancellationToken);
                 if (plan is HistoryTimelinePlanResult.Selected selected) {
-                    HistoryTimelineCommitResult commit = _timeline.Coordinator
-                        .CommitRow(selected.Candidate);
+                    HistoryTimelineCommitResult commit = seal.CommitRow(
+                        selected.Candidate);
                     if (commit is not HistoryTimelineCommitResult.Committed done) {
                         return new TimelineSyncResult(null, MapCommit(commit));
                     }
@@ -253,7 +261,8 @@ public sealed class RecapGridOnlineContextHandle :
                     committed++;
                     continue;
                 }
-                if (plan is HistoryTimelinePlanResult.NotEnough) {
+                if (plan is HistoryTimelinePlanResult.NotEnough
+                    or HistoryTimelinePlanResult.RecentReserveNotReached) {
                     return new TimelineSyncResult(expected, null);
                 }
                 if (plan is HistoryTimelinePlanResult
@@ -267,11 +276,16 @@ public sealed class RecapGridOnlineContextHandle :
                         audit = auditOpened.Context!;
                     }
                     return BuildOffline(
-                        audit, expected, committed, cancellationToken);
+                        seal,
+                        audit,
+                        expected,
+                        committed,
+                        cancellationToken);
                 }
                 return new TimelineSyncResult(null, MapPlan(plan));
             }
             return ProbeOnlineAtRowLimit(
+                seal,
                 ref audit,
                 expected,
                 cancellationToken);
@@ -289,48 +303,43 @@ public sealed class RecapGridOnlineContextHandle :
     }
 
     private TimelineSyncResult BuildOffline(
+        RecapGridCadenceTimelineSealOperation seal,
         AuditContext audit,
         TimelineHeadRef expected,
         int committed,
         CancellationToken cancellationToken
     ) {
-        using SessionSelectedLineageForwardCursor cursor =
-            audit.Snapshot.OpenForwardCursor(cancellationToken);
-        if (expected.HeadRowId is { } rowId) {
-            HistoryTimelineReaderRowResult selected = _timeline.Reader
-                .ReadSelectedRow(expected, rowId);
-            if (selected is not HistoryTimelineReaderRowResult.Selected row) {
-                return new TimelineSyncResult(
-                    null, MapSelectedRow(selected));
-            }
-            cursor.SeekToBoundary(
-                row.Row.Descriptor.EndInclusive,
-                row.Row.Descriptor.EndSetups,
+        RecapGridCadenceOfflineBuilderOpenResult opened =
+            seal.OpenOfflineBuilder(
+                expected,
+                audit.Snapshot,
                 cancellationToken);
-        }
-        HistoryTimelineOfflineBuilderOpenResult opened =
-            _timeline.Coordinator.OpenOfflineBuilder(expected, cursor);
-        if (opened is not HistoryTimelineOfflineBuilderOpenResult.Opened ready) {
+        if (opened is not RecapGridCadenceOfflineBuilderOpenResult.Opened ready) {
             return new TimelineSyncResult(null, MapOfflineOpen(opened));
         }
+        using RecapGridCadenceOfflineBuilder builder = ready.Builder;
         while (committed < _limits.MaximumTimelineRows) {
             cancellationToken.ThrowIfCancellationRequested();
-            HistoryTimelineOfflineStepResult step = ready.Builder
+            HistoryTimelineOfflineStepResult step = builder
                 .BuildNextRow(expected, cancellationToken);
             if (step is HistoryTimelineOfflineStepResult.Committed done) {
                 expected = done.Head;
                 committed++;
                 continue;
             }
-            if (step is HistoryTimelineOfflineStepResult.NotEnough) {
+            if (step is HistoryTimelineOfflineStepResult.NotEnough
+                or HistoryTimelineOfflineStepResult
+                    .RecentReserveNotReached) {
                 return new TimelineSyncResult(expected, null);
             }
             return new TimelineSyncResult(null, MapOfflineStep(step));
         }
-        HistoryTimelineOfflineStepResult terminalProbe = ready.Builder
+        HistoryTimelineOfflineStepResult terminalProbe = builder
             .ProbeNextRow(expected, cancellationToken);
         return terminalProbe switch {
             HistoryTimelineOfflineStepResult.NotEnough
+                or HistoryTimelineOfflineStepResult
+                    .RecentReserveNotReached
                 => new TimelineSyncResult(expected, null),
             HistoryTimelineOfflineStepResult.Selected
                 => TimelineRowLimitExceeded(),
@@ -340,6 +349,7 @@ public sealed class RecapGridOnlineContextHandle :
     }
 
     private TimelineSyncResult ProbeOnlineAtRowLimit(
+        RecapGridCadenceTimelineSealOperation seal,
         ref AuditContext? audit,
         TimelineHeadRef expected,
         CancellationToken cancellationToken
@@ -353,9 +363,10 @@ public sealed class RecapGridOnlineContextHandle :
         if (raw is not OnlineSelectedRawCaptureResult.Captured captured) {
             return new TimelineSyncResult(null, MapCapture(raw));
         }
-        HistoryTimelinePlanResult plan = _timeline.Coordinator.PlanNextRow(
+        HistoryTimelinePlanResult plan = seal.PlanNextRow(
             expected, captured.Capture, cancellationToken);
-        if (plan is HistoryTimelinePlanResult.NotEnough) {
+        if (plan is HistoryTimelinePlanResult.NotEnough
+            or HistoryTimelinePlanResult.RecentReserveNotReached) {
             return new TimelineSyncResult(expected, null);
         }
         if (plan is HistoryTimelinePlanResult.Selected) {
@@ -373,40 +384,34 @@ public sealed class RecapGridOnlineContextHandle :
             audit = auditOpened.Context!;
         }
         return ProbeOfflineAtRowLimit(
+            seal,
             audit,
             expected,
             cancellationToken);
     }
 
     private TimelineSyncResult ProbeOfflineAtRowLimit(
+        RecapGridCadenceTimelineSealOperation seal,
         AuditContext audit,
         TimelineHeadRef expected,
         CancellationToken cancellationToken
     ) {
-        using SessionSelectedLineageForwardCursor cursor =
-            audit.Snapshot.OpenForwardCursor(cancellationToken);
-        if (expected.HeadRowId is { } rowId) {
-            HistoryTimelineReaderRowResult selected = _timeline.Reader
-                .ReadSelectedRow(expected, rowId);
-            if (selected is not HistoryTimelineReaderRowResult.Selected row) {
-                return new TimelineSyncResult(
-                    null, MapSelectedRow(selected));
-            }
-            cursor.SeekToBoundary(
-                row.Row.Descriptor.EndInclusive,
-                row.Row.Descriptor.EndSetups,
+        RecapGridCadenceOfflineBuilderOpenResult opened =
+            seal.OpenOfflineBuilder(
+                expected,
+                audit.Snapshot,
                 cancellationToken);
-        }
-        HistoryTimelineOfflineBuilderOpenResult opened =
-            _timeline.Coordinator.OpenOfflineBuilder(expected, cursor);
-        if (opened is not HistoryTimelineOfflineBuilderOpenResult
+        if (opened is not RecapGridCadenceOfflineBuilderOpenResult
                 .Opened ready) {
             return new TimelineSyncResult(null, MapOfflineOpen(opened));
         }
-        HistoryTimelineOfflineStepResult probe = ready.Builder
+        using RecapGridCadenceOfflineBuilder builder = ready.Builder;
+        HistoryTimelineOfflineStepResult probe = builder
             .ProbeNextRow(expected, cancellationToken);
         return probe switch {
             HistoryTimelineOfflineStepResult.NotEnough
+                or HistoryTimelineOfflineStepResult
+                    .RecentReserveNotReached
                 => new TimelineSyncResult(expected, null),
             HistoryTimelineOfflineStepResult.Selected
                 => TimelineRowLimitExceeded(),
@@ -563,6 +568,7 @@ public sealed class RecapGridOnlineContextHandle :
             _timeline.Dispose();
             CleanupHooksForTest?.AfterTimelineDisposed?.Invoke();
         });
+        DisposeOne(_cadence.Dispose);
         if (failures is { Count: 1 }) {
             ExceptionDispatchInfo.Capture(failures[0]).Throw();
         }
@@ -642,6 +648,41 @@ public sealed class RecapGridOnlineContextHandle :
         _ => Unavailable(RecapGridOnlineComponent.Timeline,
             "TimelineSnapshotOutcomeInvalid", "Unknown Timeline snapshot outcome.")
     };
+
+    private static RecapGridOnlinePassResult MapSealOpen(
+        RecapGridCadenceTimelineSealOpenResult result
+    ) => result switch {
+        RecapGridCadenceTimelineSealOpenResult.Busy value
+            => Backpressure(
+                MapSealComponent(value.Component),
+                "CadenceTimelineSealBusy",
+                $"{value.Component} is busy."),
+        RecapGridCadenceTimelineSealOpenResult.UnsupportedSchema value
+            => Unavailable(
+                MapSealComponent(value.Component),
+                "CadenceTimelineSealUnsupportedSchema",
+                value.SchemaVersion.ToString()),
+        RecapGridCadenceTimelineSealOpenResult.Disposed value
+            => Unavailable(
+                MapSealComponent(value.Component),
+                "CadenceTimelineSealDisposed",
+                $"{value.Component} is disposed."),
+        RecapGridCadenceTimelineSealOpenResult.Invalid value
+            => Unavailable(
+                MapSealComponent(value.Component),
+                value.Code,
+                value.Detail),
+        _ => Unavailable(
+            RecapGridOnlineComponent.Cadence,
+            "CadenceTimelineSealOpenOutcomeInvalid",
+            "Unknown Cadence Timeline seal-open outcome.")
+    };
+
+    private static RecapGridOnlineComponent MapSealComponent(
+        string component
+    ) => string.Equals(component, "Timeline", StringComparison.Ordinal)
+        ? RecapGridOnlineComponent.Timeline
+        : RecapGridOnlineComponent.Cadence;
 
     private static RecapGridOnlinePassResult MapReconcile(
         HistoryTimelineReconcileResult result
@@ -771,18 +812,18 @@ public sealed class RecapGridOnlineContextHandle :
     };
 
     private static RecapGridOnlinePassResult MapOfflineOpen(
-        HistoryTimelineOfflineBuilderOpenResult result
+        RecapGridCadenceOfflineBuilderOpenResult result
     ) => result switch {
-        HistoryTimelineOfflineBuilderOpenResult.RawHeadChanged
+        RecapGridCadenceOfflineBuilderOpenResult.RawHeadChanged
             => Backpressure(RecapGridOnlineComponent.RawAuthority,
                 "RawHeadChanged", "Raw head changed."),
-        HistoryTimelineOfflineBuilderOpenResult.StaleTimelineHead
+        RecapGridCadenceOfflineBuilderOpenResult.StaleTimelineHead
             => Backpressure(RecapGridOnlineComponent.Timeline,
                 "StaleTimelineHead", "Timeline head changed."),
-        HistoryTimelineOfflineBuilderOpenResult.BackendBusy
+        RecapGridCadenceOfflineBuilderOpenResult.Busy
             => Backpressure(RecapGridOnlineComponent.Timeline,
                 "TimelineBusy", "HistoryTimeline is busy."),
-        HistoryTimelineOfflineBuilderOpenResult.Invalid value
+        RecapGridCadenceOfflineBuilderOpenResult.Invalid value
             => Unavailable(RecapGridOnlineComponent.Timeline,
                 value.Code, value.Detail),
         _ => Unavailable(RecapGridOnlineComponent.Timeline,
@@ -813,6 +854,9 @@ public sealed class RecapGridOnlineContextHandle :
         HistoryTimelineOfflineStepResult.PartitionAlgorithmUnavailable value
             => Unavailable(RecapGridOnlineComponent.Timeline,
                 "PartitionAlgorithmUnavailable", value.AlgorithmId),
+        HistoryTimelineOfflineStepResult.RecentReserveProofUnavailable value
+            => Backpressure(RecapGridOnlineComponent.RawAuthority,
+                value.Code, value.Detail),
         HistoryTimelineOfflineStepResult.BackendBusy
             => Backpressure(RecapGridOnlineComponent.Timeline,
                 "TimelineBusy", "HistoryTimeline is busy."),

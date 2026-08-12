@@ -2,6 +2,7 @@ using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Store;
@@ -880,9 +881,12 @@ public sealed class OnlineVerticalTests : IDisposable {
                     timeline.Reader.ReadSelectedRow(
                         after,
                         after.HeadRowId!.Value)).Row;
-                Assert.Equal(
+                Assert.NotEqual(
                     siblingHead,
                     selected.Descriptor.EndInclusive);
+                Assert.Equal(
+                    siblingHead,
+                    after.SelectedRawHeadAtCommit);
             }
             return (before, after);
         }
@@ -1042,6 +1046,17 @@ public sealed class OnlineVerticalTests : IDisposable {
                     maxRenderedBytes: 1024 * 1024),
                 _estimator)
         );
+        Assert.IsType<RecapGridCadenceCreateResult.Created>(
+            RecapGridCadenceFactory.Create(
+                writer,
+                new RecapGridCadencePolicySpec(
+                    minimumRecentHistoryLoad: 1,
+                    HistoryPartitionAlgorithms
+                        .FirstReplaySafeBoundaryAtTargetV1,
+                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                    targetHistoryLoad: 1,
+                    maxRawEvents,
+                    maxRenderedBytes: 1024 * 1024)));
         var admission = new RecapGridControlAdmission(
             RecapGridControlPermission.Create,
             Array.Empty<FamilyDefinitionDigest>(),
@@ -1160,17 +1175,28 @@ public sealed class OnlineVerticalTests : IDisposable {
 
     private static void CopyDirectory(string source, string destination) {
         Directory.CreateDirectory(destination);
+        if (!OperatingSystem.IsWindows()) {
+            File.SetUnixFileMode(destination, File.GetUnixFileMode(source));
+        }
         foreach (string directory in Directory.EnumerateDirectories(
                      source, "*", SearchOption.AllDirectories)) {
-            Directory.CreateDirectory(Path.Combine(
+            string copied = Path.Combine(
                 destination,
-                Path.GetRelativePath(source, directory)));
+                Path.GetRelativePath(source, directory));
+            Directory.CreateDirectory(copied);
+            if (!OperatingSystem.IsWindows()) {
+                File.SetUnixFileMode(copied, File.GetUnixFileMode(directory));
+            }
         }
         foreach (string file in Directory.EnumerateFiles(
                      source, "*", SearchOption.AllDirectories)) {
-            File.Copy(file, Path.Combine(
+            string copied = Path.Combine(
                 destination,
-                Path.GetRelativePath(source, file)));
+                Path.GetRelativePath(source, file));
+            File.Copy(file, copied);
+            if (!OperatingSystem.IsWindows()) {
+                File.SetUnixFileMode(copied, File.GetUnixFileMode(file));
+            }
         }
     }
 

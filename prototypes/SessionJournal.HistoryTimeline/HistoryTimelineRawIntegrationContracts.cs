@@ -152,6 +152,8 @@ public sealed class OnlineSelectedRawCapture : IHistoryTimelineRawFence {
     }
 
     public RefId RefId { get; }
+    string IHistoryTimelineRawFence.CanonicalRepositoryPath
+        => Path.TrimEndingDirectorySeparator(Path.GetFullPath(_readView.Path));
     public EventAddress CapturedHead { get; }
     internal SJ.SessionCurrentLineagePrefix Prefix { get; }
     internal SJ.SessionJournalReadView ReadView => _readView;
@@ -165,6 +167,7 @@ public sealed class OnlineSelectedRawCapture : IHistoryTimelineRawFence {
 }
 
 internal interface IHistoryTimelineRawFence {
+    string CanonicalRepositoryPath { get; }
     RefId RefId { get; }
     EventAddress? CapturedHead { get; }
     EventAddress? ReadCurrentHead();
@@ -179,13 +182,24 @@ public sealed class HistoryRowCommitCandidate {
     internal HistoryRowCommitCandidate(
         HistoryRowProposal proposal,
         IHistoryTimelineRawFence rawFence
+    ) : this(
+        proposal,
+        rawFence,
+        HistoryRecentReserveProof.CreateForTest(proposal, rawFence)) { }
+
+    internal HistoryRowCommitCandidate(
+        HistoryRowProposal proposal,
+        IHistoryTimelineRawFence rawFence,
+        HistoryRecentReserveProof reserveProof
     ) {
         Proposal = proposal;
         RawFence = rawFence;
+        ReserveProof = reserveProof;
     }
 
     public HistoryRowProposal Proposal { get; }
     internal IHistoryTimelineRawFence RawFence { get; }
+    internal HistoryRecentReserveProof ReserveProof { get; }
 }
 
 internal sealed class EmptySelectedRawFence
@@ -201,14 +215,20 @@ internal sealed class EmptySelectedRawFence
     }
 
     public RefId RefId { get; }
+    public string CanonicalRepositoryPath => Path.TrimEndingDirectorySeparator(
+        Path.GetFullPath(_readView.Path));
     public EventAddress? CapturedHead => null;
     public EventAddress? ReadCurrentHead()
         => _readView.ReadCurrentHead();
 }
 
 internal sealed class OfflineSelectedRawCursorFence(
+    string canonicalRepositoryPath,
     SJ.SessionSelectedLineageForwardCursor cursor
 ) : IHistoryTimelineRawFence {
+    public string CanonicalRepositoryPath { get; } =
+        Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(canonicalRepositoryPath));
     public RefId RefId => cursor.Authority.Capture.BranchRefId;
     public EventAddress? CapturedHead
         => cursor.Authority.Capture.CapturedHead;
@@ -390,6 +410,15 @@ public abstract record HistoryTimelineOfflineStepResult {
         HistoryPartitionResult.NotEnough Partition
     ) : HistoryTimelineOfflineStepResult;
 
+    public sealed record RecentReserveNotReached(
+        HistoryRecentReserveShortfall Shortfall
+    ) : HistoryTimelineOfflineStepResult;
+
+    public sealed record RecentReserveProofUnavailable(
+        string Code,
+        string Detail
+    ) : HistoryTimelineOfflineStepResult;
+
     public sealed record LimitExceeded(
         HistoryPartitionResult.LimitExceeded Partition
     ) : HistoryTimelineOfflineStepResult;
@@ -428,6 +457,10 @@ public abstract record HistoryTimelinePlanResult {
 
     public sealed record NotEnough(
         HistoryPartitionResult.NotEnough Partition
+    ) : HistoryTimelinePlanResult;
+
+    public sealed record RecentReserveNotReached(
+        HistoryRecentReserveShortfall Shortfall
     ) : HistoryTimelinePlanResult;
 
     public sealed record LimitExceeded(

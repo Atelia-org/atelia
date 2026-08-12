@@ -1,4 +1,5 @@
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Manager;
 
@@ -31,15 +32,30 @@ public static class RecapGridOnlineFactory {
             return new RecapGridOnlineOpenResult.DisposedRawAuthority();
         }
 
+        RecapGridCadenceHandle? cadence = null;
         HistoryTimelineHandle? timeline = null;
         RecapGridContextHandle? getter = null;
         try {
+            RecapGridCadenceOpenResult cadenceOpened =
+                RecapGridCadenceFactory.OpenMutable(owner);
+            if (cadenceOpened is not RecapGridCadenceOpenResult.Opened
+                    cadenceAvailable) {
+                return MapCadenceOpen(cadenceOpened);
+            }
+            cadence = cadenceAvailable.Handle;
             HistoryTimelineOpenResult timelineOpened =
                 HistoryTimelineFactory.Open(selectedRef, estimators);
             if (timelineOpened is not HistoryTimelineOpenResult.Opened opened) {
                 return MapTimelineOpen(timelineOpened);
             }
             timeline = opened.Handle;
+            RecapGridCadenceTimelineSealOpenResult sealOpened =
+                cadence.BeginTimelineSeal(timeline);
+            if (sealOpened is not RecapGridCadenceTimelineSealOpenResult
+                    .Opened sealAvailable) {
+                return MapSealOpen(sealOpened);
+            }
+            sealAvailable.Operation.Dispose();
 
             RecapGridContextOpenResult getterOpened =
                 RecapGridContextFactory.Open(selectedRef);
@@ -51,6 +67,7 @@ public static class RecapGridOnlineFactory {
                 new RecapGridOnlineContextHandle(
                     owner,
                     selectedRef,
+                    cadence,
                     timeline,
                     getter,
                     executor,
@@ -62,9 +79,71 @@ public static class RecapGridOnlineFactory {
         finally {
             if (getter is null) {
                 timeline?.Dispose();
+                cadence?.Dispose();
             }
         }
     }
+
+    private static RecapGridOnlineOpenResult MapCadenceOpen(
+        RecapGridCadenceOpenResult result
+    ) => result switch {
+        RecapGridCadenceOpenResult.Absent
+            => new RecapGridOnlineOpenResult.Absent(
+                RecapGridOnlineComponent.Cadence),
+        RecapGridCadenceOpenResult.Busy
+            => new RecapGridOnlineOpenResult.Busy(
+                RecapGridOnlineComponent.Cadence),
+        RecapGridCadenceOpenResult.UnsupportedSchema value
+            => new RecapGridOnlineOpenResult.UnsupportedSchema(
+                RecapGridOnlineComponent.Cadence,
+                value.Version),
+        RecapGridCadenceOpenResult.PlatformUnsupported
+            => new RecapGridOnlineOpenResult.Invalid(
+                RecapGridOnlineComponent.Cadence,
+                "CadencePlatformUnsupported",
+                "RecapGrid Cadence is unsupported on this platform."),
+        RecapGridCadenceOpenResult.Invalid value
+            => new RecapGridOnlineOpenResult.Invalid(
+                RecapGridOnlineComponent.Cadence,
+                value.Code,
+                value.Detail),
+        _ => new RecapGridOnlineOpenResult.Invalid(
+            RecapGridOnlineComponent.Cadence,
+            "CadenceOpenOutcomeInvalid",
+            "RecapGrid Cadence returned an unknown open outcome.")
+    };
+
+    private static RecapGridOnlineOpenResult MapSealOpen(
+        RecapGridCadenceTimelineSealOpenResult result
+    ) => result switch {
+        RecapGridCadenceTimelineSealOpenResult.Busy value
+            => new RecapGridOnlineOpenResult.Busy(
+                MapSealComponent(value.Component)),
+        RecapGridCadenceTimelineSealOpenResult.UnsupportedSchema value
+            => new RecapGridOnlineOpenResult.UnsupportedSchema(
+                MapSealComponent(value.Component),
+                value.SchemaVersion),
+        RecapGridCadenceTimelineSealOpenResult.Disposed value
+            => new RecapGridOnlineOpenResult.Invalid(
+                MapSealComponent(value.Component),
+                "SealOwnerDisposed",
+                "The Cadence or Timeline seal owner was disposed."),
+        RecapGridCadenceTimelineSealOpenResult.Invalid value
+            => new RecapGridOnlineOpenResult.Invalid(
+                MapSealComponent(value.Component),
+                value.Code,
+                value.Detail),
+        _ => new RecapGridOnlineOpenResult.Invalid(
+            RecapGridOnlineComponent.Cadence,
+            "CadenceSealOpenOutcomeInvalid",
+            "RecapGrid Cadence returned an unknown seal-open outcome.")
+    };
+
+    private static RecapGridOnlineComponent MapSealComponent(
+        string component
+    ) => string.Equals(component, "Timeline", StringComparison.Ordinal)
+        ? RecapGridOnlineComponent.Timeline
+        : RecapGridOnlineComponent.Cadence;
 
     private static RecapGridOnlineOpenResult MapTimelineOpen(
         HistoryTimelineOpenResult result

@@ -1,4 +1,5 @@
 using Atelia.EventJournal;
+using Atelia.SessionJournal.HistoryTimeline;
 
 namespace Atelia.SessionJournal.RecapGrid.Cadence;
 
@@ -6,10 +7,10 @@ public static class RecapGridCadenceFactory {
     public static RecapGridCadenceCreateResult Create(
         SessionJournalEngine mutableOwner,
         RecapGridCadencePolicySpec policy
-    ) => CreateForTest(mutableOwner, policy,
+    ) => CreateWithHooks(mutableOwner, policy,
         CadencePersistenceTestHooks.None);
 
-    internal static RecapGridCadenceCreateResult CreateForTest(
+    internal static RecapGridCadenceCreateResult CreateWithHooks(
         SessionJournalEngine mutableOwner,
         RecapGridCadencePolicySpec policy,
         CadencePersistenceTestHooks hooks
@@ -80,7 +81,9 @@ public static class RecapGridCadenceFactory {
                     reader,
                     new RecapGridCadenceCoordinator(
                         paths, lifetime, hooks, mutableOwner),
-                    lifetime));
+                    lifetime,
+                    paths,
+                    mutableOwner));
         }
         catch (CadenceDirectoryAbsentException) {
             return new RecapGridCadenceOpenResult.Absent();
@@ -294,17 +297,29 @@ public static class RecapGridCadenceFactory {
 
 public sealed class RecapGridCadenceHandle : IDisposable {
     private readonly CadenceLifetime _lifetime;
+    private readonly CadencePaths _paths;
+    private readonly SessionJournalEngine _mutableOwner;
     internal RecapGridCadenceHandle(
         RecapGridCadenceReader reader,
         RecapGridCadenceCoordinator coordinator,
-        CadenceLifetime lifetime
+        CadenceLifetime lifetime,
+        CadencePaths paths,
+        SessionJournalEngine mutableOwner
     ) {
         Reader = reader;
         Coordinator = coordinator;
         _lifetime = lifetime;
+        _paths = paths;
+        _mutableOwner = mutableOwner;
     }
     public RecapGridCadenceReader Reader { get; }
     public RecapGridCadenceCoordinator Coordinator { get; }
+    public RecapGridCadenceTimelineSealOpenResult BeginTimelineSeal(
+        HistoryTimelineHandle timeline
+    ) => RecapGridCadenceTimelineSeal.Open(this, timeline);
+    internal CadenceLifetime Lifetime => _lifetime;
+    internal CadencePaths Paths => _paths;
+    internal SessionJournalEngine MutableOwner => _mutableOwner;
     public void Dispose() => _lifetime.Dispose();
 }
 

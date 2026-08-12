@@ -250,6 +250,60 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
     }
 
     [Fact]
+    public void ForwardCursorForkAndSourceHaveIndependentSharedSnapshotLeases() {
+        string path = NewPath();
+        EventAddress firstAction;
+        using (var writer = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A", "system-A", "surface-A"))) {
+            _ = writer.AppendObservation("first");
+            firstAction = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("one")]),
+                new CompletionDescriptor("import", "v1", "model-A"));
+            _ = writer.AppendObservation("second");
+            _ = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("two")]),
+                new CompletionDescriptor("import", "v1", "model-A"));
+        }
+        using var engine = SessionJournalEngine.OpenReadOnly(path);
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        var pages = new List<SessionSelectedLineageAuditPage>();
+        while (!audit.IsCaptureComplete) {
+            pages.Add(audit.ReadNextPage(2));
+        }
+        _ = audit.Complete();
+        var snapshot = new CountingPageSnapshot(audit.Capture, pages);
+
+        SessionSelectedLineageForwardCursor source =
+            engine.OpenSelectedLineageForwardCursor(snapshot);
+        SessionSelectedLineageForwardCursor fork =
+            source.ForkAtBoundary(
+                source.Authority.BootstrapSeed.Address,
+                source.Authority.BootstrapSeed.Setups);
+        source.Dispose();
+        Assert.Equal(0, snapshot.DisposeCount);
+        Assert.NotNull(fork.ReadNextRange(2));
+        fork.Dispose();
+        Assert.Equal(1, snapshot.DisposeCount);
+
+        SessionSelectedLineageForwardCursor secondSource =
+            engine.OpenSelectedLineageForwardCursor(
+                new CountingPageSnapshot(audit.Capture, pages));
+        SessionSelectedLineageForwardCursor secondFork =
+            secondSource.ForkAtBoundary(
+                firstAction,
+                secondSource.Preview(Assert.IsType<
+                    SessionSelectedLineageForwardRange>(
+                    secondSource.ReadNextRange(4)))
+                    .ReplaySafeBoundarySetups[firstAction]);
+        secondFork.Dispose();
+        Assert.NotNull(secondSource.ReadCurrentHead());
+        secondSource.Dispose();
+    }
+
+    [Fact]
     public void ForwardCursor_ExtendRejectsRangeOwnedByAnotherCursor() {
         string path = CreateLongFixture(extraEventCount: 6);
         using var engine = SessionJournalEngine.OpenReadOnly(path);
@@ -942,6 +996,20 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
 
         public void Dispose() {
         }
+    }
+
+    private sealed class CountingPageSnapshot(
+        SessionSelectedLineageAuditCapture capture,
+        IReadOnlyList<SessionSelectedLineageAuditPage> pages
+    ) : ISessionSelectedLineageAuditPageSnapshot {
+        public SessionSelectedLineageAuditCapture Capture { get; } = capture;
+        public long PageCount => pages.Count;
+        public int DisposeCount { get; private set; }
+        public IEnumerable<SessionSelectedLineageAuditPage>
+            ReadHeadToOldestPages() => pages;
+        public IEnumerable<SessionSelectedLineageAuditPage>
+            ReadOldestToHeadPages() => pages.Reverse();
+        public void Dispose() => DisposeCount++;
     }
 
     private sealed class DivergentForwardPageSnapshot(
