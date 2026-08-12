@@ -4,6 +4,7 @@ using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -312,6 +313,26 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             throw new InvalidOperationException(
                 $"The Galatea test Timeline could not be provisioned: "
                 + timeline.GetType().Name
+            );
+        }
+
+        RecapGridCadenceCreateResult cadence =
+            RecapGridCadenceFactory.Create(
+                engine,
+                new RecapGridCadencePolicySpec(
+                    minimumRecentHistoryLoad: 1,
+                    HistoryPartitionAlgorithms
+                        .FirstReplaySafeBoundaryAtTargetV1,
+                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                    targetHistoryLoad: 1,
+                    maxRawEvents: 64,
+                    maxRenderedBytes: 1024 * 1024
+                )
+            );
+        if (cadence is not RecapGridCadenceCreateResult.Created) {
+            throw new InvalidOperationException(
+                $"The Galatea test Cadence could not be provisioned: "
+                + cadence.GetType().Name
             );
         }
 
