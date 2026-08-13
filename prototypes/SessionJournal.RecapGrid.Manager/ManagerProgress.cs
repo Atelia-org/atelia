@@ -243,11 +243,23 @@ public sealed partial class RecapGridManager {
         }
         RecapGridBuildProgressResult? finalFence =
             MapProgressFence(CheckFinalFences(frozen));
+        RecapGridPromotableProof? proof = fulfillmentPresent
+            ? new RecapGridPromotableProof(
+                frozen.ControlSnapshot.Head,
+                frozen.TimelineHead,
+                frozen.StoreIdentity,
+                frozen.RequestedRecipe.Recipe.Digest,
+                frozen.Through.Descriptor.RowId,
+                frozen.Through.Descriptor.DescriptorDigest,
+                key,
+                requestedFinal.View.Digest
+            )
+            : null;
         return Finish(finalFence
             ?? new RecapGridBuildProgressResult.Complete(
                 authority,
                 requestedFinal.View.Digest,
-                fulfillmentPresent
+                proof
             ));
     }
 

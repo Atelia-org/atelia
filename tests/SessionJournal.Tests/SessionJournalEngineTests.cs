@@ -3001,6 +3001,111 @@ public sealed class SessionJournalEngineTests : IDisposable {
         );
     }
 
+    [Fact]
+    public async Task PendingToolBoundaryReturnsMorePendingAndRequiresExactNextHead() {
+        string path = CreateImportedTwoToolPendingJournal();
+        var alpha = new RecordingTool(
+            "alpha",
+            _ => ToolExecuteResult.FromText(
+                ToolExecutionStatus.Success, "alpha-result"));
+        var beta = new RecordingTool(
+            "beta",
+            _ => ToolExecuteResult.FromText(
+                ToolExecutionStatus.Success, "beta-result"));
+        ToolSession tools = new ToolRegistry([alpha, beta]).CreateSession();
+        using SessionJournalEngine engine = SessionJournalEngine.Open(path);
+        EventAddress initial = engine.ReadCurrentHead()!.Value;
+
+        SessionPendingToolBoundaryResult.MorePending first = Assert.IsType<
+            SessionPendingToolBoundaryResult.MorePending>(
+            await engine.ExecutePendingToolToBoundaryAsync(
+                initial, tools, ToolRuntimeIdentity));
+        Assert.Equal((1, 0), (alpha.Calls, beta.Calls));
+        Assert.Equal(first.Head, engine.ReadCurrentHead());
+        await Assert.ThrowsAsync<SessionJournalExpectedHeadMismatchException>(
+            () => engine.ExecutePendingToolToBoundaryAsync(
+                initial, tools, ToolRuntimeIdentity));
+        Assert.Equal((1, 0), (alpha.Calls, beta.Calls));
+
+        SessionPendingToolBoundaryResult.Settled second = Assert.IsType<
+            SessionPendingToolBoundaryResult.Settled>(
+            await engine.ExecutePendingToolToBoundaryAsync(
+                first.Head, tools, ToolRuntimeIdentity));
+        Assert.Equal((1, 1), (alpha.Calls, beta.Calls));
+        Assert.Equal(second.Head, engine.ReadCurrentHead());
+        Assert.Equal(SessionExecutionPhase.AwaitingAgentAction,
+            engine.InspectExecutionBoundary().Phase);
+    }
+
+    [Fact]
+    public async Task PendingToolBoundaryPreCancellationIsZeroMutation() {
+        string path = CreateImportedTwoToolPendingJournal();
+        var tool = new RecordingTool(
+            "alpha",
+            _ => ToolExecuteResult.FromText(
+                ToolExecutionStatus.Success, "must-not-run"));
+        ToolSession tools = new ToolRegistry([
+            tool,
+            new RecordingTool("beta", _ => ToolExecuteResult.FromText(
+                ToolExecutionStatus.Success, "must-not-run"))
+        ]).CreateSession();
+        using SessionJournalEngine engine = SessionJournalEngine.Open(path);
+        EventAddress initial = engine.ReadCurrentHead()!.Value;
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            engine.ExecutePendingToolToBoundaryAsync(
+                initial,
+                tools,
+                ToolRuntimeIdentity,
+                cancelled.Token));
+
+        Assert.Equal(initial, engine.ReadCurrentHead());
+        Assert.Equal(0, tool.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PendingToolBoundaryPropagatesUnsettledAndFatalAfterDurableStart(
+        bool fatal
+    ) {
+        string path = CreateImportedTwoToolPendingJournal();
+        var tool = new RecordingTool(
+            "alpha",
+            _ => fatal
+                ? throw new OutOfMemoryException("fatal-tool")
+                : throw new ToolExecutionUnsettledException(
+                    "ToolOutcomeUnknown",
+                    "Inspect the durable operation before retrying."));
+        ToolSession tools = new ToolRegistry([
+            tool,
+            new RecordingTool("beta", _ => ToolExecuteResult.FromText(
+                ToolExecutionStatus.Success, "must-not-run"))
+        ]).CreateSession();
+        using SessionJournalEngine engine = SessionJournalEngine.Open(path);
+        EventAddress initial = engine.ReadCurrentHead()!.Value;
+
+        if (fatal) {
+            await Assert.ThrowsAsync<OutOfMemoryException>(() =>
+                engine.ExecutePendingToolToBoundaryAsync(
+                    initial, tools, ToolRuntimeIdentity));
+        }
+        else {
+            await Assert.ThrowsAsync<ToolExecutionUnsettledException>(() =>
+                engine.ExecutePendingToolToBoundaryAsync(
+                    initial, tools, ToolRuntimeIdentity));
+        }
+
+        Assert.Equal(1, tool.Calls);
+        Assert.NotEqual(initial, engine.ReadCurrentHead());
+        Assert.Equal(SessionEventKind.ToolExecutionStarted,
+            engine.InspectExecutionBoundary().HeadKind);
+        Assert.Equal(SessionExecutionPhase.AwaitingToolExecution,
+            engine.InspectExecutionBoundary().Phase);
+    }
+
     [Theory]
     [InlineData("duplicate-id")]
     [InlineData("empty-id")]

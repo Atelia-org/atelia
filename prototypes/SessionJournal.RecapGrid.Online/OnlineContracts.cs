@@ -14,43 +14,42 @@ public enum RecapGridOnlineComponent {
     Getter
 }
 
-public static class RecapGridOnlineOperationLimits {
-    public const int MaximumTimelineRows = 1_000_000;
-}
-
 public sealed record RecapGridOnlineLimits {
     public RecapGridOnlineLimits(
         int maximumAuditEvents,
-        int maximumTimelineRows,
-        RecapGridBuildBudget buildBudget
+        int maximumNewCalls,
+        TimeSpan softMaximumElapsed
     ) {
         if (maximumAuditEvents is < 1
             or > HistoryRecentReserveOperationLimits.MaximumRawEvents) {
             throw new ArgumentOutOfRangeException(nameof(maximumAuditEvents));
         }
-        if (maximumTimelineRows is < 1
-            or > RecapGridOnlineOperationLimits.MaximumTimelineRows) {
-            throw new ArgumentOutOfRangeException(nameof(maximumTimelineRows));
+        if (maximumNewCalls is < 0
+            or > RecapGridLimits.MaximumColumnCount) {
+            throw new ArgumentOutOfRangeException(nameof(maximumNewCalls));
+        }
+        if (softMaximumElapsed <= TimeSpan.Zero
+            || softMaximumElapsed > TimeSpan.FromDays(1)) {
+            throw new ArgumentOutOfRangeException(nameof(softMaximumElapsed));
         }
         MaximumAuditEvents = maximumAuditEvents;
-        MaximumTimelineRows = maximumTimelineRows;
-        BuildBudget = buildBudget
-            ?? throw new ArgumentNullException(nameof(buildBudget));
+        MaximumNewCalls = maximumNewCalls;
+        SoftMaximumElapsed = softMaximumElapsed;
     }
 
     public int MaximumAuditEvents { get; }
-    public int MaximumTimelineRows { get; }
-    public RecapGridBuildBudget BuildBudget { get; }
+    public int MaximumNewCalls { get; }
+    /// <summary>
+    /// Cooperative elapsed-time budget checked only at safe Manager
+    /// boundaries; it is not a dispatch timeout or hard cancellation.
+    /// </summary>
+    public TimeSpan SoftMaximumElapsed { get; }
 
     public static RecapGridOnlineLimits Production { get; } = new(
         maximumAuditEvents:
             HistoryRecentReserveOperationLimits.MaximumRawEvents,
-        maximumTimelineRows: 4_096,
-        new RecapGridBuildBudget(
-            maximumRecipeRowSteps: 262_144,
-            maximumNewCalls: 4_096,
-            maximumElapsed: TimeSpan.FromMinutes(15)
-        )
+        maximumNewCalls: RecapGridLimits.MaximumColumnCount,
+        softMaximumElapsed: TimeSpan.FromMinutes(15)
     );
 }
 
@@ -78,18 +77,66 @@ public abstract record RecapGridOnlineOpenResult {
 public abstract record RecapGridOnlinePassResult {
     private RecapGridOnlinePassResult() { }
 
-    public sealed record Ready : RecapGridOnlinePassResult;
-    public sealed record RawHistoryAuthorized : RecapGridOnlinePassResult;
+    public sealed record Ready(
+        RecapGridOnlineMaintenanceEvidence? Evidence = null
+    ) : RecapGridOnlinePassResult;
+    public sealed record RawHistoryAuthorized(
+        RecapGridOnlineMaintenanceEvidence? Evidence = null
+    ) : RecapGridOnlinePassResult;
+    public sealed record MaintenanceContinuation(
+        RecapGridOnlineComponent Component,
+        string Code,
+        string Detail,
+        RecapGridOnlineMaintenanceEvidence Evidence
+    ) : RecapGridOnlinePassResult;
     public sealed record Backpressure(
         RecapGridOnlineComponent Component,
         string Code,
         string Detail,
-        SessionCurrentLineageBeyondPrefix? BoundedLineageEvidence = null
+        SessionCurrentLineageBeyondPrefix? BoundedLineageEvidence = null,
+        RecapGridOnlineMaintenanceEvidence? MaintenanceEvidence = null
     ) : RecapGridOnlinePassResult;
     public sealed record Unavailable(
         RecapGridOnlineComponent Component,
         string Code,
-        string Detail
+        string Detail,
+        RecapGridOnlineMaintenanceEvidence? MaintenanceEvidence = null
     ) : RecapGridOnlinePassResult;
-    public sealed record Disposed : RecapGridOnlinePassResult;
+    public sealed record Disposed(
+        RecapGridOnlineMaintenanceEvidence? Evidence = null
+    ) : RecapGridOnlinePassResult;
+}
+
+public sealed record RecapGridOnlineMaintenanceEvidence(
+    int Passes,
+    bool EntryDebt,
+    int TimelineRowsCommitted,
+    RecapGridRecipeRowCoordinate? LastAttemptedRecipeRow,
+    RecapGridBuildProgressAuthority? LastAttemptedAuthority,
+    int RecipeRowSteps,
+    int RowViewsCommitted,
+    int CellsCommitted,
+    int NewCalls,
+    RecapGridRecipeRowCoordinate? NextRecipeRow,
+    RecapGridBuildProgressAuthority? NextAuthority,
+    RecapGridOnlineContinuationKind ContinuationKind
+);
+
+public sealed record RecapGridRecipeRowCoordinate(
+    HistoryRowId RowId,
+    GridBuildRecipeDigest RecipeDigest
+);
+
+public enum RecapGridOnlineContinuationKind {
+    Ready,
+    RawHistoryAuthorized,
+    GridDebtCleared,
+    GridDebtRemaining,
+    TimelineDebtRemaining,
+    PostMutationFailure,
+    CatchUpBudgetExhausted
+}
+
+public static class RecapGridOnlineCatchUpLimits {
+    public const int MaximumPasses = 256;
 }

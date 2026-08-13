@@ -3,6 +3,7 @@ using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Manager;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 
 namespace Atelia.SessionJournal.RecapGrid.Online;
@@ -24,6 +25,9 @@ public sealed class RecapGridOnlineContextHandle :
     private RecapGridManagerHandle? _manager;
 
     internal OnlineCleanupTestHooks? CleanupHooksForTest { get; set; }
+    internal OnlineOperationTestHooks? OperationHooksForTest { get; set; }
+    internal TimeProvider TimeProviderForTest { get; set; }
+        = TimeProvider.System;
 
     internal RecapGridOnlineContextHandle(
         SessionJournalEngine owner,
@@ -66,14 +70,120 @@ public sealed class RecapGridOnlineContextHandle :
     ) {
         ArgumentNullException.ThrowIfNull(readView);
         ArgumentNullException.ThrowIfNull(request);
+        var budget = new OnlineOperationBudget(
+            _limits.MaximumNewCalls,
+            _limits.SoftMaximumElapsed,
+            TimeProviderForTest);
+        return PreparePassBudgetedAsync(
+            readView, request, budget, cancellationToken);
+    }
+
+    private ValueTask<RecapGridOnlinePassResult> PreparePassBudgetedAsync(
+        SessionJournalReadView readView,
+        SessionContextLifecycleRequest request,
+        OnlineOperationBudget budget,
+        CancellationToken cancellationToken
+    ) {
         if (!_lifetime.TryEnter(out OnlineLifetime.OperationLease? lease)) {
             return ValueTask.FromResult<RecapGridOnlinePassResult>(
                 new RecapGridOnlinePassResult.Disposed()
             );
         }
         return PrepareEnteredAsync(
-            lease!, readView, request, cancellationToken
+            lease!, readView, request, budget, cancellationToken
         );
+    }
+
+    public async ValueTask<RecapGridOnlinePassResult>
+        CatchUpMaintenanceAsync(
+        string? pendingObservation,
+        CancellationToken cancellationToken = default
+    ) {
+        var budget = new OnlineOperationBudget(
+            _limits.MaximumNewCalls,
+            _limits.SoftMaximumElapsed,
+            TimeProviderForTest);
+        RecapGridOnlineMaintenanceEvidence cumulative = EmptyEvidence(
+            RecapGridOnlineContinuationKind.Ready);
+        for (int pass = 0;
+             pass < RecapGridOnlineCatchUpLimits.MaximumPasses;
+             pass++) {
+            var capture = new MaintenanceCaptureLifecycle(
+                this,
+                budget.WithMaximumNewCalls(
+                    Math.Max(0, _limits.MaximumNewCalls - cumulative.NewCalls)));
+            EventAddress expectedHead = _selectedRef.ReadCurrentHead()
+                ?? throw new InvalidDataException(
+                    "Online lifecycle maintenance requires a raw head."
+                );
+            try {
+                _ = await _owner
+                    .PrepareContextLifecycleMaintenanceAsync(
+                        expectedHead,
+                        capture,
+                        pendingObservation,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (SessionJournalNotReadyException) when (
+                capture.Result is not null) {
+                // SessionJournal surfaces any non-ready lifecycle result as a
+                // typed exception. Preserve the captured Online result here;
+                // the loop below retries only MaintenanceContinuation.
+            }
+            if (capture.Result is not { } result) {
+                result = Unavailable(
+                    RecapGridOnlineComponent.RawAuthority,
+                    "MaintenanceCaptureMissing",
+                    "SessionJournal returned without an Online lifecycle result."
+                );
+            }
+            RecapGridOnlineMaintenanceEvidence passEvidence =
+                ExtractEvidence(result) ?? (EmptyEvidence(
+                    result is RecapGridOnlinePassResult.RawHistoryAuthorized
+                        ? RecapGridOnlineContinuationKind.RawHistoryAuthorized
+                        : RecapGridOnlineContinuationKind.Ready) with {
+                            NextRecipeRow = result is
+                                    RecapGridOnlinePassResult.Ready
+                                    or RecapGridOnlinePassResult
+                                        .RawHistoryAuthorized
+                                ? null
+                                : cumulative.NextRecipeRow
+                            ,
+                            NextAuthority = result is
+                                    RecapGridOnlinePassResult.Ready
+                                    or RecapGridOnlinePassResult
+                                        .RawHistoryAuthorized
+                                ? null
+                                : cumulative.NextAuthority
+                        });
+            cumulative = AccumulateEvidence(cumulative, passEvidence);
+            if (cumulative.Passes > RecapGridOnlineCatchUpLimits.MaximumPasses
+                || cumulative.NewCalls > _limits.MaximumNewCalls
+                || cumulative.TimelineRowsCommitted > cumulative.Passes
+                || cumulative.RecipeRowSteps > cumulative.Passes
+                || cumulative.RowViewsCommitted > cumulative.Passes) {
+                throw new InvalidOperationException(
+                    "Online catch-up exceeded its frozen operation budget.");
+            }
+            result = WithCatchUpEvidence(result, cumulative);
+            if (result is not RecapGridOnlinePassResult
+                    .MaintenanceContinuation) {
+                if (IsOperationBudgetFailure(result, out string budgetCode)) {
+                    return CatchUpBudgetExhausted(
+                        budgetCode,
+                        cumulative);
+                }
+                return result;
+            }
+            if (pass + 1 == RecapGridOnlineCatchUpLimits.MaximumPasses) {
+                return CatchUpBudgetExhausted(
+                    "CatchUpPassBudgetExhausted",
+                    cumulative);
+            }
+        }
+        throw new InvalidOperationException(
+            "Online catch-up loop escaped its code-owned pass bound.");
     }
 
     private async ValueTask<SessionContextLifecycleResult>
@@ -90,6 +200,10 @@ public sealed class RecapGridOnlineContextHandle :
                 => SessionContextLifecycleResult.Ready,
             RecapGridOnlinePassResult.RawHistoryAuthorized
                 => SessionContextLifecycleResult.RawHistoryAuthorized,
+            RecapGridOnlinePassResult.MaintenanceContinuation value
+                => new SessionContextLifecycleResult(
+                    SessionContextLifecycleStatus.Backpressure,
+                    $"{value.Component}:{value.Code}:{value.Detail}"),
             RecapGridOnlinePassResult.Backpressure value
                 => new SessionContextLifecycleResult(
                     SessionContextLifecycleStatus.Backpressure,
@@ -114,6 +228,7 @@ public sealed class RecapGridOnlineContextHandle :
         OnlineLifetime.OperationLease lease,
         SessionJournalReadView readView,
         SessionContextLifecycleRequest request,
+        OnlineOperationBudget budget,
         CancellationToken cancellationToken
     ) {
         using (lease)
@@ -147,6 +262,10 @@ public sealed class RecapGridOnlineContextHandle :
                     $"Expected={request.Boundary};Observed={currentRawHead}"
                 );
             }
+            if (OperationHooksForTest?.PreparePassOverride?.Invoke()
+                    is { } overridden) {
+                return overridden;
+            }
 
             // Idle+pending runs before ObservationAccepted is appended and is
             // the only safe seal point for this turn. The immediately
@@ -155,18 +274,19 @@ public sealed class RecapGridOnlineContextHandle :
             // an empty prepared raw range and lose the request boundary.
             if (request.Trigger
                     == SessionContextLifecycleTrigger.PreObservation) {
-                TimelineSyncResult synchronized = SynchronizeTimeline(
+                return await MaintainPreObservationAsync(
+                    request,
+                    budget,
                     cancellationToken
-                );
-                if (synchronized.Error is { } syncError) {
-                    return syncError;
-                }
+                ).ConfigureAwait(false);
             }
 
-            RecapGridOnlinePassResult readiness = await EnsureReadyAsync(
-                request,
-                cancellationToken
-            ).ConfigureAwait(false);
+            RecapGridOnlinePassResult readiness =
+                await MaintainGridOnlyAsync(
+                    request,
+                    budget,
+                    cancellationToken
+                ).ConfigureAwait(false);
             if (readiness is RecapGridOnlinePassResult.Ready
                 or RecapGridOnlinePassResult.RawHistoryAuthorized) {
                 EventAddress? after = _selectedRef.ReadCurrentHead();
@@ -196,27 +316,90 @@ public sealed class RecapGridOnlineContextHandle :
         _ => false,
     };
 
-    private TimelineSyncResult SynchronizeTimeline(
+    private async ValueTask<RecapGridOnlinePassResult>
+        MaintainGridOnlyAsync(
+        SessionContextLifecycleRequest request,
+        OnlineOperationBudget budget,
+        CancellationToken cancellationToken
+    ) {
+        GridInspection entry = InspectReadiness(
+            request, budget, cancellationToken);
+        if (entry.Error is { } entryError) {
+            return entryError;
+        }
+        if (!entry.HasDebt) {
+            return entry.Readiness!;
+        }
+        GridBuildStepResult build = await BuildOneAsync(
+            entry,
+            cancellationToken
+        ).ConfigureAwait(false);
+        GridInspection terminal = InspectAfterMutation(
+            request, budget, cancellationToken);
+        RecapGridOnlineMaintenanceEvidence evidence = Evidence(
+            entryDebt: true,
+            timelineRowsCommitted: 0,
+            entry.Coordinate,
+            build.Metrics,
+            terminal.Coordinate,
+            terminal.HasDebt
+                ? RecapGridOnlineContinuationKind.GridDebtRemaining
+                : RecapGridOnlineContinuationKind.GridDebtCleared,
+            entry.Authority,
+            terminal.Authority
+        );
+        if (build.Error is { } buildError) {
+            return WithEvidence(buildError, evidence with {
+                ContinuationKind =
+                    RecapGridOnlineContinuationKind.PostMutationFailure
+            });
+        }
+        if (terminal.Error is { } terminalError) {
+            return WithEvidence(terminalError, evidence with {
+                ContinuationKind =
+                    RecapGridOnlineContinuationKind.PostMutationFailure
+            });
+        }
+        return Maintenance(
+            RecapGridOnlineComponent.Manager,
+            terminal.HasDebt ? "GridDebtRemaining" : "GridDebtCleared",
+            "One recipe-row maintenance unit consumed this lifecycle pass.",
+            evidence
+        );
+    }
+
+    private async ValueTask<RecapGridOnlinePassResult>
+        MaintainPreObservationAsync(
+        SessionContextLifecycleRequest request,
+        OnlineOperationBudget budget,
         CancellationToken cancellationToken
     ) {
         RecapGridCadenceTimelineSealOpenResult sealOpened =
             _cadence.BeginTimelineSeal(_timeline);
         if (sealOpened is not RecapGridCadenceTimelineSealOpenResult
                 .Opened available) {
-            return new TimelineSyncResult(null, MapSealOpen(sealOpened));
+            return MapSealOpen(sealOpened);
         }
         using RecapGridCadenceTimelineSealOperation seal =
             available.Operation;
         TimelineHeadRef expected = seal.HeadAtOpen;
-        HistoryTimelineReconcileResult reconcile = _timeline.Coordinator
-            .ReconcileSelectedPath(expected, _selectedRef, cancellationToken);
         AuditContext? audit = null;
+        bool entryDebtObserved = false;
+        int timelineRowsCommitted = 0;
+        RecapGridRecipeRowCoordinate? attemptedRecipeRow = null;
+        RecapGridBuildMetrics accumulatedBuildMetrics =
+            RecapGridBuildMetrics.Empty;
         try {
+            HistoryTimelineReconcileResult reconcile = _timeline.Coordinator
+                .ReconcileSelectedPath(
+                    expected,
+                    _selectedRef,
+                    cancellationToken);
             if (reconcile is HistoryTimelineReconcileResult
                     .OfflineBootstrapRequired) {
                 AuditOpenResult auditOpened = OpenAudit(cancellationToken);
                 if (auditOpened.Error is { } auditError) {
-                    return new TimelineSyncResult(null, auditError);
+                    return auditError;
                 }
                 audit = auditOpened.Context!;
                 reconcile = seal.ReconcileSelectedPathOffline(
@@ -232,123 +415,178 @@ public sealed class RecapGridOnlineContextHandle :
                 expected = moved.Head;
             }
             else {
-                return new TimelineSyncResult(
-                    null, MapReconcile(reconcile));
+                return MapReconcile(reconcile);
             }
 
-            int committed = 0;
-            while (committed < _limits.MaximumTimelineRows) {
-                cancellationToken.ThrowIfCancellationRequested();
-                OnlineSelectedRawCaptureResult raw = _timeline.Coordinator
-                    .CaptureOnline(expected, _selectedRef, cancellationToken);
-                if (raw is OnlineSelectedRawCaptureResult.Empty) {
-                    return new TimelineSyncResult(expected, null);
-                }
-                if (raw is not OnlineSelectedRawCaptureResult.Captured captured) {
-                    return new TimelineSyncResult(null, MapCapture(raw));
-                }
-                HistoryTimelinePlanResult plan = seal.PlanNextRow(
-                    expected,
-                    captured.Capture,
-                    cancellationToken);
-                if (plan is HistoryTimelinePlanResult.Selected selected) {
-                    HistoryTimelineCommitResult commit = seal.CommitRow(
-                        selected.Candidate);
-                    if (commit is not HistoryTimelineCommitResult.Committed done) {
-                        return new TimelineSyncResult(null, MapCommit(commit));
-                    }
-                    expected = done.Head;
-                    committed++;
-                    continue;
-                }
-                if (plan is HistoryTimelinePlanResult.NotEnough
-                    or HistoryTimelinePlanResult.RecentReserveNotReached) {
-                    return new TimelineSyncResult(expected, null);
-                }
-                if (plan is HistoryTimelinePlanResult
-                        .OfflineBootstrapRequired) {
-                    if (audit is null) {
-                        AuditOpenResult auditOpened = OpenAudit(
-                            cancellationToken);
-                        if (auditOpened.Error is { } auditError) {
-                            return new TimelineSyncResult(null, auditError);
-                        }
-                        audit = auditOpened.Context!;
-                    }
-                    return BuildOffline(
-                        seal,
-                        audit,
-                        expected,
-                        committed,
-                        cancellationToken);
-                }
-                return new TimelineSyncResult(null, MapPlan(plan));
+            GridInspection entry = InspectReadiness(
+                request,
+                budget,
+                cancellationToken);
+            if (entry.Error is { } entryError) {
+                return entryError;
             }
-            return ProbeOnlineAtRowLimit(
+            entryDebtObserved = entry.HasDebt;
+            if (entry.HasDebt) {
+                attemptedRecipeRow = entry.Coordinate;
+                GridBuildStepResult build = await BuildOneAsync(
+                    entry,
+                    cancellationToken
+                ).ConfigureAwait(false);
+                accumulatedBuildMetrics = build.Metrics;
+                GridInspection afterDebt = InspectAfterMutation(
+                    request,
+                    budget,
+                    cancellationToken);
+                RecapGridOnlineMaintenanceEvidence evidence = Evidence(
+                    entryDebt: true,
+                    timelineRowsCommitted: 0,
+                    entry.Coordinate,
+                    build.Metrics,
+                    afterDebt.Coordinate,
+                    afterDebt.HasDebt
+                        ? RecapGridOnlineContinuationKind.GridDebtRemaining
+                        : RecapGridOnlineContinuationKind.GridDebtCleared,
+                    entry.Authority,
+                    afterDebt.Authority);
+                if (build.Error is { } buildError) {
+                    return WithEvidence(buildError, evidence with {
+                        ContinuationKind = RecapGridOnlineContinuationKind
+                            .PostMutationFailure
+                    });
+                }
+                if (afterDebt.Error is { } afterDebtError) {
+                    return WithEvidence(afterDebtError, evidence with {
+                        ContinuationKind = RecapGridOnlineContinuationKind
+                            .PostMutationFailure
+                    });
+                }
+                return Maintenance(
+                    RecapGridOnlineComponent.Manager,
+                    afterDebt.HasDebt
+                        ? "GridDebtRemaining"
+                        : "GridDebtCleared",
+                    "A pre-existing recipe-row debt consumed this lifecycle pass.",
+                    evidence
+                );
+            }
+
+            TimelineStepResult timeline = SealOneTimelineRow(
                 seal,
                 ref audit,
                 expected,
                 cancellationToken);
+            timelineRowsCommitted = timeline.Committed ? 1 : 0;
+            var timelineOnly = Evidence(
+                entryDebt: false,
+                timeline.Committed ? 1 : 0,
+                attemptedRecipeRow: null,
+                RecapGridBuildMetrics.Empty,
+                nextRecipeRow: null,
+                RecapGridOnlineContinuationKind.PostMutationFailure);
+            if (timeline.Error is { } timelineError) {
+                return timeline.Committed
+                    ? WithEvidence(timelineError, timelineOnly)
+                    : timelineError;
+            }
+            if (!timeline.Committed) {
+                return entry.Readiness!;
+            }
+
+            GridInspection afterSeal = InspectAfterMutation(
+                request,
+                budget,
+                cancellationToken);
+            if (afterSeal.Error is { } afterSealError) {
+                return WithEvidence(afterSealError, timelineOnly);
+            }
+            RecapGridBuildMetrics buildMetrics = RecapGridBuildMetrics.Empty;
+            RecapGridRecipeRowCoordinate? attempted = null;
+            if (afterSeal.HasDebt) {
+                attempted = afterSeal.Coordinate;
+                attemptedRecipeRow = attempted;
+                GridBuildStepResult build = await BuildOneAsync(
+                    afterSeal,
+                    cancellationToken
+                ).ConfigureAwait(false);
+                buildMetrics = build.Metrics;
+                accumulatedBuildMetrics = buildMetrics;
+                if (build.Error is not null) {
+                    return WithEvidence(build.Error, Evidence(
+                        entryDebt: false,
+                        timelineRowsCommitted: 1,
+                        attempted,
+                        buildMetrics,
+                        nextRecipeRow: attempted,
+                        RecapGridOnlineContinuationKind
+                            .PostMutationFailure,
+                        afterSeal.Authority,
+                        afterSeal.Authority));
+                }
+            }
+
+            GridInspection terminal = InspectAfterMutation(
+                request,
+                budget,
+                cancellationToken);
+            if (terminal.Error is { } terminalError) {
+                return WithEvidence(terminalError, Evidence(
+                    entryDebt: false,
+                    timelineRowsCommitted: 1,
+                    attempted,
+                    buildMetrics,
+                    terminal.Coordinate,
+                    RecapGridOnlineContinuationKind.PostMutationFailure,
+                    afterSeal.Authority,
+                    terminal.Authority));
+            }
+            if (timeline.MoreRows || terminal.HasDebt) {
+                RecapGridOnlineContinuationKind kind = timeline.MoreRows
+                    ? RecapGridOnlineContinuationKind.TimelineDebtRemaining
+                    : RecapGridOnlineContinuationKind.GridDebtRemaining;
+                return Maintenance(
+                    timeline.MoreRows
+                        ? RecapGridOnlineComponent.Timeline
+                        : RecapGridOnlineComponent.Manager,
+                    timeline.MoreRows
+                        ? "TimelineDebtRemaining"
+                        : "GridDebtRemaining",
+                    "The bounded online pass left durable maintenance debt.",
+                    Evidence(
+                        entryDebt: false,
+                        timelineRowsCommitted: 1,
+                        attempted,
+                        buildMetrics,
+                        terminal.Coordinate,
+                        kind,
+                        afterSeal.Authority,
+                        terminal.Authority)
+                );
+            }
+            return terminal.Readiness!;
         }
         catch (SessionSelectedLineageAuditChangedException changed) {
-            return new TimelineSyncResult(null, Backpressure(
+            RecapGridOnlinePassResult error = Backpressure(
                 RecapGridOnlineComponent.RawAuthority,
                 "RawHeadChanged",
                 $"Expected={changed.ExpectedHead};Observed={changed.ObservedHead}"
-            ));
+            );
+            return timelineRowsCommitted != 0
+                    || accumulatedBuildMetrics != RecapGridBuildMetrics.Empty
+                ? WithEvidence(error, Evidence(
+                    entryDebtObserved,
+                    timelineRowsCommitted,
+                    attemptedRecipeRow,
+                    accumulatedBuildMetrics,
+                    nextRecipeRow: null,
+                    RecapGridOnlineContinuationKind.PostMutationFailure))
+                : error;
         }
         finally {
             audit?.Dispose();
         }
     }
 
-    private TimelineSyncResult BuildOffline(
-        RecapGridCadenceTimelineSealOperation seal,
-        AuditContext audit,
-        TimelineHeadRef expected,
-        int committed,
-        CancellationToken cancellationToken
-    ) {
-        RecapGridCadenceOfflineBuilderOpenResult opened =
-            seal.OpenOfflineBuilder(
-                expected,
-                audit.Snapshot,
-                cancellationToken);
-        if (opened is not RecapGridCadenceOfflineBuilderOpenResult.Opened ready) {
-            return new TimelineSyncResult(null, MapOfflineOpen(opened));
-        }
-        using RecapGridCadenceOfflineBuilder builder = ready.Builder;
-        while (committed < _limits.MaximumTimelineRows) {
-            cancellationToken.ThrowIfCancellationRequested();
-            HistoryTimelineOfflineStepResult step = builder
-                .BuildNextRow(expected, cancellationToken);
-            if (step is HistoryTimelineOfflineStepResult.Committed done) {
-                expected = done.Head;
-                committed++;
-                continue;
-            }
-            if (step is HistoryTimelineOfflineStepResult.NotEnough
-                or HistoryTimelineOfflineStepResult
-                    .RecentReserveNotReached) {
-                return new TimelineSyncResult(expected, null);
-            }
-            return new TimelineSyncResult(null, MapOfflineStep(step));
-        }
-        HistoryTimelineOfflineStepResult terminalProbe = builder
-            .ProbeNextRow(expected, cancellationToken);
-        return terminalProbe switch {
-            HistoryTimelineOfflineStepResult.NotEnough
-                or HistoryTimelineOfflineStepResult
-                    .RecentReserveNotReached
-                => new TimelineSyncResult(expected, null),
-            HistoryTimelineOfflineStepResult.Selected
-                => TimelineRowLimitExceeded(),
-            _ => new TimelineSyncResult(
-                null, MapOfflineStep(terminalProbe))
-        };
-    }
-
-    private TimelineSyncResult ProbeOnlineAtRowLimit(
+    private TimelineStepResult SealOneTimelineRow(
         RecapGridCadenceTimelineSealOperation seal,
         ref AuditContext? audit,
         TimelineHeadRef expected,
@@ -358,39 +596,161 @@ public sealed class RecapGridOnlineContextHandle :
         OnlineSelectedRawCaptureResult raw = _timeline.Coordinator
             .CaptureOnline(expected, _selectedRef, cancellationToken);
         if (raw is OnlineSelectedRawCaptureResult.Empty) {
-            return new TimelineSyncResult(expected, null);
+            return new TimelineStepResult(false, false, null);
         }
         if (raw is not OnlineSelectedRawCaptureResult.Captured captured) {
-            return new TimelineSyncResult(null, MapCapture(raw));
+            return new TimelineStepResult(false, false, MapCapture(raw));
         }
         HistoryTimelinePlanResult plan = seal.PlanNextRow(
-            expected, captured.Capture, cancellationToken);
+            expected,
+            captured.Capture,
+            cancellationToken);
         if (plan is HistoryTimelinePlanResult.NotEnough
             or HistoryTimelinePlanResult.RecentReserveNotReached) {
-            return new TimelineSyncResult(expected, null);
+            return new TimelineStepResult(false, false, null);
         }
-        if (plan is HistoryTimelinePlanResult.Selected) {
-            return TimelineRowLimitExceeded();
+        if (plan is HistoryTimelinePlanResult.Selected selected) {
+            HistoryTimelineCommitResult commit = seal.CommitRow(
+                selected.Candidate);
+            if (commit is not HistoryTimelineCommitResult.Committed done) {
+                return new TimelineStepResult(
+                    false, false, MapCommit(commit));
+            }
+            OperationHooksForTest?.AfterTimelineCommit?.Invoke();
+            try {
+                return ProbeNextTimelineRowOnline(
+                    seal,
+                    ref audit,
+                    done.Head,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (
+                cancellationToken.IsCancellationRequested) {
+                return new TimelineStepResult(
+                    true,
+                    false,
+                    Backpressure(
+                        RecapGridOnlineComponent.RawAuthority,
+                        "PostMutationCancelled",
+                        "Cancellation was observed after a Timeline row committed."));
+            }
         }
         if (plan is not HistoryTimelinePlanResult
                 .OfflineBootstrapRequired) {
-            return new TimelineSyncResult(null, MapPlan(plan));
+            return new TimelineStepResult(false, false, MapPlan(plan));
         }
         if (audit is null) {
             AuditOpenResult auditOpened = OpenAudit(cancellationToken);
             if (auditOpened.Error is { } auditError) {
-                return new TimelineSyncResult(null, auditError);
+                return new TimelineStepResult(false, false, auditError);
             }
             audit = auditOpened.Context!;
         }
-        return ProbeOfflineAtRowLimit(
+        return SealOneTimelineRowOffline(
             seal,
             audit,
             expected,
             cancellationToken);
     }
 
-    private TimelineSyncResult ProbeOfflineAtRowLimit(
+    private TimelineStepResult SealOneTimelineRowOffline(
+        RecapGridCadenceTimelineSealOperation seal,
+        AuditContext audit,
+        TimelineHeadRef expected,
+        CancellationToken cancellationToken
+    ) {
+        RecapGridCadenceOfflineBuilderOpenResult opened =
+            seal.OpenOfflineBuilder(
+                expected,
+                audit.Snapshot,
+                cancellationToken);
+        if (opened is not RecapGridCadenceOfflineBuilderOpenResult.Opened ready) {
+            return new TimelineStepResult(
+                false, false, MapOfflineOpen(opened));
+        }
+        using RecapGridCadenceOfflineBuilder builder = ready.Builder;
+        cancellationToken.ThrowIfCancellationRequested();
+        HistoryTimelineOfflineStepResult step = builder
+            .BuildNextRow(expected, cancellationToken);
+        if (step is HistoryTimelineOfflineStepResult.NotEnough
+            or HistoryTimelineOfflineStepResult
+                .RecentReserveNotReached) {
+            return new TimelineStepResult(false, false, null);
+        }
+        if (step is not HistoryTimelineOfflineStepResult.Committed done) {
+            return new TimelineStepResult(
+                false, false, MapOfflineStep(step));
+        }
+        OperationHooksForTest?.AfterTimelineCommit?.Invoke();
+        HistoryTimelineOfflineStepResult probe;
+        try {
+            probe = builder.ProbeNextRow(done.Head, cancellationToken);
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested) {
+            return new TimelineStepResult(
+                true,
+                false,
+                Backpressure(
+                    RecapGridOnlineComponent.RawAuthority,
+                    "PostMutationCancelled",
+                    "Cancellation was observed after a Timeline row committed."));
+        }
+        return probe switch {
+            HistoryTimelineOfflineStepResult.NotEnough
+                or HistoryTimelineOfflineStepResult
+                    .RecentReserveNotReached
+                => new TimelineStepResult(true, false, null),
+            HistoryTimelineOfflineStepResult.Selected
+                => new TimelineStepResult(true, true, null),
+            _ => new TimelineStepResult(
+                true, false, MapOfflineStep(probe))
+        };
+    }
+
+    private TimelineStepResult ProbeNextTimelineRowOnline(
+        RecapGridCadenceTimelineSealOperation seal,
+        ref AuditContext? audit,
+        TimelineHeadRef expected,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        OnlineSelectedRawCaptureResult raw = _timeline.Coordinator
+            .CaptureOnline(expected, _selectedRef, cancellationToken);
+        if (raw is OnlineSelectedRawCaptureResult.Empty) {
+            return new TimelineStepResult(true, false, null);
+        }
+        if (raw is not OnlineSelectedRawCaptureResult.Captured captured) {
+            return new TimelineStepResult(true, false, MapCapture(raw));
+        }
+        HistoryTimelinePlanResult plan = seal.PlanNextRow(
+            expected, captured.Capture, cancellationToken);
+        if (plan is HistoryTimelinePlanResult.NotEnough
+            or HistoryTimelinePlanResult.RecentReserveNotReached) {
+            return new TimelineStepResult(true, false, null);
+        }
+        if (plan is HistoryTimelinePlanResult.Selected) {
+            return new TimelineStepResult(true, true, null);
+        }
+        if (plan is not HistoryTimelinePlanResult
+                .OfflineBootstrapRequired) {
+            return new TimelineStepResult(true, false, MapPlan(plan));
+        }
+        if (audit is null) {
+            AuditOpenResult auditOpened = OpenAudit(cancellationToken);
+            if (auditOpened.Error is { } auditError) {
+                return new TimelineStepResult(true, false, auditError);
+            }
+            audit = auditOpened.Context!;
+        }
+        return ProbeNextTimelineRowOffline(
+            seal,
+            audit,
+            expected,
+            cancellationToken);
+    }
+
+    private TimelineStepResult ProbeNextTimelineRowOffline(
         RecapGridCadenceTimelineSealOperation seal,
         AuditContext audit,
         TimelineHeadRef expected,
@@ -403,7 +763,8 @@ public sealed class RecapGridOnlineContextHandle :
                 cancellationToken);
         if (opened is not RecapGridCadenceOfflineBuilderOpenResult
                 .Opened ready) {
-            return new TimelineSyncResult(null, MapOfflineOpen(opened));
+            return new TimelineStepResult(
+                true, false, MapOfflineOpen(opened));
         }
         using RecapGridCadenceOfflineBuilder builder = ready.Builder;
         HistoryTimelineOfflineStepResult probe = builder
@@ -412,18 +773,13 @@ public sealed class RecapGridOnlineContextHandle :
             HistoryTimelineOfflineStepResult.NotEnough
                 or HistoryTimelineOfflineStepResult
                     .RecentReserveNotReached
-                => new TimelineSyncResult(expected, null),
+                => new TimelineStepResult(true, false, null),
             HistoryTimelineOfflineStepResult.Selected
-                => TimelineRowLimitExceeded(),
-            _ => new TimelineSyncResult(null, MapOfflineStep(probe))
+                => new TimelineStepResult(true, true, null),
+            _ => new TimelineStepResult(
+                true, false, MapOfflineStep(probe))
         };
     }
-
-    private TimelineSyncResult TimelineRowLimitExceeded()
-        => new(null, Backpressure(
-            RecapGridOnlineComponent.Timeline,
-            "TimelineRowLimitExceeded",
-            $"MaximumTimelineRows={_limits.MaximumTimelineRows}"));
 
     private AuditOpenResult OpenAudit(CancellationToken cancellationToken) {
         try {
@@ -469,8 +825,9 @@ public sealed class RecapGridOnlineContextHandle :
         }
     }
 
-    private async ValueTask<RecapGridOnlinePassResult> EnsureReadyAsync(
+    private GridInspection InspectReadiness(
         SessionContextLifecycleRequest request,
+        OnlineOperationBudget budget,
         CancellationToken cancellationToken
     ) {
         RecapGridContextResolveResult resolved = _getter.Resolve(
@@ -479,63 +836,190 @@ public sealed class RecapGridOnlineContextHandle :
             cancellationToken);
         if (resolved is RecapGridContextResolveResult.RawHistoryAuthorized
             or RecapGridContextResolveResult.ReserveBootstrapRawOnly) {
-            return new RecapGridOnlinePassResult.RawHistoryAuthorized();
+            return new GridInspection(
+                HasDebt: false,
+                new RecapGridOnlinePassResult.RawHistoryAuthorized(),
+                Manager: null,
+                Request: null,
+                    Coordinate: null,
+                    Authority: null,
+                    Error: null);
         }
         if (resolved is RecapGridContextResolveResult.Selected
             or RecapGridContextResolveResult.OrdinalUnavailable) {
-            return new RecapGridOnlinePassResult.Ready();
+            return new GridInspection(
+                HasDebt: false,
+                new RecapGridOnlinePassResult.Ready(),
+                Manager: null,
+                Request: null,
+                Coordinate: null,
+                Authority: null,
+                Error: null);
         }
         if (resolved is not RecapGridContextResolveResult.Unfulfilled) {
-            return MapGetterResolve(resolved);
+            return GridInspection.FromError(MapGetterResolve(resolved));
         }
 
         ManagerOpen managerOpen = OpenManager();
         if (managerOpen.Error is { } managerError) {
-            return managerError;
+            return GridInspection.FromError(managerError);
         }
         RecapGridManager manager = managerOpen.Handle!.Manager;
         var buildRequest = new RecapGridBuildRequest(
             new RecapGridBuildSelection.LiveActive(),
             throughRowId: null,
-            _limits.BuildBudget);
+            OnlineBuildBudget(budget));
         RecapGridBuildProgressResult progress = manager
             .InspectBuildProgress(buildRequest, cancellationToken);
         switch (progress) {
             case RecapGridBuildProgressResult.Complete {
                 FulfillmentPresent: true
             }:
-                return MapGetterResolve(_getter.Resolve(
-                    request.Boundary,
-                    request.Selection.NthPrevious,
-                    cancellationToken));
+                RecapGridOnlinePassResult ready = MapGetterResolve(
+                    _getter.Resolve(
+                        request.Boundary,
+                        request.Selection.NthPrevious,
+                        cancellationToken));
+                return ready is RecapGridOnlinePassResult.Ready
+                        or RecapGridOnlinePassResult.RawHistoryAuthorized
+                    ? new GridInspection(
+                        HasDebt: false,
+                        ready,
+                        Manager: null,
+                        Request: null,
+                        Coordinate: null,
+                        Authority: null,
+                        Error: null)
+                    : GridInspection.FromError(ready);
             case RecapGridBuildProgressResult.NoRows:
             case RecapGridBuildProgressResult.NoActiveRecipe:
-                return MapGetterResolve(_getter.Resolve(
-                    request.Boundary,
-                    request.Selection.NthPrevious,
-                    cancellationToken));
-            case RecapGridBuildProgressResult.Frontier:
-            case RecapGridBuildProgressResult.Complete:
-                break;
+                RecapGridOnlinePassResult raw = MapGetterResolve(
+                    _getter.Resolve(
+                        request.Boundary,
+                        request.Selection.NthPrevious,
+                        cancellationToken));
+                return raw is RecapGridOnlinePassResult.Ready
+                        or RecapGridOnlinePassResult.RawHistoryAuthorized
+                    ? new GridInspection(
+                        HasDebt: false,
+                        raw,
+                        Manager: null,
+                        Request: null,
+                        Coordinate: null,
+                        Authority: null,
+                        Error: null)
+                    : GridInspection.FromError(raw);
+            case RecapGridBuildProgressResult.Frontier frontier:
+                if (budget.HasElapsed()) {
+                    return GridInspection.FromError(Backpressure(
+                        RecapGridOnlineComponent.Manager,
+                        "BuildBudgetExceeded",
+                        RecapGridBuildBudgetKind.Elapsed.ToString()));
+                }
+                return new GridInspection(
+                    HasDebt: true,
+                    Readiness: null,
+                    manager,
+                    buildRequest,
+                    Coordinate(frontier.NextWork),
+                    frontier.Authority,
+                    Error: null);
+            case RecapGridBuildProgressResult.Complete {
+                FulfillmentPresent: false
+            } incomplete:
+                if (budget.HasElapsed()) {
+                    return GridInspection.FromError(Backpressure(
+                        RecapGridOnlineComponent.Manager,
+                        "BuildBudgetExceeded",
+                        RecapGridBuildBudgetKind.Elapsed.ToString()));
+                }
+                return new GridInspection(
+                    HasDebt: true,
+                    Readiness: null,
+                    manager,
+                    buildRequest,
+                    new RecapGridRecipeRowCoordinate(
+                        incomplete.Authority.ThroughRowId,
+                        incomplete.Authority.RecipeDigest),
+                    incomplete.Authority,
+                    Error: null);
             default:
-                return MapProgress(progress);
-        }
-
-        RecapGridBuildResult built = await manager.BuildAsync(
-            buildRequest, _executor, cancellationToken
-        ).ConfigureAwait(false);
-        switch (built) {
-            case RecapGridBuildResult.Fulfilled:
-            case RecapGridBuildResult.NoRows:
-            case RecapGridBuildResult.NoActiveRecipe:
-                return MapGetterResolve(_getter.Resolve(
-                    request.Boundary,
-                    request.Selection.NthPrevious,
-                    cancellationToken));
-            default:
-                return MapBuild(built);
+                return GridInspection.FromError(MapProgress(progress));
         }
     }
+
+    private GridInspection InspectAfterMutation(
+        SessionContextLifecycleRequest request,
+        OnlineOperationBudget budget,
+        CancellationToken cancellationToken
+    ) {
+        try {
+            return InspectReadiness(request, budget, cancellationToken);
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested) {
+            return GridInspection.FromError(Backpressure(
+                RecapGridOnlineComponent.RawAuthority,
+                "PostMutationCancelled",
+                "Cancellation was observed after durable maintenance mutation."));
+        }
+    }
+
+    private async ValueTask<GridBuildStepResult> BuildOneAsync(
+        GridInspection inspection,
+        CancellationToken cancellationToken
+    ) {
+        if (!inspection.HasDebt
+            || inspection.Manager is null
+            || inspection.Request is null) {
+            return new GridBuildStepResult(
+                RecapGridBuildMetrics.Empty,
+                Unavailable(
+                    RecapGridOnlineComponent.Manager,
+                    "GridInspectionInvalid",
+                    "A recipe-row build requires exact inspected debt."
+                )
+            );
+        }
+        RecapGridBuildResult built = await inspection.Manager.BuildAsync(
+            inspection.Request, _executor, cancellationToken
+        ).ConfigureAwait(false);
+        RecapGridBuildMetrics metrics = built.Metrics;
+        OperationHooksForTest?.AfterBuildResult?.Invoke();
+        if (metrics.RecipeRowSteps is < 0 or > 1
+            || metrics.RowViewsCommitted is < 0 or > 1
+            || metrics.CellsCommitted is < 0
+                or > RecapGridLimits.MaximumColumnCount
+            || metrics.NewCalls is < 0
+                or > RecapGridLimits.MaximumColumnCount) {
+            return new GridBuildStepResult(metrics, Unavailable(
+                RecapGridOnlineComponent.Manager,
+                "RecipeRowStepInvariant",
+                "Online Manager metrics exceeded one recipe-row unit."
+            ));
+        }
+        RecapGridOnlinePassResult? error = built switch {
+            RecapGridBuildResult.Fulfilled
+                or RecapGridBuildResult.NoRows
+                or RecapGridBuildResult.NoActiveRecipe
+                => null,
+            RecapGridBuildResult.BudgetExceeded {
+                Kind: RecapGridBuildBudgetKind.RecipeRowSteps
+            } value when value.Metrics.RecipeRowSteps == 1
+                => null,
+            RecapGridBuildResult.Incomplete
+                => null,
+            _ => MapBuild(built)
+        };
+        return new GridBuildStepResult(metrics, error);
+    }
+
+    private static RecapGridBuildBudget OnlineBuildBudget(
+        OnlineOperationBudget budget
+    ) => new(
+        maximumRecipeRowSteps: 1,
+        budget.MaximumNewCalls,
+        budget.RemainingElapsedForManager());
 
     private ManagerOpen OpenManager() {
         lock (_managerGate) {
@@ -593,18 +1077,84 @@ public sealed class RecapGridOnlineContextHandle :
             and not StackOverflowException
             and not AccessViolationException;
 
-    private sealed record TimelineSyncResult(
-        TimelineHeadRef? Head,
+    private sealed record TimelineStepResult(
+        bool Committed,
+        bool MoreRows,
         RecapGridOnlinePassResult? Error
     );
+    private sealed record GridInspection(
+        bool HasDebt,
+        RecapGridOnlinePassResult? Readiness,
+        RecapGridManager? Manager,
+        RecapGridBuildRequest? Request,
+        RecapGridRecipeRowCoordinate? Coordinate,
+        RecapGridBuildProgressAuthority? Authority,
+        RecapGridOnlinePassResult? Error
+    ) {
+        internal static GridInspection FromError(
+            RecapGridOnlinePassResult error
+        ) => new(
+            HasDebt: false,
+            Readiness: null,
+            Manager: null,
+            Request: null,
+            Coordinate: null,
+            Authority: null,
+            error);
+    }
     private sealed record ManagerOpen(
         RecapGridManagerHandle? Handle,
+        RecapGridOnlinePassResult? Error
+    );
+    private sealed record GridBuildStepResult(
+        RecapGridBuildMetrics Metrics,
         RecapGridOnlinePassResult? Error
     );
     private sealed record AuditOpenResult(
         AuditContext? Context,
         RecapGridOnlinePassResult? Error
     );
+
+    private sealed class MaintenanceCaptureLifecycle(
+        RecapGridOnlineContextHandle owner,
+        OnlineOperationBudget budget
+    ) : ISessionContextLifecycleCoordinator {
+        internal RecapGridOnlinePassResult? Result { get; private set; }
+
+        public async ValueTask<SessionContextLifecycleResult> PrepareAsync(
+            SessionJournalReadView readView,
+            SessionContextLifecycleRequest request,
+            CancellationToken cancellationToken
+        ) {
+            Result = await owner.PreparePassBudgetedAsync(
+                readView,
+                request,
+                budget,
+                cancellationToken).ConfigureAwait(false);
+            return Result switch {
+                RecapGridOnlinePassResult.Ready
+                    => SessionContextLifecycleResult.Ready,
+                RecapGridOnlinePassResult.RawHistoryAuthorized
+                    => SessionContextLifecycleResult.RawHistoryAuthorized,
+                RecapGridOnlinePassResult.MaintenanceContinuation value
+                    => new SessionContextLifecycleResult(
+                        SessionContextLifecycleStatus.Backpressure,
+                        $"{value.Component}:{value.Code}:{value.Detail}"),
+                RecapGridOnlinePassResult.Backpressure value
+                    => new SessionContextLifecycleResult(
+                        SessionContextLifecycleStatus.Backpressure,
+                        $"{value.Component}:{value.Code}:{value.Detail}",
+                        value.BoundedLineageEvidence),
+                RecapGridOnlinePassResult.Unavailable value
+                    => new SessionContextLifecycleResult(
+                        SessionContextLifecycleStatus.Unavailable,
+                        $"{value.Component}:{value.Code}:{value.Detail}"),
+                _ => new SessionContextLifecycleResult(
+                    SessionContextLifecycleStatus.Unavailable,
+                    "Online:Disposed:The online context handle is disposed.")
+            };
+        }
+    }
 
     private sealed class AuditContext(
         SessionSelectedLineageAuditSnapshot snapshot
@@ -619,6 +1169,12 @@ public sealed class RecapGridOnlineContextHandle :
         Action? AfterTimelineDisposed = null
     );
 
+    internal sealed record OnlineOperationTestHooks(
+        Action? AfterTimelineCommit = null,
+        Action? AfterBuildResult = null,
+        Func<RecapGridOnlinePassResult?>? PreparePassOverride = null
+    );
+
     private static RecapGridOnlinePassResult Backpressure(
         RecapGridOnlineComponent component,
         string code,
@@ -626,6 +1182,233 @@ public sealed class RecapGridOnlineContextHandle :
         SessionCurrentLineageBeyondPrefix? evidence = null
     ) => new RecapGridOnlinePassResult.Backpressure(
         component, code, detail, evidence);
+
+    private static RecapGridOnlinePassResult Maintenance(
+        RecapGridOnlineComponent component,
+        string code,
+        string detail,
+        RecapGridOnlineMaintenanceEvidence evidence
+    ) => new RecapGridOnlinePassResult.MaintenanceContinuation(
+        component,
+        code,
+        detail,
+        evidence);
+
+    private static RecapGridRecipeRowCoordinate Coordinate(
+        RecapGridRecipeRowWork work
+    ) => new(work.RowId, work.RecipeDigest);
+
+    private static RecapGridOnlineMaintenanceEvidence Evidence(
+        bool entryDebt,
+        int timelineRowsCommitted,
+        RecapGridRecipeRowCoordinate? attemptedRecipeRow,
+        RecapGridBuildMetrics metrics,
+        RecapGridRecipeRowCoordinate? nextRecipeRow,
+        RecapGridOnlineContinuationKind continuationKind,
+        RecapGridBuildProgressAuthority? lastAttemptedAuthority = null,
+        RecapGridBuildProgressAuthority? nextAuthority = null
+    ) {
+        if (timelineRowsCommitted is < 0 or > 1
+            || metrics.RecipeRowSteps is < 0 or > 1
+            || metrics.RowViewsCommitted is < 0 or > 1) {
+            throw new InvalidOperationException(
+                "Online maintenance exceeded its one-row operation bound.");
+        }
+        return new RecapGridOnlineMaintenanceEvidence(
+            1,
+            entryDebt,
+            timelineRowsCommitted,
+            attemptedRecipeRow,
+            lastAttemptedAuthority,
+            metrics.RecipeRowSteps,
+            metrics.RowViewsCommitted,
+            metrics.CellsCommitted,
+            metrics.NewCalls,
+            nextRecipeRow,
+            nextAuthority,
+            continuationKind);
+    }
+
+    private static RecapGridOnlineMaintenanceEvidence EmptyEvidence(
+        RecapGridOnlineContinuationKind kind
+    ) => new(
+        Passes: 0,
+        EntryDebt: false,
+        TimelineRowsCommitted: 0,
+        LastAttemptedRecipeRow: null,
+        LastAttemptedAuthority: null,
+        RecipeRowSteps: 0,
+        RowViewsCommitted: 0,
+        CellsCommitted: 0,
+        NewCalls: 0,
+        NextRecipeRow: null,
+        NextAuthority: null,
+        ContinuationKind: kind);
+
+    private static RecapGridOnlineMaintenanceEvidence? ExtractEvidence(
+        RecapGridOnlinePassResult result
+    ) => result switch {
+        RecapGridOnlinePassResult.Ready value => value.Evidence,
+        RecapGridOnlinePassResult.RawHistoryAuthorized value
+            => value.Evidence,
+        RecapGridOnlinePassResult.MaintenanceContinuation value
+            => value.Evidence,
+        RecapGridOnlinePassResult.Backpressure value
+            => value.MaintenanceEvidence,
+        RecapGridOnlinePassResult.Unavailable value
+            => value.MaintenanceEvidence,
+        RecapGridOnlinePassResult.Disposed value => value.Evidence,
+        _ => null
+    };
+
+    private static RecapGridOnlineMaintenanceEvidence AccumulateEvidence(
+        RecapGridOnlineMaintenanceEvidence cumulative,
+        RecapGridOnlineMaintenanceEvidence pass
+    ) => new(
+        Passes: checked(cumulative.Passes + Math.Max(1, pass.Passes)),
+        EntryDebt: cumulative.EntryDebt || pass.EntryDebt,
+        TimelineRowsCommitted: checked(
+            cumulative.TimelineRowsCommitted
+                + pass.TimelineRowsCommitted),
+        LastAttemptedRecipeRow: pass.LastAttemptedRecipeRow
+            ?? cumulative.LastAttemptedRecipeRow,
+        LastAttemptedAuthority: pass.LastAttemptedAuthority
+            ?? cumulative.LastAttemptedAuthority,
+        RecipeRowSteps: checked(
+            cumulative.RecipeRowSteps + pass.RecipeRowSteps),
+        RowViewsCommitted: checked(
+            cumulative.RowViewsCommitted + pass.RowViewsCommitted),
+        CellsCommitted: checked(
+            cumulative.CellsCommitted + pass.CellsCommitted),
+        NewCalls: checked(cumulative.NewCalls + pass.NewCalls),
+        NextRecipeRow: pass.NextRecipeRow,
+        NextAuthority: pass.NextAuthority,
+        ContinuationKind: pass.ContinuationKind);
+
+    private static RecapGridOnlinePassResult WithCatchUpEvidence(
+        RecapGridOnlinePassResult result,
+        RecapGridOnlineMaintenanceEvidence evidence
+    ) => result switch {
+        RecapGridOnlinePassResult.Ready value => value with {
+            Evidence = evidence with {
+                ContinuationKind = RecapGridOnlineContinuationKind.Ready
+            }
+        },
+        RecapGridOnlinePassResult.RawHistoryAuthorized value => value with {
+            Evidence = evidence with {
+                ContinuationKind = RecapGridOnlineContinuationKind
+                    .RawHistoryAuthorized
+            }
+        },
+        RecapGridOnlinePassResult.MaintenanceContinuation value => value with {
+            Evidence = evidence
+        },
+        RecapGridOnlinePassResult.Backpressure value => value with {
+            MaintenanceEvidence = evidence
+        },
+        RecapGridOnlinePassResult.Unavailable value => value with {
+            MaintenanceEvidence = evidence
+        },
+        RecapGridOnlinePassResult.Disposed value => value with {
+            Evidence = evidence
+        },
+        _ => result
+    };
+
+    private static bool IsOperationBudgetFailure(
+        RecapGridOnlinePassResult result,
+        out string code
+    ) {
+        if (result is RecapGridOnlinePassResult.Backpressure {
+                Code: "BuildBudgetExceeded",
+                Detail: "NewCalls"
+            }) {
+            code = "CatchUpNewCallBudgetExhausted";
+            return true;
+        }
+        if (result is RecapGridOnlinePassResult.Backpressure {
+                Code: "BuildBudgetExceeded",
+                Detail: "Elapsed"
+            }) {
+            code = "CatchUpElapsedBudgetExhausted";
+            return true;
+        }
+        code = string.Empty;
+        return false;
+    }
+
+    private static RecapGridOnlinePassResult CatchUpBudgetExhausted(
+        string code,
+        RecapGridOnlineMaintenanceEvidence evidence
+    ) => Maintenance(
+        RecapGridOnlineComponent.Manager,
+        code,
+        "The host-owned lifecycle catch-up operation budget was exhausted before further dispatch.",
+        evidence with {
+            ContinuationKind = RecapGridOnlineContinuationKind
+                .CatchUpBudgetExhausted
+        });
+
+    private sealed class OnlineOperationBudget {
+        private readonly TimeProvider _timeProvider;
+        private readonly long _startedAt;
+        private readonly TimeSpan _maximumElapsed;
+
+        internal OnlineOperationBudget(
+            int maximumNewCalls,
+            TimeSpan maximumElapsed,
+            TimeProvider timeProvider
+        ) : this(
+            maximumNewCalls,
+            maximumElapsed,
+            timeProvider,
+            timeProvider.GetTimestamp()) {
+        }
+
+        private OnlineOperationBudget(
+            int maximumNewCalls,
+            TimeSpan maximumElapsed,
+            TimeProvider timeProvider,
+            long startedAt
+        ) {
+            MaximumNewCalls = maximumNewCalls;
+            _maximumElapsed = maximumElapsed;
+            _timeProvider = timeProvider;
+            _startedAt = startedAt;
+        }
+
+        internal int MaximumNewCalls { get; }
+
+        internal bool HasElapsed() =>
+            _timeProvider.GetElapsedTime(_startedAt) >= _maximumElapsed;
+
+        internal OnlineOperationBudget WithMaximumNewCalls(int value)
+            => new(value, _maximumElapsed, _timeProvider, _startedAt);
+
+        internal TimeSpan RemainingElapsedForManager() {
+            TimeSpan remaining = _maximumElapsed
+                - _timeProvider.GetElapsedTime(_startedAt);
+            return remaining > TimeSpan.Zero
+                ? remaining
+                : TimeSpan.FromTicks(1);
+        }
+    }
+
+    private static RecapGridOnlinePassResult WithEvidence(
+        RecapGridOnlinePassResult result,
+        RecapGridOnlineMaintenanceEvidence evidence
+    ) => result switch {
+        RecapGridOnlinePassResult.Backpressure value => value with {
+            MaintenanceEvidence = evidence
+        },
+        RecapGridOnlinePassResult.Unavailable value => value with {
+            MaintenanceEvidence = evidence
+        },
+        RecapGridOnlinePassResult.Disposed value => value with {
+            Evidence = evidence
+        },
+        _ => result
+    };
 
     private static RecapGridOnlinePassResult Unavailable(
         RecapGridOnlineComponent component,

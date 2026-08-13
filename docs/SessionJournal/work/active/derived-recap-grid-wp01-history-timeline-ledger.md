@@ -88,7 +88,7 @@ history-message neutral contract间接引用Completion abstractions；不得因�
 
 Completion evidence：Timeline full 156/156、raw audit 19/19、walking architecture/package gates 13/13、public surface 2/2、
 solution build 0 warning / 0 error、docs checker 15/0、diff check clean、两路independent review GO。commit evidence由包含本次变更的
-containing commit提供，不预写hash。C3D hard cut后的Timeline Schema V2 source candidate为Linux-only durability，V1 root
+containing commit提供，不预写hash。C3D hard cut后的Timeline Schema V2已由commit `7a9c0b3b`完成，durability为Linux-only，V1 root
 inert且无fallback/migration；formal source存在不表示actual cyber activation已执行。
 
 ## Handoff to WP-02

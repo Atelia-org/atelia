@@ -43,9 +43,9 @@ explicit promotion重演该行为。
   Timeline nonempty + active missing fulfillment必须保持NotReady/Unfulfilled；
 - Prepared/Started：在active composition之前走frozen path，零Timeline/Grid/DerivedRecap active/control/current route config读取；
   Prepared仍按frozen completion identity从Host registry exact bind；Started Refuse在binding/client creation前返回；
-- Manager lifecycle在本包锁定Idle/pre-observation与ObservationAccepted：只有Idle在append新Observation前执行
-  Timeline reconcile/seal；随后AwaitingAgentAction只做readiness，必须把刚写入的Observation保留为SessionJournal-owned raw tail，不能把
-  Prepared raw range封成empty。ToolResultObserved、ToolExecutionStarted与Agent-facing control capability统一拆给WP-07C；
+- C3C把lifecycle收口为Grid-first one-row pass：只有`PreObservation`在无既存Grid debt时可seal一条Timeline row；
+  `ObservationAccepted`与`ToolResultObserved`只恢复既存Grid debt、绝不seal，必须保留SessionJournal-owned raw tail。两个Host在同一外部
+  请求内只对typed `MaintenanceContinuation`做bounded catch-up，Ready之前不构造main-agent client；
 - built-in/operator genesis本包只复用WP-07A canonical provision fixture与正式Control factories；没有声称Agent tool已经完成，也不在normal
   Host缺state时auto-create；
 - route按allow-listed family key，dynamic column无需每列静态connection mapping；
@@ -89,8 +89,8 @@ handoff给WP-07C。WP-08必须继续等待WP-07C GO。
   与mutation owner、exact head、single capture、cap/cap+1、cancel/failure后的exhaustion均由typed tests锁定；online
   `OfflineBootstrapRequired`只经该一次性bounded audit完成，不scan orphan或复制raw reducer/hash。`AuditContext`拥有共享snapshot，
   每个owner-bound cursor只释放自己的enumerator/lease，因此同一capture可先offline reconcile、再从共同ancestor继续bounded suffix build；
-  ordinary read-only offline cursor仍保留原先的独占snapshot ownership；达到`MaximumTimelineRows`后必须做零提交terminal probe，exact N
-  terminal成功、N+1才返回Backpressure；
+  ordinary read-only offline cursor仍保留原先的独占snapshot ownership；C3C移除旧的Online可配row-count surface，改为每pass最多
+  seal一row，并以零提交terminal probe区分Ready与typed continuation；
 - Hosting新增单一`RecapGridCompletionHost`，main agent和Recap Runtime共用同一strict registry；agent exact inspect/bind与Prepared exact bind
   不经default fallback，route manifest只在首个recap work加载，关闭顺序固定Online/request handles -> Runtime drain -> registry distinct clients；
 - CLI新增可删除candidate入口`recap-grid candidate run-online-turn`；Started/Refuse在connection/route/client之前终止，Prepared只按frozen

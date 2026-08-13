@@ -128,8 +128,8 @@ recap-grid materialize --input "$repo" --nth-previous 0 ...
 至少覆盖一次bounded partial build：首operation提交部分cells/views后dispose所有handles；fresh reopen只dispatch
 missing work，完成后再次reopen为zero-call。任何阶段都不得创建old rebuild spool。
 
-candidate recipe build不自动activate。promotion必须同进程以`MaximumNewCalls=0`重证current head-through
-fulfillment，再用whole Control/Timeline heads执行operation-aware CAS。partial/stale/missing不得activate。
+candidate recipe build不自动activate。promotion必须同进程pure-read检查current head-through assignment、fulfillment与exact proof，
+再用whole Control/Timeline heads执行operation-aware CAS。partial/stale/missing不得activate。
 
 ## 6. Galatea/CLI host gates
 

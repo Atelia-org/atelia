@@ -171,6 +171,6 @@ internal sealed record AgentControlDependencyTestHooks(
     Action? BeforeOpen = null,
     Func<RecapGridControlOperationResult>?
         ControlOperationResultOverride = null,
-    Func<CancellationToken, ValueTask<RecapGridBuildResult>>?
-        BuildResultOverride = null
+    Func<CancellationToken, RecapGridBuildProgressResult>?
+        ProgressResultOverride = null
 );

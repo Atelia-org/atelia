@@ -1,7 +1,8 @@
 # RecapGrid cadence、长期容量与 Galatea 激活设计审计
 
-状态：Active capacity/activation audit；cadence A0/A1/A2 complete，C3A/C3B complete，C3D Timeline V2 source
-implementation candidate等待最终closure；C2/C3C/C4/C5仍未完成。
+状态：Active capacity/activation audit；cadence A0/A1/A2 complete，C3A/C3B/C3C/C3D complete；C3C两路independent
+closure均GO（P0=0，P1=0）；
+C2/C4/C5仍未完成。
 
 核对基线：cutover `6f9ea7db`；cadence owner `0af28eea`、authority/durability fixes `397f2ab8`/`b0bce3b3`、
 reserve-aware seal `1e8ea927`、reserve-aware selection `bac31986`。事实优先级仍是 current code、tests、canonical codecs，以及 raw events + selected
@@ -245,7 +246,8 @@ online/offline facade，Getter共享Cadence snapshot与Timeline policy fence。
 | 128 | Store `MaximumPageItems` | inspect/export/verify单页items；不限制normal inserts总数 |
 | 128 | Getter `MaximumProvenanceRows` | full-chain诊断读取预算；超出后materialization仍可Available，但provenance为Incomplete |
 | 4,096 | Getter `MaximumNthPrevious` | 可请求的strict predecessor ordinal上限，不是Timeline总row数 |
-| 4,096 / 1,000,000 | Online production default / `MaximumTimelineRows` admission maximum | 一次lifecycle pass可补交的Timeline rows；是operation budget，不是durable累计row cap |
+| 1 / 256 | Online每pass Timeline/recipe-row上限 / Host同请求catch-up pass上限 | 每pass最多seal一条Timeline row并发布一个recipe-row；只有typed continuation可在同请求内继续 |
+| 128 | Online单recipe-row new-call上限 | 等于单recipe最大column数；不是durable累计cap，elapsed只在safe Manager边界soft检查 |
 | 65,536 | Timeline per-segment `MaximumRawEvents` | 单个history segment允许吸收的raw event硬上限；不是row数或ledger寿命 |
 | 256 / 4,096 / 4,096 | Control Family / Definition / Recipe caps | 单个Control state的catalog硬上限 |
 | 16,384 / 32 MiB | Control terminal receipt count / state bytes | operation replay证据与whole state硬上限 |
@@ -471,7 +473,8 @@ A3增加provider-free `recap-grid cadence inspect|set-reserve` operator surface�
 - canary通过后再次取得actual activation确认；停服、备份actual repo/config并确认selected Ref/raw head/phase，才替换正式cyber repo；
 - 首次new raw append前可以回退binary/repo selection；append后不得用旧backup覆盖raw，只能证明旧binary可replay或forward-fix。
 
-A0→A1→A2已经完成；C2仍是真实LLM写入前的硬门禁。C3D source implementation等待最终closure，C3C orchestration仍待完成。
+A0→A1→A2已经完成；C2仍是真实LLM写入前的硬门禁。C3D已由commit `7a9c0b3b`完成；C3C orchestration
+已Complete且两路independent closure均GO。
 C4是retention/rollover与跨operation recovery优化，不再是跨越固定65,536 lifetime cap的前置条件；是否作为首次activation门禁
 取决于用户要求的retention/rollback horizon，不能再以旧累计cap论证。
 

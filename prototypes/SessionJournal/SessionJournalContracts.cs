@@ -121,6 +121,29 @@ public sealed record ResumeOutcome(
 );
 
 /// <summary>
+/// Result of executing exactly one durable pending tool operation without
+/// selecting or invoking a completion client.
+/// </summary>
+public abstract record SessionPendingToolBoundaryResult {
+    private SessionPendingToolBoundaryResult() { }
+
+    /// <summary>
+    /// The tool result is durable and the session is now waiting for the
+    /// completion that follows that result.
+    /// </summary>
+    public sealed record Settled(EventAddress Head)
+        : SessionPendingToolBoundaryResult;
+
+    /// <summary>
+    /// The tool result is durable, but another tool call from the same frozen
+    /// action remains pending. The Host must continue with the same frozen
+    /// tool runtime identity.
+    /// </summary>
+    public sealed record MorePending(EventAddress Head)
+        : SessionPendingToolBoundaryResult;
+}
+
+/// <summary>
 /// Stable reason why an online completion route cannot currently be entered.
 /// Raw journal corruption and lineage violations are deliberately reported by
 /// their existing exceptions instead of being mapped to this readiness surface.

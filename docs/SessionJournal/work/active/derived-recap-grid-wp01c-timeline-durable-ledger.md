@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-01C：Single Durable Timeline Ledger
 
-状态：WP-01C Complete；C3D Schema V2 hard-cut amendment为source candidate，等待最终closure；依赖 WP-01B complete
+状态：WP-01C Complete；C3D Schema V2 hard-cut amendment已由commit `7a9c0b3b`完成；依赖 WP-01B complete
 
 只需加载：Grid target、Master、WP-01 overview、WP-01B handoff与本文。
 

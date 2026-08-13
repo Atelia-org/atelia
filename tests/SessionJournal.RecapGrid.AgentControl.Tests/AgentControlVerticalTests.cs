@@ -159,7 +159,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
     }
 
     [Fact]
-    public async Task ManagerCancellationAfterPromotionStartsRemainsUnsettled() {
+    public async Task ManagerInspectionCancellationPrecedesPromotionMutation() {
         Fixture fixture = CreateFixture();
         using (fixture.Journal) {
             RecapGridAgentControlProfile profile =
@@ -173,17 +173,16 @@ public sealed class AgentControlVerticalTests : IDisposable {
                 fixture.Journal.ReadView,
                 profile,
                 new AgentControlDependencyTestHooks(
-                    BuildResultOverride: _ => ValueTask.FromResult<
-                        RecapGridBuildResult>(
-                            new RecapGridBuildResult.Cancelled()
-                        )
+                    ProgressResultOverride: _ =>
+                        new RecapGridBuildProgressResult.Cancelled()
                 ),
                 _estimator
             )).Handle;
 
-            ToolExecutionUnsettledException unsettled =
-                await Assert.ThrowsAsync<ToolExecutionUnsettledException>(
-                    async () => await handle.ToolSession.ExecuteReservedAsync(
+            ControlHeadRef before = ReadControlHead(fixture);
+            await Assert.ThrowsAsync<
+                ToolExecutionCancelledBeforeMutationException>(async () =>
+                    await handle.ToolSession.ExecuteReservedAsync(
                         new RawToolCall(
                             "recap_grid.control",
                             "cancelled-promotion-call",
@@ -195,10 +194,8 @@ public sealed class AgentControlVerticalTests : IDisposable {
                         1,
                         "cancelled-promotion-operation",
                         TestContext.Current.CancellationToken
-                    )
-                );
-
-            Assert.Equal("manager-cancelled-after-start", unsettled.Code);
+                    ));
+            Assert.Equal(before, ReadControlHead(fixture));
         }
     }
 
@@ -207,14 +204,16 @@ public sealed class AgentControlVerticalTests : IDisposable {
         Fixture fixture = CreateFixture();
         var recipe = new GridBuildRecipeDigest(new string('a', 64));
         TimelineHeadRef timelineHead = ReadTimelineHead(fixture);
-        (RecapGridBuildResult Result, string Code)[] cases = [
-            (new RecapGridBuildResult.RecipeAbsent(recipe), "recipe-absent"),
-            (new RecapGridBuildResult.StaleTimelineHead(timelineHead),
+        (RecapGridBuildProgressResult Result, string Code)[] cases = [
+            (new RecapGridBuildProgressResult.RecipeAbsent(recipe),
+                "recipe-absent"),
+            (new RecapGridBuildProgressResult.StaleTimelineHead(timelineHead),
                 "stale-timeline-head")
         ];
         using (fixture.Journal) {
             int sequence = 0;
-            foreach ((RecapGridBuildResult build, string code) in cases) {
+            foreach ((RecapGridBuildProgressResult progress, string code)
+                     in cases) {
                 RecapGridAgentControlProfile profile =
                     RecapGridAgentControlProfile.Create(
                         $"promotion-{sequence}-v1",
@@ -226,7 +225,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
                     fixture.Journal.ReadView,
                     profile,
                     new AgentControlDependencyTestHooks(
-                        BuildResultOverride: _ => ValueTask.FromResult(build)
+                        ProgressResultOverride: _ => progress
                     ),
                     _estimator
                 )).Handle;

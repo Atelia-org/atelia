@@ -10,11 +10,7 @@ using Atelia.SessionJournal.RecapGrid.Manager;
 namespace Atelia.SessionJournal.Cli;
 
 internal static partial class RecapGridCommands {
-    private static int ControlPromote(CliOptions options) => ControlPromoteAsync(
-        options
-    ).GetAwaiter().GetResult();
-
-    private static async ValueTask<int> ControlPromoteAsync(CliOptions options) {
+    private static int ControlPromote(CliOptions options) {
         options.EnsureOnly(
             "input", "branch", "confirm-ref", "admission", "recipe",
             "through-row", "max-recipe-row-steps",
@@ -55,24 +51,16 @@ internal static partial class RecapGridCommands {
             );
         }
         using (manager.Handle) {
-            var executor = new PromotionZeroCallExecutor();
-            RecapGridBuildResult built = await manager.Handle.Manager.BuildAsync(
-                request,
-                executor
-            ).ConfigureAwait(false);
-            if (executor.CallCount != 0) {
-                return Print(
-                    "control.promote",
-                    "invalid",
-                    new { code = "PromotionDispatchedCompletion" },
-                    2
-                );
-            }
-            if (built is not RecapGridBuildResult.Fulfilled fulfilled) {
+            RecapGridBuildProgressResult progress = manager.Handle.Manager
+                .InspectBuildProgress(request);
+            if (progress is not RecapGridBuildProgressResult.Complete {
+                    FulfillmentPresent: true,
+                    Proof: { } proof
+                }) {
                 return Print(
                     "control.promote",
                     "revalidation-not-promotable",
-                    built,
+                    progress,
                     2
                 );
             }
@@ -91,9 +79,9 @@ internal static partial class RecapGridCommands {
             using (control.Handle) {
                 RecapGridControlActivateResult activated = control.Handle
                     .Coordinator.CompareExchangeActiveRecipe(
-                        fulfilled.Proof.ControlHead,
-                        fulfilled.Proof.TimelineHead,
-                        fulfilled.Proof.RecipeDigest,
+                        proof.ControlHead,
+                        proof.TimelineHead,
+                        proof.RecipeDigest,
                         RecapGridControlActivationPurpose.Promotion
                     );
                 return PrintControlActivate(
@@ -413,18 +401,4 @@ internal static partial class RecapGridCommands {
         _ => "invalid-outcome"
     };
 
-    private sealed class PromotionZeroCallExecutor
-        : IRecapCellBatchExecutor {
-        internal int CallCount { get; private set; }
-
-        public ValueTask<RecapCellBatchExecutionResult> ExecuteAsync(
-            FrozenRowBatch batch,
-            CancellationToken cancellationToken
-        ) {
-            CallCount++;
-            throw new InvalidOperationException(
-                "Promotion attempted to dispatch completion work."
-            );
-        }
-    }
 }

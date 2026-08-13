@@ -2437,6 +2437,57 @@ public sealed partial class SessionJournalEngine : IDisposable {
         )
         .ConfigureAwait(false);
 
+    /// <summary>
+    /// Executes and durably settles exactly one pending tool operation, then
+    /// stops before planning or dispatching the completion after the tool
+    /// result. This lets a Host run derived maintenance at the exact
+    /// ToolResultObserved boundary before it selects the current completion
+    /// route.
+    /// </summary>
+    public async Task<SessionPendingToolBoundaryResult>
+        ExecutePendingToolToBoundaryAsync(
+        EventAddress expectedHead,
+        ToolSession toolSession,
+        SessionToolRuntimeIdentity toolRuntimeIdentity,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(toolSession);
+        ArgumentNullException.ThrowIfNull(toolRuntimeIdentity);
+        using MutationLease mutation = EnterMutation(
+            nameof(ExecutePendingToolToBoundaryAsync)
+        );
+        ThrowIfReadOnlyMutation(nameof(ExecutePendingToolToBoundaryAsync));
+        SessionExecutionRecovery recovery = ResolveExecutionTail(
+            cancellationToken
+        );
+        if (recovery.Head != expectedHead) {
+            throw new SessionJournalExpectedHeadMismatchException(
+                expectedHead,
+                recovery.Head
+            );
+        }
+        SessionExecutionRecovery refreshed = await
+            ExecutePendingToolOnceAsync(
+                recovery,
+                toolSession,
+                toolRuntimeIdentity,
+                cancellationToken
+            ).ConfigureAwait(false);
+        EventAddress head = refreshed.Head
+            ?? throw new InvalidDataException(
+                "A settled tool operation must leave a raw head."
+            );
+        return refreshed.State.Phase switch {
+            SessionExecutionPhase.AwaitingAgentAction
+                => new SessionPendingToolBoundaryResult.Settled(head),
+            SessionExecutionPhase.AwaitingToolExecution
+                => new SessionPendingToolBoundaryResult.MorePending(head),
+            _ => throw new InvalidDataException(
+                $"A settled tool operation reached unexpected phase '{refreshed.State.Phase}'."
+            )
+        };
+    }
+
     internal async Task<ResumeOutcome> ResumeAsync(
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
@@ -3348,22 +3399,55 @@ public sealed partial class SessionJournalEngine : IDisposable {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
+        SessionRuntime runtime = RequireRuntime();
+        ToolSession toolSession = RequireToolSession(runtime);
+        SessionToolRuntimeIdentity runtimeIdentity = runtime.ToolRuntimeIdentity
+            ?? throw new InvalidOperationException(
+                "Tool continuation requires an exact current tool runtime identity."
+            );
+        SessionExecutionRecovery refreshed = await ExecutePendingToolOnceAsync(
+            recovery,
+            toolSession,
+            runtimeIdentity,
+            cancellationToken
+        ).ConfigureAwait(false);
+        return refreshed.State.Phase switch {
+            SessionExecutionPhase.AwaitingToolExecution =>
+                await ContinueToolLoopAsync(
+                    refreshed,
+                    observer,
+                    cancellationToken
+                ).ConfigureAwait(false),
+            SessionExecutionPhase.AwaitingAgentAction =>
+                await CompleteAwaitingAgentActionAsync(
+                    refreshed,
+                    observer,
+                    cancellationToken
+                ).ConfigureAwait(false),
+            _ => throw new InvalidOperationException($"Tool loop cannot continue from phase '{refreshed.State.Phase}'.")
+        };
+    }
+
+    private async Task<SessionExecutionRecovery> ExecutePendingToolOnceAsync(
+        SessionExecutionRecovery recovery,
+        ToolSession toolSession,
+        SessionToolRuntimeIdentity runtimeIdentity,
+        CancellationToken cancellationToken
+    ) {
         if (recovery.Head is null
             || recovery.State.Phase !=
                 SessionExecutionPhase.AwaitingToolExecution) {
-            throw new InvalidDataException(
-                "Tool continuation requires an exact AwaitingToolExecution recovery boundary."
+            throw new InvalidOperationException(
+                "Tool-boundary execution requires an exact AwaitingToolExecution recovery boundary."
             );
         }
-        SessionRuntime runtime = RequireRuntime();
-        ToolSession toolSession = RequireToolSession(runtime);
         if (recovery.State.PendingToolCall is null) { throw new InvalidDataException("AwaitingToolExecution requires a pending tool call."); }
         SessionToolRuntimeIdentity expectedToolRuntimeIdentity =
             recovery.State.PendingToolRuntimeIdentity
                 ?? throw new InvalidDataException(
                     "AwaitingToolExecution requires a durable pending tool runtime identity."
                 );
-        if (runtime.ToolRuntimeIdentity != expectedToolRuntimeIdentity) {
+        if (runtimeIdentity != expectedToolRuntimeIdentity) {
             throw new InvalidOperationException(
                 "Current tool runtime implementation/capability identity does not match the durable pending Action."
             );
@@ -3413,25 +3497,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
         );
         TriggerFailpoint(SessionJournalFailpoint.AfterToolResultCommitted);
 
-        SessionExecutionRecovery refreshed = ResolveExecutionTail(
+        return ResolveExecutionTail(
             resultAddress,
             cancellationToken
         );
-        return refreshed.State.Phase switch {
-            SessionExecutionPhase.AwaitingToolExecution =>
-                await ContinueToolLoopAsync(
-                    refreshed,
-                    observer,
-                    cancellationToken
-                ).ConfigureAwait(false),
-            SessionExecutionPhase.AwaitingAgentAction =>
-                await CompleteAwaitingAgentActionAsync(
-                    refreshed,
-                    observer,
-                    cancellationToken
-                ).ConfigureAwait(false),
-            _ => throw new InvalidOperationException($"Tool loop cannot continue from phase '{refreshed.State.Phase}'.")
-        };
     }
 
     private EventAddress AppendToolExecutionStarted(
@@ -3843,6 +3912,20 @@ public sealed partial class SessionJournalEngine : IDisposable {
         if (runtime.ContextLifecycle is not { } lifecycle) {
             return SessionContextLifecycleResult.Ready;
         }
+        return await PrepareContextLifecycleAsync(
+            lifecycle,
+            recovery,
+            pendingObservation,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<SessionContextLifecycleResult>
+        PrepareContextLifecycleAsync(
+        ISessionContextLifecycleCoordinator lifecycle,
+        SessionExecutionRecovery recovery,
+        string? pendingObservation,
+        CancellationToken cancellationToken
+    ) {
         EventAddress boundary = recovery.Head
             ?? throw new InvalidDataException(
                 "Online context lifecycle requires an exact non-empty raw boundary."
@@ -3897,6 +3980,53 @@ public sealed partial class SessionJournalEngine : IDisposable {
                     $"Unknown context lifecycle status '{result.Status}'."
                 );
         }
+    }
+
+    /// <summary>
+    /// Executes one derived lifecycle pass under the mutable owner's normal
+    /// mutation/audit authority without appending raw events or dispatching a
+    /// completion. The exact expected head prevents a Host from running a
+    /// maintenance pass against a boundary it did not inspect.
+    /// </summary>
+    public async ValueTask<SessionContextLifecycleResult>
+        PrepareContextLifecycleMaintenanceAsync(
+        EventAddress expectedHead,
+        ISessionContextLifecycleCoordinator lifecycle,
+        string? pendingObservation,
+        CancellationToken cancellationToken
+    ) {
+        ArgumentNullException.ThrowIfNull(lifecycle);
+        using MutationLease mutation = EnterMutation(
+            nameof(PrepareContextLifecycleMaintenanceAsync));
+        ThrowIfReadOnlyMutation(
+            nameof(PrepareContextLifecycleMaintenanceAsync));
+        SessionExecutionRecovery recovery = ResolveExecutionTail(
+            cancellationToken);
+        if (recovery.Head != expectedHead) {
+            throw new SessionJournalExpectedHeadMismatchException(
+                expectedHead,
+                recovery.Head
+            );
+        }
+        bool valid = recovery.State.Phase switch {
+            SessionExecutionPhase.Idle => pendingObservation is not null,
+            SessionExecutionPhase.AwaitingAgentAction
+                => pendingObservation is null
+                    && recovery.State.HeadKind is
+                        SessionEventKind.ObservationAccepted
+                            or SessionEventKind.ToolResultObserved,
+            _ => false
+        };
+        if (!valid) {
+            throw new InvalidOperationException(
+                "Derived lifecycle maintenance is unavailable at the current phase."
+            );
+        }
+        return await PrepareContextLifecycleAsync(
+            lifecycle,
+            recovery,
+            pendingObservation,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static SessionContextLifecycleTrigger

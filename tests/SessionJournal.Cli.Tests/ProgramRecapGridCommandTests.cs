@@ -1095,7 +1095,24 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
 
     [Fact]
     public async Task ExplicitCandidateBuildUsesExactRuntimeRouteAndPromotesOnlyAfterZeroCallRevalidation() {
-        CreateJournal();
+        // Bind the raw governing setup before derived provisioning so the
+        // formal Host does not need to append a setup change after the
+        // candidate proof has been built.
+        using (SessionJournalLegacyImportWriter writer =
+               SessionJournalLegacyImportWriter.Create(
+                   _root,
+                   new SessionCreateOptions(
+                       "test-model",
+                       "system",
+                       "test-v1"))) {
+            _ = writer.AppendObservation("observation 0");
+            _ = writer.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text("answer 0")
+                ]),
+                new CompletionDescriptor("import", "v1", "test-model")
+            );
+        }
         FamilyDefinition family = FamilyDefinition.Create(
             "Maintain the inquiry.",
             [new FamilyToolDefinition(
@@ -1414,6 +1431,24 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal(0, factory.CallCount);
         AssertSnapshotEqual(beforeMalformed, SnapshotDirectory(_root));
 
+        string[] PromoteArgs() => [
+            "control", "promote", "--input", _root,
+            "--confirm-ref", refId,
+            "--admission", admission,
+            "--recipe", recipe.Digest.Value,
+            "--max-recipe-row-steps", "64",
+            "--max-new-calls", "0",
+            "--max-elapsed-ms", "10000"
+        ];
+        DomainSnapshot beforeIncompletePromotion = SnapshotDomains();
+        (int incompletePromotionCode, JsonElement incompletePromotion) =
+            RunCaptured(PromoteArgs());
+        Assert.Equal(2, incompletePromotionCode);
+        Assert.Equal("revalidation-not-promotable",
+            incompletePromotion.GetProperty("status").GetString());
+        AssertDomainsEqual(beforeIncompletePromotion, SnapshotDomains());
+        Assert.Equal(0, factory.CallCount);
+
         (int buildCode, JsonElement build) = RunCapturedWithFactory(factory,
             "build", "--input", _root, "--confirm-ref", refId,
             "--recipe", recipe.Digest.Value,
@@ -1431,6 +1466,75 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal(1, factory.DisposeCount);
         Assert.Null(ReadControlHead(refId).ActiveRecipeDigest);
 
+        using (SessionJournalEngine selected =
+               SessionJournalEngine.OpenReadOnly(_root))
+        using (HistoryTimelineHandle timeline = Assert.IsType<
+                   HistoryTimelineOpenResult.Opened>(
+                   HistoryTimelineFactory.Open(
+                       selected.ReadView,
+                       new O200kBaseHistoryUnitLoadEstimator())).Handle) {
+            TimelineHeadRef beforeStale = Assert.IsType<
+                HistoryTimelineSnapshotResult.Available>(
+                timeline.Reader.ReadSnapshot()).Head;
+            Assert.IsType<HistoryTimelinePolicyCasResult.Applied>(
+                timeline.Coordinator.CompareExchangePolicy(
+                    beforeStale,
+                    beforeStale.ActivePartitionPolicyDigest));
+        }
+        DomainSnapshot beforeStalePromotion = SnapshotDomains();
+        (int stalePromotionCode, JsonElement stalePromotion) =
+            RunCaptured(PromoteArgs());
+        Assert.Equal(2, stalePromotionCode);
+        Assert.Equal("revalidation-not-promotable",
+            stalePromotion.GetProperty("status").GetString());
+        AssertDomainsEqual(beforeStalePromotion, SnapshotDomains());
+        Assert.Equal(1, factory.CallCount);
+
+        (int refreshedBuildCode, JsonElement refreshedBuild) =
+            RunCapturedWithFactory(factory,
+                "build", "--input", _root, "--confirm-ref", refId,
+                "--recipe", recipe.Digest.Value,
+                "--max-recipe-row-steps", "64",
+                "--max-new-calls", "8", "--max-elapsed-ms", "10000",
+                "--routes", routes, "--connections", connections);
+        Assert.Equal(0, refreshedBuildCode);
+        Assert.Equal("fulfilled",
+            refreshedBuild.GetProperty("status").GetString());
+        Assert.Equal(1, factory.CallCount);
+
+        DomainSnapshot beforeSuccessfulPromotion = SnapshotDomains();
+        Assert.Equal(0, Run(PromoteArgs()));
+        DomainSnapshot afterSuccessfulPromotion = SnapshotDomains();
+        AssertSnapshotEqual(
+            beforeSuccessfulPromotion.Raw,
+            afterSuccessfulPromotion.Raw);
+        AssertSnapshotEqual(
+            beforeSuccessfulPromotion.Timeline,
+            afterSuccessfulPromotion.Timeline);
+        AssertSnapshotEqual(
+            beforeSuccessfulPromotion.Grid,
+            afterSuccessfulPromotion.Grid);
+        Assert.Equal(recipe.Digest,
+            ReadControlHead(refId).ActiveRecipeDigest);
+        Assert.Equal(1, factory.CallCount);
+        TimelineHeadRef currentTimeline;
+        using (HistoryTimelineReaderHandle timeline = Assert.IsType<
+                   HistoryTimelineReaderOpenResult.Opened>(
+                   HistoryTimelineMaintenance.OpenReader(
+                       _root, RefId.ParseHex(refId).Value)).Handle) {
+            currentTimeline = Assert.IsType<
+                HistoryTimelineSnapshotResult.Available>(
+                timeline.Reader.ReadSnapshot()).Head;
+        }
+        ControlHeadRef promotedHead = ReadControlHead(refId);
+        Assert.Equal(0, Run(DirectActivationArgs(
+            refId,
+            admission,
+            promotedHead,
+            currentTimeline,
+            recipeDigest: null)));
+        Assert.Null(ReadControlHead(refId).ActiveRecipeDigest);
+
         (int progressCode, JsonElement progress) = RunCaptured(
             "progress", "--input", _root,
             "--recipe", recipe.Digest.Value,
@@ -1440,6 +1544,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         );
         Assert.Equal(0, progressCode);
         Assert.Equal("complete", progress.GetProperty("status").GetString());
+        Assert.True(progress.GetProperty("detail")
+            .GetProperty("FulfillmentPresent").GetBoolean());
         Assert.Equal(1, factory.CallCount);
 
         int requestsBeforeOnline = factory.RequestCount;
@@ -1475,8 +1581,25 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             recapRequestsBeforePromotion,
             factory.RecapRequestCount
         );
-        Assert.Equal(recipe.Digest,
-            ReadControlHead(refId).ActiveRecipeDigest);
+        string promotionToolResults = string.Join("\n",
+            factory.Requests.Skip(requestsBeforeOnline)
+                .SelectMany(static request => request.TailMessages)
+                .OfType<ToolResultsMessage>()
+                .SelectMany(static message => message.Results)
+                .Select(static result => result.GetFlattenedText()));
+        string durableToolResults;
+        using (SessionJournalEngine promotionReader =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            durableToolResults = string.Join("\n",
+                promotionReader.ReadHistoryPlanningWindow().Units
+                    .Select(static unit => unit.Message)
+                    .OfType<ToolResultsMessage>()
+                    .SelectMany(static message => message.Results)
+                    .Select(static result => result.GetFlattenedText()));
+        }
+        Assert.True(
+            ReadControlHead(refId).ActiveRecipeDigest == recipe.Digest,
+            $"toolResults={promotionToolResults}; durable={durableToolResults}; tails={string.Join(',', factory.Requests.Skip(requestsBeforeOnline).SelectMany(static request => request.TailMessages).Select(static message => message.Kind))}");
         Assert.Equal(
             receiptsBeforePromotion + 1,
             ReadControlReceiptCount(refId, timelineHead.TimelineId)

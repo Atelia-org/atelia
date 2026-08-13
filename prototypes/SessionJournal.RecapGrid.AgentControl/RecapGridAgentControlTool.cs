@@ -274,80 +274,68 @@ internal sealed class RecapGridAgentControlTool {
                     TimeSpan.FromMinutes(5)
                 )
             );
-            RecapGridBuildResult build = _testHooks?.BuildResultOverride
-                    is { } buildOverride
-                ? await buildOverride(cancellationToken).ConfigureAwait(false)
-                : await managerOpened.Handle.Manager.BuildAsync(
-                        request,
-                        NoDispatchExecutor.Instance,
-                        cancellationToken
-                    ).ConfigureAwait(false);
-            if (build is not RecapGridBuildResult.Fulfilled fulfilled) {
-                return build switch {
-                    RecapGridBuildResult.FulfilledThrough
+            RecapGridBuildProgressResult progress = _testHooks?
+                    .ProgressResultOverride is { } progressOverride
+                ? progressOverride(cancellationToken)
+                : managerOpened.Handle.Manager.InspectBuildProgress(
+                    request,
+                    cancellationToken
+                );
+            if (progress is not RecapGridBuildProgressResult.Complete {
+                    FulfillmentPresent: true,
+                    Proof: { } proof
+                }) {
+                return progress switch {
+                    RecapGridBuildProgressResult.Complete
                         => Failed(
-                            "fulfilled-through-not-promotable",
-                            "A partial fulfillment cannot be promoted."
+                            "candidate-fulfillment-missing",
+                            "The exact candidate assignment has no fulfillment marker."
                         ),
-                    RecapGridBuildResult.NoRows
-                        => Failed(
-                            "no-rows",
-                            "The selected Timeline has no promotable head row."
-                        ),
-                    RecapGridBuildResult.NoActiveRecipe
-                        => Failed(
-                            "no-active-recipe",
-                            "No active recipe is available."
-                        ),
-                    RecapGridBuildResult.RecipeAbsent
-                        => Failed(
-                            "recipe-absent",
-                            "The candidate recipe is absent."
-                        ),
-                    RecapGridBuildResult.ThroughRowNotSelected
-                        => Failed(
-                            "through-row-not-selected",
-                            "The requested Timeline head is not selected."
-                        ),
-                    RecapGridBuildResult.BudgetExceeded value
-                        => Failed(
-                            "budget-exceeded",
-                            value.Kind.ToString()
-                        ),
-                    RecapGridBuildResult.Cancelled
-                        => throw new ToolExecutionUnsettledException(
-                            "manager-cancelled-after-start",
-                            "Manager cancellation may follow durable Grid writes; resume with the same operation id."
-                        ),
-                    RecapGridBuildResult.Incomplete
+                    RecapGridBuildProgressResult.Frontier
                         => Failed(
                             "candidate-incomplete",
                             "The candidate recipe remains incomplete."
                         ),
-                    RecapGridBuildResult.ExecutorRejected value
+                    RecapGridBuildProgressResult.NoRows
                         => Failed(
-                            "executor-rejected",
-                            $"{value.Code}:{value.Detail}"
+                            "no-rows",
+                            "The selected Timeline has no promotable head row."
                         ),
-                    RecapGridBuildResult.ExecutorFailed value
+                    RecapGridBuildProgressResult.NoActiveRecipe
                         => Failed(
-                            "executor-failed",
-                            $"{value.Code}:{value.Detail}"
+                            "no-active-recipe",
+                            "No active recipe is available."
                         ),
-                    RecapGridBuildResult.Unavailable value
+                    RecapGridBuildProgressResult.RecipeAbsent
+                        => Failed(
+                            "recipe-absent",
+                            "The candidate recipe is absent."
+                        ),
+                    RecapGridBuildProgressResult.ThroughRowNotSelected
+                        => Failed(
+                            "through-row-not-selected",
+                            "The requested Timeline head is not selected."
+                        ),
+                    RecapGridBuildProgressResult.BudgetExceeded value
+                        => Failed(
+                            "budget-exceeded",
+                            value.Kind.ToString()
+                        ),
+                    RecapGridBuildProgressResult.Cancelled
+                        => throw new ToolExecutionCancelledBeforeMutationException(
+                            cancellationToken
+                        ),
+                    RecapGridBuildProgressResult.Blocked value
                         => Failed(value.Code, value.Detail),
-                    RecapGridBuildResult.StaleTimelineHead
+                    RecapGridBuildProgressResult.Unavailable value
+                        => Failed(value.Code, value.Detail),
+                    RecapGridBuildProgressResult.StaleTimelineHead
                         => Failed("stale-timeline-head", "Timeline changed."),
-                    RecapGridBuildResult.StaleControlAuthority
+                    RecapGridBuildProgressResult.StaleControlAuthority
                         => Failed("stale-control-head", "Control changed."),
-                    RecapGridBuildResult.SettlementRequired
-                        => throw new ToolExecutionUnsettledException(
-                            "manager-settlement-required",
-                            "Grid settlement must be reconciled before the same operation can resume."
-                        ),
-                    RecapGridBuildResult.Disposed
+                    RecapGridBuildProgressResult.Disposed
                         => Failed("disposed", "Manager is disposed."),
-                    RecapGridBuildResult.Invalid value
+                    RecapGridBuildProgressResult.Invalid value
                         => Failed(value.Code, value.Detail),
                     _ => Failed(
                         "manager-outcome-invalid",
@@ -355,9 +343,9 @@ internal sealed class RecapGridAgentControlTool {
                     )
                 };
             }
-            if (fulfilled.Proof.ControlHead != authority.ControlHead
-                || fulfilled.Proof.TimelineHead != authority.TimelineHead
-                || fulfilled.Proof.RecipeDigest != recipeDigest) {
+            if (proof.ControlHead != authority.ControlHead
+                || proof.TimelineHead != authority.TimelineHead
+                || proof.RecipeDigest != recipeDigest) {
                 return Failed(
                     "promotion-proof-stale",
                     "The fresh promotion proof differs from the captured authority."
@@ -751,19 +739,6 @@ internal sealed class RecapGridAgentControlTool {
         bool InstanceReplaced
     );
 
-    private sealed class NoDispatchExecutor : IRecapCellBatchExecutor {
-        internal static NoDispatchExecutor Instance { get; } = new();
-
-        public ValueTask<RecapCellBatchExecutionResult> ExecuteAsync(
-            FrozenRowBatch batch,
-            CancellationToken cancellationToken
-        ) => ValueTask.FromResult<RecapCellBatchExecutionResult>(
-            new RecapCellBatchExecutionResult.RejectedBeforeDispatch(
-                "AgentControlDispatchForbidden",
-                "Promotion proof may not start new recap calls."
-            )
-        );
-    }
 }
 
 internal enum AgentControlAction {

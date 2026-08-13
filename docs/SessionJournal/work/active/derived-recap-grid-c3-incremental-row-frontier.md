@@ -1,6 +1,6 @@
 # RecapGrid C3：逐 row 增量 frontier 重构
 
-状态：C3A、C3B Complete；C3D source implementation candidate等待最终closure；C3C pending。
+状态：C3A、C3B、C3C、C3D Complete。C3C两路independent closure均GO（P0=0，P1=0）；尚未执行real-provider canary或actual cyber activation。
 
 上游设计：
 
@@ -115,14 +115,17 @@ Online lifecycle采用Grid-first的稳态顺序：
 1. 若current Timeline head存在未完成Grid debt，先做一个recipe-row step，不append Timeline；
 2. 无debt时，Cadence/Timeline最多seal一条eligible row；
 3. seal成功后立即为active recipe做一个row step；
-4. terminal probe仍有debt时返回continuation/backpressure，绝不放行main-agent provider request；
-5. 无debt且Getter exact ready后才构造主Agent context。
+4. `PreObservation`、`ObservationAccepted`、`ToolResultObserved`入口只要发现既存Grid debt，均先做至多一个recipe-row、绝不seal；
+5. terminal probe仍有debt时返回typed `MaintenanceContinuation`，绝不放行main-agent provider request；
+6. 无debt且Getter exact ready后才构造主Agent context。
 
-CLI/offline catch-up可以在一个冻结operation中循环多步；Galatea前台不应无界循环历史backlog。
+CLI与Galatea在同一个外部请求内执行code-owned bounded catch-up；每个内部pass仍最多seal一条Timeline row、发布一个
+recipe-row，且只对`MaintenanceContinuation`重试。耗尽时返回typed continuation；maintenance Ready之前只做exact connection
+metadata inspection，不构造main-agent client。Prepared/Started frozen路径保持在最外层。
 
 ## 3. 永久容量上限裁决
 
-累计 `MaximumTimelineRows`、`MaximumRowCount`、`MaximumCellCount`、`MaximumRowViewCount`、
+任何累计Timeline row预算，以及`MaximumRowCount`、`MaximumCellCount`、`MaximumRowViewCount`、
 `MaximumFulfilledViewCount` 不是operation budget；达到后 retry也无法前进，因此不符合长期rolling系统。
 
 C3/C4交界采取以下规则：
@@ -155,18 +158,28 @@ C3/C4交界采取以下规则：
 实现证据：Manager从through沿selected predecessor读取V2 assignment，命中每条recipe的exact healthy anchor后只反转
 minimal suffix；overlay bootstrap以独立base/candidate anchors恢复，same-row base requirement覆盖全部未建bootstrap rows。
 `InspectBuildProgress`纯读且不capture raw，首个缺失durable assignment即Frontier；Build只在actual missing Cell work时
-lazy capture raw，view-only/zero-call fulfillment仍执行轻量raw-head与Timeline/Control final fences。Manager full 73 tests及
+lazy capture raw，view-only/zero-call fulfillment仍执行轻量raw-head与Timeline/Control final fences。Manager full 74 tests及
 Public/Walking、CLI/Online/AgentControl/Galatea focused覆盖restart step=1、branch/rewind sibling exclusion、nested overlay、
 damaged anchor、budget/cancel/elapsed与zero-write paths。
 
 ### C3C — Online/CLI/Host orchestration
 
-- Grid-first；Timeline seal与Grid fill各至多一步的foreground pass；
-- CLI显式bounded catch-up循环并报告remaining/anchor/examined/committed；
-- promotion只读current-head assignment并以`MaximumNewCalls=0`重证，不暗中rebuild；
+- Grid-first；每个pass的Timeline seal与Grid fill各至多一步；Observation/ToolResult readiness也能逐pass恢复既存debt；
+- CLI/Galatea在同一外部请求内执行bounded catch-up并报告stable evidence：entry debt、Timeline committed 0/1、attempted/next
+  recipe coordinate、recipe step/view 0/1、Cells、新调用与continuation kind；
+- promotion只调用pure-read `InspectBuildProgress`，仅`Complete + FulfillmentPresent + exact proof`可CAS；不调用Build、不写Store；
 - readiness/progress纯读，不构造provider、不写Store。
 
-### C3D — Timeline V2 lifetime capacity（source candidate）
+实现证据：Online production把`MaximumRecipeRowSteps`固定为1、new-call上限固定为单recipe列上限128，elapsed是safe Manager
+boundary上的soft budget；Host catch-up上限为256 pass。SessionJournal新增exact-head-bound tool-boundary primitive：frozen tool先只执行并
+提交一个durable operation，停在`ToolResultObserved`，Host完成Grid catch-up后才绑定current completion并Resume。CLI真实Host
+`recap_grid.control` promotion覆盖ToolCall -> durable ToolResult -> next completion，promotion期间recap provider call不增；Prepared/Started、
+stale head、Started crash recovery与maintenance failure client-zero均有focused tests。
+本轮affected serial evidence为Manager 74/74、Online 31/31、AgentControl 20/20、CLI 97/97、Galatea 87/87、
+SessionJournal 442/442、Online external public surface 1/1与Walking 27/27；CLI和AgentControl产品build均为
+0 warning / 0 error。两路independent closure均GO（P0=0，P1=0）；这些source证据不替代real-provider canary或actual cyber activation。
+
+### C3D — Timeline V2 lifetime capacity（Complete，commit `7a9c0b3b`）
 
 - hard cut `derived/history-timeline/v2` / Schema V2；V1 bytes inert且无fallback/migration；
 - 删除immutable trie path-copy，改为mutable current selected path + whole-head count/root commitment与O(log N) Merkle

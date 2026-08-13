@@ -763,7 +763,8 @@ branch命令内部从selected `SessionJournalReadView`取得canonical repository
 `build`与Fresh/NewRequest/ToolResult/ToolContinuation online只在各自lazy dispatch boundary读取strict route/connection inputs并构造
 所需Runtime/clients。route必须exact匹配`(FamilyDigest, RuntimeProtocolId, SemanticModelId?)`，含显式`null`且无fallback；
 Prepared frozen resume不读current route，Started/Refuse在connections前终止。`progress`是Manager pure read；
-`promote`必须同进程以零new-call重证head-through proof后立即CAS，proof不得编码或跨进程保存。
+`promote`必须同进程pure-read检查current head-through assignment、fulfillment与exact proof后立即CAS；不得调用Build或写Store，
+proof不得编码或跨进程保存。
 
 首个spike不实现cell/view GC：除whole-store reset外不得删除committed artifacts。retention、generation与忘记
 EvaluationKey reservation的规则必须另立设计，不能借“清理旧candidate”偷偷引入targeted repair。spike至少覆盖cell
@@ -874,7 +875,7 @@ dependency DAG的二维投影视图，不是每个坐标只有一个可变值的
 Timeline durable decision已由WP-01C关闭：唯一production backend是独立SQLite ledger（`DELETE` +
 `synchronous=EXTRA`），per-Ref canonical locator、verified backup/restore与explicit abandon各自有closed typed library action；它与
 可reset的Grid数据库保持独立lifecycle。两路independent review与final serial validation均GO，现已成为WP-02的complete handoff；
-这不表示actual cyber activation。C3D hard cut后的Timeline Schema V2 source candidate仍只在Linux上启用durable lease/fsync；
+这不表示actual cyber activation。C3D hard cut后的Timeline Schema V2已由commit `7a9c0b3b`完成，仍只在Linux上启用durable lease/fsync；
 V1 root inert且没有normal read、fallback或migration。
 
 Control carrier decision已由WP-02关闭：V1只使用
@@ -899,7 +900,7 @@ WP-06 final evidence为Runtime 56/56、Completion 471/471、Runtime public surfa
 0 warning / 0 error、docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0）；exact route、V1 renderer/parser、
 leader/follower scheduler与operational evidence成为WP-07A的complete handoff。WP-07A当时把exact deferred
 route落到独立Hosting owner，把pure-read progress落到Manager，并新增临时candidate operator子树；focused CLI 5/5
-已在closure tail扩为8/8，覆盖online/offline cap与raw drift、Ref隔离、真实Runtime build、zero-call promotion、strict materialization、
+已在closure tail扩为8/8，覆盖online/offline cap与raw drift、Ref隔离、真实Runtime build、pure-read promotion、strict materialization、
 strict bounded connections零mutation与Timeline/Control/Grid maintenance的raw/四域byte isolation。Hosting operational evidence只在首次
 真实work materialize并按field/event/retained-total bytes限界；最终Hosting 16/16、Hosting public 1/1、Manager 60/60、Completion registry
 lifetime 6/6、CLI candidate 8/8、Walking 20/20、Timeline cursor 2/2、stable/old CLI targeted 7/7、solution build 0 warning / 0 error、
@@ -912,7 +913,7 @@ WP-07C已加入Control V2 terminal receipts、strict AgentControl、显式built-
 ToolResult/ToolContinuation exact frozen binding。receipt保存Control-owned canonical command/result identity与原instance/generation，
 不保存whole next head；replay只报告current head及head-advanced/instance-replaced证据。当前tail focused证据记录在WP-07C implementation
 record；其中Family/Definition/overlay登记是明确fixture precondition，真实CLI Host随后经Runtime missing build，并在
-当时的candidate `run-online-turn`内由main provider发出AgentControl promotion ToolCall；同一Host以zero-call重证、提交receipt、保留
+正式`run-online-turn`内由main provider发出AgentControl promotion ToolCall；同一Hostpure-read检查exact proof、提交receipt、保留
 ToolResult raw-tail，且紧随其后的completion读取active contribution。Galatea继续覆盖同一frozen recovery/authority等价边界。
 最终证据为Control 45/45、AgentControl 20/20、Completion 482/482、CLI candidate 12/12、Walking 23/23、solution build
 0 warning / 0 error、vulnerable package scan零命中、docs 15/0、diff clean与两路independent closure GO（P0=0，P1=0）。

@@ -104,7 +104,7 @@ Runtime public 2/2、Walking 18/18、`Atelia.sln` build 0 warning / 0 error、do
 （P0=0，P1=0）。
 WP-07A当时完成独立Hosting exact-route owner、Manager pure-read progress与临时operator旁路；closure-tail CLI focused
 8/8覆盖online/offline cap与raw drift、new Ref isolation、真实WP-06 Runtime build、
-provider-free progress、zero-call promotion、strict materialization、malformed connections全repo零mutation及真实四域maintenance byte
+provider-free progress、pure-read promotion、strict materialization、malformed connections全repo零mutation及真实四域maintenance byte
 isolation/Busy。Hosting strict bounded connections/evidence与Manager MaximumNewCalls progress亦已落；最终Hosting 16/16、Hosting public 1/1、
 Manager 60/60、Completion registry lifetime 6/6、CLI candidate 8/8、Walking 20/20、Timeline cursor 2/2、stable/old CLI targeted 7/7、
 solution build 0 warning / 0 error、docs 15/0、diff clean，两路independent closure均GO（P0=0，P1=0）。WP-07B随后已完成
@@ -114,7 +114,7 @@ WP-07B final evidence为Hosting 19/19、Online 21/21、Galatea actual candidate 
 diff clean；两路independent closure均GO（P0=0，P1=0）。WP-07C现已complete。
 WP-07C已交付Control V2 terminal receipts、strict AgentControl/MethodToolWrapper、显式built-in provision、
 ToolResult/ToolContinuation frozen binding，以及真实CLI Host内的definition/overlay precondition -> Runtime build -> AgentControl
-ToolCall -> zero-call promotion -> receipt/ToolResult -> next-completion纵向。当前串行
+ToolCall -> pure-read proof inspection/promotion -> receipt/ToolResult -> next-completion纵向。当前串行
 focused证据为Control 45/45、AgentControl 20/20、AgentControl public 1/1、Completion 482/482、SessionJournal targeted
 7/7、Online 22/22、Hosting 19/19、CLI candidate 12/12、Galatea candidate + stop/lifecycle targeted 23/23、Online/Hosting public
 3/3与Walking 23/23；solution build 0 warning / 0 error、vulnerable package scan零命中、docs 15/0、diff clean，
@@ -136,8 +136,12 @@ authority；所有Timeline writers经reserve-aware seal，Getter/context按健�
 provider-free `recap-grid cadence inspect|set-reserve`，后者只CAS改变R。该closure不改变本计划WP-00至WP-08的
 cutover completion，也不关闭长期容量/activation audit中的C2-C5。
 C3 capacity进展：C3A Store V2 immutable progression assignment与C3B Manager head-to-anchor incremental frontier已Complete；
-C3D Timeline Schema V2 hard-cut、O(log N) selected-path commitment与lifetime-cap removal为source candidate，等待最终closure；
-C3C Online/CLI/Host Grid-first orchestration仍pending。以上source状态不替代real-provider canary或actual cyber activation。
+C3D Timeline Schema V2 hard-cut、O(log N) selected-path commitment与lifetime-cap removal已由commit `7a9c0b3b`完成；
+C3C Online/CLI/Host Grid-first orchestration已Complete：每pass最多一条Timeline row/一个recipe-row，
+两个Host同请求bounded catch-up且maintenance Ready前不构造main-agent client。affected serial evidence为Manager 74/74、Online 31/31、
+AgentControl 20/20、CLI 97/97、Galatea 87/87、SessionJournal 442/442、Online external public surface 1/1与Walking 27/27，
+CLI/AgentControl产品build均为0 warning / 0 error，两路independent closure均GO（P0=0，P1=0）。以上source状态不替代
+real-provider canary或actual cyber activation。
 fresh no-local checkout已在provisional containing source tree `913fd8fa`上完成：全新restore成功、Release solution
 build 0 warning / 0 error、36个test projects合计4658/4658 green、package vulnerability audit零命中、scoped docs
 14/0、all-tracked docs 71/0且checkout status clean。最终containing commit只回写该fresh evidence，没有再改变product/test source。

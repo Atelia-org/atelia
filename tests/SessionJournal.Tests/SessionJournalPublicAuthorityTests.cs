@@ -166,11 +166,17 @@ public sealed class SessionJournalPublicAuthorityTests : IDisposable {
             )
             .Where(method => method.Name is nameof(
                     SessionJournalEngine.SendAsync
-                ) or nameof(SessionJournalEngine.ResumeAsync))
+                ) or nameof(SessionJournalEngine.ResumeAsync)
+                or nameof(SessionJournalEngine
+                    .ExecutePendingToolToBoundaryAsync)
+                or nameof(SessionJournalEngine
+                    .PrepareContextLifecycleMaintenanceAsync))
             .ToArray();
 
         Assert.Equal(
             [
+                "ExecutePendingToolToBoundaryAsync(EventAddress,ToolSession,SessionToolRuntimeIdentity,CancellationToken)",
+                "PrepareContextLifecycleMaintenanceAsync(EventAddress,ISessionContextLifecycleCoordinator,String,CancellationToken)",
                 "ResumeAsync(EventAddress,CancellationToken)",
                 "ResumeAsync(EventAddress,CompletionStreamObserver,CancellationToken)",
                 "SendAsync(EventAddress,String,CancellationToken)",
@@ -189,9 +195,21 @@ public sealed class SessionJournalPublicAuthorityTests : IDisposable {
                     method.GetParameters()[0].ParameterType
                 );
                 Assert.Equal(
-                    method.Name == nameof(SessionJournalEngine.SendAsync)
-                        ? typeof(Task<TurnResult>)
-                        : typeof(Task<ResumeOutcome>),
+                    method.Name switch {
+                        nameof(SessionJournalEngine.SendAsync)
+                            => typeof(Task<TurnResult>),
+                        nameof(SessionJournalEngine.ResumeAsync)
+                            => typeof(Task<ResumeOutcome>),
+                        nameof(SessionJournalEngine
+                            .ExecutePendingToolToBoundaryAsync)
+                            => typeof(Task<
+                                SessionPendingToolBoundaryResult>),
+                        nameof(SessionJournalEngine
+                            .PrepareContextLifecycleMaintenanceAsync)
+                            => typeof(ValueTask<
+                                SessionContextLifecycleResult>),
+                        _ => throw new InvalidOperationException()
+                    },
                     method.ReturnType
                 );
             }

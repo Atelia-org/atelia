@@ -729,9 +729,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
             liveTurn, cancellationToken).ConfigureAwait(false);
         string prompted = WrapUserMessageForEngine(effective);
         await using GalateaRecapGridTurn turn =
-            recapGrid.OpenFresh(
+            await recapGrid.OpenFreshAsync(
                 host.Engine,
-                liveTurn.Options.ConnectionId);
+                liveTurn.Options.ConnectionId,
+                prompted,
+                cancellationToken).ConfigureAwait(false);
         RecapGridOnlineContextHandle online = turn.Online
             ?? throw new InvalidDataException(
                 "Fresh RecapGrid binding has no Online context.");
@@ -775,9 +777,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     host.Engine,
                     capturedHead,
                     inspected);
-                turn = recapGrid.OpenFresh(
+                turn = await recapGrid.OpenFreshAsync(
                     host.Engine,
-                    liveTurn.Options.ConnectionId);
+                    liveTurn.Options.ConnectionId,
+                    pendingObservation: null,
+                    cancellationToken).ConfigureAwait(false);
                 RecapGridOnlineContextHandle online = turn.Online
                     ?? throw new InvalidDataException(
                         "New-request RecapGrid binding has no Online context.");
@@ -818,11 +822,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
             }
             else if (requirement is SessionRuntimeRecoveryRequirements
                          .ToolContinuationRequired toolContinuation) {
-                turn = recapGrid.BindToolContinuation(
+                turn = await recapGrid.BindToolContinuationAsync(
                     host.Engine,
                     liveTurn.Options.ConnectionId,
-                    toolContinuation
-                );
+                    toolContinuation,
+                    cancellationToken
+                ).ConfigureAwait(false);
                 RecapGridOnlineContextHandle online = turn.Online
                     ?? throw new InvalidDataException(
                         "Tool continuation has no Online context."
@@ -843,7 +848,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             }
 
             ResumeOutcome outcome = await host.Engine.ResumeAsync(
-                capturedHead,
+                turn.ResumeHead ?? capturedHead,
                 observer,
                 cancellationToken).ConfigureAwait(false);
             if (!outcome.Advanced

@@ -211,6 +211,40 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             providerCallsBeforeReadiness,
             candidateFactory.Client.DispatchCallCount
         );
+        await using (GalateaRecapGridTurn settleCurrentRawTail = await candidate
+            .OpenFreshAsync(
+                session.Engine,
+                connection.Id,
+                pendingObservation: "settle current raw tail",
+                CancellationToken.None)) { }
+        int providerCallsBeforeFulfilledProbe =
+            candidateFactory.Client.DispatchCallCount;
+        await using (GalateaRecapGridTurn fulfilledProbe = await candidate
+            .OpenFreshAsync(
+                session.Engine,
+                connection.Id,
+                pendingObservation: "provider-free fulfilled probe",
+                CancellationToken.None)) {
+            RecapGridOnlineMaintenanceEvidence probeEvidence =
+                Assert.IsType<RecapGridOnlineMaintenanceEvidence>(
+                    fulfilledProbe.MaintenanceEvidence);
+            Assert.Equal(0, probeEvidence.NewCalls);
+            Assert.Equal(0, probeEvidence.CellsCommitted);
+            Assert.Equal(0, probeEvidence.RecipeRowSteps);
+            Assert.Equal(0, probeEvidence.RowViewsCommitted);
+            Assert.Null(probeEvidence.LastAttemptedRecipeRow);
+            Assert.Null(probeEvidence.NextRecipeRow);
+            Assert.Equal(RecapGridOnlineContinuationKind.Ready,
+                probeEvidence.ContinuationKind);
+        }
+        Assert.Equal(
+            providerCallsBeforeFulfilledProbe,
+            candidateFactory.Client.DispatchCallCount);
+
+        TimelineHeadRef probeHead = ReadTimelineHead(
+            path, session.Engine.BranchRefId);
+        int providerCallsBeforeBootstrap =
+            candidateFactory.Client.DispatchCallCount;
 
         UpdateMinimumRecentHistoryLoad(
             session.Engine,
@@ -228,11 +262,11 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         RecapGridReserveBootstrapEvidenceDto evidence = Assert.IsType<
             RecapGridReserveBootstrapEvidenceDto>(
                 bootstrap.ReserveBootstrap);
-        Assert.Equal(fulfilledHead.RefId.ToString(), evidence.RefId);
-        Assert.Equal(fulfilledHead.TimelineId.Value, evidence.TimelineId);
-        Assert.Equal(fulfilledHead.Generation, evidence.TimelineGeneration);
+        Assert.Equal(probeHead.RefId.ToString(), evidence.RefId);
+        Assert.Equal(probeHead.TimelineId.Value, evidence.TimelineId);
+        Assert.Equal(probeHead.Generation, evidence.TimelineGeneration);
         Assert.Equal(
-            fulfilledHead.HeadRowId?.Value,
+            probeHead.HeadRowId?.Value,
             evidence.TimelineHeadRowId);
         Assert.True(
             evidence.RetainedHistoryLoad < evidence.RequiredHistoryLoad);
@@ -240,7 +274,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.True(evidence.Metrics.ExaminedTimelineRows > 0);
         Assert.Equal(bootstrapBytes, SnapshotDomainFiles(path));
         Assert.Equal(
-            providerCallsBeforeReadiness,
+            providerCallsBeforeBootstrap,
             candidateFactory.Client.DispatchCallCount);
         UpdateMinimumRecentHistoryLoad(
             session.Engine,
@@ -262,7 +296,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             SnapshotDomainFiles(path)
         );
         Assert.Equal(
-            providerCallsBeforeReadiness,
+            providerCallsBeforeBootstrap,
             candidateFactory.Client.DispatchCallCount
         );
 
@@ -285,7 +319,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.NotEmpty(frontier.OrderedMissing!);
         Assert.Equal(frontierBytes, SnapshotDomainFiles(path));
         Assert.Equal(
-            providerCallsBeforeReadiness,
+            providerCallsBeforeBootstrap,
             candidateFactory.Client.DispatchCallCount
         );
         await service.DisposeAsync();
@@ -768,9 +802,184 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(2, snapshot.Definitions.Count);
     }
 
+    [Fact]
+    public async Task PendingToolBoundaryIsHeadBoundAndNeverDispatchesCompletion() {
+        string path = NewPath();
+        CompletionConnectionConfig connection = Connection();
+        RecapGridAgentControlProfile profile = AgentProfile();
+        EventAddress actionHead = await
+            CreateAgentControlRecoveryBoundaryAsync(
+                path,
+                connection,
+                profile,
+                SessionJournalFailpoint.AfterActionCommitted,
+                SessionExecutionPhase.AwaitingToolExecution
+            );
+        using SessionJournalEngine engine = SessionJournalEngine.Open(path);
+        using RecapGridAgentControlHandle agent = Assert.IsType<
+            RecapGridAgentControlOpenResult.Opened
+        >(RecapGridAgentControlFactory.Bind(
+            engine.ReadView,
+            profile,
+            _estimator
+        )).Handle;
+        await Assert.ThrowsAsync<SessionJournalExpectedHeadMismatchException>(
+            () => engine.ExecutePendingToolToBoundaryAsync(
+                default,
+                agent.ToolSession,
+                agent.RuntimeIdentity));
+        Assert.Equal(actionHead, engine.ReadCurrentHead());
+
+        SessionPendingToolBoundaryResult settled = await engine
+            .ExecutePendingToolToBoundaryAsync(
+                actionHead,
+                agent.ToolSession,
+                agent.RuntimeIdentity);
+        EventAddress resultHead = Assert.IsType<
+            SessionPendingToolBoundaryResult.Settled>(settled).Head;
+        Assert.Equal(resultHead, engine.ReadCurrentHead());
+        Assert.Equal(
+            SessionExecutionPhase.AwaitingAgentAction,
+            engine.InspectExecutionBoundary().Phase);
+    }
+
+    [Fact]
+    public async Task ToolContinuationSettlesBeforeMaintenanceAndDoesNotCreateCurrentClientWhenCadenceIsAbsent() {
+        string path = NewPath();
+        CompletionConnectionConfig connection = Connection();
+        RecapGridAgentControlProfile profile = AgentProfile();
+        EventAddress actionHead = await
+            CreateAgentControlRecoveryBoundaryAsync(
+                path,
+                connection,
+                profile,
+                SessionJournalFailpoint.AfterActionCommitted,
+                SessionExecutionPhase.AwaitingToolExecution
+            );
+        string cadencePath;
+        using (SessionJournalEngine reader =
+               SessionJournalEngine.OpenReadOnly(path)) {
+            cadencePath = Path.Combine(
+                path,
+                "control",
+                "recap-grid",
+                "v1",
+                "refs",
+                reader.BranchRefId.ToHexString(),
+                "cadence",
+                "cadence.json");
+        }
+        File.Delete(cadencePath);
+
+        var factory = new TrackingFactory("must not dispatch");
+        RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
+            static () => throw new InvalidOperationException(
+                "Missing cadence must fail before recap route loading."),
+            Connections(connection),
+            factory,
+            new RecapGridAgentControlProfileRegistry([profile]));
+        var candidate = new GalateaRecapGridComposition(
+            completion,
+            profile.ProfileId,
+            RecapGridOnlineLimits.Production,
+            _estimator);
+        await using var service = new GalateaHostService(
+            Config(path, connection),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            candidate);
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice", CancellationToken.None);
+        GalateaLiveTurn turn = service.StartRecovery(
+            session,
+            new GalateaTurnOptions(
+                connection.Id,
+                GalateaTurnMode.Resume,
+                ExpectedHead: actionHead));
+
+        GalateaTurnException failure = await Assert.ThrowsAsync<
+            GalateaTurnException>(() => service.RunTurnAsync(
+                session, turn, CancellationToken.None));
+        Assert.Equal("recap-grid-unprovisioned", failure.FailureReason);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.Client.DispatchCallCount);
+        Assert.Equal(
+            SessionExecutionPhase.AwaitingAgentAction,
+            session.Engine.InspectExecutionBoundary().Phase);
+        Assert.Equal(
+            SessionEventKind.ToolResultObserved,
+            session.Engine.InspectExecutionBoundary().HeadKind);
+
+        Assert.IsType<RecapGridCadenceCreateResult.Created>(
+            RecapGridCadenceFactory.Create(
+                session.Engine,
+                new RecapGridCadencePolicySpec(
+                    minimumRecentHistoryLoad: 1,
+                    HistoryPartitionAlgorithms
+                        .FirstReplaySafeBoundaryAtTargetV1,
+                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                    targetHistoryLoad: 1,
+                    maxRawEvents: 64,
+                    maxRenderedBytes: 1024 * 1024)));
+        await using GalateaRecapGridTurn reopened = await candidate
+            .OpenFreshAsync(
+                session.Engine,
+                connection.Id,
+                pendingObservation: null,
+                CancellationToken.None);
+        Assert.Equal(1, factory.CreateCallCount);
+        Assert.Equal(0, factory.Client.DispatchCallCount);
+        Assert.NotNull(reopened.MaintenanceEvidence);
+    }
+
+    [Fact]
+    public async Task CancelledFreshBindingDisposesLocalOnlineBeforeClientAndCanReopen() {
+        string path = NewPath();
+        CompletionConnectionConfig connection = Connection();
+        using (SessionJournalEngine provisioner = SessionJournalEngine.Create(
+                   path,
+                   new SessionCreateOptions(
+                       "model-a", "test system prompt", "openai-chat/strict"))) {
+            ProvisionTimelineAndControl(provisioner);
+        }
+        var factory = new TrackingFactory("candidate answer");
+        var candidate = new GalateaRecapGridComposition(
+            RecapGridCompletionHost.Create(
+                static () => throw new InvalidOperationException(
+                    "Raw-only maintenance must not load routes."),
+                Connections(connection),
+                factory),
+            RecapGridOnlineLimits.Production,
+            _estimator);
+        await using (candidate) {
+            using SessionJournalEngine engine = SessionJournalEngine.Open(path);
+            using var cancelled = new CancellationTokenSource();
+            cancelled.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                candidate.OpenFreshAsync(
+                    engine,
+                    connection.Id,
+                    pendingObservation: "pending",
+                    cancelled.Token).AsTask());
+            Assert.Equal(0, factory.CreateCallCount);
+
+            await using GalateaRecapGridTurn reopened = await candidate
+                .OpenFreshAsync(
+                    engine,
+                    connection.Id,
+                    pendingObservation: "pending",
+                    CancellationToken.None);
+            Assert.Equal(1, factory.CreateCallCount);
+            Assert.Equal(0, factory.Client.DispatchCallCount);
+            Assert.NotNull(reopened.MaintenanceEvidence);
+        }
+    }
+
     [Theory]
     [InlineData(
         nameof(SessionJournalFailpoint.AfterActionCommitted),
+        SessionExecutionPhase.AwaitingToolExecution)]
+    [InlineData(
+        nameof(SessionJournalFailpoint.AfterToolStartedCommitted),
         SessionExecutionPhase.AwaitingToolExecution)]
     [InlineData(
         nameof(SessionJournalFailpoint.AfterToolResultCommitted),
@@ -1459,11 +1668,12 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         using SqliteCommand delete = connection.CreateCommand();
         delete.Transaction = transaction;
         delete.CommandText = "DELETE FROM fulfilled_view_ref;";
-        Assert.Equal(1, delete.ExecuteNonQuery());
+        int deleted = delete.ExecuteNonQuery();
+        Assert.True(deleted > 0);
         using SqliteCommand count = connection.CreateCommand();
         count.Transaction = transaction;
         count.CommandText = "UPDATE store_metadata "
-            + "SET fulfilled_view_count = fulfilled_view_count - 1;";
+            + $"SET fulfilled_view_count = fulfilled_view_count - {deleted};";
         Assert.Equal(1, count.ExecuteNonQuery());
         transaction.Commit();
     }

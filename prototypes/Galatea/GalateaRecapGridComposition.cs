@@ -1,5 +1,6 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.Hosting;
@@ -85,19 +86,21 @@ internal sealed class GalateaRecapGridComposition
             "Unknown RecapGrid connection lookup outcome.")
     };
 
-    internal GalateaRecapGridTurn OpenFresh(
+    internal async ValueTask<GalateaRecapGridTurn> OpenFreshAsync(
         SessionJournalEngine engine,
-        string connectionId
+        string connectionId,
+        string? pendingObservation,
+        CancellationToken cancellationToken
     ) {
-        RecapGridAgentConnectionResult agent =
-            _completion.BindAgentExact(connectionId);
-        if (agent is not RecapGridAgentConnectionResult.Bound bound) {
-            throw agent switch {
-                RecapGridAgentConnectionResult.Absent
+        RecapGridAgentConnectionLookupResult lookup =
+            _completion.InspectAgentExact(connectionId);
+        if (lookup is not RecapGridAgentConnectionLookupResult.Found found) {
+            throw lookup switch {
+                RecapGridAgentConnectionLookupResult.Absent
                     => new GalateaTurnException(
                         "RecapGrid composition缺少精确模型连接。",
                         "recap-grid-connection-absent"),
-                RecapGridAgentConnectionResult.Invalid invalid
+                RecapGridAgentConnectionLookupResult.Invalid invalid
                     => new GalateaTurnException(
                         $"RecapGrid模型连接无法构造：{invalid.Code}",
                         "recap-grid-connection-invalid"),
@@ -113,26 +116,54 @@ internal sealed class GalateaRecapGridComposition
         if (opened is not RecapGridOnlineOpenResult.Opened available) {
             throw CandidateOpenFailure(opened);
         }
+        RecapGridOnlineContextHandle? ownedOnline = available.Handle;
         RecapGridAgentControlHandle? agentControl = null;
-        if (_agentControlProfileId is not null) {
-            RecapGridAgentControlOpenResult toolOpened =
-                _completion.OpenAgentControl(
-                    engine.ReadView,
-                    _agentControlProfileId,
-                    _estimators
-                );
-            if (toolOpened is not RecapGridAgentControlOpenResult.Opened tool) {
-                available.Handle.Dispose();
-                throw AgentControlOpenFailure(toolOpened);
+        try {
+            RecapGridOnlinePassResult caughtUp = await ownedOnline
+                .CatchUpMaintenanceAsync(
+                    pendingObservation,
+                    cancellationToken).ConfigureAwait(false);
+            if (caughtUp is not RecapGridOnlinePassResult.Ready
+                    and not RecapGridOnlinePassResult.RawHistoryAuthorized) {
+                throw CatchUpFailure(caughtUp);
             }
-            agentControl = tool.Handle;
+            RecapGridAgentConnectionResult agent =
+                _completion.BindAgentExact(connectionId);
+            if (agent is not RecapGridAgentConnectionResult.Bound bound) {
+                throw new GalateaTurnException(
+                    "RecapGrid无法构造精确模型连接。",
+                    "recap-grid-connection-invalid");
+            }
+            if (_agentControlProfileId is not null) {
+                RecapGridAgentControlOpenResult toolOpened =
+                    _completion.OpenAgentControl(
+                        engine.ReadView,
+                        _agentControlProfileId,
+                        _estimators
+                    );
+                if (toolOpened is not RecapGridAgentControlOpenResult
+                        .Opened tool) {
+                    throw AgentControlOpenFailure(toolOpened);
+                }
+                agentControl = tool.Handle;
+            }
+            var turn = new GalateaRecapGridTurn(
+                bound.Connection,
+                bound.Client,
+                bound.Identity,
+                ownedOnline,
+                agentControl,
+                maintenanceEvidence: ExtractEvidence(caughtUp));
+            ownedOnline = null;
+            agentControl = null;
+            return turn;
         }
-        return new GalateaRecapGridTurn(
-            bound.Connection,
-            bound.Client,
-            bound.Identity,
-            available.Handle,
-            agentControl);
+        finally {
+            agentControl?.Dispose();
+            if (ownedOnline is not null) {
+                await ownedOnline.DisposeAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     internal GalateaRecapGridTurn BindPrepared(
@@ -170,12 +201,13 @@ internal sealed class GalateaRecapGridComposition
             agentControl);
     }
 
-    internal GalateaRecapGridTurn BindToolContinuation(
+    internal async ValueTask<GalateaRecapGridTurn> BindToolContinuationAsync(
         SessionJournalEngine engine,
         string connectionId,
-        SessionRuntimeRecoveryRequirements.ToolContinuationRequired frozen
+        SessionRuntimeRecoveryRequirements.ToolContinuationRequired frozen,
+        CancellationToken cancellationToken
     ) {
-        RecapGridAgentControlHandle agentControl =
+        using RecapGridAgentControlHandle frozenAgentControl =
             BindFrozenAgentControl(
                 engine,
                 frozen.ToolRuntimeIdentity,
@@ -184,14 +216,29 @@ internal sealed class GalateaRecapGridComposition
                 "冻结工具runtime缺少Agent Control profile。",
                 "tool-runtime-profile-absent"
             );
-        RecapGridAgentConnectionResult agent =
-            _completion.BindAgentExact(connectionId);
-        if (agent is not RecapGridAgentConnectionResult.Bound bound) {
-            agentControl.Dispose();
-            throw new GalateaTurnException(
-                "RecapGrid无法绑定当前模型连接。",
-                "recap-grid-connection-absent"
+        EventAddress toolHead = frozen.CapturedHead
+            ?? throw new InvalidDataException(
+                "Tool continuation has no captured raw head."
             );
+        while (true) {
+            SessionPendingToolBoundaryResult boundary = await engine
+                .ExecutePendingToolToBoundaryAsync(
+                    toolHead,
+                    frozenAgentControl.ToolSession,
+                    frozen.ToolRuntimeIdentity,
+                    cancellationToken
+                ).ConfigureAwait(false);
+            toolHead = boundary switch {
+                SessionPendingToolBoundaryResult.Settled value => value.Head,
+                SessionPendingToolBoundaryResult.MorePending value
+                    => value.Head,
+                _ => throw new InvalidDataException(
+                    "Unknown pending tool boundary result."
+                )
+            };
+            if (boundary is SessionPendingToolBoundaryResult.Settled) {
+                break;
+            }
         }
         RecapGridOnlineOpenResult onlineOpened = RecapGridOnlineFactory.Open(
             engine,
@@ -200,19 +247,96 @@ internal sealed class GalateaRecapGridComposition
             _estimators
         );
         if (onlineOpened is not RecapGridOnlineOpenResult.Opened online) {
-            agentControl.Dispose();
             throw CandidateOpenFailure(onlineOpened);
         }
-        return new GalateaRecapGridTurn(
-            bound.Connection,
-            bound.Client,
-            bound.Identity,
-            online.Handle,
-            agentControl
-        );
+        RecapGridOnlineContextHandle? ownedOnline = online.Handle;
+        RecapGridAgentControlHandle? currentAgentControl = null;
+        try {
+            RecapGridOnlinePassResult caughtUp = await ownedOnline
+                .CatchUpMaintenanceAsync(
+                    pendingObservation: null,
+                    cancellationToken).ConfigureAwait(false);
+            if (caughtUp is not RecapGridOnlinePassResult.Ready
+                    and not RecapGridOnlinePassResult.RawHistoryAuthorized) {
+                throw CatchUpFailure(caughtUp);
+            }
+            RecapGridAgentConnectionResult agent =
+                _completion.BindAgentExact(connectionId);
+            if (agent is not RecapGridAgentConnectionResult.Bound bound) {
+                throw new GalateaTurnException(
+                    "RecapGrid无法绑定当前模型连接。",
+                    "recap-grid-connection-absent"
+                );
+            }
+            if (_agentControlProfileId is not null) {
+                RecapGridAgentControlOpenResult current =
+                    _completion.OpenAgentControl(
+                        engine.ReadView,
+                        _agentControlProfileId,
+                        _estimators
+                    );
+                if (current is not RecapGridAgentControlOpenResult
+                        .Opened opened) {
+                    throw AgentControlOpenFailure(current);
+                }
+                currentAgentControl = opened.Handle;
+            }
+            var turn = new GalateaRecapGridTurn(
+                bound.Connection,
+                bound.Client,
+                bound.Identity,
+                ownedOnline,
+                currentAgentControl,
+                toolHead,
+                ExtractEvidence(caughtUp));
+            ownedOnline = null;
+            currentAgentControl = null;
+            return turn;
+        }
+        finally {
+            currentAgentControl?.Dispose();
+            if (ownedOnline is not null) {
+                await ownedOnline.DisposeAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     public ValueTask DisposeAsync() => _completion.DisposeAsync();
+
+    private static RecapGridOnlineMaintenanceEvidence? ExtractEvidence(
+        RecapGridOnlinePassResult result
+    ) => result switch {
+        RecapGridOnlinePassResult.Ready value => value.Evidence,
+        RecapGridOnlinePassResult.RawHistoryAuthorized value
+            => value.Evidence,
+        RecapGridOnlinePassResult.MaintenanceContinuation value
+            => value.Evidence,
+        RecapGridOnlinePassResult.Backpressure value
+            => value.MaintenanceEvidence,
+        RecapGridOnlinePassResult.Unavailable value
+            => value.MaintenanceEvidence,
+        _ => null
+    };
+
+    private static Exception CatchUpFailure(
+        RecapGridOnlinePassResult result
+    ) => result switch {
+        RecapGridOnlinePassResult.MaintenanceContinuation value
+            => new GalateaTurnException(
+                $"RecapGrid维护尚未完成：{value.Code}",
+                "recap-grid-maintenance-continuation"),
+        RecapGridOnlinePassResult.Backpressure value
+            => new GalateaTurnException(
+                $"RecapGrid维护受阻：{value.Code}",
+                "recap-grid-maintenance-backpressure"),
+        RecapGridOnlinePassResult.Unavailable value
+            => new GalateaTurnException(
+                $"RecapGrid维护不可用：{value.Code}",
+                "recap-grid-maintenance-unavailable"),
+        _ => new GalateaTurnException(
+            "RecapGrid维护已关闭。",
+            "recap-grid-maintenance-disposed")
+    };
 
     private static Exception CandidateOpenFailure(
         RecapGridOnlineOpenResult result
@@ -310,13 +434,17 @@ internal sealed class GalateaRecapGridTurn : IAsyncDisposable {
         ICompletionClient client,
         CompletionDispatchIdentity identity,
         RecapGridOnlineContextHandle? online,
-        RecapGridAgentControlHandle? agentControl
+        RecapGridAgentControlHandle? agentControl,
+        EventAddress? resumeHead = null,
+        RecapGridOnlineMaintenanceEvidence? maintenanceEvidence = null
     ) {
         Connection = connection;
         Client = client;
         Identity = identity;
         Online = online;
         AgentControl = agentControl;
+        ResumeHead = resumeHead;
+        MaintenanceEvidence = maintenanceEvidence;
     }
 
     internal CompletionConnectionConfig Connection { get; }
@@ -324,6 +452,10 @@ internal sealed class GalateaRecapGridTurn : IAsyncDisposable {
     internal CompletionDispatchIdentity Identity { get; }
     internal RecapGridOnlineContextHandle? Online { get; }
     internal RecapGridAgentControlHandle? AgentControl { get; }
+    internal EventAddress? ResumeHead { get; }
+    internal RecapGridOnlineMaintenanceEvidence? MaintenanceEvidence {
+        get;
+    }
 
     public async ValueTask DisposeAsync() {
         try {

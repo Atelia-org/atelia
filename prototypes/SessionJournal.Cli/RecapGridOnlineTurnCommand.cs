@@ -223,14 +223,97 @@ internal static partial class RecapGridCommands {
                         return MapAgentControlBinding(frozenTool);
                     }
                     agentControl = frozenOpened.Handle;
+                    while (true) {
+                        SessionPendingToolBoundaryResult boundary =
+                            await engine.ExecutePendingToolToBoundaryAsync(
+                                expectedHead,
+                                agentControl.ToolSession,
+                                toolContinuation.ToolRuntimeIdentity,
+                                CancellationToken.None
+                            ).ConfigureAwait(false);
+                        expectedHead = boundary switch {
+                            SessionPendingToolBoundaryResult.Settled value
+                                => value.Head,
+                            SessionPendingToolBoundaryResult.MorePending value
+                                => value.Head,
+                            _ => throw new InvalidDataException(
+                                "Unknown pending tool boundary result."
+                            )
+                        };
+                        if (boundary is SessionPendingToolBoundaryResult
+                                .Settled) {
+                            break;
+                        }
+                    }
+                    agentControl.Dispose();
+                    agentControl = null;
                 }
                 string requested = options.RequireSingle("connection");
+                RecapGridAgentConnectionLookupResult inspected =
+                    completionHost.InspectAgentExact(requested);
+                if (inspected is not RecapGridAgentConnectionLookupResult
+                        .Found found) {
+                    return inspected switch {
+                        RecapGridAgentConnectionLookupResult.Absent value
+                            => Print(
+                                "run-online-turn",
+                                "connection-absent",
+                                new { value.ConnectionId },
+                                2),
+                        RecapGridAgentConnectionLookupResult.Invalid value
+                            => Print(
+                                "run-online-turn",
+                                "connection-invalid",
+                                new { value.Code, value.Detail },
+                                2),
+                        _ => Print(
+                            "run-online-turn",
+                            "connection-invalid",
+                            exitCode: 2)
+                    };
+                }
+                connection = found.Connection;
+
+                if (mode == RecapGridOnlineMode.SendNewTurn) {
+                    expectedHead = ReconcileOnlineSetup(
+                        engine,
+                        recovery,
+                        connection
+                    ).Head;
+                }
+                else {
+                    ValidateOnlineSetup(engine, expectedHead, connection);
+                }
+
+                RecapGridOnlineOpenResult opened = RecapGridOnlineFactory.Open(
+                    engine,
+                    completionHost.Executor,
+                    RecapGridOnlineLimits.Production,
+                    new O200kBaseHistoryUnitLoadEstimator()
+                );
+                if (opened is not RecapGridOnlineOpenResult.Opened available) {
+                    return MapOnlineOpen(opened);
+                }
+                online = available.Handle;
+
+                RecapGridOnlinePassResult caughtUp = await online
+                    .CatchUpMaintenanceAsync(
+                        mode == RecapGridOnlineMode.SendNewTurn
+                            ? message
+                            : null,
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+                if (caughtUp is not RecapGridOnlinePassResult.Ready
+                        and not RecapGridOnlinePassResult
+                            .RawHistoryAuthorized) {
+                    return PrintOnlineCatchUp(caughtUp);
+                }
+
                 RecapGridAgentConnectionResult agent =
                     completionHost.BindAgentExact(requested);
                 if (agent is not RecapGridAgentConnectionResult.Bound bound) {
                     return MapAgentBinding(agent);
                 }
-                connection = bound.Connection;
                 agentClient = bound.Client;
                 dispatchIdentity = bound.Identity;
 
@@ -247,28 +330,6 @@ internal static partial class RecapGridCommands {
                     }
                     agentControl = currentOpened.Handle;
                 }
-
-                if (mode == RecapGridOnlineMode.SendNewTurn) {
-                    expectedHead = ReconcileOnlineSetup(
-                        engine,
-                        recovery,
-                        connection
-                    ).Head;
-                }
-                else {
-                    ValidateOnlineSetup(engine, recovery, connection);
-                }
-
-                RecapGridOnlineOpenResult opened = RecapGridOnlineFactory.Open(
-                    engine,
-                    completionHost.Executor,
-                    RecapGridOnlineLimits.Production,
-                    new O200kBaseHistoryUnitLoadEstimator()
-                );
-                if (opened is not RecapGridOnlineOpenResult.Opened available) {
-                    return MapOnlineOpen(opened);
-                }
-                online = available.Handle;
             }
 
             engine.UseRuntime(new SessionRuntime(
@@ -486,11 +547,9 @@ internal static partial class RecapGridCommands {
 
     private static void ValidateOnlineSetup(
         SessionJournalEngine engine,
-        SessionRuntimeRecoveryRequirements requirement,
+        EventAddress head,
         CompletionConnectionConfig connection
     ) {
-        EventAddress head = requirement.CapturedHead
-            ?? throw new InvalidDataException("Active request has no head.");
         SessionGoverningSetup setup = engine.ResolveGoverningSetup(head);
         if (!string.Equals(
                 setup.RuntimeConfig.ModelId,
@@ -570,6 +629,45 @@ internal static partial class RecapGridCommands {
                 "Unknown online open outcome."
             )
         };
+
+    private static int PrintOnlineCatchUp(
+        RecapGridOnlinePassResult result
+    ) => result switch {
+        RecapGridOnlinePassResult.MaintenanceContinuation value => Print(
+            "run-online-turn",
+            "maintenance-continuation",
+            new {
+                component = value.Component.ToString(),
+                value.Code,
+                value.Detail,
+                value.Evidence
+            },
+            exitCode: 2),
+        RecapGridOnlinePassResult.Backpressure value => Print(
+            "run-online-turn",
+            "maintenance-backpressure",
+            new {
+                component = value.Component.ToString(),
+                value.Code,
+                value.Detail,
+                value.MaintenanceEvidence
+            },
+            exitCode: 2),
+        RecapGridOnlinePassResult.Unavailable value => Print(
+            "run-online-turn",
+            "maintenance-unavailable",
+            new {
+                component = value.Component.ToString(),
+                value.Code,
+                value.Detail,
+                value.MaintenanceEvidence
+            },
+            exitCode: 2),
+        RecapGridOnlinePassResult.Disposed => Print(
+            "run-online-turn", "disposed", exitCode: 2),
+        _ => throw new InvalidDataException(
+            "Unknown Online catch-up outcome.")
+    };
 
     private static int MapAgentControlBinding(
         RecapGridAgentControlOpenResult result

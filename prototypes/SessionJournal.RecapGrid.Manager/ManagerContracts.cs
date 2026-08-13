@@ -481,8 +481,10 @@ public abstract record RecapGridBuildProgressResult {
     public sealed record Complete(
         RecapGridBuildProgressAuthority Authority,
         RowViewDigest ThroughViewDigest,
-        bool FulfillmentPresent
-    ) : RecapGridBuildProgressResult;
+        RecapGridPromotableProof? Proof
+    ) : RecapGridBuildProgressResult {
+        public bool FulfillmentPresent => Proof is not null;
+    }
 
     public sealed record Frontier(
         RecapGridBuildProgressAuthority Authority,

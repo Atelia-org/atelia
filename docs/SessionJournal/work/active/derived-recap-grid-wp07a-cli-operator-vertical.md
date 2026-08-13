@@ -63,9 +63,9 @@ Timeline初始policy字段全部显式。Control admission是独立strict bounde
 - `build`是唯一读取strict bounded route/connections并构造Hosting Runtime的命令，且在这些输入、`--confirm-ref`与budget/request全部
   preflight完成后才打开Manager；candidate build永不activate；`progress`与所有init/diagnostic/
   maintenance/materialize路径在Completion factory之前返回；
-- `control promote`在同一进程用`ExplicitCandidate(recipe)`、`MaximumNewCalls=0`与throwing zero-call executor重证；只有fresh
-  head-through `Fulfilled(RecapGridPromotableProof)`才立即按proof whole Timeline/Control heads执行Promotion CAS。partial/stale/missing或任何
-  dispatch均不activate，proof不序列化；
+- `control promote`在同一进程pure-read调用`InspectBuildProgress(ExplicitCandidate(recipe))`；只有fresh
+  `Complete + FulfillmentPresent + exact RecapGridPromotableProof`才立即CAS，过程不调用Build、不写Store、也不构造provider；
+  CAS原样使用proof whole Timeline/Control heads。partial/stale/missing均不activate，proof不序列化；
 - `materialize`只调用Getter strict NthPrevious；raw-only仅报告`raw-history-authorized`，不在CLI复制raw-tail reducer；
 - 输出是bounded `atelia.session-journal.recap-grid-candidate-cli.v1` JSON envelope；syntax/confirmation为exit 1，closed operational failure
   为exit 2，success/idempotent为exit 0。Busy/Stale/Unsupported/Indeterminate不自动retry；indeterminate保留intended/observed与inspect提示。
@@ -77,7 +77,7 @@ Timeline初始policy字段全部显式。Control admission是独立strict bounde
 - `recap-control verify/backup/restore/reinitialize`直接映射WP-02 typed library actions；normal Control无普通reset，corrupt current不能在线
   restore/reinitialize，必须走offline exact archive/delete+Create；
 - `recap-grid inspect/export/verify/reset`；
-- build recipe/candidate fulfill/full rebuild、pure-read progress与zero-call promotion commands；
+- build recipe/candidate fulfill/full rebuild、pure-read progress与pure-read promotion commands；
 - materialization inspect的strict `--nth-previous`；
 - bounded progress：active recipe、Timeline head、fulfilled-through、missing assignments；HistoryLoad仅表示Timeline cadence；
 - current CLI自写parser的strict command/confirmation/error mapping。
@@ -113,7 +113,7 @@ Control `CommitIndeterminate`/backup `PublishIndeterminate`必须显示intended�
    recipe active也raw-only，允许raw增长与首row seal而不形成fulfillment先决死锁。Timeline nonempty + active unfulfilled/Invalid必须
    fail closed，不得raw/旧cache fallback。
 10. exact/null route没有fallback，Hosting lazy construction与Runtime-before-registry dispose有external public surface证据；
-11. online与bounded offline sync、new Ref new TimelineId、candidate build不activate、zero-call promotion、build后provider-free progress及
+11. online与bounded offline sync、new Ref new TimelineId、candidate build不activate、pure-read promotion、build后provider-free progress及
     promotion后strict materialize通过同一真实CLI fixture；
 12. stable store-only`recap-grid`与旧`recap`命令仍走原dispatch，candidate不得改变Galatea/current production composition。
 13. offline audit在code-owned event cap的cap-1/exact边界分别typed limit/success；raw-head drift不retry；malformed connections在Manager、
@@ -143,7 +143,7 @@ disposable CLI E2E、crash/confirmation/read-only gates、build/docs/diff和inde
   cleanup回归证明fatal立即透传且不包装为Aggregate/non-fatal尾结算；
 - CLI真实fixture 8/8：explicit init+online sync+no-provider diagnostics/raw materialize、wrong Ref/duplicate/unknown option零derived mutation、
   bounded offline audit cap-1/exact与raw-head drift、formal Family/Definition/Recipe + WP-06 Runtime provider build + provider-free progress +
-  zero-call promotion + strict materialize、fork Ref独立Timeline/no fallback、malformed connections全repo零mutation、六种Timeline/Control
+  pure-read promotion + strict materialize、fork Ref独立Timeline/no fallback、malformed connections全repo零mutation、六种Timeline/Control
   maintenance与Grid reset真实四域byte isolation/Busy；
 - stable store-only + old recap/history-load targeted regression 7/7。此前pre-tail CLI full为72/73；唯一失败是本包未改的
   `CompletionTargetIdentityFactoryTests.Create_PreservesWireFingerprintsAndExcludesSecrets`旧golden（expected `209495...`、actual
