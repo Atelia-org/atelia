@@ -310,18 +310,20 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                 reserveRequirement,
                 cancellationToken
             );
-        IReadOnlyList<HistoryTimelineSelectedRow> crossedRows;
         HistoryTimelineSelectedRow reserveRow;
+        long crossedRowCount;
         switch (anchorRead) {
             case HistoryRecentReserveAnchorResult.Eligible eligible:
-                crossedRows = eligible.HeadThroughAnchor;
                 reserveRow = eligible.Anchor;
+                crossedRowCount = eligible.HeadThroughAnchorRowCount;
                 break;
             case HistoryRecentReserveAnchorResult.ReserveBootstrapRequired
                     bootstrap:
                 RecapGridContextResolveResult? bootstrapHealth =
                     ValidateCrossedViews(
-                        bootstrap.HeadThroughRoot,
+                        timelineHead,
+                        stopRowId: null,
+                        bootstrap.HeadThroughRootRowCount,
                         currentRow,
                         currentView,
                         reader,
@@ -343,7 +345,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                             store.Handle.Identity,
                             bootstrap.RetainedHistoryLoad,
                             reserveRequirement.MinimumRecentHistoryLoad,
-                            bootstrap.HeadThroughRoot.Count,
+                            bootstrap.HeadThroughRootRowCount,
                             bootstrap.Metrics
                         )
                     ),
@@ -357,7 +359,9 @@ public sealed partial class RecapGridContextHandle : IDisposable,
         }
 
         RecapGridContextResolveResult? crossedHealth = ValidateCrossedViews(
-            crossedRows,
+            timelineHead,
+            reserveRow.Descriptor.RowId,
+            crossedRowCount,
             currentRow,
             currentView,
             reader,
@@ -636,8 +640,10 @@ public sealed partial class RecapGridContextHandle : IDisposable,
         return null;
     }
 
-    private static RecapGridContextResolveResult? ValidateCrossedViews(
-        IReadOnlyList<HistoryTimelineSelectedRow> rows,
+    private RecapGridContextResolveResult? ValidateCrossedViews(
+        TimelineHeadRef timelineHead,
+        HistoryRowId? stopRowId,
+        long expectedRowCount,
         HistoryTimelineSelectedRow currentRow,
         RecapRowView currentView,
         RecapGridStoreReader reader,
@@ -650,62 +656,114 @@ public sealed partial class RecapGridContextHandle : IDisposable,
     ) {
         finalRow = currentRow;
         finalView = currentView;
-        if (rows.Count == 0
-            || rows[0].Descriptor.RowId != currentRow.Descriptor.RowId
-            || rows[0].Descriptor.DescriptorDigest
-                != currentRow.Descriptor.DescriptorDigest) {
-            return Invalid(
-                RecapGridContextComponent.Timeline,
-                "RecentReservePathInvalid",
-                "The recent-reserve path does not begin at the current row."
-            );
-        }
-        for (int index = 1; index < rows.Count; index++) {
+        long examined = 0;
+        HistoryTimelinePathCursor? cursor = null;
+        while (true) {
             cancellationToken.ThrowIfCancellationRequested();
-            HistoryTimelineSelectedRow row = rows[index];
-            if (finalRow.Descriptor.PreviousRowId
-                    != row.Descriptor.RowId
-                || finalView.PreviousViewDigest is not { } previousDigest) {
-                return Invalid(
-                    RecapGridContextComponent.Store,
-                    "RecentReserveViewChainInvalid",
-                    "The healthy RowView chain does not match the crossed Timeline path."
+            HistoryTimelinePathPageResult readPage =
+                _lifetime.Timeline.ReadSelectedPathPage(
+                    timelineHead,
+                    cursor,
+                    HistoryTimelineStoreLimits.MaximumPathPageRows
                 );
+            if (readPage is not HistoryTimelinePathPageResult.Page page) {
+                return MapTimelinePathPage(readPage);
             }
-            RecapGridStoreReadResult<RecapRowView> read =
-                reader.ReadView(previousDigest);
-            if (read is not RecapGridStoreReadResult<
-                    RecapRowView>.Found found) {
-                return read is RecapGridStoreReadResult<RecapRowView>.Missing
-                    ? Invalid(
-                        RecapGridContextComponent.Store,
-                        "CrossedViewMissing",
-                        "A RowView crossed by the recent-reserve proof is missing."
-                    )
-                    : MapStoreRead(read);
+            foreach (HistoryTimelineSelectedRow row in page.Value.Rows) {
+                cancellationToken.ThrowIfCancellationRequested();
+                examined = checked(examined + 1);
+                if (examined == 1) {
+                    if (row.Descriptor.RowId
+                            != currentRow.Descriptor.RowId
+                        || row.Descriptor.DescriptorDigest
+                            != currentRow.Descriptor.DescriptorDigest) {
+                        return Invalid(
+                            RecapGridContextComponent.Timeline,
+                            "RecentReservePathInvalid",
+                            "The recent-reserve path does not begin at the current row."
+                        );
+                    }
+                }
+                else {
+                    if (finalRow.Descriptor.PreviousRowId
+                            != row.Descriptor.RowId
+                        || finalView.PreviousViewDigest
+                            is not { } previousDigest) {
+                        return Invalid(
+                            RecapGridContextComponent.Store,
+                            "RecentReserveViewChainInvalid",
+                            "The healthy RowView chain does not match the crossed Timeline path."
+                        );
+                    }
+                    RecapGridStoreReadResult<RecapRowView> read =
+                        reader.ReadView(previousDigest);
+                    if (read is not RecapGridStoreReadResult<
+                            RecapRowView>.Found found) {
+                        return read is RecapGridStoreReadResult<
+                                RecapRowView>.Missing
+                            ? Invalid(
+                                RecapGridContextComponent.Store,
+                                "CrossedViewMissing",
+                                "A RowView crossed by the recent-reserve proof is missing."
+                            )
+                            : MapStoreRead(read);
+                    }
+                    RecapGridContextResolveResult? viewFailure =
+                        ValidateView(found.Value, row.Descriptor, recipe);
+                    if (viewFailure is not null) {
+                        return viewFailure;
+                    }
+                    RecapGridContextResolveResult? cellsFailure =
+                        ValidateViewCells(
+                            reader,
+                            found.Value,
+                            row.Descriptor,
+                            definitions,
+                            cancellationToken
+                        );
+                    if (cellsFailure is not null) {
+                        return cellsFailure;
+                    }
+                    finalRow = row;
+                    finalView = found.Value;
+                }
+                if (stopRowId is { } stop
+                    && row.Descriptor.RowId == stop) {
+                    return examined == expectedRowCount
+                        ? null
+                        : Invalid(
+                            RecapGridContextComponent.Timeline,
+                            "RecentReservePathCountMismatch",
+                            "The recent-reserve anchor row count changed during validation."
+                        );
+                }
+                if (stopRowId is not null
+                    && examined >= expectedRowCount) {
+                    return Invalid(
+                        RecapGridContextComponent.Timeline,
+                        "RecentReservePathStopMismatch",
+                        "The recent-reserve path did not end at its exact stop row."
+                    );
+                }
+                if (stopRowId is null && examined > expectedRowCount) {
+                    return Invalid(
+                        RecapGridContextComponent.Timeline,
+                        "RecentReservePathCountMismatch",
+                        "The recent-reserve root row count changed during validation."
+                    );
+                }
             }
-            RecapGridContextResolveResult? viewFailure = ValidateView(
-                found.Value,
-                row.Descriptor,
-                recipe
-            );
-            if (viewFailure is not null) {
-                return viewFailure;
+            if (page.Value.Next is null) {
+                return stopRowId is null && examined == expectedRowCount
+                    ? null
+                    : Invalid(
+                        RecapGridContextComponent.Timeline,
+                        "RecentReservePathTerminalMismatch",
+                        "The recent-reserve path terminal changed during validation."
+                    );
             }
-            RecapGridContextResolveResult? cellsFailure = ValidateViewCells(
-                reader,
-                found.Value,
-                row.Descriptor,
-                definitions,
-                cancellationToken
-            );
-            if (cellsFailure is not null) {
-                return cellsFailure;
-            }
-            finalRow = row;
-            finalView = found.Value;
+            cursor = page.Value.Next;
         }
-        return null;
     }
 
     private RecapGridContextResolveResult? CheckFences(
@@ -974,6 +1032,36 @@ public sealed partial class RecapGridContextHandle : IDisposable,
             RecapGridContextComponent.Timeline,
             "TimelineRowOutcomeInvalid",
             "HistoryTimeline returned an unknown row outcome."
+        )
+    };
+
+    private static RecapGridContextResolveResult MapTimelinePathPage(
+        HistoryTimelinePathPageResult result
+    ) => result switch {
+        HistoryTimelinePathPageResult.StaleTimelineHead
+            => new RecapGridContextResolveResult.Stale(
+                RecapGridContextComponent.Timeline,
+                "The whole Timeline head changed."
+            ),
+        HistoryTimelinePathPageResult.Busy
+            => new RecapGridContextResolveResult.Busy(
+                RecapGridContextComponent.Timeline
+            ),
+        HistoryTimelinePathPageResult.Invalid invalid
+            when invalid.Code == "HistoryTimelineDisposed"
+            => new RecapGridContextResolveResult.Disposed(
+                RecapGridContextComponent.Timeline
+            ),
+        HistoryTimelinePathPageResult.Invalid invalid
+            => Invalid(
+                RecapGridContextComponent.Timeline,
+                invalid.Code,
+                invalid.Detail
+            ),
+        _ => Invalid(
+            RecapGridContextComponent.Timeline,
+            "TimelinePathOutcomeInvalid",
+            "HistoryTimeline returned an unknown path-page outcome."
         )
     };
 

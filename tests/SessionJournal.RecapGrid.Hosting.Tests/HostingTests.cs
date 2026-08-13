@@ -551,6 +551,8 @@ public sealed class HostingTests {
             rowId,
             new string('3', 64),
             descriptor.EndInclusive,
+            1,
+            new string('4', 64),
             generation: 1
         );
         var controlHead = new ControlHeadRef(

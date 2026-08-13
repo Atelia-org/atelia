@@ -155,6 +155,8 @@ internal static class Program {
             null,
             new string('d', 64),
             null,
+            0,
+            HistoryTimelineSelectedPath.EmptyDigest,
             generation: 1
         );
         return (

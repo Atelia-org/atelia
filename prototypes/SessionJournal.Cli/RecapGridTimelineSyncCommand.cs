@@ -6,6 +6,7 @@ namespace Atelia.SessionJournal.Cli;
 internal static partial class RecapGridCommands {
     private const int MaximumRecapGridAuditEvents =
         HistoryRecentReserveOperationLimits.MaximumRawEvents;
+    private const int MaximumTimelineRowsPerSync = 1_000_000;
     internal static readonly AsyncLocal<Action?> BeforeAuditCompleteForTest =
         new();
     internal static readonly AsyncLocal<int?> MaximumAuditEventsForTest =
@@ -37,7 +38,7 @@ internal static partial class RecapGridCommands {
         int maximumRows = ParseBoundedInt(
             options.RequireSingle("max-rows"),
             1,
-            HistoryTimelineStoreLimits.MaximumRowCount,
+            MaximumTimelineRowsPerSync,
             "--max-rows"
         );
         HistoryTimelineOpenResult opened = HistoryTimelineFactory.Open(
@@ -187,12 +188,73 @@ internal static partial class RecapGridCommands {
                     }
                     return Print("timeline.sync", "plan-failed", plan, 2);
                 }
+                OnlineSelectedRawCaptureResult terminalRaw = timeline.Handle
+                    .Coordinator.CaptureOnline(expected, engine.ReadView);
+                if (terminalRaw is OnlineSelectedRawCaptureResult.Empty) {
+                    return PrintSyncComplete(
+                        expected,
+                        committed,
+                        "empty",
+                        audit is null ? "online" : "offline-reconcile");
+                }
+                if (terminalRaw is not
+                        OnlineSelectedRawCaptureResult.Captured terminalCapture) {
+                    return Print(
+                        "timeline.sync", "capture-failed", terminalRaw, 2);
+                }
+                HistoryTimelinePlanResult terminalPlan = sealOperation
+                    .PlanNextRow(expected, terminalCapture.Capture);
+                if (terminalPlan is HistoryTimelinePlanResult.NotEnough
+                        terminalNotEnough) {
+                    return PrintSyncComplete(
+                        expected,
+                        committed,
+                        "not-enough",
+                        audit is null ? "online" : "offline-reconcile",
+                        terminalNotEnough);
+                }
+                if (terminalPlan is HistoryTimelinePlanResult
+                        .RecentReserveNotReached terminalReserve) {
+                    return PrintSyncComplete(
+                        expected,
+                        committed,
+                        "recent-reserve-not-reached",
+                        audit is null ? "online" : "offline-reconcile",
+                        terminalReserve);
+                }
+                if (terminalPlan is HistoryTimelinePlanResult
+                        .LimitExceeded terminalLimit) {
+                    return Print(
+                        "timeline.sync",
+                        "partition-limit",
+                        terminalLimit,
+                        2);
+                }
+                if (terminalPlan is HistoryTimelinePlanResult
+                        .OfflineBootstrapRequired) {
+                    if (audit is null) {
+                        RecapGridCadenceOfflineAuditCaptureResult captured =
+                            CaptureAudit(sealOperation);
+                        if (captured is not
+                                RecapGridCadenceOfflineAuditCaptureResult
+                                .Available available) {
+                            return Print(
+                                "timeline.sync", "audit-limit", captured, 2);
+                        }
+                        audit = available.Audit;
+                    }
+                    return BuildOffline(
+                        sealOperation,
+                        audit,
+                        expected,
+                        committed,
+                        maximumRows);
+                }
+                if (terminalPlan is HistoryTimelinePlanResult.Selected) {
+                    return PrintRowLimit(expected, committed, maximumRows);
+                }
                 return Print(
-                    "timeline.sync",
-                    "row-limit",
-                    new { head = expected, committed, maximumRows },
-                    2
-                );
+                    "timeline.sync", "plan-failed", terminalPlan, 2);
             }
             finally {
                 audit?.Dispose();
@@ -251,15 +313,68 @@ internal static partial class RecapGridCommands {
                     unavailable,
                     2);
             }
+            if (step is HistoryTimelineOfflineStepResult
+                    .LimitExceeded limit) {
+                return Print(
+                    "timeline.sync",
+                    "partition-limit",
+                    limit,
+                    2);
+            }
             return Print("timeline.sync", "offline-step-failed", step, 2);
         }
+        HistoryTimelineOfflineStepResult terminalProbe = offline
+            .ProbeNextRow(expected);
+        if (terminalProbe is HistoryTimelineOfflineStepResult.NotEnough
+                terminalNotEnough) {
+            return PrintSyncComplete(
+                expected,
+                committed,
+                "not-enough",
+                "offline-build",
+                terminalNotEnough);
+        }
+        if (terminalProbe is HistoryTimelineOfflineStepResult
+                .RecentReserveNotReached terminalReserve) {
+            return PrintSyncComplete(
+                expected,
+                committed,
+                "recent-reserve-not-reached",
+                "offline-build",
+                terminalReserve);
+        }
+        if (terminalProbe is HistoryTimelineOfflineStepResult
+                .LimitExceeded terminalLimit) {
+            return Print(
+                "timeline.sync",
+                "partition-limit",
+                terminalLimit,
+                2);
+        }
+        if (terminalProbe is HistoryTimelineOfflineStepResult.Selected) {
+            return PrintRowLimit(expected, committed, maximumRows);
+        }
+        if (terminalProbe is HistoryTimelineOfflineStepResult
+                .RecentReserveProofUnavailable terminalUnavailable) {
+            return Print(
+                "timeline.sync",
+                "recent-reserve-proof-unavailable",
+                terminalUnavailable,
+                2);
+        }
         return Print(
-            "timeline.sync",
-            "row-limit",
-            new { head = expected, committed, maximumRows },
-            2
-        );
+            "timeline.sync", "offline-step-failed", terminalProbe, 2);
     }
+
+    private static int PrintRowLimit(
+        TimelineHeadRef head,
+        int committed,
+        int maximumRows
+    ) => Print(
+        "timeline.sync",
+        "row-limit",
+        new { head, committed, maximumRows },
+        2);
 
     private static int PrintSyncComplete(
         TimelineHeadRef head,

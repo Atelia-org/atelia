@@ -5,7 +5,7 @@
 ## Canonical durable layout
 
 ```text
-derived/history-timeline/v1/refs/<ref>/
+derived/history-timeline/v2/refs/<ref>/
   locator.json
   timelines/<timeline>.sqlite
 
@@ -23,8 +23,9 @@ derived/recap-grid/v1/
   lifetime.lock
 ```
 
-HistoryTimeline 使用 per-Ref locator 和 durable SQLite ledger，保存 policies、rows、whole head 以及
-selected-path persistent indexes。Control 的 single canonical `control.json` 保存完整 state graph、active
+HistoryTimeline 使用 per-Ref locator 和 durable SQLite Schema V2 ledger，保存 policies、immutable rows、whole head 以及
+mutable selected path；selected path的count/root commitment进入whole head，append以O(log N)更新complete-subtree Merkle
+accumulator，reconcile以prefix commitment截断，不再复制immutable trie snapshot。Control 的 single canonical `control.json` 保存完整 state graph、active
 recipe、operation receipts 与 whole head。Cadence保存per-Ref R、exact expected Timeline partition fields、
 generation/domain digest；它不属于SessionJournal RuntimeConfig。Grid SQLite保存 canonical cells、row views 与 fulfilled records。
 
@@ -40,6 +41,10 @@ generation/domain digest；它不属于SessionJournal RuntimeConfig。Grid SQLit
 - backup/restore/reinitialize/reset 都要求 fresh exact witness 与 exclusive lifetime；successful replacement
   生成可区分的新 identity 或 generation，旧 head不会发生 ABA。
 - Grid Store reset只触碰 `derived/recap-grid/v1`，不会删除 Control 或 Timeline。
+- Timeline V2是pre-release hard cut：旧`derived/history-timeline/v1`bytes inert，normal create/open/read不会扫描、读取、
+  fallback或在线迁移它们。部署V2必须显式重新provision Cadence、Timeline、Control、Store四个durability domains；不得把
+  V1 Timeline locator/head与current companion state拼成一个混合generation。rollback只允许在首次new raw write前恢复完整
+  pre-cutover repo/config generation；首次new raw write后只能由旧binary证明可replay或forward-fix，不能用旧backup覆盖raw。
 - old legacy recap slots不参与 normal open、selection、recovery或fallback。它们由
   `recap-grid legacy-root inspect|archive|delete` 以 bounded manifest与fresh confirmation单独治理。
 

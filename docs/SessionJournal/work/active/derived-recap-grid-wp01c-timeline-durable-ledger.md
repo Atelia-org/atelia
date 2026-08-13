@@ -1,6 +1,6 @@
 # DerivedRecap Grid WP-01C：Single Durable Timeline Ledger
 
-状态：Complete；两路independent review均GO；依赖 WP-01B complete
+状态：WP-01C Complete；C3D Schema V2 hard-cut amendment为source candidate，等待最终closure；依赖 WP-01B complete
 
 只需加载：Grid target、Master、WP-01 overview、WP-01B handoff与本文。
 
@@ -28,21 +28,21 @@ WP-01B `InMemoryHistoryTimelineLedger`已迁到test assembly，只保留语义�
 canonical inventory固定为：
 
 ```text
-<repository>/derived/history-timeline/v1/
+<repository>/derived/history-timeline/v2/
   locks/<ref-id>.lock
   refs/<ref-id>/locator.json
   refs/<ref-id>/timelines/<timeline-id>.sqlite
 ```
 
 normal create/open只按exact Ref locator与exact Timeline slot工作；不扫描orphan、backup、mtime或“latest”。
-V1 durability/lease只在Linux上验证并启用；其他platform必须返回typed `TimelineStorePlatformUnsupported`，不得降级成无fsync或
+V2 durability/lease只在Linux上验证并启用；其他platform必须返回typed `TimelineStorePlatformUnsupported`，不得降级成无fsync或
 无`flock`模式。上表是normal canonical slots，不是所有crash残留清单：process death可留下unreferenced Timeline SQLite、locator/restore
 dot-temp或SQLite exact-slot旁的rollback journal；它们只能由SQLite exact-slot recovery或后续explicit inventory/retention action处理，
 normal create/open绝不把它们当候选、backup或“latest”。
 
 ## In scope
 
-- V1 create/open strict schema；以下四种transaction不得合并成隐式“最新状态”写入：
+- V2 create/open strict schema；以下四种transaction不得合并成隐式“最新状态”写入：
   - `PutPolicy(canonicalPolicy)`：strict decode/canonical equality后content-addressed idempotent insert，绝不改head；
   - `CompareExchangePolicy(expectedWholeHead, nextPolicyDigest)`：CAS比较完整`TimelineHeadRef`，只替换active policy并推进
     generation；next policy必须已存在且属于同Timeline；即使empty head仍保持row/raw fence为null；
@@ -116,23 +116,33 @@ single backend、operator action、crash/backup/branch tests、affected build/do
 - per-Ref normal handle持shared lifetime lease；Create/Restore/Abandon需要exclusive lease。locator第一次为generation 0；abandon先
   durable-create新DB再atomic locator generation+1，旧DB bytes不改且normal path不再发现；
 - Restore只要求current schema与canonical head仍可strict读取并exact等于manifest，而非要求whole current store healthy；因此可用
-  same-head verified backup修复row/trie corruption。current head/schema不可读时Restore拒绝，只能exact-confirm Abandon。
+  same-head verified backup修复row或mutable selected-path/Merkle commitment corruption。current head/schema不可读时Restore拒绝，
+  只能exact-confirm Abandon。
 
 ## Durable indexes and hard caps
 
-selected path由两棵content-addressed immutable fixed-depth byte-radix trie组成，key分别为32-byte `RowId`与16-byte
-`EndInclusive`；每个committed row保存snapshot roots。append结构共享且最多新增50个nodes；reconcile只能切到expected selected
-predecessor chain已提交root或empty，不存在global End-to-candidate authority，也不回扫head/root。相同End、不同policy的合法candidate
-可共存；只有expected selected chain决定authority。
+selected path由mutable `current_selected_path`和complete-subtree Merkle accumulator提交：每个leaf绑定ordinal、RowId、
+PreviousRowId与EndInclusive，whole head绑定selected-path count/root digest。append只增加O(log N) nodes；reconcile先证明target
+membership与prefix commitment，再truncate suffix并把head切到该prefix。normal row/page/reconcile读取都验证assignment、proof、
+whole-head root与sticky mutation guard；middle delete、ordinal swap、off-branch insert不能等到maintenance verify才暴露。Merkle nodes
+总量保持O(N)，page在单operation内复用proof-node cache，避免逐row重复O(log N) SQL。
 
-production caps为：policy/head/locator 4 KiB、descriptor/backup manifest 16 KiB、policies/rows各65,536、trie nodes 3,276,800、
-path page 128 rows / 4 MiB、DB与restore copy各8 GiB。常量不可由config放宽；internal small-limit fixture覆盖exact cap与cap+1。
+production只保留资源边界：policy/head/locator 4 KiB、descriptor/backup manifest 16 KiB、path page 128 rows / 4 MiB、
+single artifact/raw audit/operation caps。累计policy/row/node count与database/restore总bytes不再是code-owned lifetime terminal；
+counts/ordinals使用checked `long`，backup/restore/verify streaming，实际上限来自SQLite 64-bit寻址、格式、filesystem与可用磁盘。
+`MaxRawEvents <= 65,536`仍是单partition segment admission cap，不是Timeline累计row cap；262,144 recent-reserve audit与
+1,000,000 Online/Control上界分别是单operation/单recipe admission budget，也不是lifetime cap。
+
+Schema V2为pre-release hard cut：V1 root bytes inert，Factory不读取、不fallback、不迁移。部署必须显式重新provision
+Cadence、Timeline、Control、Store四域；rollback只能在首次new raw write前恢复完整pre-cutover generation，禁止混合四域版本。
 
 ## Implementation record
 
-- product：strict HeadRef/locator/manifest codecs、SQLite ledger/trie、factory/lifetime/Reader、inspect/verify/backup/restore/abandon；
+- product：strict HeadRef/locator/manifest codecs、SQLite V2 ledger/Merkle selected-path commitment、factory/lifetime/Reader、
+  inspect/verify/backup/restore/abandon；
 - tail hardening：snapshot canonical commitment按exact predecessor递推验证；hot open不做physical recount；online/offline reconcile每次只开
-  一个fixed-root boundary probe；Restore只验证private copy；strict sqlite_schema/PRAGMA/FK/historical reference与paged trie verify；
+  一个fixed-root boundary probe；Restore只验证private copy；strict sqlite_schema/PRAGMA/FK/historical reference、paged mutable
+  selected-path assignment与whole-head-bound Merkle/MMR commitment verify；
   lifetime drain、fresh lock fsync、exact locator existence和offline Busy/Invalid/Absent/store-limit typed mapping均已有focused fixture；
 - tests：真实SQLite reopen/branch snapshot/same-End/mixed CAS、caps/root/index/schema/PRAGMA corruption、long divergence writer interleave、
   read-only、无IVT public surface、16窗口child crash harness；
@@ -143,7 +153,10 @@ path page 128 rows / 4 MiB、DB与restore copy各8 GiB。常量不可由config�
   assembly-external public surface 2/2、`Atelia.sln` build 0 warning / 0 error、docs checker 15/0、diff check clean；
 - review/commit evidence：冻结candidate经两路独立只读review均为GO；包含本次变更的containing commit作为commit evidence，
   不在提交前虚构commit hash；
-- cutover/platform boundary：current production仍由old DerivedRecap composition承载，尚未cutover；Timeline V1 durable lease/fsync
+- C3D source evidence：public 4,097 rows通过CLI Timeline sync与Manager zero-call vertical；65,537 durable rows通过reopen、
+  first/last page、rewind/reselect、verify与backup/restore。4097/8194/65537实测ledger约21.35/42.72/341.40 MiB，append约
+  7.2/13.7/107.0秒；这是bounded fixture evidence，不是磁盘寿命承诺；
+- cutover/platform boundary：Timeline V2 durable lease/fsync
   仍为Linux-only，其他platform只返回typed unsupported，不提供弱durability fallback。
 
 ## Handoff to WP-02

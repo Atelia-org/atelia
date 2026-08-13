@@ -198,6 +198,8 @@ public static class HistoryTimelineFactory {
                 headRowId: null,
                 policy.PolicyDigest,
                 selectedRawHeadAtCommit: null,
+                selectedPathCount: 0,
+                HistorySelectedPathCommitment.EmptyDigest,
                 generation: 0
             );
             return new HistoryTimelineCreateResult.Created(
@@ -216,7 +218,7 @@ public static class HistoryTimelineFactory {
         catch (SqliteException exception)
             when (exception.SqliteErrorCode is 13 or 18) {
             return new HistoryTimelineCreateResult.LimitExceeded(
-                "MaximumDatabaseBytes"
+                "SqliteFull"
             );
         }
         catch (Exception exception) when (IsFactoryFailure(exception)) {

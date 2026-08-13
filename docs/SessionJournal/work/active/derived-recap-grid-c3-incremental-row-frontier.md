@@ -1,6 +1,6 @@
 # RecapGrid C3：逐 row 增量 frontier 重构
 
-状态：C3A、C3B Complete；C3C、C3D pending。
+状态：C3A、C3B Complete；C3D source implementation candidate等待最终closure；C3C pending。
 
 上游设计：
 
@@ -166,25 +166,26 @@ damaged anchor、budget/cancel/elapsed与zero-write paths。
 - promotion只读current-head assignment并以`MaximumNewCalls=0`重证，不暗中rebuild；
 - readiness/progress纯读，不构造provider、不写Store。
 
-### C3D — lifetime capacity
+### C3D — Timeline V2 lifetime capacity（source candidate）
 
-- 移除Timeline累计policy/row/trie-node固定cap及相应int narrowing；
-- 移除`HistoryRecentReserveAnchor`无continuation的4,097-row scan terminal：分页直到anchor/root，或提供绑定whole-head
-  的真实续扫cursor；不能让retry每次从head重来；
-- 保留operation/resource bounds与分页；
-- 4,097、65,537以及更长synthetic lineage均证明可继续，不靠把常量再调大。
-
-当前gate：真实public Timeline 4,097-row构造曾运行16分钟仍未离开`CommitAllRows`，SQLite约109 MiB，显示现有逐row
-commit为O(n²)/显著空间放大。C3B没有用Skip、缩小数字或synthetic Manager hook冒充该integration；C3D必须先优化
-Timeline scaling，再恢复真实4,097-row Manager discovery/build验收。
+- hard cut `derived/history-timeline/v2` / Schema V2；V1 bytes inert且无fallback/migration；
+- 删除immutable trie path-copy，改为mutable current selected path + whole-head count/root commitment与O(log N) Merkle
+  append/truncate；normal read/page/reconcile验证local assignment、inclusion proof与whole head，sticky guard捕获越权middle mutation；
+- 移除Timeline累计policy/row/node count、database/restore总bytes固定cap及相应int narrowing；保留single artifact/page/raw audit/
+  operation limits；
+- `HistoryRecentReserveAnchor`只返回exact stop/count authority，Getter二次分页验证，不持whole path；
+- V2实测public 4,097-row CLI sync约18.2秒，真实Manager zero-call vertical通过；65,537 durable rows约341.40 MiB、append
+  约107秒，并通过reopen、path首尾、rewind/reselect、verify及backup/restore。4,097/8,194中间点约21.35/42.72 MiB与
+  7.2/13.7秒，证明节点总量O(N)且没有旧逐rowO(n²)放大；这些是fixture evidence，不是未来filesystem容量承诺。
 
 每个工作包都按 fresh review → implementation → independent review → focused/affected validation → commit闭合；
 不得把全部变更留成一次不可审阅的大diff。
 
 ## 5. 必须通过的验收
 
-- 4,096/4,097行：已有anchor时只处理exact suffix，不再whole-root BudgetExceeded；
-- 65,536/65,537累计对象：Timeline与Grid不因固定count拒绝；
+- 4,096/4,097行：public Timeline与Manager vertical均继续，不再whole-root BudgetExceeded；
+- 65,536/65,537累计对象：Timeline与Grid不因固定count拒绝；Timeline V2还须验证reopen/path、rewind/reselect、
+  verify与backup/restore，而不只检查一次append；
 - partial row：已提交Cells在restart后复用，只补missing cells，RowView最后原子发布；
 - restart：reopen后从最近assignment继续，完成后再次reopen为zero provider calls；
 - branch/rewind：共同祖先复用，sibling RowId不串用，回到旧branch可复用旧immutable assignment；

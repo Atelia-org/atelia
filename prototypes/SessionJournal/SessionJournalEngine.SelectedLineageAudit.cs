@@ -753,12 +753,6 @@ public sealed partial class SessionJournalEngine {
         CancellationToken cancellationToken
     ) {
         ValidateForwardCursorRange(cursor, exactPending);
-        if (cursor.PreviewedRange is not null
-            || cursor.PreviewedWindow is not null) {
-            throw new InvalidOperationException(
-                "A previewed forward range must be consumed before it can be extended."
-            );
-        }
         if (maxTotalRawEventCount is <= 0
             or > SessionSelectedLineageAuditLimits
                 .MaximumForwardRangeEventCount
@@ -768,7 +762,6 @@ public sealed partial class SessionJournalEngine {
                 nameof(maxTotalRawEventCount)
             );
         }
-
         RequireSelectedLineageCaptureCurrent(
             cursor.Authority.Capture
         );
@@ -807,7 +800,10 @@ public sealed partial class SessionJournalEngine {
                     break;
                 }
                 consumedNewEntry = true;
+                _testHooks.AfterPendingRangeExtendEntryRead?.Invoke();
                 cancellationToken.ThrowIfCancellationRequested();
+                entry = _testHooks.RewritePendingRangeExtendEntry?.Invoke(
+                    entry) ?? entry;
                 if (entry.Parent != expectedParent
                     || entry.SequenceNumber <= priorSequence) {
                     throw new InvalidDataException(
@@ -885,7 +881,8 @@ public sealed partial class SessionJournalEngine {
     ) {
         ValidateForwardCursorRange(cursor, range);
         if (ReferenceEquals(cursor.PreviewedRange, range)
-            && cursor.PreviewedWindow is { } existing) {
+            && cursor.PreviewedWindow is { } existing
+            && existing.ObservedRawHead == range.EndInclusive) {
             return existing;
         }
         SessionHistoryPlanningWindow window =

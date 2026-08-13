@@ -318,7 +318,7 @@ public sealed partial class GetterVerticalTests : IDisposable {
                     HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
                     O200kBaseHistoryUnitLoadEstimator.EstimatorId,
                     new HistoryLoadUnit(1),
-                    maxRawEvents: 64,
+                    maxRawEvents: 1024,
                     maxRenderedBytes: 1024 * 1024
                 ),
                 _estimator
@@ -342,7 +342,7 @@ public sealed partial class GetterVerticalTests : IDisposable {
             [definition.Capability.CapabilityFingerprint],
             [ContextHeaderCarrier.System],
             ["case."],
-            maximumBootstrapRows: 64,
+            maximumBootstrapRows: 1_000_000,
             maximumProjectedCalls: 1024
         );
         ControlHeadRef controlHead = Assert.IsType<
@@ -465,7 +465,7 @@ public sealed partial class GetterVerticalTests : IDisposable {
                 HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
                 O200kBaseHistoryUnitLoadEstimator.EstimatorId,
                 targetHistoryLoad: 1,
-                maxRawEvents: 64,
+                maxRawEvents: 1024,
                 maxRenderedBytes: 1024 * 1024));
         Assert.True(result is RecapGridCadenceCreateResult.Created
             or RecapGridCadenceCreateResult.AlreadyExists,

@@ -135,6 +135,9 @@ authority；所有Timeline writers经reserve-aware seal，Getter/context按健�
 目标policy为B=60,000、R=24,000，seal/build-read/anchor共用262,144 raw-event operation cap。operator新增
 provider-free `recap-grid cadence inspect|set-reserve`，后者只CAS改变R。该closure不改变本计划WP-00至WP-08的
 cutover completion，也不关闭长期容量/activation audit中的C2-C5。
+C3 capacity进展：C3A Store V2 immutable progression assignment与C3B Manager head-to-anchor incremental frontier已Complete；
+C3D Timeline Schema V2 hard-cut、O(log N) selected-path commitment与lifetime-cap removal为source candidate，等待最终closure；
+C3C Online/CLI/Host Grid-first orchestration仍pending。以上source状态不替代real-provider canary或actual cyber activation。
 fresh no-local checkout已在provisional containing source tree `913fd8fa`上完成：全新restore成功、Release solution
 build 0 warning / 0 error、36个test projects合计4658/4658 green、package vulnerability audit零命中、scoped docs
 14/0、all-tracked docs 71/0且checkout status clean。最终containing commit只回写该fresh evidence，没有再改变product/test source。

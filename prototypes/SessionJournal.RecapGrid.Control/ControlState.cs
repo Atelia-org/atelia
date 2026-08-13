@@ -793,6 +793,8 @@ internal sealed class ControlState {
         value.SelectedRawHeadAtCommit?.Ticket.Packed,
         value.SelectedRawHeadAtCommit?.SegmentNumber,
         value.SelectedRawHeadAtCommit?.Hint.Packed,
+        value.SelectedPathCount,
+        value.SelectedPathDigest,
         value.Generation
     );
 
@@ -817,6 +819,8 @@ internal sealed class ControlState {
             value.HeadRowId is null ? null : new HistoryRowId(value.HeadRowId),
             value.ActivePolicyDigest,
             rawHead,
+            value.SelectedPathCount,
+            value.SelectedPathDigest,
             value.Generation
         );
     }
@@ -896,6 +900,8 @@ internal sealed record TimelineHeadDto(
     ulong? RawTicket,
     uint? RawSegment,
     uint? RawHint,
+    long SelectedPathCount,
+    string SelectedPathDigest,
     long Generation
 );
 internal sealed record ControlHeadDto(

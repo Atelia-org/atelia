@@ -621,6 +621,177 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
     }
 
     [Fact]
+    public void TimelineSyncPublicVerticalCommits4097RowsWithoutLifetimeCliff() {
+        const int rowCount = 4_097;
+        CreateJournal(turns: rowCount);
+        string admission = WriteAdmission(["create"]);
+        RefId refId;
+        using (SessionJournalEngine journal =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            refId = journal.BranchRefId;
+        }
+        Assert.Equal(0, Run(
+            "init", "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", admission,
+            "--partition-algorithm",
+            HistoryPartitionAlgorithms
+                .FirstReplaySafeBoundaryAtTargetV1,
+            "--history-load-estimator",
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
+            "--target-history-load", "1",
+            "--max-raw-events", "3",
+            "--max-rendered-bytes", "1048576"
+        ));
+
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        (int code, JsonElement report) = RunCaptured(
+            "timeline", "sync",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--max-rows", rowCount.ToString()
+        );
+        Assert.Equal(2, code);
+        Assert.Equal("row-limit", report.GetProperty("status").GetString());
+        Assert.Equal(
+            rowCount,
+            report.GetProperty("detail").GetProperty("committed").GetInt32());
+
+        using HistoryTimelineReaderHandle timeline = Assert.IsType<
+            HistoryTimelineReaderOpenResult.Opened
+        >(HistoryTimelineMaintenance.OpenReader(_root, refId)).Handle;
+        TimelineHeadRef head = Assert.IsType<
+            HistoryTimelineSnapshotResult.Available
+        >(timeline.Reader.ReadSnapshot()).Head;
+        long selectedRows = 0;
+        HistoryTimelinePathCursor? cursor = null;
+        do {
+            HistoryTimelinePathPageResult.Page page = Assert.IsType<
+                HistoryTimelinePathPageResult.Page
+            >(timeline.Reader.ReadSelectedPathPage(head, cursor));
+            selectedRows = checked(selectedRows + page.Value.Rows.Count);
+            cursor = page.Value.Next;
+        } while (cursor is not null);
+        Assert.Equal(rowCount, selectedRows);
+        string databasePath = Path.Combine(
+            _root,
+            "derived",
+            "history-timeline",
+            "v2",
+            "refs",
+            refId.ToHexString(),
+            "timelines",
+            $"{head.TimelineId.Value}.sqlite");
+        Console.WriteLine(
+            $"C3D public-cli rows={selectedRows} bytes={new FileInfo(databasePath).Length} elapsedMs={elapsed.ElapsedMilliseconds}"
+        );
+    }
+
+    [Fact]
+    public void TimelineSyncOnlineExactTerminalAndDebtContinuationAreExact() {
+        CreateJournal(turns: 2);
+        string refId = InitializeTimeline(maxRawEvents: 64);
+
+        (int firstCode, JsonElement first) = RunCaptured(
+            "timeline", "sync", "--input", _root,
+            "--confirm-ref", refId, "--max-rows", "2");
+        Assert.Equal(2, firstCode);
+        Assert.Equal("row-limit", first.GetProperty("status").GetString());
+        TimelineHeadRef afterFirst = ReadTimelineHead(refId);
+        Assert.Equal(2, afterFirst.SelectedPathCount);
+
+        (int finalCode, JsonElement final) = RunCaptured(
+            "timeline", "sync", "--input", _root,
+            "--confirm-ref", refId, "--max-rows", "1");
+        Assert.Equal(0, finalCode);
+        Assert.Equal("synchronized", final.GetProperty("status").GetString());
+        TimelineHeadRef terminal = ReadTimelineHead(refId);
+        Assert.Equal(3, terminal.SelectedPathCount);
+
+        Assert.Equal(0, Run(
+            "timeline", "sync", "--input", _root,
+            "--confirm-ref", refId, "--max-rows", "3"));
+        Assert.Equal(terminal, ReadTimelineHead(refId));
+    }
+
+    [Fact]
+    public void TimelineSyncOfflineExactTerminalAndDebtContinuationAreExact() {
+        CreateJournal(turns: 12);
+        string refId = InitializeTimeline(maxRawEvents: 3);
+        int auditEvents = CountSelectedAuditEvents();
+        RecapGridCommands.MaximumAuditEventsForTest.Value = auditEvents;
+        try {
+            (int firstCode, JsonElement first) = RunCaptured(
+                "timeline", "sync", "--input", _root,
+                "--confirm-ref", refId, "--max-rows", "12");
+            Assert.Equal(2, firstCode);
+            Assert.Equal("row-limit", first.GetProperty("status").GetString());
+            Assert.Equal(12, ReadTimelineHead(refId).SelectedPathCount);
+
+            (int finalCode, JsonElement final) = RunCaptured(
+                "timeline", "sync", "--input", _root,
+                "--confirm-ref", refId, "--max-rows", "12");
+            Assert.Equal(0, finalCode);
+            Assert.Equal(
+                "synchronized",
+                final.GetProperty("status").GetString());
+            TimelineHeadRef terminal = ReadTimelineHead(refId);
+            Assert.Equal(23, terminal.SelectedPathCount);
+
+            Assert.Equal(0, Run(
+                "timeline", "sync", "--input", _root,
+                "--confirm-ref", refId, "--max-rows", "1"));
+            Assert.Equal(terminal, ReadTimelineHead(refId));
+        }
+        finally {
+            RecapGridCommands.MaximumAuditEventsForTest.Value = null;
+        }
+    }
+
+    [Theory]
+    [InlineData(64)]
+    [InlineData(3)]
+    public void TimelineSyncTerminalPartitionLimitHasStableTypedStatus(
+        int maxRawEvents
+    ) {
+        using (SessionJournalLegacyImportWriter writer =
+               SessionJournalLegacyImportWriter.Create(
+                   _root,
+                   new SessionCreateOptions(
+                       "model", "system", "recap-grid-cli"))) {
+            _ = writer.AppendObservation("small");
+            _ = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("small")]),
+                new CompletionDescriptor("import", "v1", "model"));
+            _ = writer.AppendObservation(new string('x', 4096));
+            _ = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("large")]),
+                new CompletionDescriptor("import", "v1", "model"));
+        }
+        string refId = InitializeTimeline(
+            maxRawEvents,
+            maxRenderedBytes: 1024);
+        if (maxRawEvents == 3) {
+            RecapGridCommands.MaximumAuditEventsForTest.Value =
+                CountSelectedAuditEvents();
+        }
+        try {
+            (int code, JsonElement report) = RunCaptured(
+                "timeline", "sync", "--input", _root,
+                "--confirm-ref", refId, "--max-rows", "3");
+            Assert.Equal(2, code);
+            Assert.Equal(
+                "partition-limit",
+                report.GetProperty("status").GetString());
+            Assert.Equal(2, ReadTimelineHead(refId).SelectedPathCount);
+        }
+        finally {
+            RecapGridCommands.MaximumAuditEventsForTest.Value = null;
+        }
+    }
+
+    [Fact]
     public void InitPreflightsAdmissionAndPolicyBeforeAnyDomainMutation() {
         CreateJournal();
         string refId;
@@ -1657,6 +1828,38 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                 new CompletionDescriptor("import", "v1", "model")
             );
         }
+    }
+
+    private string InitializeTimeline(
+        int maxRawEvents,
+        int maxRenderedBytes = 1024 * 1024
+    ) {
+        string refId;
+        using (SessionJournalEngine journal =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            refId = journal.BranchRefId.ToHexString();
+        }
+        Assert.Equal(0, Run(
+            "init", "--input", _root, "--confirm-ref", refId,
+            "--admission", WriteAdmission(["create"]),
+            "--partition-algorithm",
+            HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+            "--history-load-estimator",
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
+            "--target-history-load", "1",
+            "--max-raw-events", maxRawEvents.ToString(),
+            "--max-rendered-bytes", maxRenderedBytes.ToString()));
+        return refId;
+    }
+
+    private TimelineHeadRef ReadTimelineHead(string refId) {
+        using HistoryTimelineReaderHandle timeline = Assert.IsType<
+            HistoryTimelineReaderOpenResult.Opened>(
+            HistoryTimelineMaintenance.OpenReader(
+                _root, RefId.ParseHex(refId).Value)).Handle;
+        return Assert.IsType<HistoryTimelineSnapshotResult.Available>(
+            timeline.Reader.ReadSnapshot()).Head;
     }
 
     private async Task<EventAddress> CreatePreparedAsync(

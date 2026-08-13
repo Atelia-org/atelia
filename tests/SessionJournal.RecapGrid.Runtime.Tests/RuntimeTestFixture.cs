@@ -109,6 +109,8 @@ internal static class RuntimeTestFixture {
             rowId,
             new string('3', 64),
             rawHead,
+            1,
+            new string('4', 64),
             generation: 1
         );
         var controlHead = new ControlHeadRef(
@@ -328,6 +330,8 @@ internal static class RuntimeTestFixture {
             currentRowId,
             new string('3', 64),
             currentDescriptor.EndInclusive,
+            2,
+            new string('4', 64),
             generation: 2
         );
         var controlHead = new ControlHeadRef(
@@ -483,6 +487,8 @@ internal static class RuntimeTestFixture {
                 currentRowId,
                 new string('3', 64),
                 descriptor.EndInclusive,
+                2,
+                new string('4', 64),
                 2
             ),
             new ControlHeadRef(

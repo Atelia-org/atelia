@@ -10,14 +10,8 @@ public static class HistoryTimelineStoreLimits {
     public const int MaximumHeadUtf8Bytes = 4 * 1024;
     public const int MaximumLocatorUtf8Bytes = 4 * 1024;
     public const int MaximumBackupManifestUtf8Bytes = 16 * 1024;
-    public const int MaximumPolicyCount = 65_536;
-    public const int MaximumRowCount = 65_536;
-    public const int MaximumTrieNodeCount = 3_276_800;
     public const int MaximumPathPageRows = 128;
     public const int MaximumPathPageUtf8Bytes = 4 * 1024 * 1024;
-    public const long MaximumDatabaseBytes =
-        8L * 1024 * 1024 * 1024;
-    public const long MaximumRestoreCopyBytes = MaximumDatabaseBytes;
 }
 
 /// <summary>
@@ -469,8 +463,7 @@ public sealed record HistoryTimelineBackupManifest {
                 nameof(headSha256)
             );
         }
-        if (databaseBytes is < 1
-            or > HistoryTimelineStoreLimits.MaximumDatabaseBytes) {
+        if (databaseBytes < 1) {
             throw new ArgumentOutOfRangeException(
                 nameof(databaseBytes)
             );
@@ -570,33 +563,4 @@ public abstract record HistoryTimelineAbandonResult {
     public sealed record Busy : HistoryTimelineAbandonResult;
     public sealed record Invalid(string Code, string Detail)
         : HistoryTimelineAbandonResult;
-}
-
-internal sealed record HistoryTimelineSelectedPathSnapshotBody {
-    internal HistoryTimelineSelectedPathSnapshotBody(
-        HistoryRowId headRowId,
-        string rowRootDigest,
-        string endRootDigest,
-        int memberCount
-    ) {
-        HistoryTimelineSyntax.RequireHistoryRowId(headRowId);
-        HeadRowId = headRowId;
-        RowRootDigest = HistoryTimelineSyntax.RequireSha256(
-            rowRootDigest,
-            nameof(rowRootDigest)
-        );
-        EndRootDigest = HistoryTimelineSyntax.RequireSha256(
-            endRootDigest,
-            nameof(endRootDigest)
-        );
-        if (memberCount < 1) {
-            throw new ArgumentOutOfRangeException(nameof(memberCount));
-        }
-        MemberCount = memberCount;
-    }
-
-    internal HistoryRowId HeadRowId { get; }
-    internal string RowRootDigest { get; }
-    internal string EndRootDigest { get; }
-    internal int MemberCount { get; }
 }

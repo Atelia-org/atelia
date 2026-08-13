@@ -16,10 +16,11 @@ public sealed partial class GetterVerticalTests {
         using RecapGridContextHandle getter = OpenGetter(fixture.Journal);
         EventAddress boundary = fixture.Journal.ReadCurrentHead()!.Value;
 
+        RecapGridContextResolveResult resolved = getter.Resolve(boundary, 0);
         RecapGridContextResolveResult.ReserveBootstrapRawOnly bootstrap =
             Assert.IsType<
                 RecapGridContextResolveResult.ReserveBootstrapRawOnly>(
-                getter.Resolve(boundary, 0)
+                resolved
             );
         Assert.Equal(fixture.TimelineHead, bootstrap.Evidence.TimelineHead);
         Assert.Equal(fixture.Rows.Count, bootstrap.Evidence.VerifiedRows);
@@ -136,6 +137,43 @@ public sealed partial class GetterVerticalTests {
             fixture.Rows[^3].Descriptor.RowId,
             previous.SelectedRowId
         );
+    }
+
+    [Fact]
+    public async Task EligibleAndBootstrapResolutionCross129RowPageBoundary() {
+        using Fixture fixture = await CreateBuiltFixture(turns: 129);
+        EventAddress boundary = fixture.Journal.ReadCurrentHead()!.Value;
+
+        UpdateCadence(
+            fixture.Journal,
+            FindCrossingRequirement(
+                fixture,
+                boundary,
+                minimumHeadThroughRows: 129));
+        using (RecapGridContextHandle eligible = OpenGetter(
+                   fixture.Journal)) {
+            RecapGridContextResolveResult.Selected selected = Assert.IsType<
+                RecapGridContextResolveResult.Selected>(
+                eligible.Resolve(boundary, 0));
+            int selectedIndex = fixture.Rows.ToList().FindIndex(
+                row => row.Descriptor.RowId
+                    == selected.Selection.SelectedRowId);
+            Assert.InRange(
+                selectedIndex,
+                0,
+                fixture.Rows.Count - 129);
+        }
+
+        UpdateCadence(
+            fixture.Journal,
+            minimumRecentHistoryLoad: 1_000_000);
+        using RecapGridContextHandle bootstrap = OpenGetter(fixture.Journal);
+        RecapGridContextResolveResult.ReserveBootstrapRawOnly raw =
+            Assert.IsType<
+                RecapGridContextResolveResult.ReserveBootstrapRawOnly>(
+                bootstrap.Resolve(boundary, 0));
+        Assert.True(raw.Evidence.VerifiedRows > 128);
+        Assert.True(raw.Evidence.Metrics.ExaminedTimelineRows > 128);
     }
 
     [Fact]
@@ -820,7 +858,7 @@ public sealed partial class GetterVerticalTests {
                         .FirstReplaySafeBoundaryAtTargetV1,
                     O200kBaseHistoryUnitLoadEstimator.EstimatorId,
                     targetHistoryLoad,
-                    maxRawEvents: 64,
+                    maxRawEvents: 1024,
                     maxRenderedBytes: 1024 * 1024
                 )
             )
@@ -829,7 +867,8 @@ public sealed partial class GetterVerticalTests {
 
     private long FindCrossingRequirement(
         Fixture fixture,
-        EventAddress boundary
+        EventAddress boundary,
+        long minimumHeadThroughRows = 2
     ) {
         using HistoryTimelineBuildReadSession session = Assert.IsType<
             HistoryTimelineBuildReadSessionOpenResult.Opened>(
@@ -838,19 +877,53 @@ public sealed partial class GetterVerticalTests {
                 _estimator
             )
         ).Session;
-        for (long required = 2; required <= 10_000; required++) {
-            HistoryRecentReserveAnchorResult result =
-                session.FindRecentReserveAnchor(
-                    fixture.TimelineHead,
-                    boundary,
-                    new HistoryRecentReserveRequirement(
-                        fixture.TimelineHead.ActivePartitionPolicyDigest,
-                        O200kBaseHistoryUnitLoadEstimator.EstimatorId,
-                        new HistoryLoadUnit(required)
-                    )
-                );
+        HistoryRecentReserveAnchorResult Read(long required) =>
+            session.FindRecentReserveAnchor(
+                fixture.TimelineHead,
+                boundary,
+                new HistoryRecentReserveRequirement(
+                    fixture.TimelineHead.ActivePartitionPolicyDigest,
+                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                    new HistoryLoadUnit(required)));
+
+        long lower = 2;
+        long upper = 2;
+        while (upper <= 1_000_000_000) {
+            HistoryRecentReserveAnchorResult result = Read(upper);
             if (result is HistoryRecentReserveAnchorResult.Eligible eligible
-                && eligible.HeadThroughAnchor.Count == 2) {
+                && eligible.HeadThroughAnchorRowCount
+                    >= minimumHeadThroughRows) {
+                break;
+            }
+            if (result is HistoryRecentReserveAnchorResult
+                    .ReserveBootstrapRequired) {
+                break;
+            }
+            lower = checked(upper + 1);
+            upper = checked(upper * 2);
+        }
+        while (lower < upper) {
+            long required = lower + ((upper - lower) / 2);
+            HistoryRecentReserveAnchorResult result = Read(required);
+            bool meets = result is HistoryRecentReserveAnchorResult
+                    .ReserveBootstrapRequired
+                || result is HistoryRecentReserveAnchorResult.Eligible eligible
+                    && eligible.HeadThroughAnchorRowCount
+                        >= minimumHeadThroughRows;
+            if (meets) {
+                upper = required;
+            }
+            else {
+                lower = checked(required + 1);
+            }
+        }
+        for (long required = lower;
+             required <= checked(lower + 2);
+             required++) {
+            HistoryRecentReserveAnchorResult result = Read(required);
+            if (result is HistoryRecentReserveAnchorResult.Eligible eligible
+                && eligible.HeadThroughAnchorRowCount
+                    >= minimumHeadThroughRows) {
                 return required;
             }
             if (result is HistoryRecentReserveAnchorResult
@@ -859,7 +932,7 @@ public sealed partial class GetterVerticalTests {
             }
         }
         throw new Xunit.Sdk.XunitException(
-            "The fixture did not expose a two-row recent-reserve anchor."
+            $"The fixture did not expose a {minimumHeadThroughRows}-row recent-reserve anchor."
         );
     }
 }

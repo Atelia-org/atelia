@@ -2,6 +2,8 @@ using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Microsoft.Data.Sqlite;
+using System.Diagnostics;
+using static Atelia.SessionJournal.HistoryTimeline.Tests.HistoryTimelineTestData;
 
 namespace Atelia.SessionJournal.HistoryTimeline.Tests;
 
@@ -105,7 +107,7 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                 unsupportedPath,
                 unsupported.BranchRefId
             ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
-            ExecuteSql(databasePath, "PRAGMA user_version = 2;");
+            ExecuteSql(databasePath, "PRAGMA user_version = 3;");
 
             HistoryTimelineOpenResult.UnsupportedSchema result =
                 Assert.IsType<HistoryTimelineOpenResult.UnsupportedSchema>(
@@ -114,9 +116,9 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                         _estimator
                     )
                 );
-            Assert.Equal(2, result.SchemaVersion);
+            Assert.Equal(3, result.SchemaVersion);
             Assert.Equal(
-                2,
+                3,
                 Assert.IsType<
                     HistoryTimelineReaderOpenResult.UnsupportedSchema
                 >(HistoryTimelineMaintenance.OpenReader(
@@ -176,6 +178,29 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             ));
             Assert.Equal("TimelineStoreSlotMissing", result.Code);
         }
+    }
+
+    [Fact]
+    public void V1BytesAreInertAndNeverUsedAsAFactoryFallback() {
+        string path = NewPath();
+        using SessionJournalEngine journal = CreateJournal(path);
+        string legacyRoot = Path.Combine(
+            path, "derived", "history-timeline", "v1");
+        Directory.CreateDirectory(legacyRoot);
+        string sentinel = Path.Combine(legacyRoot, "sentinel.bin");
+        byte[] poison = [0, 255, 17, 33, 65, 0];
+        File.WriteAllBytes(sentinel, poison);
+
+        Assert.IsType<HistoryTimelineOpenResult.Absent>(
+            HistoryTimelineFactory.Open(journal.ReadView, _estimator));
+        Assert.Equal(poison, File.ReadAllBytes(sentinel));
+
+        Assert.IsType<HistoryTimelineCreateResult.Created>(
+            HistoryTimelineFactory.Create(
+                journal.ReadView, InitialPolicy(), _estimator));
+        Assert.Equal(poison, File.ReadAllBytes(sentinel));
+        Assert.True(Directory.Exists(Path.Combine(
+            path, "derived", "history-timeline", "v2")));
     }
 
     [Fact]
@@ -243,10 +268,10 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             schemaPath,
             schema.BranchRefId
         ).TimelineDatabasePath(schemaCreated.Locator.ActiveTimelineId);
-        ExecuteSql(schemaDatabase, "PRAGMA user_version = 2;");
+        ExecuteSql(schemaDatabase, "PRAGMA user_version = 3;");
 
         Assert.Equal(
-            2,
+            3,
             Assert.IsType<HistoryTimelineSnapshotResult.UnsupportedSchema>(
                 handle.Reader.ReadSnapshot()
             ).SchemaVersion
@@ -720,7 +745,7 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
         ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
         ExecuteSql(
             databasePath,
-            "UPDATE selected_path_nodes SET canonical = zeroblob(length(canonical)) WHERE node_digest = (SELECT node_digest FROM selected_path_nodes LIMIT 1);"
+            "UPDATE rows SET canonical = zeroblob(length(canonical)) WHERE row_id = (SELECT row_id FROM rows LIMIT 1);"
         );
         Assert.IsType<HistoryTimelineInspectResult.Invalid>(
             HistoryTimelineMaintenance.Verify(
@@ -1107,6 +1132,258 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
     }
 
     [Fact]
+    public void V2MutableSelectedPathCommitsAndVerifies65537Rows() {
+        const int firstMilestone = 4_097;
+        const int secondMilestone = firstMilestone * 2;
+        const int rowCount = 65_537;
+        string path = NewPath();
+        using SessionJournalEngine journal = CreateJournal(path);
+        HistoryTimelineCreateResult.Created created = Assert.IsType<
+            HistoryTimelineCreateResult.Created
+        >(HistoryTimelineFactory.Create(
+            journal.ReadView,
+            InitialPolicy(),
+            _estimator
+        ));
+        var policy = PartitionPolicyRevision.Create(
+            created.Locator.ActiveTimelineId,
+            HistoryPartitionAlgorithms
+                .FirstReplaySafeBoundaryAtTargetV1,
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            new HistoryLoadUnit(1),
+            maxRawEvents: 8,
+            maxRenderedBytes: 1024 * 1024
+        );
+        var ledger = OpenLedger(
+            path,
+            journal.BranchRefId,
+            created.Locator
+        );
+        TimelineHeadRef head = ReadHead(ledger);
+        string databasePath = new HistoryTimelinePaths(
+            path,
+            journal.BranchRefId
+        ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
+        var elapsed = Stopwatch.StartNew();
+        long firstBytes = 0;
+        long secondBytes = 0;
+        HistorySegmentDescriptor? predecessor = null;
+        HistorySegmentDescriptor? root = null;
+        HistorySegmentDescriptor? penultimate = null;
+        SessionContextAnchorSetupReferences setups = Setups();
+        for (int index = 0; index < rowCount; index++) {
+            EventAddress start = Address((ulong)(1_000 + index));
+            EventAddress end = Address((ulong)(1_001 + index));
+            var point = new HistoryPartitionPoint(
+                head.TimelineId,
+                policy.PolicyDigest,
+                start,
+                end,
+                setups,
+                setups,
+                index,
+                index + 1,
+                new HistoryLoadUnit(1),
+                rawEventCount: 1,
+                measuredRenderedUtf8Bytes: 1
+            );
+            HistorySegmentDescriptor descriptor =
+                HistorySegmentDescriptorFactory.Create(
+                    point,
+                    new BoundHistorySegmentRange(
+                        journal.BranchRefId,
+                        start,
+                        end,
+                        setups,
+                        setups,
+                        index,
+                        index + 1,
+                        rawEventCount: 1,
+                        new string('a', 64)
+                    ),
+                    policy,
+                    predecessor
+                );
+            var fence = new FixedRawFence(
+                journal.BranchRefId,
+                end
+            );
+            var proposal = new HistoryRowProposal(
+                head,
+                end,
+                descriptor
+            );
+            head = Assert.IsType<HistoryTimelineCommitResult.Committed>(
+                ledger.CommitRow(new HistoryRowCommitCandidate(
+                    proposal,
+                    fence
+                ))
+            ).Head;
+            root ??= descriptor;
+            if (index == rowCount - 2) {
+                penultimate = descriptor;
+            }
+            predecessor = descriptor;
+            if (index + 1 == firstMilestone) {
+                firstBytes = new FileInfo(databasePath).Length;
+                Console.WriteLine(
+                    $"C3D rows={firstMilestone} bytes={firstBytes} elapsedMs={elapsed.ElapsedMilliseconds}"
+                );
+            }
+            else if (index + 1 == secondMilestone) {
+                secondBytes = new FileInfo(databasePath).Length;
+                Console.WriteLine(
+                    $"C3D rows={secondMilestone} bytes={secondBytes} elapsedMs={elapsed.ElapsedMilliseconds}"
+                );
+            }
+        }
+
+        long finalBytes = new FileInfo(databasePath).Length;
+        Console.WriteLine(
+            $"C3D rows={rowCount} bytes={finalBytes} elapsedMs={elapsed.ElapsedMilliseconds}"
+        );
+        Assert.True(firstBytes > 0);
+        Assert.InRange(secondBytes, firstBytes, checked(firstBytes * 3));
+        Assert.InRange(finalBytes, secondBytes, checked(firstBytes * 20));
+        Assert.Equal(rowCount, ReadStoredRowCount(databasePath));
+        Assert.Equal(rowCount, head.SelectedPathCount);
+        using (SqliteConnection countConnection = OpenSqlite(databasePath))
+        using (SqliteCommand countCommand = countConnection.CreateCommand()) {
+            countCommand.CommandText =
+                "SELECT COUNT(*) FROM current_selected_path_merkle;";
+            long commitmentNodes = Convert.ToInt64(
+                countCommand.ExecuteScalar());
+            Assert.InRange(
+                commitmentNodes,
+                (long)rowCount,
+                checked((2L * rowCount) - 1));
+        }
+        Assert.Equal(predecessor!.RowId, head.HeadRowId);
+        Assert.IsType<HistoryTimelineStoreReadResult<TimelineHeadRef>.Found>(
+            ledger.VerifyFully()
+        );
+
+        long publicRows = 0;
+        HistoryRowId? publicNewest = null;
+        HistoryRowId? publicOldest = null;
+        using (HistoryTimelineHandle reopened = Open(journal)) {
+            Assert.Equal(head, Assert.IsType<
+                HistoryTimelineSnapshotResult.Available
+            >(reopened.Reader.ReadSnapshot()).Head);
+            HistoryTimelinePathCursor? cursor = null;
+            do {
+                HistoryTimelinePathPage page = Assert.IsType<
+                    HistoryTimelinePathPageResult.Page
+                >(reopened.Reader.ReadSelectedPathPage(
+                    head,
+                    cursor)).Value;
+                publicNewest ??= page.Rows[0].Descriptor.RowId;
+                publicOldest = page.Rows[^1].Descriptor.RowId;
+                publicRows = checked(publicRows + page.Rows.Count);
+                cursor = page.Next;
+            } while (cursor is not null);
+        }
+        Assert.Equal(rowCount, publicRows);
+        Assert.Equal(predecessor.RowId, publicNewest);
+        Assert.Equal(root!.RowId, publicOldest);
+
+        Assert.NotNull(penultimate);
+        TimelineHeadRef rewound = Assert.IsType<
+            HistoryTimelineReconcileResult.Reconciled
+        >(ledger.ReconcileSelectedPath(
+            new HistoryTimelineReconcileCandidate(
+                head,
+                penultimate.RowId,
+                new FixedRawFence(
+                    journal.BranchRefId,
+                    penultimate.EndInclusive)))).Head;
+        EventAddress siblingStart = penultimate.EndInclusive;
+        EventAddress siblingEnd = Address(9_000_001);
+        var siblingPoint = new HistoryPartitionPoint(
+            head.TimelineId,
+            policy.PolicyDigest,
+            siblingStart,
+            siblingEnd,
+            setups,
+            setups,
+            rowCount - 1,
+            rowCount,
+            new HistoryLoadUnit(1),
+            rawEventCount: 1,
+            measuredRenderedUtf8Bytes: 1);
+        HistorySegmentDescriptor sibling =
+            HistorySegmentDescriptorFactory.Create(
+                siblingPoint,
+                new BoundHistorySegmentRange(
+                    journal.BranchRefId,
+                    siblingStart,
+                    siblingEnd,
+                    setups,
+                    setups,
+                    rowCount - 1,
+                    rowCount,
+                    rawEventCount: 1,
+                    new string('b', 64)),
+                policy,
+                penultimate);
+        TimelineHeadRef siblingHead = Assert.IsType<
+            HistoryTimelineCommitResult.Committed
+        >(ledger.CommitRow(new HistoryRowCommitCandidate(
+            new HistoryRowProposal(rewound, siblingEnd, sibling),
+            new FixedRawFence(journal.BranchRefId, siblingEnd)))).Head;
+        TimelineHeadRef common = Assert.IsType<
+            HistoryTimelineReconcileResult.Reconciled
+        >(ledger.ReconcileSelectedPath(
+            new HistoryTimelineReconcileCandidate(
+                siblingHead,
+                penultimate.RowId,
+                new FixedRawFence(
+                    journal.BranchRefId,
+                    penultimate.EndInclusive)))).Head;
+        TimelineHeadRef reselected = Assert.IsType<
+            HistoryTimelineCommitResult.Committed
+        >(ledger.CommitRow(new HistoryRowCommitCandidate(
+            new HistoryRowProposal(
+                common,
+                predecessor.EndInclusive,
+                predecessor),
+            new FixedRawFence(
+                journal.BranchRefId,
+                predecessor.EndInclusive)))).Head;
+        Assert.Equal(predecessor.RowId, reselected.HeadRowId);
+        Assert.Equal(rowCount + 1, ReadStoredRowCount(databasePath));
+
+        string backup = NewPath();
+        HistoryTimelineBackupResult.Created backedUp = Assert.IsType<
+            HistoryTimelineBackupResult.Created
+        >(HistoryTimelineMaintenance.Backup(
+            path,
+            journal.BranchRefId,
+            backup));
+        Assert.Equal(reselected, backedUp.Manifest.Head);
+        Assert.IsType<HistoryTimelineRestoreResult.Restored>(
+            HistoryTimelineMaintenance.Restore(
+                path,
+                journal.BranchRefId,
+                new HistoryTimelineActiveConfirmation(
+                    created.Locator,
+                    reselected),
+                backup));
+        using HistoryTimelineHandle restored = Open(journal);
+        Assert.Equal(reselected, Assert.IsType<
+            HistoryTimelineSnapshotResult.Available
+        >(restored.Reader.ReadSnapshot()).Head);
+        Assert.IsType<HistoryTimelineReaderRowResult.Selected>(
+            restored.Reader.ReadSelectedRow(
+                reselected,
+                predecessor.RowId));
+        Assert.IsType<HistoryTimelineReaderRowResult.NotOnSelectedPath>(
+            restored.Reader.ReadSelectedRow(
+                reselected,
+                sibling.RowId));
+    }
+
+    [Fact]
     public void PathPageRowAndByteCapsAcceptExactAndRejectCapPlusOne() {
         string path = NewPath();
         using SessionJournalEngine journal = CreateJournal(path);
@@ -1176,13 +1453,10 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
     }
 
     [Theory]
-    [InlineData("predecessor-roots")]
-    [InlineData("extra-member-roots")]
-    [InlineData("wrong-count")]
-    [InlineData("self-only")]
-    public void VerifyRejectsSnapshotThatIsNotExactPredecessorExtension(
-        string corruption
-    ) {
+    [InlineData("ordinal-gap")]
+    [InlineData("wrong-end")]
+    [InlineData("missing-middle")]
+    public void VerifyRejectsCorruptCurrentSelectedPath(string corruption) {
         string path = NewPath();
         using SessionJournalEngine journal = CreateJournal(path);
         HistoryTimelineCreateResult.Created created = Assert.IsType<
@@ -1196,19 +1470,15 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
         using (HistoryTimelineHandle handle = Open(journal)) {
             for (int index = 0; index < 3; index++) {
                 _ = journal.AppendObservation(
-                    $"snapshot recurrence observation {index}"
+                    $"selected path recurrence observation {index}"
                 );
                 _ = journal.AppendImportedAgentAction(
                     new ActionMessage([
                         new ActionBlock.Text(
-                            $"snapshot recurrence answer {index}"
+                            $"selected path recurrence answer {index}"
                         )
                     ]),
-                    new CompletionDescriptor(
-                        "import",
-                        "v1",
-                        "model-A"
-                    )
+                    new CompletionDescriptor("import", "v1", "model-A")
                 );
                 rows.Add(CommitNextDescriptor(handle, journal));
             }
@@ -1217,103 +1487,24 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             path,
             journal.BranchRefId
         ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
-        SnapshotFields first = ReadSnapshotFields(
-            databasePath,
-            rows[0].RowId
-        );
-        SnapshotFields second = ReadSnapshotFields(
-            databasePath,
-            rows[1].RowId
-        );
-        SnapshotFields third = ReadSnapshotFields(
-            databasePath,
-            rows[2].RowId
-        );
-
-        switch (corruption) {
-            case "predecessor-roots":
-                ForgeSnapshot(
-                    databasePath,
-                    rows[1].RowId,
-                    first.RowRootDigest,
-                    first.EndRootDigest,
-                    first.MemberCount
-                );
-                break;
-            case "extra-member-roots":
-                ForgeSnapshot(
-                    databasePath,
-                    rows[1].RowId,
-                    third.RowRootDigest,
-                    third.EndRootDigest,
-                    third.MemberCount
-                );
-                break;
-            case "wrong-count":
-                ForgeSnapshot(
-                    databasePath,
-                    rows[1].RowId,
-                    second.RowRootDigest,
-                    second.EndRootDigest,
-                    second.MemberCount + 1
-                );
-                break;
-            case "self-only":
-                ForgeSelfOnlySnapshot(
-                    databasePath,
-                    rows[1]
-                );
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(
-                    nameof(corruption)
-                );
-        }
+        string sql = corruption switch {
+            "ordinal-gap" =>
+                $"UPDATE current_selected_path SET ordinal = 10 WHERE row_id = '{rows[1].RowId.Value}';",
+            "wrong-end" =>
+                $"UPDATE current_selected_path SET end_address = randomblob(length(end_address)) WHERE row_id = '{rows[1].RowId.Value}';",
+            "missing-middle" =>
+                $"DELETE FROM current_selected_path WHERE row_id = '{rows[1].RowId.Value}';",
+            _ => throw new ArgumentOutOfRangeException(nameof(corruption))
+        };
+        ExecuteSql(databasePath, sql);
 
         Assert.IsType<HistoryTimelineInspectResult.Invalid>(
-            HistoryTimelineMaintenance.Verify(
-                path,
-                journal.BranchRefId
-            )
+            HistoryTimelineMaintenance.Verify(path, journal.BranchRefId)
         );
     }
 
     [Fact]
-    public void SnapshotReadRejectsColumnCanonicalMismatch() {
-        string path = NewPath();
-        using SessionJournalEngine journal = CreateJournal(path);
-        _ = journal.AppendObservation("snapshot read fixture");
-        HistoryTimelineCreateResult.Created created = Assert.IsType<
-            HistoryTimelineCreateResult.Created
-        >(HistoryTimelineFactory.Create(
-            journal.ReadView,
-            InitialPolicy(),
-            _estimator
-        ));
-        HistorySegmentDescriptor descriptor;
-        TimelineHeadRef head;
-        using (HistoryTimelineHandle handle = Open(journal)) {
-            descriptor = CommitNextDescriptor(handle, journal);
-            head = Assert.IsType<
-                HistoryTimelineSnapshotResult.Available
-            >(handle.Reader.ReadSnapshot()).Head;
-        }
-        string databasePath = new HistoryTimelinePaths(
-            path,
-            journal.BranchRefId
-        ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
-        ExecuteSql(
-            databasePath,
-            $"UPDATE selected_path_snapshots SET member_count = member_count + 1 WHERE head_row_id = '{descriptor.RowId.Value}';"
-        );
-        using HistoryTimelineHandle reopened = Open(journal);
-        Assert.IsType<HistoryTimelineReaderRowResult.Invalid>(
-            reopened.Reader.ReadSelectedRow(head, descriptor.RowId)
-        );
-    }
-
-    [Fact]
-    public void NormalSelectedReadsRejectCurrentSnapshotWithSuccessorRoots() {
+    public void SelectedReadsRejectCurrentPathTailBeyondWholeHead() {
         string path = NewPath();
         using SessionJournalEngine journal = CreateJournal(path);
         HistoryTimelineCreateResult.Created created = Assert.IsType<
@@ -1327,11 +1518,11 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
         HistorySegmentDescriptor a2;
         TimelineHeadRef rewound;
         using (HistoryTimelineHandle handle = Open(journal)) {
-            _ = journal.AppendObservation("snapshot authority A1");
+            _ = journal.AppendObservation("selected path authority A1");
             a1 = CommitNextDescriptor(handle, journal);
             EventAddress a2Raw = journal.AppendImportedAgentAction(
                 new ActionMessage([
-                    new ActionBlock.Text("snapshot authority A2")
+                    new ActionBlock.Text("selected path authority A2")
                 ]),
                 new CompletionDescriptor("import", "v1", "model-A")
             );
@@ -1350,31 +1541,32 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                 journal.ReadView
             )).Head;
         }
-        Assert.Equal(a1.RowId, rewound.HeadRowId);
         string databasePath = new HistoryTimelinePaths(
             path,
             journal.BranchRefId
         ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
-        SnapshotFields successor = ReadSnapshotFields(
+        InsertCurrentPathRow(
             databasePath,
-            a2.RowId
-        );
-        ForgeSnapshot(
-            databasePath,
-            a1.RowId,
-            successor.RowRootDigest,
-            successor.EndRootDigest,
-            successor.MemberCount
+            ordinal: 1,
+            a2.RowId,
+            a2.EndInclusive
         );
 
-        using (HistoryTimelineHandle rowReader = Open(journal)) {
-            Assert.IsType<HistoryTimelineReaderRowResult.Invalid>(
-                rowReader.Reader.ReadSelectedRow(
-                    rewound,
-                    a2.RowId
-                )
-            );
-        }
+        Assert.IsType<HistoryTimelineOpenResult.Invalid>(
+            HistoryTimelineFactory.Open(journal.ReadView, _estimator));
+        Assert.IsType<SelectedHistoryRowResult.Invalid>(OpenLedger(
+            path,
+            journal.BranchRefId,
+            created.Locator
+        ).ReadSelectedRow(rewound, a2.RowId));
+        Assert.IsType<HistoryTimelineStorePathPageResult.Invalid>(OpenLedger(
+            path,
+            journal.BranchRefId,
+            created.Locator
+        ).ReadSelectedPathPage(
+            rewound,
+            startAt: null,
+            HistoryTimelineStoreLimits.MaximumPathPageRows));
         Assert.IsType<HistoryTimelineBoundaryProbeOpenResult.Invalid>(
             OpenLedger(
                 path,
@@ -1382,25 +1574,214 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                 created.Locator
             ).OpenBoundaryProbe(rewound)
         );
-        using (HistoryTimelineHandle pathReader = Open(journal)) {
-            Assert.IsType<HistoryTimelinePathPageResult.Invalid>(
-                pathReader.Reader.ReadSelectedPathPage(
-                    rewound,
-                    new HistoryTimelinePathCursor(
-                        rewound.TimelineId,
-                        rewound.RefId,
-                        rewound.Generation,
-                        a2.RowId
-                    )
-                )
-            );
-        }
         Assert.IsType<HistoryTimelineInspectResult.Invalid>(
-            HistoryTimelineMaintenance.Verify(
-                path,
-                journal.BranchRefId
-            )
+            HistoryTimelineMaintenance.Verify(path, journal.BranchRefId)
         );
+    }
+
+    [Theory]
+    [InlineData("middle-delete")]
+    [InlineData("ordinal-swap")]
+    [InlineData("off-branch-insert")]
+    public void NormalSelectedOperationsLatchAnyPathMutationInvalid(
+        string corruption
+    ) {
+        string path = NewPath();
+        using SessionJournalEngine journal = CreateJournal(path);
+        HistoryTimelineCreateResult.Created created = Assert.IsType<
+            HistoryTimelineCreateResult.Created>(
+            HistoryTimelineFactory.Create(
+                journal.ReadView, InitialPolicy(), _estimator));
+        HistorySegmentDescriptor first;
+        HistorySegmentDescriptor second;
+        HistorySegmentDescriptor third;
+        TimelineHeadRef head;
+        using (HistoryTimelineHandle handle = Open(journal)) {
+            _ = journal.AppendObservation("path commitment first");
+            _ = journal.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("first")]),
+                new CompletionDescriptor("import", "v1", "model-A"));
+            first = CommitNextDescriptor(handle, journal);
+            _ = journal.AppendObservation("path commitment second");
+            _ = journal.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("second")]),
+                new CompletionDescriptor("import", "v1", "model-A"));
+            second = CommitNextDescriptor(handle, journal);
+            _ = journal.AppendObservation("path commitment third");
+            _ = journal.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("third")]),
+                new CompletionDescriptor("import", "v1", "model-A"));
+            third = CommitNextDescriptor(handle, journal);
+            head = Assert.IsType<HistoryTimelineSnapshotResult.Available>(
+                handle.Reader.ReadSnapshot()).Head;
+        }
+        string databasePath = new HistoryTimelinePaths(
+            path, journal.BranchRefId).TimelineDatabasePath(
+                created.Locator.ActiveTimelineId);
+        string sql = corruption switch {
+            "middle-delete" =>
+                $"DELETE FROM current_selected_path WHERE row_id = '{second.RowId.Value}';",
+            "ordinal-swap" => $"""
+                UPDATE current_selected_path SET ordinal = 100
+                WHERE row_id = '{first.RowId.Value}';
+                UPDATE current_selected_path SET ordinal = 0
+                WHERE row_id = '{second.RowId.Value}';
+                UPDATE current_selected_path SET ordinal = 1
+                WHERE row_id = '{first.RowId.Value}';
+                """,
+            "off-branch-insert" => $"""
+                UPDATE current_selected_path
+                SET row_id = '{first.RowId.Value}',
+                    previous_row_id = NULL,
+                    leaf_digest = '{new string('0', 64)}'
+                WHERE row_id = '{second.RowId.Value}';
+                """,
+            _ => throw new ArgumentOutOfRangeException(nameof(corruption))
+        };
+        if (corruption == "off-branch-insert") {
+            // Keep a unique row locator while making the selected assignment
+            // disagree with its immutable predecessor recurrence.
+            sql = $"""
+                UPDATE current_selected_path
+                SET previous_row_id = NULL,
+                    leaf_digest = '{new string('0', 64)}'
+                WHERE row_id = '{second.RowId.Value}';
+                """;
+        }
+        ExecuteSql(databasePath, sql);
+
+        Assert.IsType<HistoryTimelineOpenResult.Invalid>(
+            HistoryTimelineFactory.Open(journal.ReadView, _estimator));
+        Assert.IsType<SelectedHistoryRowResult.Invalid>(OpenLedger(
+            path, journal.BranchRefId, created.Locator)
+            .ReadSelectedRow(head, third.RowId));
+        Assert.IsType<HistoryTimelineStorePathPageResult.Invalid>(OpenLedger(
+            path, journal.BranchRefId, created.Locator)
+            .ReadSelectedPathPage(
+                head,
+                startAt: null,
+                HistoryTimelineStoreLimits.MaximumPathPageRows));
+        var reconcileCandidate = new HistoryTimelineReconcileCandidate(
+            head,
+            third.RowId,
+            new FixedRawFence(
+                journal.BranchRefId,
+                head.SelectedRawHeadAtCommit
+                    ?? throw new InvalidDataException(
+                        "A committed head requires a raw fence.")));
+        Assert.IsType<HistoryTimelineReconcileResult.Invalid>(
+            OpenLedger(path, journal.BranchRefId, created.Locator)
+                .ReconcileSelectedPath(reconcileCandidate));
+    }
+
+    [Theory]
+    [InlineData("middle-delete")]
+    [InlineData("ordinal")]
+    [InlineData("end")]
+    [InlineData("leaf")]
+    public void SelectedPathGuardBlocksEveryNormalReadAndWriterWithoutMutation(
+        string corruption
+    ) {
+        string path = NewPath();
+        using SessionJournalEngine journal = CreateJournal(path);
+        HistoryTimelineCreateResult.Created created = Assert.IsType<
+            HistoryTimelineCreateResult.Created>(
+            HistoryTimelineFactory.Create(
+                journal.ReadView, InitialPolicy(), _estimator));
+        HistorySegmentDescriptor first;
+        HistorySegmentDescriptor second;
+        HistorySegmentDescriptor third;
+        TimelineHeadRef head;
+        HistoryRowCommitCandidate appendCandidate;
+        using (HistoryTimelineHandle handle = Open(journal)) {
+            _ = journal.AppendObservation("guard first");
+            _ = journal.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("first")]),
+                new CompletionDescriptor("import", "v1", "model-A"));
+            first = CommitNextDescriptor(handle, journal);
+            _ = journal.AppendObservation("guard second");
+            _ = journal.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("second")]),
+                new CompletionDescriptor("import", "v1", "model-A"));
+            second = CommitNextDescriptor(handle, journal);
+            _ = journal.AppendObservation("guard third");
+            _ = journal.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("third")]),
+                new CompletionDescriptor("import", "v1", "model-A"));
+            third = CommitNextDescriptor(handle, journal);
+            head = Assert.IsType<HistoryTimelineSnapshotResult.Available>(
+                handle.Reader.ReadSnapshot()).Head;
+
+            _ = journal.AppendObservation("guard pending append");
+            _ = journal.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("pending")]),
+                new CompletionDescriptor("import", "v1", "model-A"));
+            OnlineSelectedRawCapture capture = Assert.IsType<
+                OnlineSelectedRawCaptureResult.Captured>(
+                handle.Coordinator.CaptureOnline(
+                    head,
+                    journal.ReadView
+                )).Capture;
+            appendCandidate = Assert.IsType<
+                HistoryTimelinePlanResult.Selected>(
+                handle.Coordinator.PlanNextRow(head, capture)
+            ).Candidate;
+        }
+
+        string databasePath = new HistoryTimelinePaths(
+            path, journal.BranchRefId).TimelineDatabasePath(
+                created.Locator.ActiveTimelineId);
+        string sql = corruption switch {
+            "middle-delete" => $"""
+                DELETE FROM current_selected_path
+                WHERE row_id = '{second.RowId.Value}';
+                """,
+            "ordinal" => $"""
+                UPDATE current_selected_path
+                SET ordinal = 100
+                WHERE row_id = '{first.RowId.Value}';
+                """,
+            "end" => $"""
+                UPDATE current_selected_path
+                SET end_address = X'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'
+                WHERE row_id = '{second.RowId.Value}';
+                """,
+            "leaf" => $"""
+                UPDATE current_selected_path
+                SET leaf_digest = '{new string('0', 64)}'
+                WHERE row_id = '{second.RowId.Value}';
+                """,
+            _ => throw new ArgumentOutOfRangeException(nameof(corruption))
+        };
+        ExecuteSql(databasePath, sql);
+        byte[] corruptedBytes = File.ReadAllBytes(databasePath);
+        PartitionPolicyRevision next = NextPolicy(
+            created.Locator.ActiveTimelineId);
+
+        Assert.IsType<HistoryTimelineStoreReadResult<
+            TimelineHeadRef>.Invalid>(OpenLedger(
+                path, journal.BranchRefId, created.Locator).ReadSnapshot());
+        Assert.IsType<HistoryTimelineStoreReadResult<
+            PartitionPolicyRevision>.Invalid>(OpenLedger(
+                path, journal.BranchRefId, created.Locator).ReadPolicy(
+                    head.ActivePartitionPolicyDigest));
+        Assert.IsType<HistoryTimelineStoreReadResult<
+            HistorySegmentDescriptor>.Invalid>(OpenLedger(
+                path, journal.BranchRefId, created.Locator).ReadRow(
+                    third.RowId));
+        Assert.IsType<HistoryTimelinePolicyPutResult.Invalid>(OpenLedger(
+            path, journal.BranchRefId, created.Locator).PutPolicy(next));
+        Assert.IsType<HistoryTimelinePolicyCasResult.Invalid>(OpenLedger(
+            path, journal.BranchRefId, created.Locator)
+            .CompareExchangePolicy(head, next.PolicyDigest));
+        Assert.IsType<HistoryTimelineCommitResult.Invalid>(OpenLedger(
+            path, journal.BranchRefId, created.Locator)
+            .CommitRow(appendCandidate));
+
+        Assert.Equal(corruptedBytes, File.ReadAllBytes(databasePath));
+        Assert.False(File.Exists(databasePath + "-journal"));
+        Assert.False(File.Exists(databasePath + "-wal"));
+        Assert.False(File.Exists(databasePath + "-shm"));
     }
 
     [Fact]
@@ -1424,18 +1805,6 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                 SqliteHistoryTimelineLedger.VerifyRowsNextPageSql,
                 "rows",
                 "row_id"
-            ),
-            (
-                SqliteHistoryTimelineLedger.VerifyTrieNodesFirstPageSql,
-                SqliteHistoryTimelineLedger.VerifyTrieNodesNextPageSql,
-                "selected_path_nodes",
-                "node_digest"
-            ),
-            (
-                SqliteHistoryTimelineLedger.VerifySnapshotsFirstPageSql,
-                SqliteHistoryTimelineLedger.VerifySnapshotsNextPageSql,
-                "selected_path_snapshots",
-                "head_row_id"
             )
         ];
 
@@ -1564,108 +1933,60 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             )
         );
     }
-
     [Fact]
-    public void PolicyRowAndTrieCapsRejectCapPlusOneWithoutHeadMutation() {
-        VerifyPolicyCountCap();
-        VerifyRowCountCap();
-        VerifyTrieNodeCountCap();
-    }
-
-    [Fact]
-    public void DatabaseAndRestoreCopyCapsAcceptExactAndRejectCapPlusOne() {
-        string baselinePath = NewPath();
-        long baselineBytes;
-        using (SessionJournalEngine baseline = CreateJournal(baselinePath)) {
-            HistoryTimelineCreateResult.Created created = Assert.IsType<
-                HistoryTimelineCreateResult.Created
-            >(HistoryTimelineFactory.Create(
-                baseline.ReadView,
-                InitialPolicy(),
-                _estimator
-            ));
-            baselineBytes = new FileInfo(new HistoryTimelinePaths(
-                baselinePath,
-                baseline.BranchRefId
-            ).TimelineDatabasePath(
-                created.Locator.ActiveTimelineId
-            )).Length;
-        }
-
-        string exactPath = NewPath();
-        using (SessionJournalEngine exact = CreateJournal(exactPath)) {
-            Assert.IsType<HistoryTimelineCreateResult.Created>(
-                HistoryTimelineFactory.CreateForTest(
-                    exact.ReadView,
-                    InitialPolicy(),
-                    HistoryTimelineStorageLimits.Production with {
-                        MaximumDatabaseBytes = baselineBytes
-                    },
-                    _estimator
+    public void V2RowsPoliciesAndRestoreHaveNoCodeOwnedLifetimeCap() {
+        string path = NewPath();
+        using SessionJournalEngine journal = CreateJournal(path);
+        HistoryTimelineCreateResult.Created created = Assert.IsType<
+            HistoryTimelineCreateResult.Created
+        >(HistoryTimelineFactory.Create(
+            journal.ReadView,
+            InitialPolicy(),
+            _estimator
+        ));
+        TimelineHeadRef head;
+        using (HistoryTimelineHandle handle = Open(journal)) {
+            Assert.IsType<HistoryTimelinePolicyPutResult.Stored>(
+                handle.Coordinator.PutPolicy(
+                    NextPolicy(created.Locator.ActiveTimelineId)
                 )
             );
-        }
-        string overPath = NewPath();
-        using (SessionJournalEngine over = CreateJournal(overPath)) {
-            Assert.IsType<HistoryTimelineCreateResult.LimitExceeded>(
-                HistoryTimelineFactory.CreateForTest(
-                    over.ReadView,
-                    InitialPolicy(),
-                    HistoryTimelineStorageLimits.Production with {
-                        MaximumDatabaseBytes = baselineBytes - 1
-                    },
-                    _estimator
-                )
-            );
+            for (int index = 0; index < 3; index++) {
+                _ = journal.AppendObservation($"uncapped row {index}");
+                _ = journal.AppendImportedAgentAction(
+                    new ActionMessage([
+                        new ActionBlock.Text($"uncapped answer {index}")
+                    ]),
+                    new CompletionDescriptor("import", "v1", "model-A")
+                );
+                _ = CommitNextDescriptor(handle, journal);
+            }
+            head = Assert.IsType<
+                HistoryTimelineSnapshotResult.Available
+            >(handle.Reader.ReadSnapshot()).Head;
         }
 
         string backup = NewPath();
-        RefId exactRef;
-        ActiveTimelineLocator locator;
-        TimelineHeadRef head;
-        using (SessionJournalEngine exact =
-               SessionJournalEngine.Open(exactPath)) {
-            exactRef = exact.BranchRefId;
-            locator = HistoryTimelineFactory.ReadLocator(
-                new HistoryTimelinePaths(exactPath, exactRef)
-            );
-            head = Assert.IsType<HistoryTimelineInspectResult.Available>(
-                HistoryTimelineMaintenance.Inspect(exactPath, exactRef)
-            ).Head;
-        }
         HistoryTimelineBackupResult.Created backedUp = Assert.IsType<
             HistoryTimelineBackupResult.Created
-        >(HistoryTimelineMaintenance.Backup(exactPath, exactRef, backup));
-        var confirmation = new HistoryTimelineActiveConfirmation(
-            locator,
-            head
-        );
-        Assert.IsType<HistoryTimelineRestoreResult.LimitExceeded>(
-            HistoryTimelineMaintenance.RestoreCore(
-                exactPath,
-                exactRef,
-                confirmation,
-                backup,
-                HistoryTimelineStorageLimits.Production with {
-                    MaximumRestoreCopyBytes =
-                        backedUp.Manifest.DatabaseBytes - 1
-                }
-            )
-        );
+        >(HistoryTimelineMaintenance.Backup(
+            path,
+            journal.BranchRefId,
+            backup
+        ));
+        Assert.True(backedUp.Manifest.DatabaseBytes > 0);
         Assert.IsType<HistoryTimelineRestoreResult.Restored>(
-            HistoryTimelineMaintenance.RestoreCore(
-                exactPath,
-                exactRef,
-                confirmation,
-                backup,
-                HistoryTimelineStorageLimits.Production with {
-                    MaximumRestoreCopyBytes =
-                        backedUp.Manifest.DatabaseBytes
-                }
+            HistoryTimelineMaintenance.Restore(
+                path,
+                journal.BranchRefId,
+                new HistoryTimelineActiveConfirmation(
+                    created.Locator,
+                    head
+                ),
+                backup
             )
         );
     }
-
     [Fact]
     public void DurableBranchReconcileReusesPreviouslyCommittedSnapshot() {
         string path = NewPath();
@@ -1721,9 +2042,7 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             path,
             journal.BranchRefId
         ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
-        (long Rows, long Nodes) beforeSwitch = ReadStoredCounts(
-            databasePath
-        );
+        long beforeSwitch = ReadStoredRowCount(databasePath);
         Assert.True(journal.MoveCurrentHeadForTest(b2Raw, a2Raw));
         TimelineHeadRef restored;
         using (HistoryTimelineHandle replay = Open(journal)) {
@@ -1753,7 +2072,7 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
         }
 
         Assert.Equal(a2.RowId, restored.HeadRowId);
-        Assert.Equal(beforeSwitch, ReadStoredCounts(databasePath));
+        Assert.Equal(beforeSwitch, ReadStoredRowCount(databasePath));
         using HistoryTimelineHandle reopened = Open(journal);
         Assert.IsType<HistoryTimelineReaderRowResult.Selected>(
             reopened.Reader.ReadSelectedRow(restored, a1.RowId)
@@ -2127,116 +2446,6 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             )
         ).Handle;
 
-    private void VerifyPolicyCountCap() {
-        string path = NewPath();
-        using SessionJournalEngine journal = CreateJournal(path);
-        HistoryTimelineStorageLimits limits =
-            HistoryTimelineStorageLimits.Production with {
-                MaximumPolicyCount = 1
-            };
-        HistoryTimelineCreateResult.Created created = Assert.IsType<
-            HistoryTimelineCreateResult.Created
-        >(HistoryTimelineFactory.CreateForTest(
-            journal.ReadView,
-            InitialPolicy(),
-            limits,
-            _estimator
-        ));
-        using HistoryTimelineHandle handle = Assert.IsType<
-            HistoryTimelineOpenResult.Opened
-        >(HistoryTimelineFactory.OpenForTest(
-            journal.ReadView,
-            limits,
-            _estimator
-        )).Handle;
-        TimelineHeadRef before = Assert.IsType<
-            HistoryTimelineSnapshotResult.Available
-        >(handle.Reader.ReadSnapshot()).Head;
-        Assert.IsType<HistoryTimelinePolicyPutResult.LimitExceeded>(
-            handle.Coordinator.PutPolicy(
-                NextPolicy(created.Locator.ActiveTimelineId)
-            )
-        );
-        Assert.Equal(
-            before,
-            Assert.IsType<HistoryTimelineSnapshotResult.Available>(
-                handle.Reader.ReadSnapshot()
-            ).Head
-        );
-    }
-
-    private void VerifyRowCountCap() {
-        VerifyAppendCap(
-            HistoryTimelineStorageLimits.Production with {
-                MaximumRowCount = 1
-            },
-            "MaximumRowCount"
-        );
-    }
-
-    private void VerifyTrieNodeCountCap() {
-        VerifyAppendCap(
-            HistoryTimelineStorageLimits.Production with {
-                MaximumTrieNodeCount = 50,
-                MaximumRowCount = 2
-            },
-            "MaximumTrieNodeCount"
-        );
-    }
-
-    private void VerifyAppendCap(
-        HistoryTimelineStorageLimits limits,
-        string expectedLimit
-    ) {
-        string path = NewPath();
-        using SessionJournalEngine journal = CreateJournal(path);
-        _ = Assert.IsType<HistoryTimelineCreateResult.Created>(
-            HistoryTimelineFactory.CreateForTest(
-                journal.ReadView,
-                InitialPolicy(),
-                limits,
-                _estimator
-            )
-        );
-        using HistoryTimelineHandle handle = Assert.IsType<
-            HistoryTimelineOpenResult.Opened
-        >(HistoryTimelineFactory.OpenForTest(
-            journal.ReadView,
-            limits,
-            _estimator
-        )).Handle;
-        _ = journal.AppendObservation("cap first observation");
-        _ = journal.AppendImportedAgentAction(
-            new ActionMessage([new ActionBlock.Text("cap first answer")]),
-            new CompletionDescriptor("import", "v1", "model-A")
-        );
-        TimelineHeadRef first = CommitNextRow(handle, journal);
-        _ = journal.AppendObservation("cap second observation");
-        _ = journal.AppendImportedAgentAction(
-            new ActionMessage([new ActionBlock.Text("cap second answer")]),
-            new CompletionDescriptor("import", "v1", "model-A")
-        );
-        OnlineSelectedRawCapture capture = Assert.IsType<
-            OnlineSelectedRawCaptureResult.Captured
-        >(handle.Coordinator.CaptureOnline(
-            first,
-            journal.ReadView
-        )).Capture;
-        HistoryTimelinePlanResult.Selected selected = Assert.IsType<
-            HistoryTimelinePlanResult.Selected
-        >(handle.Coordinator.PlanNextRow(first, capture));
-        HistoryTimelineCommitResult.LimitExceeded limited = Assert.IsType<
-            HistoryTimelineCommitResult.LimitExceeded
-        >(handle.Coordinator.CommitRow(selected.Candidate));
-        Assert.Equal(expectedLimit, limited.Limit);
-        Assert.Equal(
-            first,
-            Assert.IsType<HistoryTimelineSnapshotResult.Available>(
-                handle.Reader.ReadSnapshot()
-            ).Head
-        );
-    }
-
     private static PartitionPolicyRevision NextPolicy(
         TimelineId timelineId
     ) => PartitionPolicyRevision.Create(
@@ -2313,19 +2522,15 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                 "The durable Timeline head is unavailable."
             );
 
-    private static (long Rows, long Nodes) ReadStoredCounts(
-        string databasePath
-    ) {
+    private static long ReadStoredRowCount(string databasePath) {
         using SqliteConnection connection = OpenSqlite(databasePath);
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
-            SELECT row_count, trie_node_count
+            SELECT row_count
             FROM store_metadata
             WHERE singleton = 1;
             """;
-        using SqliteDataReader reader = command.ExecuteReader();
-        Assert.True(reader.Read());
-        return (reader.GetInt64(0), reader.GetInt64(1));
+        return Assert.IsType<long>(command.ExecuteScalar());
     }
 
     private static void ExecuteSql(string databasePath, string sql) {
@@ -2335,135 +2540,28 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
         command.ExecuteNonQuery();
     }
 
-    private static SnapshotFields ReadSnapshotFields(
+    private static void InsertCurrentPathRow(
         string databasePath,
-        HistoryRowId rowId
+        long ordinal,
+        HistoryRowId rowId,
+        EventAddress endInclusive
     ) {
+        byte[] endAddress = new byte[
+            EventAddressCodec.EventAddressLength];
+        EventAddressCodec.Encode(endInclusive, endAddress);
         using SqliteConnection connection = OpenSqlite(databasePath);
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = """
-            SELECT row_root_digest, end_root_digest, member_count
-            FROM selected_path_snapshots
-            WHERE head_row_id = $row;
+            INSERT INTO current_selected_path(
+                ordinal, row_id, previous_row_id, end_address, leaf_digest
+            ) VALUES ($ordinal, $row, NULL, $end, $leaf);
             """;
+        command.Parameters.AddWithValue("$ordinal", ordinal);
         command.Parameters.AddWithValue("$row", rowId.Value);
-        using SqliteDataReader reader = command.ExecuteReader();
-        Assert.True(reader.Read());
-        return new SnapshotFields(
-            reader.GetString(0),
-            reader.GetString(1),
-            reader.GetInt32(2)
-        );
-    }
-
-    private static void ForgeSnapshot(
-        string databasePath,
-        HistoryRowId headRowId,
-        string rowRootDigest,
-        string endRootDigest,
-        int memberCount
-    ) {
-        var body = new HistoryTimelineSelectedPathSnapshotBody(
-            headRowId,
-            rowRootDigest,
-            endRootDigest,
-            memberCount
-        );
-        byte[] canonical = HistoryTimelineCanonicalCodec.Encode(body);
-        string digest = HistoryTimelineHash.Compute(
-            SqliteHistoryTimelineLedger.SelectedSnapshotHashDomain,
-            canonical
-        );
-        using SqliteConnection connection = OpenSqlite(databasePath);
-        using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = """
-            UPDATE selected_path_snapshots
-            SET row_root_digest = $rowRoot,
-                end_root_digest = $endRoot,
-                member_count = $count,
-                snapshot_digest = $digest,
-                canonical = $canonical
-            WHERE head_row_id = $row;
-            """;
-        command.Parameters.AddWithValue("$rowRoot", rowRootDigest);
-        command.Parameters.AddWithValue("$endRoot", endRootDigest);
-        command.Parameters.AddWithValue("$count", memberCount);
-        command.Parameters.AddWithValue("$digest", digest);
-        command.Parameters.AddWithValue("$canonical", canonical);
-        command.Parameters.AddWithValue("$row", headRowId.Value);
+        command.Parameters.AddWithValue("$end", endAddress);
+        command.Parameters.AddWithValue("$leaf", new string('0', 64));
         Assert.Equal(1, command.ExecuteNonQuery());
     }
-
-    private static void ForgeSelfOnlySnapshot(
-        string databasePath,
-        HistorySegmentDescriptor descriptor
-    ) {
-        using SqliteConnection connection = OpenSqlite(databasePath);
-        using SqliteTransaction transaction =
-            connection.BeginTransaction(deferred: false);
-        var trie = new SqliteSelectedPathTrie();
-        int insertedNodes = 0;
-        string rowRoot = trie.InsertRow(
-            connection,
-            transaction,
-            rootDigest: null,
-            descriptor.RowId,
-            ref insertedNodes
-        );
-        string endRoot = trie.InsertEnd(
-            connection,
-            transaction,
-            rootDigest: null,
-            descriptor.EndInclusive,
-            descriptor.RowId,
-            ref insertedNodes
-        );
-        var body = new HistoryTimelineSelectedPathSnapshotBody(
-            descriptor.RowId,
-            rowRoot,
-            endRoot,
-            memberCount: 1
-        );
-        byte[] canonical = HistoryTimelineCanonicalCodec.Encode(body);
-        string digest = HistoryTimelineHash.Compute(
-            SqliteHistoryTimelineLedger.SelectedSnapshotHashDomain,
-            canonical
-        );
-        using (SqliteCommand update = connection.CreateCommand()) {
-            update.Transaction = transaction;
-            update.CommandText = """
-                UPDATE selected_path_snapshots
-                SET row_root_digest = $rowRoot,
-                    end_root_digest = $endRoot,
-                    member_count = 1,
-                    snapshot_digest = $digest,
-                    canonical = $canonical
-                WHERE head_row_id = $row;
-                """;
-            update.Parameters.AddWithValue("$rowRoot", rowRoot);
-            update.Parameters.AddWithValue("$endRoot", endRoot);
-            update.Parameters.AddWithValue("$digest", digest);
-            update.Parameters.AddWithValue("$canonical", canonical);
-            update.Parameters.AddWithValue(
-                "$row",
-                descriptor.RowId.Value
-            );
-            Assert.Equal(1, update.ExecuteNonQuery());
-        }
-        using (SqliteCommand counts = connection.CreateCommand()) {
-            counts.Transaction = transaction;
-            counts.CommandText = """
-                UPDATE store_metadata
-                SET trie_node_count = (
-                    SELECT COUNT(*) FROM selected_path_nodes
-                )
-                WHERE singleton = 1;
-                """;
-            Assert.Equal(1, counts.ExecuteNonQuery());
-        }
-        transaction.Commit();
-    }
-
     private static SqliteConnection OpenSqlite(string databasePath) {
         var builder = new SqliteConnectionStringBuilder {
             DataSource = databasePath,
@@ -2543,12 +2641,6 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
         public EventAddress? CapturedHead { get; } = capturedHead;
         public EventAddress? ReadCurrentHead() => capturedHead;
     }
-
-    private sealed record SnapshotFields(
-        string RowRootDigest,
-        string EndRootDigest,
-        int MemberCount
-    );
 
     private sealed class AuditPageSnapshot(
         SessionSelectedLineageAuditCapture capture,

@@ -47,6 +47,8 @@ internal sealed class InMemoryHistoryTimelineLedger
             headRowId: null,
             initialPolicy.PolicyDigest,
             selectedRawHeadAtCommit: null,
+            selectedPathCount: 0,
+            HistorySelectedPathCommitment.EmptyDigest,
             generation: 0
         );
     }
@@ -182,6 +184,8 @@ internal sealed class InMemoryHistoryTimelineLedger
                 _head.HeadRowId,
                 nextPolicyDigest,
                 _head.SelectedRawHeadAtCommit,
+                _head.SelectedPathCount,
+                _head.SelectedPathDigest,
                 nextGeneration
             );
             _head = next;
@@ -268,6 +272,8 @@ internal sealed class InMemoryHistoryTimelineLedger
                 descriptor.RowId,
                 _head.ActivePartitionPolicyDigest,
                 proposal.CapturedSelectedRawHead,
+                _head.SelectedPathCount + 1,
+                ComputePathDigest(_selectedPath.Append(descriptor)),
                 nextGeneration
             );
             if (_selectedPath.RowsByEnd.TryGetValue(
@@ -419,6 +425,8 @@ internal sealed class InMemoryHistoryTimelineLedger
                 candidate.SelectedRowId,
                 _head.ActivePartitionPolicyDigest,
                 selectedFence,
+                nextPath.RowsById.Count,
+                ComputePathDigest(nextPath),
                 nextGeneration
             );
             _selectedPath = nextPath;
@@ -574,6 +582,52 @@ internal sealed class InMemoryHistoryTimelineLedger
             RowsById.Add(descriptor.RowId, descriptor),
             RowsByEnd.Add(descriptor.EndInclusive, descriptor)
         );
+    }
+
+    private static string ComputePathDigest(SelectedPathSnapshot path) {
+        if (path.RowsById.Count == 0) {
+            return HistorySelectedPathCommitment.EmptyDigest;
+        }
+        HistorySegmentDescriptor head = path.RowsById.Values.Single(
+            descriptor => !path.RowsById.Values.Any(
+                candidate => candidate.PreviousRowId == descriptor.RowId));
+        var headToOldest = new List<HistorySegmentDescriptor>();
+        HistorySegmentDescriptor? cursor = head;
+        while (cursor is not null) {
+            headToOldest.Add(cursor);
+            cursor = cursor.PreviousRowId is { } previous
+                ? path.RowsById[previous]
+                : null;
+        }
+        var nodes = new Dictionary<(int Level, long Index), string>();
+        long ordinal = 0;
+        foreach (HistorySegmentDescriptor descriptor
+                 in headToOldest.AsEnumerable().Reverse()) {
+            string digest = HistorySelectedPathCommitment.ComputeLeaf(
+                ordinal,
+                descriptor.RowId,
+                descriptor.PreviousRowId,
+                descriptor.EndInclusive);
+            nodes[(0, ordinal)] = digest;
+            long node = ordinal;
+            for (int level = 0; (node & 1) == 1; level++) {
+                digest = HistorySelectedPathCommitment.Combine(
+                    level + 1,
+                    nodes[(level, node - 1)],
+                    digest);
+                node >>= 1;
+                nodes[(level + 1, node)] = digest;
+            }
+            ordinal++;
+        }
+        return HistorySelectedPathCommitment.ComputeRoot(
+            ordinal,
+            HistorySelectedPathCommitment.PeakKeys(ordinal)
+                .Select(key => new HistorySelectedPathPeak(
+                    key.Level,
+                    key.NodeIndex,
+                    nodes[(key.Level, key.NodeIndex)]))
+                .ToArray());
     }
 
     private sealed class InMemoryBoundaryProbe(

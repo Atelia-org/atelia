@@ -716,7 +716,7 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
         ledger.CommitOverride = _ => outcome == "busy"
             ? new HistoryTimelineCommitResult.BackendBusy()
             : new HistoryTimelineCommitResult.LimitExceeded(
-                "MaximumRowCount"
+                "StorageFull"
             );
 
         HistoryTimelineOfflineStepResult result =
@@ -729,7 +729,7 @@ public sealed class HistoryTimelineOfflineBootstrapTests : IDisposable {
         }
         else {
             Assert.Equal(
-                "MaximumRowCount",
+                "StorageFull",
                 Assert.IsType<HistoryTimelineOfflineStepResult
                     .StoreLimitExceeded>(result).Limit
             );

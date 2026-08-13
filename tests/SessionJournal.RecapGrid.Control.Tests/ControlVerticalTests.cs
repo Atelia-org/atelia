@@ -816,6 +816,8 @@ public sealed partial class ControlVerticalTests : IDisposable {
             null,
             new string('a', 64),
             null,
+            0,
+            HistoryTimelineSelectedPath.EmptyDigest,
             generation: 0
         );
         var first = new RegisteredGridRecipe(
@@ -1358,6 +1360,8 @@ public sealed partial class ControlVerticalTests : IDisposable {
             null,
             new string('a', 64),
             null,
+            0,
+            HistoryTimelineSelectedPath.EmptyDigest,
             generation: 0
         )
     );

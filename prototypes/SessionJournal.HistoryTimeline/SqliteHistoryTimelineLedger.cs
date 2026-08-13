@@ -5,11 +5,9 @@ namespace Atelia.SessionJournal.HistoryTimeline;
 
 internal sealed class SqliteHistoryTimelineLedger
     : IHistoryTimelineLedgerPort {
-    internal const int SchemaVersion = 1;
+    internal const int SchemaVersion = 2;
     internal const string HeadHashDomain =
         "atelia.history-timeline.head.v1";
-    internal const string SelectedSnapshotHashDomain =
-        "atelia.history-timeline.selected-path-snapshot.v1";
     internal const string VerifyRowsFirstPageSql = """
         SELECT
             row_id,
@@ -35,32 +33,6 @@ internal sealed class SqliteHistoryTimelineLedger
         ORDER BY row_id
         LIMIT 128
         """;
-    internal const string VerifyTrieNodesFirstPageSql = """
-        SELECT node_digest, length(canonical), canonical
-        FROM selected_path_nodes
-        ORDER BY node_digest
-        LIMIT 128
-        """;
-    internal const string VerifyTrieNodesNextPageSql = """
-        SELECT node_digest, length(canonical), canonical
-        FROM selected_path_nodes
-        WHERE node_digest > $after
-        ORDER BY node_digest
-        LIMIT 128
-        """;
-    internal const string VerifySnapshotsFirstPageSql = """
-        SELECT head_row_id
-        FROM selected_path_snapshots
-        ORDER BY head_row_id
-        LIMIT 128
-        """;
-    internal const string VerifySnapshotsNextPageSql = """
-        SELECT head_row_id
-        FROM selected_path_snapshots
-        WHERE head_row_id > $after
-        ORDER BY head_row_id
-        LIMIT 128
-        """;
 
     private readonly string _databasePath;
     private readonly TimelineId _timelineId;
@@ -68,7 +40,6 @@ internal sealed class SqliteHistoryTimelineLedger
     private readonly HistoryTimelineStorageLimits _limits;
     private readonly HistoryTimelinePersistenceTestHooks _hooks;
     private readonly bool _readOnly;
-    private readonly SqliteSelectedPathTrie _trie = new();
     private readonly object _invalidGate = new();
     private string? _invalidCode;
     private string? _invalidDetail;
@@ -119,6 +90,8 @@ internal sealed class SqliteHistoryTimelineLedger
                 headRowId: null,
                 initialPolicy.PolicyDigest,
                 selectedRawHeadAtCommit: null,
+                selectedPathCount: 0,
+                HistorySelectedPathCommitment.EmptyDigest,
                 generation: 0
             );
             byte[] policyBytes = initialPolicy.ToCanonicalBytes();
@@ -153,11 +126,10 @@ internal sealed class SqliteHistoryTimelineLedger
                         head_canonical,
                         head_sha256,
                         policy_count,
-                        row_count,
-                        trie_node_count
+                        row_count
                     ) VALUES (
                         1, $schema, $timeline, $ref,
-                        $head, $headDigest, 1, 0, 0
+                        $head, $headDigest, 1, 0
                     );
                     """;
                 metadata.Parameters.AddWithValue(
@@ -264,8 +236,7 @@ internal sealed class SqliteHistoryTimelineLedger
             TimelineHeadRef head = ReadHead(connection, transaction);
             VerifyCanonicalPolicies(connection, transaction);
             VerifyCanonicalRows(connection, transaction);
-            VerifyCanonicalTrieNodes(connection, transaction);
-            VerifyCanonicalSelectedSnapshots(connection, transaction);
+            VerifyCurrentSelectedPath(connection, transaction, head);
             VerifyPhysicalCounts(connection, transaction);
             PartitionPolicyRevision? policy = ReadPolicyCore(
                 connection,
@@ -277,18 +248,9 @@ internal sealed class SqliteHistoryTimelineLedger
                     "The active Timeline policy is missing."
                 );
             }
-            SelectedSnapshot snapshot = ReadSelectedSnapshot(
-                connection,
-                transaction,
-                head.HeadRowId
-            );
             if (head.HeadRowId is { } rowId) {
-                if (_trie.LookupRow(
-                        connection,
-                        transaction,
-                        snapshot.RowRootDigest,
-                        rowId
-                    ) != rowId) {
+                if (!IsCurrentSelectedRow(
+                        connection, transaction, rowId)) {
                     throw new InvalidDataException(
                         "The selected head is absent from its path index."
                     );
@@ -429,6 +391,7 @@ internal sealed class SqliteHistoryTimelineLedger
             using SqliteConnection connection = OpenVerifiedConnection();
             using SqliteTransaction transaction =
                 connection.BeginTransaction(deferred: false);
+            RequireSelectedPathGuardClean(connection, transaction);
             TimelineHeadRef head = ReadHead(connection, transaction);
             if (policy.TimelineId != head.TimelineId) {
                 return new HistoryTimelinePolicyPutResult.Invalid(
@@ -455,11 +418,6 @@ internal sealed class SqliteHistoryTimelineLedger
                     );
             }
             StoreCounts counts = ReadCounts(connection, transaction);
-            if (counts.PolicyCount >= _limits.MaximumPolicyCount) {
-                return new HistoryTimelinePolicyPutResult.LimitExceeded(
-                    "MaximumPolicyCount"
-                );
-            }
             using (SqliteCommand insert = connection.CreateCommand()) {
                 insert.Transaction = transaction;
                 insert.CommandText = """
@@ -494,7 +452,7 @@ internal sealed class SqliteHistoryTimelineLedger
         catch (SqliteException exception)
             when (IsFullOrTooBig(exception)) {
             return new HistoryTimelinePolicyPutResult.LimitExceeded(
-                "MaximumDatabaseBytes"
+                "SqliteFull"
             );
         }
         catch (Exception exception) when (IsStoreFailure(exception)) {
@@ -520,6 +478,7 @@ internal sealed class SqliteHistoryTimelineLedger
             using SqliteConnection connection = OpenVerifiedConnection();
             using SqliteTransaction transaction =
                 connection.BeginTransaction(deferred: false);
+            RequireSelectedPathGuardClean(connection, transaction);
             TimelineHeadRef actual = ReadHead(connection, transaction);
             if (actual != expectedWholeHead) {
                 return new HistoryTimelinePolicyCasResult
@@ -540,6 +499,8 @@ internal sealed class SqliteHistoryTimelineLedger
                 actual.HeadRowId,
                 nextPolicyDigest,
                 actual.SelectedRawHeadAtCommit,
+                actual.SelectedPathCount,
+                actual.SelectedPathDigest,
                 checked(actual.Generation + 1)
             );
             WriteHead(connection, transaction, actual, next);
@@ -573,8 +534,14 @@ internal sealed class SqliteHistoryTimelineLedger
             using SqliteTransaction transaction =
                 connection.BeginTransaction(deferred: false);
             _hooks.AfterAppendWriterLockAcquired?.Invoke();
+            RequireSelectedPathGuardClean(connection, transaction);
             HistoryRowProposal proposal = candidate.Proposal;
             TimelineHeadRef actual = ReadHead(connection, transaction);
+            RequireCurrentSelectedHead(
+                connection,
+                transaction,
+                actual
+            );
             if (!candidate.ReserveProof.IsExactFor(
                     proposal,
                     candidate.RawFence)) {
@@ -645,145 +612,41 @@ internal sealed class SqliteHistoryTimelineLedger
                     "The row ID is already bound to different canonical bytes."
                 );
             }
-            if (existingRow is null
-                && counts.RowCount >= _limits.MaximumRowCount) {
-                return new HistoryTimelineCommitResult.LimitExceeded(
-                    "MaximumRowCount"
+            CurrentSelectedTail current = ReadCurrentSelectedTail(
+                connection,
+                transaction
+            );
+            if (current.RowId != actual.HeadRowId) {
+                return new HistoryTimelineCommitResult.Invalid(
+                    "SelectedPathHeadMismatch",
+                    "The current selected path does not match the whole head."
                 );
             }
-            SelectedSnapshot current =
-                ReadAndValidateSelectedSnapshot(
-                connection,
-                transaction,
-                actual.HeadRowId
-            );
-            HistoryRowId? existingSelectedRow = _trie.LookupRow(
-                connection,
-                transaction,
-                current.RowRootDigest,
-                descriptor.RowId
-            );
-            HistoryRowId? boundaryOwner = _trie.LookupEnd(
-                connection,
-                transaction,
-                current.EndRootDigest,
-                descriptor.EndInclusive
-            );
-            if (existingSelectedRow is not null
-                || boundaryOwner is not null) {
+            if (IsCurrentSelectedRow(
+                    connection, transaction, descriptor.RowId)
+                || IsCurrentSelectedBoundary(
+                    connection, transaction, descriptor.EndInclusive)) {
                 return new HistoryTimelineCommitResult.Invalid(
                     "SelectedBoundaryCollision",
                     "The exact predecessor snapshot already contains the proposed row or raw boundary."
                 );
             }
-
-            string expectedRowRoot = _trie.ComputeRowExtension(
-                connection,
-                transaction,
-                current.RowRootDigest,
-                descriptor.RowId
-            );
-            string expectedEndRoot = _trie.ComputeEndExtension(
-                connection,
-                transaction,
-                current.EndRootDigest,
-                descriptor.EndInclusive,
-                descriptor.RowId
-            );
-            SelectedSnapshot expectedSnapshot = CreateSelectedSnapshot(
-                descriptor.RowId,
-                expectedRowRoot,
-                expectedEndRoot,
-                checked(current.MemberCount + 1)
-            );
-            int insertedNodes = 0;
-            if (TryReadSelectedSnapshot(
-                    connection,
-                    transaction,
-                    descriptor.RowId,
-                    out SelectedSnapshot existingSnapshot)) {
-                if (existingRow is null
-                    || !SelectedSnapshotsEqual(
-                        existingSnapshot,
-                        expectedSnapshot)) {
-                    return new HistoryTimelineCommitResult.Invalid(
-                        "SelectedPathSnapshotCollision",
-                        "The row ID is bound to a snapshot that is not the exact predecessor extension."
-                    );
-                }
-                ValidateSnapshotHeadMembership(
-                    connection,
-                    transaction,
-                    existingSnapshot,
-                    descriptor.RowId
-                );
-                if (_trie.LookupEnd(
-                        connection,
-                        transaction,
-                        existingSnapshot.EndRootDigest,
-                        descriptor.EndInclusive
-                    ) != descriptor.RowId) {
-                    return new HistoryTimelineCommitResult.Invalid(
-                        "SelectedPathSnapshotCollision",
-                        "The row ID snapshot does not contain its exact boundary."
-                    );
-                }
-            }
-            else {
-                if (existingRow is not null) {
-                    return new HistoryTimelineCommitResult.Invalid(
-                        "SelectedPathSnapshotMissing",
-                        "An existing row has no exact selected-path snapshot."
-                    );
-                }
+            if (existingRow is null) {
                 InsertRow(
                     connection,
                     transaction,
                     descriptor,
                     descriptorBytes
                 );
-                string rowRoot = _trie.InsertRow(
-                    connection,
-                    transaction,
-                    current.RowRootDigest,
-                    descriptor.RowId,
-                    ref insertedNodes
-                );
-                string endRoot = _trie.InsertEnd(
-                    connection,
-                    transaction,
-                    current.EndRootDigest,
-                    descriptor.EndInclusive,
-                    descriptor.RowId,
-                    ref insertedNodes
-                );
-                if (!string.Equals(
-                        rowRoot,
-                        expectedRowRoot,
-                        StringComparison.Ordinal)
-                    || !string.Equals(
-                        endRoot,
-                        expectedEndRoot,
-                        StringComparison.Ordinal)) {
-                    return new HistoryTimelineCommitResult.Invalid(
-                        "SelectedPathSnapshotConstructionMismatch",
-                        "Materialized trie roots differ from the deterministic predecessor extension."
-                    );
-                }
-                if (checked(
-                        counts.TrieNodeCount + insertedNodes)
-                    > _limits.MaximumTrieNodeCount) {
-                    return new HistoryTimelineCommitResult.LimitExceeded(
-                        "MaximumTrieNodeCount"
-                    );
-                }
-                InsertSelectedSnapshot(
-                    connection,
-                    transaction,
-                    descriptor.RowId,
-                    expectedSnapshot
-                );
             }
+            InsertCurrentSelectedRow(
+                connection,
+                transaction,
+                checked(current.Ordinal + 1),
+                descriptor.RowId,
+                descriptor.PreviousRowId,
+                descriptor.EndInclusive
+            );
 
             TimelineHeadRef next = new(
                 actual.TimelineId,
@@ -791,9 +654,15 @@ internal sealed class SqliteHistoryTimelineLedger
                 descriptor.RowId,
                 actual.ActivePartitionPolicyDigest,
                 proposal.CapturedSelectedRawHead,
+                checked(current.Ordinal + 2),
+                ReadCurrentSelectedRoot(
+                    connection,
+                    transaction,
+                    checked(current.Ordinal + 2)),
                 checked(actual.Generation + 1)
             );
             WriteHead(connection, transaction, actual, next);
+            ClearSelectedPathGuard(connection, transaction);
             UpdateCounts(
                 connection,
                 transaction,
@@ -801,9 +670,6 @@ internal sealed class SqliteHistoryTimelineLedger
                     RowCount = existingRow is null
                         ? checked(counts.RowCount + 1)
                         : counts.RowCount,
-                    TrieNodeCount = checked(
-                        counts.TrieNodeCount + insertedNodes
-                    )
                 }
             );
             _hooks.BeforeAppendCommit?.Invoke();
@@ -817,7 +683,7 @@ internal sealed class SqliteHistoryTimelineLedger
         catch (SqliteException exception)
             when (IsFullOrTooBig(exception)) {
             return new HistoryTimelineCommitResult.LimitExceeded(
-                "MaximumDatabaseBytes"
+                "SqliteFull"
             );
         }
         catch (Exception exception) when (IsStoreFailure(exception)) {
@@ -846,19 +712,12 @@ internal sealed class SqliteHistoryTimelineLedger
                 return new SelectedHistoryRowResult
                     .StaleTimelineHead(actual);
             }
-            SelectedSnapshot snapshot =
-                ReadAndValidateSelectedSnapshot(
-                connection,
-                transaction,
-                actual.HeadRowId
-            );
-            HistoryRowId? found = _trie.LookupRow(
-                connection,
-                transaction,
-                snapshot.RowRootDigest,
-                rowId
-            );
-            if (found != rowId) {
+            RequireCurrentSelectedHead(
+                connection, transaction, actual);
+            CurrentSelectedAssignment? assignment =
+                ReadCurrentSelectedAssignment(
+                    connection, transaction, rowId);
+            if (assignment is null) {
                 return new SelectedHistoryRowResult
                     .NotOnSelectedPath(rowId);
             }
@@ -869,6 +728,8 @@ internal sealed class SqliteHistoryTimelineLedger
             ) ?? throw new InvalidDataException(
                 "The selected path references a missing row."
             );
+            RequireSelectedAssignment(
+                connection, transaction, actual, assignment, descriptor);
             transaction.Commit();
             return new SelectedHistoryRowResult.Selected(descriptor);
         }
@@ -938,20 +799,12 @@ internal sealed class SqliteHistoryTimelineLedger
                 return new HistoryTimelineBoundaryProbeOpenResult
                     .StaleTimelineHead(actual);
             }
-            SelectedSnapshot snapshot =
-                ReadAndValidateSelectedSnapshot(
-                connection,
-                transaction: null,
-                actual.HeadRowId
-            );
+            RequireCurrentSelectedHead(
+                connection, transaction: null, actual);
             var probe = new SqliteBoundaryProbe(
                 this,
                 connection,
-                _trie.OpenEndBoundaryProbe(
-                    connection,
-                    snapshot.EndRootDigest,
-                    _hooks.BeforeBoundaryProbeLookupQuery
-                ),
+                actual,
                 _hooks.BeforeBoundaryProbeLookupQuery
             );
             connection = null;
@@ -987,6 +840,7 @@ internal sealed class SqliteHistoryTimelineLedger
             using SqliteConnection connection = OpenVerifiedConnection();
             using SqliteTransaction transaction =
                 connection.BeginTransaction(deferred: false);
+            RequireSelectedPathGuardClean(connection, transaction);
             TimelineHeadRef actual = ReadHead(connection, transaction);
             if (actual != candidate.ExpectedHead) {
                 return new HistoryTimelineReconcileResult
@@ -998,21 +852,14 @@ internal sealed class SqliteHistoryTimelineLedger
                     "The reconciliation candidate belongs to another raw Ref."
                 );
             }
-            SelectedSnapshot current =
-                ReadAndValidateSelectedSnapshot(
-                connection,
-                transaction,
-                actual.HeadRowId
-            );
-            SelectedSnapshot nextSnapshot = SelectedSnapshot.Empty;
+            RequireCurrentSelectedHead(
+                connection, transaction, actual);
+            long targetOrdinal = -1;
             if (candidate.SelectedRowId is { } selectedRowId) {
-                HistoryRowId? member = _trie.LookupRow(
-                    connection,
-                    transaction,
-                    current.RowRootDigest,
-                    selectedRowId
-                );
-                if (member != selectedRowId) {
+                CurrentSelectedAssignment? assignment =
+                    ReadCurrentSelectedAssignment(
+                        connection, transaction, selectedRowId);
+                if (assignment is null) {
                     return new HistoryTimelineReconcileResult.Invalid(
                         "ReconcileTargetNotSelected",
                         "The reconciliation target is not on the exact expected selected path."
@@ -1024,11 +871,17 @@ internal sealed class SqliteHistoryTimelineLedger
                         "A non-empty target requires a captured raw head."
                     );
                 }
-                nextSnapshot = ReadAndValidateSelectedSnapshot(
+                HistorySegmentDescriptor descriptor = ReadRowCore(
+                    connection, transaction, selectedRowId)
+                    ?? throw new InvalidDataException(
+                        "The reconciliation target row is missing.");
+                RequireSelectedAssignment(
                     connection,
                     transaction,
-                    selectedRowId
-                );
+                    actual,
+                    assignment,
+                    descriptor);
+                targetOrdinal = assignment.Ordinal;
             }
             EventAddress? observedRawHead =
                 candidate.RawFence.ReadCurrentHead();
@@ -1047,16 +900,23 @@ internal sealed class SqliteHistoryTimelineLedger
                     actual
                 );
             }
-            _ = nextSnapshot;
+            DeleteCurrentSelectedSuffix(
+                connection, transaction, targetOrdinal);
             TimelineHeadRef next = new(
                 actual.TimelineId,
                 actual.RefId,
                 candidate.SelectedRowId,
                 actual.ActivePartitionPolicyDigest,
                 selectedFence,
+                targetOrdinal < 0 ? 0 : checked(targetOrdinal + 1),
+                ReadCurrentSelectedRoot(
+                    connection,
+                    transaction,
+                    targetOrdinal < 0 ? 0 : checked(targetOrdinal + 1)),
                 checked(actual.Generation + 1)
             );
             WriteHead(connection, transaction, actual, next);
+            ClearSelectedPathGuard(connection, transaction);
             _hooks.BeforeReconcileCommit?.Invoke();
             transaction.Commit();
             _hooks.AfterReconcileCommit?.Invoke();
@@ -1102,26 +962,20 @@ internal sealed class SqliteHistoryTimelineLedger
                 return new HistoryTimelineStorePathPageResult
                     .StaleTimelineHead(actual);
             }
-            SelectedSnapshot snapshot =
-                ReadAndValidateSelectedSnapshot(
-                connection,
-                transaction,
-                actual.HeadRowId
-            );
+            RequireCurrentSelectedHead(
+                connection, transaction, actual);
             HistoryRowId? cursor = startAt ?? actual.HeadRowId;
             if (cursor is { } requested
-                && _trie.LookupRow(
-                    connection,
-                    transaction,
-                    snapshot.RowRootDigest,
-                    requested
-                ) != requested) {
+                && ReadCurrentSelectedAssignment(
+                    connection, transaction, requested) is null) {
                 return new HistoryTimelineStorePathPageResult.Invalid(
                     "PathCursorNotSelected",
                     "The path cursor is not on the exact selected path."
                 );
             }
             var rows = new List<HistorySegmentDescriptor>(maximumRows);
+            var proofNodes = new Dictionary<(int Level, long NodeIndex),
+                string>();
             int bytes = 0;
             while (cursor is { } rowId
                 && rows.Count < maximumRows) {
@@ -1132,6 +986,19 @@ internal sealed class SqliteHistoryTimelineLedger
                 ) ?? throw new InvalidDataException(
                     "The selected path references a missing row."
                 );
+                CurrentSelectedAssignment assignment =
+                    ReadCurrentSelectedAssignment(
+                        connection, transaction, rowId)
+                    ?? throw new InvalidDataException(
+                        "The descriptor chain is absent from the selected path.");
+                RequireSelectedAssignment(
+                    connection,
+                    transaction,
+                    actual,
+                    assignment,
+                    descriptor,
+                    proofNodes,
+                    verifyWholeRoot: false);
                 bytes = checked(
                     bytes + descriptor.ToCanonicalBytes().Length
                 );
@@ -1179,6 +1046,10 @@ internal sealed class SqliteHistoryTimelineLedger
                 ConfigureOpenedDatabase(connection, _limits);
             }
             ValidateSchemaIdentity(connection);
+            RequireSelectedPathGuardClean(
+                connection,
+                transaction: null
+            );
             return connection;
         }
         catch {
@@ -1351,319 +1222,6 @@ internal sealed class SqliteHistoryTimelineLedger
         return canonical;
     }
 
-    private SelectedSnapshot ReadSelectedSnapshot(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        HistoryRowId? headRowId
-    ) {
-        if (headRowId is null) {
-            return SelectedSnapshot.Empty;
-        }
-        if (!TryReadSelectedSnapshot(
-                connection,
-                transaction,
-                headRowId.Value,
-                out SelectedSnapshot snapshot)) {
-            throw new InvalidDataException(
-                "The selected head has no persistent path snapshot."
-            );
-        }
-        return snapshot;
-    }
-
-    private static bool TryReadSelectedSnapshot(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        HistoryRowId rowId,
-        out SelectedSnapshot snapshot
-    ) {
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT
-                row_root_digest,
-                end_root_digest,
-                member_count,
-                snapshot_digest,
-                length(canonical),
-                canonical
-            FROM selected_path_snapshots
-            WHERE head_row_id = $row;
-            """;
-        command.Parameters.AddWithValue("$row", rowId.Value);
-        using SqliteDataReader reader = command.ExecuteReader();
-        if (!reader.Read()) {
-            snapshot = SelectedSnapshot.Empty;
-            return false;
-        }
-        string rowRoot = reader.GetString(0);
-        string endRoot = reader.GetString(1);
-        int memberCount = reader.GetInt32(2);
-        string storedDigest = reader.GetString(3);
-        long canonicalLength = reader.GetInt64(4);
-        if (canonicalLength is < 1
-            or > HistoryTimelineStoreLimits.MaximumHeadUtf8Bytes) {
-            throw new InvalidDataException(
-                "Selected-path snapshot canonical bytes exceed their bound."
-            );
-        }
-        byte[] canonical = reader.GetFieldValue<byte[]>(5);
-        if (canonical.Length != canonicalLength) {
-            throw new InvalidDataException(
-                "Selected-path snapshot canonical length changed while reading."
-            );
-        }
-        HistoryTimelineSelectedPathSnapshotBody body =
-            HistoryTimelineCanonicalCodec.DecodeSelectedPathSnapshot(
-                canonical
-            );
-        string actualDigest = HistoryTimelineHash.Compute(
-            SelectedSnapshotHashDomain,
-            canonical
-        );
-        if (body.HeadRowId != rowId
-            || !string.Equals(
-                body.RowRootDigest,
-                rowRoot,
-                StringComparison.Ordinal)
-            || !string.Equals(
-                body.EndRootDigest,
-                endRoot,
-                StringComparison.Ordinal)
-            || body.MemberCount != memberCount
-            || !string.Equals(
-                actualDigest,
-                storedDigest,
-                StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                "Selected-path snapshot canonical commitment is invalid."
-            );
-        }
-        snapshot = new SelectedSnapshot(
-            body.HeadRowId,
-            body.RowRootDigest,
-            body.EndRootDigest,
-            body.MemberCount,
-            actualDigest,
-            canonical
-        );
-        return true;
-    }
-
-    private static void InsertSelectedSnapshot(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        HistoryRowId rowId,
-        SelectedSnapshot snapshot
-    ) {
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            INSERT INTO selected_path_snapshots(
-                head_row_id,
-                row_root_digest,
-                end_root_digest,
-                member_count,
-                snapshot_digest,
-                canonical
-            ) VALUES (
-                $row,
-                $rowRoot,
-                $endRoot,
-                $count,
-                $digest,
-                $canonical
-            );
-            """;
-        command.Parameters.AddWithValue("$row", rowId.Value);
-        command.Parameters.AddWithValue(
-            "$rowRoot",
-            snapshot.RowRootDigest!
-        );
-        command.Parameters.AddWithValue(
-            "$endRoot",
-            snapshot.EndRootDigest!
-        );
-        command.Parameters.AddWithValue("$count", snapshot.MemberCount);
-        command.Parameters.AddWithValue(
-            "$digest",
-            snapshot.SnapshotDigest!
-        );
-        command.Parameters.AddWithValue(
-            "$canonical",
-            snapshot.Canonical!
-        );
-        command.ExecuteNonQuery();
-    }
-
-    private static SelectedSnapshot CreateSelectedSnapshot(
-        HistoryRowId headRowId,
-        string rowRootDigest,
-        string endRootDigest,
-        int memberCount
-    ) {
-        var body = new HistoryTimelineSelectedPathSnapshotBody(
-            headRowId,
-            rowRootDigest,
-            endRootDigest,
-            memberCount
-        );
-        byte[] canonical = HistoryTimelineCanonicalCodec.Encode(body);
-        return new SelectedSnapshot(
-            body.HeadRowId,
-            body.RowRootDigest,
-            body.EndRootDigest,
-            body.MemberCount,
-            HistoryTimelineHash.Compute(
-                SelectedSnapshotHashDomain,
-                canonical
-            ),
-            canonical
-        );
-    }
-
-    private static bool SelectedSnapshotsEqual(
-        SelectedSnapshot left,
-        SelectedSnapshot right
-    ) => left.HeadRowId == right.HeadRowId
-        && string.Equals(
-            left.RowRootDigest,
-            right.RowRootDigest,
-            StringComparison.Ordinal
-        )
-        && string.Equals(
-            left.EndRootDigest,
-            right.EndRootDigest,
-            StringComparison.Ordinal
-        )
-        && left.MemberCount == right.MemberCount
-        && string.Equals(
-            left.SnapshotDigest,
-            right.SnapshotDigest,
-            StringComparison.Ordinal
-        )
-        && left.Canonical is not null
-        && right.Canonical is not null
-        && left.Canonical.AsSpan().SequenceEqual(right.Canonical);
-
-    private void ValidateSnapshotHeadMembership(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        SelectedSnapshot snapshot,
-        HistoryRowId? expectedHeadRowId
-    ) {
-        if (expectedHeadRowId is null) {
-            if (snapshot != SelectedSnapshot.Empty) {
-                throw new InvalidDataException(
-                    "The empty selected path has a non-empty snapshot."
-                );
-            }
-            return;
-        }
-        if (snapshot.HeadRowId != expectedHeadRowId
-            || snapshot.MemberCount < 1
-            || _trie.LookupRow(
-                connection,
-                transaction,
-                snapshot.RowRootDigest,
-                expectedHeadRowId.Value
-            ) != expectedHeadRowId.Value) {
-            throw new InvalidDataException(
-                "A selected-path snapshot does not contain its exact head row."
-            );
-        }
-    }
-
-    private SelectedSnapshot ReadAndValidateSelectedSnapshot(
-        SqliteConnection connection,
-        SqliteTransaction? transaction,
-        HistoryRowId? headRowId
-    ) {
-        SelectedSnapshot snapshot = ReadSelectedSnapshot(
-            connection,
-            transaction,
-            headRowId
-        );
-        ValidateSnapshotHeadMembership(
-            connection,
-            transaction,
-            snapshot,
-            headRowId
-        );
-        if (headRowId is null) {
-            if (snapshot != SelectedSnapshot.Empty) {
-                throw new InvalidDataException(
-                    "The empty selected path has a non-empty snapshot."
-                );
-            }
-            return snapshot;
-        }
-
-        HistorySegmentDescriptor descriptor = ReadRowCore(
-            connection,
-            transaction,
-            headRowId.Value
-        ) ?? throw new InvalidDataException(
-            "The selected snapshot head row is missing."
-        );
-        SelectedSnapshot predecessor = ReadSelectedSnapshot(
-            connection,
-            transaction,
-            descriptor.PreviousRowId
-        );
-        ValidateSnapshotHeadMembership(
-            connection,
-            transaction,
-            predecessor,
-            descriptor.PreviousRowId
-        );
-        if (_trie.LookupRow(
-                connection,
-                transaction,
-                predecessor.RowRootDigest,
-                descriptor.RowId
-            ) is not null
-            || _trie.LookupEnd(
-                connection,
-                transaction,
-                predecessor.EndRootDigest,
-                descriptor.EndInclusive
-            ) is not null) {
-            throw new InvalidDataException(
-                "The selected snapshot is not a strict predecessor extension."
-            );
-        }
-        SelectedSnapshot expected = CreateSelectedSnapshot(
-            descriptor.RowId,
-            _trie.ComputeRowExtension(
-                connection,
-                transaction,
-                predecessor.RowRootDigest,
-                descriptor.RowId
-            ),
-            _trie.ComputeEndExtension(
-                connection,
-                transaction,
-                predecessor.EndRootDigest,
-                descriptor.EndInclusive,
-                descriptor.RowId
-            ),
-            checked(predecessor.MemberCount + 1)
-        );
-        if (!SelectedSnapshotsEqual(snapshot, expected)
-            || _trie.LookupEnd(
-                connection,
-                transaction,
-                snapshot.EndRootDigest,
-                descriptor.EndInclusive
-            ) != descriptor.RowId) {
-            throw new InvalidDataException(
-                "The selected snapshot differs from its exact predecessor recurrence."
-            );
-        }
-        return snapshot;
-    }
-
     private static void InsertRow(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -1703,6 +1261,401 @@ internal sealed class SqliteHistoryTimelineLedger
         );
         command.Parameters.AddWithValue("$canonical", canonical);
         command.ExecuteNonQuery();
+    }
+
+    private static CurrentSelectedTail ReadCurrentSelectedTail(
+        SqliteConnection connection,
+        SqliteTransaction? transaction
+    ) {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT ordinal, row_id
+            FROM current_selected_path
+            ORDER BY ordinal DESC
+            LIMIT 1;
+            """;
+        using SqliteDataReader reader = command.ExecuteReader();
+        return !reader.Read()
+            ? new CurrentSelectedTail(-1, null)
+            : new CurrentSelectedTail(
+                reader.GetInt64(0),
+                new HistoryRowId(reader.GetString(1))
+            );
+    }
+
+    private static void RequireCurrentSelectedHead(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        TimelineHeadRef expectedHead
+    ) {
+        RequireSelectedPathGuardClean(connection, transaction);
+        CurrentSelectedTail tail = ReadCurrentSelectedTail(
+            connection, transaction);
+        long count = tail.Ordinal < 0 ? 0 : checked(tail.Ordinal + 1);
+        string root = ReadCurrentSelectedRoot(
+            connection, transaction, count);
+        if (tail.RowId != expectedHead.HeadRowId
+            || count != expectedHead.SelectedPathCount
+            || !string.Equals(
+                root,
+                expectedHead.SelectedPathDigest,
+                StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                "The current selected path commitment does not match the whole head."
+            );
+        }
+    }
+
+    private static void RequireSelectedPathGuardClean(
+        SqliteConnection connection,
+        SqliteTransaction? transaction
+    ) {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT dirty
+            FROM current_selected_path_guard
+            WHERE singleton = 1;
+            """;
+        object? value = command.ExecuteScalar();
+        if (value is not long dirty || dirty != 0) {
+            throw new InvalidDataException(
+                "The selected path was changed outside its whole-head transaction.");
+        }
+    }
+
+    private static void ClearSelectedPathGuard(
+        SqliteConnection connection,
+        SqliteTransaction transaction
+    ) {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE current_selected_path_guard
+            SET dirty = 0
+            WHERE singleton = 1;
+            """;
+        if (command.ExecuteNonQuery() != 1) {
+            throw new InvalidDataException(
+                "The selected-path mutation guard is unavailable.");
+        }
+    }
+
+    private static bool IsCurrentSelectedRow(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        HistoryRowId rowId
+    ) => ReadCurrentSelectedOrdinal(
+        connection, transaction, rowId) is not null;
+
+    private static long? ReadCurrentSelectedOrdinal(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        HistoryRowId rowId
+    ) {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT ordinal
+            FROM current_selected_path
+            WHERE row_id = $row;
+            """;
+        command.Parameters.AddWithValue("$row", rowId.Value);
+        object? value = command.ExecuteScalar();
+        return value is null ? null : Convert.ToInt64(value);
+    }
+
+    private static CurrentSelectedAssignment?
+        ReadCurrentSelectedAssignment(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        HistoryRowId rowId
+    ) {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT ordinal, previous_row_id, end_address, leaf_digest
+            FROM current_selected_path
+            WHERE row_id = $row;
+            """;
+        command.Parameters.AddWithValue("$row", rowId.Value);
+        using SqliteDataReader reader = command.ExecuteReader();
+        if (!reader.Read()) {
+            return null;
+        }
+        return new CurrentSelectedAssignment(
+            reader.GetInt64(0),
+            rowId,
+            reader.IsDBNull(1)
+                ? null
+                : new HistoryRowId(reader.GetString(1)),
+            reader.GetFieldValue<byte[]>(2),
+            HistoryTimelineSyntax.RequireSha256(
+                reader.GetString(3),
+                "leaf_digest"));
+    }
+
+    private static void RequireSelectedAssignment(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        TimelineHeadRef expectedHead,
+        CurrentSelectedAssignment assignment,
+        HistorySegmentDescriptor descriptor,
+        Dictionary<(int Level, long NodeIndex), string>? nodeCache = null,
+        bool verifyWholeRoot = true
+    ) {
+        if (assignment.Ordinal < 0
+            || assignment.Ordinal >= expectedHead.SelectedPathCount
+            || assignment.RowId != descriptor.RowId
+            || assignment.PreviousRowId != descriptor.PreviousRowId
+            || assignment.EndAddress.Length
+                != EventAddressCodec.EventAddressLength) {
+            throw new InvalidDataException(
+                "A selected-path assignment differs from its immutable row.");
+        }
+        byte[] expectedEnd = new byte[EventAddressCodec.EventAddressLength];
+        EventAddressCodec.Encode(descriptor.EndInclusive, expectedEnd);
+        string leaf = HistorySelectedPathCommitment.ComputeLeaf(
+            assignment.Ordinal,
+            descriptor.RowId,
+            descriptor.PreviousRowId,
+            descriptor.EndInclusive);
+        if (!assignment.EndAddress.AsSpan().SequenceEqual(expectedEnd)
+            || !string.Equals(
+                assignment.LeafDigest, leaf, StringComparison.Ordinal)
+            || !string.Equals(
+                ReadSelectedPathNode(
+                    connection, transaction, 0, assignment.Ordinal,
+                    nodeCache),
+                leaf,
+                StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                "A selected-path leaf commitment differs from its assignment.");
+        }
+
+        IReadOnlyList<(int Level, long NodeIndex)> peaks =
+            HistorySelectedPathCommitment.PeakKeys(
+                expectedHead.SelectedPathCount);
+        (int peakLevel, long peakNode) = FindContainingPeak(
+            peaks, assignment.Ordinal);
+        string computed = leaf;
+        long nodeIndex = assignment.Ordinal;
+        for (int level = 0; level < peakLevel; level++) {
+            long sibling = nodeIndex ^ 1;
+            string siblingDigest = ReadSelectedPathNode(
+                connection, transaction, level, sibling, nodeCache);
+            computed = (nodeIndex & 1) == 0
+                ? HistorySelectedPathCommitment.Combine(
+                    level + 1, computed, siblingDigest)
+                : HistorySelectedPathCommitment.Combine(
+                    level + 1, siblingDigest, computed);
+            nodeIndex >>= 1;
+        }
+        if (nodeIndex != peakNode
+            || !string.Equals(
+                computed,
+                ReadSelectedPathNode(
+                    connection,
+                    transaction,
+                    peakLevel,
+                    peakNode,
+                    nodeCache),
+                StringComparison.Ordinal)
+            || (verifyWholeRoot && !string.Equals(
+                ReadCurrentSelectedRoot(
+                    connection,
+                    transaction,
+                    expectedHead.SelectedPathCount),
+                expectedHead.SelectedPathDigest,
+                StringComparison.Ordinal))) {
+            throw new InvalidDataException(
+                "A selected-path inclusion proof differs from the whole head.");
+        }
+    }
+
+    private static (int Level, long NodeIndex) FindContainingPeak(
+        IReadOnlyList<(int Level, long NodeIndex)> peaks,
+        long ordinal
+    ) {
+        foreach ((int level, long nodeIndex) in peaks) {
+            long start = checked(nodeIndex << level);
+            long end = checked(start + (1L << level));
+            if (ordinal >= start && ordinal < end) {
+                return (level, nodeIndex);
+            }
+        }
+        throw new InvalidDataException(
+            "A selected row is outside the committed path peaks.");
+    }
+
+    private static bool IsCurrentSelectedBoundary(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        EventAddress endInclusive
+    ) {
+        byte[] encoded = new byte[EventAddressCodec.EventAddressLength];
+        EventAddressCodec.Encode(endInclusive, encoded);
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT 1
+            FROM current_selected_path
+            WHERE end_address = $end;
+            """;
+        command.Parameters.AddWithValue("$end", encoded);
+        return command.ExecuteScalar() is not null;
+    }
+
+    private static void InsertCurrentSelectedRow(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long ordinal,
+        HistoryRowId rowId,
+        HistoryRowId? previousRowId,
+        EventAddress endInclusive
+    ) {
+        byte[] encoded = new byte[EventAddressCodec.EventAddressLength];
+        EventAddressCodec.Encode(endInclusive, encoded);
+        string leafDigest = HistorySelectedPathCommitment.ComputeLeaf(
+            ordinal, rowId, previousRowId, endInclusive);
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO current_selected_path(
+                ordinal, row_id, previous_row_id, end_address, leaf_digest
+            ) VALUES ($ordinal, $row, $previous, $end, $leaf);
+            """;
+        command.Parameters.AddWithValue("$ordinal", ordinal);
+        command.Parameters.AddWithValue("$row", rowId.Value);
+        command.Parameters.AddWithValue(
+            "$previous",
+            previousRowId is null
+                ? DBNull.Value
+                : previousRowId.Value.Value);
+        command.Parameters.AddWithValue("$end", encoded);
+        command.Parameters.AddWithValue("$leaf", leafDigest);
+        command.ExecuteNonQuery();
+
+        UpsertSelectedPathNode(
+            connection, transaction, level: 0, ordinal, leafDigest);
+        long nodeIndex = ordinal;
+        string digest = leafDigest;
+        for (int level = 0; (nodeIndex & 1) == 1; level++) {
+            string left = ReadSelectedPathNode(
+                connection, transaction, level, nodeIndex - 1);
+            digest = HistorySelectedPathCommitment.Combine(
+                level + 1, left, digest);
+            nodeIndex >>= 1;
+            UpsertSelectedPathNode(
+                connection,
+                transaction,
+                level + 1,
+                nodeIndex,
+                digest);
+        }
+    }
+
+    private static void DeleteCurrentSelectedSuffix(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long targetOrdinal
+    ) {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            DELETE FROM current_selected_path
+            WHERE ordinal > $target;
+            """;
+        command.Parameters.AddWithValue("$target", targetOrdinal);
+        command.ExecuteNonQuery();
+        using var deleteNodes = connection.CreateCommand();
+        deleteNodes.Transaction = transaction;
+        deleteNodes.CommandText = """
+            DELETE FROM current_selected_path_merkle
+            WHERE range_start >= $count OR range_end >= $count;
+            """;
+        deleteNodes.Parameters.AddWithValue(
+            "$count",
+            targetOrdinal < 0 ? 0 : checked(targetOrdinal + 1));
+        deleteNodes.ExecuteNonQuery();
+    }
+
+    private static void UpsertSelectedPathNode(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        int level,
+        long nodeIndex,
+        string digest
+    ) {
+        long rangeStart = checked(nodeIndex << level);
+        long rangeEnd = checked(rangeStart + (1L << level) - 1);
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO current_selected_path_merkle(
+                level, node_index, range_start, range_end, digest
+            ) VALUES ($level, $node, $start, $end, $digest)
+            ON CONFLICT(level, node_index) DO UPDATE SET
+                range_start = excluded.range_start,
+                range_end = excluded.range_end,
+                digest = excluded.digest;
+            """;
+        command.Parameters.AddWithValue("$level", level);
+        command.Parameters.AddWithValue("$node", nodeIndex);
+        command.Parameters.AddWithValue("$start", rangeStart);
+        command.Parameters.AddWithValue("$end", rangeEnd);
+        command.Parameters.AddWithValue("$digest", digest);
+        command.ExecuteNonQuery();
+    }
+
+    private static string ReadSelectedPathNode(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        int level,
+        long nodeIndex,
+        Dictionary<(int Level, long NodeIndex), string>? cache = null
+    ) {
+        if (cache is not null
+            && cache.TryGetValue((level, nodeIndex), out string? cached)) {
+            return cached;
+        }
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT digest
+            FROM current_selected_path_merkle
+            WHERE level = $level AND node_index = $node;
+            """;
+        command.Parameters.AddWithValue("$level", level);
+        command.Parameters.AddWithValue("$node", nodeIndex);
+        object? value = command.ExecuteScalar();
+        if (value is not string digest) {
+            throw new InvalidDataException(
+                "A selected-path commitment node is missing.");
+        }
+        string validated = HistoryTimelineSyntax.RequireSha256(
+            digest, nameof(digest));
+        cache?.Add((level, nodeIndex), validated);
+        return validated;
+    }
+
+    private static string ReadCurrentSelectedRoot(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        long count
+    ) {
+        IReadOnlyList<(int Level, long NodeIndex)> keys =
+            HistorySelectedPathCommitment.PeakKeys(count);
+        var peaks = new List<HistorySelectedPathPeak>(keys.Count);
+        foreach ((int level, long nodeIndex) in keys) {
+            peaks.Add(new HistorySelectedPathPeak(
+                level,
+                nodeIndex,
+                ReadSelectedPathNode(
+                    connection, transaction, level, nodeIndex)));
+        }
+        return HistorySelectedPathCommitment.ComputeRoot(count, peaks);
     }
 
     private void VerifyCanonicalPolicies(
@@ -1847,62 +1800,71 @@ internal sealed class SqliteHistoryTimelineLedger
         }
     }
 
-    private static void VerifyCanonicalTrieNodes(
+    private void VerifyCurrentSelectedPath(
         SqliteConnection connection,
-        SqliteTransaction transaction
+        SqliteTransaction transaction,
+        TimelineHeadRef head
     ) {
-        string? afterDigest = null;
-        while (true) {
-            var page = new List<CanonicalTrieNodeRecord>(128);
-            using (var command = connection.CreateCommand()) {
-                command.Transaction = transaction;
-                command.CommandText = afterDigest is null
-                    ? VerifyTrieNodesFirstPageSql
-                    : VerifyTrieNodesNextPageSql;
-                if (afterDigest is not null) {
-                    command.Parameters.AddWithValue(
-                        "$after",
-                        afterDigest
-                    );
-                }
-                using SqliteDataReader reader = command.ExecuteReader();
-                while (reader.Read()) {
-                    page.Add(new CanonicalTrieNodeRecord(
-                        reader.GetString(0),
-                        reader.GetInt64(1),
-                        reader.GetFieldValue<byte[]>(2)
-                    ));
-                }
+        RequireSelectedPathGuardClean(connection, transaction);
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT p.ordinal, p.row_id, p.end_address, r.previous_row_id,
+                   length(r.canonical), r.canonical
+            FROM current_selected_path AS p
+            JOIN rows AS r ON r.row_id = p.row_id
+            ORDER BY p.ordinal;
+            """;
+        using SqliteDataReader reader = command.ExecuteReader();
+        long expectedOrdinal = 0;
+        HistoryRowId? previous = null;
+        HistoryRowId? last = null;
+        while (reader.Read()) {
+            long ordinal = reader.GetInt64(0);
+            var rowId = new HistoryRowId(reader.GetString(1));
+            byte[] indexedEnd = reader.GetFieldValue<byte[]>(2);
+            HistoryRowId? storedPrevious = reader.IsDBNull(3)
+                ? null
+                : new HistoryRowId(reader.GetString(3));
+            long canonicalLength = reader.GetInt64(4);
+            byte[] canonical = reader.GetFieldValue<byte[]>(5);
+            if (ordinal != expectedOrdinal
+                || storedPrevious != previous
+                || canonicalLength is < 1
+                    or > HistoryTimelineCanonicalCodec
+                        .MaximumDescriptorUtf8Bytes
+                || canonical.Length != canonicalLength
+                || indexedEnd.Length
+                    != EventAddressCodec.EventAddressLength) {
+                throw new InvalidDataException(
+                    "The current selected path is not a contiguous exact lineage."
+                );
             }
-            if (page.Count == 0) {
-                return;
+            HistorySegmentDescriptor descriptor =
+                DecodeRowCanonical(rowId, canonical);
+            byte[] expectedEnd = new byte[
+                EventAddressCodec.EventAddressLength];
+            EventAddressCodec.Encode(descriptor.EndInclusive, expectedEnd);
+            if (descriptor.PreviousRowId != previous
+                || !expectedEnd.AsSpan().SequenceEqual(indexedEnd)) {
+                throw new InvalidDataException(
+                    "The current selected path index differs from its row."
+                );
             }
-            foreach (CanonicalTrieNodeRecord node in page) {
-                if (node.CanonicalLength != node.Canonical.Length) {
-                    throw new InvalidDataException(
-                        "A selected-path trie node length is invalid."
-                    );
-                }
-                IReadOnlyList<string> children =
-                    SqliteSelectedPathTrie.VerifyCanonicalNode(
-                        node.Digest,
-                        node.Canonical
-                    );
-                foreach (string child in children) {
-                    if (!CanonicalKeyExists(
-                            connection,
-                            transaction,
-                            "selected_path_nodes",
-                            "node_digest",
-                            child
-                        )) {
-                        throw new InvalidDataException(
-                            "A selected-path trie node references a missing child."
-                        );
-                    }
-                }
-            }
-            afterDigest = page[^1].Digest;
+            previous = rowId;
+            last = rowId;
+            expectedOrdinal = checked(expectedOrdinal + 1);
+        }
+        if (last != head.HeadRowId
+            || expectedOrdinal != head.SelectedPathCount
+            || !string.Equals(
+                ReadCurrentSelectedRoot(
+                    connection, transaction, expectedOrdinal),
+                head.SelectedPathDigest,
+                StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                "The current selected path commitment differs from the whole head."
+            );
         }
     }
 
@@ -1920,111 +1882,6 @@ internal sealed class SqliteHistoryTimelineLedger
             """;
         command.Parameters.AddWithValue("$key", key);
         return command.ExecuteScalar() is not null;
-    }
-
-    private void VerifyCanonicalSelectedSnapshots(
-        SqliteConnection connection,
-        SqliteTransaction transaction
-    ) {
-        string? afterRowId = null;
-        while (true) {
-            var rowIds = new List<HistoryRowId>(128);
-            using (var command = connection.CreateCommand()) {
-                command.Transaction = transaction;
-                command.CommandText = afterRowId is null
-                    ? VerifySnapshotsFirstPageSql
-                    : VerifySnapshotsNextPageSql;
-                if (afterRowId is not null) {
-                    command.Parameters.AddWithValue(
-                        "$after",
-                        afterRowId
-                    );
-                }
-                using SqliteDataReader reader = command.ExecuteReader();
-                while (reader.Read()) {
-                    rowIds.Add(new HistoryRowId(reader.GetString(0)));
-                }
-            }
-            if (rowIds.Count == 0) {
-                return;
-            }
-            foreach (HistoryRowId rowId in rowIds) {
-                SelectedSnapshot snapshot = ReadSelectedSnapshot(
-                    connection,
-                    transaction,
-                    rowId
-                );
-                ValidateSnapshotHeadMembership(
-                    connection,
-                    transaction,
-                    snapshot,
-                    rowId
-                );
-                HistorySegmentDescriptor descriptor = ReadRowCore(
-                    connection,
-                    transaction,
-                    rowId
-                ) ?? throw new InvalidDataException(
-                    "A selected-path snapshot references a missing row."
-                );
-                SelectedSnapshot predecessor = ReadSelectedSnapshot(
-                    connection,
-                    transaction,
-                    descriptor.PreviousRowId
-                );
-                ValidateSnapshotHeadMembership(
-                    connection,
-                    transaction,
-                    predecessor,
-                    descriptor.PreviousRowId
-                );
-                if (_trie.LookupRow(
-                        connection,
-                        transaction,
-                        predecessor.RowRootDigest,
-                        rowId
-                    ) is not null
-                    || _trie.LookupEnd(
-                        connection,
-                        transaction,
-                        predecessor.EndRootDigest,
-                        descriptor.EndInclusive
-                    ) is not null) {
-                    throw new InvalidDataException(
-                        "A selected-path snapshot is not a strict predecessor extension."
-                    );
-                }
-                SelectedSnapshot expected = CreateSelectedSnapshot(
-                    rowId,
-                    _trie.ComputeRowExtension(
-                        connection,
-                        transaction,
-                        predecessor.RowRootDigest,
-                        rowId
-                    ),
-                    _trie.ComputeEndExtension(
-                        connection,
-                        transaction,
-                        predecessor.EndRootDigest,
-                        descriptor.EndInclusive,
-                        rowId
-                    ),
-                    checked(predecessor.MemberCount + 1)
-                );
-                if (!SelectedSnapshotsEqual(snapshot, expected)
-                    || _trie.LookupEnd(
-                        connection,
-                        transaction,
-                        snapshot.EndRootDigest,
-                        descriptor.EndInclusive
-                    ) != rowId) {
-                    throw new InvalidDataException(
-                        "A selected-path snapshot differs from its exact predecessor recurrence."
-                    );
-                }
-            }
-            afterRowId = rowIds[^1].Value;
-        }
     }
 
     private void WriteHead(
@@ -2069,7 +1926,7 @@ internal sealed class SqliteHistoryTimelineLedger
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT policy_count, row_count, trie_node_count
+            SELECT policy_count, row_count
             FROM store_metadata
             WHERE singleton = 1;
             """;
@@ -2080,9 +1937,8 @@ internal sealed class SqliteHistoryTimelineLedger
             );
         }
         return new StoreCounts(
-            reader.GetInt32(0),
-            reader.GetInt32(1),
-            reader.GetInt32(2)
+            reader.GetInt64(0),
+            reader.GetInt64(1)
         );
     }
 
@@ -2096,8 +1952,7 @@ internal sealed class SqliteHistoryTimelineLedger
         command.CommandText = """
             UPDATE store_metadata
             SET policy_count = $policies,
-                row_count = $rows,
-                trie_node_count = $nodes
+                row_count = $rows
             WHERE singleton = 1;
             """;
         command.Parameters.AddWithValue(
@@ -2105,10 +1960,6 @@ internal sealed class SqliteHistoryTimelineLedger
             counts.PolicyCount
         );
         command.Parameters.AddWithValue("$rows", counts.RowCount);
-        command.Parameters.AddWithValue(
-            "$nodes",
-            counts.TrieNodeCount
-        );
         if (command.ExecuteNonQuery() != 1) {
             throw new InvalidDataException(
                 "Timeline store counter update failed."
@@ -2122,12 +1973,7 @@ internal sealed class SqliteHistoryTimelineLedger
             connection,
             transaction: null
         );
-        if (stored.PolicyCount < 1
-            || stored.PolicyCount > _limits.MaximumPolicyCount
-            || stored.RowCount < 0
-            || stored.RowCount > _limits.MaximumRowCount
-            || stored.TrieNodeCount < 0
-            || stored.TrieNodeCount > _limits.MaximumTrieNodeCount) {
+        if (stored.PolicyCount < 1 || stored.RowCount < 0) {
             throw new InvalidDataException(
                 "Timeline SQLite counters exceed their code-owned bounds."
             );
@@ -2143,9 +1989,7 @@ internal sealed class SqliteHistoryTimelineLedger
         command.CommandText = """
             SELECT
                 (SELECT COUNT(*) FROM policies),
-                (SELECT COUNT(*) FROM rows),
-                (SELECT COUNT(*) FROM selected_path_nodes),
-                (SELECT COUNT(*) FROM selected_path_snapshots);
+                (SELECT COUNT(*) FROM rows);
             """;
         using SqliteDataReader reader = command.ExecuteReader();
         if (!reader.Read()) {
@@ -2155,13 +1999,9 @@ internal sealed class SqliteHistoryTimelineLedger
         }
         long policies = reader.GetInt64(0);
         long rows = reader.GetInt64(1);
-        long nodes = reader.GetInt64(2);
-        long snapshots = reader.GetInt64(3);
         StoreCounts stored = ReadCounts(connection, transaction);
         if (stored.PolicyCount != policies
-            || stored.RowCount != rows
-            || stored.TrieNodeCount != nodes
-            || snapshots != rows) {
+            || stored.RowCount != rows) {
             throw new InvalidDataException(
                 "Timeline SQLite counters differ from canonical tables."
             );
@@ -2231,7 +2071,7 @@ internal sealed class SqliteHistoryTimelineLedger
                     expected.Sql,
                     StringComparison.Ordinal)) {
                 throw new InvalidDataException(
-                    "Timeline SQLite schema shape differs from V1."
+                    "Timeline SQLite schema shape differs from V2."
                 );
             }
         }
@@ -2300,7 +2140,7 @@ internal sealed class SqliteHistoryTimelineLedger
             $"PRAGMA busy_timeout = {limits.BusyTimeoutMilliseconds};"
         );
         ExecuteScalarPragma(connection, "PRAGMA temp_store = MEMORY;");
-        long maximumPages = limits.MaximumDatabaseBytes / 4096;
+        const long maximumPages = 4_294_967_294L;
         ExecuteScalarPragma(
             connection,
             $"PRAGMA max_page_count = {maximumPages};"
@@ -2406,12 +2246,6 @@ internal sealed class SqliteHistoryTimelineLedger
                 "Timeline database exact slot is empty."
             );
         }
-        if (file.Length > limits.MaximumDatabaseBytes) {
-            throw new HistoryTimelineStoreLimitException(
-                "MaximumDatabaseBytes",
-                "Timeline database exceeds its code-owned byte bound."
-            );
-        }
     }
 
     private static string ComputeHeadDigest(ReadOnlySpan<byte> canonical)
@@ -2512,6 +2346,47 @@ internal sealed class SqliteHistoryTimelineLedger
     private static readonly SchemaEntry[] ExpectedSchemaEntries = [
         new(
             "table",
+            "current_selected_path",
+            "current_selected_path",
+            """
+            CREATE TABLE current_selected_path(
+                ordinal INTEGER PRIMARY KEY CHECK(ordinal >= 0),
+                row_id TEXT NOT NULL UNIQUE,
+                previous_row_id TEXT NULL,
+                end_address BLOB NOT NULL UNIQUE,
+                leaf_digest TEXT NOT NULL,
+                FOREIGN KEY(row_id) REFERENCES rows(row_id)
+            ) STRICT
+            """
+        ),
+        new(
+            "table",
+            "current_selected_path_guard",
+            "current_selected_path_guard",
+            """
+            CREATE TABLE current_selected_path_guard(
+                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                dirty INTEGER NOT NULL CHECK(dirty IN (0, 1))
+            ) STRICT
+            """
+        ),
+        new(
+            "table",
+            "current_selected_path_merkle",
+            "current_selected_path_merkle",
+            """
+            CREATE TABLE current_selected_path_merkle(
+                level INTEGER NOT NULL CHECK(level >= 0 AND level <= 62),
+                node_index INTEGER NOT NULL CHECK(node_index >= 0),
+                range_start INTEGER NOT NULL CHECK(range_start >= 0),
+                range_end INTEGER NOT NULL CHECK(range_end >= range_start),
+                digest TEXT NOT NULL,
+                PRIMARY KEY(level, node_index)
+            ) STRICT, WITHOUT ROWID
+            """
+        ),
+        new(
+            "table",
             "policies",
             "policies",
             """
@@ -2538,37 +2413,6 @@ internal sealed class SqliteHistoryTimelineLedger
         ),
         new(
             "table",
-            "selected_path_nodes",
-            "selected_path_nodes",
-            """
-            CREATE TABLE selected_path_nodes(
-                node_digest TEXT PRIMARY KEY,
-                canonical BLOB NOT NULL
-            ) STRICT, WITHOUT ROWID
-            """
-        ),
-        new(
-            "table",
-            "selected_path_snapshots",
-            "selected_path_snapshots",
-            """
-            CREATE TABLE selected_path_snapshots(
-                head_row_id TEXT PRIMARY KEY,
-                row_root_digest TEXT NOT NULL,
-                end_root_digest TEXT NOT NULL,
-                member_count INTEGER NOT NULL CHECK(member_count >= 1),
-                snapshot_digest TEXT NOT NULL,
-                canonical BLOB NOT NULL,
-                FOREIGN KEY(head_row_id) REFERENCES rows(row_id),
-                FOREIGN KEY(row_root_digest)
-                    REFERENCES selected_path_nodes(node_digest),
-                FOREIGN KEY(end_root_digest)
-                    REFERENCES selected_path_nodes(node_digest)
-            ) STRICT, WITHOUT ROWID
-            """
-        ),
-        new(
-            "table",
             "store_metadata",
             "store_metadata",
             """
@@ -2580,9 +2424,80 @@ internal sealed class SqliteHistoryTimelineLedger
                 head_canonical BLOB NOT NULL,
                 head_sha256 TEXT NOT NULL,
                 policy_count INTEGER NOT NULL CHECK(policy_count >= 0),
-                row_count INTEGER NOT NULL CHECK(row_count >= 0),
-                trie_node_count INTEGER NOT NULL CHECK(trie_node_count >= 0)
+                row_count INTEGER NOT NULL CHECK(row_count >= 0)
             ) STRICT
+            """
+        )
+        ,new(
+            "trigger",
+            "guard_selected_path_ad",
+            "current_selected_path",
+            """
+            CREATE TRIGGER guard_selected_path_ad
+            AFTER DELETE ON current_selected_path
+            BEGIN
+                UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
+            END
+            """
+        ),
+        new(
+            "trigger",
+            "guard_selected_path_ai",
+            "current_selected_path",
+            """
+            CREATE TRIGGER guard_selected_path_ai
+            AFTER INSERT ON current_selected_path
+            BEGIN
+                UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
+            END
+            """
+        ),
+        new(
+            "trigger",
+            "guard_selected_path_au",
+            "current_selected_path",
+            """
+            CREATE TRIGGER guard_selected_path_au
+            AFTER UPDATE ON current_selected_path
+            BEGIN
+                UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
+            END
+            """
+        ),
+        new(
+            "trigger",
+            "guard_selected_path_commitments_ad",
+            "current_selected_path_merkle",
+            """
+            CREATE TRIGGER guard_selected_path_commitments_ad
+            AFTER DELETE ON current_selected_path_merkle
+            BEGIN
+                UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
+            END
+            """
+        ),
+        new(
+            "trigger",
+            "guard_selected_path_commitments_ai",
+            "current_selected_path_merkle",
+            """
+            CREATE TRIGGER guard_selected_path_commitments_ai
+            AFTER INSERT ON current_selected_path_merkle
+            BEGIN
+                UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
+            END
+            """
+        ),
+        new(
+            "trigger",
+            "guard_selected_path_commitments_au",
+            "current_selected_path_merkle",
+            """
+            CREATE TRIGGER guard_selected_path_commitments_au
+            AFTER UPDATE ON current_selected_path_merkle
+            BEGIN
+                UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
+            END
             """
         )
     ];
@@ -2596,8 +2511,7 @@ internal sealed class SqliteHistoryTimelineLedger
             head_canonical BLOB NOT NULL,
             head_sha256 TEXT NOT NULL,
             policy_count INTEGER NOT NULL CHECK(policy_count >= 0),
-            row_count INTEGER NOT NULL CHECK(row_count >= 0),
-            trie_node_count INTEGER NOT NULL CHECK(trie_node_count >= 0)
+            row_count INTEGER NOT NULL CHECK(row_count >= 0)
         ) STRICT;
 
         CREATE TABLE policies(
@@ -2614,31 +2528,86 @@ internal sealed class SqliteHistoryTimelineLedger
             FOREIGN KEY(previous_row_id) REFERENCES rows(row_id)
         ) STRICT, WITHOUT ROWID;
 
-        CREATE TABLE selected_path_nodes(
-            node_digest TEXT PRIMARY KEY,
-            canonical BLOB NOT NULL
+        CREATE TABLE current_selected_path(
+            ordinal INTEGER PRIMARY KEY CHECK(ordinal >= 0),
+            row_id TEXT NOT NULL UNIQUE,
+            previous_row_id TEXT NULL,
+            end_address BLOB NOT NULL UNIQUE,
+            leaf_digest TEXT NOT NULL,
+            FOREIGN KEY(row_id) REFERENCES rows(row_id)
+        ) STRICT;
+
+        CREATE TABLE current_selected_path_merkle(
+            level INTEGER NOT NULL CHECK(level >= 0 AND level <= 62),
+            node_index INTEGER NOT NULL CHECK(node_index >= 0),
+            range_start INTEGER NOT NULL CHECK(range_start >= 0),
+            range_end INTEGER NOT NULL CHECK(range_end >= range_start),
+            digest TEXT NOT NULL,
+            PRIMARY KEY(level, node_index)
         ) STRICT, WITHOUT ROWID;
 
-        CREATE TABLE selected_path_snapshots(
-            head_row_id TEXT PRIMARY KEY,
-            row_root_digest TEXT NOT NULL,
-            end_root_digest TEXT NOT NULL,
-            member_count INTEGER NOT NULL CHECK(member_count >= 1),
-            snapshot_digest TEXT NOT NULL,
-            canonical BLOB NOT NULL,
-            FOREIGN KEY(head_row_id) REFERENCES rows(row_id),
-            FOREIGN KEY(row_root_digest)
-                REFERENCES selected_path_nodes(node_digest),
-            FOREIGN KEY(end_root_digest)
-                REFERENCES selected_path_nodes(node_digest)
-        ) STRICT, WITHOUT ROWID;
+        CREATE TABLE current_selected_path_guard(
+            singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+            dirty INTEGER NOT NULL CHECK(dirty IN (0, 1))
+        ) STRICT;
+
+        INSERT INTO current_selected_path_guard(singleton, dirty)
+        VALUES (1, 0);
+
+        CREATE TRIGGER guard_selected_path_ad
+        AFTER DELETE ON current_selected_path
+        BEGIN
+            UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
+        END;
+
+        CREATE TRIGGER guard_selected_path_ai
+        AFTER INSERT ON current_selected_path
+        BEGIN
+            UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
+        END;
+
+        CREATE TRIGGER guard_selected_path_au
+        AFTER UPDATE ON current_selected_path
+        BEGIN
+            UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
+        END;
+
+        CREATE TRIGGER guard_selected_path_commitments_ad
+        AFTER DELETE ON current_selected_path_merkle
+        BEGIN
+            UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
+        END;
+
+        CREATE TRIGGER guard_selected_path_commitments_ai
+        AFTER INSERT ON current_selected_path_merkle
+        BEGIN
+            UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
+        END;
+
+        CREATE TRIGGER guard_selected_path_commitments_au
+        AFTER UPDATE ON current_selected_path_merkle
+        BEGIN
+            UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
+        END;
 
         """;
 
     private sealed record StoreCounts(
-        int PolicyCount,
-        int RowCount,
-        int TrieNodeCount
+        long PolicyCount,
+        long RowCount
+    );
+
+    private sealed record CurrentSelectedTail(
+        long Ordinal,
+        HistoryRowId? RowId
+    );
+
+    private sealed record CurrentSelectedAssignment(
+        long Ordinal,
+        HistoryRowId RowId,
+        HistoryRowId? PreviousRowId,
+        byte[] EndAddress,
+        string LeafDigest
     );
 
     private sealed record SchemaEntry(
@@ -2657,42 +2626,43 @@ internal sealed class SqliteHistoryTimelineLedger
         byte[] Canonical
     );
 
-    private sealed record CanonicalTrieNodeRecord(
-        string Digest,
-        long CanonicalLength,
-        byte[] Canonical
-    );
-
     private sealed class SqliteBoundaryProbe
         : IHistoryTimelineBoundaryProbe {
         private readonly SqliteHistoryTimelineLedger _owner;
         private readonly SqliteConnection _connection;
-        private readonly SqliteSelectedPathTrie.EndBoundaryProbe
-            _endProbe;
         private readonly SqliteCommand _readRow;
-        private readonly SqliteParameter _rowId;
+        private readonly SqliteParameter _endAddress;
+        private readonly TimelineHeadRef _expectedHead;
         private readonly Action? _beforeLookupQuery;
         private bool _disposed;
 
         internal SqliteBoundaryProbe(
             SqliteHistoryTimelineLedger owner,
             SqliteConnection connection,
-            SqliteSelectedPathTrie.EndBoundaryProbe endProbe,
+            TimelineHeadRef expectedHead,
             Action? beforeLookupQuery
         ) {
             _owner = owner;
             _connection = connection;
-            _endProbe = endProbe;
+            _expectedHead = expectedHead;
             _beforeLookupQuery = beforeLookupQuery;
             _readRow = connection.CreateCommand();
             _readRow.CommandText = """
-                SELECT length(canonical), canonical
-                FROM rows
-                WHERE row_id = $row;
+                SELECT
+                    p.row_id,
+                    p.ordinal,
+                    p.previous_row_id,
+                    p.end_address,
+                    p.leaf_digest,
+                    length(r.canonical),
+                    r.canonical
+                FROM current_selected_path AS p
+                JOIN rows AS r ON r.row_id = p.row_id
+                WHERE p.end_address = $end;
                 """;
-            _rowId = _readRow.Parameters.Add(
-                "$row",
-                SqliteType.Text
+            _endAddress = _readRow.Parameters.Add(
+                "$end",
+                SqliteType.Blob
             );
             _readRow.Prepare();
         }
@@ -2707,19 +2677,27 @@ internal sealed class SqliteHistoryTimelineLedger
                 );
             }
             try {
-                HistoryRowId? rowId = _endProbe.Lookup(endInclusive);
-                if (rowId is null) {
-                    return new SelectedHistoryBoundaryResult.NotFound();
-                }
                 _beforeLookupQuery?.Invoke();
-                _rowId.Value = rowId.Value.Value;
+                byte[] encoded = new byte[
+                    EventAddressCodec.EventAddressLength];
+                EventAddressCodec.Encode(endInclusive, encoded);
+                _endAddress.Value = encoded;
                 using SqliteDataReader reader = _readRow.ExecuteReader();
                 if (!reader.Read()) {
-                    throw new InvalidDataException(
-                        "The selected boundary references a missing row."
-                    );
+                    return new SelectedHistoryBoundaryResult.NotFound();
                 }
-                long length = reader.GetInt64(0);
+                var rowId = new HistoryRowId(reader.GetString(0));
+                var assignment = new CurrentSelectedAssignment(
+                    reader.GetInt64(1),
+                    rowId,
+                    reader.IsDBNull(2)
+                        ? null
+                        : new HistoryRowId(reader.GetString(2)),
+                    reader.GetFieldValue<byte[]>(3),
+                    HistoryTimelineSyntax.RequireSha256(
+                        reader.GetString(4),
+                        "leaf_digest"));
+                long length = reader.GetInt64(5);
                 if (length is < 1
                     or > HistoryTimelineCanonicalCodec
                         .MaximumDescriptorUtf8Bytes) {
@@ -2727,14 +2705,20 @@ internal sealed class SqliteHistoryTimelineLedger
                         "The selected boundary row exceeds its canonical byte bound."
                     );
                 }
-                byte[] canonical = reader.GetFieldValue<byte[]>(1);
+                byte[] canonical = reader.GetFieldValue<byte[]>(6);
                 if (canonical.Length != length) {
                     throw new InvalidDataException(
                         "The selected boundary row length changed while reading."
                     );
                 }
                 HistorySegmentDescriptor descriptor =
-                    _owner.DecodeRowCanonical(rowId.Value, canonical);
+                    _owner.DecodeRowCanonical(rowId, canonical);
+                RequireSelectedAssignment(
+                    _connection,
+                    transaction: null,
+                    _expectedHead,
+                    assignment,
+                    descriptor);
                 if (descriptor.EndInclusive != endInclusive) {
                     throw new InvalidDataException(
                         "The selected boundary index differs from its row."
@@ -2763,27 +2747,8 @@ internal sealed class SqliteHistoryTimelineLedger
             }
             _disposed = true;
             _readRow.Dispose();
-            _endProbe.Dispose();
             _connection.Dispose();
         }
-    }
-
-    private sealed record SelectedSnapshot(
-        HistoryRowId? HeadRowId,
-        string? RowRootDigest,
-        string? EndRootDigest,
-        int MemberCount,
-        string? SnapshotDigest,
-        byte[]? Canonical
-    ) {
-        internal static SelectedSnapshot Empty { get; } = new(
-            null,
-            null,
-            null,
-            0,
-            null,
-            null
-        );
     }
 
 }

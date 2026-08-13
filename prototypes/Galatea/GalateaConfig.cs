@@ -141,7 +141,7 @@ public sealed record RecapGridReadinessMetricsDto(
 );
 
 public sealed record RecapGridReserveBootstrapMetricsDto(
-    int ExaminedTimelineRows,
+    long ExaminedTimelineRows,
     int ExaminedRawEvents,
     int ExaminedHistoryUnits,
     int ExaminedRenderedUtf8Bytes
@@ -160,7 +160,7 @@ public sealed record RecapGridReserveBootstrapEvidenceDto(
     int StoreSchemaVersion,
     long RetainedHistoryLoad,
     long RequiredHistoryLoad,
-    int VerifiedRows,
+    long VerifiedRows,
     RecapGridReserveBootstrapMetricsDto Metrics
 );
 

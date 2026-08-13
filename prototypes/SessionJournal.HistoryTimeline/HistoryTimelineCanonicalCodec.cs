@@ -40,6 +40,8 @@ public static class HistoryTimelineCanonicalCodec {
             else {
                 writer.WriteNull("selectedRawHeadAtCommit");
             }
+            writer.WriteNumber("selectedPathCount", value.SelectedPathCount);
+            writer.WriteString("selectedPathDigest", value.SelectedPathDigest);
             writer.WriteNumber("generation", value.Generation);
             writer.WriteEndObject();
         }
@@ -70,6 +72,8 @@ public static class HistoryTimelineCanonicalCodec {
                 raw is null
                     ? null
                     : SJ.EventAddressTextCodec.Parse(raw),
+                ReadInt64(root, "selectedPathCount"),
+                ReadString(root, "selectedPathDigest"),
                 ReadInt64(root, "generation")
             );
         },
@@ -179,52 +183,6 @@ public static class HistoryTimelineCanonicalCodec {
         },
         Encode,
         "Timeline backup manifest"
-    );
-
-    internal static byte[] Encode(
-        HistoryTimelineSelectedPathSnapshotBody value
-    ) {
-        ArgumentNullException.ThrowIfNull(value);
-        var buffer = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            writer.WriteStartObject();
-            writer.WriteNumber("v", 1);
-            writer.WriteString("headRowId", value.HeadRowId.Value);
-            writer.WriteString(
-                "rowRootDigest",
-                value.RowRootDigest
-            );
-            writer.WriteString(
-                "endRootDigest",
-                value.EndRootDigest
-            );
-            writer.WriteNumber("memberCount", value.MemberCount);
-            writer.WriteEndObject();
-        }
-        return RequireEncodedBound(
-            buffer.WrittenMemory.ToArray(),
-            HistoryTimelineStoreLimits.MaximumHeadUtf8Bytes,
-            "selected-path snapshot"
-        );
-    }
-
-    internal static HistoryTimelineSelectedPathSnapshotBody
-        DecodeSelectedPathSnapshot(
-        ReadOnlySpan<byte> bytes
-    ) => DecodeCanonical(
-        bytes,
-        HistoryTimelineStoreLimits.MaximumHeadUtf8Bytes,
-        static root => {
-            RequireVersion(root, "selected-path snapshot");
-            return new HistoryTimelineSelectedPathSnapshotBody(
-                new HistoryRowId(ReadString(root, "headRowId")),
-                ReadString(root, "rowRootDigest"),
-                ReadString(root, "endRootDigest"),
-                ReadInt32(root, "memberCount")
-            );
-        },
-        Encode,
-        "selected-path snapshot"
     );
 
     private static readonly JsonWriterOptions WriterOptions = new() {

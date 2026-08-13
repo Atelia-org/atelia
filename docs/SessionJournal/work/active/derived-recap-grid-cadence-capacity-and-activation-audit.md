@@ -1,6 +1,7 @@
 # RecapGrid cadence、长期容量与 Galatea 激活设计审计
 
-状态：Active capacity/activation audit；cadence A0/A1/A2 source implementation complete，C2-C5仍未完成。
+状态：Active capacity/activation audit；cadence A0/A1/A2 complete，C3A/C3B complete，C3D Timeline V2 source
+implementation candidate等待最终closure；C2/C3C/C4/C5仍未完成。
 
 核对基线：cutover `6f9ea7db`；cadence owner `0af28eea`、authority/durability fixes `397f2ab8`/`b0bce3b3`、
 reserve-aware seal `1e8ea927`、reserve-aware selection `bac31986`。事实优先级仍是 current code、tests、canonical codecs，以及 raw events + selected
@@ -28,8 +29,8 @@ WP-00 至 WP-08 已经完成 Grid source cutover，但“rolling rewrite 正确�
 2. `RecapBuildIntervalHistoryLoad = 60,000` 可以由 Timeline 表达；
 3. `MinimumRecentHistoryLoad`现已有durable per-Ref contract与online/offline/Getter gate；目标部署值为24,000；
 4. Online/CLI seal已不再只按B drain，必须证明candidate之后仍保留至少R；
-5. `128` 不是 Timeline 总 row 上限，Manager的4,096 whole-path semantic cliff已由C3B删除；current仍受
-   Timeline 65,536-row/8 GiB lifetime caps与逐row commit scaling限制，尚不能无限运行；
+5. `128` 不是 Timeline 总 row 上限，Manager的4,096 whole-path semantic cliff已由C3B删除；C3D V2又删除
+   Timeline累计65,536-row/8 GiB lifetime caps与旧逐row immutable-trie path-copy放大，仍保留每页、单artifact与单operation边界；
 6. Galatea 需要的“自传 + world-understanding + Opus 4.6”正式 built-in 与真实数据激活仍未完成。
 
 因此 actual cyber activation 维持 **No-Go**，直到 §9 的 activation-blocking 项关闭。
@@ -234,7 +235,7 @@ online/offline facade，Getter共享Cadence snapshot与Timeline policy fence。
 - 绕过Cadence facade另建B-only writer；
 - 只判断`G >= R+B`；replay-safe overshoot仍可能破坏R。
 
-### 4.3 `128`、`4,096` 与 `65,536`
+### 4.3 `128`、`4,096`、`65,536` 与 `1,000,000`
 
 这些数必须分开解释：
 
@@ -244,27 +245,29 @@ online/offline facade，Getter共享Cadence snapshot与Timeline policy fence。
 | 128 | Store `MaximumPageItems` | inspect/export/verify单页items；不限制normal inserts总数 |
 | 128 | Getter `MaximumProvenanceRows` | full-chain诊断读取预算；超出后materialization仍可Available，但provenance为Incomplete |
 | 4,096 | Getter `MaximumNthPrevious` | 可请求的strict predecessor ordinal上限，不是Timeline总row数 |
-| 4,096 | Online `MaximumTimelineRows` | 一次lifecycle pass可补交的Timeline rows；是operation budget |
-| 65,536 | Timeline `MaximumRowCount` | 单个ledger的durable累计row硬上限，包含保留的非selected branch rows |
-| 65,536 | Timeline per-segment `MaximumRawEvents` | 单个history segment允许吸收的raw event硬上限；不是row数 |
+| 4,096 / 1,000,000 | Online production default / `MaximumTimelineRows` admission maximum | 一次lifecycle pass可补交的Timeline rows；是operation budget，不是durable累计row cap |
+| 65,536 | Timeline per-segment `MaximumRawEvents` | 单个history segment允许吸收的raw event硬上限；不是row数或ledger寿命 |
 | 256 / 4,096 / 4,096 | Control Family / Definition / Recipe caps | 单个Control state的catalog硬上限 |
 | 16,384 / 32 MiB | Control terminal receipt count / state bytes | operation replay证据与whole state硬上限 |
 | 262,144 | Timeline `HistoryRecentReserveOperationLimits.MaximumRawEvents` | seal、build-read anchor、Online与CLI共用的单次recent-reserve operation cap；达到后typed limit/backpressure，不等于partition segment cap |
+| 1,000,000 | Control `MaximumBootstrapRows` / projected calls admission maximum | 单recipe注册时的cost/admission上界，不是Timeline或Grid累计寿命 |
 
 所以“max rows 128”是误解。C3A已删除Grid Store的累计artifact count与8 GiB lifetime cap，C3B又以immutable
 per-row assignment取代Manager whole-root freeze，删除`MaximumSelectedRows`，因此第4,097行不再有Manager语义上的
 永久terminal。normal reopen会从exact healthy anchor只收集未建suffix；`MaximumRecipeRowSteps`只限制本次成功发布的
 recipe-row assignments。
 
-这仍不等于current system已达到无限长期运行。Timeline目前保留65,536累计row与8 GiB database cap；而且真实public
-Timeline 4,097-row fixture在C3B验收中运行16分钟仍停留在`CommitAllRows`，SQLite约109 MiB，暴露逐row commit的
-O(n²)时间/空间放大。该真实integration没有被缩小数字、Skip或synthetic hook替代，必须由C3D先修Timeline scaling后
-恢复并通过。operation/page/artifact/raw caps也继续作为资源边界存在。
+C3D将Timeline hard cut到Schema V2：mutable selected path由whole-head count/root commitment与O(log N) Merkle accumulator
+证明，删除累计policy/row/node count和database/restore总bytes code-owned lifetime caps。真实public 4,097-row CLI sync与
+Manager vertical现已通过；65,537 durable rows也通过reopen、path首尾、rewind/reselect、verify、backup/restore。4097/8194/65537
+ledger约21.35/42.72/341.40 MiB，append约7.2/13.7/107秒；这关闭旧O(n²)fixture blocker，但不把SQLite/filesystem容量
+虚称为无限。operation/page/artifact/raw caps继续作为资源边界，disk full/SQLite full/I/O仍typed fail closed。
 
 ### 4.4 reset / abandon 不是 rollover
 
 - Grid reset只换成空Store identity；Timeline与Control不变。它是exact-confirm的destructive derived rebuild/recovery primitive，
-  不只用于corruption。reopen后Manager仍须从root重扫并重建全部rows，随后再次撞同一caps。
+  不只用于corruption。reopen后Manager仍须从root增量发现并重建全部rows；单operation budget会产生typed continuation，
+  但不再有累计count/database-byte lifetime terminal。
 - Timeline abandon创建新的empty TimelineId并切locator；旧ledger保持inert。Control recipes绑定旧TimelineId，不能自动复用。
 - current first row只有`FirstRow` prior，没有“从上一generation的两列projection开始”的durable bootstrap contract。
 
@@ -278,7 +281,7 @@ O(n²)时间/空间放大。该真实integration没有被缩小数字、Skip或s
 - durable per-Ref R/B authority与seal facade：[`RecapGrid Cadence`](../../../../prototypes/SessionJournal.RecapGrid.Cadence/)；
 - Online immediate commit loop与offline fallback：[`RecapGridOnlineContextHandle`](../../../../prototypes/SessionJournal.RecapGrid.Online/RecapGridOnlineContextHandle.cs)；
 - CLI online/offline writer：[`RecapGridTimelineSyncCommand`](../../../../prototypes/SessionJournal.Cli/RecapGridTimelineSyncCommand.cs)；
-- current Timeline policy/row/page caps：[`HistoryTimelinePersistenceContracts`](../../../../prototypes/SessionJournal.HistoryTimeline/HistoryTimelinePersistenceContracts.cs)；
+- current Timeline artifact/page resource caps：[`HistoryTimelinePersistenceContracts`](../../../../prototypes/SessionJournal.HistoryTimeline/HistoryTimelinePersistenceContracts.cs)；
 - reserve-aware build-read anchor：[`HistoryRecentReserveAnchor`](../../../../prototypes/SessionJournal.HistoryTimeline/HistoryRecentReserveAnchor.cs)；
 - reserve-aware selection与`ReserveBootstrapRawOnly`：[`RecapGridContextHandle`](../../../../prototypes/SessionJournal.RecapGrid.Getter/RecapGridContextHandle.cs)；
 - Manager head-to-anchor progression：[`RecapGrid Manager`](../../../../prototypes/SessionJournal.RecapGrid.Manager/)；
@@ -309,7 +312,8 @@ FulfilledViewKey读取mapping；仅凭previous row descriptor无法定位历史f
 
 ### 5.2 Timeline-instance / epoch rollover and retention
 
-达到安全watermark前需要显式generation transition，而不是把65,536简单改成更大的常量：
+Timeline V2已删除固定累计row/database cap，因此rollover不再是跨过65,536的前置条件。若未来为retention、归档、
+physical compaction或bounded recovery horizon引入generation transition，仍必须满足：
 
 - 本文的epoch/Timeline-instance不得与现有`TimelineHead.Generation`混称；后者只是同一Timeline的head transition counter；
 - carry-forward checkpoint至少提交旧 Timeline/head/row/view proof、两列ordered contents/digests、raw boundary及该boundary的
@@ -388,7 +392,7 @@ provider evidence时，才能采用第二种账单模型。模型价格会变化
 - 让SessionJournal core直接实现HistoryLoad estimator，制造raw owner到Timeline policy的反向依赖；
 - 把R放进Cell/Definition/route identity，导致retention policy变化触发内容重算；
 - 把单次budget删成“无限”，失去故障隔离；正确方向是bounded incremental continuation；
-- 只提高4,096/65,536常量，继续保留whole-root算法和永久cap；
+- 只提高4,096/65,536常量，继续保留whole-root算法和永久cap；C3B/C3D已经分别删除这两类semantic cliff；
 - 把Grid reset或Timeline abandon包装成rollover；
 - 为节省Cell数把`KeepUnchanged`改成未执行/旧Cell直接复用；
 - 让同一row的第二列依赖第一列刚生成的结果，却仍声称两列并行共享同一Evaluation输入；
@@ -436,7 +440,9 @@ A3增加provider-free `recap-grid cadence inspect|set-reserve` operator surface�
 - C3A已落immutable per-row assignment、exact recurrence与Store lifetime-cap removal；
 - C3B已落head-to-anchor minimal suffix、overlay独立anchors与one recipe-row budget，删除Manager
   `MaximumSelectedRows` semantic cliff；
-- 真实4,097-row public Timeline integration仍由C3D scaling gate阻挡，不把Manager focused evidence冒充Timeline容量验收；
+- C3D hard cut Timeline V2：V1 root inert/no fallback；mutable selected path以whole-head count/root与O(log N) Merkle
+  commitment取代immutable trie snapshot，删除累计row/node/database-byte lifetime cap；
+- public 4,097-row Timeline/Manager vertical与65,537 durable reopen/path/rewind/reselect/verify/backup/restore均已通过；
 - readiness/CLI pure read报告Timeline/Cell/View/Fulfilled、Control Family/Definition/Recipe/receipt/state bytes、offline-audit
   progress与各自watermarks；不得只显示最先撞到的Store cap；
 - full rebuild仍可bounded offline执行。
@@ -465,8 +471,9 @@ A3增加provider-free `recap-grid cadence inspect|set-reserve` operator surface�
 - canary通过后再次取得actual activation确认；停服、备份actual repo/config并确认selected Ref/raw head/phase，才替换正式cyber repo；
 - 首次new raw append前可以回退binary/repo selection；append后不得用旧backup覆盖raw，只能证明旧binary可replay或forward-fix。
 
-A0→A1→A2已经完成；C2仍是真实LLM写入前的硬门禁。C3应在长期online启用前完成。若仅做有明确容量horizon的短期canary，
-C4可后移，但必须在readiness中暴露容量并明确停服水位；若承诺“无限长期Agent”，C4也是activation blocking。
+A0→A1→A2已经完成；C2仍是真实LLM写入前的硬门禁。C3D source implementation等待最终closure，C3C orchestration仍待完成。
+C4是retention/rollover与跨operation recovery优化，不再是跨越固定65,536 lifetime cap的前置条件；是否作为首次activation门禁
+取决于用户要求的retention/rollback horizon，不能再以旧累计cap论证。
 
 ## 10. 最小验收矩阵
 
@@ -504,7 +511,9 @@ C4可后移，但必须在readiness中暴露容量并明确停服水位；若承
 
 - 128/129 path rows证明128只是分页；provenance 129仍Available但明确Incomplete。
 - Manager以多row、restart、branch/rewind、nested overlay与anchor corruption fixtures锁定incremental suffix；
-  C3D优化真实Timeline逐rowcommit后恢复4,097+ integration。
+  C3D已恢复真实4,097+ Timeline/Manager integration，65,537 gate另锁reopen/path、rewind/reselect、verify与backup/restore。
+- V2 selected-path normal ReadSelectedRow/page/reconcile均验证assignment、whole-head count/root与Merkle proof；middle delete、
+  ordinal swap、off-branch insert sticky Invalid，page复用operation-local proof cache，节点总量保持O(N)。
 - Control catalog/receipt/state byte caps与offline audit event cap做exact/cap+1 typed backpressure，不能被误报为Timeline寿命；
   随后用new instance/compaction与checkpointed audit跨多个operation继续到成功，证明cap不是永久停止点。
 - rollover前后previous projection、raw boundary与active recipe exact连续；wrong authority与crash不能发布半generation。

@@ -1,6 +1,7 @@
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
+using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Online;
@@ -31,6 +32,17 @@ public sealed class PublicSurfaceTests {
                         maxRawEvents: 64,
                         maxRenderedBytes: 1024 * 1024),
                     estimator));
+            Assert.IsType<RecapGridCadenceCreateResult.Created>(
+                RecapGridCadenceFactory.Create(
+                    engine,
+                    new RecapGridCadencePolicySpec(
+                        minimumRecentHistoryLoad: 1,
+                        HistoryPartitionAlgorithms
+                            .FirstReplaySafeBoundaryAtTargetV1,
+                        O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                        targetHistoryLoad: 1,
+                        maxRawEvents: 64,
+                        maxRenderedBytes: 1024 * 1024)));
             Assert.IsType<RecapGridControlCreateResult.Created>(
                 RecapGridControlFactory.Create(
                     path,

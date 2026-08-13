@@ -1096,6 +1096,50 @@ public sealed class AssemblyDependencyBoundaryTests {
     }
 
     [Fact]
+    public void HistoryTimelineV2HasNoImmutableTrieOrLifetimeCapSource() {
+        string root = FindRepositoryRoot();
+        string timelineRoot = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.HistoryTimeline");
+        string[] sourceFiles = [.. Directory.EnumerateFiles(
+            timelineRoot,
+            "*.cs",
+            SearchOption.AllDirectories
+        ).Where(static path => !IsBuildOutput(path))];
+        string combined = string.Join('\n',
+            sourceFiles.Select(File.ReadAllText));
+
+        Assert.Contains(
+            "internal const int SchemaVersion = 2;",
+            combined,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "CREATE TABLE current_selected_path",
+            combined,
+            StringComparison.Ordinal);
+        string storage = File.ReadAllText(Path.Combine(
+            timelineRoot,
+            "HistoryTimelineStorage.cs"));
+        Assert.Contains("\"v2\"", storage, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"v1\"", storage, StringComparison.Ordinal);
+        foreach (string forbidden in new[] {
+                     "SqliteSelectedPathTrie",
+                     "selected_path_nodes",
+                     "selected_path_snapshots",
+                     "MaximumRowCount",
+                     "MaximumTrieNodeCount",
+                     "MaximumDatabaseBytes",
+                     "MaximumRestoreCopyBytes"
+                 }) {
+            Assert.DoesNotContain(
+                forbidden,
+                combined,
+                StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void FormalConsumersReferenceTimelineDirectlyWithoutTokenizerPins() {
         string root = FindRepositoryRoot();
         foreach ((string project, string expectedReference) in new[] {

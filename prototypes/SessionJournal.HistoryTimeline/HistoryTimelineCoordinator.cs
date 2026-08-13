@@ -262,7 +262,7 @@ public sealed class HistoryTimelineCoordinator {
                     actual.ActivePartitionPolicyDigest
                 );
         }
-        _ = policyFound.Value;
+        PartitionPolicyRevision policy = policyFound.Value;
         string observedRepositoryPath;
         try {
             observedRepositoryPath = CanonicalRepositoryPath(
@@ -291,7 +291,9 @@ public sealed class HistoryTimelineCoordinator {
             HistoryTimelineOnlineRawPort.Capture(
             readView,
             expectedWholeHead,
-            maximumRawEvents,
+            requireSelectedHeadBoundary
+                ? maximumRawEvents
+                : Math.Min(maximumRawEvents, policy.MaxRawEvents),
             cancellationToken
         );
         RefId capturedRef = result switch {

@@ -3,10 +3,6 @@ using SJ = Atelia.SessionJournal;
 
 namespace Atelia.SessionJournal.HistoryTimeline;
 
-public static class HistoryRecentReserveAnchorLimits {
-    public const int MaximumTimelineRows = 4_097;
-}
-
 public sealed record HistoryRecentReserveRequirement {
     public HistoryRecentReserveRequirement(
         string expectedPartitionPolicyDigest,
@@ -32,7 +28,7 @@ public sealed record HistoryRecentReserveRequirement {
 }
 
 public sealed record HistoryRecentReserveAnchorMetrics(
-    int ExaminedTimelineRows,
+    long ExaminedTimelineRows,
     int ExaminedRawEvents,
     int ExaminedHistoryUnits,
     int ExaminedRenderedUtf8Bytes
@@ -43,13 +39,13 @@ public abstract record HistoryRecentReserveAnchorResult {
 
     public sealed record Eligible(
         HistoryTimelineSelectedRow Anchor,
-        IReadOnlyList<HistoryTimelineSelectedRow> HeadThroughAnchor,
+        long HeadThroughAnchorRowCount,
         HistoryLoadUnit RetainedHistoryLoad,
         HistoryRecentReserveAnchorMetrics Metrics
     ) : HistoryRecentReserveAnchorResult;
 
     public sealed record ReserveBootstrapRequired(
-        IReadOnlyList<HistoryTimelineSelectedRow> HeadThroughRoot,
+        long HeadThroughRootRowCount,
         HistoryLoadUnit RetainedHistoryLoad,
         HistoryRecentReserveAnchorMetrics Metrics
     ) : HistoryRecentReserveAnchorResult;
@@ -80,23 +76,16 @@ public abstract record HistoryRecentReserveAnchorResult {
 }
 
 internal sealed record HistoryRecentReserveAnchorReadLimits(
-    int MaximumRawEvents,
-    int MaximumTimelineRows
+    int MaximumRawEvents
 ) {
     internal static HistoryRecentReserveAnchorReadLimits Production { get; }
         = new(
-            HistoryRecentReserveOperationLimits.MaximumRawEvents,
-            HistoryRecentReserveAnchorLimits.MaximumTimelineRows);
+            HistoryRecentReserveOperationLimits.MaximumRawEvents);
 
     internal void Validate() {
         if (MaximumRawEvents is < 1
             or > HistoryRecentReserveOperationLimits.MaximumRawEvents) {
             throw new ArgumentOutOfRangeException(nameof(MaximumRawEvents));
-        }
-        if (MaximumTimelineRows is < 1
-            or > HistoryRecentReserveAnchorLimits.MaximumTimelineRows) {
-            throw new ArgumentOutOfRangeException(
-                nameof(MaximumTimelineRows));
         }
     }
 }
@@ -181,12 +170,11 @@ internal static class HistoryRecentReserveAnchorFinder {
                         Metrics(0, 0, 0, 0)));
             }
 
-            int examinedRows = 0;
+            long examinedRows = 0;
             int examinedRawEvents = 0;
             int examinedUnits = 0;
             int examinedBytes = 0;
             long retained = 0;
-            var crossed = new List<HistoryTimelineSelectedRow>();
             HistoryTimelinePathCursor? cursor = null;
             HistoryTimelineSelectedRow? newer = null;
             while (true) {
@@ -201,17 +189,6 @@ internal static class HistoryRecentReserveAnchorFinder {
                 foreach (HistoryTimelineSelectedRow row in page.Value.Rows) {
                     cancellationToken.ThrowIfCancellationRequested();
                     examinedRows = checked(examinedRows + 1);
-                    if (examinedRows > limits.MaximumTimelineRows) {
-                        return new HistoryRecentReserveAnchorResult
-                            .LimitExceeded(
-                                nameof(HistoryRecentReserveAnchorLimits
-                                    .MaximumTimelineRows),
-                                Metrics(examinedRows - 1,
-                                    examinedRawEvents,
-                                    examinedUnits,
-                                    examinedBytes));
-                    }
-                    crossed.Add(row);
                     SJ.SessionHistoryPlanningWindow window;
                     if (newer is null) {
                         HistoryRecentReserveAnchorResult? readFailure =
@@ -300,7 +277,7 @@ internal static class HistoryRecentReserveAnchorFinder {
                             completionBoundary,
                             new HistoryRecentReserveAnchorResult.Eligible(
                                 row,
-                                Array.AsReadOnly(crossed.ToArray()),
+                                examinedRows,
                                 new HistoryLoadUnit(retained),
                                 Metrics(examinedRows,
                                     examinedRawEvents,
@@ -318,7 +295,7 @@ internal static class HistoryRecentReserveAnchorFinder {
                         completionBoundary,
                         new HistoryRecentReserveAnchorResult
                             .ReserveBootstrapRequired(
-                                Array.AsReadOnly(crossed.ToArray()),
+                                examinedRows,
                                 new HistoryLoadUnit(retained),
                                 Metrics(examinedRows,
                                     examinedRawEvents,
@@ -412,7 +389,7 @@ internal static class HistoryRecentReserveAnchorFinder {
     }
 
     private static HistoryRecentReserveAnchorMetrics Metrics(
-        int rows,
+        long rows,
         int rawEvents,
         int units,
         int bytes

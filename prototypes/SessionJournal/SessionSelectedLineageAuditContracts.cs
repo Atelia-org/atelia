@@ -677,14 +677,25 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
         SessionSelectedLineageForwardRange expected,
         SessionSelectedLineageForwardRange replacement
     ) {
-        if (!ReferenceEquals(_pendingRange, expected)
-            || _previewedRange is not null
-            || _previewedWindow is not null) {
+        if (!ReferenceEquals(_pendingRange, expected)) {
             throw new InvalidOperationException(
-                "Only the exact unpreviewed pending range may be replaced."
+                "Only the exact pending range may be replaced."
+            );
+        }
+        if ((_previewedRange is null) != (_previewedWindow is null)
+            || _previewedRange is not null
+                && !ReferenceEquals(_previewedRange, expected)) {
+            throw new InvalidOperationException(
+                "The pending preview state is inconsistent."
             );
         }
         _pendingRange = replacement;
+        if (_previewedRange is not null) {
+            // The replacement is the exact old range plus a suffix. Retain
+            // the already materialized prefix so a failed wider preview can
+            // still consume a previously proven replay-safe boundary.
+            _previewedRange = replacement;
+        }
     }
 
     internal void InvalidateForwardEnumeration()

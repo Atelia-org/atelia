@@ -283,6 +283,8 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
             null,
             new string('d', 64),
             null,
+            0,
+            HistoryTimelineSelectedPath.EmptyDigest,
             generation: 1
         );
         FulfilledViewKey key = FulfilledViewKey.Create(
@@ -396,6 +398,8 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
             null,
             new string('d', 64),
             null,
+            0,
+            HistoryTimelineSelectedPath.EmptyDigest,
             key.TimelineHeadGeneration
         );
         command.Parameters.AddWithValue(

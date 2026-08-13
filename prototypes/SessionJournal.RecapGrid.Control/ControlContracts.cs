@@ -7,6 +7,10 @@ using Atelia.SessionJournal.HistoryTimeline;
 
 namespace Atelia.SessionJournal.RecapGrid.Control;
 
+public static class RecapGridControlAdmissionLimits {
+    public const int MaximumBootstrapRows = 1_000_000;
+}
+
 public readonly record struct ControlInstanceId {
     public ControlInstanceId(string value) {
         Value = RequireHex(value, 32, nameof(value));
@@ -395,7 +399,7 @@ public sealed class RecapGridControlAdmission {
         }
         _logicalColumnPrefixes = Array.AsReadOnly(prefixes);
         if (maximumBootstrapRows is < 0
-            or > HistoryTimelineStoreLimits.MaximumRowCount) {
+            or > RecapGridControlAdmissionLimits.MaximumBootstrapRows) {
             throw new ArgumentOutOfRangeException(nameof(maximumBootstrapRows));
         }
         if (maximumProjectedCalls is < 0 or > 1_000_000) {

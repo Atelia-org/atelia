@@ -556,6 +556,8 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
                 null,
                 new string('d', 64),
                 null,
+                0,
+                HistoryTimelineSelectedPath.EmptyDigest,
                 generation: index
             );
             views.Add(assignedView);
@@ -899,6 +901,8 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             null,
             new string('d', 64),
             null,
+            0,
+            HistoryTimelineSelectedPath.EmptyDigest,
             generation: 1
         );
         return (

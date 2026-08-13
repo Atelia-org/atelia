@@ -216,6 +216,8 @@ public sealed record TimelineHeadRef {
         HistoryRowId? headRowId,
         string activePartitionPolicyDigest,
         EventAddress? selectedRawHeadAtCommit,
+        long selectedPathCount,
+        string selectedPathDigest,
         long generation
     ) {
         TimelineId = HistoryTimelineSyntax.RequireTimelineId(timelineId);
@@ -241,6 +243,13 @@ public sealed record TimelineHeadRef {
                 nameof(selectedRawHeadAtCommit)
             );
         }
+        if (selectedPathCount < 0
+            || (headRowId is null && selectedPathCount != 0)
+            || (headRowId is not null && selectedPathCount < 1)) {
+            throw new ArgumentOutOfRangeException(
+                nameof(selectedPathCount),
+                "The selected path count must exactly match empty/non-empty head state.");
+        }
         if (generation < 0) {
             throw new ArgumentOutOfRangeException(nameof(generation));
         }
@@ -257,6 +266,19 @@ public sealed record TimelineHeadRef {
                 nameof(activePartitionPolicyDigest)
             );
         SelectedRawHeadAtCommit = selectedRawHeadAtCommit;
+        SelectedPathCount = selectedPathCount;
+        SelectedPathDigest = HistoryTimelineSyntax.RequireSha256(
+            selectedPathDigest,
+            nameof(selectedPathDigest));
+        if (selectedPathCount == 0
+            && !string.Equals(
+                SelectedPathDigest,
+                HistoryTimelineSelectedPath.EmptyDigest,
+                StringComparison.Ordinal)) {
+            throw new ArgumentException(
+                "An empty selected path requires the code-owned empty commitment.",
+                nameof(selectedPathDigest));
+        }
         Generation = generation;
     }
 
@@ -265,10 +287,17 @@ public sealed record TimelineHeadRef {
     public HistoryRowId? HeadRowId { get; }
     public string ActivePartitionPolicyDigest { get; }
     public EventAddress? SelectedRawHeadAtCommit { get; }
+    public long SelectedPathCount { get; }
+    public string SelectedPathDigest { get; }
     public long Generation { get; }
 
     public byte[] ToCanonicalBytes()
         => HistoryTimelineCanonicalCodec.Encode(this);
+}
+
+public static class HistoryTimelineSelectedPath {
+    public static string EmptyDigest
+        => HistorySelectedPathCommitment.EmptyDigest;
 }
 
 public sealed record HistoryPartitionPoint {

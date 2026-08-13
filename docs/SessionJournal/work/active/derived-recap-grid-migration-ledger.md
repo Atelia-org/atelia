@@ -130,14 +130,17 @@ rg -n "derived/recap/v4|old v4|v4-v7" \
 
 New Grid `reset/rebuild`只处理new Grid artifacts。它不得扫描、解释、fallback、auto-delete或声称已经处理上述old roots。
 
-WP-01C新增的target root是`<repo>/derived/history-timeline/v1/`，exact inventory只有
+WP-01C经C3D hard cut后的target root是`<repo>/derived/history-timeline/v2/`，exact inventory只有
 `locks/<ref>.lock`、`refs/<ref>/locator.json`与`refs/<ref>/timelines/<timeline>.sqlite`。它不是old-root migration对象：normal
 runtime只跟随canonical locator，不扫描old recap roots、orphan Timeline DB或backup；Grid reset也不处理它。single SQLite backend、
-backup/restore/abandon与public factory/Reader已完成并取得两路independent review GO；final serial evidence为Timeline 156/156、raw 19/19、
-walking 13/13、public surface 2/2、solution build 0 warning / 0 error、docs 15/0与diff clean。包含本次变更的containing commit作为
-commit evidence，不在提交前虚构hash。WP-08 source cutover已完成并关闭deletion entries；actual cyber activation仍由外部gate决定。
+backup/restore/abandon与public factory/Reader已完成；C3D把selected path改为head-bound count/root commitment与O(log N)
+append/truncate，删除累计row/trie/database byte lifetime caps。旧`derived/history-timeline/v1`bytes明确inert，normal path不读取、
+fallback或迁移。V2 deployment必须将Cadence、Timeline、Control、Store作为四个durability domains显式重新provision；不得混用
+V1 Timeline与current companion state。whole-generation rollback只允许在首次new raw write前；之后只能replay或forward-fix。
+包含本次变更的containing commit作为commit evidence，不在提交前虚构hash。WP-08 source cutover已完成并关闭deletion entries；
+actual cyber activation仍由外部gate决定。
 这里的exact inventory只列normal canonical slots：crash可留下unreferenced Timeline SQLite、dot-temp或exact SQLite rollback journal；它们
-不参与normal discovery/latest选择，只能由SQLite recovery或后续explicit inventory/retention action处理。V1 durable lease/fsync为
+不参与normal discovery/latest选择，只能由SQLite recovery或后续explicit inventory/retention action处理。V2 durable lease/fsync为
 Linux-only，其他platform返回typed unsupported，不提供弱durability fallback。
 
 ## 5. Source and production ledger

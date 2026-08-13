@@ -5,21 +5,11 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal.HistoryTimeline;
 
 internal sealed record HistoryTimelineStorageLimits(
-    long MaximumDatabaseBytes,
-    long MaximumRestoreCopyBytes,
-    int MaximumPolicyCount,
-    int MaximumRowCount,
-    int MaximumTrieNodeCount,
     int MaximumPathPageRows,
     int MaximumPathPageUtf8Bytes,
     int BusyTimeoutMilliseconds
 ) {
     internal static HistoryTimelineStorageLimits Production { get; } = new(
-        HistoryTimelineStoreLimits.MaximumDatabaseBytes,
-        HistoryTimelineStoreLimits.MaximumRestoreCopyBytes,
-        HistoryTimelineStoreLimits.MaximumPolicyCount,
-        HistoryTimelineStoreLimits.MaximumRowCount,
-        HistoryTimelineStoreLimits.MaximumTrieNodeCount,
         HistoryTimelineStoreLimits.MaximumPathPageRows,
         HistoryTimelineStoreLimits.MaximumPathPageUtf8Bytes,
         BusyTimeoutMilliseconds: 5_000
@@ -51,7 +41,7 @@ internal sealed class HistoryTimelinePaths {
             RepositoryPath,
             "derived",
             "history-timeline",
-            "v1"
+            "v2"
         );
         RefPath = Path.Combine(
             RootPath,

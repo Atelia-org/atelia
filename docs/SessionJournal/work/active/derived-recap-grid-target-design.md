@@ -874,7 +874,8 @@ dependency DAG的二维投影视图，不是每个坐标只有一个可变值的
 Timeline durable decision已由WP-01C关闭：唯一production backend是独立SQLite ledger（`DELETE` +
 `synchronous=EXTRA`），per-Ref canonical locator、verified backup/restore与explicit abandon各自有closed typed library action；它与
 可reset的Grid数据库保持独立lifecycle。两路independent review与final serial validation均GO，现已成为WP-02的complete handoff；
-这不表示production cutover，且Timeline V1 durable lease/fsync仍只在Linux上启用。
+这不表示actual cyber activation。C3D hard cut后的Timeline Schema V2 source candidate仍只在Linux上启用durable lease/fsync；
+V1 root inert且没有normal read、fallback或migration。
 
 Control carrier decision已由WP-02关闭：V1只使用
 `<repo>/control/recap-grid/v1/refs/<ref>/timelines/<timeline>/control.json` bounded canonical whole-state carrier与双lock；不写raw

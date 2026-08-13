@@ -22,10 +22,7 @@ public sealed class HistoryRecentReserveAnchorTests : IDisposable {
         Assert.Equal(
             fixture.Rows[0].RowId,
             result.Anchor.Descriptor.RowId);
-        Assert.Equal(
-            fixture.Rows.Select(static row => row.RowId).Reverse(),
-            result.HeadThroughAnchor.Select(static row =>
-                row.Descriptor.RowId));
+        Assert.Equal(3, result.HeadThroughAnchorRowCount);
         Assert.Equal(3, result.RetainedHistoryLoad.Value);
         Assert.Equal(3, result.Metrics.ExaminedTimelineRows);
         Assert.Equal(4, result.Metrics.ExaminedRawEvents);
@@ -35,9 +32,7 @@ public sealed class HistoryRecentReserveAnchorTests : IDisposable {
     public void ExactGlobalRawCapSucceedsAndCapPlusOneIsTypedLimit() {
         using Fixture exact = CreateFixture(
             turns: 3,
-            recentReserveLimits: new(
-                MaximumRawEvents: 2,
-                MaximumTimelineRows: 4));
+            recentReserveLimits: new(MaximumRawEvents: 2));
         HistoryRecentReserveAnchorResult.Eligible eligible = Assert.IsType<
             HistoryRecentReserveAnchorResult.Eligible>(
                 exact.Session.FindRecentReserveAnchor(
@@ -48,9 +43,7 @@ public sealed class HistoryRecentReserveAnchorTests : IDisposable {
 
         using Fixture capped = CreateFixture(
             turns: 3,
-            recentReserveLimits: new(
-                MaximumRawEvents: 1,
-                MaximumTimelineRows: 4));
+            recentReserveLimits: new(MaximumRawEvents: 1));
         HistoryRecentReserveAnchorResult.LimitExceeded limit = Assert.IsType<
             HistoryRecentReserveAnchorResult.LimitExceeded>(
                 capped.Session.FindRecentReserveAnchor(
@@ -94,7 +87,7 @@ public sealed class HistoryRecentReserveAnchorTests : IDisposable {
                     fixture.RawHead,
                     Requirement(fixture.Policy, minimumRecent: 5)));
 
-        Assert.Equal(3, result.HeadThroughRoot.Count);
+        Assert.Equal(3, result.HeadThroughRootRowCount);
         Assert.Equal(4, result.RetainedHistoryLoad.Value);
         Assert.Equal(4, result.Metrics.ExaminedRawEvents);
     }

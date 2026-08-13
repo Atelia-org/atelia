@@ -14,6 +14,10 @@ public enum RecapGridOnlineComponent {
     Getter
 }
 
+public static class RecapGridOnlineOperationLimits {
+    public const int MaximumTimelineRows = 1_000_000;
+}
+
 public sealed record RecapGridOnlineLimits {
     public RecapGridOnlineLimits(
         int maximumAuditEvents,
@@ -25,7 +29,7 @@ public sealed record RecapGridOnlineLimits {
             throw new ArgumentOutOfRangeException(nameof(maximumAuditEvents));
         }
         if (maximumTimelineRows is < 1
-            or > HistoryTimelineStoreLimits.MaximumRowCount) {
+            or > RecapGridOnlineOperationLimits.MaximumTimelineRows) {
             throw new ArgumentOutOfRangeException(nameof(maximumTimelineRows));
         }
         MaximumAuditEvents = maximumAuditEvents;

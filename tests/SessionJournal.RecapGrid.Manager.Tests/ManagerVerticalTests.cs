@@ -335,6 +335,68 @@ public sealed class ManagerVerticalTests : IDisposable {
     }
 
     [Fact]
+    public async Task Public4097TimelineBuildsThroughHeadOneRowAtATimeAndReopensZeroStep() {
+        const int rowCount = 4_097;
+        Fixture fixture = CreateFullFixture(
+            turns: (rowCount - 1) / 2,
+            zeroColumns: true);
+        Assert.Equal(rowCount, fixture.Rows.Count);
+        var executor = new RecordingExecutor();
+
+        using (fixture.Journal) {
+            var bootstrapRequest = new RecapGridBuildRequest(
+                new RecapGridBuildSelection.ExplicitCandidate(
+                    fixture.Recipe.Digest),
+                fixture.Rows[rowCount - 2].Descriptor.RowId,
+                new RecapGridBuildBudget(
+                    maximumRecipeRowSteps: rowCount - 1,
+                    maximumNewCalls: 0,
+                    maximumElapsed: TimeSpan.FromMinutes(5)));
+            using (RecapGridManagerHandle bootstrap = OpenManager(fixture)) {
+                RecapGridBuildResult.FulfilledThrough result = Assert.IsType<
+                    RecapGridBuildResult.FulfilledThrough
+                >(await bootstrap.Manager.BuildAsync(
+                    bootstrapRequest,
+                    executor));
+                Assert.Equal(rowCount - 1,
+                    result.Metrics.RecipeRowSteps);
+                Assert.Equal(0, result.Metrics.NewCalls);
+            }
+
+            var headRequest = new RecapGridBuildRequest(
+                new RecapGridBuildSelection.ExplicitCandidate(
+                    fixture.Recipe.Digest),
+                fixture.Rows[^1].Descriptor.RowId,
+                new RecapGridBuildBudget(
+                    maximumRecipeRowSteps: 1,
+                    maximumNewCalls: 0,
+                    maximumElapsed: TimeSpan.FromMinutes(1)));
+            using (RecapGridManagerHandle head = OpenManager(fixture)) {
+                RecapGridBuildResult.Fulfilled result = Assert.IsType<
+                    RecapGridBuildResult.Fulfilled
+                >(await head.Manager.BuildAsync(headRequest, executor));
+                Assert.Equal(1, result.Metrics.RecipeRowSteps);
+                Assert.Equal(0, result.Metrics.NewCalls);
+            }
+
+            var zeroStepRequest = new RecapGridBuildRequest(
+                headRequest.Selection,
+                headRequest.ThroughRowId,
+                new RecapGridBuildBudget(
+                    maximumRecipeRowSteps: 0,
+                    maximumNewCalls: 0,
+                    maximumElapsed: TimeSpan.FromMinutes(1)));
+            using RecapGridManagerHandle reopened = OpenManager(fixture);
+            RecapGridBuildResult.Fulfilled cached = Assert.IsType<
+                RecapGridBuildResult.Fulfilled
+            >(await reopened.Manager.BuildAsync(zeroStepRequest, executor));
+            Assert.Equal(0, cached.Metrics.RecipeRowSteps);
+            Assert.Equal(0, cached.Metrics.NewCalls);
+            Assert.Empty(executor.Batches);
+        }
+    }
+
+    [Fact]
     public async Task ExistingCellsExposeViewFrontierAndPublishWithoutRaw() {
         Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
         var request = new RecapGridBuildRequest(
@@ -2461,7 +2523,9 @@ public sealed class ManagerVerticalTests : IDisposable {
                 ? []
                 : [ContextHeaderCarrier.System],
             ["case."],
-            maximumBootstrapRows: 64,
+            maximumBootstrapRows: zeroColumns
+                ? RecapGridControlAdmissionLimits.MaximumBootstrapRows
+                : 64,
             maximumProjectedCalls: 1024
         );
         ControlHeadRef head = Assert.IsType<
@@ -2778,32 +2842,34 @@ public sealed class ManagerVerticalTests : IDisposable {
             RecapGridCadenceTimelineSealOpenResult.Opened
         >(cadence.BeginTimelineSeal(timeline)).Operation;
         var rows = new List<HistoryTimelineSelectedRow>();
+        TimelineHeadRef before = Assert.IsType<
+            HistoryTimelineSnapshotResult.Available
+        >(timeline.Reader.ReadSnapshot()).Head;
+        using RecapGridCadenceOfflineAudit audit = Assert.IsType<
+            RecapGridCadenceOfflineAuditCaptureResult.Available
+        >(seal.CaptureOfflineAudit(
+            HistoryRecentReserveOperationLimits.MaximumRawEvents
+        )).Audit;
+        using RecapGridCadenceOfflineBuilder offline = Assert.IsType<
+            RecapGridCadenceOfflineBuilderOpenResult.Opened
+        >(seal.OpenOfflineBuilder(before, audit)).Builder;
         while (true) {
-            TimelineHeadRef before = Assert.IsType<
-                HistoryTimelineSnapshotResult.Available
-            >(timeline.Reader.ReadSnapshot()).Head;
-            OnlineSelectedRawCapture capture = Assert.IsType<
-                OnlineSelectedRawCaptureResult.Captured
-            >(timeline.Coordinator.CaptureOnline(
-                before,
-                journal.ReadView
-            )).Capture;
-            HistoryTimelinePlanResult plan = seal.PlanNextRow(before, capture);
-            if (plan is HistoryTimelinePlanResult.NotEnough
-                or HistoryTimelinePlanResult.RecentReserveNotReached) {
+            HistoryTimelineOfflineStepResult step = offline
+                .BuildNextRow(before);
+            if (step is HistoryTimelineOfflineStepResult.NotEnough
+                or HistoryTimelineOfflineStepResult
+                    .RecentReserveNotReached) {
                 return (before, rows.AsReadOnly());
             }
-            HistoryRowCommitCandidate candidate = Assert.IsType<
-                HistoryTimelinePlanResult.Selected
-            >(plan).Candidate;
-            TimelineHeadRef committed = Assert.IsType<
-                HistoryTimelineCommitResult.Committed
-            >(seal.CommitRow(candidate)).Head;
+            HistoryTimelineOfflineStepResult.Committed committed =
+                Assert.IsType<HistoryTimelineOfflineStepResult.Committed>(
+                    step);
+            before = committed.Head;
             rows.Add(Assert.IsType<
                 HistoryTimelineReaderRowResult.Selected
             >(timeline.Reader.ReadSelectedRow(
-                committed,
-                committed.HeadRowId!.Value
+                before,
+                before.HeadRowId!.Value
             )).Row);
         }
     }
@@ -2974,6 +3040,8 @@ public sealed class ManagerVerticalTests : IDisposable {
             head.HeadRowId,
             head.ActivePartitionPolicyDigest,
             head.SelectedRawHeadAtCommit,
+            head.SelectedPathCount,
+            head.SelectedPathDigest,
             checked(head.Generation + 1)
         );
         return FulfilledViewKey.Create(

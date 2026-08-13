@@ -188,6 +188,9 @@ internal sealed record SessionJournalTestHooks(
         RewriteBoundedHistoryProofHeader = null,
     Func<EventAddress?, EventAddress?>?
         RewritePendingRangeExtendObservedHead = null,
+    Action? AfterPendingRangeExtendEntryRead = null,
+    Func<SessionSelectedLineageAuditEntry, SessionSelectedLineageAuditEntry>?
+        RewritePendingRangeExtendEntry = null,
     Func<EventAddress?, EventAddress?>?
         RewriteForwardCursorObservedHead = null,
     Func<EventAddress?, EventAddress?>?

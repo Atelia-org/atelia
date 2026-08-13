@@ -213,14 +213,17 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
         >(cursor.ReadNextRange(4));
 
         _ = cursor.Preview(initial);
-        Assert.Throws<InvalidOperationException>(() =>
-            cursor.ExtendPendingRange(initial, 6));
+        SessionSelectedLineageForwardRange previewExtended =
+            cursor.ExtendPendingRange(initial, 6);
+        Assert.Throws<ArgumentException>(() =>
+            cursor.Materialize(initial));
+        _ = cursor.Preview(previewExtended);
         SessionSelectedLineageForwardRange remainder = Assert.IsType<
             SessionSelectedLineageForwardRange
-        >(cursor.ConsumePreviewedPrefix(initial, firstAction)
+        >(cursor.ConsumePreviewedPrefix(previewExtended, firstAction)
             .RemainingRange);
-        Assert.Equal(2, remainder.Entries.Count);
-        Assert.False(remainder.IsFinal);
+        Assert.Equal(4, remainder.Entries.Count);
+        Assert.True(remainder.IsFinal);
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             cursor.ExtendPendingRange(remainder, 1));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
@@ -414,6 +417,62 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
             SessionSelectedLineageAuditChangeKind.RawHeadChanged,
             error.Kind
         );
+        AssertInvalidated(cursor, pending);
+    }
+
+    [Fact]
+    public void ForwardCursor_ExtendCancellationAfterReadInvalidatesCursor() {
+        string path = CreateLongFixture(extraEventCount: 6);
+        using var cancellation = new CancellationTokenSource();
+        var source = new TestContextCandidateSource();
+        using var engine = SessionJournalEngine.OpenReadOnlyForTest(
+            path,
+            new SessionRuntime(
+                new UnusedCompletionClient(),
+                CompletionTarget: new SessionCompletionTargetIdentity(
+                    "audit-extend-cancel-test",
+                    "test",
+                    "audit-extend-v1",
+                    "audit-extend-adapter-v1"),
+                ContextCandidateSource: source),
+            new SessionJournalTestHooks(
+                AfterPendingRangeExtendEntryRead: cancellation.Cancel));
+        (SessionSelectedLineageForwardCursor cursor,
+            SessionSelectedLineageForwardRange pending) =
+            OpenExtendablePendingRange(engine);
+        using (cursor) {
+            Assert.Throws<OperationCanceledException>(() =>
+                cursor.ExtendPendingRange(pending, 4, cancellation.Token));
+            AssertInvalidated(cursor, pending);
+        }
+    }
+
+    [Fact]
+    public void ForwardCursor_ExtendValidationFailureAfterReadInvalidatesCursor() {
+        string path = CreateLongFixture(extraEventCount: 6);
+        var source = new TestContextCandidateSource();
+        using var engine = SessionJournalEngine.OpenReadOnlyForTest(
+            path,
+            new SessionRuntime(
+                new UnusedCompletionClient(),
+                CompletionTarget: new SessionCompletionTargetIdentity(
+                    "audit-extend-invalid-test",
+                    "test",
+                    "audit-extend-v1",
+                    "audit-extend-adapter-v1"),
+                ContextCandidateSource: source),
+            new SessionJournalTestHooks(
+                RewritePendingRangeExtendEntry: entry => entry with {
+                    SequenceNumber = 0
+                }));
+        (SessionSelectedLineageForwardCursor cursor,
+            SessionSelectedLineageForwardRange pending) =
+            OpenExtendablePendingRange(engine);
+        using (cursor) {
+            Assert.Throws<InvalidDataException>(() =>
+                cursor.ExtendPendingRange(pending, 4));
+            AssertInvalidated(cursor, pending);
+        }
     }
 
     [Fact]
@@ -911,6 +970,43 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
             _ = writer.AppendSystemPromptSetup($"system-{index}");
         }
         return path;
+    }
+
+    private static (
+        SessionSelectedLineageForwardCursor Cursor,
+        SessionSelectedLineageForwardRange Pending
+    ) OpenExtendablePendingRange(SessionJournalEngine engine) {
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        var pages = new List<SessionSelectedLineageAuditPage>();
+        while (!audit.IsCaptureComplete) {
+            pages.Add(audit.ReadNextPage(2));
+        }
+        _ = audit.Complete();
+        SessionSelectedLineageForwardCursor cursor =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages));
+        SessionSelectedLineageForwardRange range = Assert.IsType<
+            SessionSelectedLineageForwardRange>(cursor.ReadNextRange(4));
+        SessionHistoryPlanningWindow preview = cursor.Preview(range);
+        SessionSelectedLineageForwardRange pending = Assert.IsType<
+            SessionSelectedLineageForwardRange>(
+            cursor.ConsumePreviewedPrefix(
+                range,
+                preview.ReplaySafeBoundaries[0].Address).RemainingRange);
+        return (cursor, pending);
+    }
+
+    private static void AssertInvalidated(
+        SessionSelectedLineageForwardCursor cursor,
+        SessionSelectedLineageForwardRange pending
+    ) {
+        Assert.Throws<InvalidOperationException>(() =>
+            cursor.Preview(pending));
+        Assert.Throws<InvalidOperationException>(() =>
+            cursor.Materialize(pending));
+        Assert.Throws<InvalidOperationException>(() =>
+            cursor.ExtendPendingRange(pending, pending.Entries.Count));
     }
 
     private static void AssertPageChain(

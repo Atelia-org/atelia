@@ -618,11 +618,7 @@ public static class HistoryTimelineMaintenance {
                 $".{locator.ActiveTimelineId.Value}."
                 + $"{Guid.NewGuid():N}.restore.tmp"
             );
-            CopyFileBounded(
-                backupDatabase,
-                temporaryDatabase,
-                limits.MaximumRestoreCopyBytes
-            );
+            CopyFileExact(backupDatabase, temporaryDatabase);
             hooks?.AfterRestoreCopyBeforeVerify?.Invoke();
             var privateCopyInfo = new FileInfo(temporaryDatabase);
             if (!privateCopyInfo.Exists
@@ -778,6 +774,8 @@ public static class HistoryTimelineMaintenance {
                 headRowId: null,
                 policy.PolicyDigest,
                 selectedRawHeadAtCommit: null,
+                selectedPathCount: 0,
+                HistorySelectedPathCommitment.EmptyDigest,
                 generation: 0
             );
             return new HistoryTimelineAbandonResult.Abandoned(
@@ -842,10 +840,9 @@ public static class HistoryTimelineMaintenance {
             .ToLowerInvariant();
     }
 
-    private static void CopyFileBounded(
+    private static void CopyFileExact(
         string source,
-        string destination,
-        long maximumBytes
+        string destination
     ) {
         using var input = new FileStream(
             source,
@@ -855,12 +852,6 @@ public static class HistoryTimelineMaintenance {
             bufferSize: 1024 * 1024,
             FileOptions.SequentialScan
         );
-        if (input.Length > maximumBytes) {
-            throw new HistoryTimelineStoreLimitException(
-                "MaximumRestoreCopyBytes",
-                "Restore source exceeds its code-owned byte bound."
-            );
-        }
         if (input.Length < 1) {
             throw new InvalidDataException(
                 "Restore source is empty."

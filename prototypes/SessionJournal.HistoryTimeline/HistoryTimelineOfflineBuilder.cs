@@ -299,6 +299,8 @@ public sealed class HistoryTimelineOfflineBuilder {
                 point,
                 policy,
                 estimator,
+                range,
+                outer,
                 cancellationToken);
             if (reserve is RecentReserveMeasurement.Unavailable
                 reserveUnavailable) {
@@ -309,8 +311,10 @@ public sealed class HistoryTimelineOfflineBuilder {
                             reserveUnavailable.Code,
                             reserveUnavailable.Detail));
             }
-            HistoryLoadUnit retained = ((RecentReserveMeasurement.Measured)
-                reserve).Retained;
+            RecentReserveMeasurement.Measured measuredReserve =
+                (RecentReserveMeasurement.Measured)reserve;
+            HistoryLoadUnit retained = measuredReserve.Retained;
+            range = measuredReserve.PrimaryRange;
             if (retained.Value
                 < _reservePolicy.MinimumRecentHistoryLoad.Value) {
                 return FinishTerminal(
@@ -458,6 +462,119 @@ public sealed class HistoryTimelineOfflineBuilder {
         HistoryPartitionPoint point,
         PartitionPolicyRevision policy,
         IHistoryUnitLoadEstimator estimator,
+        SJ.SessionSelectedLineageForwardRange primaryRange,
+        SJ.SessionHistoryPlanningWindow primaryWindow,
+        CancellationToken cancellationToken
+    ) {
+        if (!_reservePolicy.IsRequired) {
+            return new RecentReserveMeasurement.Measured(
+                new HistoryLoadUnit(0),
+                primaryRange);
+        }
+
+        SJ.SessionSelectedLineageForwardRange range = primaryRange;
+        SJ.SessionHistoryPlanningWindow window = primaryWindow;
+        int maximumPrimaryRangeEventCount = (int)Math.Min(
+            _reserveForwardRangeEventCap,
+            Math.Min(
+                int.MaxValue,
+                checked((long)point.RawEventCount
+                    + policy.MaxRawEvents)));
+        while (true) {
+            HistoryLoadThresholdProjection projection;
+            try {
+                projection = HistoryLoadProjector.MeasureAtLeast(
+                    window,
+                    point.EndInclusive,
+                    estimator,
+                    _reservePolicy.MinimumRecentHistoryLoad);
+            }
+            catch (SJ.SessionSelectedLineageOpenDependencyException)
+                when (!range.IsFinal
+                    && range.Entries.Count
+                        < maximumPrimaryRangeEventCount) {
+                int nextCap = NextPrimaryRangeEventCount(
+                    range.Entries.Count,
+                    maximumPrimaryRangeEventCount);
+                range = _cursor.ExtendPendingRange(
+                    range,
+                    nextCap,
+                    cancellationToken);
+                window = _cursor.Preview(range, cancellationToken);
+                continue;
+            }
+            catch (SJ.SessionSelectedLineageOpenDependencyException)
+                when (range.IsFinal) {
+                return new RecentReserveMeasurement.Unavailable(
+                    "RecentReserveTerminalOpenDependency",
+                    "The exact terminal selected-lineage range contains an unresolved tool dependency, so recent reserve cannot be proven.");
+            }
+            catch (SJ.SessionSelectedLineageOpenDependencyException) {
+                break;
+            }
+
+            if (projection.Reached) {
+                return new RecentReserveMeasurement.Measured(
+                    _reservePolicy.MinimumRecentHistoryLoad,
+                    range);
+            }
+            if (range.IsFinal) {
+                return new RecentReserveMeasurement.Measured(
+                    projection.Growth,
+                    range);
+            }
+            if (range.Entries.Count >= maximumPrimaryRangeEventCount) {
+                break;
+            }
+
+            int extendedCount = NextPrimaryRangeEventCount(
+                range.Entries.Count,
+                maximumPrimaryRangeEventCount);
+            range = _cursor.ExtendPendingRange(
+                range,
+                extendedCount,
+                cancellationToken);
+            try {
+                window = _cursor.Preview(range, cancellationToken);
+            }
+            catch (SJ.SessionSelectedLineageOpenDependencyException)
+                when (!range.IsFinal
+                    && range.Entries.Count
+                        < maximumPrimaryRangeEventCount) {
+                continue;
+            }
+            catch (SJ.SessionSelectedLineageOpenDependencyException)
+                when (range.IsFinal) {
+                return new RecentReserveMeasurement.Unavailable(
+                    "RecentReserveTerminalOpenDependency",
+                    "The exact terminal selected-lineage range contains an unresolved tool dependency, so recent reserve cannot be proven.");
+            }
+            catch (SJ.SessionSelectedLineageOpenDependencyException) {
+                break;
+            }
+        }
+
+        ForkRecentReserveMeasurement forked = MeasureRecentReserveByFork(
+            point,
+            estimator,
+            cancellationToken);
+        return forked switch {
+            ForkRecentReserveMeasurement.Measured measured
+                => new RecentReserveMeasurement.Measured(
+                    measured.Retained,
+                    range),
+            ForkRecentReserveMeasurement.Unavailable unavailable
+                => new RecentReserveMeasurement.Unavailable(
+                    unavailable.Code,
+                    unavailable.Detail),
+            _ => throw new InvalidOperationException(
+                "The forked recent-reserve scan returned an unknown outcome.")
+        };
+    }
+
+    private ForkRecentReserveMeasurement MeasureRecentReserveByFork(
+        HistoryPartitionPoint point,
+        IHistoryUnitLoadEstimator estimator,
         CancellationToken cancellationToken
     ) {
         using SJ.SessionSelectedLineageForwardCursor fork =
@@ -466,10 +583,6 @@ public sealed class HistoryTimelineOfflineBuilder {
                 point.EndSetups,
                 cancellationToken);
         long retained = 0;
-        if (!_reservePolicy.IsRequired) {
-            return new RecentReserveMeasurement.Measured(
-                new HistoryLoadUnit(0));
-        }
         SJ.SessionSelectedLineageForwardRange? range = null;
         int rangeCap = _reserveInitialForwardRangeEventCount;
         while (retained < _reservePolicy.MinimumRecentHistoryLoad.Value) {
@@ -501,12 +614,12 @@ public sealed class HistoryTimelineOfflineBuilder {
             }
             catch (SJ.SessionSelectedLineageOpenDependencyException)
                 when (!range.IsFinal) {
-                return new RecentReserveMeasurement.Unavailable(
+                return new ForkRecentReserveMeasurement.Unavailable(
                     "RecentReserveForwardRangeLimitExceeded",
                     "An unresolved tool dependency exceeded the bounded selected-lineage forward range.");
             }
             catch (SJ.SessionSelectedLineageOpenDependencyException) {
-                return new RecentReserveMeasurement.Unavailable(
+                return new ForkRecentReserveMeasurement.Unavailable(
                     "RecentReserveTerminalOpenDependency",
                     "The exact terminal selected-lineage range contains an unresolved tool dependency, so recent reserve cannot be proven.");
             }
@@ -519,7 +632,7 @@ public sealed class HistoryTimelineOfflineBuilder {
                     estimator,
                     new HistoryLoadUnit(remaining));
             if (projection.Reached) {
-                return new RecentReserveMeasurement.Measured(
+                return new ForkRecentReserveMeasurement.Measured(
                     _reservePolicy.MinimumRecentHistoryLoad);
             }
             retained = checked(retained + projection.Growth.Value);
@@ -530,7 +643,7 @@ public sealed class HistoryTimelineOfflineBuilder {
                     boundary.Address != window.StartExclusive);
             if (lastSafe is null) {
                 if (!range.IsFinal) {
-                    return new RecentReserveMeasurement.Unavailable(
+                    return new ForkRecentReserveMeasurement.Unavailable(
                         "RecentReserveForwardRangeLimitExceeded",
                         "No replay-safe boundary was found within the bounded selected-lineage forward range.");
                 }
@@ -543,18 +656,42 @@ public sealed class HistoryTimelineOfflineBuilder {
                     cancellationToken);
             range = consumed.RemainingRange;
         }
-        return new RecentReserveMeasurement.Measured(
+        return new ForkRecentReserveMeasurement.Measured(
             new HistoryLoadUnit(retained));
+    }
+
+    private int NextPrimaryRangeEventCount(
+        int currentCount,
+        int maximumCount
+    ) {
+        int growth = Math.Min(
+            currentCount,
+            _reserveInitialForwardRangeEventCount);
+        return Math.Min(
+            maximumCount,
+            checked(currentCount + Math.Max(1, growth)));
     }
 
     private abstract record RecentReserveMeasurement {
         private RecentReserveMeasurement() { }
 
-        internal sealed record Measured(HistoryLoadUnit Retained)
+        internal sealed record Measured(
+            HistoryLoadUnit Retained,
+            SJ.SessionSelectedLineageForwardRange PrimaryRange)
             : RecentReserveMeasurement;
 
         internal sealed record Unavailable(string Code, string Detail)
             : RecentReserveMeasurement;
+    }
+
+    private abstract record ForkRecentReserveMeasurement {
+        private ForkRecentReserveMeasurement() { }
+
+        internal sealed record Measured(HistoryLoadUnit Retained)
+            : ForkRecentReserveMeasurement;
+
+        internal sealed record Unavailable(string Code, string Detail)
+            : ForkRecentReserveMeasurement;
     }
 
     private HistoryTimelineOfflineStepResult FinishTerminal(

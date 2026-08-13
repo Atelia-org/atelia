@@ -916,6 +916,8 @@ public sealed class CanonicalContractTests {
             null,
             new string('c', 64),
             null,
+            0,
+            HistoryTimelineSelectedPath.EmptyDigest,
             generation: 0
         );
         FulfilledViewKey fulfilled = FulfilledViewKey.Create(

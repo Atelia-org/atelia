@@ -407,6 +407,8 @@ public sealed class HistoryTimelineContractAndCodecTests {
             first.RowId,
             policy.PolicyDigest,
             first.EndInclusive,
+            selectedPathCount: 1,
+            new string('a', 64),
             generation: 1
         );
         var proposal = new HistoryRowProposal(
@@ -444,6 +446,8 @@ public sealed class HistoryTimelineContractAndCodecTests {
             headRowId: null,
             policy.PolicyDigest,
             selectedRawHeadAtCommit: null,
+            selectedPathCount: 0,
+            HistoryTimelineSelectedPath.EmptyDigest,
             generation: 0
         );
         Assert.Null(empty.HeadRowId);
@@ -454,6 +458,8 @@ public sealed class HistoryTimelineContractAndCodecTests {
             headRowId: null,
             policy.PolicyDigest,
             selectedRawHeadAtCommit: null,
+            selectedPathCount: 0,
+            HistoryTimelineSelectedPath.EmptyDigest,
             generation: 1
         );
         Assert.Equal(1, policyOnlyCasHead.Generation);
@@ -464,6 +470,8 @@ public sealed class HistoryTimelineContractAndCodecTests {
             headRowId: null,
             policy.PolicyDigest,
             selectedRawHeadAtCommit: Address(101),
+            selectedPathCount: 0,
+            HistoryTimelineSelectedPath.EmptyDigest,
             generation: 0
         ));
         Assert.Throws<ArgumentOutOfRangeException>(() => new TimelineHeadRef(
@@ -472,6 +480,8 @@ public sealed class HistoryTimelineContractAndCodecTests {
             headRowId: null,
             policy.PolicyDigest,
             selectedRawHeadAtCommit: null,
+            selectedPathCount: 0,
+            HistoryTimelineSelectedPath.EmptyDigest,
             generation: -1
         ));
 
@@ -487,6 +497,8 @@ public sealed class HistoryTimelineContractAndCodecTests {
                 descriptor.RowId,
                 policy.PolicyDigest,
                 descriptor.EndInclusive,
+                selectedPathCount: 1,
+                new string('a', 64),
                 generation: 0
             )
         );
@@ -503,6 +515,8 @@ public sealed class HistoryTimelineContractAndCodecTests {
             headRowId: null,
             policy.PolicyDigest,
             selectedRawHeadAtCommit: null,
+            selectedPathCount: 0,
+            HistoryTimelineSelectedPath.EmptyDigest,
             generation: 0
         );
         var locator = new ActiveTimelineLocator(
@@ -623,6 +637,10 @@ public sealed class HistoryTimelineContractAndCodecTests {
             rowId,
             policyDigest ?? policy.PolicyDigest,
             rowId is null ? null : descriptor.EndInclusive,
+            rowId is null ? 0 : 1,
+            rowId is null
+                ? HistoryTimelineSelectedPath.EmptyDigest
+                : new string('a', 64),
             rowId is null ? 0 : 1
         );
 

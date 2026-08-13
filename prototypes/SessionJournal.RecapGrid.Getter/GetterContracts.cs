@@ -188,7 +188,7 @@ public sealed record RecapGridReserveBootstrapEvidence(
     RecapGridStoreIdentity StoreIdentity,
     HistoryLoadUnit RetainedHistoryLoad,
     HistoryLoadUnit RequiredHistoryLoad,
-    int VerifiedRows,
+    long VerifiedRows,
     HistoryRecentReserveAnchorMetrics Metrics
 );
 
