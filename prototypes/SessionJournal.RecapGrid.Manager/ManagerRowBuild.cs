@@ -14,12 +14,12 @@ public sealed partial class RecapGridManager {
         FrozenOperation frozen,
         FrozenRecipePlan plan,
         HistoryTimelineSelectedRow selected,
-        int rowIndex,
+        bool isOverlayBootstrap,
         BuiltRow? previousRow,
         BuiltRow? baseRow
     ) {
         HistorySegmentDescriptor descriptor = selected.Descriptor;
-        if ((rowIndex == 0) != (previousRow is null)) {
+        if ((descriptor.PreviousRowId is null) != (previousRow is null)) {
             return (null, Invalid(
                 "PreviousCandidateViewMismatch",
                 "Candidate row provenance does not match Timeline order."
@@ -30,13 +30,17 @@ public sealed partial class RecapGridManager {
         RowViewDigest? previousDigest = null;
         IReadOnlyList<RecapCellArtifact> previousCells = [];
         if (previousRow is not null) {
-            RecapGridBuildResult? previousError = ValidateBuiltRow(
-                previousRow,
-                plan,
-                frozen.RootToThrough[rowIndex - 1].Descriptor
-            );
-            if (previousError is not null) {
-                return (null, previousError);
+            if (previousRow.View.HistoryRowId
+                    != descriptor.PreviousRowId
+                || previousRow.View.RefId != descriptor.RefId
+                || previousRow.View.TimelineId != descriptor.TimelineId
+                || previousRow.View.RecipeDigest != plan.Recipe.Digest
+                || previousRow.View.TargetDigest
+                    != plan.Recipe.Target.Digest) {
+                return (null, Invalid(
+                    "PreviousCandidateViewMismatch",
+                    "The predecessor assignment differs from the exact selected predecessor."
+                ));
             }
             previousCells = previousRow.Cells;
             projection = PriorInputProjection.Create(
@@ -54,7 +58,7 @@ public sealed partial class RecapGridManager {
             assignments = DeriveAssignments(
                 plan,
                 descriptor,
-                rowIndex,
+                isOverlayBootstrap,
                 prior,
                 baseRow
             );
@@ -75,9 +79,9 @@ public sealed partial class RecapGridManager {
                 plan.Recipe.Target.Digest,
                 descriptor.PreviousRowId,
                 previousDigest,
-                plan.Recipe.Kind == GridBuildRecipeKind.Full
-                    || plan.BootstrapIndex < 0
-                    || rowIndex >= plan.BootstrapIndex
+                !isOverlayBootstrap
+                    || plan.Recipe.BootstrapThroughRowId
+                        == descriptor.RowId
             );
             RowBuildSpec spec = plan.Recipe.Kind switch {
                 GridBuildRecipeKind.Full => RowBuildSpec.CreateFull(
@@ -87,7 +91,7 @@ public sealed partial class RecapGridManager {
                     assignments
                 ),
                 GridBuildRecipeKind.Overlay
-                    when rowIndex <= plan.BootstrapIndex
+                    when isOverlayBootstrap
                     => RowBuildSpec.CreateOverlayBootstrap(
                         plan.Recipe,
                         coordinate,
@@ -122,7 +126,7 @@ public sealed partial class RecapGridManager {
     private RowBuildAssignment[] DeriveAssignments(
         FrozenRecipePlan plan,
         HistorySegmentDescriptor descriptor,
-        int rowIndex,
+        bool isOverlayBootstrap,
         PriorInputReference prior,
         BuiltRow? baseRow
     ) {
@@ -130,7 +134,7 @@ public sealed partial class RecapGridManager {
             .RecomputedColumns.ToHashSet();
         bool overlayBootstrap = plan.Recipe.Kind
                 == GridBuildRecipeKind.Overlay
-            && rowIndex <= plan.BootstrapIndex;
+            && isOverlayBootstrap;
         Dictionary<LogicalColumnId, RecapCellArtifact>? reusable = null;
         if (overlayBootstrap) {
             if (baseRow is null) {

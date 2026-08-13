@@ -15,7 +15,6 @@ internal static class GalateaRecapGridReadiness {
         new();
 
     private static readonly RecapGridBuildBudget ProgressBudget = new(
-        maximumSelectedRows: 4_096,
         maximumRecipeRowSteps: 65_536,
         maximumNewCalls:
             RecapGridBuildProgressLimits.MaximumFrontierAssignments,

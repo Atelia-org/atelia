@@ -791,6 +791,7 @@ public sealed class AssemblyDependencyBoundaryTests {
                      "IHistoryTimelineLedgerPort",
                      "SqliteHistoryTimelineLedger",
                      "RecapGridControlCoordinator",
+                     "MaximumSelectedRows",
                      "Microsoft.Data.Sqlite",
                      "Atelia.Completion",
                      "Galatea",

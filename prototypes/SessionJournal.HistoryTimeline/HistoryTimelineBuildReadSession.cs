@@ -1,4 +1,5 @@
 using SJ = Atelia.SessionJournal;
+using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal.HistoryTimeline;
 
@@ -35,6 +36,50 @@ public sealed class HistoryTimelineBuildReadSession : IDisposable {
 
     public ActiveTimelineLocator Locator => _ownedHandle.Locator;
     public HistoryTimelineReader Reader => _ownedHandle.Reader;
+
+    public HistoryTimelineRawHeadObservationResult ObserveRawHead() {
+        HistoryTimelineSnapshotResult snapshot = Reader.ReadSnapshot();
+        switch (snapshot) {
+            case HistoryTimelineSnapshotResult.Busy:
+                return new HistoryTimelineRawHeadObservationResult.Busy();
+            case HistoryTimelineSnapshotResult.UnsupportedSchema unsupported:
+                return new HistoryTimelineRawHeadObservationResult
+                    .UnsupportedSchema(unsupported.SchemaVersion);
+            case HistoryTimelineSnapshotResult.Invalid invalid
+                when string.Equals(
+                    invalid.Code,
+                    "HistoryTimelineDisposed",
+                    StringComparison.Ordinal):
+                return new HistoryTimelineRawHeadObservationResult.Disposed();
+            case HistoryTimelineSnapshotResult.Invalid invalid:
+                return new HistoryTimelineRawHeadObservationResult.Invalid(
+                    invalid.Code,
+                    invalid.Detail
+                );
+            case not HistoryTimelineSnapshotResult.Available:
+                return new HistoryTimelineRawHeadObservationResult.Invalid(
+                    "TimelineSnapshotOutcomeInvalid",
+                    "Timeline returned an unknown snapshot outcome."
+                );
+        }
+        try {
+            return new HistoryTimelineRawHeadObservationResult.Available(
+                _selectedRef.ReadCurrentHead()
+            );
+        }
+        catch (ObjectDisposedException) {
+            return new HistoryTimelineRawHeadObservationResult.Disposed();
+        }
+        catch (Exception exception) when (exception is IOException
+            or InvalidDataException
+            or InvalidOperationException
+            or UnauthorizedAccessException) {
+            return new HistoryTimelineRawHeadObservationResult.Invalid(
+                "RawHeadObservationFailed",
+                exception.Message
+            );
+        }
+    }
 
     public HistoryRecentReserveAnchorResult FindRecentReserveAnchor(
         TimelineHeadRef expectedWholeHead,
@@ -131,6 +176,23 @@ public sealed class HistoryTimelineBuildReadSession : IDisposable {
             "SelectedRowWitnessMismatch",
             "The selected row and witness do not bind one exact descriptor."
         );
+}
+
+public abstract record HistoryTimelineRawHeadObservationResult {
+    private HistoryTimelineRawHeadObservationResult() { }
+
+    public sealed record Available(EventAddress? Head)
+        : HistoryTimelineRawHeadObservationResult;
+
+    public sealed record Busy : HistoryTimelineRawHeadObservationResult;
+
+    public sealed record UnsupportedSchema(int SchemaVersion)
+        : HistoryTimelineRawHeadObservationResult;
+
+    public sealed record Disposed : HistoryTimelineRawHeadObservationResult;
+
+    public sealed record Invalid(string Code, string Detail)
+        : HistoryTimelineRawHeadObservationResult;
 }
 
 public abstract record HistoryTimelineBuildReadSessionOpenResult {

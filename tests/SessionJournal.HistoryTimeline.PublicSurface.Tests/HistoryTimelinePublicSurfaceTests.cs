@@ -143,6 +143,9 @@ public sealed class HistoryTimelinePublicSurfaceTests : IDisposable {
         _ = Assert.IsType<
             OnlineSelectedRawCaptureResult.Captured
         >(session.CaptureRaw(head));
+        Assert.IsType<HistoryTimelineRawHeadObservationResult.Available>(
+            session.ObserveRawHead()
+        );
         Assert.Null(typeof(HistoryTimelineBuildReadSession).GetProperty(
             "Coordinator"
         ));
@@ -160,6 +163,9 @@ public sealed class HistoryTimelinePublicSurfaceTests : IDisposable {
                 method.Name,
                 StringComparer.Ordinal));
         session.Dispose();
+        Assert.IsType<HistoryTimelineRawHeadObservationResult.Disposed>(
+            session.ObserveRawHead()
+        );
         Assert.Equal(
             "HistoryTimelineDisposed",
             Assert.IsType<HistoryTimelineSnapshotResult.Invalid>(

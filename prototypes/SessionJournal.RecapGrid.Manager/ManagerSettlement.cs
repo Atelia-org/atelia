@@ -130,15 +130,14 @@ public sealed partial class RecapGridManager {
         if (state.HasElapsed()) {
             return new RecapGridBuildResult.BudgetExceeded(
                 RecapGridBuildBudgetKind.Elapsed,
-                frozen.RootToThrough[^1].Descriptor.RowId
+                frozen.Through.Descriptor.RowId
             );
         }
         RecapGridBuildResult? fence = CheckFinalFences(frozen);
         if (fence is not null) {
             return fence;
         }
-        HistoryTimelineSelectedRow through =
-            frozen.RootToThrough[^1];
+        HistoryTimelineSelectedRow through = frozen.Through;
         FulfilledViewKey key;
         try {
             key = FulfilledViewKey.Create(
@@ -298,20 +297,20 @@ public sealed partial class RecapGridManager {
         if (fence is not null) {
             return fence;
         }
-        OnlineSelectedRawCaptureResult raw = _timeline.CaptureRaw(
-            frozen.TimelineHead
-        );
-        if (raw is not OnlineSelectedRawCaptureResult.Captured captured) {
-            return MapRawCapture(raw);
+        HistoryTimelineRawHeadObservationResult observed =
+            _timeline.ObserveRawHead();
+        if (observed is not HistoryTimelineRawHeadObservationResult.Available
+            available) {
+            return MapRawHeadObservation(observed);
         }
-        return captured.Capture.CapturedHead
-            == frozen.RawCapture.CapturedHead
-            ? null
-            : Unavailable(
+        if (available.Head != frozen.FrozenRawHead) {
+            return Unavailable(
                 RecapGridBuildDependency.RawHistory,
                 "RawHeadChanged",
                 "The selected raw head changed during the build operation."
             );
+        }
+        return null;
     }
 
 }

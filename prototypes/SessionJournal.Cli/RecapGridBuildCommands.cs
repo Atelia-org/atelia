@@ -17,7 +17,7 @@ internal static partial class RecapGridCommands {
     private static async ValueTask<int> ControlPromoteAsync(CliOptions options) {
         options.EnsureOnly(
             "input", "branch", "confirm-ref", "admission", "recipe",
-            "through-row", "max-selected-rows", "max-recipe-row-steps",
+            "through-row", "max-recipe-row-steps",
             "max-new-calls", "max-elapsed-ms"
         );
         if (!string.Equals(
@@ -110,7 +110,7 @@ internal static partial class RecapGridCommands {
     ) {
         options.EnsureOnly(
             "input", "branch", "confirm-ref", "live", "recipe", "through-row",
-            "max-selected-rows", "max-recipe-row-steps", "max-new-calls",
+            "max-recipe-row-steps", "max-new-calls",
             "max-elapsed-ms", "routes", "connections"
         );
         using SessionJournalEngine engine = OpenBranch(options);
@@ -157,7 +157,7 @@ internal static partial class RecapGridCommands {
     private static int Progress(CliOptions options) {
         options.EnsureOnly(
             "input", "branch", "live", "recipe", "through-row",
-            "max-selected-rows", "max-recipe-row-steps", "max-new-calls",
+            "max-recipe-row-steps", "max-new-calls",
             "max-elapsed-ms"
         );
         using SessionJournalEngine engine = OpenBranch(options);
@@ -305,7 +305,6 @@ internal static partial class RecapGridCommands {
             selection,
             through,
             new RecapGridBuildBudget(
-                ReadBoundedOption(options, "max-selected-rows", 65_536),
                 ReadBoundedOption(options, "max-recipe-row-steps", 1_000_000),
                 ReadBoundedOption(options, "max-new-calls", 1_000_000),
                 TimeSpan.FromMilliseconds(ReadBoundedOption(

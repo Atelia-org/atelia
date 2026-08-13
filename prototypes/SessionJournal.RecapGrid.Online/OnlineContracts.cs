@@ -43,7 +43,6 @@ public sealed record RecapGridOnlineLimits {
             HistoryRecentReserveOperationLimits.MaximumRawEvents,
         maximumTimelineRows: 4_096,
         new RecapGridBuildBudget(
-            maximumSelectedRows: 4_096,
             maximumRecipeRowSteps: 262_144,
             maximumNewCalls: 4_096,
             maximumElapsed: TimeSpan.FromMinutes(15)

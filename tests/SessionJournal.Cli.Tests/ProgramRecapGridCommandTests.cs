@@ -425,7 +425,6 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "progress",
             "--input", _root,
             "--live",
-            "--max-selected-rows", "64",
             "--max-recipe-row-steps", "64",
             "--max-new-calls", "0",
             "--max-elapsed-ms", "10000"
@@ -468,7 +467,6 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "build", "--input", _root,
             "--confirm-ref", new string('0', 16),
             "--live",
-            "--max-selected-rows", "1",
             "--max-recipe-row-steps", "1",
             "--max-new-calls", "0",
             "--max-elapsed-ms", "1",
@@ -501,7 +499,6 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal(1, Run(
             "build", "--input", _root, "--confirm-ref", refId,
             "--live", "--live",
-            "--max-selected-rows", "1",
             "--max-recipe-row-steps", "1",
             "--max-new-calls", "0",
             "--max-elapsed-ms", "1",
@@ -1239,7 +1236,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal(1, RunWithFactory(factory,
             "build", "--input", _root, "--confirm-ref", refId,
             "--recipe", recipe.Digest.Value,
-            "--max-selected-rows", "64", "--max-recipe-row-steps", "64",
+            "--max-recipe-row-steps", "64",
             "--max-new-calls", "8", "--max-elapsed-ms", "10000",
             "--routes", routes, "--connections", malformedConnections
         ));
@@ -1249,7 +1246,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         (int buildCode, JsonElement build) = RunCapturedWithFactory(factory,
             "build", "--input", _root, "--confirm-ref", refId,
             "--recipe", recipe.Digest.Value,
-            "--max-selected-rows", "64", "--max-recipe-row-steps", "64",
+            "--max-recipe-row-steps", "64",
             "--max-new-calls", "8", "--max-elapsed-ms", "10000",
             "--routes", routes, "--connections", connections
         );
@@ -1266,7 +1263,6 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         (int progressCode, JsonElement progress) = RunCaptured(
             "progress", "--input", _root,
             "--recipe", recipe.Digest.Value,
-            "--max-selected-rows", "64",
             "--max-recipe-row-steps", "64",
             "--max-new-calls", "0",
             "--max-elapsed-ms", "10000"

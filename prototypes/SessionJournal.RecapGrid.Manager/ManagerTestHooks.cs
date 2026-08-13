@@ -14,7 +14,8 @@ internal sealed record ManagerTestHooks(
     Action? BeforeCaptureRaw = null,
     Func<HistoryTimelineSelectedRow, Func<HistorySegmentOpenResult>,
         HistorySegmentOpenResult>? OpenSelectedSegment = null,
-    TimeProvider? TimeProvider = null
+    TimeProvider? TimeProvider = null,
+    Action? AfterDiscoverProgression = null
 ) {
     internal static ManagerTestHooks None { get; } = new();
 }

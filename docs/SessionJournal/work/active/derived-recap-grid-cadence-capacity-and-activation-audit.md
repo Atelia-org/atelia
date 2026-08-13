@@ -28,8 +28,8 @@ WP-00 至 WP-08 已经完成 Grid source cutover，但“rolling rewrite 正确�
 2. `RecapBuildIntervalHistoryLoad = 60,000` 可以由 Timeline 表达；
 3. `MinimumRecentHistoryLoad`现已有durable per-Ref contract与online/offline/Getter gate；目标部署值为24,000；
 4. Online/CLI seal已不再只按B drain，必须证明candidate之后仍保留至少R；
-5. `128` 不是 Timeline 总 row 上限，但 Manager 的 4,096 whole-path budget 与 65,536 durable counters
-   确实使 current V1 不能无限运行；
+5. `128` 不是 Timeline 总 row 上限，Manager的4,096 whole-path semantic cliff已由C3B删除；current仍受
+   Timeline 65,536-row/8 GiB lifetime caps与逐row commit scaling限制，尚不能无限运行；
 6. Galatea 需要的“自传 + world-understanding + Opus 4.6”正式 built-in 与真实数据激活仍未完成。
 
 因此 actual cyber activation 维持 **No-Go**，直到 §9 的 activation-blocking 项关闭。
@@ -245,25 +245,21 @@ online/offline facade，Getter共享Cadence snapshot与Timeline policy fence。
 | 128 | Getter `MaximumProvenanceRows` | full-chain诊断读取预算；超出后materialization仍可Available，但provenance为Incomplete |
 | 4,096 | Getter `MaximumNthPrevious` | 可请求的strict predecessor ordinal上限，不是Timeline总row数 |
 | 4,096 | Online `MaximumTimelineRows` | 一次lifecycle pass可补交的Timeline rows；是operation budget |
-| 4,096 | Online production Manager `MaximumSelectedRows` | Galatea固定composition下normal build冻结whole selected path的上限；第4,097行会在provider dispatch前持续BudgetExceeded |
 | 65,536 | Timeline `MaximumRowCount` | 单个ledger的durable累计row硬上限，包含保留的非selected branch rows |
-| 65,536 | Store Cell/RowView/Fulfilled counters | whole Store的durable全局硬上限 |
 | 65,536 | Timeline per-segment `MaximumRawEvents` | 单个history segment允许吸收的raw event硬上限；不是row数 |
 | 256 / 4,096 / 4,096 | Control Family / Definition / Recipe caps | 单个Control state的catalog硬上限 |
 | 16,384 / 32 MiB | Control terminal receipt count / state bytes | operation replay证据与whole state硬上限 |
 | 262,144 | Timeline `HistoryRecentReserveOperationLimits.MaximumRawEvents` | seal、build-read anchor、Online与CLI共用的单次recent-reserve operation cap；达到后typed limit/backpressure，不等于partition segment cap |
 
-所以“max rows 128”是误解；但 current system 仍不满足无限长期运行：
+所以“max rows 128”是误解。C3A已删除Grid Store的累计artifact count与8 GiB lifetime cap，C3B又以immutable
+per-row assignment取代Manager whole-root freeze，删除`MaximumSelectedRows`，因此第4,097行不再有Manager语义上的
+永久terminal。normal reopen会从exact healthy anchor只收集未建suffix；`MaximumRecipeRowSteps`只限制本次成功发布的
+recipe-row assignments。
 
-1. normal Manager每次从root分页读取whole selected path；虽然Manager contract允许caller把budget提高到65,536，Galatea
-   production固定为4,096，因此第4,097行先撞composition budget且重复调用不会自然前进；
-2. 两列Full recipe通常每row产生两个新Cells，即使`KeepUnchanged`也如此；理想无分支、单recipe时约32,768
-   rows会先撞65,536 Cell cap；
-3. candidate/overlay、definition revisions、branch rows与额外fulfilled mappings会更早消耗容量；
-4. Timeline和Store另有8 GiB database cap，可能比count cap更早达到。
-
-按每row约60,000 HistoryLoad粗算，4,096-row Manager hot-path限制约对应2.46亿HistoryLoad，32,768-row
-双列Cell限制约对应19.7亿HistoryLoad。它们可能很远，但仍是永久停止点；不能把“时间很久”写成“无上限”。
+这仍不等于current system已达到无限长期运行。Timeline目前保留65,536累计row与8 GiB database cap；而且真实public
+Timeline 4,097-row fixture在C3B验收中运行16分钟仍停留在`CommitAllRows`，SQLite约109 MiB，暴露逐row commit的
+O(n²)时间/空间放大。该真实integration没有被缩小数字、Skip或synthetic hook替代，必须由C3D先修Timeline scaling后
+恢复并通过。operation/page/artifact/raw caps也继续作为资源边界存在。
 
 ### 4.4 reset / abandon 不是 rollover
 
@@ -285,7 +281,7 @@ online/offline facade，Getter共享Cadence snapshot与Timeline policy fence。
 - current Timeline policy/row/page caps：[`HistoryTimelinePersistenceContracts`](../../../../prototypes/SessionJournal.HistoryTimeline/HistoryTimelinePersistenceContracts.cs)；
 - reserve-aware build-read anchor：[`HistoryRecentReserveAnchor`](../../../../prototypes/SessionJournal.HistoryTimeline/HistoryRecentReserveAnchor.cs)；
 - reserve-aware selection与`ReserveBootstrapRawOnly`：[`RecapGridContextHandle`](../../../../prototypes/SessionJournal.RecapGrid.Getter/RecapGridContextHandle.cs)；
-- Manager whole-path freeze：[`ManagerAuthority`](../../../../prototypes/SessionJournal.RecapGrid.Manager/ManagerAuthority.cs)；
+- Manager head-to-anchor progression：[`RecapGrid Manager`](../../../../prototypes/SessionJournal.RecapGrid.Manager/)；
 - previous projection与`KeepUnchanged` Cell创建：[`ManagerRowBuild`](../../../../prototypes/SessionJournal.RecapGrid.Manager/ManagerRowBuild.cs)；
 - Store whole-database counters：[`StoreContracts`](../../../../prototypes/SessionJournal.RecapGrid.Store/StoreContracts.cs)；
 - Getter ordinal/provenance caps：[`GetterContracts`](../../../../prototypes/SessionJournal.RecapGrid.Getter/GetterContracts.cs)；
@@ -437,9 +433,10 @@ A3增加provider-free `recap-grid cadence inspect|set-reserve` operator surface�
 
 ### C3：Incremental Manager and capacity observability
 
-- 先锁canonical progression checkpoint/index contract；
-- normal path从exact fulfilled predecessor增量前进；
-- 4,096/4,097以上路径不再因root scan永久阻断；
+- C3A已落immutable per-row assignment、exact recurrence与Store lifetime-cap removal；
+- C3B已落head-to-anchor minimal suffix、overlay独立anchors与one recipe-row budget，删除Manager
+  `MaximumSelectedRows` semantic cliff；
+- 真实4,097-row public Timeline integration仍由C3D scaling gate阻挡，不把Manager focused evidence冒充Timeline容量验收；
 - readiness/CLI pure read报告Timeline/Cell/View/Fulfilled、Control Family/Definition/Recipe/receipt/state bytes、offline-audit
   progress与各自watermarks；不得只显示最先撞到的Store cap；
 - full rebuild仍可bounded offline执行。
@@ -506,8 +503,8 @@ C4可后移，但必须在readiness中暴露容量并明确停服水位；若承
 ### Capacity
 
 - 128/129 path rows证明128只是分页；provenance 129仍Available但明确Incomplete。
-- current实现的4,096/4,097回归先锁住已知限制；incremental实现后4,097+只读/build suffix。
-- 注入小Store cap证明双列每row增加两个Cells，Keep同样计数。
+- Manager以多row、restart、branch/rewind、nested overlay与anchor corruption fixtures锁定incremental suffix；
+  C3D优化真实Timeline逐rowcommit后恢复4,097+ integration。
 - Control catalog/receipt/state byte caps与offline audit event cap做exact/cap+1 typed backpressure，不能被误报为Timeline寿命；
   随后用new instance/compaction与checkpointed audit跨多个operation继续到成功，证明cap不是永久停止点。
 - rollover前后previous projection、raw boundary与active recipe exact连续；wrong authority与crash不能发布半generation。

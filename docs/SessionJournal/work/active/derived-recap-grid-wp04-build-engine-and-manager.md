@@ -21,13 +21,14 @@
   drain已进入operation，一次operation绑定exact `StoreIdentity`。
 - Build request为`LiveActive | ExplicitCandidate(recipeDigest)` + `ThroughRowId?`。非空Timeline的null through默认
   selected head；空Timeline只允许null并返回`NoRows`，不写Cell/RowView/Fulfilled。Budget同时限制
-  `MaximumSelectedRows`、`MaximumRecipeRowSteps`、`MaximumNewCalls`与deadline/elapsed。
-- `MaximumSelectedRows`是对本次冻结的完整selected head -> root path的admission bound，不是一个从root
-  重放的调度量子；`MaximumRecipeRowSteps`限制row-major closure中的`recipe x row`总数。Recipe在empty
+  `MaximumRecipeRowSteps`、`MaximumNewCalls`与deadline/elapsed。原WP04的`MaximumSelectedRows` whole-path
+  admission合同已由C3B supersede并从public API删除；authority discovery分页到exact assignment anchor或root，
+  不再把累计selected row数当作永久terminal。
+- `MaximumRecipeRowSteps`限制本次成功发布的`recipe x row` assignment数。Recipe在empty
   Timeline注册时可有null bootstrap；之后Timeline出现rows时，full仍全部Evaluate，overlay将所有现有rows视为
   strictly after-bootstrap并使用`CreateNormal`，不为这些rows构建无用base artifacts。
-- operation先用public Timeline Reader按head -> root有界分页冻结whole selected path，验证Ref/Timeline/
-  predecessor/witness并做final whole-head fence，再reverse为root -> through。非空through必须在exact selected path；
+- operation先用public Timeline Reader从through向predecessor分页验证Ref/Timeline/chain并寻找每条recipe的exact
+  healthy assignment anchor，只冻结minimal unbuilt suffix；冷Store可继续到root。非空through必须在exact selected path；
   replay-safe由Timeline sealed row authority保证，Manager不接受raw boundary也不封row。
 - 从frozen Control snapshot取exact requested recipe、整条base closure、definitions与families并复验scope/graph。
   采用row-major，每row按base -> candidate closure执行：requested recipe的required-through为请求through；每个base的

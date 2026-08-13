@@ -269,7 +269,6 @@ internal sealed class RecapGridAgentControlTool {
                 new RecapGridBuildSelection.ExplicitCandidate(recipeDigest),
                 authority.TimelineHead.HeadRowId,
                 new RecapGridBuildBudget(
-                    HistoryTimelineStoreLimits.MaximumRowCount,
                     1_000_000,
                     maximumNewCalls: 0,
                     TimeSpan.FromMinutes(5)

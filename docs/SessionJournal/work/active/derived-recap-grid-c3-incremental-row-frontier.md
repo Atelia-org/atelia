@@ -1,6 +1,6 @@
 # RecapGrid C3：逐 row 增量 frontier 重构
 
-状态：Active implementation plan；fresh review complete，C3A implementation pending。
+状态：C3A、C3B Complete；C3C、C3D pending。
 
 上游设计：
 
@@ -12,7 +12,7 @@ checkpoint 作为修复；它把已经成功发布的每个 RowView 本身变成
 
 ## 1. 要修的不是一个常量
 
-Current Manager 在 dispatch 前冻结并 materialize 从 root 到 through 的完整 selected path，再把
+历史WP04 Manager 在 dispatch 前冻结并 materialize 从 root 到 through 的完整 selected path，再把
 `MaximumSelectedRows` 同时当作 authority discovery 与本次 work budget。Galatea production 传入 4,096，
 所以第 4,097 行不是“本次少做一点”，而是每次 retry 都在同一位置 `BudgetExceeded`，永远不能继续。
 
@@ -152,6 +152,13 @@ C3/C4交界采取以下规则：
 - `BuildAsync`/`InspectBuildProgress`复用同一frozen suffix；
 - 删除whole-root hot-path index与`MaximumSelectedRows`。
 
+实现证据：Manager从through沿selected predecessor读取V2 assignment，命中每条recipe的exact healthy anchor后只反转
+minimal suffix；overlay bootstrap以独立base/candidate anchors恢复，same-row base requirement覆盖全部未建bootstrap rows。
+`InspectBuildProgress`纯读且不capture raw，首个缺失durable assignment即Frontier；Build只在actual missing Cell work时
+lazy capture raw，view-only/zero-call fulfillment仍执行轻量raw-head与Timeline/Control final fences。Manager full 73 tests及
+Public/Walking、CLI/Online/AgentControl/Galatea focused覆盖restart step=1、branch/rewind sibling exclusion、nested overlay、
+damaged anchor、budget/cancel/elapsed与zero-write paths。
+
 ### C3C — Online/CLI/Host orchestration
 
 - Grid-first；Timeline seal与Grid fill各至多一步的foreground pass；
@@ -166,6 +173,10 @@ C3/C4交界采取以下规则：
   的真实续扫cursor；不能让retry每次从head重来；
 - 保留operation/resource bounds与分页；
 - 4,097、65,537以及更长synthetic lineage均证明可继续，不靠把常量再调大。
+
+当前gate：真实public Timeline 4,097-row构造曾运行16分钟仍未离开`CommitAllRows`，SQLite约109 MiB，显示现有逐row
+commit为O(n²)/显著空间放大。C3B没有用Skip、缩小数字或synthetic Manager hook冒充该integration；C3D必须先优化
+Timeline scaling，再恢复真实4,097-row Manager discovery/build验收。
 
 每个工作包都按 fresh review → implementation → independent review → focused/affected validation → commit闭合；
 不得把全部变更留成一次不可审阅的大diff。

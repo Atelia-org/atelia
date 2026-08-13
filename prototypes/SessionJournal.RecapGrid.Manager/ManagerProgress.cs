@@ -27,219 +27,173 @@ public sealed partial class RecapGridManager {
             )
         };
 
-        FreezeAttempt frozenAttempt = FreezeOperation(
+        FreezeAttempt freeze = FreezeOperation(
             request,
             state,
             cancellationToken
         );
-        if (frozenAttempt.Error is { } freezeError) {
+        if (freeze.Error is { } freezeError) {
             return Finish(MapProgressError(freezeError));
         }
-        FrozenOperation frozen = frozenAttempt.Value!;
-        HistoryTimelineSelectedRow through = frozen.RootToThrough[^1];
+        FrozenOperation frozen = freeze.Value!;
         var authority = new RecapGridBuildProgressAuthority(
             frozen.TimelineHead,
             frozen.ControlSnapshot.Head,
             frozen.StoreIdentity,
             frozen.RequestedRecipe.Recipe.Digest,
-            through.Descriptor.RowId,
-            through.Descriptor.DescriptorDigest
+            frozen.Through.Descriptor.RowId,
+            frozen.Through.Descriptor.DescriptorDigest
         );
-        var previous = new Dictionary<GridBuildRecipeDigest, BuiltRow>();
-        BuiltRow? requestedFinal = null;
-        for (int rowIndex = 0;
-             rowIndex < frozen.RootToThrough.Count;
-             rowIndex++) {
-            HistoryTimelineSelectedRow selected =
-                frozen.RootToThrough[rowIndex];
+        ProgressionAttempt discovery = DiscoverProgression(
+            frozen,
+            state,
+            cancellationToken
+        );
+        if (discovery.Error is { } discoveryError) {
+            return Finish(MapProgressError(discoveryError));
+        }
+        FrozenProgression progression = discovery.Value!;
+        BuiltRow? requestedFinal = progression.RequestedExact;
+        if (progression.OrderedUnits.Count > 0) {
+            FrozenRecipeRowUnit unit = progression.OrderedUnits[0];
+            _testHooks.AfterDiscoverProgression?.Invoke();
+            if (state.HasElapsed()) {
+                return Finish(new RecapGridBuildProgressResult.BudgetExceeded(
+                    RecapGridBuildBudgetKind.Elapsed,
+                    unit.Selected.Descriptor.RowId
+                ));
+            }
             if (cancellationToken.IsCancellationRequested) {
                 return Finish(new RecapGridBuildProgressResult.Cancelled());
             }
-            if (state.HasElapsed()) {
-                return Finish(new RecapGridBuildProgressResult
-                    .BudgetExceeded(
-                        RecapGridBuildBudgetKind.Elapsed,
-                        selected.Descriptor.RowId
-                    ));
+            if (request.Budget.MaximumRecipeRowSteps == 0) {
+                return Finish(new RecapGridBuildProgressResult.BudgetExceeded(
+                    RecapGridBuildBudgetKind.RecipeRowSteps,
+                    unit.Selected.Descriptor.RowId
+                ));
             }
-            var current = new Dictionary<GridBuildRecipeDigest, BuiltRow>();
-            foreach (FrozenRecipePlan plan in frozen.BaseToCandidate) {
-                if (rowIndex > plan.RequiredThroughIndex) {
-                    continue;
-                }
-                previous.TryGetValue(
-                    plan.Recipe.Digest,
-                    out BuiltRow? previousRow
+            progression.Anchors.TryGetValue(
+                unit.Plan.Recipe.Digest,
+                out BuiltRow? previous);
+            BuiltRow? baseRow = null;
+            if (unit.IsOverlayBootstrap
+                && unit.Plan.Recipe.BaseRecipeDigest is { } baseDigest) {
+                FrozenRecipePlan basePlan = frozen.BaseToCandidate.Single(
+                    value => value.Recipe.Digest == baseDigest
                 );
-                BuiltRow? baseRow = null;
-                if (plan.Recipe.BaseRecipeDigest is { } baseDigest
-                    && rowIndex <= plan.BootstrapIndex
-                    && !current.TryGetValue(baseDigest, out baseRow)) {
-                    return Finish(new RecapGridBuildProgressResult.Invalid(
-                        "BaseSameRowUnavailable",
-                        "The row-major base recipe result is unavailable."
-                    ));
+                (baseRow, RecapGridBuildResult? baseError) =
+                    ReadAssignedView(basePlan, unit.Selected);
+                if (baseError is not null) {
+                    return Finish(MapProgressError(baseError));
                 }
-                state.RecipeRowSteps++;
-                (DerivedRowPlan? derived,
-                    RecapGridBuildResult? deriveError) = DeriveRowPlan(
-                        frozen,
-                        plan,
-                        selected,
-                        rowIndex,
-                        previousRow,
-                        baseRow
-                    );
-                if (deriveError is not null) {
-                    return Finish(MapProgressError(deriveError));
-                }
-                RowBuildSpec spec = derived!.Spec;
-                examinedAssignments = checked(
-                    examinedAssignments + spec.OrderedAssignments.Count
+            }
+            (DerivedRowPlan? derived, RecapGridBuildResult? deriveError) =
+                DeriveRowPlan(
+                    frozen,
+                    unit.Plan,
+                    unit.Selected,
+                    unit.IsOverlayBootstrap,
+                    previous,
+                    baseRow
                 );
-                RecapGridMissingResult missingRead =
-                    _store.Reader.FindMissingAssignments(spec);
-                if (missingRead
-                    is RecapGridMissingResult.PrerequisiteMissing missing) {
-                    RecapGridBuildProgressResult? fence =
-                        MapProgressFence(CheckFinalFences(frozen));
-                    return Finish(fence
-                        ?? new RecapGridBuildProgressResult.Blocked(
-                            authority,
-                            selected.Descriptor.RowId,
-                            plan.Recipe.Digest,
-                            "ReusePrerequisiteMissing",
-                            $"{missing.LogicalColumnId}:{missing.CellDigest}"
-                        ));
-                }
-                if (missingRead is RecapGridMissingResult.Busy) {
-                    return Finish(new RecapGridBuildProgressResult.Unavailable(
-                        RecapGridBuildDependency.Store,
-                        "StoreBusy",
-                        "The Store is busy."
-                    ));
-                }
-                if (missingRead is RecapGridMissingResult.Disposed) {
-                    return Finish(new RecapGridBuildProgressResult.Unavailable(
-                        RecapGridBuildDependency.Store,
-                        "StoreDisposed",
-                        "The Store handle has been disposed."
-                    ));
-                }
-                if (missingRead is RecapGridMissingResult.Invalid invalid) {
-                    return Finish(new RecapGridBuildProgressResult.Unavailable(
-                        RecapGridBuildDependency.Store,
-                        invalid.Code,
-                        invalid.Detail
-                    ));
-                }
-                EvaluationKey[] missingKeys;
-                if (missingRead is RecapGridMissingResult.Complete) {
-                    missingKeys = [];
-                }
-                else if (missingRead is RecapGridMissingResult.Missing value) {
-                    missingKeys = value.OrderedKeys.ToArray();
-                }
-                else {
-                    return Finish(new RecapGridBuildProgressResult.Invalid(
-                        "ProgressMissingReadOutcomeInvalid",
-                        "The Store returned an unknown missing result."
-                    ));
-                }
-                (FrozenRecapCellWork[]? work,
-                    RecapGridBuildResult? workError) = CreateMissingWork(
-                        plan,
-                        spec,
-                        missingKeys
-                    );
-                if (workError is not null) {
-                    return Finish(MapProgressError(workError));
-                }
-                if (work!.Length > 0) {
-                    missingAssignments = work.Length;
-                    if (state.NewCalls + work.Length
-                            > request.Budget.MaximumNewCalls
-                        || work.Length
-                            > RecapGridBuildProgressLimits
-                                .MaximumFrontierAssignments) {
-                        return Finish(new RecapGridBuildProgressResult
-                            .BudgetExceeded(
-                                RecapGridBuildBudgetKind.NewCalls,
-                                selected.Descriptor.RowId
-                            ));
-                    }
-                    RecapGridBuildProgressResult? fence =
-                        MapProgressFence(CheckFinalFences(frozen));
-                    if (fence is not null) {
-                        return Finish(fence);
-                    }
-                    return Finish(new RecapGridBuildProgressResult.Frontier(
-                        authority,
-                        selected.Descriptor.RowId,
-                        plan.Recipe.Digest,
-                        Array.AsReadOnly(work.Select(item =>
-                            new RecapGridMissingAssignmentProgress(
-                                item.Ordinal,
-                                selected.Descriptor.RowId,
-                                plan.Recipe.Digest,
-                                item.LogicalColumnId,
-                                item.EvaluationKey.Digest
-                            )).ToArray())
-                    ));
-                }
-                (RecapCellArtifact[]? cells,
-                    RecapGridBuildResult? cellsError) =
-                    ResolveSelectedCells(
-                        plan,
-                        spec,
-                        new Dictionary<EvaluationKeyDigest,
-                            RecapCellArtifact>(),
-                        derived.PreviousCells
-                    );
-                if (cellsError is not null) {
-                    return Finish(MapProgressError(cellsError));
-                }
-                RecapRowView view;
-                try {
-                    view = RecapRowView.Create(spec, cells!);
-                }
-                catch (Exception exception) when (
-                    IsContractFailure(exception)) {
-                    return Finish(new RecapGridBuildProgressResult.Invalid(
-                        "ProgressRowViewInvalid",
-                        exception.Message
-                    ));
-                }
-                var built = new BuiltRow(view, cells!);
-                current.Add(plan.Recipe.Digest, built);
-                if (plan.Recipe.Digest
-                    == frozen.RequestedRecipe.Recipe.Digest) {
-                    requestedFinal = built;
-                }
+            if (deriveError is not null) {
+                return Finish(MapProgressError(deriveError));
             }
-            foreach ((GridBuildRecipeDigest digest, BuiltRow built)
-                     in current) {
-                previous[digest] = built;
+            examinedAssignments = checked(examinedAssignments
+                + derived!.Spec.OrderedAssignments.Count);
+            RecapGridMissingResult missing =
+                _store.Reader.FindMissingAssignments(derived.Spec);
+            if (missing is RecapGridMissingResult.PrerequisiteMissing absent) {
+                RecapGridBuildProgressResult? blockedFence =
+                    MapProgressFence(CheckFinalFences(frozen));
+                return Finish(blockedFence
+                    ?? new RecapGridBuildProgressResult.Blocked(
+                    authority,
+                    unit.Selected.Descriptor.RowId,
+                    unit.Plan.Recipe.Digest,
+                    "ReusePrerequisiteMissing",
+                    $"{absent.LogicalColumnId}:{absent.CellDigest}"
+                    ));
             }
+            if (missing is RecapGridMissingResult.Busy) {
+                return Finish(new RecapGridBuildProgressResult.Unavailable(
+                    RecapGridBuildDependency.Store,
+                    "StoreBusy",
+                    "The Store is busy."
+                ));
+            }
+            if (missing is RecapGridMissingResult.Disposed) {
+                return Finish(new RecapGridBuildProgressResult.Unavailable(
+                    RecapGridBuildDependency.Store,
+                    "StoreDisposed",
+                    "The Store handle has been disposed."
+                ));
+            }
+            if (missing is RecapGridMissingResult.Invalid invalid) {
+                return Finish(new RecapGridBuildProgressResult.Unavailable(
+                    RecapGridBuildDependency.Store,
+                    invalid.Code,
+                    invalid.Detail
+                ));
+            }
+            EvaluationKey[] keys = missing switch {
+                RecapGridMissingResult.Missing value
+                    => value.OrderedKeys.ToArray(),
+                RecapGridMissingResult.Complete => [],
+                _ => []
+            };
+            (FrozenRecapCellWork[]? work, RecapGridBuildResult? workError) =
+                CreateMissingWork(unit.Plan, derived.Spec, keys);
+            if (workError is not null) {
+                return Finish(MapProgressError(workError));
+            }
+            missingAssignments = work!.Length;
+            if (work.Length > request.Budget.MaximumNewCalls) {
+                return Finish(new RecapGridBuildProgressResult.BudgetExceeded(
+                    RecapGridBuildBudgetKind.NewCalls,
+                    unit.Selected.Descriptor.RowId
+                ));
+            }
+            RecapGridBuildProgressResult? fence =
+                MapProgressFence(CheckFinalFences(frozen));
+            return Finish(fence
+                ?? new RecapGridBuildProgressResult.Frontier(
+                    authority,
+                    progression.Anchors.TryGetValue(
+                        unit.Plan.Recipe.Digest,
+                        out BuiltRow? anchor)
+                            ? anchor.View.HistoryRowId
+                            : null,
+                    new RecapGridRecipeRowWork(
+                        unit.Selected.Descriptor.RowId,
+                        unit.Plan.Recipe.Digest,
+                        unit.IsOverlayBootstrap
+                    ),
+                    progression.OrderedUnits.Count,
+                    Array.AsReadOnly(work.Select(item =>
+                        new RecapGridMissingAssignmentProgress(
+                            item.Ordinal,
+                            unit.Selected.Descriptor.RowId,
+                            unit.Plan.Recipe.Digest,
+                            item.LogicalColumnId,
+                            item.EvaluationKey.Digest
+                        )).ToArray())
+                    ));
         }
+
         if (requestedFinal is null) {
             return Finish(new RecapGridBuildProgressResult.Invalid(
                 "ProgressRequestedViewUnavailable",
-                "The requested recipe has no derivable through-row view."
+                "The requested recipe has no exact through-row assignment."
             ));
         }
-        if (_store.Identity != frozen.StoreIdentity) {
-            return Finish(new RecapGridBuildProgressResult.Invalid(
-                "StoreIdentityChanged",
-                "The Store identity changed during progress inspection."
-            ));
-        }
+        bool fulfillmentPresent;
         FulfilledViewKey key;
         try {
             key = FulfilledViewKey.Create(
                 frozen.TimelineHead.RefId,
                 frozen.TimelineHead,
-                through.Descriptor.DescriptorDigest,
+                frozen.Through.Descriptor.DescriptorDigest,
                 frozen.RequestedRecipe.Recipe
             );
         }
@@ -249,16 +203,16 @@ public sealed partial class RecapGridManager {
                 exception.Message
             ));
         }
-        bool fulfillmentPresent;
         switch (_store.Reader.ReadFulfilled(key)) {
             case RecapGridStoreReadResult<RecapGridFulfilledView>.Found found
-                when found.Value.ViewDigest == requestedFinal.View.Digest:
+                when found.Value.ViewDigest
+                    == requestedFinal.View.Digest:
                 fulfillmentPresent = true;
                 break;
             case RecapGridStoreReadResult<RecapGridFulfilledView>.Found:
                 return Finish(new RecapGridBuildProgressResult.Invalid(
                     "ProgressFulfillmentMismatch",
-                    "The exact fulfilled key points to another row view."
+                    "The exact fulfilled key points to another RowView."
                 ));
             case RecapGridStoreReadResult<RecapGridFulfilledView>.Missing:
                 fulfillmentPresent = false;
@@ -306,47 +260,29 @@ public sealed partial class RecapGridManager {
     ) => error switch {
         RecapGridBuildResult.NoRows value
             => new RecapGridBuildProgressResult.NoRows(
-                value.TimelineHead,
-                value.RecipeDigest
-            ),
+                value.TimelineHead, value.RecipeDigest),
         RecapGridBuildResult.NoActiveRecipe
             => new RecapGridBuildProgressResult.NoActiveRecipe(),
         RecapGridBuildResult.RecipeAbsent value
-            => new RecapGridBuildProgressResult.RecipeAbsent(
-                value.RecipeDigest
-            ),
+            => new RecapGridBuildProgressResult.RecipeAbsent(value.RecipeDigest),
         RecapGridBuildResult.ThroughRowNotSelected value
-            => new RecapGridBuildProgressResult.ThroughRowNotSelected(
-                value.RowId
-            ),
+            => new RecapGridBuildProgressResult.ThroughRowNotSelected(value.RowId),
         RecapGridBuildResult.BudgetExceeded value
             => new RecapGridBuildProgressResult.BudgetExceeded(
-                value.Kind,
-                value.AtRow
-            ),
+                value.Kind, value.AtRow),
         RecapGridBuildResult.Cancelled
             => new RecapGridBuildProgressResult.Cancelled(),
         RecapGridBuildResult.Unavailable value
             => new RecapGridBuildProgressResult.Unavailable(
-                value.Dependency,
-                value.Code,
-                value.Detail
-            ),
+                value.Dependency, value.Code, value.Detail),
         RecapGridBuildResult.StaleTimelineHead value
-            => new RecapGridBuildProgressResult.StaleTimelineHead(
-                value.Actual
-            ),
+            => new RecapGridBuildProgressResult.StaleTimelineHead(value.Actual),
         RecapGridBuildResult.StaleControlAuthority value
-            => new RecapGridBuildProgressResult.StaleControlAuthority(
-                value.Actual
-            ),
+            => new RecapGridBuildProgressResult.StaleControlAuthority(value.Actual),
         RecapGridBuildResult.Disposed
             => new RecapGridBuildProgressResult.Disposed(),
         RecapGridBuildResult.Invalid value
-            => new RecapGridBuildProgressResult.Invalid(
-                value.Code,
-                value.Detail
-            ),
+            => new RecapGridBuildProgressResult.Invalid(value.Code, value.Detail),
         _ => new RecapGridBuildProgressResult.Invalid(
             "ProgressBuildOutcomeInvalid",
             "A write-only build outcome reached progress inspection."

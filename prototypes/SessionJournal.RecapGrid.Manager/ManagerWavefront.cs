@@ -45,13 +45,23 @@ public sealed partial class RecapGridManager {
             return freezeError;
         }
         FrozenOperation frozen = frozenAttempt.Value!;
-        var previous = new Dictionary<GridBuildRecipeDigest, BuiltRow>();
-        BuiltRow? requestedFinal = null;
-        for (int rowIndex = 0;
-             rowIndex < frozen.RootToThrough.Count;
-             rowIndex++) {
-            HistoryTimelineSelectedRow selected =
-                frozen.RootToThrough[rowIndex];
+        ProgressionAttempt progressionAttempt = DiscoverProgression(
+            frozen,
+            state,
+            cancellationToken
+        );
+        if (progressionAttempt.Error is { } progressionError) {
+            return progressionError;
+        }
+        FrozenProgression progression = progressionAttempt.Value!;
+        var previous = progression.Anchors.ToDictionary();
+        BuiltRow? requestedFinal = progression.RequestedExact;
+        HistoryRowId? currentRowId = null;
+        HistorySegmentContent? content = null;
+        var current = new Dictionary<GridBuildRecipeDigest, BuiltRow>();
+        foreach (FrozenRecipeRowUnit unit in progression.OrderedUnits) {
+            HistoryTimelineSelectedRow selected = unit.Selected;
+            FrozenRecipePlan plan = unit.Plan;
             if (state.HasElapsed()) {
                 return new RecapGridBuildResult.BudgetExceeded(
                     RecapGridBuildBudgetKind.Elapsed,
@@ -61,62 +71,75 @@ public sealed partial class RecapGridManager {
             if (cancellationToken.IsCancellationRequested) {
                 return new RecapGridBuildResult.Cancelled();
             }
-            (HistorySegmentContent? content,
-                RecapGridBuildResult? contentError) = OpenHistorySegment(
+            if (state.RecipeRowSteps
+                >= state.Budget.MaximumRecipeRowSteps) {
+                return new RecapGridBuildResult.BudgetExceeded(
+                    RecapGridBuildBudgetKind.RecipeRowSteps,
+                    selected.Descriptor.RowId
+                );
+            }
+            if (currentRowId != selected.Descriptor.RowId) {
+                foreach ((GridBuildRecipeDigest digest, BuiltRow built)
+                         in current) {
+                    previous[digest] = built;
+                }
+                current.Clear();
+                currentRowId = selected.Descriptor.RowId;
+                content = null;
+            }
+            (HistorySegmentContent?, RecapGridBuildResult?) OpenContent() {
+                if (content is not null) {
+                    return (content, null);
+                }
+                (HistorySegmentContent? opened,
+                    RecapGridBuildResult? error) = OpenHistorySegment(
+                        frozen,
+                        selected,
+                        state,
+                        cancellationToken
+                    );
+                if (error is null) {
+                    content = opened;
+                }
+                return (opened, error);
+            }
+            previous.TryGetValue(
+                plan.Recipe.Digest,
+                out BuiltRow? previousRow
+            );
+            BuiltRow? baseRow = null;
+            if (unit.IsOverlayBootstrap
+                && plan.Recipe.BaseRecipeDigest is { } baseDigest
+                && !current.TryGetValue(baseDigest, out baseRow)) {
+                FrozenRecipePlan basePlan = frozen.BaseToCandidate.Single(
+                    value => value.Recipe.Digest == baseDigest
+                );
+                (baseRow, RecapGridBuildResult? baseError) =
+                    ReadAssignedView(basePlan, selected);
+                if (baseError is not null) {
+                    return baseError;
+                }
+            }
+            RowAttempt attempt = await BuildRecipeRowAsync(
                 frozen,
+                plan,
                 selected,
+                OpenContent,
+                unit.IsOverlayBootstrap,
+                previousRow,
+                baseRow,
+                executor,
                 state,
                 cancellationToken
-            );
-            if (contentError is not null) {
-                return contentError;
+            ).ConfigureAwait(false);
+            if (attempt.Error is { } error) {
+                return error;
             }
-            var current = new Dictionary<GridBuildRecipeDigest, BuiltRow>();
-            foreach (FrozenRecipePlan plan in frozen.BaseToCandidate) {
-                if (rowIndex > plan.RequiredThroughIndex) {
-                    continue;
-                }
-                previous.TryGetValue(
-                    plan.Recipe.Digest,
-                    out BuiltRow? previousRow
-                );
-                BuiltRow? baseRow = null;
-                if (plan.Recipe.BaseRecipeDigest is { } baseDigest
-                    && rowIndex <= plan.BootstrapIndex
-                    && !current.TryGetValue(baseDigest, out baseRow)) {
-                    return Invalid(
-                        "BaseSameRowUnavailable",
-                        "The row-major base recipe result is unavailable."
-                    );
-                }
-                state.RecipeRowSteps++;
-                RowAttempt attempt = await BuildRecipeRowAsync(
-                    frozen,
-                    plan,
-                    selected,
-                    content!,
-                    rowIndex,
-                    previousRow,
-                    baseRow,
-                    executor,
-                    state,
-                    cancellationToken
-                ).ConfigureAwait(false);
-                if (attempt.Error is { } error) {
-                    return error;
-                }
-                current.Add(plan.Recipe.Digest, attempt.Value!);
-                if (plan.Recipe.Digest
-                    == frozen.RequestedRecipe.Recipe.Digest) {
-                    requestedFinal = attempt.Value;
-                }
-            }
-            foreach ((GridBuildRecipeDigest digest, BuiltRow built)
-                     in current) {
-                previous[digest] = built;
-            }
-            if (cancellationToken.IsCancellationRequested) {
-                return new RecapGridBuildResult.Cancelled();
+            state.RecipeRowSteps++;
+            current.Add(plan.Recipe.Digest, attempt.Value!);
+            if (plan.Recipe.Digest
+                == frozen.RequestedRecipe.Recipe.Digest) {
+                requestedFinal = attempt.Value;
             }
         }
         if (requestedFinal is null) {
@@ -132,8 +155,8 @@ public sealed partial class RecapGridManager {
         FrozenOperation frozen,
         FrozenRecipePlan plan,
         HistoryTimelineSelectedRow selected,
-        HistorySegmentContent content,
-        int rowIndex,
+        Func<(HistorySegmentContent?, RecapGridBuildResult?)> openContent,
+        bool isOverlayBootstrap,
         BuiltRow? previousRow,
         BuiltRow? baseRow,
         IRecapCellBatchExecutor executor,
@@ -146,7 +169,7 @@ public sealed partial class RecapGridManager {
                 frozen,
                 plan,
                 selected,
-                rowIndex,
+                isOverlayBootstrap,
                 previousRow,
                 baseRow
             );
@@ -229,18 +252,31 @@ public sealed partial class RecapGridManager {
             if (cancellationToken.IsCancellationRequested) {
                 return RowError(new RecapGridBuildResult.Cancelled());
             }
+            RecapGridBuildResult? captureError = EnsureRawCapture(
+                frozen,
+                state,
+                cancellationToken
+            );
+            if (captureError is not null) {
+                return RowError(captureError);
+            }
             RecapGridBuildResult? fence = CheckTimelineFence(
                 frozen.TimelineHead
             ) ?? CheckControlFence(frozen);
             if (fence is not null) {
                 return RowError(fence);
             }
+            (HistorySegmentContent? content,
+                RecapGridBuildResult? contentError) = openContent();
+            if (contentError is not null) {
+                return RowError(contentError);
+            }
             var batch = new FrozenRowBatch(
                 frozen.TimelineHead,
                 frozen.ControlSnapshot.Head,
                 frozen.StoreIdentity,
                 plan.Recipe,
-                content,
+                content!,
                 spec,
                 previousRow?.View,
                 previousCells,
@@ -450,6 +486,46 @@ public sealed partial class RecapGridManager {
                 null
             )
             : RowError(viewPut);
+    }
+
+    private RecapGridBuildResult? EnsureRawCapture(
+        FrozenOperation frozen,
+        BuildState state,
+        CancellationToken cancellationToken
+    ) {
+        if (state.RawCapture is not null) {
+            return null;
+        }
+        OnlineSelectedRawCaptureResult capture;
+        try {
+            _testHooks.BeforeCaptureRaw?.Invoke();
+            capture = _timeline.CaptureRaw(
+                frozen.TimelineHead,
+                cancellationToken
+            );
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested) {
+            return new RecapGridBuildResult.Cancelled();
+        }
+        if (capture is not OnlineSelectedRawCaptureResult.Captured
+            captured) {
+            return MapRawCapture(capture);
+        }
+        if (captured.Capture.CapturedHead != frozen.FrozenRawHead) {
+            return Unavailable(
+                RecapGridBuildDependency.RawHistory,
+                "RawHeadChanged",
+                "The selected raw head changed before build materialization."
+            );
+        }
+        RecapGridBuildResult? fence = CheckTimelineFence(
+            frozen.TimelineHead
+        );
+        if (fence is null) {
+            state.RawCapture = captured.Capture;
+        }
+        return fence;
     }
 
 }

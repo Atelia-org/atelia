@@ -1,3 +1,4 @@
+using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Store;
@@ -17,6 +18,7 @@ public sealed partial class RecapGridManager {
         internal int NewCalls { get; set; }
         internal int CellsCommitted { get; set; }
         internal int RowViewsCommitted { get; set; }
+        internal OnlineSelectedRawCapture? RawCapture { get; set; }
 
         internal bool HasElapsed()
             => timeProvider.GetElapsedTime(_started)
@@ -33,8 +35,6 @@ public sealed partial class RecapGridManager {
 
     private sealed record FrozenRecipePlan(
         RegisteredGridRecipe Registered,
-        int BootstrapIndex,
-        int RequiredThroughIndex,
         IReadOnlyDictionary<LogicalColumnId,
             MaintainerDefinitionRevision> Definitions,
         IReadOnlyDictionary<LogicalColumnId, FamilyDefinition> Families
@@ -49,10 +49,9 @@ public sealed partial class RecapGridManager {
         bool IsLive,
         FrozenRecipePlan RequestedRecipe,
         IReadOnlyList<FrozenRecipePlan> BaseToCandidate,
-        IReadOnlyList<HistoryTimelineSelectedRow> RootToThrough,
+        HistoryTimelineSelectedRow Through,
         HistoryTimelineSelectedRow SelectedHead,
-        IReadOnlyDictionary<HistoryRowId, int> WholePathIndexes,
-        OnlineSelectedRawCapture RawCapture
+        EventAddress FrozenRawHead
     );
 
     private sealed record FreezeAttempt(
@@ -140,84 +139,61 @@ public sealed partial class RecapGridManager {
             ));
         }
 
-        (IReadOnlyList<HistoryTimelineSelectedRow>? wholePath,
-            RecapGridBuildResult? pathError) = ReadWholeSelectedPath(
-            timelineHead,
-            request.Budget.MaximumSelectedRows,
-            state,
-            cancellationToken
-        );
-        if (pathError is not null) {
-            return Error(pathError);
-        }
-        IReadOnlyList<HistoryTimelineSelectedRow> rootToHead = wholePath!;
-        var indexes = new Dictionary<HistoryRowId, int>();
-        for (int index = 0; index < rootToHead.Count; index++) {
-            if (!indexes.TryAdd(
-                    rootToHead[index].Descriptor.RowId,
-                    index)) {
-                return Error(Invalid(
-                    "SelectedPathDuplicateRow",
-                    "The selected path contains a duplicate row identity."
-                ));
-            }
-        }
         HistoryRowId through = request.ThroughRowId
             ?? timelineHead.HeadRowId.Value;
-        if (!indexes.TryGetValue(through, out int throughIndex)) {
-            return Error(
-                new RecapGridBuildResult.ThroughRowNotSelected(through)
+        (HistoryTimelineSelectedRow? selectedThrough,
+            RecapGridBuildResult? throughError) = ReadSelectedRow(
+                timelineHead,
+                through
             );
+        if (throughError is not null) {
+            return Error(throughError);
+        }
+        HistoryTimelineSelectedRow selectedHead;
+        if (through == timelineHead.HeadRowId.Value) {
+            selectedHead = selectedThrough!;
+        }
+        else {
+            (HistoryTimelineSelectedRow? head,
+                RecapGridBuildResult? headError) = ReadSelectedRow(
+                    timelineHead,
+                    timelineHead.HeadRowId.Value
+                );
+            if (headError is not null) {
+                return Error(headError);
+            }
+            selectedHead = head!;
         }
 
         (IReadOnlyList<FrozenRecipePlan>? closure,
             RecapGridBuildResult? closureError) = FreezeRecipeClosure(
             requested,
-            throughIndex,
-            indexes,
             control,
-            request.Budget.MaximumRecipeRowSteps
+            timelineHead
         );
         if (closureError is not null) {
             return Error(closureError);
         }
         IReadOnlyList<FrozenRecipePlan> plans = closure!;
-        int stepCount = plans.Sum(plan => checked(
-            plan.RequiredThroughIndex + 1
-        ));
-        if (stepCount > request.Budget.MaximumRecipeRowSteps) {
-            return Error(new RecapGridBuildResult.BudgetExceeded(
-                RecapGridBuildBudgetKind.RecipeRowSteps,
-                through
-            ));
-        }
         if (state.HasElapsed()) {
             return Error(new RecapGridBuildResult.BudgetExceeded(
                 RecapGridBuildBudgetKind.Elapsed,
                 through
             ));
         }
+        HistoryTimelineRawHeadObservationResult rawHead =
+            _timeline.ObserveRawHead();
+        if (rawHead is not HistoryTimelineRawHeadObservationResult.Available
+            { Head: { } observedRawHead }) {
+            return Error(MapRawHeadObservation(rawHead));
+        }
+        RecapGridBuildResult? observationFence = CheckTimelineFence(
+            timelineHead
+        );
+        if (observationFence is not null) {
+            return Error(observationFence);
+        }
 
-        OnlineSelectedRawCaptureResult capture;
-        try {
-            _testHooks.BeforeCaptureRaw?.Invoke();
-            capture = _timeline.CaptureRaw(
-                timelineHead,
-                cancellationToken
-            );
-        }
-        catch (OperationCanceledException) when (
-            cancellationToken.IsCancellationRequested) {
-            return Error(new RecapGridBuildResult.Cancelled());
-        }
-        if (capture is not OnlineSelectedRawCaptureResult.Captured
-            captured) {
-            return Error(MapRawCapture(capture));
-        }
-        RecapGridBuildResult? fence = CheckTimelineFence(timelineHead);
-        if (fence is not null) {
-            return Error(fence);
-        }
         return new FreezeAttempt(
             new FrozenOperation(
                 timelineHead,
@@ -226,83 +202,48 @@ public sealed partial class RecapGridManager {
                 request.Selection is RecapGridBuildSelection.LiveActive,
                 plans[^1],
                 plans,
-                rootToHead.Take(throughIndex + 1).ToArray(),
-                rootToHead[^1],
-                indexes,
-                captured.Capture
+                selectedThrough!,
+                selectedHead,
+                observedRawHead
             ),
             null
         );
     }
 
-    private (IReadOnlyList<HistoryTimelineSelectedRow>?,
-        RecapGridBuildResult?) ReadWholeSelectedPath(
+    private (HistoryTimelineSelectedRow?, RecapGridBuildResult?)
+        ReadSelectedRow(
         TimelineHeadRef expected,
-        int maximumRows,
-        BuildState state,
-        CancellationToken cancellationToken
+        HistoryRowId rowId
     ) {
-        var headToRoot = new List<HistoryTimelineSelectedRow>();
-        HistoryTimelinePathCursor? cursor = null;
-        do {
-            if (cancellationToken.IsCancellationRequested) {
-                return (null, new RecapGridBuildResult.Cancelled());
-            }
-            HistoryTimelinePathPageResult result =
-                _timeline.Reader.ReadSelectedPathPage(
-                    expected,
-                    cursor,
-                    HistoryTimelineStoreLimits.MaximumPathPageRows
-                );
-            if (result is not HistoryTimelinePathPageResult.Page page) {
-                return (null, MapTimelinePath(result));
-            }
-            foreach (HistoryTimelineSelectedRow row in page.Value.Rows) {
-                headToRoot.Add(row);
-                state.SelectedRows = headToRoot.Count;
-                if (headToRoot.Count > maximumRows) {
-                    return (null,
-                        new RecapGridBuildResult.BudgetExceeded(
-                            RecapGridBuildBudgetKind.SelectedRows,
-                            row.Descriptor.RowId
-                        ));
-                }
-            }
-            cursor = page.Value.Next;
-        } while (cursor is not null);
-        if (headToRoot.Count == 0
-            || headToRoot[0].Descriptor.RowId != expected.HeadRowId) {
-            return (null, Invalid(
-                "SelectedPathHeadMismatch",
-                "The selected path does not begin at the expected head."
-            ));
-        }
-        for (int index = 0; index < headToRoot.Count; index++) {
-            HistorySegmentDescriptor descriptor =
-                headToRoot[index].Descriptor;
-            HistoryRowId? next = index + 1 < headToRoot.Count
-                ? headToRoot[index + 1].Descriptor.RowId
-                : null;
-            if (descriptor.TimelineId != expected.TimelineId
-                || descriptor.RefId != expected.RefId
-                || descriptor.PreviousRowId != next) {
-                return (null, Invalid(
-                    "SelectedPathChainMismatch",
-                    "The selected path descriptor chain is not exact."
-                ));
-            }
-        }
-        headToRoot.Reverse();
-        return (headToRoot.AsReadOnly(), null);
+        return _timeline.Reader.ReadSelectedRow(expected, rowId) switch {
+            HistoryTimelineReaderRowResult.Selected selected
+                => (selected.Row, null),
+            HistoryTimelineReaderRowResult.NotOnSelectedPath missing
+                => (null, new RecapGridBuildResult
+                    .ThroughRowNotSelected(missing.RowId)),
+            HistoryTimelineReaderRowResult.StaleTimelineHead stale
+                => (null, new RecapGridBuildResult
+                    .StaleTimelineHead(stale.Actual)),
+            HistoryTimelineReaderRowResult.Busy
+                => (null, Unavailable(
+                    RecapGridBuildDependency.Timeline,
+                    "TimelineBusy")),
+            HistoryTimelineReaderRowResult.Invalid invalid
+                => (null, Unavailable(
+                    RecapGridBuildDependency.Timeline,
+                    invalid.Code,
+                    invalid.Detail)),
+            _ => (null, Invalid(
+                "SelectedRowOutcomeInvalid",
+                "Timeline returned an unknown selected-row outcome."))
+        };
     }
 
     private (IReadOnlyList<FrozenRecipePlan>?, RecapGridBuildResult?)
         FreezeRecipeClosure(
             RegisteredGridRecipe requested,
-            int requestedThroughIndex,
-            IReadOnlyDictionary<HistoryRowId, int> pathIndexes,
             RecapGridControlSnapshot control,
-            int maximumRecipeRowSteps
+            TimelineHeadRef timelineHead
         ) {
         Dictionary<GridBuildRecipeDigest, RegisteredGridRecipe> recipes;
         Dictionary<MaintainerDefinitionDigest,
@@ -366,26 +307,34 @@ public sealed partial class RecapGridManager {
             current = baseRecipe;
         }
 
-        var required = new Dictionary<GridBuildRecipeDigest, int> {
-            [requested.Recipe.Digest] = requestedThroughIndex
-        };
         for (int index = 0; index < candidateToBase.Count; index++) {
             RegisteredGridRecipe child = candidateToBase[index];
-            int bootstrapIndex;
             if (child.Recipe.BootstrapThroughRowId is { } bootstrap) {
-                if (!pathIndexes.TryGetValue(bootstrap,
-                        out bootstrapIndex)
-                    || child.Bootstrap.RowId != bootstrap
+                (HistoryTimelineSelectedRow? selected,
+                    RecapGridBuildResult? selectedError) = ReadSelectedRow(
+                        timelineHead,
+                        bootstrap
+                    );
+                if (selectedError is not null) {
+                    return (null, selectedError);
+                }
+                if (child.Bootstrap.RowId != bootstrap
                     || child.Bootstrap.DescriptorDigest is null) {
                     return (null, Invalid(
                         "RecipeBootstrapNotSelected",
                         "A frozen recipe bootstrap is not on the selected path."
                     ));
                 }
+                if (selected!.Descriptor.DescriptorDigest
+                    != child.Bootstrap.DescriptorDigest) {
+                    return (null, Invalid(
+                        "RecipeBootstrapDescriptorMismatch",
+                        "The selected bootstrap descriptor differs from Control evidence."
+                    ));
+                }
             }
             else if (child.Bootstrap.RowId is null
                      && child.Bootstrap.DescriptorDigest is null) {
-                bootstrapIndex = -1;
             }
             else {
                 return (null, Invalid(
@@ -393,27 +342,11 @@ public sealed partial class RecapGridManager {
                     "An empty bootstrap has inconsistent stored evidence."
                 ));
             }
-            int childRequired = required[child.Recipe.Digest];
-            if (index + 1 < candidateToBase.Count) {
-                RegisteredGridRecipe parent = candidateToBase[index + 1];
-                int parentRequired = Math.Min(
-                    childRequired,
-                    bootstrapIndex
-                );
-                required[parent.Recipe.Digest] = required.TryGetValue(
-                    parent.Recipe.Digest,
-                    out int existing
-                ) ? Math.Max(existing, parentRequired) : parentRequired;
-            }
         }
         candidateToBase.Reverse();
         var plans = new List<FrozenRecipePlan>(candidateToBase.Count);
-        int totalSteps = 0;
         foreach (RegisteredGridRecipe registered in candidateToBase) {
             GridBuildRecipe recipe = registered.Recipe;
-            int bootstrapIndex = recipe.BootstrapThroughRowId is { } rowId
-                ? pathIndexes[rowId]
-                : -1;
             var recipeDefinitions = new Dictionary<LogicalColumnId,
                 MaintainerDefinitionRevision>();
             var recipeFamilies = new Dictionary<LogicalColumnId,
@@ -435,19 +368,8 @@ public sealed partial class RecapGridManager {
                 recipeDefinitions.Add(column.LogicalColumnId, definition);
                 recipeFamilies.Add(column.LogicalColumnId, family);
             }
-            int through = required[recipe.Digest];
-            totalSteps = checked(totalSteps + through + 1);
-            if (totalSteps > maximumRecipeRowSteps) {
-                return (null,
-                    new RecapGridBuildResult.BudgetExceeded(
-                        RecapGridBuildBudgetKind.RecipeRowSteps,
-                        null
-                    ));
-            }
             plans.Add(new FrozenRecipePlan(
                 registered,
-                bootstrapIndex,
-                through,
                 recipeDefinitions,
                 recipeFamilies
             ));
@@ -490,6 +412,31 @@ public sealed partial class RecapGridManager {
 
     private static FreezeAttempt Error(RecapGridBuildResult error)
         => new(null, error);
+
+    private static RecapGridBuildResult MapRawHeadObservation(
+        HistoryTimelineRawHeadObservationResult result
+    ) => result switch {
+        HistoryTimelineRawHeadObservationResult.Available
+            => Invalid(
+                "RawHeadUnavailable",
+                "A non-empty Timeline requires a selected raw head."),
+        HistoryTimelineRawHeadObservationResult.Busy
+            => Unavailable(RecapGridBuildDependency.RawHistory,
+                "RawHistoryBusy"),
+        HistoryTimelineRawHeadObservationResult.UnsupportedSchema value
+            => Unavailable(RecapGridBuildDependency.Timeline,
+                "TimelineUnsupportedSchema",
+                value.SchemaVersion.ToString()),
+        HistoryTimelineRawHeadObservationResult.Disposed
+            => Unavailable(RecapGridBuildDependency.RawHistory,
+                "RawHistoryDisposed"),
+        HistoryTimelineRawHeadObservationResult.Invalid invalid
+            => Unavailable(RecapGridBuildDependency.RawHistory,
+                invalid.Code, invalid.Detail),
+        _ => Invalid(
+            "RawHeadObservationOutcomeInvalid",
+            "Timeline returned an unknown raw-head observation outcome.")
+    };
 
     private static RecapGridBuildResult MapTimelineSnapshot(
         HistoryTimelineSnapshotResult result

@@ -28,17 +28,10 @@ public abstract record RecapGridBuildSelection {
 
 public sealed record RecapGridBuildBudget {
     public RecapGridBuildBudget(
-        int maximumSelectedRows,
         int maximumRecipeRowSteps,
         int maximumNewCalls,
         TimeSpan maximumElapsed
     ) {
-        if (maximumSelectedRows is < 0
-            or > HistoryTimelineStoreLimits.MaximumRowCount) {
-            throw new ArgumentOutOfRangeException(
-                nameof(maximumSelectedRows)
-            );
-        }
         if (maximumRecipeRowSteps is < 0 or > 1_000_000) {
             throw new ArgumentOutOfRangeException(
                 nameof(maximumRecipeRowSteps)
@@ -51,13 +44,11 @@ public sealed record RecapGridBuildBudget {
             || maximumElapsed > TimeSpan.FromDays(1)) {
             throw new ArgumentOutOfRangeException(nameof(maximumElapsed));
         }
-        MaximumSelectedRows = maximumSelectedRows;
         MaximumRecipeRowSteps = maximumRecipeRowSteps;
         MaximumNewCalls = maximumNewCalls;
         MaximumElapsed = maximumElapsed;
     }
 
-    public int MaximumSelectedRows { get; }
     public int MaximumRecipeRowSteps { get; }
     public int MaximumNewCalls { get; }
     public TimeSpan MaximumElapsed { get; }
@@ -320,7 +311,6 @@ public sealed class RecapGridPromotableProof {
 }
 
 public enum RecapGridBuildBudgetKind {
-    SelectedRows,
     RecipeRowSteps,
     NewCalls,
     Elapsed
@@ -473,6 +463,16 @@ public sealed record RecapGridMissingAssignmentProgress(
     EvaluationKeyDigest EvaluationKey
 );
 
+/// <summary>
+/// One resumable Manager work unit. A unit always names exactly one frozen
+/// recipe at one selected Timeline row; cell calls are children of this unit.
+/// </summary>
+public sealed record RecapGridRecipeRowWork(
+    HistoryRowId RowId,
+    GridBuildRecipeDigest RecipeDigest,
+    bool IsOverlayBootstrap
+);
+
 public abstract record RecapGridBuildProgressResult {
     private RecapGridBuildProgressResult() { }
 
@@ -486,10 +486,15 @@ public abstract record RecapGridBuildProgressResult {
 
     public sealed record Frontier(
         RecapGridBuildProgressAuthority Authority,
-        HistoryRowId RowId,
-        GridBuildRecipeDigest RecipeDigest,
+        HistoryRowId? AnchorRowId,
+        RecapGridRecipeRowWork NextWork,
+        int PendingRecipeRows,
         IReadOnlyList<RecapGridMissingAssignmentProgress> OrderedMissing
-    ) : RecapGridBuildProgressResult;
+    ) : RecapGridBuildProgressResult {
+        public HistoryRowId RowId => NextWork.RowId;
+        public GridBuildRecipeDigest RecipeDigest =>
+            NextWork.RecipeDigest;
+    }
 
     public sealed record Blocked(
         RecapGridBuildProgressAuthority Authority,

@@ -17,7 +17,10 @@ public sealed partial class RecapGridManager {
             result = _testHooks.OpenSelectedSegment is null
                 ? _timeline.OpenSelectedSegment(
                     frozen.TimelineHead,
-                    frozen.RawCapture,
+                    state.RawCapture
+                        ?? throw new InvalidOperationException(
+                            "Raw capture must exist before segment materialization."
+                        ),
                     selected,
                     cancellationToken
                 )
@@ -25,7 +28,10 @@ public sealed partial class RecapGridManager {
                     selected,
                     () => _timeline.OpenSelectedSegment(
                         frozen.TimelineHead,
-                        frozen.RawCapture,
+                        state.RawCapture
+                            ?? throw new InvalidOperationException(
+                                "Raw capture must exist before segment materialization."
+                            ),
                         selected,
                         cancellationToken
                     )

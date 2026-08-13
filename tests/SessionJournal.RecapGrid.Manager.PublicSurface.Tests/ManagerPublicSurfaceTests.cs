@@ -116,7 +116,6 @@ public sealed class ManagerPublicSurfaceTests {
                 new RecapGridBuildBudget(
                     64,
                     64,
-                    64,
                     TimeSpan.FromMinutes(1)
                 )
             );
@@ -138,6 +137,17 @@ public sealed class ManagerPublicSurfaceTests {
             Assert.NotNull(typeof(RecapGridBuildResult).GetProperty(
                 "Metrics"
             ));
+            Assert.True(typeof(RecapGridRecipeRowWork).IsPublic);
+            Assert.Equal(3, typeof(RecapGridBuildBudget)
+                .GetConstructors()
+                .Single()
+                .GetParameters()
+                .Length);
+            Assert.Null(typeof(RecapGridBuildBudget).GetProperty(
+                "MaximumSelectedRows"
+            ));
+            Assert.NotNull(typeof(RecapGridBuildProgressResult.Frontier)
+                .GetProperty("NextWork"));
             manager.Dispose();
             Assert.IsType<RecapGridBuildResult.Disposed>(
                 await manager.Manager.BuildAsync(request, new NoCallExecutor())
