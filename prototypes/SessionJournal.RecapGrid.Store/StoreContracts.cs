@@ -5,12 +5,6 @@ using System.Security.Cryptography;
 namespace Atelia.SessionJournal.RecapGrid.Store;
 
 public static class RecapGridStoreLimits {
-    public const long MaximumDatabaseBytes = 8L * 1024 * 1024 * 1024;
-    public const int MaximumCellCount = 65_536;
-    public const int MaximumRowViewCount = 65_536;
-    public const int MaximumRowViewMemberCount =
-        MaximumRowViewCount * RecapGridLimits.MaximumColumnCount;
-    public const int MaximumFulfilledViewCount = 65_536;
     public const int MaximumPageItems = 128;
     public const int MaximumPageBytes = 4 * 1024 * 1024;
     public const int MaximumVerificationErrors = 128;
@@ -53,7 +47,7 @@ public sealed record RecapGridStoreIdentity {
 
 public sealed record RecapGridStorePhysicalWitness {
     public RecapGridStorePhysicalWitness(long length, string sha256) {
-        if (length < 1 || length > RecapGridStoreLimits.MaximumDatabaseBytes) {
+        if (length < 1) {
             throw new ArgumentOutOfRangeException(nameof(length));
         }
         Length = length;
@@ -67,10 +61,10 @@ public sealed record RecapGridStorePhysicalWitness {
 public sealed record RecapGridStoreInfo(
     RecapGridStoreIdentity Identity,
     long DatabaseBytes,
-    int CellCount,
-    int RowViewCount,
-    int RowViewMemberCount,
-    int FulfilledViewCount,
+    long CellCount,
+    long RowViewCount,
+    long RowViewMemberCount,
+    long FulfilledViewCount,
     string SqliteVersion,
     string SqliteSourceId,
     IReadOnlyList<string> CompileOptions
@@ -469,6 +463,7 @@ public abstract record RecapGridRowViewPutResult {
     public sealed record Busy : RecapGridRowViewPutResult;
     public sealed record Limit(string Name) : RecapGridRowViewPutResult;
     public sealed record CommitIndeterminate(
+        RowViewAssignmentKey IntendedAssignment,
         RowViewDigest Intended,
         RowViewDigest? Observed
     ) : RecapGridRowViewPutResult;

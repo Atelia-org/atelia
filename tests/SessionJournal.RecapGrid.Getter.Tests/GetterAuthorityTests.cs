@@ -412,11 +412,19 @@ public sealed partial class GetterVerticalTests {
         ).Value;
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             fixture.Recipe,
-            original.SelectedRow.Descriptor.RowId,
-            original.SelectedDescriptorDigest,
-            // This canonical view is self-row scoped rather than predecessor
-            // scoped. Store accepts it as content; Getter provenance must not.
-            original.SelectedView.Digest,
+            new RowViewCoordinate(
+                fixture.Journal.BranchRefId,
+                original.SelectedRow.Descriptor.TimelineId,
+                original.SelectedRow.Descriptor.RowId,
+                original.SelectedDescriptorDigest,
+                fixture.Recipe.Digest,
+                fixture.Recipe.Target.Digest,
+                original.SelectedRow.Descriptor.PreviousRowId,
+                // This deliberately names the current view as predecessor;
+                // Store V2 must reject the broken assignment recurrence.
+                original.SelectedView.Digest,
+                bootstrapCompleted: true
+            ),
             cell.EvaluationKey.PriorInput,
             [new RowBuildAssignment.Evaluate(
                 cell.LogicalColumnId,
@@ -424,14 +432,27 @@ public sealed partial class GetterVerticalTests {
             )]
         );
         RecapRowView wrong = RecapRowView.Create(spec, [cell]);
-        Assert.IsType<RecapGridRowViewPutResult.Inserted>(
-            store.Writer.PutRowView(spec, wrong)
-        );
         store.Dispose();
         ExecuteStoreSql(
             fixture.Path,
-            "UPDATE fulfilled_view_ref SET view_digest=$view;",
-            ("$view", wrong.Digest.Value)
+            """
+            PRAGMA foreign_keys=OFF;
+            UPDATE row_view
+            SET view_digest=$newView,
+                previous_view_digest=$offScopePrevious,
+                canonical=$canonical
+            WHERE view_digest=$oldView;
+            UPDATE row_view_member
+            SET view_digest=$newView
+            WHERE view_digest=$oldView;
+            UPDATE fulfilled_view_ref
+            SET view_digest=$newView
+            WHERE view_digest=$oldView;
+            """,
+            ("$newView", wrong.Digest.Value),
+            ("$offScopePrevious", original.SelectedView.Digest.Value),
+            ("$canonical", wrong.ToCanonicalBytes()),
+            ("$oldView", original.SelectedView.Digest.Value)
         );
 
         using RecapGridContextHandle reopened = OpenGetter(fixture.Journal);

@@ -369,6 +369,37 @@ public sealed class RecapGridStoreReader {
         }
     }
 
+    public RecapGridStoreReadResult<RecapRowView> ReadViewAt(
+        RowViewAssignmentKey key
+    ) {
+        ArgumentNullException.ThrowIfNull(key);
+        using StoreLifetime.Operation? operation = _lifetime.TryEnter();
+        if (operation is null) {
+            return new RecapGridStoreReadResult<RecapRowView>.Disposed();
+        }
+        if (_store.TryInvalid(out string code, out string detail)) {
+            return new RecapGridStoreReadResult<RecapRowView>
+                .Invalid(code, detail);
+        }
+        try {
+            RecapRowView? value = _store.ReadRowViewAt(key);
+            return value is null
+                ? new RecapGridStoreReadResult<RecapRowView>.Missing()
+                : new RecapGridStoreReadResult<RecapRowView>.Found(value);
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException exception)
+            when (SqliteRecapGridStore.IsBusy(exception)) {
+            return new RecapGridStoreReadResult<RecapRowView>.Busy();
+        }
+        catch (Exception exception) when (
+            SqliteRecapGridStore.IsStoreFailure(exception)
+        ) {
+            (code, detail) = _store.LatchInvalid(exception);
+            return new RecapGridStoreReadResult<RecapRowView>
+                .Invalid(code, detail);
+        }
+    }
+
     public RecapGridStoreReadResult<RecapGridFulfilledView> ReadFulfilled(
         FulfilledViewKey key
     ) {

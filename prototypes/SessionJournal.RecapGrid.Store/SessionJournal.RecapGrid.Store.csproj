@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="SchemaV1.sql" />
+    <EmbeddedResource Include="SchemaV2.sql" />
     <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Store.Tests" />
     <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Store.CrashHarness" />
   </ItemGroup>

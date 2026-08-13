@@ -66,12 +66,23 @@ public sealed partial class RecapGridManager {
             ));
         }
         try {
+            var coordinate = new RowViewCoordinate(
+                descriptor.RefId,
+                descriptor.TimelineId,
+                descriptor.RowId,
+                descriptor.DescriptorDigest,
+                plan.Recipe.Digest,
+                plan.Recipe.Target.Digest,
+                descriptor.PreviousRowId,
+                previousDigest,
+                plan.Recipe.Kind == GridBuildRecipeKind.Full
+                    || plan.BootstrapIndex < 0
+                    || rowIndex >= plan.BootstrapIndex
+            );
             RowBuildSpec spec = plan.Recipe.Kind switch {
                 GridBuildRecipeKind.Full => RowBuildSpec.CreateFull(
                     plan.Recipe,
-                    descriptor.RowId,
-                    descriptor.DescriptorDigest,
-                    previousDigest,
+                    coordinate,
                     prior,
                     assignments
                 ),
@@ -79,18 +90,14 @@ public sealed partial class RecapGridManager {
                     when rowIndex <= plan.BootstrapIndex
                     => RowBuildSpec.CreateOverlayBootstrap(
                         plan.Recipe,
-                        descriptor.RowId,
-                        descriptor.DescriptorDigest,
-                        previousDigest,
+                        coordinate,
                         prior,
                         assignments
                     ),
                 GridBuildRecipeKind.Overlay
                     => RowBuildSpec.CreateNormal(
                         plan.Recipe,
-                        descriptor.RowId,
-                        descriptor.DescriptorDigest,
-                        previousDigest,
+                        coordinate,
                         prior,
                         assignments
                     ),

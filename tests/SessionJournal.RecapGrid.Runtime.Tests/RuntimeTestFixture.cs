@@ -83,9 +83,7 @@ internal static class RuntimeTestFixture {
             ))];
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             recipe,
-            rowId,
-            descriptor.DescriptorDigest,
-            previousViewDigest: null,
+            Coordinate(recipe, descriptor, previousView: null),
             PriorInputReference.FirstRow.Value,
             assignments
         );
@@ -281,9 +279,7 @@ internal static class RuntimeTestFixture {
         );
         RowBuildSpec priorSpec = RowBuildSpec.CreateFull(
             recipe,
-            priorRowId,
-            priorDescriptor.DescriptorDigest,
-            previousViewDigest: null,
+            Coordinate(recipe, priorDescriptor, previousView: null),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Evaluate(logical, priorKey)]
         );
@@ -318,9 +314,7 @@ internal static class RuntimeTestFixture {
         );
         RowBuildSpec currentSpec = RowBuildSpec.CreateNormal(
             recipe,
-            currentRowId,
-            currentDescriptor.DescriptorDigest,
-            previousView.Digest,
+            Coordinate(recipe, currentDescriptor, previousView),
             priorReference,
             [new RowBuildAssignment.Evaluate(logical, currentKey)]
         );
@@ -421,9 +415,7 @@ internal static class RuntimeTestFixture {
         );
         RowBuildSpec priorSpec = RowBuildSpec.CreateFull(
             baseRecipe,
-            priorRowId,
-            priorDescriptor.DescriptorDigest,
-            null,
+            Coordinate(baseRecipe, priorDescriptor, previousView: null),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Evaluate(priorLogical, priorKey)]
         );
@@ -474,9 +466,7 @@ internal static class RuntimeTestFixture {
         );
         RowBuildSpec spec = RowBuildSpec.CreateOverlayBootstrap(
             overlay,
-            currentRowId,
-            descriptor.DescriptorDigest,
-            previousView.Digest,
+            Coordinate(overlay, descriptor, previousView),
             priorReference,
             [
                 new RowBuildAssignment.Reuse(
@@ -554,6 +544,23 @@ internal static class RuntimeTestFixture {
             )
         );
     }
+
+    private static RowViewCoordinate Coordinate(
+        GridBuildRecipe recipe,
+        HistorySegmentDescriptor descriptor,
+        RecapRowView? previousView
+    ) => new(
+        descriptor.RefId,
+        descriptor.TimelineId,
+        descriptor.RowId,
+        descriptor.DescriptorDigest,
+        recipe.Digest,
+        recipe.Target.Digest,
+        descriptor.PreviousRowId,
+        previousView?.Digest,
+        recipe.Kind == GridBuildRecipeKind.Full
+            || recipe.BootstrapThroughRowId == descriptor.RowId
+    );
 
     private static SessionHistoryPlanningWindow Window(
         IReadOnlyList<IHistoryMessage> messages

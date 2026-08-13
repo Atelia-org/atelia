@@ -172,12 +172,14 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
                 handle.Writer.PutCell(cell)
             ).Observed?.CellDigest
         );
-        Assert.Equal(
-            view.Digest,
+        RecapGridRowViewPutResult.CommitIndeterminate rowSettlement =
             Assert.IsType<RecapGridRowViewPutResult.CommitIndeterminate>(
                 handle.Writer.PutRowView(spec, view)
-            ).Observed
-        );
+            );
+        Assert.Equal(spec.Coordinate.AssignmentKey,
+            rowSettlement.IntendedAssignment);
+        Assert.Equal(view.Digest, rowSettlement.Intended);
+        Assert.Equal(view.Digest, rowSettlement.Observed);
         Assert.Equal(
             view.Digest,
             Assert.IsType<RecapGridFulfilledPutResult.CommitIndeterminate>(
@@ -214,12 +216,14 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
                 handle.Writer.PutCell(cell)
             ).Observed?.CellDigest
         );
-        Assert.Equal(
-            view.Digest,
+        RecapGridRowViewPutResult.CommitIndeterminate rowSettlement =
             Assert.IsType<RecapGridRowViewPutResult.CommitIndeterminate>(
                 handle.Writer.PutRowView(spec, view)
-            ).Observed
-        );
+            );
+        Assert.Equal(spec.Coordinate.AssignmentKey,
+            rowSettlement.IntendedAssignment);
+        Assert.Equal(view.Digest, rowSettlement.Intended);
+        Assert.Equal(view.Digest, rowSettlement.Observed);
         Assert.Equal(
             view.Digest,
             Assert.IsType<RecapGridFulfilledPutResult.CommitIndeterminate>(
@@ -317,25 +321,18 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
     }
 
     [Fact]
-    public void CountCapAndQueryPlansAreBounded() {
+    public void LifetimeCountIsNotAdmissionCappedAndQueryPlansUseIndexes() {
         Directory.CreateDirectory(_root);
         Assert.IsType<RecapGridStoreCreateResult.Created>(
             RecapGridStoreFactory.Create(_root)
         );
-        StoreStorageLimits limits = StoreStorageLimits.Production with {
-            MaximumCellCount = 1
-        };
         using RecapGridStoreHandle handle = Assert.IsType<
             RecapGridStoreOpenResult.Opened
-        >(RecapGridStoreFactory.OpenForTest(
-            _root,
-            limits,
-            StorePersistenceTestHooks.None
-        )).Handle;
+        >(RecapGridStoreFactory.Open(_root)).Handle;
         Assert.IsType<RecapGridCellPutResult.Inserted>(
             handle.Writer.PutCell(Cell('b', "one"))
         );
-        Assert.IsType<RecapGridCellPutResult.Limit>(
+        Assert.IsType<RecapGridCellPutResult.Inserted>(
             handle.Writer.PutCell(Cell('c', "two"))
         );
 
@@ -519,7 +516,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
         Assert.IsType<RecapGridStoreCreateResult.Created>(
             RecapGridStoreFactory.Create(_root)
         );
-        (RowBuildSpec spec, RecapCellArtifact cell, RecapRowView view, _) =
+        (RowBuildSpec spec, RecapCellArtifact cell, _, _) =
             RowValues();
         using (RecapGridStoreHandle handle = Assert.IsType<
                RecapGridStoreOpenResult.Opened
@@ -527,34 +524,100 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             Assert.IsType<RecapGridCellPutResult.Inserted>(
                 handle.Writer.PutCell(cell)
             );
-            Assert.IsType<RecapGridRowViewPutResult.Inserted>(
-                handle.Writer.PutRowView(spec, view)
-            );
         }
         GridBuildRecipe recipe = Recipe();
-        FulfilledViewKey[] keys = Enumerable.Range(1, 257)
-            .Select(index => {
-                var refId = new RefId((ulong)index);
-                var head = new TimelineHeadRef(
+        var keys = new List<FulfilledViewKey>(257);
+        var views = new List<RecapRowView>(257);
+        for (int index = 1; index <= 257; index++) {
+            var refId = new RefId((ulong)index);
+            RowBuildSpec assignedSpec = RowBuildSpec.CreateFull(
+                recipe,
+                new RowViewCoordinate(
+                    refId,
                     recipe.TimelineId,
-                    refId,
-                    null,
-                    new string('d', 64),
-                    null,
-                    generation: index
-                );
-                return FulfilledViewKey.Create(
-                    refId,
-                    head,
-                    view.RowDescriptorDigest,
-                    recipe
-                );
-            })
-            .ToArray();
+                    spec.HistoryRowId,
+                    spec.HistorySegmentDigest,
+                    recipe.Digest,
+                    recipe.Target.Digest,
+                    previousHistoryRowId: null,
+                    previousViewDigest: null,
+                    bootstrapCompleted: true
+                ),
+                spec.PriorInput,
+                spec.OrderedAssignments
+            );
+            RecapRowView assignedView = RecapRowView.Create(
+                assignedSpec,
+                [cell]
+            );
+            var head = new TimelineHeadRef(
+                recipe.TimelineId,
+                refId,
+                null,
+                new string('d', 64),
+                null,
+                generation: index
+            );
+            views.Add(assignedView);
+            keys.Add(FulfilledViewKey.Create(
+                refId,
+                head,
+                assignedView.RowDescriptorDigest,
+                recipe
+            ));
+        }
         using (SqliteConnection connection = OpenRaw()) {
             connection.Open();
             using SqliteTransaction transaction = connection.BeginTransaction();
-            foreach (FulfilledViewKey key in keys) {
+            for (int index = 0; index < keys.Count; index++) {
+                FulfilledViewKey key = keys[index];
+                RecapRowView view = views[index];
+                using (SqliteCommand insertView = connection.CreateCommand()) {
+                    insertView.Transaction = transaction;
+                    insertView.CommandText = """
+                        INSERT INTO row_view(
+                            view_digest, ref_id, timeline_id, history_row_id,
+                            row_descriptor_digest, recipe_digest, target_digest,
+                            previous_history_row_id, previous_view_digest,
+                            bootstrap_completed, canonical
+                        ) VALUES (
+                            $view, $ref, $timeline, $row, $descriptor, $recipe,
+                            $target, NULL, NULL, 1, $canonical
+                        );
+                        """;
+                    insertView.Parameters.AddWithValue("$view", view.Digest.Value);
+                    insertView.Parameters.AddWithValue("$ref", key.RefId.ToHexString());
+                    insertView.Parameters.AddWithValue("$timeline", key.TimelineId.Value);
+                    insertView.Parameters.AddWithValue("$row", view.HistoryRowId.Value);
+                    insertView.Parameters.AddWithValue(
+                        "$descriptor",
+                        view.RowDescriptorDigest.Value
+                    );
+                    insertView.Parameters.AddWithValue("$recipe", view.RecipeDigest.Value);
+                    insertView.Parameters.AddWithValue("$target", view.TargetDigest.Value);
+                    insertView.Parameters.AddWithValue("$canonical", view.ToCanonicalBytes());
+                    insertView.ExecuteNonQuery();
+                }
+                using (SqliteCommand insertMember = connection.CreateCommand()) {
+                    insertMember.Transaction = transaction;
+                    insertMember.CommandText = """
+                        INSERT INTO row_view_member(
+                            view_digest, column_ordinal, logical_column_id,
+                            definition_digest, cell_digest
+                        ) VALUES ($view, 0, $column, $definition, $cell);
+                        """;
+                    insertMember.Parameters.AddWithValue("$view", view.Digest.Value);
+                    insertMember.Parameters.AddWithValue(
+                        "$column",
+                        cell.LogicalColumnId.Value
+                    );
+                    insertMember.Parameters.AddWithValue(
+                        "$definition",
+                        cell.DefinitionDigest.Value
+                    );
+                    insertMember.Parameters.AddWithValue("$cell", cell.CellDigest.Value);
+                    insertMember.ExecuteNonQuery();
+                }
                 using SqliteCommand insert = connection.CreateCommand();
                 insert.Transaction = transaction;
                 insert.CommandText = """
@@ -593,9 +656,13 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             }
             using SqliteCommand count = connection.CreateCommand();
             count.Transaction = transaction;
-            count.CommandText =
-                "UPDATE store_metadata SET fulfilled_view_count = $count;";
-            count.Parameters.AddWithValue("$count", keys.Length);
+            count.CommandText = """
+                UPDATE store_metadata
+                SET row_view_count = $count,
+                    row_view_member_count = $count,
+                    fulfilled_view_count = $count;
+                """;
+            count.Parameters.AddWithValue("$count", keys.Count);
             Assert.Equal(1, count.ExecuteNonQuery());
             transaction.Commit();
         }
@@ -620,7 +687,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
                 byte[] canonical = Assert.IsType<byte[]>(item.Canonical);
                 FulfilledViewKey decoded =
                     FulfilledViewKey.DecodeCanonical(canonical);
-                FulfilledViewKey expected = keys[expectedIndex++];
+                FulfilledViewKey expected = keys[expectedIndex];
                 Assert.Equal(expected.ToCanonicalBytes(), canonical);
                 Assert.Equal(expected.RefId, decoded.RefId);
                 Assert.Equal(
@@ -633,7 +700,11 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
                     ).Key,
                     item.Key
                 );
-                Assert.Equal(view.Digest, item.FulfilledViewDigest);
+                Assert.Equal(
+                    views[expectedIndex].Digest,
+                    item.FulfilledViewDigest
+                );
+                expectedIndex++;
             }
             if (!page.Incomplete) {
                 Assert.Null(page.NextCursor);
@@ -646,9 +717,9 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             cursor = RecapGridStoreExportCursor.Parse(cursorValue);
         } while (true);
 
-        Assert.Equal(3, pages);
-        Assert.Equal(keys.Length, expectedIndex);
-        Assert.Equal(keys.Length, seenKeys.Count);
+        Assert.Equal(5, pages);
+        Assert.Equal(keys.Count, expectedIndex);
+        Assert.Equal(keys.Count, seenKeys.Count);
     }
 
     [Fact]
@@ -807,9 +878,17 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
         var rowId = new HistoryRowId(new string('c', 64));
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             recipe,
-            rowId,
-            descriptor,
-            null,
+            new RowViewCoordinate(
+                new RefId(1),
+                timeline,
+                rowId,
+                descriptor,
+                recipe.Digest,
+                recipe.Target.Digest,
+                previousHistoryRowId: null,
+                previousViewDigest: null,
+                bootstrapCompleted: true
+            ),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Evaluate(column, evaluation)]
         );

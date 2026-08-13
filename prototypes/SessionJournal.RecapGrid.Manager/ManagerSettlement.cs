@@ -25,10 +25,11 @@ public sealed partial class RecapGridManager {
             );
         if (put is RecapGridRowViewPutResult.CommitIndeterminate
             pending) {
-            if (pending.Intended != view.Digest) {
+            if (pending.IntendedAssignment != view.Coordinate.AssignmentKey
+                || pending.Intended != view.Digest) {
                 return Invalid(
                     "RowViewSettlementIntendedMismatch",
-                    "The indeterminate RowView identity differs from the proposed view."
+                    "The indeterminate RowView assignment or digest differs from the proposed view."
                 );
             }
             if (pending.Observed is { } observedDigest
@@ -39,10 +40,9 @@ public sealed partial class RecapGridManager {
                 );
             }
         }
-        if (put is RecapGridRowViewPutResult.CommitIndeterminate
-            { Observed: null } pendingRead) {
+        if (put is RecapGridRowViewPutResult.CommitIndeterminate pendingRead) {
             RecapGridStoreReadResult<RecapRowView> observed =
-                _store.Reader.ReadView(pendingRead.Intended);
+                _store.Reader.ReadViewAt(pendingRead.IntendedAssignment);
             switch (observed) {
                 case RecapGridStoreReadResult<RecapRowView>.Found found
                     when found.Value.Digest == pendingRead.Intended
@@ -50,13 +50,19 @@ public sealed partial class RecapGridManager {
                             view.ToCanonicalBytes()):
                     put = new RecapGridRowViewPutResult
                         .CommitIndeterminate(
+                            pendingRead.IntendedAssignment,
                             pendingRead.Intended,
                             pendingRead.Intended
                         );
                     break;
                 case RecapGridStoreReadResult<RecapRowView>.Missing:
                 case RecapGridStoreReadResult<RecapRowView>.Busy:
-                    break;
+                    return Settlement(
+                        RecapGridBuildCommitKind.RowView,
+                        pendingRead.Intended.Value,
+                        pendingRead.Observed?.Value,
+                        state
+                    );
                 case RecapGridStoreReadResult<RecapRowView>.Disposed:
                     return Unavailable(
                         RecapGridBuildDependency.Store,

@@ -1,6 +1,7 @@
 using Atelia.EventJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.Store;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace Atelia.SessionJournal.RecapGrid.Store.Tests;
@@ -18,7 +19,7 @@ public sealed class StoreCellVerticalTests : IDisposable {
         RecapGridStoreCreateResult.Created created = Assert.IsType<
             RecapGridStoreCreateResult.Created
         >(RecapGridStoreFactory.Create(_root));
-        Assert.Equal(1, created.Identity.SchemaVersion);
+        Assert.Equal(2, created.Identity.SchemaVersion);
         Assert.IsType<RecapGridStoreCreateResult.AlreadyExists>(
             RecapGridStoreFactory.Create(_root)
         );
@@ -39,6 +40,29 @@ public sealed class StoreCellVerticalTests : IDisposable {
         Assert.NotEmpty(info.SqliteVersion);
         Assert.NotEmpty(info.SqliteSourceId);
         Assert.NotEmpty(info.CompileOptions);
+        using var connection = new SqliteConnection(
+            $"Data Source={new StorePaths(_root).DatabasePath};Mode=ReadOnly;Pooling=False"
+        );
+        connection.Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = "PRAGMA max_page_count;";
+        Assert.Equal(4_294_967_294L, Convert.ToInt64(command.ExecuteScalar()));
+    }
+
+    [Fact]
+    public void ProductionCountMathCrossesInt32AndRejectsInt64Overflow() {
+        Assert.Equal(
+            (long)int.MaxValue + 1L,
+            StoreCountMath.Increment(int.MaxValue)
+        );
+        Assert.Equal(
+            (long)int.MaxValue + 17L,
+            StoreCountMath.Add(int.MaxValue, 17)
+        );
+        Assert.Throws<OverflowException>(() =>
+            StoreCountMath.Increment(long.MaxValue));
+        Assert.Throws<OverflowException>(() =>
+            StoreCountMath.Add(long.MaxValue, 1));
     }
 
     [Fact]
@@ -125,6 +149,9 @@ public sealed class StoreCellVerticalTests : IDisposable {
         Assert.IsType<RecapGridRowViewPutResult.PrerequisiteMissing>(
             handle.Writer.PutRowView(spec, view)
         );
+        Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Missing>(
+            handle.Reader.ReadViewAt(spec.Coordinate.AssignmentKey)
+        );
         Assert.IsType<RecapGridCellPutResult.Inserted>(
             handle.Writer.PutCell(cell)
         );
@@ -140,13 +167,21 @@ public sealed class StoreCellVerticalTests : IDisposable {
         Assert.Equal(
             view.ToCanonicalBytes(),
             Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Found>(
-                handle.Reader.ReadView(view.Digest)
+                handle.Reader.ReadViewAt(spec.Coordinate.AssignmentKey)
             ).Value.ToCanonicalBytes()
+        );
+        Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Missing>(
+            handle.Reader.ReadViewAt(new RowViewAssignmentKey(
+                new RefId(2),
+                spec.TimelineId,
+                spec.RecipeDigest,
+                spec.HistoryRowId
+            ))
         );
     }
 
     [Fact]
-    public void ExistingViewDoesNotBypassExactPriorInputResolution() {
+    public void AssignmentConflictDoesNotBypassExactPriorInputResolution() {
         Directory.CreateDirectory(_root);
         Assert.IsType<RecapGridStoreCreateResult.Created>(
             RecapGridStoreFactory.Create(_root)
@@ -188,23 +223,42 @@ public sealed class StoreCellVerticalTests : IDisposable {
             "second",
             RecapGridLimits.MaximumContentUtf8Bytes
         );
+        RecapCellArtifact cellB = RecapCellArtifact.Create(
+            column,
+            definition,
+            evaluationB,
+            RecapCellOutcome.Updated,
+            "competing second",
+            RecapGridLimits.MaximumContentUtf8Bytes
+        );
         var rowId = new HistoryRowId(new string('e', 64));
-        RowBuildSpec exactSpec = RowBuildSpec.CreateNormal(
-            recipe,
+        var coordinate = new RowViewCoordinate(
+            new RefId(1),
+            timeline,
             rowId,
             descriptor,
+            recipe.Digest,
+            recipe.Target.Digest,
+            firstSpec.HistoryRowId,
             firstView.Digest,
+            bootstrapCompleted: true
+        );
+        RowBuildSpec exactSpec = RowBuildSpec.CreateNormal(
+            recipe,
+            coordinate,
             priorA,
             [new RowBuildAssignment.Evaluate(column, evaluationA)]
         );
         RecapRowView secondView = RecapRowView.Create(exactSpec, [cellA]);
         RowBuildSpec wrongPriorSpec = RowBuildSpec.CreateNormal(
             recipe,
-            rowId,
-            descriptor,
-            firstView.Digest,
+            coordinate,
             priorB,
             [new RowBuildAssignment.Evaluate(column, evaluationB)]
+        );
+        RecapRowView competingView = RecapRowView.Create(
+            wrongPriorSpec,
+            [cellB]
         );
 
         using RecapGridStoreHandle handle = Assert.IsType<
@@ -222,8 +276,14 @@ public sealed class StoreCellVerticalTests : IDisposable {
         Assert.IsType<RecapGridRowViewPutResult.Inserted>(
             handle.Writer.PutRowView(exactSpec, secondView)
         );
-        Assert.IsType<RecapGridRowViewPutResult.PrerequisiteMissing>(
-            handle.Writer.PutRowView(wrongPriorSpec, secondView)
+        Assert.IsType<RecapGridCellPutResult.Inserted>(
+            handle.Writer.PutCell(cellB)
+        );
+        Assert.Equal(
+            "RowViewAssignmentConflict",
+            Assert.IsType<RecapGridRowViewPutResult.Invalid>(
+                handle.Writer.PutRowView(wrongPriorSpec, competingView)
+            ).Code
         );
     }
 
@@ -313,9 +373,17 @@ public sealed class StoreCellVerticalTests : IDisposable {
         );
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             recipe,
-            new HistoryRowId(new string('c', 64)),
-            descriptor,
-            null,
+            new RowViewCoordinate(
+                new RefId(1),
+                timeline,
+                new HistoryRowId(new string('c', 64)),
+                descriptor,
+                recipe.Digest,
+                target.Digest,
+                previousHistoryRowId: null,
+                previousViewDigest: null,
+                bootstrapCompleted: true
+            ),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Evaluate(column, evaluation)]
         );

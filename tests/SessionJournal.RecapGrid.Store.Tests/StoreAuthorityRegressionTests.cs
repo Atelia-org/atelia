@@ -81,7 +81,7 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
         );
         GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(
             full,
-            new HistoryRowId(new string('c', 64)),
+            new HistoryRowId(new string('d', 64)),
             target,
             [columnX]
         );
@@ -122,9 +122,17 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
         );
         RowBuildSpec spec = RowBuildSpec.CreateOverlayBootstrap(
             overlay,
-            new HistoryRowId(new string('d', 64)),
-            descriptor,
-            null,
+            new RowViewCoordinate(
+                new RefId(1),
+                timeline,
+                new HistoryRowId(new string('d', 64)),
+                descriptor,
+                overlay.Digest,
+                target.Digest,
+                previousHistoryRowId: null,
+                previousViewDigest: null,
+                bootstrapCompleted: true
+            ),
             PriorInputReference.FirstRow.Value,
             [
                 new RowBuildAssignment.Evaluate(columnX, evaluationX),
@@ -149,6 +157,110 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
             handle.Writer.PutRowView(spec, view)
         );
         Assert.Equal(before, DatabaseBytes());
+    }
+
+    [Fact]
+    public void BootstrapCompletionCannotRegressAlongExactAssignmentChain() {
+        Create();
+        var timeline = new TimelineId("00112233445566778899aabbccddeeff");
+        var column = new LogicalColumnId("case.culprit");
+        var definition = new MaintainerDefinitionDigest(new string('a', 64));
+        BuildTarget target = BuildTarget.Create([
+            new BuildTargetColumn(column, definition)
+        ]);
+        GridBuildRecipe baseRecipe = GridBuildRecipe.CreateFull(
+            timeline,
+            RowId('1'),
+            target
+        );
+        GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(
+            baseRecipe,
+            RowId('3'),
+            target,
+            [column]
+        );
+        var bootstrapDescriptor = new HistorySegmentDescriptorDigest(
+            new string('3', 64)
+        );
+        EvaluationKey bootstrapEvaluation = EvaluationKey.Create(
+            bootstrapDescriptor,
+            definition,
+            PriorInputReference.FirstRow.Value
+        );
+        RecapCellArtifact bootstrapCell = RecapCellArtifact.Create(
+            column,
+            definition,
+            bootstrapEvaluation,
+            RecapCellOutcome.Updated,
+            "bootstrap",
+            RecapGridLimits.MaximumContentUtf8Bytes
+        );
+        RowBuildSpec bootstrapSpec = RowBuildSpec.CreateOverlayBootstrap(
+            overlay,
+            new RowViewCoordinate(
+                new RefId(1), timeline, RowId('3'), bootstrapDescriptor,
+                overlay.Digest, target.Digest, null, null,
+                bootstrapCompleted: true
+            ),
+            PriorInputReference.FirstRow.Value,
+            [new RowBuildAssignment.Evaluate(column, bootstrapEvaluation)]
+        );
+        RecapRowView bootstrapView = RecapRowView.Create(
+            bootstrapSpec,
+            [bootstrapCell]
+        );
+        var projection = new PriorInputReference.Projection(
+            PriorInputProjection.Create([
+                new PriorProjectedContent(column, bootstrapCell.ContentDigest)
+            ]).Digest
+        );
+        var earlierDescriptor = new HistorySegmentDescriptorDigest(
+            new string('2', 64)
+        );
+        EvaluationKey earlierEvaluation = EvaluationKey.Create(
+            earlierDescriptor,
+            definition,
+            projection
+        );
+        RecapCellArtifact earlierCell = RecapCellArtifact.Create(
+            column,
+            definition,
+            earlierEvaluation,
+            RecapCellOutcome.Updated,
+            "earlier",
+            RecapGridLimits.MaximumContentUtf8Bytes
+        );
+        RowBuildSpec regressingSpec = RowBuildSpec.CreateOverlayBootstrap(
+            overlay,
+            new RowViewCoordinate(
+                new RefId(1), timeline, RowId('2'), earlierDescriptor,
+                overlay.Digest, target.Digest, RowId('3'),
+                bootstrapView.Digest, bootstrapCompleted: false
+            ),
+            projection,
+            [new RowBuildAssignment.Evaluate(column, earlierEvaluation)]
+        );
+        RecapRowView regressingView = RecapRowView.Create(
+            regressingSpec,
+            [earlierCell]
+        );
+
+        using RecapGridStoreHandle handle = Open();
+        Assert.IsType<RecapGridCellPutResult.Inserted>(
+            handle.Writer.PutCell(bootstrapCell)
+        );
+        Assert.IsType<RecapGridRowViewPutResult.Inserted>(
+            handle.Writer.PutRowView(bootstrapSpec, bootstrapView)
+        );
+        Assert.IsType<RecapGridCellPutResult.Inserted>(
+            handle.Writer.PutCell(earlierCell)
+        );
+        Assert.Equal(
+            "BootstrapRecurrenceMismatch",
+            Assert.IsType<RecapGridRowViewPutResult.Rejected>(
+                handle.Writer.PutRowView(regressingSpec, regressingView)
+            ).Code
+        );
     }
 
     [Theory]
@@ -272,7 +384,7 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
             "member-orphan" => "DELETE FROM cell_artifact;",
             "fulfilled-physical" =>
                 "UPDATE fulfilled_view_ref SET key_canonical = $canonical;",
-            "unknown-schema" => "PRAGMA user_version = 2;",
+            "unknown-schema" => "PRAGMA user_version = 99;",
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
         command.Parameters.AddWithValue("$view", view.Digest.Value);
@@ -342,9 +454,17 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
         );
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             recipe,
-            new HistoryRowId(new string(descriptorToken, 64)),
-            descriptor,
-            null,
+            new RowViewCoordinate(
+                new RefId(1),
+                recipe.TimelineId,
+                new HistoryRowId(new string(descriptorToken, 64)),
+                descriptor,
+                recipe.Digest,
+                recipe.Target.Digest,
+                previousHistoryRowId: null,
+                previousViewDigest: null,
+                bootstrapCompleted: true
+            ),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Evaluate(column, evaluation)]
         );
@@ -364,6 +484,9 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
             ])
         );
     }
+
+    private static HistoryRowId RowId(char value)
+        => new(new string(value, 64));
 
     public void Dispose() {
         if (Directory.Exists(_root)) {

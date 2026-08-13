@@ -527,9 +527,17 @@ public sealed class HostingTests {
         );
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             recipe,
-            rowId,
-            descriptor.DescriptorDigest,
-            previousViewDigest: null,
+            new RowViewCoordinate(
+                descriptor.RefId,
+                timelineId,
+                rowId,
+                descriptor.DescriptorDigest,
+                recipe.Digest,
+                target.Digest,
+                previousHistoryRowId: null,
+                previousViewDigest: null,
+                bootstrapCompleted: true
+            ),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Evaluate(logical, key)]
         );

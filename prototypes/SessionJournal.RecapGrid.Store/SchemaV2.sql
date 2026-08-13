@@ -1,6 +1,6 @@
 CREATE TABLE store_metadata(
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+    schema_version INTEGER NOT NULL CHECK(schema_version = 2),
     store_instance_id TEXT NOT NULL,
     cell_count INTEGER NOT NULL CHECK(cell_count >= 0),
     row_view_count INTEGER NOT NULL CHECK(row_view_count >= 0),
@@ -21,15 +21,28 @@ CREATE TABLE cell_artifact(
 
 CREATE TABLE row_view(
     view_digest TEXT PRIMARY KEY,
+    ref_id TEXT NOT NULL,
     timeline_id TEXT NOT NULL,
     history_row_id TEXT NOT NULL,
     row_descriptor_digest TEXT NOT NULL,
     recipe_digest TEXT NOT NULL,
     target_digest TEXT NOT NULL,
-    previous_view_key BLOB NOT NULL,
+    previous_history_row_id TEXT,
+    previous_view_digest TEXT,
+    bootstrap_completed INTEGER NOT NULL
+        CHECK(bootstrap_completed IN (0, 1)),
     canonical BLOB NOT NULL,
-    UNIQUE(recipe_digest, row_descriptor_digest, target_digest, previous_view_key),
-    UNIQUE(view_digest, recipe_digest, row_descriptor_digest)
+    CHECK((previous_history_row_id IS NULL)
+        = (previous_view_digest IS NULL)),
+    UNIQUE(ref_id, timeline_id, recipe_digest, history_row_id),
+    UNIQUE(view_digest, ref_id, timeline_id, recipe_digest,
+        history_row_id, target_digest),
+    UNIQUE(view_digest, ref_id, timeline_id, recipe_digest,
+        row_descriptor_digest),
+    FOREIGN KEY(previous_view_digest, ref_id, timeline_id, recipe_digest,
+        previous_history_row_id, target_digest)
+        REFERENCES row_view(view_digest, ref_id, timeline_id, recipe_digest,
+            history_row_id, target_digest)
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE row_view_member(
@@ -55,6 +68,8 @@ CREATE TABLE fulfilled_view_ref(
     view_digest TEXT NOT NULL,
     PRIMARY KEY(ref_id, timeline_id, timeline_head_generation,
         through_row_descriptor_digest, recipe_digest),
-    FOREIGN KEY(view_digest, recipe_digest, through_row_descriptor_digest)
-        REFERENCES row_view(view_digest, recipe_digest, row_descriptor_digest)
+    FOREIGN KEY(view_digest, ref_id, timeline_id, recipe_digest,
+        through_row_descriptor_digest)
+        REFERENCES row_view(view_digest, ref_id, timeline_id, recipe_digest,
+            row_descriptor_digest)
 ) STRICT, WITHOUT ROWID;

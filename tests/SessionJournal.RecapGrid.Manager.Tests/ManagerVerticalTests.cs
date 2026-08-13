@@ -284,11 +284,11 @@ public sealed class ManagerVerticalTests : IDisposable {
                 );
             },
             PutRowView: (spec, view, next) => {
-                _ = spec;
                 Assert.IsType<RecapGridRowViewPutResult.Inserted>(next());
                 return new RecapGridRowViewPutResult.CommitIndeterminate(
+                    spec.Coordinate.AssignmentKey,
                     view.Digest,
-                    null
+                    view.Digest
                 );
             },
             PutFulfilled: (key, viewDigest, next) => {
@@ -319,7 +319,7 @@ public sealed class ManagerVerticalTests : IDisposable {
     [InlineData(RecapGridBuildCommitKind.Cell)]
     [InlineData(RecapGridBuildCommitKind.RowView)]
     [InlineData(RecapGridBuildCommitKind.Fulfilled)]
-    public async Task IndeterminateMissingRequiresSettlement(
+    public async Task IndeterminateMissingRequiresSettlementEvenWhenRowViewReportsSameDigest(
         RecapGridBuildCommitKind kind
     ) {
         Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
@@ -329,8 +329,12 @@ public sealed class ManagerVerticalTests : IDisposable {
                     .CommitIndeterminate(cell.EvaluationKey.Digest, null)
                 : null,
             PutRowView: kind == RecapGridBuildCommitKind.RowView
-                ? (_, view, _) => new RecapGridRowViewPutResult
-                    .CommitIndeterminate(view.Digest, null)
+                ? (spec, view, _) => new RecapGridRowViewPutResult
+                    .CommitIndeterminate(
+                        spec.Coordinate.AssignmentKey,
+                        view.Digest,
+                        view.Digest
+                    )
                 : null,
             PutFulfilled: kind == RecapGridBuildCommitKind.Fulfilled
                 ? (key, _, _) => new RecapGridFulfilledPutResult
@@ -346,7 +350,42 @@ public sealed class ManagerVerticalTests : IDisposable {
                 new RecordingExecutor()
             ));
             Assert.Equal(kind, result.Kind);
-            Assert.Null(result.ObservedIdentity);
+            if (kind == RecapGridBuildCommitKind.RowView) {
+                Assert.NotNull(result.ObservedIdentity);
+            }
+            else {
+                Assert.Null(result.ObservedIdentity);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task IndeterminateRowViewWrongAssignmentIsInvalidEvenWhenDigestMatches() {
+        Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
+        var hooks = new ManagerTestHooks(
+            PutRowView: (spec, view, next) => {
+                Assert.IsType<RecapGridRowViewPutResult.Inserted>(next());
+                return new RecapGridRowViewPutResult.CommitIndeterminate(
+                    new RowViewAssignmentKey(
+                        spec.RefId,
+                        spec.TimelineId,
+                        spec.RecipeDigest,
+                        new HistoryRowId(new string('f', 64))
+                    ),
+                    view.Digest,
+                    view.Digest
+                );
+            }
+        );
+        using (fixture.Journal)
+        using (RecapGridManagerHandle manager = OpenManager(fixture, hooks)) {
+            RecapGridBuildResult.Invalid result = Assert.IsType<
+                RecapGridBuildResult.Invalid
+            >(await manager.Manager.BuildAsync(
+                Request(),
+                new RecordingExecutor()
+            ));
+            Assert.Equal("RowViewSettlementIntendedMismatch", result.Code);
         }
     }
 
@@ -404,10 +443,11 @@ public sealed class ManagerVerticalTests : IDisposable {
                 }
                 : null,
             PutRowView: kind == RecapGridBuildCommitKind.RowView
-                ? (_, proposed, next) => {
+                ? (spec, proposed, next) => {
                     view = proposed;
                     Assert.IsType<RecapGridRowViewPutResult.Inserted>(next());
                     return new RecapGridRowViewPutResult.CommitIndeterminate(
+                        spec.Coordinate.AssignmentKey,
                         DifferentRowViewDigest(proposed.Digest),
                         observedKind switch {
                             IndeterminateObservedKind.Same
@@ -483,9 +523,10 @@ public sealed class ManagerVerticalTests : IDisposable {
         Fixture fixture = CreateFullFixture(1, zeroColumns: false);
         var hooks = new ManagerTestHooks(
             PutRowView: kind == RecapGridBuildCommitKind.RowView
-                ? (_, view, next) => {
+                ? (spec, view, next) => {
                     Assert.IsType<RecapGridRowViewPutResult.Inserted>(next());
                     return new RecapGridRowViewPutResult.CommitIndeterminate(
+                        spec.Coordinate.AssignmentKey,
                         view.Digest,
                         DifferentRowViewDigest(view.Digest)
                     );

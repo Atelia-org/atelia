@@ -44,6 +44,114 @@ public abstract class RowBuildAssignment {
 }
 
 /// <summary>
+/// Exact immutable Store coordinate for one recipe-row progression assignment.
+/// Timeline selection remains an outer-owner responsibility; this value commits
+/// the recurrence that the Store can validate without reading Timeline state.
+/// </summary>
+public sealed class RowViewCoordinate {
+    public RowViewCoordinate(
+        RefId refId,
+        TimelineId timelineId,
+        HistoryRowId historyRowId,
+        HistorySegmentDescriptorDigest historySegmentDigest,
+        GridBuildRecipeDigest recipeDigest,
+        BuildTargetDigest targetDigest,
+        HistoryRowId? previousHistoryRowId,
+        RowViewDigest? previousViewDigest,
+        bool bootstrapCompleted
+    ) {
+        if (refId.IsDefault) {
+            throw new ArgumentException("RefId must not be default.", nameof(refId));
+        }
+        RecapGridSyntax.RequireTypedValue(timelineId.Value, 32, nameof(timelineId));
+        RecapGridSyntax.RequireTypedValue(historyRowId.Value, 64, nameof(historyRowId));
+        RecapGridSyntax.RequireTypedValue(
+            historySegmentDigest.Value,
+            64,
+            nameof(historySegmentDigest)
+        );
+        RecapGridSyntax.RequireTypedValue(recipeDigest.Value, 64, nameof(recipeDigest));
+        RecapGridSyntax.RequireTypedValue(targetDigest.Value, 64, nameof(targetDigest));
+        if (previousHistoryRowId is { } previousRow) {
+            RecapGridSyntax.RequireTypedValue(
+                previousRow.Value,
+                64,
+                nameof(previousHistoryRowId)
+            );
+        }
+        if (previousViewDigest is { } previousView) {
+            RecapGridSyntax.RequireTypedValue(
+                previousView.Value,
+                64,
+                nameof(previousViewDigest)
+            );
+        }
+        if ((previousHistoryRowId is null) != (previousViewDigest is null)) {
+            throw new ArgumentException(
+                "Previous row and previous view must be present or absent together."
+            );
+        }
+        if (previousHistoryRowId == historyRowId) {
+            throw new ArgumentException(
+                "A row-view assignment cannot name itself as its predecessor.",
+                nameof(previousHistoryRowId)
+            );
+        }
+        RefId = refId;
+        TimelineId = timelineId;
+        HistoryRowId = historyRowId;
+        HistorySegmentDigest = historySegmentDigest;
+        RecipeDigest = recipeDigest;
+        TargetDigest = targetDigest;
+        PreviousHistoryRowId = previousHistoryRowId;
+        PreviousViewDigest = previousViewDigest;
+        BootstrapCompleted = bootstrapCompleted;
+    }
+
+    public RefId RefId { get; }
+    public TimelineId TimelineId { get; }
+    public HistoryRowId HistoryRowId { get; }
+    public HistorySegmentDescriptorDigest HistorySegmentDigest { get; }
+    public GridBuildRecipeDigest RecipeDigest { get; }
+    public BuildTargetDigest TargetDigest { get; }
+    public HistoryRowId? PreviousHistoryRowId { get; }
+    public RowViewDigest? PreviousViewDigest { get; }
+    public bool BootstrapCompleted { get; }
+
+    public RowViewAssignmentKey AssignmentKey => new(
+        RefId,
+        TimelineId,
+        RecipeDigest,
+        HistoryRowId
+    );
+}
+
+public sealed record RowViewAssignmentKey {
+    public RowViewAssignmentKey(
+        RefId refId,
+        TimelineId timelineId,
+        GridBuildRecipeDigest recipeDigest,
+        HistoryRowId historyRowId
+    ) {
+        if (refId.IsDefault) {
+            throw new ArgumentException("RefId must not be default.", nameof(refId));
+        }
+        RecapGridSyntax.RequireTypedValue(timelineId.Value, 32, nameof(timelineId));
+        RecapGridSyntax.RequireTypedValue(recipeDigest.Value, 64, nameof(recipeDigest));
+        RecapGridSyntax.RequireTypedValue(historyRowId.Value, 64, nameof(historyRowId));
+        RefId = refId;
+        TimelineId = timelineId;
+        RecipeDigest = recipeDigest;
+        HistoryRowId = historyRowId;
+    }
+
+    public RefId RefId { get; }
+    public TimelineId TimelineId { get; }
+    public GridBuildRecipeDigest RecipeDigest { get; }
+    public HistoryRowId HistoryRowId { get; }
+}
+
+/// <summary>
 /// Pure validated build input. It is deliberately not a durable identity or
 /// canonical wire owner; WP-04 derives it from frozen Timeline and Control
 /// snapshots.
@@ -54,22 +162,14 @@ public sealed class RowBuildSpec {
         _orderedDefinitionDigests;
 
     private RowBuildSpec(
-        TimelineId timelineId,
-        HistoryRowId historyRowId,
-        HistorySegmentDescriptorDigest historySegmentDigest,
-        GridBuildRecipeDigest recipeDigest,
-        BuildTargetDigest targetDigest,
-        RowViewDigest? previousViewDigest,
+        GridBuildRecipe recipe,
+        RowViewCoordinate coordinate,
         PriorInputReference priorInput,
         RowBuildAssignment[] orderedAssignments,
         MaintainerDefinitionDigest[] orderedDefinitionDigests
     ) {
-        TimelineId = timelineId;
-        HistoryRowId = historyRowId;
-        HistorySegmentDigest = historySegmentDigest;
-        RecipeDigest = recipeDigest;
-        TargetDigest = targetDigest;
-        PreviousViewDigest = previousViewDigest;
+        Recipe = recipe;
+        Coordinate = coordinate;
         PriorInput = priorInput;
         _orderedAssignments = Array.AsReadOnly(orderedAssignments);
         _orderedDefinitionDigests = Array.AsReadOnly(
@@ -77,21 +177,26 @@ public sealed class RowBuildSpec {
         );
     }
 
-    public TimelineId TimelineId { get; }
-    public HistoryRowId HistoryRowId { get; }
-    public HistorySegmentDescriptorDigest HistorySegmentDigest { get; }
-    public GridBuildRecipeDigest RecipeDigest { get; }
-    public BuildTargetDigest TargetDigest { get; }
-    public RowViewDigest? PreviousViewDigest { get; }
+    public GridBuildRecipe Recipe { get; }
+    public RowViewCoordinate Coordinate { get; }
+    public RefId RefId => Coordinate.RefId;
+    public TimelineId TimelineId => Coordinate.TimelineId;
+    public HistoryRowId HistoryRowId => Coordinate.HistoryRowId;
+    public HistorySegmentDescriptorDigest HistorySegmentDigest =>
+        Coordinate.HistorySegmentDigest;
+    public GridBuildRecipeDigest RecipeDigest => Coordinate.RecipeDigest;
+    public BuildTargetDigest TargetDigest => Coordinate.TargetDigest;
+    public HistoryRowId? PreviousHistoryRowId =>
+        Coordinate.PreviousHistoryRowId;
+    public RowViewDigest? PreviousViewDigest => Coordinate.PreviousViewDigest;
+    public bool BootstrapCompleted => Coordinate.BootstrapCompleted;
     public PriorInputReference PriorInput { get; }
     public IReadOnlyList<RowBuildAssignment> OrderedAssignments =>
         _orderedAssignments;
 
     public static RowBuildSpec CreateFull(
         GridBuildRecipe recipe,
-        HistoryRowId historyRowId,
-        HistorySegmentDescriptorDigest historySegmentDigest,
-        RowViewDigest? previousViewDigest,
+        RowViewCoordinate coordinate,
         PriorInputReference priorInput,
         IEnumerable<RowBuildAssignment> orderedAssignments
     ) {
@@ -99,6 +204,12 @@ public sealed class RowBuildSpec {
             throw new ArgumentException(
                 "CreateFull requires a full recipe.",
                 nameof(recipe)
+            );
+        }
+        if (!coordinate.BootstrapCompleted) {
+            throw new ArgumentException(
+                "A full-recipe row must have completed bootstrap.",
+                nameof(coordinate)
             );
         }
         RowBuildAssignment[] assignments = MaterializeAssignments(
@@ -113,9 +224,7 @@ public sealed class RowBuildSpec {
         }
         return CreateCore(
             recipe,
-            historyRowId,
-            historySegmentDigest,
-            previousViewDigest,
+            coordinate,
             priorInput,
             assignments
         );
@@ -123,9 +232,7 @@ public sealed class RowBuildSpec {
 
     public static RowBuildSpec CreateOverlayBootstrap(
         GridBuildRecipe recipe,
-        HistoryRowId historyRowId,
-        HistorySegmentDescriptorDigest historySegmentDigest,
-        RowViewDigest? previousViewDigest,
+        RowViewCoordinate coordinate,
         PriorInputReference priorInput,
         IEnumerable<RowBuildAssignment> orderedAssignments
     ) {
@@ -133,6 +240,14 @@ public sealed class RowBuildSpec {
             throw new ArgumentException(
                 "CreateOverlayBootstrap requires an overlay recipe.",
                 nameof(recipe)
+            );
+        }
+        bool reachesBootstrap = recipe.BootstrapThroughRowId
+            == coordinate.HistoryRowId;
+        if (coordinate.BootstrapCompleted != reachesBootstrap) {
+            throw new ArgumentException(
+                "An overlay-bootstrap row completes bootstrap exactly at its bootstrap row.",
+                nameof(coordinate)
             );
         }
         RowBuildAssignment[] assignments = MaterializeAssignments(
@@ -156,9 +271,7 @@ public sealed class RowBuildSpec {
         }
         return CreateCore(
             recipe,
-            historyRowId,
-            historySegmentDigest,
-            previousViewDigest,
+            coordinate,
             priorInput,
             assignments
         );
@@ -166,13 +279,17 @@ public sealed class RowBuildSpec {
 
     public static RowBuildSpec CreateNormal(
         GridBuildRecipe recipe,
-        HistoryRowId historyRowId,
-        HistorySegmentDescriptorDigest historySegmentDigest,
-        RowViewDigest? previousViewDigest,
+        RowViewCoordinate coordinate,
         PriorInputReference priorInput,
         IEnumerable<RowBuildAssignment> orderedAssignments
     ) {
         ArgumentNullException.ThrowIfNull(recipe);
+        if (!coordinate.BootstrapCompleted) {
+            throw new ArgumentException(
+                "A normal row requires completed bootstrap.",
+                nameof(coordinate)
+            );
+        }
         RowBuildAssignment[] assignments = MaterializeAssignments(
             orderedAssignments
         );
@@ -185,9 +302,7 @@ public sealed class RowBuildSpec {
         }
         return CreateCore(
             recipe,
-            historyRowId,
-            historySegmentDigest,
-            previousViewDigest,
+            coordinate,
             priorInput,
             assignments
         );
@@ -195,32 +310,22 @@ public sealed class RowBuildSpec {
 
     private static RowBuildSpec CreateCore(
         GridBuildRecipe recipe,
-        HistoryRowId historyRowId,
-        HistorySegmentDescriptorDigest historySegmentDigest,
-        RowViewDigest? previousViewDigest,
+        RowViewCoordinate coordinate,
         PriorInputReference priorInput,
         RowBuildAssignment[] assignments
     ) {
         ArgumentNullException.ThrowIfNull(recipe);
+        ArgumentNullException.ThrowIfNull(coordinate);
         ArgumentNullException.ThrowIfNull(priorInput);
-        RecapGridSyntax.RequireTypedValue(
-            historyRowId.Value,
-            64,
-            nameof(historyRowId)
-        );
-        RecapGridSyntax.RequireTypedValue(
-            historySegmentDigest.Value,
-            64,
-            nameof(historySegmentDigest)
-        );
-        if (previousViewDigest is { } priorView) {
-            RecapGridSyntax.RequireTypedValue(
-                priorView.Value,
-                64,
-                nameof(previousViewDigest)
+        if (coordinate.TimelineId != recipe.TimelineId
+            || coordinate.RecipeDigest != recipe.Digest
+            || coordinate.TargetDigest != recipe.Target.Digest) {
+            throw new ArgumentException(
+                "The row coordinate must bind the exact recipe and target.",
+                nameof(coordinate)
             );
         }
-        if ((previousViewDigest is null)
+        if ((coordinate.PreviousViewDigest is null)
             != (priorInput is PriorInputReference.FirstRow)) {
             throw new ArgumentException(
                 "First-row prior input must exactly match absent predecessor provenance.",
@@ -244,7 +349,7 @@ public sealed class RowBuildSpec {
                     when evaluate.EvaluationKey.DefinitionDigest
                             == target[index].DefinitionDigest
                         && evaluate.EvaluationKey.HistorySegmentDigest
-                            == historySegmentDigest
+                            == coordinate.HistorySegmentDigest
                         && SamePrior(
                             evaluate.EvaluationKey.PriorInput,
                             priorInput
@@ -256,7 +361,7 @@ public sealed class RowBuildSpec {
                         && reuse.Cell.DefinitionDigest
                             == target[index].DefinitionDigest
                         && reuse.Cell.EvaluationKey.HistorySegmentDigest
-                            == historySegmentDigest:
+                            == coordinate.HistorySegmentDigest:
                     break;
                 default:
                     throw new ArgumentException(
@@ -266,12 +371,8 @@ public sealed class RowBuildSpec {
             }
         }
         return new RowBuildSpec(
-            recipe.TimelineId,
-            historyRowId,
-            historySegmentDigest,
-            recipe.Digest,
-            recipe.Target.Digest,
-            previousViewDigest,
+            recipe,
+            coordinate,
             priorInput,
             assignments,
             target.Select(static column => column.DefinitionDigest).ToArray()
@@ -511,33 +612,29 @@ public sealed class RecapRowView {
     private readonly byte[] _canonicalBytes;
 
     private RecapRowView(
-        TimelineId timelineId,
-        HistoryRowId historyRowId,
-        HistorySegmentDescriptorDigest rowDescriptorDigest,
-        GridBuildRecipeDigest recipeDigest,
-        BuildTargetDigest targetDigest,
-        RowViewDigest? previousViewDigest,
+        RowViewCoordinate coordinate,
         RecapRowViewCell[] orderedCells,
         RowViewDigest digest,
         byte[] canonicalBytes
     ) {
-        TimelineId = timelineId;
-        HistoryRowId = historyRowId;
-        RowDescriptorDigest = rowDescriptorDigest;
-        RecipeDigest = recipeDigest;
-        TargetDigest = targetDigest;
-        PreviousViewDigest = previousViewDigest;
+        Coordinate = coordinate;
         _orderedCells = Array.AsReadOnly(orderedCells);
         Digest = digest;
         _canonicalBytes = canonicalBytes;
     }
 
-    public TimelineId TimelineId { get; }
-    public HistoryRowId HistoryRowId { get; }
-    public HistorySegmentDescriptorDigest RowDescriptorDigest { get; }
-    public GridBuildRecipeDigest RecipeDigest { get; }
-    public BuildTargetDigest TargetDigest { get; }
-    public RowViewDigest? PreviousViewDigest { get; }
+    public RowViewCoordinate Coordinate { get; }
+    public RefId RefId => Coordinate.RefId;
+    public TimelineId TimelineId => Coordinate.TimelineId;
+    public HistoryRowId HistoryRowId => Coordinate.HistoryRowId;
+    public HistorySegmentDescriptorDigest RowDescriptorDigest =>
+        Coordinate.HistorySegmentDigest;
+    public GridBuildRecipeDigest RecipeDigest => Coordinate.RecipeDigest;
+    public BuildTargetDigest TargetDigest => Coordinate.TargetDigest;
+    public HistoryRowId? PreviousHistoryRowId =>
+        Coordinate.PreviousHistoryRowId;
+    public RowViewDigest? PreviousViewDigest => Coordinate.PreviousViewDigest;
+    public bool BootstrapCompleted => Coordinate.BootstrapCompleted;
     public IReadOnlyList<RecapRowViewCell> OrderedCells => _orderedCells;
     public RowViewDigest Digest { get; }
 
@@ -592,13 +689,16 @@ public sealed class RecapRowView {
             );
         }
         RecapRowViewBodyDto body = new(
-            1,
+            2,
+            spec.RefId.Packed,
             spec.TimelineId.Value,
             spec.HistoryRowId.Value,
             spec.HistorySegmentDigest.Value,
             spec.RecipeDigest.Value,
             spec.TargetDigest.Value,
+            spec.PreviousHistoryRowId?.Value,
             spec.PreviousViewDigest?.Value,
+            spec.BootstrapCompleted,
             cells.Select(static cell => new RecapRowViewCellDto(
                 cell.LogicalColumnId.Value,
                 cell.DefinitionDigest.Value,
@@ -606,30 +706,28 @@ public sealed class RecapRowView {
             )).ToArray()
         );
         RowViewDigest digest = new(RecapGridHash.Compute(
-            "atelia.recap-grid.row-view.v1",
+            "atelia.recap-grid.row-view.v2",
             RecapGridCanonical.Encode(body)
         ));
         byte[] canonical = RecapGridCanonical.Encode(new RecapRowViewDto(
-            1,
+            2,
             digest.Value,
+            body.RefId,
             body.TimelineId,
             body.HistoryRowId,
             body.RowDescriptorDigest,
             body.RecipeDigest,
             body.TargetDigest,
+            body.PreviousHistoryRowId,
             body.PreviousViewDigest,
+            body.BootstrapCompleted,
             body.OrderedCells
         ));
         if (canonical.Length > RecapGridLimits.MaximumRowViewCanonicalUtf8Bytes) {
             throw new ArgumentOutOfRangeException(nameof(selectedCells));
         }
         return new RecapRowView(
-            spec.TimelineId,
-            spec.HistoryRowId,
-            spec.HistorySegmentDigest,
-            spec.RecipeDigest,
-            spec.TargetDigest,
-            spec.PreviousViewDigest,
+            spec.Coordinate,
             cells,
             digest,
             canonical
@@ -697,7 +795,7 @@ public sealed class RecapRowView {
             RecapGridLimits.MaximumRowViewCanonicalUtf8Bytes,
             nameof(bytes)
         );
-        if (dto.SchemaVersion != 1 || dto.OrderedCells is null
+        if (dto.SchemaVersion != 2 || dto.OrderedCells is null
             || dto.OrderedCells.Length > RecapGridLimits.MaximumColumnCount) {
             throw new InvalidDataException(
                 "The row-view schema or manifest is invalid."
@@ -715,6 +813,7 @@ public sealed class RecapRowView {
                 "The row-view manifest contains duplicate columns."
             );
         }
+        var refId = new RefId(dto.RefId);
         var timelineId = new TimelineId(dto.TimelineId);
         var historyRowId = new HistoryRowId(dto.HistoryRowId);
         var rowDescriptorDigest = new HistorySegmentDescriptorDigest(
@@ -725,18 +824,35 @@ public sealed class RecapRowView {
         RowViewDigest? previousViewDigest = dto.PreviousViewDigest is null
             ? null
             : new RowViewDigest(dto.PreviousViewDigest);
+        HistoryRowId? previousHistoryRowId = dto.PreviousHistoryRowId is null
+            ? null
+            : new HistoryRowId(dto.PreviousHistoryRowId);
+        var coordinate = new RowViewCoordinate(
+            refId,
+            timelineId,
+            historyRowId,
+            rowDescriptorDigest,
+            recipeDigest,
+            targetDigest,
+            previousHistoryRowId,
+            previousViewDigest,
+            dto.BootstrapCompleted
+        );
         var body = new RecapRowViewBodyDto(
-            1,
+            2,
+            refId.Packed,
             timelineId.Value,
             historyRowId.Value,
             rowDescriptorDigest.Value,
             recipeDigest.Value,
             targetDigest.Value,
+            previousHistoryRowId?.Value,
             previousViewDigest?.Value,
+            dto.BootstrapCompleted,
             dto.OrderedCells
         );
         RowViewDigest digest = new(RecapGridHash.Compute(
-            "atelia.recap-grid.row-view.v1",
+            "atelia.recap-grid.row-view.v2",
             RecapGridCanonical.Encode(body)
         ));
         if (!string.Equals(
@@ -748,12 +864,7 @@ public sealed class RecapRowView {
             );
         }
         return new RecapRowView(
-            timelineId,
-            historyRowId,
-            rowDescriptorDigest,
-            recipeDigest,
-            targetDigest,
-            previousViewDigest,
+            coordinate,
             cells,
             digest,
             bytes.ToArray()
@@ -966,24 +1077,30 @@ internal sealed record RecapRowViewCellDto(
 
 internal sealed record RecapRowViewBodyDto(
     int SchemaVersion,
+    ulong RefId,
     string TimelineId,
     string HistoryRowId,
     string RowDescriptorDigest,
     string RecipeDigest,
     string TargetDigest,
+    string? PreviousHistoryRowId,
     string? PreviousViewDigest,
+    bool BootstrapCompleted,
     RecapRowViewCellDto[] OrderedCells
 );
 
 internal sealed record RecapRowViewDto(
     int SchemaVersion,
     string Digest,
+    ulong RefId,
     string TimelineId,
     string HistoryRowId,
     string RowDescriptorDigest,
     string RecipeDigest,
     string TargetDigest,
+    string? PreviousHistoryRowId,
     string? PreviousViewDigest,
+    bool BootstrapCompleted,
     RecapRowViewCellDto[] OrderedCells
 );
 

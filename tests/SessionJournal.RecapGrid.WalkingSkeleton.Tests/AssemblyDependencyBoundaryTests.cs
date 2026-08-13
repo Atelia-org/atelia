@@ -933,7 +933,13 @@ public sealed class AssemblyDependencyBoundaryTests {
                      "SessionJournalEngine",
                      "RecapGrid.Control",
                      "Completion",
-                     "DerivedRecap"
+                     "DerivedRecap",
+                     "MaximumDatabaseBytes",
+                     "MaximumCellCount",
+                     "MaximumRowViewCount",
+                     "MaximumRowViewMemberCount",
+                     "MaximumFulfilledViewCount",
+                     "SchemaV1.sql"
                  }) {
             Assert.DoesNotContain(
                 forbidden,

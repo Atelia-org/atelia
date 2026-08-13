@@ -1,4 +1,6 @@
 using System.Reflection;
+using Atelia.EventJournal;
+using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Store;
 using Xunit;
@@ -35,6 +37,43 @@ public sealed class StorePublicSurfaceTests : IDisposable {
             RecapGridStoreReaderOpenResult.Opened
         >(RecapGridStoreFactory.OpenReader(_root)).Handle;
         Assert.Equal(created.Identity, reader.Identity);
+        Assert.IsType<RecapGridStoreReadResult<RecapRowView>.Missing>(
+            reader.Reader.ReadViewAt(new RowViewAssignmentKey(
+                new RefId(1),
+                new TimelineId(new string('1', 32)),
+                new GridBuildRecipeDigest(new string('2', 64)),
+                new HistoryRowId(new string('3', 64))
+            ))
+        );
+    }
+
+    [Fact]
+    public void PublicCountersAndPhysicalWitnessUseLongWithoutLifetimeCap() {
+        foreach (string property in new[] {
+                     nameof(RecapGridStoreInfo.DatabaseBytes),
+                     nameof(RecapGridStoreInfo.CellCount),
+                     nameof(RecapGridStoreInfo.RowViewCount),
+                     nameof(RecapGridStoreInfo.RowViewMemberCount),
+                     nameof(RecapGridStoreInfo.FulfilledViewCount)
+                 }) {
+            Assert.Equal(
+                typeof(long),
+                typeof(RecapGridStoreInfo).GetProperty(property)!.PropertyType
+            );
+        }
+        var witness = new RecapGridStorePhysicalWitness(
+            16L * 1024 * 1024 * 1024,
+            new string('a', 64)
+        );
+        Assert.Equal(16L * 1024 * 1024 * 1024, witness.Length);
+        Assert.DoesNotContain(
+            typeof(RecapGridStoreLimits).GetFields(
+                BindingFlags.Public | BindingFlags.Static
+            ),
+            static field => field.Name.Contains("Database",
+                StringComparison.Ordinal)
+                || field.Name.Contains("Count", StringComparison.Ordinal)
+        );
     }
 
     [Fact]

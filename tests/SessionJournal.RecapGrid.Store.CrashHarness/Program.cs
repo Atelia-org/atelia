@@ -134,9 +134,17 @@ internal static class Program {
         );
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             recipe,
-            rowId,
-            descriptor,
-            null,
+            new RowViewCoordinate(
+                new RefId(1),
+                timeline,
+                rowId,
+                descriptor,
+                recipe.Digest,
+                recipe.Target.Digest,
+                previousHistoryRowId: null,
+                previousViewDigest: null,
+                bootstrapCompleted: true
+            ),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Evaluate(column, evaluation)]
         );

@@ -1,3 +1,4 @@
+using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
@@ -29,9 +30,7 @@ public sealed class GridWalkingSkeletonTests {
         );
         RowBuildSpec firstSpec = RowBuildSpec.CreateFull(
             fixture.Recipe,
-            RowId('1'),
-            firstHistory,
-            null,
+            Coordinate(fixture.Recipe, RowId('1'), firstHistory, null),
             PriorInputReference.FirstRow.Value,
             [
                 new RowBuildAssignment.Evaluate(
@@ -79,9 +78,12 @@ public sealed class GridWalkingSkeletonTests {
         );
         RowBuildSpec secondSpec = RowBuildSpec.CreateFull(
             fixture.Recipe,
-            RowId('2'),
-            secondHistory,
-            firstView.Digest,
+            Coordinate(
+                fixture.Recipe,
+                RowId('2'),
+                secondHistory,
+                firstView.Digest
+            ),
             priorReference,
             [
                 new RowBuildAssignment.Evaluate(
@@ -227,9 +229,12 @@ public sealed class GridWalkingSkeletonTests {
         );
         RowBuildSpec spec = RowBuildSpec.CreateOverlayBootstrap(
             overlay,
-            RowId('2'),
-            HistoryDigest('2'),
-            new RowViewDigest(new string('d', 64)),
+            Coordinate(
+                overlay,
+                RowId('2'),
+                HistoryDigest('2'),
+                new RowViewDigest(new string('d', 64))
+            ),
             currentPrior,
             [
                 new RowBuildAssignment.Reuse(
@@ -255,9 +260,12 @@ public sealed class GridWalkingSkeletonTests {
         Assert.Throws<ArgumentException>(() =>
             RowBuildSpec.CreateOverlayBootstrap(
                 overlay,
-                RowId('2'),
-                HistoryDigest('2'),
-                new RowViewDigest(new string('d', 64)),
+                Coordinate(
+                    overlay,
+                    RowId('2'),
+                    HistoryDigest('2'),
+                    new RowViewDigest(new string('d', 64))
+                ),
                 currentPrior,
                 [
                     new RowBuildAssignment.Reuse(
@@ -273,9 +281,12 @@ public sealed class GridWalkingSkeletonTests {
         Assert.Throws<ArgumentException>(() =>
             RowBuildSpec.CreateOverlayBootstrap(
                 overlay,
-                RowId('2'),
-                HistoryDigest('2'),
-                new RowViewDigest(new string('d', 64)),
+                Coordinate(
+                    overlay,
+                    RowId('2'),
+                    HistoryDigest('2'),
+                    new RowViewDigest(new string('d', 64))
+                ),
                 currentPrior,
                 [
                     new RowBuildAssignment.Evaluate(
@@ -290,9 +301,12 @@ public sealed class GridWalkingSkeletonTests {
             ));
         Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateNormal(
             overlay,
-            RowId('2'),
-            HistoryDigest('2'),
-            new RowViewDigest(new string('d', 64)),
+            Coordinate(
+                overlay,
+                RowId('2'),
+                HistoryDigest('2'),
+                new RowViewDigest(new string('d', 64))
+            ),
             currentPrior,
             [
                 new RowBuildAssignment.Reuse(
@@ -330,9 +344,12 @@ public sealed class GridWalkingSkeletonTests {
         );
         Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateOverlayBootstrap(
             overlay,
-            RowId('2'),
-            HistoryDigest('2'),
-            new RowViewDigest(new string('d', 64)),
+            Coordinate(
+                overlay,
+                RowId('2'),
+                HistoryDigest('2'),
+                new RowViewDigest(new string('d', 64))
+            ),
             currentPrior,
             [
                 new RowBuildAssignment.Reuse(
@@ -465,6 +482,24 @@ public sealed class GridWalkingSkeletonTests {
 
     private static HistoryRowId RowId(char value)
         => new(new string(value, 64));
+
+    private static RowViewCoordinate Coordinate(
+        GridBuildRecipe recipe,
+        HistoryRowId rowId,
+        HistorySegmentDescriptorDigest descriptor,
+        RowViewDigest? previousView
+    ) => new(
+        new RefId(1),
+        recipe.TimelineId,
+        rowId,
+        descriptor,
+        recipe.Digest,
+        recipe.Target.Digest,
+        previousView is null ? null : RowId('1'),
+        previousView,
+        recipe.Kind == GridBuildRecipeKind.Full
+            || recipe.BootstrapThroughRowId == rowId
+    );
 
     private sealed record Fixture(
         FamilyDefinition Family,

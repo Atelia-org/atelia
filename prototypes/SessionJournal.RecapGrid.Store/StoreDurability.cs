@@ -3,23 +3,25 @@ using System.Runtime.InteropServices;
 namespace Atelia.SessionJournal.RecapGrid.Store;
 
 internal sealed record StoreStorageLimits(
-    long MaximumDatabaseBytes,
-    int MaximumCellCount,
-    int MaximumRowViewCount,
-    int MaximumRowViewMemberCount,
-    int MaximumFulfilledViewCount,
     int MaximumCommitAttempts,
     int CommitRetryDelayMilliseconds
 ) {
     internal static StoreStorageLimits Production { get; } = new(
-        RecapGridStoreLimits.MaximumDatabaseBytes,
-        RecapGridStoreLimits.MaximumCellCount,
-        RecapGridStoreLimits.MaximumRowViewCount,
-        RecapGridStoreLimits.MaximumRowViewMemberCount,
-        RecapGridStoreLimits.MaximumFulfilledViewCount,
         MaximumCommitAttempts: 4,
         CommitRetryDelayMilliseconds: 25
     );
+}
+
+internal static class StoreCountMath {
+    internal static long Increment(long current)
+        => checked(current + 1L);
+
+    internal static long Add(long current, long delta) {
+        if (delta < 0) {
+            throw new ArgumentOutOfRangeException(nameof(delta));
+        }
+        return checked(current + delta);
+    }
 }
 
 internal sealed record StorePersistenceTestHooks(
@@ -205,8 +207,7 @@ internal static class StoreDurableFiles {
     }
 
     internal static RecapGridStorePhysicalWitness ComputeWitness(
-        StorePaths paths,
-        StoreStorageLimits limits
+        StorePaths paths
     ) {
         paths.RequireSafe(paths.DatabasePath);
         using var stream = new FileStream(
@@ -217,8 +218,10 @@ internal static class StoreDurableFiles {
             bufferSize: 128 * 1024,
             FileOptions.SequentialScan
         );
-        if (stream.Length is < 1 || stream.Length > limits.MaximumDatabaseBytes) {
-            throw new StoreLimitException("MaximumDatabaseBytes");
+        if (stream.Length < 1) {
+            throw new InvalidDataException(
+                "The RecapGrid Store database is empty."
+            );
         }
         long length = stream.Length;
         string digest = Convert.ToHexStringLower(

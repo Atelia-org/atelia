@@ -246,9 +246,17 @@ public sealed partial class GetterVerticalTests : IDisposable {
             );
             RowBuildSpec spec = RowBuildSpec.CreateFull(
                 fixture.Recipe,
-                descriptor.RowId,
-                descriptor.DescriptorDigest,
-                previous?.Digest,
+                new RowViewCoordinate(
+                    fixture.Journal.BranchRefId,
+                    descriptor.TimelineId,
+                    descriptor.RowId,
+                    descriptor.DescriptorDigest,
+                    fixture.Recipe.Digest,
+                    fixture.Recipe.Target.Digest,
+                    descriptor.PreviousRowId,
+                    previous?.Digest,
+                    bootstrapCompleted: true
+                ),
                 prior,
                 [new RowBuildAssignment.Evaluate(
                     fixture.Definition.LogicalColumnId,

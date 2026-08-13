@@ -225,9 +225,7 @@ public sealed class CanonicalContractTests {
         );
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             recipe,
-            RowId('1'),
-            HistoryDigest('1'),
-            null,
+            Coordinate(recipe, RowId('1'), HistoryDigest('1')),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Evaluate(
                 definition.LogicalColumnId,
@@ -269,17 +267,13 @@ public sealed class CanonicalContractTests {
         );
         Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(
             recipe,
-            RowId('2'),
-            HistoryDigest('2'),
-            null,
+            Coordinate(recipe, RowId('2'), HistoryDigest('2')),
             PriorInputReference.FirstRow.Value,
             Array.Empty<RowBuildAssignment>()
         ));
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             recipe,
-            RowId('2'),
-            HistoryDigest('2'),
-            null,
+            Coordinate(recipe, RowId('2'), HistoryDigest('2')),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Evaluate(
                 definition.LogicalColumnId,
@@ -304,7 +298,7 @@ public sealed class CanonicalContractTests {
             + "c3e41a7bcaa525d8fca556ff17e369827b8984155f67cbc129e30a105a975176\n"
             + "13abe0196f72da491691abb9bf9f1747c7e57ee5f0f2d65e5988fd738ac38344\n"
             + "182f802b3819dd13f57a417c1af09b7c71ec479f91409481d850d02a99d5e423\n"
-            + "1329ad5b3ec48a2f21bf1119a121170791f3fbcd98fc4fde566726064a3ed8b5",
+            + "ecc2d6cad20efd7aad8c4ec0de81f63e004e5801f8937c605e6a426571c2a596",
             string.Join("\n", new[] {
                 value.Family.Digest.Value,
                 value.Definition.Digest.Value,
@@ -388,13 +382,17 @@ public sealed class CanonicalContractTests {
             value.Projection.ToCanonicalBytes(),
             value.Evaluation.ToCanonicalBytes(),
             value.Cell.ToCanonicalBytes(),
-            value.View.ToCanonicalBytes(),
             value.Fulfilled.ToCanonicalBytes()
         }, bytes => Assert.StartsWith(
             "{\"schemaVersion\":1,",
             Encoding.UTF8.GetString(bytes),
             StringComparison.Ordinal
         ));
+        Assert.StartsWith(
+            "{\"schemaVersion\":2,",
+            Encoding.UTF8.GetString(value.View.ToCanonicalBytes()),
+            StringComparison.Ordinal
+        );
         Assert.Equal(9, new[] {
             value.Family.Digest.Value,
             value.Definition.Digest.Value,
@@ -414,7 +412,7 @@ public sealed class CanonicalContractTests {
             + "436ac01f8031b636eeaf77b02aa1fd4df81f4bb98decae7cf7b01907adced7a2\n"
             + "da233a6fd81d80d761d66126b11d7d66e4113c84611262c6c38e9b6367308fde\n"
             + "b8d0dd60d9913b6f57477f2aa02a0c6a5a5c75fd87bd6a397dec3112cf268688\n"
-            + "550bb8e3c28108621cee54dfbd40bc61baf330d04d8d1d35a0b2dbd2cd49905e\n"
+            + "a53fe00877522bacee4cf56de88b68d1be3882934430348d88e2159a1f9655d3\n"
             + "c08fc09804a0b40dd63e54f88d44c1bf64cd0431304428e440fa96c10ef776ff",
             string.Join("\n", new[] {
                 CanonicalSha(value.Family.ToCanonicalBytes()),
@@ -452,9 +450,11 @@ public sealed class CanonicalContractTests {
         ));
         Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(
             value.Recipe,
-            default,
-            value.Evaluation.HistorySegmentDigest,
-            null,
+            Coordinate(
+                value.Recipe,
+                default,
+                value.Evaluation.HistorySegmentDigest
+            ),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Evaluate(
                 value.Definition.LogicalColumnId,
@@ -693,9 +693,11 @@ public sealed class CanonicalContractTests {
         FormalFixture value = FormalValues();
         Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(
             value.Recipe,
-            value.Spec.HistoryRowId,
-            value.Spec.HistorySegmentDigest,
-            null,
+            Coordinate(
+                value.Recipe,
+                value.Spec.HistoryRowId,
+                value.Spec.HistorySegmentDigest
+            ),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Reuse(
                 value.Definition.LogicalColumnId,
@@ -709,9 +711,11 @@ public sealed class CanonicalContractTests {
         );
         Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(
             value.Recipe,
-            RowId('a'),
-            value.Evaluation.HistorySegmentDigest,
-            null,
+            Coordinate(
+                value.Recipe,
+                RowId('a'),
+                value.Evaluation.HistorySegmentDigest
+            ),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Evaluate(
                 value.Definition.LogicalColumnId,
@@ -723,9 +727,11 @@ public sealed class CanonicalContractTests {
         );
         Assert.Throws<ArgumentException>(() => RowBuildSpec.CreateFull(
             value.Recipe,
-            RowId('a'),
-            value.Evaluation.HistorySegmentDigest,
-            null,
+            Coordinate(
+                value.Recipe,
+                RowId('a'),
+                value.Evaluation.HistorySegmentDigest
+            ),
             projected,
             [new RowBuildAssignment.Evaluate(
                 value.Definition.LogicalColumnId,
@@ -896,9 +902,7 @@ public sealed class CanonicalContractTests {
         ]);
         RowBuildSpec spec = RowBuildSpec.CreateFull(
             recipe,
-            RowId('a'),
-            HistoryDigest('b'),
-            null,
+            Coordinate(recipe, RowId('a'), HistoryDigest('b')),
             PriorInputReference.FirstRow.Value,
             [new RowBuildAssignment.Evaluate(
                 definition.LogicalColumnId,
@@ -934,6 +938,26 @@ public sealed class CanonicalContractTests {
             fulfilled
         );
     }
+
+    private static RowViewCoordinate Coordinate(
+        GridBuildRecipe recipe,
+        HistoryRowId rowId,
+        HistorySegmentDescriptorDigest descriptor,
+        RowViewDigest? previousView = null,
+        bool? bootstrapCompleted = null
+    ) => new(
+        new RefId(1),
+        recipe.TimelineId,
+        rowId,
+        descriptor,
+        recipe.Digest,
+        recipe.Target.Digest,
+        previousView is null ? null : RowId('0'),
+        previousView,
+        bootstrapCompleted
+            ?? (recipe.Kind == GridBuildRecipeKind.Full
+                || recipe.BootstrapThroughRowId == rowId)
+    );
 
     private sealed record FormalFixture(
         FamilyDefinition Family,

@@ -181,7 +181,7 @@ public static class RecapGridStoreMaintenance {
                     .OfflineCleanupRequired(sidecar);
             }
             return new RecapGridStorePrepareResetResult.Prepared(
-                StoreDurableFiles.ComputeWitness(paths, limits)
+                StoreDurableFiles.ComputeWitness(paths)
             );
         }
         catch (PlatformNotSupportedException) {
@@ -231,7 +231,7 @@ public static class RecapGridStoreMaintenance {
                     .OfflineCleanupRequired(sidecar);
             }
             RecapGridStorePhysicalWitness actual =
-                StoreDurableFiles.ComputeWitness(paths, limits);
+                StoreDurableFiles.ComputeWitness(paths);
             if (actual != expected) {
                 return new RecapGridStoreResetResult.StaleConfirmation(actual);
             }
