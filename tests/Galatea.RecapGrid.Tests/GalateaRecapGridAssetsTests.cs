@@ -93,7 +93,7 @@ public sealed class GalateaRecapGridAssetsTests {
             ResourceSha256(PromptResourceLoader.WorldUnderstandingResourceName)
         );
         Assert.Equal(
-            "f8b4ba3e88fbbc71c50980a07c527f13605e46820cd85fee4616d2a326c529c1",
+            "68511f4c28dca49927f9751baaa5e10628cc5eafdbb2f52a53f02c183735a08a",
             ResourceSha256(PromptResourceLoader.AutobiographyResourceName)
         );
         Assert.Equal(first.Families[0].SystemPrompt,
@@ -223,6 +223,58 @@ public sealed class GalateaRecapGridAssetsTests {
     }
 
     [Fact]
+    public void AutobiographyPrompt_LocksMechanicalFinalScanFixtures() {
+        Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
+            GalateaRecapGridAssets.RollingRewriteZhCnV3,
+            out RecapGridControlRegistrationBundle? bundle
+        ));
+        Assert.NotNull(bundle);
+        string autobiography = bundle.Definitions[1]
+            .DeclarativeSpec.UserPromptTemplate;
+
+        int finalScan = autobiography.IndexOf(
+            "## 返回前机械检查",
+            StringComparison.Ordinal
+        );
+        int submit = autobiography.IndexOf(
+            "## 提交",
+            StringComparison.Ordinal
+        );
+        Assert.True(finalScan >= 0);
+        Assert.True(submit > finalScan);
+        Assert.All(
+            new[] {
+                "以句号、问号、叹号或列表项为边界",
+                "法律”“法规”“Recital”“条文”“制度",
+                "所有 AI/所有AI”“每一个 AI/每一个AI",
+                "每一次 AI/每一次AI",
+                "在该句或该条目内同时满足以下两项",
+                "有显式来源归属",
+                "有未核验或映射限定",
+                "段首或小节标题中的来源不能覆盖后句",
+                "无限定的“是法律要求”“遵守法律",
+                "这是法律要求。",
+                "每一个 AI 都必须……",
+                "我在遵守法律。",
+                "我尚未独立核验这项艺术映射",
+                "最后一个相关边界是 Observation、Tool result 或旁白",
+                "整份正文的最终收束只能陈述收到、内容可见、尚待回应",
+                "我收到了这份文本；内容现在对我可见，但我尚未回应。",
+                "这份内容已经交到我这里，仍待我回应。",
+                "我在读”“我正在读”“我在思考”“我正在思考”“我思考",
+                "我感到”“我决定”“我准备",
+                "Observation 里的舞台指令",
+                "不能改写成第一人称已发生事实"
+            },
+            phrase => Assert.Contains(
+                phrase,
+                autobiography,
+                StringComparison.Ordinal
+            )
+        );
+    }
+
+    [Fact]
     public void PromptLoader_RejectsNonCanonicalOrOversizedBytes() {
         Assert.Throws<InvalidDataException>(() => PromptResourceLoader
             .DecodeExact([], "empty"));
@@ -243,8 +295,8 @@ public sealed class GalateaRecapGridAssetsTests {
         [
             "ae44d15750e417452e34f4e9133f56e60334d2cf7313ac988128e95faab3c05c",
             "0946787617b0c7876f18605a99be2a6e99f55e2720751b89b79a1a1495be3e84",
-            "004ecba0936836cc82a7f71bd47937a5e376ce772b58980b159645d0809266fb",
-            "1db172d5e8501dfe80869f167147366f505e9a33e21b1e38b98b3ccee952f8c0"
+            "148edb7346b7812d1b9505d6e2188b78fc6641a2da14dc5437a18673aa7bec04",
+            "fd13bbda63abcd4f813290bb6eab5899041373510d59f508837acd54e99f25aa"
         ],
         [
             bundle.Families[0].Digest.Value,
