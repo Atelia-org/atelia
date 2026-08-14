@@ -1,6 +1,7 @@
 # SessionJournal RecapGrid host integration
 
-状态：WP-08 formal source cutover Complete；current code/tests是authority。real-provider与actual cyber activation仍为外部`NotRun`。
+状态：WP-08 formal source cutover Complete；C2D real-provider与本机actual cyber activation Complete；current code/tests与actual
+repo authority仍须分别核验。
 
 ## Single-owner composition
 
@@ -61,4 +62,5 @@ enumerator/lease，不销毁共享snapshot。任何raw head变化均返回typed 
 - `recap_grid.control`的receipt支持幂等replay与indeterminate settlement，但不把uncertain external effects
   描述成exactly-once。
 - old v4-v8/rebuild legacy roots inert；只有formal legacy-root operator可以archive/delete。
-- real-provider HTTP/caching/economic canary仍需独立人工环境验证，deterministic tests不能替代。
+- real-provider HTTP/caching/economic canary已在C2D独立人工环境完成；deterministic tests仍不能替代下一次provider/config revision的
+  fresh canary。exact evidence见[C2 rolling maintainers](../../work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md)。

@@ -1,7 +1,7 @@
 # DerivedRecap Grid C2：Galatea rolling maintainers 设计与实施边界
 
 状态：C2A/C2B/C2C source implementation complete；RecapRewriter V3 source hard cut complete；
-V2 real-provider canary已fail closed，V3 canary rerun / actual cyber activation `NotRun`
+C2D real-provider canary与本机actual cyber activation complete（2026-08-15）
 
 总体设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)  
 Cadence/capacity/activation 总审计：[`derived-recap-grid-cadence-capacity-and-activation-audit.md`](derived-recap-grid-cadence-capacity-and-activation-audit.md)
@@ -254,8 +254,8 @@ focused 2/2、Galatea full 93/93；frozen/provider-free阶段provider constructi
 
 ### C2D：real-provider canary + actual activation
 
-状态：V2 canary已fail closed并促成V3 hard cut；V3 canary rerun与actual activation为`NotRun`。必须使用执行当下确认的
-exact disposable repo/call manifest，不能由source tests替代。
+状态：Complete。V2 canary fail closed并促成V3 hard cut；V3先在disposable repos完成rolling与内容质量门禁，随后从
+immutable legacy JSON export重新导入全新的actual repo并完成显式promotion。source tests没有被当作real-provider evidence。
 
 - 先在immutable legacy export导入的一次性repo clone上，使用
   `prototypes/Galatea/.atelia/galatea/connections.json`中的默认Opus 4.6 connection做bounded rebuild；
@@ -265,6 +265,70 @@ exact disposable repo/call manifest，不能由source tests替代。
 - canary通过后，actual cyber activation仍需再次确认停服时点、exact target repo/Ref/raw、备份/恢复边界和首次new raw write；
   随后才可重建或替换actual cyber repo并显式provision/build/promote；
 - 首次new raw append前允许回退binary/config；append后不得覆盖raw，只能forward-fix或先证明旧binary兼容新raw。
+
+#### 6.1 C2D exact execution record
+
+本次执行使用run root
+`gitignore/galatea-grid-acceptance/20260814-c2d-cyber-b71822a/`；该目录被git忽略，包含受限call logs、operator inputs、
+content-free reports与pre-activation config backups，不是tracked source。最终无正文/无secret的live evidence为
+`reports/activation-live-readiness.json`。legacy authority为：
+
+- export：`prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-legacy-upgrade-export.json`；
+- source SHA-256：`b71822a27003e8d9f9b9c0ff956ca7c268267aba72221be89df154ed7d4751f3`；
+- imported Ref：`000000000400001f`；imported raw head：`ej1:00000487000004330000000100000000`；
+- import得到71个Observation、71个Action、1个runtime setup、4个prompt setup；旧2个compaction与2个recap被显式跳过，warnings为0；
+- calibration为HistoryLoad 116,458、142 history units、145 raw events与414,487 rendered bytes。
+
+第一次V2 real-provider canary发现`Role-Play Agent`被模型替换成terminal tool name。V2 reserved-token gate阻止了污染Cell落盘，
+但该结果证明tool name本身已经进入长期记忆语义，因此hard cut到V3 `FullReplacementText`/zero-tools，而不是重试或增加兼容分支。
+
+V3 real-provider采用同一shared Family、world-first、`maxConcurrency=1`、Opus 4.6与runtime `reasoningEffort=low`；model与effort仍不进入
+durable identity。B=45,000/R=24,000 disposable shadow真实生成2 rows/4 cells，证明row 1两个siblings读取同一whole prior pack，且其中
+两列分别与row 0输出逐字相等；每row第一列创建Anthropic prefix cache、第二列读取该prefix。该结构证据来自较早的V3 member prompt
+revision；最终production prompt在固定export的B=60,000/R=24,000 policy下只产生一个bootstrap row，因此不能把前者冒充为最终prompt的
+第二row质量证据。
+
+内容gate没有因wire/Store成功而自动放行。多个fresh B60 candidates依次因以下P0被拒绝且从未promotion：
+
+1. autobiography把剧本中的Recital 132艺术映射升格为现实法律要求；
+2. Timeline row以用户Observation提交文本结束时，autobiography虚构Galatea已经阅读、感受、评价或“正在读”；
+3. 来源限定只在段首出现、后续可独立流通的绝对句又失去局部source/uncertainty scope。
+
+对应prompt revisions把法律/制度/故事机制改为逐句或同一条目局部绑定source与未核验状态，并规定无Galatea Action的terminal segment只能
+记录“收到/可见/尚未回应”，不得补写心理吸收、评价、选择或进行中的动作。最终fresh B60 candidate的两项P0均关闭，independent review
+给出promotion GO：world与autobiography分别为7,464与7,841 UTF-8 bytes，低于32 KiB；两列无协议词污染，identity-bearing `Agent`/
+`Role-Play Agent`保持原词；autobiography把法律命题限定为老刘剧本的艺术解读并注明未独立核验，末句只记录文本可见且尚未回应。
+
+最终两次provider调用均为`opus4-6-recap` / `claude-opus-4-6` / Anthropic / low，termination为`end_turn`且errors为0。bounded usage
+合计为27,341 uncached input、20,273 cache creation、144,545 cache read与6,152 output tokens；第二列的82,409 cache read包含首列新建的
+20,273-token prefix，证明sequential sibling prefix reuse。repeat build为zero-call/zero-write，Timeline/Control/Grid verify、promotion与
+materialization全部通过。
+
+#### 6.2 Actual cyber activation
+
+actual repo不是旧DerivedRecap repo的clone，而是再次从同一immutable export fresh import：
+
+```text
+prototypes/Galatea/.atelia/galatea/sessions/cyber-session-journal-recap-grid
+```
+
+在RecapGrid init之前，operator用exact old head显式reconcile governing setup到main connection `opus4-6`、Anthropic surface与当前
+`prompts/cyber.md`；新raw head为`ej1:00000498c80004b10000000100000000`。随后按B=60,000/R=24,000显式创建Cadence/Timeline/
+Control/Grid、sync一个row、provision V3 asset、world-first compose/put、用独立recap connection执行2-call build、zero-call复验、promotion与
+materialization。actual recipe digest为`2aaade63404d086393ee3e9998f71620ae1e4748f35a3d634d6e66ba4faff0d3`；actual两份输出与已批准
+的final disposable candidate逐字相等。
+
+live config已切到该新repo和V3 profile/route。main Agent的default connection仍是`opus4-6`且保持provider-default reasoning；
+RecapGrid单独使用`opus4-6-recap`的low策略。strict live connections保留原有dsv4p、opus4-6、opus5与fable5 choices，只删除retired
+top-level routing field并补齐strict surface/base-address shape，没有把“recap两列使用单一模型”误解成删除main-agent choices。
+
+正式live config复验只执行登录、`/api/me`与`/api/recent-turns`，没有提交用户消息或构造main completion；结果为
+`freshness=exact`、`state=ready`、6个recent turns、上述raw head与actual recipe exact。旧repo
+`prototypes/Galatea/.atelia/galatea/sessions/cyber-session-journal`未修改、未归档、未删除。
+
+回滚边界是恢复run root中create-only保存的pre-activation `config.json`与`connections.json`，使Host重新指向旧repo；回滚绝不删除、
+覆盖或rewind新repo。当前尚未在新active repo发送用户消息，因此该config rollback仍不会遗失cutover后的对话。首次新用户raw append后，
+不得用回退配置隐藏新经历；应停服并forward-fix，或先制定显式的raw-preserving迁移方案。
 
 ## 7. 验收与No-Go
 
@@ -279,13 +343,15 @@ C2 source candidate至少满足：
 7. real-provider与actual cyber activation各自有独立evidence，不以fake tests冒充；
 8. docs checker、Walking dependency/public-surface gates、affected suites、solution build与diff check green。
 
-C2A-C2C source closure已满足上述八项；两路independent review最终均为GO（P0=0，P1=0）。这只关闭source gate，
-不关闭下述C2D外部执行门禁。
+C2A-C2C source closure与C2D external execution现已满足上述八项；source、disposable real-provider和actual activation evidence仍按各自
+边界记录，不能相互替代。
 
-V3最终串行affected evidence：Abstractions 15/15、Runtime 52/52、Hosting 20/20、Online 31/31、AgentControl 20/20、
-Control 45/45、Manager 74/74、Getter 27/27、CLI 100/100、Galatea asset 4/4、Galatea Server 93/93、
+V3 protocol hard-cut串行affected evidence：Abstractions 15/15、Runtime 52/52、Hosting 20/20、Online 31/31、AgentControl 20/20、
+Control 45/45、Manager 74/74、Getter 27/27、CLI 100/100、Galatea Server 93/93、
 Galatea/Runtime/Hosting/AgentControl public-surface 1/1 + 2/2 + 2/2 + 1/1、Walking 27/27；`Atelia.sln` build
-0 warning / 0 error，scoped legacy-protocol search与diff check均为green。
+0 warning / 0 error，scoped legacy-protocol search与diff check均为green。最终source-discipline/role-boundary revisions
+`c03c3776`、`ed1d146b`、`cfc04efb`之后，asset direct gates为7/7、CLI 100/100、Galatea Server 93/93，solution build仍为
+0 warning / 0 error。
 
 同一asset ID一旦进入Control receipt/canonical catalog即视为immutable。prompt、Family、Definition或output mode的canonical bytes发生变化时
 必须发布新的asset revision（例如`...-v4`）；不得让同一个operator operation identity在不同binary中代表不同registration command。
@@ -305,10 +371,5 @@ No-Go条件：把Opus 4.6写入semantic identity；把prompt正文复制进C#形
 - 新程序集、operator catalog composition、测试/public-surface/Walking细节；
 - fake provider验证范围。
 
-以下两项不是source语义问题，但必须在执行当下取得用户输入：
-
-- real-provider canary的exact disposable clone/provider/model/connection/call cap/retry/logging manifest；
-- actual cyber activation的停服时点、exact target repo/Ref/raw witness、备份/恢复边界与首次new raw write。
-
-用户已经方向性授权使用真实connection、费用不作为阻断，并允许在必要时放弃故障期经历、从clean legacy export重建；该授权不替代上述
-exact execution manifest。除此之外，当前没有需要用户继续澄清的C2需求或关键设计决策。
+上述两个execution decisions已在C2D中以exact manifest落实：bounded disposable clones先行、actual repo从clean legacy export fresh import、
+pre-activation config create-only备份、无用户消息的live readiness复验。当前没有需要用户继续澄清的C2需求或关键设计决策。

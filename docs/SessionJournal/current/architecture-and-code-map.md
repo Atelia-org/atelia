@@ -75,16 +75,16 @@ identity、head fence 与重建边界的 companion state；它们不回写 raw h
 
 ## Current boundaries
 
-- WP-08 source implementation and independent closure are complete. The real-provider canary and actual cyber
-  repository activation remain external `NotRun` gates.
-- A fresh no-local checkout is a post-commit identity gate and has not run; it does not replace or weaken the
-  completed source/independent closure.
+- WP-08 source implementation and independent closure are complete. C2D later completed a separately bounded
+  real-provider canary and local actual cyber repository activation; it did not rewrite WP-08 source evidence.
+- A fresh no-local checkout ran for the containing source candidate. It does not replace either independent source
+  closure or the later machine-local C2D activation evidence.
 - Operator provisioning/composition/activation is explicit. There is no implicit autobiographical or
   world-understanding default roster.
 - The formal CLI surface is `recap-grid ...` plus top-level `run-online-turn`; Galatea owns one
   `RecapGridCompletionHost` and one formal RecapGrid composition.
 - Provider cache/economic claims require a real authenticated canary and cannot be inferred from deterministic
-  tests.
+  tests. C2D has such evidence for the current V3/Opus route; future provider, route or prompt revisions need fresh evidence.
 
 See [concepts](derived-recap/concepts.md), [durable target](derived-recap/durable-target.md),
 [HistoryLoad](derived-recap/history-load.md), and [host integration](host-integration/derived-recap-host-integration.md).

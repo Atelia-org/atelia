@@ -2,7 +2,7 @@
 
 状态：Active capacity/activation audit；cadence A0/A1/A2 complete，C3A/C3B/C3C/C3D complete；C3C两路independent
 closure均GO（P0=0，P1=0）；C2A/C2B/C2C source complete且两路independent closure均GO（P0=0，P1=0）；
-C2D real-provider/actual activation及C4/C5仍未完成。
+C2D real-provider/actual activation与C5 complete；C4 retention/rollover仍未完成。
 
 核对基线：cutover `6f9ea7db`；cadence owner `0af28eea`、authority/durability fixes `397f2ab8`/`b0bce3b3`、
 reserve-aware seal `1e8ea927`、reserve-aware selection `bac31986`。事实优先级仍是 current code、tests、canonical codecs，以及 raw events + selected
@@ -32,9 +32,10 @@ WP-00 至 WP-08 已经完成 Grid source cutover，但“rolling rewrite 正确�
 4. Online/CLI seal已不再只按B drain，必须证明candidate之后仍保留至少R；
 5. `128` 不是 Timeline 总 row 上限，Manager的4,096 whole-path semantic cliff已由C3B删除；C3D V2又删除
    Timeline累计65,536-row/8 GiB lifetime caps与旧逐row immutable-trie path-copy放大，仍保留每页、单artifact与单operation边界；
-6. Galatea 需要的“自传 + world-understanding + Opus 4.6”正式 built-in 与真实数据激活仍未完成。
+6. Galatea需要的“自传 + world-understanding”V3 operator asset与真实数据激活现已完成；Opus 4.6仍只是runtime policy。
 
-因此 actual cyber activation 维持 **No-Go**，直到 §9 的 activation-blocking 项关闭。
+本审计最初据此维持actual cyber activation **No-Go**；§9的C2/C5门禁现已由C2D exact execution关闭，C4仍是独立长期
+retention/rollover课题，不追溯阻断这次bounded activation。
 
 ## 2. 用户可见的目标承诺
 
@@ -59,7 +60,7 @@ WP-00 至 WP-08 已经完成 Grid source cutover，但“rolling rewrite 正确�
 
 目标实现形状：
 
-- 一个 code-owned `galatea-rolling-rewrite-zh-cn-v1` built-in；
+- 一个 code-owned `galatea-rolling-rewrite-zh-cn-v3` operator asset；
 - 两个 ordered Maintainer Definitions和一个 Full recipe；两列共用现有
   [`recap-maintainer-family/system-zh-cn.md`](../../../Galatea/prompt/recap-maintainer-family/system-zh-cn.md)
   形成一个shared Family，专业差异来自各自的zh-CN user prompt；
@@ -73,9 +74,9 @@ WP-00 至 WP-08 已经完成 Grid source cutover，但“rolling rewrite 正确�
 C2 exact设计、程序集边界、未来RecapEditor/ExperienceRefiner扩展点与实施矩阵见
 [`derived-recap-grid-c2-galatea-rolling-maintainers.md`](derived-recap-grid-c2-galatea-rolling-maintainers.md)。
 
-当前 repo 只有 `mystery-investigation-v1` AgentControl code-owned built-in；上述Galatea operator asset仍是待实现目标。每列
-`MaxContentUtf8Bytes = 32 KiB`作为C2首版工程默认；若真实canary证明不足，应发布新Definition revision调整，不能用runtime override
-改变既有Definition语义。
+Galatea operator asset由独立Galatea-owned catalog提供，不进入`mystery-investigation-v1`所在的AgentControl built-in catalog。
+每列`MaxContentUtf8Bytes = 32 KiB`作为C2首版工程默认；真实canary最终输出分别为7,464与7,841 bytes，未触及该bound。以后若需调整，
+仍应发布新Definition revision，不能用runtime override改变既有Definition语义。
 
 ### 2.3 Rolling rewrite 的跨 row 语义
 
@@ -104,7 +105,7 @@ C2已锁定single shared Family，因此两列走同一route group的leader/foll
 
 ## 3. Cadence 的 implemented target 语义
 
-本节的R/B与authority边界已由A0-A2实现；它仍不等于C2 built-in、C3/C4长期容量或C5 actual activation已经完成。
+本节的R/B与authority边界已由A0-A2实现；它不替代C2/C5的独立real-provider/activation evidence，也不关闭C4长期retention。
 
 ### 3.1 两个独立量
 
@@ -435,15 +436,17 @@ provider evidence时，才能采用第二种账单模型。模型价格会变化
 
 A3增加provider-free `recap-grid cadence inspect|set-reserve` operator surface；`set-reserve`只CAS更新R，不能改B。
 
-### C2：Galatea rolling built-in and route（activation blocking）
+### C2：Galatea rolling operator asset and route（complete）
 
 - C2A-C2C source已由commits `bf4beff0`、`eb3743dd`、`62b93f9a`及其closure tail实现，两路independent review均GO；
-- `galatea-rolling-rewrite-zh-cn-v1` operator asset提供一个shared Family、两Definition和provider-free Full recipe composition；
+- `galatea-rolling-rewrite-zh-cn-v3` operator asset提供一个shared Family、两Definition和provider-free Full recipe composition；
 - 固定ordered targets、strict canonical bytes/goldens与runtime identity；
 - 两列capability显式`SemanticModelId=null`；runtime route/config默认选择Opus 4.6但允许以后切换model，无fallback、
   provider/client保持lazy，actual provider/model/connection只进入operation evidence；
 - fake Host已证明previous-row rolling、same-row shared prefix、Keep、missing-only restart及model A/B只补missing；
-- 用真实Opus 4.6 disposable clone证明terminal protocol、输出质量、cache/usage、latency和费用。
+- V2真实Opus canary因terminal tool name污染业务术语而fail closed，随后hard cut为V3 zero-tools `FullReplacementText`；
+- V3真实Opus disposable runs证明2-row rolling prior、shared cache、输出质量、usage/latency与内容门禁；多个不合格B60 candidates未promotion，
+  最终candidate通过来源纪律和Observation/Action role-boundary独立审阅。
 
 ### C3：Incremental Manager and capacity observability
 
@@ -467,22 +470,23 @@ A3增加provider-free `recap-grid cadence inspect|set-reserve` operator surface�
 - 裁决Prepared引用、NthPrevious支持窗口、archive/export与derived GC承诺；
 - 用小caps fixture验证exact/cap+1、wrong checkpoint、crash before/after publish与旧generation inert。
 
-### C5：Cyber rebuild and production activation
+### C5：Cyber rebuild and production activation（complete）
 
-- 优先从`prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-legacy-upgrade-export.json`
-  作为用户指定的cleaner-base candidate新建SessionJournal repo；这是一项activation选择，不是本文对旧事故根因的证明；
+- 已从`prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-legacy-upgrade-export.json`
+  作为用户指定的cleaner-base新建SessionJournal repo；这是一项activation选择，不是本文对旧事故根因的证明；
 - `prototypes/Galatea/.atelia/galatea/sessions/cyber-session-journal`只作为旧repo备份/审计输入；旧derived正文不得迁入新Grid。
   用户已明确允许舍弃疑似受故障运行影响的一段经历，但真正切换前仍须exact确认import文件hash、selected Ref、目标repo与停服窗口；
 - 上述`.atelia`路径均为operator-local ignored data，不属于fresh checkout/source gate证据；runbook不能假定另一台机器存在同样文件；
-- provider-free阶段完成import validation、Timeline/Cadence/Control/Grid create、sync、provision、recipe与fake vertical；derived-only步骤不改raw；
-- 真实调用与actual repo操作以[Galatea G2A staging acceptance](../../operations/galatea-g2a-staging-acceptance.md)为外部门禁：
-  先取得用户对exact disposable clone、provider/model、maximum calls/estimated cost、无自动retry与日志不落secret的明确授权；
-- 在disposable clone上用`prototypes/Galatea/.atelia/galatea/connections.json`和Opus 4.6执行bounded rebuild；
-- canary通过后再次取得actual activation确认；停服、备份actual repo/config并确认selected Ref/raw head/phase，才替换正式cyber repo；
-- 首次new raw append前可以回退binary/repo selection；append后不得用旧backup覆盖raw，只能证明旧binary可replay或forward-fix。
+- provider-free阶段完成import validation、Timeline/Cadence/Control/Grid create、sync、provision与recipe；derived-only步骤不改raw；
+- 真实调用与actual repo操作按[Galatea G2A staging acceptance](../../operations/galatea-g2a-staging-acceptance.md)执行，使用exact disposable
+  clone、2/4-call bounds、无自动retry、env-backed secret与受限call logs；
+- actual repo再次从export fresh import，不提升disposable clone；显式reconcile current setup后完成B60/R24 build、zero-call repeat、promotion、
+  materialization和正式Host exact/ready复验；
+- live config与connections有create-only pre-activation backups，旧DerivedRecap repo保持inert。新active repo尚未接收用户消息；之后若已追加
+  新对话，不能用旧backup覆盖或隐藏raw，只能forward-fix或制定raw-preserving迁移。
 
-A0→A1→A2与C2A-C2C source closure已经完成；C2D仍是真实LLM写入前的硬门禁。C3D已由commit `7a9c0b3b`完成；C3C orchestration
-已Complete且两路independent closure均GO。
+A0→A1→A2、C2A-C2D与C5已经完成。C3D已由commit `7a9c0b3b`完成；C3C orchestration已Complete且两路independent
+closure均GO。
 C4是retention/rollover与跨operation recovery优化，不再是跨越固定65,536 lifetime cap的前置条件；是否作为首次activation门禁
 取决于用户要求的retention/rollback horizon，不能再以旧累计cap论证。
 
@@ -540,14 +544,13 @@ C4是retention/rollover与跨operation recovery优化，不再是跨越固定65,
 
 ## 11. 后续 retention / activation 审阅清单
 
-以下项目不阻塞C2 source实施，但在对应retention/activation阶段仍需用户确认或现场authority：
+以下项目不阻塞已完成的C2/C5 activation，但在后续retention阶段仍需用户确认或现场authority：
 
 1. 长期保留承诺：是否需要保存所有中间Cells/Views，还是保留active/Nth/Prepared所需窗口并允许显式GC。
 2. C4 generation rollover是否为首次production activation硬门禁，还是允许在明确容量水位下先做bounded pilot。
-3. 用户已允许放弃疑似故障期经历；activation时仍需确认clean import文件hash、selected legacy Ref、目标repo与停服时点。
+3. 若未来再次rebuild/切换actual repo，仍须重新确认当次clean import hash、selected Ref、目标repo、停服时点与新raw rollback boundary。
 
 shared Family与prompt来源、model/runtime identity边界已经裁决：Opus 4.6不是durable semantic identity，C2使用
 `SemanticModelId=null`；model切换后保留既有Cells并由新model补missing work也属于已接受的runtime provenance。
 C2首版32 KiB/列、world-first顺序与prompt规则迁移作为工程决策处理。R=24,000、B=60,000及repo-owned Cadence authority
-也已不再是待裁决项。C3/C4/C5其余裁决仍未完成；
-本文不授权修改actual cyber repository或发起真实provider调用。
+也已不再是待裁决项。C4其余裁决仍未完成。本文记录的C2D授权已执行完毕；它不自动授权未来新的actual repo mutation或provider run。

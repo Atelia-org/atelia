@@ -1,7 +1,9 @@
 # Galatea RecapGrid repeatable staging acceptance
 
-> **状态**：Active procedure / WP-08 formal CLI shape
-> **验证边界**：本文是runbook，不是Passed evidence。WP-08没有运行真实LLM或真实cyber repository。
+> **状态**：Active procedure / current formal CLI shape
+> **验证边界**：本文是可重复runbook，不把procedure本身冒充Passed evidence。WP-08当时没有运行真实LLM或actual cyber repo；
+> C2D在2026-08-15已按本流程完成，exact record见
+> [`C2 Galatea rolling maintainers`](../work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md)。
 
 ## 1. Goal and trust zones
 
@@ -72,7 +74,8 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 ```bash
 mkdir -p "$operator_dir"
 galatea_connections="prototypes/Galatea/.atelia/galatea/connections.json"
-recap_connection_id="opus4-6"
+recap_source_connection_id="opus4-6"
+recap_connection_id="opus4-6-recap"
 partition_algorithm="atelia.history-timeline.partition.first-replay-safe-at-target.v1"
 estimator="atelia.history-load.o200k-base.history-unit-v1"
 minimum_recent=24000
@@ -88,22 +91,24 @@ route_manifest="$operator_dir/recap-grid-routes.json"
 strict_connections="$operator_dir/recap-grid-connections.json"
 recipe_file="$operator_dir/galatea-rolling-full-recipe.json"
 
-# 当前Galatea connections文件含legacy routing字段，且省略strict reader要求的
-# baseAddress/completionSurfaceId；不能直接交给recap-grid build。只投影本轮Opus连接，
-# 不复制literal apiKey。所有output必须事先不存在。
-( set -o noclobber; umask 077; jq -e --arg id "$recap_connection_id" '
-    [.connections[] | select(.id == $id)]
-    | if length != 1 then error("exact recap connection absent or duplicate")
+# 首次部署时dedicated recap id尚不存在。live connections可能还包含retired routing字段；
+# acceptance不复用whole file，而从exact main source connection投影provider/model/env/cache字段，
+# 显式创建runtime-only recap id与low effort，不复制literal apiKey。所有output必须事先不存在。
+( set -o noclobber; umask 077; jq -e \
+  --arg source "$recap_source_connection_id" \
+  --arg target "$recap_connection_id" '
+    [.connections[] | select(.id == $source)]
+    | if length != 1 then error("exact source connection absent or duplicate")
       else .[0] end
     | select(.kind == "anthropic")
     | {
-        defaultConnectionId: .id,
+        defaultConnectionId: $target,
         connections: [{
-          id, kind, modelId,
-          completionSurfaceId: "anthropic",
+          id: $target, kind, modelId,
+          completionSurfaceId: (.completionSurfaceId // "anthropic"),
           baseAddress: (.baseAddress // ""),
           baseAddressEnv, apiKeyEnv,
-          maxTokens, reasoningEffort, anthropicPromptCacheTtl
+          maxTokens, reasoningEffort: "low", anthropicPromptCacheTtl
         } | with_entries(select(.value != null))]
       }
   ' "$galatea_connections" >"$strict_connections" )
@@ -116,8 +121,8 @@ api_key_env="$(jq -er '.connections[0].apiKeyEnv' "$strict_connections")"
 
 scaffold_report="$(dotnet run --project prototypes/SessionJournal.Cli -- \
   recap-grid scaffold \
-  --asset galatea-rolling-rewrite-zh-cn-v1 \
-  --profile-id galatea-rolling-v1 \
+  --asset galatea-rolling-rewrite-zh-cn-v3 \
+  --profile-id galatea-rolling-v3 \
   --connection-id "$recap_connection_id" \
   --permission create --permission register-family \
   --permission register-definition --permission register-recipe \
@@ -175,7 +180,7 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   recap-grid control provision-asset \
   --input "$staging_repo" --branch main --confirm-ref "$ref_id" \
   --admission "$admission" \
-  --asset galatea-rolling-rewrite-zh-cn-v1
+  --asset galatea-rolling-rewrite-zh-cn-v3
 
 compose_report="$(dotnet run --project prototypes/SessionJournal.Cli -- \
   recap-grid control compose-full-recipe \
@@ -283,7 +288,7 @@ missing work，完成后再次reopen为zero-call。任何阶段都不得创建ol
 
 candidate recipe build不自动activate。promotion必须同进程pure-read检查current head-through assignment、fulfillment与exact proof，
 再用whole Control/Timeline heads执行operation-aware CAS。partial/stale/missing不得activate。
-`build_report`中的bounded telemetry必须exact记录2个settled events与`opus4-6`/`claude-opus-4-6`；
+`build_report`中的bounded telemetry必须exact记录2个settled events与本轮`recap_connection_id`/`claude-opus-4-6`；
 Completion call logs和带正文的materialization只放受限`call-logs/`，不得复制到content-free `reports/`。
 首次build失败后不自动或循环retry：先读progress、已写logs与Store状态，再由operator决定是否只补missing cell。
 
@@ -306,9 +311,9 @@ Completion call logs和带正文的materialization只放受限`call-logs/`，不
 deterministic tests不能替代下列人工gate：
 
 - TLS/auth/endpoint/model availability；
-- real provider terminal tool protocol；
+- V3 no-tools `FullReplacementText` Completion contract/provider projection与真实`end_turn` termination；
 - provider-native cache write/read evidence与usage accounting；
-- model quality、mystery-analysis coherence与经济性。
+- 两列连续性、source/role discipline与经济性。
 
 每个provider使用独立fresh clone与call-log目录。记录git identity、config/route digests、typed outcome与bounded usage；
 不记录secret或正文。环境失败记`EnvironmentBlocked`，不能改写为Passed。
@@ -318,3 +323,59 @@ deterministic tests不能替代下列人工gate：
 只有import/raw baseline、formal provisioning、provider-free gates、restart/materialization、CLI/Galatea host gates与本轮要求的
 real-provider gates全部通过，才把该run id标为`Passed`。否则精确记录`Failed`或`NotRun`。保留run root只用于审计，
 cleanup也必须是显式、bounded、可核对的operator action。
+
+## 9. Actual activation after a passed disposable candidate
+
+Passed disposable clone不能直接提升为actual repository。停服后必须再次从同一immutable export导入一个全新actual repo。先把
+reconcile产生的新head提升为后续唯一raw authority witness：
+
+```bash
+pre_setup_head="$raw_head"
+actual_connections="$host_config/candidate-connections.json"
+main_connection_id="opus4-6"
+system_prompt_file="prototypes/Galatea/.atelia/galatea/prompts/cyber.md"
+setup_report="$reports/reconcile-actual-setup.json"
+validate_after_setup="$reports/validate-actual-after-setup.json"
+
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  reconcile-desired-setup \
+  --input "$actual_repo" --branch main \
+  --expected-head "$pre_setup_head" \
+  --connections "$actual_connections" \
+  --connection "$main_connection_id" \
+  --system-prompt-file "$system_prompt_file" \
+  --report-json "$setup_report"
+
+raw_head="$(jq -er '.afterHead' "$setup_report")"
+if [[ "$raw_head" == "$pre_setup_head" ]]; then
+  jq -e '
+    .runtimeConfigChanged == false and .systemPromptChanged == false
+  ' "$setup_report" >/dev/null
+fi
+
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  validate --input "$actual_repo" --branch main \
+  --report-json "$validate_after_setup"
+jq -e --arg head "$raw_head" --arg ref "$ref_id" '
+  # SessionExecutionPhase.Idle当前按enum数值1写入validation report。
+  .head == $head and .branchRefId == $ref and .executionPhase == 1
+' "$validate_after_setup" >/dev/null
+```
+
+所有report/config output必须create-only且预先不存在。setup已exact时允许`afterHead == pre_setup_head`，但上面的gate要求report同时证明
+两项均未改变。
+
+随后按以下顺序执行：
+
+1. 以更新后的`raw_head`重新执行四域init、Timeline sync、asset provision、world-first recipe compose/put、bounded build、zero-call
+   repeat、verify、promotion与
+   materialization；不得复制disposable clone的Grid/Control/Timeline文件；
+2. 保留main-agent connection choices，给recap route使用独立connection id与runtime model/reasoning policy；model policy不进入durable identity；
+3. 在仍停服时，用candidate config path先启动一次正式Host，证明strict config/connections可open且readiness exact/ready，再干净停机；
+4. fresh核对live config/connections bytes/SHA-256仍等于preflight inventory，create-only保存两份pre-activation backups；安装两份candidate
+   文件后再次核对bytes/SHA-256，并把含credential reference或本地登录信息的文件限制为owner-only访问。两文件切换期间不得启动Host；
+5. 从正式live config再次启动Host，只登录并读取`/api/me`与`/api/recent-turns`；要求raw head、recipe、`freshness=exact`、`state=ready`，
+   且不得发送canary
+   用户消息；
+6. 保留旧repo inert。首次新用户raw append前，可通过恢复两份pre-activation config回到旧repo；该动作不得删除或改写新repo。首次新用户
+   append后，回退若会隐藏新经历则No-Go，必须改为停服forward-fix或显式raw-preserving迁移。

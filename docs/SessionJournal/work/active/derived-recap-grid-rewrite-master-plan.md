@@ -127,8 +127,8 @@ build后dispose/reopen只补missing rows且不创建legacy spool。focused evide
 13/13、legacy-root 11/11、HistoryLoad CLI 3/3、Galatea composition/readiness 9/9、Manager restart 1/1、HistoryTimeline
 tool node fixtures 6/6、scoped docs 14/0。final source evidence为36个solution test projects合计4658/4658 green、
 package vulnerability audit退出0且所有项目无已知漏洞、两路independent closure P0=0/P1=0，以及deterministic
-disposable legacy-import canary完成。real-provider canary与actual cyber activation仍为外部`NotRun` gate，不阻止
-source implementation标Complete，也不得被deterministic tests冒充。
+disposable legacy-import canary完成。当时real-provider canary与actual cyber activation仍为外部`NotRun` gate；它们不阻止
+source implementation标Complete，也不得被deterministic tests冒充。后续C2D已单独执行并记录在下文，不回写成WP-08 source evidence。
 
 Post-cutover cadence A0-A2已完成：独立per-Ref repo-owned Cadence V1是R与expected Timeline policy的durable
 authority；所有Timeline writers经reserve-aware seal，Getter/context按健康artifact选择latest R-eligible anchor。
@@ -140,16 +140,18 @@ C3D Timeline Schema V2 hard-cut、O(log N) selected-path commitment与lifetime-c
 C3C Online/CLI/Host Grid-first orchestration已Complete：每pass最多一条Timeline row/一个recipe-row，
 两个Host同请求bounded catch-up且maintenance Ready前不构造main-agent client。affected serial evidence为Manager 74/74、Online 31/31、
 AgentControl 20/20、CLI 97/97、Galatea 87/87、SessionJournal 442/442、Online external public surface 1/1与Walking 27/27，
-CLI/AgentControl产品build均为0 warning / 0 error，两路independent closure均GO（P0=0，P1=0）。以上source状态不替代
-real-provider canary或actual cyber activation。
+CLI/AgentControl产品build均为0 warning / 0 error，两路independent closure均GO（P0=0，P1=0）。以上source状态本身不替代
+real-provider canary或actual cyber activation；C2D另有真实provider与live readiness evidence。
 
 C2 Galatea rolling maintainers的需求与实施边界已经单独锁定在
 [`C2 Galatea rolling maintainers`](derived-recap-grid-c2-galatea-rolling-maintainers.md)：一个shared Family、
 world-understanding/autobiography两个ordered Definitions、runtime-configurable model且`SemanticModelId=null`、Galatea-owned
 operator asset assembly，以及RecapRewriter/RecapEditor/ExperienceRefiner之间的authority边界。C2A-C2C source candidate已由
 `bf4beff0`、`eb3743dd`、`62b93f9a`及closure tail实现，两路independent review均GO（P0=0，P1=0）；
-C2D real-provider canary与actual cyber activation
-保持`NotRun`，不被WP-00至WP-08、C3 closure或fake Host tests冒充。
+C2D现已Complete：V2 real-provider fail-closed促成V3 no-tools hard cut；V3 B45/R24 disposable shadow真实证明2-row rolling prior与
+shared prefix cache；多个B60 candidates因来源纪律与Observation/Action role boundary被拒绝，最终prompt通过独立内容审阅。actual cyber
+repo随后从immutable legacy JSON fresh import，按B60/R24完成2-call build、zero-call repeat、promotion/materialization和live
+`freshness=exact` / `state=ready`复验，且未发送用户消息。旧DerivedRecap repo保持原样；exact authority、usage与回滚边界见C2文档。
 fresh no-local checkout已在provisional containing source tree `913fd8fa`上完成：全新restore成功、Release solution
 build 0 warning / 0 error、36个test projects合计4658/4658 green、package vulnerability audit零命中、scoped docs
 14/0、all-tracked docs 71/0且checkout status clean。最终containing commit只回写该fresh evidence，没有再改变product/test source。

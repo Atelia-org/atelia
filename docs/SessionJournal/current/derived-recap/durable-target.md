@@ -1,6 +1,6 @@
 # RecapGrid durable target
 
-状态：WP-08 formal source cutover Complete；actual cyber activation仍为外部`NotRun`。
+状态：WP-08 formal source cutover Complete；C2D本机actual cyber activation Complete。
 
 ## Canonical durable layout
 
@@ -43,8 +43,9 @@ generation/domain digest；它不属于SessionJournal RuntimeConfig。Grid SQLit
 - Grid Store reset只触碰 `derived/recap-grid/v1`，不会删除 Control 或 Timeline。
 - Timeline V2是pre-release hard cut：旧`derived/history-timeline/v1`bytes inert，normal create/open/read不会扫描、读取、
   fallback或在线迁移它们。部署V2必须显式重新provision Cadence、Timeline、Control、Store四个durability domains；不得把
-  V1 Timeline locator/head与current companion state拼成一个混合generation。rollback只允许在首次new raw write前恢复完整
-  pre-cutover repo/config generation；首次new raw write后只能由旧binary证明可replay或forward-fix，不能用旧backup覆盖raw。
+  V1 Timeline locator/head与current companion state拼成一个混合generation。in-place rollback只允许在首次new raw write前恢复完整
+  pre-cutover repo/config generation；首次new raw write后只能由旧binary证明可replay或forward-fix，不能用旧backup覆盖raw。C2D采用
+  side-by-side fresh repo：切回旧config不会覆盖新repo，但首次新用户append后若会隐藏新经历，同样必须No-Go并改走raw-preserving方案。
 - old legacy recap slots不参与 normal open、selection、recovery或fallback。它们由
   `recap-grid legacy-root inspect|archive|delete` 以 bounded manifest与fresh confirmation单独治理。
 

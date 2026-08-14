@@ -3,8 +3,8 @@
 标识：`DRGRID-CUTOVER`
 
 状态：WP-08 source implementation Complete，independent closure Closed；旧production callers/projects已切除，
-全部durable/source/test entries均已Closed。containing commit仍是commit identity evidence；real-provider canary与
-actual cyber activation保持外部`NotRun`，不改变ledger source closure。
+全部durable/source/test entries均已Closed。containing commit仍是commit identity evidence；后续C2D已独立完成real-provider canary与
+本机actual cyber activation，但不把external execution evidence回写成ledger source closure。
 
 上游：[`Grid target`](derived-recap-grid-target-design.md) ·
 [`Master plan`](derived-recap-grid-rewrite-master-plan.md) ·
