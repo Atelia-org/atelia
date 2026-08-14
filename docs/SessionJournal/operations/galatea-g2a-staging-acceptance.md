@@ -77,7 +77,8 @@ partition_algorithm="atelia.history-timeline.partition.first-replay-safe-at-targ
 estimator="atelia.history-load.o200k-base.history-unit-v1"
 minimum_recent=24000
 target_load=60000
-max_raw=262144
+# Timeline partition的单次raw range上限；不要与recent-reserve operation跨页审计预算262144混淆。
+max_raw=65536
 max_rendered=1048576
 bootstrap_row_cap=1
 projected_call_cap=2
