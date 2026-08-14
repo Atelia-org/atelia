@@ -121,11 +121,11 @@ public sealed class GalateaRecapGridAssetsTests {
             ResourceSha256(PromptResourceLoader.FamilySystemResourceName)
         );
         Assert.Equal(
-            "f6b13ceda97e42b1c3d614a6da4664ec2fb41dc213a4e0d3f4e80b73214a0f16",
+            "641270e3044efe3678538740ab7c7995702232de67c8e2e61d812dae8bab6a93",
             ResourceSha256(PromptResourceLoader.WorldUnderstandingResourceName)
         );
         Assert.Equal(
-            "89ab230ad2e3850cd9139eec7d72a8ee35e649e7fa530fbf1d55fc146c2b289c",
+            "9f685b51f6fb607b7e21956a3402e02593f532e1f3d606338227a5f9a6a1ee7d",
             ResourceSha256(PromptResourceLoader.AutobiographyResourceName)
         );
         Assert.Equal(first.Families[0].SystemPrompt,
@@ -165,9 +165,9 @@ public sealed class GalateaRecapGridAssetsTests {
     ) => Assert.Equal(
         [
             "0c922f473c63f0fcdbbf8d972ffcc6f405fa0112a924b03011be121651a5f953",
-            "0dc887018c459a5c9e5e20d8c46ed2da8f982e3f0efb7e45ac53f62ae9b96799",
-            "cd63ccc9fed6e5a7f1af84a0f6826f23dff60594927a46bb975db8d19872efda",
-            "eefd03ff18e55a90ed4f5f7f53e4093b6936afb67da3d96beea88f67c07b0877"
+            "829e780acd637c8d7f98a10c47e2dfda7c6fe40f308ee9dc6fcbeabca0ed23c6",
+            "98461a42b4d2de31613957f09a265f016183d6d114ec6ae18f40831effd8b9a6",
+            "d9082013b5a62c377080e0d19210545a8ed39eeec54f3b9a5f7978ca1a906a17"
         ],
         [
             bundle.Families[0].Digest.Value,
