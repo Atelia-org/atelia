@@ -9,6 +9,7 @@ docs/SessionJournal/current/derived-recap/durable-target.md
 docs/SessionJournal/current/derived-recap/history-load.md
 docs/SessionJournal/current/derived-recap/planner-config.md
 docs/SessionJournal/work/active/derived-recap-grid-cadence-capacity-and-activation-audit.md
+docs/SessionJournal/work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md
 docs/SessionJournal/work/active/derived-recap-grid-c3-incremental-row-frontier.md
 docs/SessionJournal/current/host-integration/derived-recap-host-integration.md
 docs/SessionJournal/current/recovery/uncertain-external-effects.md

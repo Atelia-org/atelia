@@ -60,18 +60,22 @@ WP-00 至 WP-08 已经完成 Grid source cutover，但“rolling rewrite 正确�
 目标实现形状：
 
 - 一个 code-owned `galatea-rolling-rewrite-zh-cn-v1` built-in；
-- 两个 ordered Maintainer Definitions和一个 Full recipe；Family shape留作§11的显式裁决：单一shared Family可最大化
-  prefix/cache复用，但必须先把两份专业system prompt重构成共同Family system prompt + per-definition tail；两个Family可原样
-  保留现有专业system prompt，但会形成两个route keys；
+- 两个 ordered Maintainer Definitions和一个 Full recipe；两列共用现有
+  [`recap-maintainer-family/system-zh-cn.md`](../../../Galatea/prompt/recap-maintainer-family/system-zh-cn.md)
+  形成一个shared Family，专业差异来自各自的zh-CN user prompt；
 - input scope 为完整 previous BuildTarget projection + current exact History segment；
-- 两列都exact绑定Opus 4.6 model/connection，不再恢复 Opus 4.6 / `dsv4p` 混用；只有单一Family方案才形成
-  同一个 exact route key；
+- 两列使用同一个`SemanticModelId=null` exact route key；默认runtime config把它映射到Opus 4.6 connection，但actual model是
+  可切换的运行时策略，不属于durable semantic identity；
 - route、connection、lane、cache 与 usage 是 runtime/operation evidence，不因部署选用 Opus 4.6 就自动进入 Cell identity；
-- `world-understanding` 与 `autobiography` 的专业内容准则继续来自现有 zh-CN rewrite prompts；若为了真正共享
-  Family prefix 需要合并 Family system prompt，则必须保留两列各自职责，不能把两个文档退化成同一种摘要。
+- `world-understanding` 与 `autobiography` 的专业内容准则继续来自现有 zh-CN user prompts；共享system prompt只承载共同
+  rolling rewrite协议与证据纪律，不能把两个文档退化成同一种摘要。
 
-当前 repo 只有 `mystery-investigation-v1` code-owned built-in；上述 Galatea built-in 仍是待实现目标。每列
-`MaxContentUtf8Bytes = 32 KiB` 是当前建议值，不在用户确认前伪装成已经冻结的 production 数值。
+C2 exact设计、程序集边界、未来RecapEditor/ExperienceRefiner扩展点与实施矩阵见
+[`derived-recap-grid-c2-galatea-rolling-maintainers.md`](derived-recap-grid-c2-galatea-rolling-maintainers.md)。
+
+当前 repo 只有 `mystery-investigation-v1` AgentControl code-owned built-in；上述Galatea operator asset仍是待实现目标。每列
+`MaxContentUtf8Bytes = 32 KiB`作为C2首版工程默认；若真实canary证明不足，应发布新Definition revision调整，不能用runtime override
+改变既有Definition语义。
 
 ### 2.3 Rolling rewrite 的跨 row 语义
 
@@ -92,7 +96,8 @@ row n > 0:
 `W_n` 和 `A_n` 会一起成为 row `n+1` 的 prior。这是“跨 row 相互传播”，不是同一 row 内隐式串行讨论。
 
 “语义独立”不等于“provider调用一定并行”。Current Runtime 对同route group先执行leader、再释放followers以支持cache；
-两个Families/route groups才可能并发。调度顺序不得改变Evaluation inputs，但延迟与cache成本会因Family方案而不同。
+C2已锁定single shared Family，因此两列走同一route group的leader/follower调度；其他domain拥有多个Families/route groups时才可能
+并发。调度顺序不得改变Evaluation inputs，且不进入durable identity。
 
 `KeepUnchanged` 仍表示 Maintainer 已读取当前 segment 后明确判断正文无需改变。它复制 prior content，但产生绑定
 当前 row/EvaluationKey 的新 Cell；不能把它偷换成“没有执行”或直接复用旧 Cell。
@@ -290,8 +295,10 @@ ledger约21.35/42.72/341.40 MiB，append约7.2/13.7/107秒；这关闭旧O(n²)f
 - previous projection与`KeepUnchanged` Cell创建：[`ManagerRowBuild`](../../../../prototypes/SessionJournal.RecapGrid.Manager/ManagerRowBuild.cs)；
 - Store whole-database counters：[`StoreContracts`](../../../../prototypes/SessionJournal.RecapGrid.Store/StoreContracts.cs)；
 - Getter ordinal/provenance caps：[`GetterContracts`](../../../../prototypes/SessionJournal.RecapGrid.Getter/GetterContracts.cs)；
-- Galatea两份现有内容prompt：[`world-understanding rewrite`](../../../Galatea/prompt/world-understanding-maintainer/rewrite-zh-cn/system.md)
-  与[`autobiography rewrite`](../../../Galatea/prompt/autobiographical-maintainer/rewrite-zh-cn/system.md)。
+- C2 shared Family prompt：[`recap maintainer family`](../../../Galatea/prompt/recap-maintainer-family/system-zh-cn.md)；
+  两列内容prompt：[`world-understanding`](../../../Galatea/prompt/world-understanding-maintainer/rewrite-zh-cn/user.md)
+  与[`autobiography`](../../../Galatea/prompt/autobiographical-maintainer/rewrite-zh-cn/user.md)。C2A把旧两份专业zh-CN system规则迁入
+  对应user prompt后删除旧system文件；Git历史保留迁移证据，current source不留双authoring owner。
 
 ## 5. 长期运行的目标边界
 
@@ -332,7 +339,7 @@ digest做额外审计，必须另行定义durable reference与“缺失只损失
 不能先删再宣称可恢复同一历史认知演化。Current Store没有artifact删除API；GC必须是新schema/maintenance工作包，按共享Cell
 reachability与FK做exact mark-sweep，不能在normal runtime opportunistic delete。
 
-## 6. 成本模型与单一 Opus 4.6 route
+## 6. 成本模型与单一 shared route
 
 现有透明成本模型在理想可连续切分/`L=B`近似下，把recent suffix视为从`R`增长到`R+B`，平均为`R+B/2`。
 一般replay-safe overshoot下它不是runtime精确均值。该近似只有§3 reserve invariant落地后才有意义；当前实现会从接近0
@@ -343,7 +350,8 @@ reachability与FK做exact mark-sweep，不能在normal runtime opportunistic del
 只是旧illustrative defaults，不是production authority；用户本轮确认的审阅目标是24k/60k。
 
 `HistoryLoad`到provider tokens的换算、output size、cache TTL、cache creation/read价格与实际hit rate仍需真实telemetry校准。
-两列使用同一个Opus 4.6 route后，应至少分两种成本情景：
+两列使用同一个shared Family route后，应至少分两种成本情景。首次activation默认把该route配置到Opus 4.6，
+但成本模型必须接受runtime实际选择的provider/model价格与telemetry，不能把Opus 4.6写成semantic identity：
 
 ```text
 S  = exact shared prefix tokens
@@ -429,11 +437,10 @@ A3增加provider-free `recap-grid cadence inspect|set-reserve` operator surface�
 
 ### C2：Galatea rolling built-in and route（activation blocking）
 
-- 新增`galatea-rolling-rewrite-zh-cn-v1` built-in、两Definition和Full recipe builder；按§11裁决实现一个shared Family
-  或两个专业Families；
+- 新增`galatea-rolling-rewrite-zh-cn-v1` operator asset、一个shared Family、两Definition和Full recipe builder；
 - 固定ordered targets、strict canonical bytes/goldens与runtime identity；
-- 两列exact Opus 4.6 model/connection，无fallback、provider/client保持lazy；single-Family时共享route key，two-Family时
-  exact route keys不同但可指向同一connection/model；
+- 两列capability显式`SemanticModelId=null`；runtime route/config默认选择Opus 4.6但允许以后切换model，无fallback、
+  provider/client保持lazy，actual provider/model/connection只进入operation evidence；
 - 用fake provider证明previous-row rolling、same-row shared prefix、Keep和missing-only restart；
 - 用真实Opus 4.6 disposable clone证明terminal protocol、输出质量、cache/usage、latency和费用。
 
@@ -500,7 +507,8 @@ C4是retention/rollover与跨operation recovery优化，不再是跨越固定65,
 - row0两列均为FirstRow；row1两列看到相同且包含row0两列正文的ordered prior。
 - 任一列不读取current-row sibling输出；row2可以看到row1双方更新。
 - `KeepUnchanged`正文相同，但EvaluationKey/CellDigest变化且CellCount增加。
-- fake与real provider均只使用exact Opus 4.6 model/connection；missing/no-build/readiness零client construction。
+- fake provider验证相同route key可映射到不同runtime model且durable identity不变；首次real canary使用配置中的Opus 4.6
+  connection。missing/no-build/readiness保持零client construction。
 
 ### Context/recovery
 
@@ -529,18 +537,16 @@ C4是retention/rollover与跨operation recovery优化，不再是跨越固定65,
 - 两列内容人工审阅：旧自传/世界理解中仍有效的信息被承继，新segment被整合，两列职责没有串位。
 - actual cutover记录停服、备份、old/new repo fingerprints、首次new raw write与rollback/forward-fix边界。
 
-## 11. 用户审阅清单
+## 11. 后续 retention / activation 审阅清单
 
-以下项目需要用户明确确认或修改：
+以下项目不阻塞C2 source实施，但在对应retention/activation阶段仍需用户确认或现场authority：
 
-1. 两列同row语义独立、跨row交换认知；不要求同row内world先生成再给autobiography读；实际调用可以因cache调度而串行。
-2. 首版一个shared Family是否值得为最大prefix/cache复用而重构共同system prompt；若否，应使用两个Families保留现有专业
-   system prompt，并接受两个route keys与较弱prefix共享。
-3. 两列`MaxContentUtf8Bytes=32 KiB`是否合适。
-4. Opus 4.6 route是deployment选择，还是必须进入definition semantic capability并使换模型产生新Cell identity。
-5. 长期保留承诺：是否需要保存所有中间Cells/Views，还是保留active/Nth/Prepared所需窗口并允许显式GC。
-6. C4 generation rollover是否为首次production activation硬门禁，还是允许在明确容量水位下先做bounded pilot。
-7. 用户已允许放弃疑似故障期经历；activation时仍需确认clean import文件hash、selected legacy Ref、目标repo与停服时点。
+1. 长期保留承诺：是否需要保存所有中间Cells/Views，还是保留active/Nth/Prepared所需窗口并允许显式GC。
+2. C4 generation rollover是否为首次production activation硬门禁，还是允许在明确容量水位下先做bounded pilot。
+3. 用户已允许放弃疑似故障期经历；activation时仍需确认clean import文件hash、selected legacy Ref、目标repo与停服时点。
 
-R=24,000、B=60,000及repo-owned Cadence authority已不再是待裁决项。以上C2-C5裁决仍未完成；本文不授权修改
-actual cyber repository或发起真实provider调用。
+shared Family与prompt来源、model/runtime identity边界已经裁决：Opus 4.6不是durable semantic identity，C2使用
+`SemanticModelId=null`；model切换后保留既有Cells并由新model补missing work也属于已接受的runtime provenance。
+C2首版32 KiB/列、world-first顺序与prompt规则迁移作为工程决策处理。R=24,000、B=60,000及repo-owned Cadence authority
+也已不再是待裁决项。C3/C4/C5其余裁决仍未完成；
+本文不授权修改actual cyber repository或发起真实provider调用。

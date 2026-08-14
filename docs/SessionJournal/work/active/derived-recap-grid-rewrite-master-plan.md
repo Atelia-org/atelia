@@ -142,6 +142,12 @@ C3C Online/CLI/Host Grid-first orchestration已Complete：每pass最多一条Tim
 AgentControl 20/20、CLI 97/97、Galatea 87/87、SessionJournal 442/442、Online external public surface 1/1与Walking 27/27，
 CLI/AgentControl产品build均为0 warning / 0 error，两路independent closure均GO（P0=0，P1=0）。以上source状态不替代
 real-provider canary或actual cyber activation。
+
+C2 Galatea rolling maintainers的需求与实施边界已经单独锁定在
+[`C2 Galatea rolling maintainers`](derived-recap-grid-c2-galatea-rolling-maintainers.md)：一个shared Family、
+world-understanding/autobiography两个ordered Definitions、runtime-configurable model且`SemanticModelId=null`、Galatea-owned
+operator asset assembly，以及RecapRewriter/RecapEditor/ExperienceRefiner之间的authority边界。C2 source implementation、
+real-provider canary与actual cyber activation仍pending，不被WP-00至WP-08或C3 closure冒充。
 fresh no-local checkout已在provisional containing source tree `913fd8fa`上完成：全新restore成功、Release solution
 build 0 warning / 0 error、36个test projects合计4658/4658 green、package vulnerability audit零命中、scoped docs
 14/0、all-tracked docs 71/0且checkout status clean。最终containing commit只回写该fresh evidence，没有再改变product/test source。
