@@ -16,6 +16,7 @@ public sealed class PublicSurfaceTests {
         var invoker = new PublicInvoker();
         RecapCompletionRoute route = RecapCompletionRoute.Create(
             key,
+            "connection-v1",
             "model-v1",
             invoker,
             RecapCompletionResourceOwnership.Borrowed,
@@ -31,6 +32,7 @@ public sealed class PublicSurfaceTests {
         Assert.Same(runtime, executor);
         Assert.Same(runtime, asyncLifetime);
         Assert.Equal(key, route.Key);
+        Assert.Equal("connection-v1", route.ConnectionId);
         Assert.Equal(
             RecapCompletionResourceOwnership.Borrowed,
             route.InvokerOwnership
@@ -41,6 +43,20 @@ public sealed class PublicSurfaceTests {
 
     [Fact]
     public void PublicRouteUnion_IsClosedAndRejectsInvalidPayloads() {
+        var key = new RecapCompletionRouteKey(
+            new FamilyDefinitionDigest(new string('a', 64)),
+            RecapRewriterProtocolV1.RuntimeProtocolId,
+            semanticModelId: null
+        );
+        Assert.ThrowsAny<ArgumentException>(() => RecapCompletionRoute.Create(
+            key,
+            "",
+            "model-v1",
+            new PublicInvoker(),
+            RecapCompletionResourceOwnership.Borrowed,
+            1,
+            TimeSpan.FromMinutes(1)
+        ));
         Assert.Throws<ArgumentNullException>(() =>
             new RecapCompletionRouteResolution.Bound(null!));
         Assert.ThrowsAny<ArgumentException>(() =>

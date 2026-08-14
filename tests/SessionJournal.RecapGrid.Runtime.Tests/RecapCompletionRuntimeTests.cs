@@ -149,6 +149,7 @@ public sealed class RecapCompletionRuntimeTests {
                 exact.Key.RuntimeProtocolId,
                 "fallback-model"
             ),
+            exact.ConnectionId,
             exact.ModelId,
             invoker,
             RecapCompletionResourceOwnership.Owned,
@@ -633,6 +634,7 @@ public sealed class RecapCompletionRuntimeTests {
             return new RecapCompletionRouteResolution.Bound(
                 RecapCompletionRoute.Create(
                     key,
+                    "test-connection",
                     "test-model",
                     invoker,
                     RecapCompletionResourceOwnership.Owned,

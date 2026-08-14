@@ -47,6 +47,11 @@ public sealed class PublicSurfaceTests {
 
     [Fact]
     public async Task ExternalCompositionCanOwnAgentAndRecapInOneHost() {
+        var key = new RecapCompletionRouteKey(
+            new FamilyDefinitionDigest(new string('a', 64)),
+            RecapRewriterProtocolV1.RuntimeProtocolId,
+            null
+        );
         CompletionConnectionsFileConfig connections =
             RecapGridCompletionConnectionsManifest.Decode(
                 Encoding.UTF8.GetBytes("""
@@ -55,10 +60,25 @@ public sealed class PublicSurfaceTests {
         var factory = new BorrowedFactory();
         await using RecapGridCompletionHost host =
             RecapGridCompletionHost.Create(
-                () => RecapGridRouteManifest.Create([]),
+                () => RecapGridRouteManifest.Create([
+                    new RecapGridRouteManifestEntry(
+                        key,
+                        "main",
+                        1,
+                        TimeSpan.FromSeconds(30),
+                        1024
+                    )
+                ]),
                 connections,
                 factory);
 
+        RecapGridConfiguredRouteInspectionResult.Configured route =
+            Assert.IsType<RecapGridConfiguredRouteInspectionResult.Configured>(
+                host.InspectRouteExact(key)
+            );
+        Assert.Equal("main", route.ConnectionId);
+        Assert.Equal("model", route.ModelId);
+        Assert.Equal(0, factory.CreateCount);
         RecapGridAgentConnectionLookupResult.Found inspected = Assert.IsType<
             RecapGridAgentConnectionLookupResult.Found>(
             host.InspectAgentExact("main"));

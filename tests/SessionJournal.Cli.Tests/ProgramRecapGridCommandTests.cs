@@ -3,6 +3,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
+using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Cadence;
@@ -159,11 +160,11 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
     }
 
     [Fact]
-    public void OperatorProvisionBuiltInIsExplicitReplayableAndAdmitted() {
+    public void OperatorProvisionAssetIsExplicitReplayableAndAdmitted() {
         CreateJournal();
-        Assert.True(RecapGridAgentControlBuiltIns
+        Assert.True(GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV1,
+                GalateaRecapGridAssets.RollingRewriteZhCnV1,
                 out RecapGridControlRegistrationBundle? bundle
             ));
         string createOnly = WriteAdmission(["create"]);
@@ -180,12 +181,12 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         ControlHeadRef initial = ReadControlHead(refId.ToHexString());
 
         (int unauthorizedCode, JsonElement unauthorized) = RunCaptured(
-            "control", "provision-built-in",
+            "control", "provision-asset",
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
             "--asset",
-            RecapGridAgentControlBuiltIns.MysteryInvestigationV1
+            GalateaRecapGridAssets.RollingRewriteZhCnV1
         );
         Assert.Equal(2, unauthorizedCode);
         Assert.Equal(
@@ -200,15 +201,19 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                 .ToArray(),
             bundle.Definitions.Select(static value =>
                 value.Capability.CapabilityFingerprint).Distinct().ToArray(),
-            [ContextHeaderCarrierTokens.System]
+            [
+                ContextHeaderCarrierTokens.Observation,
+                ContextHeaderCarrierTokens.Action
+            ],
+            ["world-understanding", "autobiography"]
         );
         (int appliedCode, JsonElement applied) = RunCaptured(
-            "control", "provision-built-in",
+            "control", "provision-asset",
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            RecapGridAgentControlBuiltIns.MysteryInvestigationV1
+            GalateaRecapGridAssets.RollingRewriteZhCnV1
         );
         Assert.Equal(0, appliedCode);
         Assert.Equal("applied", applied.GetProperty("status").GetString());
@@ -216,19 +221,25 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal(initial.Generation + 1, provisioned.Generation);
 
         (int replayCode, JsonElement replay) = RunCaptured(
-            "control", "provision-built-in",
+            "control", "provision-asset",
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            RecapGridAgentControlBuiltIns.MysteryInvestigationV1
+            GalateaRecapGridAssets.RollingRewriteZhCnV1
         );
         Assert.Equal(0, replayCode);
         Assert.Equal("replayed", replay.GetProperty("status").GetString());
         Assert.Equal(provisioned, ReadControlHead(refId.ToHexString()));
 
-        (int unknownCode, JsonElement unknown) = RunCaptured(
+        Assert.Equal(1, Run(
             "control", "provision-built-in",
+            "--input", _root
+        ));
+        Assert.Equal(provisioned, ReadControlHead(refId.ToHexString()));
+
+        (int unknownCode, JsonElement unknown) = RunCaptured(
+            "control", "provision-asset",
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
@@ -236,7 +247,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         );
         Assert.Equal(2, unknownCode);
         Assert.Equal(
-            "built-in-asset-absent",
+            "operator-asset-absent",
             unknown.GetProperty("status").GetString()
         );
         Assert.Equal(provisioned, ReadControlHead(refId.ToHexString()));
@@ -252,12 +263,12 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         );
         Assert.NotEqual(provisioned.InstanceId, reinitialized.InstanceId);
         (int reappliedCode, JsonElement reapplied) = RunCaptured(
-            "control", "provision-built-in",
+            "control", "provision-asset",
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            RecapGridAgentControlBuiltIns.MysteryInvestigationV1
+            GalateaRecapGridAssets.RollingRewriteZhCnV1
         );
         Assert.Equal(0, reappliedCode);
         Assert.Equal("applied", reapplied.GetProperty("status").GetString());
@@ -267,12 +278,12 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal(reinitialized.Generation + 1,
             reprovisioned.Generation);
         (int retryCode, JsonElement retry) = RunCaptured(
-            "control", "provision-built-in",
+            "control", "provision-asset",
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            RecapGridAgentControlBuiltIns.MysteryInvestigationV1
+            GalateaRecapGridAssets.RollingRewriteZhCnV1
         );
         Assert.Equal(0, retryCode);
         Assert.Equal("replayed", retry.GetProperty("status").GetString());
@@ -291,9 +302,9 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
     [Fact]
     public void ComposeFullRecipeUsesExactEmptyTimelineAndOrderedDefinitions() {
         CreateJournal();
-        Assert.True(RecapGridAgentControlBuiltIns
+        Assert.True(GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV1,
+                GalateaRecapGridAssets.RollingRewriteZhCnV1,
                 out RecapGridControlRegistrationBundle? bundle
             ));
         RefId refId;
@@ -312,14 +323,18 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                 .ToArray(),
             bundle.Definitions.Select(static value =>
                 value.Capability.CapabilityFingerprint).Distinct().ToArray(),
-            [ContextHeaderCarrierTokens.System]
+            [
+                ContextHeaderCarrierTokens.Observation,
+                ContextHeaderCarrierTokens.Action
+            ],
+            ["world-understanding", "autobiography"]
         );
         Assert.Equal(0, Run(
-            "control", "provision-built-in",
+            "control", "provision-asset",
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
-            "--asset", RecapGridAgentControlBuiltIns.MysteryInvestigationV1
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV1
         ));
         string output = _root + "-full-recipe.json";
         _externalPaths.Add(output);
@@ -342,6 +357,11 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             bundle.Definitions.Select(static value => value.Digest),
             recipe.Target.OrderedColumns.Select(static value =>
                 value.DefinitionDigest)
+        );
+        Assert.Equal(
+            ["world-understanding", "autobiography"],
+            recipe.Target.OrderedColumns.Select(static value =>
+                value.LogicalColumnId.Value)
         );
 
         Assert.Equal(0, Run(
@@ -2082,7 +2102,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         string[] permissions,
         string[]? families = null,
         string[]? capabilities = null,
-        string[]? carriers = null
+        string[]? carriers = null,
+        string[]? logicalColumnPrefixes = null
     ) {
         string path = Path.Combine(_root, "admission.json");
         RecapGridControlPermission permissionSet =
@@ -2120,7 +2141,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                 static value => new FamilyDefinitionDigest(value)),
             capabilities ?? Array.Empty<string>(),
             parsedCarriers,
-            ["case."],
+            logicalColumnPrefixes ?? ["case."],
             maximumBootstrapRows: 64,
             maximumProjectedCalls: 1024
         );

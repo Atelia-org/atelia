@@ -28,13 +28,13 @@ internal static partial class RecapGridCommands {
             "route-output"
         );
         string assetId = options.RequireSingle("asset");
-        if (!RecapGridAgentControlBuiltIns.TryCreateRegistrationBundle(
+        if (!RecapGridOperatorAssetCatalog.TryCreateRegistrationBundle(
                 assetId,
                 out RecapGridControlRegistrationBundle? bundle)
             || bundle is null) {
             return Print(
                 "scaffold",
-                "built-in-asset-absent",
+                "operator-asset-absent",
                 new { assetId },
                 2
             );
@@ -204,6 +204,21 @@ internal static partial class RecapGridCommands {
             "created",
             new {
                 assetId,
+                registrationCommandDigest = bundle.CanonicalCommandDigest,
+                families = bundle.Families.Select(static (family, ordinal) =>
+                    new {
+                        ordinal,
+                        digest = family.Digest.Value
+                    }),
+                definitions = bundle.Definitions.Select(
+                    static (definition, ordinal) => new {
+                        ordinal,
+                        logicalColumnId = definition.LogicalColumnId.Value,
+                        targetCarrier = ContextHeaderCarrierTokens
+                            .ToStorageToken(definition.Target.Carrier),
+                        targetBlockKey = definition.Target.BlockKey,
+                        digest = definition.Digest.Value
+                    }),
                 profileId = profile.ProfileId,
                 runtimeIdentity = profile.RuntimeIdentity,
                 routeCount = route.Routes.Count,

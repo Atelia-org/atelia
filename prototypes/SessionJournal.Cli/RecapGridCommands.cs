@@ -108,7 +108,7 @@ internal static partial class RecapGridCommands {
             "put-definition" => ControlPutDefinition(options),
             "compose-full-recipe" => ControlComposeFullRecipe(options),
             "put-recipe" => ControlPutRecipe(options),
-            "provision-built-in" => ControlProvisionBuiltIn(options),
+            "provision-asset" => ControlProvisionAsset(options),
             "activate" => ControlActivate(options),
             "promote" => ControlPromote(options),
             "backup" => ControlBackup(options),

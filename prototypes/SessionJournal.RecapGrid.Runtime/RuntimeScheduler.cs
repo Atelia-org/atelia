@@ -306,6 +306,7 @@ public sealed partial class RecapCompletionRuntime {
             _telemetry.Record(new RecapCompletionTelemetryEvent(
                 "completion-settled",
                 prepared.Route.Key,
+                prepared.Route.ConnectionId,
                 prepared.Route.ModelId,
                 prepared.Route.Invoker.ProviderId,
                 prepared.Route.Invoker.ApiSpecId,

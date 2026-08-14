@@ -424,6 +424,7 @@ public sealed class RuntimeRenderingAndSchedulingTests {
         );
         RecapCompletionRoute ownedRoute = RecapCompletionRoute.Create(
             RuntimeTestFixture.Route(batch, ownedInvoker).Key,
+            "owned-connection",
             "test-model",
             ownedInvoker,
             RecapCompletionResourceOwnership.Owned,
@@ -432,6 +433,7 @@ public sealed class RuntimeRenderingAndSchedulingTests {
         );
         RecapCompletionRoute borrowedRoute = RecapCompletionRoute.Create(
             RuntimeTestFixture.Route(batch, borrowingInvoker).Key,
+            "borrowed-connection",
             "test-model",
             borrowingInvoker,
             RecapCompletionResourceOwnership.Owned,
@@ -461,6 +463,7 @@ public sealed class RuntimeRenderingAndSchedulingTests {
         );
         RecapCompletionRoute borrowed = RecapCompletionRoute.Create(
             template.Key,
+            template.ConnectionId,
             template.ModelId,
             invoker,
             RecapCompletionResourceOwnership.Borrowed,
@@ -497,6 +500,7 @@ public sealed class RuntimeRenderingAndSchedulingTests {
         );
         RecapCompletionRoute borrowed = RecapCompletionRoute.Create(
             second.Key,
+            second.ConnectionId,
             second.ModelId,
             invoker,
             RecapCompletionResourceOwnership.Borrowed,
@@ -559,6 +563,10 @@ public sealed class RuntimeRenderingAndSchedulingTests {
             );
             Assert.Equal(work.Family.Digest, value.FamilyDigest);
             Assert.Equal(work.Definition.Digest, value.DefinitionDigest);
+            Assert.Equal("test-connection", value.ConnectionId);
+            Assert.Equal("test-model", value.ModelId);
+            Assert.Equal("test-provider", value.ProviderId);
+            Assert.Equal("test-api-v1", value.ApiSpecId);
             Assert.Equal(
                 work.EvaluationKey.HistorySegmentDigest.Value,
                 value.HistorySegmentDigest

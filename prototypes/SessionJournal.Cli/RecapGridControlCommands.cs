@@ -315,18 +315,18 @@ internal static partial class RecapGridCommands {
         }
     }
 
-    private static int ControlProvisionBuiltIn(CliOptions options) {
+    private static int ControlProvisionAsset(CliOptions options) {
         options.EnsureOnly(
             "input", "branch", "confirm-ref", "admission", "asset"
         );
         string assetId = options.RequireSingle("asset");
-        if (!RecapGridAgentControlBuiltIns.TryCreateRegistrationBundle(
+        if (!RecapGridOperatorAssetCatalog.TryCreateRegistrationBundle(
                 assetId,
                 out RecapGridControlRegistrationBundle? bundle)
             || bundle is null) {
             return Print(
-                "control.provision-built-in",
-                "built-in-asset-absent",
+                "control.provision-asset",
+                "operator-asset-absent",
                 new { assetId },
                 2
             );
@@ -342,7 +342,7 @@ internal static partial class RecapGridCommands {
             );
         if (controlResult is not RecapGridControlOpenResult.Opened control) {
             return PrintControlOpenFailure(
-                "control.provision-built-in",
+                "control.provision-asset",
                 controlResult
             );
         }
@@ -352,16 +352,15 @@ internal static partial class RecapGridCommands {
             if (controlSnapshot is not RecapGridControlSnapshotResult
                     .Available currentControl) {
                 return PrintControlSnapshotFailure(
-                    "control.provision-built-in",
+                    "control.provision-asset",
                     controlSnapshot
                 );
             }
             RecapGridControlOperation operation =
-                RecapGridAgentControlBuiltIns
-                    .CreateOperatorProvisionOperation(
-                        assetId,
-                        currentControl.Snapshot.Head.InstanceId
-                    );
+                RecapGridOperatorAssetCatalog.CreateProvisionOperation(
+                    assetId,
+                    currentControl.Snapshot.Head.InstanceId
+                );
             HistoryTimelineReaderOpenResult timelineResult =
                 HistoryTimelineMaintenance.OpenReader(
                     engine.ReadView.Path,
@@ -370,7 +369,7 @@ internal static partial class RecapGridCommands {
             if (timelineResult is not HistoryTimelineReaderOpenResult.Opened
                     timeline) {
                 return PrintTimelineReaderOpenFailure(
-                    "control.provision-built-in",
+                    "control.provision-asset",
                     timelineResult
                 );
             }
@@ -380,12 +379,12 @@ internal static partial class RecapGridCommands {
                 if (timelineSnapshot is not HistoryTimelineSnapshotResult
                         .Available currentTimeline) {
                     return PrintTimelineSnapshotFailure(
-                        "control.provision-built-in",
+                        "control.provision-asset",
                         timelineSnapshot
                     );
                 }
                 return PrintControlOperation(
-                    "control.provision-built-in",
+                    "control.provision-asset",
                     control.Handle.Coordinator.ApplyRegistrationBundle(
                         currentControl.Snapshot.Head,
                         currentTimeline.Head,

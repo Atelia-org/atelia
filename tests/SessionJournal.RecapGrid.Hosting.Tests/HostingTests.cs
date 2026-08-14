@@ -173,10 +173,34 @@ public sealed class HostingTests {
 
         Assert.Equal(0, manifestLoads);
         Assert.Equal(0, factory.CreateCount);
+        RecapCompletionRouteKey exactKey = new(
+            batch.OrderedMissingWork[0].Family.Digest,
+            RecapRewriterProtocolV1.RuntimeProtocolId,
+            null
+        );
+        var configured = Assert.IsType<
+            RecapGridConfiguredRouteInspectionResult.Configured>(
+            host.InspectRouteExact(exactKey)
+        );
+        Assert.Equal("main", configured.ConnectionId);
+        Assert.Equal("model-main", configured.ModelId);
+        Assert.Equal(2, configured.MaximumConcurrency);
+        Assert.Equal(TimeSpan.FromSeconds(30), configured.DispatchTimeout);
+        Assert.Equal(1024, configured.MaximumOutputTokens);
+        Assert.Equal(1, manifestLoads);
+        Assert.Equal(0, factory.CreateCount);
+        Assert.IsType<RecapGridConfiguredRouteInspectionResult.ExactRouteAbsent>(
+            host.InspectRouteExact(new RecapCompletionRouteKey(
+                exactKey.FamilyDigest,
+                exactKey.RuntimeProtocolId,
+                "other"
+            ))
+        );
+        Assert.Equal(0, factory.CreateCount);
         RecapGridAgentConnectionResult.Bound agent = Assert.IsType<
             RecapGridAgentConnectionResult.Bound>(
             host.BindAgentExact("main"));
-        Assert.Equal(0, manifestLoads);
+        Assert.Equal(1, manifestLoads);
         Assert.Equal(1, factory.CreateCount);
         Assert.Same(agent.Client, Assert.IsType<
             CompletionDispatchBindingResult.Bound>(
@@ -188,6 +212,58 @@ public sealed class HostingTests {
         Assert.IsType<RecapCellBatchExecutionResult.Completed>(result);
         Assert.Equal(1, manifestLoads);
         Assert.Equal(1, factory.CreateCount);
+        RecapCompletionTelemetryEvent evidence = Assert.Single(
+            host.Telemetry.ReadSnapshot().Events
+        );
+        Assert.Equal("main", evidence.ConnectionId);
+        Assert.Equal("model-main", evidence.ModelId);
+        Assert.Equal("test", evidence.ProviderId);
+        Assert.Equal("test-v1", evidence.ApiSpecId);
+    }
+
+    [Fact]
+    public async Task CompletionHostRouteInspectionFailsClosedWithoutProvider() {
+        var factory = new RecordingFactory();
+        FrozenRowBatch batch = Batch();
+        RecapCompletionRouteKey key = new(
+            batch.OrderedMissingWork[0].Family.Digest,
+            RecapRewriterProtocolV1.RuntimeProtocolId,
+            null
+        );
+        await using (RecapGridCompletionHost absent =
+                     RecapGridCompletionHost.Create(
+                         () => RecapGridRouteManifest.Create([
+                             new RecapGridRouteManifestEntry(
+                                 key,
+                                 "missing-connection",
+                                 1,
+                                 TimeSpan.FromSeconds(5),
+                                 512
+                             )
+                         ]),
+                         Connections(),
+                         factory)) {
+            var missing = Assert.IsType<
+                RecapGridConfiguredRouteInspectionResult.ConnectionAbsent>(
+                absent.InspectRouteExact(key)
+            );
+            Assert.Equal("missing-connection", missing.ConnectionId);
+            Assert.Equal(0, factory.CreateCount);
+        }
+
+        await using (RecapGridCompletionHost invalid =
+                     RecapGridCompletionHost.Create(
+                         () => throw new InvalidDataException("invalid"),
+                         Connections(),
+                         factory)) {
+            var failure = Assert.IsType<
+                RecapGridConfiguredRouteInspectionResult.Invalid>(
+                invalid.InspectRouteExact(key)
+            );
+            Assert.Equal("RouteManifestLoadFailed", failure.Code);
+            Assert.Equal(nameof(InvalidDataException), failure.Detail);
+            Assert.Equal(0, factory.CreateCount);
+        }
     }
 
     [Fact]
@@ -666,6 +742,7 @@ public sealed class HostingTests {
                 RecapRewriterProtocolV1.RuntimeProtocolId,
                 null
             ),
+            "connection-main",
             modelId,
             "test",
             "test-v1",

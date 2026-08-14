@@ -25,6 +25,32 @@ public abstract record RecapGridAgentConnectionLookupResult {
         : RecapGridAgentConnectionLookupResult;
 }
 
+/// <summary>
+/// Provider-free inspection of one exact configured RecapGrid route. A
+/// configured result describes runtime policy only; it is not evidence that a
+/// provider client was constructed or a call was dispatched.
+/// </summary>
+public abstract record RecapGridConfiguredRouteInspectionResult {
+    private RecapGridConfiguredRouteInspectionResult() { }
+
+    public sealed record Configured(
+        string ConnectionId,
+        string ModelId,
+        int MaximumConcurrency,
+        TimeSpan DispatchTimeout,
+        int? MaximumOutputTokens
+    ) : RecapGridConfiguredRouteInspectionResult;
+
+    public sealed record ExactRouteAbsent
+        : RecapGridConfiguredRouteInspectionResult;
+
+    public sealed record ConnectionAbsent(string ConnectionId)
+        : RecapGridConfiguredRouteInspectionResult;
+
+    public sealed record Invalid(string Code, string Detail)
+        : RecapGridConfiguredRouteInspectionResult;
+}
+
 public sealed class BoundedRecapCompletionTelemetry
     : IRecapCompletionTelemetry {
     private const int MaximumEventUtf8Bytes = 32 * 1024;
@@ -108,6 +134,7 @@ public sealed class BoundedRecapCompletionTelemetry
             Add(value.RouteKey.FamilyDigest.Value);
             Add(value.RouteKey.RuntimeProtocolId);
             Add(value.RouteKey.SemanticModelId);
+            Add(value.ConnectionId);
             Add(value.ModelId);
             Add(value.ProviderId);
             Add(value.ApiSpecId);
@@ -272,6 +299,7 @@ public sealed class RecapGridRuntimeHost : IDisposable, IAsyncDisposable {
                 return new RecapCompletionRouteResolution.Bound(
                     RecapCompletionRoute.Create(
                         key,
+                        route.ConnectionId,
                         connection.ModelId,
                         invoker,
                         RecapCompletionResourceOwnership.Owned,
@@ -315,17 +343,20 @@ public abstract record RecapGridAgentConnectionResult {
 /// </summary>
 public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
     private readonly CompletionConnectionRegistry _registry;
+    private readonly DeferredSharedRegistryRouteResolver _routeResolver;
     private readonly RecapGridAgentControlProfileRegistry? _agentControl;
     private readonly object _disposeGate = new();
     private Task? _disposeTask;
 
     private RecapGridCompletionHost(
         CompletionConnectionRegistry registry,
+        DeferredSharedRegistryRouteResolver routeResolver,
         RecapCompletionRuntime runtime,
         BoundedRecapCompletionTelemetry telemetry,
         RecapGridAgentControlProfileRegistry? agentControl
     ) {
         _registry = registry;
+        _routeResolver = routeResolver;
         Runtime = runtime;
         Telemetry = telemetry;
         _agentControl = agentControl;
@@ -393,6 +424,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
                 resolver, runtimeOptions, telemetry);
             return new RecapGridCompletionHost(
                 registry,
+                resolver,
                 runtime,
                 telemetry,
                 agentControl
@@ -486,6 +518,14 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             : new RecapGridAgentConnectionLookupResult.Absent(connectionId);
     }
 
+    /// <summary>
+    /// Inspects one exact deferred route and its frozen connection config
+    /// without constructing a provider client.
+    /// </summary>
+    public RecapGridConfiguredRouteInspectionResult InspectRouteExact(
+        RecapCompletionRouteKey key
+    ) => _routeResolver.Inspect(key);
+
     public CompletionDispatchBindingResult BindPreparedExact(
         CompletionDispatchIdentity required
     ) => _registry.BindExact(required);
@@ -533,24 +573,36 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         public RecapCompletionRouteResolution Resolve(
             RecapCompletionRouteKey key
         ) {
-            IReadOnlyDictionary<RecapCompletionRouteKey,
-                RecapGridRouteManifestEntry> routes;
-            try {
-                routes = _routes.Value;
-            }
-            catch (Exception exception) when (IsNonFatal(exception)) {
-                return new RecapCompletionRouteResolution.Invalid(
-                    "RouteManifestLoadFailed", exception.GetType().Name);
-            }
-            if (!routes.TryGetValue(key, out var route)) {
+            RecapGridConfiguredRouteInspectionResult inspected = InspectCore(
+                key,
+                out RecapGridRouteManifestEntry? route,
+                out CompletionConnectionConfig? connection
+            );
+            if (inspected is RecapGridConfiguredRouteInspectionResult
+                    .ExactRouteAbsent) {
                 return new RecapCompletionRouteResolution.Unavailable(
                     "ExactRouteAbsent",
                     "No exact recap completion route is configured.");
             }
-            if (!_registry.TryGet(route.ConnectionId, out var connection)) {
+            if (inspected is RecapGridConfiguredRouteInspectionResult
+                    .ConnectionAbsent) {
                 return new RecapCompletionRouteResolution.Unavailable(
                     "RouteConnectionAbsent",
                     "The exact route connection is not configured.");
+            }
+            if (inspected is RecapGridConfiguredRouteInspectionResult.Invalid
+                    invalid) {
+                return new RecapCompletionRouteResolution.Invalid(
+                    invalid.Code,
+                    invalid.Detail
+                );
+            }
+            if (inspected is not RecapGridConfiguredRouteInspectionResult
+                    .Configured || route is null || connection is null) {
+                return new RecapCompletionRouteResolution.Invalid(
+                    "RouteInspectionInvalid",
+                    "The configured route inspection returned an unknown outcome."
+                );
             }
             try {
                 var invoker = new CompletionClientRecapInvoker(
@@ -559,6 +611,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
                 return new RecapCompletionRouteResolution.Bound(
                     RecapCompletionRoute.Create(
                         key,
+                        route.ConnectionId,
                         connection.ModelId,
                         invoker,
                         RecapCompletionResourceOwnership.Owned,
@@ -571,6 +624,43 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
                     "RouteClientConstructionFailed",
                     exception.GetType().Name);
             }
+        }
+
+        internal RecapGridConfiguredRouteInspectionResult Inspect(
+            RecapCompletionRouteKey key
+        ) => InspectCore(key, out _, out _);
+
+        private RecapGridConfiguredRouteInspectionResult InspectCore(
+            RecapCompletionRouteKey key,
+            out RecapGridRouteManifestEntry? route,
+            out CompletionConnectionConfig? connection
+        ) {
+            route = null;
+            connection = null;
+            IReadOnlyDictionary<RecapCompletionRouteKey,
+                RecapGridRouteManifestEntry> routes;
+            try {
+                routes = _routes.Value;
+            }
+            catch (Exception exception) when (IsNonFatal(exception)) {
+                return new RecapGridConfiguredRouteInspectionResult.Invalid(
+                    "RouteManifestLoadFailed", exception.GetType().Name);
+            }
+            if (!routes.TryGetValue(key, out route)) {
+                return new RecapGridConfiguredRouteInspectionResult
+                    .ExactRouteAbsent();
+            }
+            if (!_registry.TryGet(route.ConnectionId, out connection)) {
+                return new RecapGridConfiguredRouteInspectionResult
+                    .ConnectionAbsent(route.ConnectionId);
+            }
+            return new RecapGridConfiguredRouteInspectionResult.Configured(
+                route.ConnectionId,
+                connection.ModelId,
+                route.MaximumConcurrency,
+                route.DispatchTimeout,
+                route.MaximumOutputTokens
+            );
         }
     }
 }

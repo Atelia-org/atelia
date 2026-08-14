@@ -121,6 +121,7 @@ public sealed class CompletionClientRecapInvoker : IRecapCompletionInvoker,
 public sealed class RecapCompletionRoute {
     internal RecapCompletionRoute(
         RecapCompletionRouteKey key,
+        string connectionId,
         string modelId,
         IRecapCompletionInvoker invoker,
         RecapCompletionResourceOwnership invokerOwnership,
@@ -128,6 +129,12 @@ public sealed class RecapCompletionRoute {
         TimeSpan dispatchTimeout,
         int? maximumOutputTokens
     ) {
+        if (string.IsNullOrWhiteSpace(connectionId)) {
+            throw new ArgumentException(
+                "Connection id must not be empty.",
+                nameof(connectionId)
+            );
+        }
         if (string.IsNullOrWhiteSpace(modelId)) {
             throw new ArgumentException("Model id must not be empty.", nameof(modelId));
         }
@@ -146,6 +153,7 @@ public sealed class RecapCompletionRoute {
             throw new ArgumentOutOfRangeException(nameof(maximumOutputTokens));
         }
         Key = key;
+        ConnectionId = connectionId;
         ModelId = modelId;
         Invoker = invoker;
         InvokerOwnership = invokerOwnership;
@@ -155,6 +163,11 @@ public sealed class RecapCompletionRoute {
     }
 
     public RecapCompletionRouteKey Key { get; }
+    /// <summary>
+    /// Non-durable operational identity of the exact configured connection
+    /// selected by the route resolver.
+    /// </summary>
+    public string ConnectionId { get; }
     public string ModelId { get; }
     public IRecapCompletionInvoker Invoker { get; }
     public RecapCompletionResourceOwnership InvokerOwnership { get; }
@@ -164,6 +177,7 @@ public sealed class RecapCompletionRoute {
 
     public static RecapCompletionRoute Create(
         RecapCompletionRouteKey key,
+        string connectionId,
         string modelId,
         IRecapCompletionInvoker invoker,
         RecapCompletionResourceOwnership invokerOwnership,
@@ -172,6 +186,7 @@ public sealed class RecapCompletionRoute {
         int? maximumOutputTokens = null
     ) => new(
         key,
+        connectionId,
         modelId,
         invoker,
         invokerOwnership,
@@ -248,6 +263,7 @@ public sealed record RecapCompletionTelemetryEvent {
     public RecapCompletionTelemetryEvent(
         string kind,
         RecapCompletionRouteKey routeKey,
+        string connectionId,
         string modelId,
         string providerId,
         string apiSpecId,
@@ -272,6 +288,7 @@ public sealed record RecapCompletionTelemetryEvent {
     ) {
         Kind = RequireText(kind, nameof(kind));
         RouteKey = routeKey;
+        ConnectionId = RequireText(connectionId, nameof(connectionId));
         ModelId = RequireText(modelId, nameof(modelId));
         ProviderId = RequireText(providerId, nameof(providerId));
         ApiSpecId = RequireText(apiSpecId, nameof(apiSpecId));
@@ -320,6 +337,7 @@ public sealed record RecapCompletionTelemetryEvent {
 
     public string Kind { get; }
     public RecapCompletionRouteKey RouteKey { get; }
+    public string ConnectionId { get; }
     public string ModelId { get; }
     public string ProviderId { get; }
     public string ApiSpecId { get; }

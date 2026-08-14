@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Atelia.Completion.Tools;
 using Atelia.SessionJournal.HistoryTimeline;
@@ -216,41 +214,6 @@ public static class RecapGridAgentControlBuiltIns {
             []
         );
         return true;
-    }
-
-    /// <summary>
-    /// Returns the stable operator receipt identity for explicitly installing
-    /// one code-owned asset in one exact Control instance. Repeating it in the
-    /// same instance is a receipt replay; a reinitialized/restored instance
-    /// receives a distinct operation key and can install the catalog again.
-    /// </summary>
-    public static Control.RecapGridControlOperation
-        CreateOperatorProvisionOperation(
-            string assetId,
-            Control.ControlInstanceId controlInstanceId
-        ) {
-        if (!AssetIds.Contains(assetId, StringComparer.Ordinal)) {
-            throw new ArgumentException(
-                "The code-owned built-in asset id is unknown.",
-                nameof(assetId)
-            );
-        }
-        if (controlInstanceId.Value is null) {
-            throw new ArgumentException(
-                "Control instance id must not be default.",
-                nameof(controlInstanceId)
-            );
-        }
-        string runtimeDigest = Convert.ToHexStringLower(
-            SHA256.HashData(Encoding.UTF8.GetBytes(
-                "atelia.recap-grid.agent-control.operator-provision.v1"
-            ))
-        );
-        return Control.RecapGridControlOperation.Create(
-            $"candidate-operator:provision-built-in:{controlInstanceId.Value}:{assetId}",
-            executionSequence: 1,
-            runtimeIdentityDigest: runtimeDigest
-        );
     }
 
     internal static byte[] CanonicalCatalogBytes() =>

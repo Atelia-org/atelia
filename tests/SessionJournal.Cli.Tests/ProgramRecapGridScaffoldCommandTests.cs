@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
@@ -76,6 +78,93 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
             .GetProperty("sha256").GetString()!.Length);
         Assert.Equal(64, detail.GetProperty("route")
             .GetProperty("sha256").GetString()!.Length);
+    }
+
+    [Fact]
+    public void GalateaOperatorAssetScaffoldIsCanonicalSingleNullRouteAndProviderFree() {
+        Directory.CreateDirectory(_root);
+        ScaffoldPaths paths = Paths("galatea");
+        string[] arguments = ScaffoldArguments(paths)
+            .ReplaceOption(
+                "asset",
+                GalateaRecapGridAssets.RollingRewriteZhCnV1
+            )
+            .ReplaceOption("logical-column-prefix", "world-understanding")
+            .AppendOptions(
+                "--logical-column-prefix", "autobiography"
+            );
+
+        (int exitCode, JsonElement report) = RunCaptured(arguments);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("created", report.GetProperty("status").GetString());
+        Assert.Equal(0, _factory.CreateCallCount);
+        Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
+            GalateaRecapGridAssets.RollingRewriteZhCnV1,
+            out RecapGridControlRegistrationBundle? bundle
+        ));
+        Assert.NotNull(bundle);
+        RecapGridRouteManifestEntry route = Assert.Single(
+            RecapGridRouteManifest.DecodeCanonical(
+                File.ReadAllBytes(paths.Route)
+            ).Routes
+        );
+        Assert.Equal(bundle.Families[0].Digest, route.Key.FamilyDigest);
+        Assert.Equal(RecapRewriterProtocolV1.RuntimeProtocolId,
+            route.Key.RuntimeProtocolId);
+        Assert.Null(route.Key.SemanticModelId);
+        Assert.Equal("agent-connection", route.ConnectionId);
+        Assert.Equal(
+            ["world-understanding", "autobiography"],
+            bundle.Definitions.Select(static value =>
+                value.LogicalColumnId.Value)
+        );
+        Assert.Equal(
+            [
+                "roleplay.world-understanding",
+                "roleplay.first-person-autobiography"
+            ],
+            bundle.Definitions.Select(static value => value.Target.BlockKey)
+        );
+        JsonElement detail = report.GetProperty("detail");
+        Assert.Equal(
+            bundle.CanonicalCommandDigest,
+            detail.GetProperty("registrationCommandDigest").GetString()
+        );
+        Assert.Equal(
+            bundle.Families.Select(static value => value.Digest.Value),
+            detail.GetProperty("families").EnumerateArray()
+                .Select(static value => value.GetProperty("digest").GetString())
+        );
+        JsonElement[] definitions = [.. detail.GetProperty("definitions")
+            .EnumerateArray()];
+        Assert.Equal([0, 1], definitions.Select(static value =>
+            value.GetProperty("ordinal").GetInt32()));
+        Assert.Equal(
+            bundle.Definitions.Select(static value => value.Digest.Value),
+            definitions.Select(static value =>
+                value.GetProperty("digest").GetString())
+        );
+        Assert.Equal(
+            ["world-understanding", "autobiography"],
+            definitions.Select(static value =>
+                value.GetProperty("logicalColumnId").GetString())
+        );
+        Assert.Equal(
+            [ContextHeaderCarrierTokens.Observation,
+                ContextHeaderCarrierTokens.Action],
+            definitions.Select(static value =>
+                value.GetProperty("targetCarrier").GetString())
+        );
+        Assert.Equal(
+            [
+                "roleplay.world-understanding",
+                "roleplay.first-person-autobiography"
+            ],
+            definitions.Select(static value =>
+                value.GetProperty("targetBlockKey").GetString())
+        );
+        Assert.Equal(0, _factory.CreateCallCount);
     }
 
     [Fact]

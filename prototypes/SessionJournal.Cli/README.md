@@ -10,7 +10,7 @@ recap-grid timeline create|sync|inspect|verify|export|backup|restore|abandon ...
 recap-grid timeline history-load inspect ...
 recap-grid cadence inspect ...
 recap-grid cadence set-reserve --confirm-ref <ref> --expected-generation <generation> --expected-domain-digest <sha256> --minimum-recent-history-load <R> ...
-recap-grid control create|inspect|verify|export|put-family|put-definition|put-recipe|compose-full-recipe|provision-built-in|activate|promote|backup|restore|reinitialize ...
+recap-grid control create|inspect|verify|export|put-family|put-definition|put-recipe|compose-full-recipe|provision-asset|activate|promote|backup|restore|reinitialize ...
 recap-grid build|progress|materialize ...
 recap-grid legacy-root inspect|archive|delete ...
 run-online-turn ...
@@ -30,11 +30,13 @@ Timeline policy matching；Busy、Stale与CommitIndeterminate均返回typed repo
 `--confirm-ref`。`init` 显式按 Timeline、Cadence、Control、Grid 四域创建，且
 `--minimum-recent-history-load`是必需输入；其他命令不自动
 创建。Family、Definition、Recipe 输入必须是 formal canonical bytes；
-`provision-built-in` 只接受 code-owned exact asset ID。Control admission 是独立 strict
+`provision-asset` 只接受CLI compile-time closed operator catalog中的code-owned exact
+asset ID；Galatea operator asset不会进入AgentControl built-in catalog或其implementation
+fingerprint。Control admission 是独立 strict
 canonical 文件，不能从 payload 自授权。
 
 `recap-grid scaffold` 是 provider-free、create-only 的operator bootstrap：对一个
-code-owned built-in asset，把operator显式给出的permissions、logical-column prefixes、
+code-owned operator asset，把operator显式给出的permissions、logical-column prefixes、
 Control budgets和route execution limits组合成三份strict canonical文件——Control admission、
 AgentControl profile、Hosting route manifest。family/capability/carrier只来自code-owned
 registration bundle；三个output必须pairwise distinct且全部不存在，任一existing时零写。
@@ -49,6 +51,11 @@ admission交给`init`，profile/route路径交给Galatea strict config。
 fallback。`progress` 不构造 provider；`promote` 在同一进程用
 `--max-new-calls 0` 重证 head-through proof 后才执行 Promotion CAS；build 本身永不
 activate。`materialize` 只走 Getter strict `--nth-previous`。
+
+Hosting的provider-free exact route inspection只报告configured connection/model/limits，
+不会构造provider client；只有settled runtime telemetry中的`ConnectionId`、model与provider
+才是actual dispatch evidence。这些字段是bounded operational evidence，不进入durable
+Family、Definition、Recipe、EvaluationKey、Cell或RowView identity。
 
 `run-online-turn` 是唯一正式 online CLI。Prepared 按 frozen identity exact bind；
 启动时strict config/connections已经冻结；Started/Refuse早于本次current connection

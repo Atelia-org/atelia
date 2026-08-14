@@ -264,6 +264,7 @@ internal static class RuntimeTestFixture {
                 work.Definition.Capability.RuntimeProtocolId,
                 work.Definition.Capability.SemanticModelId
             ),
+            "test-connection",
             "test-model",
             invoker,
             RecapCompletionResourceOwnership.Owned,
