@@ -121,11 +121,11 @@ public sealed class GalateaRecapGridAssetsTests {
             ResourceSha256(PromptResourceLoader.FamilySystemResourceName)
         );
         Assert.Equal(
-            "641270e3044efe3678538740ab7c7995702232de67c8e2e61d812dae8bab6a93",
+            "6c1d2d41eacc35e097559be4540cbf280913f3eb901193766edc4c192d9cdddc",
             ResourceSha256(PromptResourceLoader.WorldUnderstandingResourceName)
         );
         Assert.Equal(
-            "9f685b51f6fb607b7e21956a3402e02593f532e1f3d606338227a5f9a6a1ee7d",
+            "a031dd45490539abb9f2d6f360f6657f22c1f21dc2bd0404cca299d416fa7886",
             ResourceSha256(PromptResourceLoader.AutobiographyResourceName)
         );
         Assert.Equal(first.Families[0].SystemPrompt,
@@ -143,6 +143,11 @@ public sealed class GalateaRecapGridAssetsTests {
                 PromptResourceLoader.AutobiographyResourceName,
                 RecapGridLimits.MaximumUserPromptUtf8Bytes
             ));
+        Assert.All(first.Definitions, definition => Assert.DoesNotContain(
+            RecapRewriterProtocolV1.TerminalToolName,
+            definition.DeclarativeSpec.UserPromptTemplate,
+            StringComparison.Ordinal
+        ));
     }
 
     [Fact]
@@ -165,9 +170,9 @@ public sealed class GalateaRecapGridAssetsTests {
     ) => Assert.Equal(
         [
             "0c922f473c63f0fcdbbf8d972ffcc6f405fa0112a924b03011be121651a5f953",
-            "829e780acd637c8d7f98a10c47e2dfda7c6fe40f308ee9dc6fcbeabca0ed23c6",
-            "98461a42b4d2de31613957f09a265f016183d6d114ec6ae18f40831effd8b9a6",
-            "d9082013b5a62c377080e0d19210545a8ed39eeec54f3b9a5f7978ca1a906a17"
+            "d1662eed763e90f01beeec636d08aa5f937b8c4c65d189bd7e81aff3623e82bf",
+            "20c301e940c3469e2297368c30892dcdcc5fa5aea792c673ad1b1f9af302732d",
+            "3aa41d18db9da5d971961eb33d4c3ac585a635b14bd62f3fffa720c147741b72"
         ],
         [
             bundle.Families[0].Digest.Value,
