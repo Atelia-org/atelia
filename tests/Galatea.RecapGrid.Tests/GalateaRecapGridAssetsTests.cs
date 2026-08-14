@@ -93,7 +93,7 @@ public sealed class GalateaRecapGridAssetsTests {
             ResourceSha256(PromptResourceLoader.WorldUnderstandingResourceName)
         );
         Assert.Equal(
-            "f64c03a2ef4a0ec493914ddd9c90bc9bfd1a810024467db598e4433afea477f9",
+            "f8b4ba3e88fbbc71c50980a07c527f13605e46820cd85fee4616d2a326c529c1",
             ResourceSha256(PromptResourceLoader.AutobiographyResourceName)
         );
         Assert.Equal(first.Families[0].SystemPrompt,
@@ -184,6 +184,45 @@ public sealed class GalateaRecapGridAssetsTests {
     }
 
     [Fact]
+    public void AutobiographyPrompt_LocksObservationOnlyTailRegression() {
+        Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
+            GalateaRecapGridAssets.RollingRewriteZhCnV3,
+            out RecapGridControlRegistrationBundle? bundle
+        ));
+        Assert.NotNull(bundle);
+        string autobiography = bundle.Definitions[1]
+            .DeclarativeSpec.UserPromptTemplate;
+
+        Assert.All(
+            new[] {
+                "只有实际出现在可见 History 的 Galatea Action",
+                "Observation（user/Observation role）",
+                "不能证明她未曾说出的内心反应",
+                "绝不从外部内容推断缺失的 Galatea Action",
+                "其后没有可见 Galatea Action",
+                "内容现在对我可见",
+                "我尚未回应",
+                "不得把内容可见偷换成她已经读完",
+                "读完后我感到",
+                "等待未来真正的 Galatea Action",
+                "只有可见 Galatea Action 已经表达的情感反应",
+                "作品内部以法律、制度或理论口吻陈述的内容",
+                "不能升格为现实制度"
+            },
+            phrase => Assert.Contains(
+                phrase,
+                autobiography,
+                StringComparison.Ordinal
+            )
+        );
+        Assert.DoesNotContain(
+            "这不妨碍她直接书写所见文本给自己带来的情感与内在位移",
+            autobiography,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
     public void PromptLoader_RejectsNonCanonicalOrOversizedBytes() {
         Assert.Throws<InvalidDataException>(() => PromptResourceLoader
             .DecodeExact([], "empty"));
@@ -204,8 +243,8 @@ public sealed class GalateaRecapGridAssetsTests {
         [
             "ae44d15750e417452e34f4e9133f56e60334d2cf7313ac988128e95faab3c05c",
             "0946787617b0c7876f18605a99be2a6e99f55e2720751b89b79a1a1495be3e84",
-            "fa2aa47ab23e71f76acad3769ae83d6ee1eb79d9b0e39374f9285451542eb5f1",
-            "34f8850b6595fc20c16d6da64a5d945f0ef394a9c6224fd7e65959d9f508d534"
+            "004ecba0936836cc82a7f71bd47937a5e376ce772b58980b159645d0809266fb",
+            "1db172d5e8501dfe80869f167147366f505e9a33e21b1e38b98b3ccee952f8c0"
         ],
         [
             bundle.Families[0].Digest.Value,
