@@ -55,13 +55,19 @@ internal static class RuntimeParser {
                 StringComparison.Ordinal)) {
             return Failed("InvocationMismatch", "Completion invocation differs from the selected route.");
         }
-        if (result.Message.Blocks.Count != 1
-            || result.Message.Blocks[0] is not ActionBlock.ToolCall block
+        ActionBlock[] visibleOutputs = [.. result.Message.Blocks.Where(
+            static block => block is not ActionBlock.ReasoningBlock
+        )];
+        if (visibleOutputs.Length != 1
+            || visibleOutputs[0] is not ActionBlock.ToolCall block
             || !string.Equals(
                 block.Call.ToolName,
                 prepared.Work.Family.OutputProtocol.TerminalToolName,
                 StringComparison.Ordinal)) {
-            return Failed("TerminalToolCallInvalid", "Exactly one terminal tool call and no other output are required.");
+            return Failed(
+                "TerminalToolCallInvalid",
+                "Exactly one terminal tool call, optional provider-native reasoning, and no other output are required."
+            );
         }
         string arguments = block.Call.RawArgumentsJson;
         if (string.IsNullOrEmpty(arguments)

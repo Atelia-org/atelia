@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Anthropic;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Xunit;
 
@@ -420,6 +421,48 @@ public sealed class RecapCompletionRuntimeTests {
     }
 
     [Fact]
+    public async Task ProviderNativeReasoningPlusTerminalTool_IsAccepted() {
+        FrozenRowBatch batch = RuntimeTestFixture.Batch();
+        ScriptedInvoker? invoker = null;
+        invoker = new ScriptedInvoker((request, _) => {
+            var descriptor = new CompletionDescriptor(
+                invoker!.ProviderId,
+                invoker.ApiSpecId,
+                request.ModelId
+            );
+            return ValueTask.FromResult(RuntimeTestFixture.Result(
+                request,
+                invoker!,
+                "{\"outcome\":\"updated\",\"content\":\"accepted\"}",
+                [
+                    new AnthropicReasoningBlock(
+                        new byte[] { 1, 2, 3 },
+                        descriptor
+                    ),
+                    new ActionBlock.TextReasoningBlock("hidden", descriptor),
+                    new ActionBlock.ToolCall(new RawToolCall(
+                        "submit",
+                        "call-1",
+                        "{\"outcome\":\"updated\",\"content\":\"accepted\"}"
+                    ))
+                ]
+            ) with {
+                Termination = CompletionTermination.Completed("tool_use")
+            });
+        });
+        using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
+
+        var completed = Assert.IsType<RecapCellBatchExecutionResult.Completed>(
+            await runtime.ExecuteAsync(batch, default)
+        );
+        var updated = Assert.IsType<RecapCellExecutionOutcome.Updated>(
+            Assert.Single(completed.OrderedOutcomes)
+        );
+        Assert.Equal("accepted", updated.Content);
+        Assert.Equal(1, invoker.CallCount);
+    }
+
+    [Fact]
     public async Task WrongToolTextOrMultipleCalls_AreRejectedAfterOneProviderStart() {
         FrozenRowBatch batch = RuntimeTestFixture.Batch();
         var outputs = new Queue<IReadOnlyList<ActionBlock>>([
@@ -440,6 +483,22 @@ public sealed class RecapCompletionRuntimeTests {
                     "call-2",
                     "{\"outcome\":\"updated\",\"content\":\"y\"}"
                 ))
+            ],
+            [
+                new ActionBlock.TextReasoningBlock(
+                    "hidden-provider-reasoning",
+                    new CompletionDescriptor(
+                        "provider",
+                        "api",
+                        "model"
+                    )
+                ),
+                new ActionBlock.Text("ordinary text"),
+                new ActionBlock.ToolCall(new RawToolCall(
+                    "submit",
+                    "call-1",
+                    "{\"outcome\":\"updated\",\"content\":\"x\"}"
+                ))
             ]
         ]);
         ScriptedInvoker? invoker = null;
@@ -453,7 +512,7 @@ public sealed class RecapCompletionRuntimeTests {
         ));
         using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
 
-        for (int index = 0; index < 3; index++) {
+        for (int index = 0; index < 4; index++) {
             var completed = Assert.IsType<
                 RecapCellBatchExecutionResult.Completed
             >(await runtime.ExecuteAsync(batch, default));
@@ -464,7 +523,7 @@ public sealed class RecapCompletionRuntimeTests {
                 ).Code
             );
         }
-        Assert.Equal(3, invoker.CallCount);
+        Assert.Equal(4, invoker.CallCount);
     }
 
     [Fact]
