@@ -197,7 +197,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             Assert.Equal(fixture.Family.Digest, value.FamilyDigest);
             Assert.Equal(fixture.Family.Digest,
                 value.RouteKey.FamilyDigest);
-            Assert.Equal(RecapRewriterProtocolV1.RuntimeProtocolId,
+            Assert.Equal(RecapRewriterProtocolV2.RuntimeProtocolId,
                 value.RouteKey.RuntimeProtocolId);
             Assert.Null(value.RouteKey.SemanticModelId);
         });
@@ -253,7 +253,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.Equal(fixture.Family.Digest, modelBEvent.FamilyDigest);
         Assert.Equal(fixture.Family.Digest,
             modelBEvent.RouteKey.FamilyDigest);
-        Assert.Equal(RecapRewriterProtocolV1.RuntimeProtocolId,
+        Assert.Equal(RecapRewriterProtocolV2.RuntimeProtocolId,
             modelBEvent.RouteKey.RuntimeProtocolId);
         Assert.Null(modelBEvent.RouteKey.SemanticModelId);
         Assert.Equal(fixture.Autobiography.Digest,
@@ -504,7 +504,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
     private RollingRepository CreateRollingRepository() {
         string path = NewPath();
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV1,
+            GalateaRecapGridAssets.RollingRewriteZhCnV2,
             out RecapGridControlRegistrationBundle? created
         ));
         RecapGridControlRegistrationBundle bundle = created!;
@@ -587,7 +587,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         >(control.Reader.ReadSnapshot()).Snapshot.Head;
         RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
             .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV1,
+                GalateaRecapGridAssets.RollingRewriteZhCnV2,
                 initial.InstanceId
             );
         ControlHeadRef registered = Assert.IsType<
@@ -652,7 +652,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 new RecapGridRouteManifestEntry(
                     new RecapCompletionRouteKey(
                         fixture.Family.Digest,
-                        RecapRewriterProtocolV1.RuntimeProtocolId,
+                        RecapRewriterProtocolV2.RuntimeProtocolId,
                         semanticModelId: null
                     ),
                     RecapConnectionId,
@@ -972,17 +972,17 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         bool Invalid = false
     ) {
         internal static RecapReply Updated(string content) => new(
-            RecapRewriterProtocolV1.UpdatedOutcome,
+            RecapRewriterProtocolV2.UpdatedOutcome,
             content
         );
 
         internal static RecapReply Keep() => new(
-            RecapRewriterProtocolV1.KeepUnchangedOutcome,
+            RecapRewriterProtocolV2.KeepUnchangedOutcome,
             null
         );
 
         internal static RecapReply InvalidTerminal() => new(
-            RecapRewriterProtocolV1.UpdatedOutcome,
+            RecapRewriterProtocolV2.UpdatedOutcome,
             "must-not-persist",
             Invalid: true
         );
@@ -1084,7 +1084,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             RecapReply reply = script(invocation);
             string tool = reply.Invalid
                 ? "invalid-terminal"
-                : RecapRewriterProtocolV1.TerminalToolName;
+                : RecapRewriterProtocolV2.TerminalToolName;
             string arguments = JsonSerializer.Serialize(new {
                 outcome = reply.Outcome,
                 content = reply.Content

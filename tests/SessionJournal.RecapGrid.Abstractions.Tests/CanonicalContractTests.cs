@@ -62,7 +62,7 @@ public sealed class CanonicalContractTests {
                     StringComparison.Ordinal
                 ))));
         const string OutputProtocol =
-            "\"outputProtocol\":{\"protocolId\":\"atelia.recap.output.v1\","
+            "\"outputProtocol\":{\"protocolId\":\"atelia.recap.output.v2\","
             + "\"terminalToolName\":\"submit_recap\",\"toolChoice\":\"required\","
             + "\"allowParallel\":false}";
         Assert.Contains(OutputProtocol, text, StringComparison.Ordinal);
@@ -290,15 +290,15 @@ public sealed class CanonicalContractTests {
     public void FormalValuesRoundTripAndKeepDomainSeparatedGoldens() {
         FormalFixture value = FormalValues();
         Assert.Equal(
-            "45ca17f0b170c6a6197f243d33bc974c86b66d249f501b67597b68b3cfa14c49\n"
-            + "8dbec2b10510ca49bf56cd187c89e19b30435fc359654129d258fe1462d6529a\n"
-            + "5e00f9857fbb96ac9bda6d6902c35bb410c64a075d4c754dce60878451bcf000\n"
-            + "b559feb44dc2a73378299b02f9cd9cdc4084fd7067169ed3ed0f27a450196ca1\n"
+            "4cde3f7dfbcd55913fe46237bcdf45ea8f238a21f328bc62e7dea8bb165ce502\n"
+            + "acab1da33c452934852c2ea7a100f7d7849d56f9e170fbb428cf2832654a13cd\n"
+            + "b8873a462e8abfdb47fce1bf1799f819a71f9e31a3529626988b949333f5bb94\n"
+            + "e2b0bf18e43eb35858beb38809bf35e8be815dd71915f01ee98fcee365336605\n"
             + "7b622b3e5ba946841d45722375ae7a5ae0f15b75b3f28b4ccb7c74ba642cb753\n"
-            + "c3e41a7bcaa525d8fca556ff17e369827b8984155f67cbc129e30a105a975176\n"
+            + "36ff79d729d88173bbb7750c1d6839b2d26e2903f9cb9f251a52e6df7e4293ce\n"
             + "13abe0196f72da491691abb9bf9f1747c7e57ee5f0f2d65e5988fd738ac38344\n"
-            + "182f802b3819dd13f57a417c1af09b7c71ec479f91409481d850d02a99d5e423\n"
-            + "ecc2d6cad20efd7aad8c4ec0de81f63e004e5801f8937c605e6a426571c2a596",
+            + "8805b1e8d2a2b4517adfb1ca572d53b177e72cc985020abb3614b45c9b03d734\n"
+            + "19b526966710363c72bf28dcacc774f80f68d8a3a531deabcb6c5be9812578ae",
             string.Join("\n", new[] {
                 value.Family.Digest.Value,
                 value.Definition.Digest.Value,
@@ -405,15 +405,15 @@ public sealed class CanonicalContractTests {
             value.View.Digest.Value
         }.Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(
-            "b498db80d6f45666697be36d6331b8a117aaa1dbeddd1c87dd7383a2fd6db76e\n"
-            + "ae56b23f120260ce9b44dfb01e983d4119f9d7799fc6676a1239ce6b07f91e66\n"
-            + "80a6b63fc6b1517604582118fdae7542f3dd55a023fcf22ae59ae9077fe662d6\n"
-            + "f1b8a247db94f9b515db6eeafaca486f8f161221cbfa79179d8372abc17d387e\n"
+            "9ba652b6646007c2bf347f9a1df78412e68f92d285dca3063bf2fafea15d0a5a\n"
+            + "5025e7454f0521584b0bf4adaa525252e49d28dcc3f96b939c1ae060bdf17514\n"
+            + "0db1cadcca718cdfb7467897e47e1f419b9e152b1e48af12a3b84eefc11ca2bc\n"
+            + "1e76f1f620de8cff67628a19a1eaa59abce8e942f324440cf5d873279d6d4185\n"
             + "436ac01f8031b636eeaf77b02aa1fd4df81f4bb98decae7cf7b01907adced7a2\n"
-            + "da233a6fd81d80d761d66126b11d7d66e4113c84611262c6c38e9b6367308fde\n"
-            + "b8d0dd60d9913b6f57477f2aa02a0c6a5a5c75fd87bd6a397dec3112cf268688\n"
-            + "a53fe00877522bacee4cf56de88b68d1be3882934430348d88e2159a1f9655d3\n"
-            + "c08fc09804a0b40dd63e54f88d44c1bf64cd0431304428e440fa96c10ef776ff",
+            + "f26ba200108d175e01852688c027e837a306118630f21a6df60f57927b395f17\n"
+            + "953c201059a560f29703155808d5d754390da8a974bfae3b583670bf61876c82\n"
+            + "8fcceeab942086c5da505711dfd8eab735d6b72f8027b377acbd80ab1e891055\n"
+            + "ab658ea7e9d4f4a138d66b421ea506307e058e0f70c388e23f24ef713a341943",
             string.Join("\n", new[] {
                 CanonicalSha(value.Family.ToCanonicalBytes()),
                 CanonicalSha(value.Definition.ToCanonicalBytes()),
@@ -521,7 +521,7 @@ public sealed class CanonicalContractTests {
         FamilyDefinition family = FamilyDefinition.Create(
             "Render every supported V1 schema kind.",
             [new FamilyToolDefinition(
-                "submit",
+                RecapRewriterProtocolV2.TerminalToolName,
                 "Submit typed evidence.",
                 new FamilyObjectInputSchema([
                     new FamilyToolProperty(
@@ -553,7 +553,7 @@ public sealed class CanonicalContractTests {
             )],
             new FamilyOutputProtocol(
                 "typed-output-v1",
-                "submit",
+                RecapRewriterProtocolV2.TerminalToolName,
                 FamilyToolChoice.Required,
                 allowParallel: null
             ),
@@ -796,7 +796,7 @@ public sealed class CanonicalContractTests {
             "Maintain one explicit line of inquiry.",
             [terminal],
             new FamilyOutputProtocol(
-                "atelia.recap.output.v1",
+                "atelia.recap.output.v2",
                 terminal.Name,
                 FamilyToolChoice.Required,
                 allowParallel: false
@@ -817,7 +817,7 @@ public sealed class CanonicalContractTests {
         familyDigest,
         new ContextHeaderBlockPath(ContextHeaderCarrier.System, column),
         new MaintainerCapabilitySpec(
-            "tool-runtime-v1",
+            "tool-runtime-v2",
             MaintainerReadableScope
                 .FullPriorBuildTargetAndCurrentHistorySegmentV1,
             "model-class-v1"

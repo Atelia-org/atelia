@@ -33,7 +33,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             string command = JsonSerializer.Serialize(new {
                 action = "provision-built-in",
                 builtInAssetId = RecapGridAgentControlBuiltIns
-                    .MysteryInvestigationV1
+                    .MysteryInvestigationV2
             });
             ToolCallExecutionResult applied = await handle.ToolSession
                 .ExecuteReservedAsync(
@@ -69,7 +69,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
 
             Assert.True(RecapGridAgentControlBuiltIns
                 .TryCreateRegistrationBundle(
-                    RecapGridAgentControlBuiltIns.MysteryInvestigationV1,
+                    RecapGridAgentControlBuiltIns.MysteryInvestigationV2,
                     out RecapGridControlRegistrationBundle? builtIn));
             string conflictingCommand = JsonSerializer.Serialize(new {
                 action = "register-family",
@@ -111,7 +111,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
     public async Task NarrowProfileRejectsDefinitionBeforeAnyControlMutation() {
         Fixture fixture = CreateFixture();
         Assert.True(RecapGridAgentControlBuiltIns.TryCreateRegistrationBundle(
-            RecapGridAgentControlBuiltIns.MysteryInvestigationV1,
+            RecapGridAgentControlBuiltIns.MysteryInvestigationV2,
             out RecapGridControlRegistrationBundle? builtIn
         ));
         var narrow = new RecapGridControlAdmission(
@@ -384,20 +384,20 @@ public sealed class AgentControlVerticalTests : IDisposable {
         using (RecapGridAgentControlHandle second = Open(fixture)) {
             Assert.Equal(first.RuntimeIdentity, second.RuntimeIdentity);
             Assert.Equal(
-                "e6fde75c3ad68482ae0fdf8aedce8c24ba35f14223b5256eaa5c9b91731ae037",
+                "f6c846ff1bae4f53828664f3d4c25744619816552a6d9d001ddb91556311fe4a",
                 first.RuntimeIdentity.ImplementationSetFingerprint
             );
             Assert.Equal(
-                [RecapGridAgentControlBuiltIns.MysteryInvestigationV1],
+                [RecapGridAgentControlBuiltIns.MysteryInvestigationV2],
                 RecapGridAgentControlBuiltIns.AssetIds
             );
             Assert.True(RecapGridAgentControlBuiltIns
                 .TryCreateRegistrationBundle(
-                    RecapGridAgentControlBuiltIns.MysteryInvestigationV1,
+                    RecapGridAgentControlBuiltIns.MysteryInvestigationV2,
                     out RecapGridControlRegistrationBundle? one));
             Assert.True(RecapGridAgentControlBuiltIns
                 .TryCreateRegistrationBundle(
-                    RecapGridAgentControlBuiltIns.MysteryInvestigationV1,
+                    RecapGridAgentControlBuiltIns.MysteryInvestigationV2,
                     out RecapGridControlRegistrationBundle? two));
             Assert.Equal(
                 one!.Families[0].ToCanonicalBytes(),
@@ -408,7 +408,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
                 two.ToCanonicalCommandBytes()
             );
             Assert.Equal(
-                "71166ab044952ed62ce05763ee08855f83d0b9ba2704a4547ed4bffbb2c9a36e",
+                "9f0ba63f0f3c363af9517c7e0a0b0d9dce1f9139661c912517f574714d5ccb81",
                 one.CanonicalCommandDigest
             );
             Assert.Equal(
@@ -416,13 +416,13 @@ public sealed class AgentControlVerticalTests : IDisposable {
                 two.Definitions.Select(static value => value.Digest)
             );
             Assert.Equal(
-                "1f881701891e48cec85c3358bd768c8de0e2e867c49e37239e2f0ad5d3d15bd5",
+                "bed2c5295dece36d32bb63434572c4967f0347a3bac3b2b7005a52ee7f65e847",
                 one.Families[0].Digest.Value
             );
             Assert.Equal(
                 [
-                    "00607678dee2e57a36406e84e7f178abc1f76d84a904813ffcf0e8f0176ec695",
-                    "f3a6f175e6e7b25cc899d31a88f7037a2140ed34f353035580f8b1f4975e82e1"
+                    "3907dcac685b05ef3bb5b1d52eaccc0a518af1c9048ecf2e9f873fe2dd7637fc",
+                    "69828219ca49d542aa06d0a58fd13c8b0cac1aed4480f1ac1a5563ae11763585"
                 ],
                 one.Definitions.Select(static value => value.Digest.Value)
             );
@@ -659,7 +659,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
                     new RawToolCall(
                         "recap_grid.control",
                         "cancel-call",
-                        "{\"action\":\"provision-built-in\",\"builtInAssetId\":\"mystery-investigation-v1\"}"
+                        "{\"action\":\"provision-built-in\",\"builtInAssetId\":\"mystery-investigation-v2\"}"
                     ),
                     1,
                     "cancel-before-mutation",
@@ -714,7 +714,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
                         new RawToolCall(
                             "recap_grid.control",
                             "indeterminate-call",
-                            "{\"action\":\"provision-built-in\",\"builtInAssetId\":\"mystery-investigation-v1\"}"
+                            "{\"action\":\"provision-built-in\",\"builtInAssetId\":\"mystery-investigation-v2\"}"
                         ),
                         1,
                         "indeterminate-operation",
@@ -796,7 +796,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
         RecapGridControlAdmission admission = CreateAdmission();
         Assert.True(RecapGridAgentControlBuiltIns
             .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV1,
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV2,
                 out RecapGridControlRegistrationBundle? builtIn));
         Assert.NotNull(builtIn);
         Assert.IsType<RecapGridControlCreateResult.Created>(
@@ -815,7 +815,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
     private static RecapGridControlAdmission CreateAdmission() {
         Assert.True(RecapGridAgentControlBuiltIns
             .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV1,
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV2,
                 out RecapGridControlRegistrationBundle? builtIn));
         return new RecapGridControlAdmission(
             RecapGridControlPermission.All,

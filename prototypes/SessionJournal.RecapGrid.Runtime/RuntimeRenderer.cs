@@ -15,7 +15,7 @@ internal static class RuntimeRenderer {
             writer.WriteStartObject();
             writer.WriteString(
                 "schema",
-                RecapRewriterProtocolV1.PriorProjectionSchemaId
+                RecapRewriterProtocolV2.PriorProjectionSchemaId
             );
             writer.WritePropertyName("columns");
             writer.WriteStartArray();
@@ -86,7 +86,7 @@ internal static class RuntimeRenderer {
             writer.WriteStartObject();
             writer.WriteString(
                 "schema",
-                RecapRewriterProtocolV1.InputProtocolId
+                RecapRewriterProtocolV2.InputProtocolId
             );
             writer.WriteString(
                 "logicalColumnId",

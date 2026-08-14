@@ -381,7 +381,7 @@ public sealed class GridWalkingSkeletonTests {
                 ])
             )],
             new FamilyOutputProtocol(
-                "atelia.recap.output.v1",
+                "atelia.recap.output.v2",
                 "submit_recap",
                 FamilyToolChoice.Required,
                 allowParallel: false
@@ -423,7 +423,7 @@ public sealed class GridWalkingSkeletonTests {
         familyDigest,
         new ContextHeaderBlockPath(ContextHeaderCarrier.System, column),
         new MaintainerCapabilitySpec(
-            "tool-runtime-v1",
+            "tool-runtime-v2",
             MaintainerReadableScope
                 .FullPriorBuildTargetAndCurrentHistorySegmentV1
         ),

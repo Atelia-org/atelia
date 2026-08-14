@@ -8,8 +8,11 @@ namespace Atelia.SessionJournal.RecapGrid.Runtime;
 internal abstract record RuntimeParseResult {
     private RuntimeParseResult() { }
 
-    internal sealed record Parsed(RecapCellExecutionOutcome Outcome)
-        : RuntimeParseResult;
+    internal sealed record Parsed(
+        RecapCellExecutionOutcome Outcome,
+        int IgnoredPreTerminalTextBlockCount,
+        int IgnoredPreTerminalTextUtf8Bytes
+    ) : RuntimeParseResult;
 
     internal sealed record Failed(string Code, string Detail)
         : RuntimeParseResult;
@@ -55,20 +58,46 @@ internal static class RuntimeParser {
                 StringComparison.Ordinal)) {
             return Failed("InvocationMismatch", "Completion invocation differs from the selected route.");
         }
-        ActionBlock[] visibleOutputs = [.. result.Message.Blocks.Where(
-            static block => block is not ActionBlock.ReasoningBlock
-        )];
-        if (visibleOutputs.Length != 1
-            || visibleOutputs[0] is not ActionBlock.ToolCall block
+        ActionBlock.ToolCall? terminal = null;
+        int ignoredTextBlockCount = 0;
+        int ignoredTextUtf8Bytes = 0;
+        foreach (ActionBlock output in result.Message.Blocks) {
+            switch (output) {
+                case ActionBlock.ReasoningBlock:
+                    continue;
+                case ActionBlock.Text text when terminal is null:
+                    try {
+                        ignoredTextUtf8Bytes = checked(
+                            ignoredTextUtf8Bytes
+                            + StrictUtf8.GetByteCount(text.Content)
+                        );
+                        ignoredTextBlockCount = checked(
+                            ignoredTextBlockCount + 1
+                        );
+                    }
+                    catch (Exception exception) when (exception is
+                        EncoderFallbackException or OverflowException) {
+                        return Failed(
+                            "TerminalToolCallInvalid",
+                            "Pre-terminal text is not valid bounded UTF-8 input."
+                        );
+                    }
+                    continue;
+                case ActionBlock.ToolCall toolCall when terminal is null:
+                    terminal = toolCall;
+                    continue;
+                default:
+                    return InvalidTerminalEnvelope();
+            }
+        }
+        if (terminal is null
             || !string.Equals(
-                block.Call.ToolName,
+                terminal.Call.ToolName,
                 prepared.Work.Family.OutputProtocol.TerminalToolName,
                 StringComparison.Ordinal)) {
-            return Failed(
-                "TerminalToolCallInvalid",
-                "Exactly one terminal tool call, optional provider-native reasoning, and no other output are required."
-            );
+            return InvalidTerminalEnvelope();
         }
+        ActionBlock.ToolCall block = terminal;
         string arguments = block.Call.RawArgumentsJson;
         if (string.IsNullOrEmpty(arguments)
             || arguments[0] == '\uFEFF') {
@@ -82,7 +111,7 @@ internal static class RuntimeParser {
             return Failed("TerminalArgumentsInvalidUtf16", "Terminal arguments contain invalid UTF-16.");
         }
         if (argumentBytes > MaximumArgumentsUtf8Bytes) {
-            return Failed("TerminalArgumentsTooLarge", "Terminal arguments exceed the V1 bound.");
+            return Failed("TerminalArgumentsTooLarge", "Terminal arguments exceed the V2 bound.");
         }
         byte[] utf8 = new byte[argumentBytes];
         _ = StrictUtf8.GetBytes(arguments.AsSpan(), utf8);
@@ -119,21 +148,23 @@ internal static class RuntimeParser {
             string? outcome = outcomeElement.GetString();
             if (string.Equals(
                     outcome,
-                    RecapRewriterProtocolV1.KeepUnchangedOutcome,
+                    RecapRewriterProtocolV2.KeepUnchangedOutcome,
                     StringComparison.Ordinal)) {
                 if (contentElement.ValueKind != JsonValueKind.Null
                     || prepared.SameColumnPrior is null) {
                     return Failed("KeepUnchangedInvalid", "Keep-unchanged requires null content and an exact same-column prior cell.");
                 }
-                return new RuntimeParseResult.Parsed(
+                return Parsed(
                     new RecapCellExecutionOutcome.KeepUnchanged(
                         prepared.Work.EvaluationKey.Digest
-                    )
+                    ),
+                    ignoredTextBlockCount,
+                    ignoredTextUtf8Bytes
                 );
             }
             if (!string.Equals(
                     outcome,
-                    RecapRewriterProtocolV1.UpdatedOutcome,
+                    RecapRewriterProtocolV2.UpdatedOutcome,
                     StringComparison.Ordinal)
                 || contentElement.ValueKind != JsonValueKind.String) {
                 return Failed("TerminalOutcomeInvalid", "Updated requires string content; no other outcome is supported.");
@@ -159,6 +190,14 @@ internal static class RuntimeParser {
             if (string.IsNullOrWhiteSpace(content)) {
                 return Failed("UpdatedContentBlank", "Updated content must be non-blank.");
             }
+            if (content.Contains(
+                    RecapRewriterProtocolV2.ReservedProtocolToken,
+                    StringComparison.Ordinal)) {
+                return Failed(
+                    "ReservedProtocolTokenInContent",
+                    "Updated content contains the reserved V2 protocol token."
+                );
+            }
             int contentBytes;
             try {
                 contentBytes = StrictUtf8.GetByteCount(content);
@@ -171,13 +210,15 @@ internal static class RuntimeParser {
                 MaximumNeutralContentUtf8Bytes
             );
             if (contentBytes > cap) {
-                return Failed("UpdatedContentTooLarge", "Updated content exceeds its exact V1 byte cap.");
+                return Failed("UpdatedContentTooLarge", "Updated content exceeds its exact V2 byte cap.");
             }
-            return new RuntimeParseResult.Parsed(
+            return Parsed(
                 new RecapCellExecutionOutcome.Updated(
                     prepared.Work.EvaluationKey.Digest,
                     content
-                )
+                ),
+                ignoredTextBlockCount,
+                ignoredTextUtf8Bytes
             );
         }
         catch (JsonException exception) {
@@ -192,6 +233,22 @@ internal static class RuntimeParser {
         string code,
         string detail
     ) => new(code, detail);
+
+    private static RuntimeParseResult.Failed InvalidTerminalEnvelope() =>
+        Failed(
+            "TerminalToolCallInvalid",
+            "V2 requires optional reasoning and pre-terminal text, exactly one terminal tool call, and no post-terminal text or other output."
+        );
+
+    private static RuntimeParseResult.Parsed Parsed(
+        RecapCellExecutionOutcome outcome,
+        int ignoredTextBlockCount,
+        int ignoredTextUtf8Bytes
+    ) => new(
+        outcome,
+        ignoredTextBlockCount,
+        ignoredTextUtf8Bytes
+    );
 
     private static bool ContainsUnpairedEscapedSurrogate(string rawJson) {
         for (int index = 1; index < rawJson.Length - 1; index++) {

@@ -3057,7 +3057,7 @@ public sealed class ManagerVerticalTests : IDisposable {
         FamilyDefinition family = FamilyDefinition.Create(
             "Maintain one line of inquiry.",
             [new FamilyToolDefinition(
-                "submit",
+                RecapRewriterProtocolV2.TerminalToolName,
                 "Submit the recap.",
                 new FamilyObjectInputSchema([
                     new FamilyToolProperty(
@@ -3071,7 +3071,7 @@ public sealed class ManagerVerticalTests : IDisposable {
             )],
             new FamilyOutputProtocol(
                 "output-v1",
-                "submit",
+                RecapRewriterProtocolV2.TerminalToolName,
                 FamilyToolChoice.Required,
                 allowParallel: false
             ),

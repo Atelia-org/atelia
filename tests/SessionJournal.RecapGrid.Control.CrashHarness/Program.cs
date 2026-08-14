@@ -63,7 +63,7 @@ internal static class Program {
     internal static FamilyDefinition CrashFamily() => FamilyDefinition.Create(
         "Crash fixture family.",
         [new FamilyToolDefinition(
-            "submit",
+            RecapRewriterProtocolV2.TerminalToolName,
             "Submit.",
             new FamilyObjectInputSchema([
                 new FamilyToolProperty(
@@ -75,7 +75,7 @@ internal static class Program {
         )],
         new FamilyOutputProtocol(
             "output-v1",
-            "submit",
+            RecapRewriterProtocolV2.TerminalToolName,
             FamilyToolChoice.Required,
             allowParallel: false
         ),

@@ -78,11 +78,11 @@ Family system prompt负责所有成员共同的协议和证据纪律；Definitio
 
 ## 3. Model/route配置边界
 
-首版V1 route shape固定为：
+首版V2 route shape固定为：
 
 ```text
 durable capability:
-  (FamilyDigest, RuntimeProtocolId = "tool-runtime-v1", SemanticModelId = null)
+  (FamilyDigest, RuntimeProtocolId = "tool-runtime-v2", SemanticModelId = null)
 
 runtime route manifest:
   exact key above -> ConnectionId
@@ -92,7 +92,7 @@ connections.json:
 ```
 
 因此一个shared Family只需要一条`semanticModelId: null`的exact route。Galatea的`recapGrid.routeManifestPath`仍是deferred、strict、
-no-fallback输入；实际model默认来自`connections.json`中被选connection的`modelId`。V1允许operator修改配置后重启/重开Host切换模型，
+no-fallback输入；实际model默认来自`connections.json`中被选connection的`modelId`。V2允许operator修改配置后重启/重开Host切换模型，
 不修改Control或derived identity。进程内hot reload与按费用、延迟、健康度或任务类型逐调用选择明确不属于C2：当前Runtime按route key
 缓存resolved route，未来实现动态策略时必须一并重做Host resolver、Runtime route-cache/lifetime、admission与telemetry合同，不能只替换
 一个callback。该后续协议仍须满足：
@@ -133,7 +133,7 @@ namespace Atelia.Galatea.RecapGrid
 
 ```text
 GalateaRecapGridAssets
-  AssetId = "galatea-rolling-rewrite-zh-cn-v1"
+  AssetId = "galatea-rolling-rewrite-zh-cn-v2"
   TryCreateRegistrationBundle(assetId, out bundle)
   Describe(assetId) -> ordered definition digests/targets/resource digests
 ```
@@ -163,9 +163,20 @@ Agent-facing JSON action仍由AgentControl独立拥有`provision-built-in`，不
 
 ### 5.1 RecapRewriter
 
-当前`tool-runtime-v1`只是“Completion调用 + 恰好一个terminal tool output”的envelope，并不执行普通tools。C2继续使用
+当前`tool-runtime-v2`只是“Completion调用 + 恰好一个terminal tool output”的envelope，并不执行普通tools。C2继续使用
 `updated/keep-unchanged`，是当前最小且恢复语义最清晰的协议。它还必须显式承诺每个missing Cell至多启动一次真实Completion；
 现有Manager可据此用missing work count做调用前admission和operation evidence。
+
+V2删除V1且不提供兼容读取或route fallback。它把runtime/output identity分别旋转为`tool-runtime-v2`与
+`atelia.recap.output.v2`，terminal tool使用reserved name；input/prior/history rendering schema仍独立保持v1。Family system prompt、
+Galatea member prompts和terminal description都必须name-neutral，不出现reserved token；tool schema本身是唯一向provider公开该名字的
+canonical位置。
+
+V2 output parser接受的exact block grammar是：零个或多个provider-native reasoning或pre-terminal text、恰好一个reserved terminal
+tool call、随后只允许provider-native reasoning。pre-terminal text属于provider compatibility side-band，必须丢弃且只以bounded
+block-count/UTF-8-byte-count telemetry报告；它绝不拼入`content`、不成为fallback，也不进入Cell identity。text-only、wrong/ordinary tool、
+multiple tools、post-terminal text及未知block全部fail closed。`updated.content`按ordinal包含reserved protocol token时以
+`ReservedProtocolTokenInContent`拒绝，防止控制协议名泄漏进Galatea长期记忆。
 
 ### 5.2 RecapEditor
 
@@ -202,9 +213,9 @@ RecapGrid executor是可重试的derived evaluation，严禁从中直接产生�
 状态：Complete，commit `bf4beff0`。
 
 - 给`FamilyDefinition.OrderedTools`、`IRecapCellBatchExecutor`、`RecapCellArtifact`补上述协议/纯度/immutable注释；
-- 当前`tool-runtime-v1` validator要求Family恰好声明一个terminal tool，禁止“声明了普通tools但runtime从不dispatch”的假扩展；
-- C2 V1 Family锁定exact terminal tool name=`submit`、`FamilyToolChoice.Required`与`allowParallel=false`，并纳入canonical goldens；
-- current V1 executor XML contract锁定每个work最多一次provider call；未来multi-call protocol必须先扩逐call pre-admission、actual-started
+- 当前`tool-runtime-v2` validator要求Family恰好声明一个terminal tool，禁止“声明了普通tools但runtime从不dispatch”的假扩展；
+- C2 V2 Family锁定reserved terminal tool name、`FamilyToolChoice.Required`与`allowParallel=false`，并纳入canonical goldens；
+- current V2 executor XML contract锁定每个work最多一次provider call；未来multi-call protocol必须先扩逐call pre-admission、actual-started
   count、cancel/drain和operation-total evidence；
 - 新建`Galatea.RecapGrid` product/tests/public-surface，嵌入三份prompt资源，生成一个Family和两个Definitions；
 - 两个capability的`SemanticModelId=null`，首版`MaxContentUtf8Bytes=32 KiB`；若真实canary证明不够，再以新Definition revision调整，
@@ -282,7 +293,7 @@ No-Go条件：把Opus 4.6写入semantic identity；把prompt正文复制进C#形
 当前C2 source设计没有剩余的高层需求阻塞。以下均按工程决策处理，无需再打断用户：
 
 - 首版32 KiB/列及world-first canonical order；
-- V1配置变化通过Host restart/reopen生效，逐调用动态route属于独立后续协议；
+- V2配置变化通过Host restart/reopen生效，逐调用动态route属于独立后续协议；
 - 将旧专业system规则迁入两个versioned user prompts、共享system prompt润色与golden更新；
 - model切换后保留既有Cells、只由新model补missing work的mixed runtime provenance；
 - 新程序集、operator catalog composition、测试/public-surface/Walking细节；

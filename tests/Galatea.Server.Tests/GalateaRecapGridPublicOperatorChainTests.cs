@@ -45,7 +45,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
 
         Assert.Equal(0, Run(provider,
             "scaffold",
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV1,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV2,
             "--profile-id", ProfileId,
             "--connection-id", RecapConnectionId,
             "--permission", "create",
@@ -98,10 +98,10 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             "--input", repository,
             "--confirm-ref", refText,
             "--admission", admission,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV1
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV2
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV1,
+            GalateaRecapGridAssets.RollingRewriteZhCnV2,
             out RecapGridControlRegistrationBundle? created
         ));
         RecapGridControlRegistrationBundle bundle = created!;
@@ -339,7 +339,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                 bool recap = request.PromptPrefix.OutputContract.Tools.Any(
                     static tool => string.Equals(
                         tool.Name,
-                        RecapRewriterProtocolV1.TerminalToolName,
+                        RecapRewriterProtocolV2.TerminalToolName,
                         StringComparison.Ordinal
                     )
                 );
@@ -348,7 +348,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                     return Task.FromResult(new CompletionResult(
                         new ActionMessage([new ActionBlock.ToolCall(
                             new RawToolCall(
-                                RecapRewriterProtocolV1.TerminalToolName,
+                                RecapRewriterProtocolV2.TerminalToolName,
                                 "operator-chain-recap",
                                 "{\"outcome\":\"updated\","
                                     + "\"content\":\"operator-chain recap\"}"

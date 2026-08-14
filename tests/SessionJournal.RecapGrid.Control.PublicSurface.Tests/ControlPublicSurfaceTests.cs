@@ -37,7 +37,7 @@ public sealed class ControlPublicSurfaceTests : IDisposable {
         FamilyDefinition family = FamilyDefinition.Create(
             "Public fixture family.",
             [new FamilyToolDefinition(
-                "submit",
+                RecapRewriterProtocolV2.TerminalToolName,
                 "Submit.",
                 new FamilyObjectInputSchema([
                     new FamilyToolProperty(
@@ -51,7 +51,7 @@ public sealed class ControlPublicSurfaceTests : IDisposable {
             )],
             new FamilyOutputProtocol(
                 "output-v1",
-                "submit",
+                RecapRewriterProtocolV2.TerminalToolName,
                 FamilyToolChoice.Required,
                 allowParallel: false
             ),

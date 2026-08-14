@@ -12,7 +12,7 @@ public sealed class PublicSurfaceTests {
     public async Task ExternalCompositionCanCreateAndDisposeLazyHost() {
         var key = new RecapCompletionRouteKey(
             new FamilyDefinitionDigest(new string('a', 64)),
-            RecapRewriterProtocolV1.RuntimeProtocolId,
+            RecapRewriterProtocolV2.RuntimeProtocolId,
             null
         );
         RecapGridRouteManifest manifest = RecapGridRouteManifest.Create([
@@ -49,7 +49,7 @@ public sealed class PublicSurfaceTests {
     public async Task ExternalCompositionCanOwnAgentAndRecapInOneHost() {
         var key = new RecapCompletionRouteKey(
             new FamilyDefinitionDigest(new string('a', 64)),
-            RecapRewriterProtocolV1.RuntimeProtocolId,
+            RecapRewriterProtocolV2.RuntimeProtocolId,
             null
         );
         CompletionConnectionsFileConfig connections =

@@ -26,7 +26,7 @@ public sealed class HostingTests {
         Assert.Equal(
             "{\"v\":1,\"routes\":[{\"familyDigest\":\""
             + new string('a', 64)
-            + "\",\"runtimeProtocolId\":\"tool-runtime-v1\","
+            + "\",\"runtimeProtocolId\":\"tool-runtime-v2\","
             + "\"semanticModelId\":null,\"connectionId\":\"main\","
             + "\"maximumConcurrency\":2,"
             + "\"dispatchTimeoutMilliseconds\":30000,"
@@ -113,7 +113,7 @@ public sealed class HostingTests {
 
         var missing = resolver.Resolve(new RecapCompletionRouteKey(
             Family,
-            RecapRewriterProtocolV1.RuntimeProtocolId,
+            RecapRewriterProtocolV2.RuntimeProtocolId,
             "semantic-v1"
         ));
         Assert.IsType<RecapCompletionRouteResolution.Unavailable>(missing);
@@ -122,7 +122,7 @@ public sealed class HostingTests {
         var bound = Assert.IsType<RecapCompletionRouteResolution.Bound>(
             resolver.Resolve(new RecapCompletionRouteKey(
                 Family,
-                RecapRewriterProtocolV1.RuntimeProtocolId,
+                RecapRewriterProtocolV2.RuntimeProtocolId,
                 null
             ))
         );
@@ -160,7 +160,7 @@ public sealed class HostingTests {
                         new RecapGridRouteManifestEntry(
                             new RecapCompletionRouteKey(
                                 batch.OrderedMissingWork[0].Family.Digest,
-                                RecapRewriterProtocolV1.RuntimeProtocolId,
+                                RecapRewriterProtocolV2.RuntimeProtocolId,
                                 null),
                             "main",
                             2,
@@ -175,7 +175,7 @@ public sealed class HostingTests {
         Assert.Equal(0, factory.CreateCount);
         RecapCompletionRouteKey exactKey = new(
             batch.OrderedMissingWork[0].Family.Digest,
-            RecapRewriterProtocolV1.RuntimeProtocolId,
+            RecapRewriterProtocolV2.RuntimeProtocolId,
             null
         );
         var configured = Assert.IsType<
@@ -227,7 +227,7 @@ public sealed class HostingTests {
         FrozenRowBatch batch = Batch();
         RecapCompletionRouteKey key = new(
             batch.OrderedMissingWork[0].Family.Digest,
-            RecapRewriterProtocolV1.RuntimeProtocolId,
+            RecapRewriterProtocolV2.RuntimeProtocolId,
             null
         );
         await using (RecapGridCompletionHost absent =
@@ -275,7 +275,7 @@ public sealed class HostingTests {
             new RecapGridRouteManifestEntry(
                 new RecapCompletionRouteKey(
                     batch.OrderedMissingWork[0].Family.Digest,
-                    RecapRewriterProtocolV1.RuntimeProtocolId,
+                    RecapRewriterProtocolV2.RuntimeProtocolId,
                     null
                 ),
                 "main",
@@ -321,7 +321,7 @@ public sealed class HostingTests {
                 new RecapGridRouteManifestEntry(
                     new RecapCompletionRouteKey(
                         batch.OrderedMissingWork[0].Family.Digest,
-                        RecapRewriterProtocolV1.RuntimeProtocolId,
+                        RecapRewriterProtocolV2.RuntimeProtocolId,
                         null),
                     "main",
                     1,
@@ -504,7 +504,7 @@ public sealed class HostingTests {
             new RecapGridRouteManifestEntry(
                 new RecapCompletionRouteKey(
                     Family,
-                    RecapRewriterProtocolV1.RuntimeProtocolId,
+                    RecapRewriterProtocolV2.RuntimeProtocolId,
                     semantic
                 ),
                 "main",
@@ -529,7 +529,7 @@ public sealed class HostingTests {
         FamilyDefinition family = FamilyDefinition.Create(
             "Maintain the inquiry.",
             [new FamilyToolDefinition(
-                "submit",
+                RecapRewriterProtocolV2.TerminalToolName,
                 "Submit the maintained content.",
                 new FamilyObjectInputSchema([
                     new FamilyToolProperty(
@@ -537,8 +537,8 @@ public sealed class HostingTests {
                         new FamilyScalarInputSchema(
                             FamilyScalarType.String,
                             orderedEnum: [
-                                RecapRewriterProtocolV1.UpdatedOutcome,
-                                RecapRewriterProtocolV1.KeepUnchangedOutcome
+                                RecapRewriterProtocolV2.UpdatedOutcome,
+                                RecapRewriterProtocolV2.KeepUnchangedOutcome
                             ]
                         ),
                         required: true
@@ -554,15 +554,15 @@ public sealed class HostingTests {
                 ])
             )],
             new FamilyOutputProtocol(
-                RecapRewriterProtocolV1.OutputProtocolId,
-                "submit",
+                RecapRewriterProtocolV2.OutputProtocolId,
+                RecapRewriterProtocolV2.TerminalToolName,
                 FamilyToolChoice.Required,
                 allowParallel: false
             ),
             new FamilyInputRenderingProtocol(
-                RecapRewriterProtocolV1.InputProtocolId,
-                RecapRewriterProtocolV1.PriorProjectionSchemaId,
-                RecapRewriterProtocolV1.HistorySegmentRenderingSchemaId
+                RecapRewriterProtocolV2.InputProtocolId,
+                RecapRewriterProtocolV2.PriorProjectionSchemaId,
+                RecapRewriterProtocolV2.HistorySegmentRenderingSchemaId
             )
         );
         var logical = new LogicalColumnId("case.column-0");
@@ -575,7 +575,7 @@ public sealed class HostingTests {
                     "column-0"
                 ),
                 new MaintainerCapabilitySpec(
-                    RecapRewriterProtocolV1.RuntimeProtocolId,
+                    RecapRewriterProtocolV2.RuntimeProtocolId,
                     MaintainerReadableScope
                         .FullPriorBuildTargetAndCurrentHistorySegmentV1
                 ),
@@ -739,7 +739,7 @@ public sealed class HostingTests {
             "settled",
             new RecapCompletionRouteKey(
                 Family,
-                RecapRewriterProtocolV1.RuntimeProtocolId,
+                RecapRewriterProtocolV2.RuntimeProtocolId,
                 null
             ),
             "connection-main",
@@ -820,7 +820,7 @@ public sealed class HostingTests {
             await Release.Task.WaitAsync(cancellationToken);
             return new CompletionResult(
                 new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(
-                    "submit",
+                    RecapRewriterProtocolV2.TerminalToolName,
                     "call-1",
                     "{\"outcome\":\"updated\",\"content\":\"settled\"}"
                 ))]),

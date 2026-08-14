@@ -58,7 +58,7 @@ public sealed class RecapCompletionRuntimeTests {
     }
 
     [Fact]
-    public async Task NonExactV1TerminalEnvelope_RejectsWholeBatchBeforeRemoteStart() {
+    public async Task NonExactV2TerminalEnvelope_RejectsWholeBatchBeforeRemoteStart() {
         FrozenRowBatch[] invalid = [
             RuntimeTestFixture.Batch(includeAdditionalTool: true),
             RuntimeTestFixture.Batch(terminalToolName: "finish"),
@@ -87,7 +87,7 @@ public sealed class RecapCompletionRuntimeTests {
         FrozenRowBatch batch = RuntimeTestFixture.Batch(
             columnCount: 2,
             runtimeProtocolIds: [
-                RecapRewriterProtocolV1.RuntimeProtocolId,
+                RecapRewriterProtocolV2.RuntimeProtocolId,
                 "unsupported-runtime-v2"
             ]
         );
@@ -421,8 +421,9 @@ public sealed class RecapCompletionRuntimeTests {
     }
 
     [Fact]
-    public async Task ProviderNativeReasoningPlusTerminalTool_IsAccepted() {
+    public async Task AnthropicReasoningAndPreTerminalText_AreAcceptedAndReported() {
         FrozenRowBatch batch = RuntimeTestFixture.Batch();
+        var telemetry = new CapturingTelemetry();
         ScriptedInvoker? invoker = null;
         invoker = new ScriptedInvoker((request, _) => {
             var descriptor = new CompletionDescriptor(
@@ -439,18 +440,22 @@ public sealed class RecapCompletionRuntimeTests {
                         new byte[] { 1, 2, 3 },
                         descriptor
                     ),
-                    new ActionBlock.TextReasoningBlock("hidden", descriptor),
+                    new ActionBlock.Text("Looking at this carefully..."),
                     new ActionBlock.ToolCall(new RawToolCall(
-                        "submit",
+                        RecapRewriterProtocolV2.TerminalToolName,
                         "call-1",
                         "{\"outcome\":\"updated\",\"content\":\"accepted\"}"
-                    ))
+                    )),
+                    new ActionBlock.TextReasoningBlock("hidden", descriptor)
                 ]
             ) with {
                 Termination = CompletionTermination.Completed("tool_use")
             });
         });
-        using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
+        using var runtime = Runtime(
+            RuntimeTestFixture.Route(batch, invoker),
+            telemetry
+        );
 
         var completed = Assert.IsType<RecapCellBatchExecutionResult.Completed>(
             await runtime.ExecuteAsync(batch, default)
@@ -460,10 +465,19 @@ public sealed class RecapCompletionRuntimeTests {
         );
         Assert.Equal("accepted", updated.Content);
         Assert.Equal(1, invoker.CallCount);
+        RecapCompletionTelemetryEvent evidence = Assert.Single(
+            telemetry.Events
+        );
+        Assert.Equal("updated", evidence.ProviderOutcome);
+        Assert.Equal("PreTerminalTextIgnored", evidence.Code);
+        Assert.Equal(
+            "Ignored 1 pre-terminal text block(s), 28 UTF-8 byte(s).",
+            evidence.Detail
+        );
     }
 
     [Fact]
-    public async Task WrongToolTextOrMultipleCalls_AreRejectedAfterOneProviderStart() {
+    public async Task TextOnlyWrongMultipleAndPostToolText_AreRejected() {
         FrozenRowBatch batch = RuntimeTestFixture.Batch();
         var outputs = new Queue<IReadOnlyList<ActionBlock>>([
             [new ActionBlock.Text("plain text")],
@@ -474,12 +488,12 @@ public sealed class RecapCompletionRuntimeTests {
             ))],
             [
                 new ActionBlock.ToolCall(new RawToolCall(
-                    "submit",
+                    RecapRewriterProtocolV2.TerminalToolName,
                     "call-1",
                     "{\"outcome\":\"updated\",\"content\":\"x\"}"
                 )),
                 new ActionBlock.ToolCall(new RawToolCall(
-                    "submit",
+                    RecapRewriterProtocolV2.TerminalToolName,
                     "call-2",
                     "{\"outcome\":\"updated\",\"content\":\"y\"}"
                 ))
@@ -493,12 +507,23 @@ public sealed class RecapCompletionRuntimeTests {
                         "model"
                     )
                 ),
-                new ActionBlock.Text("ordinary text"),
                 new ActionBlock.ToolCall(new RawToolCall(
-                    "submit",
+                    RecapRewriterProtocolV2.TerminalToolName,
                     "call-1",
                     "{\"outcome\":\"updated\",\"content\":\"x\"}"
-                ))
+                )),
+                new ActionBlock.Text("post-terminal text")
+            ],
+            [
+                new ActionBlock.TextReasoningBlock(
+                    "hidden-provider-reasoning",
+                    new CompletionDescriptor(
+                        "provider",
+                        "api",
+                        "model"
+                    )
+                ),
+                new ActionBlock.Text("ordinary text")
             ]
         ]);
         ScriptedInvoker? invoker = null;
@@ -512,7 +537,7 @@ public sealed class RecapCompletionRuntimeTests {
         ));
         using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
 
-        for (int index = 0; index < 4; index++) {
+        for (int index = 0; index < 5; index++) {
             var completed = Assert.IsType<
                 RecapCellBatchExecutionResult.Completed
             >(await runtime.ExecuteAsync(batch, default));
@@ -523,7 +548,92 @@ public sealed class RecapCompletionRuntimeTests {
                 ).Code
             );
         }
-        Assert.Equal(4, invoker.CallCount);
+        Assert.Equal(5, invoker.CallCount);
+    }
+
+    [Fact]
+    public async Task SameToolArguments_WithOrWithoutPreamble_HaveSameCellIdentity() {
+        FrozenRowBatch batch = RuntimeTestFixture.Batch();
+        var includePreamble = new Queue<bool>([false, true]);
+        ScriptedInvoker? invoker = null;
+        invoker = new ScriptedInvoker((request, _) => ValueTask.FromResult(
+            RuntimeTestFixture.Result(
+                request,
+                invoker!,
+                "{\"outcome\":\"updated\",\"content\":\"same content\"}",
+                includePreamble.Dequeue()
+                    ? [
+                        new ActionBlock.Text("brief preamble"),
+                        new ActionBlock.ToolCall(new RawToolCall(
+                            RecapRewriterProtocolV2.TerminalToolName,
+                            "call-with-preamble",
+                            "{\"outcome\":\"updated\",\"content\":\"same content\"}"
+                        ))
+                    ]
+                    : [new ActionBlock.ToolCall(new RawToolCall(
+                        RecapRewriterProtocolV2.TerminalToolName,
+                        "call-without-preamble",
+                        "{\"outcome\":\"updated\",\"content\":\"same content\"}"
+                    ))]
+            )
+        ));
+        using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
+
+        var first = Assert.IsType<RecapCellExecutionOutcome.Updated>(
+            Assert.Single(Assert.IsType<RecapCellBatchExecutionResult.Completed>(
+                await runtime.ExecuteAsync(batch, default)
+            ).OrderedOutcomes)
+        );
+        var second = Assert.IsType<RecapCellExecutionOutcome.Updated>(
+            Assert.Single(Assert.IsType<RecapCellBatchExecutionResult.Completed>(
+                await runtime.ExecuteAsync(batch, default)
+            ).OrderedOutcomes)
+        );
+
+        Assert.Equal(first, second);
+        FrozenRecapCellWork work = Assert.Single(batch.OrderedMissingWork);
+        RecapCellArtifact firstCell = RecapCellArtifact.Create(
+            work.LogicalColumnId,
+            work.Definition.Digest,
+            work.EvaluationKey,
+            RecapCellOutcome.Updated,
+            first.Content,
+            work.Definition.MaxContentUtf8Bytes
+        );
+        RecapCellArtifact secondCell = RecapCellArtifact.Create(
+            work.LogicalColumnId,
+            work.Definition.Digest,
+            work.EvaluationKey,
+            RecapCellOutcome.Updated,
+            second.Content,
+            work.Definition.MaxContentUtf8Bytes
+        );
+        Assert.Equal(firstCell.CellDigest, secondCell.CellDigest);
+        Assert.Equal(firstCell.ToCanonicalBytes(), secondCell.ToCanonicalBytes());
+    }
+
+    [Fact]
+    public async Task UpdatedContent_ContainingReservedProtocolToken_IsRejected() {
+        FrozenRowBatch batch = RuntimeTestFixture.Batch();
+        ScriptedInvoker? invoker = null;
+        invoker = new ScriptedInvoker((request, _) => ValueTask.FromResult(
+            RuntimeTestFixture.Updated(
+                request,
+                invoker!,
+                $"prefix {RecapRewriterProtocolV2.ReservedProtocolToken} suffix"
+            )
+        ));
+        using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
+
+        var completed = Assert.IsType<RecapCellBatchExecutionResult.Completed>(
+            await runtime.ExecuteAsync(batch, default)
+        );
+        Assert.Equal(
+            "ReservedProtocolTokenInContent",
+            Assert.IsType<RecapCellExecutionOutcome.Failed>(
+                Assert.Single(completed.OrderedOutcomes)
+            ).Code
+        );
     }
 
     [Fact]
@@ -738,5 +848,12 @@ public sealed class RecapCompletionRuntimeTests {
     private sealed class ThrowingTelemetry : IRecapCompletionTelemetry {
         public void Record(RecapCompletionTelemetryEvent value)
             => throw new IOException(value.Kind);
+    }
+
+    private sealed class CapturingTelemetry : IRecapCompletionTelemetry {
+        internal List<RecapCompletionTelemetryEvent> Events { get; } = [];
+
+        public void Record(RecapCompletionTelemetryEvent value) =>
+            Events.Add(value);
     }
 }

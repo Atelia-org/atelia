@@ -10,7 +10,7 @@ namespace Atelia.SessionJournal.RecapGrid.Runtime.Tests;
 
 public sealed class RuntimeProviderProjectionTests {
     [Fact]
-    public async Task RealRuntimeRequests_ProjectOrRejectExactV1AcrossProviders() {
+    public async Task RealRuntimeRequests_ProjectOrRejectExactV2AcrossProviders() {
         FrozenRowBatch requiredBatch = RuntimeTestFixture.Batch(columnCount: 2);
         var invoker = new CapturingInvoker();
         RecapCompletionRoute requiredRoute = RuntimeTestFixture.Route(
@@ -62,7 +62,7 @@ public sealed class RuntimeProviderProjectionTests {
         OpenAIChatApiRequest requiredApi = OpenAIChatMessageConverter
             .ConvertToApiRequest(required, OpenAIChatDialects.Strict);
         Assert.False(requiredApi.ParallelToolCalls);
-        Assert.Equal("submit", Assert.IsType<OpenAIChatNamedToolChoice>(
+        Assert.Equal(RecapRewriterProtocolV2.TerminalToolName, Assert.IsType<OpenAIChatNamedToolChoice>(
             requiredApi.ToolChoice
         ).Function.Name);
         AssertNullableContent(
@@ -77,7 +77,7 @@ public sealed class RuntimeProviderProjectionTests {
         OpenAIResponsesApiRequest requiredApi = OpenAIResponsesMessageConverter
             .ConvertToApiRequest(required, options);
         Assert.False(requiredApi.ParallelToolCalls);
-        Assert.Equal("submit", Assert.IsType<OpenAIResponsesNamedToolChoice>(
+        Assert.Equal(RecapRewriterProtocolV2.TerminalToolName, Assert.IsType<OpenAIResponsesNamedToolChoice>(
             requiredApi.ToolChoice
         ).Name);
         AssertNullableContent(
@@ -89,7 +89,7 @@ public sealed class RuntimeProviderProjectionTests {
         AnthropicApiRequest requiredApi = AnthropicMessageConverter
             .ConvertToApiRequest(required, enablePromptCaching: true);
         Assert.Equal("tool", requiredApi.ToolChoice!.Type);
-        Assert.Equal("submit", requiredApi.ToolChoice.Name);
+        Assert.Equal(RecapRewriterProtocolV2.TerminalToolName, requiredApi.ToolChoice.Name);
         Assert.True(requiredApi.ToolChoice.DisableParallelToolUse);
         AssertNullableContent(
             Assert.Single(requiredApi.Tools!).InputSchema

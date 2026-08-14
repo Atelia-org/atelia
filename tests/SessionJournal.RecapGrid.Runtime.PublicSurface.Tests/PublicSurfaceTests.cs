@@ -10,7 +10,7 @@ public sealed class PublicSurfaceTests {
     public void ExternalComposition_CanConstructExactLazyRouteRuntime() {
         var key = new RecapCompletionRouteKey(
             new FamilyDefinitionDigest(new string('a', 64)),
-            RecapRewriterProtocolV1.RuntimeProtocolId,
+            RecapRewriterProtocolV2.RuntimeProtocolId,
             semanticModelId: null
         );
         var invoker = new PublicInvoker();
@@ -45,7 +45,7 @@ public sealed class PublicSurfaceTests {
     public void PublicRouteUnion_IsClosedAndRejectsInvalidPayloads() {
         var key = new RecapCompletionRouteKey(
             new FamilyDefinitionDigest(new string('a', 64)),
-            RecapRewriterProtocolV1.RuntimeProtocolId,
+            RecapRewriterProtocolV2.RuntimeProtocolId,
             semanticModelId: null
         );
         Assert.ThrowsAny<ArgumentException>(() => RecapCompletionRoute.Create(

@@ -4,7 +4,7 @@
 
 只依据输入中可见的 History 与 prior recap 工作。区分亲历、他人陈述、推断、疑点和未知；不得把不可见信息或无依据推测伪装成事实。当前 History 与 prior recap 冲突时，按成员任务规定的证据纪律更新认识，不要为了表面一致而抹去仍有价值的不确定性。
 
-必须恰好调用一次名为 `submit` 的 terminal tool，不得输出普通文本或调用其他工具：
+必须恰好调用一次指定的 terminal tool，不得输出普通文本或调用其他工具：
 
 - 成员正文需要变化时，使用 `outcome: "updated"`，并在 `content` 中提交完整 replacement，不得提交差量、补丁或变更摘要。
 - 现有成员正文已经正确且本轮没有值得保留的变化时，使用 `outcome: "keep-unchanged"`，并令 `content` 严格为 `null`。

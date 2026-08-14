@@ -13,8 +13,8 @@ internal static class RuntimeTestFixture {
     internal static FrozenRowBatch Batch(
         int columnCount = 1,
         string? semanticModelId = null,
-        string runtimeProtocolId = RecapRewriterProtocolV1.RuntimeProtocolId,
-        string inputProtocolId = RecapRewriterProtocolV1.InputProtocolId,
+        string runtimeProtocolId = RecapRewriterProtocolV2.RuntimeProtocolId,
+        string inputProtocolId = RecapRewriterProtocolV2.InputProtocolId,
         IReadOnlyList<IHistoryMessage>? history = null,
         int maxContentUtf8Bytes = 16 * 1024,
         bool distinctFamilies = false,
@@ -24,7 +24,7 @@ internal static class RuntimeTestFixture {
         FamilyToolChoice toolChoice = FamilyToolChoice.Required,
         bool? allowParallel = false,
         bool includeAdditionalTool = false,
-        string terminalToolName = RecapRewriterProtocolV1.TerminalToolName,
+        string terminalToolName = RecapRewriterProtocolV2.TerminalToolName,
         bool includeSchemaDescription = false
     ) {
         FamilyDefinition[] families = [.. Enumerable.Range(0, columnCount)
@@ -168,19 +168,19 @@ internal static class RuntimeTestFixture {
     }
 
     internal static FamilyDefinition Family(
-        string inputProtocolId = RecapRewriterProtocolV1.InputProtocolId,
+        string inputProtocolId = RecapRewriterProtocolV2.InputProtocolId,
         string systemPromptSuffix = "",
         FamilyToolChoice toolChoice = FamilyToolChoice.Required,
         bool? allowParallel = false,
         bool includeAdditionalTool = false,
-        string terminalToolName = RecapRewriterProtocolV1.TerminalToolName,
+        string terminalToolName = RecapRewriterProtocolV2.TerminalToolName,
         bool includeSchemaDescription = false
     ) {
-        FamilyToolDefinition exact = RecapRewriterProtocolV1
+        FamilyToolDefinition exact = RecapRewriterProtocolV2
             .CreateTerminalTool("Submit the maintained content.");
         FamilyToolDefinition terminal = string.Equals(
             terminalToolName,
-            RecapRewriterProtocolV1.TerminalToolName,
+            RecapRewriterProtocolV2.TerminalToolName,
             StringComparison.Ordinal
         ) ? exact : new FamilyToolDefinition(
             terminalToolName,
@@ -211,15 +211,15 @@ internal static class RuntimeTestFixture {
             "Maintain the inquiry." + systemPromptSuffix,
             tools,
             new FamilyOutputProtocol(
-                RecapRewriterProtocolV1.OutputProtocolId,
+                RecapRewriterProtocolV2.OutputProtocolId,
                 terminalToolName,
                 toolChoice,
                 allowParallel
             ),
             new FamilyInputRenderingProtocol(
                 inputProtocolId,
-                RecapRewriterProtocolV1.PriorProjectionSchemaId,
-                RecapRewriterProtocolV1.HistorySegmentRenderingSchemaId
+                RecapRewriterProtocolV2.PriorProjectionSchemaId,
+                RecapRewriterProtocolV2.HistorySegmentRenderingSchemaId
             )
         );
     }
@@ -241,7 +241,11 @@ internal static class RuntimeTestFixture {
         IReadOnlyList<ActionBlock>? blocks = null
     ) => new(
         new ActionMessage(blocks ?? [new ActionBlock.ToolCall(
-            new RawToolCall("submit", "call-1", arguments)
+            new RawToolCall(
+                RecapRewriterProtocolV2.TerminalToolName,
+                "call-1",
+                arguments
+            )
         )]),
         new CompletionDescriptor(
             invoker.ProviderId,
@@ -288,7 +292,7 @@ internal static class RuntimeTestFixture {
                     "column-0"
                 ),
                 new MaintainerCapabilitySpec(
-                    RecapRewriterProtocolV1.RuntimeProtocolId,
+                    RecapRewriterProtocolV2.RuntimeProtocolId,
                     MaintainerReadableScope
                         .FullPriorBuildTargetAndCurrentHistorySegmentV1
                 ),
@@ -659,7 +663,7 @@ internal static class RuntimeTestFixture {
             blockKey
         ),
         new MaintainerCapabilitySpec(
-            RecapRewriterProtocolV1.RuntimeProtocolId,
+            RecapRewriterProtocolV2.RuntimeProtocolId,
             MaintainerReadableScope
                 .FullPriorBuildTargetAndCurrentHistorySegmentV1
         ),

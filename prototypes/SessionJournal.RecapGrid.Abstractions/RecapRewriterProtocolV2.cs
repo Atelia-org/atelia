@@ -1,23 +1,24 @@
 namespace Atelia.SessionJournal.RecapGrid;
 
 /// <summary>
-/// Provider-neutral canonical contract for the single-shot V1 recap rewriter.
+/// Provider-neutral canonical contract for the single-shot V2 recap rewriter.
 /// Runtime/provider implementations may execute this protocol, but do not own
 /// its durable identifiers or terminal schema.
 /// </summary>
-public static class RecapRewriterProtocolV1 {
-    public const string RuntimeProtocolId = "tool-runtime-v1";
-    public const string OutputProtocolId = "atelia.recap.output.v1";
+public static class RecapRewriterProtocolV2 {
+    public const string RuntimeProtocolId = "tool-runtime-v2";
+    public const string OutputProtocolId = "atelia.recap.output.v2";
     public const string InputProtocolId = "atelia.recap.input.v1";
     public const string PriorProjectionSchemaId = "atelia.recap.prior.v1";
     public const string HistorySegmentRenderingSchemaId =
         "atelia.history.segment.v1";
-    public const string TerminalToolName = "submit";
+    public const string TerminalToolName = "recap_grid_finalize_cell";
+    public const string ReservedProtocolToken = TerminalToolName;
     public const string UpdatedOutcome = "updated";
     public const string KeepUnchangedOutcome = "keep-unchanged";
 
     /// <summary>
-    /// Creates the exact V1 terminal tool. The description is Family-owned
+    /// Creates the exact V2 terminal tool. The description is Family-owned
     /// canonical prompt material; the name and input schema are protocol-owned.
     /// </summary>
     public static FamilyToolDefinition CreateTerminalTool(string description)
@@ -47,7 +48,7 @@ public static class RecapRewriterProtocolV1 {
             ])
         );
 
-    /// <summary>Creates the exact V1 output envelope.</summary>
+    /// <summary>Creates the exact V2 output envelope.</summary>
     public static FamilyOutputProtocol CreateOutputProtocol() => new(
         OutputProtocolId,
         TerminalToolName,
@@ -55,7 +56,10 @@ public static class RecapRewriterProtocolV1 {
         allowParallel: false
     );
 
-    /// <summary>Creates the exact V1 prior/history rendering envelope.</summary>
+    /// <summary>
+    /// Creates the exact V2 input envelope. The input/prior/history schemas are
+    /// unchanged from their independently versioned v1 contracts.
+    /// </summary>
     public static FamilyInputRenderingProtocol CreateInputRenderingProtocol()
         => new(
             InputProtocolId,

@@ -155,11 +155,11 @@ internal sealed class RecapGridAgentControlLifetime : IDisposable {
 }
 
 public static class RecapGridAgentControlBuiltIns {
-    public const string MysteryInvestigationV1 =
-        "mystery-investigation-v1";
+    public const string MysteryInvestigationV2 =
+        "mystery-investigation-v2";
 
     public static IReadOnlyList<string> AssetIds { get; } =
-        Array.AsReadOnly([MysteryInvestigationV1]);
+        Array.AsReadOnly([MysteryInvestigationV2]);
 
     public static bool TryCreateRegistrationBundle(
         string assetId,
@@ -167,14 +167,14 @@ public static class RecapGridAgentControlBuiltIns {
     ) {
         if (!string.Equals(
                 assetId,
-                MysteryInvestigationV1,
+                MysteryInvestigationV2,
                 StringComparison.Ordinal)) {
             bundle = null;
             return false;
         }
         FamilyDefinition family = CreateMysteryFamily();
         var capability = new MaintainerCapabilitySpec(
-            RecapRewriterProtocolV1.RuntimeProtocolId,
+            RecapRewriterProtocolV2.RuntimeProtocolId,
             MaintainerReadableScope
                 .FullPriorBuildTargetAndCurrentHistorySegmentV1
         );
@@ -251,10 +251,10 @@ public static class RecapGridAgentControlBuiltIns {
     private static FamilyDefinition CreateMysteryFamily() =>
         FamilyDefinition.Create(
             "Maintain one bounded investigation thought.",
-            [RecapRewriterProtocolV1.CreateTerminalTool(
+            [RecapRewriterProtocolV2.CreateTerminalTool(
                 "Submit the updated thought."
             )],
-            RecapRewriterProtocolV1.CreateOutputProtocol(),
-            RecapRewriterProtocolV1.CreateInputRenderingProtocol()
+            RecapRewriterProtocolV2.CreateOutputProtocol(),
+            RecapRewriterProtocolV2.CreateInputRenderingProtocol()
         );
 }
