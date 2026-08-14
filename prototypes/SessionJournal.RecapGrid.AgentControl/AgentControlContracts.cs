@@ -155,11 +155,11 @@ internal sealed class RecapGridAgentControlLifetime : IDisposable {
 }
 
 public static class RecapGridAgentControlBuiltIns {
-    public const string MysteryInvestigationV2 =
-        "mystery-investigation-v2";
+    public const string MysteryInvestigationV3 =
+        "mystery-investigation-v3";
 
     public static IReadOnlyList<string> AssetIds { get; } =
-        Array.AsReadOnly([MysteryInvestigationV2]);
+        Array.AsReadOnly([MysteryInvestigationV3]);
 
     public static bool TryCreateRegistrationBundle(
         string assetId,
@@ -167,14 +167,14 @@ public static class RecapGridAgentControlBuiltIns {
     ) {
         if (!string.Equals(
                 assetId,
-                MysteryInvestigationV2,
+                MysteryInvestigationV3,
                 StringComparison.Ordinal)) {
             bundle = null;
             return false;
         }
         FamilyDefinition family = CreateMysteryFamily();
         var capability = new MaintainerCapabilitySpec(
-            RecapRewriterProtocolV2.RuntimeProtocolId,
+            RecapRewriterProtocolV3.RuntimeProtocolId,
             MaintainerReadableScope
                 .FullPriorBuildTargetAndCurrentHistorySegmentV1
         );
@@ -250,11 +250,11 @@ public static class RecapGridAgentControlBuiltIns {
 
     private static FamilyDefinition CreateMysteryFamily() =>
         FamilyDefinition.Create(
-            "Maintain one bounded investigation thought.",
-            [RecapRewriterProtocolV2.CreateTerminalTool(
-                "Submit the updated thought."
-            )],
-            RecapRewriterProtocolV2.CreateOutputProtocol(),
-            RecapRewriterProtocolV2.CreateInputRenderingProtocol()
+            "Maintain one bounded investigation thought. Return only the "
+                + "complete replacement text; if unchanged, reproduce the "
+                + "prior block verbatim.",
+            [],
+            RecapRewriterProtocolV3.CreateOutputProtocol(),
+            RecapRewriterProtocolV3.CreateInputRenderingProtocol()
         );
 }

@@ -132,7 +132,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                     new RecapGridRouteManifestEntry(
                         new RecapCompletionRouteKey(
                             family.Digest,
-                            RecapRewriterProtocolV2.RuntimeProtocolId,
+                            RecapRewriterProtocolV3.RuntimeProtocolId,
                             null),
                         connection.Id,
                         maximumConcurrency: 1,
@@ -384,7 +384,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 new RecapGridRouteManifestEntry(
                     new RecapCompletionRouteKey(
                         family.Digest,
-                        RecapRewriterProtocolV2.RuntimeProtocolId,
+                        RecapRewriterProtocolV3.RuntimeProtocolId,
                         null),
                     connection.Id,
                     maximumConcurrency: 1,
@@ -1324,7 +1324,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
     private static RecapGridAgentControlProfile AgentProfile() {
         Assert.True(RecapGridAgentControlBuiltIns
             .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV2,
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV3,
                 out RecapGridControlRegistrationBundle? builtIn
             ));
         var admission = new RecapGridControlAdmission(
@@ -1352,36 +1352,12 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Null(timeline.HeadRowId);
         FamilyDefinition family = FamilyDefinition.Create(
             "Maintain the inquiry.",
-            [new FamilyToolDefinition(
-                RecapRewriterProtocolV2.TerminalToolName,
-                "Submit the maintained content.",
-                new FamilyObjectInputSchema([
-                    new FamilyToolProperty(
-                        "outcome",
-                        new FamilyScalarInputSchema(
-                            FamilyScalarType.String,
-                            orderedEnum: [
-                                RecapRewriterProtocolV2.UpdatedOutcome,
-                                RecapRewriterProtocolV2
-                                    .KeepUnchangedOutcome
-                            ]),
-                        required: true),
-                    new FamilyToolProperty(
-                        "content",
-                        new FamilyScalarInputSchema(
-                            FamilyScalarType.String,
-                            nullable: true),
-                        required: true)
-                ]))],
-            new FamilyOutputProtocol(
-                RecapRewriterProtocolV2.OutputProtocolId,
-                RecapRewriterProtocolV2.TerminalToolName,
-                FamilyToolChoice.Required,
-                allowParallel: false),
+            [],
+            RecapRewriterProtocolV3.CreateOutputProtocol(),
             new FamilyInputRenderingProtocol(
-                RecapRewriterProtocolV2.InputProtocolId,
-                RecapRewriterProtocolV2.PriorProjectionSchemaId,
-                RecapRewriterProtocolV2
+                RecapRewriterProtocolV3.InputProtocolId,
+                RecapRewriterProtocolV3.PriorProjectionSchemaId,
+                RecapRewriterProtocolV3
                     .HistorySegmentRenderingSchemaId));
         MaintainerDefinitionRevision definition =
             MaintainerDefinitionRevision.Create(
@@ -1390,7 +1366,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 new ContextHeaderBlockPath(
                     ContextHeaderCarrier.System, "culprit"),
                 new MaintainerCapabilitySpec(
-                    RecapRewriterProtocolV2.RuntimeProtocolId,
+                    RecapRewriterProtocolV3.RuntimeProtocolId,
                     MaintainerReadableScope
                         .FullPriorBuildTargetAndCurrentHistorySegmentV1),
                 new MaintainerDeclarativeSpec(
@@ -1493,36 +1469,12 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         BuildGridValues() {
         FamilyDefinition family = FamilyDefinition.Create(
             "Maintain the inquiry.",
-            [new FamilyToolDefinition(
-                RecapRewriterProtocolV2.TerminalToolName,
-                "Submit the maintained content.",
-                new FamilyObjectInputSchema([
-                    new FamilyToolProperty(
-                        "outcome",
-                        new FamilyScalarInputSchema(
-                            FamilyScalarType.String,
-                            orderedEnum: [
-                                RecapRewriterProtocolV2.UpdatedOutcome,
-                                RecapRewriterProtocolV2
-                                    .KeepUnchangedOutcome
-                            ]),
-                        required: true),
-                    new FamilyToolProperty(
-                        "content",
-                        new FamilyScalarInputSchema(
-                            FamilyScalarType.String,
-                            nullable: true),
-                        required: true)
-                ]))],
-            new FamilyOutputProtocol(
-                RecapRewriterProtocolV2.OutputProtocolId,
-                RecapRewriterProtocolV2.TerminalToolName,
-                FamilyToolChoice.Required,
-                allowParallel: false),
+            [],
+            RecapRewriterProtocolV3.CreateOutputProtocol(),
             new FamilyInputRenderingProtocol(
-                RecapRewriterProtocolV2.InputProtocolId,
-                RecapRewriterProtocolV2.PriorProjectionSchemaId,
-                RecapRewriterProtocolV2
+                RecapRewriterProtocolV3.InputProtocolId,
+                RecapRewriterProtocolV3.PriorProjectionSchemaId,
+                RecapRewriterProtocolV3
                     .HistorySegmentRenderingSchemaId));
         MaintainerDefinitionRevision definition =
             MaintainerDefinitionRevision.Create(
@@ -1531,7 +1483,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 new ContextHeaderBlockPath(
                     ContextHeaderCarrier.System, "culprit"),
                 new MaintainerCapabilitySpec(
-                    RecapRewriterProtocolV2.RuntimeProtocolId,
+                    RecapRewriterProtocolV3.RuntimeProtocolId,
                     MaintainerReadableScope
                         .FullPriorBuildTargetAndCurrentHistorySegmentV1),
                 new MaintainerDeclarativeSpec(
@@ -1817,12 +1769,11 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         ) {
             cancellationToken.ThrowIfCancellationRequested();
             Interlocked.Increment(ref _dispatchCallCount);
-            bool recap = request.PromptPrefix.OutputContract.Tools.Any(
-                static tool => string.Equals(
-                    tool.Name,
-                    RecapRewriterProtocolV2.TerminalToolName,
-                    StringComparison.Ordinal
-                )
+            bool recap = request.TailMessages is [ObservationMessage {
+                Content: { } tail
+            }] && tail.Contains(
+                $"\"schema\":\"{RecapRewriterProtocolV3.InputProtocolId}\"",
+                StringComparison.Ordinal
             );
             if (recap) {
                 Interlocked.Increment(ref _recapDispatchCount);
@@ -1835,12 +1786,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 observer?.OnTextDelta(responseText);
             }
             ActionMessage action = recap
-                ? new ActionMessage([new ActionBlock.ToolCall(
-                    new RawToolCall(
-                        RecapRewriterProtocolV2.TerminalToolName,
-                        "recap-call",
-                        "{\"outcome\":\"updated\","
-                        + "\"content\":\"原来如此，那些疑点就都对得上了。\"}"))])
+                ? new ActionMessage([new ActionBlock.Text(
+                    "原来如此，那些疑点就都对得上了。")])
                 : new ActionMessage([new ActionBlock.Text(responseText)]);
             return Task.FromResult(new CompletionResult(
                 action,
@@ -1862,7 +1809,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 "recap_grid.control",
                 "control-call",
                 "{\"action\":\"provision-built-in\","
-                + "\"builtInAssetId\":\"mystery-investigation-v2\"}"
+                + "\"builtInAssetId\":\"mystery-investigation-v3\"}"
             ))]),
             new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
         ));

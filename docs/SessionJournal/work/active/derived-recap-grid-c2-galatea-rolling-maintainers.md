@@ -1,7 +1,7 @@
 # DerivedRecap Grid C2：Galatea rolling maintainers 设计与实施边界
 
-状态：C2A/C2B/C2C source implementation complete；两路independent closure均GO（P0=0，P1=0）；
-real-provider canary / actual cyber activation `NotRun`
+状态：C2A/C2B/C2C source implementation complete；RecapRewriter V3 source hard cut complete；
+V2 real-provider canary已fail closed，V3 canary rerun / actual cyber activation `NotRun`
 
 总体设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)  
 Cadence/capacity/activation 总审计：[`derived-recap-grid-cadence-capacity-and-activation-audit.md`](derived-recap-grid-cadence-capacity-and-activation-audit.md)
@@ -20,8 +20,8 @@ C2让Galatea首次真正使用RecapGrid维护两个rolling rewrite context block
 1. 两列属于一个shared Family，共用
    [`docs/Galatea/prompt/recap-maintainer-family/system-zh-cn.md`](../../../Galatea/prompt/recap-maintainer-family/system-zh-cn.md)
    的Family system prompt；专业差异分别来自现有autobiographical与world-understanding zh-CN user prompt。
-2. 首版两列都使用rolling full rewrite：输入上一row的完整selected recap projection与当前History segment，输出完整新block或
-   `keep-unchanged`，绝不输出差量。
+2. 首版两列都使用rolling full rewrite：输入上一row的完整selected recap projection与当前History segment，只输出完整新block，
+   绝不输出差量或控制envelope；Runtime以正文与同列prior的ordinal等价性推导`Updated / KeepUnchanged`。
 3. 实际provider/model是运行时route policy。默认由静态配置文件选择，但以后允许换成逐调用策略；Opus 4.6只是首次部署默认，
    **不属于durable semantic identity**。
 4. 两个Definition的`MaintainerCapabilitySpec.SemanticModelId`必须为显式`null`。model、connection、lane、cache、usage和
@@ -38,7 +38,7 @@ work。若operator希望用新模型完整重建，应执行显式derived reset/
 
 ```text
 FamilyDefinition
-  system prompt + ordered terminal tools + input/output protocol
+  system prompt + FullReplacementText output mode + zero tools + input protocol
         |
         +-- Definition: world-understanding + its user prompt
         +-- Definition: autobiography       + its user prompt
@@ -47,7 +47,9 @@ FamilyDefinition
                           |
                 IRecapCellBatchExecutor
                           |
-                Updated / KeepUnchanged
+             exact replacement Text
+                          |
+       ordinal equality => Updated / KeepUnchanged
                           |
                  immutable Cell + RowView
 ```
@@ -64,25 +66,24 @@ Family system prompt负责所有成员共同的协议和证据纪律；Definitio
 - shared system prompt明确输入依次包含previous recap pack、current history segment与最后的member task；
 - 明确只能维护`logicalColumnId`指定成员，sibling blocks只作为上下文；
 - 明确只依据可见History与prior recap，不把推测伪装成事实；
-- 明确恰好调用一次terminal tool，`updated`必须携带完整replacement，`keep-unchanged`必须携带`null`；
+- 明确只返回完整replacement正文，第一个与最后一个字符都属于正文，不返回tool call、控制字段、sentinel、说明或前后缀；
 - 两份user prompt不再声称“上下文开头就是自己的旧文档”，而是要求从带`logicalColumnId`的prior projection中识别自己的旧block；
 - 将两份旧zh-CN system prompt中的列专属规则完整迁入各自versioned user prompt；autobiography保留第一人称、心理连续性、
   重要关系/承诺与当前内在状态，world-understanding保留事实/推断/矛盾、确信程度、信息分类与known-unknown纪律；
-- 两份user prompt把“始终返回完整文档”改为：发生变化时以`updated`返回完整文档，确实无需变化时以
-  `keep-unchanged`返回`content:null`。
+- 两份user prompt要求始终返回完整replacement；确实无需变化时逐字返回同列旧block，由Runtime确定性识别为`KeepUnchanged`。
 
 上述`docs/Galatea/prompt/...`文件是单一authoring source。新程序集通过`.csproj`逐文件显式`EmbeddedResource`、stable logical name
 和compile-time link消费exact UTF-8/LF bytes；normal runtime只读assembly resource，绝不按filesystem相对路径加载docs，也不得在C#字符串里
 复制第二份正文。loader只接受exact resource names、strict UTF-8/no BOM与bounded bytes。golden tests锁定resource SHA-256、Family digest、
-两个Definition digests、registration command digest、ordered targets与terminal schema。
+两个Definition digests、registration command digest、ordered targets与V3 no-tools output mode。
 
 ## 3. Model/route配置边界
 
-首版V2 route shape固定为：
+首版V3 route shape固定为：
 
 ```text
 durable capability:
-  (FamilyDigest, RuntimeProtocolId = "tool-runtime-v2", SemanticModelId = null)
+  (FamilyDigest, RuntimeProtocolId = "text-runtime-v3", SemanticModelId = null)
 
 runtime route manifest:
   exact key above -> ConnectionId
@@ -92,7 +93,7 @@ connections.json:
 ```
 
 因此一个shared Family只需要一条`semanticModelId: null`的exact route。Galatea的`recapGrid.routeManifestPath`仍是deferred、strict、
-no-fallback输入；实际model默认来自`connections.json`中被选connection的`modelId`。V2允许operator修改配置后重启/重开Host切换模型，
+no-fallback输入；实际model默认来自`connections.json`中被选connection的`modelId`。C2允许operator修改配置后重启/重开Host切换模型，
 不修改Control或derived identity。进程内hot reload与按费用、延迟、健康度或任务类型逐调用选择明确不属于C2：当前Runtime按route key
 缓存resolved route，未来实现动态策略时必须一并重做Host resolver、Runtime route-cache/lifetime、admission与telemetry合同，不能只替换
 一个callback。该后续协议仍须满足：
@@ -133,7 +134,7 @@ namespace Atelia.Galatea.RecapGrid
 
 ```text
 GalateaRecapGridAssets
-  AssetId = "galatea-rolling-rewrite-zh-cn-v2"
+  AssetId = "galatea-rolling-rewrite-zh-cn-v3"
   TryCreateRegistrationBundle(assetId, out bundle)
   Describe(assetId) -> ordered definition digests/targets/resource digests
 ```
@@ -163,20 +164,23 @@ Agent-facing JSON action仍由AgentControl独立拥有`provision-built-in`，不
 
 ### 5.1 RecapRewriter
 
-当前`tool-runtime-v2`只是“Completion调用 + 恰好一个terminal tool output”的envelope，并不执行普通tools。C2继续使用
-`updated/keep-unchanged`，是当前最小且恢复语义最清晰的协议。它还必须显式承诺每个missing Cell至多启动一次真实Completion；
-现有Manager可据此用missing work count做调用前admission和operation evidence。
+当前`text-runtime-v3`是single-shot、no-tools、no-sentinel的`FullReplacementText`协议。每个missing Cell至多启动一次真实Completion；
+现有Manager可据此用missing work count做调用前admission和operation evidence。Family canonical schema显式记录
+`FamilyOutputMode.FullReplacementText`，并强制`OrderedTools.Count == 0`；`OrderedTools`只作为未来其他output mode的扩展入口。
 
-V2删除V1且不提供兼容读取或route fallback。它把runtime/output identity分别旋转为`tool-runtime-v2`与
-`atelia.recap.output.v2`，terminal tool使用reserved name；input/prior/history rendering schema仍独立保持v1。Family system prompt、
-Galatea member prompts和terminal description都必须name-neutral，不出现reserved token；tool schema本身是唯一向provider公开该名字的
-canonical位置。
+V3删除V2且不提供兼容读取或route fallback。runtime/output identity分别为`text-runtime-v3`与`atelia.recap.output.v3`；
+input/prior/history rendering schema仍独立保持v1。Completion projection使用empty tools、`CompletionToolChoice.ProviderDefault`和
+`allowParallel=null`，使Anthropic、OpenAI Chat/Responses与Gemini wire都不声明tools或required tool name。
 
-V2 output parser接受的exact block grammar是：零个或多个provider-native reasoning或pre-terminal text、恰好一个reserved terminal
-tool call、随后只允许provider-native reasoning。pre-terminal text属于provider compatibility side-band，必须丢弃且只以bounded
-block-count/UTF-8-byte-count telemetry报告；它绝不拼入`content`、不成为fallback，也不进入Cell identity。text-only、wrong/ordinary tool、
-multiple tools、post-terminal text及未知block全部fail closed。`updated.content`按ordinal包含reserved protocol token时以
-`ReservedProtocolTokenInContent`拒绝，防止控制协议名泄漏进Galatea长期记忆。
+V3 output parser接受的exact block grammar是：零个或多个provider-native reasoning、恰好一个nonblank `ActionBlock.Text`、随后零个或多个
+provider-native reasoning。Completion Aggregator负责把连续text deltas聚成一个Text block；多个Text blocks、任何ToolCall、reasoning-only、
+blank、unknown/incomplete/error result与invocation mismatch全部fail closed。Parser不trim、normalize、剥离preamble或解释正文结构；
+UTF-16 validity与UTF-8 byte cap都按exact正文检查。正文按ordinal恰好等于同列prior content时得到`KeepUnchanged`，否则得到`Updated`；
+首row无同列prior时始终是`Updated`。Cell只保存exact Text正文。
+
+这次hard cut由V2真实Opus canary直接触发：world-understanding response把History中的业务实体`Role-Play Agent`替换成了reserved tool name
+`recap_grid_finalize_cell`。V2 reserved-token gate正确阻止了污染写入，却也证明了“让模型用协议tool name提交正文”会把控制token注入正文语义。
+V3从provider request与prompt中完全移除该tool name，使控制协议不再与Galatea长期记忆争夺词义。
 
 ### 5.2 RecapEditor
 
@@ -213,9 +217,9 @@ RecapGrid executor是可重试的derived evaluation，严禁从中直接产生�
 状态：Complete，commit `bf4beff0`。
 
 - 给`FamilyDefinition.OrderedTools`、`IRecapCellBatchExecutor`、`RecapCellArtifact`补上述协议/纯度/immutable注释；
-- 当前`tool-runtime-v2` validator要求Family恰好声明一个terminal tool，禁止“声明了普通tools但runtime从不dispatch”的假扩展；
-- C2 V2 Family锁定reserved terminal tool name、`FamilyToolChoice.Required`与`allowParallel=false`，并纳入canonical goldens；
-- current V2 executor XML contract锁定每个work最多一次provider call；未来multi-call protocol必须先扩逐call pre-admission、actual-started
+- 当前`text-runtime-v3` validator要求Family声明`FullReplacementText`且tools为空，禁止“声明了tools但runtime从不dispatch”的假扩展；
+- C2 V3 Family锁定no-tools output mode与provider projection的empty tools / ProviderDefault / null parallel choice，并纳入canonical goldens；
+- current V3 executor XML contract锁定每个work最多一次provider call；未来multi-call protocol必须先扩逐call pre-admission、actual-started
   count、cancel/drain和operation-total evidence；
 - 新建`Galatea.RecapGrid` product/tests/public-surface，嵌入三份prompt资源，生成一个Family和两个Definitions；
 - 两个capability的`SemanticModelId=null`，首版`MaxContentUtf8Bytes=32 KiB`；若真实canary证明不够，再以新Definition revision调整，
@@ -250,13 +254,14 @@ focused 2/2、Galatea full 93/93；frozen/provider-free阶段provider constructi
 
 ### C2D：real-provider canary + actual activation
 
-状态：`NotRun`；必须使用执行当下确认的exact disposable clone/call manifest，不能由source tests替代。
+状态：V2 canary已fail closed并促成V3 hard cut；V3 canary rerun与actual activation为`NotRun`。必须使用执行当下确认的
+exact disposable repo/call manifest，不能由source tests替代。
 
 - 先在immutable legacy export导入的一次性repo clone上，使用
   `prototypes/Galatea/.atelia/galatea/connections.json`中的默认Opus 4.6 connection做bounded rebuild；
 - canary启动前必须向用户给出并确认exact disposable clone、selected Ref/raw head、provider/model/connection、maximum calls、
   retry policy、估算费用与secret/call-log策略；不得把“费用不构成阻断”的方向性授权扩大成未绑定target与call cap的无限调用；
-- 人工审阅自传连续性、world-understanding证据纪律、两列串位、terminal tool稳定性、cache/usage、延迟与输出bytes；
+- 人工审阅自传连续性、world-understanding证据纪律、两列串位、identity-bearing名称保真、cache/usage、延迟与输出bytes；
 - canary通过后，actual cyber activation仍需再次确认停服时点、exact target repo/Ref/raw、备份/恢复边界和首次new raw write；
   随后才可重建或替换actual cyber repo并显式provision/build/promote；
 - 首次new raw append前允许回退binary/config；append后不得覆盖raw，只能forward-fix或先证明旧binary兼容新raw。
@@ -277,12 +282,13 @@ C2 source candidate至少满足：
 C2A-C2C source closure已满足上述八项；两路independent review最终均为GO（P0=0，P1=0）。这只关闭source gate，
 不关闭下述C2D外部执行门禁。
 
-最终串行affected evidence：Abstractions 15/15、Runtime 58/58、Hosting 20/20、AgentControl 20/20、CLI 99/99、
-Galatea asset 4/4、Galatea Server 93/93、Galatea/Runtime/Hosting/AgentControl public-surface 1/1 + 2/2 + 2/2 + 1/1、
-Walking 27/27；`Atelia.sln` build 0 warning / 0 error，docs scoped/all-tracked与diff check均为green。
+V3最终串行affected evidence：Abstractions 15/15、Runtime 52/52、Hosting 20/20、Online 31/31、AgentControl 20/20、
+Control 45/45、Manager 74/74、Getter 27/27、CLI 100/100、Galatea asset 4/4、Galatea Server 93/93、
+Galatea/Runtime/Hosting/AgentControl public-surface 1/1 + 2/2 + 2/2 + 1/1、Walking 27/27；`Atelia.sln` build
+0 warning / 0 error，scoped legacy-protocol search与diff check均为green。
 
-同一asset ID一旦进入Control receipt/canonical catalog即视为immutable。prompt、Family、Definition或terminal schema的canonical bytes发生变化时
-必须发布新的asset revision（例如`...-v2`）；不得让同一个operator operation identity在不同binary中代表不同registration command。
+同一asset ID一旦进入Control receipt/canonical catalog即视为immutable。prompt、Family、Definition或output mode的canonical bytes发生变化时
+必须发布新的asset revision（例如`...-v4`）；不得让同一个operator operation identity在不同binary中代表不同registration command。
 
 No-Go条件：把Opus 4.6写入semantic identity；把prompt正文复制进C#形成双真源；Galatea normal path自动创建Control/Grid状态；
 把Galatea asset塞入AgentControl catalog而未处理frozen identity；把effectful ExperienceRefiner放进可重试Cell executor；或在真实clone质量审阅前
@@ -293,7 +299,7 @@ No-Go条件：把Opus 4.6写入semantic identity；把prompt正文复制进C#形
 当前C2 source设计没有剩余的高层需求阻塞。以下均按工程决策处理，无需再打断用户：
 
 - 首版32 KiB/列及world-first canonical order；
-- V2配置变化通过Host restart/reopen生效，逐调用动态route属于独立后续协议；
+- C2配置变化通过Host restart/reopen生效，逐调用动态route属于独立后续协议；
 - 将旧专业system规则迁入两个versioned user prompts、共享system prompt润色与golden更新；
 - model切换后保留既有Cells、只由新model补missing work的mixed runtime provenance；
 - 新程序集、operator catalog composition、测试/public-surface/Walking细节；

@@ -9,9 +9,8 @@ public enum FamilyScalarType {
     Int64
 }
 
-public enum FamilyToolChoice {
-    Auto,
-    Required
+public enum FamilyOutputMode {
+    FullReplacementText
 }
 
 public abstract class FamilyInputSchema {
@@ -209,26 +208,20 @@ public sealed class FamilyToolDefinition {
 public sealed class FamilyOutputProtocol {
     public FamilyOutputProtocol(
         string protocolId,
-        string terminalToolName,
-        FamilyToolChoice toolChoice,
-        bool? allowParallel
+        FamilyOutputMode mode
     ) {
         ProtocolId = RecapGridSyntax.RequireIdentifier(
             protocolId,
             nameof(protocolId)
         );
-        TerminalToolName = RecapGridSyntax.RequireIdentifier(
-            terminalToolName,
-            nameof(terminalToolName)
-        );
-        ToolChoice = toolChoice;
-        AllowParallel = allowParallel;
+        if (!Enum.IsDefined(mode)) {
+            throw new ArgumentOutOfRangeException(nameof(mode));
+        }
+        Mode = mode;
     }
 
     public string ProtocolId { get; }
-    public string TerminalToolName { get; }
-    public FamilyToolChoice ToolChoice { get; }
-    public bool? AllowParallel { get; }
+    public FamilyOutputMode Mode { get; }
 }
 
 public sealed class FamilyInputRenderingProtocol {
@@ -307,7 +300,7 @@ public sealed class FamilyDefinition {
             RecapGridLimits.MaximumToolCount,
             nameof(orderedTools)
         );
-        if (tools.Length is < 1 or > RecapGridLimits.MaximumToolCount) {
+        if (tools.Length > RecapGridLimits.MaximumToolCount) {
             throw new ArgumentOutOfRangeException(nameof(orderedTools));
         }
         if (tools.Any(static tool => tool is null)
@@ -318,13 +311,11 @@ public sealed class FamilyDefinition {
                 nameof(orderedTools)
             );
         }
-        if (!tools.Any(tool => string.Equals(
-                tool.Name,
-                outputProtocol.TerminalToolName,
-                StringComparison.Ordinal))) {
+        if (outputProtocol.Mode is FamilyOutputMode.FullReplacementText
+            && tools.Length != 0) {
             throw new ArgumentException(
-                "The terminal tool must be present in OrderedTools.",
-                nameof(outputProtocol)
+                "FullReplacementText output requires an empty OrderedTools set.",
+                nameof(orderedTools)
             );
         }
         ValidateSchemas(tools);
@@ -335,11 +326,11 @@ public sealed class FamilyDefinition {
             inputRenderingProtocol
         );
         FamilyDefinitionDigest digest = new(RecapGridHash.Compute(
-            "atelia.recap-grid.family-definition.v1",
+            "atelia.recap-grid.family-definition.v2",
             RecapGridCanonical.Encode(body)
         ));
         byte[] canonical = RecapGridCanonical.Encode(new FamilyDefinitionDto(
-            1,
+            2,
             digest.Value,
             body.SystemPrompt,
             body.OrderedTools,
@@ -386,7 +377,7 @@ public sealed class FamilyDefinition {
             RecapGridLimits.MaximumFamilyCanonicalUtf8Bytes,
             nameof(bytes)
         );
-        if (dto.SchemaVersion != 1
+        if (dto.SchemaVersion != 2
             || dto.OrderedTools is null
             || dto.OutputProtocol is null
             || dto.InputRenderingProtocol is null) {
@@ -399,9 +390,7 @@ public sealed class FamilyDefinition {
             dto.OrderedTools.Select(FromDto),
             new FamilyOutputProtocol(
                 dto.OutputProtocol.ProtocolId,
-                dto.OutputProtocol.TerminalToolName,
-                ParseToolChoice(dto.OutputProtocol.ToolChoice),
-                dto.OutputProtocol.AllowParallel
+                ParseOutputMode(dto.OutputProtocol.Mode)
             ),
             new FamilyInputRenderingProtocol(
                 dto.InputRenderingProtocol.ProtocolId,
@@ -424,20 +413,18 @@ public sealed class FamilyDefinition {
         FamilyOutputProtocol output,
         FamilyInputRenderingProtocol input
     ) => new(
-        1,
+        2,
         systemPrompt,
         tools.Select(static item => item.ToDto()).ToArray(),
         new FamilyOutputProtocolDto(
             output.ProtocolId,
-            output.TerminalToolName,
-            output.ToolChoice switch {
-                FamilyToolChoice.Auto => "auto",
-                FamilyToolChoice.Required => "required",
+            output.Mode switch {
+                FamilyOutputMode.FullReplacementText =>
+                    "full-replacement-text",
                 _ => throw new InvalidOperationException(
-                    "The tool choice is unsupported."
+                    "The output mode is unsupported."
                 )
-            },
-            output.AllowParallel
+            }
         ),
         new FamilyInputRenderingProtocolDto(
             input.ProtocolId,
@@ -503,10 +490,9 @@ public sealed class FamilyDefinition {
         _ => throw new ArgumentException("The scalar type is unsupported.")
     };
 
-    private static FamilyToolChoice ParseToolChoice(string value) => value switch {
-        "auto" => FamilyToolChoice.Auto,
-        "required" => FamilyToolChoice.Required,
-        _ => throw new ArgumentException("The tool choice is unsupported.")
+    private static FamilyOutputMode ParseOutputMode(string value) => value switch {
+        "full-replacement-text" => FamilyOutputMode.FullReplacementText,
+        _ => throw new ArgumentException("The output mode is unsupported.")
     };
 
     private static void ValidateSchemas(IEnumerable<FamilyToolDefinition> tools) {
@@ -843,9 +829,7 @@ internal sealed record FamilyToolDefinitionDto(
 
 internal sealed record FamilyOutputProtocolDto(
     string ProtocolId,
-    string TerminalToolName,
-    string ToolChoice,
-    bool? AllowParallel
+    string Mode
 );
 
 internal sealed record FamilyInputRenderingProtocolDto(

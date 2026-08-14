@@ -115,11 +115,11 @@ public sealed partial class RecapCompletionRuntime {
             }
             if (!string.Equals(
                     work.Definition.Capability.RuntimeProtocolId,
-                    RecapRewriterProtocolV2.RuntimeProtocolId,
+                    RecapRewriterProtocolV3.RuntimeProtocolId,
                     StringComparison.Ordinal)) {
                 return new RuntimePreflightResult.Rejected(
                     "ProtocolUnavailable",
-                    "The maintainer runtime protocol is unavailable in runtime V2."
+                    "The maintainer runtime protocol is unavailable in runtime V3."
                 );
             }
 
@@ -181,27 +181,27 @@ public sealed partial class RecapCompletionRuntime {
         FamilyDefinition family = work.Family;
         if (!string.Equals(
                 work.Definition.Capability.RuntimeProtocolId,
-                RecapRewriterProtocolV2.RuntimeProtocolId,
+                RecapRewriterProtocolV3.RuntimeProtocolId,
                 StringComparison.Ordinal)
             || !string.Equals(
                 family.OutputProtocol.ProtocolId,
-                RecapRewriterProtocolV2.OutputProtocolId,
+                RecapRewriterProtocolV3.OutputProtocolId,
                 StringComparison.Ordinal)
             || !string.Equals(
                 family.InputRenderingProtocol.ProtocolId,
-                RecapRewriterProtocolV2.InputProtocolId,
+                RecapRewriterProtocolV3.InputProtocolId,
                 StringComparison.Ordinal)
             || !string.Equals(
                 family.InputRenderingProtocol.PriorProjectionSchemaId,
-                RecapRewriterProtocolV2.PriorProjectionSchemaId,
+                RecapRewriterProtocolV3.PriorProjectionSchemaId,
                 StringComparison.Ordinal)
             || !string.Equals(
                 family.InputRenderingProtocol.HistorySegmentRenderingSchemaId,
-                RecapRewriterProtocolV2.HistorySegmentRenderingSchemaId,
+                RecapRewriterProtocolV3.HistorySegmentRenderingSchemaId,
                 StringComparison.Ordinal)) {
             return new RuntimePreflightResult.Rejected(
                 "ProtocolUnavailable",
-                "The family or maintainer protocol is unavailable in runtime V2."
+                "The family or maintainer protocol is unavailable in runtime V3."
             );
         }
         RuntimePreflightResult.Rejected? protocolFailure =

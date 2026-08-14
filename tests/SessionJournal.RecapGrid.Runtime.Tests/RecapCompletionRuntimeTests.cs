@@ -58,28 +58,20 @@ public sealed class RecapCompletionRuntimeTests {
     }
 
     [Fact]
-    public async Task NonExactV2TerminalEnvelope_RejectsWholeBatchBeforeRemoteStart() {
-        FrozenRowBatch[] invalid = [
-            RuntimeTestFixture.Batch(includeAdditionalTool: true),
-            RuntimeTestFixture.Batch(terminalToolName: "finish"),
-            RuntimeTestFixture.Batch(toolChoice: FamilyToolChoice.Auto),
-            RuntimeTestFixture.Batch(allowParallel: true),
-            RuntimeTestFixture.Batch(allowParallel: null),
-            RuntimeTestFixture.Batch(includeSchemaDescription: true)
-        ];
+    public async Task NonExactV3OutputProtocol_RejectsBeforeRemoteStart() {
+        FrozenRowBatch batch = RuntimeTestFixture.Batch(
+            outputProtocolId: "unsupported-output-v3"
+        );
+        var invoker = new ScriptedInvoker((_, _) =>
+            throw new InvalidOperationException("must not dispatch"));
+        using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
 
-        foreach (FrozenRowBatch batch in invalid) {
-            var invoker = new ScriptedInvoker((_, _) =>
-                throw new InvalidOperationException("must not dispatch"));
-            using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
+        var rejected = Assert.IsType<
+            RecapCellBatchExecutionResult.RejectedBeforeDispatch
+        >(await runtime.ExecuteAsync(batch, default));
 
-            var rejected = Assert.IsType<
-                RecapCellBatchExecutionResult.RejectedBeforeDispatch
-            >(await runtime.ExecuteAsync(batch, default));
-
-            Assert.Equal("OutputProtocolMismatch", rejected.Code);
-            Assert.Equal(0, invoker.CallCount);
-        }
+        Assert.Equal("ProtocolUnavailable", rejected.Code);
+        Assert.Equal(0, invoker.CallCount);
     }
 
     [Fact]
@@ -87,8 +79,8 @@ public sealed class RecapCompletionRuntimeTests {
         FrozenRowBatch batch = RuntimeTestFixture.Batch(
             columnCount: 2,
             runtimeProtocolIds: [
-                RecapRewriterProtocolV2.RuntimeProtocolId,
-                "unsupported-runtime-v2"
+                RecapRewriterProtocolV3.RuntimeProtocolId,
+                "unsupported-runtime-v3"
             ]
         );
         var invoker = new ScriptedInvoker((_, _) =>
@@ -205,22 +197,13 @@ public sealed class RecapCompletionRuntimeTests {
     }
 
     [Theory]
-    [InlineData("{\"outcome\":\"updated\",\"content\":null}", "TerminalOutcomeInvalid")]
-    [InlineData("{\"outcome\":\"unknown\",\"content\":\"x\"}", "TerminalOutcomeInvalid")]
-    [InlineData("{\"outcome\":\"updated\",\"content\":\"x\",\"extra\":1}", "TerminalArgumentsShapeInvalid")]
-    [InlineData("{\"outcome\":\"updated\",\"outcome\":\"updated\",\"content\":\"x\"}", "TerminalArgumentsShapeInvalid")]
-    [InlineData("{\"outcome\":\"updated\",\"content\":\"\\uD800\"}", "UpdatedContentInvalidUtf16")]
-    [InlineData("{\"outcome\":\"updated\",\"content\":\"\\uDC00\"}", "UpdatedContentInvalidUtf16")]
-    [InlineData("\uFEFF{\"outcome\":\"updated\",\"content\":\"x\"}", "TerminalArgumentsInvalid")]
-    [InlineData("{\"outcome\":\"updated\",\"content\":\"x\"} trailing", "TerminalArgumentsInvalidJson")]
-    public async Task Parser_InvalidShape_IsStableFailure(
-        string arguments,
-        string expectedCode
-    ) {
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Parser_BlankText_IsStableFailure(string content) {
         FrozenRowBatch batch = RuntimeTestFixture.Batch();
         ScriptedInvoker? invoker = null;
         invoker = new ScriptedInvoker((request, _) => ValueTask.FromResult(
-            RuntimeTestFixture.Result(request, invoker!, arguments)
+            RuntimeTestFixture.Result(request, invoker!, content)
         ));
         RecapCompletionRoute route = RuntimeTestFixture.Route(batch, invoker);
         using var runtime = Runtime(route);
@@ -232,7 +215,7 @@ public sealed class RecapCompletionRuntimeTests {
             Assert.Single(completed.OrderedOutcomes)
         );
 
-        Assert.Equal(expectedCode, failed.Code);
+        Assert.Equal("FullReplacementTextBlank", failed.Code);
         Assert.Equal(1, invoker.CallCount);
     }
 
@@ -346,9 +329,9 @@ public sealed class RecapCompletionRuntimeTests {
 
     [Theory]
     [InlineData("éa", true, null)]
-    [InlineData("éaa", false, "UpdatedContentTooLarge")]
-    [InlineData("   ", false, "UpdatedContentBlank")]
-    public async Task UpdatedContent_UsesStrictExactUtf8Cap(
+    [InlineData("éaa", false, "FullReplacementTextTooLarge")]
+    [InlineData("   ", false, "FullReplacementTextBlank")]
+    public async Task FullReplacementText_UsesStrictExactUtf8Cap(
         string content,
         bool succeeds,
         string? expectedCode
@@ -413,7 +396,7 @@ public sealed class RecapCompletionRuntimeTests {
             await runtime.ExecuteAsync(batch, default)
         );
         Assert.Equal(
-            "UpdatedContentTooLarge",
+            "FullReplacementTextTooLarge",
             Assert.IsType<RecapCellExecutionOutcome.Failed>(
                 Assert.Single(over.OrderedOutcomes)
             ).Code
@@ -421,7 +404,7 @@ public sealed class RecapCompletionRuntimeTests {
     }
 
     [Fact]
-    public async Task AnthropicReasoningAndPreTerminalText_AreAcceptedAndReported() {
+    public async Task AnthropicReasoningAndFullReplacementText_PreserveRolePlayAgent() {
         FrozenRowBatch batch = RuntimeTestFixture.Batch();
         var telemetry = new CapturingTelemetry();
         ScriptedInvoker? invoker = null;
@@ -434,22 +417,19 @@ public sealed class RecapCompletionRuntimeTests {
             return ValueTask.FromResult(RuntimeTestFixture.Result(
                 request,
                 invoker!,
-                "{\"outcome\":\"updated\",\"content\":\"accepted\"}",
+                "Role-Play Agent remains exact.",
                 [
                     new AnthropicReasoningBlock(
                         new byte[] { 1, 2, 3 },
                         descriptor
                     ),
-                    new ActionBlock.Text("Looking at this carefully..."),
-                    new ActionBlock.ToolCall(new RawToolCall(
-                        RecapRewriterProtocolV2.TerminalToolName,
-                        "call-1",
-                        "{\"outcome\":\"updated\",\"content\":\"accepted\"}"
-                    )),
+                    new ActionBlock.Text(
+                        "Role-Play Agent remains exact."
+                    ),
                     new ActionBlock.TextReasoningBlock("hidden", descriptor)
                 ]
             ) with {
-                Termination = CompletionTermination.Completed("tool_use")
+                Termination = CompletionTermination.Completed("end_turn")
             });
         });
         using var runtime = Runtime(
@@ -463,67 +443,47 @@ public sealed class RecapCompletionRuntimeTests {
         var updated = Assert.IsType<RecapCellExecutionOutcome.Updated>(
             Assert.Single(completed.OrderedOutcomes)
         );
-        Assert.Equal("accepted", updated.Content);
+        Assert.Equal("Role-Play Agent remains exact.", updated.Content);
         Assert.Equal(1, invoker.CallCount);
         RecapCompletionTelemetryEvent evidence = Assert.Single(
             telemetry.Events
         );
         Assert.Equal("updated", evidence.ProviderOutcome);
-        Assert.Equal("PreTerminalTextIgnored", evidence.Code);
-        Assert.Equal(
-            "Ignored 1 pre-terminal text block(s), 28 UTF-8 byte(s).",
-            evidence.Detail
-        );
+        Assert.Null(evidence.Code);
+        Assert.Null(evidence.Detail);
     }
 
     [Fact]
-    public async Task TextOnlyWrongMultipleAndPostToolText_AreRejected() {
+    public async Task MultipleTextToolAndReasoningOnlyOutputs_AreRejected() {
         FrozenRowBatch batch = RuntimeTestFixture.Batch();
+        var descriptor = new CompletionDescriptor(
+            "provider",
+            "api",
+            "model"
+        );
         var outputs = new Queue<IReadOnlyList<ActionBlock>>([
-            [new ActionBlock.Text("plain text")],
             [new ActionBlock.ToolCall(new RawToolCall(
-                "wrong",
+                "unexpected",
                 "call-1",
-                "{\"outcome\":\"updated\",\"content\":\"x\"}"
+                "{}"
             ))],
             [
+                new ActionBlock.Text("first"),
+                new ActionBlock.Text("second")
+            ],
+            [
+                new ActionBlock.TextReasoningBlock(
+                    "hidden-provider-reasoning",
+                    descriptor
+                )
+            ],
+            [
+                new ActionBlock.Text("replacement"),
                 new ActionBlock.ToolCall(new RawToolCall(
-                    RecapRewriterProtocolV2.TerminalToolName,
-                    "call-1",
-                    "{\"outcome\":\"updated\",\"content\":\"x\"}"
-                )),
-                new ActionBlock.ToolCall(new RawToolCall(
-                    RecapRewriterProtocolV2.TerminalToolName,
+                    "unexpected",
                     "call-2",
-                    "{\"outcome\":\"updated\",\"content\":\"y\"}"
+                    "{}"
                 ))
-            ],
-            [
-                new ActionBlock.TextReasoningBlock(
-                    "hidden-provider-reasoning",
-                    new CompletionDescriptor(
-                        "provider",
-                        "api",
-                        "model"
-                    )
-                ),
-                new ActionBlock.ToolCall(new RawToolCall(
-                    RecapRewriterProtocolV2.TerminalToolName,
-                    "call-1",
-                    "{\"outcome\":\"updated\",\"content\":\"x\"}"
-                )),
-                new ActionBlock.Text("post-terminal text")
-            ],
-            [
-                new ActionBlock.TextReasoningBlock(
-                    "hidden-provider-reasoning",
-                    new CompletionDescriptor(
-                        "provider",
-                        "api",
-                        "model"
-                    )
-                ),
-                new ActionBlock.Text("ordinary text")
             ]
         ]);
         ScriptedInvoker? invoker = null;
@@ -531,52 +491,53 @@ public sealed class RecapCompletionRuntimeTests {
             RuntimeTestFixture.Result(
                 request,
                 invoker!,
-                "{}",
+                "unused",
                 outputs.Dequeue()
             )
         ));
         using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
 
-        for (int index = 0; index < 5; index++) {
+        for (int index = 0; index < 4; index++) {
             var completed = Assert.IsType<
                 RecapCellBatchExecutionResult.Completed
             >(await runtime.ExecuteAsync(batch, default));
             Assert.Equal(
-                "TerminalToolCallInvalid",
+                "FullReplacementTextInvalid",
                 Assert.IsType<RecapCellExecutionOutcome.Failed>(
                     Assert.Single(completed.OrderedOutcomes)
                 ).Code
             );
         }
-        Assert.Equal(5, invoker.CallCount);
+        Assert.Equal(4, invoker.CallCount);
     }
 
     [Fact]
-    public async Task SameToolArguments_WithOrWithoutPreamble_HaveSameCellIdentity() {
+    public async Task SameText_WithOrWithoutReasoning_HasSameCellIdentity() {
         FrozenRowBatch batch = RuntimeTestFixture.Batch();
-        var includePreamble = new Queue<bool>([false, true]);
+        var includeReasoning = new Queue<bool>([false, true]);
         ScriptedInvoker? invoker = null;
-        invoker = new ScriptedInvoker((request, _) => ValueTask.FromResult(
-            RuntimeTestFixture.Result(
+        invoker = new ScriptedInvoker((request, _) => {
+            var descriptor = new CompletionDescriptor(
+                invoker!.ProviderId,
+                invoker.ApiSpecId,
+                request.ModelId
+            );
+            IReadOnlyList<ActionBlock> blocks = includeReasoning.Dequeue()
+                ? [
+                    new ActionBlock.TextReasoningBlock(
+                        "hidden",
+                        descriptor
+                    ),
+                    new ActionBlock.Text("same content")
+                ]
+                : [new ActionBlock.Text("same content")];
+            return ValueTask.FromResult(RuntimeTestFixture.Result(
                 request,
-                invoker!,
-                "{\"outcome\":\"updated\",\"content\":\"same content\"}",
-                includePreamble.Dequeue()
-                    ? [
-                        new ActionBlock.Text("brief preamble"),
-                        new ActionBlock.ToolCall(new RawToolCall(
-                            RecapRewriterProtocolV2.TerminalToolName,
-                            "call-with-preamble",
-                            "{\"outcome\":\"updated\",\"content\":\"same content\"}"
-                        ))
-                    ]
-                    : [new ActionBlock.ToolCall(new RawToolCall(
-                        RecapRewriterProtocolV2.TerminalToolName,
-                        "call-without-preamble",
-                        "{\"outcome\":\"updated\",\"content\":\"same content\"}"
-                    ))]
-            )
-        ));
+                invoker,
+                "same content",
+                blocks
+            ));
+        });
         using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
 
         var first = Assert.IsType<RecapCellExecutionOutcome.Updated>(
@@ -610,30 +571,6 @@ public sealed class RecapCompletionRuntimeTests {
         );
         Assert.Equal(firstCell.CellDigest, secondCell.CellDigest);
         Assert.Equal(firstCell.ToCanonicalBytes(), secondCell.ToCanonicalBytes());
-    }
-
-    [Fact]
-    public async Task UpdatedContent_ContainingReservedProtocolToken_IsRejected() {
-        FrozenRowBatch batch = RuntimeTestFixture.Batch();
-        ScriptedInvoker? invoker = null;
-        invoker = new ScriptedInvoker((request, _) => ValueTask.FromResult(
-            RuntimeTestFixture.Updated(
-                request,
-                invoker!,
-                $"prefix {RecapRewriterProtocolV2.ReservedProtocolToken} suffix"
-            )
-        ));
-        using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
-
-        var completed = Assert.IsType<RecapCellBatchExecutionResult.Completed>(
-            await runtime.ExecuteAsync(batch, default)
-        );
-        Assert.Equal(
-            "ReservedProtocolTokenInContent",
-            Assert.IsType<RecapCellExecutionOutcome.Failed>(
-                Assert.Single(completed.OrderedOutcomes)
-            ).Code
-        );
     }
 
     [Fact]
@@ -677,17 +614,18 @@ public sealed class RecapCompletionRuntimeTests {
         Assert.Equal(3, invoker.CallCount);
     }
 
-    [Theory]
-    [InlineData("{\"Outcome\":\"updated\",\"content\":\"x\"}", "TerminalArgumentsShapeInvalid")]
-    [InlineData("{/*comment*/\"outcome\":\"updated\",\"content\":\"x\"}", "TerminalArgumentsInvalidJson")]
-    public async Task Parser_RejectsCaseVariantsAndComments(
-        string arguments,
-        string expectedCode
-    ) {
+    [Fact]
+    public async Task InvocationMismatch_IsStableStartedFailure() {
         FrozenRowBatch batch = RuntimeTestFixture.Batch();
         ScriptedInvoker? invoker = null;
         invoker = new ScriptedInvoker((request, _) => ValueTask.FromResult(
-            RuntimeTestFixture.Result(request, invoker!, arguments)
+            RuntimeTestFixture.Updated(request, invoker!) with {
+                Invocation = new CompletionDescriptor(
+                    invoker!.ProviderId,
+                    invoker.ApiSpecId,
+                    "wrong-model"
+                )
+            }
         ));
         using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
 
@@ -695,19 +633,18 @@ public sealed class RecapCompletionRuntimeTests {
             await runtime.ExecuteAsync(batch, default)
         );
         Assert.Equal(
-            expectedCode,
+            "InvocationMismatch",
             Assert.IsType<RecapCellExecutionOutcome.Failed>(
                 Assert.Single(completed.OrderedOutcomes)
             ).Code
         );
+        Assert.Equal(1, invoker.CallCount);
     }
 
     [Fact]
-    public async Task Parser_RejectsArgumentsBeyondCodeOwnedBound() {
+    public async Task Parser_RejectsTextBeyondCodeOwnedBound() {
         FrozenRowBatch batch = RuntimeTestFixture.Batch();
-        string huge = "{\"outcome\":\"updated\",\"content\":\""
-            + new string('x', 2 * 1024 * 1024)
-            + "\"}";
+        string huge = new('x', 2 * 1024 * 1024);
         ScriptedInvoker? invoker = null;
         invoker = new ScriptedInvoker((request, _) => ValueTask.FromResult(
             RuntimeTestFixture.Result(request, invoker!, huge)
@@ -718,7 +655,7 @@ public sealed class RecapCompletionRuntimeTests {
             await runtime.ExecuteAsync(batch, default)
         );
         Assert.Equal(
-            "TerminalArgumentsTooLarge",
+            "FullReplacementTextTooLarge",
             Assert.IsType<RecapCellExecutionOutcome.Failed>(
                 Assert.Single(completed.OrderedOutcomes)
             ).Code
@@ -726,56 +663,12 @@ public sealed class RecapCompletionRuntimeTests {
     }
 
     [Fact]
-    public async Task EscapedContent_UsesDecodedExactCapAndRawEnvelopeBound() {
-        FrozenRowBatch batch = RuntimeTestFixture.Batch(
-            maxContentUtf8Bytes: 1024 * 1024
-        );
-        static string Arguments(int decodedCharacters) =>
-            "{\"outcome\":\"updated\",\"content\":\""
-            + string.Concat(Enumerable.Repeat("\\u0078", decodedCharacters))
-            + "\"}";
-        var arguments = new Queue<string>([
-            Arguments(256 * 1024),
-            Arguments(256 * 1024 + 1)
-        ]);
-        ScriptedInvoker? invoker = null;
-        invoker = new ScriptedInvoker((request, _) => ValueTask.FromResult(
-            RuntimeTestFixture.Result(
-                request,
-                invoker!,
-                arguments.Dequeue()
-            )
-        ));
-        using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
-
-        var exact = Assert.IsType<RecapCellBatchExecutionResult.Completed>(
-            await runtime.ExecuteAsync(batch, default)
-        );
-        Assert.Equal(
-            256 * 1024,
-            Assert.IsType<RecapCellExecutionOutcome.Updated>(
-                Assert.Single(exact.OrderedOutcomes)
-            ).Content.Length
-        );
-        var over = Assert.IsType<RecapCellBatchExecutionResult.Completed>(
-            await runtime.ExecuteAsync(batch, default)
-        );
-        Assert.Equal(
-            "UpdatedContentTooLarge",
-            Assert.IsType<RecapCellExecutionOutcome.Failed>(
-                Assert.Single(over.OrderedOutcomes)
-            ).Code
-        );
-    }
-
-    [Fact]
-    public async Task Parser_RejectsInvalidUtf16BeforeAllocatingArgumentBytes() {
+    public async Task Parser_RejectsInvalidUtf16Text() {
         FrozenRowBatch batch = RuntimeTestFixture.Batch();
-        string arguments =
-            "{\"outcome\":\"updated\",\"content\":\"\uD800\"}";
+        string content = "invalid-\uD800";
         ScriptedInvoker? invoker = null;
         invoker = new ScriptedInvoker((request, _) => ValueTask.FromResult(
-            RuntimeTestFixture.Result(request, invoker!, arguments)
+            RuntimeTestFixture.Result(request, invoker!, content)
         ));
         using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
 
@@ -783,7 +676,7 @@ public sealed class RecapCompletionRuntimeTests {
             await runtime.ExecuteAsync(batch, default)
         );
         Assert.Equal(
-            "TerminalArgumentsInvalidUtf16",
+            "FullReplacementTextInvalidUtf16",
             Assert.IsType<RecapCellExecutionOutcome.Failed>(
                 Assert.Single(completed.OrderedOutcomes)
             ).Code

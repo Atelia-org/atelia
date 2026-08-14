@@ -112,7 +112,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             ReadHeadCells(fixture);
         Assert.Equal(RecapCellOutcome.KeepUnchanged, world.Outcome);
         Assert.Equal("world-r1", world.Content);
-        Assert.Equal(RecapCellOutcome.Updated, autobiography.Outcome);
+        Assert.Equal(RecapCellOutcome.KeepUnchanged, autobiography.Outcome);
         Assert.Equal("autobiography-r2", autobiography.Content);
         Assert.All(completion.Telemetry.ReadSnapshot().Events, value => {
             Assert.Equal(RecapConnectionId, value.ConnectionId);
@@ -197,7 +197,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             Assert.Equal(fixture.Family.Digest, value.FamilyDigest);
             Assert.Equal(fixture.Family.Digest,
                 value.RouteKey.FamilyDigest);
-            Assert.Equal(RecapRewriterProtocolV2.RuntimeProtocolId,
+            Assert.Equal(RecapRewriterProtocolV3.RuntimeProtocolId,
                 value.RouteKey.RuntimeProtocolId);
             Assert.Null(value.RouteKey.SemanticModelId);
         });
@@ -253,7 +253,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.Equal(fixture.Family.Digest, modelBEvent.FamilyDigest);
         Assert.Equal(fixture.Family.Digest,
             modelBEvent.RouteKey.FamilyDigest);
-        Assert.Equal(RecapRewriterProtocolV2.RuntimeProtocolId,
+        Assert.Equal(RecapRewriterProtocolV3.RuntimeProtocolId,
             modelBEvent.RouteKey.RuntimeProtocolId);
         Assert.Null(modelBEvent.RouteKey.SemanticModelId);
         Assert.Equal(fixture.Autobiography.Digest,
@@ -504,7 +504,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
     private RollingRepository CreateRollingRepository() {
         string path = NewPath();
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV2,
+            GalateaRecapGridAssets.RollingRewriteZhCnV3,
             out RecapGridControlRegistrationBundle? created
         ));
         RecapGridControlRegistrationBundle bundle = created!;
@@ -587,7 +587,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         >(control.Reader.ReadSnapshot()).Snapshot.Head;
         RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
             .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV2,
+                GalateaRecapGridAssets.RollingRewriteZhCnV3,
                 initial.InstanceId
             );
         ControlHeadRef registered = Assert.IsType<
@@ -652,7 +652,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 new RecapGridRouteManifestEntry(
                     new RecapCompletionRouteKey(
                         fixture.Family.Digest,
-                        RecapRewriterProtocolV2.RuntimeProtocolId,
+                        RecapRewriterProtocolV3.RuntimeProtocolId,
                         semanticModelId: null
                     ),
                     RecapConnectionId,
@@ -967,22 +967,14 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
     );
 
     private sealed record RecapReply(
-        string Outcome,
         string? Content,
         bool Invalid = false
     ) {
-        internal static RecapReply Updated(string content) => new(
-            RecapRewriterProtocolV2.UpdatedOutcome,
-            content
-        );
+        internal static RecapReply Updated(string content) => new(content);
 
-        internal static RecapReply Keep() => new(
-            RecapRewriterProtocolV2.KeepUnchangedOutcome,
-            null
-        );
+        internal static RecapReply Keep() => new(Content: null);
 
         internal static RecapReply InvalidTerminal() => new(
-            RecapRewriterProtocolV2.UpdatedOutcome,
             "must-not-persist",
             Invalid: true
         );
@@ -1060,7 +1052,6 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
     private sealed class RecapClient(
         Func<RecapInvocation, RecapReply> script
     ) : ICompletionClient {
-        private int _callId;
         internal ConcurrentQueue<RecapInvocation> Invocations { get; } = [];
         public string Name => "fake-recap";
         public string ApiSpecId => "openai-chat-v1";
@@ -1082,21 +1073,33 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             var invocation = new RecapInvocation(request, column, prior);
             Invocations.Enqueue(invocation);
             RecapReply reply = script(invocation);
-            string tool = reply.Invalid
-                ? "invalid-terminal"
-                : RecapRewriterProtocolV2.TerminalToolName;
-            string arguments = JsonSerializer.Serialize(new {
-                outcome = reply.Outcome,
-                content = reply.Content
-            });
+            string content = reply.Content ?? PriorContent(prior, column);
+            IReadOnlyList<ActionBlock> blocks = reply.Invalid
+                ? [
+                    new ActionBlock.Text(content),
+                    new ActionBlock.Text("invalid-second-block")
+                ]
+                : [new ActionBlock.Text(content)];
             return Task.FromResult(new CompletionResult(
-                new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(
-                    tool,
-                    $"recap-{Interlocked.Increment(ref _callId)}",
-                    arguments
-                ))]),
+                new ActionMessage(blocks),
                 new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
             ));
+        }
+
+        private static string PriorContent(string prior, string column) {
+            using JsonDocument document = JsonDocument.Parse(prior);
+            foreach (JsonElement item in document.RootElement
+                .GetProperty("columns").EnumerateArray()) {
+                if (string.Equals(
+                        item.GetProperty("logicalColumnId").GetString(),
+                        column,
+                        StringComparison.Ordinal)) {
+                    return item.GetProperty("content").GetString()!;
+                }
+            }
+            throw new InvalidOperationException(
+                "A keep reply requires an exact same-column prior."
+            );
         }
     }
 

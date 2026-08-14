@@ -13,29 +13,21 @@ internal static class RuntimeTestFixture {
     internal static FrozenRowBatch Batch(
         int columnCount = 1,
         string? semanticModelId = null,
-        string runtimeProtocolId = RecapRewriterProtocolV2.RuntimeProtocolId,
-        string inputProtocolId = RecapRewriterProtocolV2.InputProtocolId,
+        string runtimeProtocolId = RecapRewriterProtocolV3.RuntimeProtocolId,
+        string inputProtocolId = RecapRewriterProtocolV3.InputProtocolId,
         IReadOnlyList<IHistoryMessage>? history = null,
         int maxContentUtf8Bytes = 16 * 1024,
         bool distinctFamilies = false,
         bool distinctSemanticModels = false,
         int semanticModelGroupSize = 0,
         IReadOnlyList<string>? runtimeProtocolIds = null,
-        FamilyToolChoice toolChoice = FamilyToolChoice.Required,
-        bool? allowParallel = false,
-        bool includeAdditionalTool = false,
-        string terminalToolName = RecapRewriterProtocolV2.TerminalToolName,
-        bool includeSchemaDescription = false
+        string outputProtocolId = RecapRewriterProtocolV3.OutputProtocolId
     ) {
         FamilyDefinition[] families = [.. Enumerable.Range(0, columnCount)
             .Select(index => Family(
                 inputProtocolId,
                 distinctFamilies ? $"-{index}" : string.Empty,
-                toolChoice,
-                allowParallel,
-                includeAdditionalTool,
-                terminalToolName,
-                includeSchemaDescription
+                outputProtocolId
             ))];
         var definitions = new MaintainerDefinitionRevision[columnCount];
         for (int index = 0; index < columnCount; index++) {
@@ -168,58 +160,21 @@ internal static class RuntimeTestFixture {
     }
 
     internal static FamilyDefinition Family(
-        string inputProtocolId = RecapRewriterProtocolV2.InputProtocolId,
+        string inputProtocolId = RecapRewriterProtocolV3.InputProtocolId,
         string systemPromptSuffix = "",
-        FamilyToolChoice toolChoice = FamilyToolChoice.Required,
-        bool? allowParallel = false,
-        bool includeAdditionalTool = false,
-        string terminalToolName = RecapRewriterProtocolV2.TerminalToolName,
-        bool includeSchemaDescription = false
+        string outputProtocolId = RecapRewriterProtocolV3.OutputProtocolId
     ) {
-        FamilyToolDefinition exact = RecapRewriterProtocolV2
-            .CreateTerminalTool("Submit the maintained content.");
-        FamilyToolDefinition terminal = string.Equals(
-            terminalToolName,
-            RecapRewriterProtocolV2.TerminalToolName,
-            StringComparison.Ordinal
-        ) ? exact : new FamilyToolDefinition(
-            terminalToolName,
-            exact.Description,
-            exact.InputSchema
-        );
-        if (includeSchemaDescription) {
-            terminal = new FamilyToolDefinition(
-                terminal.Name,
-                terminal.Description,
-                new FamilyObjectInputSchema(
-                    terminal.InputSchema.Properties,
-                    description: "Schema drift."
-                )
-            );
-        }
-        FamilyToolDefinition[] tools = includeAdditionalTool
-            ? [
-                terminal,
-                new FamilyToolDefinition(
-                    "ordinary-tool",
-                    "This runtime must not dispatch ordinary tools.",
-                    new FamilyObjectInputSchema([])
-                )
-            ]
-            : [terminal];
         return FamilyDefinition.Create(
             "Maintain the inquiry." + systemPromptSuffix,
-            tools,
+            [],
             new FamilyOutputProtocol(
-                RecapRewriterProtocolV2.OutputProtocolId,
-                terminalToolName,
-                toolChoice,
-                allowParallel
+                outputProtocolId,
+                FamilyOutputMode.FullReplacementText
             ),
             new FamilyInputRenderingProtocol(
                 inputProtocolId,
-                RecapRewriterProtocolV2.PriorProjectionSchemaId,
-                RecapRewriterProtocolV2.HistorySegmentRenderingSchemaId
+                RecapRewriterProtocolV3.PriorProjectionSchemaId,
+                RecapRewriterProtocolV3.HistorySegmentRenderingSchemaId
             )
         );
     }
@@ -231,22 +186,16 @@ internal static class RuntimeTestFixture {
     ) => Result(
         request,
         invoker,
-        $"{{\"outcome\":\"updated\",\"content\":{System.Text.Json.JsonSerializer.Serialize(content)}}}"
+        content
     );
 
     internal static CompletionResult Result(
         CompletionRequest request,
         IRecapCompletionInvoker invoker,
-        string arguments,
+        string content,
         IReadOnlyList<ActionBlock>? blocks = null
     ) => new(
-        new ActionMessage(blocks ?? [new ActionBlock.ToolCall(
-            new RawToolCall(
-                RecapRewriterProtocolV2.TerminalToolName,
-                "call-1",
-                arguments
-            )
-        )]),
+        new ActionMessage(blocks ?? [new ActionBlock.Text(content)]),
         new CompletionDescriptor(
             invoker.ProviderId,
             invoker.ApiSpecId,
@@ -292,7 +241,7 @@ internal static class RuntimeTestFixture {
                     "column-0"
                 ),
                 new MaintainerCapabilitySpec(
-                    RecapRewriterProtocolV2.RuntimeProtocolId,
+                    RecapRewriterProtocolV3.RuntimeProtocolId,
                     MaintainerReadableScope
                         .FullPriorBuildTargetAndCurrentHistorySegmentV1
                 ),
@@ -663,7 +612,7 @@ internal static class RuntimeTestFixture {
             blockKey
         ),
         new MaintainerCapabilitySpec(
-            RecapRewriterProtocolV2.RuntimeProtocolId,
+            RecapRewriterProtocolV3.RuntimeProtocolId,
             MaintainerReadableScope
                 .FullPriorBuildTargetAndCurrentHistorySegmentV1
         ),

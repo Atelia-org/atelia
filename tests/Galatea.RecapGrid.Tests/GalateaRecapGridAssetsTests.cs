@@ -8,9 +8,9 @@ namespace Atelia.Galatea.RecapGrid.Tests;
 
 public sealed class GalateaRecapGridAssetsTests {
     [Fact]
-    public void RollingRewriteV2_IsExactProviderNeutralCanonicalBundle() {
+    public void RollingRewriteV3_IsExactProviderNeutralCanonicalBundle() {
         Assert.Equal(
-            [GalateaRecapGridAssets.RollingRewriteZhCnV2],
+            [GalateaRecapGridAssets.RollingRewriteZhCnV3],
             GalateaRecapGridAssets.AssetIds
         );
         Assert.False(GalateaRecapGridAssets.TryCreateRegistrationBundle(
@@ -19,7 +19,7 @@ public sealed class GalateaRecapGridAssetsTests {
         ));
         Assert.Null(unknown);
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV2,
+            GalateaRecapGridAssets.RollingRewriteZhCnV3,
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -27,59 +27,17 @@ public sealed class GalateaRecapGridAssetsTests {
         FamilyDefinition family = Assert.Single(bundle.Families);
         Assert.Empty(bundle.Recipes);
         Assert.Equal(2, bundle.Definitions.Count);
-        FamilyToolDefinition tool = Assert.Single(family.OrderedTools);
-        Assert.Equal(RecapRewriterProtocolV2.TerminalToolName, tool.Name);
-        Assert.Equal(RecapRewriterProtocolV2.OutputProtocolId,
+        Assert.Empty(family.OrderedTools);
+        Assert.Equal(RecapRewriterProtocolV3.OutputProtocolId,
             family.OutputProtocol.ProtocolId);
-        Assert.Equal(RecapRewriterProtocolV2.TerminalToolName,
-            family.OutputProtocol.TerminalToolName);
-        Assert.Equal(FamilyToolChoice.Required,
-            family.OutputProtocol.ToolChoice);
-        Assert.False(family.OutputProtocol.AllowParallel);
-        Assert.Equal(RecapRewriterProtocolV2.InputProtocolId,
+        Assert.Equal(FamilyOutputMode.FullReplacementText,
+            family.OutputProtocol.Mode);
+        Assert.Equal(RecapRewriterProtocolV3.InputProtocolId,
             family.InputRenderingProtocol.ProtocolId);
-        Assert.Equal(RecapRewriterProtocolV2.PriorProjectionSchemaId,
+        Assert.Equal(RecapRewriterProtocolV3.PriorProjectionSchemaId,
             family.InputRenderingProtocol.PriorProjectionSchemaId);
-        Assert.Equal(RecapRewriterProtocolV2.HistorySegmentRenderingSchemaId,
+        Assert.Equal(RecapRewriterProtocolV3.HistorySegmentRenderingSchemaId,
             family.InputRenderingProtocol.HistorySegmentRenderingSchemaId);
-        Assert.DoesNotContain(
-            RecapRewriterProtocolV2.ReservedProtocolToken,
-            family.SystemPrompt,
-            StringComparison.Ordinal
-        );
-        Assert.DoesNotContain(
-            RecapRewriterProtocolV2.ReservedProtocolToken,
-            tool.Description,
-            StringComparison.Ordinal
-        );
-
-        Assert.False(tool.InputSchema.Nullable);
-        Assert.Equal(2, tool.InputSchema.Properties.Count);
-        FamilyToolProperty outcome = tool.InputSchema.Properties[0];
-        Assert.Equal("outcome", outcome.Name);
-        Assert.True(outcome.Required);
-        var outcomeSchema = Assert.IsType<FamilyScalarInputSchema>(
-            outcome.Schema
-        );
-        Assert.False(outcomeSchema.Nullable);
-        Assert.Equal(FamilyScalarType.String, outcomeSchema.ScalarType);
-        Assert.Equal(
-            [
-                RecapRewriterProtocolV2.UpdatedOutcome,
-                RecapRewriterProtocolV2.KeepUnchangedOutcome
-            ],
-            outcomeSchema.OrderedEnum
-        );
-        FamilyToolProperty content = tool.InputSchema.Properties[1];
-        Assert.Equal("content", content.Name);
-        Assert.True(content.Required);
-        var contentSchema = Assert.IsType<FamilyScalarInputSchema>(
-            content.Schema
-        );
-        Assert.True(contentSchema.Nullable);
-        Assert.Equal(FamilyScalarType.String, contentSchema.ScalarType);
-        Assert.Empty(contentSchema.OrderedEnum);
-
         MaintainerDefinitionRevision world = bundle.Definitions[0];
         MaintainerDefinitionRevision autobiography = bundle.Definitions[1];
         Assert.Equal("world-understanding", world.LogicalColumnId.Value);
@@ -92,7 +50,7 @@ public sealed class GalateaRecapGridAssetsTests {
             autobiography.Target.BlockKey);
         Assert.All(bundle.Definitions, definition => {
             Assert.Equal(family.Digest, definition.FamilyDigest);
-            Assert.Equal(RecapRewriterProtocolV2.RuntimeProtocolId,
+            Assert.Equal(RecapRewriterProtocolV3.RuntimeProtocolId,
                 definition.Capability.RuntimeProtocolId);
             Assert.Null(definition.Capability.SemanticModelId);
             Assert.Equal(32 * 1024, definition.MaxContentUtf8Bytes);
@@ -104,11 +62,11 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void Materialization_IsDeterministicAndResourcesAreExact() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV2,
+            GalateaRecapGridAssets.RollingRewriteZhCnV3,
             out RecapGridControlRegistrationBundle? first
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV2,
+            GalateaRecapGridAssets.RollingRewriteZhCnV3,
             out RecapGridControlRegistrationBundle? second
         ));
         Assert.Equal(first!.ToCanonicalCommandBytes(),
@@ -127,15 +85,15 @@ public sealed class GalateaRecapGridAssetsTests {
             names
         );
         Assert.Equal(
-            "27fa49f793f0e41cff8eb3f6e6294951fb4fe402039d8f2ca919d22ccc255cb8",
+            "7484f67f693d327ba397e3399b0d57ecd1b57a97e50d00f85bcbaea219bbbda5",
             ResourceSha256(PromptResourceLoader.FamilySystemResourceName)
         );
         Assert.Equal(
-            "6c1d2d41eacc35e097559be4540cbf280913f3eb901193766edc4c192d9cdddc",
+            "a8205f61213b8fa7c43985ae6a1c9950fdd66a2d0628721f7135ccf12362febe",
             ResourceSha256(PromptResourceLoader.WorldUnderstandingResourceName)
         );
         Assert.Equal(
-            "a031dd45490539abb9f2d6f360f6657f22c1f21dc2bd0404cca299d416fa7886",
+            "d9565c5bff5595d0d7432c96009448895f650b761c05a26769e4d3989bb7d8da",
             ResourceSha256(PromptResourceLoader.AutobiographyResourceName)
         );
         Assert.Equal(first.Families[0].SystemPrompt,
@@ -153,18 +111,31 @@ public sealed class GalateaRecapGridAssetsTests {
                 PromptResourceLoader.AutobiographyResourceName,
                 RecapGridLimits.MaximumUserPromptUtf8Bytes
             ));
-        Assert.All(first.Definitions, definition => {
-            Assert.DoesNotContain(
-                RecapRewriterProtocolV2.ReservedProtocolToken,
-                definition.DeclarativeSpec.Topic,
-                StringComparison.Ordinal
-            );
-            Assert.DoesNotContain(
-                RecapRewriterProtocolV2.ReservedProtocolToken,
-                definition.DeclarativeSpec.UserPromptTemplate,
-                StringComparison.Ordinal
-            );
-        });
+        string embeddedPrompts = string.Join(
+            "\n",
+            first.Families[0].SystemPrompt,
+            first.Definitions[0].DeclarativeSpec.UserPromptTemplate,
+            first.Definitions[1].DeclarativeSpec.UserPromptTemplate
+        );
+        Assert.All(
+            new[] {
+                "recap_grid_finalize_cell",
+                "outcome",
+                "keep-unchanged",
+                "updated",
+                "content"
+            },
+            token => Assert.DoesNotContain(
+                token,
+                embeddedPrompts,
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
+        Assert.All(first.Definitions, definition => Assert.Contains(
+            "Role-Play Agent",
+            definition.DeclarativeSpec.UserPromptTemplate,
+            StringComparison.Ordinal
+        ));
     }
 
     [Fact]
@@ -186,10 +157,10 @@ public sealed class GalateaRecapGridAssetsTests {
         RecapGridControlRegistrationBundle bundle
     ) => Assert.Equal(
         [
-            "46ede01e56d693a8da71175e83dbca776fd2f878d7febdf7252d8c98873d38f4",
-            "05716d6ee578465e6c56f5f27b766c6f49b67e9314c4f2d5d62d7caa57ec23d7",
-            "a6225a430baed394ecabab21b0468aabba26835952f16190197e1e5f7f6c24df",
-            "93bd931814e60107d59d7ebf707f083e9b7739fc415ebc4911e58ad58b57c7c4"
+            "ae44d15750e417452e34f4e9133f56e60334d2cf7313ac988128e95faab3c05c",
+            "0e6d9b342842fc31141a7ac40b32a1fe3086dc75ac95f3795fce54785d466d82",
+            "1ccf3594b15ccf150c625cfa69ef116cffc5d3fb8bc5825ab99f5a780137c7e2",
+            "b60840ebbbb4396882344a85bf86b1cb379fbbf12b876dd94354ee284be629e3"
         ],
         [
             bundle.Families[0].Digest.Value,

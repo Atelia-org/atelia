@@ -163,13 +163,12 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
     public void OperatorProvisionAssetOperationIdentityIsExact() {
         RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
             .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV2,
+                GalateaRecapGridAssets.RollingRewriteZhCnV3,
                 new ControlInstanceId(
                     "0123456789abcdef0123456789abcdef")
             );
-
         Assert.Equal(
-            "1ec1eedd704c81e1e9cf270b4976003c7ea0bcab58f41a6bbc7b48b4830b78ea",
+            "5ace771dfecf51367e2dcbf77fe3169b64eb4ca4a11bf685aa859acc4697e3ea",
             operation.OperationKey
         );
         Assert.Equal(1, operation.ExecutionSequence);
@@ -216,7 +215,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         CreateJournal();
         Assert.True(GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV2,
+                GalateaRecapGridAssets.RollingRewriteZhCnV3,
                 out RecapGridControlRegistrationBundle? bundle
             ));
         string createOnly = WriteAdmission(["create"]);
@@ -238,7 +237,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV2
+            GalateaRecapGridAssets.RollingRewriteZhCnV3
         );
         Assert.Equal(2, unauthorizedCode);
         Assert.Equal(
@@ -265,7 +264,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV2
+            GalateaRecapGridAssets.RollingRewriteZhCnV3
         );
         Assert.Equal(0, appliedCode);
         Assert.Equal("applied", applied.GetProperty("status").GetString());
@@ -278,7 +277,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV2
+            GalateaRecapGridAssets.RollingRewriteZhCnV3
         );
         Assert.Equal(0, replayCode);
         Assert.Equal("replayed", replay.GetProperty("status").GetString());
@@ -320,7 +319,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV2
+            GalateaRecapGridAssets.RollingRewriteZhCnV3
         );
         Assert.Equal(0, reappliedCode);
         Assert.Equal("applied", reapplied.GetProperty("status").GetString());
@@ -335,7 +334,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV2
+            GalateaRecapGridAssets.RollingRewriteZhCnV3
         );
         Assert.Equal(0, retryCode);
         Assert.Equal("replayed", retry.GetProperty("status").GetString());
@@ -356,7 +355,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         CreateJournal();
         Assert.True(GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV2,
+                GalateaRecapGridAssets.RollingRewriteZhCnV3,
                 out RecapGridControlRegistrationBundle? bundle
             ));
         RefId refId;
@@ -386,7 +385,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV2
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV3
         ));
         string output = _root + "-full-recipe.json";
         _externalPaths.Add(output);
@@ -1187,38 +1186,12 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         }
         FamilyDefinition family = FamilyDefinition.Create(
             "Maintain the inquiry.",
-            [new FamilyToolDefinition(
-                RecapRewriterProtocolV2.TerminalToolName,
-                "Submit content.",
-                new FamilyObjectInputSchema([
-                    new FamilyToolProperty(
-                        "outcome",
-                        new FamilyScalarInputSchema(
-                            FamilyScalarType.String,
-                            orderedEnum: ["updated", "keep-unchanged"]
-                        ),
-                        required: true
-                    ),
-                    new FamilyToolProperty(
-                        "content",
-                        new FamilyScalarInputSchema(
-                            FamilyScalarType.String,
-                            nullable: true
-                        ),
-                        required: true
-                    )
-                ])
-            )],
-            new FamilyOutputProtocol(
-                RecapRewriterProtocolV2.OutputProtocolId,
-                RecapRewriterProtocolV2.TerminalToolName,
-                FamilyToolChoice.Required,
-                allowParallel: false
-            ),
+            [],
+            RecapRewriterProtocolV3.CreateOutputProtocol(),
             new FamilyInputRenderingProtocol(
-                RecapRewriterProtocolV2.InputProtocolId,
-                RecapRewriterProtocolV2.PriorProjectionSchemaId,
-                RecapRewriterProtocolV2.HistorySegmentRenderingSchemaId
+                RecapRewriterProtocolV3.InputProtocolId,
+                RecapRewriterProtocolV3.PriorProjectionSchemaId,
+                RecapRewriterProtocolV3.HistorySegmentRenderingSchemaId
             )
         );
         MaintainerDefinitionRevision definition =
@@ -1230,7 +1203,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                     "culprit"
                 ),
                 new MaintainerCapabilitySpec(
-                    RecapRewriterProtocolV2.RuntimeProtocolId,
+                    RecapRewriterProtocolV3.RuntimeProtocolId,
                     MaintainerReadableScope
                         .FullPriorBuildTargetAndCurrentHistorySegmentV1
                 ),
@@ -1249,7 +1222,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                     "x-suspicion"
                 ),
                 new MaintainerCapabilitySpec(
-                    RecapRewriterProtocolV2.RuntimeProtocolId,
+                    RecapRewriterProtocolV3.RuntimeProtocolId,
                     MaintainerReadableScope
                         .FullPriorBuildTargetAndCurrentHistorySegmentV1
                 ),
@@ -1464,7 +1437,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                 new RecapGridRouteManifestEntry(
                     new RecapCompletionRouteKey(
                         family.Digest,
-                        RecapRewriterProtocolV2.RuntimeProtocolId,
+                        RecapRewriterProtocolV3.RuntimeProtocolId,
                         null
                     ),
                     "test",
@@ -1512,7 +1485,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                 new RecapGridRouteManifestEntry(
                     new RecapCompletionRouteKey(
                         family.Digest,
-                        RecapRewriterProtocolV2.RuntimeProtocolId,
+                        RecapRewriterProtocolV3.RuntimeProtocolId,
                         "another-semantic-model"
                     ),
                     "test",
@@ -1744,13 +1717,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         );
         Assert.Contains(
             factory.Requests.Skip(requestsBeforeOnline),
-            static request => request.PromptPrefix.OutputContract.Tools.All(
-                    static tool => !string.Equals(
-                        tool.Name,
-                        RecapRewriterProtocolV2.TerminalToolName,
-                        StringComparison.Ordinal
-                    ))
-                && request.PromptPrefix.SystemPrompt.Contains(
+            static request => request.PromptPrefix.SystemPrompt.Contains(
                     "candidate result",
                     StringComparison.Ordinal
                 )
@@ -1795,9 +1762,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             secondOnline.GetProperty("status").GetString());
         Assert.True(factory.RequestCount >= beforeSecondOnline + 2);
         Assert.Contains(factory.Requests, static request =>
-            request.PromptPrefix.OutputContract.Tools.All(static tool =>
-                !string.Equals(tool.Name, RecapRewriterProtocolV2.TerminalToolName, StringComparison.Ordinal))
-            && request.PromptPrefix.SystemPrompt.Contains(
+            request.PromptPrefix.SystemPrompt.Contains(
                 "candidate result",
                 StringComparison.Ordinal
             ));
@@ -1845,7 +1810,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         CompletionConnectionConfig connection = CandidateConnection();
         Assert.True(RecapGridAgentControlBuiltIns
             .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV2,
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV3,
                 out RecapGridControlRegistrationBundle? builtIn
             ));
         var admissionValue = new RecapGridControlAdmission(
@@ -2619,11 +2584,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             return new DeterministicCompletionClient(
                 request => {
                     RequestCount++;
-                    if (request.PromptPrefix.OutputContract.Tools.Any(
-                            static tool => string.Equals(
-                                tool.Name,
-                                RecapRewriterProtocolV2.TerminalToolName,
-                                StringComparison.Ordinal))) {
+                    if (IsRecapRequest(request)) {
                         RecapRequestCount++;
                     }
                     Requests.Add(request);
@@ -2634,17 +2595,9 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         }
 
         private ActionMessage CreateAction(CompletionRequest request) {
-            if (request.PromptPrefix.OutputContract.Tools.Any(static tool =>
-                    string.Equals(
-                        tool.Name,
-                        RecapRewriterProtocolV2.TerminalToolName,
-                        StringComparison.Ordinal))) {
+            if (IsRecapRequest(request)) {
                 return new ActionMessage([
-                    new ActionBlock.ToolCall(new RawToolCall(
-                        RecapRewriterProtocolV2.TerminalToolName,
-                        "candidate-call",
-                        "{\"outcome\":\"updated\",\"content\":\"candidate result\"}"
-                    ))
+                    new ActionBlock.Text("candidate result")
                 ]);
             }
             if (EmitAgentControlPromoteRecipeOnce is { } recipeDigest
@@ -2670,6 +2623,13 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                 new ActionBlock.Text("candidate agent answer")
             ]);
         }
+
+        private static bool IsRecapRequest(CompletionRequest request) =>
+            request.TailMessages is [ObservationMessage { Content: { } tail }]
+            && tail.Contains(
+                $"\"schema\":\"{RecapRewriterProtocolV3.InputProtocolId}\"",
+                StringComparison.Ordinal
+            );
     }
 
     private sealed class DeterministicCompletionClient(
@@ -2721,7 +2681,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                 "recap_grid.control",
                 "control-call",
                 "{\"action\":\"provision-built-in\","
-                + "\"builtInAssetId\":\"mystery-investigation-v2\"}"
+                + "\"builtInAssetId\":\"mystery-investigation-v3\"}"
             ))]),
             new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
         ));

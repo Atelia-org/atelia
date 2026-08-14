@@ -36,24 +36,10 @@ public sealed class ControlPublicSurfaceTests : IDisposable {
         );
         FamilyDefinition family = FamilyDefinition.Create(
             "Public fixture family.",
-            [new FamilyToolDefinition(
-                RecapRewriterProtocolV2.TerminalToolName,
-                "Submit.",
-                new FamilyObjectInputSchema([
-                    new FamilyToolProperty(
-                        "content",
-                        new FamilyScalarInputSchema(
-                            FamilyScalarType.String
-                        ),
-                        required: true
-                    )
-                ])
-            )],
+            [],
             new FamilyOutputProtocol(
                 "output-v1",
-                RecapRewriterProtocolV2.TerminalToolName,
-                FamilyToolChoice.Required,
-                allowParallel: false
+                FamilyOutputMode.FullReplacementText
             ),
             new FamilyInputRenderingProtocol(
                 "input-v1",

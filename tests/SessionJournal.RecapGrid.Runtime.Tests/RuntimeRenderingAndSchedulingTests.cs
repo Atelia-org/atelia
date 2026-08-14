@@ -132,12 +132,17 @@ public sealed class RuntimeRenderingAndSchedulingTests {
     public async Task KeepUnchanged_RequiresExactSameColumnPrior() {
         FrozenRowBatch withPrior = RuntimeTestFixture.BatchWithPrior();
         FrozenRowBatch firstRow = RuntimeTestFixture.Batch();
+        var replacements = new Queue<string>([
+            "prior content",
+            "prior content ",
+            "prior content"
+        ]);
         ScriptedInvoker? invoker = null;
         invoker = new ScriptedInvoker((request, _) => ValueTask.FromResult(
             RuntimeTestFixture.Result(
                 request,
                 invoker!,
-                "{\"outcome\":\"keep-unchanged\",\"content\":null}"
+                replacements.Dequeue()
             )
         ));
         RecapCompletionRoute route = RuntimeTestFixture.Route(withPrior, invoker);
@@ -150,13 +155,22 @@ public sealed class RuntimeRenderingAndSchedulingTests {
             Assert.Single(accepted.OrderedOutcomes)
         );
 
+        var exactWhitespace = Assert.IsType<
+            RecapCellBatchExecutionResult.Completed
+        >(await runtime.ExecuteAsync(withPrior, default));
+        Assert.Equal(
+            "prior content ",
+            Assert.IsType<RecapCellExecutionOutcome.Updated>(
+                Assert.Single(exactWhitespace.OrderedOutcomes)
+            ).Content
+        );
+
         var missing = Assert.IsType<RecapCellBatchExecutionResult.Completed>(
             await runtime.ExecuteAsync(firstRow, default)
         );
-        var failed = Assert.IsType<RecapCellExecutionOutcome.Failed>(
+        Assert.IsType<RecapCellExecutionOutcome.Updated>(
             Assert.Single(missing.OrderedOutcomes)
         );
-        Assert.Equal("KeepUnchangedInvalid", failed.Code);
     }
 
     [Fact]
@@ -167,7 +181,7 @@ public sealed class RuntimeRenderingAndSchedulingTests {
             RuntimeTestFixture.Result(
                 request,
                 invoker!,
-                "{\"outcome\":\"keep-unchanged\",\"content\":null}"
+                "prior content"
             )
         ));
         using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
@@ -175,11 +189,11 @@ public sealed class RuntimeRenderingAndSchedulingTests {
         var completed = Assert.IsType<RecapCellBatchExecutionResult.Completed>(
             await runtime.ExecuteAsync(batch, default)
         );
-        var failed = Assert.IsType<RecapCellExecutionOutcome.Failed>(
+        var updated = Assert.IsType<RecapCellExecutionOutcome.Updated>(
             Assert.Single(completed.OrderedOutcomes)
         );
 
-        Assert.Equal("KeepUnchangedInvalid", failed.Code);
+        Assert.Equal("prior content", updated.Content);
         Assert.Equal(1, invoker.CallCount);
     }
 
@@ -1061,7 +1075,7 @@ public sealed class RuntimeRenderingAndSchedulingTests {
                     this,
                     RecapCompletionResourceOwnership.Borrowed
                 ),
-                "{\"outcome\":\"updated\",\"content\":\"owned\"}"
+                "owned"
             ));
         }
 

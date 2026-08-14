@@ -62,9 +62,8 @@ public sealed class CanonicalContractTests {
                     StringComparison.Ordinal
                 ))));
         const string OutputProtocol =
-            "\"outputProtocol\":{\"protocolId\":\"atelia.recap.output.v2\","
-            + "\"terminalToolName\":\"submit_recap\",\"toolChoice\":\"required\","
-            + "\"allowParallel\":false}";
+            "\"outputProtocol\":{\"protocolId\":\"atelia.recap.output.v3\","
+            + "\"mode\":\"full-replacement-text\"}";
         Assert.Contains(OutputProtocol, text, StringComparison.Ordinal);
         Assert.Throws<InvalidDataException>(() =>
             FamilyDefinition.DecodeCanonical(Encoding.UTF8.GetBytes(
@@ -88,17 +87,17 @@ public sealed class CanonicalContractTests {
         Assert.Throws<InvalidDataException>(() =>
             FamilyDefinition.DecodeCanonical(Encoding.UTF8.GetBytes(
                 text.Replace(
-                    "{\"schemaVersion\":1,",
-                    "{\"schemaVersion\":1,\"schemaVersion\":1,",
+                    "{\"schemaVersion\":2,",
+                    "{\"schemaVersion\":2,\"schemaVersion\":2,",
                     StringComparison.Ordinal
                 ))));
-        string digestPrefix = $"{{\"schemaVersion\":1,\"digest\":\"{Family().Digest.Value}\",";
+        string digestPrefix = $"{{\"schemaVersion\":2,\"digest\":\"{Family().Digest.Value}\",";
         Assert.StartsWith(digestPrefix, text, StringComparison.Ordinal);
         Assert.Throws<InvalidDataException>(() =>
             FamilyDefinition.DecodeCanonical(Encoding.UTF8.GetBytes(
                 text.Replace(
                     digestPrefix,
-                    $"{{\"digest\":\"{Family().Digest.Value}\",\"schemaVersion\":1,",
+                    $"{{\"digest\":\"{Family().Digest.Value}\",\"schemaVersion\":2,",
                     StringComparison.Ordinal
                 ))));
         Assert.Throws<InvalidDataException>(() =>
@@ -290,15 +289,15 @@ public sealed class CanonicalContractTests {
     public void FormalValuesRoundTripAndKeepDomainSeparatedGoldens() {
         FormalFixture value = FormalValues();
         Assert.Equal(
-            "4cde3f7dfbcd55913fe46237bcdf45ea8f238a21f328bc62e7dea8bb165ce502\n"
-            + "acab1da33c452934852c2ea7a100f7d7849d56f9e170fbb428cf2832654a13cd\n"
-            + "b8873a462e8abfdb47fce1bf1799f819a71f9e31a3529626988b949333f5bb94\n"
-            + "e2b0bf18e43eb35858beb38809bf35e8be815dd71915f01ee98fcee365336605\n"
+            "d53cead7c23bb8a318751127d013971414dee255fed4ef5b81bfd376f18b4fc1\n"
+            + "59d07e92d18b09470d57be97d633cc96d2cc33346c4e7a0865adf46c069896c1\n"
+            + "247b830371b3d74207cf74c39c935d9b2e99c45e6913316db81d241b7cbc4d7e\n"
+            + "8f34516ad0337ee9e5c6696ebb92d8253831adae15a0a4432d390b5de14469b0\n"
             + "7b622b3e5ba946841d45722375ae7a5ae0f15b75b3f28b4ccb7c74ba642cb753\n"
-            + "36ff79d729d88173bbb7750c1d6839b2d26e2903f9cb9f251a52e6df7e4293ce\n"
+            + "3050c9060bee307442a4dfe833eccd8cd67abd7b47548368ec3d7ce6520d1c98\n"
             + "13abe0196f72da491691abb9bf9f1747c7e57ee5f0f2d65e5988fd738ac38344\n"
-            + "8805b1e8d2a2b4517adfb1ca572d53b177e72cc985020abb3614b45c9b03d734\n"
-            + "19b526966710363c72bf28dcacc774f80f68d8a3a531deabcb6c5be9812578ae",
+            + "0663597ee6fa6a48ad4bd89bc3ef29d2827d53c0cd9c3d27ba8dd231951c0b1d\n"
+            + "0df25d6ca140c493f8dd5c8ef50493d5d484f280f6e07181b7be3cc86ffeb15e",
             string.Join("\n", new[] {
                 value.Family.Digest.Value,
                 value.Definition.Digest.Value,
@@ -374,8 +373,12 @@ public sealed class CanonicalContractTests {
                 value.Fulfilled.ToCanonicalBytes()
             ).ToCanonicalBytes()
         );
+        Assert.StartsWith(
+            "{\"schemaVersion\":2,",
+            Encoding.UTF8.GetString(value.Family.ToCanonicalBytes()),
+            StringComparison.Ordinal
+        );
         Assert.All(new[] {
-            value.Family.ToCanonicalBytes(),
             value.Definition.ToCanonicalBytes(),
             value.Target.ToCanonicalBytes(),
             value.Recipe.ToCanonicalBytes(),
@@ -405,15 +408,15 @@ public sealed class CanonicalContractTests {
             value.View.Digest.Value
         }.Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(
-            "9ba652b6646007c2bf347f9a1df78412e68f92d285dca3063bf2fafea15d0a5a\n"
-            + "5025e7454f0521584b0bf4adaa525252e49d28dcc3f96b939c1ae060bdf17514\n"
-            + "0db1cadcca718cdfb7467897e47e1f419b9e152b1e48af12a3b84eefc11ca2bc\n"
-            + "1e76f1f620de8cff67628a19a1eaa59abce8e942f324440cf5d873279d6d4185\n"
+            "9522354f4dca93dc4499bb7f5f4567c02c2c885d3e0b1a10a81624dd4dba7315\n"
+            + "3c864ff40691355b101f2d8830e7ef812ac7d6f289e69f3f232fe73e8bf65b69\n"
+            + "ddbbf53ccf6d2db8dd3f5740b0a1f445eda353ae87b029950481474a5b839c1b\n"
+            + "7a000cfc5e48befa140c22fa676a819cb6556ac2bc2763f4674087067d22a8cb\n"
             + "436ac01f8031b636eeaf77b02aa1fd4df81f4bb98decae7cf7b01907adced7a2\n"
-            + "f26ba200108d175e01852688c027e837a306118630f21a6df60f57927b395f17\n"
-            + "953c201059a560f29703155808d5d754390da8a974bfae3b583670bf61876c82\n"
-            + "8fcceeab942086c5da505711dfd8eab735d6b72f8027b377acbd80ab1e891055\n"
-            + "ab658ea7e9d4f4a138d66b421ea506307e058e0f70c388e23f24ef713a341943",
+            + "5e2b244a1af4ae3f253f909be1a9ce3af6fb7ec6b40ca9c2ec5c893a9fa4d3c8\n"
+            + "e538f61824e762bce34fd467b75bd5e9152ee235d2f53bd63aa504d125c0a71e\n"
+            + "eee21bedbf66e6dd73aebc7fe3b41a416c62d3cf448af437c2f20e90653c7caa\n"
+            + "78a487b81b6e6f5177bdc3deacc1b2d8067222e69cf42b541c91dfd8a529b53a",
             string.Join("\n", new[] {
                 CanonicalSha(value.Family.ToCanonicalBytes()),
                 CanonicalSha(value.Definition.ToCanonicalBytes()),
@@ -470,7 +473,7 @@ public sealed class CanonicalContractTests {
     }
 
     [Fact]
-    public void EmptyFullTargetAndNullableParallelAreCanonical() {
+    public void EmptyFullTargetAndFullReplacementModeAreCanonical() {
         BuildTarget empty = BuildTarget.Create(
             Array.Empty<BuildTargetColumn>()
         );
@@ -489,16 +492,10 @@ public sealed class CanonicalContractTests {
 
         FamilyDefinition family = FamilyDefinition.Create(
             "prompt",
-            [new FamilyToolDefinition(
-                "done",
-                "done",
-                new FamilyObjectInputSchema([])
-            )],
+            [],
             new FamilyOutputProtocol(
                 "output-v1",
-                "done",
-                FamilyToolChoice.Auto,
-                allowParallel: null
+                FamilyOutputMode.FullReplacementText
             ),
             new FamilyInputRenderingProtocol(
                 "input-v1",
@@ -506,9 +503,28 @@ public sealed class CanonicalContractTests {
                 "history-v1"
             )
         );
-        Assert.Null(FamilyDefinition.DecodeCanonical(
-            family.ToCanonicalBytes()
-        ).OutputProtocol.AllowParallel);
+        Assert.Equal(
+            FamilyOutputMode.FullReplacementText,
+            FamilyDefinition.DecodeCanonical(family.ToCanonicalBytes())
+                .OutputProtocol.Mode
+        );
+        Assert.Throws<ArgumentException>(() => FamilyDefinition.Create(
+            "prompt",
+            [new FamilyToolDefinition(
+                "done",
+                "done",
+                new FamilyObjectInputSchema([])
+            )],
+            new FamilyOutputProtocol(
+                "output-v1",
+                FamilyOutputMode.FullReplacementText
+            ),
+            new FamilyInputRenderingProtocol(
+                "input-v1",
+                "prior-v1",
+                "history-v1"
+            )
+        ));
         Assert.Throws<ArgumentException>(() =>
             new FamilyScalarInputSchema(
                 FamilyScalarType.Boolean,
@@ -517,13 +533,11 @@ public sealed class CanonicalContractTests {
     }
 
     [Fact]
-    public void DenseFamilySchemaAndProjectionDiscriminantRoundTrip() {
-        FamilyDefinition family = FamilyDefinition.Create(
-            "Render every supported V1 schema kind.",
-            [new FamilyToolDefinition(
-                RecapRewriterProtocolV2.TerminalToolName,
-                "Submit typed evidence.",
-                new FamilyObjectInputSchema([
+    public void DenseToolSchemaAndProjectionDiscriminantRemainExact() {
+        var tool = new FamilyToolDefinition(
+            "submit_typed_evidence",
+            "Submit typed evidence.",
+            new FamilyObjectInputSchema([
                     new FamilyToolProperty(
                         "scores",
                         new FamilyArrayInputSchema(
@@ -550,26 +564,23 @@ public sealed class CanonicalContractTests {
                         true
                     )
                 ])
-            )],
+        );
+        Assert.Throws<ArgumentException>(() => FamilyDefinition.Create(
+            "Render every supported V1 schema kind.",
+            [tool],
             new FamilyOutputProtocol(
                 "typed-output-v1",
-                RecapRewriterProtocolV2.TerminalToolName,
-                FamilyToolChoice.Required,
-                allowParallel: null
+                FamilyOutputMode.FullReplacementText
             ),
             new FamilyInputRenderingProtocol(
                 "typed-input-v1",
                 "prior-v1",
                 "history-v1"
             )
-        );
-
-        FamilyDefinition decoded = FamilyDefinition.DecodeCanonical(
-            family.ToCanonicalBytes()
-        );
+        ));
         FamilyObjectInputSchema root = Assert.IsType<
             FamilyObjectInputSchema
-        >(Assert.Single(decoded.OrderedTools).InputSchema);
+        >(tool.InputSchema);
         FamilyArrayInputSchema scores = Assert.IsType<
             FamilyArrayInputSchema
         >(root.Properties[0].Schema);
@@ -586,8 +597,6 @@ public sealed class CanonicalContractTests {
                 root.Properties[2].Schema
             ).OrderedEnum
         );
-        Assert.Null(decoded.OutputProtocol.AllowParallel);
-
         FormalFixture value = FormalValues();
         EvaluationKey first = EvaluationKey.Create(
             value.Evaluation.HistorySegmentDigest,
@@ -778,28 +787,12 @@ public sealed class CanonicalContractTests {
     }
 
     private static FamilyDefinition Family() {
-        var terminal = new FamilyToolDefinition(
-            "submit_recap",
-            "Submit the maintained recap.",
-            new FamilyObjectInputSchema([
-                new FamilyToolProperty(
-                    "content",
-                    new FamilyScalarInputSchema(
-                        FamilyScalarType.String,
-                        description: "The replacement recap."
-                    ),
-                    true
-                )
-            ])
-        );
         return FamilyDefinition.Create(
             "Maintain one explicit line of inquiry.",
-            [terminal],
+            [],
             new FamilyOutputProtocol(
-                "atelia.recap.output.v2",
-                terminal.Name,
-                FamilyToolChoice.Required,
-                allowParallel: false
+                "atelia.recap.output.v3",
+                FamilyOutputMode.FullReplacementText
             ),
             new FamilyInputRenderingProtocol(
                 "atelia.recap.input.v1",
@@ -817,7 +810,7 @@ public sealed class CanonicalContractTests {
         familyDigest,
         new ContextHeaderBlockPath(ContextHeaderCarrier.System, column),
         new MaintainerCapabilitySpec(
-            "tool-runtime-v2",
+            "text-runtime-v3",
             MaintainerReadableScope
                 .FullPriorBuildTargetAndCurrentHistorySegmentV1,
             "model-class-v1"

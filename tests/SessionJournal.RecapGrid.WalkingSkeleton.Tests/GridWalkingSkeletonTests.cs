@@ -367,24 +367,10 @@ public sealed class GridWalkingSkeletonTests {
     private static Fixture CreateFixture() {
         FamilyDefinition family = FamilyDefinition.Create(
             "Maintain an evidence-backed line of inquiry.",
-            [new FamilyToolDefinition(
-                "submit_recap",
-                "Submit the updated recap.",
-                new FamilyObjectInputSchema([
-                    new FamilyToolProperty(
-                        "content",
-                        new FamilyScalarInputSchema(
-                            FamilyScalarType.String
-                        ),
-                        true
-                    )
-                ])
-            )],
+            [],
             new FamilyOutputProtocol(
-                "atelia.recap.output.v2",
-                "submit_recap",
-                FamilyToolChoice.Required,
-                allowParallel: false
+                "atelia.recap.output.v3",
+                FamilyOutputMode.FullReplacementText
             ),
             new FamilyInputRenderingProtocol(
                 "atelia.recap.input.v1",
@@ -423,7 +409,7 @@ public sealed class GridWalkingSkeletonTests {
         familyDigest,
         new ContextHeaderBlockPath(ContextHeaderCarrier.System, column),
         new MaintainerCapabilitySpec(
-            "tool-runtime-v2",
+            "text-runtime-v3",
             MaintainerReadableScope
                 .FullPriorBuildTargetAndCurrentHistorySegmentV1
         ),

@@ -87,7 +87,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         string[] arguments = ScaffoldArguments(paths)
             .ReplaceOption(
                 "asset",
-                GalateaRecapGridAssets.RollingRewriteZhCnV2
+                GalateaRecapGridAssets.RollingRewriteZhCnV3
             )
             .ReplaceOption("logical-column-prefix", "world-understanding")
             .AppendOptions(
@@ -100,7 +100,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         Assert.Equal("created", report.GetProperty("status").GetString());
         Assert.Equal(0, _factory.CreateCallCount);
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV2,
+            GalateaRecapGridAssets.RollingRewriteZhCnV3,
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -110,7 +110,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
             ).Routes
         );
         Assert.Equal(bundle.Families[0].Digest, route.Key.FamilyDigest);
-        Assert.Equal(RecapRewriterProtocolV2.RuntimeProtocolId,
+        Assert.Equal(RecapRewriterProtocolV3.RuntimeProtocolId,
             route.Key.RuntimeProtocolId);
         Assert.Null(route.Key.SemanticModelId);
         Assert.Equal("agent-connection", route.ConnectionId);
@@ -252,7 +252,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
 
     private string[] ScaffoldArguments(ScaffoldPaths paths) => [
         "scaffold",
-        "--asset", RecapGridAgentControlBuiltIns.MysteryInvestigationV2,
+        "--asset", RecapGridAgentControlBuiltIns.MysteryInvestigationV3,
         "--profile-id", "operator-profile",
         "--connection-id", "agent-connection",
         "--permission", "create",

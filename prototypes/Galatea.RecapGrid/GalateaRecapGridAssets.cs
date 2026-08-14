@@ -6,11 +6,11 @@ namespace Atelia.Galatea.RecapGrid;
 
 /// <summary>Code-owned, provider-free Galatea RecapGrid assets.</summary>
 public static class GalateaRecapGridAssets {
-    public const string RollingRewriteZhCnV2 =
-        "galatea-rolling-rewrite-zh-cn-v2";
+    public const string RollingRewriteZhCnV3 =
+        "galatea-rolling-rewrite-zh-cn-v3";
 
     public static IReadOnlyList<string> AssetIds { get; } =
-        Array.AsReadOnly([RollingRewriteZhCnV2]);
+        Array.AsReadOnly([RollingRewriteZhCnV3]);
 
     public static bool TryCreateRegistrationBundle(
         string assetId,
@@ -18,7 +18,7 @@ public static class GalateaRecapGridAssets {
     ) {
         if (!string.Equals(
                 assetId,
-                RollingRewriteZhCnV2,
+                RollingRewriteZhCnV3,
                 StringComparison.Ordinal)) {
             bundle = null;
             return false;
@@ -39,14 +39,12 @@ public static class GalateaRecapGridAssets {
 
         FamilyDefinition family = FamilyDefinition.Create(
             systemPrompt,
-            [RecapRewriterProtocolV2.CreateTerminalTool(
-                "提交这个 recap 成员的完整维护结果。"
-            )],
-            RecapRewriterProtocolV2.CreateOutputProtocol(),
-            RecapRewriterProtocolV2.CreateInputRenderingProtocol()
+            [],
+            RecapRewriterProtocolV3.CreateOutputProtocol(),
+            RecapRewriterProtocolV3.CreateInputRenderingProtocol()
         );
         var capability = new MaintainerCapabilitySpec(
-            RecapRewriterProtocolV2.RuntimeProtocolId,
+            RecapRewriterProtocolV3.RuntimeProtocolId,
             MaintainerReadableScope
                 .FullPriorBuildTargetAndCurrentHistorySegmentV1,
             semanticModelId: null

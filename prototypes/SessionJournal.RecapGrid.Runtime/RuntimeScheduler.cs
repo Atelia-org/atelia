@@ -206,12 +206,7 @@ public sealed partial class RecapCompletionRuntime {
             return parsed switch {
                 RuntimeParseResult.Parsed value => new RuntimeItemResult(
                     prepared,
-                    RecordParsedOutcome(
-                        value,
-                        out providerOutcome,
-                        out telemetryCode,
-                        out telemetryDetail
-                    ),
+                    RecordParsedOutcome(value.Outcome, out providerOutcome),
                     null
                 ),
                 RuntimeParseResult.Failed value => Failure(
@@ -365,26 +360,14 @@ public sealed partial class RecapCompletionRuntime {
     }
 
     private static RecapCellExecutionOutcome RecordParsedOutcome(
-        RuntimeParseResult.Parsed parsed,
-        out string providerOutcome,
-        out string? telemetryCode,
-        out string? telemetryDetail
+        RecapCellExecutionOutcome outcome,
+        out string providerOutcome
     ) {
-        RecapCellExecutionOutcome outcome = parsed.Outcome;
         providerOutcome = outcome switch {
             RecapCellExecutionOutcome.Updated => "updated",
             RecapCellExecutionOutcome.KeepUnchanged => "keep-unchanged",
             _ => "parsed"
         };
-        if (parsed.IgnoredPreTerminalTextBlockCount > 0) {
-            telemetryCode = "PreTerminalTextIgnored";
-            telemetryDetail =
-                $"Ignored {parsed.IgnoredPreTerminalTextBlockCount} pre-terminal text block(s), {parsed.IgnoredPreTerminalTextUtf8Bytes} UTF-8 byte(s).";
-        }
-        else {
-            telemetryCode = null;
-            telemetryDetail = null;
-        }
         return outcome;
     }
 

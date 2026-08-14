@@ -45,7 +45,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
 
         Assert.Equal(0, Run(provider,
             "scaffold",
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV2,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV3,
             "--profile-id", ProfileId,
             "--connection-id", RecapConnectionId,
             "--permission", "create",
@@ -98,10 +98,10 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             "--input", repository,
             "--confirm-ref", refText,
             "--admission", admission,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV2
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV3
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV2,
+            GalateaRecapGridAssets.RollingRewriteZhCnV3,
             out RecapGridControlRegistrationBundle? created
         ));
         RecapGridControlRegistrationBundle bundle = created!;
@@ -336,24 +336,18 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             ) {
                 cancellationToken.ThrowIfCancellationRequested();
                 Interlocked.Increment(ref owner._dispatchCallCount);
-                bool recap = request.PromptPrefix.OutputContract.Tools.Any(
-                    static tool => string.Equals(
-                        tool.Name,
-                        RecapRewriterProtocolV2.TerminalToolName,
-                        StringComparison.Ordinal
-                    )
+                bool recap = request.TailMessages is [ObservationMessage {
+                    Content: { } tail
+                }] && tail.Contains(
+                    $"\"schema\":\"{RecapRewriterProtocolV3.InputProtocolId}\"",
+                    StringComparison.Ordinal
                 );
                 if (recap) {
                     Interlocked.Increment(ref owner._recapDispatchCount);
                     return Task.FromResult(new CompletionResult(
-                        new ActionMessage([new ActionBlock.ToolCall(
-                            new RawToolCall(
-                                RecapRewriterProtocolV2.TerminalToolName,
-                                "operator-chain-recap",
-                                "{\"outcome\":\"updated\","
-                                    + "\"content\":\"operator-chain recap\"}"
-                            )
-                        )]),
+                        new ActionMessage([
+                            new ActionBlock.Text("operator-chain recap")
+                        ]),
                         new CompletionDescriptor(
                             Name,
                             ApiSpecId,

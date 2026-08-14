@@ -477,22 +477,10 @@ public sealed partial class GetterVerticalTests : IDisposable {
     ) {
         FamilyDefinition family = FamilyDefinition.Create(
             "Maintain one exact hypothesis.",
-            [new FamilyToolDefinition(
-                RecapRewriterProtocolV2.TerminalToolName,
-                "Submit the recap.",
-                new FamilyObjectInputSchema([
-                    new FamilyToolProperty(
-                        "content",
-                        new FamilyScalarInputSchema(FamilyScalarType.String),
-                        true
-                    )
-                ])
-            )],
+            [],
             new FamilyOutputProtocol(
                 "output-v1",
-                RecapRewriterProtocolV2.TerminalToolName,
-                FamilyToolChoice.Required,
-                false
+                FamilyOutputMode.FullReplacementText
             ),
             new FamilyInputRenderingProtocol(
                 "input-v1",

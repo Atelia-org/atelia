@@ -1369,24 +1369,10 @@ public sealed partial class ControlVerticalTests : IDisposable {
     private static Values ValuesFor(TimelineHeadRef timelineHead) {
         FamilyDefinition family = FamilyDefinition.Create(
             "Maintain one line of inquiry.",
-            [new FamilyToolDefinition(
-                RecapRewriterProtocolV2.TerminalToolName,
-                "Submit the recap.",
-                new FamilyObjectInputSchema([
-                    new FamilyToolProperty(
-                        "content",
-                        new FamilyScalarInputSchema(
-                            FamilyScalarType.String
-                        ),
-                        true
-                    )
-                ])
-            )],
+            [],
             new FamilyOutputProtocol(
                 "output-v1",
-                RecapRewriterProtocolV2.TerminalToolName,
-                FamilyToolChoice.Required,
-                allowParallel: false
+                FamilyOutputMode.FullReplacementText
             ),
             new FamilyInputRenderingProtocol(
                 "input-v1",

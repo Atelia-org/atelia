@@ -10,7 +10,7 @@ namespace Atelia.SessionJournal.RecapGrid.Runtime.Tests;
 
 public sealed class RuntimeProviderProjectionTests {
     [Fact]
-    public async Task RealRuntimeRequests_ProjectOrRejectExactV2AcrossProviders() {
+    public async Task RealRuntimeRequests_ProjectExactV3WithoutTools() {
         FrozenRowBatch requiredBatch = RuntimeTestFixture.Batch(columnCount: 2);
         var invoker = new CapturingInvoker();
         RecapCompletionRoute requiredRoute = RuntimeTestFixture.Route(
@@ -47,10 +47,11 @@ public sealed class RuntimeProviderProjectionTests {
             value.PromptCacheReuseHint
         ));
         Assert.Equal(
-            CompletionToolChoiceKind.RequiredNamed,
+            CompletionToolChoiceKind.ProviderDefault,
             required.PromptPrefix.OutputContract.ToolChoice.Kind
         );
-        Assert.False(required.PromptPrefix.OutputContract.AllowParallelToolCalls);
+        Assert.Empty(required.PromptPrefix.OutputContract.Tools);
+        Assert.Null(required.PromptPrefix.OutputContract.AllowParallelToolCalls);
 
         AssertOpenAiChat(required);
         AssertOpenAiResponses(required);
@@ -61,13 +62,9 @@ public sealed class RuntimeProviderProjectionTests {
     private static void AssertOpenAiChat(CompletionRequest required) {
         OpenAIChatApiRequest requiredApi = OpenAIChatMessageConverter
             .ConvertToApiRequest(required, OpenAIChatDialects.Strict);
-        Assert.False(requiredApi.ParallelToolCalls);
-        Assert.Equal(RecapRewriterProtocolV2.TerminalToolName, Assert.IsType<OpenAIChatNamedToolChoice>(
-            requiredApi.ToolChoice
-        ).Function.Name);
-        AssertNullableContent(
-            Assert.Single(requiredApi.Tools!).Function.Parameters
-        );
+        Assert.Null(requiredApi.Tools);
+        Assert.Null(requiredApi.ToolChoice);
+        Assert.Null(requiredApi.ParallelToolCalls);
     }
 
     private static void AssertOpenAiResponses(CompletionRequest required) {
@@ -76,42 +73,24 @@ public sealed class RuntimeProviderProjectionTests {
         };
         OpenAIResponsesApiRequest requiredApi = OpenAIResponsesMessageConverter
             .ConvertToApiRequest(required, options);
-        Assert.False(requiredApi.ParallelToolCalls);
-        Assert.Equal(RecapRewriterProtocolV2.TerminalToolName, Assert.IsType<OpenAIResponsesNamedToolChoice>(
-            requiredApi.ToolChoice
-        ).Name);
-        AssertNullableContent(
-            Assert.Single(requiredApi.Tools!).Parameters
-        );
+        Assert.Null(requiredApi.Tools);
+        Assert.Null(requiredApi.ToolChoice);
     }
 
     private static void AssertAnthropic(CompletionRequest required) {
         AnthropicApiRequest requiredApi = AnthropicMessageConverter
             .ConvertToApiRequest(required, enablePromptCaching: true);
-        Assert.Equal("tool", requiredApi.ToolChoice!.Type);
-        Assert.Equal(RecapRewriterProtocolV2.TerminalToolName, requiredApi.ToolChoice.Name);
-        Assert.True(requiredApi.ToolChoice.DisableParallelToolUse);
-        AssertNullableContent(
-            Assert.Single(requiredApi.Tools!).InputSchema
-        );
+        Assert.Null(requiredApi.Tools);
+        Assert.Null(requiredApi.ToolChoice);
         string json = JsonSerializer.Serialize(requiredApi);
         Assert.Contains("cache_control", json, StringComparison.Ordinal);
     }
 
     private static void AssertGemini(CompletionRequest required) {
-        _ = Assert.Throws<NotSupportedException>(() =>
-            GeminiMessageConverter.ConvertToApiRequest(required)
-        );
-    }
-
-    private static void AssertNullableContent(JsonElement schema) {
-        JsonElement content = schema.GetProperty("properties")
-            .GetProperty("content");
-        Assert.Equal(
-            ["string", "null"],
-            content.GetProperty("type").EnumerateArray()
-                .Select(static value => value.GetString())
-        );
+        GeminiGenerateContentRequest requiredApi = GeminiMessageConverter
+            .ConvertToApiRequest(required);
+        Assert.Null(requiredApi.Tools);
+        Assert.Null(requiredApi.ToolConfig);
     }
 
     private sealed class CapturingInvoker : IRecapCompletionInvoker {
