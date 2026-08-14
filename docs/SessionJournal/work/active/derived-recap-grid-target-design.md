@@ -753,7 +753,7 @@ recap-grid init
 recap-grid timeline create|sync|inspect|verify|export|backup|restore|abandon
 recap-grid timeline history-load inspect
 recap-grid cadence inspect|set-reserve
-recap-grid control create|inspect|verify|export|put-family|put-definition|compose-full-recipe|put-recipe|provision-built-in|activate|promote|backup|restore|reinitialize
+recap-grid control create|inspect|verify|export|put-family|put-definition|compose-full-recipe|put-recipe|provision-asset|activate|promote|backup|restore|reinitialize
 recap-grid build|progress|materialize
 recap-grid legacy-root inspect|archive|delete
 run-online-turn

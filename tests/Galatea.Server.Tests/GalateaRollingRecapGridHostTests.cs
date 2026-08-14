@@ -8,8 +8,10 @@ using Atelia.SessionJournal;
 using Atelia.SessionJournal.Cli;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
+using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
+using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Atelia.SessionJournal.RecapGrid.Online;
@@ -356,6 +358,149 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             ReadControlSnapshot(fixture).Head.ActiveRecipeDigest);
     }
 
+    [Fact]
+    public async Task ActiveFormalRecipeToolContinuationSealsDurableToolTail() {
+        RollingRepository fixture = CreateRollingRepository();
+        var seedFactory = new RoutedCompletionFactory(
+            "seed agent",
+            static request => RecapReply.Updated(
+                "seed-" + request.LogicalColumnId
+            )
+        );
+        RecapGridCompletionHost seedCompletion = CreateCompletionHost(
+            fixture,
+            ModelAConnections(),
+            seedFactory
+        );
+        await using (var seedService = new GalateaHostService(
+            Config(fixture.Path, ModelAConnections()),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            new GalateaRecapGridComposition(
+                seedCompletion,
+                RecapGridOnlineLimits.Production,
+                _estimator
+            )
+        )) {
+            UserSessionHost seedSession = await seedService.GetSessionAsync(
+                "alice",
+                CancellationToken.None
+            );
+            await RunFreshAsync(seedService, seedSession, "seed one");
+            await RunFreshAsync(seedService, seedSession, "seed two");
+        }
+        EvaluationKeyDigest[] healthyKeys = seedCompletion.Telemetry
+            .ReadSnapshot().Events.Select(static value => value.EvaluationKey)
+            .ToArray();
+        Assert.Equal(2, healthyKeys.Length);
+
+        RecapGridAgentControlProfile profile =
+            RecapGridAgentControlProfile.Create(
+                "rolling-operator",
+                fixture.Admission
+            );
+        EventAddress actionHead = await CreateToolContinuationBoundaryAsync(
+            fixture,
+            profile,
+            ModelAConnections()[0],
+            _estimator
+        );
+
+        var recoveryFactory = new RoutedCompletionFactory(
+            "continued agent",
+            static request => RecapReply.Updated(
+                "continued-" + request.LogicalColumnId
+            )
+        );
+        UserSessionHost? session = null;
+        EventAddress? durableToolResultHead = null;
+        int routeLoads = 0;
+        RecapGridCompletionHost recoveryCompletion = CreateCompletionHost(
+            fixture,
+            ModelAConnections(),
+            recoveryFactory,
+            () => {
+                Interlocked.Increment(ref routeLoads);
+                Assert.NotNull(session);
+                Assert.NotNull(durableToolResultHead);
+                Assert.Empty(recoveryFactory.Recap.Invocations);
+            },
+            profile
+        );
+        await using var service = new GalateaHostService(
+            Config(fixture.Path, ModelAConnections()),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            new GalateaRecapGridComposition(
+                recoveryCompletion,
+                profile.ProfileId,
+                RecapGridOnlineLimits.Production,
+                _estimator
+            )
+        );
+        session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        GalateaLiveTurn turn = service.StartRecovery(
+            session,
+            new GalateaTurnOptions(
+                AgentConnectionId,
+                GalateaTurnMode.Resume,
+                ExpectedHead: actionHead
+            )
+        );
+
+        await service.RunTurnAsync(session, turn, CancellationToken.None);
+        service.FinishTurn(session, turn);
+
+        Assert.Equal("completed", turn.Status);
+        Assert.Equal(0, routeLoads);
+        Assert.Empty(recoveryFactory.Recap.Invocations);
+        SessionCurrentLineagePrefix lineage = session.Engine
+            .ReadCurrentLineagePrefix(64);
+        durableToolResultHead = Assert.Single(lineage.HeadToOldest,
+            static value => value.Kind == SessionEventKind.ToolResultObserved)
+            .Address;
+
+        await RunFreshAsync(
+            service,
+            session,
+            "seal the durable tool-result tail"
+        );
+
+        Assert.Equal(1, routeLoads);
+        RecapInvocation[] withToolTail = recoveryFactory.Recap.Invocations
+            .Where(static value => value.Request.PromptPrefix
+                .SharedContextMessages.OfType<ToolResultsMessage>().Any())
+            .ToArray();
+        Assert.Equal(2, withToolTail.Length);
+        Assert.Equal(
+            ["autobiography", "world-understanding"],
+            withToolTail.Select(static value => value.LogicalColumnId)
+                .Order(StringComparer.Ordinal)
+        );
+        Assert.All(withToolTail, static value => {
+            ToolResultsMessage results = Assert.Single(value.Request
+                .PromptPrefix.SharedContextMessages
+                .OfType<ToolResultsMessage>());
+            Assert.Contains(
+                "\"status\":\"available\"",
+                string.Join("|", results.Results.Select(
+                    static result => result.GetFlattenedText()
+                )),
+                StringComparison.Ordinal
+            );
+        });
+        EvaluationKeyDigest[] continuationKeys = recoveryCompletion.Telemetry
+            .ReadSnapshot().Events.Select(static value => value.EvaluationKey)
+            .ToArray();
+        Assert.Equal(continuationKeys.Length,
+            continuationKeys.Distinct().Count());
+        Assert.DoesNotContain(continuationKeys,
+            value => healthyKeys.Contains(value));
+        Assert.Equal(fixture.Recipe.Digest,
+            ReadControlSnapshot(fixture).Head.ActiveRecipeDigest);
+    }
+
     private RollingRepository CreateRollingRepository() {
         string path = NewPath();
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
@@ -498,9 +643,10 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         RollingRepository fixture,
         IReadOnlyList<CompletionConnectionConfig> connections,
         ICompletionClientFactory factory,
-        Action? onRouteLoad = null
-    ) => RecapGridCompletionHost.Create(
-        () => {
+        Action? onRouteLoad = null,
+        RecapGridAgentControlProfile? agentProfile = null
+    ) {
+        Func<RecapGridRouteManifest> routeLoader = () => {
             onRouteLoad?.Invoke();
             return RecapGridRouteManifest.Create([
                 new RecapGridRouteManifestEntry(
@@ -515,13 +661,25 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                     maximumOutputTokens: 2_048
                 )
             ]);
-        },
-        CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+        };
+        CompletionConnectionsFileConfig frozen =
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
             connections,
             AgentConnectionId
-        )),
-        factory
-    );
+        ));
+        return agentProfile is null
+            ? RecapGridCompletionHost.Create(
+                routeLoader,
+                frozen,
+                factory
+            )
+            : RecapGridCompletionHost.Create(
+                routeLoader,
+                frozen,
+                factory,
+                new RecapGridAgentControlProfileRegistry([agentProfile])
+            );
+    }
 
     private (RecapCellArtifact World, RecapCellArtifact Autobiography)
         ReadHeadCells(RollingRepository fixture) {
@@ -638,6 +796,67 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             ));
         Assert.Equal(failpoint, exception.Failpoint);
         return engine.ReadCurrentHead()!.Value;
+    }
+
+    private static async Task<EventAddress>
+        CreateToolContinuationBoundaryAsync(
+        RollingRepository fixture,
+        RecapGridAgentControlProfile profile,
+        CompletionConnectionConfig connection,
+        IHistoryUnitLoadEstimator estimator
+    ) {
+        var client = new RecapGridInspectToolCallClient();
+        CompletionDispatchIdentity dispatch =
+            CompletionDispatchIdentityFactory.Create(connection, client);
+        var target = new SessionCompletionTargetIdentity(
+            dispatch.ConnectionId,
+            dispatch.Kind,
+            dispatch.ConnectionFingerprint,
+            dispatch.RequestAdapterFingerprint
+        );
+        using SessionJournalEngine engine = SessionJournalEngine.OpenForTest(
+            fixture.Path,
+            new SessionRuntime(
+                client,
+                CompletionTarget: target,
+                ContextCandidateSource: new EmptyCandidateSource()
+            ),
+            new SessionJournalTestHooks(
+                SessionJournalFailpoint.AfterActionCommitted
+            )
+        );
+        using RecapGridAgentControlHandle agent = Assert.IsType<
+            RecapGridAgentControlOpenResult.Opened
+        >(RecapGridAgentControlFactory.Bind(
+            engine.ReadView,
+            profile,
+            estimator
+        )).Handle;
+        using RecapGridContextHandle context = Assert.IsType<
+            RecapGridContextOpenResult.Opened
+        >(RecapGridContextFactory.Open(
+            engine.ReadView,
+            estimator
+        )).Handle;
+        engine.UseRuntime(new SessionRuntime(
+            client,
+            agent.ToolSession,
+            target,
+            ToolRuntimeIdentity: agent.RuntimeIdentity,
+            ContextCandidateSource: context
+        ));
+        SessionJournalFailpointException failure = await Assert.ThrowsAsync<
+            SessionJournalFailpointException>(() => engine.SendAsync(
+                engine.ReadCurrentHead()!.Value,
+                "inspect the exact active rolling recipe"
+            ));
+        Assert.Equal(SessionJournalFailpoint.AfterActionCommitted,
+            failure.Failpoint);
+        SessionExecutionBoundaryInspection boundary =
+            engine.InspectExecutionBoundary();
+        Assert.Equal(SessionExecutionPhase.AwaitingToolExecution,
+            boundary.Phase);
+        return boundary.Head!.Value;
     }
 
     private TimelineHeadRef ReadTimelineHead(string path, RefId refId) {
@@ -875,6 +1094,27 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                     tool,
                     $"recap-{Interlocked.Increment(ref _callId)}",
                     arguments
+                ))]),
+                new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
+            ));
+        }
+    }
+
+    private sealed class RecapGridInspectToolCallClient : ICompletionClient {
+        public string Name => "rolling-recipe-inspection";
+        public string ApiSpecId => "openai-chat-v1";
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new CompletionResult(
+                new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(
+                    "recap_grid.control",
+                    "inspect-active-recipe",
+                    "{\"action\":\"inspect\"}"
                 ))]),
                 new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
             ));

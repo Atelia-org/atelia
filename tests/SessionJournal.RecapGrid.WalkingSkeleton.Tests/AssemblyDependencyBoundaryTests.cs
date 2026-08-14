@@ -74,6 +74,12 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Cadence",
             "SessionJournal.RecapGrid.Cadence.csproj"
         );
+        string galateaAssetProject = Path.Combine(
+            root,
+            "prototypes",
+            "Galatea.RecapGrid",
+            "Galatea.RecapGrid.csproj"
+        );
 
         Assert.Equal(
             ["../SessionJournal/SessionJournal.csproj"],
@@ -161,6 +167,13 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
+                "../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj",
+                "../SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj"
+            ],
+            DirectProjectReferences(galateaAssetProject)
+        );
+        Assert.Equal(
+            [
                 "Microsoft.Data.Sqlite@10.0.10",
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
                 "Microsoft.Bcl.Memory@9.0.17",
@@ -185,6 +198,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Empty(DirectPackageReferences(agentControlProject));
         Assert.Empty(DirectPackageReferences(onlineProject));
         Assert.Empty(DirectPackageReferences(cadenceProject));
+        Assert.Empty(DirectPackageReferences(galateaAssetProject));
 
         string upstream = File.ReadAllText(timelineProject)
             + File.ReadAllText(abstractionsProject);
@@ -568,6 +582,12 @@ public sealed class AssemblyDependencyBoundaryTests {
     [Fact]
     public void FormalCliDelegatesToGridOwnersWithoutLegacyOrProviderAlgorithms() {
         string root = FindRepositoryRoot();
+        string cliProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.Cli",
+            "SessionJournal.Cli.csproj"
+        );
         string recapGridSource = string.Join(
             "\n",
             Directory.EnumerateFiles(
@@ -579,7 +599,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         foreach (string forbidden in new[] {
                      "SessionJournal.DerivedRecap",
-                     "Galatea",
+                     "Galatea.Server",
                      "Microsoft.Data.Sqlite",
                      "SQLitePCLRaw",
                      "CompletionConnectionRegistry.Resolve",
@@ -595,6 +615,27 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparison.Ordinal
             );
         }
+        Assert.Contains(
+            "../Galatea.RecapGrid/Galatea.RecapGrid.csproj",
+            DirectProjectReferences(cliProject),
+            StringComparer.Ordinal
+        );
+        Assert.DoesNotContain(
+            "../Galatea/Galatea.Server.csproj",
+            DirectProjectReferences(cliProject),
+            StringComparer.Ordinal
+        );
+        string galateaServerProject = Path.Combine(
+            root,
+            "prototypes",
+            "Galatea",
+            "Galatea.Server.csproj"
+        );
+        Assert.DoesNotContain(
+            "../Galatea.RecapGrid/Galatea.RecapGrid.csproj",
+            DirectProjectReferences(galateaServerProject),
+            StringComparer.Ordinal
+        );
         Assert.Empty(Directory.EnumerateFiles(
             Path.Combine(root, "prototypes", "SessionJournal.Cli"),
             "RecapGridCandidate*.cs",

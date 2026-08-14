@@ -55,5 +55,8 @@ recipe/row authority 与 bounded metrics。该读取不 dispatch provider、不 
 
 Galatea 不自动 Create/Provision/Activate Grid。operator 应先使用 SessionJournal.Cli 的
 `recap-grid scaffold`生成strict admission/profile/route files，再用`recap-grid init`、
-Control compose/provision/activate 与 build 命令完成显式配置。scaffold不会构造provider、
+`recap-grid control provision-asset --asset galatea-rolling-rewrite-zh-cn-v1`、
+Control compose/put-recipe/activate 与 build 命令完成显式配置。该asset提供一个shared Family下的
+`world-understanding`与`autobiography`两列；实际connection/model只来自route/connections配置，不进入durable semantic identity。
+scaffold不会构造provider、
 Timeline、Control或Store；Galatea仍只消费其strict canonical outputs。

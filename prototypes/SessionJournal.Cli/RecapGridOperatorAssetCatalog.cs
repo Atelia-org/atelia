@@ -56,7 +56,7 @@ internal static class RecapGridOperatorAssetCatalog {
             );
         }
         return RecapGridControlOperation.Create(
-            $"candidate-operator:provision-asset:{controlInstanceId.Value}:{assetId}",
+            $"recap-grid-operator:provision-asset:{controlInstanceId.Value}:{assetId}",
             executionSequence: 1,
             runtimeIdentityDigest: ProvisionRuntimeIdentityDigest
         );

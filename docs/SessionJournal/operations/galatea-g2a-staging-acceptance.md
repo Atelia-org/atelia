@@ -60,6 +60,37 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 - exact route manifest与Completion connections；`semanticModelId`必须显式，含`null`；
 - Galatea `recapGrid` config：deferred route path、bounded profile files、exact current profile id。
 
+先用provider-free scaffold创建三份strict canonical配置，并从bounded JSON report读取两个ordered definition digests：
+
+```bash
+mkdir -p "$operator_dir"
+admission="$operator_dir/recap-grid-admission.json"
+profile="$operator_dir/recap-grid-agent-control-profile.json"
+route_manifest="$operator_dir/recap-grid-routes.json"
+recipe_file="$operator_dir/galatea-rolling-full-recipe.json"
+timeline_head_file="$operator_dir/timeline-head.json"
+
+scaffold_report="$(dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap-grid scaffold \
+  --asset galatea-rolling-rewrite-zh-cn-v1 \
+  --profile-id galatea-rolling-v1 \
+  --connection-id "$recap_connection_id" \
+  --permission create --permission register-family \
+  --permission register-definition --permission register-recipe \
+  --permission activate --permission promote \
+  --logical-column-prefix world-understanding \
+  --logical-column-prefix autobiography \
+  --max-bootstrap-rows 1000000 --max-projected-calls 1000000 \
+  --max-concurrency 2 --dispatch-timeout-ms 900000 \
+  --max-output-tokens 32768 \
+  --admission-output "$admission" --profile-output "$profile" \
+  --route-output "$route_manifest")"
+world_definition="$(jq -er '.detail.definitions[] | select(.logicalColumnId == "world-understanding") | .digest' <<<"$scaffold_report")"
+autobiography_definition="$(jq -er '.detail.definitions[] | select(.logicalColumnId == "autobiography") | .digest' <<<"$scaffold_report")"
+```
+
+scaffold为create-only；任一输出已存在时必须先由operator核对并选择新的空输出路径，不得覆盖。
+
 先取得selected RefId，再显式创建四域：
 
 ```bash
@@ -74,21 +105,55 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   --max-rendered-bytes "$max_rendered"
 ```
 
-随后用`recap-grid control put-family|put-definition`或显式`provision-built-in`登记definition。初始full recipe
-必须由provider-free helper基于fresh exact authority生成，再显式register/activate：
+随后显式登记code-owned asset，并按world-first顺序组成、登记初始Full recipe：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap-grid control provision-asset \
+  --input "$staging_repo" --branch main --confirm-ref "$ref_id" \
+  --admission "$admission" \
+  --asset galatea-rolling-rewrite-zh-cn-v1
+
+compose_report="$(dotnet run --project prototypes/SessionJournal.Cli -- \
   recap-grid control compose-full-recipe \
-  --input "$staging_repo" --confirm-ref "$ref_id" \
-  --admission "$admission" --definition "$definition_digest" \
-  --output "$recipe_file"
+  --input "$staging_repo" --branch main \
+  --definition "$world_definition" \
+  --definition "$autobiography_definition" \
+  --output "$recipe_file")"
+recipe_digest="$(jq -er '.detail.recipeDigest' <<<"$compose_report")"
 
 dotnet run --project prototypes/SessionJournal.Cli -- \
-  recap-grid control put-recipe ...
+  recap-grid control put-recipe \
+  --input "$staging_repo" --branch main --confirm-ref "$ref_id" \
+  --admission "$admission" --recipe "$recipe_file"
+```
+
+direct activation必须使用put-recipe之后fresh读取的whole Control/Timeline authority；CLI的`timeline export`报告提供exact
+`headCanonicalBase64`，不得手写canonical Timeline head：
+
+```bash
+control_report="$(dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap-grid control inspect --input "$staging_repo" --branch main)"
+timeline_report="$(dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap-grid timeline export --input "$staging_repo" --branch main --max-rows 1)"
+printf '%s' "$(jq -er '.detail.headCanonicalBase64' <<<"$timeline_report")" \
+  | base64 --decode >"$timeline_head_file"
+
+control_instance="$(jq -er '.detail.head.instanceId.value' <<<"$control_report")"
+control_timeline="$(jq -er '.detail.head.timelineId.value' <<<"$control_report")"
+control_generation="$(jq -er '.detail.head.generation' <<<"$control_report")"
+control_state="$(jq -er '.detail.head.stateDigest.value' <<<"$control_report")"
+control_active="$(jq -r '.detail.head.activeRecipeDigest.value // "none"' <<<"$control_report")"
 
 dotnet run --project prototypes/SessionJournal.Cli -- \
-  recap-grid control activate ...
+  recap-grid control activate \
+  --input "$staging_repo" --branch main --confirm-ref "$ref_id" \
+  --admission "$admission" --recipe "$recipe_digest" \
+  --confirm-instance "$control_instance" \
+  --confirm-timeline "$control_timeline" \
+  --confirm-generation "$control_generation" \
+  --confirm-state "$control_state" --confirm-active "$control_active" \
+  --confirm-timeline-head "$timeline_head_file"
 ```
 
 所有mutation都提交fresh exact confirmation；Busy/Stale/Unsupported/Indeterminate不自动retry。

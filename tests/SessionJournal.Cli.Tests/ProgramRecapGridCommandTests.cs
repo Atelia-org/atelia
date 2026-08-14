@@ -160,6 +160,26 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
     }
 
     [Fact]
+    public void OperatorProvisionAssetOperationIdentityIsExact() {
+        RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
+            .CreateProvisionOperation(
+                GalateaRecapGridAssets.RollingRewriteZhCnV1,
+                new ControlInstanceId(
+                    "0123456789abcdef0123456789abcdef")
+            );
+
+        Assert.Equal(
+            "e4889c03e4df3f509649d0a5e7e61fe783399f4855971617f3a95014cabe9665",
+            operation.OperationKey
+        );
+        Assert.Equal(1, operation.ExecutionSequence);
+        Assert.Equal(
+            "ca57ba4c32962984fbd2ea939b4efbb35232498aa67066e7779291ef3f84f26f",
+            operation.RuntimeIdentityDigest
+        );
+    }
+
+    [Fact]
     public void OperatorProvisionAssetIsExplicitReplayableAndAdmitted() {
         CreateJournal();
         Assert.True(GalateaRecapGridAssets

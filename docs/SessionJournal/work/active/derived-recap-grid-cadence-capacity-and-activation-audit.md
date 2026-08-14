@@ -1,8 +1,8 @@
 # RecapGrid cadence、长期容量与 Galatea 激活设计审计
 
 状态：Active capacity/activation audit；cadence A0/A1/A2 complete，C3A/C3B/C3C/C3D complete；C3C两路independent
-closure均GO（P0=0，P1=0）；
-C2/C4/C5仍未完成。
+closure均GO（P0=0，P1=0）；C2A/C2B/C2C source complete且两路independent closure均GO（P0=0，P1=0）；
+C2D real-provider/actual activation及C4/C5仍未完成。
 
 核对基线：cutover `6f9ea7db`；cadence owner `0af28eea`、authority/durability fixes `397f2ab8`/`b0bce3b3`、
 reserve-aware seal `1e8ea927`、reserve-aware selection `bac31986`。事实优先级仍是 current code、tests、canonical codecs，以及 raw events + selected
@@ -437,11 +437,12 @@ A3增加provider-free `recap-grid cadence inspect|set-reserve` operator surface�
 
 ### C2：Galatea rolling built-in and route（activation blocking）
 
-- 新增`galatea-rolling-rewrite-zh-cn-v1` operator asset、一个shared Family、两Definition和Full recipe builder；
+- C2A-C2C source已由commits `bf4beff0`、`eb3743dd`、`62b93f9a`及其closure tail实现，两路independent review均GO；
+- `galatea-rolling-rewrite-zh-cn-v1` operator asset提供一个shared Family、两Definition和provider-free Full recipe composition；
 - 固定ordered targets、strict canonical bytes/goldens与runtime identity；
 - 两列capability显式`SemanticModelId=null`；runtime route/config默认选择Opus 4.6但允许以后切换model，无fallback、
   provider/client保持lazy，actual provider/model/connection只进入operation evidence；
-- 用fake provider证明previous-row rolling、same-row shared prefix、Keep和missing-only restart；
+- fake Host已证明previous-row rolling、same-row shared prefix、Keep、missing-only restart及model A/B只补missing；
 - 用真实Opus 4.6 disposable clone证明terminal protocol、输出质量、cache/usage、latency和费用。
 
 ### C3：Incremental Manager and capacity observability
@@ -480,7 +481,7 @@ A3增加provider-free `recap-grid cadence inspect|set-reserve` operator surface�
 - canary通过后再次取得actual activation确认；停服、备份actual repo/config并确认selected Ref/raw head/phase，才替换正式cyber repo；
 - 首次new raw append前可以回退binary/repo selection；append后不得用旧backup覆盖raw，只能证明旧binary可replay或forward-fix。
 
-A0→A1→A2已经完成；C2仍是真实LLM写入前的硬门禁。C3D已由commit `7a9c0b3b`完成；C3C orchestration
+A0→A1→A2与C2A-C2C source closure已经完成；C2D仍是真实LLM写入前的硬门禁。C3D已由commit `7a9c0b3b`完成；C3C orchestration
 已Complete且两路independent closure均GO。
 C4是retention/rollover与跨operation recovery优化，不再是跨越固定65,536 lifetime cap的前置条件；是否作为首次activation门禁
 取决于用户要求的retention/rollback horizon，不能再以旧累计cap论证。

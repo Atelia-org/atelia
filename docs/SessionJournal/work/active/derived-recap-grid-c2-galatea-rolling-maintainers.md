@@ -1,6 +1,7 @@
 # DerivedRecap Grid C2：Galatea rolling maintainers 设计与实施边界
 
-状态：Design locked；source implementation pending；real-provider canary / actual cyber activation `NotRun`
+状态：C2A/C2B/C2C source implementation complete；两路independent closure均GO（P0=0，P1=0）；
+real-provider canary / actual cyber activation `NotRun`
 
 总体设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)  
 Cadence/capacity/activation 总审计：[`derived-recap-grid-cadence-capacity-and-activation-audit.md`](derived-recap-grid-cadence-capacity-and-activation-audit.md)
@@ -99,8 +100,8 @@ no-fallback输入；实际model默认来自`connections.json`中被选connection
 1. 输入只来自runtime config/health/operation policy；
 2. 不改写durable Family/Definition/Recipe；
 3. Prepared/Started recovery仍按冻结的completion/tool identity处理，不能被current route抢先遮蔽；
-4. 每次调用的actual provider/model/connection必须进入bounded operation telemetry/evidence，便于质量、费用和故障审计；当前telemetry
-   已有provider/model/API但缺`ConnectionId`，C2B应给Hosting/Runtime增加non-durable operational connection evidence；
+4. 每次调用的actual provider/model/connection必须进入bounded operation telemetry/evidence，便于质量、费用和故障审计；C2B已让
+   Hosting/Runtime同时记录non-durable `ConnectionId`、model、provider与API evidence；
 5. missing/no-build/readiness/pure inspection不得构造provider client。
 
 provider-free readiness只能报告configured route/connection，不得伪称actual dispatch evidence；只有provider调用settled后的telemetry才报告
@@ -147,8 +148,8 @@ AgentControl built-in集合。
 
 `SessionJournal.Cli`作为operator composition root可以同时引用通用AgentControl built-ins和`Galatea.RecapGrid` asset catalog。实现使用
 compile-time closed、exact-ID resolver；禁止反射扫描、DI/plugin discovery或目录发现，并以测试锁定asset ID无重复。CLI继续通过
-`recap-grid control provision-built-in --asset ...`暴露一个明确命令。若实现时发现该命令名会把Agent-facing catalog与operator asset混为一谈，
-可在同一C2提交中硬切为更准确的`provision-asset`；项目尚未发布，不保留旧名兼容分支。
+`recap-grid control provision-asset --asset ...`暴露一个明确命令；旧CLI名`provision-built-in`已删除且不保留兼容分支。
+Agent-facing JSON action仍由AgentControl独立拥有`provision-built-in`，不进入operator asset catalog。
 
 ## 5. 为未来三类refiner保留的边界
 
@@ -198,6 +199,8 @@ RecapGrid executor是可重试的derived evaluation，严禁从中直接产生�
 
 ### C2A：contract hardening + asset assembly
 
+状态：Complete，commit `bf4beff0`。
+
 - 给`FamilyDefinition.OrderedTools`、`IRecapCellBatchExecutor`、`RecapCellArtifact`补上述协议/纯度/immutable注释；
 - 当前`tool-runtime-v1` validator要求Family恰好声明一个terminal tool，禁止“声明了普通tools但runtime从不dispatch”的假扩展；
 - C2 V1 Family锁定exact terminal tool name=`submit`、`FamilyToolChoice.Required`与`allowParallel=false`，并纳入canonical goldens；
@@ -210,6 +213,8 @@ RecapGrid executor是可重试的derived evaluation，严禁从中直接产生�
 
 ### C2B：operator/config vertical
 
+状态：Complete，commit `eb3743dd`。
+
 - CLI operator catalog接入Galatea asset，但不改AgentControl catalog/fingerprint；
 - scaffold/admission输出允许exact Family/Definitions/targets，route manifest输出一条`semanticModelId:null` route；
 - provision asset -> compose Full recipe -> put recipe -> build -> zero-call proof promotion；
@@ -219,6 +224,8 @@ RecapGrid executor是可重试的derived evaluation，严禁从中直接产生�
 
 ### C2C：fake Host vertical
 
+状态：Complete，commit `62b93f9a`。
+
 - Galatea fresh/Observation/ToolResult路径真实使用该active Full recipe；
 - row n两列共享同一prepared Family prefix，输入previous whole pack + current segment；
 - partial build/restart只补missing work，切模型不会使已fulfilled rows自动重建；
@@ -226,7 +233,13 @@ RecapGrid executor是可重试的derived evaluation，严禁从中直接产生�
   durable Prepared/Started状态，仍允许未commit调用在恢复后重复；
 - readiness/telemetry报告exact Family/Definition/Recipe和actual provider/model/connection evidence。
 
+closure tail补齐formal active asset的ToolContinuation→durable ToolResultObserved→下一PreObservation两列maintenance，
+以及public CLI scaffold→init→provision→world-first compose→put→activate→strict Galatea Host/readiness全链。新增tail
+focused 2/2、Galatea full 93/93；frozen/provider-free阶段provider construction/dispatch均为0。
+
 ### C2D：real-provider canary + actual activation
+
+状态：`NotRun`；必须使用执行当下确认的exact disposable clone/call manifest，不能由source tests替代。
 
 - 先在immutable legacy export导入的一次性repo clone上，使用
   `prototypes/Galatea/.atelia/galatea/connections.json`中的默认Opus 4.6 connection做bounded rebuild；
@@ -249,6 +262,13 @@ C2 source candidate至少满足：
 6. AgentControl implementation fingerprint不因Galatea operator asset而旋转；
 7. real-provider与actual cyber activation各自有独立evidence，不以fake tests冒充；
 8. docs checker、Walking dependency/public-surface gates、affected suites、solution build与diff check green。
+
+C2A-C2C source closure已满足上述八项；两路independent review最终均为GO（P0=0，P1=0）。这只关闭source gate，
+不关闭下述C2D外部执行门禁。
+
+最终串行affected evidence：Abstractions 15/15、Runtime 58/58、Hosting 20/20、AgentControl 20/20、CLI 99/99、
+Galatea asset 4/4、Galatea Server 93/93、Galatea/Runtime/Hosting/AgentControl public-surface 1/1 + 2/2 + 2/2 + 1/1、
+Walking 27/27；`Atelia.sln` build 0 warning / 0 error，docs scoped/all-tracked与diff check均为green。
 
 同一asset ID一旦进入Control receipt/canonical catalog即视为immutable。prompt、Family、Definition或terminal schema的canonical bytes发生变化时
 必须发布新的asset revision（例如`...-v2`）；不得让同一个operator operation identity在不同binary中代表不同registration command。

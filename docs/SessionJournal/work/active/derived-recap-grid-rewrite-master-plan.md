@@ -146,8 +146,10 @@ real-provider canary或actual cyber activation。
 C2 Galatea rolling maintainers的需求与实施边界已经单独锁定在
 [`C2 Galatea rolling maintainers`](derived-recap-grid-c2-galatea-rolling-maintainers.md)：一个shared Family、
 world-understanding/autobiography两个ordered Definitions、runtime-configurable model且`SemanticModelId=null`、Galatea-owned
-operator asset assembly，以及RecapRewriter/RecapEditor/ExperienceRefiner之间的authority边界。C2 source implementation、
-real-provider canary与actual cyber activation仍pending，不被WP-00至WP-08或C3 closure冒充。
+operator asset assembly，以及RecapRewriter/RecapEditor/ExperienceRefiner之间的authority边界。C2A-C2C source candidate已由
+`bf4beff0`、`eb3743dd`、`62b93f9a`及closure tail实现，两路independent review均GO（P0=0，P1=0）；
+C2D real-provider canary与actual cyber activation
+保持`NotRun`，不被WP-00至WP-08、C3 closure或fake Host tests冒充。
 fresh no-local checkout已在provisional containing source tree `913fd8fa`上完成：全新restore成功、Release solution
 build 0 warning / 0 error、36个test projects合计4658/4658 green、package vulnerability audit零命中、scoped docs
 14/0、all-tracked docs 71/0且checkout status clean。最终containing commit只回写该fresh evidence，没有再改变product/test source。
