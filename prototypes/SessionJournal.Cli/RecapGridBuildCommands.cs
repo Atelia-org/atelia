@@ -99,7 +99,7 @@ internal static partial class RecapGridCommands {
         options.EnsureOnly(
             "input", "branch", "confirm-ref", "live", "recipe", "through-row",
             "max-recipe-row-steps", "max-new-calls",
-            "max-elapsed-ms", "routes", "connections"
+            "max-elapsed-ms", "routes", "connections", "call-log-dir"
         );
         using SessionJournalEngine engine = OpenBranch(options);
         RequireConfirmedRef(options, engine.BranchRefId);
@@ -114,6 +114,13 @@ internal static partial class RecapGridCommands {
                 options.RequireSingle("connections"),
                 RecapGridCompletionConnectionsLimits.MaximumInputUtf8Bytes
             ));
+        string? callLogDirectory = options.GetOptionalSingle("call-log-dir");
+        ICompletionClientFactory buildClientFactory = callLogDirectory is null
+            ? completionClientFactory
+            : new RecapGridLoggingCompletionClientFactory(
+                completionClientFactory,
+                callLogDirectory
+            );
         RecapGridManagerOpenResult opened = RecapGridManagerFactory.Open(
             engine.ReadView,
             RecapGridHistoryLoadEstimator
@@ -127,7 +134,7 @@ internal static partial class RecapGridCommands {
             await using RecapGridRuntimeHost host = RecapGridRuntimeHost.Create(
                 manifest,
                 connections,
-                completionClientFactory
+                buildClientFactory
             );
             RecapGridBuildResult result = await manager.Handle.Manager
                 .BuildAsync(

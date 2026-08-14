@@ -51,6 +51,10 @@ admission交给`init`，profile/route路径交给Galatea strict config。
 fallback。`progress` 不构造 provider；`promote` 在同一进程用
 `--max-new-calls 0` 重证 head-through proof 后才执行 Promotion CAS；build 本身永不
 activate。`materialize` 只走 Getter strict `--nth-previous`。
+`build --call-log-dir <dir>`是显式opt-in；日志目录只在lazy dispatch实际构造recap
+client时materialize，每个实际provider call通过现有Completion call-log V9 seam写入一份日志。
+未传时行为不变；provider-free、无missing work或exact route未命中的路径不会仅因该选项创建日志目录。日志写入失败仍沿用
+`LoggingCompletionClient`的best-effort合同，不改变provider outcome。
 
 Hosting的provider-free exact route inspection只报告configured connection/model/limits，
 不会构造provider client；只有settled runtime telemetry中的`ConnectionId`、model与provider

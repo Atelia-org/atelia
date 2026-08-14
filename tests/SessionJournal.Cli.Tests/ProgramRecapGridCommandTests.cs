@@ -180,6 +180,38 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
     }
 
     [Fact]
+    public void HelpAdvertisesOnlyAcceptedOnlineAndBuildLoggingOptions() {
+        TextWriter original = Console.Out;
+        using var output = new StringWriter();
+        try {
+            Console.SetOut(output);
+            Assert.Equal(0, Program.MainCore(
+                ["--help"],
+                ThrowingCompletionClientFactory.Instance
+            ));
+        }
+        finally {
+            Console.SetOut(original);
+        }
+
+        string[] lines = output.ToString().Split(
+            Environment.NewLine,
+            StringSplitOptions.RemoveEmptyEntries
+        );
+        string build = Assert.Single(lines, static line =>
+            line.StartsWith("  recap-grid build ...", StringComparison.Ordinal)
+        );
+        Assert.Contains("[--call-log-dir <dir>]", build,
+            StringComparison.Ordinal);
+        string online = Assert.Single(lines, static line =>
+            line.StartsWith("  run-online-turn ", StringComparison.Ordinal)
+        );
+        Assert.DoesNotContain("--output", online, StringComparison.Ordinal);
+        Assert.DoesNotContain("--call-log-dir", online,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OperatorProvisionAssetIsExplicitReplayableAndAdmitted() {
         CreateJournal();
         Assert.True(GalateaRecapGridAssets
@@ -1460,16 +1492,51 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "connections-invalid.json"
         );
         File.WriteAllBytes(malformedConnections, [0xff]);
+        string preDispatchCallLogs = ExternalPath("pre-dispatch-call-logs");
         Dictionary<string, byte[]> beforeMalformed = SnapshotDirectory(_root);
         Assert.Equal(1, RunWithFactory(factory,
             "build", "--input", _root, "--confirm-ref", refId,
             "--recipe", recipe.Digest.Value,
             "--max-recipe-row-steps", "64",
             "--max-new-calls", "8", "--max-elapsed-ms", "10000",
-            "--routes", routes, "--connections", malformedConnections
+            "--routes", routes, "--connections", malformedConnections,
+            "--call-log-dir", preDispatchCallLogs
         ));
         Assert.Equal(0, factory.CallCount);
+        Assert.False(Directory.Exists(preDispatchCallLogs));
         AssertSnapshotEqual(beforeMalformed, SnapshotDirectory(_root));
+
+        string absentRouteManifest = WriteBytes(
+            "routes-exact-absent.json",
+            RecapGridRouteManifest.Create([
+                new RecapGridRouteManifestEntry(
+                    new RecapCompletionRouteKey(
+                        family.Digest,
+                        RecapRewriterProtocolV1.RuntimeProtocolId,
+                        "another-semantic-model"
+                    ),
+                    "test",
+                    1,
+                    TimeSpan.FromSeconds(30),
+                    128
+                )
+            ]).ToCanonicalBytes()
+        );
+        string absentRouteCallLogs = ExternalPath("absent-route-call-logs");
+        (int absentRouteCode, JsonElement absentRoute) =
+            RunCapturedWithFactory(factory,
+                "build", "--input", _root, "--confirm-ref", refId,
+                "--recipe", recipe.Digest.Value,
+                "--max-recipe-row-steps", "64",
+                "--max-new-calls", "8", "--max-elapsed-ms", "10000",
+                "--routes", absentRouteManifest,
+                "--connections", connections,
+                "--call-log-dir", absentRouteCallLogs);
+        Assert.Equal(2, absentRouteCode);
+        Assert.Equal("executor-rejected",
+            absentRoute.GetProperty("status").GetString());
+        Assert.Equal(0, factory.CallCount);
+        Assert.False(Directory.Exists(absentRouteCallLogs));
 
         string[] PromoteArgs() => [
             "control", "promote", "--input", _root,
@@ -1489,12 +1556,14 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         AssertDomainsEqual(beforeIncompletePromotion, SnapshotDomains());
         Assert.Equal(0, factory.CallCount);
 
+        string callLogDirectory = ExternalPath("build-call-logs");
         (int buildCode, JsonElement build) = RunCapturedWithFactory(factory,
             "build", "--input", _root, "--confirm-ref", refId,
             "--recipe", recipe.Digest.Value,
             "--max-recipe-row-steps", "64",
             "--max-new-calls", "8", "--max-elapsed-ms", "10000",
-            "--routes", routes, "--connections", connections
+            "--routes", routes, "--connections", connections,
+            "--call-log-dir", callLogDirectory
         );
         Assert.Equal(0, buildCode);
         Assert.Equal("fulfilled", build.GetProperty("status").GetString());
@@ -1505,6 +1574,32 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal(1, factory.CallCount);
         Assert.Equal(1, factory.DisposeCount);
         Assert.Null(ReadControlHead(refId).ActiveRecipeDigest);
+        string[] callLogs = Directory.GetFiles(
+            callLogDirectory,
+            "*.json",
+            SearchOption.TopDirectoryOnly
+        );
+        Assert.Equal(2, callLogs.Length);
+        foreach (string callLog in callLogs) {
+            using JsonDocument log = JsonDocument.Parse(
+                File.ReadAllBytes(callLog));
+            Assert.Equal(
+                "atelia.completion.call-log.v9",
+                log.RootElement.GetProperty("schema").GetString()
+            );
+            Assert.Equal(
+                "recap-grid/build",
+                log.RootElement.GetProperty("context")
+                    .GetProperty("command").GetString()
+            );
+            Assert.Equal(
+                "test-model",
+                log.RootElement.GetProperty("connection")
+                    .GetProperty("modelId").GetString()
+            );
+            Assert.True(log.RootElement.TryGetProperty("request", out _));
+            Assert.True(log.RootElement.TryGetProperty("response", out _));
+        }
 
         using (SessionJournalEngine selected =
                SessionJournalEngine.OpenReadOnly(_root))
@@ -1530,17 +1625,20 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         AssertDomainsEqual(beforeStalePromotion, SnapshotDomains());
         Assert.Equal(1, factory.CallCount);
 
+        string zeroCallLogDirectory = ExternalPath("zero-call-build-logs");
         (int refreshedBuildCode, JsonElement refreshedBuild) =
             RunCapturedWithFactory(factory,
                 "build", "--input", _root, "--confirm-ref", refId,
                 "--recipe", recipe.Digest.Value,
                 "--max-recipe-row-steps", "64",
                 "--max-new-calls", "8", "--max-elapsed-ms", "10000",
-                "--routes", routes, "--connections", connections);
+                "--routes", routes, "--connections", connections,
+                "--call-log-dir", zeroCallLogDirectory);
         Assert.Equal(0, refreshedBuildCode);
         Assert.Equal("fulfilled",
             refreshedBuild.GetProperty("status").GetString());
         Assert.Equal(1, factory.CallCount);
+        Assert.False(Directory.Exists(zeroCallLogDirectory));
 
         DomainSnapshot beforeSuccessfulPromotion = SnapshotDomains();
         Assert.Equal(0, Run(PromoteArgs()));
@@ -2072,6 +2170,12 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
               }]
             }
             """);
+        return path;
+    }
+
+    private string ExternalPath(string suffix) {
+        string path = $"{_root}-{suffix}";
+        _externalPaths.Add(path);
         return path;
     }
 

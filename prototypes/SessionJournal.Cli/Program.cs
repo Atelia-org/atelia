@@ -322,6 +322,10 @@ internal static class Program {
             "  recap-grid <scaffold|init|timeline|control|cadence|build|progress|materialize> ..."
         );
         Console.WriteLine(
+            "  recap-grid build ... --routes <path> --connections <path> "
+            + "[--call-log-dir <dir>]"
+        );
+        Console.WriteLine(
             "  recap-grid cadence inspect|set-reserve --input <repo-dir> ..."
         );
         Console.WriteLine(
@@ -354,9 +358,8 @@ internal static class Program {
         );
         Console.WriteLine(
             "  run-online-turn --input <repo-dir> --branch <name> "
-            + "--connections <path> --output <json> "
+            + "--connections <path> "
             + "[--message <text>] [--connection <id>] "
-            + "[--call-log-dir <dir>] "
             + "[--maximum-canonical-request-bytes <n>] "
             + "[--uncertain-recovery refuse|restart-new-attempt]"
         );
