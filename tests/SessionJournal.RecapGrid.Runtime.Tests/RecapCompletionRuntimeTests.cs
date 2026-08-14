@@ -57,11 +57,36 @@ public sealed class RecapCompletionRuntimeTests {
     }
 
     [Fact]
+    public async Task NonExactV1TerminalEnvelope_RejectsWholeBatchBeforeRemoteStart() {
+        FrozenRowBatch[] invalid = [
+            RuntimeTestFixture.Batch(includeAdditionalTool: true),
+            RuntimeTestFixture.Batch(terminalToolName: "finish"),
+            RuntimeTestFixture.Batch(toolChoice: FamilyToolChoice.Auto),
+            RuntimeTestFixture.Batch(allowParallel: true),
+            RuntimeTestFixture.Batch(allowParallel: null),
+            RuntimeTestFixture.Batch(includeSchemaDescription: true)
+        ];
+
+        foreach (FrozenRowBatch batch in invalid) {
+            var invoker = new ScriptedInvoker((_, _) =>
+                throw new InvalidOperationException("must not dispatch"));
+            using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
+
+            var rejected = Assert.IsType<
+                RecapCellBatchExecutionResult.RejectedBeforeDispatch
+            >(await runtime.ExecuteAsync(batch, default));
+
+            Assert.Equal("OutputProtocolMismatch", rejected.Code);
+            Assert.Equal(0, invoker.CallCount);
+        }
+    }
+
+    [Fact]
     public async Task SameFamily_PerWorkRuntimeProtocolMismatch_RejectsWholeBatch() {
         FrozenRowBatch batch = RuntimeTestFixture.Batch(
             columnCount: 2,
             runtimeProtocolIds: [
-                RecapCompletionProtocolV1.RuntimeProtocolId,
+                RecapRewriterProtocolV1.RuntimeProtocolId,
                 "unsupported-runtime-v2"
             ]
         );

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="../../docs/Galatea/prompt/recap-maintainer-family/system-zh-cn.md">
+      <Link>Prompts/recap-maintainer-family/system-zh-cn.md</Link>
+      <LogicalName>Atelia.Galatea.RecapGrid.Prompts.RecapMaintainerFamily.System.zh-CN.md</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="../../docs/Galatea/prompt/world-understanding-maintainer/rewrite-zh-cn/user.md">
+      <Link>Prompts/world-understanding-maintainer/rewrite-zh-cn/user.md</Link>
+      <LogicalName>Atelia.Galatea.RecapGrid.Prompts.WorldUnderstanding.Rewrite.zh-CN.user.md</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/rewrite-zh-cn/user.md">
+      <Link>Prompts/autobiographical-maintainer/rewrite-zh-cn/user.md</Link>
+      <LogicalName>Atelia.Galatea.RecapGrid.Prompts.Autobiography.Rewrite.zh-CN.user.md</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Atelia.Galatea.RecapGrid.Tests" />
+  </ItemGroup>
+
+</Project>

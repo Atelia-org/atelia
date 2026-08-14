@@ -136,6 +136,13 @@ public sealed class FrozenRowBatch {
     public IReadOnlyList<FrozenRecapCellWork> OrderedMissingWork { get; }
 }
 
+/// <summary>
+/// Pure, retryable evaluation of frozen missing Cell work. The current V1
+/// contract may start at most one provider invocation for each work item and
+/// must not mutate Control, Store, Timeline, raw journals, or external memory.
+/// A future multi-call protocol requires an expanded admission, settlement,
+/// cancellation/drain, and operation-total evidence contract first.
+/// </summary>
 public interface IRecapCellBatchExecutor {
     ValueTask<RecapCellBatchExecutionResult> ExecuteAsync(
         FrozenRowBatch batch,

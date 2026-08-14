@@ -132,7 +132,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                     new RecapGridRouteManifestEntry(
                         new RecapCompletionRouteKey(
                             family.Digest,
-                            RecapCompletionProtocolV1.RuntimeProtocolId,
+                            RecapRewriterProtocolV1.RuntimeProtocolId,
                             null),
                         connection.Id,
                         maximumConcurrency: 1,
@@ -384,7 +384,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 new RecapGridRouteManifestEntry(
                     new RecapCompletionRouteKey(
                         family.Digest,
-                        RecapCompletionProtocolV1.RuntimeProtocolId,
+                        RecapRewriterProtocolV1.RuntimeProtocolId,
                         null),
                     connection.Id,
                     maximumConcurrency: 1,
@@ -1361,8 +1361,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         new FamilyScalarInputSchema(
                             FamilyScalarType.String,
                             orderedEnum: [
-                                RecapCompletionProtocolV1.UpdatedOutcome,
-                                RecapCompletionProtocolV1
+                                RecapRewriterProtocolV1.UpdatedOutcome,
+                                RecapRewriterProtocolV1
                                     .KeepUnchangedOutcome
                             ]),
                         required: true),
@@ -1374,14 +1374,14 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         required: true)
                 ]))],
             new FamilyOutputProtocol(
-                RecapCompletionProtocolV1.OutputProtocolId,
+                RecapRewriterProtocolV1.OutputProtocolId,
                 "submit",
                 FamilyToolChoice.Required,
                 allowParallel: false),
             new FamilyInputRenderingProtocol(
-                RecapCompletionProtocolV1.InputProtocolId,
-                RecapCompletionProtocolV1.PriorProjectionSchemaId,
-                RecapCompletionProtocolV1
+                RecapRewriterProtocolV1.InputProtocolId,
+                RecapRewriterProtocolV1.PriorProjectionSchemaId,
+                RecapRewriterProtocolV1
                     .HistorySegmentRenderingSchemaId));
         MaintainerDefinitionRevision definition =
             MaintainerDefinitionRevision.Create(
@@ -1390,7 +1390,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 new ContextHeaderBlockPath(
                     ContextHeaderCarrier.System, "culprit"),
                 new MaintainerCapabilitySpec(
-                    RecapCompletionProtocolV1.RuntimeProtocolId,
+                    RecapRewriterProtocolV1.RuntimeProtocolId,
                     MaintainerReadableScope
                         .FullPriorBuildTargetAndCurrentHistorySegmentV1),
                 new MaintainerDeclarativeSpec(
@@ -1502,8 +1502,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         new FamilyScalarInputSchema(
                             FamilyScalarType.String,
                             orderedEnum: [
-                                RecapCompletionProtocolV1.UpdatedOutcome,
-                                RecapCompletionProtocolV1
+                                RecapRewriterProtocolV1.UpdatedOutcome,
+                                RecapRewriterProtocolV1
                                     .KeepUnchangedOutcome
                             ]),
                         required: true),
@@ -1515,14 +1515,14 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         required: true)
                 ]))],
             new FamilyOutputProtocol(
-                RecapCompletionProtocolV1.OutputProtocolId,
+                RecapRewriterProtocolV1.OutputProtocolId,
                 "submit",
                 FamilyToolChoice.Required,
                 allowParallel: false),
             new FamilyInputRenderingProtocol(
-                RecapCompletionProtocolV1.InputProtocolId,
-                RecapCompletionProtocolV1.PriorProjectionSchemaId,
-                RecapCompletionProtocolV1
+                RecapRewriterProtocolV1.InputProtocolId,
+                RecapRewriterProtocolV1.PriorProjectionSchemaId,
+                RecapRewriterProtocolV1
                     .HistorySegmentRenderingSchemaId));
         MaintainerDefinitionRevision definition =
             MaintainerDefinitionRevision.Create(
@@ -1531,7 +1531,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 new ContextHeaderBlockPath(
                     ContextHeaderCarrier.System, "culprit"),
                 new MaintainerCapabilitySpec(
-                    RecapCompletionProtocolV1.RuntimeProtocolId,
+                    RecapRewriterProtocolV1.RuntimeProtocolId,
                     MaintainerReadableScope
                         .FullPriorBuildTargetAndCurrentHistorySegmentV1),
                 new MaintainerDeclarativeSpec(

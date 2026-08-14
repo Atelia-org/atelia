@@ -176,7 +176,7 @@ public static class RecapGridAgentControlBuiltIns {
         }
         FamilyDefinition family = CreateMysteryFamily();
         var capability = new MaintainerCapabilitySpec(
-            "tool-runtime-v1",
+            RecapRewriterProtocolV1.RuntimeProtocolId,
             MaintainerReadableScope
                 .FullPriorBuildTargetAndCurrentHistorySegmentV1
         );
@@ -288,41 +288,10 @@ public static class RecapGridAgentControlBuiltIns {
     private static FamilyDefinition CreateMysteryFamily() =>
         FamilyDefinition.Create(
             "Maintain one bounded investigation thought.",
-            [new FamilyToolDefinition(
-                "submit",
-                "Submit the updated thought.",
-                new FamilyObjectInputSchema([
-                    new FamilyToolProperty(
-                        "outcome",
-                        new FamilyScalarInputSchema(
-                            FamilyScalarType.String,
-                            orderedEnum: [
-                                "updated",
-                                "keep-unchanged"
-                            ]
-                        ),
-                        true
-                    ),
-                    new FamilyToolProperty(
-                        "content",
-                        new FamilyScalarInputSchema(
-                            FamilyScalarType.String,
-                            nullable: true
-                        ),
-                        true
-                    )
-                ])
+            [RecapRewriterProtocolV1.CreateTerminalTool(
+                "Submit the updated thought."
             )],
-            new FamilyOutputProtocol(
-                "atelia.recap.output.v1",
-                "submit",
-                FamilyToolChoice.Required,
-                allowParallel: false
-            ),
-            new FamilyInputRenderingProtocol(
-                "atelia.recap.input.v1",
-                "atelia.recap.prior.v1",
-                "atelia.history.segment.v1"
-            )
+            RecapRewriterProtocolV1.CreateOutputProtocol(),
+            RecapRewriterProtocolV1.CreateInputRenderingProtocol()
         );
 }

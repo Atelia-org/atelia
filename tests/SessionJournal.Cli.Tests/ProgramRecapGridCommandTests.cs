@@ -1138,15 +1138,15 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                 ])
             )],
             new FamilyOutputProtocol(
-                RecapCompletionProtocolV1.OutputProtocolId,
+                RecapRewriterProtocolV1.OutputProtocolId,
                 "submit",
                 FamilyToolChoice.Required,
                 allowParallel: false
             ),
             new FamilyInputRenderingProtocol(
-                RecapCompletionProtocolV1.InputProtocolId,
-                RecapCompletionProtocolV1.PriorProjectionSchemaId,
-                RecapCompletionProtocolV1.HistorySegmentRenderingSchemaId
+                RecapRewriterProtocolV1.InputProtocolId,
+                RecapRewriterProtocolV1.PriorProjectionSchemaId,
+                RecapRewriterProtocolV1.HistorySegmentRenderingSchemaId
             )
         );
         MaintainerDefinitionRevision definition =
@@ -1158,7 +1158,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                     "culprit"
                 ),
                 new MaintainerCapabilitySpec(
-                    RecapCompletionProtocolV1.RuntimeProtocolId,
+                    RecapRewriterProtocolV1.RuntimeProtocolId,
                     MaintainerReadableScope
                         .FullPriorBuildTargetAndCurrentHistorySegmentV1
                 ),
@@ -1177,7 +1177,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                     "x-suspicion"
                 ),
                 new MaintainerCapabilitySpec(
-                    RecapCompletionProtocolV1.RuntimeProtocolId,
+                    RecapRewriterProtocolV1.RuntimeProtocolId,
                     MaintainerReadableScope
                         .FullPriorBuildTargetAndCurrentHistorySegmentV1
                 ),
@@ -1392,7 +1392,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                 new RecapGridRouteManifestEntry(
                     new RecapCompletionRouteKey(
                         family.Digest,
-                        RecapCompletionProtocolV1.RuntimeProtocolId,
+                        RecapRewriterProtocolV1.RuntimeProtocolId,
                         null
                     ),
                     "test",

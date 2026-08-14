@@ -387,6 +387,10 @@ public sealed class AgentControlVerticalTests : IDisposable {
                 "e6fde75c3ad68482ae0fdf8aedce8c24ba35f14223b5256eaa5c9b91731ae037",
                 first.RuntimeIdentity.ImplementationSetFingerprint
             );
+            Assert.Equal(
+                [RecapGridAgentControlBuiltIns.MysteryInvestigationV1],
+                RecapGridAgentControlBuiltIns.AssetIds
+            );
             Assert.True(RecapGridAgentControlBuiltIns
                 .TryCreateRegistrationBundle(
                     RecapGridAgentControlBuiltIns.MysteryInvestigationV1,

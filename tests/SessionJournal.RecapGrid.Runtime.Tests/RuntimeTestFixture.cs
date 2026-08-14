@@ -13,8 +13,8 @@ internal static class RuntimeTestFixture {
     internal static FrozenRowBatch Batch(
         int columnCount = 1,
         string? semanticModelId = null,
-        string runtimeProtocolId = RecapCompletionProtocolV1.RuntimeProtocolId,
-        string inputProtocolId = RecapCompletionProtocolV1.InputProtocolId,
+        string runtimeProtocolId = RecapRewriterProtocolV1.RuntimeProtocolId,
+        string inputProtocolId = RecapRewriterProtocolV1.InputProtocolId,
         IReadOnlyList<IHistoryMessage>? history = null,
         int maxContentUtf8Bytes = 16 * 1024,
         bool distinctFamilies = false,
@@ -22,17 +22,22 @@ internal static class RuntimeTestFixture {
         int semanticModelGroupSize = 0,
         IReadOnlyList<string>? runtimeProtocolIds = null,
         FamilyToolChoice toolChoice = FamilyToolChoice.Required,
-        bool? allowParallel = false
+        bool? allowParallel = false,
+        bool includeAdditionalTool = false,
+        string terminalToolName = RecapRewriterProtocolV1.TerminalToolName,
+        bool includeSchemaDescription = false
     ) {
         FamilyDefinition[] families = [.. Enumerable.Range(0, columnCount)
             .Select(index => Family(
                 inputProtocolId,
                 distinctFamilies ? $"-{index}" : string.Empty,
                 toolChoice,
-                allowParallel
+                allowParallel,
+                includeAdditionalTool,
+                terminalToolName,
+                includeSchemaDescription
             ))];
         var definitions = new MaintainerDefinitionRevision[columnCount];
-        var columns = new BuildTargetColumn[columnCount];
         for (int index = 0; index < columnCount; index++) {
             var logical = new LogicalColumnId($"case.column-{index}");
             definitions[index] = MaintainerDefinitionRevision.Create(
@@ -58,11 +63,34 @@ internal static class RuntimeTestFixture {
                 ),
                 maxContentUtf8Bytes
             );
-            columns[index] = new BuildTargetColumn(
-                logical,
-                definitions[index].Digest
-            );
         }
+        return Batch(families, definitions, history);
+    }
+
+    internal static FrozenRowBatch Batch(
+        FamilyDefinition family,
+        IReadOnlyList<MaintainerDefinitionRevision> definitions,
+        IReadOnlyList<IHistoryMessage>? history = null
+    ) {
+        ArgumentNullException.ThrowIfNull(family);
+        ArgumentNullException.ThrowIfNull(definitions);
+        return Batch(
+            Enumerable.Repeat(family, definitions.Count).ToArray(),
+            definitions.ToArray(),
+            history
+        );
+    }
+
+    private static FrozenRowBatch Batch(
+        FamilyDefinition[] families,
+        MaintainerDefinitionRevision[] definitions,
+        IReadOnlyList<IHistoryMessage>? history
+    ) {
+        BuildTargetColumn[] columns = [.. definitions.Select(static definition =>
+            new BuildTargetColumn(
+                definition.LogicalColumnId,
+                definition.Digest
+            ))];
         var timelineId = new TimelineId(new string('1', 32));
         var rowId = new HistoryRowId(new string('2', 64));
         BuildTarget target = BuildTarget.Create(columns);
@@ -140,49 +168,61 @@ internal static class RuntimeTestFixture {
     }
 
     internal static FamilyDefinition Family(
-        string inputProtocolId = RecapCompletionProtocolV1.InputProtocolId,
+        string inputProtocolId = RecapRewriterProtocolV1.InputProtocolId,
         string systemPromptSuffix = "",
         FamilyToolChoice toolChoice = FamilyToolChoice.Required,
-        bool? allowParallel = false
-    ) => FamilyDefinition.Create(
-        "Maintain the inquiry." + systemPromptSuffix,
-        [new FamilyToolDefinition(
-            "submit",
-            "Submit the maintained content.",
-            new FamilyObjectInputSchema([
-                new FamilyToolProperty(
-                    "outcome",
-                    new FamilyScalarInputSchema(
-                        FamilyScalarType.String,
-                        orderedEnum: [
-                            RecapCompletionProtocolV1.UpdatedOutcome,
-                            RecapCompletionProtocolV1.KeepUnchangedOutcome
-                        ]
-                    ),
-                    required: true
-                ),
-                new FamilyToolProperty(
-                    "content",
-                    new FamilyScalarInputSchema(
-                        FamilyScalarType.String,
-                        nullable: true
-                    ),
-                    required: true
+        bool? allowParallel = false,
+        bool includeAdditionalTool = false,
+        string terminalToolName = RecapRewriterProtocolV1.TerminalToolName,
+        bool includeSchemaDescription = false
+    ) {
+        FamilyToolDefinition exact = RecapRewriterProtocolV1
+            .CreateTerminalTool("Submit the maintained content.");
+        FamilyToolDefinition terminal = string.Equals(
+            terminalToolName,
+            RecapRewriterProtocolV1.TerminalToolName,
+            StringComparison.Ordinal
+        ) ? exact : new FamilyToolDefinition(
+            terminalToolName,
+            exact.Description,
+            exact.InputSchema
+        );
+        if (includeSchemaDescription) {
+            terminal = new FamilyToolDefinition(
+                terminal.Name,
+                terminal.Description,
+                new FamilyObjectInputSchema(
+                    terminal.InputSchema.Properties,
+                    description: "Schema drift."
                 )
-            ])
-        )],
-        new FamilyOutputProtocol(
-            RecapCompletionProtocolV1.OutputProtocolId,
-            "submit",
-            toolChoice,
-            allowParallel
-        ),
-        new FamilyInputRenderingProtocol(
-            inputProtocolId,
-            RecapCompletionProtocolV1.PriorProjectionSchemaId,
-            RecapCompletionProtocolV1.HistorySegmentRenderingSchemaId
-        )
-    );
+            );
+        }
+        FamilyToolDefinition[] tools = includeAdditionalTool
+            ? [
+                terminal,
+                new FamilyToolDefinition(
+                    "ordinary-tool",
+                    "This runtime must not dispatch ordinary tools.",
+                    new FamilyObjectInputSchema([])
+                )
+            ]
+            : [terminal];
+        return FamilyDefinition.Create(
+            "Maintain the inquiry." + systemPromptSuffix,
+            tools,
+            new FamilyOutputProtocol(
+                RecapRewriterProtocolV1.OutputProtocolId,
+                terminalToolName,
+                toolChoice,
+                allowParallel
+            ),
+            new FamilyInputRenderingProtocol(
+                inputProtocolId,
+                RecapRewriterProtocolV1.PriorProjectionSchemaId,
+                RecapRewriterProtocolV1.HistorySegmentRenderingSchemaId
+            )
+        );
+    }
 
     internal static CompletionResult Updated(
         CompletionRequest request,
@@ -247,7 +287,7 @@ internal static class RuntimeTestFixture {
                     "column-0"
                 ),
                 new MaintainerCapabilitySpec(
-                    RecapCompletionProtocolV1.RuntimeProtocolId,
+                    RecapRewriterProtocolV1.RuntimeProtocolId,
                     MaintainerReadableScope
                         .FullPriorBuildTargetAndCurrentHistorySegmentV1
                 ),
@@ -618,7 +658,7 @@ internal static class RuntimeTestFixture {
             blockKey
         ),
         new MaintainerCapabilitySpec(
-            RecapCompletionProtocolV1.RuntimeProtocolId,
+            RecapRewriterProtocolV1.RuntimeProtocolId,
             MaintainerReadableScope
                 .FullPriorBuildTargetAndCurrentHistorySegmentV1
         ),

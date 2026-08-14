@@ -10,7 +10,7 @@ public sealed class PublicSurfaceTests {
     public void ExternalComposition_CanConstructExactLazyRouteRuntime() {
         var key = new RecapCompletionRouteKey(
             new FamilyDefinitionDigest(new string('a', 64)),
-            RecapCompletionProtocolV1.RuntimeProtocolId,
+            RecapRewriterProtocolV1.RuntimeProtocolId,
             semanticModelId: null
         );
         var invoker = new PublicInvoker();

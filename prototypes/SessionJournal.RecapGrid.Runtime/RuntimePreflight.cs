@@ -115,7 +115,7 @@ public sealed partial class RecapCompletionRuntime {
             }
             if (!string.Equals(
                     work.Definition.Capability.RuntimeProtocolId,
-                    RecapCompletionProtocolV1.RuntimeProtocolId,
+                    RecapRewriterProtocolV1.RuntimeProtocolId,
                     StringComparison.Ordinal)) {
                 return new RuntimePreflightResult.Rejected(
                     "ProtocolUnavailable",
@@ -181,23 +181,23 @@ public sealed partial class RecapCompletionRuntime {
         FamilyDefinition family = work.Family;
         if (!string.Equals(
                 work.Definition.Capability.RuntimeProtocolId,
-                RecapCompletionProtocolV1.RuntimeProtocolId,
+                RecapRewriterProtocolV1.RuntimeProtocolId,
                 StringComparison.Ordinal)
             || !string.Equals(
                 family.OutputProtocol.ProtocolId,
-                RecapCompletionProtocolV1.OutputProtocolId,
+                RecapRewriterProtocolV1.OutputProtocolId,
                 StringComparison.Ordinal)
             || !string.Equals(
                 family.InputRenderingProtocol.ProtocolId,
-                RecapCompletionProtocolV1.InputProtocolId,
+                RecapRewriterProtocolV1.InputProtocolId,
                 StringComparison.Ordinal)
             || !string.Equals(
                 family.InputRenderingProtocol.PriorProjectionSchemaId,
-                RecapCompletionProtocolV1.PriorProjectionSchemaId,
+                RecapRewriterProtocolV1.PriorProjectionSchemaId,
                 StringComparison.Ordinal)
             || !string.Equals(
                 family.InputRenderingProtocol.HistorySegmentRenderingSchemaId,
-                RecapCompletionProtocolV1.HistorySegmentRenderingSchemaId,
+                RecapRewriterProtocolV1.HistorySegmentRenderingSchemaId,
                 StringComparison.Ordinal)) {
             return new RuntimePreflightResult.Rejected(
                 "ProtocolUnavailable",

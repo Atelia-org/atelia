@@ -7,15 +7,24 @@ internal static class RuntimeProtocolValidator {
     internal static RuntimePreflightResult.Rejected? Validate(
         FamilyDefinition family
     ) {
-        FamilyToolDefinition? terminal = family.OrderedTools.SingleOrDefault(
-            tool => string.Equals(
-                tool.Name,
-                family.OutputProtocol.TerminalToolName,
+        FamilyToolDefinition? terminal = family.OrderedTools.Count == 1
+            ? family.OrderedTools[0]
+            : null;
+        if (terminal is null
+            || !string.Equals(
+                terminal.Name,
+                RecapRewriterProtocolV1.TerminalToolName,
                 StringComparison.Ordinal
             )
-        );
-        if (terminal is null
+            || !string.Equals(
+                family.OutputProtocol.TerminalToolName,
+                RecapRewriterProtocolV1.TerminalToolName,
+                StringComparison.Ordinal
+            )
+            || family.OutputProtocol.ToolChoice != FamilyToolChoice.Required
+            || family.OutputProtocol.AllowParallel is not false
             || terminal.InputSchema.Nullable
+            || terminal.InputSchema.Description is not null
             || terminal.InputSchema.Properties.Count != 2
             || terminal.InputSchema.Properties[0] is not {
                 Name: "outcome",
@@ -23,10 +32,11 @@ internal static class RuntimeProtocolValidator {
                 Schema: FamilyScalarInputSchema outcome
             }
             || outcome.Nullable
+            || outcome.Description is not null
             || outcome.ScalarType != FamilyScalarType.String
             || !outcome.OrderedEnum.SequenceEqual([
-                RecapCompletionProtocolV1.UpdatedOutcome,
-                RecapCompletionProtocolV1.KeepUnchangedOutcome
+                RecapRewriterProtocolV1.UpdatedOutcome,
+                RecapRewriterProtocolV1.KeepUnchangedOutcome
             ], StringComparer.Ordinal)
             || terminal.InputSchema.Properties[1] is not {
                 Name: "content",
@@ -34,11 +44,12 @@ internal static class RuntimeProtocolValidator {
                 Schema: FamilyScalarInputSchema content
             }
             || !content.Nullable
+            || content.Description is not null
             || content.ScalarType != FamilyScalarType.String
             || content.OrderedEnum.Count != 0) {
             return new RuntimePreflightResult.Rejected(
                 "OutputProtocolMismatch",
-                "The terminal tool must use the exact V1 outcome/content schema."
+                "Runtime V1 requires exactly one submit tool, Required choice, disabled parallel calls, and the exact outcome/content schema."
             );
         }
         return null;
@@ -53,19 +64,12 @@ internal static class RuntimeProtocolValidator {
                 tool.Description,
                 (ToolSchema.Object)ConvertSchema(tool.InputSchema)
             ))];
-        CompletionToolChoice choice = family.OutputProtocol.ToolChoice switch {
-            FamilyToolChoice.Auto => CompletionToolChoice.Auto,
-            FamilyToolChoice.Required => CompletionToolChoice.RequiredNamed(
-                family.OutputProtocol.TerminalToolName
-            ),
-            _ => throw new InvalidOperationException(
-                "The family tool choice is unsupported."
-            )
-        };
         return new CompletionOutputContract(
             tools,
-            choice,
-            family.OutputProtocol.AllowParallel
+            CompletionToolChoice.RequiredNamed(
+                RecapRewriterProtocolV1.TerminalToolName
+            ),
+            allowParallelToolCalls: false
         );
     }
 

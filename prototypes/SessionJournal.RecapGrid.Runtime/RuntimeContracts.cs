@@ -3,16 +3,6 @@ using Atelia.SessionJournal.RecapGrid.Manager;
 
 namespace Atelia.SessionJournal.RecapGrid.Runtime;
 
-public static class RecapCompletionProtocolV1 {
-    public const string RuntimeProtocolId = "tool-runtime-v1";
-    public const string OutputProtocolId = "atelia.recap.output.v1";
-    public const string InputProtocolId = "atelia.recap.input.v1";
-    public const string PriorProjectionSchemaId = "atelia.recap.prior.v1";
-    public const string HistorySegmentRenderingSchemaId = "atelia.history.segment.v1";
-    public const string UpdatedOutcome = "updated";
-    public const string KeepUnchangedOutcome = "keep-unchanged";
-}
-
 public readonly record struct RecapCompletionRouteKey {
     public RecapCompletionRouteKey(
         FamilyDefinitionDigest familyDigest,

@@ -407,6 +407,11 @@ public enum RecapCellOutcome {
     KeepUnchanged
 }
 
+/// <summary>
+/// Immutable, content-addressed output of one pure derived evaluation. A Cell
+/// is not proof that an external side effect happened and must remain safe to
+/// recompute after cancellation, crash, or an indeterminate local commit.
+/// </summary>
 public sealed class RecapCellArtifact {
     private readonly byte[] _canonicalBytes;
 

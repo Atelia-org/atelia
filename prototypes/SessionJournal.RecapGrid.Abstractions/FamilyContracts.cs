@@ -277,6 +277,12 @@ public sealed class FamilyDefinition {
     }
 
     public string SystemPrompt { get; }
+
+    /// <summary>
+    /// The canonical ordered tool declarations for this Family. A runtime may
+    /// execute only a protocol shape it validates exactly; declaring additional
+    /// tools does not grant dispatch capability.
+    /// </summary>
     public IReadOnlyList<FamilyToolDefinition> OrderedTools => _orderedTools;
     public FamilyOutputProtocol OutputProtocol { get; }
     public FamilyInputRenderingProtocol InputRenderingProtocol { get; }

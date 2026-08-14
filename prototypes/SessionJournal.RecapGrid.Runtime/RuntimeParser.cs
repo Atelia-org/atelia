@@ -113,7 +113,7 @@ internal static class RuntimeParser {
             string? outcome = outcomeElement.GetString();
             if (string.Equals(
                     outcome,
-                    RecapCompletionProtocolV1.KeepUnchangedOutcome,
+                    RecapRewriterProtocolV1.KeepUnchangedOutcome,
                     StringComparison.Ordinal)) {
                 if (contentElement.ValueKind != JsonValueKind.Null
                     || prepared.SameColumnPrior is null) {
@@ -127,7 +127,7 @@ internal static class RuntimeParser {
             }
             if (!string.Equals(
                     outcome,
-                    RecapCompletionProtocolV1.UpdatedOutcome,
+                    RecapRewriterProtocolV1.UpdatedOutcome,
                     StringComparison.Ordinal)
                 || contentElement.ValueKind != JsonValueKind.String) {
                 return Failed("TerminalOutcomeInvalid", "Updated requires string content; no other outcome is supported.");
