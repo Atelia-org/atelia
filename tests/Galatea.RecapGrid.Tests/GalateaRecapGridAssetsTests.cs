@@ -89,11 +89,11 @@ public sealed class GalateaRecapGridAssetsTests {
             ResourceSha256(PromptResourceLoader.FamilySystemResourceName)
         );
         Assert.Equal(
-            "a8205f61213b8fa7c43985ae6a1c9950fdd66a2d0628721f7135ccf12362febe",
+            "c13ed6fe61d1532926b2af41986065241fec769edfc5efbb383714ca5c3c9368",
             ResourceSha256(PromptResourceLoader.WorldUnderstandingResourceName)
         );
         Assert.Equal(
-            "d9565c5bff5595d0d7432c96009448895f650b761c05a26769e4d3989bb7d8da",
+            "f64c03a2ef4a0ec493914ddd9c90bc9bfd1a810024467db598e4433afea477f9",
             ResourceSha256(PromptResourceLoader.AutobiographyResourceName)
         );
         Assert.Equal(first.Families[0].SystemPrompt,
@@ -139,6 +139,51 @@ public sealed class GalateaRecapGridAssetsTests {
     }
 
     [Fact]
+    public void MemberPrompts_LockSourceAndUncertaintyBoundaries() {
+        Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
+            GalateaRecapGridAssets.RollingRewriteZhCnV3,
+            out RecapGridControlRegistrationBundle? bundle
+        ));
+        Assert.NotNull(bundle);
+        string world = bundle.Definitions[0]
+            .DeclarativeSpec.UserPromptTemplate;
+        string autobiography = bundle.Definitions[1]
+            .DeclarativeSpec.UserPromptTemplate;
+
+        Assert.All(
+            new[] {
+                "来源作用域不会因前文或段落边界自动延续",
+                "本句或同一条目内局部带有来源与确信程度",
+                "情感反应、信任变化和内在位移可以用第一人称直接写",
+                "触发它们的法律解释、理论主张或故事机制",
+                "普遍量词、制度性归因和必然性措辞",
+                "除非输入明确显示她已独立验证",
+                "不等于作品或项目已经完成"
+            },
+            phrase => Assert.Contains(
+                phrase,
+                autobiography,
+                StringComparison.Ordinal
+            )
+        );
+        Assert.All(
+            new[] {
+                "保留输入的决策拓扑和不确定性",
+                "待定的归属（ownership）",
+                "来源不明的多种可能",
+                "静默选定其中一支或丢掉其余推断分支",
+                "不等于作品或项目已完成",
+                "具体生理过程、身体细节或体验时序"
+            },
+            phrase => Assert.Contains(
+                phrase,
+                world,
+                StringComparison.Ordinal
+            )
+        );
+    }
+
+    [Fact]
     public void PromptLoader_RejectsNonCanonicalOrOversizedBytes() {
         Assert.Throws<InvalidDataException>(() => PromptResourceLoader
             .DecodeExact([], "empty"));
@@ -158,9 +203,9 @@ public sealed class GalateaRecapGridAssetsTests {
     ) => Assert.Equal(
         [
             "ae44d15750e417452e34f4e9133f56e60334d2cf7313ac988128e95faab3c05c",
-            "0e6d9b342842fc31141a7ac40b32a1fe3086dc75ac95f3795fce54785d466d82",
-            "1ccf3594b15ccf150c625cfa69ef116cffc5d3fb8bc5825ab99f5a780137c7e2",
-            "b60840ebbbb4396882344a85bf86b1cb379fbbf12b876dd94354ee284be629e3"
+            "0946787617b0c7876f18605a99be2a6e99f55e2720751b89b79a1a1495be3e84",
+            "fa2aa47ab23e71f76acad3769ae83d6ee1eb79d9b0e39374f9285451542eb5f1",
+            "34f8850b6595fc20c16d6da64a5d945f0ef394a9c6224fd7e65959d9f508d534"
         ],
         [
             bundle.Families[0].Digest.Value,
