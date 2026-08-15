@@ -16,6 +16,7 @@ namespace Atelia.Analyzers.Style;
 public sealed class RG0001RecapGridModuleDependencyAnalyzer
     : DiagnosticAnalyzer {
     public const string DiagnosticId = "RG0001";
+    public const string OwnershipDiagnosticId = "RG0002";
 
     public static readonly DiagnosticDescriptor Rule = new(
         DiagnosticId,
@@ -29,8 +30,20 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
             + "direction after their former project boundaries are consolidated."
     );
 
+    public static readonly DiagnosticDescriptor OwnershipRule = new(
+        OwnershipDiagnosticId,
+        "RecapGrid source path and namespace must have one module owner",
+        "{0}",
+        "Architecture",
+        DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        description:
+            "Consolidated RecapGrid source must live under one known module "
+            + "directory, and module directories must declare their owned namespace."
+    );
+
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-        ImmutableArray.Create(Rule);
+        ImmutableArray.Create(Rule, OwnershipRule);
 
     public override void Initialize(AnalysisContext context) {
         context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
@@ -40,14 +53,25 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
 
     private static void AnalyzeSemanticModel(SemanticModelAnalysisContext context) {
         string path = context.SemanticModel.SyntaxTree.FilePath;
-        SourceModule? source = ClassifySourceModule(path);
-        if (source is null) {
-            return;
-        }
-
         SyntaxNode root = context.SemanticModel.SyntaxTree.GetRoot(
             context.CancellationToken
         );
+        SourceModule? source = ClassifySourceModule(path);
+        if (source is null) {
+            if (IsConsolidatedRecapGridSource(path)) {
+                context.ReportDiagnostic(Diagnostic.Create(
+                    OwnershipRule,
+                    root.GetFirstToken(includeZeroWidth: true).GetLocation(),
+                    "Consolidated RecapGrid source must be placed under one "
+                    + "of the eight owned module directories."
+                ));
+            }
+            return;
+        }
+        if (source != SourceModule.GalateaAssets) {
+            ReportOwnershipMismatch(context, root, source.Value);
+        }
+
         var violations = new Dictionary<TargetModule, Violation>();
 
         foreach (SyntaxNode node in root.DescendantNodesAndSelf()) {
@@ -140,8 +164,8 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
                 return;
             }
 
-            InspectNamespace(
-                symbol.ContainingNamespace,
+            InspectTargetSymbol(
+                symbol,
                 location,
                 symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)
             );
@@ -175,8 +199,8 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
                     }
                     return;
                 case INamedTypeSymbol named:
-                    InspectNamespace(
-                        named.ContainingNamespace,
+                    InspectTargetSymbol(
+                        named,
                         location,
                         named.ToDisplayString(
                             SymbolDisplayFormat.CSharpErrorMessageFormat
@@ -192,17 +216,12 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
             }
         }
 
-        void InspectNamespace(
-            INamespaceSymbol? namespaceSymbol,
+        void InspectTargetSymbol(
+            ISymbol symbol,
             Location location,
             string symbolName
         ) {
-            if (namespaceSymbol is null || namespaceSymbol.IsGlobalNamespace) {
-                return;
-            }
-            TargetModule? target = ClassifyTargetModule(
-                namespaceSymbol.ToDisplayString()
-            );
+            TargetModule? target = ClassifyTargetSymbolOwner(symbol);
             if (target is null || IsAllowed(source.Value, target.Value)) {
                 return;
             }
@@ -215,8 +234,53 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
         }
     }
 
+    private static void ReportOwnershipMismatch(
+        SemanticModelAnalysisContext context,
+        SyntaxNode root,
+        SourceModule source
+    ) {
+        TargetModule expected = ToTargetModule(source);
+        BaseNamespaceDeclarationSyntax? firstNamespace = root.DescendantNodes()
+            .OfType<BaseNamespaceDeclarationSyntax>()
+            .FirstOrDefault(namespaceDeclaration => {
+                ISymbol? symbol = context.SemanticModel.GetDeclaredSymbol(
+                    namespaceDeclaration,
+                    context.CancellationToken
+                );
+                return symbol is not INamespaceSymbol namespaceSymbol
+                    || ClassifyTargetModule(namespaceSymbol.ToDisplayString())
+                        != expected;
+            });
+        if (firstNamespace is not null) {
+            ISymbol? actual = context.SemanticModel.GetDeclaredSymbol(
+                firstNamespace,
+                context.CancellationToken
+            );
+            context.ReportDiagnostic(Diagnostic.Create(
+                OwnershipRule,
+                firstNamespace.Name.GetLocation(),
+                $"Module directory '{Display(source)}' must declare its owned "
+                + $"namespace, but found '{actual?.ToDisplayString() ?? "<unknown>"}'."
+            ));
+            return;
+        }
+
+        bool hasTypeDeclaration = root.DescendantNodes().Any(static node =>
+            node is BaseTypeDeclarationSyntax or DelegateDeclarationSyntax
+        );
+        if (hasTypeDeclaration
+            && !root.DescendantNodes().OfType<BaseNamespaceDeclarationSyntax>().Any()) {
+            context.ReportDiagnostic(Diagnostic.Create(
+                OwnershipRule,
+                root.GetFirstToken(includeZeroWidth: true).GetLocation(),
+                $"Module directory '{Display(source)}' must not declare types "
+                + "in the global namespace."
+            ));
+        }
+    }
+
     private static SourceModule? ClassifySourceModule(string path) {
-        string normalized = "/" + path.Replace('\\', '/').TrimStart('/');
+        string normalized = NormalizePath(path);
         if (ContainsPathSegment(normalized, "/bin/")
             || ContainsPathSegment(normalized, "/obj/")) {
             return null;
@@ -241,6 +305,16 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
         return null;
     }
 
+    private static bool IsConsolidatedRecapGridSource(string path) {
+        string normalized = NormalizePath(path);
+        return !ContainsPathSegment(normalized, "/bin/")
+            && !ContainsPathSegment(normalized, "/obj/")
+            && ContainsPathSegment(
+                normalized,
+                "/prototypes/SessionJournal.RecapGrid/"
+            );
+    }
+
     private static TargetModule? ClassifyTargetModule(string namespaceName) {
         const string recapGrid = "Atelia.SessionJournal.RecapGrid";
         const string timeline = "Atelia.SessionJournal.HistoryTimeline";
@@ -259,6 +333,42 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
             return TargetModule.Abstractions;
         }
         return null;
+    }
+
+    private static TargetModule? ClassifyTargetSymbolOwner(ISymbol symbol) {
+        if (symbol is IAliasSymbol alias) {
+            return ClassifyTargetSymbolOwner(alias.Target);
+        }
+        if (symbol is IMethodSymbol { ReducedFrom: { } reducedFrom }) {
+            symbol = reducedFrom;
+        }
+
+        ISymbol definition = symbol.OriginalDefinition;
+        ImmutableArray<SyntaxReference> declarations =
+            definition.DeclaringSyntaxReferences;
+        if (declarations.IsDefaultOrEmpty
+            && definition.ContainingType is not null) {
+            declarations = definition.ContainingType.OriginalDefinition
+                .DeclaringSyntaxReferences;
+        }
+        if (!declarations.IsDefaultOrEmpty) {
+            foreach (SyntaxReference declaration in declarations) {
+                SourceModule? owner = ClassifySourceModule(
+                    declaration.SyntaxTree.FilePath
+                );
+                if (owner is not null && owner != SourceModule.GalateaAssets) {
+                    return ToTargetModule(owner.Value);
+                }
+            }
+            // Source symbols must be owned by their declaring path. An
+            // unclassified consolidated path is separately rejected by RG0002.
+            return null;
+        }
+
+        INamespaceSymbol? namespaceSymbol = definition.ContainingNamespace;
+        return namespaceSymbol is null || namespaceSymbol.IsGlobalNamespace
+            ? null
+            : ClassifyTargetModule(namespaceSymbol.ToDisplayString());
     }
 
     private static bool IsAllowed(SourceModule source, TargetModule target) {
@@ -314,6 +424,9 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
     private static bool ContainsPathSegment(string path, string segment) =>
         path.IndexOf(segment, StringComparison.OrdinalIgnoreCase) >= 0;
 
+    private static string NormalizePath(string path) =>
+        "/" + path.Replace('\\', '/').TrimStart('/');
+
     private static bool IsNamespace(string actual, string expected) =>
         string.Equals(actual, expected, StringComparison.Ordinal)
         || actual.StartsWith(expected + ".", StringComparison.Ordinal);
@@ -327,6 +440,19 @@ public sealed class RG0001RecapGridModuleDependencyAnalyzer
         TargetModule.HistoryTimeline => "HistoryTimeline",
         _ => module.ToString()
     };
+
+    private static TargetModule ToTargetModule(SourceModule module) =>
+        module switch {
+            SourceModule.Abstractions => TargetModule.Abstractions,
+            SourceModule.Control => TargetModule.Control,
+            SourceModule.Store => TargetModule.Store,
+            SourceModule.Manager => TargetModule.Manager,
+            SourceModule.Runtime => TargetModule.Runtime,
+            SourceModule.Getter => TargetModule.Getter,
+            SourceModule.Online => TargetModule.Online,
+            SourceModule.AgentControl => TargetModule.AgentControl,
+            _ => throw new ArgumentOutOfRangeException(nameof(module))
+        };
 
     private static readonly ImmutableArray<SourceModule> RecapGridSourceModules =
         ImmutableArray.Create(

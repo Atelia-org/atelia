@@ -215,20 +215,123 @@ public sealed class RG0001RecapGridModuleDependencyTests {
         Assert.Contains("Runtime", diagnostic.GetMessage());
     }
 
+    [Theory]
+    [InlineData("/repo/prototypes/SessionJournal.RecapGrid/Loose.cs")]
+    [InlineData(
+        "/repo/prototypes/SessionJournal.RecapGrid/FutureModule/Loose.cs"
+    )]
+    public async Task RejectsUnclassifiedConsolidatedSource(string path) {
+        Diagnostic diagnostic = Assert.Single(await AnalyzeAsync((
+            path,
+            """
+            namespace Atelia.SessionJournal.RecapGrid;
+            public sealed class LooseSource { }
+            """
+        )));
+
+        Assert.Equal("RG0002", diagnostic.Id);
+        Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
+        Assert.Contains("eight owned module directories", diagnostic.GetMessage());
+    }
+
+    [Fact]
+    public async Task RejectsModulePathAndNamespaceOwnerMismatch() {
+        Diagnostic diagnostic = Assert.Single(await AnalyzeAsync((
+            "/repo/prototypes/SessionJournal.RecapGrid/Manager/Mismatch.cs",
+            """
+            namespace Atelia.SessionJournal.RecapGrid;
+            public sealed class MismatchedManagerSource { }
+            """
+        )));
+
+        Assert.Equal("RG0002", diagnostic.Id);
+        Assert.Contains("Manager", diagnostic.GetMessage());
+        Assert.Contains("Atelia.SessionJournal.RecapGrid", diagnostic.GetMessage());
+    }
+
+    [Fact]
+    public async Task RejectsPartialTypeCrossingModuleRoots() {
+        Diagnostic diagnostic = Assert.Single(await AnalyzeAsync(
+            (
+                "/repo/prototypes/SessionJournal.RecapGrid/Manager/Part1.cs",
+                """
+                namespace Atelia.SessionJournal.RecapGrid.Manager;
+                public sealed partial class CrossOwnedType { }
+                """
+            ),
+            (
+                "/repo/prototypes/SessionJournal.RecapGrid/Store/Part2.cs",
+                """
+                namespace Atelia.SessionJournal.RecapGrid.Manager;
+                public sealed partial class CrossOwnedType { }
+                """
+            )
+        ));
+
+        Assert.Equal("RG0002", diagnostic.Id);
+        Assert.EndsWith(
+            "/Store/Part2.cs",
+            diagnostic.Location.GetLineSpan().Path,
+            StringComparison.Ordinal
+        );
+        Assert.Contains("Store", diagnostic.GetMessage());
+        Assert.Contains("RecapGrid.Manager", diagnostic.GetMessage());
+    }
+
+    [Fact]
+    public async Task DeclaringPathPreventsNamespaceLaunderingWithinCompilation() {
+        Diagnostic[] diagnostics = await AnalyzeAsync(
+            (
+                "/repo/prototypes/SessionJournal.RecapGrid/Manager/Laundered.cs",
+                """
+                namespace Atelia.SessionJournal.RecapGrid;
+                public sealed class LaunderedManagerValue { }
+                """
+            ),
+            (
+                "/repo/prototypes/SessionJournal.RecapGrid/Store/Use.cs",
+                """
+                using Atelia.SessionJournal.RecapGrid;
+                namespace Atelia.SessionJournal.RecapGrid.Store;
+                public sealed class LaunderingConsumer {
+                    public object Create() => new LaunderedManagerValue();
+                }
+                """
+            )
+        );
+
+        Diagnostic ownership = Assert.Single(diagnostics, static diagnostic =>
+            diagnostic.Id == "RG0002"
+        );
+        Assert.EndsWith(
+            "/Manager/Laundered.cs",
+            ownership.Location.GetLineSpan().Path,
+            StringComparison.Ordinal
+        );
+
+        Diagnostic edge = Assert.Single(diagnostics, static diagnostic =>
+            diagnostic.Id == "RG0001"
+        );
+        Assert.EndsWith(
+            "/Store/Use.cs",
+            edge.Location.GetLineSpan().Path,
+            StringComparison.Ordinal
+        );
+        Assert.Contains("Store", edge.GetMessage());
+        Assert.Contains("Manager", edge.GetMessage());
+    }
+
     private static async Task<Diagnostic[]> AnalyzeAsync(
         params (string Path, string Source)[] sources
     ) {
-        var syntaxTrees = new List<SyntaxTree> {
-            CSharpSyntaxTree.ParseText(ModuleDeclarations, path: "/fixture/Modules.cs")
-        };
-        syntaxTrees.AddRange(sources.Select(source =>
+        SyntaxTree[] syntaxTrees = sources.Select(source =>
             CSharpSyntaxTree.ParseText(source.Source, path: source.Path)
-        ));
+        ).ToArray();
 
         CSharpCompilation compilation = CSharpCompilation.Create(
             "Atelia.RecapGrid.ModuleDependency.Tests",
             syntaxTrees,
-            GetMetadataReferences(),
+            GetMetadataReferences().Append(CreateModuleMetadataReference()),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
         );
         Assert.DoesNotContain(
@@ -241,9 +344,29 @@ public sealed class RG0001RecapGridModuleDependencyTests {
             .WithAnalyzers(ImmutableArray.Create<DiagnosticAnalyzer>(analyzer))
             .GetAnalyzerDiagnosticsAsync();
         return diagnostics
-            .Where(static diagnostic => diagnostic.Id == "RG0001")
-            .OrderBy(static diagnostic => diagnostic.Location.SourceSpan.Start)
+            .Where(static diagnostic => diagnostic.Id is "RG0001" or "RG0002")
+            .OrderBy(static diagnostic =>
+                diagnostic.Location.GetLineSpan().Path,
+                StringComparer.Ordinal
+            )
+            .ThenBy(static diagnostic => diagnostic.Location.SourceSpan.Start)
             .ToArray();
+    }
+
+    private static MetadataReference CreateModuleMetadataReference() {
+        CSharpCompilation compilation = CSharpCompilation.Create(
+            "Atelia.RecapGrid.ModuleFixtures",
+            [CSharpSyntaxTree.ParseText(ModuleDeclarations)],
+            GetMetadataReferences(),
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+        );
+        using var stream = new MemoryStream();
+        var result = compilation.Emit(stream);
+        Assert.True(
+            result.Success,
+            string.Join(Environment.NewLine, result.Diagnostics)
+        );
+        return MetadataReference.CreateFromImage(stream.ToArray());
     }
 
     private static IEnumerable<MetadataReference> GetMetadataReferences() =>
