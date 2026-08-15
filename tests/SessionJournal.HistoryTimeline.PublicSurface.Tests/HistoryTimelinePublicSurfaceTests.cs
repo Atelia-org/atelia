@@ -86,6 +86,28 @@ public sealed class HistoryTimelinePublicSurfaceTests : IDisposable {
     }
 
     [Fact]
+    public void HistoryLoadSafetyLimitsAreNotExported() {
+        Type[] timelineTypes = typeof(HistoryTimelineFactory).Assembly
+            .GetExportedTypes()
+            .Where(static type =>
+                type.Namespace is "Atelia.SessionJournal.HistoryTimeline"
+            )
+            .ToArray();
+        Assert.Contains(typeof(HistoryTimelineFactory), timelineTypes);
+
+        string[] leakedSafetyTypes = timelineTypes
+            .Select(static type => type.FullName)
+            .Where(static fullName => fullName is
+                "Atelia.SessionJournal.HistoryTimeline.HistoryLoadMeasurementSafety"
+                or "Atelia.SessionJournal.HistoryTimeline.HistoryLoadMeasurementSafety+V1"
+            )
+            .Cast<string>()
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Empty(leakedSafetyTypes);
+    }
+
+    [Fact]
     public void PublicFactoryAndHandlesExposeNoBackendSelector() {
         Type[] publicTypes = typeof(HistoryTimelineFactory)
             .Assembly

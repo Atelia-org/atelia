@@ -8,6 +8,9 @@ using SJ = Atelia.SessionJournal;
 namespace Atelia.SessionJournal.HistoryTimeline.Tests;
 
 public sealed class O200kBaseHistoryUnitLoadEstimatorTests {
+    private const int ExpectedMaxRenderedHistoryUnitUtf8Bytes =
+        4 * 1024 * 1024;
+
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator =
         new();
 
@@ -27,13 +30,11 @@ public sealed class O200kBaseHistoryUnitLoadEstimatorTests {
 
         HistoryUnitLoadMeasurement first = _estimator.Measure(
             unit,
-            HistoryLoadMeasurementSafety.V1
-                .MaxRenderedHistoryUnitUtf8Bytes
+            ExpectedMaxRenderedHistoryUnitUtf8Bytes
         );
         HistoryUnitLoadMeasurement second = _estimator.Measure(
             Unit(new ObservationMessage(content), 90, 99),
-            HistoryLoadMeasurementSafety.V1
-                .MaxRenderedHistoryUnitUtf8Bytes
+            ExpectedMaxRenderedHistoryUnitUtf8Bytes
         );
 
         Assert.Equal(
@@ -222,11 +223,10 @@ public sealed class O200kBaseHistoryUnitLoadEstimatorTests {
     }
 
     [Fact]
-    public void V1UnitSafetyCapRejectsOversizedContent() {
+    public void ConfiguredUnitSafetyCapRejectsOversizedContent() {
         string content = new(
             'a',
-            HistoryLoadMeasurementSafety.V1
-                .MaxRenderedHistoryUnitUtf8Bytes
+            ExpectedMaxRenderedHistoryUnitUtf8Bytes
         );
 
         HistoryLoadMeasurementException failure =
@@ -283,8 +283,7 @@ public sealed class O200kBaseHistoryUnitLoadEstimatorTests {
         IHistoryMessage message
     ) => _estimator.Measure(
         Unit(message),
-        HistoryLoadMeasurementSafety.V1
-            .MaxRenderedHistoryUnitUtf8Bytes
+        ExpectedMaxRenderedHistoryUnitUtf8Bytes
     );
 
     private void AssertUnsupportedBlock(IHistoryMessage message) {

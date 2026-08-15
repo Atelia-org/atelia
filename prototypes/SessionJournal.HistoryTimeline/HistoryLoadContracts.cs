@@ -124,7 +124,7 @@ public sealed record HistoryLoadBoundaryProjection {
 /// <summary>
 /// Code-owned bounds for H0 history-load measurement.
 /// </summary>
-public static class HistoryLoadMeasurementSafety {
+internal static class HistoryLoadMeasurementSafety {
     public static class V1 {
         public const int MaxRenderedHistoryUnitUtf8Bytes =
             4 * 1024 * 1024;

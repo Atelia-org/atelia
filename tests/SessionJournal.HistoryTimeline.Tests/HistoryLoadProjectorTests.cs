@@ -7,6 +7,9 @@ using SJ = Atelia.SessionJournal;
 namespace Atelia.SessionJournal.HistoryTimeline.Tests;
 
 public sealed class HistoryLoadProjectorTests {
+    private const int ExpectedMaxRenderedHistoryUnitUtf8Bytes =
+        4 * 1024 * 1024;
+
     [Fact]
     public void StartBaselineProjectsAdditivePrefixAndSharedCounts() {
         SJ.SessionHistoryPlanningWindow window = StandardWindow();
@@ -250,8 +253,7 @@ public sealed class HistoryLoadProjectorTests {
         Assert.All(
             observing.ObservedCaps,
             cap => Assert.Equal(
-                HistoryLoadMeasurementSafety.V1
-                    .MaxRenderedHistoryUnitUtf8Bytes,
+                ExpectedMaxRenderedHistoryUnitUtf8Bytes,
                 cap
             )
         );
@@ -302,9 +304,7 @@ public sealed class HistoryLoadProjectorTests {
 
     [Fact]
     public void WindowByteCapAcceptsExactAndRejectsOneMoreUnit() {
-        int unitBytes =
-            HistoryLoadMeasurementSafety.V1
-                .MaxRenderedHistoryUnitUtf8Bytes;
+        int unitBytes = ExpectedMaxRenderedHistoryUnitUtf8Bytes;
         var estimator = new DelegateEstimator(_ =>
             new HistoryUnitLoadMeasurement(
                 new HistoryLoadUnit(1),
