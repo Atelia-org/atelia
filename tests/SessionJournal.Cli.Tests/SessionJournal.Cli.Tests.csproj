@@ -18,8 +18,6 @@
     <ProjectReference Include="../../prototypes/Galatea.RecapGrid/Galatea.RecapGrid.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.Offline/SessionJournal.Offline.csproj" />
-    <!-- Test-only producer/consumer compatibility coverage. The product CLI does not reference ChatSession. -->
-    <ProjectReference Include="../../prototypes/ChatSession/ChatSession.csproj" />
     <ProjectReference Include="../../prototypes/Completion/Completion.csproj" />
     <ProjectReference Include="../../prototypes/Completion.Abstractions/Completion.Abstractions.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
