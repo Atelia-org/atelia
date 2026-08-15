@@ -13,3 +13,4 @@ X0002   | Formatting.Experimental | Info | Experimental conditional close paren 
 MT0101  | Documentation | Info | Escape unescaped angle brackets in XML doc text
 MT0008  | Brace      | Info | Require braces for embedded statements; code fix adds braces inline (no newline introduced)
 MT0009  | Brace      | Info | Inline simple single-statement if/else blocks by removing inner newlines
+RG0001  | Architecture | Error | Preserve locked RecapGrid source-module dependency edges across assembly consolidation
