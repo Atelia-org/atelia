@@ -1,8 +1,19 @@
 # SessionJournal DurableIO 安全收敛方案（S4-D）
 
-状态：Proposed；设计核验已完成，implementation 尚未开始  
-审阅基线：`32683f4c7baeeca82f33a423911c92d52778d8f7`  
+状态：Closed / Archived；D0 Stop，owner-local Retain；未进入 implementation  
+设计审阅基线：`32683f4c7baeeca82f33a423911c92d52778d8f7`  
+D0 核验基线：`b84cba39e726070fc629bfc56c50e9cc3812a0d6`  
 撰写日期：2026-08-16
+
+归档说明：D0 已完成四个 durability owner 的 fact/threat matrix 与独立 challenger 复核。
+除最底层 `flock` ABI leaf 和少量 path-based directory-fsync 源码外，没有找到能够同时保持
+pre/postcondition、path/shape、handle ownership、failure mapping 与 crash settlement，且能净减少
+语义分叉的 non-trivial exact-equivalent consumer pair。因此停止门触发，S4-D 以 owner-local
+Retain 关闭；D1-D4 未进入，也未创建 shared module/assembly。current durability contract 继续以
+[durable target](../../current/derived-recap/durable-target.md)、owning code/tests 与
+[Beta contract snapshot](../../current/contracts/session-journal-beta-contract-snapshot.md) 为准。
+
+下文保留关闭时的方案、资格门与验收设想，仅作 historical study；不得据此启动 current backlog。
 
 ## 1. 结论
 
@@ -15,14 +26,13 @@ WriteAtomic / FlushDirectory` 样板，并进一步建议统一
 
 1. **原 S4 整体 No-Go。** durable implementation 与 public result contract 没有共同
    authority owner、依赖顺序或验收门槛，不应绑成一个实施包。
-2. **S4-D 条件成立。** 四个 durable owner 确实重复了少量 Linux syscall、lock 与 directory
-   flush 机制；但不存在四套完整、行为等价的 durable layer。只有先锁定 threat/settlement
-   矩阵，且证明至少两个 owner 能复用同一 hardened kernel，才允许抽取。
+2. **S4-D 已由 D0 判定 Stop / Retain。** 四个 durable owner 确实重复少量 Linux syscall、lock
+   与 directory flush 源码，但不存在能产生净语义收益的 non-trivial exact-equivalent seam；不进入抽取。
 3. **S4-R 当前 Reject / Retain。** result family 的叶子名称相似，但合法 case 集、payload
    authority 与 operator action 不同。跨 owner generic/sum 会增加不可达或不可恢复的可表示状态，
    不是语义化简。
-4. 当前默认保持 owner-local。本文批准的是 **D0/D1 调查与校准路径**，不是预先批准新的
-   shared assembly，也不是要求最终一定产生代码变更。
+4. 当前保持 owner-local。D0 已完成；D1-D4 均未进入。没有批准新的 shared assembly/module，
+   也没有产生代码变更。
 
 本方案不改变 canonical bytes、SQLite schema、durable path/layout、lock topology、wire reader
 接受语言或既有 typed result。若后续接受更严格的 path/hostile-writer contract，应另记为显式
@@ -187,7 +197,7 @@ consumer workflow 全部相同**，才另立 per-owner direct-cut 方案；不�
 
 ## 5. 工作包
 
-### D0 — Durability fact / threat lock（只读）
+### D0 — Durability fact / threat lock（已完成：Stop）
 
 产出逐 owner matrix：
 
@@ -204,7 +214,12 @@ consumer workflow 全部相同**，才另立 per-owner direct-cut 方案；不�
 
 **停止门：** 找不到至少两个 exact-equivalent consumers，关闭 S4-D，记录 owner-local retain。
 
-### D1 — Owner-local safety calibration
+实际裁决：唯一逐项等价的候选只到借用 fd 的 `flock(...|LOCK_NB)` ABI leaf；Control/Store 的
+path-based directory flush 也只在 raw syscall sequence 层近似。任一候选扩展到 slot open/shape、
+path protection、owner/mode、handle lifetime、failure mapping 或 publication settlement 即发生分叉；
+抽取只会以新的 topology/RG ownership 换取少量 P/Invoke 去重，不满足净收益要求。停止门已触发。
+
+### D1 — Owner-local safety calibration（未进入）
 
 先补 mutation/negative evidence，不移动实现：
 
@@ -224,7 +239,7 @@ consumer workflow 全部相同**，才另立 per-owner direct-cut 方案；不�
 consumer 的 pre/post condition、failure stage、handle ownership 或 settlement 不再
 exact-equivalent，立即以 Retain 结束，不得沿用修复前的 Go 结论。
 
-### D2 — Conditional shared-kernel prototype
+### D2 — Conditional shared-kernel prototype（未进入）
 
 仅在 D0/D1 Go 后执行：
 
@@ -234,7 +249,7 @@ exact-equivalent，立即以 Retain 结束，不得沿用修复前的 Go 结论�
 4. owner wrapper 保持原 error message/code、Busy 映射、publish stage 与 handle ownership；
 5. 若第二个 consumer 需要大量 special cases，删除 prototype 并回到 owner-local，而不是扩张 framework。
 
-### D3 — 逐 owner 迁移
+### D3 — 逐 owner 迁移（未进入）
 
 一个 owner 一个提交与独立 review。迁移顺序由 D0 的 exact common subset 决定，不预设把 Cadence
 整套复制给其他 owner。
@@ -247,7 +262,7 @@ exact-equivalent，立即以 Retain 结束，不得沿用修复前的 Go 结论�
 reader acceptance 或 crash settlement delta，回退该 owner 包并停止后续迁移；不能靠更新 baseline
 或放宽测试把 delta 接纳进“共同 kernel”。
 
-### D4 — Closure
+### D4 — Closure（未进入）
 
 - 删除所有已被证明完全替代的 duplicate syscall wrapper；不以删除 owner adapter 为目标；
 - 更新 exact project graph、IVT、RG gate、WalkingSkeleton 与 public surface gate；
@@ -299,10 +314,13 @@ CrashHarness 必须在 isolated checkout 以标准 repo-local `bin/...` 布局�
 
 本方案有两个同样合法的完成态：
 
-- **Retain completion：** D0/D1 证明没有至少两个 exact-equivalent consumers，记录矩阵与风险，
+- **Retain completion：** D0（或重新校准后的 D1）证明没有至少两个 exact-equivalent consumers，记录矩阵与风险，
   不产生 shared layer；
 - **Extraction completion：** D2-D4 证明一个窄 kernel 被至少两个 owner 使用，owner-specific
   durability/result contract 不变，重复实现被删除且所有 gates 通过。
 
 “新增了 shared helper，但只有一个 consumer”“保留 owner-local wrapper 同时继续复制 syscall”或
 “为了统一而让 result/path policy 变宽”均不算完成。
+
+本研究的实际完成态是 **Retain completion**：D0 证明没有值得抽取的 non-trivial
+exact-equivalent consumers；shared layer 未创建，owner-specific durability/result contract 未改变。
