@@ -20,7 +20,7 @@ prototypes/Galatea/README.md
 
 # Evidence/archive records are intentionally not default-scanned. Their links
 # remain observable with:
-#   python scripts/check_session_journal_docs.py --all-tracked --report-only
+#   python3 scripts/check_session_journal_docs.py --all-tracked --report-only
 # This is an explicit lifecycle boundary, not a reason to promote closed records
 # into default scope. Physical moves must keep both default and all-tracked scans
 # at zero diagnostics.

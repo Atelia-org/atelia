@@ -1,10 +1,14 @@
-# RecapGrid 程序集收口方案
+# RecapGrid 程序集收口方案与实施记录
 
-状态：Proposal（经设计审阅修订，未实施）
-作用域：`prototypes/SessionJournal.HistoryTimeline` 与
+状态：Implemented（M1 已完成；M2 本轮 visibility-only audit 与批次已完成，剩余 public API
+不视为冻结）
+原始作用域：`prototypes/SessionJournal.HistoryTimeline` 与
 `prototypes/SessionJournal.RecapGrid.*` 共 11 个生产项目
+方案修订：采用 T/C/G/H/O 的 **11 → 5** 拓扑；未采用 11 → 6 ControlPlane 备选
 撰写日期：2026-08-15
 审阅修订日期：2026-08-15
+实施日期：2026-08-15
+实施提交范围：`13bcf7e1..5461373f`
 基线分支：`feature/derived-recap-grid-rewrite`
 
 ## 1. 目的与结论
@@ -12,9 +16,9 @@
 目标是缩小需要对普通下游消费者承诺的 public API 表面，同时保留当前真正有价值的
 依赖、权限与 composition 边界。
 
-原候选的 `11 → 3` 方向不直接采用。它会把 HistoryTimeline 与 privileged Cadence 一并
-并入约 4 万行的大程序集，并迫使 `SessionJournal` 把当前只授予 Cadence 的 internal
-mutation capability 授给整个 RecapGrid core。推荐目标是 **11 → 5**：
+原候选的 `11 → 3` 方向未采用。它会把 HistoryTimeline 与 privileged Cadence 一并
+并入约 4 万行的大程序集，并迫使 `SessionJournal` 把只授予 Cadence 的 internal
+mutation capability 授给整个 RecapGrid core。实际实现采用 **11 → 5**：
 
 1. 保留 `SessionJournal.HistoryTimeline`；
 2. 保留 `SessionJournal.RecapGrid.Cadence`；
@@ -25,12 +29,12 @@ mutation capability 授给整个 RecapGrid core。推荐目标是 **11 → 5**�
 这样既能消除大多数“只因跨程序集才被迫 public”的 RecapGrid 内部契约，又不会扩大 raw
 SessionJournal / Timeline internal capability 的生产 caller set。
 
-本文仍只处理程序集拓扑和由此直接产生的可见性收口。它不改变 wire-format、SQLite
+本文只处理程序集拓扑和由此直接产生的可见性收口。它不改变 wire-format、SQLite
 schema、canonical bytes、durable identity 或 result/outcome 语义。
 
 ### 1.1 两个独立里程碑
 
-不能把“程序集移动成功”与“public 表面已经正确缩小”写成同一个完成状态。
+“程序集移动成功”与“public 表面按 visibility-only 边界完成本轮收口”分别验收。
 
 **M1：程序集拓扑收口**
 
@@ -44,8 +48,10 @@ schema、canonical bytes、durable identity 或 result/outcome 语义。
 
 - 以 symbol/public-signature closure 为依据逐模块降级；
 - 所有真实生产消费者和无 friend 权限的 external-consumer tests 继续编译、通过；
-- 每个保留的 public 类型都能归因到一个跨程序集契约、公开签名闭包或明确支持场景；
-- 最终 public API 清单和数量单独记录，不把初始文本匹配统计当作验收事实。
+- 本轮完成 visibility-only 候选审计和已确认批次；剩余 G 五模块的 64 个 top-level 类型均被
+  production consumer 或 public-signature closure 阻塞；
+- M1/M2 public API 清单和数量单独记录，不把初始文本匹配统计当作验收事实，也不把剩余
+  415 个 G 类型逐 symbol 声明为稳定或冻结。
 
 ### 1.2 兼容性承诺
 
@@ -53,13 +59,14 @@ schema、canonical bytes、durable identity 或 result/outcome 语义。
 类型从旧程序集移入 `Atelia.SessionJournal.RecapGrid.dll` 会改变 CLR type identity 与
 assembly-qualified name；不承诺旧编译产物的 binary compatibility。
 
-在实施前仍需确认 canonical/wire 数据没有持久化 assembly-qualified type name。当前源码
-检索未发现这类路径，但检索结果不能替代 codec/golden 与 clean deployment 验收。
+实施期源码检索未发现 canonical/wire 数据持久化 assembly-qualified type name；codec/golden、
+clean build 与 fresh-output 验收也未发现这类依赖。该结果只描述本次实施证据，不承诺未来
+新增路径天然安全。
 
-## 2. 当前事实
+## 2. 实施前历史快照
 
-统计口径：排除 `obj/`、`bin/`。下表是本候选撰写时的源码规模与直接包依赖快照，不是 API
-稳定性声明。
+统计口径：排除 `obj/`、`bin/`。下表是候选撰写时、M1 实施前的源码规模与直接包依赖快照，
+不是当前项目表，也不是 API 稳定性声明。
 
 | 项目 | 行数 | 直接 NuGet 依赖 |
 |:--|--:|:--|
@@ -76,7 +83,7 @@ assembly-qualified name；不承诺旧编译产物的 binary compatibility。
 | `SessionJournal.RecapGrid.AgentControl` | 1,723 | — |
 | **合计** | **41,392** | |
 
-当前已确认：
+实施前已确认：
 
 - 三个生产 composition consumer 是 Galatea、Galatea.RecapGrid、SessionJournal.Cli；
 - 有 11 个模块 regular test 项目、10 个模块 `*.PublicSurface.Tests`、3 个 CrashHarness，另有
@@ -87,7 +94,7 @@ assembly-qualified name；不承诺旧编译产物的 binary compatibility。
 
 ### 2.1 现有 friend 不是偶然噪声
 
-当前存在两条关键的**单向生产 friend**：
+实施前存在、且实施后保持了两条关键的**单向生产 friend**：
 
 1. `SessionJournal` 向 `Atelia.SessionJournal.RecapGrid.Cadence` 开放 internal；Cadence 由此
    调用 `SessionJournalEngine.ExecuteDerivedSidecarMutation`；
@@ -129,7 +136,7 @@ assembly-qualified name；不承诺旧编译产物的 binary compatibility。
   RecapGrid 产品闭包，没有额外的 production IVT privilege，适合合并后用 namespace 维持
   语义 owner。
 
-## 4. 目标拓扑：11 → 5
+## 4. 已实现拓扑：11 → 5
 
 下图箭头表示“source depends on target”：
 
@@ -219,25 +226,25 @@ O 拆分完成后，T 不得引用 O，Timeline 的普通消费者也不再被�
 H 独占 concrete `Completion`（HTTP/provider 实现）。H 应直接引用它在源码中使用的 T、G、
 `Completion` 与 `Completion.Abstractions`，不要依赖偶然的 transitive compile asset。
 
-### 4.6 Galatea asset layer：11 → 5 接受的一项取舍
+### 4.6 Galatea asset layer：11 → 5 已接受的取舍
 
-当前 `Galatea.RecapGrid` 只直接引用 Abstractions + Control，资产层架构测试据此断言它没有
-Runtime、Manager、Store、AgentControl 或 Completion 的 direct assembly reference。目标 G 会
-改变这条**物理**约束：Galatea.RecapGrid 将直接引用 G，虽然源码仍可由 module-edge gate 限制
+M1 前 `Galatea.RecapGrid` 只直接引用 Abstractions + Control，资产层架构测试据此断言它没有
+Runtime、Manager、Store、AgentControl 或 Completion 的 direct assembly reference。实施后的 G
+改变了这条**物理**约束：Galatea.RecapGrid 直接引用 G，源码则由 module-edge gate 限制
 为只使用 Abstractions/Control namespace。
 
-本方案默认接受这一取舍，理由是它不扩大 upstream internal privilege，且当前实际依赖闭包
-已经经 Timeline/SessionJournal 包含 Completion abstractions/tools；但实施账本必须把旧断言
-明确标为“转换为 source/module-edge gate”，不能静默删除。
+实施已接受这一取舍：它不扩大 upstream internal privilege，且依赖闭包已经经
+Timeline/SessionJournal 包含 Completion abstractions/tools；旧断言已转换为 source owner gate，
+没有静默删除。
 
-若团队要求资产层继续由 csproj/assembly 强制隔离，则目标应改为 **11 → 6**：
+未采用的 **11 → 6** ControlPlane 备选曾是：
 
 - 新建独立 ControlPlane assembly，合并 Abstractions + Control；
 - G 只合并 Store、Manager、Runtime、Getter、Online、AgentControl 六个模块；
 - Galatea.RecapGrid 只引用 ControlPlane。
 
-这是一个可选的更强模块性边界，不是 privilege-safe 的必要条件。M1 开始前应锁定 5 或 6；
-不得在迁移测试时临时决定。
+这是一个可选的更强模块性边界，不是 privilege-safe 的必要条件。M1 实施前已锁定 11 → 5，
+本轮没有创建 ControlPlane。
 
 ## 5. 目录布局
 
@@ -273,11 +280,11 @@ prototypes/SessionJournal.HistoryTimeline.O200k/    # O，新项目
 
 ### 5.1 合并预检
 
-G 合并前应检查的是八个来源项目之间是否存在重复的**完整 metadata type identity**
+M1 合并预检检查了八个来源项目之间是否存在重复的**完整 metadata type identity**
 （namespace + containing types + type name + arity），而不是“跨 namespace 的简单类型名是否
 重复”。不同 namespace 的同名类型本来就是合法的，也不需要 `extern alias`。
 
-同时预检：
+预检还覆盖：
 
 - assembly-level attributes；当前只有 HistoryTimeline 另有手写 `Properties/AssemblyInfo.cs`，
   不能按“删除十份 AssemblyInfo”执行；
@@ -317,15 +324,15 @@ public contract，不是机械降级。
 充分”的证明。
 
 原候选记录的 802 个 public 声明、478 个 distinct 名与“161 个未命中”可以保留为历史粗筛
-快照，但 **161 不作为下界、目标或验收数字**。M2 开始前应以 symbol-aware 工具重新生成
-baseline，并保存生成命令。
+快照，但 **161 不作为下界、目标或验收数字**。M2 已由 symbol-aware 工具生成 baseline，
+并保存生成命令与结果。
 
 ## 7. 测试与架构约束
 
 ### 7.1 PublicSurface tests
 
-M1 先保留现有 10 个模块 PublicSurface 项目，并更新它们的 direct ProjectReference。它们本来
-就没有 friend 权限，保留可以降低一次性迁移风险。
+M1 保留了现有 10 个模块 PublicSurface 项目，并更新它们的 direct ProjectReference。它们本来
+就没有 friend 权限，保留降低了一次性迁移风险。
 
 测试源码并非全部机械不变：现有若干断言对“整个原程序集”的 exported types 做正负检查；
 G 合并后必须改为按原 module namespace/owner 过滤，否则别的模块中合法的 public 类型会造成
@@ -342,25 +349,24 @@ M2 可以在覆盖关系稳定后另行决定是否按消费 profile 合并测�
 Timeline+O200k、Hosting composition 与端到端组合，不把全部引用堆进一个项目后宣称依赖隔离
 已经得到证明。
 
-### 7.2 WalkingSkeleton 迁移是 M1 的必要代码改动
+### 7.2 WalkingSkeleton 的 M1 迁移账本
 
-当前 `AssemblyDependencyBoundaryTests.cs` 大量硬编码旧项目目录、csproj 路径、DLL 名、IVT
+M1 前 `AssemblyDependencyBoundaryTests.cs` 大量硬编码旧项目目录、csproj 路径、DLL 名、IVT
 清单和 assembly closure；Galatea.RecapGrid 的资产层架构测试也锁定旧 direct
-ProjectReference。只改测试 csproj 的 ProjectReference 不可能全绿。
+ProjectReference。实施没有把这些断言静默删除，而是按下列账本迁移：
 
-在 M1 前先把现有断言逐条归类：
+- **保留**：raw/Timeline privilege、concrete Completion 隔离、legacy product DLL absence；
+- **转换**：旧 module assembly graph 改为 RG0001/RG0002 gates；Galatea asset 的 physical
+  assembly 断言改为 source owner gate；
+- **退休**：旧八模块 DLL/csproj “必须存在”的拓扑要求。
 
-- **保留**：raw/Timeline privilege、concrete Completion 隔离、legacy owner absence 等语义；
-- **转换**：旧 module assembly graph 改为 G 内 namespace/module edge；
-- **退休**：只是在重复“旧 DLL 必须存在”的拓扑事实。
-
-每条退休断言都要记录替代 gate 或退休理由。测试 `.cs` 的这些修改是必要迁移，不得藏在
-“零源码变更”的描述之外。
+旧 product DLL absence、RG gates 与 source owner gate 共同覆盖了退休/转换后的边界；测试
+`.cs` 修改作为 M1 必要迁移已在提交中显式记录。
 
 ### 7.3 namespace/module dependency gate
 
-G 合并会失去八个项目之间的编译期方向检查，因此必须在合并前先建立并校准 module-edge
-gate，合并后只切换 source root。允许的家族内边保持原图：
+G 合并后不再由八个项目强制模块间方向，因此实施前先建立并校准了 module-edge gate，合并时
+只切换 source root。实现允许的家族内边保持原图：
 
 | G 内模块 | 允许依赖的家族模块 |
 |:--|:--|
@@ -370,7 +376,7 @@ gate，合并后只切换 source root。允许的家族内边保持原图：
 | Manager | T、Abstractions、Control、Store |
 | Runtime | Abstractions、Manager |
 | Getter | T、C、Abstractions、Control、Store |
-| Online | T、C、Manager、Getter |
+| Online | T、C、Abstractions、Manager、Getter |
 | AgentControl | T、Abstractions、Control、Manager |
 
 表格只描述家族内 edge；System、SessionJournal、EventJournal、Completion abstractions/tools 等
@@ -382,14 +388,18 @@ Roslyn semantic model 做 source-symbol 分析；若选择 `System.Reflection.Me
 解析上述来源，并用“临时注入一条禁止依赖时测试确实失败”的 mutation check 校准。覆盖不全的
 实现只能称 regression net，不能称编译期边界的等价物。
 
-T、C、H、O 的关键方向继续由独立 csproj 直接强制，不降级为 namespace test。
+实际实现使用同一 analyzer 的 `RG0001` 检查 module dependency、`RG0002` 检查 source path 与
+namespace owner 一致性。`9647b929` 进一步 fail-closed：未分类的 consolidated path、namespace
+伪装与 ownership bypass 均被拒绝，并以 mutation-style analyzer tests 校准。
 
-## 8. 迁移步骤
+T、C、H、O 的关键方向继续由独立 csproj 直接强制，没有降级为 namespace test。
 
-M1 与 M2 分开提交。每个步骤结束后运行 focused tests；每个里程碑结束后运行 clean full
-`dotnet build` + `dotnet test`，并记录与基线的差异。
+## 8. 已执行迁移步骤
 
-### 8.0 前置基线与审计
+M1 与 M2 按独立提交执行，实施范围为 `13bcf7e1..5461373f`。各步骤运行 focused tests，
+里程碑运行 clean/fresh builds、tests 与输出检查。
+
+### 8.0 前置基线与审计（已完成）
 
 1. 记录 clean checkout 的 solution project list、build/test 通过数与耗时；
 2. 记录 11 个产品项目的 direct refs、package refs、resources、IVT 与 assembly names；
@@ -400,7 +410,7 @@ M1 与 M2 分开提交。每个步骤结束后运行 focused tests；每个里�
 旧 `tests/SessionJournal.DerivedRecap.*` 项目在当前 checkout 已经不存在；本方案不再删除它们，
 也不把历史清理混入本次提交。
 
-### 8.1 先建立 module-edge gate
+### 8.1 先建立 module-edge gate（已完成）
 
 在旧项目图仍能提供参照时实现 §7.3 的 checker，并证明它：
 
@@ -409,9 +419,9 @@ M1 与 M2 分开提交。每个步骤结束后运行 focused tests；每个里�
 - 覆盖源码签名和方法体中的依赖；
 - 不把同 namespace 的 compiler-generated metadata 误报为业务 edge。
 
-该步骤先落地，避免合并后才发现新 gate 与旧 project graph 并不等价。
+该步骤已先于程序集移动落地，并由 `9647b929` 完成 fail-closed ownership 加固。
 
-### 8.2 拆出 O
+### 8.2 拆出 O（已完成）
 
 1. 新建 `SessionJournal.HistoryTimeline.O200k`；
 2. 按 §4.4 迁移 estimator、renderer/writer、异常过滤与测试；
@@ -421,7 +431,7 @@ M1 与 M2 分开提交。每个步骤结束后运行 focused tests；每个里�
    分别增加 direct O reference；不能只以“相关测试”概括；
 6. 验证不引用 O 的 Timeline consumer profile 不再携带 tokenizer/词表。
 
-### 8.3 合并 G 的八个项目
+### 8.3 合并 G 的八个项目（已完成）
 
 1. 新建 `prototypes/SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj`；
 2. `git mv` Abstractions、Control、Store、Manager、Runtime、Getter、Online、AgentControl 的源码
@@ -441,23 +451,23 @@ M1 与 M2 分开提交。每个步骤结束后运行 focused tests；每个里�
 变更。除此之外的生产 `.cs` 变化必须逐项解释；不再使用“除两处外零 `.cs` 变更”的不可达
 判据。
 
-### 8.4 Retarget external-surface tests
+### 8.4 Retarget external-surface tests（已完成）
 
 保留 10 个现有项目，按实际使用为其添加 T/C/G/H/O 的 direct references。按 §7.1 只修改
 那些因 assembly-wide 断言或依赖 profile 变化而必须调整的测试源码，并保留原 module 的断言
 语义。所有 producer 都不得向这些 exact assembly names 授予 IVT。
 
-待 M2 完成且消费 profile 稳定后，再把“是否合并 PublicSurface test projects”作为纯测试
-维护决策处理，不把它绑定为程序集收口的正确性证明。
+本轮保留了按消费 profile 分开的 PublicSurface test projects，没有把合并测试项目绑定为
+程序集收口的正确性证明。
 
-### 8.5 分批 internal 化（M2）
+### 8.5 分批 internal 化（本轮 visibility-only 批次已完成）
 
-建议顺序：
+实际执行顺序：
 
-1. G 内 test hooks 与 persistence implementation details；
-2. G 内跨旧模块的 progress/assignment/mapping/runtime helper；
-3. G 的 contracts/result families；
-4. T/C/H/O 各自真正只在本程序集内使用的表面。
+1. 保存 G 的 M1 symbol-aware inventory；
+2. 收窄 Control、Online 的 code-owned limits；
+3. 收窄 Store writer/result/read internals；
+4. 收窄 C 的 cadence limits 与 T 的 history-load safety limits。
 
 一个 namespace/module 一个提交。每批至少验证：
 
@@ -467,14 +477,58 @@ M1 与 M2 分开提交。每个步骤结束后运行 focused tests；每个里�
 - public signature closure 没有 inconsistent accessibility；
 - module-edge gate 没有因“已经同程序集”而放过反向依赖。
 
-若降级失败，先区分“真实支持契约”“H/O/C/T 保留程序集 seam”“测试误用了 internal”与
-“public contract 需要先重塑”，不能只因某个 smoke test 编译失败就自动永久保留 public。
+剩余候选已区分“真实支持契约”“H/O/C/T 保留程序集 seam”“测试误用了 internal”与
+“public contract 需要先重塑”；需要 contract-shape 变化的表面没有混入本轮。
 
-### 8.6 文档收尾
+### 8.6 文档收尾（已完成）
 
-M1 实施后更新 `docs/SessionJournal/current/architecture-and-code-map.md` 的 assembly ownership
-表。`work/active/` 中已经关闭的施工记录保留历史原文；current/router 文档不得继续把旧
-八程序集写成当前事实。
+M1 已更新 `docs/SessionJournal/current/architecture-and-code-map.md` 的 assembly ownership
+表。`work/active/` 中已经关闭的施工记录保留历史原文；current/router 文档不再把旧八程序集
+写成当前事实。
+
+### 8.7 实施结果与 API evidence
+
+| 提交 | 结果 |
+|:--|:--|
+| `13bcf7e1`、`9647b929` | 建立 RG0001/RG0002 module-edge/ownership gate，并完成 fail-closed 加固 |
+| `21f2ef1b` | 从 T 拆出 O200k estimator/renderer/tokenizer adapter |
+| `9de3c402` | 八个 RecapGrid 模块原子合并为 G，retarget consumers/tests，迁移架构 gates |
+| `53e8fd13` | 建立确定性的 G-only public API inventory，并保存 M1 evidence |
+| `570603bf` | internal 化 Control admission limits |
+| `04859cbe` | internal 化 Online catch-up limits |
+| `08eb7bdc` | internal 化 Store writer/result/read closure |
+| `0ec3dbde` | internal 化 C 的 cadence limits |
+| `5461373f` | internal 化 T 的 history-load safety limits |
+
+G inventory 由以下命令生成；工具只以 `Atelia.SessionJournal.RecapGrid.dll` 为目标，不把 C/T
+统计混入 JSONL：
+
+```bash
+dotnet run --project scripts/SessionJournal.RecapGrid.ApiInventory -- \
+  docs/SessionJournal/operations/evidence/recap-grid-public-api-m2.jsonl
+dotnet run --project scripts/SessionJournal.RecapGrid.ApiInventory -- \
+  /tmp/recap-grid-public-api-m2-repeat.jsonl
+cmp -s \
+  docs/SessionJournal/operations/evidence/recap-grid-public-api-m2.jsonl \
+  /tmp/recap-grid-public-api-m2-repeat.jsonl
+```
+
+| Evidence | Effective-public types | Declared public/protected members | JSONL 行数 |
+|:--|--:|--:|--:|
+| [M1](evidence/recap-grid-public-api-m1.jsonl) | 455 | 4,884 | 5,340 |
+| [M2](evidence/recap-grid-public-api-m2.jsonl) | 415 | 4,429 | 4,845 |
+| **G 降幅** | **-40** | **-455** | **-495** |
+
+M2 文件 SHA-256 为
+`1e0aecbc5b653e552c49a91acc488f4e7fe698bf763fb869e3660a4a391e2bd3`；重复生成字节一致。
+owner-local reflection/source gates 另记录 C `-1 type/-2 members`、T `-2 types/-2 members`；它们
+不在 G-only JSONL 中。三程序集合计 visibility reduction 为 **43 types / 459 members**。
+
+G 剩余 Manager、Runtime、Getter、Online、AgentControl 五模块共 64 个 effective-public
+top-level types；source consumer 与 public-signature closure 复核没有找到新的
+visibility-only atomic batch。H/O 同样没有此类候选。继续收缩需要重塑 executor、result、
+telemetry、provenance/evidence 等 contract shape，应另立方案；M2 的 415 个 G types 是本次
+exact-run evidence，不是逐 symbol 稳定性或冻结承诺。
 
 ## 9. 风险与处置
 
@@ -485,7 +539,7 @@ M1 实施后更新 `docs/SessionJournal/current/architecture-and-code-map.md` �
 | 旧 WalkingSkeleton hardcode 全面失败 | M1 前建立逐条迁移账本，允许必要测试源码变更 |
 | public 候选统计误导 | 使用 symbol + public-signature closure；文本匹配只做候选发现 |
 | 合并后分层反向依赖 | 先校准 module-edge gate；T/C/H/O 保留物理边界 |
-| Galatea asset 物理边界弱化 | M1 前显式选择 11→5 的 source gate，或采用 11→6 ControlPlane |
+| Galatea asset 物理边界弱化 | M1 已采用 11→5 source owner gate；未采用 11→6 ControlPlane |
 | metadata checker 漏 TypeDef/signature/IL | 优先 Roslyn；否则完整解析并做 mutation check |
 | embedded resource 名变化 | csproj 固定 LogicalName，运行时精确匹配并测试 |
 | CLR type identity 改变 | 明确仅 source compatibility；全部 consumer clean rebuild |
@@ -507,26 +561,27 @@ M1 实施后更新 `docs/SessionJournal/current/architecture-and-code-map.md` �
 
 ### M1：拓扑
 
-- [ ] M1 拓扑已锁定：默认 5 个 T/C/G/H/O；若保留 asset 物理边界则为 6 个并增加 ControlPlane
-- [ ] 默认方案的 G 只包含八个计划内模块；11→6 变体的 G 只包含六个，ControlPlane 只含 Abstractions/Control；T/C/H 均未被并入
-- [ ] `Microsoft.ML.Tokenizers` 与 O200kBase data 只出现在 O
-- [ ] concrete `Completion` 只出现在 H，不进入 T/C/G/O
-- [ ] `SessionJournal → C` 与 `T → C` production IVT 保持精确；不存在指向 G 的新增 production IVT
-- [ ] T 不引用 C/G/H/O；C 不引用 G/H/O；O 不被 T 引用
-- [ ] Galatea / Galatea.RecapGrid / SessionJournal.Cli 的生产 `.cs` 源码未因拓扑迁移修改
-- [ ] 10 个现有模块 PublicSurface projects 均未获得 IVT 且通过
-- [ ] WalkingSkeleton 的每条旧 topology assertion 都有保留、转换或退休记录
-- [ ] Galatea asset layer 已显式锁定 11→5 source gate 或 11→6 ControlPlane，相关测试没有静默降级
-- [ ] module-edge gate 已由 mutation check 证明能抓到禁止 edge
-- [ ] clean output 不含八个被替代的旧 RecapGrid product DLL
-- [ ] clean full build/test 与基线的通过集合一致
-- [ ] current architecture/code map 已更新，历史施工记录未被伪装成当前事实
+- [x] M1 拓扑锁定并实现为 5 个 T/C/G/H/O；未创建 ControlPlane
+- [x] G 只包含八个计划内模块；T/C/H 均未被并入
+- [x] `Microsoft.ML.Tokenizers` 与 O200kBase data 只出现在 O
+- [x] concrete `Completion` 只出现在 H，不进入 T/C/G/O
+- [x] `SessionJournal → C` 与 `T → C` production IVT 保持精确；不存在指向 G 的新增 production IVT
+- [x] T 不引用 C/G/H/O；C 不引用 G/H/O；O 不被 T 引用
+- [x] Galatea / Galatea.RecapGrid / SessionJournal.Cli 的生产 `.cs` 源码未因拓扑迁移修改
+- [x] 10 个现有模块 PublicSurface projects 均未获得 IVT 且通过
+- [x] WalkingSkeleton 的每条旧 topology assertion 都有保留、转换或退休记录
+- [x] Galatea asset layer 锁定 11→5 source owner gate，相关测试没有静默降级
+- [x] module-edge gate 已由 mutation check 证明能抓到禁止 edge
+- [x] clean output 不含八个被替代的旧 RecapGrid product DLL
+- [x] clean full build/test 与基线的通过集合一致
+- [x] current architecture/code map 已更新，历史施工记录未被伪装成当前事实
 
 ### M2：API 表面
 
-- [ ] 保存 symbol-aware public API baseline、最终清单与可复现命令
-- [ ] 每个保留 public symbol 都有 contract/profile 归因
-- [ ] 每个 internal 化提交通过对应 production consumer、PublicSurface 与 architecture gates
-- [ ] 没有 public signature 暴露 internal type
-- [ ] 没有 reflection/serialization/canonical identity 因 assembly move 或可见性变化失效
-- [ ] 最终 public 声明数相对 baseline 的变化已记录，但不以预设降幅替代设计审阅
+- [x] 保存 symbol-aware public API baseline、本轮最终清单与可复现命令
+- [ ] 每个保留 public symbol 都有 contract/profile 归因（本轮只完成候选与 closure audit；剩余
+  415 个 G types 未逐一形成 symbol ledger，因此不宣称 surface 冻结）
+- [x] 每个 internal 化提交通过对应 production consumer、PublicSurface 与 architecture gates
+- [x] 没有 public signature 暴露 internal type
+- [x] 没有 reflection/serialization/canonical identity 因 assembly move 或可见性变化失效
+- [x] 最终 public 声明数相对 baseline 的变化已记录，但不以预设降幅替代设计审阅

@@ -56,13 +56,13 @@
 检查 current explicit scope：
 
 ```bash
-python scripts/check_session_journal_docs.py
+python3 scripts/check_session_journal_docs.py
 ```
 
 观察全部 tracked SessionJournal 文档：
 
 ```bash
-python scripts/check_session_journal_docs.py --all-tracked --report-only
+python3 scripts/check_session_journal_docs.py --all-tracked --report-only
 ```
 
 默认路径见 [`session-journal-doc-check-scope.txt`](session-journal-doc-check-scope.txt)。checker 只做
