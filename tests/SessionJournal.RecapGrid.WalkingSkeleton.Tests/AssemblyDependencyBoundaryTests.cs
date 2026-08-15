@@ -733,7 +733,7 @@ public sealed class AssemblyDependencyBoundaryTests {
     }
 
     [Fact]
-    public void RecapGridManagerUsesOnlyPublicBoundedAuthorities() {
+    public void RecapGridManagerUsesOnlyBoundedOwnerApis() {
         string root = FindRepositoryRoot();
         string managerRoot = Path.Combine(
             root,

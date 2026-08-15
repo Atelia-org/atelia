@@ -77,6 +77,47 @@ public sealed class StorePublicSurfaceTests : IDisposable {
     }
 
     [Fact]
+    public void WriterAndMutationResultsAreNotExported() {
+        string[] hiddenTypeNames = [
+            "RecapGridStoreWriter",
+            "RecapGridCellPutResult",
+            "RecapGridRowViewPutResult",
+            "RecapGridFulfilledPutResult",
+            "RecapGridMissingResult",
+            "RecapGridFulfilledView"
+        ];
+        string[] leakedTypeNames = typeof(RecapGridStoreFactory).Assembly
+            .GetExportedTypes()
+            .Where(static type =>
+                type.Namespace is "Atelia.SessionJournal.RecapGrid.Store"
+            )
+            .Select(static type => type.Name)
+            .Intersect(hiddenTypeNames, StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(leakedTypeNames);
+        Assert.Null(typeof(RecapGridStoreHandle).GetProperty(
+            "Writer",
+            BindingFlags.Instance | BindingFlags.Public
+        ));
+
+        string[] publicReaderMethods = typeof(RecapGridStoreReader)
+            .GetMethods(
+                BindingFlags.Instance
+                | BindingFlags.Public
+                | BindingFlags.DeclaredOnly
+            )
+            .Select(static method => method.Name)
+            .ToArray();
+        Assert.DoesNotContain(
+            "FindMissingAssignments",
+            publicReaderMethods
+        );
+        Assert.DoesNotContain("ReadFulfilled", publicReaderMethods);
+    }
+
+    [Fact]
     public void PublicFactoryHasNoBackendSelector() {
         Assembly assembly = typeof(RecapGridStoreFactory).Assembly;
         Assert.DoesNotContain(

@@ -315,7 +315,7 @@ public sealed class RecapGridStoreReader {
         return Read(() => _store.ReadCellByDigest(cellDigest));
     }
 
-    public RecapGridMissingResult FindMissingAssignments(RowBuildSpec spec) {
+    internal RecapGridMissingResult FindMissingAssignments(RowBuildSpec spec) {
         ArgumentNullException.ThrowIfNull(spec);
         using StoreLifetime.Operation? operation = _lifetime.TryEnter();
         if (operation is null) {
@@ -400,7 +400,7 @@ public sealed class RecapGridStoreReader {
         }
     }
 
-    public RecapGridStoreReadResult<RecapGridFulfilledView> ReadFulfilled(
+    internal RecapGridStoreReadResult<RecapGridFulfilledView> ReadFulfilled(
         FulfilledViewKey key
     ) {
         ArgumentNullException.ThrowIfNull(key);
@@ -461,7 +461,7 @@ public sealed class RecapGridStoreReader {
     }
 }
 
-public sealed class RecapGridStoreWriter {
+internal sealed class RecapGridStoreWriter {
     private readonly SqliteRecapGridStore _store;
     private readonly StoreLifetime _lifetime;
 

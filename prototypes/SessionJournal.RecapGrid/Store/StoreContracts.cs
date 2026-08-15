@@ -419,9 +419,9 @@ public abstract record RecapGridStoreReadResult<T> where T : class {
         : RecapGridStoreReadResult<T>;
 }
 
-public sealed record RecapGridFulfilledView(RowViewDigest ViewDigest);
+internal sealed record RecapGridFulfilledView(RowViewDigest ViewDigest);
 
-public abstract record RecapGridMissingResult {
+internal abstract record RecapGridMissingResult {
     private RecapGridMissingResult() { }
     public sealed record Complete : RecapGridMissingResult;
     public sealed record Missing(IReadOnlyList<EvaluationKey> OrderedKeys)
@@ -436,7 +436,7 @@ public abstract record RecapGridMissingResult {
         : RecapGridMissingResult;
 }
 
-public abstract record RecapGridCellPutResult {
+internal abstract record RecapGridCellPutResult {
     private RecapGridCellPutResult() { }
     public sealed record Inserted : RecapGridCellPutResult;
     public sealed record AlreadyFilled(RecapCellArtifact Winner)
@@ -453,7 +453,7 @@ public abstract record RecapGridCellPutResult {
         : RecapGridCellPutResult;
 }
 
-public abstract record RecapGridRowViewPutResult {
+internal abstract record RecapGridRowViewPutResult {
     private RecapGridRowViewPutResult() { }
     public sealed record Inserted : RecapGridRowViewPutResult;
     public sealed record AlreadyPresent : RecapGridRowViewPutResult;
@@ -472,7 +472,7 @@ public abstract record RecapGridRowViewPutResult {
         : RecapGridRowViewPutResult;
 }
 
-public abstract record RecapGridFulfilledPutResult {
+internal abstract record RecapGridFulfilledPutResult {
     private RecapGridFulfilledPutResult() { }
     public sealed record Inserted : RecapGridFulfilledPutResult;
     public sealed record AlreadyPresent : RecapGridFulfilledPutResult;
@@ -507,7 +507,7 @@ public sealed class RecapGridStoreHandle : IDisposable {
 
     public RecapGridStoreIdentity Identity { get; }
     public RecapGridStoreReader Reader { get; }
-    public RecapGridStoreWriter Writer { get; }
+    internal RecapGridStoreWriter Writer { get; }
     public void Dispose() => _lifetime.Dispose();
 }
 

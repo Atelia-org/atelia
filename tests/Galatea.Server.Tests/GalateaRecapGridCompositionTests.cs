@@ -164,33 +164,6 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(1, routeLoads);
         Assert.True(File.Exists(Path.Combine(
             path, "derived", "recap-grid", "v1", "grid.sqlite")));
-        TimelineHeadRef fulfilledHead;
-        HistoryTimelineSelectedRow fulfilledRow;
-        using (HistoryTimelineReaderHandle timeline = Assert.IsType<
-                   HistoryTimelineReaderOpenResult.Opened>(
-                   HistoryTimelineMaintenance.OpenReader(
-                       path, session.Engine.BranchRefId)).Handle) {
-            fulfilledHead = Assert.IsType<
-                HistoryTimelineSnapshotResult.Available>(
-                timeline.Reader.ReadSnapshot()).Head;
-            Assert.NotNull(fulfilledHead.HeadRowId);
-            fulfilledRow = Assert.IsType<
-                HistoryTimelineReaderRowResult.Selected>(
-                timeline.Reader.ReadSelectedRow(
-                    fulfilledHead,
-                    fulfilledHead.HeadRowId!.Value)).Row;
-        }
-        using (RecapGridStoreReaderHandle store = Assert.IsType<
-                   RecapGridStoreReaderOpenResult.Opened>(
-                   RecapGridStoreFactory.OpenReader(path)).Handle) {
-            Assert.IsType<RecapGridStoreReadResult<
-                RecapGridFulfilledView>.Found>(
-                store.Reader.ReadFulfilled(FulfilledViewKey.Create(
-                    session.Engine.BranchRefId,
-                    fulfilledHead,
-                    fulfilledRow.Descriptor.DescriptorDigest,
-                    recipe)));
-        }
         int providerCallsBeforeReadiness =
             candidateFactory.Client.DispatchCallCount;
         IReadOnlyDictionary<string, string> readyBytes = SnapshotDomainFiles(
