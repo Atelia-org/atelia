@@ -59,6 +59,21 @@ public sealed class CadencePublicSurfaceTests : IDisposable {
         });
     }
 
+    [Fact]
+    public void CadenceLimitsAreNotExported() {
+        Type[] cadenceTypes = typeof(RecapGridCadenceFactory).Assembly
+            .GetExportedTypes()
+            .Where(static type =>
+                type.Namespace is "Atelia.SessionJournal.RecapGrid.Cadence"
+            )
+            .ToArray();
+
+        Assert.NotEmpty(cadenceTypes);
+        Assert.DoesNotContain(cadenceTypes, static type =>
+            type.Name is "RecapGridCadenceLimits"
+        );
+    }
+
     public void Dispose() {
         if (Directory.Exists(_path)) {
             Directory.Delete(_path, recursive: true);

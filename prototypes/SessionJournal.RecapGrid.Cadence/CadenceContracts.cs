@@ -4,7 +4,7 @@ using Atelia.SessionJournal.HistoryTimeline;
 
 namespace Atelia.SessionJournal.RecapGrid.Cadence;
 
-public static class RecapGridCadenceLimits {
+internal static class RecapGridCadenceLimits {
     public const int MaximumCanonicalUtf8Bytes = 4 * 1024;
     public const long MaximumHistoryLoad = long.MaxValue;
 }
