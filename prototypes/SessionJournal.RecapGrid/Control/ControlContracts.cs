@@ -7,7 +7,7 @@ using Atelia.SessionJournal.HistoryTimeline;
 
 namespace Atelia.SessionJournal.RecapGrid.Control;
 
-public static class RecapGridControlAdmissionLimits {
+internal static class RecapGridControlAdmissionLimits {
     public const int MaximumBootstrapRows = 1_000_000;
 }
 

@@ -94,6 +94,16 @@ public sealed class ControlPublicSurfaceTests : IDisposable {
     }
 
     [Fact]
+    public void AdmissionLimitsAreNotExported() {
+        Assert.DoesNotContain(
+            typeof(RecapGridControlFactory).Assembly.GetExportedTypes()
+                .Where(static type => type.Namespace
+                    is "Atelia.SessionJournal.RecapGrid.Control"),
+            static type => type.Name is "RecapGridControlAdmissionLimits"
+        );
+    }
+
+    [Fact]
     public void PublicFactoryAndHandlesExposeNoBackendSelector() {
         Type[] exported = typeof(RecapGridControlFactory)
             .Assembly.GetExportedTypes()
