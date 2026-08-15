@@ -137,6 +137,6 @@ public enum RecapGridOnlineContinuationKind {
     CatchUpBudgetExhausted
 }
 
-public static class RecapGridOnlineCatchUpLimits {
+internal static class RecapGridOnlineCatchUpLimits {
     public const int MaximumPasses = 256;
 }

@@ -85,6 +85,16 @@ public sealed class PublicSurfaceTests {
         }
     }
 
+    [Fact]
+    public void CatchUpLimitsAreNotExported() {
+        Assert.DoesNotContain(
+            typeof(RecapGridOnlineFactory).Assembly.GetExportedTypes()
+                .Where(static type => type.Namespace
+                    is "Atelia.SessionJournal.RecapGrid.Online"),
+            static type => type.Name is "RecapGridOnlineCatchUpLimits"
+        );
+    }
+
     private sealed class RejectingExecutor : IRecapCellBatchExecutor {
         public ValueTask<RecapCellBatchExecutionResult> ExecuteAsync(
             FrozenRowBatch batch,
