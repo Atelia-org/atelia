@@ -13,6 +13,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Hosting/SessionJournal.RecapGrid.Hosting.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
     <ProjectReference Include="../../prototypes/Completion.Abstractions/Completion.Abstractions.csproj" />
   </ItemGroup>
 </Project>

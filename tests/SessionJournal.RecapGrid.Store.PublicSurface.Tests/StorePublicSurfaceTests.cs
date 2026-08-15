@@ -80,7 +80,13 @@ public sealed class StorePublicSurfaceTests : IDisposable {
     public void PublicFactoryHasNoBackendSelector() {
         Assembly assembly = typeof(RecapGridStoreFactory).Assembly;
         Assert.DoesNotContain(
-            assembly.GetExportedTypes(),
+            assembly.GetExportedTypes().Where(static type =>
+                type.Namespace is "Atelia.SessionJournal.RecapGrid.Store"
+                || type.Namespace?.StartsWith(
+                    "Atelia.SessionJournal.RecapGrid.Store.",
+                    StringComparison.Ordinal
+                ) is true
+            ),
             static type => type.Name.Contains(
                 "Sqlite",
                 StringComparison.OrdinalIgnoreCase

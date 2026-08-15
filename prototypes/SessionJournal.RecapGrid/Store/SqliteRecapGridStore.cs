@@ -1847,13 +1847,9 @@ internal sealed class SqliteRecapGridStore {
 
     private static string ReadSchemaSql() {
         Assembly assembly = typeof(SqliteRecapGridStore).Assembly;
-        string resource = assembly.GetManifestResourceNames().Single(
-            static name => name.EndsWith(
-                ".SchemaV2.sql",
-                StringComparison.Ordinal
-            )
-        );
-        using Stream stream = assembly.GetManifestResourceStream(resource)
+        using Stream stream = assembly.GetManifestResourceStream(
+            "Atelia.SessionJournal.RecapGrid.Store.SchemaV2.sql"
+        )
             ?? throw new InvalidOperationException(
                 "The RecapGrid Store V2 schema resource is missing."
             );

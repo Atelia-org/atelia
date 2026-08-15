@@ -7,9 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../SessionJournal.RecapGrid.Runtime/SessionJournal.RecapGrid.Runtime.csproj" />
-    <ProjectReference Include="../SessionJournal.RecapGrid.AgentControl/SessionJournal.RecapGrid.AgentControl.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
+    <ProjectReference Include="../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
     <ProjectReference Include="../Completion/Completion.csproj" />
+    <ProjectReference Include="../Completion.Abstractions/Completion.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>

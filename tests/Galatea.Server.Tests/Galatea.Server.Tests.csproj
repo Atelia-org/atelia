@@ -25,17 +25,13 @@
     <ProjectReference Include="../../prototypes/SessionJournal.Offline/SessionJournal.Offline.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline.O200k/SessionJournal.HistoryTimeline.O200k.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Cadence/SessionJournal.RecapGrid.Cadence.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Getter/SessionJournal.RecapGrid.Getter.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Hosting/SessionJournal.RecapGrid.Hosting.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Online/SessionJournal.RecapGrid.Online.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="../TestInfrastructure/TestDirectorySafety.cs"
-             Link="TestInfrastructure/TestDirectorySafety.cs" />
+    <Compile Include="../TestInfrastructure/TestDirectorySafety.cs" Link="TestInfrastructure/TestDirectorySafety.cs" />
   </ItemGroup>
 
 </Project>

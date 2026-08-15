@@ -15,8 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.AgentControl/SessionJournal.RecapGrid.AgentControl.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline.O200k/SessionJournal.HistoryTimeline.O200k.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />

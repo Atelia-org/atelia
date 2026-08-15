@@ -7,8 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj" />
-    <ProjectReference Include="../SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj" />
+    <ProjectReference Include="../SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -15,16 +15,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
     <ProjectReference Include="../../prototypes/Galatea.RecapGrid/Galatea.RecapGrid.csproj" />
     <ProjectReference Include="../../prototypes/Completion.Abstractions/Completion.Abstractions.csproj" />
     <ProjectReference Include="../../prototypes/Completion/Completion.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Manager/SessionJournal.RecapGrid.Manager.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Runtime/SessionJournal.RecapGrid.Runtime.csproj" />
   </ItemGroup>
 
 </Project>

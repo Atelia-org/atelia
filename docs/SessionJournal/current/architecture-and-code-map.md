@@ -27,16 +27,10 @@ identity、head fence 与重建边界的 companion state；它们不回写 raw h
 |---|---|
 | `SessionJournal` | raw replay、selected Parent lineage、setup authority、bounded planning/audit、neutral context lifecycle |
 | `SessionJournal.HistoryTimeline` | immutable timeline rows、selected-path head、policy、branch reconcile、owner-bound build reads |
+| `SessionJournal.HistoryTimeline.O200k` | fixed o200k estimator、renderer 与 tokenizer adapter |
 | `SessionJournal.RecapGrid.Cadence` | per-Ref R/expected Timeline policy、reserve-aware seal authority、strict CAS/no-create reader |
-| `SessionJournal.RecapGrid.Abstractions` | Family/Definition/Recipe、projection、cell、row-view 与 fulfilled-key canonical contracts |
-| `SessionJournal.RecapGrid.Control` | registered families/definitions/recipes、active recipe、operation receipts、whole-head CAS |
-| `SessionJournal.RecapGrid.Store` | cells、row views、fulfilled entries、store identity、verification/reset |
-| `SessionJournal.RecapGrid.Manager` | recipe closure wavefront、exact row-build derivation、progress、fulfillment proof |
-| `SessionJournal.RecapGrid.Runtime` | provider-neutral batch executor、route/lane scheduling、strict output protocol |
-| `SessionJournal.RecapGrid.Getter` | exact active+head fulfilled resolution、NthPrevious、context contribution materialization |
-| `SessionJournal.RecapGrid.AgentControl` | strict `recap_grid.control` tool、built-in asset catalog、operation replay |
+| `SessionJournal.RecapGrid` | 以 namespace/source module 分隔的 canonical contracts、Control、Store、Manager、Runtime、Getter、Online 与 AgentControl；source-module 依赖由 RG0001/RG0002 守门 |
 | `SessionJournal.RecapGrid.Hosting` | strict completion/route composition、single connection owner、runtime lifetime |
-| `SessionJournal.RecapGrid.Online` | Timeline reconcile/seal、readiness、lazy build 与 composite lifecycle |
 | CLI / Galatea | operator surface、application phase gate、provider and UI composition |
 
 ## Key code and focused evidence
@@ -45,14 +39,15 @@ identity、head fence 与重建边界的 companion state；它们不回写 raw h
 |---|---|
 | bounded raw history and lifecycle audit | `SessionJournal`, `SessionJournal.Tests` |
 | durable Timeline and branch reconcile | `HistoryTimeline`, `HistoryTimeline.Tests` |
+| fixed o200k history-load estimation | `HistoryTimeline.O200k`, `HistoryTimeline.Tests` |
 | durable cadence and recent reserve | `RecapGrid.Cadence`, `RecapGrid.Cadence.Tests` |
-| canonical Grid values | `RecapGrid.Abstractions`, `RecapGrid.Abstractions.Tests` |
-| Control state and receipts | `RecapGrid.Control`, `RecapGrid.Control.Tests` |
-| SQLite artifact Store | `RecapGrid.Store`, `RecapGrid.Store.Tests` |
-| wavefront build/progress | `RecapGrid.Manager`, `RecapGrid.Manager.Tests` |
-| provider-neutral runtime | `RecapGrid.Runtime`, `RecapGrid.Runtime.Tests` |
-| pure-read context selection | `RecapGrid.Getter`, `RecapGrid.Getter.Tests` |
-| online lifecycle | `RecapGrid.Online`, `RecapGrid.Online.Tests` |
+| canonical Grid values | `RecapGrid/Abstractions`, `RecapGrid.Abstractions.Tests` |
+| Control state and receipts | `RecapGrid/Control`, `RecapGrid.Control.Tests` |
+| SQLite artifact Store | `RecapGrid/Store`, `RecapGrid.Store.Tests` |
+| wavefront build/progress | `RecapGrid/Manager`, `RecapGrid.Manager.Tests` |
+| provider-neutral runtime | `RecapGrid/Runtime`, `RecapGrid.Runtime.Tests` |
+| pure-read context selection | `RecapGrid/Getter`, `RecapGrid.Getter.Tests` |
+| online lifecycle | `RecapGrid/Online`, `RecapGrid.Online.Tests` |
 | formal CLI / Galatea composition | `SessionJournal.Cli.Tests`, `Galatea.Server.Tests` |
 | dependency and retired-owner absence | `SessionJournal.RecapGrid.WalkingSkeleton.Tests` |
 

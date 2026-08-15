@@ -15,15 +15,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
     <ProjectReference Include="../../prototypes/Completion.Abstractions/Completion.Abstractions.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline.O200k/SessionJournal.HistoryTimeline.O200k.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Cadence/SessionJournal.RecapGrid.Cadence.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Getter/SessionJournal.RecapGrid.Getter.csproj" />
   </ItemGroup>
 
 </Project>

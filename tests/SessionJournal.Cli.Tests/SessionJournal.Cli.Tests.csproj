@@ -23,13 +23,12 @@
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline.O200k/SessionJournal.HistoryTimeline.O200k.csproj" />
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
     <ProjectReference Include="../SessionJournal.Cli.LegacyRoot.CrashHarness/SessionJournal.Cli.LegacyRoot.CrashHarness.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="../TestInfrastructure/TestDirectorySafety.cs"
-             Link="TestInfrastructure/TestDirectorySafety.cs" />
+    <Compile Include="../TestInfrastructure/TestDirectorySafety.cs" Link="TestInfrastructure/TestDirectorySafety.cs" />
   </ItemGroup>
 
 </Project>

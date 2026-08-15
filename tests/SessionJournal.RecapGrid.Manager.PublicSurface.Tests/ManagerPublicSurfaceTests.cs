@@ -153,7 +153,15 @@ public sealed class ManagerPublicSurfaceTests {
                 await manager.Manager.BuildAsync(request, new NoCallExecutor())
             );
             Assert.DoesNotContain(
-                typeof(RecapGridManager).Assembly.GetExportedTypes(),
+                typeof(RecapGridManager).Assembly.GetExportedTypes().Where(
+                    static type =>
+                        type.Namespace
+                            is "Atelia.SessionJournal.RecapGrid.Manager"
+                        || type.Namespace?.StartsWith(
+                            "Atelia.SessionJournal.RecapGrid.Manager.",
+                            StringComparison.Ordinal
+                        ) is true
+                ),
                 static type => type.Name.Contains(
                     "Backend",
                     StringComparison.OrdinalIgnoreCase

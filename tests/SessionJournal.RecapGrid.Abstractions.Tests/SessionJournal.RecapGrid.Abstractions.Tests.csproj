@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
   </ItemGroup>
 
 </Project>

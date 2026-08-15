@@ -15,10 +15,7 @@ public sealed class GalateaRecapGridArchitectureTests {
         );
         XDocument xml = XDocument.Load(project);
         Assert.Equal(
-            [
-                "../SessionJournal.RecapGrid.Abstractions/SessionJournal.RecapGrid.Abstractions.csproj",
-                "../SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj"
-            ],
+            ["../SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj"],
             xml.Descendants("ProjectReference")
                 .Select(static value => value.Attribute("Include")!.Value)
         );
@@ -42,19 +39,21 @@ public sealed class GalateaRecapGridArchitectureTests {
             .GetReferencedAssemblies()
             .Select(static value => value.Name!)
             .ToArray();
+        Assert.Contains(
+            "Atelia.SessionJournal.RecapGrid",
+            references,
+            StringComparer.Ordinal
+        );
         Assert.DoesNotContain(references, static value =>
-            value.Contains("RecapGrid.Runtime", StringComparison.Ordinal)
-            || value.Contains("RecapGrid.Manager", StringComparison.Ordinal)
-            || value.Contains("RecapGrid.Store", StringComparison.Ordinal)
-            || value.Contains("RecapGrid.AgentControl", StringComparison.Ordinal)
-            || value.Contains("Completion", StringComparison.Ordinal)
+            value.Contains("Completion", StringComparison.Ordinal)
             || value.Contains("SessionJournal.Cli", StringComparison.Ordinal)
             || value.Contains("Galatea.Server", StringComparison.Ordinal));
 
         string agentControl = File.ReadAllText(Path.Combine(
             root,
             "prototypes",
-            "SessionJournal.RecapGrid.AgentControl",
+            "SessionJournal.RecapGrid",
+            "AgentControl",
             "AgentControlContracts.cs"
         ));
         Assert.DoesNotContain(

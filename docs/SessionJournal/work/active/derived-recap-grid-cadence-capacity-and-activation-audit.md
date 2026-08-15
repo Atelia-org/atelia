@@ -287,15 +287,15 @@ ledger约21.35/42.72/341.40 MiB，append约7.2/13.7/107秒；这关闭旧O(n²)f
 
 - first-safe B partition：[`HistoryPartitioner.Partition`](../../../../prototypes/SessionJournal.HistoryTimeline/HistoryPartitioner.cs)；
 - durable per-Ref R/B authority与seal facade：[`RecapGrid Cadence`](../../../../prototypes/SessionJournal.RecapGrid.Cadence/)；
-- Online immediate commit loop与offline fallback：[`RecapGridOnlineContextHandle`](../../../../prototypes/SessionJournal.RecapGrid.Online/RecapGridOnlineContextHandle.cs)；
+- Online immediate commit loop与offline fallback：[`RecapGridOnlineContextHandle`](../../../../prototypes/SessionJournal.RecapGrid/Online/RecapGridOnlineContextHandle.cs)；
 - CLI online/offline writer：[`RecapGridTimelineSyncCommand`](../../../../prototypes/SessionJournal.Cli/RecapGridTimelineSyncCommand.cs)；
 - current Timeline artifact/page resource caps：[`HistoryTimelinePersistenceContracts`](../../../../prototypes/SessionJournal.HistoryTimeline/HistoryTimelinePersistenceContracts.cs)；
 - reserve-aware build-read anchor：[`HistoryRecentReserveAnchor`](../../../../prototypes/SessionJournal.HistoryTimeline/HistoryRecentReserveAnchor.cs)；
-- reserve-aware selection与`ReserveBootstrapRawOnly`：[`RecapGridContextHandle`](../../../../prototypes/SessionJournal.RecapGrid.Getter/RecapGridContextHandle.cs)；
-- Manager head-to-anchor progression：[`RecapGrid Manager`](../../../../prototypes/SessionJournal.RecapGrid.Manager/)；
-- previous projection与`KeepUnchanged` Cell创建：[`ManagerRowBuild`](../../../../prototypes/SessionJournal.RecapGrid.Manager/ManagerRowBuild.cs)；
-- Store whole-database counters：[`StoreContracts`](../../../../prototypes/SessionJournal.RecapGrid.Store/StoreContracts.cs)；
-- Getter ordinal/provenance caps：[`GetterContracts`](../../../../prototypes/SessionJournal.RecapGrid.Getter/GetterContracts.cs)；
+- reserve-aware selection与`ReserveBootstrapRawOnly`：[`RecapGridContextHandle`](../../../../prototypes/SessionJournal.RecapGrid/Getter/RecapGridContextHandle.cs)；
+- Manager head-to-anchor progression：[`RecapGrid Manager`](../../../../prototypes/SessionJournal.RecapGrid/Manager/)；
+- previous projection与`KeepUnchanged` Cell创建：[`ManagerRowBuild`](../../../../prototypes/SessionJournal.RecapGrid/Manager/ManagerRowBuild.cs)；
+- Store whole-database counters：[`StoreContracts`](../../../../prototypes/SessionJournal.RecapGrid/Store/StoreContracts.cs)；
+- Getter ordinal/provenance caps：[`GetterContracts`](../../../../prototypes/SessionJournal.RecapGrid/Getter/GetterContracts.cs)；
 - C2 shared Family prompt：[`recap maintainer family`](../../../Galatea/prompt/recap-maintainer-family/system-zh-cn.md)；
   两列内容prompt：[`world-understanding`](../../../Galatea/prompt/world-understanding-maintainer/rewrite-zh-cn/user.md)
   与[`autobiography`](../../../Galatea/prompt/autobiographical-maintainer/rewrite-zh-cn/user.md)。C2A把旧两份专业zh-CN system规则迁入

@@ -96,7 +96,15 @@ public sealed class ControlPublicSurfaceTests : IDisposable {
     [Fact]
     public void PublicFactoryAndHandlesExposeNoBackendSelector() {
         Type[] exported = typeof(RecapGridControlFactory)
-            .Assembly.GetExportedTypes();
+            .Assembly.GetExportedTypes()
+            .Where(static type =>
+                type.Namespace is "Atelia.SessionJournal.RecapGrid.Control"
+                || type.Namespace?.StartsWith(
+                    "Atelia.SessionJournal.RecapGrid.Control.",
+                    StringComparison.Ordinal
+                ) is true
+            )
+            .ToArray();
         Assert.DoesNotContain(exported, static type =>
             type.Name.Contains("Sqlite", StringComparison.OrdinalIgnoreCase)
             || type.Name.Contains(

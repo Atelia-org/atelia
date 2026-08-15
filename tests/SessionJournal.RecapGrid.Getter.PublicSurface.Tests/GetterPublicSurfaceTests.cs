@@ -99,7 +99,15 @@ public sealed class GetterPublicSurfaceTests : IDisposable {
     [Fact]
     public void PublicSurfaceHasNoBackendOrMutationSelector() {
         Type[] exported = typeof(RecapGridContextFactory)
-            .Assembly.GetExportedTypes();
+            .Assembly.GetExportedTypes()
+            .Where(static type =>
+                type.Namespace is "Atelia.SessionJournal.RecapGrid.Getter"
+                || type.Namespace?.StartsWith(
+                    "Atelia.SessionJournal.RecapGrid.Getter.",
+                    StringComparison.Ordinal
+                ) is true
+            )
+            .ToArray();
         Assert.DoesNotContain(exported, static type =>
             type.Name.Contains("Sqlite", StringComparison.OrdinalIgnoreCase)
             || type.Name.Contains("Backend", StringComparison.OrdinalIgnoreCase)
