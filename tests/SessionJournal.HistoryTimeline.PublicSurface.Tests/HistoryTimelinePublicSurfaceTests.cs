@@ -70,6 +70,22 @@ public sealed class HistoryTimelinePublicSurfaceTests : IDisposable {
     }
 
     [Fact]
+    public void O200kExtensionAssemblyExportsOnlyEstimator() {
+        var timelineAssembly = typeof(HistoryTimelineFactory).Assembly;
+        var o200kAssembly = typeof(O200kBaseHistoryUnitLoadEstimator).Assembly;
+
+        Assert.NotEqual(timelineAssembly, o200kAssembly);
+        Assert.Equal(
+            [typeof(O200kBaseHistoryUnitLoadEstimator)],
+            o200kAssembly.GetExportedTypes()
+        );
+        Assert.Null(timelineAssembly.GetType(
+            typeof(O200kBaseHistoryUnitLoadEstimator).FullName!,
+            throwOnError: false
+        ));
+    }
+
+    [Fact]
     public void PublicFactoryAndHandlesExposeNoBackendSelector() {
         Type[] publicTypes = typeof(HistoryTimelineFactory)
             .Assembly

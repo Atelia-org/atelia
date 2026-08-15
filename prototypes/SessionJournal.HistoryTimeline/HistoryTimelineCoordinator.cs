@@ -8,6 +8,9 @@ namespace Atelia.SessionJournal.HistoryTimeline;
 /// composition root; callers cannot select the in-memory semantic carrier.
 /// </summary>
 public sealed class HistoryTimelineCoordinator {
+    private const string NoReserveTestEstimatorId =
+        "atelia.history-load.test.no-reserve-v1";
+
     private string _repositoryPath = null!;
     private IHistoryTimelineLedgerPort _ledger = null!;
     private IHistoryTimelineEstimatorResolver _estimators = null!;
@@ -1079,7 +1082,7 @@ public sealed class HistoryTimelineCoordinator {
         PartitionPolicyRevision policy = PartitionPolicyRevision.Create(
             expectedWholeHead.TimelineId,
             HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
-            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            NoReserveTestEstimatorId,
             new HistoryLoadUnit(1),
             maxRawEvents: 1,
             maxRenderedBytes: 1);

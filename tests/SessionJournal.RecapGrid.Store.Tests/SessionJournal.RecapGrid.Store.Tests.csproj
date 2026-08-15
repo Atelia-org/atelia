@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Store/SessionJournal.RecapGrid.Store.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline.O200k/SessionJournal.HistoryTimeline.O200k.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.RecapGrid.Control/SessionJournal.RecapGrid.Control.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Store.CrashHarness/SessionJournal.RecapGrid.Store.CrashHarness.csproj"
                       ReferenceOutputAssembly="false" />

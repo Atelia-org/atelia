@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.HistoryTimeline.O200k/SessionJournal.HistoryTimeline.O200k.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../../prototypes/Completion.Abstractions/Completion.Abstractions.csproj" />
   </ItemGroup>

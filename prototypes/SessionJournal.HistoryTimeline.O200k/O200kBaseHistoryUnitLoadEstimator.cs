@@ -47,7 +47,7 @@ public sealed class O200kBaseHistoryUnitLoadEstimator
             );
         }
         catch (Exception exception) when (
-            HistoryLoadNonFatalException.IsCatchable(exception)
+            IsCatchable(exception)
         ) {
             throw new HistoryLoadMeasurementException(
                 HistoryLoadMeasurementDefectCodes.EstimatorFailed,
@@ -62,6 +62,12 @@ public sealed class O200kBaseHistoryUnitLoadEstimator
         );
     }
 
+    private static bool IsCatchable(Exception exception)
+        => exception is not (
+            OutOfMemoryException
+            or StackOverflowException
+            or AccessViolationException
+        );
 }
 
 internal sealed record HistoryUnitLoadRendering(

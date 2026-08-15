@@ -14,6 +14,12 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.HistoryTimeline",
             "SessionJournal.HistoryTimeline.csproj"
         );
+        string o200kProject = Path.Combine(
+            root,
+            "prototypes",
+            "SessionJournal.HistoryTimeline.O200k",
+            "SessionJournal.HistoryTimeline.O200k.csproj"
+        );
         string abstractionsProject = Path.Combine(
             root,
             "prototypes",
@@ -84,6 +90,14 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Equal(
             ["../SessionJournal/SessionJournal.csproj"],
             DirectProjectReferences(timelineProject)
+        );
+        Assert.Equal(
+            [
+                "../Completion.Abstractions/Completion.Abstractions.csproj",
+                "../SessionJournal/SessionJournal.csproj",
+                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"
+            ],
+            DirectProjectReferences(o200kProject)
         );
         Assert.Equal(
             ["../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"],
@@ -176,11 +190,26 @@ public sealed class AssemblyDependencyBoundaryTests {
             [
                 "Microsoft.Data.Sqlite@10.0.10",
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
-                "Microsoft.Bcl.Memory@9.0.17",
+                "Microsoft.Bcl.Memory@9.0.17"
+            ],
+            DirectPackageReferences(timelineProject)
+        );
+        Assert.Equal(
+            [
                 "Microsoft.ML.Tokenizers@2.0.0",
                 "Microsoft.ML.Tokenizers.Data.O200kBase@2.0.0"
             ],
-            DirectPackageReferences(timelineProject)
+            DirectPackageReferences(o200kProject)
+        );
+        Assert.Equal(
+            ["Atelia.SessionJournal.HistoryTimeline.Tests"],
+            XDocument.Load(o200kProject)
+                .Descendants("InternalsVisibleTo")
+                .Select(static element =>
+                    (string?)element.Attribute("Include"))
+                .Where(static value => value is not null)
+                .Select(static value => value!)
+                .ToArray()
         );
         Assert.Empty(DirectPackageReferences(abstractionsProject));
         Assert.Empty(DirectPackageReferences(controlProject));
@@ -1077,9 +1106,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         foreach (string declaration in new[] {
             "public readonly record struct HistoryLoadUnit",
             "public interface IHistoryUnitLoadEstimator",
-            "public sealed class O200kBaseHistoryUnitLoadEstimator",
-            "public static class HistoryLoadProjector",
-            "public const string EstimatorId"
+            "public static class HistoryLoadProjector"
         }) {
             string owner = Assert.Single(sourceFiles, path =>
                 File.ReadAllText(path).Contains(
@@ -1089,6 +1116,22 @@ public sealed class AssemblyDependencyBoundaryTests {
             );
             Assert.Contains(
                 "/prototypes/SessionJournal.HistoryTimeline/",
+                owner,
+                StringComparison.Ordinal
+            );
+        }
+        foreach (string declaration in new[] {
+                     "public sealed class O200kBaseHistoryUnitLoadEstimator",
+                     "public const string EstimatorId"
+                 }) {
+            string owner = Assert.Single(sourceFiles, path =>
+                File.ReadAllText(path).Contains(
+                    declaration,
+                    StringComparison.Ordinal
+                )
+            );
+            Assert.Contains(
+                "/prototypes/SessionJournal.HistoryTimeline.O200k/",
                 owner,
                 StringComparison.Ordinal
             );
@@ -1116,7 +1159,7 @@ public sealed class AssemblyDependencyBoundaryTests {
             )
         );
         Assert.EndsWith(
-            "/prototypes/SessionJournal.HistoryTimeline/O200kBaseHistoryUnitLoadEstimator.cs",
+            "/prototypes/SessionJournal.HistoryTimeline.O200k/O200kBaseHistoryUnitLoadEstimator.cs",
             o200kOwner,
             StringComparison.Ordinal
         );
@@ -1181,33 +1224,36 @@ public sealed class AssemblyDependencyBoundaryTests {
     }
 
     [Fact]
-    public void FormalConsumersReferenceTimelineDirectlyWithoutTokenizerPins() {
+    public void FormalConsumersReferenceTimelineAndO200kDirectlyWithoutPackagePins() {
         string root = FindRepositoryRoot();
-        foreach ((string project, string expectedReference) in new[] {
-            (
-                Path.Combine(
-                    root,
-                    "prototypes",
-                    "SessionJournal.Cli",
-                    "SessionJournal.Cli.csproj"
-                ),
-                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"
+        foreach (string project in new[] {
+            Path.Combine(
+                root,
+                "prototypes",
+                "SessionJournal.Cli",
+                "SessionJournal.Cli.csproj"
             ),
-            (
-                Path.Combine(
-                    root,
-                    "prototypes",
-                    "Galatea",
-                    "Galatea.Server.csproj"
-                ),
-                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"
+            Path.Combine(
+                root,
+                "prototypes",
+                "Galatea",
+                "Galatea.Server.csproj"
             )
         }) {
+            string[] references = DirectProjectReferences(project);
             Assert.Contains(
-                expectedReference,
-                DirectProjectReferences(project),
-                StringComparer.Ordinal
-            );
+                "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
+                references,
+                StringComparer.Ordinal);
+            Assert.Contains(
+                "../SessionJournal.HistoryTimeline.O200k/SessionJournal.HistoryTimeline.O200k.csproj",
+                references,
+                StringComparer.Ordinal);
+            Assert.DoesNotContain(
+                DirectPackageReferences(project),
+                static package => package.StartsWith(
+                    "Microsoft.ML.Tokenizers",
+                    StringComparison.Ordinal));
         }
     }
 
@@ -1359,6 +1405,7 @@ public sealed class AssemblyDependencyBoundaryTests {
     public void ProductAssembliesDoNotActuallyReferenceForbiddenOwners() {
         foreach (string assemblyFileName in new[] {
             "Atelia.SessionJournal.HistoryTimeline.dll",
+            "Atelia.SessionJournal.HistoryTimeline.O200k.dll",
             "Atelia.SessionJournal.RecapGrid.Abstractions.dll",
             "Atelia.SessionJournal.RecapGrid.Control.dll",
             "Atelia.SessionJournal.RecapGrid.Store.dll",
