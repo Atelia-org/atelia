@@ -13,6 +13,7 @@ internal sealed class GalateaLiveTurn {
     private int _previewUtf8Bytes;
     private bool _previewSuppressed;
     private bool _terminalPublished;
+    private bool _transportAborted;
     private string _status = "running";
     private string? _phase;
 
@@ -56,6 +57,14 @@ internal sealed class GalateaLiveTurn {
         }
     }
 
+    internal bool TransportAborted {
+        get {
+            lock (_gate) {
+                return _transportAborted;
+            }
+        }
+    }
+
     internal int ReplayUtf8Bytes {
         get {
             lock (_gate) {
@@ -91,7 +100,7 @@ internal sealed class GalateaLiveTurn {
                     FullMode = BoundedChannelFullMode.Wait
                 }
             );
-            if (!_terminalPublished) {
+            if (!_terminalPublished && !_transportAborted) {
                 _subscribers.Add(subscriberId, channel);
             }
             else {
@@ -109,29 +118,25 @@ internal sealed class GalateaLiveTurn {
     internal void PublishStatus(
         GalateaSseStatusCode code,
         bool? changed = null
-    ) {
-        if (!ShouldEncodePreview()) {
-            return;
-        }
-        PublishPreview(
-            GalateaSseFrames.Status(code, changed),
+    ) => PublishPreview(
+            maximumBytes => GalateaSseFrames.TryStatus(
+                code,
+                changed,
+                maximumBytes
+            ),
             GalateaSseFrames.StatusCode(code)
         );
-    }
 
-    internal void PublishReasoningDelta(string delta) {
-        if (!ShouldEncodePreview()) {
-            return;
-        }
-        PublishPreview(GalateaSseFrames.ReasoningDelta(delta));
-    }
+    internal void PublishReasoningDelta(string delta) =>
+        PublishPreview(maximumBytes =>
+            GalateaSseFrames.TryReasoningDelta(
+                delta,
+                maximumBytes
+            ));
 
-    internal void PublishTextDelta(string delta) {
-        if (!ShouldEncodePreview()) {
-            return;
-        }
-        PublishPreview(GalateaSseFrames.TextDelta(delta));
-    }
+    internal void PublishTextDelta(string delta) =>
+        PublishPreview(maximumBytes =>
+            GalateaSseFrames.TryTextDelta(delta, maximumBytes));
 
     internal void PublishDone(RecentTurnsResponseDto? recent) =>
         PublishTerminal(
@@ -147,7 +152,7 @@ internal sealed class GalateaLiveTurn {
 
     public void Complete() {
         lock (_gate) {
-            if (!_terminalPublished) {
+            if (!_terminalPublished && !_transportAborted) {
                 throw new InvalidOperationException(
                     "A live Galatea turn cannot complete without a terminal SSE frame."
                 );
@@ -166,36 +171,60 @@ internal sealed class GalateaLiveTurn {
 
     public bool RequestStop() => StopController.RequestStop();
 
-    private bool ShouldEncodePreview() {
+    internal void AbortTransportWithoutTerminal() {
+        List<Channel<GalateaSseFrame>> subscribers;
         lock (_gate) {
-            ThrowIfTerminalPublished();
-            return !_previewSuppressed;
+            if (_terminalPublished || _transportAborted) {
+                return;
+            }
+            _transportAborted = true;
+            _status = "failed";
+            subscribers = [.. _subscribers.Values];
+            _subscribers.Clear();
         }
+        StopController.Complete();
+        CompleteDisconnected(subscribers);
     }
 
     private bool PublishPreview(
-        GalateaSseFrame frame,
+        Func<int, GalateaSseFrame?> encode,
         string? phase = null
     ) {
-        if (frame.IsTerminal) {
-            throw new ArgumentException(
-                "Preview publication requires a nonterminal frame.",
-                nameof(frame)
-            );
+        int maximumFrameBytes;
+        lock (_gate) {
+            ThrowIfPublicationClosed();
+            if (_previewSuppressed) {
+                return false;
+            }
+            if (_previewEventCount
+                == GalateaSseLimits.MaximumPreviewEventCount) {
+                _previewSuppressed = true;
+                return false;
+            }
+            maximumFrameBytes =
+                GalateaSseLimits.MaximumPreviewUtf8Bytes
+                - _previewUtf8Bytes;
         }
+        GalateaSseFrame? frame = encode(maximumFrameBytes);
         List<Channel<GalateaSseFrame>> disconnected = [];
         lock (_gate) {
-            ThrowIfTerminalPublished();
+            ThrowIfPublicationClosed();
             if (_previewSuppressed) {
                 return false;
             }
             if (_previewEventCount
                     == GalateaSseLimits.MaximumPreviewEventCount
+                || frame is null
                 || frame.Utf8Length
                     > GalateaSseLimits.MaximumPreviewUtf8Bytes
                         - _previewUtf8Bytes) {
                 _previewSuppressed = true;
                 return false;
+            }
+            if (frame.IsTerminal) {
+                throw new InvalidOperationException(
+                    "Preview encoder produced a terminal frame."
+                );
             }
             _previewEventCount++;
             _previewUtf8Bytes += frame.Utf8Length;
@@ -221,7 +250,7 @@ internal sealed class GalateaLiveTurn {
         }
         List<Channel<GalateaSseFrame>> subscribers = [];
         lock (_gate) {
-            ThrowIfTerminalPublished();
+            ThrowIfPublicationClosed();
             if (frame.Utf8Length
                 > GalateaSseLimits.MaximumTerminalFrameUtf8Bytes) {
                 throw new InvalidOperationException(
@@ -262,10 +291,15 @@ internal sealed class GalateaLiveTurn {
         }
     }
 
-    private void ThrowIfTerminalPublished() {
+    private void ThrowIfPublicationClosed() {
         if (_terminalPublished) {
             throw new InvalidOperationException(
                 "Galatea SSE terminal frame was already published."
+            );
+        }
+        if (_transportAborted) {
+            throw new InvalidOperationException(
+                "Galatea SSE transport was already aborted."
             );
         }
     }

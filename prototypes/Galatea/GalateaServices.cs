@@ -348,9 +348,18 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 )
                 .ConfigureAwait(false);
         }
+        catch (OperationCanceledException ex) {
+            host.MarkRecentSnapshotStale();
+            DebugUtil.Warning(
+                "Galatea.Session",
+                "Completed turn recent refresh was cancelled after the "
+                    + $"durable boundary: user={host.User.UserId}",
+                ex
+            );
+            return null;
+        }
         catch (Exception ex) when (
             GalateaExceptionClassifier.IsNonFatal(ex)
-            && !cancellationToken.IsCancellationRequested
         ) {
             host.MarkRecentSnapshotStale();
             DebugUtil.Warning(

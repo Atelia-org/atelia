@@ -352,6 +352,28 @@ export class GalateaSseV1Parser {
   }
 }
 
+export async function consumeGalateaSseStream(
+  reader,
+  limits,
+  onEvent,
+) {
+  const parser = new GalateaSseV1Parser(limits);
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    for (const streamEvent of parser.push(value)) {
+      if (streamEvent.type !== "done" && streamEvent.type !== "error") {
+        onEvent(streamEvent);
+      }
+    }
+  }
+  const terminal = parser.finish();
+  onEvent(terminal);
+  return terminal;
+}
+
 function requireSseEvent(eventName, value) {
   switch (eventName) {
     case "status": {
@@ -530,6 +552,41 @@ function requireCurrentTurn(value) {
     throw new Error("current turn.status is unknown");
   }
   return current;
+}
+
+export function decideGalateaStreamContinuation(value) {
+  const decision = requireExactKeys(value, [
+    "outcome", "expectedTurnId", "currentTurn",
+    "reconciliationFailures",
+  ], "stream continuation input");
+  if (!/^[0-9a-f]{32}$/.test(decision.expectedTurnId)) {
+    throw new Error("stream continuation expectedTurnId is invalid");
+  }
+  requireNonnegativeInteger(
+    decision.reconciliationFailures,
+    "stream continuation reconciliationFailures",
+  );
+  if (decision.outcome === "protocol-invalid") {
+    return "stop-protocol";
+  }
+  if (decision.outcome === "terminal") {
+    return "refresh-stop";
+  }
+  if (decision.outcome !== "transport-ended") {
+    throw new Error("stream continuation outcome is unknown");
+  }
+  if (decision.currentTurn === null) {
+    return decision.reconciliationFailures >= 3
+      ? "stop-unconfirmed"
+      : "retry-confirm";
+  }
+  const current = requireCurrentTurn(decision.currentTurn);
+  if (current.status === "running"
+      && (current.turnId === decision.expectedTurnId
+          || current.turnId === null)) {
+    return "reconnect";
+  }
+  return "refresh-stop";
 }
 
 async function readJsonResponse(response, validator) {
@@ -927,18 +984,11 @@ function startGalateaApp() {
 
   async function readEventStream(response) {
     const reader = response.body.getReader();
-    const parser = new GalateaSseV1Parser(streamLimits);
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) {
-        break;
-      }
-      for (const streamEvent of parser.push(value)) {
-        handleEvent(streamEvent);
-      }
-    }
-    return parser.finish();
+    return await consumeGalateaSseStream(
+      reader,
+      streamLimits,
+      handleEvent,
+    );
   }
 
   function handleEvent(streamEvent) {
@@ -1150,7 +1200,22 @@ function startGalateaApp() {
         }
 
         const terminalEvent = await readEventStream(response);
-        const currentTurn = await waitForCurrentTurnTerminal();
+        let currentTurn = null;
+        try {
+          currentTurn = await waitForCurrentTurnTerminal();
+        } catch {
+          // A validated terminal ends this transport turn. Durable-view
+          // reconciliation below remains bounded and never reconnects it.
+        }
+        const terminalDecision = decideGalateaStreamContinuation({
+          outcome: "terminal",
+          expectedTurnId: normalizedTurnId,
+          currentTurn,
+          reconciliationFailures: 0,
+        });
+        if (terminalDecision !== "refresh-stop") {
+          throw new Error("terminal stream continuation is invalid");
+        }
         clearActiveTurn();
         resetLive();
         let recentUnavailable = false;
@@ -1180,6 +1245,15 @@ function startGalateaApp() {
           return;
         }
         if (error instanceof GalateaSseProtocolError) {
+          const decision = decideGalateaStreamContinuation({
+            outcome: "protocol-invalid",
+            expectedTurnId: normalizedTurnId,
+            currentTurn: null,
+            reconciliationFailures,
+          });
+          if (decision !== "stop-protocol") {
+            throw new Error("protocol stream continuation is invalid");
+          }
           setStreaming(
             true,
             "生成流协议无效；已停止自动重连，请刷新页面。",
@@ -1192,7 +1266,13 @@ function startGalateaApp() {
           reconciliationFailures = 0;
         } catch {
           reconciliationFailures += 1;
-          if (reconciliationFailures >= 3) {
+          const decision = decideGalateaStreamContinuation({
+            outcome: "transport-ended",
+            expectedTurnId: normalizedTurnId,
+            currentTurn: null,
+            reconciliationFailures,
+          });
+          if (decision === "stop-unconfirmed") {
             setStreaming(
               true,
               "无法确认生成状态；已停止自动重连，请刷新页面。",
@@ -1203,11 +1283,15 @@ function startGalateaApp() {
           await sleep(800);
           continue;
         }
-        if (currentTurn?.status === "running"
-            && (currentTurn.turnId === normalizedTurnId
-                || currentTurn.turnId === null)) {
+        const decision = decideGalateaStreamContinuation({
+          outcome: "transport-ended",
+          expectedTurnId: normalizedTurnId,
+          currentTurn,
+          reconciliationFailures,
+        });
+        if (decision === "reconnect") {
           setStreaming(true, "连接已断开，正在从头重连…");
-        } else {
+        } else if (decision === "refresh-stop") {
           clearActiveTurn();
           resetLive();
           await loadRecentTurns().catch(() => {});
@@ -1221,6 +1305,8 @@ function startGalateaApp() {
             setStreaming(false, "生成流在terminal前中断；已刷新持久化视图。");
           }
           return;
+        } else {
+          throw new Error("transport stream continuation is invalid");
         }
       }
 

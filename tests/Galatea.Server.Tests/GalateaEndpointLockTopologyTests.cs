@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
@@ -123,6 +124,117 @@ public sealed class GalateaEndpointLockTopologyTests {
 
             response?.Dispose();
         }
+    }
+
+    [Fact]
+    public async Task Events_ReplayThenLiveThenTerminalHaveNoGapOrDuplicate() {
+        await using var host = CreateHost();
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        GalateaHostService hostService = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await hostService.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn liveTurn = hostService.StartTurn(
+            session,
+            "replay/live fixture",
+            new GalateaTurnOptions("test")
+        );
+        try {
+            liveTurn.PublishStatus(GalateaSseStatusCode.Generating);
+            liveTurn.PublishTextDelta("replay");
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"/api/v1/chat/turns/{liveTurn.TurnId}/events"
+            );
+            using HttpResponseMessage response = await client.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead
+            ).WaitAsync(EndpointDeadline);
+            await using Stream stream = await response.Content
+                .ReadAsStreamAsync();
+            Task<string> body = new StreamReader(
+                stream,
+                Encoding.UTF8
+            ).ReadToEndAsync();
+
+            liveTurn.PublishTextDelta("live");
+            liveTurn.PublishDone(recent: null);
+            liveTurn.Complete();
+
+            Assert.Equal(
+                "event: status\ndata: {\"code\":\"generating\"}\n\n"
+                    + "event: text-delta\ndata: {\"delta\":\"replay\"}\n\n"
+                    + "event: text-delta\ndata: {\"delta\":\"live\"}\n\n"
+                    + "event: done\ndata: {\"recent\":null}\n\n",
+                await body.WaitAsync(EndpointDeadline)
+            );
+        }
+        finally {
+            hostService.FinishTurn(session, liveTurn);
+            if (liveTurn.Status == "running") {
+                liveTurn.PublishError(
+                    GalateaSseErrorCode.InternalFailure
+                );
+                liveTurn.Complete();
+            }
+            session.TurnLock.Release();
+        }
+    }
+
+    [Fact]
+    public async Task FatalTurnFailurePreservesCauseAndEndsTransport() {
+        var fatalClient = new FatalCompletionClient();
+        await using var host = GalateaTestHost.Create(
+            new SingleClientFactory(fatalClient),
+            new PassThroughNormalizer()
+        );
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        GalateaHostService hostService = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await hostService.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+
+        using HttpResponseMessage accepted = await client.PostAsJsonAsync(
+            "/api/v1/chat/turns",
+            new ChatStreamRequest("fatal fixture", "test")
+        );
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        await fatalClient.Entered.Task.WaitAsync(EndpointDeadline);
+        GalateaLiveTurn liveTurn = Assert.IsType<GalateaLiveTurn>(
+            session.GetCurrentTurn()
+        );
+        using GalateaTurnSubscription subscription = liveTurn.Subscribe();
+
+        fatalClient.Release.TrySetResult();
+        OutOfMemoryException failure = await Assert.ThrowsAsync<
+            OutOfMemoryException
+        >(async () => await Assert.IsAssignableFrom<Task>(liveTurn.RunTask));
+
+        Assert.Same(fatalClient.Failure, failure);
+        Assert.True(liveTurn.TransportAborted);
+        Assert.Throws<InvalidOperationException>(() =>
+            liveTurn.PublishTextDelta("after fatal")
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            liveTurn.PublishDone(recent: null)
+        );
+        List<GalateaSseFrame> observed = [];
+        await foreach (GalateaSseFrame frame
+                       in subscription.Reader.ReadAllAsync()) {
+            observed.Add(frame);
+        }
+        Assert.DoesNotContain(observed, static frame => frame.IsTerminal);
+        Assert.Null(session.GetCurrentTurn());
+        Assert.True(session.TurnLock.Wait(0));
+        session.TurnLock.Release();
     }
 
     [Fact]
@@ -565,6 +677,47 @@ public sealed class GalateaEndpointLockTopologyTests {
         ) => throw new InvalidOperationException(
             "Lock-topology tests must not dispatch a completion request."
         );
+    }
+
+    private sealed class SingleClientFactory(ICompletionClient client)
+        : ICompletionClientFactory {
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) {
+            ArgumentNullException.ThrowIfNull(connection);
+            return client;
+        }
+    }
+
+    private sealed class FatalCompletionClient : ICompletionClient {
+        internal TaskCompletionSource Entered { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        internal TaskCompletionSource Release { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        internal OutOfMemoryException Failure { get; } = new(
+            "fatal completion fixture"
+        );
+
+        public string Name => "galatea-fatal-test";
+
+        public string ApiSpecId => "openai-chat-v1";
+
+        public async Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            _ = request;
+            _ = observer;
+            cancellationToken.ThrowIfCancellationRequested();
+            Entered.TrySetResult();
+            await Release.Task.ConfigureAwait(false);
+            throw Failure;
+        }
     }
 
     private sealed class PassThroughNormalizer

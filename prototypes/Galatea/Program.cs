@@ -738,7 +738,9 @@ static IResult StartAcceptedTurn(
             }
             catch (GalateaTurnException ex) {
                 DebugUtil.Warning("Galatea.Api", $"Turn failed with GalateaTurnException: user={session.User.UserId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}, detail={ex.Message}");
-                liveTurn.PublishError(ClassifySseError(ex));
+                liveTurn.PublishError(
+                    GalateaSseErrorClassifier.Classify(ex)
+                );
             }
             catch (Exception ex) when (
                 GalateaExceptionClassifier.IsNonFatal(ex)
@@ -748,11 +750,16 @@ static IResult StartAcceptedTurn(
                     GalateaSseErrorCode.InternalFailure
                 );
             }
+            catch (Exception) {
+                liveTurn.AbortTransportWithoutTerminal();
+                throw;
+            }
             finally {
                 try {
                     hostService.FinishTurn(session, liveTurn);
                     liveTurn.Complete();
-                    if (!string.Equals(
+                    if (!liveTurn.TransportAborted
+                        && !string.Equals(
                             liveTurn.Status,
                             "completed",
                             StringComparison.Ordinal
@@ -792,27 +799,6 @@ static IResult RecoveryConflict(
     new ApiErrorDto(code, error),
     statusCode: StatusCodes.Status409Conflict
 );
-
-static GalateaSseErrorCode ClassifySseError(
-    GalateaTurnException exception
-) {
-    string? reason = exception.FailureReason;
-    if (reason is "stopped-by-user"
-        or "stopped-before-dispatch"
-        or "recovery-stopped-before-dispatch") {
-        return GalateaSseErrorCode.OperatorStop;
-    }
-    if (reason is "input-limit-exceeded"
-        or "uncertain-completion-restart-required"
-        || reason?.StartsWith("recovery-", StringComparison.Ordinal) == true
-        || reason?.StartsWith("failed-turn-", StringComparison.Ordinal) == true
-        || reason?.StartsWith("recap-grid-", StringComparison.Ordinal) == true
-        || reason?.StartsWith("agent-control-", StringComparison.Ordinal) == true
-        || reason?.StartsWith("tool-runtime-", StringComparison.Ordinal) == true) {
-        return GalateaSseErrorCode.TurnUnavailable;
-    }
-    return GalateaSseErrorCode.CompletionFailed;
-}
 
 static (int StatusCode, ApiErrorDto Error) MapApiException(
     Exception exception

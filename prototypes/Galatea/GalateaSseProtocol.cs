@@ -1,5 +1,8 @@
+using System.Buffers;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using Atelia.Completion;
 
 namespace Atelia.Galatea.Server;
 
@@ -78,11 +81,51 @@ internal static class GalateaSseFrames {
         return Encode("status", payload, terminal: false);
     }
 
+    internal static GalateaSseFrame? TryStatus(
+        GalateaSseStatusCode code,
+        bool? changed,
+        int maximumFrameUtf8Bytes
+    ) {
+        if (maximumFrameUtf8Bytes < 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maximumFrameUtf8Bytes)
+            );
+        }
+        GalateaSseFrame frame = Status(code, changed);
+        return frame.Utf8Length <= maximumFrameUtf8Bytes
+            ? frame
+            : null;
+    }
+
     internal static GalateaSseFrame ReasoningDelta(string delta) =>
-        Delta("reasoning-delta", delta);
+        TryReasoningDelta(delta, int.MaxValue)
+        ?? throw new InvalidOperationException(
+            "Galatea SSE reasoning delta exceeded Int32 capacity."
+        );
 
     internal static GalateaSseFrame TextDelta(string delta) =>
-        Delta("text-delta", delta);
+        TryTextDelta(delta, int.MaxValue)
+        ?? throw new InvalidOperationException(
+            "Galatea SSE text delta exceeded Int32 capacity."
+        );
+
+    internal static GalateaSseFrame? TryReasoningDelta(
+        string delta,
+        int maximumFrameUtf8Bytes
+    ) => TryDelta(
+        "reasoning-delta",
+        delta,
+        maximumFrameUtf8Bytes
+    );
+
+    internal static GalateaSseFrame? TryTextDelta(
+        string delta,
+        int maximumFrameUtf8Bytes
+    ) => TryDelta(
+        "text-delta",
+        delta,
+        maximumFrameUtf8Bytes
+    );
 
     internal static GalateaSseFrame Done(
         RecentTurnsResponseDto? recent
@@ -138,9 +181,10 @@ internal static class GalateaSseFrames {
             _ => throw new ArgumentOutOfRangeException(nameof(code), code, null)
         };
 
-    private static GalateaSseFrame Delta(
+    private static GalateaSseFrame? TryDelta(
         string eventName,
-        string delta
+        string delta,
+        int maximumFrameUtf8Bytes
     ) {
         if (string.IsNullOrEmpty(delta)) {
             throw new ArgumentException(
@@ -148,12 +192,151 @@ internal static class GalateaSseFrames {
                 nameof(delta)
             );
         }
-        return Encode(
+        return TryEncodeDelta(
             eventName,
-            new GalateaSseDeltaPayload(delta),
-            terminal: false
+            delta,
+            maximumFrameUtf8Bytes
         );
     }
+
+    private static GalateaSseFrame? TryEncodeDelta(
+        string eventName,
+        string delta,
+        int maximumFrameUtf8Bytes
+    ) {
+        if (maximumFrameUtf8Bytes < 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maximumFrameUtf8Bytes)
+            );
+        }
+        byte[] prefix = Encoding.UTF8.GetBytes(
+            $"event: {eventName}\ndata: {{\"delta\":\""
+        );
+        const int SuffixLength = 4;
+        int maximumEscapedBytes = maximumFrameUtf8Bytes
+            - prefix.Length
+            - SuffixLength;
+        if (maximumEscapedBytes < 0
+            || !TryCountEscapedUtf8(
+                delta,
+                maximumEscapedBytes,
+                out int escapedBytes
+            )) {
+            return null;
+        }
+
+        int frameLength = checked(
+            prefix.Length + escapedBytes + SuffixLength
+        );
+        byte[] frame = GC.AllocateUninitializedArray<byte>(frameLength);
+        prefix.CopyTo(frame, 0);
+        int destinationOffset = prefix.Length;
+        ForEachEscapedUtf8Chunk(delta, encoded => {
+            encoded.CopyTo(frame.AsSpan(destinationOffset));
+            destinationOffset += encoded.Length;
+        });
+        frame[destinationOffset++] = (byte)'"';
+        frame[destinationOffset++] = (byte)'}';
+        frame[destinationOffset++] = (byte)'\n';
+        frame[destinationOffset++] = (byte)'\n';
+        if (destinationOffset != frame.Length) {
+            throw new InvalidOperationException(
+                "Galatea SSE delta length changed while encoding."
+            );
+        }
+        return new GalateaSseFrame(eventName, frame, terminal: false);
+    }
+
+    private static bool TryCountEscapedUtf8(
+        string value,
+        int maximumBytes,
+        out int escapedBytes
+    ) {
+        int total = 0;
+        bool withinLimit = true;
+        ForEachEscapedUtf8Chunk(value, encoded => {
+            if (encoded.Length > maximumBytes - total) {
+                withinLimit = false;
+                return false;
+            }
+            total += encoded.Length;
+            return true;
+        });
+        escapedBytes = total;
+        return withinLimit;
+    }
+
+    private static void ForEachEscapedUtf8Chunk(
+        string value,
+        EscapedChunkConsumer consume
+    ) => ForEachEscapedUtf8Chunk(
+        value,
+        encoded => {
+            consume(encoded);
+            return true;
+        }
+    );
+
+    private static void ForEachEscapedUtf8Chunk(
+        string value,
+        EscapedChunkPredicate consume
+    ) {
+        const int EncodedCharacterBufferLength = 1024;
+        Span<char> encodedCharacters = stackalloc char[
+            EncodedCharacterBufferLength
+        ];
+        Span<byte> encodedUtf8 = stackalloc byte[
+            Encoding.UTF8.GetMaxByteCount(
+                EncodedCharacterBufferLength
+            )
+        ];
+        JavaScriptEncoder encoder = GalateaJson.Options.Encoder
+            ?? JavaScriptEncoder.Default;
+        ReadOnlySpan<char> remaining = value;
+        while (!remaining.IsEmpty) {
+            OperationStatus status = encoder.Encode(
+                remaining,
+                encodedCharacters,
+                out int consumedCharacters,
+                out int writtenCharacters,
+                isFinalBlock: true
+            );
+            if (consumedCharacters == 0 && writtenCharacters == 0) {
+                throw new InvalidOperationException(
+                    "Galatea JSON encoder made no progress."
+                );
+            }
+            int writtenUtf8 = Encoding.UTF8.GetBytes(
+                encodedCharacters[..writtenCharacters],
+                encodedUtf8
+            );
+            if (!consume(encodedUtf8[..writtenUtf8])) {
+                return;
+            }
+            remaining = remaining[consumedCharacters..];
+            if (status == OperationStatus.Done) {
+                if (!remaining.IsEmpty) {
+                    throw new InvalidOperationException(
+                        "Galatea JSON encoder finished before consuming input."
+                    );
+                }
+                return;
+            }
+            if (status != OperationStatus.DestinationTooSmall) {
+                throw new InvalidOperationException(
+                    $"Galatea JSON encoder returned {status}."
+                );
+            }
+        }
+    }
+
+    private delegate void EscapedChunkConsumer(
+        ReadOnlySpan<byte> encoded
+    );
+
+    private delegate bool EscapedChunkPredicate(
+        ReadOnlySpan<byte> encoded
+    );
 
     private static GalateaSseFrame Encode(
         string eventName,
@@ -189,8 +372,6 @@ internal static class GalateaSseFrames {
         bool Changed
     );
 
-    private sealed record GalateaSseDeltaPayload(string Delta);
-
     private sealed record GalateaSseDonePayload(
         RecentTurnsResponseDto? Recent
     );
@@ -199,4 +380,57 @@ internal static class GalateaSseFrames {
         string Code,
         string Message
     );
+}
+
+internal static class GalateaSseErrorClassifier {
+    internal static GalateaSseErrorCode Classify(
+        GalateaTurnException exception
+    ) {
+        ArgumentNullException.ThrowIfNull(exception);
+        string? reason = exception.FailureReason;
+        if (reason is "stopped-by-user"
+            or "stopped-before-dispatch"
+            or "recovery-stopped-before-dispatch") {
+            return GalateaSseErrorCode.OperatorStop;
+        }
+        if (reason is "input-limit-exceeded"
+            or "uncertain-completion-restart-required"
+            or "stale-session-head"
+            or "tool-set-fingerprint-mismatch"
+            or nameof(CompletionDispatchBindingUnavailableReason
+                .ConnectionMissing)
+            or nameof(CompletionDispatchBindingUnavailableReason
+                .ConnectionKindMismatch)
+            or nameof(CompletionDispatchBindingUnavailableReason
+                .ConnectionFingerprintMismatch)
+            or nameof(CompletionDispatchBindingUnavailableReason
+                .ClientNameMismatch)
+            or nameof(CompletionDispatchBindingUnavailableReason
+                .ClientApiSpecIdMismatch)
+            or nameof(CompletionDispatchBindingUnavailableReason
+                .RequestAdapterFingerprintMismatch)
+            || reason?.StartsWith(
+                "recovery-",
+                StringComparison.Ordinal
+            ) == true
+            || reason?.StartsWith(
+                "failed-turn-",
+                StringComparison.Ordinal
+            ) == true
+            || reason?.StartsWith(
+                "recap-grid-",
+                StringComparison.Ordinal
+            ) == true
+            || reason?.StartsWith(
+                "agent-control-",
+                StringComparison.Ordinal
+            ) == true
+            || reason?.StartsWith(
+                "tool-runtime-",
+                StringComparison.Ordinal
+            ) == true) {
+            return GalateaSseErrorCode.TurnUnavailable;
+        }
+        return GalateaSseErrorCode.CompletionFailed;
+    }
 }

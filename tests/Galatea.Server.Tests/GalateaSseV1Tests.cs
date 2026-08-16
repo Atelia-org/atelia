@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Atelia.Completion;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
@@ -50,6 +51,20 @@ public sealed class GalateaSseV1Tests {
         );
         Assert.Throws<ArgumentException>(() =>
             GalateaSseFrames.TextDelta(string.Empty)
+        );
+
+        string boundaryDelta = new string('x', 511)
+            + "\U0001F600\0你好<>&\"\\\n";
+        GalateaSseFrame escaped = GalateaSseFrames.TextDelta(
+            boundaryDelta
+        );
+        string expectedJson = JsonSerializer.Serialize(
+            new { delta = boundaryDelta },
+            GalateaJson.Options
+        );
+        Assert.Equal(
+            $"event: text-delta\ndata: {expectedJson}\n\n",
+            FrameText(escaped)
         );
     }
 
@@ -171,12 +186,28 @@ public sealed class GalateaSseV1Tests {
     public async Task SlowSubscriberOverflowDisconnectsOnlyThatSubscriber() {
         GalateaLiveTurn turn = Turn();
         using GalateaTurnSubscription slow = turn.Subscribe();
+        using GalateaTurnSubscription fast = turn.Subscribe();
+        var fastFrames = new List<GalateaSseFrame>();
+        using var fastObserved = new SemaphoreSlim(0);
+        Task fastReader = Task.Run(async () => {
+            await foreach (GalateaSseFrame frame
+                           in fast.Reader.ReadAllAsync()) {
+                lock (fastFrames) {
+                    fastFrames.Add(frame);
+                }
+                fastObserved.Release();
+            }
+        });
         for (int index = 0;
              index <= GalateaSseLimits.SubscriberChannelCapacity;
-             index++) {
+            index++) {
             turn.PublishTextDelta($"delta-{index}");
+            Assert.True(await fastObserved.WaitAsync(
+                TimeSpan.FromSeconds(3)
+            ));
         }
         turn.PublishDone(recent: null);
+        await fastReader;
 
         List<GalateaSseFrame> observed = [];
         await foreach (GalateaSseFrame frame in slow.Reader.ReadAllAsync()) {
@@ -190,12 +221,59 @@ public sealed class GalateaSseV1Tests {
         Assert.Equal("completed", turn.Status);
         Assert.False(turn.StopRequested);
 
+        lock (fastFrames) {
+            Assert.Equal(
+                GalateaSseLimits.SubscriberChannelCapacity + 2,
+                fastFrames.Count
+            );
+            Assert.Equal("done", fastFrames[^1].EventName);
+            Assert.Single(
+                fastFrames,
+                static frame => frame.IsTerminal
+            );
+        }
+
         using GalateaTurnSubscription replay = turn.Subscribe();
         Assert.Equal(
             GalateaSseLimits.SubscriberChannelCapacity + 2,
             replay.ReplayFrames.Count
         );
         Assert.Equal("done", replay.ReplayFrames[^1].EventName);
+    }
+
+    [Fact]
+    public void HugeHighEscapePreviewIsCappedBeforeMaterialization() {
+        string huge = new('\0', 100 * 1024 * 1024);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+
+        GalateaSseFrame? frame = GalateaSseFrames.TryTextDelta(
+            huge,
+            maximumFrameUtf8Bytes: 4 * 1024
+        );
+
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.Null(frame);
+        Assert.True(
+            allocated < 1024 * 1024,
+            $"Capped preview encoding allocated {allocated} bytes."
+        );
+
+        GalateaLiveTurn turn = Turn();
+        long productionBefore = GC.GetAllocatedBytesForCurrentThread();
+        turn.PublishTextDelta(huge);
+        long productionAllocated =
+            GC.GetAllocatedBytesForCurrentThread() - productionBefore;
+        Assert.True(turn.PreviewSuppressed);
+        Assert.True(
+            productionAllocated
+                < GalateaSseLimits.MaximumPreviewUtf8Bytes
+                    + 1024 * 1024,
+            $"Production preview gate allocated {productionAllocated} bytes."
+        );
+        turn.PublishDone(recent: null);
+        using GalateaTurnSubscription replay = turn.Subscribe();
+        Assert.Single(replay.ReplayFrames);
+        Assert.Equal("done", replay.ReplayFrames[0].EventName);
     }
 
     [Fact]
@@ -366,6 +444,34 @@ public sealed class GalateaSseV1Tests {
         );
     }
 
+    [Fact]
+    public void KnownRecoveryAndConfigurationReasonsAreTurnUnavailable() {
+        string[] reasons = [
+            "stale-session-head",
+            "tool-set-fingerprint-mismatch",
+            .. Enum.GetValues<CompletionDispatchBindingUnavailableReason>()
+                .Select(static reason => reason.ToString())
+        ];
+
+        foreach (string reason in reasons) {
+            Assert.Equal(
+                GalateaSseErrorCode.TurnUnavailable,
+                GalateaSseErrorClassifier.Classify(
+                    new GalateaTurnException("detail", reason)
+                )
+            );
+        }
+        Assert.Equal(
+            GalateaSseErrorCode.CompletionFailed,
+            GalateaSseErrorClassifier.Classify(
+                new GalateaTurnException(
+                    "provider detail",
+                    "provider-finish-reason"
+                )
+            )
+        );
+    }
+
     private static GalateaLiveTurn Turn() => new(
         "message",
         new GalateaTurnOptions("test")
@@ -406,4 +512,6 @@ public sealed class GalateaSseV1Tests {
             return exception;
         }
     }
+
+
 }

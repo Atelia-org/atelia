@@ -208,24 +208,106 @@ assert.throws(
 );
 assert.doesNotMatch(source, /maximumConnectionBytes\s*=\s*\d/);
 assert.doesNotMatch(source, /maximumFrameBytes\s*=\s*\d/);
-const attachSource = source.slice(
-  source.indexOf("async function attachToTurn"),
-  source.indexOf('form.addEventListener("submit"'),
+
+function readerFrom(...chunks) {
+  let index = 0;
+  return {
+    async read() {
+      if (index === chunks.length) {
+        return { value: undefined, done: true };
+      }
+      return { value: chunks[index++], done: false };
+    },
+  };
+}
+
+const successfulEffects = [];
+await production.consumeGalateaSseStream(
+  readerFrom(nullDone),
+  limitsFor(nullDone),
+  (event) => successfulEffects.push(event.type),
 );
-const protocolBranch = attachSource.indexOf(
-  "error instanceof GalateaSseProtocolError",
-);
-const reconciliationRead = attachSource.indexOf(
-  "currentTurn = await loadCurrentTurn()",
-);
-assert.ok(protocolBranch >= 0 && protocolBranch < reconciliationRead);
-assert.match(
-  attachSource.slice(protocolBranch, reconciliationRead),
-  /已停止自动重连[\s\S]*return;/,
-);
-assert.match(attachSource, /currentTurn\?\.status === "running"/);
-assert.match(attachSource, /reconciliationFailures >= 3/);
-assert.match(attachSource, /SSE turn was not found/);
+assert.deepEqual(successfulEffects, ["done"]);
+
+for (const invalidTail of [Uint8Array.of(0x78), Uint8Array.of(0xff)]) {
+  const effects = [];
+  await assert.rejects(
+    production.consumeGalateaSseStream(
+      readerFrom(nullDone, invalidTail),
+      {
+        maximumConnectionBytes: nullDone.byteLength + 1,
+        maximumFrameBytes: nullDone.byteLength,
+      },
+      (event) => effects.push(event.type),
+    ),
+    production.GalateaSseProtocolError,
+  );
+  assert.deepEqual(effects, []);
+}
+
+const idleCurrent = {
+  status: "idle",
+  turnId: null,
+  connectionId: null,
+  restartRequired: false,
+  recoveryHead: null,
+};
+const runningCurrent = {
+  status: "running",
+  turnId: "a".repeat(32),
+  connectionId: "test",
+  restartRequired: false,
+  recoveryHead: null,
+};
+const recoveryCurrent = {
+  status: "recovery-required",
+  turnId: null,
+  connectionId: null,
+  restartRequired: true,
+  recoveryHead: "head",
+};
+assert.equal(production.decideGalateaStreamContinuation({
+  outcome: "protocol-invalid",
+  expectedTurnId: runningCurrent.turnId,
+  currentTurn: null,
+  reconciliationFailures: 0,
+}), "stop-protocol");
+assert.equal(production.decideGalateaStreamContinuation({
+  outcome: "transport-ended",
+  expectedTurnId: runningCurrent.turnId,
+  currentTurn: runningCurrent,
+  reconciliationFailures: 0,
+}), "reconnect");
+assert.equal(production.decideGalateaStreamContinuation({
+  outcome: "transport-ended",
+  expectedTurnId: runningCurrent.turnId,
+  currentTurn: null,
+  reconciliationFailures: 2,
+}), "retry-confirm");
+assert.equal(production.decideGalateaStreamContinuation({
+  outcome: "transport-ended",
+  expectedTurnId: runningCurrent.turnId,
+  currentTurn: null,
+  reconciliationFailures: 3,
+}), "stop-unconfirmed");
+assert.equal(production.decideGalateaStreamContinuation({
+  outcome: "transport-ended",
+  expectedTurnId: runningCurrent.turnId,
+  currentTurn: idleCurrent,
+  reconciliationFailures: 0,
+}), "refresh-stop");
+assert.equal(production.decideGalateaStreamContinuation({
+  outcome: "transport-ended",
+  expectedTurnId: runningCurrent.turnId,
+  currentTurn: recoveryCurrent,
+  reconciliationFailures: 0,
+}), "refresh-stop");
+assert.equal(production.decideGalateaStreamContinuation({
+  outcome: "terminal",
+  expectedTurnId: runningCurrent.turnId,
+  currentTurn: null,
+  reconciliationFailures: 0,
+}), "refresh-stop");
 assert.match(
   source,
   /typeof window !== "undefined" && typeof document !== "undefined"/,

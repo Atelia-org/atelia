@@ -795,6 +795,49 @@ public sealed class GalateaRecentRewindHostTests {
         );
     }
 
+    [Fact]
+    public async Task CompletedBoundary_CancelledRecentRefreshPublishesDoneNull() {
+        await using var host = CreateHost(
+            new QueueCompletionClient("unused")
+        );
+        (GalateaHostService service, UserSessionHost session) =
+            await GetSessionAsync(host);
+        _ = session.Engine.AppendObservation(
+            GalateaUserMessageEnvelope.Wrap("durable user")
+        );
+        _ = session.Engine.AppendImportedAgentAction(
+            new ActionMessage([new ActionBlock.Text("durable assistant")]),
+            new CompletionDescriptor(
+                "cancelled-refresh-fixture",
+                "fixture-v1",
+                "model-a"
+            )
+        );
+        using var stopping = new CancellationTokenSource();
+        stopping.Cancel();
+
+        RecentTurnsResponseDto? recent =
+            await service.RefreshRecentTurnsForCompletedStreamAsync(
+                session,
+                stopping.Token
+            );
+
+        Assert.Null(recent);
+        GalateaLiveTurn turn = new(
+            "already durable",
+            new GalateaTurnOptions("test")
+        );
+        turn.PublishDone(recent);
+        using GalateaTurnSubscription replay = turn.Subscribe();
+        GalateaSseFrame terminal = Assert.Single(replay.ReplayFrames);
+        Assert.Equal("done", terminal.EventName);
+        Assert.Contains(
+            "\"recent\":null",
+            Encoding.UTF8.GetString(terminal.Utf8.Span),
+            StringComparison.Ordinal
+        );
+    }
+
     private static GalateaTestHost CreateHost(
         ICompletionClient client,
         bool deleteFilesOnDispose = true
