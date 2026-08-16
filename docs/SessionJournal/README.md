@@ -17,6 +17,7 @@
 | Core API、raw wire、Prepared/Resume 与 crash recovery | [Beta contract snapshot](current/contracts/session-journal-beta-contract-snapshot.md)、[Core guide](../../prototypes/SessionJournal/README.md) | [Uncertain external effects contract](current/recovery/uncertain-external-effects.md) 与 current codec/recovery tests |
 | Timeline、partition、HistoryLoad 与 branch reconcile | [HistoryLoad](current/derived-recap/history-load.md)、[HistoryTimeline code](../../prototypes/SessionJournal.HistoryTimeline/)、[HistoryTimeline tests](../../tests/SessionJournal.HistoryTimeline.Tests/) | [Durable authority](current/derived-recap/durable-target.md) |
 | Grid Store、Control、Manager、Getter 与 Runtime | [Grid concepts](current/derived-recap/concepts.md)、[target design](work/active/derived-recap-grid-target-design.md) | owning product/tests；不要从旧slot推导current contract |
+| 收窄并冻结 current public API / wire-format | [Contract Freeze R2](work/active/session-journal-contract-freeze-r2.md) | 先完成 fresh inventory 与 candidate ledger；R2 plan lock 前不改 API/wire |
 | 审阅 post-cutover cadence、recent reserve、长期容量或 cyber 激活边界 | [Cadence/capacity audit](work/active/derived-recap-grid-cadence-capacity-and-activation-audit.md) | A0-A2已实现24k target reserve；C2/C5 activation完成，C4仍Open |
 | 实现 Galatea 自传/world-understanding rolling maintainers，或审阅未来 Editor/ExperienceRefiner 边界 | [C2 Galatea rolling maintainers](work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md) | shared Family、runtime-configurable model、operator asset assembly与验收矩阵 |
 | CLI operator 或 Galatea integration | [CLI guide](../../prototypes/SessionJournal.Cli/README.md)、[Galatea guide](../../prototypes/Galatea/README.md)、[Host integration](current/host-integration/derived-recap-host-integration.md) | current composition/code/tests |
@@ -36,6 +37,8 @@
   记录WP-00至WP-08的implementation/review evidence；WP-08负责正式caller cutover与旧owner删除。
   [C2 Galatea rolling maintainers](work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md)
   记录首个production recipe、runtime model policy、prompt/asset owner与未来refiner扩展边界。
+  [SessionJournal Contract Freeze R2](work/active/session-journal-contract-freeze-r2.md)
+  记录 current public support roles、wire fact ownership、候选 direct cut 与分阶段 freeze gates。
   精确事实仍以owning code/tests与`current/`文档为准。
 
 目录、标题、日期、`README.md` 或 `public` 均不自动授予 authority。
