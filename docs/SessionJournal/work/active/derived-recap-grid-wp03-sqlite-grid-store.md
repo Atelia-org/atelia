@@ -108,7 +108,7 @@ pathname冒充同时处理WAL/SHM或在失败后升级破坏力度。
 6. same fulfillment key same view idempotent；different view Invalid；
 7. bounded `SQLITE_BUSY`只重试local commit，不触发业务回调；
 8. canonical BLOB、locator、member ordinal/set、FK orphan、unknown schema、truncated/page/integrity统一Invalid；本实例随后拒绝writes；
-9. inspect/export/verify `Mode=ReadOnly`、no-create、code-owned 128-item/4MiB page与128-error bounds、默认隐藏Cell正文，provider factory零调用；V1不暴露`--limit/--max-errors`；
+9. inspect/export/verify `Mode=ReadOnly`、no-create、code-owned 128-item/2MiB page与128-error bounds、默认隐藏Cell正文，provider factory零调用；V1不暴露`--limit/--max-errors`；
 10. runtime SQLite version、schema与connection PRAGMAs可诊断；
 11. 三种commit原语各覆盖before BEGIN、after statements-before COMMIT、after COMMIT-before return；
 12. 大fixture分页/流式，`EXPLAIN QUERY PLAN`为SEARCH/index而非脆弱墙钟gate；
@@ -130,6 +130,9 @@ pathname冒充同时处理WAL/SHM或在失败后升级破坏力度。
 - reviewer确认Store不含Manager/Completion policy。
 
 ## Implementation record（final，2026-08-11）
+
+> 本节保留2026-08-11 candidate的历史数值；2026-08-16 `CF-D-04` 因outer JSON composed-size反例把
+> current export page cap从4 MiB hard-cut到2 MiB。上方current crash/concurrency matrix已按新cap更新。
 
 - 新增唯一production owner `SessionJournal.RecapGrid.Store`，direct project只引用Abstractions，direct pins为
   `Microsoft.Data.Sqlite 10.0.10`与`SQLitePCLRaw.bundle_e_sqlite3 2.1.12`；checked-in `SchemaV1.sql`、strict

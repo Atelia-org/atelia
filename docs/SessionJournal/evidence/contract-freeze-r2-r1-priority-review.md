@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 — R1 priority candidate review
 
-状态：Focused R1 review complete；R2 plan lock / implementation pending  
+状态：Focused R1 review complete；historical pre-implementation evidence  
 调查基线：`677e94c9d931cfabc8137a24bf5163b3b494331f`  
 调查日期：2026-08-16
 
@@ -36,6 +36,10 @@
 
 本文的 `Adopt` 是 R1 recommendation。只有 active plan 的 R2 preflight、blast radius、red/green gates 与
 rollback boundary 锁定后，才能进入 R3。
+
+> R2后续说明：这些priority candidates已经按更窄原子包实施并记录在
+> [R2 priority implementation evidence](contract-freeze-r2-r2-priority-implementation.md)。本文保留R1当时的
+> 调查判断；其中§5.3关于4 MiB export page一定低于16 MiB report的推论已被可执行反例推翻，不应继续引用。
 
 ## 3. CF-A-01 — output construction surface
 
@@ -244,9 +248,10 @@ current common printer在
 `status:"limit-exceeded"`、`detail:{limit:"RecapGridReportUtf8Bytes"}`、exit 2。cap计算serialized JSON bytes，
 不含 `WriteLine` newline，exact cap accepted，cap+1 fallback。
 
-Store export当前最多128 items / 4 MiB canonical bytes；Base64加metadata仍低于16 MiB，因此正常 page不会丢
-cursor。R2必须把“最大合法 CLI page < report cap”变成 executable relation gate；若未来失效，应降低Store page
-bound，不给通用printer添加cursor-aware special case。
+R1曾推断Store export最多128 items / 4 MiB canonical bytes时，Base64加metadata仍低于16 MiB。R2的
+executable relation gate证明该推论错误：默认JSON encoder对Base64 `+` 的escaping可把合法近4 MiB page放大到
+16 MiB以上。已按本节原有停止线把Store page bound hard-cut到2 MiB，而没有给通用printer添加cursor-aware
+special case；详见R2 implementation evidence。
 
 其他 gates：
 

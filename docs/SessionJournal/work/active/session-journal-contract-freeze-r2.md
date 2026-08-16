@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；R0 complete，focused R1 priority review complete，remaining R1 / R2 pending  
+状态：Active；priority R2/R3 code complete，R4 code gates passed；operator migration / remaining R1 pending  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -213,9 +213,9 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | R0 synthesis | Complete | [R0 current inventory](../../evidence/contract-freeze-r2-r0.md) |
 | R1 priority reviews | Complete | [CF-A-01 / CF-D-01 / CF-D-04 evidence](../../evidence/contract-freeze-r2-r1-priority-review.md) |
 | R1 remaining reviews | Pending | CF-D-02拆HTTP/SSE；CF-D-03；CF-C-01/02；不重开raw/durable字段删除 |
-| R2 plan lock | Pending | 不允许提前改 API/wire |
-| R3 implementation | Pending | 只实施 Adopt candidates |
-| R4 candidate gate | Pending | accepted change 产生新 candidate |
+| R2 priority plan lock | Complete | [priority implementation evidence](../../evidence/contract-freeze-r2-r2-priority-implementation.md)；仅批准CF-A-01 G/M/O、CF-D-01、CF-D-04 |
+| R3 priority implementation | Complete | 七个原子commits + test-only `87079eaa`；未增加compatibility/framework层 |
+| R4 priority code gates | Complete | solution + owner/PublicSurface/CLI/wire/nonfriend gates；CF-D-01 operator migration仍Pending |
 | R5 freeze closure | Pending | 分 tier 发布稳定性声明 |
 
 ## 9. R0 完成标准
@@ -232,13 +232,26 @@ R0 只有在以下条件同时满足时完成：
 
 ## 10. Focused R1 decision与复杂性门槛
 
-本轮三项优先review形成下列R2输入，但尚未修改production API/wire：
+本轮三项优先review已完成R2 plan lock与R3 bounded implementation：
 
-- `CF-A-01`：拆Manager/Getter/Online；Metrics Retain，完整result family封闭Defer；
-- `CF-D-01`：Completion-owned唯一数值`v:1` strict byte language，owner-local path guards；实施前盘点
-  ignored operator manifest shape与未完成Prepared，atomic迁移writer/readers/CLI/docs；
-- `CF-D-04`：只统一outer envelope与16 MiB cap，不抽typed result/DTO framework。
+- `CF-A-01`：Manager/Getter/Online已分别收窄；Metrics Retain，完整result family封闭因76 variants与合法
+  external implementer contract而升级为Reject-overreach；
+- `CF-D-01`：Completion-owned唯一数值`v:1` strict byte language已落地，owner-local path guards保留；
+  tracked writer/readers/CLI/docs已atomic cut，ignored operator manifest仍是明确deployment gate；
+- `CF-D-04`：outer envelope已统一；可执行反例要求Store page cap由4 MiB hard-cut到2 MiB，未抽typed
+  result/DTO framework。
 
 任何实施若开始需要新shared assembly、generic parser options、dual reader、compatibility hierarchy、
 跨owner result union或cursor-aware通用printer，应暂停并重新证明收益；这些结构会重新引入本计划要删除的
 第二truth或compatibility promise。
+
+## 11. Priority implementation后的路线调整
+
+- `CF-D-02` 下一步拆为HTTP core与SSE event两个独立language candidate；先锁explicit version、closed
+  event/error DTO与browser fixture，不做通用JSON framework。
+- `CF-D-03` root config继续独立，不把users/routes/secrets/runtime policy并入connections superset。
+- broad `CF-B` 排在HTTP/SSE之后；不为降低inventory count继续改写output-only result algebra。
+- `CF-C` 继续补companion wire goldens/classification；不重开已证明承担corruption/query/CAS职责的
+  head/digest/schema/index proof。
+- 所有outer wire bound新增composed encoded-byte relation gate；内层payload cap不能作为外层安全上限的证明。
+- CF-D-01实际operator migration完成前，code与旧manifest不得交叉运行；回滚必须code+manifest成对执行。
