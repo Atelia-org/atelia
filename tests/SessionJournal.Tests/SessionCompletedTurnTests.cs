@@ -3,6 +3,7 @@ using Atelia.Completion.Tools;
 using Atelia.EventJournal;
 using Atelia.Rbf;
 using Atelia.RbfSegmentStore;
+using System.Reflection;
 using Xunit;
 
 namespace Atelia.SessionJournal.Tests;
@@ -755,6 +756,29 @@ public sealed class SessionCompletedTurnTests : IDisposable {
     }
 
     [Fact]
+    public void BoundedResultContracts_DoNotExposeRecordSynthesis() {
+        Type[] resultTypes = [
+            typeof(SessionCompletedTurnsReadResult),
+            typeof(SessionCompletedTurnsReadResult.Snapshot),
+            typeof(SessionCompletedTurnsReadResult.LimitExceeded),
+            typeof(SessionCompletedTurnsReadResult.UnsupportedSchema),
+            typeof(SessionCompletedTurnsReadResult.Corruption),
+            typeof(SessionCompletedTurnRewindPrepareResult),
+            typeof(SessionCompletedTurnRewindPrepareResult.Prepared),
+            typeof(SessionCompletedTurnRewindPrepareResult.Unavailable),
+            typeof(SessionCompletedTurnRewindPrepareResult.Retryable),
+            typeof(SessionCompletedTurnRewindPrepareResult.LimitExceeded),
+            typeof(SessionCompletedTurnRewindPrepareResult.UnsupportedSchema),
+            typeof(SessionCompletedTurnRewindPrepareResult.Corruption)
+        ];
+
+        Assert.Equal(12, resultTypes.Length);
+        foreach (Type resultType in resultTypes) {
+            AssertPlainClassShape(resultType);
+        }
+    }
+
+    [Fact]
     public void PreparedRewind_DoesNotMoveBeforeCommitAndCasIsReplaySafe() {
         string path = NewPath();
         using var engine = Create(path);
@@ -1080,6 +1104,41 @@ public sealed class SessionCompletedTurnTests : IDisposable {
     ) => Assert.IsType<SessionCompletedTurnsReadResult.Snapshot>(
         result
     ).Value;
+
+    private static void AssertPlainClassShape(Type type) {
+        const BindingFlags DeclaredMembers =
+            BindingFlags.DeclaredOnly
+            | BindingFlags.Instance
+            | BindingFlags.Static
+            | BindingFlags.Public
+            | BindingFlags.NonPublic;
+
+        Assert.True(type.IsClass);
+        Assert.Null(type.GetMethod("<Clone>$", DeclaredMembers));
+        Assert.Null(type.GetProperty("EqualityContract", DeclaredMembers));
+        Assert.DoesNotContain(
+            type.GetMethods(DeclaredMembers),
+            static method => method.Name is
+                "op_Equality"
+                or "op_Inequality"
+                or nameof(object.Equals)
+                or nameof(object.GetHashCode)
+                or nameof(object.ToString)
+        );
+        Assert.DoesNotContain(
+            type.GetConstructors(DeclaredMembers),
+            constructor => {
+                ParameterInfo[] parameters = constructor.GetParameters();
+                return parameters.Length == 1
+                    && parameters[0].ParameterType == type
+                    && (
+                        constructor.IsFamily
+                        || constructor.IsFamilyOrAssembly
+                        || constructor.IsFamilyAndAssembly
+                    );
+            }
+        );
+    }
 
     private static SessionJournalEngine Create(string path) =>
         SessionJournalEngine.Create(path, Options);

@@ -36,31 +36,31 @@ public enum SessionCompletedTurnsLimit {
 /// Closed outcome of the bounded completed-turn projection. Constructors are SessionJournal-owned;
 /// callers can inspect durable evidence without constructing counterfeit outcomes.
 /// </summary>
-public abstract record SessionCompletedTurnsReadResult {
+public abstract class SessionCompletedTurnsReadResult {
     private SessionCompletedTurnsReadResult() { }
 
-    public sealed record Snapshot : SessionCompletedTurnsReadResult {
+    public sealed class Snapshot : SessionCompletedTurnsReadResult {
         internal Snapshot(SessionCompletedTurnsSnapshot value) {
             Value = value;
         }
         public SessionCompletedTurnsSnapshot Value { get; }
     }
 
-    public sealed record LimitExceeded : SessionCompletedTurnsReadResult {
+    public sealed class LimitExceeded : SessionCompletedTurnsReadResult {
         internal LimitExceeded(SessionCompletedTurnsLimit limit) {
             Limit = limit;
         }
         public SessionCompletedTurnsLimit Limit { get; }
     }
 
-    public sealed record UnsupportedSchema : SessionCompletedTurnsReadResult {
+    public sealed class UnsupportedSchema : SessionCompletedTurnsReadResult {
         internal UnsupportedSchema(string detail) {
             Detail = detail;
         }
         public string Detail { get; }
     }
 
-    public sealed record Corruption : SessionCompletedTurnsReadResult {
+    public sealed class Corruption : SessionCompletedTurnsReadResult {
         internal Corruption(string detail) {
             Detail = detail;
         }
@@ -97,24 +97,24 @@ public sealed class SessionPreparedCompletedTurnRewind {
     public string ObservationContent => Turn.ObservationContent;
 }
 
-public abstract record SessionCompletedTurnRewindPrepareResult {
+public abstract class SessionCompletedTurnRewindPrepareResult {
     private SessionCompletedTurnRewindPrepareResult() { }
 
-    public sealed record Prepared : SessionCompletedTurnRewindPrepareResult {
+    public sealed class Prepared : SessionCompletedTurnRewindPrepareResult {
         internal Prepared(SessionPreparedCompletedTurnRewind value) {
             Value = value;
         }
         public SessionPreparedCompletedTurnRewind Value { get; }
     }
 
-    public sealed record Unavailable : SessionCompletedTurnRewindPrepareResult {
+    public sealed class Unavailable : SessionCompletedTurnRewindPrepareResult {
         internal Unavailable(SessionExecutionBoundaryInspection boundary) {
             Boundary = boundary;
         }
         public SessionExecutionBoundaryInspection Boundary { get; }
     }
 
-    public sealed record Retryable : SessionCompletedTurnRewindPrepareResult {
+    public sealed class Retryable : SessionCompletedTurnRewindPrepareResult {
         internal Retryable(
             EventAddress expectedHead,
             EventAddress? observedHead
@@ -126,21 +126,21 @@ public abstract record SessionCompletedTurnRewindPrepareResult {
         public EventAddress? ObservedHead { get; }
     }
 
-    public sealed record LimitExceeded : SessionCompletedTurnRewindPrepareResult {
+    public sealed class LimitExceeded : SessionCompletedTurnRewindPrepareResult {
         internal LimitExceeded(SessionCompletedTurnsLimit limit) {
             Limit = limit;
         }
         public SessionCompletedTurnsLimit Limit { get; }
     }
 
-    public sealed record UnsupportedSchema : SessionCompletedTurnRewindPrepareResult {
+    public sealed class UnsupportedSchema : SessionCompletedTurnRewindPrepareResult {
         internal UnsupportedSchema(string detail) {
             Detail = detail;
         }
         public string Detail { get; }
     }
 
-    public sealed record Corruption : SessionCompletedTurnRewindPrepareResult {
+    public sealed class Corruption : SessionCompletedTurnRewindPrepareResult {
         internal Corruption(string detail) {
             Detail = detail;
         }
