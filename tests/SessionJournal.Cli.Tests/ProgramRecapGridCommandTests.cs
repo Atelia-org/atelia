@@ -8,6 +8,7 @@ using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
+using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Runtime;
 using Atelia.SessionJournal.RecapGrid.Store;
@@ -24,6 +25,67 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         "atelia-recap-grid-cli-tests",
         Guid.NewGuid().ToString("N")
     );
+
+    [Fact]
+    public void MaterializeEvidenceReportsKeepExactJsonPropertyOrder() {
+        object provenance = InvokeInternalArgumentConstructor(
+            typeof(RecapGridContextProvenance),
+            RecapGridProvenanceStatus.Verified,
+            RecapGridProvenanceStatus.NotSatisfied,
+            RecapGridProvenanceStatus.Incomplete,
+            1,
+            2,
+            3
+        );
+        (int provenanceCode, string provenanceJson) = CapturePrint(
+            "materialize",
+            "available",
+            provenance
+        );
+        Assert.Equal(0, provenanceCode);
+        Assert.Equal(
+            "{\"schema\":\"atelia.session-journal.recap-grid-cli.v1\","
+                + "\"command\":\"materialize\",\"status\":\"available\","
+                + "\"detail\":{\"MembershipComplete\":0,"
+                + "\"PriorInputAligned\":1,\"FullRebuildChain\":2,"
+                + "\"ExaminedRows\":1,\"ExaminedCells\":2,"
+                + "\"ExaminedCanonicalUtf8Bytes\":3}}",
+            provenanceJson
+        );
+
+        object bootstrap = InvokeInternalArgumentConstructor(
+            typeof(RecapGridReserveBootstrapEvidence),
+            null,
+            null,
+            null,
+            null,
+            new HistoryLoadUnit(1),
+            new HistoryLoadUnit(2),
+            3L,
+            new HistoryRecentReserveAnchorMetrics(4, 5, 6, 7)
+        );
+        (int bootstrapCode, string bootstrapJson) = CapturePrint(
+            "materialize",
+            "reserve-bootstrap-raw-only",
+            bootstrap
+        );
+        Assert.Equal(0, bootstrapCode);
+        Assert.Equal(
+            "{\"schema\":\"atelia.session-journal.recap-grid-cli.v1\","
+                + "\"command\":\"materialize\","
+                + "\"status\":\"reserve-bootstrap-raw-only\","
+                + "\"detail\":{\"TimelineHead\":null,"
+                + "\"CadenceHead\":null,\"ControlHead\":null,"
+                + "\"StoreIdentity\":null,"
+                + "\"RetainedHistoryLoad\":{\"Value\":1},"
+                + "\"RequiredHistoryLoad\":{\"Value\":2},"
+                + "\"VerifiedRows\":3,\"Metrics\":{"
+                + "\"ExaminedTimelineRows\":4,\"ExaminedRawEvents\":5,"
+                + "\"ExaminedHistoryUnits\":6,"
+                + "\"ExaminedRenderedUtf8Bytes\":7}}}",
+            bootstrapJson
+        );
+    }
 
     [Fact]
     public void CadenceInspectAndSetReserveAreProviderFreeExactCas() {
@@ -2493,6 +2555,50 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         finally {
             Console.SetOut(original);
             Console.SetError(originalError);
+        }
+    }
+
+    private static object InvokeInternalArgumentConstructor(
+        Type type,
+        params object?[] arguments
+    ) {
+        System.Reflection.ConstructorInfo constructor = Assert.Single(
+            type.GetConstructors(
+                System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.NonPublic
+            ),
+            candidate => {
+                System.Reflection.ParameterInfo[] parameters = candidate
+                    .GetParameters();
+                return candidate.IsAssembly
+                    && parameters.Length == arguments.Length
+                    && parameters.Zip(arguments).All(static pair =>
+                        pair.Second is null
+                            ? !pair.First.ParameterType.IsValueType
+                            : pair.First.ParameterType.IsInstanceOfType(
+                                pair.Second
+                            )
+                    );
+            }
+        );
+        return constructor.Invoke(arguments);
+    }
+
+    private static (int ExitCode, string Json) CapturePrint(
+        string command,
+        string status,
+        object detail
+    ) {
+        TextWriter original = Console.Out;
+        using var output = new StringWriter();
+        try {
+            Console.SetOut(output);
+            int exitCode = RecapGridCommands.Print(command, status, detail);
+            string json = output.ToString().TrimEnd('\r', '\n');
+            return (exitCode, json);
+        }
+        finally {
+            Console.SetOut(original);
         }
     }
 

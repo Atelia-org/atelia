@@ -122,6 +122,90 @@ public sealed class GetterPublicSurfaceTests : IDisposable {
         ));
     }
 
+    [Fact]
+    public void EvidenceRecordsArePublicReadOnlyAndNotPubliclyConstructible() {
+        AssertEvidenceRecordShape(
+            typeof(RecapGridContextProvenance),
+            [
+                ("MembershipComplete", typeof(RecapGridProvenanceStatus)),
+                ("PriorInputAligned", typeof(RecapGridProvenanceStatus)),
+                ("FullRebuildChain", typeof(RecapGridProvenanceStatus)),
+                ("ExaminedRows", typeof(int)),
+                ("ExaminedCells", typeof(int)),
+                ("ExaminedCanonicalUtf8Bytes", typeof(int))
+            ]
+        );
+        AssertEvidenceRecordShape(
+            typeof(RecapGridReserveBootstrapEvidence),
+            [
+                ("TimelineHead", typeof(TimelineHeadRef)),
+                ("CadenceHead", typeof(RecapGridCadenceHeadRef)),
+                ("ControlHead", typeof(ControlHeadRef)),
+                ("StoreIdentity", typeof(
+                    Atelia.SessionJournal.RecapGrid.Store
+                        .RecapGridStoreIdentity)),
+                ("RetainedHistoryLoad", typeof(HistoryLoadUnit)),
+                ("RequiredHistoryLoad", typeof(HistoryLoadUnit)),
+                ("VerifiedRows", typeof(long)),
+                ("Metrics", typeof(HistoryRecentReserveAnchorMetrics))
+            ]
+        );
+    }
+
+    private static void AssertEvidenceRecordShape(
+        Type type,
+        (string Name, Type Type)[] expectedProperties
+    ) {
+        const System.Reflection.BindingFlags PublicDeclaredInstance =
+            System.Reflection.BindingFlags.Public
+            | System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.DeclaredOnly;
+        const System.Reflection.BindingFlags NonPublicInstance =
+            System.Reflection.BindingFlags.NonPublic
+            | System.Reflection.BindingFlags.Instance;
+
+        Assert.True(type.IsPublic);
+        Assert.True(type.IsSealed);
+        Assert.DoesNotContain(
+            type.GetConstructors(PublicDeclaredInstance),
+            static constructor => constructor.GetParameters().Length > 0
+        );
+        Assert.DoesNotContain(
+            type.GetMethods(PublicDeclaredInstance),
+            static method => method.Name == "Deconstruct"
+        );
+
+        System.Reflection.PropertyInfo[] properties = type.GetProperties(
+            PublicDeclaredInstance
+        );
+        Assert.Equal(
+            expectedProperties.Select(static property => property.Name),
+            properties.Select(static property => property.Name)
+        );
+        Assert.Equal(
+            expectedProperties.Select(static property => property.Type),
+            properties.Select(static property => property.PropertyType)
+        );
+        Assert.All(properties, static property => {
+            Assert.NotNull(property.GetMethod);
+            Assert.True(property.GetMethod!.IsPublic);
+            Assert.Null(property.SetMethod);
+        });
+
+        Type[] argumentTypes = expectedProperties
+            .Select(static property => property.Type)
+            .ToArray();
+        System.Reflection.ConstructorInfo? argumentConstructor = type
+            .GetConstructor(
+                NonPublicInstance,
+                binder: null,
+                argumentTypes,
+                modifiers: null
+            );
+        Assert.NotNull(argumentConstructor);
+        Assert.True(argumentConstructor!.IsAssembly);
+    }
+
     public void Dispose() {
         if (Directory.Exists(_path)) {
             Directory.Delete(_path, recursive: true);

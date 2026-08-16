@@ -28,14 +28,30 @@ public enum RecapGridProvenanceStatus {
     Incomplete
 }
 
-public sealed record RecapGridContextProvenance(
-    RecapGridProvenanceStatus MembershipComplete,
-    RecapGridProvenanceStatus PriorInputAligned,
-    RecapGridProvenanceStatus FullRebuildChain,
-    int ExaminedRows,
-    int ExaminedCells,
-    int ExaminedCanonicalUtf8Bytes
-);
+public sealed record RecapGridContextProvenance {
+    internal RecapGridContextProvenance(
+        RecapGridProvenanceStatus membershipComplete,
+        RecapGridProvenanceStatus priorInputAligned,
+        RecapGridProvenanceStatus fullRebuildChain,
+        int examinedRows,
+        int examinedCells,
+        int examinedCanonicalUtf8Bytes
+    ) {
+        MembershipComplete = membershipComplete;
+        PriorInputAligned = priorInputAligned;
+        FullRebuildChain = fullRebuildChain;
+        ExaminedRows = examinedRows;
+        ExaminedCells = examinedCells;
+        ExaminedCanonicalUtf8Bytes = examinedCanonicalUtf8Bytes;
+    }
+
+    public RecapGridProvenanceStatus MembershipComplete { get; }
+    public RecapGridProvenanceStatus PriorInputAligned { get; }
+    public RecapGridProvenanceStatus FullRebuildChain { get; }
+    public int ExaminedRows { get; }
+    public int ExaminedCells { get; }
+    public int ExaminedCanonicalUtf8Bytes { get; }
+}
 
 public abstract record RecapGridContextOpenResult {
     private RecapGridContextOpenResult() { }
@@ -181,16 +197,36 @@ public abstract record RecapGridContextResolveResult {
     ) : RecapGridContextResolveResult;
 }
 
-public sealed record RecapGridReserveBootstrapEvidence(
-    TimelineHeadRef TimelineHead,
-    RecapGridCadenceHeadRef CadenceHead,
-    ControlHeadRef ControlHead,
-    RecapGridStoreIdentity StoreIdentity,
-    HistoryLoadUnit RetainedHistoryLoad,
-    HistoryLoadUnit RequiredHistoryLoad,
-    long VerifiedRows,
-    HistoryRecentReserveAnchorMetrics Metrics
-);
+public sealed record RecapGridReserveBootstrapEvidence {
+    internal RecapGridReserveBootstrapEvidence(
+        TimelineHeadRef timelineHead,
+        RecapGridCadenceHeadRef cadenceHead,
+        ControlHeadRef controlHead,
+        RecapGridStoreIdentity storeIdentity,
+        HistoryLoadUnit retainedHistoryLoad,
+        HistoryLoadUnit requiredHistoryLoad,
+        long verifiedRows,
+        HistoryRecentReserveAnchorMetrics metrics
+    ) {
+        TimelineHead = timelineHead;
+        CadenceHead = cadenceHead;
+        ControlHead = controlHead;
+        StoreIdentity = storeIdentity;
+        RetainedHistoryLoad = retainedHistoryLoad;
+        RequiredHistoryLoad = requiredHistoryLoad;
+        VerifiedRows = verifiedRows;
+        Metrics = metrics;
+    }
+
+    public TimelineHeadRef TimelineHead { get; }
+    public RecapGridCadenceHeadRef CadenceHead { get; }
+    public ControlHeadRef ControlHead { get; }
+    public RecapGridStoreIdentity StoreIdentity { get; }
+    public HistoryLoadUnit RetainedHistoryLoad { get; }
+    public HistoryLoadUnit RequiredHistoryLoad { get; }
+    public long VerifiedRows { get; }
+    public HistoryRecentReserveAnchorMetrics Metrics { get; }
+}
 
 public abstract record RecapGridContextMaterializeResult {
     private RecapGridContextMaterializeResult() { }
