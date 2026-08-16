@@ -1215,15 +1215,15 @@ public sealed class RecapGridOnlineContextHandle :
                 "Online maintenance exceeded its one-row operation bound.");
         }
         return new RecapGridOnlineMaintenanceEvidence(
-            1,
+            passes: 1,
             entryDebt,
             timelineRowsCommitted,
-            attemptedRecipeRow,
+            lastAttemptedRecipeRow: attemptedRecipeRow,
             lastAttemptedAuthority,
-            metrics.RecipeRowSteps,
-            metrics.RowViewsCommitted,
-            metrics.CellsCommitted,
-            metrics.NewCalls,
+            recipeRowSteps: metrics.RecipeRowSteps,
+            rowViewsCommitted: metrics.RowViewsCommitted,
+            cellsCommitted: metrics.CellsCommitted,
+            newCalls: metrics.NewCalls,
             nextRecipeRow,
             nextAuthority,
             continuationKind);
@@ -1232,18 +1232,18 @@ public sealed class RecapGridOnlineContextHandle :
     private static RecapGridOnlineMaintenanceEvidence EmptyEvidence(
         RecapGridOnlineContinuationKind kind
     ) => new(
-        Passes: 0,
-        EntryDebt: false,
-        TimelineRowsCommitted: 0,
-        LastAttemptedRecipeRow: null,
-        LastAttemptedAuthority: null,
-        RecipeRowSteps: 0,
-        RowViewsCommitted: 0,
-        CellsCommitted: 0,
-        NewCalls: 0,
-        NextRecipeRow: null,
-        NextAuthority: null,
-        ContinuationKind: kind);
+        passes: 0,
+        entryDebt: false,
+        timelineRowsCommitted: 0,
+        lastAttemptedRecipeRow: null,
+        lastAttemptedAuthority: null,
+        recipeRowSteps: 0,
+        rowViewsCommitted: 0,
+        cellsCommitted: 0,
+        newCalls: 0,
+        nextRecipeRow: null,
+        nextAuthority: null,
+        continuationKind: kind);
 
     private static RecapGridOnlineMaintenanceEvidence? ExtractEvidence(
         RecapGridOnlinePassResult result
@@ -1265,25 +1265,25 @@ public sealed class RecapGridOnlineContextHandle :
         RecapGridOnlineMaintenanceEvidence cumulative,
         RecapGridOnlineMaintenanceEvidence pass
     ) => new(
-        Passes: checked(cumulative.Passes + Math.Max(1, pass.Passes)),
-        EntryDebt: cumulative.EntryDebt || pass.EntryDebt,
-        TimelineRowsCommitted: checked(
+        passes: checked(cumulative.Passes + Math.Max(1, pass.Passes)),
+        entryDebt: cumulative.EntryDebt || pass.EntryDebt,
+        timelineRowsCommitted: checked(
             cumulative.TimelineRowsCommitted
                 + pass.TimelineRowsCommitted),
-        LastAttemptedRecipeRow: pass.LastAttemptedRecipeRow
+        lastAttemptedRecipeRow: pass.LastAttemptedRecipeRow
             ?? cumulative.LastAttemptedRecipeRow,
-        LastAttemptedAuthority: pass.LastAttemptedAuthority
+        lastAttemptedAuthority: pass.LastAttemptedAuthority
             ?? cumulative.LastAttemptedAuthority,
-        RecipeRowSteps: checked(
+        recipeRowSteps: checked(
             cumulative.RecipeRowSteps + pass.RecipeRowSteps),
-        RowViewsCommitted: checked(
+        rowViewsCommitted: checked(
             cumulative.RowViewsCommitted + pass.RowViewsCommitted),
-        CellsCommitted: checked(
+        cellsCommitted: checked(
             cumulative.CellsCommitted + pass.CellsCommitted),
-        NewCalls: checked(cumulative.NewCalls + pass.NewCalls),
-        NextRecipeRow: pass.NextRecipeRow,
-        NextAuthority: pass.NextAuthority,
-        ContinuationKind: pass.ContinuationKind);
+        newCalls: checked(cumulative.NewCalls + pass.NewCalls),
+        nextRecipeRow: pass.NextRecipeRow,
+        nextAuthority: pass.NextAuthority,
+        continuationKind: pass.ContinuationKind);
 
     private static RecapGridOnlinePassResult WithCatchUpEvidence(
         RecapGridOnlinePassResult result,

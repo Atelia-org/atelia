@@ -107,20 +107,54 @@ public abstract record RecapGridOnlinePassResult {
     ) : RecapGridOnlinePassResult;
 }
 
-public sealed record RecapGridOnlineMaintenanceEvidence(
-    int Passes,
-    bool EntryDebt,
-    int TimelineRowsCommitted,
-    RecapGridRecipeRowCoordinate? LastAttemptedRecipeRow,
-    RecapGridBuildProgressAuthority? LastAttemptedAuthority,
-    int RecipeRowSteps,
-    int RowViewsCommitted,
-    int CellsCommitted,
-    int NewCalls,
-    RecapGridRecipeRowCoordinate? NextRecipeRow,
-    RecapGridBuildProgressAuthority? NextAuthority,
-    RecapGridOnlineContinuationKind ContinuationKind
-);
+public sealed record RecapGridOnlineMaintenanceEvidence {
+    internal RecapGridOnlineMaintenanceEvidence(
+        int passes,
+        bool entryDebt,
+        int timelineRowsCommitted,
+        RecapGridRecipeRowCoordinate? lastAttemptedRecipeRow,
+        RecapGridBuildProgressAuthority? lastAttemptedAuthority,
+        int recipeRowSteps,
+        int rowViewsCommitted,
+        int cellsCommitted,
+        int newCalls,
+        RecapGridRecipeRowCoordinate? nextRecipeRow,
+        RecapGridBuildProgressAuthority? nextAuthority,
+        RecapGridOnlineContinuationKind continuationKind
+    ) {
+        Passes = passes;
+        EntryDebt = entryDebt;
+        TimelineRowsCommitted = timelineRowsCommitted;
+        LastAttemptedRecipeRow = lastAttemptedRecipeRow;
+        LastAttemptedAuthority = lastAttemptedAuthority;
+        RecipeRowSteps = recipeRowSteps;
+        RowViewsCommitted = rowViewsCommitted;
+        CellsCommitted = cellsCommitted;
+        NewCalls = newCalls;
+        NextRecipeRow = nextRecipeRow;
+        NextAuthority = nextAuthority;
+        ContinuationKind = continuationKind;
+    }
+
+    public int Passes { get; }
+    public bool EntryDebt { get; }
+    public int TimelineRowsCommitted { get; }
+    public RecapGridRecipeRowCoordinate? LastAttemptedRecipeRow { get; }
+    public RecapGridBuildProgressAuthority? LastAttemptedAuthority { get; }
+    public int RecipeRowSteps { get; }
+    public int RowViewsCommitted { get; }
+    public int CellsCommitted { get; }
+    public int NewCalls { get; }
+    public RecapGridRecipeRowCoordinate? NextRecipeRow { get; internal init; }
+    public RecapGridBuildProgressAuthority? NextAuthority {
+        get;
+        internal init;
+    }
+    public RecapGridOnlineContinuationKind ContinuationKind {
+        get;
+        internal init;
+    }
+}
 
 public sealed record RecapGridRecipeRowCoordinate(
     HistoryRowId RowId,
