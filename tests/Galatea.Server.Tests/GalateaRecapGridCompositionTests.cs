@@ -988,7 +988,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/chat/turns/resume",
+            "/api/v1/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(recoveryHead),
                 connection.Id

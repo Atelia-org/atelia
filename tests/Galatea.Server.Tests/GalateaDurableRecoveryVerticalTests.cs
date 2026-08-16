@@ -29,7 +29,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await LoginAsync(client);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/chat/turns",
+            "/api/v1/chat/turns",
             new ChatStreamRequest(
                 "must not be accepted",
                 ConnectionId: "test"
@@ -43,12 +43,11 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             body.RootElement.GetProperty("code").GetString()
         );
         Assert.Equal(
-            nameof(SessionExecutionPhase.AwaitingAgentAction),
-            body.RootElement.GetProperty("phase").GetString()
-        );
-        Assert.Equal(
-            EventAddressTextCodec.Format(pendingHead),
-            body.RootElement.GetProperty("head").GetString()
+            ["code", "error"],
+            body.RootElement.EnumerateObject()
+                .Select(static property => property.Name)
+                .Order()
+                .ToArray()
         );
         Assert.Equal(0, normalizer.NormalizeCallCount);
         Assert.Equal(0, completionFactory.CreateCallCount);
@@ -88,20 +87,16 @@ public sealed class GalateaDurableRecoveryVerticalTests {
 
         CurrentTurnDto? before = await client.GetFromJsonAsync<
             CurrentTurnDto
-        >("/api/chat/turns/current");
+        >("/api/v1/chat/turns/current");
         Assert.NotNull(before);
         Assert.Equal("idle", before!.Status);
-        Assert.Equal(
-            nameof(SessionExecutionPhase.TurnFailed),
-            before.DurablePhase
-        );
-        Assert.Equal(
-            EventAddressTextCodec.Format(failedHead),
-            before.RecoveryHead
-        );
+        Assert.Null(before.TurnId);
+        Assert.Null(before.ConnectionId);
+        Assert.False(before.RestartRequired);
+        Assert.Null(before.RecoveryHead);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/chat/turns",
+            "/api/v1/chat/turns",
             new ChatStreamRequest(
                 "continue after failure",
                 ConnectionId: "test"
@@ -160,7 +155,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await LoginAsync(client);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/chat/turns/resume",
+            "/api/v1/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(failedHead),
                 ConnectionId: null,
@@ -175,8 +170,11 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             body.RootElement.GetProperty("code").GetString()
         );
         Assert.Equal(
-            nameof(SessionExecutionPhase.TurnFailed),
-            body.RootElement.GetProperty("phase").GetString()
+            ["code", "error"],
+            body.RootElement.EnumerateObject()
+                .Select(static property => property.Name)
+                .Order()
+                .ToArray()
         );
         Assert.Equal(0, normalizer.NormalizeCallCount);
         Assert.Equal(0, completionFactory.CreateCallCount);
@@ -322,7 +320,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await LoginAsync(client);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/chat/turns/resume",
+            "/api/v1/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(startedHead),
                 ConnectionId: null,
@@ -337,8 +335,11 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             body.RootElement.GetProperty("code").GetString()
         );
         Assert.Equal(
-            nameof(SessionExecutionPhase.AwaitingCompletion),
-            body.RootElement.GetProperty("phase").GetString()
+            ["code", "error"],
+            body.RootElement.EnumerateObject()
+                .Select(static property => property.Name)
+                .Order()
+                .ToArray()
         );
         Assert.Equal(0, normalizer.NormalizeCallCount);
         Assert.Equal(0, completionFactory.CreateCallCount);
@@ -353,7 +354,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.Equal(startedHead, session.Engine.ReadCurrentHead());
         CurrentTurnDto? current = await client
             .GetFromJsonAsync<CurrentTurnDto>(
-                "/api/chat/turns/current"
+                "/api/v1/chat/turns/current"
             );
         Assert.NotNull(current);
         Assert.Equal("recovery-required", current!.Status);
@@ -387,7 +388,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         await LoginAsync(client);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/chat/turns/resume",
+            "/api/v1/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(startedHead),
                 ConnectionId: null,
@@ -566,7 +567,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         string? connectionId
     ) {
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/chat/turns/resume",
+            "/api/v1/chat/turns/resume",
             new ResumeTurnRequest(
                 EventAddressTextCodec.Format(expectedHead),
                 connectionId

@@ -105,11 +105,11 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         await normalizer.Entered.Task.WaitAsync(CompletionDeadline);
 
         using HttpResponseMessage stop = await client.PostAsync(
-                $"/api/chat/turns/{started.TurnId}/stop",
+                $"/api/v1/chat/turns/{started.TurnId}/stop",
                 content: null
             )
             .WaitAsync(CompletionDeadline);
-        Assert.Equal(HttpStatusCode.OK, stop.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, stop.StatusCode);
 
         await normalizer.CancellationObserved.Task
             .WaitAsync(CompletionDeadline);
@@ -155,7 +155,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         string message
     ) {
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/chat/turns",
+            "/api/v1/chat/turns",
             new ChatStreamRequest(message, ConnectionId: "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -168,7 +168,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         GetRecentTurnsAsync(HttpClient client) {
         RecentTurnsResponseDto? response = await client
             .GetFromJsonAsync<RecentTurnsResponseDto>(
-                "/api/recent-turns"
+                "/api/v1/recent-turns"
             );
         return Assert.IsType<RecentTurnsResponseDto>(response);
     }
@@ -178,7 +178,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
     ) {
         CurrentTurnDto? response = await client
             .GetFromJsonAsync<CurrentTurnDto>(
-                "/api/chat/turns/current"
+                "/api/v1/chat/turns/current"
             );
         return Assert.IsType<CurrentTurnDto>(response);
     }

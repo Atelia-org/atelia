@@ -29,6 +29,7 @@ internal sealed class GalateaInputPreprocessor {
             ?? throw new InvalidOperationException(
                 "Input preprocessing requires a fresh user message."
             );
+        RequireMessageFits(original, "original");
         bool shouldNormalize;
         try {
             shouldNormalize = _normalizer.ShouldNormalize(original);
@@ -63,6 +64,7 @@ internal sealed class GalateaInputPreprocessor {
             if (string.IsNullOrWhiteSpace(effective)) {
                 effective = original;
             }
+            RequireMessageFits(effective, "normalized");
             bool changed = !string.Equals(
                 original,
                 effective,
@@ -83,6 +85,9 @@ internal sealed class GalateaInputPreprocessor {
         catch (OperationCanceledException) when (
             cancellationToken.IsCancellationRequested
         ) {
+            throw;
+        }
+        catch (GalateaTurnException) {
             throw;
         }
         catch (Exception exception) {
@@ -112,6 +117,16 @@ internal sealed class GalateaInputPreprocessor {
         + $"turnId={liveTurn.TurnId}, input={Preview(original)}, "
         + $"error={exception.Message}"
     );
+
+    private static void RequireMessageFits(string message, string source) {
+        string? error = GalateaHttpV1.ValidateMessage(message);
+        if (error is not null) {
+            throw new GalateaTurnException(
+                $"The {source} user message is invalid: {error}",
+                "input-limit-exceeded"
+            );
+        }
+    }
 
     private static string Preview(string? text) {
         if (string.IsNullOrWhiteSpace(text)) {

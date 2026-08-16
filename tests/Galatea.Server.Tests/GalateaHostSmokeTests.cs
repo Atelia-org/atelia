@@ -50,7 +50,7 @@ public sealed class GalateaHostSmokeTests {
         );
 
         RecentTurnsResponseDto? recent = await client
-            .GetFromJsonAsync<RecentTurnsResponseDto>("/api/recent-turns");
+            .GetFromJsonAsync<RecentTurnsResponseDto>("/api/v1/recent-turns");
         Assert.NotNull(recent);
         Assert.Empty(recent!.Turns);
         RecapGridReadinessSnapshotDto recap = Assert.IsType<
@@ -111,7 +111,7 @@ public sealed class GalateaHostSmokeTests {
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
 
         using HttpResponseMessage response = await client.GetAsync(
-            "/api/recent-turns"
+            "/api/v1/recent-turns"
         );
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         RecentTurnsResponseDto? recent = await response.Content

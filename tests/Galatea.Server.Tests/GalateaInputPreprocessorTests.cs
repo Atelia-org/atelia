@@ -124,6 +124,30 @@ public sealed class GalateaInputPreprocessorTests {
     }
 
     [Fact]
+    public async Task ProcessAsync_NormalizedMessageOver64KiBDoesNotFallback() {
+        var normalizer = new StubNormalizer {
+            NormalizeHandler = static (_, _) => ValueTask.FromResult(
+                new string(
+                    'x',
+                    GalateaHttpV1.MaximumMessageUtf8Bytes + 1
+                )
+            )
+        };
+        GalateaLiveTurn turn = Turn("original");
+        var preprocessor = new GalateaInputPreprocessor(normalizer);
+
+        GalateaTurnException exception = await Assert.ThrowsAsync<
+            GalateaTurnException
+        >(() => preprocessor.ProcessAsync(
+            turn,
+            CancellationToken.None
+        ).AsTask());
+
+        Assert.Equal("input-limit-exceeded", exception.FailureReason);
+        AssertSsePhases(Replay(turn), "input-normalization-start");
+    }
+
+    [Fact]
     public async Task ProcessAsync_ShouldNormalizeExceptionFallsBackWithoutSse() {
         var normalizer = new StubNormalizer {
             ShouldNormalizeHandler = static _ => throw new(

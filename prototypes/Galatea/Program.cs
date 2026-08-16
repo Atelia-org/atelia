@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Diagnostics;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -26,6 +27,12 @@ builder.Services.AddSingleton(config);
 builder.Services.AddSingleton<ICompletionClientFactory, DefaultCompletionClientFactory>();
 builder.Services.AddSingleton<IGalateaUserMessageNormalizer>(_ => GalateaUserMessageNormalizerFactory.CreateFromEnvironment());
 builder.Services.AddSingleton<GalateaHostService>();
+builder.Services.ConfigureHttpJsonOptions(
+    options => GalateaHttpV1.ConfigureJson(options.SerializerOptions)
+);
+builder.Services.Configure<RouteHandlerOptions>(
+    options => options.ThrowOnBadRequest = true
+);
 builder.Services.AddAuthentication(CookieScheme)
     .AddCookie(
     CookieScheme,
@@ -35,14 +42,19 @@ builder.Services.AddAuthentication(CookieScheme)
         options.Cookie.SameSite = SameSiteMode.Lax;
         options.ExpireTimeSpan = TimeSpan.FromDays(30);
         options.LoginPath = "/login";
-        options.Events.OnRedirectToLogin = context => {
+        options.Events.OnRedirectToLogin = async context => {
             if (context.Request.Path.StartsWithSegments("/api", StringComparison.Ordinal)) {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                return Task.CompletedTask;
+                await context.Response.WriteAsJsonAsync(
+                    new ApiErrorDto(
+                        "authentication-required",
+                        "Authentication is required."
+                    )
+                );
+                return;
             }
 
             context.Response.Redirect("/login");
-            return Task.CompletedTask;
         };
     }
 );
@@ -50,22 +62,25 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+app.UseRouting();
 app.Use(async (context, next) => {
     try {
         await next(context);
     }
-    catch (GalateaSessionUnavailableException exception) when (
-        context.Request.Path.StartsWithSegments(
-            "/api",
-            StringComparison.Ordinal
-        )
+    catch (OperationCanceledException) {
+        throw;
+    }
+    catch (Exception exception) when (
+        context.Request.Path.StartsWithSegments("/api/v1")
+        && GalateaExceptionClassifier.IsNonFatal(exception)
     ) {
-        context.Response.StatusCode =
-            StatusCodes.Status503ServiceUnavailable;
-        await context.Response.WriteAsJsonAsync(new {
-            code = exception.Code,
-            error = exception.Message
-        });
+        if (context.Response.HasStarted) {
+            throw;
+        }
+        (int statusCode, ApiErrorDto error) = MapApiException(exception);
+        context.Response.Clear();
+        await Results.Json(error, statusCode: statusCode)
+            .ExecuteAsync(context);
     }
 });
 
@@ -73,20 +88,60 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.Use(async (context, next) => {
     if (config.MaintenanceMode
-        && HttpMethods.IsPost(context.Request.Method)
-        && context.Request.Path.StartsWithSegments(
-            "/api/chat/turns",
-            StringComparison.Ordinal
-        )) {
-        context.Response.StatusCode =
-            StatusCodes.Status503ServiceUnavailable;
-        await context.Response.WriteAsJsonAsync(new {
-            code = "maintenance-mode",
-            error = "Galatea当前处于维护模式；会话写操作已禁用。"
-        });
+        && GalateaHttpV1.IsMaintenanceWrite(context)) {
+        await Results.Json(
+                new ApiErrorDto(
+                    "maintenance-mode",
+                    "Galatea当前处于维护模式；会话写操作已禁用。"
+                ),
+                statusCode: StatusCodes.Status503ServiceUnavailable
+            )
+            .ExecuteAsync(context);
         return;
     }
     await next(context);
+});
+app.Use(async (context, next) => {
+    if (!GalateaHttpV1.HasJsonBody(context)) {
+        await next(context);
+        return;
+    }
+    if (!GalateaHttpV1.IsExactJsonContentType(
+            context.Request.ContentType
+        )) {
+        await Results.Json(
+                new ApiErrorDto(
+                    "unsupported-media-type",
+                    "Content-Type must be application/json with optional UTF-8 charset."
+                ),
+                statusCode: StatusCodes.Status415UnsupportedMediaType
+            )
+            .ExecuteAsync(context);
+        return;
+    }
+    if (context.Request.ContentLength
+        > GalateaHttpV1.MaximumRequestBodyBytes) {
+        await Results.Json(
+                new ApiErrorDto(
+                    "request-too-large",
+                    "Request body exceeds the 1 MiB limit."
+                ),
+                statusCode: StatusCodes.Status413PayloadTooLarge
+            )
+            .ExecuteAsync(context);
+        return;
+    }
+
+    Stream originalBody = context.Request.Body;
+    context.Request.Body = GalateaHttpV1.CreateBoundedBodyStream(
+        originalBody
+    );
+    try {
+        await next(context);
+    }
+    finally {
+        context.Request.Body = originalBody;
+    }
 });
 app.UseStaticFiles();
 
@@ -160,7 +215,25 @@ app.MapGet(
     }
 ).RequireAuthorization();
 
-var api = app.MapGroup("/api").RequireAuthorization();
+app.MapGet(
+    "/api/me",
+    (ClaimsPrincipal user, GalateaHostService hostService) => {
+        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
+            ?? throw new InvalidOperationException(
+                "Authenticated principal is missing user id."
+            );
+        if (!hostService.TryGetUser(userId, out var configUser)) {
+            return Results.Unauthorized();
+        }
+
+        return Results.Ok(new GalateaMeDto(
+            configUser.UserId,
+            config.MaintenanceMode
+        ));
+    }
+).RequireAuthorization();
+
+var api = app.MapGroup("/api/v1").RequireAuthorization();
 
 api.MapGet(
     "/me",
@@ -185,7 +258,7 @@ api.MapGet(
         var response = await hostService.GetRecentTurnsAsync(session, ct);
         DebugUtil.Info(
             "Galatea.Api",
-            $"GET /api/recent-turns user={userId}, items={response.Turns.Count}, rewindEligible={response.RewindLatestToken is not null}"
+            $"GET /api/v1/recent-turns user={userId}, items={response.Turns.Count}, rewindEligible={response.RewindLatestToken is not null}"
         );
         return Results.Ok(response);
     }
@@ -197,10 +270,27 @@ api.MapPost(
         HttpContext httpContext,
         ClaimsPrincipal user,
         GalateaHostService hostService,
-        IHostApplicationLifetime applicationLifetime,
-        ChatStreamRequest request
+        IHostApplicationLifetime applicationLifetime
     ) => {
-        if (string.IsNullOrWhiteSpace(request.Message)) { return Results.BadRequest(new { error = "message must not be blank." }); }
+        ChatStreamRequest request = await GalateaHttpV1
+            .ReadJsonBodyAsync<ChatStreamRequest>(httpContext);
+        string? messageError = GalateaHttpV1.ValidateMessage(
+            request.Message
+        );
+        if (messageError is not null) {
+            return Results.BadRequest(
+                new ApiErrorDto("invalid-message", messageError)
+            );
+        }
+        string? connectionError = GalateaHttpV1.ValidateConnectionId(
+            request.ConnectionId
+        );
+        if (connectionError is not null) {
+            return Results.BadRequest(new ApiErrorDto(
+                "invalid-connection-id",
+                connectionError
+            ));
+        }
 
         string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
@@ -251,17 +341,17 @@ api.MapPost(
                     request.ConnectionId,
                     out CompletionConnectionConfig connection
                 )) {
-                return Results.BadRequest(new {
-                    code = "unknown-connection",
-                    error = $"Unknown completion connection '{request.ConnectionId}'."
-                });
+                return Results.BadRequest(new ApiErrorDto(
+                    "unknown-connection",
+                    $"Unknown completion connection '{request.ConnectionId}'."
+                ));
             }
             liveTurn = hostService.StartTurn(
                 session,
                 request.Message,
                 new GalateaTurnOptions(connection.Id)
             );
-            DebugUtil.Info("Galatea.Api", $"POST /api/chat/turns user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}");
+            DebugUtil.Info("Galatea.Api", $"POST /api/v1/chat/turns user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}");
             IResult result = StartAcceptedTurn(
                 session,
                 liveTurn,
@@ -289,6 +379,10 @@ api.MapPost(
             }
         }
     }
+).WithMetadata(
+    GalateaHttpV1.JsonBody,
+    GalateaHttpV1.MaintenanceWrite,
+    GalateaHttpV1.RequestSizeLimit()
 );
 
 api.MapPost(
@@ -297,9 +391,28 @@ api.MapPost(
         HttpContext httpContext,
         ClaimsPrincipal user,
         GalateaHostService hostService,
-        IHostApplicationLifetime applicationLifetime,
-        ResumeTurnRequest request
+        IHostApplicationLifetime applicationLifetime
     ) => {
+        ResumeTurnRequest request = await GalateaHttpV1
+            .ReadJsonBodyAsync<ResumeTurnRequest>(httpContext);
+        if (!GalateaHttpV1.TryParseCanonicalEventAddress(
+                request.ExpectedHead,
+                out var expectedHead
+            )) {
+            return Results.BadRequest(new ApiErrorDto(
+                "invalid-expected-head",
+                "expectedHead格式无效。"
+            ));
+        }
+        string? connectionError = GalateaHttpV1.ValidateConnectionId(
+            request.ConnectionId
+        );
+        if (connectionError is not null) {
+            return Results.BadRequest(new ApiErrorDto(
+                "invalid-connection-id",
+                connectionError
+            ));
+        }
         string userId = user.FindFirstValue(
             GalateaClaimTypes.UserId
         ) ?? throw new InvalidOperationException(
@@ -320,15 +433,6 @@ api.MapPost(
                 session.Engine.InspectRuntimeRecoveryRequirements(
                     httpContext.RequestAborted
                 );
-            if (!EventAddressTextCodec.TryParse(
-                    request.ExpectedHead,
-                    out var expectedHead
-                )) {
-                return Results.BadRequest(new {
-                    code = "invalid-expected-head",
-                    error = "expectedHead格式无效。"
-                });
-            }
             if (recovery.CapturedHead != expectedHead) {
                 return RecoveryConflict(
                     recovery,
@@ -373,10 +477,10 @@ api.MapPost(
                         request.ConnectionId,
                         out CompletionConnectionConfig connection
                     )) {
-                    return Results.BadRequest(new {
-                        code = "unknown-connection",
-                        error = $"Unknown completion connection '{request.ConnectionId}'."
-                    });
+                    return Results.BadRequest(new ApiErrorDto(
+                        "unknown-connection",
+                        $"Unknown completion connection '{request.ConnectionId}'."
+                    ));
                 }
                 connectionId = connection.Id;
             }
@@ -386,11 +490,8 @@ api.MapPost(
                 // here. The formal composition must bind the frozen tool
                 // identity first, then this exact current connection, then
                 // Online.
-                connectionId = string.IsNullOrWhiteSpace(
-                    request.ConnectionId
-                )
-                    ? hostService.DefaultConnectionId
-                    : request.ConnectionId;
+                connectionId = request.ConnectionId
+                    ?? hostService.DefaultConnectionId;
             }
             else if (recovery is SessionRuntimeRecoveryRequirements
                          .FrozenCompletionRequired frozen) {
@@ -437,6 +538,10 @@ api.MapPost(
             }
         }
     }
+).WithMetadata(
+    GalateaHttpV1.JsonBody,
+    GalateaHttpV1.MaintenanceWrite,
+    GalateaHttpV1.RequestSizeLimit()
 );
 
 api.MapPost(
@@ -444,49 +549,53 @@ api.MapPost(
     async (
         HttpContext httpContext,
         ClaimsPrincipal user,
-        GalateaHostService hostService,
-        PopLatestTurnRequestDto request
+        GalateaHostService hostService
     ) => {
+        PopLatestTurnRequestDto request = await GalateaHttpV1
+            .ReadJsonBodyAsync<PopLatestTurnRequestDto>(httpContext);
+        if (!GalateaHttpV1.TryParseCanonicalEventAddress(
+                request.RewindLatestToken,
+                out var expectedHead
+            )) {
+            return Results.BadRequest(new ApiErrorDto(
+                "invalid-rewind-token",
+                "rewindLatestToken格式无效。"
+            ));
+        }
         string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
 
         if (!session.TurnLock.Wait(0)) { return BuildTurnBusyConflict(hostService, session); }
         try {
-            if (!EventAddressTextCodec.TryParse(
-                    request.RewindLatestToken,
-                    out var expectedHead
-                )) {
-                return Results.BadRequest(new {
-                    code = "invalid-rewind-token",
-                    error = "rewindLatestToken格式无效。"
-                });
-            }
-            var poppedTurn = await hostService.PopLatestTurnAsync(
+            GalateaPreparedPopLatestTurn? prepared = hostService
+                .PrepareAndCommitPopLatestTurn(
                     session,
                     expectedHead,
                     httpContext.RequestAborted
-                )
-                .ConfigureAwait(false);
-            if (poppedTurn is null) {
-                DebugUtil.Warning("Galatea.Api", $"POST /api/chat/turns/pop-latest user={userId} returned null, head={session.Engine.ReadCurrentHead()}");
-                return Results.Json(
-                    new StartTurnResponseDto(
-                        TurnId: string.Empty,
-                        Status: "idle",
-                        Error: "当前没有可取出的最近一轮。"
-                    ),
-                    statusCode: StatusCodes.Status409Conflict
                 );
+            if (prepared is null) {
+                DebugUtil.Warning("Galatea.Api", $"POST /api/v1/chat/turns/pop-latest user={userId} returned null, head={session.Engine.ReadCurrentHead()}");
+                return Results.Json(new ApiErrorDto(
+                    "rewind-not-available",
+                    "当前没有可取出的最近一轮，或会话边界已变化。"
+                ), statusCode: StatusCodes.Status409Conflict);
             }
 
-            DebugUtil.Info("Galatea.Api", $"POST /api/chat/turns/pop-latest user={userId} succeeded, head={session.Engine.ReadCurrentHead()}");
-            return Results.Ok(poppedTurn);
+            DebugUtil.Info("Galatea.Api", $"POST /api/v1/chat/turns/pop-latest user={userId} succeeded, head={session.Engine.ReadCurrentHead()}");
+            return Results.Bytes(
+                prepared.ReceiptUtf8Bytes,
+                "application/json"
+            );
         }
         finally {
             session.TurnLock.Release();
         }
     }
+).WithMetadata(
+    GalateaHttpV1.JsonBody,
+    GalateaHttpV1.MaintenanceWrite,
+    GalateaHttpV1.RequestSizeLimit()
 );
 
 api.MapGet(
@@ -499,7 +608,7 @@ api.MapGet(
             session,
             ct
         );
-        DebugUtil.Info("Galatea.Api", $"GET /api/chat/turns/current user={userId}, status={currentTurn.Status}, turnId={currentTurn.TurnId ?? "<none>"}");
+        DebugUtil.Info("Galatea.Api", $"GET /api/v1/chat/turns/current user={userId}, status={currentTurn.Status}, turnId={currentTurn.TurnId ?? "<none>"}");
         return Results.Ok(currentTurn);
     }
 );
@@ -507,24 +616,46 @@ api.MapGet(
 api.MapPost(
     "/chat/turns/{turnId}/stop",
     async (HttpContext httpContext, ClaimsPrincipal user, GalateaHostService hostService, string turnId) => {
+        if (!GalateaHttpV1.IsCanonicalTurnId(turnId)) {
+            return Results.BadRequest(new ApiErrorDto(
+                "invalid-turn-id",
+                "turnId格式无效。"
+            ));
+        }
         string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
-        if (!hostService.RequestStop(session, turnId)) { return Results.NotFound(new { error = "turn not found or already finished." }); }
+        if (!hostService.RequestStop(session, turnId)) {
+            return Results.NotFound(new ApiErrorDto(
+                "turn-not-found",
+                "turn not found or already finished."
+            ));
+        }
 
-        DebugUtil.Warning("Galatea.Api", $"POST /api/chat/turns/{turnId}/stop user={userId}");
-        return Results.Ok(new { status = "stopping", turnId });
+        DebugUtil.Warning("Galatea.Api", $"POST /api/v1/chat/turns/{turnId}/stop user={userId}");
+        return Results.NoContent();
     }
-);
+).WithMetadata(GalateaHttpV1.MaintenanceWrite);
 
 api.MapGet(
     "/chat/turns/{turnId}/events",
     async (HttpContext httpContext, ClaimsPrincipal user, GalateaHostService hostService, string turnId) => {
+        if (!GalateaHttpV1.IsCanonicalTurnId(turnId)) {
+            return Results.BadRequest(new ApiErrorDto(
+                "invalid-turn-id",
+                "turnId格式无效。"
+            ));
+        }
         string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
         var liveTurn = hostService.FindTurn(session, turnId);
-        if (liveTurn is null) { return Results.NotFound(new { error = "turn not found." }); }
+        if (liveTurn is null) {
+            return Results.NotFound(new ApiErrorDto(
+                "turn-not-found",
+                "turn not found."
+            ));
+        }
 
         httpContext.Response.StatusCode = StatusCodes.Status200OK;
         httpContext.Response.ContentType = "text/event-stream";
@@ -568,10 +699,10 @@ static IResult BuildTurnBusyConflict(GalateaHostService hostService, UserSession
         $"Turn busy conflict: user={session.User.UserId}, runningTurn={runningTurn.TurnId ?? "<none>"}"
     );
     return Results.Json(
-        new StartTurnResponseDto(
-            TurnId: runningTurn.TurnId ?? string.Empty,
-            Status: "running",
-            Error: "该账号当前正在生成，请稍后。"
+        new TurnBusyErrorDto(
+            "turn-busy",
+            "该账号当前正在生成，请稍后。",
+            runningTurn.TurnId
         ),
         statusCode: StatusCodes.Status409Conflict
     );
@@ -646,25 +777,87 @@ static IResult StartAcceptedTurn(
     liveTurn.RunTask = runTask;
 
     return Results.Json(
-        new StartTurnResponseDto(liveTurn.TurnId, "running"),
+        new StartTurnResponseDto(liveTurn.TurnId),
         statusCode: StatusCodes.Status202Accepted
     );
 }
 
 static IResult RecoveryConflict(
-    SessionRuntimeRecoveryRequirements recovery,
+    SessionRuntimeRecoveryRequirements _,
     string code,
     string error
 ) => Results.Json(
-    new {
-        code,
-        error,
-        phase = recovery.Phase.ToString(),
-        head = EventAddressTextCodec.FormatNullable(
-            recovery.CapturedHead
-        )
-    },
+    new ApiErrorDto(code, error),
     statusCode: StatusCodes.Status409Conflict
 );
+
+static (int StatusCode, ApiErrorDto Error) MapApiException(
+    Exception exception
+) {
+    if (ContainsRequestBodyLimitException(exception)) {
+        return (
+            StatusCodes.Status413PayloadTooLarge,
+            new ApiErrorDto(
+                "request-too-large",
+                "Request body exceeds the 1 MiB limit."
+            )
+        );
+    }
+    return exception switch {
+    BadHttpRequestException badRequest when
+        badRequest.StatusCode == StatusCodes.Status413PayloadTooLarge => (
+        StatusCodes.Status413PayloadTooLarge,
+        new ApiErrorDto(
+            "request-too-large",
+            "Request body exceeds the 1 MiB limit."
+        )
+    ),
+    BadHttpRequestException or JsonException => (
+        StatusCodes.Status400BadRequest,
+        new ApiErrorDto(
+            "invalid-request",
+            "Request JSON does not match the endpoint contract."
+        )
+    ),
+    GalateaSessionUnavailableException unavailable => (
+        StatusCodes.Status503ServiceUnavailable,
+        new ApiErrorDto(unavailable.Code, unavailable.Message)
+    ),
+    GalateaRecentProjectionException projection when
+        string.Equals(
+            projection.Code,
+            "session-invalid",
+            StringComparison.Ordinal
+        ) => (
+            StatusCodes.Status500InternalServerError,
+            new ApiErrorDto(
+                "session-invalid",
+                "Session data is invalid."
+            )
+        ),
+    GalateaRecentProjectionException projection => (
+        StatusCodes.Status503ServiceUnavailable,
+        new ApiErrorDto(projection.Code, projection.Message)
+    ),
+    _ => (
+        StatusCodes.Status500InternalServerError,
+        new ApiErrorDto(
+            "internal-error",
+            "The server could not complete the request."
+        )
+    )
+    };
+}
+
+static bool ContainsRequestBodyLimitException(Exception exception) {
+    for (Exception? current = exception;
+         current is not null;
+         current = current.InnerException) {
+        if (current is RequestBodyLimitExceededException) {
+            return true;
+        }
+    }
+    return false;
+}
 
 public partial class Program;

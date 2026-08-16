@@ -245,7 +245,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
     }
 
-    public Task<CurrentTurnDto> GetCurrentTurnAsync(
+    internal Task<CurrentTurnDto> GetCurrentTurnAsync(
         UserSessionHost host,
         CancellationToken ct
     ) {
@@ -271,7 +271,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             CurrentTurnDto result = BuildDurableCurrentTurn(recovery);
             DebugUtil.Info(
                 "Galatea.Session",
-                $"GetCurrentTurnAsync: user={host.User.UserId}, status={result.Status}, phase={result.Phase ?? "<none>"}, head={recovery.CapturedHead}"
+                $"GetCurrentTurnAsync: user={host.User.UserId}, status={result.Status}, head={recovery.CapturedHead}"
             );
             return Task.FromResult(result);
         }
@@ -294,13 +294,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CurrentTurnDto result = new(
             "running",
             liveTurn.TurnId,
-            liveTurn.UserMessage,
-            liveTurn.Phase,
             liveTurn.Options.ConnectionId
         );
         DebugUtil.Info(
             "Galatea.Session",
-            $"BuildLiveCurrentTurn: turnId={result.TurnId}, phase={result.Phase ?? "<none>"}"
+            $"BuildLiveCurrentTurn: turnId={result.TurnId}, connectionId={result.ConnectionId ?? "<none>"}"
         );
         return result;
     }
@@ -382,24 +380,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) => recovery switch {
         SessionRuntimeRecoveryRequirements.NoRuntimeRequired {
             Phase: SessionExecutionPhase.Idle
-        } => new CurrentTurnDto(
-            "idle",
-            DurablePhase: recovery.Phase.ToString(),
-            RecoveryHead: EventAddressTextCodec.FormatNullable(
-                recovery.CapturedHead
-            )
-        ),
+        } => new CurrentTurnDto("idle"),
         SessionRuntimeRecoveryRequirements
-            .FailedTurnMustBeAbandoned failed => new CurrentTurnDto(
-                "idle",
-                DurablePhase: failed.Phase.ToString(),
-                RecoveryHead: EventAddressTextCodec.Format(
-                    failed.FailedHead
-                )
-            ),
+            .FailedTurnMustBeAbandoned => new CurrentTurnDto("idle"),
         SessionRuntimeRecoveryRequirements.NoRuntimeRequired {
             Phase: SessionExecutionPhase.Empty
-        } => RecoveryCurrentTurn(recovery, "unprovisioned"),
+        } => new CurrentTurnDto("unprovisioned"),
         SessionRuntimeRecoveryRequirements.NewRequestRequired =>
             RecoveryCurrentTurn(recovery),
         SessionRuntimeRecoveryRequirements.FrozenCompletionRequired {
@@ -417,12 +403,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
     private static CurrentTurnDto RecoveryCurrentTurn(
         SessionRuntimeRecoveryRequirements recovery,
-        string status = "recovery-required",
         bool restartRequired = false
     ) => new(
-        status,
-        DurablePhase: recovery.Phase.ToString(),
-        RecoveryRequired: true,
+        "recovery-required",
         RecoveryHead: EventAddressTextCodec.FormatNullable(
             recovery.CapturedHead
         ),
@@ -433,6 +416,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
         ArgumentNullException.ThrowIfNull(options);
+        string? messageError = GalateaHttpV1.ValidateMessage(userMessage);
+        if (messageError is not null) {
+            throw new ArgumentException(messageError, nameof(userMessage));
+        }
         return host.StartTurn(userMessage, options);
     }
 
@@ -443,31 +430,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(options);
         return host.StartRecovery(options);
-    }
-
-    internal async ValueTask<PopLatestTurnResponseDto?>
-        PopLatestTurnAsync(
-        UserSessionHost host,
-        EventAddress expectedHead,
-        CancellationToken cancellationToken = default
-    ) {
-        ArgumentNullException.ThrowIfNull(host);
-        GalateaPreparedPopLatestTurn? prepared =
-            PrepareAndCommitPopLatestTurn(
-                host,
-                expectedHead,
-                cancellationToken
-            );
-        if (prepared is null) {
-            return null;
-        }
-        RecentTurnsResponseDto recent =
-            await RefreshRecentTurnsBestEffortAsync(
-                    host,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        return new PopLatestTurnResponseDto(prepared.Turn, recent);
     }
 
     internal GalateaPreparedPopLatestTurn?
@@ -1982,7 +1944,7 @@ internal static class GalateaHtml {
       maintenanceMode: {{JsonSerializer.Serialize(maintenanceMode, GalateaJson.Options)}}
     };
   </script>
-    <script src="{{scriptPath}}"></script>
+    <script type="module" src="{{scriptPath}}"></script>
 </body>
 </html>
 """;

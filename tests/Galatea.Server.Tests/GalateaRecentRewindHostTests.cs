@@ -161,7 +161,7 @@ public sealed class GalateaRecentRewindHostTests {
         Assert.Equal("exact", before.RecapGridReadiness?.Freshness);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/chat/turns",
+            "/api/v1/chat/turns",
             new ChatStreamRequest("will fail", ConnectionId: "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -238,14 +238,10 @@ public sealed class GalateaRecentRewindHostTests {
                     beforeRecap.ObservedRawHead
                 );
 
-                PopLatestTurnResponseDto moved =
+                PopResult moved =
                     await PopLatestAsync(client, token);
 
-                AssertTurn(
-                    moved.Turn,
-                    "user two",
-                    "assistant two"
-                );
+                Assert.Equal("user two", moved.PoppedUserText);
                 RecentTurnDto remaining = Assert.Single(
                     moved.Recent.Turns
                 );
@@ -356,12 +352,12 @@ public sealed class GalateaRecentRewindHostTests {
         string thirdToken = Assert.IsType<string>(
             before.RewindLatestToken
         );
-        PopLatestTurnResponseDto first = await PopLatestAsync(
+        PopResult first = await PopLatestAsync(
             client,
             thirdToken
         );
 
-        AssertTurn(first.Turn, "user three", "assistant three");
+        Assert.Equal("user three", first.PoppedUserText);
         Assert.Collection(
             first.Recent.Turns,
             turn => AssertTurn(turn, "user two", "assistant two"),
@@ -372,12 +368,12 @@ public sealed class GalateaRecentRewindHostTests {
         );
         Assert.NotEqual(thirdToken, secondToken);
 
-        PopLatestTurnResponseDto second = await PopLatestAsync(
+        PopResult second = await PopLatestAsync(
             client,
             secondToken
         );
 
-        AssertTurn(second.Turn, "user two", "assistant two");
+        Assert.Equal("user two", second.PoppedUserText);
         AssertTurn(
             Assert.Single(second.Recent.Turns),
             "user one",
@@ -388,12 +384,12 @@ public sealed class GalateaRecentRewindHostTests {
         );
         Assert.NotEqual(secondToken, firstToken);
 
-        PopLatestTurnResponseDto third = await PopLatestAsync(
+        PopResult third = await PopLatestAsync(
             client,
             firstToken
         );
 
-        AssertTurn(third.Turn, "user one", "assistant one");
+        Assert.Equal("user one", third.PoppedUserText);
         Assert.Empty(third.Recent.Turns);
         Assert.Null(third.Recent.RewindLatestToken);
         Assert.Equal(3, completion.DispatchCallCount);
@@ -479,11 +475,11 @@ public sealed class GalateaRecentRewindHostTests {
             session.TurnLock.Release();
         }
 
-        PopLatestTurnResponseDto moved = await PopLatestAsync(
+        PopResult moved = await PopLatestAsync(
             client,
             token
         );
-        AssertTurn(moved.Turn, "user one", "assistant one");
+        Assert.Equal("user one", moved.PoppedUserText);
     }
 
     [Fact]
@@ -548,6 +544,23 @@ public sealed class GalateaRecentRewindHostTests {
             );
         });
         Assert.Equal("popped-user-text-limit-exceeded", error.Code);
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        using HttpResponseMessage response = await PostPopAsync(
+            client,
+            EventAddressTextCodec.Format(terminal)
+        );
+        Assert.Equal(
+            HttpStatusCode.ServiceUnavailable,
+            response.StatusCode
+        );
+        using JsonDocument body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync()
+        );
+        Assert.Equal(
+            "popped-user-text-limit-exceeded",
+            body.RootElement.GetProperty("code").GetString()
+        );
         Assert.Equal(terminal, session.Engine.ReadCurrentHead());
     }
 
@@ -637,6 +650,22 @@ public sealed class GalateaRecentRewindHostTests {
                     .RefreshRecentTurnsBestEffortAsync(session)
             );
         Assert.Equal("recent-view-limit-exceeded", error.Code);
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        using HttpResponseMessage response = await client.GetAsync(
+            "/api/v1/recent-turns"
+        );
+        Assert.Equal(
+            HttpStatusCode.ServiceUnavailable,
+            response.StatusCode
+        );
+        using JsonDocument body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync()
+        );
+        Assert.Equal(
+            "recent-view-limit-exceeded",
+            body.RootElement.GetProperty("code").GetString()
+        );
     }
 
     private static GalateaTestHost CreateHost(
@@ -674,7 +703,7 @@ public sealed class GalateaRecentRewindHostTests {
         string message
     ) {
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/chat/turns",
+            "/api/v1/chat/turns",
             new ChatStreamRequest(message, ConnectionId: "test")
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -697,7 +726,7 @@ public sealed class GalateaRecentRewindHostTests {
     ) {
         RecentTurnsResponseDto? recent = await client
             .GetFromJsonAsync<RecentTurnsResponseDto>(
-                "/api/recent-turns"
+                "/api/v1/recent-turns"
             );
         return Assert.IsType<RecentTurnsResponseDto>(recent);
     }
@@ -706,11 +735,11 @@ public sealed class GalateaRecentRewindHostTests {
         HttpClient client,
         string token
     ) => await client.PostAsJsonAsync(
-        "/api/chat/turns/pop-latest",
+        "/api/v1/chat/turns/pop-latest",
         new PopLatestTurnRequestDto(token)
     );
 
-    private static async Task<PopLatestTurnResponseDto> PopLatestAsync(
+    private static async Task<PopResult> PopLatestAsync(
         HttpClient client,
         string token
     ) {
@@ -719,10 +748,35 @@ public sealed class GalateaRecentRewindHostTests {
             token
         );
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        PopLatestTurnResponseDto? moved = await response.Content
-            .ReadFromJsonAsync<PopLatestTurnResponseDto>();
-        return Assert.IsType<PopLatestTurnResponseDto>(moved);
+        Assert.Equal(
+            "application/json",
+            response.Content.Headers.ContentType?.MediaType
+        );
+        byte[] receiptBytes = await response.Content
+            .ReadAsByteArrayAsync();
+        PopLatestTurnReceiptDto? receipt = JsonSerializer.Deserialize<
+            PopLatestTurnReceiptDto
+        >(receiptBytes, GalateaJson.Options);
+        PopLatestTurnReceiptDto exactReceipt = Assert.IsType<
+            PopLatestTurnReceiptDto
+        >(receipt);
+        Assert.Equal(
+            JsonSerializer.SerializeToUtf8Bytes(
+                exactReceipt,
+                GalateaJson.Options
+            ),
+            receiptBytes
+        );
+        return new PopResult(
+            exactReceipt.PoppedUserText,
+            await GetRecentAsync(client)
+        );
     }
+
+    private sealed record PopResult(
+        string PoppedUserText,
+        RecentTurnsResponseDto Recent
+    );
 
     private static void AssertTurn(
         RecentTurnDto turn,

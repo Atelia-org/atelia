@@ -79,7 +79,7 @@ public sealed class GalateaEndpointLockTopologyTests {
 
             using var request = new HttpRequestMessage(
                 HttpMethod.Get,
-                $"/api/chat/turns/{liveTurn.TurnId}/events"
+                $"/api/v1/chat/turns/{liveTurn.TurnId}/events"
             );
             response = await client.SendAsync(
                     request,
@@ -127,7 +127,7 @@ public sealed class GalateaEndpointLockTopologyTests {
     }
 
     [Fact]
-    public async Task Stop_ReturnsOkWhileTurnLockRemainsHeld() {
+    public async Task Stop_ReturnsNoContentWhileTurnLockRemainsHeld() {
         await using var host = CreateHost();
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
@@ -151,12 +151,12 @@ public sealed class GalateaEndpointLockTopologyTests {
             );
 
             using HttpResponseMessage response = await client.PostAsync(
-                    $"/api/chat/turns/{liveTurn.TurnId}/stop",
+                    $"/api/v1/chat/turns/{liveTurn.TurnId}/stop",
                     content: null
                 )
                 .WaitAsync(EndpointDeadline);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
             Assert.True(liveTurn.StopRequested);
             Assert.False(session.TurnLock.Wait(0));
         }
@@ -204,7 +204,7 @@ public sealed class GalateaEndpointLockTopologyTests {
         );
         RecentTurnsResponseDto? idleRecent = await client
             .GetFromJsonAsync<RecentTurnsResponseDto>(
-                "/api/recent-turns"
+                "/api/v1/recent-turns"
             );
         Assert.NotNull(idleRecent);
         Assert.NotNull(idleRecent!.RewindLatestToken);
@@ -239,21 +239,19 @@ public sealed class GalateaEndpointLockTopologyTests {
 
             CurrentTurnDto? current = await client
                 .GetFromJsonAsync<CurrentTurnDto>(
-                    "/api/chat/turns/current"
+                    "/api/v1/chat/turns/current"
                 )
                 .WaitAsync(EndpointDeadline);
             Assert.NotNull(current);
             Assert.Equal("running", current!.Status);
             Assert.Equal(liveTurn.TurnId, current.TurnId);
-            Assert.Equal(liveTurn.UserMessage, current.UserMessage);
-            Assert.Equal(liveTurn.Phase, current.Phase);
             Assert.Equal("test", current.ConnectionId);
-            Assert.Null(current.DurablePhase);
+            Assert.False(current.RestartRequired);
             Assert.Null(current.RecoveryHead);
 
             RecentTurnsResponseDto? activeRecent = await client
                 .GetFromJsonAsync<RecentTurnsResponseDto>(
-                    "/api/recent-turns"
+                    "/api/v1/recent-turns"
                 )
                 .WaitAsync(EndpointDeadline);
             Assert.NotNull(activeRecent);
@@ -273,7 +271,7 @@ public sealed class GalateaEndpointLockTopologyTests {
 
             using HttpResponseMessage busy = await client
                 .PostAsJsonAsync(
-                    "/api/chat/turns",
+                    "/api/v1/chat/turns",
                     new ChatStreamRequest(
                         "must remain busy",
                         ConnectionId: "test"
@@ -281,18 +279,19 @@ public sealed class GalateaEndpointLockTopologyTests {
                 )
                 .WaitAsync(EndpointDeadline);
             Assert.Equal(HttpStatusCode.Conflict, busy.StatusCode);
-            StartTurnResponseDto? conflict = await busy.Content
-                .ReadFromJsonAsync<StartTurnResponseDto>();
+            TurnBusyErrorDto? conflict = await busy.Content
+                .ReadFromJsonAsync<TurnBusyErrorDto>();
             Assert.NotNull(conflict);
             Assert.Equal(liveTurn.TurnId, conflict!.TurnId);
-            Assert.Equal("running", conflict.Status);
+            Assert.Equal("turn-busy", conflict.Code);
+            Assert.NotEmpty(conflict.Error);
 
             using HttpResponseMessage stop = await client.PostAsync(
-                    $"/api/chat/turns/{liveTurn.TurnId}/stop",
+                    $"/api/v1/chat/turns/{liveTurn.TurnId}/stop",
                     content: null
                 )
                 .WaitAsync(EndpointDeadline);
-            Assert.Equal(HttpStatusCode.OK, stop.StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, stop.StatusCode);
             Assert.True(liveTurn.StopRequested);
 
             SessionJournalReadDiagnostics after =
@@ -331,14 +330,16 @@ public sealed class GalateaEndpointLockTopologyTests {
 
             CurrentTurnDto? current = await client
                 .GetFromJsonAsync<CurrentTurnDto>(
-                    "/api/chat/turns/current"
+                    "/api/v1/chat/turns/current"
                 )
                 .WaitAsync(EndpointDeadline);
 
             Assert.NotNull(current);
             Assert.Equal("running", current!.Status);
             Assert.Null(current.TurnId);
-            Assert.Null(current.DurablePhase);
+            Assert.Null(current.ConnectionId);
+            Assert.False(current.RestartRequired);
+            Assert.Null(current.RecoveryHead);
             Assert.Equal(
                 before,
                 session.Engine.CaptureReadDiagnostics()
@@ -377,7 +378,7 @@ public sealed class GalateaEndpointLockTopologyTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "state.recapGridReadiness = payload?.recapGridReadiness ?? null;",
+            "state.recapGridReadiness = recent.recapGridReadiness;",
             script,
             StringComparison.Ordinal
         );
@@ -461,7 +462,7 @@ public sealed class GalateaEndpointLockTopologyTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "state.pendingPoppedDraftText = input.value;",
+            "state.pendingPoppedDraftText = receipt.poppedUserText;",
             script,
             StringComparison.Ordinal
         );
@@ -510,7 +511,7 @@ public sealed class GalateaEndpointLockTopologyTests {
         );
         using HttpResponseMessage response =
             await client.PostAsJsonAsync(
-                "/api/chat/turns",
+                "/api/v1/chat/turns",
                 new ChatStreamRequest(
                     "invalid connection probe",
                     ConnectionId: "missing"

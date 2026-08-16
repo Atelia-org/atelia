@@ -185,44 +185,33 @@ public sealed record AssistantMessageDto(
     string? ReasoningText
 );
 
-public sealed record ChatStreamRequest(
+internal sealed record ChatStreamRequest(
     [property: JsonPropertyName("message")] string Message,
     [property: JsonPropertyName("connectionId")] string? ConnectionId = null
-);
-
-public sealed record PopLatestTurnResponseDto(
-    RecentTurnDto Turn,
-    RecentTurnsResponseDto Recent
 );
 
 internal sealed record PopLatestTurnReceiptDto(
     string PoppedUserText
 );
 
-public sealed record PopLatestTurnRequestDto(
+internal sealed record PopLatestTurnRequestDto(
     [property: JsonPropertyName("rewindLatestToken")]
     string RewindLatestToken
 );
 
-public sealed record StartTurnResponseDto(
-    string TurnId,
-    string Status,
-    string? Error = null
+internal sealed record StartTurnResponseDto(
+    string TurnId
 );
 
-public sealed record CurrentTurnDto(
+internal sealed record CurrentTurnDto(
     string Status,
     string? TurnId = null,
-    string? UserMessage = null,
-    string? Phase = null,
     string? ConnectionId = null,
-    string? DurablePhase = null,
-    bool RecoveryRequired = false,
     bool RestartRequired = false,
     string? RecoveryHead = null
 );
 
-public sealed record ResumeTurnRequest(
+internal sealed record ResumeTurnRequest(
     [property: JsonPropertyName("expectedHead")]
     string ExpectedHead,
     [property: JsonPropertyName("connectionId")]

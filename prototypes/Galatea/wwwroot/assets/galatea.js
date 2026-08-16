@@ -1,4 +1,271 @@
-(function () {
+function requireObject(value, label) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value;
+}
+
+function requireExactKeys(value, keys, label) {
+  const object = requireObject(value, label);
+  const actual = Object.keys(object).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new Error(`${label} has unexpected fields`);
+  }
+  return object;
+}
+
+function requireString(value, label) {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+  return value;
+}
+
+function requireNonblankString(value, label) {
+  const text = requireString(value, label);
+  if (!text.trim()) {
+    throw new Error(`${label} must not be blank`);
+  }
+  return text;
+}
+
+function requireNullableString(value, label) {
+  return value === null ? null : requireString(value, label);
+}
+
+function requireBoolean(value, label) {
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} must be a boolean`);
+  }
+  return value;
+}
+
+function requireNonnegativeInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a nonnegative safe integer`);
+  }
+  return value;
+}
+
+function requireNullableObject(value, validator, label) {
+  return value === null ? null : validator(value, label);
+}
+
+function requireAuthority(value, label) {
+  const authority = requireExactKeys(value, [
+    "refId", "timelineId", "timelineGeneration", "timelineHeadRowId",
+    "controlGeneration", "controlStateDigest", "storeInstanceId",
+    "storeSchemaVersion", "recipeDigest", "throughRowId",
+    "throughDescriptorDigest",
+  ], label);
+  requireNonblankString(authority.refId, `${label}.refId`);
+  requireNonblankString(authority.timelineId, `${label}.timelineId`);
+  requireNonnegativeInteger(authority.timelineGeneration, `${label}.timelineGeneration`);
+  requireNullableString(authority.timelineHeadRowId, `${label}.timelineHeadRowId`);
+  requireNonnegativeInteger(authority.controlGeneration, `${label}.controlGeneration`);
+  requireNonblankString(authority.controlStateDigest, `${label}.controlStateDigest`);
+  requireNonblankString(authority.storeInstanceId, `${label}.storeInstanceId`);
+  requireNonnegativeInteger(authority.storeSchemaVersion, `${label}.storeSchemaVersion`);
+  requireNonblankString(authority.recipeDigest, `${label}.recipeDigest`);
+  requireNonblankString(authority.throughRowId, `${label}.throughRowId`);
+  requireNonblankString(authority.throughDescriptorDigest, `${label}.throughDescriptorDigest`);
+  return authority;
+}
+
+function requireReadinessMetrics(value, label) {
+  const metrics = requireExactKeys(value, [
+    "selectedRows", "recipeRowSteps", "examinedAssignments", "missingAssignments",
+  ], label);
+  for (const key of Object.keys(metrics)) {
+    requireNonnegativeInteger(metrics[key], `${label}.${key}`);
+  }
+  return metrics;
+}
+
+function requireMissingAssignment(value, label) {
+  const missing = requireExactKeys(value, [
+    "ordinal", "rowId", "recipeDigest", "logicalColumnId", "evaluationKey",
+  ], label);
+  requireNonnegativeInteger(missing.ordinal, `${label}.ordinal`);
+  for (const key of ["rowId", "recipeDigest", "logicalColumnId", "evaluationKey"]) {
+    requireNonblankString(missing[key], `${label}.${key}`);
+  }
+  return missing;
+}
+
+function requireReserveBootstrap(value, label) {
+  const reserve = requireExactKeys(value, [
+    "refId", "timelineId", "timelineGeneration", "timelineHeadRowId",
+    "cadenceGeneration", "cadenceDomainDigest", "controlGeneration",
+    "controlStateDigest", "storeInstanceId", "storeSchemaVersion",
+    "retainedHistoryLoad", "requiredHistoryLoad", "verifiedRows", "metrics",
+  ], label);
+  for (const key of [
+    "refId", "timelineId", "cadenceDomainDigest", "controlStateDigest", "storeInstanceId",
+  ]) {
+    requireNonblankString(reserve[key], `${label}.${key}`);
+  }
+  requireNullableString(reserve.timelineHeadRowId, `${label}.timelineHeadRowId`);
+  for (const key of [
+    "timelineGeneration", "cadenceGeneration", "controlGeneration", "storeSchemaVersion",
+    "retainedHistoryLoad", "requiredHistoryLoad", "verifiedRows",
+  ]) {
+    requireNonnegativeInteger(reserve[key], `${label}.${key}`);
+  }
+  const metrics = requireExactKeys(reserve.metrics, [
+    "examinedTimelineRows", "examinedRawEvents", "examinedHistoryUnits",
+    "examinedRenderedUtf8Bytes",
+  ], `${label}.metrics`);
+  for (const key of Object.keys(metrics)) {
+    requireNonnegativeInteger(metrics[key], `${label}.metrics.${key}`);
+  }
+  return reserve;
+}
+
+function requireReadiness(value, label) {
+  const readiness = requireExactKeys(value, [
+    "freshness", "state", "observedRawHead", "authority", "metrics",
+    "orderedMissing", "code", "detail", "reserveBootstrap",
+  ], label);
+  if (!["exact", "stale"].includes(readiness.freshness)) {
+    throw new Error(`${label}.freshness is unknown`);
+  }
+  const states = [
+    "ready", "raw-only", "reserve-bootstrap-raw-only", "frontier",
+    "fulfillment-missing", "blocked", "no-rows", "no-active", "invalid",
+    "limited", "cancelled", "unavailable", "stale", "busy", "unprovisioned",
+  ];
+  if (!states.includes(readiness.state)) {
+    throw new Error(`${label}.state is unknown`);
+  }
+  requireNullableString(readiness.observedRawHead, `${label}.observedRawHead`);
+  requireNullableObject(readiness.authority, requireAuthority, `${label}.authority`);
+  requireNullableObject(readiness.metrics, requireReadinessMetrics, `${label}.metrics`);
+  if (readiness.orderedMissing !== null) {
+    if (!Array.isArray(readiness.orderedMissing)) {
+      throw new Error(`${label}.orderedMissing must be an array or null`);
+    }
+    readiness.orderedMissing.forEach((item, index) =>
+      requireMissingAssignment(item, `${label}.orderedMissing[${index}]`));
+  }
+  requireNullableString(readiness.code, `${label}.code`);
+  requireNullableString(readiness.detail, `${label}.detail`);
+  requireNullableObject(
+    readiness.reserveBootstrap,
+    requireReserveBootstrap,
+    `${label}.reserveBootstrap`,
+  );
+  return readiness;
+}
+
+export function requireRecentTurnsResponse(value) {
+  const recent = requireExactKeys(value, [
+    "turns", "rewindLatestToken", "recapGridReadiness",
+  ], "recent turns response");
+  if (!Array.isArray(recent.turns)) {
+    throw new Error("recent turns response.turns must be an array");
+  }
+  recent.turns.forEach((value, index) => {
+    const turn = requireExactKeys(value, ["userText", "assistant"], `turns[${index}]`);
+    requireString(turn.userText, `turns[${index}].userText`);
+    const assistant = requireExactKeys(
+      turn.assistant,
+      ["text", "reasoningText"],
+      `turns[${index}].assistant`,
+    );
+    requireString(assistant.text, `turns[${index}].assistant.text`);
+    requireNullableString(assistant.reasoningText, `turns[${index}].assistant.reasoningText`);
+  });
+  requireNullableString(recent.rewindLatestToken, "recent turns response.rewindLatestToken");
+  requireNullableObject(
+    recent.recapGridReadiness,
+    requireReadiness,
+    "recent turns response.recapGridReadiness",
+  );
+  return recent;
+}
+
+function requireApiError(value) {
+  const error = requireExactKeys(value, ["code", "error"], "API error");
+  requireNonblankString(error.code, "API error.code");
+  requireNonblankString(error.error, "API error.error");
+  return error;
+}
+
+function requireBusyError(value) {
+  const error = requireExactKeys(value, ["code", "error", "turnId"], "busy error");
+  if (error.code !== "turn-busy") {
+    throw new Error("busy error.code is unknown");
+  }
+  requireNonblankString(error.error, "busy error.error");
+  if (error.turnId !== null && !/^[0-9a-f]{32}$/.test(error.turnId)) {
+    throw new Error("busy error.turnId is invalid");
+  }
+  return error;
+}
+
+function requireAcceptedTurn(value) {
+  const accepted = requireExactKeys(value, ["turnId"], "accepted turn");
+  if (!/^[0-9a-f]{32}$/.test(accepted.turnId)) {
+    throw new Error("accepted turn.turnId is invalid");
+  }
+  return accepted;
+}
+
+function requirePopReceipt(value) {
+  const receipt = requireExactKeys(value, ["poppedUserText"], "pop receipt");
+  requireString(receipt.poppedUserText, "pop receipt.poppedUserText");
+  return receipt;
+}
+
+function requireCurrentTurn(value) {
+  const current = requireExactKeys(value, [
+    "status", "turnId", "connectionId", "restartRequired", "recoveryHead",
+  ], "current turn");
+  requireNullableString(current.turnId, "current turn.turnId");
+  requireNullableString(current.connectionId, "current turn.connectionId");
+  requireBoolean(current.restartRequired, "current turn.restartRequired");
+  requireNullableString(current.recoveryHead, "current turn.recoveryHead");
+  if (current.status === "running") {
+    const published = current.turnId !== null || current.connectionId !== null;
+    if (published && (!/^[0-9a-f]{32}$/.test(current.turnId ?? "") || !current.connectionId)) {
+      throw new Error("running current turn is only partially published");
+    }
+    if (current.restartRequired || current.recoveryHead !== null) {
+      throw new Error("running current turn carries recovery state");
+    }
+  } else if (current.status === "recovery-required") {
+    if (current.turnId !== null || current.connectionId !== null || !current.recoveryHead) {
+      throw new Error("recovery current turn has an invalid state matrix");
+    }
+  } else if (["idle", "unprovisioned"].includes(current.status)) {
+    if (current.turnId !== null || current.connectionId !== null
+        || current.restartRequired || current.recoveryHead !== null) {
+      throw new Error("terminal current turn has an invalid state matrix");
+    }
+  } else {
+    throw new Error("current turn.status is unknown");
+  }
+  return current;
+}
+
+async function readJsonResponse(response, validator) {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType)) {
+    throw new Error("API response has an invalid Content-Type");
+  }
+  const text = await response.text();
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error("API response is not valid JSON");
+  }
+  return validator(value);
+}
+
+function startGalateaApp() {
   const bootstrapConfig = window.galateaBootstrap ?? {};
   const connections = Array.isArray(bootstrapConfig.connections) ? bootstrapConfig.connections : [];
   const userKey = bootstrapConfig.userId ?? "anonymous";
@@ -7,7 +274,6 @@
   const state = {
     recentTurns: [],
     rewindLatestToken: null,
-    pendingPoppedTurn: null,
     pendingPoppedDraftText: null,
     liveText: "",
     liveReasoning: "",
@@ -60,15 +326,16 @@
     input.focus();
   });
 
-  async function fetchJson(url, options) {
+  async function fetchJson(url, validator, options) {
     const response = await fetch(url, {
       credentials: "same-origin",
       ...options,
     });
     if (!response.ok) {
-      throw new Error(await response.text());
+      const error = await readJsonResponse(response, requireApiError);
+      throw new Error(error.error);
     }
-    return await response.json();
+    return await readJsonResponse(response, validator);
   }
 
   function escapeHtml(text) {
@@ -120,7 +387,7 @@
 
   function refreshComposerMode() {
     if (composerModeHint) {
-      if (state.pendingPoppedTurn) {
+      if (state.pendingPoppedDraftText !== null) {
         composerModeHint.textContent = "已撤销一轮。可继续撤销更早轮次，或修改后重新发送。";
         composerModeHint.classList.remove("hidden");
       } else {
@@ -139,13 +406,12 @@
   }
 
   function clearPendingPoppedTurn() {
-    state.pendingPoppedTurn = null;
     state.pendingPoppedDraftText = null;
     refreshComposerMode();
   }
 
   function confirmPendingPoppedTurnReplacement() {
-    if (!state.pendingPoppedTurn) {
+    if (state.pendingPoppedDraftText === null) {
       return true;
     }
 
@@ -239,14 +505,18 @@
   }
 
   async function loadRecentTurns() {
-    applyRecentTurnsPayload(await fetchJson("/api/recent-turns"));
+    applyRecentTurnsPayload(await fetchJson(
+      "/api/v1/recent-turns",
+      requireRecentTurnsResponse,
+    ));
     renderTurns();
   }
 
   function applyRecentTurnsPayload(payload) {
-    state.recentTurns = payload?.turns ?? [];
-    state.rewindLatestToken = payload?.rewindLatestToken ?? null;
-    state.recapGridReadiness = payload?.recapGridReadiness ?? null;
+    const recent = requireRecentTurnsResponse(payload);
+    state.recentTurns = recent.turns;
+    state.rewindLatestToken = recent.rewindLatestToken;
+    state.recapGridReadiness = recent.recapGridReadiness;
     renderRecapGridReadiness();
   }
 
@@ -338,7 +608,10 @@
   }
 
   async function loadCurrentTurn() {
-    return await fetchJson("/api/chat/turns/current");
+    return await fetchJson(
+      "/api/v1/chat/turns/current",
+      requireCurrentTurn,
+    );
   }
 
   async function waitForPublishedCurrentTurn(currentTurn) {
@@ -436,7 +709,7 @@
         liveText.textContent = state.liveText;
         break;
       case "done":
-        applyRecentTurnsPayload(payload?.recent ?? {});
+        applyRecentTurnsPayload(payload?.recent);
         clearPendingPoppedTurn();
         renderTurns();
         clearActiveTurn();
@@ -459,51 +732,64 @@
       return null;
     }
 
+    const submittedToken = state.rewindLatestToken;
+    const provisionalDraft = state.recentTurns[0]?.userText ?? "";
     setStreaming(true, status || "正在取出最近一轮…");
 
-    const response = await fetch("/api/chat/turns/pop-latest", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        rewindLatestToken: state.rewindLatestToken,
-      }),
-    });
-
-    const payload = await response.json().catch(() => null);
-
-    if (response.status === 409) {
-      if (payload?.turnId) {
-        await attachToTurn(payload.turnId, payload.error || "正在恢复生成…");
-        return null;
+    let response;
+    try {
+      response = await fetch("/api/v1/chat/turns/pop-latest", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ rewindLatestToken: submittedToken }),
+      });
+    } catch (error) {
+      try {
+        await loadRecentTurns();
+        if (state.rewindLatestToken !== submittedToken) {
+          input.value = provisionalDraft;
+          state.pendingPoppedDraftText = provisionalDraft;
+          refreshComposerMode();
+          setStreaming(false, "撤销已生效；响应在传输中丢失。未重复提交。");
+        } else {
+          setStreaming(false, "撤销结果未知；未重复提交。请稍后刷新。");
+        }
+      } catch {
+        setStreaming(false, error?.message || "撤销结果未知；未重复提交。");
       }
-
-      await loadRecentTurns().catch(() => {});
-      setStreaming(false, payload?.error || "当前没有可取出的最近一轮");
       return null;
     }
 
     if (!response.ok) {
-      setStreaming(false, payload?.error || "请求失败");
+      const error = await readJsonResponse(response, (value) =>
+        value?.code === "turn-busy" ? requireBusyError(value) : requireApiError(value));
+      if (error.code === "turn-busy" && error.turnId) {
+        await attachToTurn(error.turnId, error.error);
+        return null;
+      }
+      await loadRecentTurns().catch(() => {});
+      setStreaming(false, error.error);
       return null;
     }
 
-    state.pendingPoppedTurn = payload?.turn ?? null;
-    if (!state.pendingPoppedTurn) {
-      setStreaming(false, "当前没有可取出的最近一轮");
-      return null;
+    const receipt = await readJsonResponse(response, requirePopReceipt);
+    state.rewindLatestToken = null;
+    state.recapGridReadiness = null;
+    input.value = receipt.poppedUserText;
+    state.pendingPoppedDraftText = receipt.poppedUserText;
+    refreshComposerMode();
+    try {
+      await loadRecentTurns();
+      setStreaming(false, "");
+    } catch (error) {
+      setStreaming(false, `撤销已生效；recent view 暂不可用：${error?.message || "加载失败"}`);
     }
-
-    applyRecentTurnsPayload(payload?.recent ?? {});
-    input.value = state.pendingPoppedTurn.userText ?? "";
-    state.pendingPoppedDraftText = input.value;
-    renderTurns();
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
-    setStreaming(false, "");
-    return state.pendingPoppedTurn;
+    return receipt;
   }
 
   async function attachToTurn(turnId, status) {
@@ -520,7 +806,7 @@
       setStreaming(true, status || "正在连接生成流…");
 
       try {
-        const response = await fetch(`/api/chat/turns/${encodeURIComponent(normalizedTurnId)}/events`, {
+        const response = await fetch(`/api/v1/chat/turns/${encodeURIComponent(normalizedTurnId)}/events`, {
           credentials: "same-origin",
         });
 
@@ -587,11 +873,11 @@
       return;
     }
 
-    const replacingPoppedTurn = state.pendingPoppedTurn !== null;
+    const replacingPoppedTurn = state.pendingPoppedDraftText !== null;
     state.stopRequested = false;
     setStreaming(true, replacingPoppedTurn ? "正在重新生成…" : "正在发送…");
 
-    const response = await fetch("/api/chat/turns", {
+    const response = await fetch("/api/v1/chat/turns", {
       method: "POST",
       credentials: "same-origin",
       headers: {
@@ -603,29 +889,25 @@
       }),
     });
 
-    const payload = await response.json().catch(() => null);
-
-    if (response.status === 409) {
-      if (payload?.turnId) {
-        await attachToTurn(payload.turnId, payload.error || "正在恢复生成…");
+    if (!response.ok) {
+      const error = await readJsonResponse(response, (value) =>
+        value?.code === "turn-busy" ? requireBusyError(value) : requireApiError(value));
+      if (error.code === "turn-busy" && error.turnId) {
+        await attachToTurn(error.turnId, error.error);
         return;
       }
 
-      setStreaming(false, payload?.error || "该账号当前正在生成，请稍后。");
+      setStreaming(false, error.error);
       return;
     }
 
-    if (!response.ok) {
-      setStreaming(false, payload?.error || "请求失败");
-      return;
-    }
-
+    const payload = await readJsonResponse(response, requireAcceptedTurn);
     if (replacingPoppedTurn) {
-      await attachToTurn(payload?.turnId, "正在重新生成…");
+      await attachToTurn(payload.turnId, "正在重新生成…");
       return;
     }
 
-    await attachToTurn(payload?.turnId, "正在生成…");
+    await attachToTurn(payload.turnId, "正在生成…");
   });
 
   undoLastButton?.addEventListener("click", async () => {
@@ -644,16 +926,19 @@
     state.stopRequested = true;
     setStreaming(true, "正在停止生成…");
 
-    const response = await fetch(`/api/chat/turns/${encodeURIComponent(state.activeTurnId)}/stop`, {
+    const response = await fetch(`/api/v1/chat/turns/${encodeURIComponent(state.activeTurnId)}/stop`, {
       method: "POST",
       credentials: "same-origin",
     });
 
-    const payload = await response.json().catch(() => null);
     if (!response.ok) {
+      const error = await readJsonResponse(response, requireApiError);
       state.stopRequested = false;
-      setStreaming(true, payload?.error || "停止请求失败，继续等待生成完成…");
+      setStreaming(true, error.error);
       return;
+    }
+    if (response.status !== 204 || (await response.text()) !== "") {
+      throw new Error("stop response must be an empty 204");
     }
 
     setStreaming(true, "已发送停止请求，等待模型收尾…");
@@ -692,7 +977,7 @@
         setStreaming(false, "已保留不确定状态，未重新调用模型。");
         return;
       }
-      const response = await fetch("/api/chat/turns/resume", {
+      const response = await fetch("/api/v1/chat/turns/resume", {
         method: "POST",
         credentials: "same-origin",
         headers: {
@@ -704,14 +989,20 @@
           restartUncertainCompletion,
         }),
       });
-      const payload = await response.json().catch(() => null);
-      if (response.ok && payload?.turnId) {
+      if (response.ok) {
+        const payload = await readJsonResponse(response, requireAcceptedTurn);
         await attachToTurn(payload.turnId, "正在恢复生成…");
+        return;
+      }
+      const error = await readJsonResponse(response, (value) =>
+        value?.code === "turn-busy" ? requireBusyError(value) : requireApiError(value));
+      if (error.code === "turn-busy" && error.turnId) {
+        await attachToTurn(error.turnId, error.error);
         return;
       }
       resetLive();
       refreshComposerMode();
-      setStreaming(false, payload?.error || "持久化轮次需要人工恢复。");
+      setStreaming(false, error.error);
       return;
     }
 
@@ -725,4 +1016,8 @@
     resetLive();
     setStreaming(false, error.message || "加载失败");
   });
-})();
+}
+
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+  startGalateaApp();
+}
