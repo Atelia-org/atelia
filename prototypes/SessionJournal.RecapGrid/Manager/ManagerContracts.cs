@@ -453,37 +453,77 @@ public readonly record struct RecapGridBuildProgressMetrics(
     int MissingAssignments
 );
 
-public sealed record RecapGridBuildProgressAuthority(
-    TimelineHeadRef TimelineHead,
-    ControlHeadRef ControlHead,
-    RecapGridStoreIdentity StoreIdentity,
-    GridBuildRecipeDigest RecipeDigest,
-    HistoryRowId ThroughRowId,
-    HistorySegmentDescriptorDigest ThroughDescriptorDigest
-);
+public sealed record RecapGridBuildProgressAuthority {
+    internal RecapGridBuildProgressAuthority(
+        TimelineHeadRef timelineHead,
+        ControlHeadRef controlHead,
+        RecapGridStoreIdentity storeIdentity,
+        GridBuildRecipeDigest recipeDigest,
+        HistoryRowId throughRowId,
+        HistorySegmentDescriptorDigest throughDescriptorDigest
+    ) {
+        TimelineHead = timelineHead;
+        ControlHead = controlHead;
+        StoreIdentity = storeIdentity;
+        RecipeDigest = recipeDigest;
+        ThroughRowId = throughRowId;
+        ThroughDescriptorDigest = throughDescriptorDigest;
+    }
 
-public sealed record RecapGridMissingAssignmentProgress(
-    int Ordinal,
-    HistoryRowId RowId,
-    GridBuildRecipeDigest RecipeDigest,
-    LogicalColumnId LogicalColumnId,
-    EvaluationKeyDigest EvaluationKey
-);
+    public TimelineHeadRef TimelineHead { get; }
+    public ControlHeadRef ControlHead { get; }
+    public RecapGridStoreIdentity StoreIdentity { get; }
+    public GridBuildRecipeDigest RecipeDigest { get; }
+    public HistoryRowId ThroughRowId { get; }
+    public HistorySegmentDescriptorDigest ThroughDescriptorDigest { get; }
+}
+
+public sealed record RecapGridMissingAssignmentProgress {
+    internal RecapGridMissingAssignmentProgress(
+        int ordinal,
+        HistoryRowId rowId,
+        GridBuildRecipeDigest recipeDigest,
+        LogicalColumnId logicalColumnId,
+        EvaluationKeyDigest evaluationKey
+    ) {
+        Ordinal = ordinal;
+        RowId = rowId;
+        RecipeDigest = recipeDigest;
+        LogicalColumnId = logicalColumnId;
+        EvaluationKey = evaluationKey;
+    }
+
+    public int Ordinal { get; }
+    public HistoryRowId RowId { get; }
+    public GridBuildRecipeDigest RecipeDigest { get; }
+    public LogicalColumnId LogicalColumnId { get; }
+    public EvaluationKeyDigest EvaluationKey { get; }
+}
 
 /// <summary>
 /// One resumable Manager work unit. A unit always names exactly one frozen
 /// recipe at one selected Timeline row; cell calls are children of this unit.
 /// </summary>
-public sealed record RecapGridRecipeRowWork(
-    HistoryRowId RowId,
-    GridBuildRecipeDigest RecipeDigest,
-    bool IsOverlayBootstrap
-);
+public sealed record RecapGridRecipeRowWork {
+    internal RecapGridRecipeRowWork(
+        HistoryRowId rowId,
+        GridBuildRecipeDigest recipeDigest,
+        bool isOverlayBootstrap
+    ) {
+        RowId = rowId;
+        RecipeDigest = recipeDigest;
+        IsOverlayBootstrap = isOverlayBootstrap;
+    }
+
+    public HistoryRowId RowId { get; }
+    public GridBuildRecipeDigest RecipeDigest { get; }
+    public bool IsOverlayBootstrap { get; }
+}
 
 public abstract record RecapGridBuildProgressResult {
     private RecapGridBuildProgressResult() { }
 
-    public RecapGridBuildProgressMetrics Metrics { get; init; }
+    public RecapGridBuildProgressMetrics Metrics { get; internal init; }
 
     public sealed record Complete(
         RecapGridBuildProgressAuthority Authority,

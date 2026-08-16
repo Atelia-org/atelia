@@ -1,5 +1,6 @@
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Cadence;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Manager;
@@ -9,6 +10,53 @@ using Xunit;
 namespace Atelia.SessionJournal.RecapGrid.Manager.PublicSurface.Tests;
 
 public sealed class ManagerPublicSurfaceTests {
+    [Fact]
+    public void ProgressRecordsArePublicReadOnlyAndNotPubliclyConstructible() {
+        AssertProgressRecordShape(
+            typeof(RecapGridBuildProgressAuthority),
+            [
+                ("TimelineHead", typeof(TimelineHeadRef)),
+                ("ControlHead", typeof(ControlHeadRef)),
+                ("StoreIdentity", typeof(RecapGridStoreIdentity)),
+                ("RecipeDigest", typeof(GridBuildRecipeDigest)),
+                ("ThroughRowId", typeof(HistoryRowId)),
+                ("ThroughDescriptorDigest", typeof(
+                    HistorySegmentDescriptorDigest))
+            ]
+        );
+        AssertProgressRecordShape(
+            typeof(RecapGridMissingAssignmentProgress),
+            [
+                ("Ordinal", typeof(int)),
+                ("RowId", typeof(HistoryRowId)),
+                ("RecipeDigest", typeof(GridBuildRecipeDigest)),
+                ("LogicalColumnId", typeof(LogicalColumnId)),
+                ("EvaluationKey", typeof(EvaluationKeyDigest))
+            ]
+        );
+        AssertProgressRecordShape(
+            typeof(RecapGridRecipeRowWork),
+            [
+                ("RowId", typeof(HistoryRowId)),
+                ("RecipeDigest", typeof(GridBuildRecipeDigest)),
+                ("IsOverlayBootstrap", typeof(bool))
+            ]
+        );
+
+        Assert.True(typeof(RecapGridBuildProgressMetrics).IsValueType);
+        System.Reflection.PropertyInfo? metricsProperty =
+            typeof(RecapGridBuildProgressResult).GetProperty("Metrics");
+        Assert.NotNull(metricsProperty);
+        System.Reflection.PropertyInfo metrics = metricsProperty!;
+        Assert.True(metrics.GetMethod!.IsPublic);
+        Assert.NotNull(metrics.SetMethod);
+        Assert.True(metrics.SetMethod!.IsAssembly);
+        Assert.Contains(
+            typeof(System.Runtime.CompilerServices.IsExternalInit),
+            metrics.SetMethod.ReturnParameter.GetRequiredCustomModifiers()
+        );
+    }
+
     [Fact]
     public async Task ExternalCompositionCanOpenBuildDisposeWithoutBackendAccess() {
         string path = Path.Combine(
@@ -217,6 +265,57 @@ public sealed class ManagerPublicSurfaceTests {
             committed.HeadRowId!.Value
         )).Row;
         return (committed, row);
+    }
+
+    private static void AssertProgressRecordShape(
+        Type type,
+        (string Name, Type Type)[] expectedProperties
+    ) {
+        const System.Reflection.BindingFlags PublicDeclaredInstance =
+            System.Reflection.BindingFlags.Public
+            | System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.DeclaredOnly;
+        const System.Reflection.BindingFlags NonPublicInstance =
+            System.Reflection.BindingFlags.NonPublic
+            | System.Reflection.BindingFlags.Instance;
+
+        Assert.True(type.IsPublic);
+        Assert.True(type.IsSealed);
+        Assert.Empty(type.GetConstructors(PublicDeclaredInstance));
+        Assert.DoesNotContain(
+            type.GetMethods(PublicDeclaredInstance),
+            static method => method.Name == "Deconstruct"
+        );
+
+        System.Reflection.PropertyInfo[] properties = type.GetProperties(
+            PublicDeclaredInstance
+        );
+        Assert.Equal(
+            expectedProperties.Select(static property => property.Name),
+            properties.Select(static property => property.Name)
+        );
+        Assert.Equal(
+            expectedProperties.Select(static property => property.Type),
+            properties.Select(static property => property.PropertyType)
+        );
+        Assert.All(properties, static property => {
+            Assert.NotNull(property.GetMethod);
+            Assert.True(property.GetMethod!.IsPublic);
+            Assert.Null(property.SetMethod);
+        });
+
+        Type[] argumentTypes = expectedProperties
+            .Select(static property => property.Type)
+            .ToArray();
+        System.Reflection.ConstructorInfo? argumentConstructor = type
+            .GetConstructor(
+                NonPublicInstance,
+                binder: null,
+                argumentTypes,
+                modifiers: null
+            );
+        Assert.NotNull(argumentConstructor);
+        Assert.True(argumentConstructor!.IsAssembly);
     }
 
     private sealed class NoCallExecutor : IRecapCellBatchExecutor {
