@@ -166,10 +166,7 @@ public sealed class GetterPublicSurfaceTests : IDisposable {
 
         Assert.True(type.IsPublic);
         Assert.True(type.IsSealed);
-        Assert.DoesNotContain(
-            type.GetConstructors(PublicDeclaredInstance),
-            static constructor => constructor.GetParameters().Length > 0
-        );
+        Assert.Empty(type.GetConstructors(PublicDeclaredInstance));
         Assert.DoesNotContain(
             type.GetMethods(PublicDeclaredInstance),
             static method => method.Name == "Deconstruct"
