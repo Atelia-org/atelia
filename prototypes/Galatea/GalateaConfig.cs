@@ -33,16 +33,6 @@ public sealed record GalateaRecapGridFileConfig(
     string CurrentAgentControlProfileId
 );
 
-/// <summary>
-/// Galatea-owned envelope for connections.json. Recap routing is deliberately
-/// kept out of the shared Completion connection-file contract.
-/// </summary>
-[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-public sealed record GalateaConnectionsFileConfig(
-    IReadOnlyList<CompletionConnectionConfig> Connections,
-    string? DefaultConnectionId = null
-);
-
 /// <summary>Shape of config.json: user accounts + server settings, with no LLM binding.</summary>
 public sealed record GalateaUsersFileConfig(
     IReadOnlyList<GalateaUserConfig> Users,

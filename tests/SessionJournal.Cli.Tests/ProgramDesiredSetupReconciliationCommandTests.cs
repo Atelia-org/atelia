@@ -256,6 +256,28 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
         Assert.False(File.Exists(reportPath));
     }
 
+    [Fact]
+    public void NoVersionConnectionsFailBeforeRepositoryMutation() {
+        TestInputs inputs = CreateInputs(
+            "model-A",
+            "surface-A",
+            "prompt-A"
+        );
+        string noVersion = File.ReadAllText(inputs.ConnectionsPath).Replace(
+            "\"v\": 1,",
+            string.Empty,
+            StringComparison.Ordinal
+        );
+        File.WriteAllText(inputs.ConnectionsPath, noVersion);
+        JournalSnapshot before = ReadSnapshot(inputs.RepositoryPath);
+
+        int exitCode = Run(inputs, before.Head);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(before, ReadSnapshot(inputs.RepositoryPath));
+        Assert.False(File.Exists(inputs.ReportPath));
+    }
+
     private int Run(
         TestInputs inputs,
         EventAddress expectedHead,
@@ -308,6 +330,7 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
             connectionsPath,
             """
             {
+              "v": 1,
               "defaultConnectionId": "target",
               "connections": [
                 {

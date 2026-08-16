@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.SessionJournal;
@@ -244,10 +245,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 profile.ProfileId
             )
         );
-        var connectionsFile = new GalateaConnectionsFileConfig(
-            connections,
-            defaultConnectionId
-        );
         var jsonOptions = new JsonSerializerOptions(
             JsonSerializerDefaults.Web
         );
@@ -259,14 +256,58 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             configPath,
             JsonSerializer.Serialize(users, jsonOptions)
         );
-        File.WriteAllText(
+        WriteConnectionsFile(
             Path.Combine(
                 configurationDirectory,
                 GalateaConfigLoader.ConnectionsFileName
             ),
-            JsonSerializer.Serialize(connectionsFile, jsonOptions)
+            connections,
+            defaultConnectionId
         );
         return configPath;
+    }
+
+    internal static void WriteConnectionsFile(
+        string path,
+        IReadOnlyList<CompletionConnectionConfig> connections,
+        string defaultConnectionId
+    ) {
+        var output = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(output)) {
+            writer.WriteStartObject();
+            writer.WriteNumber("v", 1);
+            writer.WriteStartArray("connections");
+            foreach (CompletionConnectionConfig connection in connections) {
+                if (!string.IsNullOrWhiteSpace(connection.BaseAddressEnv)
+                    || !string.IsNullOrWhiteSpace(connection.ApiKeyEnv)) {
+                    throw new InvalidOperationException(
+                        "Galatea test fixtures use explicit inline sources."
+                    );
+                }
+                writer.WriteStartObject();
+                writer.WriteString("id", connection.Id);
+                writer.WriteString("kind", connection.Kind);
+                writer.WriteString("modelId", connection.ModelId);
+                writer.WriteString(
+                    "completionSurfaceId",
+                    connection.CompletionSurfaceId
+                );
+                writer.WriteString("baseAddress", connection.BaseAddress);
+                if (!string.IsNullOrWhiteSpace(connection.ApiKey)) {
+                    writer.WriteString("apiKey", connection.ApiKey);
+                }
+                if (connection.MaxTokens is int maxTokens) {
+                    writer.WriteNumber("maxTokens", maxTokens);
+                }
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteString("defaultConnectionId", defaultConnectionId);
+            writer.WriteEndObject();
+        }
+        byte[] bytes = output.WrittenSpan.ToArray();
+        _ = CompletionConnectionConfigLoader.Decode(bytes);
+        File.WriteAllBytes(path, bytes);
     }
 
     private static RecapGridAgentControlProfile AssertBuiltInProfile() {

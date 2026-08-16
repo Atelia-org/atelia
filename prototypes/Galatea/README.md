@@ -23,6 +23,13 @@ Agent Control profiles 必须继续保留，供 Prepared/ToolContinuation 按 fr
 绑定；current profile 只用于新 request。route manifest 延迟到首次 RecapGrid work 才
 读取，没有 wildcard/default fallback。
 
+该文件使用 Completion-owned strict V1 byte language：根必须包含 integer token
+`"v": 1`、非空 `connections` 与 `defaultConnectionId`；每项必须显式提供
+`completionSurfaceId`，并在 `baseAddress` / `baseAddressEnv` 中恰好选择一个，在
+`apiKey` / `apiKeyEnv` 中至多选择一个。升级旧文件时必须人工增加 `v: 1`，并删除与
+env locator 并存的空 inline source；没有 no-version compatibility reader，也不会自动
+改写可能含有 secret 的文件。
+
 GalateaHostService 唯一拥有一个 `RecapGridCompletionHost`，shutdown 顺序为：停止并
 drain per-turn Online/runtime operation，再 dispose host-wide runtime，最后清理 distinct
 Completion clients。CallLogDir 由统一 Completion factory decorator 服务 agent 与 recap

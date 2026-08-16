@@ -110,9 +110,9 @@ internal static partial class RecapGridCommands {
                 RecapGridRouteManifestLimits.MaximumCanonicalUtf8Bytes
             ));
         CompletionConnectionsFileConfig connections =
-            RecapGridCompletionConnectionsManifest.Decode(ReadBoundedFile(
+            CompletionConnectionConfigLoader.Decode(ReadBoundedFile(
                 options.RequireSingle("connections"),
-                RecapGridCompletionConnectionsLimits.MaximumInputUtf8Bytes
+                CompletionConnectionConfigLoader.MaximumInputUtf8Bytes
             ));
         string? callLogDirectory = options.GetOptionalSingle("call-log-dir");
         ICompletionClientFactory buildClientFactory = callLogDirectory is null

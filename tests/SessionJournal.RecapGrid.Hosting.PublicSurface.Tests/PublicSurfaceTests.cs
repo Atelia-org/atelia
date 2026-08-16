@@ -27,9 +27,9 @@ public sealed class PublicSurfaceTests {
         var factory = new ThrowingFactory();
 
         CompletionConnectionsFileConfig connections =
-            RecapGridCompletionConnectionsManifest.Decode(
+            CompletionConnectionConfigLoader.Decode(
                 Encoding.UTF8.GetBytes("""
-                    {"connections":[{"id":"main","kind":"test","modelId":"model","completionSurfaceId":"test-v1","baseAddress":"https://example.invalid/"}],"defaultConnectionId":"main"}
+                    {"v":1,"connections":[{"id":"main","kind":"test","modelId":"model","completionSurfaceId":"test-v1","baseAddress":"https://example.invalid/"}],"defaultConnectionId":"main"}
                     """)
             );
         await using RecapGridRuntimeHost host = RecapGridRuntimeHost.Create(
@@ -53,9 +53,9 @@ public sealed class PublicSurfaceTests {
             null
         );
         CompletionConnectionsFileConfig connections =
-            RecapGridCompletionConnectionsManifest.Decode(
+            CompletionConnectionConfigLoader.Decode(
                 Encoding.UTF8.GetBytes("""
-                    {"connections":[{"id":"main","kind":"test","modelId":"model","completionSurfaceId":"test-v1","baseAddress":"https://example.invalid/"}],"defaultConnectionId":"main"}
+                    {"v":1,"connections":[{"id":"main","kind":"test","modelId":"model","completionSurfaceId":"test-v1","baseAddress":"https://example.invalid/"}],"defaultConnectionId":"main"}
                     """));
         var factory = new BorrowedFactory();
         await using RecapGridCompletionHost host =
@@ -93,6 +93,19 @@ public sealed class PublicSurfaceTests {
 
         await host.DisposeAsync();
         Assert.Equal(1, factory.Client.DisposeCount);
+    }
+
+    [Fact]
+    public void HostingDoesNotExportAConnectionsByteReaderOrLimits() {
+        Type[] exported = typeof(RecapGridRuntimeHost).Assembly
+            .GetExportedTypes();
+
+        Assert.DoesNotContain(
+            exported,
+            static type => type.Name
+                is "RecapGridCompletionConnectionsManifest"
+                    or "RecapGridCompletionConnectionsLimits"
+        );
     }
 
     private sealed class ThrowingFactory : ICompletionClientFactory {

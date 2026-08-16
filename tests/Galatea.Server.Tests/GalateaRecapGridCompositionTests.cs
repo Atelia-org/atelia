@@ -348,7 +348,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Directory.CreateDirectory(external);
         string connectionsPath = Path.Combine(external, "connections.json");
         File.WriteAllText(connectionsPath, """
-            {"connections":[{"id":"test","kind":"openai-chat","modelId":"model-a","completionSurfaceId":"openai-chat/strict","baseAddress":"http://localhost:8000/","apiKey":"test-key"}],"defaultConnectionId":"test"}
+            {"v":1,"connections":[{"id":"test","kind":"openai-chat","modelId":"model-a","completionSurfaceId":"openai-chat/strict","baseAddress":"http://localhost:8000/","apiKey":"test-key"}],"defaultConnectionId":"test"}
             """);
         string routesPath = Path.Combine(external, "routes.json");
         File.WriteAllBytes(

@@ -88,9 +88,9 @@ internal static partial class RecapGridCommands {
             "--connections"
         );
         CompletionConnectionsFileConfig connections =
-            RecapGridCompletionConnectionsManifest.Decode(ReadBoundedFile(
+            CompletionConnectionConfigLoader.Decode(ReadBoundedFile(
                 connectionsPath,
-                RecapGridCompletionConnectionsLimits.MaximumInputUtf8Bytes
+                CompletionConnectionConfigLoader.MaximumInputUtf8Bytes
             ));
         string? routesPath = options.GetOptionalSingle("routes");
         if (mode is RecapGridOnlineMode.SendNewTurn

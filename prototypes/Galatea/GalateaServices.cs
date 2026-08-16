@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Globalization;
@@ -1201,10 +1202,8 @@ internal static class GalateaConfigLoader {
         string configDir = Path.GetDirectoryName(resolvedPath)
             ?? throw new InvalidOperationException($"Cannot determine config directory for: {resolvedPath}");
         string connectionsPath = Path.Combine(configDir, ConnectionsFileName);
-        byte[] usersBytes = GalateaStrictConfigReader.ReadAndValidate(
-            resolvedPath,
-            GalateaStrictConfigReader.MaximumConfigUtf8Bytes,
-            GalateaStrictDocumentKind.Users
+        byte[] usersBytes = GalateaStrictConfigReader.ReadUsersAndValidate(
+            resolvedPath
         );
         var usersFile = JsonSerializer.Deserialize(usersBytes, GalateaJsonContext.Default.GalateaUsersFileConfig);
         if (usersFile is null) { throw new InvalidOperationException($"Failed to deserialize Galatea config: {resolvedPath}"); }
@@ -1215,24 +1214,14 @@ internal static class GalateaConfigLoader {
                 connectionsPath
             );
         }
-        byte[] connectionsJson = GalateaStrictConfigReader.ReadAndValidate(
-            connectionsPath,
-            GalateaStrictConfigReader.MaximumConnectionsUtf8Bytes,
-            GalateaStrictDocumentKind.Connections
-        );
-        var galateaConnectionsFile = JsonSerializer.Deserialize(
-            connectionsJson,
-            GalateaJsonContext.Default.GalateaConnectionsFileConfig
-        ) ?? throw new InvalidOperationException(
-            $"Failed to deserialize Galatea connections file: {connectionsPath}"
-        );
-        CompletionConnectionsFileConfig connectionsFile =
-            CompletionConnectionConfigLoader.NormalizeAndValidate(
-                new CompletionConnectionsFileConfig(
-                    galateaConnectionsFile.Connections,
-                    galateaConnectionsFile.DefaultConnectionId
-                )
+        byte[] connectionsJson = GalateaStrictConfigReader
+            .ReadBoundedRegularFile(
+                connectionsPath,
+                CompletionConnectionConfigLoader.MaximumInputUtf8Bytes,
+                "Galatea connections"
             );
+        CompletionConnectionsFileConfig connectionsFile =
+            CompletionConnectionConfigLoader.Decode(connectionsJson);
         if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("Galatea config must contain at least one user."); }
 
         var config = new GalateaConfig(
@@ -1576,10 +1565,9 @@ internal static class GalateaConfigBootstrapper {
         }
 
         if (!connectionsExists) {
-            File.WriteAllText(
+            File.WriteAllBytes(
                 connectionsPath,
-                JsonSerializer.Serialize(GalateaConfigTemplateFactory.CreateConnectionsFile(), jsonOptions) + Environment.NewLine,
-                Encoding.UTF8
+                GalateaConfigTemplateFactory.CreateConnectionsFileUtf8()
             );
             generated.Add(connectionsPath);
         }
@@ -1620,23 +1608,41 @@ internal static class GalateaConfigTemplateFactory {
         );
     }
 
-    public static GalateaConnectionsFileConfig CreateConnectionsFile() {
-        return new GalateaConnectionsFileConfig(
-            Connections: [
-                new CompletionConnectionConfig(
-                    Id: DefaultConnectionId,
-                    Kind: "openai-chat",
-                    ModelId: PlaceholderModelId,
-                    CompletionSurfaceId: "openai-chat/qwen-sglang",
-                    // Points at a local OpenAI-compatible server by default. The inline
-                    // placeholder key lets the config load out of the box; swap in a real
-                    // key, or move it to an env var via ApiKeyEnv, before going live.
-                    BaseAddress: "http://localhost:8888/",
-                    ApiKey: "sk-local-placeholder"
-                ),
-            ],
-            DefaultConnectionId: DefaultConnectionId
+    public static byte[] CreateConnectionsFileUtf8() {
+        var output = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(
+            output,
+            new JsonWriterOptions { Indented = true }
+        )) {
+            writer.WriteStartObject();
+            writer.WriteNumber("v", 1);
+            writer.WriteStartArray("connections");
+            writer.WriteStartObject();
+            writer.WriteString("id", DefaultConnectionId);
+            writer.WriteString("kind", "openai-chat");
+            writer.WriteString("modelId", PlaceholderModelId);
+            writer.WriteString(
+                "completionSurfaceId",
+                "openai-chat/qwen-sglang"
+            );
+            // Points at a local OpenAI-compatible server by default. The inline
+            // placeholder key lets the config load out of the box; users can
+            // replace each inline source with its corresponding env locator.
+            writer.WriteString("baseAddress", "http://localhost:8888/");
+            writer.WriteString("apiKey", "sk-local-placeholder");
+            writer.WriteEndObject();
+            writer.WriteEndArray();
+            writer.WriteString("defaultConnectionId", DefaultConnectionId);
+            writer.WriteEndObject();
+        }
+        byte[] document = output.WrittenSpan.ToArray();
+        _ = CompletionConnectionConfigLoader.Decode(document);
+        byte[] terminated = GC.AllocateUninitializedArray<byte>(
+            document.Length + 1
         );
+        document.CopyTo(terminated, 0);
+        terminated[^1] = (byte)'\n';
+        return terminated;
     }
 
     private static GalateaUserConfig CreateUser(string userId, string password, string sessionDir) {
@@ -1826,5 +1832,4 @@ internal static class GalateaJson {
 [JsonSerializable(typeof(GalateaUsersFileConfig))]
 [JsonSerializable(typeof(GalateaUserConfig))]
 [JsonSerializable(typeof(GalateaRecapGridFileConfig))]
-[JsonSerializable(typeof(GalateaConnectionsFileConfig))]
 internal sealed partial class GalateaJsonContext : JsonSerializerContext;

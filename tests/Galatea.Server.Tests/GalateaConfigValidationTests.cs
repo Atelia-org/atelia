@@ -87,15 +87,10 @@ public sealed class GalateaConfigValidationTests {
                     GalateaJson.Options
                 )
             );
-            File.WriteAllText(
+            GalateaTestHost.WriteConnectionsFile(
                 Path.Combine(root, GalateaConfigLoader.ConnectionsFileName),
-                JsonSerializer.Serialize(
-                    new CompletionConnectionsFileConfig(
-                        Connections,
-                        "test"
-                    ),
-                    GalateaJson.Options
-                )
+                Connections,
+                "test"
             );
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
@@ -161,8 +156,8 @@ public sealed class GalateaConfigValidationTests {
 
             string[] invalidConnections = [
                 originalConnections.Replace(
-                    "{\"connections\"",
-                    "{\"unknown\":1,\"connections\"",
+                    "{\"v\":1,",
+                    "{\"unknown\":1,\"v\":1,",
                     StringComparison.Ordinal
                 ),
                 originalConnections.Replace(
@@ -190,6 +185,49 @@ public sealed class GalateaConfigValidationTests {
         }
         finally {
             Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ConnectionsRequireCompletionOwnedV1AndBootstrapRoundTrips() {
+        byte[] template = GalateaConfigTemplateFactory
+            .CreateConnectionsFileUtf8();
+        CompletionConnectionsFileConfig decoded =
+            CompletionConnectionConfigLoader.Decode(template);
+        Assert.Single(decoded.Connections);
+        using (JsonDocument document = JsonDocument.Parse(template)) {
+            JsonElement root = document.RootElement;
+            Assert.Equal("1", root.GetProperty("v").GetRawText());
+            JsonElement item = root.GetProperty("connections")[0];
+            Assert.True(item.TryGetProperty("baseAddress", out _));
+            Assert.False(item.TryGetProperty("baseAddressEnv", out _));
+            Assert.True(item.TryGetProperty("apiKey", out _));
+            Assert.False(item.TryGetProperty("apiKeyEnv", out _));
+        }
+
+        string rootDirectory = NewRoot();
+        try {
+            string configPath = WriteConfig(
+                rootDirectory,
+                [User("alice", Path.Combine(rootDirectory, "session"))]
+            );
+            string connectionsPath = Path.Combine(
+                rootDirectory,
+                GalateaConfigLoader.ConnectionsFileName
+            );
+            string noVersion = File.ReadAllText(connectionsPath).Replace(
+                "\"v\":1,",
+                string.Empty,
+                StringComparison.Ordinal
+            );
+            File.WriteAllText(connectionsPath, noVersion);
+
+            Assert.Throws<InvalidDataException>(() =>
+                GalateaConfigLoader.Load(configPath)
+            );
+        }
+        finally {
+            Directory.Delete(rootDirectory, recursive: true);
         }
     }
 
@@ -455,15 +493,10 @@ public sealed class GalateaConfigValidationTests {
             Path.Combine(root, "profile.json"),
             CreateProfile().ToCanonicalBytes()
         );
-        File.WriteAllText(
+        GalateaTestHost.WriteConnectionsFile(
             Path.Combine(root, GalateaConfigLoader.ConnectionsFileName),
-            JsonSerializer.Serialize(
-                new CompletionConnectionsFileConfig(
-                    Connections,
-                    "test"
-                ),
-                GalateaJson.Options
-            )
+            Connections,
+            "test"
         );
         return configPath;
     }

@@ -220,18 +220,13 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                 GalateaJson.Options
             )
         );
-        File.WriteAllText(
+        GalateaTestHost.WriteConnectionsFile(
             Path.Combine(_root, GalateaConfigLoader.ConnectionsFileName),
-            JsonSerializer.Serialize(
-                new CompletionConnectionsFileConfig(
-                    [
-                        Connection(AgentConnectionId, "agent-model"),
-                        Connection(RecapConnectionId, "recap-model")
-                    ],
-                    AgentConnectionId
-                ),
-                GalateaJson.Options
-            )
+            [
+                Connection(AgentConnectionId, "agent-model"),
+                Connection(RecapConnectionId, "recap-model")
+            ],
+            AgentConnectionId
         );
     }
 

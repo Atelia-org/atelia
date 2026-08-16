@@ -1512,15 +1512,29 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         string connections = Path.Combine(_root, "connections.json");
         File.WriteAllText(connections, """
             {
+              "v": 1,
               "connections": [{
                 "id": "test",
                 "kind": "test",
                 "modelId": "test-model",
                 "completionSurfaceId": "test-v1",
                 "baseAddress": "https://example.invalid"
-              }]
+              }],
+              "defaultConnectionId": "test"
             }
             """);
+        string noVersionConnections = Path.Combine(
+            _root,
+            "connections-no-version.json"
+        );
+        File.WriteAllText(
+            noVersionConnections,
+            File.ReadAllText(connections).Replace(
+                "\"v\": 1,",
+                string.Empty,
+                StringComparison.Ordinal
+            )
+        );
         var factory = new DeterministicCompletionClientFactory();
         string malformedConnections = Path.Combine(
             _root,
@@ -1540,6 +1554,17 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal(0, factory.CallCount);
         Assert.False(Directory.Exists(preDispatchCallLogs));
         AssertSnapshotEqual(beforeMalformed, SnapshotDirectory(_root));
+
+        Dictionary<string, byte[]> beforeNoVersion = SnapshotDirectory(_root);
+        Assert.Equal(1, RunWithFactory(factory,
+            "build", "--input", _root, "--confirm-ref", refId,
+            "--recipe", recipe.Digest.Value,
+            "--max-recipe-row-steps", "64",
+            "--max-new-calls", "8", "--max-elapsed-ms", "10000",
+            "--routes", routes, "--connections", noVersionConnections
+        ));
+        Assert.Equal(0, factory.CallCount);
+        AssertSnapshotEqual(beforeNoVersion, SnapshotDirectory(_root));
 
         string absentRouteManifest = WriteBytes(
             "routes-exact-absent.json",
@@ -1733,6 +1758,24 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         Directory.CreateDirectory(Path.GetDirectoryName(oldV8)!);
         File.WriteAllBytes(oldV8, [8, 0, 8, 0, 7]);
         byte[] oldV8Before = File.ReadAllBytes(oldV8);
+        Dictionary<string, byte[]> beforeNoVersionOnline =
+            SnapshotDirectory(_root);
+        Assert.Equal(1, RunWithFactory(factory,
+            "run-online-turn",
+            "--input", _root,
+            "--branch", SessionJournalDefaults.MainBranchName,
+            "--confirm-ref", refId,
+            "--message", "must not dispatch",
+            "--connection", "test",
+            "--admission", admission,
+            "--connections", noVersionConnections,
+            "--routes", routes
+        ));
+        Assert.Equal(requestsBeforeOnline, factory.RequestCount);
+        AssertSnapshotEqual(
+            beforeNoVersionOnline,
+            SnapshotDirectory(_root)
+        );
         (int firstOnlineCode, JsonElement firstOnline) =
             RunCapturedWithFactory(factory,
                 "run-online-turn",
@@ -2188,13 +2231,15 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         string path = Path.Combine(_root, "connections.json");
         File.WriteAllText(path, """
             {
+              "v": 1,
               "connections": [{
                 "id": "test",
                 "kind": "test",
                 "modelId": "test-model",
                 "completionSurfaceId": "test-v1",
                 "baseAddress": "https://example.invalid"
-              }]
+              }],
+              "defaultConnectionId": "test"
             }
             """);
         return path;

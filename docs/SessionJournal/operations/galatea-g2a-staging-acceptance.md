@@ -101,15 +101,33 @@ recipe_file="$operator_dir/galatea-rolling-full-recipe.json"
     | if length != 1 then error("exact source connection absent or duplicate")
       else .[0] end
     | select(.kind == "anthropic")
+    | . as $connection
     | {
+        v: 1,
         defaultConnectionId: $target,
-        connections: [{
-          id: $target, kind, modelId,
-          completionSurfaceId: (.completionSurfaceId // "anthropic"),
-          baseAddress: (.baseAddress // ""),
-          baseAddressEnv, apiKeyEnv,
-          maxTokens, reasoningEffort: "low", anthropicPromptCacheTtl
-        } | with_entries(select(.value != null))]
+        connections: [
+          ({
+            id: $target,
+            kind: $connection.kind,
+            modelId: $connection.modelId,
+            completionSurfaceId: ($connection.completionSurfaceId // "anthropic"),
+            reasoningEffort: "low"
+          }
+          + (if (($connection.baseAddressEnv // "") | length) > 0 then
+               {baseAddressEnv: $connection.baseAddressEnv}
+             elif (($connection.baseAddress // "") | length) > 0 then
+               {baseAddress: $connection.baseAddress}
+             else error("selected connection has no endpoint source") end)
+          + (if (($connection.apiKeyEnv // "") | length) > 0 then
+               {apiKeyEnv: $connection.apiKeyEnv}
+             else {} end)
+          + (if $connection.maxTokens != null then
+               {maxTokens: $connection.maxTokens}
+             else {} end)
+          + (if $connection.anthropicPromptCacheTtl != null then
+               {anthropicPromptCacheTtl: $connection.anthropicPromptCacheTtl}
+             else {} end))
+        ]
       }
   ' "$galatea_connections" >"$strict_connections" )
 

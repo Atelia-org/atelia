@@ -4,17 +4,10 @@ using System.Text.Json;
 
 namespace Atelia.Galatea.Server;
 
-internal enum GalateaStrictDocumentKind {
-    Users,
-    Connections
-}
-
 internal static class GalateaStrictConfigReader {
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
-    internal const int MaximumConnectionsUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumUserCount = 256;
-    internal const int MaximumConnectionCount = 256;
     private const int MaximumDepth = 32;
     private const int OpenReadOnly = 0;
     private const int OpenNonBlocking = 0x800;
@@ -23,13 +16,13 @@ internal static class GalateaStrictConfigReader {
     private const uint LinuxFileTypeMask = 0xF000;
     private const uint LinuxRegularFileType = 0x8000;
 
-    internal static byte[] ReadAndValidate(
-        string path,
-        int maximumBytes,
-        GalateaStrictDocumentKind kind
-    ) {
-        byte[] bytes = ReadBoundedRegularFile(path, maximumBytes, kind.ToString());
-        Validate(bytes, kind);
+    internal static byte[] ReadUsersAndValidate(string path) {
+        byte[] bytes = ReadBoundedRegularFile(
+            path,
+            MaximumConfigUtf8Bytes,
+            "Galatea config"
+        );
+        ValidateUsers(bytes);
         return bytes;
     }
 
@@ -141,32 +134,24 @@ internal static class GalateaStrictConfigReader {
         }
     }
 
-    internal static void Validate(
-        ReadOnlySpan<byte> bytes,
-        GalateaStrictDocumentKind kind
-    ) {
+    internal static void ValidateUsers(ReadOnlySpan<byte> bytes) {
         try {
             var reader = new Utf8JsonReader(bytes, new JsonReaderOptions {
                 AllowTrailingCommas = false,
                 CommentHandling = JsonCommentHandling.Disallow,
                 MaxDepth = MaximumDepth
             });
-            RequireRead(ref reader, JsonTokenType.StartObject, kind.ToString());
-            if (kind == GalateaStrictDocumentKind.Users) {
-                ValidateUsersObject(ref reader);
-            }
-            else {
-                ValidateConnectionsObject(ref reader);
-            }
+            RequireRead(ref reader, JsonTokenType.StartObject, "Galatea config");
+            ValidateUsersObject(ref reader);
             if (reader.Read()) {
                 throw new InvalidDataException(
-                    $"{kind} JSON contains trailing data."
+                    "Galatea config JSON contains trailing data."
                 );
             }
         }
         catch (JsonException exception) {
             throw new InvalidDataException(
-                $"{kind} JSON is not strict valid UTF-8 JSON.",
+                "Galatea config JSON is not strict valid UTF-8 JSON.",
                 exception
             );
         }
@@ -245,68 +230,6 @@ internal static class GalateaStrictConfigReader {
                     break;
                 default:
                     throw Unknown("recapGrid", property);
-            }
-        }
-    }
-
-    private static void ValidateConnectionsObject(ref Utf8JsonReader reader) {
-        var seen = NewPropertySet();
-        while (ReadProperty(ref reader, seen, "connections", out string property)) {
-            RequireReadValue(ref reader, property);
-            switch (property) {
-                case "connections":
-                    ValidateObjectArray(
-                        ref reader,
-                        MaximumConnectionCount,
-                        property,
-                        ValidateConnectionObject
-                    );
-                    break;
-                case "defaultConnectionId":
-                    RequireStringOrNull(reader.TokenType, property);
-                    break;
-                default:
-                    throw Unknown("connections", property);
-            }
-        }
-    }
-
-    private static void ValidateConnectionObject(ref Utf8JsonReader reader) {
-        var seen = NewPropertySet();
-        while (ReadProperty(ref reader, seen, "connection", out string property)) {
-            RequireReadValue(ref reader, property);
-            switch (property) {
-                case "id":
-                case "kind":
-                case "modelId":
-                case "completionSurfaceId":
-                case "baseAddress":
-                    RequireToken(reader.TokenType, JsonTokenType.String, property);
-                    break;
-                case "apiKey":
-                case "baseAddressEnv":
-                case "apiKeyEnv":
-                    RequireStringOrNull(reader.TokenType, property);
-                    break;
-                case "maxTokens":
-                    RequireToken(
-                        reader.TokenType,
-                        JsonTokenType.Number,
-                        JsonTokenType.Null,
-                        property
-                    );
-                    break;
-                case "reasoningEffort":
-                case "anthropicPromptCacheTtl":
-                    RequireToken(
-                        reader.TokenType,
-                        JsonTokenType.String,
-                        JsonTokenType.Number,
-                        property
-                    );
-                    break;
-                default:
-                    throw Unknown("connection", property);
             }
         }
     }
