@@ -234,7 +234,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(host);
 
         if (!host.TurnLock.Wait(0)) {
-            return host.GetRecentTurns();
+            throw new GalateaRecentProjectionException(
+                "recent-view-busy",
+                "The recent view is temporarily unavailable while a turn writer owns the session."
+            );
         }
         try {
             return await RefreshRecentTurnsAsync(host, ct)
@@ -497,22 +500,23 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "Encoded pop receipt exceeds its response limit."
             );
         }
+        var preparedReceipt = new GalateaPreparedPopLatestTurn(
+            poppedUserText,
+            receiptBytes
+        );
+        RecentTurnsResponseDto preparedStaleSnapshot =
+            host.PrepareRecentSnapshotStale();
 
         SessionTurnRetractionResult committed =
             host.Engine.CommitPreparedCompletedTurnRewind(
                 ready.Value,
                 cancellationToken
             );
-        if (committed is not SessionTurnRetractionResult.Moved moved
-            || moved.Turn.TerminalAction is null) {
+        if (committed is not SessionTurnRetractionResult.Moved) {
             return null;
         }
-        host.MarkRecentSnapshotStale();
-        return new GalateaPreparedPopLatestTurn(
-            GalateaRecentTurnDisplayAdapter.Project(moved.Turn),
-            poppedUserText,
-            receiptBytes
-        );
+        host.SetRecentTurns(preparedStaleSnapshot);
+        return preparedReceipt;
     }
 
     internal GalateaLiveTurn? FindTurn(UserSessionHost host, string turnId) {
@@ -1145,7 +1149,6 @@ internal sealed class GalateaRecentProjectionException : Exception {
 }
 
 internal sealed record GalateaPreparedPopLatestTurn(
-    RecentTurnDto Turn,
     string PoppedUserText,
     byte[] ReceiptUtf8Bytes
 );
@@ -1285,6 +1288,12 @@ public sealed class UserSessionHost : IAsyncDisposable {
     internal void MarkRecentSnapshotStale() {
         lock (_turnStateGate) {
             _recentTurns = MarkStale(_recentTurns);
+        }
+    }
+
+    internal RecentTurnsResponseDto PrepareRecentSnapshotStale() {
+        lock (_turnStateGate) {
+            return MarkStale(_recentTurns);
         }
     }
 

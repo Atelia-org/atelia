@@ -2,7 +2,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atelia.SessionJournal;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
 
@@ -25,9 +24,6 @@ internal static class GalateaHttpV1 {
         options.RespectNullableAnnotations = true;
         options.AllowDuplicateProperties = false;
     }
-
-    internal static RequestSizeLimitAttribute RequestSizeLimit() =>
-        new(MaximumRequestBodyBytes);
 
     internal static bool HasJsonBody(HttpContext context) =>
         context.GetEndpoint()?.Metadata

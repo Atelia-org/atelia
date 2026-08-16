@@ -585,6 +585,13 @@ public sealed class GalateaRecentRewindHostTests {
         GalateaPreparedPopLatestTurn moved = Assert.IsType<
             GalateaPreparedPopLatestTurn
         >(service.PrepareAndCommitPopLatestTurn(session, terminal));
+        Assert.Equal(
+            ["PoppedUserText", "ReceiptUtf8Bytes"],
+            typeof(GalateaPreparedPopLatestTurn).GetProperties()
+                .Select(static property => property.Name)
+                .Order()
+                .ToArray()
+        );
         Assert.Equal(worstCase, moved.PoppedUserText);
         Assert.True(
             moved.ReceiptUtf8Bytes.Length
@@ -599,6 +606,67 @@ public sealed class GalateaRecentRewindHostTests {
         Assert.Equal("poppedUserText", property.Name);
         Assert.Equal(worstCase, property.Value.GetString());
         Assert.Equal(before, session.Engine.ReadCurrentHead());
+    }
+
+    [Fact]
+    public void PopCommitTail_PerformsNoProjectionOrSerializationAfterCas() {
+        string source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "prototypes",
+            "Galatea",
+            "GalateaServices.cs"
+        ));
+        int methodStart = source.IndexOf(
+            "PrepareAndCommitPopLatestTurn(",
+            StringComparison.Ordinal
+        );
+        int methodEnd = source.IndexOf(
+            "internal GalateaLiveTurn? FindTurn(",
+            methodStart,
+            StringComparison.Ordinal
+        );
+        Assert.True(methodStart >= 0);
+        Assert.True(methodEnd > methodStart);
+        string method = source[methodStart..methodEnd];
+        int commit = method.IndexOf(
+            "CommitPreparedCompletedTurnRewind(",
+            StringComparison.Ordinal
+        );
+        Assert.True(commit > 0);
+        string afterCommit = method[commit..];
+
+        Assert.True(
+            method.IndexOf(
+                "JsonSerializer.SerializeToUtf8Bytes(",
+                StringComparison.Ordinal
+            ) < commit
+        );
+        Assert.True(
+            method.IndexOf(
+                "PrepareRecentSnapshotStale()",
+                StringComparison.Ordinal
+            ) < commit
+        );
+        Assert.DoesNotContain(
+            "GalateaRecentTurnDisplayAdapter.Project(",
+            afterCommit,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "JsonSerializer.",
+            afterCommit,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "GalateaBoundedJson.",
+            afterCommit,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            ".Turn",
+            afterCommit,
+            StringComparison.Ordinal
+        );
     }
 
     [Fact]
@@ -785,6 +853,20 @@ public sealed class GalateaRecentRewindHostTests {
     ) {
         Assert.Equal(user, turn.UserText);
         Assert.Equal(assistant, turn.Assistant.Text);
+    }
+
+    private static string FindRepositoryRoot() {
+        for (DirectoryInfo? directory = new(AppContext.BaseDirectory);
+             directory is not null;
+             directory = directory.Parent) {
+            if (File.Exists(Path.Combine(directory.FullName, "Atelia.sln"))) {
+                return directory.FullName;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "Could not locate the repository root."
+        );
     }
 
     private sealed class QueueCompletionClient

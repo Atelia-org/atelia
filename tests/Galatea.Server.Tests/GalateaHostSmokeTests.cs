@@ -21,7 +21,7 @@ public sealed class GalateaHostSmokeTests {
         using HttpClient client = host.CreateClient();
 
         using HttpResponseMessage anonymous = await client.GetAsync(
-            "/api/me"
+            "/api/v1/me"
         );
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
 
@@ -32,7 +32,7 @@ public sealed class GalateaHostSmokeTests {
         Assert.Equal("/", login.Headers.Location?.OriginalString);
 
         GalateaMeDto? me = await client.GetFromJsonAsync<GalateaMeDto>(
-            "/api/me"
+            "/api/v1/me"
         );
         Assert.NotNull(me);
         Assert.Equal("alice", me!.UserId);

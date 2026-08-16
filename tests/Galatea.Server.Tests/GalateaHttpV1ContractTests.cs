@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.SessionJournal;
+using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -30,15 +32,24 @@ public sealed class GalateaHttpV1ContractTests {
             .GetMetadata<GalateaHttpV1.JsonBodyEndpointMetadata>());
         Assert.NotNull(endpoint.Metadata
             .GetMetadata<GalateaHttpV1.MaintenanceWriteEndpointMetadata>());
+        Assert.Null(endpoint.Metadata
+            .GetMetadata<IRequestSizeLimitMetadata>());
     }
 
     [Fact]
     public async Task V1Cutover_ExposesOnlyVersionedApiSurface() {
+        var completionFactory = new ZeroWorkCompletionClientFactory();
+        var normalizer = new ZeroWorkNormalizer();
         await using var host = GalateaTestHost.Create(
-            new NoDispatchCompletionClientFactory(),
-            DisabledGalateaUserMessageNormalizer.Instance,
+            completionFactory,
+            normalizer,
             provisionRawOnly: false
         );
+        Atelia.EventJournal.EventAddress? initialHead;
+        using (SessionJournalEngine before =
+               SessionJournalEngine.OpenReadOnly(host.SessionDirectory)) {
+            initialHead = before.ReadCurrentHead();
+        }
         using HttpClient client = host.CreateClient();
 
         using HttpResponseMessage anonymous = await client.GetAsync(
@@ -55,19 +66,42 @@ public sealed class GalateaHttpV1ContractTests {
         );
         Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
 
-        using HttpResponseMessage current = await client.GetAsync(
-            "/api/v1/chat/turns/current"
-        );
-        Assert.Equal(HttpStatusCode.OK, current.StatusCode);
-
-        string[] retiredRoutes = [
-            "/api/recent-turns",
-            "/api/chat/turns/current",
-            "/api/chat/turns/not-a-turn/events",
+        string canonicalTurnId = new('a', 32);
+        HttpRequestMessage[] retiredRequests = [
+            new(HttpMethod.Get, "/api/me"),
+            new(HttpMethod.Get, "/api/recent-turns"),
+            new(HttpMethod.Get, "/api/chat/turns/current"),
+            new(HttpMethod.Get,
+                $"/api/chat/turns/{canonicalTurnId}/events"),
+            JsonRequest(HttpMethod.Post, "/api/chat/turns",
+                "{\"message\":\"hello\"}"),
+            JsonRequest(HttpMethod.Post, "/api/chat/turns/resume",
+                "{\"expectedHead\":\"00000000:0000000000000000\"}"),
+            JsonRequest(HttpMethod.Post, "/api/chat/turns/pop-latest",
+                "{\"rewindLatestToken\":\"00000000:0000000000000000\"}"),
+            new(HttpMethod.Post,
+                $"/api/chat/turns/{canonicalTurnId}/stop"),
         ];
-        foreach (string route in retiredRoutes) {
-            using HttpResponseMessage retired = await client.GetAsync(route);
-            Assert.Equal(HttpStatusCode.NotFound, retired.StatusCode);
+        foreach (HttpRequestMessage request in retiredRequests) {
+            using (request) {
+                using HttpResponseMessage retired = await client
+                    .SendAsync(request);
+                Assert.Equal(
+                    HttpStatusCode.NotFound,
+                    retired.StatusCode
+                );
+            }
+        }
+
+        Assert.Equal(0, completionFactory.CreateCallCount);
+        Assert.Equal(0, normalizer.ShouldNormalizeCallCount);
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        Assert.Equal(0, GetSessionCount(service));
+        using (SessionJournalEngine after =
+               SessionJournalEngine.OpenReadOnly(host.SessionDirectory)) {
+            Assert.Equal(initialHead, after.ReadCurrentHead());
         }
     }
 
@@ -167,6 +201,49 @@ public sealed class GalateaHttpV1ContractTests {
     }
 
     [Fact]
+    public async Task JsonBody_RejectsContentEncoding() {
+        await using var host = CreateHost();
+        using HttpClient client = host.CreateClient();
+        _ = await GalateaTestHost.LoginAsync(client);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/api/v1/chat/turns"
+        ) {
+            Content = new StringContent(
+                "{\"message\":\"hello\"}",
+                Encoding.UTF8,
+                "application/json"
+            )
+        };
+        request.Content.Headers.ContentEncoding.Add("gzip");
+
+        using HttpResponseMessage response = await client.SendAsync(request);
+
+        await AssertApiErrorAsync(
+            response,
+            HttpStatusCode.UnsupportedMediaType,
+            "unsupported-media-type"
+        );
+    }
+
+    [Fact]
+    public async Task KnownJsonBody_EmptyBodyIsInvalidRequest() {
+        await using var host = CreateHost();
+        using HttpClient client = host.CreateClient();
+        _ = await GalateaTestHost.LoginAsync(client);
+        using HttpResponseMessage response = await client.PostAsync(
+            "/api/v1/chat/turns",
+            content: null
+        );
+
+        await AssertApiErrorAsync(
+            response,
+            HttpStatusCode.BadRequest,
+            "invalid-request"
+        );
+    }
+
+    [Fact]
     public async Task UnknownLengthBody_OverOneMiBReturnsTyped413() {
         await using var host = CreateHost();
         using HttpClient client = host.CreateClient();
@@ -187,6 +264,35 @@ public sealed class GalateaHttpV1ContractTests {
 
         await AssertApiErrorAsync(
             response,
+            HttpStatusCode.RequestEntityTooLarge,
+            "request-too-large"
+        );
+    }
+
+    [Fact]
+    public async Task UnknownLengthBody_ExactMaximumPassesAndPlusOneFails() {
+        await using var host = CreateHost();
+        using HttpClient client = host.CreateClient();
+        _ = await GalateaTestHost.LoginAsync(client);
+
+        using HttpResponseMessage exact = await PostUnknownLengthAsync(
+            client,
+            BuildExactLengthJson(GalateaHttpV1.MaximumRequestBodyBytes)
+        );
+        await AssertApiErrorAsync(
+            exact,
+            HttpStatusCode.BadRequest,
+            "invalid-message"
+        );
+
+        using HttpResponseMessage plusOne = await PostUnknownLengthAsync(
+            client,
+            BuildExactLengthJson(
+                GalateaHttpV1.MaximumRequestBodyBytes + 1
+            )
+        );
+        await AssertApiErrorAsync(
+            plusOne,
             HttpStatusCode.RequestEntityTooLarge,
             "request-too-large"
         );
@@ -355,12 +461,66 @@ public sealed class GalateaHttpV1ContractTests {
         );
     }
 
+    [Fact]
+    public async Task Me_WhenAuthenticatedUserDisappearsReturnsTyped401() {
+        await using var host = CreateHost();
+        using HttpClient client = host.CreateClient();
+        _ = await GalateaTestHost.LoginAsync(client);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        var users = Assert.IsType<Dictionary<string, GalateaUserConfig>>(
+            typeof(GalateaHostService)
+                .GetField(
+                    "_users",
+                    System.Reflection.BindingFlags.Instance
+                        | System.Reflection.BindingFlags.NonPublic
+                )!
+                .GetValue(service)
+        );
+        Assert.True(users.Remove("alice"));
+
+        using HttpResponseMessage response = await client.GetAsync(
+            "/api/v1/me"
+        );
+
+        await AssertApiErrorAsync(
+            response,
+            HttpStatusCode.Unauthorized,
+            "authentication-user-unknown"
+        );
+    }
+
     private static GalateaTestHost CreateHost() =>
         GalateaTestHost.Create(
             new NoDispatchCompletionClientFactory(),
             DisabledGalateaUserMessageNormalizer.Instance,
             provisionRawOnly: false
         );
+
+    private static HttpRequestMessage JsonRequest(
+        HttpMethod method,
+        string url,
+        string json
+    ) => new(method, url) {
+        Content = new StringContent(
+            json,
+            Encoding.UTF8,
+            "application/json"
+        )
+    };
+
+    private static int GetSessionCount(GalateaHostService service) {
+        object sessions = typeof(GalateaHostService)
+            .GetField(
+                "_sessions",
+                System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.NonPublic
+            )!
+            .GetValue(service)!;
+        return Assert.IsType<int>(
+            sessions.GetType().GetProperty("Count")!.GetValue(sessions)
+        );
+    }
 
     private static async Task<HttpResponseMessage> PostRawAsync(
         HttpClient client,
@@ -378,6 +538,30 @@ public sealed class GalateaHttpV1ContractTests {
             contentType
         );
         return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage>
+        PostUnknownLengthAsync(HttpClient client, byte[] body) {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/api/v1/chat/turns"
+        ) {
+            Content = new UnknownLengthJsonContent(body)
+        };
+        return await client.SendAsync(request);
+    }
+
+    private static byte[] BuildExactLengthJson(int targetLength) {
+        const string Prefix = "{\"message\":\"";
+        const string Suffix = "\"}";
+        int payloadLength = targetLength
+            - Encoding.UTF8.GetByteCount(Prefix + Suffix);
+        Assert.True(payloadLength > 0);
+        byte[] body = Encoding.UTF8.GetBytes(
+            Prefix + new string('x', payloadLength) + Suffix
+        );
+        Assert.Equal(targetLength, body.Length);
+        return body;
     }
 
     private static async Task AssertApiErrorAsync(
@@ -417,6 +601,51 @@ public sealed class GalateaHttpV1ContractTests {
             throw new InvalidOperationException(
                 "HTTP contract tests must not construct a completion client."
             );
+    }
+
+    private sealed class ZeroWorkCompletionClientFactory
+        : ICompletionClientFactory {
+        private int _createCallCount;
+
+        internal int CreateCallCount => Volatile.Read(
+            ref _createCallCount
+        );
+
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) {
+            Interlocked.Increment(ref _createCallCount);
+            throw new InvalidOperationException(
+                "Retired routes must not create a completion client."
+            );
+        }
+    }
+
+    private sealed class ZeroWorkNormalizer
+        : IGalateaUserMessageNormalizer {
+        private int _shouldNormalizeCallCount;
+        private int _normalizeCallCount;
+
+        internal int ShouldNormalizeCallCount => Volatile.Read(
+            ref _shouldNormalizeCallCount
+        );
+
+        internal int NormalizeCallCount => Volatile.Read(
+            ref _normalizeCallCount
+        );
+
+        public bool ShouldNormalize(string userMessage) {
+            Interlocked.Increment(ref _shouldNormalizeCallCount);
+            return false;
+        }
+
+        public ValueTask<string> NormalizeAsync(
+            string userMessage,
+            CancellationToken ct
+        ) {
+            Interlocked.Increment(ref _normalizeCallCount);
+            return ValueTask.FromResult(userMessage);
+        }
     }
 
     private sealed class UnknownLengthJsonContent : HttpContent {

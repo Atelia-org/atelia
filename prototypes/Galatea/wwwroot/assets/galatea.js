@@ -186,6 +186,50 @@ export function requireRecentTurnsResponse(value) {
   return recent;
 }
 
+export function capturePopProvisional(recentValue) {
+  const recent = requireRecentTurnsResponse(recentValue);
+  return Object.freeze({
+    submittedToken: requireNonblankString(
+      recent.rewindLatestToken,
+      "pop provisional.rewindLatestToken",
+    ),
+    poppedUserText: recent.turns[0]?.userText ?? "",
+  });
+}
+
+export function stagePopProvisional(recentValue) {
+  const provisional = capturePopProvisional(recentValue);
+  return Object.freeze({
+    provisional,
+    rewindLatestToken: null,
+    pendingPoppedDraftText: provisional.poppedUserText,
+    inputValue: provisional.poppedUserText,
+  });
+}
+
+export function reconcilePopProvisional(provisionalValue, recentValue) {
+  const provisional = requireExactKeys(
+    provisionalValue,
+    ["submittedToken", "poppedUserText"],
+    "pop provisional",
+  );
+  requireNonblankString(provisional.submittedToken, "pop provisional.submittedToken");
+  requireString(provisional.poppedUserText, "pop provisional.poppedUserText");
+  const recent = requireRecentTurnsResponse(recentValue);
+  return recent.rewindLatestToken !== provisional.submittedToken
+    ? provisional.poppedUserText
+    : null;
+}
+
+export function canContinueWithoutInitialRecent(
+  currentValue,
+  errorCode,
+) {
+  const current = requireCurrentTurn(currentValue);
+  return errorCode === "recent-view-busy"
+    && current.status === "running";
+}
+
 function requireApiError(value) {
   const error = requireExactKeys(value, ["code", "error"], "API error");
   requireNonblankString(error.code, "API error.code");
@@ -333,7 +377,10 @@ function startGalateaApp() {
     });
     if (!response.ok) {
       const error = await readJsonResponse(response, requireApiError);
-      throw new Error(error.error);
+      const failure = new Error(error.error);
+      failure.code = error.code;
+      failure.status = response.status;
+      throw failure;
     }
     return await readJsonResponse(response, validator);
   }
@@ -505,11 +552,13 @@ function startGalateaApp() {
   }
 
   async function loadRecentTurns() {
-    applyRecentTurnsPayload(await fetchJson(
+    const recent = await fetchJson(
       "/api/v1/recent-turns",
       requireRecentTurnsResponse,
-    ));
+    );
+    applyRecentTurnsPayload(recent);
     renderTurns();
+    return recent;
   }
 
   function applyRecentTurnsPayload(payload) {
@@ -732,8 +781,25 @@ function startGalateaApp() {
       return null;
     }
 
-    const submittedToken = state.rewindLatestToken;
-    const provisionalDraft = state.recentTurns[0]?.userText ?? "";
+    const stagedPop = stagePopProvisional({
+      turns: state.recentTurns,
+      rewindLatestToken: state.rewindLatestToken,
+      recapGridReadiness: state.recapGridReadiness,
+    });
+    const provisional = stagedPop.provisional;
+    const composerBeforePop = {
+      inputValue: input.value,
+      pendingPoppedDraftText: state.pendingPoppedDraftText,
+      recapGridReadiness: state.recapGridReadiness,
+    };
+    // Keep a coherent draft locally before the POST can become ambiguous.
+    // The submitted token is retained only inside `provisional`; UI state is
+    // invalidated now so no response-loss path can submit it again.
+    state.rewindLatestToken = stagedPop.rewindLatestToken;
+    state.recapGridReadiness = null;
+    input.value = stagedPop.inputValue;
+    state.pendingPoppedDraftText = stagedPop.pendingPoppedDraftText;
+    refreshComposerMode();
     setStreaming(true, status || "正在取出最近一轮…");
 
     let response;
@@ -744,40 +810,61 @@ function startGalateaApp() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ rewindLatestToken: submittedToken }),
+        body: JSON.stringify({
+          rewindLatestToken: provisional.submittedToken,
+        }),
       });
     } catch (error) {
-      try {
-        await loadRecentTurns();
-        if (state.rewindLatestToken !== submittedToken) {
-          input.value = provisionalDraft;
-          state.pendingPoppedDraftText = provisionalDraft;
-          refreshComposerMode();
-          setStreaming(false, "撤销已生效；响应在传输中丢失。未重复提交。");
-        } else {
-          setStreaming(false, "撤销结果未知；未重复提交。请稍后刷新。");
-        }
-      } catch {
-        setStreaming(false, error?.message || "撤销结果未知；未重复提交。");
-      }
+      await reconcileAmbiguousPop(
+        provisional,
+        composerBeforePop,
+        error,
+      );
       return null;
     }
 
     if (!response.ok) {
-      const error = await readJsonResponse(response, (value) =>
-        value?.code === "turn-busy" ? requireBusyError(value) : requireApiError(value));
+      let error;
+      try {
+        error = await readJsonResponse(response, (value) =>
+          value?.code === "turn-busy" ? requireBusyError(value) : requireApiError(value));
+      } catch (parseError) {
+        await reconcileAmbiguousPop(
+          provisional,
+          composerBeforePop,
+          parseError,
+        );
+        return null;
+      }
+      input.value = composerBeforePop.inputValue;
+      state.pendingPoppedDraftText =
+        composerBeforePop.pendingPoppedDraftText;
+      state.recapGridReadiness = composerBeforePop.recapGridReadiness;
       if (error.code === "turn-busy" && error.turnId) {
+        refreshComposerMode();
         await attachToTurn(error.turnId, error.error);
         return null;
       }
+      state.rewindLatestToken = provisional.submittedToken;
       await loadRecentTurns().catch(() => {});
+      refreshComposerMode();
       setStreaming(false, error.error);
       return null;
     }
 
-    const receipt = await readJsonResponse(response, requirePopReceipt);
-    state.rewindLatestToken = null;
-    state.recapGridReadiness = null;
+    // A 200 means the CAS may already be durable. Invalidate the stale token
+    // before the first response-body await so no UI path can submit it again.
+    let receipt;
+    try {
+      receipt = await readJsonResponse(response, requirePopReceipt);
+    } catch (error) {
+      await reconcileAmbiguousPop(
+        provisional,
+        composerBeforePop,
+        error,
+      );
+      return null;
+    }
     input.value = receipt.poppedUserText;
     state.pendingPoppedDraftText = receipt.poppedUserText;
     refreshComposerMode();
@@ -790,6 +877,37 @@ function startGalateaApp() {
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
     return receipt;
+  }
+
+  async function reconcileAmbiguousPop(
+    provisional,
+    composerBeforePop,
+    cause,
+  ) {
+    try {
+      const recent = await loadRecentTurns();
+      const restoredDraft = reconcilePopProvisional(
+        provisional,
+        recent,
+      );
+      if (restoredDraft !== null) {
+        input.value = restoredDraft;
+        state.pendingPoppedDraftText = restoredDraft;
+        refreshComposerMode();
+        setStreaming(false, "撤销已生效；响应不完整。未重复提交。");
+      } else {
+        input.value = composerBeforePop.inputValue;
+        state.pendingPoppedDraftText =
+          composerBeforePop.pendingPoppedDraftText;
+        refreshComposerMode();
+        setStreaming(false, "撤销结果未改变；未重复提交。");
+      }
+    } catch {
+      setStreaming(
+        false,
+        cause?.message || "撤销结果未知；未重复提交。请稍后刷新。",
+      );
+    }
   }
 
   async function attachToTurn(turnId, status) {
@@ -949,8 +1067,17 @@ function startGalateaApp() {
     selectConnection(storedConnectionId ?? bootstrapConfig.defaultConnectionId, { persist: false });
     renderConnectionPicker();
 
-    await loadRecentTurns();
     let currentTurn = await loadCurrentTurn();
+    try {
+      await loadRecentTurns();
+    } catch (error) {
+      if (!canContinueWithoutInitialRecent(
+          currentTurn,
+          error?.code,
+        )) {
+        throw error;
+      }
+    }
     if (maintenanceMode) {
       resetLive();
       refreshComposerMode();

@@ -173,7 +173,7 @@ public sealed class GalateaEndpointLockTopologyTests {
     }
 
     [Fact]
-    public async Task ActiveTurn_ReadSurfacesUseOnlyLiveStateAndCachedRecentTurns() {
+    public async Task ActiveTurn_CurrentUsesLiveStateAndRecentReturnsTypedBusy() {
         var completionFactory =
             new NonDispatchingCompletionClientFactory();
         await using var host = GalateaTestHost.Create(
@@ -249,24 +249,18 @@ public sealed class GalateaEndpointLockTopologyTests {
             Assert.False(current.RestartRequired);
             Assert.Null(current.RecoveryHead);
 
-            RecentTurnsResponseDto? activeRecent = await client
-                .GetFromJsonAsync<RecentTurnsResponseDto>(
-                    "/api/v1/recent-turns"
-                )
+            using HttpResponseMessage activeRecent = await client
+                .GetAsync("/api/v1/recent-turns")
                 .WaitAsync(EndpointDeadline);
-            Assert.NotNull(activeRecent);
-            RecentTurnDto cachedTurn = Assert.Single(
-                activeRecent!.Turns
-            );
-            Assert.Equal("completed user", cachedTurn.UserText);
-            Assert.Null(activeRecent.RewindLatestToken);
-            RecapGridReadinessSnapshotDto activeRecap = Assert.IsType<
-                RecapGridReadinessSnapshotDto
-            >(activeRecent.RecapGridReadiness);
-            Assert.Equal("stale", activeRecap.Freshness);
             Assert.Equal(
-                idleRecap.ObservedRawHead,
-                activeRecap.ObservedRawHead
+                HttpStatusCode.ServiceUnavailable,
+                activeRecent.StatusCode
+            );
+            ApiErrorDto? recentBusy = await activeRecent.Content
+                .ReadFromJsonAsync<ApiErrorDto>();
+            Assert.Equal(
+                "recent-view-busy",
+                Assert.IsType<ApiErrorDto>(recentBusy).Code
             );
 
             using HttpResponseMessage busy = await client

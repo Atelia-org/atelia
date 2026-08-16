@@ -67,6 +67,9 @@ app.Use(async (context, next) => {
     try {
         await next(context);
     }
+    // Cancellation is never rewritten as a protocol 500. This includes
+    // RequestAborted and application-owned cancellation tokens; if headers
+    // already started, the same rethrow also guarantees no JSON is appended.
     catch (OperationCanceledException) {
         throw;
     }
@@ -106,9 +109,25 @@ app.Use(async (context, next) => {
         await next(context);
         return;
     }
+    if (context.Request.ContentLength == 0
+        || context.Features
+            .Get<Microsoft.AspNetCore.Http.Features
+                .IHttpRequestBodyDetectionFeature>()
+            ?.CanHaveBody == false) {
+        await Results.Json(
+                new ApiErrorDto(
+                    "invalid-request",
+                    "Request body must contain one JSON object."
+                ),
+                statusCode: StatusCodes.Status400BadRequest
+            )
+            .ExecuteAsync(context);
+        return;
+    }
     if (!GalateaHttpV1.IsExactJsonContentType(
             context.Request.ContentType
-        )) {
+        )
+        || context.Request.Headers.ContentEncoding.Count != 0) {
         await Results.Json(
                 new ApiErrorDto(
                     "unsupported-media-type",
@@ -215,24 +234,6 @@ app.MapGet(
     }
 ).RequireAuthorization();
 
-app.MapGet(
-    "/api/me",
-    (ClaimsPrincipal user, GalateaHostService hostService) => {
-        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
-            ?? throw new InvalidOperationException(
-                "Authenticated principal is missing user id."
-            );
-        if (!hostService.TryGetUser(userId, out var configUser)) {
-            return Results.Unauthorized();
-        }
-
-        return Results.Ok(new GalateaMeDto(
-            configUser.UserId,
-            config.MaintenanceMode
-        ));
-    }
-).RequireAuthorization();
-
 var api = app.MapGroup("/api/v1").RequireAuthorization();
 
 api.MapGet(
@@ -240,7 +241,15 @@ api.MapGet(
     (ClaimsPrincipal user, GalateaHostService hostService) => {
         string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
-        if (!hostService.TryGetUser(userId, out var configUser)) { return Results.Unauthorized(); }
+        if (!hostService.TryGetUser(userId, out var configUser)) {
+            return Results.Json(
+                new ApiErrorDto(
+                    "authentication-user-unknown",
+                    "The authenticated user is no longer configured."
+                ),
+                statusCode: StatusCodes.Status401Unauthorized
+            );
+        }
 
         return Results.Ok(new GalateaMeDto(
             configUser.UserId,
@@ -381,8 +390,7 @@ api.MapPost(
     }
 ).WithMetadata(
     GalateaHttpV1.JsonBody,
-    GalateaHttpV1.MaintenanceWrite,
-    GalateaHttpV1.RequestSizeLimit()
+    GalateaHttpV1.MaintenanceWrite
 );
 
 api.MapPost(
@@ -540,8 +548,7 @@ api.MapPost(
     }
 ).WithMetadata(
     GalateaHttpV1.JsonBody,
-    GalateaHttpV1.MaintenanceWrite,
-    GalateaHttpV1.RequestSizeLimit()
+    GalateaHttpV1.MaintenanceWrite
 );
 
 api.MapPost(
@@ -594,8 +601,7 @@ api.MapPost(
     }
 ).WithMetadata(
     GalateaHttpV1.JsonBody,
-    GalateaHttpV1.MaintenanceWrite,
-    GalateaHttpV1.RequestSizeLimit()
+    GalateaHttpV1.MaintenanceWrite
 );
 
 api.MapGet(

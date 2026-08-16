@@ -84,7 +84,7 @@ public sealed class GalateaMaintenanceModeTests {
         Assert.Equal(0, normalizer.NormalizeCallCount);
 
         GalateaMeDto? me = await client.GetFromJsonAsync<GalateaMeDto>(
-            "/api/me"
+            "/api/v1/me"
         );
         Assert.NotNull(me);
         Assert.Equal("alice", me!.UserId);
