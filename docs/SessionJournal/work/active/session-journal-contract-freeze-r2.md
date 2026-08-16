@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；R0 complete，R1 candidate review pending  
+状态：Active；R0 complete，focused R1 priority review complete，remaining R1 / R2 pending  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -91,6 +91,12 @@ current RecapGrid wire、owner 或 production caller；[durable target](../../cu
 operator confirmation token 的可构造性，也必须保留 external implementer contract（例如 executor/provider seam）
 所需的 result construction。
 
+Focused R1 已把该 umbrella 收缩为 output construction API hygiene：七类没有 production trusted input，
+不能叙述为 security authority。Manager reference records、Getter evidence可进入原子cut；metrics struct保持
+intentional default；Online需保留三项assembly-internal `init` 供现有 `with` 路径使用；完整result-family
+封闭因收益不足而Defer。见
+[R1 priority review](../../evidence/contract-freeze-r2-r1-priority-review.md)。
+
 ### CF-B — Public support-role cut
 
 逐 exported symbol 分类：
@@ -178,9 +184,10 @@ R0 只记录事实和 hypotheses。没有完整 consumer/serializer/recovery 证
 
 ### R3 — Bounded implementation loops
 
-默认顺序：CF-A construction authority → CF-B support-role cut → CF-D operational boundary → CF-C companion wire →
-CF-E raw wire。一个 candidate/semantic unit 一个提交，执行 explorer → plan lock → worker → independent reviewer →
-tail-fix 闭环。若 wire candidate 与 API candidate 可独立，禁止捆绑。
+Focused R1 后的优先顺序调整为：小型 `CF-D-04` outer-envelope cut → `CF-A-01-G/M/O` 原子API包 →
+完成operator/Prepared preflight后的 `CF-D-01` atomic language cut → 拆分后的 `CF-D-02/03` → CF-C companion
+evidence → CF-E raw wire。一个 candidate/semantic unit 一个提交，执行 explorer → plan lock → worker →
+independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 可独立，禁止捆绑。
 
 ### R4 — New candidate gate
 
@@ -204,7 +211,8 @@ tail-fix 闭环。若 wire candidate 与 API candidate 可独立，禁止捆绑�
 | R0-B durable wire inventory | Complete | raw、T/C/Control/Store/Rewriter field-owner/proof/recovery matrix |
 | R0-C operational wire inventory | Complete | connections/config/CLI/HTTP/SSE support-boundary map |
 | R0 synthesis | Complete | [R0 current inventory](../../evidence/contract-freeze-r2-r0.md) |
-| R1 independent reviews | Pending | R0 完成后启动 |
+| R1 priority reviews | Complete | [CF-A-01 / CF-D-01 / CF-D-04 evidence](../../evidence/contract-freeze-r2-r1-priority-review.md) |
+| R1 remaining reviews | Pending | CF-D-02拆HTTP/SSE；CF-D-03；CF-C-01/02；不重开raw/durable字段删除 |
 | R2 plan lock | Pending | 不允许提前改 API/wire |
 | R3 implementation | Pending | 只实施 Adopt candidates |
 | R4 candidate gate | Pending | accepted change 产生新 candidate |
@@ -221,3 +229,16 @@ R0 只有在以下条件同时满足时完成：
 5. draft ledger 不含仅凭命名/行数提出的合并；
 6. independent reviewer 对漏项、错误 owner 与 acceptance-widening finding 完成复核；
 7. 计划 progress ledger 与 exact evidence 路径同步更新。
+
+## 10. Focused R1 decision与复杂性门槛
+
+本轮三项优先review形成下列R2输入，但尚未修改production API/wire：
+
+- `CF-A-01`：拆Manager/Getter/Online；Metrics Retain，完整result family封闭Defer；
+- `CF-D-01`：Completion-owned唯一数值`v:1` strict byte language，owner-local path guards；实施前盘点
+  ignored operator manifest shape与未完成Prepared，atomic迁移writer/readers/CLI/docs；
+- `CF-D-04`：只统一outer envelope与16 MiB cap，不抽typed result/DTO framework。
+
+任何实施若开始需要新shared assembly、generic parser options、dual reader、compatibility hierarchy、
+跨owner result union或cursor-aware通用printer，应暂停并重新证明收益；这些结构会重新引入本计划要删除的
+第二truth或compatibility promise。
