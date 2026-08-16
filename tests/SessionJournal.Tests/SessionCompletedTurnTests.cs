@@ -66,7 +66,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             );
 
             SessionCompletedTurnsSnapshot latest =
-                engine.ReadRecentCompletedTurns(maximumCount: 1);
+                Snapshot(engine.ReadRecentCompletedTurns(maximumCount: 1));
             SessionCompletedTurnProjection turn = Assert.Single(
                 latest.Turns
             );
@@ -76,11 +76,11 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             Assert.Equal(structured.Blocks, turn.TerminalAction.Message.Blocks);
 
             SessionCompletedTurnsSnapshot historical =
-                engine.ReadRecentCompletedTurnsAt(firstAction, 10);
+                Snapshot(engine.ReadRecentCompletedTurnsAt(firstAction, 10));
             Assert.Equal("one", Assert.Single(historical.Turns)
                 .ObservationContent);
 
-            Assert.Empty(engine.ReadRecentCompletedTurns(0).Turns);
+            Assert.Empty(Snapshot(engine.ReadRecentCompletedTurns(0)).Turns);
             Assert.Throws<ArgumentOutOfRangeException>(
                 () => engine.ReadRecentCompletedTurns(-1)
             );
@@ -89,7 +89,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         using var readOnly = SessionJournalEngine.OpenReadOnly(path);
         Assert.Equal(
             ["two", "one"],
-            readOnly.ReadRecentCompletedTurns(10).Turns
+            Snapshot(readOnly.ReadRecentCompletedTurns(10)).Turns
                 .Select(static turn => turn.ObservationContent)
                 .ToArray()
         );
@@ -107,10 +107,10 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         EventAddress pendingObservation = engine.AppendObservation("pending");
 
         SessionCompletedTurnProjection projected = Assert.Single(
-            engine.ReadRecentCompletedTurnsAt(
+            Snapshot(engine.ReadRecentCompletedTurnsAt(
                 pendingObservation,
                 maximumCount: 10
-            ).Turns
+            )).Turns
         );
         Assert.Equal(completedAction, projected.TerminalAction.Address);
 
@@ -158,7 +158,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         );
 
         SessionCompletedTurnProjection projected = Assert.Single(
-            engine.ReadRecentCompletedTurnsAt(toolAction, 10).Turns
+            Snapshot(engine.ReadRecentCompletedTurnsAt(toolAction, 10)).Turns
         );
         Assert.Equal(earlierTerminal, projected.TerminalAction.Address);
         var unavailable = Assert.IsType<
@@ -214,7 +214,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         _ = await engine.SendAsync("use a tool", CancellationToken.None);
         EventAddress terminalHead = engine.ReadCurrentHead()!.Value;
         SessionCompletedTurnProjection projected = Assert.Single(
-            engine.ReadRecentCompletedTurnsAt(terminalHead, 10).Turns
+            Snapshot(engine.ReadRecentCompletedTurnsAt(terminalHead, 10)).Turns
         );
         Assert.Equal("use a tool", projected.ObservationContent);
         Assert.Equal(terminal.Blocks, projected.TerminalAction.Message.Blocks);
@@ -234,10 +234,10 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             terminal.Blocks,
             moved.Turn.TerminalAction.Message.Blocks
         );
-        Assert.Empty(engine.ReadRecentCompletedTurns(10).Turns);
+        Assert.Empty(Snapshot(engine.ReadRecentCompletedTurns(10)).Turns);
 
         SessionCompletedTurnProjection retained = Assert.Single(
-            engine.ReadRecentCompletedTurnsAt(terminalHead, 10).Turns
+            Snapshot(engine.ReadRecentCompletedTurnsAt(terminalHead, 10)).Turns
         );
         Assert.Equal("use a tool", retained.ObservationContent);
     }
@@ -293,7 +293,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         EventAddress terminalHead = engine.ReadCurrentHead()!.Value;
 
         SessionCompletedTurnProjection projected = Assert.Single(
-            engine.ReadRecentCompletedTurns(10).Turns
+            Snapshot(engine.ReadRecentCompletedTurns(10)).Turns
         );
         Assert.Equal(terminalHead, projected.TerminalAction.Address);
         var terminalText = Assert.IsType<ActionBlock.Text>(
@@ -355,7 +355,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             engine.InspectExecutionBoundary().Phase
         );
         SessionCompletedTurnProjection earlier = Assert.Single(
-            engine.ReadRecentCompletedTurnsAt(failedHead, 10).Turns
+            Snapshot(engine.ReadRecentCompletedTurnsAt(failedHead, 10)).Turns
         );
         Assert.Equal(earlierTerminal, earlier.TerminalAction.Address);
 
@@ -375,7 +375,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         Assert.Null(abandoned.Turn.TerminalAction);
         Assert.Equal(
             earlierTerminal,
-            Assert.Single(engine.ReadRecentCompletedTurns(10).Turns)
+            Assert.Single(Snapshot(engine.ReadRecentCompletedTurns(10)).Turns)
                 .TerminalAction.Address
         );
         Assert.Equal(
@@ -398,7 +398,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         Assert.Equal(
             terminal,
             Assert.Single(
-                engine.ReadRecentCompletedTurnsAt(setup, 10).Turns
+                Snapshot(engine.ReadRecentCompletedTurnsAt(setup, 10)).Turns
             ).TerminalAction.Address
         );
 
@@ -539,11 +539,307 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         }
 
         using var readOnly = SessionJournalEngine.OpenReadOnly(path);
-        Assert.Single(readOnly.ReadRecentCompletedTurns(10).Turns);
+        Assert.Single(Snapshot(readOnly.ReadRecentCompletedTurns(10)).Turns);
         InvalidOperationException error = Assert.Throws<
             InvalidOperationException
         >(() => readOnly.RewindLatestCompletedTurn(terminal));
         Assert.Contains("read-only", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task BoundedRecent_ExactBudgetsPassAndMaxMinusOneFailsBeforeExtraRead() {
+        string path = NewPath();
+        using var engine = Create(path);
+        for (int index = 1; index <= 7; index++) {
+            _ = engine.AppendObservation($"user-{index}");
+            _ = engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text($"assistant-{index}")
+                ]),
+                ImportedInvocation
+            );
+        }
+
+        var measured = new SessionCompletedTurnsReadBudget(
+            maximumHeaderVisits: 4_096,
+            maximumDecodedLogicalPayloadBytes: 16L * 1024 * 1024
+        );
+        SessionCompletedTurnsSnapshot snapshot = Snapshot(
+            engine.ReadRecentCompletedTurns(6, measured)
+        );
+        Assert.Equal(
+            ["user-7", "user-6", "user-5", "user-4", "user-3", "user-2"],
+            snapshot.Turns.Select(static turn => turn.ObservationContent)
+        );
+        Assert.True(measured.HeaderVisits > 1);
+        Assert.True(measured.DecodedLogicalPayloadBytes > 1);
+
+        var exact = new SessionCompletedTurnsReadBudget(
+            measured.HeaderVisits,
+            measured.DecodedLogicalPayloadBytes
+        );
+        _ = Snapshot(engine.ReadRecentCompletedTurns(6, exact));
+
+        var headerShort = new SessionCompletedTurnsReadBudget(
+            measured.HeaderVisits - 1,
+            measured.DecodedLogicalPayloadBytes
+        );
+        var headerLimit = Assert.IsType<
+            SessionCompletedTurnsReadResult.LimitExceeded
+        >(engine.ReadRecentCompletedTurns(6, headerShort));
+        Assert.Equal(
+            SessionCompletedTurnsLimit.MaximumExaminedHeaders,
+            headerLimit.Limit
+        );
+        Assert.Equal(
+            headerShort.MaximumHeaderVisits,
+            headerShort.HeaderVisits
+        );
+
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+        var payloadShort = new SessionCompletedTurnsReadBudget(
+            measured.HeaderVisits,
+            measured.DecodedLogicalPayloadBytes - 1
+        );
+        var payloadLimit = Assert.IsType<
+            SessionCompletedTurnsReadResult.LimitExceeded
+        >(engine.ReadRecentCompletedTurns(6, payloadShort));
+        SessionJournalReadDiagnostics after =
+            engine.CaptureReadDiagnostics();
+        Assert.Equal(
+            SessionCompletedTurnsLimit
+                .MaximumDecodedLogicalPayloadBytes,
+            payloadLimit.Limit
+        );
+        Assert.True(
+            payloadShort.DecodedLogicalPayloadBytes
+                <= payloadShort.MaximumDecodedLogicalPayloadBytes
+        );
+        Assert.True(
+            after.LogicalPayloadByteCount
+                - before.LogicalPayloadByteCount
+            <= payloadShort.MaximumDecodedLogicalPayloadBytes
+        );
+
+        engine.Dispose();
+        using var concurrentLimited =
+            SessionJournalEngine.OpenReadOnly(path);
+        using var concurrentAvailable =
+            SessionJournalEngine.OpenReadOnly(path);
+        SessionCompletedTurnsReadResult[] concurrent = await Task.WhenAll(
+                Task.Run(() => concurrentLimited.ReadRecentCompletedTurns(
+                    6,
+                    new SessionCompletedTurnsReadBudget(
+                        measured.HeaderVisits - 1,
+                        measured.DecodedLogicalPayloadBytes
+                    )
+                )),
+                Task.Run(() => concurrentAvailable.ReadRecentCompletedTurns(
+                    6,
+                    new SessionCompletedTurnsReadBudget(
+                        measured.HeaderVisits,
+                        measured.DecodedLogicalPayloadBytes
+                    )
+                ))
+            );
+        Assert.IsType<SessionCompletedTurnsReadResult.LimitExceeded>(
+            concurrent[0]
+        );
+        Assert.IsType<SessionCompletedTurnsReadResult.Snapshot>(
+            concurrent[1]
+        );
+        _ = Snapshot(concurrentAvailable.ReadRecentCompletedTurns(6));
+    }
+
+    [Fact]
+    public void BoundedContracts_AreOwnerIssuedAndDoNotExportBudgets() {
+        Assert.Empty(
+            typeof(SessionPreparedCompletedTurnRewind).GetConstructors()
+        );
+        Assert.Empty(
+            typeof(SessionCompletedTurnsReadResult.Snapshot)
+                .GetConstructors()
+        );
+        Assert.Empty(
+            typeof(SessionCompletedTurnsReadResult.LimitExceeded)
+                .GetConstructors()
+        );
+        Assert.Empty(
+            typeof(SessionCompletedTurnsReadResult.UnsupportedSchema)
+                .GetConstructors()
+        );
+        Assert.Empty(
+            typeof(SessionCompletedTurnsReadResult.Corruption)
+                .GetConstructors()
+        );
+        Assert.Empty(
+            typeof(SessionCompletedTurnRewindPrepareResult.Prepared)
+                .GetConstructors()
+        );
+        Assert.Empty(
+            typeof(SessionCompletedTurnRewindPrepareResult.Unavailable)
+                .GetConstructors()
+        );
+        Assert.Empty(
+            typeof(SessionCompletedTurnRewindPrepareResult.Retryable)
+                .GetConstructors()
+        );
+        Assert.Empty(
+            typeof(SessionCompletedTurnRewindPrepareResult.LimitExceeded)
+                .GetConstructors()
+        );
+        Assert.Empty(
+            typeof(SessionCompletedTurnRewindPrepareResult.UnsupportedSchema)
+                .GetConstructors()
+        );
+        Assert.Empty(
+            typeof(SessionCompletedTurnRewindPrepareResult.Corruption)
+                .GetConstructors()
+        );
+        Assert.DoesNotContain(
+            typeof(SessionJournalEngine).Assembly.GetExportedTypes(),
+            static type => type.Name.Contains(
+                "ReadBudget",
+                StringComparison.Ordinal
+            )
+        );
+    }
+
+    [Fact]
+    public void PreparedRewind_DoesNotMoveBeforeCommitAndCasIsReplaySafe() {
+        string path = NewPath();
+        using var engine = Create(path);
+        EventAddress before = engine.ReadCurrentHead()!.Value;
+        _ = engine.AppendObservation("one");
+        EventAddress terminal = engine.AppendImportedAgentAction(
+            new ActionMessage([new ActionBlock.Text("done")]),
+            ImportedInvocation
+        );
+
+        var prepared = Assert.IsType<
+            SessionCompletedTurnRewindPrepareResult.Prepared
+        >(engine.PrepareLatestCompletedTurnRewind(terminal)).Value;
+        Assert.Equal(terminal, engine.ReadCurrentHead());
+        Assert.Equal("one", prepared.ObservationContent);
+
+        var moved = Assert.IsType<SessionTurnRetractionResult.Moved>(
+            engine.CommitPreparedCompletedTurnRewind(prepared)
+        );
+        Assert.Equal(before, moved.NewHead);
+        Assert.Equal("one", moved.Turn.ObservationContent);
+
+        var replay = Assert.IsType<SessionTurnRetractionResult.Retryable>(
+            engine.CommitPreparedCompletedTurnRewind(prepared)
+        );
+        Assert.Equal(before, replay.ObservedHead);
+        Assert.Equal(before, engine.ReadCurrentHead());
+    }
+
+    [Fact]
+    public void PreparedRewind_RejectsForeignRepositoryAndBranch() {
+        string ownerPath = NewPath();
+        string foreignPath = NewPath();
+        EventAddress terminal;
+        SessionPreparedCompletedTurnRewind prepared;
+        using (var owner = Create(ownerPath)) {
+            _ = owner.AppendObservation("one");
+            terminal = owner.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("done")]),
+                ImportedInvocation
+            );
+            prepared = Assert.IsType<
+                SessionCompletedTurnRewindPrepareResult.Prepared
+            >(owner.PrepareLatestCompletedTurnRewind(terminal)).Value;
+        }
+
+        using (var journal =
+               EventJournal.EventJournal.OpenExisting(ownerPath)) {
+            _ = journal.CreateBranch("foreign", terminal).Unwrap();
+        }
+        using (var foreignBranch = SessionJournalEngine.Open(
+                   ownerPath,
+                   "foreign"
+               )) {
+            Assert.Throws<ArgumentException>(() =>
+                foreignBranch.CommitPreparedCompletedTurnRewind(
+                    prepared
+                )
+            );
+            Assert.Equal(terminal, foreignBranch.ReadCurrentHead());
+        }
+
+        using (var foreignRepository = Create(foreignPath)) {
+            EventAddress foreignHead =
+                foreignRepository.ReadCurrentHead()!.Value;
+            Assert.Throws<ArgumentException>(() =>
+                foreignRepository.CommitPreparedCompletedTurnRewind(
+                    prepared
+                )
+            );
+            Assert.Equal(
+                foreignHead,
+                foreignRepository.ReadCurrentHead()
+            );
+        }
+
+        using var reopenedOwner = SessionJournalEngine.Open(ownerPath);
+        Assert.Equal(terminal, reopenedOwner.ReadCurrentHead());
+    }
+
+    [Fact]
+    public void BoundedRecent_SessionCreatedStartHasNoOffByOne() {
+        string path = NewPath();
+        using var engine = Create(path);
+        _ = engine.AppendObservation("only");
+        EventAddress terminal = engine.AppendImportedAgentAction(
+            new ActionMessage([new ActionBlock.Text("done")]),
+            ImportedInvocation
+        );
+
+        SessionCompletedTurnsSnapshot snapshot = Snapshot(
+            engine.ReadRecentCompletedTurnsAt(terminal, 6)
+        );
+        Assert.Equal(terminal, snapshot.CapturedHead);
+        Assert.Equal("only", Assert.Single(snapshot.Turns).ObservationContent);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BoundedRecent_UnknownKindOrFutureBodySchemaIsUnsupported(
+        bool futureBodySchema
+    ) {
+        string path = NewPath();
+        EventAddress head;
+        using (var setup = Create(path)) {
+            head = setup.ReadCurrentHead()!.Value;
+        }
+
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            _ = journal.CreateBranch("unsupported", head).Unwrap();
+            byte[] payload = futureBodySchema
+                ? "{\"v\":2147483647,\"body\":{}}"u8.ToArray()
+                : "{}"u8.ToArray();
+            uint kind = futureBodySchema
+                ? (uint)SessionEventKind.ObservationAccepted
+                : uint.MaxValue;
+            head = journal.CommitToRef(
+                "unsupported",
+                head,
+                payload,
+                opaqueEventKind: kind,
+                hint: default
+            ).Unwrap().EventAddress;
+        }
+
+        using var unsupported = SessionJournalEngine.Open(
+            path,
+            "unsupported"
+        );
+        Assert.IsType<SessionCompletedTurnsReadResult.UnsupportedSchema>(
+            unsupported.ReadRecentCompletedTurnsAt(head, 6)
+        );
     }
 
     [Fact]
@@ -603,8 +899,8 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             path,
             "malformed"
         );
-        Assert.Throws<InvalidDataException>(
-            () => malformed.ReadRecentCompletedTurnsAt(toolAction, 10)
+        Assert.IsType<SessionCompletedTurnsReadResult.Corruption>(
+            malformed.ReadRecentCompletedTurnsAt(toolAction, 10)
         );
     }
 
@@ -613,6 +909,12 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         "prompt-a",
         "surface-a"
     );
+
+    private static SessionCompletedTurnsSnapshot Snapshot(
+        SessionCompletedTurnsReadResult result
+    ) => Assert.IsType<SessionCompletedTurnsReadResult.Snapshot>(
+        result
+    ).Value;
 
     private static SessionJournalEngine Create(string path) =>
         SessionJournalEngine.Create(path, Options);

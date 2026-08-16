@@ -57,7 +57,8 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         );
         Assert.Equal(wrapped, requestedObservation.Content);
 
-        var persisted = session.Engine.ReadRecentCompletedTurns(1);
+        var persisted = session.Engine.ReadRecentCompletedTurns(1)
+            .RequireSnapshot();
         Assert.Equal(
             wrapped,
             Assert.Single(persisted.Turns).ObservationContent
@@ -118,7 +119,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         Assert.Equal(0, completion.DispatchCallCount);
         Assert.Equal(initialHead, session.Engine.ReadCurrentHead());
         Assert.Empty(
-            session.Engine.ReadRecentCompletedTurns().Turns
+            session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns
         );
 
         RecentTurnsResponseDto recent = await GetRecentTurnsAsync(client);

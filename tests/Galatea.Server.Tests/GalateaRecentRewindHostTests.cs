@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -101,7 +102,7 @@ public sealed class GalateaRecentRewindHostTests {
         Assert.Equal(session.Engine.ReadCurrentHead(), rewindHead);
 
         SessionCompletedTurnsSnapshot raw =
-            session.Engine.ReadRecentCompletedTurns(2);
+            session.Engine.ReadRecentCompletedTurns(2).RequireSnapshot();
         Assert.Equal(raw.CapturedHead, rewindHead);
         Assert.Equal(
             raw.Turns[0].TerminalAction.Address,
@@ -297,7 +298,7 @@ public sealed class GalateaRecentRewindHostTests {
                     );
                 SessionCompletedTurnProjection reopenedCurrent =
                     Assert.Single(
-                        reopened.ReadRecentCompletedTurns(10).Turns
+                        reopened.ReadRecentCompletedTurns(10).RequireSnapshot().Turns
                     );
                 Assert.Contains(
                     "user one",
@@ -305,7 +306,7 @@ public sealed class GalateaRecentRewindHostTests {
                     StringComparison.Ordinal
                 );
                 Assert.DoesNotContain(
-                    reopened.ReadRecentCompletedTurns(10).Turns,
+                    reopened.ReadRecentCompletedTurns(10).RequireSnapshot().Turns,
                     static turn => turn.ObservationContent.Contains(
                         "user two",
                         StringComparison.Ordinal
@@ -316,7 +317,7 @@ public sealed class GalateaRecentRewindHostTests {
                     reopened.ReadRecentCompletedTurnsAt(
                         oldHead,
                         10
-                    ).Turns[0];
+                    ).RequireSnapshot().Turns[0];
                 Assert.Contains(
                     "user two",
                     historicalNewest.ObservationContent,
@@ -396,7 +397,7 @@ public sealed class GalateaRecentRewindHostTests {
         Assert.Empty(third.Recent.Turns);
         Assert.Null(third.Recent.RewindLatestToken);
         Assert.Equal(3, completion.DispatchCallCount);
-        Assert.Empty(session.Engine.ReadRecentCompletedTurns(10).Turns);
+        Assert.Empty(session.Engine.ReadRecentCompletedTurns(10).RequireSnapshot().Turns);
     }
 
     [Fact]
@@ -519,6 +520,123 @@ public sealed class GalateaRecentRewindHostTests {
         Assert.Null(fallback.RewindLatestToken);
         Assert.Equal("stale", fallback.RecapGridReadiness?.Freshness);
         Assert.Same(fallback, session.GetRecentTurns());
+    }
+
+    [Fact]
+    public async Task PopReceiptLimit_IsCheckedBeforeRefCas() {
+        await using var host = CreateHost(new QueueCompletionClient());
+        (GalateaHostService service, UserSessionHost session) =
+            await GetSessionAsync(host);
+        string oversized = new(
+            'x',
+            GalateaHostService.MaximumPoppedUserTextUtf8Bytes + 1
+        );
+        _ = session.Engine.AppendObservation(
+            GalateaUserMessageEnvelope.Wrap(oversized)
+        );
+        EventAddress terminal = session.Engine.AppendImportedAgentAction(
+            new ActionMessage([new ActionBlock.Text("done")]),
+            new CompletionDescriptor("fixture", "fixture-v1", "model-a")
+        );
+
+        GalateaRecentProjectionException error = Assert.Throws<
+            GalateaRecentProjectionException
+        >(() => {
+            _ = service.PrepareAndCommitPopLatestTurn(
+                session,
+                terminal
+            );
+        });
+        Assert.Equal("popped-user-text-limit-exceeded", error.Code);
+        Assert.Equal(terminal, session.Engine.ReadCurrentHead());
+    }
+
+    [Fact]
+    public async Task PopReceipt_WorstCaseEscapingFitsLockedRelationBeforeCas() {
+        await using var host = CreateHost(new QueueCompletionClient());
+        (GalateaHostService service, UserSessionHost session) =
+            await GetSessionAsync(host);
+        string worstCase = new(
+            '\0',
+            GalateaHostService.MaximumPoppedUserTextUtf8Bytes
+        );
+        EventAddress before = session.Engine.ReadCurrentHead()!.Value;
+        _ = session.Engine.AppendObservation(
+            GalateaUserMessageEnvelope.Wrap(worstCase)
+        );
+        EventAddress terminal = session.Engine.AppendImportedAgentAction(
+            new ActionMessage([new ActionBlock.Text("done")]),
+            new CompletionDescriptor("fixture", "fixture-v1", "model-a")
+        );
+
+        GalateaPreparedPopLatestTurn moved = Assert.IsType<
+            GalateaPreparedPopLatestTurn
+        >(service.PrepareAndCommitPopLatestTurn(session, terminal));
+        Assert.Equal(worstCase, moved.PoppedUserText);
+        Assert.True(
+            moved.ReceiptUtf8Bytes.Length
+                <= GalateaHostService.MaximumPopReceiptUtf8Bytes
+        );
+        using JsonDocument receipt = JsonDocument.Parse(
+            moved.ReceiptUtf8Bytes
+        );
+        JsonProperty property = Assert.Single(
+            receipt.RootElement.EnumerateObject()
+        );
+        Assert.Equal("poppedUserText", property.Name);
+        Assert.Equal(worstCase, property.Value.GetString());
+        Assert.Equal(before, session.Engine.ReadCurrentHead());
+    }
+
+    [Fact]
+    public void BoundedJson_ExactMaximumPassesAndMaximumPlusOneFails() {
+        int maximumBytes =
+            GalateaHostService.MaximumRecentResponseUtf8Bytes;
+        GalateaBoundedJson.RequireFits(
+            new string('a', maximumBytes - 2),
+            maximumBytes,
+            "recent-view-limit-exceeded"
+        );
+
+        GalateaRecentProjectionException error = Assert.Throws<
+            GalateaRecentProjectionException
+        >(() => GalateaBoundedJson.RequireFits(
+            new string('a', maximumBytes - 1),
+            maximumBytes,
+            "recent-view-limit-exceeded"
+        ));
+        Assert.Equal("recent-view-limit-exceeded", error.Code);
+    }
+
+    [Fact]
+    public async Task RecentEncodedLimit_IsNotSwallowedAsStaleCache() {
+        await using var host = CreateHost(new QueueCompletionClient());
+        (GalateaHostService service, UserSessionHost session) =
+            await GetSessionAsync(host);
+        string largeAssistant = new('a', 750_000);
+        for (int index = 0; index < GalateaHostService.RecentTurnLimit;
+             index++) {
+            _ = session.Engine.AppendObservation(
+                GalateaUserMessageEnvelope.Wrap($"user-{index}")
+            );
+            _ = session.Engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text(largeAssistant)
+                ]),
+                new CompletionDescriptor(
+                    "fixture",
+                    "fixture-v1",
+                    "model-a"
+                )
+            );
+        }
+
+        GalateaRecentProjectionException error =
+            await Assert.ThrowsAsync<GalateaRecentProjectionException>(
+                async () => await service
+                    .RefreshRecentTurnsBestEffortAsync(session)
+            );
+        Assert.Equal("recent-view-limit-exceeded", error.Code);
     }
 
     private static GalateaTestHost CreateHost(

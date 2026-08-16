@@ -8,6 +8,8 @@ namespace Atelia.SessionJournal;
 /// depending on storage cache hits or wall-clock timing.
 /// </summary>
 internal sealed class SessionJournalEventReader {
+    private readonly AsyncLocal<SessionCompletedTurnsReadBudget?>
+        _completedTurnsBudget = new();
     private readonly EventJournal.EventJournal _journal;
     private readonly IReadOnlyDictionary<
         EventAddress,
@@ -47,7 +49,11 @@ internal sealed class SessionJournalEventReader {
     }
 
     public AteliaResult<EventFrameHeader> ReadEventHeaderPreview(EventAddress address) {
+        SessionCompletedTurnsReadBudget? budget =
+            _completedTurnsBudget.Value;
+        budget?.ConsumeHeaderVisit();
         Interlocked.Increment(ref _headerPreviewReadCount);
+        AteliaResult<EventFrameHeader> result;
         if (_cachedEvents is not null
             && _cachedEvents.TryGetValue(
                 address,
@@ -55,14 +61,35 @@ internal sealed class SessionJournalEventReader {
             )
             && cached is not null) {
             Interlocked.Increment(ref _cachedHeaderReadCount);
-            return cached.Header;
+            result = cached.Header;
         }
-        ThrowIfCacheMiss(address);
-        Interlocked.Increment(ref _storageHeaderPreviewReadCount);
-        return _journal.ReadEventHeaderPreview(address);
+        else {
+            ThrowIfCacheMiss(address);
+            Interlocked.Increment(ref _storageHeaderPreviewReadCount);
+            result = _journal.ReadEventHeaderPreview(address);
+        }
+        if (budget is not null && result.IsSuccess) {
+            EventFrameHeader header = result.Unwrap();
+            if (!Enum.IsDefined(
+                    typeof(SessionEventKind),
+                    header.OpaqueEventKind
+                )) {
+                throw new SessionCompletedTurnsUnsupportedSchemaException(
+                    $"Unknown SessionJournal event kind '{header.OpaqueEventKind}' at {address}."
+                );
+            }
+        }
+        return result;
     }
 
     public AteliaResult<SessionJournalEventFrame> ReadEvent(EventAddress address) {
+        EventFrameHeader? preview = null;
+        SessionCompletedTurnsReadBudget? budget =
+            _completedTurnsBudget.Value;
+        if (budget is not null) {
+            preview = ReadEventHeaderPreview(address).Unwrap();
+            budget.ReservePayload(preview.Value.PayloadLength);
+        }
         Interlocked.Increment(ref _payloadReadCount);
         if (_cachedEvents is not null
             && _cachedEvents.TryGetValue(
@@ -70,6 +97,12 @@ internal sealed class SessionJournalEventReader {
                 out SessionJournalCachedEvent? cached
             )
             && cached is not null) {
+            if (preview is { } expected
+                && cached.Header != expected) {
+                throw new InvalidDataException(
+                    $"SessionJournal payload header at '{address}' changed after bounded preview."
+                );
+            }
             Interlocked.Increment(ref _cachedPayloadReadCount);
             long cachedLogicalPayloadBytes =
                 cached.Header.PayloadLength;
@@ -96,6 +129,13 @@ internal sealed class SessionJournalEventReader {
         }
 
         EventFrame frame = result.Unwrap();
+        if (preview is { } expectedHeader
+            && frame.Header != expectedHeader) {
+            frame.Dispose();
+            throw new InvalidDataException(
+                $"SessionJournal payload header at '{address}' changed after bounded preview."
+            );
+        }
         long logicalPayloadBytes = frame.Header.PayloadLength;
         try {
             Interlocked.Add(
@@ -154,6 +194,19 @@ internal sealed class SessionJournalEventReader {
             ChronologicalChainReadCount: Interlocked.Read(ref _chronologicalChainReadCount),
             ChronologicalEventCount: Interlocked.Read(ref _chronologicalEventCount)
         );
+
+    internal IDisposable EnterCompletedTurnsReadBudget(
+        SessionCompletedTurnsReadBudget budget
+    ) {
+        ArgumentNullException.ThrowIfNull(budget);
+        if (_completedTurnsBudget.Value is not null) {
+            throw new InvalidOperationException(
+                "A completed-turn read budget is already active in this execution context."
+            );
+        }
+        _completedTurnsBudget.Value = budget;
+        return new CompletedTurnsBudgetScope(this, budget);
+    }
 
     internal SessionJournalReaderStorageDiagnostics
         CaptureStorageDiagnostics()
@@ -215,6 +268,30 @@ internal sealed class SessionJournalEventReader {
                 $"SessionJournal audit reference {address} is not on "
                 + "the captured branch Parent lineage."
             );
+        }
+    }
+
+    private sealed class CompletedTurnsBudgetScope(
+        SessionJournalEventReader owner,
+        SessionCompletedTurnsReadBudget budget
+    ) : IDisposable {
+        private SessionJournalEventReader? _owner = owner;
+
+        public void Dispose() {
+            SessionJournalEventReader? current =
+                Interlocked.Exchange(ref _owner, null);
+            if (current is null) {
+                return;
+            }
+            if (!ReferenceEquals(
+                    current._completedTurnsBudget.Value,
+                    budget
+                )) {
+                throw new InvalidOperationException(
+                    "Completed-turn read budget scope ownership was lost."
+                );
+            }
+            current._completedTurnsBudget.Value = null;
         }
     }
 }

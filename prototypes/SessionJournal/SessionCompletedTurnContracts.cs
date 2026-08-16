@@ -27,6 +27,127 @@ public sealed record SessionCompletedTurnsSnapshot(
     IReadOnlyList<SessionCompletedTurnProjection> Turns
 );
 
+public enum SessionCompletedTurnsLimit {
+    MaximumExaminedHeaders,
+    MaximumDecodedLogicalPayloadBytes
+}
+
+/// <summary>
+/// Closed outcome of the bounded completed-turn projection. Constructors are SessionJournal-owned;
+/// callers can inspect durable evidence without constructing counterfeit outcomes.
+/// </summary>
+public abstract record SessionCompletedTurnsReadResult {
+    private SessionCompletedTurnsReadResult() { }
+
+    public sealed record Snapshot : SessionCompletedTurnsReadResult {
+        internal Snapshot(SessionCompletedTurnsSnapshot value) {
+            Value = value;
+        }
+        public SessionCompletedTurnsSnapshot Value { get; }
+    }
+
+    public sealed record LimitExceeded : SessionCompletedTurnsReadResult {
+        internal LimitExceeded(SessionCompletedTurnsLimit limit) {
+            Limit = limit;
+        }
+        public SessionCompletedTurnsLimit Limit { get; }
+    }
+
+    public sealed record UnsupportedSchema : SessionCompletedTurnsReadResult {
+        internal UnsupportedSchema(string detail) {
+            Detail = detail;
+        }
+        public string Detail { get; }
+    }
+
+    public sealed record Corruption : SessionCompletedTurnsReadResult {
+        internal Corruption(string detail) {
+            Detail = detail;
+        }
+        public string Detail { get; }
+    }
+}
+
+/// <summary>
+/// Repository- and branch-bound capability for one exact completed-turn rewind. The observation
+/// remains readable so a host can encode its success receipt before attempting the ref CAS.
+/// </summary>
+public sealed class SessionPreparedCompletedTurnRewind {
+    internal SessionPreparedCompletedTurnRewind(
+        string ownerPath,
+        RefId branchRefId,
+        EventAddress expectedHead,
+        EventAddress newHead,
+        SessionRetractedTurnProjection turn
+    ) {
+        OwnerPath = ownerPath;
+        BranchRefId = branchRefId;
+        ExpectedHead = expectedHead;
+        NewHead = newHead;
+        Turn = turn;
+    }
+
+    internal string OwnerPath { get; }
+    internal RefId BranchRefId { get; }
+    internal EventAddress NewHead { get; }
+    internal SessionRetractedTurnProjection Turn { get; }
+
+    public EventAddress ExpectedHead { get; }
+    public EventAddress ObservationAddress => Turn.ObservationAddress;
+    public string ObservationContent => Turn.ObservationContent;
+}
+
+public abstract record SessionCompletedTurnRewindPrepareResult {
+    private SessionCompletedTurnRewindPrepareResult() { }
+
+    public sealed record Prepared : SessionCompletedTurnRewindPrepareResult {
+        internal Prepared(SessionPreparedCompletedTurnRewind value) {
+            Value = value;
+        }
+        public SessionPreparedCompletedTurnRewind Value { get; }
+    }
+
+    public sealed record Unavailable : SessionCompletedTurnRewindPrepareResult {
+        internal Unavailable(SessionExecutionBoundaryInspection boundary) {
+            Boundary = boundary;
+        }
+        public SessionExecutionBoundaryInspection Boundary { get; }
+    }
+
+    public sealed record Retryable : SessionCompletedTurnRewindPrepareResult {
+        internal Retryable(
+            EventAddress expectedHead,
+            EventAddress? observedHead
+        ) {
+            ExpectedHead = expectedHead;
+            ObservedHead = observedHead;
+        }
+        public EventAddress ExpectedHead { get; }
+        public EventAddress? ObservedHead { get; }
+    }
+
+    public sealed record LimitExceeded : SessionCompletedTurnRewindPrepareResult {
+        internal LimitExceeded(SessionCompletedTurnsLimit limit) {
+            Limit = limit;
+        }
+        public SessionCompletedTurnsLimit Limit { get; }
+    }
+
+    public sealed record UnsupportedSchema : SessionCompletedTurnRewindPrepareResult {
+        internal UnsupportedSchema(string detail) {
+            Detail = detail;
+        }
+        public string Detail { get; }
+    }
+
+    public sealed record Corruption : SessionCompletedTurnRewindPrepareResult {
+        internal Corruption(string detail) {
+            Detail = detail;
+        }
+        public string Detail { get; }
+    }
+}
+
 /// <summary>
 /// The raw visible turn removed from the selected lineage. A known failed turn has no terminal
 /// Action; a completed rewind carries the same terminal Action returned by recent projection.

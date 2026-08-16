@@ -195,6 +195,10 @@ public sealed record PopLatestTurnResponseDto(
     RecentTurnsResponseDto Recent
 );
 
+internal sealed record PopLatestTurnReceiptDto(
+    string PoppedUserText
+);
+
 public sealed record PopLatestTurnRequestDto(
     [property: JsonPropertyName("rewindLatestToken")]
     string RewindLatestToken

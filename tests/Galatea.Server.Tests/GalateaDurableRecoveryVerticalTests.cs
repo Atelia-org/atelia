@@ -134,7 +134,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         Assert.NotEqual(failedHead, session.Engine.ReadCurrentHead());
         SessionCompletedTurnProjection completed =
-            session.Engine.ReadRecentCompletedTurns().Turns[^1];
+            session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns[^1];
         Assert.Equal(
             GalateaUserMessageEnvelope.Wrap("continue after failure"),
             completed.ObservationContent
@@ -232,7 +232,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             session.Engine.InspectExecutionBoundary().Phase
         );
         SessionCompletedTurnProjection completed = Assert.Single(
-            session.Engine.ReadRecentCompletedTurns().Turns
+            session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns
         );
         Assert.Equal(
             GalateaUserMessageEnvelope.Wrap("already normalized"),
@@ -421,7 +421,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
         Assert.Equal(
             "restarted answer",
-            session.Engine.ReadRecentCompletedTurns().Turns[^1]
+            session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns[^1]
                 .TerminalAction.Message.GetFlattenedText()
         );
     }

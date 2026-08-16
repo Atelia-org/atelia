@@ -80,7 +80,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(0, routeLoads);
         Assert.False(File.Exists(Path.Combine(
             path, "derived", "recap-grid", "v1", "grid.sqlite")));
-        Assert.Single(session.Engine.ReadRecentCompletedTurns().Turns);
+        Assert.Single(session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns);
 
         EventAddress observationHead = session.Engine.AppendObservation(
             GalateaHostService.WrapUserMessageForEngine(
@@ -102,7 +102,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(
             SessionExecutionPhase.Idle,
             session.Engine.InspectExecutionBoundary().Phase);
-        Assert.Equal(2, session.Engine.ReadRecentCompletedTurns().Turns.Count);
+        Assert.Equal(2, session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns.Count);
         Assert.Equal(refId, session.Engine.BranchRefId);
         Assert.Equal(oldV8Before, File.ReadAllBytes(oldV8));
     }

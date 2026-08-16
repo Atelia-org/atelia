@@ -25,6 +25,9 @@ namespace Atelia.Galatea.Server;
 
 public sealed class GalateaHostService : IAsyncDisposable {
     internal const int RecentTurnLimit = 6;
+    internal const int MaximumRecentResponseUtf8Bytes = 4 * 1024 * 1024;
+    internal const int MaximumPoppedUserTextUtf8Bytes = 256 * 1024;
+    internal const int MaximumPopReceiptUtf8Bytes = 2 * 1024 * 1024;
 
     private readonly GalateaInputPreprocessor _inputPreprocessor;
     private readonly bool _maintenanceMode;
@@ -177,8 +180,30 @@ public sealed class GalateaHostService : IAsyncDisposable {
         int maxTurns = RecentTurnLimit
     ) {
         ArgumentNullException.ThrowIfNull(engine);
-        SessionCompletedTurnsSnapshot snapshot =
+        SessionCompletedTurnsReadResult read =
             engine.ReadRecentCompletedTurns(maxTurns);
+        SessionCompletedTurnsSnapshot snapshot = read switch {
+            SessionCompletedTurnsReadResult.Snapshot available =>
+                available.Value,
+            SessionCompletedTurnsReadResult.LimitExceeded limit =>
+                throw new GalateaRecentProjectionException(
+                    "recent-view-limit-exceeded",
+                    $"Completed-turn projection exceeded '{limit.Limit}'."
+                ),
+            SessionCompletedTurnsReadResult.UnsupportedSchema schema =>
+                throw new GalateaRecentProjectionException(
+                    "session-schema-unsupported",
+                    schema.Detail
+                ),
+            SessionCompletedTurnsReadResult.Corruption corruption =>
+                throw new GalateaRecentProjectionException(
+                    "session-invalid",
+                    corruption.Detail
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown completed-turn projection result."
+            )
+        };
         IReadOnlyList<RecentTurnDto> turns = [
             .. snapshot.Turns.Select(
                 GalateaRecentTurnDisplayAdapter.Project
@@ -295,6 +320,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
         catch (Exception ex) when (
             GalateaExceptionClassifier.IsNonFatal(ex)
+            && ex is not GalateaRecentProjectionException
             && !cancellationToken.IsCancellationRequested
         ) {
             host.MarkRecentSnapshotStale();
@@ -337,6 +363,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ? projection.Response.RewindLatestToken
                 : null
         };
+        GalateaBoundedJson.RequireFits(
+            recent,
+            MaximumRecentResponseUtf8Bytes,
+            "recent-view-limit-exceeded"
+        );
         host.SetRecentTurns(recent);
         return recent;
     }
@@ -421,26 +452,105 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(host);
-        host.MarkRecentSnapshotStale();
-        SessionTurnRetractionResult result =
-            host.Engine.RewindLatestCompletedTurn(
+        GalateaPreparedPopLatestTurn? prepared =
+            PrepareAndCommitPopLatestTurn(
+                host,
                 expectedHead,
                 cancellationToken
             );
+        if (prepared is null) {
+            return null;
+        }
         RecentTurnsResponseDto recent =
             await RefreshRecentTurnsBestEffortAsync(
                     host,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-        if (result is not SessionTurnRetractionResult.Moved moved
+        return new PopLatestTurnResponseDto(prepared.Turn, recent);
+    }
+
+    internal GalateaPreparedPopLatestTurn?
+        PrepareAndCommitPopLatestTurn(
+        UserSessionHost host,
+        EventAddress expectedHead,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(host);
+        SessionCompletedTurnRewindPrepareResult preparation =
+            host.Engine.PrepareLatestCompletedTurnRewind(
+                expectedHead,
+                cancellationToken
+            );
+        if (preparation
+            is not SessionCompletedTurnRewindPrepareResult.Prepared ready) {
+            return preparation switch {
+                SessionCompletedTurnRewindPrepareResult.LimitExceeded limit =>
+                    throw new GalateaRecentProjectionException(
+                        "recent-view-limit-exceeded",
+                        $"Completed-turn rewind exceeded '{limit.Limit}'."
+                    ),
+                SessionCompletedTurnRewindPrepareResult.UnsupportedSchema schema =>
+                    throw new GalateaRecentProjectionException(
+                        "session-schema-unsupported",
+                        schema.Detail
+                    ),
+                SessionCompletedTurnRewindPrepareResult.Corruption corruption =>
+                    throw new GalateaRecentProjectionException(
+                        "session-invalid",
+                        corruption.Detail
+                    ),
+                _ => null
+            };
+        }
+
+        string poppedUserText = GalateaUserMessageEnvelope
+            .UnwrapForDisplay(ready.Value.ObservationContent);
+        int sourceBytes;
+        try {
+            sourceBytes = GalateaBoundedJson.StrictUtf8.GetByteCount(
+                poppedUserText
+            );
+        }
+        catch (EncoderFallbackException exception) {
+            throw new GalateaRecentProjectionException(
+                "session-invalid",
+                "Popped user text is not valid Unicode.",
+                exception
+            );
+        }
+        if (sourceBytes > MaximumPoppedUserTextUtf8Bytes) {
+            throw new GalateaRecentProjectionException(
+                "popped-user-text-limit-exceeded",
+                "Popped user text exceeds the display receipt limit."
+            );
+        }
+        byte[] receiptBytes = JsonSerializer.SerializeToUtf8Bytes(
+            new PopLatestTurnReceiptDto(poppedUserText),
+            GalateaJson.Options
+        );
+        if (receiptBytes.Length > MaximumPopReceiptUtf8Bytes) {
+            throw new GalateaRecentProjectionException(
+                "popped-user-text-limit-exceeded",
+                "Encoded pop receipt exceeds its response limit."
+            );
+        }
+
+        SessionTurnRetractionResult committed =
+            host.Engine.CommitPreparedCompletedTurnRewind(
+                ready.Value,
+                cancellationToken
+            );
+        if (committed is not SessionTurnRetractionResult.Moved moved
             || moved.Turn.TerminalAction is null) {
             return null;
         }
-        RecentTurnDto turn = GalateaRecentTurnDisplayAdapter.Project(
-            moved.Turn
+        host.MarkRecentSnapshotStale();
+        return new GalateaPreparedPopLatestTurn(
+            GalateaRecentTurnDisplayAdapter.Project(moved.Turn),
+            poppedUserText,
+            receiptBytes
         );
-        return new PopLatestTurnResponseDto(turn, recent);
     }
 
     internal GalateaLiveTurn? FindTurn(UserSessionHost host, string turnId) {
@@ -1058,6 +1168,96 @@ internal static class GalateaExceptionClassifier {
                 or AccessViolationException
         );
     }
+}
+
+internal sealed class GalateaRecentProjectionException : Exception {
+    internal GalateaRecentProjectionException(
+        string code,
+        string message,
+        Exception? innerException = null
+    ) : base(message, innerException) {
+        Code = code;
+    }
+
+    internal string Code { get; }
+}
+
+internal sealed record GalateaPreparedPopLatestTurn(
+    RecentTurnDto Turn,
+    string PoppedUserText,
+    byte[] ReceiptUtf8Bytes
+);
+
+internal static class GalateaBoundedJson {
+    internal static readonly UTF8Encoding StrictUtf8 = new(
+        encoderShouldEmitUTF8Identifier: false,
+        throwOnInvalidBytes: true
+    );
+
+    internal static void RequireFits<T>(
+        T value,
+        int maximumUtf8Bytes,
+        string code
+    ) {
+        if (maximumUtf8Bytes <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maximumUtf8Bytes)
+            );
+        }
+        using var sink = new CappedCountingStream(maximumUtf8Bytes);
+        try {
+            JsonSerializer.Serialize(sink, value, GalateaJson.Options);
+        }
+        catch (GalateaJsonLimitException exception) {
+            throw new GalateaRecentProjectionException(
+                code,
+                $"Encoded JSON exceeds {maximumUtf8Bytes} UTF-8 bytes.",
+                exception
+            );
+        }
+    }
+
+    private sealed class CappedCountingStream(int maximumBytes)
+        : Stream {
+        private long _length;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => _length;
+        public override long Position {
+            get => _length;
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() { }
+
+        public override void Write(byte[] buffer, int offset, int count) {
+            ArgumentNullException.ThrowIfNull(buffer);
+            WriteCore(count);
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer) =>
+            WriteCore(buffer.Length);
+
+        private void WriteCore(int count) {
+            if (count < 0 || count > maximumBytes - _length) {
+                throw new GalateaJsonLimitException();
+            }
+            _length += count;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+
+        public override void SetLength(long value) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class GalateaJsonLimitException : Exception;
 }
 
 public sealed class UserSessionHost : IAsyncDisposable {
