@@ -48,12 +48,8 @@ internal sealed class GalateaInputPreprocessor {
             return original;
         }
 
-        liveTurn.Publish(
-            new StreamEventDto(
-                "meta",
-                new { phase = "input-normalization-start" }
-            ),
-            phase: "input-normalization-start"
+        liveTurn.PublishStatus(
+            GalateaSseStatusCode.NormalizingInput
         );
 
         try {
@@ -70,15 +66,9 @@ internal sealed class GalateaInputPreprocessor {
                 effective,
                 StringComparison.Ordinal
             );
-            liveTurn.Publish(
-                new StreamEventDto(
-                    "meta",
-                    new {
-                        phase = "input-normalization-finish",
-                        changed
-                    }
-                ),
-                phase: "input-normalization-finish"
+            liveTurn.PublishStatus(
+                GalateaSseStatusCode.InputNormalizationFinished,
+                changed
             );
             return effective;
         }
@@ -92,16 +82,9 @@ internal sealed class GalateaInputPreprocessor {
         }
         catch (Exception exception) {
             LogFallback(liveTurn, original, exception);
-            liveTurn.Publish(
-                new StreamEventDto(
-                    "meta",
-                    new {
-                        phase = "input-normalization-finish",
-                        changed = false,
-                        fallback = true
-                    }
-                ),
-                phase: "input-normalization-finish"
+            liveTurn.PublishStatus(
+                GalateaSseStatusCode.InputNormalizationFinished,
+                changed: false
             );
             return original;
         }

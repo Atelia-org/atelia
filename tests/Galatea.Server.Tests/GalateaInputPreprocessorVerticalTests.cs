@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
@@ -129,19 +130,24 @@ public sealed class GalateaInputPreprocessorVerticalTests {
 
         Assert.Equal("failed", liveTurn.Status);
         using GalateaTurnSubscription subscription = liveTurn.Subscribe();
-        StreamEventDto error = Assert.Single(
-            subscription.ReplayEvents,
-            static item => item.Type == "error"
+        GalateaSseFrame error = Assert.Single(
+            subscription.ReplayFrames,
+            static item => item.EventName == "error"
         );
         using JsonDocument payload = JsonDocument.Parse(
-            JsonSerializer.Serialize(error.Payload)
+            Encoding.UTF8.GetString(error.Utf8.Span)
+                .Split('\n')[1]["data: ".Length..]
         );
         Assert.Equal(
-            "stopped-before-dispatch",
+            "operator-stop",
             payload.RootElement
-                .GetProperty("failureReason")
+                .GetProperty("code")
                 .GetString()
         );
+        Assert.False(payload.RootElement.TryGetProperty(
+            "failureReason",
+            out _
+        ));
     }
 
     private static async Task LoginAsync(HttpClient client) {

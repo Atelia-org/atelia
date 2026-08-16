@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
@@ -129,14 +130,16 @@ public sealed class GalateaRecentRewindHostTests {
         );
 
         using GalateaTurnSubscription subscription = liveTurn.Subscribe();
-        StreamEventDto done = Assert.Single(
-            subscription.ReplayEvents,
-            static item => item.Type == "done"
+        GalateaSseFrame done = Assert.Single(
+            subscription.ReplayFrames,
+            static item => item.EventName == "done"
         );
-        JsonElement payload = JsonSerializer.SerializeToElement(
-            done.Payload,
-            GalateaJson.Options
+        string dataLine = Encoding.UTF8.GetString(done.Utf8.Span)
+            .Split('\n')[1];
+        using JsonDocument document = JsonDocument.Parse(
+            dataLine["data: ".Length..]
         );
+        JsonElement payload = document.RootElement;
         JsonElement recap = payload.GetProperty("recent")
             .GetProperty("recapGridReadiness");
         Assert.Equal("exact", recap.GetProperty("freshness").GetString());
@@ -720,6 +723,62 @@ public sealed class GalateaRecentRewindHostTests {
         Assert.Equal("recent-view-limit-exceeded", error.Code);
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
+        using HttpResponseMessage response = await client.GetAsync(
+            "/api/v1/recent-turns"
+        );
+        Assert.Equal(
+            HttpStatusCode.ServiceUnavailable,
+            response.StatusCode
+        );
+        using JsonDocument body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync()
+        );
+        Assert.Equal(
+            "recent-view-limit-exceeded",
+            body.RootElement.GetProperty("code").GetString()
+        );
+    }
+
+    [Fact]
+    public async Task DurableCompletion_WithOversizedRecentPublishesDoneNull() {
+        string largeAssistant = new('\0', 700_000);
+        await using var host = CreateHost(
+            new QueueCompletionClient(largeAssistant)
+        );
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        (GalateaHostService service, UserSessionHost session) =
+            await GetSessionAsync(host);
+
+        GalateaLiveTurn liveTurn = await CompleteTurnAsync(
+            client,
+            service,
+            session,
+            "final user"
+        );
+
+        Assert.Single(
+            session.Engine.ReadRecentCompletedTurns()
+                .RequireSnapshot().Turns
+        );
+        Assert.True(liveTurn.PreviewSuppressed);
+        using GalateaTurnSubscription subscription = liveTurn.Subscribe();
+        GalateaSseFrame done = Assert.Single(
+            subscription.ReplayFrames,
+            static frame => frame.EventName == "done"
+        );
+        Assert.DoesNotContain(
+            subscription.ReplayFrames,
+            static frame => frame.EventName == "error"
+        );
+        string dataLine = Encoding.UTF8.GetString(done.Utf8.Span)
+            .Split('\n')[1];
+        using JsonDocument document = JsonDocument.Parse(
+            dataLine["data: ".Length..]
+        );
+        Assert.Equal(JsonValueKind.Null, document.RootElement
+            .GetProperty("recent").ValueKind);
+
         using HttpResponseMessage response = await client.GetAsync(
             "/api/v1/recent-turns"
         );

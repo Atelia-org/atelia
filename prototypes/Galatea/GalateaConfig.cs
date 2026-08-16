@@ -219,8 +219,3 @@ internal sealed record ResumeTurnRequest(
     [property: JsonPropertyName("restartUncertainCompletion")]
     bool RestartUncertainCompletion = false
 );
-
-public sealed record StreamEventDto(
-    string Type,
-    object? Payload
-);

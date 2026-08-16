@@ -670,20 +670,21 @@ api.MapGet(
         using var subscription = liveTurn.Subscribe();
 
         try {
-            foreach (var replayEvent in subscription.ReplayEvents) {
-                await GalateaSseWriter.WriteEventAsync(
+            foreach (GalateaSseFrame replayFrame
+                     in subscription.ReplayFrames) {
+                await GalateaSseWriter.WriteFrameAsync(
                     httpContext.Response,
-                    replayEvent.Type,
-                    replayEvent.Payload,
+                    replayFrame,
                     httpContext.RequestAborted
                 );
             }
 
-            await foreach (var streamEvent in subscription.Reader.ReadAllAsync(httpContext.RequestAborted)) {
-                await GalateaSseWriter.WriteEventAsync(
+            await foreach (GalateaSseFrame streamFrame
+                           in subscription.Reader.ReadAllAsync(
+                               httpContext.RequestAborted)) {
+                await GalateaSseWriter.WriteFrameAsync(
                     httpContext.Response,
-                    streamEvent.Type,
-                    streamEvent.Payload,
+                    streamFrame,
                     httpContext.RequestAborted
                 );
             }
@@ -731,25 +732,20 @@ static IResult StartAcceptedTurn(
             }
             catch (OperationCanceledException) when (applicationLifetime.ApplicationStopping.IsCancellationRequested) {
                 DebugUtil.Warning("Galatea.Api", $"Turn cancelled by shutdown: user={session.User.UserId}, turnId={liveTurn.TurnId}");
-                liveTurn.Publish(
-                    new StreamEventDto("error", new { message = "服务器正在关闭，当前生成已终止。" }),
-                    status: "failed"
+                liveTurn.PublishError(
+                    GalateaSseErrorCode.ServerShutdown
                 );
             }
             catch (GalateaTurnException ex) {
                 DebugUtil.Warning("Galatea.Api", $"Turn failed with GalateaTurnException: user={session.User.UserId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}, detail={ex.Message}");
-                liveTurn.Publish(
-                    new StreamEventDto("error", new { message = ex.Message, failureReason = ex.FailureReason }),
-                    status: "failed"
-                );
+                liveTurn.PublishError(ClassifySseError(ex));
             }
             catch (Exception ex) when (
                 GalateaExceptionClassifier.IsNonFatal(ex)
             ) {
                 DebugUtil.Error("Galatea.Api", $"Turn failed with exception: user={session.User.UserId}, turnId={liveTurn.TurnId}", ex);
-                liveTurn.Publish(
-                    new StreamEventDto("error", new { message = ex.Message }),
-                    status: "failed"
+                liveTurn.PublishError(
+                    GalateaSseErrorCode.InternalFailure
                 );
             }
             finally {
@@ -796,6 +792,27 @@ static IResult RecoveryConflict(
     new ApiErrorDto(code, error),
     statusCode: StatusCodes.Status409Conflict
 );
+
+static GalateaSseErrorCode ClassifySseError(
+    GalateaTurnException exception
+) {
+    string? reason = exception.FailureReason;
+    if (reason is "stopped-by-user"
+        or "stopped-before-dispatch"
+        or "recovery-stopped-before-dispatch") {
+        return GalateaSseErrorCode.OperatorStop;
+    }
+    if (reason is "input-limit-exceeded"
+        or "uncertain-completion-restart-required"
+        || reason?.StartsWith("recovery-", StringComparison.Ordinal) == true
+        || reason?.StartsWith("failed-turn-", StringComparison.Ordinal) == true
+        || reason?.StartsWith("recap-grid-", StringComparison.Ordinal) == true
+        || reason?.StartsWith("agent-control-", StringComparison.Ordinal) == true
+        || reason?.StartsWith("tool-runtime-", StringComparison.Ordinal) == true) {
+        return GalateaSseErrorCode.TurnUnavailable;
+    }
+    return GalateaSseErrorCode.CompletionFailed;
+}
 
 static (int StatusCode, ApiErrorDto Error) MapApiException(
     Exception exception

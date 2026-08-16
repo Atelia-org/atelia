@@ -69,12 +69,8 @@ public sealed class GalateaEndpointLockTopologyTests {
                 "lock topology probe",
                 new GalateaTurnOptions("test")
             );
-            liveTurn.Publish(
-                new StreamEventDto(
-                    "meta",
-                    new { phase = "lock-topology-proof" }
-                ),
-                phase: "lock-topology-proof"
+            liveTurn.PublishStatus(
+                GalateaSseStatusCode.Generating
             );
 
             using var request = new HttpRequestMessage(
@@ -105,9 +101,9 @@ public sealed class GalateaEndpointLockTopologyTests {
                 .AsTask()
                 .WaitAsync(EndpointDeadline);
 
-            Assert.Equal("event: meta", eventLine);
+            Assert.Equal("event: status", eventLine);
             Assert.Equal(
-                "data: {\"phase\":\"lock-topology-proof\"}",
+                "data: {\"code\":\"generating\"}",
                 dataLine
             );
             Assert.False(session.TurnLock.Wait(0));
@@ -115,6 +111,9 @@ public sealed class GalateaEndpointLockTopologyTests {
         finally {
             if (liveTurn is not null) {
                 hostService.FinishTurn(session, liveTurn);
+                liveTurn.PublishError(
+                    GalateaSseErrorCode.InternalFailure
+                );
                 liveTurn.Complete();
             }
 
@@ -163,6 +162,9 @@ public sealed class GalateaEndpointLockTopologyTests {
         finally {
             if (liveTurn is not null) {
                 hostService.FinishTurn(session, liveTurn);
+                liveTurn.PublishError(
+                    GalateaSseErrorCode.InternalFailure
+                );
                 liveTurn.Complete();
             }
 
@@ -296,6 +298,9 @@ public sealed class GalateaEndpointLockTopologyTests {
         finally {
             if (liveTurn is not null) {
                 hostService.FinishTurn(session, liveTurn);
+                liveTurn.PublishError(
+                    GalateaSseErrorCode.InternalFailure
+                );
                 liveTurn.Complete();
             }
 

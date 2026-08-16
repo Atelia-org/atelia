@@ -186,6 +186,225 @@ export function requireRecentTurnsResponse(value) {
   return recent;
 }
 
+export function requireStreamLimits(value) {
+  const limits = requireExactKeys(value, [
+    "maximumConnectionBytes", "maximumFrameBytes",
+  ], "stream limits");
+  if (!Number.isSafeInteger(limits.maximumConnectionBytes)
+      || limits.maximumConnectionBytes <= 0) {
+    throw new Error("stream limits.maximumConnectionBytes must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(limits.maximumFrameBytes)
+      || limits.maximumFrameBytes <= 0) {
+    throw new Error("stream limits.maximumFrameBytes must be a positive safe integer");
+  }
+  if (limits.maximumFrameBytes > limits.maximumConnectionBytes) {
+    throw new Error("stream limits frame bound exceeds connection bound");
+  }
+  return limits;
+}
+
+export class GalateaSseProtocolError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "GalateaSseProtocolError";
+  }
+}
+
+export class GalateaSseEofBeforeTerminalError extends Error {
+  constructor(message = "SSE ended before its terminal event") {
+    super(message);
+    this.name = "GalateaSseEofBeforeTerminalError";
+  }
+}
+
+export class GalateaSseV1Parser {
+  constructor(limitsValue) {
+    this.limits = requireStreamLimits(limitsValue);
+    this.connectionBytes = 0;
+    this.frameBytes = new Uint8Array(Math.min(
+      4096,
+      this.limits.maximumFrameBytes,
+    ));
+    this.frameLength = 0;
+    this.utf8Validator = new TextDecoder("utf-8", { fatal: true });
+    this.terminal = null;
+    this.finished = false;
+  }
+
+  push(chunk) {
+    if (!(chunk instanceof Uint8Array)) {
+      throw new GalateaSseProtocolError("SSE chunk must be raw bytes");
+    }
+    if (this.finished) {
+      throw new GalateaSseProtocolError("SSE bytes arrived after EOF");
+    }
+    if (this.terminal !== null && chunk.byteLength !== 0) {
+      throw new GalateaSseProtocolError("SSE data followed a terminal event");
+    }
+    if (chunk.byteLength
+        > this.limits.maximumConnectionBytes - this.connectionBytes) {
+      throw new GalateaSseProtocolError("SSE connection byte limit exceeded");
+    }
+    this.connectionBytes += chunk.byteLength;
+
+    const rawFrames = [];
+    for (const byte of chunk) {
+      if (byte === 0x0d) {
+        throw new GalateaSseProtocolError("SSE CR bytes are forbidden");
+      }
+      this.appendFrameByte(byte);
+      if (this.frameLength >= 2
+          && this.frameBytes[this.frameLength - 2] === 0x0a
+          && this.frameBytes[this.frameLength - 1] === 0x0a) {
+        rawFrames.push(this.frameBytes.slice(0, this.frameLength - 2));
+        this.frameLength = 0;
+      }
+    }
+    try {
+      this.utf8Validator.decode(chunk, { stream: true });
+    } catch {
+      throw new GalateaSseProtocolError("SSE contains invalid UTF-8");
+    }
+
+    const events = [];
+    for (let index = 0; index < rawFrames.length; index += 1) {
+      if (this.terminal !== null) {
+        throw new GalateaSseProtocolError("SSE data followed a terminal event");
+      }
+      const event = this.parseFrame(rawFrames[index]);
+      events.push(event);
+      if (event.type === "done" || event.type === "error") {
+        this.terminal = event;
+        if (index !== rawFrames.length - 1 || this.frameLength !== 0) {
+          throw new GalateaSseProtocolError("SSE data followed a terminal event");
+        }
+      }
+    }
+    return events;
+  }
+
+  finish() {
+    if (this.finished) {
+      throw new GalateaSseProtocolError("SSE parser was already finished");
+    }
+    this.finished = true;
+    try {
+      this.utf8Validator.decode();
+    } catch {
+      throw new GalateaSseProtocolError("SSE ended inside a UTF-8 sequence");
+    }
+    if (this.frameLength !== 0 || this.terminal === null) {
+      throw new GalateaSseEofBeforeTerminalError();
+    }
+    return this.terminal;
+  }
+
+  appendFrameByte(byte) {
+    if (this.frameLength === this.limits.maximumFrameBytes) {
+      throw new GalateaSseProtocolError("SSE frame byte limit exceeded");
+    }
+    if (this.frameLength === this.frameBytes.length) {
+      const nextLength = Math.min(
+        this.limits.maximumFrameBytes,
+        Math.max(1, this.frameBytes.length * 2),
+      );
+      const grown = new Uint8Array(nextLength);
+      grown.set(this.frameBytes);
+      this.frameBytes = grown;
+    }
+    this.frameBytes[this.frameLength++] = byte;
+  }
+
+  parseFrame(rawBytes) {
+    let raw;
+    try {
+      raw = new TextDecoder("utf-8", { fatal: true }).decode(rawBytes);
+    } catch {
+      throw new GalateaSseProtocolError("SSE frame contains invalid UTF-8");
+    }
+    const lines = raw.split("\n");
+    if (lines.length !== 2
+        || !lines[0].startsWith("event: ")
+        || !lines[1].startsWith("data: ")) {
+      throw new GalateaSseProtocolError(
+        "SSE frame must contain exact event and data lines",
+      );
+    }
+    const eventName = lines[0].slice("event: ".length);
+    const dataText = lines[1].slice("data: ".length);
+    if (!eventName || !dataText
+        || !dataText.startsWith("{") || !dataText.endsWith("}")) {
+      throw new GalateaSseProtocolError("SSE event or data line is not exact");
+    }
+    let payload;
+    try {
+      payload = JSON.parse(dataText);
+      return requireSseEvent(eventName, payload);
+    } catch (error) {
+      if (error instanceof GalateaSseProtocolError) {
+        throw error;
+      }
+      throw new GalateaSseProtocolError(
+        `SSE ${eventName} payload is invalid: ${error?.message ?? "invalid JSON"}`,
+      );
+    }
+  }
+}
+
+function requireSseEvent(eventName, value) {
+  switch (eventName) {
+    case "status": {
+      const object = requireObject(value, "SSE status");
+      const code = requireString(object.code, "SSE status.code");
+      if (code === "input-normalization-finished") {
+        const payload = requireExactKeys(
+          object,
+          ["code", "changed"],
+          "SSE status",
+        );
+        requireBoolean(payload.changed, "SSE status.changed");
+        return { type: "status", code, changed: payload.changed };
+      }
+      if (!["generating", "normalizing-input", "using-tools"].includes(code)) {
+        throw new Error("SSE status.code is unknown");
+      }
+      requireExactKeys(object, ["code"], "SSE status");
+      return { type: "status", code };
+    }
+    case "reasoning-delta":
+    case "text-delta": {
+      const payload = requireExactKeys(value, ["delta"], `SSE ${eventName}`);
+      const delta = requireString(payload.delta, `SSE ${eventName}.delta`);
+      if (!delta) {
+        throw new Error(`SSE ${eventName}.delta must be nonempty`);
+      }
+      return { type: eventName, delta };
+    }
+    case "done": {
+      const payload = requireExactKeys(value, ["recent"], "SSE done");
+      const recent = payload.recent === null
+        ? null
+        : requireRecentTurnsResponse(payload.recent);
+      return { type: "done", recent };
+    }
+    case "error": {
+      const payload = requireExactKeys(value, ["code", "message"], "SSE error");
+      const codes = [
+        "operator-stop", "server-shutdown", "completion-failed",
+        "turn-unavailable", "internal-failure",
+      ];
+      if (!codes.includes(payload.code)) {
+        throw new Error("SSE error.code is unknown");
+      }
+      requireNonblankString(payload.message, "SSE error.message");
+      return { type: "error", code: payload.code, message: payload.message };
+    }
+    default:
+      throw new Error("SSE event name is unknown");
+  }
+}
+
 export function capturePopProvisional(recentValue) {
   const recent = requireRecentTurnsResponse(recentValue);
   return Object.freeze({
@@ -333,6 +552,7 @@ function startGalateaApp() {
   const connections = Array.isArray(bootstrapConfig.connections) ? bootstrapConfig.connections : [];
   const userKey = bootstrapConfig.userId ?? "anonymous";
   const maintenanceMode = bootstrapConfig.maintenanceMode === true;
+  const streamLimits = requireStreamLimits(bootstrapConfig.streamLimits);
 
   const state = {
     recentTurns: [],
@@ -707,92 +927,61 @@ function startGalateaApp() {
 
   async function readEventStream(response) {
     const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let terminalEvent = null;
+    const parser = new GalateaSseV1Parser(streamLimits);
 
     while (true) {
       const { value, done } = await reader.read();
       if (done) {
         break;
       }
-
-      buffer += decoder.decode(value, { stream: true });
-
-      while (true) {
-        const separatorIndex = buffer.indexOf("\n\n");
-        if (separatorIndex < 0) {
-          break;
-        }
-
-        const rawEvent = buffer.slice(0, separatorIndex);
-        buffer = buffer.slice(separatorIndex + 2);
-        terminalEvent = handleRawEvent(rawEvent) ?? terminalEvent;
+      for (const streamEvent of parser.push(value)) {
+        handleEvent(streamEvent);
       }
     }
-
-    return terminalEvent;
+    return parser.finish();
   }
 
-  function handleRawEvent(rawEvent) {
-    let eventName = "message";
-    let data = "";
-
-    for (const line of rawEvent.split("\n")) {
-      if (line.startsWith("event:")) {
-        eventName = line.slice("event:".length).trim();
-      } else if (line.startsWith("data:")) {
-        data += line.slice("data:".length).trim();
-      }
-    }
-
-    const payload = data ? JSON.parse(data) : null;
-    return handleEvent(eventName, payload);
-  }
-
-  function handleEvent(eventName, payload) {
-    switch (eventName) {
-      case "meta":
-        if (payload?.phase === "turn-start") {
+  function handleEvent(streamEvent) {
+    switch (streamEvent.type) {
+      case "status":
+        if (streamEvent.code === "generating") {
           setStreaming(true, "正在生成…");
-        } else if (payload?.phase === "input-normalization-start") {
+        } else if (streamEvent.code === "normalizing-input") {
           setStreaming(true, "正在清洗输入…");
-        } else if (payload?.phase === "input-normalization-finish") {
-          if (payload?.changed) {
+        } else if (streamEvent.code === "input-normalization-finished") {
+          if (streamEvent.changed) {
             setStreaming(true, "已纠正输入，继续生成…");
           } else {
             setStreaming(true, "输入清洗完成，继续生成…");
           }
-        } else if (payload?.phase === "tool-loop-start") {
+        } else if (streamEvent.code === "using-tools") {
           setStreaming(true, "正在调用工具…");
         }
         break;
       case "reasoning-delta":
-        state.liveReasoning += payload?.delta ?? "";
+        state.liveReasoning += streamEvent.delta;
         liveReasoning.textContent = state.liveReasoning;
         liveReasoningPanel.classList.toggle("hidden", state.liveReasoning.length === 0);
         break;
       case "text-delta":
-        state.liveText += payload?.delta ?? "";
+        state.liveText += streamEvent.delta;
         liveText.textContent = state.liveText;
         break;
       case "done":
-        applyRecentTurnsPayload(payload?.recent);
-        clearPendingPoppedTurn();
-        renderTurns();
-        clearActiveTurn();
+        if (streamEvent.recent !== null) {
+          applyRecentTurnsPayload(streamEvent.recent);
+          clearPendingPoppedTurn();
+          renderTurns();
+        }
         resetLive();
         setStreaming(true, "正在收尾…");
         input.value = "";
-        return { type: "done" };
+        return;
       case "error":
-        const message = payload?.message ?? "请求失败";
-        clearActiveTurn();
-        setStreaming(false, message);
-        return { type: "error", message };
+        resetLive();
+        setStreaming(false, streamEvent.message);
+        return;
     }
-
-    return null;
   }
 
   async function popLatestTurn(status) {
@@ -937,6 +1126,7 @@ function startGalateaApp() {
 
     state.activeTurnId = normalizedTurnId;
     const generation = ++state.streamGeneration;
+    let reconciliationFailures = 0;
 
     while (state.activeTurnId === normalizedTurnId && generation === state.streamGeneration) {
       beginLive();
@@ -948,48 +1138,90 @@ function startGalateaApp() {
         });
 
         if (response.status === 404) {
-          clearActiveTurn();
-          resetLive();
-          setStreaming(false, "生成任务已结束或不存在");
-          await loadRecentTurns();
-          return;
+          throw new GalateaSseEofBeforeTerminalError(
+            "SSE turn was not found",
+          );
         }
 
         if (!response.ok || !response.body) {
-          throw new Error("连接生成流失败");
+          throw new GalateaSseEofBeforeTerminalError(
+            "SSE transport is unavailable",
+          );
         }
 
         const terminalEvent = await readEventStream(response);
-        if (state.activeTurnId !== normalizedTurnId || generation !== state.streamGeneration) {
-          if (!state.activeTurnId) {
-            const currentTurn = await waitForCurrentTurnTerminal();
-            await loadRecentTurns().catch(() => {});
-            if (currentTurn?.status === "recovery-required") {
-              setStreaming(false, currentTurn.restartRequired
-                ? "上次模型调用结果不确定；需要明确授权后才能恢复。"
-                : "本轮保留在可恢复状态；刷新页面可继续恢复。");
-            } else if (currentTurn?.status === "unprovisioned") {
-              setStreaming(false, "会话仓库尚未完成初始化。");
-            } else if (terminalEvent?.type === "error") {
-              setStreaming(false, terminalEvent.message);
-            } else {
-              setStreaming(false, "");
-            }
+        const currentTurn = await waitForCurrentTurnTerminal();
+        clearActiveTurn();
+        resetLive();
+        let recentUnavailable = false;
+        if (terminalEvent.type === "error" || terminalEvent.recent === null) {
+          try {
+            await loadRecentTurns();
+          } catch {
+            recentUnavailable = true;
           }
-          return;
         }
-
-        if (!state.streaming) {
-          return;
+        if (currentTurn?.status === "recovery-required") {
+          setStreaming(false, currentTurn.restartRequired
+            ? "上次模型调用结果不确定；需要明确授权后才能恢复。"
+            : "本轮保留在可恢复状态；刷新页面可继续恢复。");
+        } else if (currentTurn?.status === "unprovisioned") {
+          setStreaming(false, "会话仓库尚未完成初始化。");
+        } else if (terminalEvent.type === "error") {
+          setStreaming(false, terminalEvent.message);
+        } else if (recentUnavailable) {
+          setStreaming(false, "生成已完成；recent view 暂不可用，请稍后刷新。");
+        } else {
+          setStreaming(false, "");
         }
-
-        setStreaming(true, "连接已断开，正在重连…");
+        return;
       } catch (error) {
         if (state.activeTurnId !== normalizedTurnId || generation !== state.streamGeneration) {
           return;
         }
-
-        setStreaming(true, error?.message || "连接已断开，正在重连…");
+        if (error instanceof GalateaSseProtocolError) {
+          setStreaming(
+            true,
+            "生成流协议无效；已停止自动重连，请刷新页面。",
+          );
+          return;
+        }
+        let currentTurn;
+        try {
+          currentTurn = await loadCurrentTurn();
+          reconciliationFailures = 0;
+        } catch {
+          reconciliationFailures += 1;
+          if (reconciliationFailures >= 3) {
+            setStreaming(
+              true,
+              "无法确认生成状态；已停止自动重连，请刷新页面。",
+            );
+            return;
+          }
+          setStreaming(true, "连接已断开，正在确认生成状态…");
+          await sleep(800);
+          continue;
+        }
+        if (currentTurn?.status === "running"
+            && (currentTurn.turnId === normalizedTurnId
+                || currentTurn.turnId === null)) {
+          setStreaming(true, "连接已断开，正在从头重连…");
+        } else {
+          clearActiveTurn();
+          resetLive();
+          await loadRecentTurns().catch(() => {});
+          if (currentTurn?.status === "recovery-required") {
+            setStreaming(false, currentTurn.restartRequired
+              ? "生成中断且结果不确定；需要明确授权后才能恢复。"
+              : "生成中断；本轮保留在可恢复状态。");
+          } else if (currentTurn?.status === "unprovisioned") {
+            setStreaming(false, "会话仓库尚未完成初始化。");
+          } else {
+            setStreaming(false, "生成流在terminal前中断；已刷新持久化视图。");
+          }
+          return;
+        }
       }
 
       await sleep(800);

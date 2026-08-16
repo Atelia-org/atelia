@@ -40,15 +40,15 @@ public sealed class GalateaInputPreprocessorTests {
         );
 
         Assert.Equal("normalized", result);
-        Assert.Equal("input-normalization-finish", turn.Phase);
-        AssertSsePhases(
+        Assert.Equal("input-normalization-finished", turn.Phase);
+        AssertSseStatuses(
             Replay(turn),
-            "input-normalization-start",
-            "input-normalization-finish"
+            "normalizing-input",
+            "input-normalization-finished"
         );
         Assert.Contains(
             "\"changed\":true",
-            JsonSerializer.Serialize(Replay(turn)[1].Payload),
+            FrameText(Replay(turn)[1]),
             StringComparison.Ordinal
         );
     }
@@ -68,13 +68,13 @@ public sealed class GalateaInputPreprocessorTests {
         );
 
         Assert.Equal("original", result);
-        IReadOnlyList<StreamEventDto> events = Replay(turn);
-        AssertSsePhases(
+        IReadOnlyList<GalateaSseFrame> events = Replay(turn);
+        AssertSseStatuses(
             events,
-            "input-normalization-start",
-            "input-normalization-finish"
+            "normalizing-input",
+            "input-normalization-finished"
         );
-        string payload = JsonSerializer.Serialize(events[1].Payload);
+        string payload = FrameText(events[1]);
         Assert.Contains(
             "\"changed\":false",
             payload,
@@ -88,7 +88,7 @@ public sealed class GalateaInputPreprocessorTests {
     }
 
     [Fact]
-    public async Task ProcessAsync_NormalizeExceptionFallsBackAndMarksSse() {
+    public async Task ProcessAsync_NormalizeExceptionFallsBackWithoutWireDetail() {
         var normalizer = new StubNormalizer {
             NormalizeHandler = static (_, _) =>
                 ValueTask.FromException<string>(
@@ -104,20 +104,20 @@ public sealed class GalateaInputPreprocessorTests {
         );
 
         Assert.Equal("original", result);
-        IReadOnlyList<StreamEventDto> events = Replay(turn);
-        AssertSsePhases(
+        IReadOnlyList<GalateaSseFrame> events = Replay(turn);
+        AssertSseStatuses(
             events,
-            "input-normalization-start",
-            "input-normalization-finish"
+            "normalizing-input",
+            "input-normalization-finished"
         );
-        string payload = JsonSerializer.Serialize(events[1].Payload);
+        string payload = FrameText(events[1]);
         Assert.Contains(
             "\"changed\":false",
             payload,
             StringComparison.Ordinal
         );
-        Assert.Contains(
-            "\"fallback\":true",
+        Assert.DoesNotContain(
+            "fallback",
             payload,
             StringComparison.Ordinal
         );
@@ -144,7 +144,7 @@ public sealed class GalateaInputPreprocessorTests {
         ).AsTask());
 
         Assert.Equal("input-limit-exceeded", exception.FailureReason);
-        AssertSsePhases(Replay(turn), "input-normalization-start");
+        AssertSseStatuses(Replay(turn), "normalizing-input");
     }
 
     [Fact]
@@ -196,10 +196,10 @@ public sealed class GalateaInputPreprocessorTests {
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => processing
         );
-        Assert.Equal("input-normalization-start", turn.Phase);
-        AssertSsePhases(
+        Assert.Equal("normalizing-input", turn.Phase);
+        AssertSseStatuses(
             Replay(turn),
-            "input-normalization-start"
+            "normalizing-input"
         );
     }
 
@@ -208,27 +208,39 @@ public sealed class GalateaInputPreprocessorTests {
         new GalateaTurnOptions("test")
     );
 
-    private static IReadOnlyList<StreamEventDto> Replay(
+    private static IReadOnlyList<GalateaSseFrame> Replay(
         GalateaLiveTurn turn
     ) {
         using GalateaTurnSubscription subscription = turn.Subscribe();
-        return subscription.ReplayEvents;
+        return subscription.ReplayFrames;
     }
 
-    private static void AssertSsePhases(
-        IReadOnlyList<StreamEventDto> events,
+    private static void AssertSseStatuses(
+        IReadOnlyList<GalateaSseFrame> events,
         params string[] expected
     ) {
         Assert.Equal(expected.Length, events.Count);
-        Assert.All(events, static item => Assert.Equal("meta", item.Type));
+        Assert.All(
+            events,
+            static item => Assert.Equal("status", item.EventName)
+        );
         Assert.Equal(
             expected,
             events.Select(static item =>
-                JsonDocument.Parse(
-                    JsonSerializer.Serialize(item.Payload)
-                ).RootElement.GetProperty("phase").GetString()
+                FramePayload(item).GetProperty("code").GetString()
             ).ToArray()
         );
+    }
+
+    private static string FrameText(GalateaSseFrame frame) =>
+        System.Text.Encoding.UTF8.GetString(frame.Utf8.Span);
+
+    private static JsonElement FramePayload(GalateaSseFrame frame) {
+        string dataLine = FrameText(frame).Split('\n')[1];
+        using JsonDocument document = JsonDocument.Parse(
+            dataLine["data: ".Length..]
+        );
+        return document.RootElement.Clone();
     }
 
     private sealed class StubNormalizer

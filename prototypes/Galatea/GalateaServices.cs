@@ -335,6 +335,34 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
     }
 
+    internal async ValueTask<RecentTurnsResponseDto?>
+        RefreshRecentTurnsForCompletedStreamAsync(
+        UserSessionHost host,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(host);
+        try {
+            return await RefreshRecentTurnsAsync(
+                    host,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (
+            GalateaExceptionClassifier.IsNonFatal(ex)
+            && !cancellationToken.IsCancellationRequested
+        ) {
+            host.MarkRecentSnapshotStale();
+            DebugUtil.Warning(
+                "Galatea.Session",
+                "Completed turn has no exact bounded recent view: "
+                + $"user={host.User.UserId}",
+                ex
+            );
+            return null;
+        }
+    }
+
     private async ValueTask<RecentTurnsResponseDto>
         RefreshRecentTurnsAsync(
         UserSessionHost host,
@@ -555,7 +583,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CancellationToken turnCancellationToken =
             preDispatchCts.Token;
 
-        liveTurn.Publish(new StreamEventDto("meta", new { phase = "turn-start" }), phase: "turn-start");
+        liveTurn.PublishStatus(GalateaSseStatusCode.Generating);
         DebugUtil.Info(
             "Galatea.Session",
             $"RunTurnAsync start: user={host.User.UserId}, turnId={liveTurn.TurnId}, input={Preview(liveTurn.UserMessage)}, head={host.Engine.ReadCurrentHead()}",
@@ -564,30 +592,21 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
         CompletionStreamObserver observer = liveTurn.Observer;
         var toolLoopStarted = 0;
-        observer.ReceivedThinkingBegin += () => liveTurn.Publish(
-            new StreamEventDto("meta", new { phase = "reasoning-start" }),
-            phase: "reasoning-start"
-        );
-        observer.ReceivedThinkingEnd += () => liveTurn.Publish(
-            new StreamEventDto("meta", new { phase = "reasoning-end" }),
-            phase: "reasoning-end"
-        );
-        observer.ReceivedReasoningDelta += delta => liveTurn.Publish(new StreamEventDto("reasoning-delta", new { delta }));
+        observer.ReceivedReasoningDelta += delta => {
+            if (!string.IsNullOrEmpty(delta)) {
+                liveTurn.PublishReasoningDelta(delta);
+            }
+        };
         var textFilter = new InlineThinkTextFilter(startInsideThink: false);
         observer.ReceivedTextDelta += delta => {
             var visibleText = textFilter.Filter(delta);
             if (string.IsNullOrEmpty(visibleText)) { return; }
-            liveTurn.Publish(new StreamEventDto("text-delta", new { delta = visibleText }));
+            liveTurn.PublishTextDelta(visibleText);
         };
-        observer.ReceivedToolCall += call => {
+        observer.ReceivedToolCall += _ => {
             if (Interlocked.Exchange(ref toolLoopStarted, 1) == 0) {
-                liveTurn.Publish(new StreamEventDto("meta", new { phase = "tool-loop-start" }), phase: "tool-loop-start");
+                liveTurn.PublishStatus(GalateaSseStatusCode.UsingTools);
             }
-
-            liveTurn.Publish(
-                new StreamEventDto("meta", new { phase = "tool-call", toolName = call.ToolName, toolCallId = call.ToolCallId }),
-                phase: "tool-call"
-            );
         };
 
         GalateaCompletedOperation completed;
@@ -637,30 +656,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ex.Termination.ProviderReason ?? ex.Termination.Kind.ToString()
             );
         }
-        var snapshot = await RefreshRecentTurnsBestEffortAsync(
+        RecentTurnsResponseDto? snapshot =
+            await RefreshRecentTurnsForCompletedStreamAsync(
                 host,
                 ct
             )
             .ConfigureAwait(false);
         DebugUtil.Info(
             "Galatea.Session",
-            $"RunTurnAsync send done: user={host.User.UserId}, turnId={liveTurn.TurnId}, errors={completed.Errors?.Count ?? 0}, snapshotTurns={snapshot.Turns.Count}, head={host.Engine.ReadCurrentHead()}"
+            $"RunTurnAsync send done: user={host.User.UserId}, turnId={liveTurn.TurnId}, errors={completed.Errors?.Count ?? 0}, snapshotTurns={snapshot?.Turns.Count.ToString(CultureInfo.InvariantCulture) ?? "unavailable"}, head={host.Engine.ReadCurrentHead()}"
         );
-
-        if (Volatile.Read(ref toolLoopStarted) == 1) {
-            liveTurn.Publish(new StreamEventDto("meta", new { phase = "tool-loop-finish" }), phase: "tool-loop-finish");
-        }
-
-        liveTurn.Publish(
-            new StreamEventDto(
-                "done",
-                new {
-                    recent = snapshot,
-                    errors = completed.Errors
-                }
-            ),
-            status: "completed"
-        );
+        liveTurn.PublishDone(snapshot);
     }
 
     private async Task<GalateaCompletedOperation> RunFreshSendAsync(
@@ -1886,6 +1892,14 @@ internal static class GalateaHtml {
             : string.Empty;
         string stylesheetPath = GalateaStaticAssetVersion.AppendToPath("/assets/galatea.css", assetVersion);
         string scriptPath = GalateaStaticAssetVersion.AppendToPath("/assets/galatea.js", assetVersion);
+        string maximumStreamConnectionBytes =
+            GalateaSseLimits.BrowserMaximumConnectionBytes.ToString(
+                CultureInfo.InvariantCulture
+            );
+        string maximumStreamFrameBytes =
+            GalateaSseLimits.BrowserMaximumFrameBytes.ToString(
+                CultureInfo.InvariantCulture
+            );
 
         return $$"""
 <!doctype html>
@@ -1950,7 +1964,11 @@ internal static class GalateaHtml {
       userId: {{JsonSerializer.Serialize(user.UserId, GalateaJson.Options)}},
       connections: {{connectionsJson}},
       defaultConnectionId: {{defaultConnectionJson}},
-      maintenanceMode: {{JsonSerializer.Serialize(maintenanceMode, GalateaJson.Options)}}
+      maintenanceMode: {{JsonSerializer.Serialize(maintenanceMode, GalateaJson.Options)}},
+      streamLimits: {
+        maximumConnectionBytes: {{maximumStreamConnectionBytes}},
+        maximumFrameBytes: {{maximumStreamFrameBytes}}
+      }
     };
   </script>
     <script type="module" src="{{scriptPath}}"></script>
@@ -1981,10 +1999,12 @@ internal static class GalateaStaticAssetVersion {
 }
 
 internal static class GalateaSseWriter {
-    public static async Task WriteEventAsync(HttpResponse response, string eventName, object? payload, CancellationToken ct) {
-        string json = JsonSerializer.Serialize(payload, GalateaJson.Options);
-        await response.WriteAsync($"event: {eventName}\n", ct);
-        await response.WriteAsync($"data: {json}\n\n", ct);
+    public static async Task WriteFrameAsync(
+        HttpResponse response,
+        GalateaSseFrame frame,
+        CancellationToken ct
+    ) {
+        await response.Body.WriteAsync(frame.Utf8, ct);
         await response.Body.FlushAsync(ct);
     }
 }
