@@ -68,8 +68,15 @@ internal sealed class SessionJournalEventReader {
             Interlocked.Increment(ref _storageHeaderPreviewReadCount);
             result = _journal.ReadEventHeaderPreview(address);
         }
-        if (budget is not null && result.IsSuccess) {
-            EventFrameHeader header = result.Unwrap();
+        if (budget is not null) {
+            if (result.IsFailure) {
+                throw CompletedTurnsReadFailure(
+                    "header preview",
+                    address,
+                    result.Error!
+                );
+            }
+            EventFrameHeader header = result.Value;
             if (!Enum.IsDefined(
                     typeof(SessionEventKind),
                     header.OpaqueEventKind
@@ -125,6 +132,13 @@ internal sealed class SessionJournalEventReader {
         Interlocked.Increment(ref _storagePayloadReadCount);
         AteliaResult<EventFrame> result = _journal.ReadEvent(address);
         if (result.IsFailure) {
+            if (budget is not null) {
+                throw CompletedTurnsReadFailure(
+                    "payload read",
+                    address,
+                    result.Error!
+                );
+            }
             return result.Error!;
         }
 
@@ -270,6 +284,15 @@ internal sealed class SessionJournalEventReader {
             );
         }
     }
+
+    private static InvalidDataException CompletedTurnsReadFailure(
+        string operation,
+        EventAddress address,
+        AteliaError error
+    ) => new(
+        $"SessionJournal {operation} failed at '{address}' with "
+        + $"'{error.ErrorCode}': {error.Message}"
+    );
 
     private sealed class CompletedTurnsBudgetScope(
         SessionJournalEventReader owner,

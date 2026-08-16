@@ -35,6 +35,21 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
         );
         Task<TurnResult>? active = null;
         try {
+            _ = engine.AppendObservation("prepared rewind candidate");
+            EventAddress preparedHead =
+                engine.AppendImportedAgentAction(
+                    new ActionMessage([
+                        new ActionBlock.Text("prepared response")
+                    ]),
+                    new CompletionDescriptor(
+                        "fixture",
+                        "fixture-v1",
+                        "model-A"
+                    )
+                );
+            SessionPreparedCompletedTurnRewind prepared = Assert.IsType<
+                SessionCompletedTurnRewindPrepareResult.Prepared
+            >(engine.PrepareLatestCompletedTurnRewind(preparedHead)).Value;
             await CoherentArtifactSetTestFixture
                 .ActivateAtCurrentHeadAsync(_root, engine, candidates);
 
@@ -119,6 +134,19 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
             AssertMutation(
                 rewind,
                 attempted: "RewindLatestCompletedTurn",
+                active: "SendAsync"
+            );
+            Assert.Equal(blockedHead, engine.ReadCurrentHead());
+
+            SessionJournalConcurrentMutationException preparedCommit =
+                Assert.Throws<SessionJournalConcurrentMutationException>(
+                    () => engine.CommitPreparedCompletedTurnRewind(
+                        prepared
+                    )
+                );
+            AssertMutation(
+                preparedCommit,
+                attempted: "CommitPreparedCompletedTurnRewind",
                 active: "SendAsync"
             );
             Assert.Equal(blockedHead, engine.ReadCurrentHead());

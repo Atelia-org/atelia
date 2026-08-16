@@ -221,7 +221,8 @@ internal sealed record SessionJournalTestHooks(
     Action<EventJournal.EventJournal>?
         AfterLifecycleAuditExpectedHeadCaptured = null,
     Action<EventJournal.EventJournal>?
-        AfterContextLifecyclePrepared = null
+        AfterContextLifecyclePrepared = null,
+    Action? AfterCompletedTurnsBudgetEntered = null
 );
 
 internal sealed class SessionJournalFailpointException(SessionJournalFailpoint failpoint)

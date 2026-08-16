@@ -1,6 +1,8 @@
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
+using Atelia.Rbf;
+using Atelia.RbfSegmentStore;
 using Xunit;
 
 namespace Atelia.SessionJournal.Tests;
@@ -530,12 +532,16 @@ public sealed class SessionCompletedTurnTests : IDisposable {
     public void ReadOnlyEngine_AllowsProjectionButRejectsRetraction() {
         string path = NewPath();
         EventAddress terminal;
+        SessionPreparedCompletedTurnRewind prepared;
         using (var setup = Create(path)) {
             _ = setup.AppendObservation("one");
             terminal = setup.AppendImportedAgentAction(
                 new ActionMessage([new ActionBlock.Text("done")]),
                 ImportedInvocation
             );
+            prepared = Assert.IsType<
+                SessionCompletedTurnRewindPrepareResult.Prepared
+            >(setup.PrepareLatestCompletedTurnRewind(terminal)).Value;
         }
 
         using var readOnly = SessionJournalEngine.OpenReadOnly(path);
@@ -544,6 +550,15 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             InvalidOperationException
         >(() => readOnly.RewindLatestCompletedTurn(terminal));
         Assert.Contains("read-only", error.Message, StringComparison.Ordinal);
+        InvalidOperationException commitError = Assert.Throws<
+            InvalidOperationException
+        >(() => readOnly.CommitPreparedCompletedTurnRewind(prepared));
+        Assert.Contains(
+            "read-only",
+            commitError.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(terminal, readOnly.ReadCurrentHead());
     }
 
     [Fact]
@@ -623,33 +638,66 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         );
 
         engine.Dispose();
-        using var concurrentLimited =
-            SessionJournalEngine.OpenReadOnly(path);
-        using var concurrentAvailable =
-            SessionJournalEngine.OpenReadOnly(path);
-        SessionCompletedTurnsReadResult[] concurrent = await Task.WhenAll(
-                Task.Run(() => concurrentLimited.ReadRecentCompletedTurns(
-                    6,
-                    new SessionCompletedTurnsReadBudget(
-                        measured.HeaderVisits - 1,
-                        measured.DecodedLogicalPayloadBytes
-                    )
-                )),
-                Task.Run(() => concurrentAvailable.ReadRecentCompletedTurns(
+        using var firstScopeEntered = new ManualResetEventSlim();
+        using var releaseFirstScope = new ManualResetEventSlim();
+        int scopeEntries = 0;
+        int throwOnEntry = 0;
+        var hooks = new SessionJournalTestHooks(
+            AfterCompletedTurnsBudgetEntered: () => {
+                int entry = Interlocked.Increment(ref scopeEntries);
+                if (entry == 1) {
+                    firstScopeEntered.Set();
+                    releaseFirstScope.Wait();
+                }
+                if (entry == Volatile.Read(ref throwOnEntry)) {
+                    throw new InvalidOperationException(
+                        "completed-turn scope fixture"
+                    );
+                }
+            }
+        );
+        using var concurrent =
+            SessionJournalEngine.OpenReadOnlyForTest(path, hooks);
+        Task<SessionCompletedTurnsReadResult> limitedTask = Task.Run(
+            () => concurrent.ReadRecentCompletedTurns(
+                6,
+                new SessionCompletedTurnsReadBudget(
+                    measured.HeaderVisits - 1,
+                    measured.DecodedLogicalPayloadBytes
+                )
+            )
+        );
+        Assert.True(firstScopeEntered.Wait(TimeSpan.FromSeconds(10)));
+        SessionCompletedTurnsReadResult available;
+        try {
+            available = await Task.Run(
+                () => concurrent.ReadRecentCompletedTurns(
                     6,
                     new SessionCompletedTurnsReadBudget(
                         measured.HeaderVisits,
                         measured.DecodedLogicalPayloadBytes
                     )
-                ))
-            );
+                )
+            ).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally {
+            releaseFirstScope.Set();
+        }
+        SessionCompletedTurnsReadResult limited =
+            await limitedTask.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.IsType<SessionCompletedTurnsReadResult.LimitExceeded>(
-            concurrent[0]
+            limited
         );
         Assert.IsType<SessionCompletedTurnsReadResult.Snapshot>(
-            concurrent[1]
+            available
         );
-        _ = Snapshot(concurrentAvailable.ReadRecentCompletedTurns(6));
+
+        Volatile.Write(ref throwOnEntry, 3);
+        InvalidOperationException fixture = Assert.Throws<
+            InvalidOperationException
+        >(() => concurrent.ReadRecentCompletedTurns(6));
+        Assert.Equal("completed-turn scope fixture", fixture.Message);
+        _ = Snapshot(concurrent.ReadRecentCompletedTurns(6));
     }
 
     [Fact]
@@ -842,6 +890,123 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         );
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BoundedRecentAndPreparedRewind_StorageReadFailureIsCorruption(
+        bool truncateBeforeHeader
+    ) {
+        var journalOptions = new EventJournalOptions {
+            EventSegmentStoreOptions = new RbfSegmentStoreOptions {
+                SegmentSizeThresholdBytes = 4,
+                HistoricalReaderPoolCapacity = 0,
+                CacheMode = RbfCacheMode.Off
+            }
+        };
+        string path = NewPath();
+        EventAddress observation;
+        EventAddress terminal;
+        using (var setup = SessionJournalEngine.CreateForTest(
+                   path,
+                   Options,
+                   runtime: null,
+                   new SessionJournalTestHooks(),
+                   journalOptions
+               )) {
+            observation = setup.AppendObservation("one");
+            terminal = setup.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("done")]),
+                ImportedInvocation
+            );
+        }
+        using (var journal = EventJournal.EventJournal.OpenExisting(
+                   path,
+                   journalOptions
+               )) {
+            _ = journal.AppendEventFrame(
+                terminal,
+                SessionEventCodec.Encode(
+                    SessionEventKind.ObservationAccepted,
+                    new ObservationAcceptedBody("unreferenced")
+                ),
+                (uint)SessionEventKind.ObservationAccepted,
+                hint: default
+            ).Unwrap();
+        }
+
+        int corruptions = 0;
+        var hooks = new SessionJournalTestHooks(
+            AfterCompletedTurnsBudgetEntered: () => {
+                if (Interlocked.Increment(ref corruptions) == 1) {
+                    if (truncateBeforeHeader) {
+                        TruncateEventSegment(
+                            path,
+                            observation.SegmentNumber
+                        );
+                    }
+                    else {
+                        CorruptFramePayloadByte(path, observation);
+                    }
+                }
+            }
+        );
+        using var corrupted = SessionJournalEngine.OpenForTest(
+            path,
+            runtime: null,
+            hooks,
+            journalOptions
+        );
+        Assert.Equal(terminal, corrupted.ReadCurrentHead());
+        Assert.IsType<SessionCompletedTurnsReadResult.Corruption>(
+            corrupted.ReadRecentCompletedTurnsAt(terminal, 6)
+        );
+        Assert.Equal(terminal, corrupted.ReadCurrentHead());
+        Assert.IsType<SessionCompletedTurnRewindPrepareResult.Corruption>(
+            corrupted.PrepareLatestCompletedTurnRewind(terminal)
+        );
+    }
+
+    [Fact]
+    public void AbandonFailedTurn_DoesNotExposeInternalBoundaryExceptions() {
+        string limitedPath = NewPath();
+        using (var limited = Create(limitedPath)) {
+            EventAddress pending = limited.AppendObservation("pending");
+            InvalidOperationException limit = Assert.Throws<
+                InvalidOperationException
+            >(() => limited.AbandonFailedTurn(
+                pending,
+                new SessionCompletedTurnsReadBudget(
+                    maximumHeaderVisits: 1,
+                    maximumDecodedLogicalPayloadBytes: 16 * 1024 * 1024
+                )
+            ));
+            Assert.Null(limit.InnerException);
+        }
+
+        string unsupportedPath = NewPath();
+        EventAddress unsupportedHead;
+        using (var setup = Create(unsupportedPath)) {
+            unsupportedHead = setup.ReadCurrentHead()!.Value;
+        }
+        using (var journal =
+               EventJournal.EventJournal.OpenExisting(unsupportedPath)) {
+            unsupportedHead = journal.CommitToRef(
+                SessionJournalDefaults.MainBranchName,
+                unsupportedHead,
+                "{}"u8.ToArray(),
+                opaqueEventKind: uint.MaxValue,
+                hint: default
+            ).Unwrap().EventAddress;
+        }
+        using var unsupported = SessionJournalEngine.Open(
+            unsupportedPath
+        );
+        NotSupportedException schema = Assert.Throws<
+            NotSupportedException
+        >(() => unsupported.AbandonFailedTurn(unsupportedHead));
+        Assert.Null(schema.InnerException);
+    }
+
     [Fact]
     public void ActiveToolTailWithoutSessionCreatedFailsFast() {
         string path = NewPath();
@@ -918,6 +1083,53 @@ public sealed class SessionCompletedTurnTests : IDisposable {
 
     private static SessionJournalEngine Create(string path) =>
         SessionJournalEngine.Create(path, Options);
+
+    private static void CorruptFramePayloadByte(
+        string path,
+        EventAddress address
+    ) {
+        string segmentPath = Assert.Single(
+            Directory.GetFiles(
+                Path.Combine(path, "events"),
+                $"{address.SegmentNumber:x8}.rbf",
+                SearchOption.AllDirectories
+            )
+        );
+        using var stream = new FileStream(
+            segmentPath,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.None
+        );
+        long payloadOffset = checked(address.Ticket.Offset + 4);
+        stream.Position = payloadOffset;
+        int value = stream.ReadByte();
+        Assert.NotEqual(-1, value);
+        stream.Position = payloadOffset;
+        stream.WriteByte((byte)(value ^ 0x01));
+        stream.Flush(flushToDisk: true);
+    }
+
+    private static void TruncateEventSegment(
+        string path,
+        uint segmentNumber
+    ) {
+        string segmentPath = Assert.Single(
+            Directory.GetFiles(
+                Path.Combine(path, "events"),
+                $"{segmentNumber:x8}.rbf",
+                SearchOption.AllDirectories
+            )
+        );
+        using var stream = new FileStream(
+            segmentPath,
+            FileMode.Open,
+            FileAccess.Write,
+            FileShare.None
+        );
+        stream.SetLength(4);
+        stream.Flush(flushToDisk: true);
+    }
 
     private static SessionRuntime Runtime(
         ICompletionClient client,

@@ -72,7 +72,7 @@ public sealed partial class SessionJournalEngine {
         }
         ValidateMaximumCount(maximumCount);
         using IDisposable scope =
-            _reader.EnterCompletedTurnsReadBudget(budget);
+            EnterCompletedTurnsReadBudget(budget);
         try {
             SessionCompletedTurnsSnapshot snapshot =
                 ReadRecentCompletedTurnsSnapshotAt(
@@ -149,26 +149,38 @@ public sealed partial class SessionJournalEngine {
     public SessionTurnRetractionResult AbandonFailedTurn(
         EventAddress expectedHead,
         CancellationToken cancellationToken = default
+    ) => AbandonFailedTurn(
+        expectedHead,
+        new SessionCompletedTurnsReadBudget(),
+        cancellationToken
+    );
+
+    internal SessionTurnRetractionResult AbandonFailedTurn(
+        EventAddress expectedHead,
+        SessionCompletedTurnsReadBudget budget,
+        CancellationToken cancellationToken = default
     ) {
+        ArgumentNullException.ThrowIfNull(budget);
         try {
             return AbandonFailedTurnCore(
                 expectedHead,
+                budget,
                 cancellationToken
             );
         }
         catch (SessionCompletedTurnsLimitException limit) {
             throw new InvalidOperationException(
-                $"Failed-turn abandonment exceeded '{limit.Limit}'.",
-                limit
+                $"Failed-turn abandonment exceeded '{limit.Limit}'."
             );
         }
         catch (SessionCompletedTurnsUnsupportedSchemaException schema) {
-            throw new NotSupportedException(schema.Message, schema);
+            throw new NotSupportedException(schema.Message);
         }
     }
 
     private SessionTurnRetractionResult AbandonFailedTurnCore(
         EventAddress expectedHead,
+        SessionCompletedTurnsReadBudget budget,
         CancellationToken cancellationToken
     ) {
         using MutationLease mutation = EnterMutation(
@@ -186,9 +198,7 @@ public sealed partial class SessionJournalEngine {
             );
         }
         using IDisposable scope =
-            _reader.EnterCompletedTurnsReadBudget(
-                new SessionCompletedTurnsReadBudget()
-            );
+            EnterCompletedTurnsReadBudget(budget);
         SessionExecutionRecovery recovery = ResolveExecutionTail(
             expectedHead,
             cancellationToken
@@ -296,7 +306,7 @@ public sealed partial class SessionJournalEngine {
         }
 
         using IDisposable scope =
-            _reader.EnterCompletedTurnsReadBudget(budget);
+            EnterCompletedTurnsReadBudget(budget);
         try {
             SessionExecutionRecovery recovery = ResolveExecutionTail(
                 expectedHead,
@@ -679,6 +689,21 @@ public sealed partial class SessionJournalEngine {
                 "Turn retraction head cannot be the default EventAddress.",
                 parameterName
             );
+        }
+    }
+
+    private IDisposable EnterCompletedTurnsReadBudget(
+        SessionCompletedTurnsReadBudget budget
+    ) {
+        IDisposable scope =
+            _reader.EnterCompletedTurnsReadBudget(budget);
+        try {
+            _testHooks.AfterCompletedTurnsBudgetEntered?.Invoke();
+            return scope;
+        }
+        catch {
+            scope.Dispose();
+            throw;
         }
     }
 
