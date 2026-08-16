@@ -52,9 +52,61 @@ Fresh/NewRequest 才创建 per-turn Online context。生命周期在合法 raw b
 Timeline reconcile/seal、必要的 Manager build，再由 Getter 产生 coherent candidate。
 empty Timeline 或 no-active recipe 走 raw-only，不打开 Store 或 recap provider。
 
+## HTTP V1 candidate
+
+Galatea的first-party browser与server一起直接使用`/api/v1`；旧`/api/*`没有alias、redirect或compatibility
+route。当前versioned endpoints是：
+
+| Method | Path | Success |
+|:--|:--|:--|
+| GET | `/api/v1/me` | `{userId,maintenanceMode}` |
+| GET | `/api/v1/recent-turns` | latest 6 completed turns、rewind token与同head RecapGrid readiness |
+| POST | `/api/v1/chat/turns` | 202 `{turnId}` |
+| POST | `/api/v1/chat/turns/resume` | 202 `{turnId}` |
+| POST | `/api/v1/chat/turns/pop-latest` | `{poppedUserText}` |
+| GET | `/api/v1/chat/turns/current` | `status,turnId,connectionId,restartRequired,recoveryHead` |
+| POST | `/api/v1/chat/turns/{turnId}/stop` | 204 empty |
+| GET | `/api/v1/chat/turns/{turnId}/events` | SSE V1 stream |
+
+JSON body只接受`application/json`与可选UTF-8 charset，不接受`Content-Encoding`；exact camelCase，unknown、
+wrong-case、duplicate、missing required、wrong type、required null、comment和trailing comma均拒绝。request body上限
+为1 MiB，original与normalized message各为64 KiB UTF-8，connection id为128 UTF-8 bytes。除busy使用
+`{code,error,turnId}`外，error统一为`{code,error}`；diagnostic文本不作为machine branch。
+
+recent operation共享最多4,096次physical header preview visit与16 MiB cumulative decoded logical payload，
+最终production JSON最多4 MiB。pop的display source最多256 KiB UTF-8，exact receipt最多2 MiB；receipt在CAS前
+预编码，response-loss只允许browser做current/recent reconciliation，不能自动重发mutation。
+
+## SSE V1 candidate
+
+SSE只接受下列closed event language：
+
+```text
+status          { code, changed? }
+reasoning-delta { delta }
+text-delta      { delta }
+done            { recent: RecentTurnsResponseV1 | null }
+error           { code, message }
+```
+
+`status.code`为`generating|normalizing-input|input-normalization-finished|using-tools`；只有
+`input-normalization-finished`携带required `changed:boolean`。`error.code`为
+`operator-stop|server-shutdown|completion-failed|turn-unavailable|internal-failure`。frame使用strict UTF-8与LF：
+exact一个`event:`行、一个单行`data:` JSON和终止空行；id、retry、comment、multi-data与CRLF均不是V1 grammar。
+
+nonterminal preview最多4 MiB / 16,383 events，terminal reserve为5 MiB / 1 event，whole replay最多9 MiB /
+16,384 events；subscriber channel容量为256 frame references。preview cap hit只进入internal
+`PreviewSuppressed`并丢弃后续preview，不停止provider或改变durable outcome。browser在decode前限制每connection
+9 MiB、每raw frame 5 MiB，并使用fatal UTF-8 decoder。process-alive nonfatal turn必须exactly-one terminal；
+fatal transport EOF可能没有terminal，browser必须查询current并有限重试，绝不能当success。durable completion后的
+view不可用表达为`done {recent:null}`，typed原因由独立HTTP recent读取。
+
+这些HTTP/SSE bounds是combined-R4-complete的pre-release candidate，仍是`Prototype locked`，不是
+stable/frozen compatibility承诺。没有真实需求前不增加pagination、cursor、Last-Event-ID、ack或dual grammar。
+
 ## Readiness
 
-`GET /api/recent-turns` 返回 `recapGridReadiness`。它绑定同一 read view 与 recent raw
+`GET /api/v1/recent-turns` 返回 `recapGridReadiness`。它绑定同一 read view 与 recent raw
 head：先用 Getter resolve；仅 nonempty active 且 unfulfilled 时调用 Manager 的只读
 `InspectBuildProgress`。状态为 `ready`、`frontier`、`blocked`、`no-rows`、`no-active`、
 `unprovisioned`、`busy`、`stale` 或 `invalid`，并携带可证明的 Timeline/Control/Store/

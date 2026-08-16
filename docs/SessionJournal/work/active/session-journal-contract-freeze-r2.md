@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；priority code/operator cutover complete；CF-D-02a/02b plan-locked；D02-P0 / D02b-A0 product decisions locked；R3 implementation active  
+状态：Active；priority code/operator cutover complete；CF-D-02 candidate implementation + combined R4 complete；R5 Pending  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -217,10 +217,11 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | R2 priority plan lock | Complete | [priority implementation evidence](../../evidence/contract-freeze-r2-r2-priority-implementation.md) + [HTTP/SSE plan lock](../../evidence/contract-freeze-r2-http-sse-plan-lock.md) |
 | R3 priority implementation | Complete | 七个原子commits + test-only `87079eaa`；未增加compatibility/framework层 |
 | CF-D-01 operator cutover | Complete | live ignored V1 manifest；Idle/Prepared=0；actual-env Completion/Galatea provider-free load；independent PASS |
-| CF-D-02a/02b review + plan lock | Complete | HTTP/SSE split；Adopt/Retain/Prototype/Reject与P0 blocker已锁；production未改 |
+| CF-D-02a/02b review + plan lock | Complete | HTTP/SSE split；Adopt/Retain/Prototype/Reject与P0 blocker已锁；该阶段只读，后续R3/R4另列 |
 | CF-D-02-P0 / D02b-A0 decisions | Complete | 4,096 headers / 16 MiB payload / 4 MiB recent；256 KiB pop source / 2 MiB receipt；4+5=9 MiB SSE；preview suppression |
-| CF-D-02 R3 implementation | Active | bounded recent、minimal pop receipt pre-encode、HTTP/SSE atomic server+browser cuts |
-| R4 priority code gates | Complete | solution + owner/PublicSurface/CLI/wire/nonfriend gates；不认证尚未实施的D02 |
+| CF-D-02 R3 implementation | Complete | `66dd87fc` → `0f441f90`；bounded recent、minimal pop receipt、HTTP/SSE atomic server+browser cuts及P0 API hygiene tail |
+| CF-D-02 combined R4 | Complete | [commit-pinned implementation evidence](../../evidence/contract-freeze-r2-d02-r4-implementation.md)；candidate/Prototype locked，未作tier freeze |
+| R4 priority code gates | Complete | solution + owner/PublicSurface/CLI/wire/nonfriend gates；与D02的分时R4 evidence分别记录 |
 | R5 freeze closure | Pending | 分 tier 发布稳定性声明 |
 
 ## 9. R0 完成标准
@@ -252,45 +253,40 @@ R0 只有在以下条件同时满足时完成：
 
 ## 11. Priority implementation后的路线调整
 
-- `CF-D-02a/02b` 已拆分并plan-lock：采用shared `/api/v1` direct cut、strict endpoint DTO/error与closed SSE
-  event language，不做通用JSON framework；实施前先完成D02-P0 bounded recent projection。
+- `CF-D-02a/02b` 已按shared `/api/v1` direct cut、strict endpoint DTO/error与closed SSE event language实施并完成
+  combined R4；D02-P0先于wire cut关闭unbounded recent blocker，未引入通用JSON framework。
 - `CF-D-03` root config继续独立，不把users/routes/secrets/runtime policy并入connections superset。
-- broad `CF-B` 排在HTTP/SSE之后；不为降低inventory count继续改写output-only result algebra。
+- broad `CF-B` 排在HTTP/SSE之后；P0-local result已删除无需求的record synthesis，但不为降低inventory count
+  继续改写既有output-only result algebra或抽跨owner hierarchy。
 - `CF-C` 继续补companion wire goldens/classification；不重开已证明承担corruption/query/CAS职责的
   head/digest/schema/index proof。
 - 所有outer wire bound新增composed encoded-byte relation gate；内层payload cap不能作为外层安全上限的证明。
 - CF-D-01 operator migration已完成；未来回滚仍必须停服并让code+manifest成对执行。
 
-## 12. CF-D-02 plan lock与新blocker
+## 12. CF-D-02 candidate与combined R4 closure
 
-HTTP/SSE只读调查与独立交叉review记录在
-[D02 evidence](../../evidence/contract-freeze-r2-http-sse-plan-lock.md)。已批准的设计方向是：
+原始HTTP/SSE accepted-language调查、方案比较和历史blocker保留在
+[D02 plan lock](../../evidence/contract-freeze-r2-http-sse-plan-lock.md)；实际提交链、最终shape与分时验证见
+[D02 R4 implementation evidence](../../evidence/contract-freeze-r2-d02-r4-implementation.md)。当前结论是：
 
-- server + cache-busted browser直接hard-cut `/api/v1`，旧route 404；
-- HTTP只用endpoint-specific strict DTO与最小error/busy shape；unknown/case/duplicate/missing/wrong-type都fail closed，
-  browser用endpoint-local validator，不建立schema framework；
-- pop success只返回预编码 `{poppedUserText}`；browser清空旧token并另取bounded exact-current recent。view失败不
-  否定pop成功、不触发pop retry；POST前保存token-bound latest userText作provisional draft，以覆盖CAS成功但
-  receipt丢失；不为一次本地GET新增historical readiness seam或idempotency协议；
-- SSE只保留typed status/reasoning-delta/text-delta/done/error，并为process-alive nonfatal turn建立exactly-one
-  terminal与linear publish；frame固定为UTF-8/LF单event+单data+空行。fatal process/transport EOF由browser
-  查询current后有限重试，不能当success；
-- `done`在recent可用时复用HTTP coherent snapshot，不复制第二DTO；exact completed-but-view-unavailable payload
-  由P0决定，不能误报为turn/provider failure；
-- 不保留dual route、framework ProblemDetails、generic result/parser、per-frame version或provider/internal detail。
+- `CF-D-02-P0` 已把旧whole-lineage recent replay替换为同operation 4,096 header / 16 MiB decoded payload的
+  seeded bounded fold；latest 6 turns经production serializer另受4 MiB final JSON cap。closed result保留
+  limit、unsupported schema与corruption的owner语义，没有root-wide fallback或第二turn reducer。
+- `0f441f90`把P0的12个closed result records收为plain classes，只删除120个自动生成的clone/equality/print
+  API rows。最终S inventory为162 types / 1,358 rows，相对R0净增14 / 19；construction inventory与R0
+  byte-identical，没有新增public construction/copy authority，也没有wire变化。
+- pop只返回预编码exact `{poppedUserText}`；source / receipt上限为256 KiB / 2 MiB，所有fallible projection、
+  encoding与stale snapshot准备均在CAS前。browser持有token-bound provisional draft，任何indeterminate outcome
+  只做current/recent reconciliation，不自动重发mutation。
+- HTTP server与cache-busted browser已直接cut到`/api/v1`；旧route 404。request body / original-normalized message
+  上限为1 MiB / 64 KiB UTF-8；strict endpoint DTO、application-owned 413、minimal error/busy与endpoint-local
+  validators共同收窄accepted language。
+- SSE只保留status、reasoning-delta、text-delta、done与error；strict UTF-8/LF、exact terminal与linear replay
+  由typed frame owner执行。nonterminal / terminal / whole replay为4 / 5 / 9 MiB，最多16,384 events；subscriber
+  channel为256 frame refs；browser为9 MiB connection / 5 MiB raw frame。
+- cap hit不停provider、不改durable outcome，只进入internal `PreviewSuppressed`并丢弃后续preview；durable完成但
+  bounded view不可得时仍发`done {recent:null}`。fatal EOF必须查询current并有限重试，不能当success。
 
-但current `ReadRecentCompletedTurns(6)` 在取6项前先做whole-lineage unbounded/offline replay，raw event logical
-payload又可接近256 MiB。recent、pop与SSE done因此同时缺work/payload/final encoded-byte bound。R3前必须先做
-`CF-D-02-P0`：header-only反向定位保守suffix、同budget发现/验证execution与governing setup seed、只调用seeded
-bounded forward fold、typed limit、pop最小receipt pre-encode-before-CAS、production encoder relation；不得让
-`planningSeed:null` 或seed discovery向root预算外回退。主线程已锁整个operation 4,096次physical header visit、
-16 MiB decoded payload和4 MiB final recent JSON；pop source/receipt分别为256 KiB / 2 MiB，所有上限
-inclusive且必须在read/CAS/write前fail closed。durable-completed view failure在SSE中为`done {recent:null}`，
-不复制HTTP typed failure taxonomy。
-SSE实施消费已锁的`D02b-A0`：bounded subscriber channel（full时断开，无in-band error）、带terminal reserve的
-whole-turn replay cap及cap-hit turn transition，以及browser decode前per-connection/raw-frame byte bounds、fatal
-UTF-8与EOF flush；server/browser cap必须有可执行relation。它消费P0的completed-view outcome，不重复拥有该决策。
-该A0决策亦已锁定：4 MiB nonterminal + 5 MiB terminal = 9 MiB，最多16,384 events，
-subscriber channel为256 frame refs；browser为9 MiB connection / 5 MiB frame。cap hit不停provider、不改durable
-outcome，只进入internal `PreviewSuppressed`并丢弃后续preview。
-具体数值仍为Prototype；没有真实需求前不引入pagination/cursor/truncation、Last-Event-ID或ack协议。
+combined R4已完成，但这里只形成commit-pinned candidate。数值仍为`Prototype locked`，R5仍Pending；本计划
+没有批准stable/frozen tier，也没有引入pagination、cursor、truncation、Last-Event-ID、ack、dual grammar、
+generic schema framework或新的public authority。
