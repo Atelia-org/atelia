@@ -11,9 +11,10 @@
 它证明列出的candidate在各自commit时通过了相应gate；不把这些运行伪装成一次发生在文档HEAD上的全量
 final run，也不宣布任何tier已经stable或frozen。
 
-本文不改变或认证raw SessionJournal event wire、RecapGrid durable authority、Completion provider wire、
-root config或HTML bootstrap。数值bounds仍是pre-release `Prototype locked` 产品选择；未来若改变，必须形成
-新的candidate与R4 evidence。
+本文不改变或认证raw SessionJournal event wire、RecapGrid durable authority、Completion provider wire或
+root config。candidate随server/browser cut原子修改了first-party co-deployed HTML bootstrap的module/cache token与
+`streamLimits`；这些是本次部署一致性的一部分，但没有被提升为独立stable/frozen compatibility contract。数值
+bounds仍是pre-release `Prototype locked` 产品选择；未来若改变，必须形成新的candidate与R4 evidence。
 
 ## 2. Commit-pinned implementation chain
 
@@ -62,7 +63,8 @@ fail closed。
   执行；没有同值的Kestrel/MVC endpoint metadata抢先产生非typed 413。
 - original message与normalized message分别限制为64 KiB UTF-8；connection id沿用Completion owner的128-byte cap。
 - success surface为start/resume 202 `{turnId}`、stop 204 empty、pop `{poppedUserText}`、五字段current与同head
-  coherent recent。除busy的`{code,error,turnId}`外，failure只用`{code,error}`。
+  coherent recent。matched V1 endpoint failure除busy的`{code,error,turnId}`外只用`{code,error}`；unknown或
+  retired route仍是exact 404，但不承诺该endpoint-owned envelope。
 - auth早于maintenance，maintenance早于media/body decode；unknown route不被maintenance伪装成503。response
   started后不追加JSON，cancellation不被改写为protocol 500。
 

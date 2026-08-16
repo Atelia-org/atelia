@@ -362,6 +362,8 @@ server exact-output fixtures负责证明payload JSON不含duplicate；browser不
 ## 8. Remaining boundary
 
 本plan lock与其candidate implementation不修改或冻结raw SessionJournal events、RecapGrid durable authority、
-Completion provider stream、root config或HTML bootstrap。D02-P0与D02b-A0 blocker已关闭，HTTP/SSE candidate已完成
-combined R4；但numeric budgets仍是`Prototype locked`，且本记录没有执行R5 support-role map、compatibility policy、
-tag或tier声明，因此不得称为stable/frozen。
+Completion provider stream或root config。candidate随server/browser cut原子修改了first-party co-deployed HTML
+bootstrap的module/cache token与`streamLimits`，但没有把bootstrap提升为独立stable/frozen compatibility contract。
+D02-P0与D02b-A0 blocker已关闭，HTTP/SSE candidate已完成combined R4；但numeric budgets仍是
+`Prototype locked`，且本记录没有执行R5 support-role map、compatibility policy、tag或tier声明，因此不得称为
+stable/frozen。

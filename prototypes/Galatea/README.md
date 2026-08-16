@@ -70,8 +70,9 @@ route。当前versioned endpoints是：
 
 JSON body只接受`application/json`与可选UTF-8 charset，不接受`Content-Encoding`；exact camelCase，unknown、
 wrong-case、duplicate、missing required、wrong type、required null、comment和trailing comma均拒绝。request body上限
-为1 MiB，original与normalized message各为64 KiB UTF-8，connection id为128 UTF-8 bytes。除busy使用
-`{code,error,turnId}`外，error统一为`{code,error}`；diagnostic文本不作为machine branch。
+为1 MiB，original与normalized message各为64 KiB UTF-8，connection id为128 UTF-8 bytes。matched V1 endpoint
+failure除busy使用`{code,error,turnId}`外统一为`{code,error}`；unknown或retired route保持exact 404，但不承诺
+该endpoint-owned envelope。diagnostic文本不作为machine branch。
 
 recent operation共享最多4,096次physical header preview visit与16 MiB cumulative decoded logical payload，
 最终production JSON最多4 MiB。pop的display source最多256 KiB UTF-8，exact receipt最多2 MiB；receipt在CAS前
