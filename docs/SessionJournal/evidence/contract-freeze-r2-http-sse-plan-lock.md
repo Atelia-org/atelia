@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 — operator cutover and HTTP/SSE plan lock
 
-状态：CF-D-01 operator cutover complete；CF-D-02a/02b read-only review与plan lock complete；CF-D-02 R3未开始  
+状态：CF-D-01 operator cutover complete；CF-D-02a/02b read-only review与plan lock complete；D02-P0 / D02b-A0 product decisions locked；CF-D-02 R3 implementation active  
 调查基线：`e1d785f0e29942ce698dcefe0392c5c535432b4d`  
 日期：2026-08-16
 
@@ -25,8 +25,10 @@ Adopt/Retain/Prototype/Reject边界和前置blocker已锁定，不表示HTTP/SSE
 3. **不能直接宣称V1 bounded/frozen。** `recent/pop/done.recent` 当前在取最新6 turns前先做whole-lineage
    unbounded/offline replay；单raw event logical payload又可接近256 MiB。只给response writer加cap不能解决此前的
    decode、string materialization和copy。`CF-D-02-P0 bounded recent projection` 因此是R3/freeze前置包。
-4. **numeric request/response budgets仍是显式产品选择。** 仓内没有事实能推导“chat message应为1 MiB”；
-   config/connections的相邻常数不构成依据。本轮只锁需要哪几层limit和oversize语义，不发明数字、分页或截断。
+4. **numeric budgets已以保守、fail-closed产品选择锁定。** 这些值是Prototype边界，
+   不伪装成从仓内语义唯一推导的定理。request body为1 MiB，original/normalized message为64 KiB；
+   recent为4,096次header visit / 16 MiB decoded payload / 4 MiB final JSON；SSE为4 MiB preview +
+   5 MiB terminal reserve = 9 MiB whole replay。这些关系必须由可执行fixture而非只读常数证明。
 
 ## 2. CF-D-01 operator cutover evidence
 
@@ -99,8 +101,9 @@ API；本包只要求其随route hard cut原子更新。
   `JsonSerializerOptions.AllowDuplicateProperties=false`，不为此发明token scanner。
 - `Adopt`：`connectionId` 复用Completion owner的128 UTF-8 byte cap；EventAddress必须exact canonical；
   `turnId`必须32 lowercase hex。`connectionId` absent/null表示default，blank/whitespace与超cap一律拒绝。
-- `Prototype-required-decision`：request-body、original message、normalizer output的numeric byte budgets。
-  任何选定值都必须在normalization前后复验；normalizer自身也需要output/materialization bound。
+- `Prototype locked`：request body最大1 MiB；original message与normalizer output各最大64 KiB UTF-8。
+  这是为早期first-party UI选择的保守界限，而非从config常数推导的通用chat真理；
+  normalization前后均复验，chunked body也必须在物化1 MiB + 1前fail closed。
 
 可使用ASP.NET/System.Text.Json现有strict options与最外层API middleware；不写第二个JSON parser，不冻结
 framework ProblemDetails或exception detail。maintenance middleware继续早于endpoint binding，但以endpoint metadata
@@ -196,8 +199,11 @@ move之前证明最小receipt projection与encoding可成功；不能出现mutat
 - recent/pop limit返回typed code；不能把stale cache伪装成最新success；
 - SSE必须复用同一bounded recent，不复制第二套unbounded snapshot。
 
-具体 `MaximumExaminedRawEvents`、cumulative logical bytes、final JSON bytes是
-`Prototype-required-product-decision`。先锁fail-closed typed limit；没有真实需求前拒绝新增external pagination、
+数值已锁定为整个operation共享的4,096次physical header preview visit、16 MiB cumulative decoded
+logical payload，以及Galatea production serializer生成的4 MiB final recent JSON。pop另限制256 KiB
+display source UTF-8与2 MiB exact `{poppedUserText}` receipt；最坏6倍JSON control-character escaping仍小于
+receipt cap。所有上限均inclusive，`maximum + 1`必须在下一次header/payload read、CAS或response
+write之前fail closed。没有真实需求前拒绝新增external pagination、
 cursor、silent truncation或preview endpoint/API，它们会引入新的fidelity与mutation语义；这不禁止pop所需的
 内部preflight projection与pre-encode。
 
@@ -236,15 +242,16 @@ path随HTTP deployment hard-cut为 `/api/v1/chat/turns/{turnId}/events`。只保
 status          { code, changed? }
 reasoning-delta { delta }
 text-delta      { delta }
-done            { completed outcome；recent availability待P0决定 }
+done            { recent: RecentTurnsResponseV1 | null }
 error           { code, message }
 ```
 
 - status closed set：`generating|normalizing-input|input-normalization-finished|using-tools`；只有
   `input-normalization-finished` required `changed:boolean`，其他status不得带它；不冻结不可靠的fallback字段；
 - delta必须nonempty；chunk segmentation不是contract，consumer只能concatenate；
-- done event category保留，删除未消费的Completion errors；recent可用时必须精确复用HTTP V1 shared recent，
-  但P0关闭前不冻结completed-but-recent-unavailable的payload；
+- done event category保留，删除未消费的Completion errors；recent可用时必须精确复用HTTP V1 shared recent；
+  durable turn已完成但bounded view当前不可用时发exact `{recent:null}`，browser再用HTTP recent获取
+  typed reason。不把P0 failure taxonomy复制成第二套SSE code；
 - error只允许coarse code与sanitized message，删除failureReason/provider detail；exact public code ledger仍是
   `Prototype-required-decision`，至少必须区分operator stop、server shutdown、completion failure、recovery/config
   unavailable与internal failure，不能把它们都压成provider error。durable-completed后的P0 view failure属于
@@ -253,7 +260,7 @@ error           { code, message }
 - 对所有process-alive nonfatal turn，done/error恰好一个且必须最后；fatal process/transport failure仍可能EOF而没有
   terminal，browser绝不能把它当success；
 - error后丢弃未提交partial display；只有携带可用shared recent的completed outcome才提交durable display，
-  `recent-view-unavailable`（若被选择）必须触发独立refresh/error UX；
+  `recent:null` 必须触发独立refresh/error UX；
 - publish sequencer必须让live/replay有同一线性顺序。
 
 JS遇到protocol-invalid replay必须停止并显示version/protocol failure，不能对同一确定性错误无限重连；
@@ -265,10 +272,10 @@ SSE framing直接收窄并锁为UTF-8、LF：每个event恰为一个 `event: <na
 server exact-output fixtures负责证明payload JSON不含duplicate；browser不新增通用raw-token scanner，仍在parse后
 执行event-local exact shape/type检查。
 
-### 5.3 Retain / Prototype边界
+### 5.3 Read-only Retain / Prototype边界（后续未决项由A0 addendum取代）
 
 - `Retain` V1语义：在明确的whole-turn bound内，重新订阅得到从头等价表示；无event id；disconnect不取消turn。
-- `Adopt-direction / blocking`：实现bounded subscriber channel；channel full时只断开/移除slow subscriber，让
+- `Adopt / implementation pending`：实现容量为256个immutable frame reference的bounded subscriber channel；channel full时只断开/移除slow subscriber，让
   browser查询current后从头重连。满channel不能可靠再写in-band error，因此不为subscriber overflow定义wire code。
 - `Prototype-required-decision`：为whole-turn replay建立event count或serialized-byte cap，并为terminal预留budget；
   cap hit时必须另行锁定turn cancellation/abandon、terminal outcome与exactly-one transition。它不是subscriber
@@ -279,6 +286,24 @@ server exact-output fixtures负责证明payload JSON不含duplicate；browser不
   encoded replay cap建立可执行relation。
 - snapshot coalescing、Last-Event-ID、heartbeat、cursor/ack协议先`Reject first cut`；它们不是解决基本内存边界
   所必需的首个抽象。
+
+#### D02b-A0 decision addendum
+
+上述`Prototype-required-decision`已于R3实施前关闭：
+
+- subscriber channel容量为256个immutable frame reference；full只断开该subscriber；
+- nonterminal preview最多4 MiB / 16,383 events，terminal reserve为5 MiB / 1 event，whole replay
+  最多9 MiB / 16,384 events；
+- preview cap hit只进入internal `PreviewSuppressed`：不停provider、不改durable outcome、不新增
+  wire status；后续preview丢弃，最终仍发唯一done/error；
+- browser在decode前限9 MiB per-connection received bytes与5 MiB raw-frame bytes，分别与server
+  whole replay / terminal cap精确相等；
+- P0 recent为4 MiB，production encoder必须以fixture证明normal done frame严格小于5 MiB。
+
+这是Prototype产品边界，不是frozen tier宣布。若实施证据不能建立上述等式，应退回A0，
+不得改用provider cancellation、dual grammar或unbounded fallback。
+> 以下一条是当时的read-only blocker记录，已由上述A0 addendum关闭；实施以`done {recent:null}`为准。
+>
 - `done.recent` 的P0 projection/final-byte gate仍是整个SSE freeze blocker。turn已经durable完成后发现display limit，
   不能把它误报为provider失败，也不能返回stale recent。必须在P0数字锁定时选择：由上游bounds保证done总能构造，
   或定义typed `recent-view-unavailable` completed outcome；在此之前不冻结done exact payload。
@@ -291,28 +316,28 @@ server exact-output fixtures负责证明payload JSON不含duplicate；browser不
 | D02a strict endpoint DTO/options | `Adopt` | 包括duplicate rejection；accepted language只收窄，不自研parser |
 | D02a minimal error/busy shapes | `Adopt` | machine code稳定，文本diagnostic |
 | D02a success/current field cuts | `Adopt` | pop只留poppedUserText receipt；recent另取exact-current snapshot |
-| D02 request numeric bytes | `Prototype-required-decision` | original/normalized/body/materialization都需同一policy |
-| D02-P0 bounded recent locator/result | `Adopt-direction / blocking` | numeric work/payload/final-byte limits待选择 |
+| D02 request numeric bytes | `Prototype locked` | body 1 MiB；original/normalized 64 KiB UTF-8 |
+| D02-P0 bounded recent locator/result | `Adopt / implementation active` | 4,096 headers / 16 MiB payload / 4 MiB final JSON |
 | pagination/truncation/chunk endpoint | `Reject first cut` | 真实limit hit前不增加fidelity/state-machine |
-| D02b typed five-event categories | `Adopt` | done exact payload仍受P0阻塞；不与HTTP/CLI建generic envelope |
+| D02b typed five-event categories | `Adopt` | done exact `{recent:object|null}`；不与HTTP/CLI建generic envelope |
 | D02b exact UTF-8/LF frame grammar | `Adopt` | 单event/data/空行；不接受id/retry/comment/multi-data/CRLF |
 | D02b exact terminal + publish sequencer | `Adopt` | process-alive nonfatal turn；修复当前类型系统/ordering缺口 |
-| bounded subscriber channel + overflow disconnect | `Adopt-direction / blocking` | numeric cap待选择；无in-band overflow code |
-| whole-turn replay cap + terminal reserve | `Prototype-required-decision / blocking` | cap-hit turn/terminal transition待锁 |
-| browser receive/raw-frame/fatal-UTF8 bounds | `Adopt-direction / blocking` | numeric cap与server replay relation待选择 |
+| bounded subscriber channel + overflow disconnect | `Adopt / implementation pending` | 256 immutable frame refs；无in-band overflow code |
+| whole-turn replay cap + terminal reserve | `Prototype locked` | 4 MiB preview + 5 MiB terminal = 9 MiB；cap hit只 suppress preview |
+| browser receive/raw-frame/fatal-UTF8 bounds | `Adopt / implementation pending` | 9 MiB connection / 5 MiB frame，exact server relation |
 | whole replay/no id/disconnect semantics | `Retain V1` | 以明确whole-turn bound为前提 |
 | cursor/heartbeat/snapshot/ack | `Reject first cut` | 非基本memory-safety所需；按真实运行证据重开 |
 | per-frame version / versioned event names | `Reject` | path已经完成negotiation |
 
 ## 7. R3 packages与gates
 
-本轮不实施D02。下一轮若批准，按以下顺序避免把blocker藏在wire后面：
+产品边界已批准，按以下顺序实施，避免把blocker藏在wire后面：
 
 1. **D02-P0 bounded recent**：先做header-only反向suffix locator、同budget execution/setup seed discovery、
    seeded bounded forward fold、typed limit、pop最小receipt pre-encode-before-CAS与production encoder relation；主线程
-   必须显式选择numeric budgets与durable-completed oversize语义。
+   使用上述已锁numeric budgets；SSE durable-completed view failure为`done {recent:null}`。
 2. **D02b-A0 stream bounds decision**：先锁subscriber channel cap/overflow disconnect、带terminal reserve的
-   whole-turn replay cap与cap-hit turn transition，以及browser per-connection/raw-frame/fatal-UTF8 limits与server
+   whole-turn replay cap与preview-suppression transition，以及browser per-connection/raw-frame/fatal-UTF8 limits与server
    cap relation；消费P0已锁的completed-view outcome，不二次拥有该决策；不实现SSE wire。
 3. **D02a HTTP core**：`/api/v1`、strict DTO/binding、自有error、success/current cuts、browser migration；旧route
    exact 404，不增加compatibility。

@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；priority code/operator cutover complete；CF-D-02a/02b plan-locked；D02-P0 / D02b-A0 / remaining R1 pending  
+状态：Active；priority code/operator cutover complete；CF-D-02a/02b plan-locked；D02-P0 / D02b-A0 product decisions locked；R3 implementation active  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -218,7 +218,8 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | R3 priority implementation | Complete | 七个原子commits + test-only `87079eaa`；未增加compatibility/framework层 |
 | CF-D-01 operator cutover | Complete | live ignored V1 manifest；Idle/Prepared=0；actual-env Completion/Galatea provider-free load；independent PASS |
 | CF-D-02a/02b review + plan lock | Complete | HTTP/SSE split；Adopt/Retain/Prototype/Reject与P0 blocker已锁；production未改 |
-| CF-D-02-P0 / D02b-A0 / R3 implementation | Pending | bounded recent、minimal pop receipt pre-encode、stream replay/channel bounds、numeric budgets与completed-view语义先关闭 |
+| CF-D-02-P0 / D02b-A0 decisions | Complete | 4,096 headers / 16 MiB payload / 4 MiB recent；256 KiB pop source / 2 MiB receipt；4+5=9 MiB SSE；preview suppression |
+| CF-D-02 R3 implementation | Active | bounded recent、minimal pop receipt pre-encode、HTTP/SSE atomic server+browser cuts |
 | R4 priority code gates | Complete | solution + owner/PublicSurface/CLI/wire/nonfriend gates；不认证尚未实施的D02 |
 | R5 freeze closure | Pending | 分 tier 发布稳定性声明 |
 
@@ -282,8 +283,14 @@ HTTP/SSE只读调查与独立交叉review记录在
 payload又可接近256 MiB。recent、pop与SSE done因此同时缺work/payload/final encoded-byte bound。R3前必须先做
 `CF-D-02-P0`：header-only反向定位保守suffix、同budget发现/验证execution与governing setup seed、只调用seeded
 bounded forward fold、typed limit、pop最小receipt pre-encode-before-CAS、production encoder relation；不得让
-`planningSeed:null` 或seed discovery向root预算外回退。numeric budgets与durable-completed oversize语义由主线程显式选择。
-SSE另需先完成`D02b-A0`：bounded subscriber channel（full时断开，无in-band error）、带terminal reserve的
+`planningSeed:null` 或seed discovery向root预算外回退。主线程已锁整个operation 4,096次physical header visit、
+16 MiB decoded payload和4 MiB final recent JSON；pop source/receipt分别为256 KiB / 2 MiB，所有上限
+inclusive且必须在read/CAS/write前fail closed。durable-completed view failure在SSE中为`done {recent:null}`，
+不复制HTTP typed failure taxonomy。
+SSE实施消费已锁的`D02b-A0`：bounded subscriber channel（full时断开，无in-band error）、带terminal reserve的
 whole-turn replay cap及cap-hit turn transition，以及browser decode前per-connection/raw-frame byte bounds、fatal
 UTF-8与EOF flush；server/browser cap必须有可执行relation。它消费P0的completed-view outcome，不重复拥有该决策。
+该A0决策亦已锁定：4 MiB nonterminal + 5 MiB terminal = 9 MiB，最多16,384 events，
+subscriber channel为256 frame refs；browser为9 MiB connection / 5 MiB frame。cap hit不停provider、不改durable
+outcome，只进入internal `PreviewSuppressed`并丢弃后续preview。
 具体数值仍为Prototype；没有真实需求前不引入pagination/cursor/truncation、Last-Event-ID或ack协议。
