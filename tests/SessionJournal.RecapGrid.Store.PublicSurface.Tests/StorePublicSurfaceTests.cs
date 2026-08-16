@@ -15,6 +15,12 @@ public sealed class StorePublicSurfaceTests : IDisposable {
     );
 
     [Fact]
+    public void PublicExportPageLimitsAreExact() {
+        Assert.Equal(128, RecapGridStoreLimits.MaximumPageItems);
+        Assert.Equal(2 * 1024 * 1024, RecapGridStoreLimits.MaximumPageBytes);
+    }
+
+    [Fact]
     public void ExternalCompositionCanCreateOpenReadAndDispose() {
         Directory.CreateDirectory(_root);
         RecapGridStoreCreateResult.Created created = Assert.IsType<

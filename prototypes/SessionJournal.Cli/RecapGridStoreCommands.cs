@@ -132,23 +132,8 @@ internal static class RecapGridStoreCommands {
                 options.HasFlag("include-content")
             );
         return result switch {
-            RecapGridStoreExportResult.Page page => Print(
-                "export",
-                "page",
-                new {
-                    items = page.Value.Items.Select(static item => new {
-                        item.Kind,
-                        item.Key,
-                        item.CanonicalBytes,
-                        fulfilledViewDigest =
-                            item.FulfilledViewDigest?.Value,
-                        canonicalBase64 = item.Canonical is null
-                            ? null
-                            : Convert.ToBase64String(item.Canonical)
-                    }),
-                    nextCursor = page.Value.NextCursor?.Value,
-                    page.Value.Incomplete
-                }
+            RecapGridStoreExportResult.Page page => PrintExportPage(
+                page.Value
             ),
             RecapGridStoreExportResult.Absent => Print("export", "absent"),
             RecapGridStoreExportResult.Busy => Print(
@@ -173,6 +158,27 @@ internal static class RecapGridStoreCommands {
                 "Unknown RecapGrid Store export result."
             )
         };
+    }
+
+    internal static int PrintExportPage(RecapGridStoreExportPage page) {
+        ArgumentNullException.ThrowIfNull(page);
+        return Print(
+            "export",
+            "page",
+            new {
+                items = page.Items.Select(static item => new {
+                    item.Kind,
+                    item.Key,
+                    item.CanonicalBytes,
+                    fulfilledViewDigest = item.FulfilledViewDigest?.Value,
+                    canonicalBase64 = item.Canonical is null
+                        ? null
+                        : Convert.ToBase64String(item.Canonical)
+                }),
+                nextCursor = page.NextCursor?.Value,
+                page.Incomplete
+            }
+        );
     }
 
     private static int Reset(CliOptions options) {

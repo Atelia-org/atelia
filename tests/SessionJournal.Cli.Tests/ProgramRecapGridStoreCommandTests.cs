@@ -194,28 +194,17 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
     [Fact]
     public void PreviousFourMiBCanonicalPageCanExceedTheReportLimit() {
         const int previousMaximumPageBytes = 4 * 1024 * 1024;
-        string content = new('\u9ffe', 10_600);
-        RecapGridStoreExportItem[] items = Enumerable.Range(1, 128)
-            .Select(index => {
-                RecapCellArtifact cell = Cell(index, content);
-                byte[] canonical = cell.ToCanonicalBytes();
-                return new RecapGridStoreExportItem(
-                    "cell",
-                    cell.CellDigest.Value,
-                    canonical.Length,
-                    canonical
-                );
-            })
-            .ToArray();
+        RecapGridStoreExportItem[] items = AdversarialItems(10_600);
         int canonicalBytes = items.Sum(static item => item.CanonicalBytes);
-        object detail = ExportDetail(items);
+        var page = new RecapGridStoreExportPage(
+            items,
+            ParseCellCursor(items[^1].Key),
+            Incomplete: true
+        );
 
-        byte[] report = JsonSerializer.SerializeToUtf8Bytes(new {
-            schema = ReportSchema,
-            command = "export",
-            status = "page",
-            detail
-        });
+        (int exitCode, string json) = CaptureOutput(
+            () => RecapGridStoreCommands.PrintExportPage(page)
+        );
 
         Assert.Equal(128, items.Length);
         Assert.InRange(
@@ -223,34 +212,27 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
             previousMaximumPageBytes - 64 * 1024,
             previousMaximumPageBytes
         );
-        Assert.True(
-            report.Length > RecapGridCommands.MaximumReportUtf8Bytes,
-            $"Adversarial report was only {report.Length} UTF-8 bytes."
+        Assert.Equal(2, exitCode);
+        Assert.Equal(
+            """{"schema":"atelia.session-journal.recap-grid-cli.v1","command":"export","status":"limit-exceeded","detail":{"limit":"RecapGridReportUtf8Bytes"}}""",
+            json
         );
     }
 
     [Fact]
     public void MaximumItemAdversarialPageFitsTheSharedReportEnvelope() {
-        string content = new('\u9ffe', 5_196);
-        RecapGridStoreExportItem[] items = Enumerable.Range(1, 128)
-            .Select(index => {
-                RecapCellArtifact cell = Cell(index, content);
-                byte[] canonical = cell.ToCanonicalBytes();
-                return new RecapGridStoreExportItem(
-                    "cell",
-                    cell.CellDigest.Value,
-                    canonical.Length,
-                    canonical
-                );
-            })
-            .ToArray();
+        RecapGridStoreExportItem[] items = AdversarialItems(5_196);
         int canonicalBytes = items.Sum(static item => item.CanonicalBytes);
-        byte[] report = JsonSerializer.SerializeToUtf8Bytes(new {
-            schema = ReportSchema,
-            command = "export",
-            status = "page",
-            detail = ExportDetail(items)
-        });
+        RecapGridStoreExportCursor cursor = ParseCellCursor(items[^1].Key);
+        var page = new RecapGridStoreExportPage(
+            items,
+            cursor,
+            Incomplete: true
+        );
+
+        (int exitCode, string json) = CaptureOutput(
+            () => RecapGridStoreCommands.PrintExportPage(page)
+        );
 
         Assert.Equal(
             RecapGridStoreLimits.MaximumPageItems,
@@ -261,9 +243,25 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
             RecapGridStoreLimits.MaximumPageBytes - 64 * 1024,
             RecapGridStoreLimits.MaximumPageBytes
         );
+        Assert.Equal(0, exitCode);
         Assert.True(
-            report.Length < RecapGridCommands.MaximumReportUtf8Bytes,
-            $"Adversarial report was {report.Length} UTF-8 bytes."
+            Encoding.UTF8.GetByteCount(json)
+                < RecapGridCommands.MaximumReportUtf8Bytes
+        );
+        using JsonDocument report = JsonDocument.Parse(json);
+        Assert.Equal(
+            "page",
+            report.RootElement.GetProperty("status").GetString()
+        );
+        JsonElement detail = report.RootElement.GetProperty("detail");
+        Assert.Equal(
+            cursor.Value,
+            detail.GetProperty("nextCursor").GetString()
+        );
+        Assert.True(detail.GetProperty("Incomplete").GetBoolean());
+        Assert.Equal(
+            RecapGridStoreLimits.MaximumPageItems,
+            detail.GetProperty("items").GetArrayLength()
         );
     }
 
@@ -295,21 +293,35 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
         }
     }
 
-    private static object ExportDetail(
-        IReadOnlyList<RecapGridStoreExportItem> items
-    ) => new {
-        items = items.Select(static item => new {
-            item.Kind,
-            item.Key,
-            item.CanonicalBytes,
-            fulfilledViewDigest = item.FulfilledViewDigest?.Value,
-            canonicalBase64 = item.Canonical is null
-                ? null
-                : Convert.ToBase64String(item.Canonical)
-        }),
-        nextCursor = (string?)null,
-        Incomplete = false
-    };
+    private static RecapGridStoreExportItem[] AdversarialItems(
+        int contentScalars
+    ) {
+        string content = new('\u9ffe', contentScalars);
+        return Enumerable.Range(1, 128)
+            .Select(index => {
+                RecapCellArtifact cell = Cell(index, content);
+                byte[] canonical = cell.ToCanonicalBytes();
+                return new RecapGridStoreExportItem(
+                    "cell",
+                    cell.CellDigest.Value,
+                    canonical.Length,
+                    canonical
+                );
+            })
+            .ToArray();
+    }
+
+    private static RecapGridStoreExportCursor ParseCellCursor(string key) {
+        var bytes = new byte[66];
+        bytes[0] = 1;
+        bytes[1] = 1;
+        Encoding.ASCII.GetBytes(key, bytes.AsSpan(2));
+        string value = Convert.ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+        return RecapGridStoreExportCursor.Parse(value);
+    }
 
     private static RecapCellArtifact Cell(int descriptor, string content) {
         var definition = new MaintainerDefinitionDigest(new string('a', 64));
