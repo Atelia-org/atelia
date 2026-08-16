@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；priority R2/R3 code complete，R4 code gates passed；operator migration / remaining R1 pending  
+状态：Active；priority code/operator cutover complete；CF-D-02a/02b plan-locked；D02-P0 / D02b-A0 / remaining R1 pending  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -185,7 +185,8 @@ R0 只记录事实和 hypotheses。没有完整 consumer/serializer/recovery 证
 ### R3 — Bounded implementation loops
 
 Focused R1 后的优先顺序调整为：小型 `CF-D-04` outer-envelope cut → `CF-A-01-G/M/O` 原子API包 →
-完成operator/Prepared preflight后的 `CF-D-01` atomic language cut → 拆分后的 `CF-D-02/03` → CF-C companion
+完成operator/Prepared preflight后的 `CF-D-01` atomic language cut → `CF-D-02-P0` bounded recent →
+`CF-D-02b-A0` stream-bound decisions → 拆分后的 `CF-D-02a/02b` implementation → CF-D-03 → CF-C companion
 evidence → CF-E raw wire。一个 candidate/semantic unit 一个提交，执行 explorer → plan lock → worker →
 independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 可独立，禁止捆绑。
 
@@ -212,10 +213,13 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | R0-C operational wire inventory | Complete | connections/config/CLI/HTTP/SSE support-boundary map |
 | R0 synthesis | Complete | [R0 current inventory](../../evidence/contract-freeze-r2-r0.md) |
 | R1 priority reviews | Complete | [CF-A-01 / CF-D-01 / CF-D-04 evidence](../../evidence/contract-freeze-r2-r1-priority-review.md) |
-| R1 remaining reviews | Pending | CF-D-02拆HTTP/SSE；CF-D-03；CF-C-01/02；不重开raw/durable字段删除 |
-| R2 priority plan lock | Complete | [priority implementation evidence](../../evidence/contract-freeze-r2-r2-priority-implementation.md)；仅批准CF-A-01 G/M/O、CF-D-01、CF-D-04 |
+| R1 remaining reviews | Pending | CF-D-03；CF-C-01/02；不重开raw/durable字段删除 |
+| R2 priority plan lock | Complete | [priority implementation evidence](../../evidence/contract-freeze-r2-r2-priority-implementation.md) + [HTTP/SSE plan lock](../../evidence/contract-freeze-r2-http-sse-plan-lock.md) |
 | R3 priority implementation | Complete | 七个原子commits + test-only `87079eaa`；未增加compatibility/framework层 |
-| R4 priority code gates | Complete | solution + owner/PublicSurface/CLI/wire/nonfriend gates；CF-D-01 operator migration仍Pending |
+| CF-D-01 operator cutover | Complete | live ignored V1 manifest；Idle/Prepared=0；actual-env Completion/Galatea provider-free load；independent PASS |
+| CF-D-02a/02b review + plan lock | Complete | HTTP/SSE split；Adopt/Retain/Prototype/Reject与P0 blocker已锁；production未改 |
+| CF-D-02-P0 / D02b-A0 / R3 implementation | Pending | bounded recent、minimal pop receipt pre-encode、stream replay/channel bounds、numeric budgets与completed-view语义先关闭 |
+| R4 priority code gates | Complete | solution + owner/PublicSurface/CLI/wire/nonfriend gates；不认证尚未实施的D02 |
 | R5 freeze closure | Pending | 分 tier 发布稳定性声明 |
 
 ## 9. R0 完成标准
@@ -237,7 +241,7 @@ R0 只有在以下条件同时满足时完成：
 - `CF-A-01`：Manager/Getter/Online已分别收窄；Metrics Retain，完整result family封闭因76 variants与合法
   external implementer contract而升级为Reject-overreach；
 - `CF-D-01`：Completion-owned唯一数值`v:1` strict byte language已落地，owner-local path guards保留；
-  tracked writer/readers/CLI/docs已atomic cut，ignored operator manifest仍是明确deployment gate；
+  tracked writer/readers/CLI/docs已atomic cut；ignored operator manifest随后已在停服preflight后完成cutover；
 - `CF-D-04`：outer envelope已统一；可执行反例要求Store page cap由4 MiB hard-cut到2 MiB，未抽typed
   result/DTO framework。
 
@@ -247,11 +251,39 @@ R0 只有在以下条件同时满足时完成：
 
 ## 11. Priority implementation后的路线调整
 
-- `CF-D-02` 下一步拆为HTTP core与SSE event两个独立language candidate；先锁explicit version、closed
-  event/error DTO与browser fixture，不做通用JSON framework。
+- `CF-D-02a/02b` 已拆分并plan-lock：采用shared `/api/v1` direct cut、strict endpoint DTO/error与closed SSE
+  event language，不做通用JSON framework；实施前先完成D02-P0 bounded recent projection。
 - `CF-D-03` root config继续独立，不把users/routes/secrets/runtime policy并入connections superset。
 - broad `CF-B` 排在HTTP/SSE之后；不为降低inventory count继续改写output-only result algebra。
 - `CF-C` 继续补companion wire goldens/classification；不重开已证明承担corruption/query/CAS职责的
   head/digest/schema/index proof。
 - 所有outer wire bound新增composed encoded-byte relation gate；内层payload cap不能作为外层安全上限的证明。
-- CF-D-01实际operator migration完成前，code与旧manifest不得交叉运行；回滚必须code+manifest成对执行。
+- CF-D-01 operator migration已完成；未来回滚仍必须停服并让code+manifest成对执行。
+
+## 12. CF-D-02 plan lock与新blocker
+
+HTTP/SSE只读调查与独立交叉review记录在
+[D02 evidence](../../evidence/contract-freeze-r2-http-sse-plan-lock.md)。已批准的设计方向是：
+
+- server + cache-busted browser直接hard-cut `/api/v1`，旧route 404；
+- HTTP只用endpoint-specific strict DTO与最小error/busy shape；unknown/case/duplicate/missing/wrong-type都fail closed，
+  browser用endpoint-local validator，不建立schema framework；
+- pop success只返回预编码 `{poppedUserText}`；browser清空旧token并另取bounded exact-current recent。view失败不
+  否定pop成功、不触发pop retry；POST前保存token-bound latest userText作provisional draft，以覆盖CAS成功但
+  receipt丢失；不为一次本地GET新增historical readiness seam或idempotency协议；
+- SSE只保留typed status/reasoning-delta/text-delta/done/error，并为process-alive nonfatal turn建立exactly-one
+  terminal与linear publish；frame固定为UTF-8/LF单event+单data+空行。fatal process/transport EOF由browser
+  查询current后有限重试，不能当success；
+- `done`在recent可用时复用HTTP coherent snapshot，不复制第二DTO；exact completed-but-view-unavailable payload
+  由P0决定，不能误报为turn/provider failure；
+- 不保留dual route、framework ProblemDetails、generic result/parser、per-frame version或provider/internal detail。
+
+但current `ReadRecentCompletedTurns(6)` 在取6项前先做whole-lineage unbounded/offline replay，raw event logical
+payload又可接近256 MiB。recent、pop与SSE done因此同时缺work/payload/final encoded-byte bound。R3前必须先做
+`CF-D-02-P0`：header-only反向定位保守suffix、同budget发现/验证execution与governing setup seed、只调用seeded
+bounded forward fold、typed limit、pop最小receipt pre-encode-before-CAS、production encoder relation；不得让
+`planningSeed:null` 或seed discovery向root预算外回退。numeric budgets与durable-completed oversize语义由主线程显式选择。
+SSE另需先完成`D02b-A0`：bounded subscriber channel（full时断开，无in-band error）、带terminal reserve的
+whole-turn replay cap及cap-hit turn transition，以及browser decode前per-connection/raw-frame byte bounds、fatal
+UTF-8与EOF flush；server/browser cap必须有可执行relation。它消费P0的completed-view outcome，不重复拥有该决策。
+具体数值仍为Prototype；没有真实需求前不引入pagination/cursor/truncation、Last-Event-ID或ack协议。

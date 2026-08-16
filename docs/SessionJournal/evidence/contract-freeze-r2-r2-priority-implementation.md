@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 — priority implementation evidence
 
-状态：Priority R2/R3 code complete；R4 code gates passed；CF-D-01 operator migration pending  
+状态：Priority R2/R3 code complete；R4 code gates passed；CF-D-01 operator migration complete  
 实现基线：`5ca08be9efeb98859a345cfcab95bcad9cfe25d7`  
 代码候选：`58d8ae0656959570b5a48b4d4527c621759fc03b`；test-only tail `87079eaa14681e83b7d2db584b3b5bf59dd99ab5`  
 日期：2026-08-16
@@ -138,10 +138,13 @@ document/count/field/env-resolved caps；failure前provider call count与相关w
 比较旧等价 programmatic shape与V1 env-only shape的normalized non-secret fields/fingerprint；独立depth gate
 必须由 `JsonException` inner证明命中MaxDepth，而不是顺带被unknown property拒绝。
 
-本机 ignored `prototypes/Galatea/.atelia/galatea/connections.json` **仍保持旧形状**。它是operator state，
-不是tracked code；新binary会明确拒绝。实际部署必须在服务停止、重复Prepared/Started与content-free shape
-preflight后人工执行“增加 `v:1`、删除空 `baseAddress`”，用实际service env验证resolved caps，再把code与
-manifest作为一个rollback unit发布。本文不把code-complete误写成operator cutover complete。
+2026-08-16后续operator cutover已完成：ignored live manifest在停服、Idle/Prepared=0和content-free shape
+preflight后增加 `v:1`、删除5个空 `baseAddress`；实际service env resolved caps、Completion decoder与Galatea
+full config loader均provider-free通过。semantic normalized SHA保持。独立reviewer PASS；完整证据见
+[HTTP/SSE plan lock §2](contract-freeze-r2-http-sse-plan-lock.md#2-cf-d-01-operator-cutover-evidence)。
+
+manifest仍是operator state而非tracked code；rollback必须停服并让code与manifest成对执行。本轮没有保留旧
+secret-bearing文件副本，因此可逆迁移恢复语义，但不是byte-exact旧文件restore。
 
 ## 5. 动态验证
 
@@ -158,9 +161,9 @@ archive missing-target diagnostics；cached diff check通过。
 
 ## 6. 后续路线调整
 
-1. 下一项仍是 `CF-D-02`，但拆成HTTP core DTO/error language与SSE event language两个candidate；先建立
-   explicit version、closed event/error DTO和first-party browser exact fixtures，不做“通用 operational JSON”
-   framework。
+1. 下一项仍是 `CF-D-02`，但先完成bounded recent projection与SSE replay/channel bound决策，再分别实施HTTP
+   core DTO/error language与SSE event language；建立explicit version、closed event/error DTO和first-party
+   browser exact fixtures，不做“通用 operational JSON”framework。
 2. `CF-D-03` root config继续独立：users/password/routes/runtime policy的authority与secret生命周期不同，
    不因connections parser成功就合并成superset config。
 3. broad `CF-B` 降到HTTP/SSE之后；CF-A证明 output-only constructor cut很快进入收益递减，不能为inventory
@@ -171,5 +174,5 @@ archive missing-target diagnostics；cached diff check通过。
 6. CF-D-01 的成功只证明“同一个accepted language应有一个semantic owner”，不证明需要shared parser
    framework；后续一旦出现generic options、compatibility mode或跨authority DTO，立即停止并重新论证。
 
-R5仍然Pending：完成operator migration、CF-D-02/03与support-role/wire inventory closure前，不声明这些tier
+R5仍然Pending：完成CF-D-02/03与support-role/wire inventory closure前，不声明这些tier
 整体stable/frozen。
