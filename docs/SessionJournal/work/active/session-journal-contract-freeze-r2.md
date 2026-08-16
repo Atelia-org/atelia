@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；R0 current inventory in progress  
+状态：Active；R0 complete，R1 candidate review pending  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -30,7 +30,8 @@ fallback。任何被接受的 wire/API 变化都会产生新的 product candidat
 - 旧一轮 semantic-preserving normalization 已删除重复 runtime factory、任意 raw payload public escape、
   可伪造的 historical Store-issued result construction 与重复 catalog wrapper；见
   [审阅证据](../../evidence/contract-normalization-review.md)。
-- RecapGrid assembly 已从旧多项目图收敛为 T/C/G/H/O，并完成一轮低风险 `public -> internal`；保存的
+- SessionJournal/RecapGrid product assembly 已从旧多项目图收敛为 S/T/C/G/H/O 边界，并完成一轮低风险
+  `public -> internal`；保存的
   M2 G-assembly inventory 为 415 exported types / 4,429 members，但 R0 必须重新生成 current inventory，
   不把该历史数字当作 HEAD 事实。
 - S4-D 已在 D0 证明不存在值得抽取的 non-trivial exact-equivalent durable-file seam，并以
@@ -53,7 +54,7 @@ current RecapGrid wire、owner 或 production caller；[durable target](../../cu
 | A | raw SessionJournal event/recovery wire | 最高风险；只有高杠杆、明确冗余才 direct cut | literal canonical fixtures、accepted/rejected language、全 phase replay/reopen/recovery |
 | B | T/C/Control/Store durable companion wire | 可 pre-release hard cut，但必须显式 reprovision/upgrade policy | field owner、codec/schema、bounds、goldens、crash/reopen、maintenance action |
 | C | route/connections/profile config、CLI report、Galatea HTTP/SSE | 先决定是否承诺兼容，再决定 version/direct cut | producer/consumer、secret boundary、version、unknown/missing policy、client fixture |
-| D | T/C/G/H/O public .NET API | 最适合积极收窄；只冻结明确 support roles | exact exported inventory、production consumers、constructor authority、positive/negative compile/reflection gate |
+| D | S/T/C/G/H/O public .NET API | 最适合积极收窄；只冻结明确 support roles | exact exported inventory、production consumers、constructor authority、positive/negative compile/reflection gate |
 
 严格 versioning 或拒绝旧版本只说明 hard-cut policy 清晰，不等于 backward compatibility。
 
@@ -84,7 +85,7 @@ current RecapGrid wire、owner 或 production caller；[durable target](../../cu
 - Getter `RecapGridReserveBootstrapEvidence`、`RecapGridContextProvenance`；
 - Online `RecapGridOnlineMaintenanceEvidence`；
 - owner factory/open/read/maintenance result variants 与 public `init`/copy/`with` surface；
-- T/C/G/H/O 中其他 output-only authority、observation 与 maintenance token。
+- S/T/C/G/H/O 中其他 output-only authority、observation 与 maintenance token。
 
 期望形状是“type 与 public getters 保持可见，constructor/copy/init 由 owner 控制”。必须保留 caller input/spec、
 operator confirmation token 的可构造性，也必须保留 external implementer contract（例如 executor/provider seam）
@@ -144,7 +145,7 @@ setup/version/model、raw range、exact inputs、origin/execution、tool/runtime
 
 基线必须记录 HEAD、worktree、SDK/platform 与 inventory command；不修改 production/tests。产出：
 
-- T/C/G/H/O exact exported type/member/constructor inventory；
+- S/T/C/G/H/O exact exported type/member/constructor inventory；
 - public symbol production/test consumers 与 support-role 初分；
 - owner-issued construction graph、copy/with/init/reflection/serializer consumer；
 - A/B durable wire artifact、schema/version、path、writer、reader、validator、bounds、golden、recovery action；
@@ -199,10 +200,10 @@ tail-fix 闭环。若 wire candidate 与 API candidate 可独立，禁止捆绑�
 | Stage | Status | Evidence / next gate |
 |:--|:--|:--|
 | Plan | Complete | 本文；baseline `13ca21f7` |
-| R0-A public/constructor inventory | In progress | 等待 exact exported/consumer/construction graph |
-| R0-B durable wire inventory | In progress | 等待 T/C/Control/Store/Rewriter field-owner matrix |
-| R0-C operational wire inventory | In progress | 等待 config/CLI/HTTP/SSE support-boundary map |
-| R0 synthesis | Pending | 形成 current support map、wire matrix 与 draft ledger |
+| R0-A public/constructor inventory | Complete | S/T/O/C/G/H exact metadata inventory + compiled construction graph |
+| R0-B durable wire inventory | Complete | raw、T/C/Control/Store/Rewriter field-owner/proof/recovery matrix |
+| R0-C operational wire inventory | Complete | connections/config/CLI/HTTP/SSE support-boundary map |
+| R0 synthesis | Complete | [R0 current inventory](../../evidence/contract-freeze-r2-r0.md) |
 | R1 independent reviews | Pending | R0 完成后启动 |
 | R2 plan lock | Pending | 不允许提前改 API/wire |
 | R3 implementation | Pending | 只实施 Adopt candidates |
@@ -220,4 +221,3 @@ R0 只有在以下条件同时满足时完成：
 5. draft ledger 不含仅凭命名/行数提出的合并；
 6. independent reviewer 对漏项、错误 owner 与 acceptance-widening finding 完成复核；
 7. 计划 progress ledger 与 exact evidence 路径同步更新。
-

@@ -1,20 +1,51 @@
 using System.Reflection;
+using System.Runtime.Loader;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Atelia.SessionJournal.RecapGrid;
 
-if (args.Length > 1) {
+bool explicitAssembly = args.Length > 0
+    && string.Equals(args[0], "--assembly", StringComparison.Ordinal);
+if ((!explicitAssembly && args.Length > 1)
+    || (explicitAssembly && args.Length is < 2 or > 4)) {
     Console.Error.WriteLine(
-        "Usage: dotnet run --project scripts/SessionJournal.RecapGrid.ApiInventory -- [output-path]"
+        "Usage: inventory [output-path]\n"
+        + "       inventory --assembly <assembly-path> "
+        + "[output-path] [construction-output-path]"
     );
     return 2;
 }
 
-Assembly target = typeof(FamilyDefinition).Assembly;
+AssemblyLoadContext? loadContext = null;
+Assembly target;
+string? outputPath;
+string? constructionOutputPath;
+if (explicitAssembly) {
+    string targetPath = Path.GetFullPath(args[1]);
+    var resolver = new AssemblyDependencyResolver(targetPath);
+    loadContext = new AssemblyLoadContext(
+        "session-journal-api-inventory",
+        isCollectible: true
+    );
+    loadContext.Resolving += (_, name) => {
+        string? dependency = resolver.ResolveAssemblyToPath(name);
+        return dependency is null
+            ? null
+            : loadContext.LoadFromAssemblyPath(dependency);
+    };
+    target = loadContext.LoadFromAssemblyPath(targetPath);
+    outputPath = args.Length >= 3 ? args[2] : null;
+    constructionOutputPath = args.Length == 4 ? args[3] : null;
+}
+else {
+    target = typeof(FamilyDefinition).Assembly;
+    outputPath = args.Length == 1 ? args[0] : null;
+    constructionOutputPath = null;
+}
 string assemblyName = target.GetName().Name
     ?? throw new InvalidOperationException("The target assembly has no name.");
-if (!string.Equals(
+if (!explicitAssembly && !string.Equals(
         assemblyName,
         "Atelia.SessionJournal.RecapGrid",
         StringComparison.Ordinal)) {
@@ -30,17 +61,40 @@ if (!first.Bytes.AsSpan().SequenceEqual(second.Bytes)) {
         "The API inventory was not byte-stable across repeated generation."
     );
 }
+ConstructionInventory? constructionFirst = null;
+if (constructionOutputPath is not null) {
+    constructionFirst = BuildConstructionInventory(target);
+    ConstructionInventory constructionSecond =
+        BuildConstructionInventory(target);
+    if (!constructionFirst.Bytes.AsSpan().SequenceEqual(
+            constructionSecond.Bytes)) {
+        throw new InvalidOperationException(
+            "The construction inventory was not byte-stable across "
+            + "repeated generation."
+        );
+    }
+}
 
-if (args.Length == 0 || string.Equals(args[0], "-", StringComparison.Ordinal)) {
+if (outputPath is null
+    || string.Equals(outputPath, "-", StringComparison.Ordinal)) {
     Console.OpenStandardOutput().Write(first.Bytes);
 }
 else {
-    string outputPath = args[0];
     string? outputDirectory = Path.GetDirectoryName(outputPath);
     if (!string.IsNullOrEmpty(outputDirectory)) {
         Directory.CreateDirectory(outputDirectory);
     }
     File.WriteAllBytes(outputPath, first.Bytes);
+}
+if (constructionOutputPath is not null
+    && constructionFirst is not null) {
+    string? constructionOutputDirectory = Path.GetDirectoryName(
+        constructionOutputPath
+    );
+    if (!string.IsNullOrEmpty(constructionOutputDirectory)) {
+        Directory.CreateDirectory(constructionOutputDirectory);
+    }
+    File.WriteAllBytes(constructionOutputPath, constructionFirst.Bytes);
 }
 
 string sha256 = Convert.ToHexString(SHA256.HashData(first.Bytes))
@@ -50,6 +104,16 @@ Console.Error.WriteLine(
     + $"members={first.MemberCount} lines={first.LineCount} "
     + $"sha256={sha256} deterministic=true"
 );
+if (constructionFirst is not null) {
+    string constructionSha256 = Convert.ToHexString(
+        SHA256.HashData(constructionFirst.Bytes)
+    ).ToLowerInvariant();
+    Console.Error.WriteLine(
+        $"Construction inventory: assembly={assemblyName} "
+        + $"lines={constructionFirst.LineCount} "
+        + $"sha256={constructionSha256} deterministic=true"
+    );
+}
 return 0;
 
 static Inventory BuildInventory(Assembly assembly, string assemblyName) {
@@ -90,6 +154,82 @@ static Inventory BuildInventory(Assembly assembly, string assemblyName) {
     lines.AddRange(members.Select(static member => member.Json));
     byte[] bytes = Encoding.UTF8.GetBytes(string.Join('\n', lines) + "\n");
     return new Inventory(bytes, types.Length, members.Count, lines.Count);
+}
+
+static ConstructionInventory BuildConstructionInventory(
+    Assembly assembly
+) {
+    string[] lines = ConstructionSurface(assembly).ToArray();
+    byte[] bytes = Encoding.UTF8.GetBytes(
+        lines.Length == 0
+            ? string.Empty
+            : string.Join('\n', lines) + "\n"
+    );
+    return new ConstructionInventory(bytes, lines.Length);
+}
+
+static IEnumerable<string> ConstructionSurface(Assembly assembly) {
+    const BindingFlags flags = BindingFlags.DeclaredOnly
+        | BindingFlags.Instance
+        | BindingFlags.Static
+        | BindingFlags.Public
+        | BindingFlags.NonPublic;
+    foreach (Type type in assembly.GetTypes()
+                 .Where(IsEffectivelyPublic)
+                 .OrderBy(TypeId, StringComparer.Ordinal)) {
+        foreach (ConstructorInfo constructor in type.GetConstructors(flags)
+                     .Where(IsApiVisibleMethod)
+                     .OrderBy(
+                         static value => value.ToString(),
+                         StringComparer.Ordinal
+                     )) {
+            ParameterInfo[] parameters = constructor.GetParameters();
+            yield return JsonSerializer.Serialize(new {
+                k = "ctor",
+                type = TypeId(type),
+                nested = type.DeclaringType is not null,
+                a = MethodAccessibility(constructor),
+                copy = parameters.Length == 1
+                    && parameters[0].ParameterType == type,
+                signature = $".ctor({Parameters(constructor)})"
+            });
+        }
+        foreach (PropertyInfo property in type.GetProperties(flags)
+                     .OrderBy(
+                         static value => value.Name,
+                         StringComparer.Ordinal
+                     )) {
+            MethodInfo? setter = property.GetSetMethod(nonPublic: true);
+            if (setter is null || !IsApiVisibleMethod(setter)) {
+                continue;
+            }
+            bool init = setter.ReturnParameter.GetRequiredCustomModifiers()
+                .Any(static modifier => modifier.FullName
+                    == "System.Runtime.CompilerServices.IsExternalInit");
+            yield return JsonSerializer.Serialize(new {
+                k = "setter",
+                type = TypeId(type),
+                property = property.Name,
+                a = MethodAccessibility(setter),
+                init,
+                propertyType = FormatType(property.PropertyType)
+            });
+        }
+        foreach (MethodInfo clone in type.GetMethods(flags)
+                     .Where(IsApiVisibleMethod)
+                     .Where(static method => method.Name == "<Clone>$")
+                     .OrderBy(
+                         static value => value.ToString(),
+                         StringComparer.Ordinal
+                     )) {
+            yield return JsonSerializer.Serialize(new {
+                k = "clone",
+                type = TypeId(type),
+                a = MethodAccessibility(clone),
+                returns = FormatType(clone.ReturnType)
+            });
+        }
+    }
 }
 
 static IEnumerable<MemberInventory> DeclaredApiMembers(Type type) {
@@ -345,6 +485,11 @@ internal sealed record Inventory(
     byte[] Bytes,
     int TypeCount,
     int MemberCount,
+    int LineCount
+);
+
+internal sealed record ConstructionInventory(
+    byte[] Bytes,
     int LineCount
 );
 

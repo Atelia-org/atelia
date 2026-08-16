@@ -14,6 +14,7 @@
 | [DG1 pilot](document-governance-dg1-pilot.md) | 12个窄claim的Accept/Modify/frozen/closed裁决和portable verification pointers | verification baseline `cf3c77d524abdf24352400c221e0c42f0c9cb2fe`；candidate evidence仍限于各自exact candidate | 审计router claim为何这样分层，或重新核验某一claim时；它不是第二份active ledger |
 | [First-production readiness review](first-production-readiness-review.md) | 首次生产前findings、修复/残余边界与R4 acceptance记录 | review baseline `2ccd67150373360a1230dd22c195b4ec100ac0bb`；Beta GO只属于candidate `681fc02bb9f1e4a45cd012aa7feadefe3f33fa9e` | 追溯早期Beta blocker、accepted risk或首次candidate gate时，不用于证明后来HEAD可发布 |
 | [Contract normalization review](contract-normalization-review.md) | N0～N5 candidate ledger、Adopt/Retain/Reject/Defer理由与contract-preservation evidence | execution baseline `cd804c39cf96499167c80e5d046fb21e4d3b8c7d`；implementation candidate `49ebb4634e5b4136032db983dd92a9a4560b33eb`；`81a1fa24`只增加tests/runbook，本轮provider calls为0且staging evidence是scripted | 再提contract合并/删除proof redundancy时，复核已裁决方案与重新开启条件 |
+| [Contract Freeze R2 R0 inventory](contract-freeze-r2-r0.md) | S/T/O/C/G/H public construction、raw/durable companion wire、config/CLI/HTTP/SSE current inventory与R1 draft ledger | exact source/inventory baseline `380df30fc069d2dfbc3c71fe1923e0442389ecd8`；R0只读调查，不认证后续HEAD，也未批准或实施candidate | 在收窄current API、给wire加版本或进入R1/R2前，复核current finding、Retain理由、evidence gaps与gates |
 
 Galatea 2026-08-01 exact G2A旧证据仍在
 [cutover completion record](../archive/completed-plans/galatea-session-journal-cutover-plan.md#g2arepeatable-staging-acceptancedone2026-08-01)；
