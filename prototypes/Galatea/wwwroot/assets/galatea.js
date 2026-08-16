@@ -230,6 +230,25 @@ export function canContinueWithoutInitialRecent(
     && current.status === "running";
 }
 
+export async function loadInitialSessionState(
+  loadCurrent,
+  loadRecent,
+) {
+  let current = await loadCurrent();
+  try {
+    await loadRecent();
+  } catch (error) {
+    if (error?.code !== "recent-view-busy") {
+      throw error;
+    }
+    current = await loadCurrent();
+    if (!canContinueWithoutInitialRecent(current, error.code)) {
+      throw error;
+    }
+  }
+  return current;
+}
+
 function requireApiError(value) {
   const error = requireExactKeys(value, ["code", "error"], "API error");
   requireNonblankString(error.code, "API error.code");
@@ -1067,17 +1086,10 @@ function startGalateaApp() {
     selectConnection(storedConnectionId ?? bootstrapConfig.defaultConnectionId, { persist: false });
     renderConnectionPicker();
 
-    let currentTurn = await loadCurrentTurn();
-    try {
-      await loadRecentTurns();
-    } catch (error) {
-      if (!canContinueWithoutInitialRecent(
-          currentTurn,
-          error?.code,
-        )) {
-        throw error;
-      }
-    }
+    let currentTurn = await loadInitialSessionState(
+      loadCurrentTurn,
+      loadRecentTurns,
+    );
     if (maintenanceMode) {
       resetLive();
       refreshComposerMode();

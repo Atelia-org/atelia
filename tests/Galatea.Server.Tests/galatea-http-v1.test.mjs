@@ -107,6 +107,28 @@ assert.equal(
   false,
 );
 
+const idleCurrent = {
+  ...runningCurrent,
+  status: "idle",
+  turnId: null,
+  connectionId: null,
+};
+const currentSequence = [idleCurrent, runningCurrent];
+let currentReads = 0;
+let recentReads = 0;
+const initialState = await production.loadInitialSessionState(
+  async () => currentSequence[currentReads++],
+  async () => {
+    recentReads += 1;
+    const error = new Error("recent busy");
+    error.code = "recent-view-busy";
+    throw error;
+  },
+);
+assert.equal(initialState, runningCurrent);
+assert.equal(currentReads, 2);
+assert.equal(recentReads, 1);
+
 const popFunction = source.slice(
   source.indexOf("async function popLatestTurn"),
   source.indexOf("async function attachToTurn"),
@@ -125,11 +147,15 @@ const initializeFunction = source.slice(
   source.indexOf("async function initializeApp"),
   source.indexOf("initializeApp().catch"),
 );
+assert.match(initializeFunction, /await loadInitialSessionState\(/);
 assert.ok(
-  initializeFunction.indexOf("await loadCurrentTurn()")
-    < initializeFunction.indexOf("await loadRecentTurns()"),
+  initializeFunction.indexOf("await loadInitialSessionState(")
+    < initializeFunction.indexOf("await attachToTurn("),
 );
-assert.match(initializeFunction, /canContinueWithoutInitialRecent/);
+assert.match(
+  initializeFunction,
+  /currentTurn\?\.status === "running"[\s\S]*await attachToTurn\(/,
+);
 
 assert.match(source, /\/api\/v1\/recent-turns/);
 assert.doesNotMatch(source, /["'`]\/api\/(?!v1\/)/);
