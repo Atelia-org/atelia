@@ -1,5 +1,5 @@
-using System.Text.Json;
 using Atelia.SessionJournal.RecapGrid.Store;
+using static Atelia.SessionJournal.Cli.RecapGridCommands;
 
 namespace Atelia.SessionJournal.Cli;
 
@@ -30,6 +30,7 @@ internal static class RecapGridStoreCommands {
             RecapGridStoreMaintenance.Inspect(repository);
         return result switch {
             RecapGridStoreInspectResult.Available available => Print(
+                "inspect",
                 "available",
                 new {
                     instanceId = available.Info.Identity.InstanceId.Value,
@@ -44,17 +45,21 @@ internal static class RecapGridStoreCommands {
                     available.Info.CompileOptions
                 }
             ),
-            RecapGridStoreInspectResult.Absent => Print("absent"),
-            RecapGridStoreInspectResult.Busy => Print("busy", exitCode: 2),
+            RecapGridStoreInspectResult.Absent => Print("inspect", "absent"),
+            RecapGridStoreInspectResult.Busy => Print(
+                "inspect", "busy", exitCode: 2
+            ),
             RecapGridStoreInspectResult.UnsupportedSchema unsupported =>
                 Print(
+                    "inspect",
                     "unsupported-schema",
                     new { unsupported.SchemaVersion },
                     2
                 ),
             RecapGridStoreInspectResult.PlatformUnsupported =>
-                Print("platform-unsupported", exitCode: 2),
+                Print("inspect", "platform-unsupported", exitCode: 2),
             RecapGridStoreInspectResult.Invalid invalid => Print(
+                "inspect",
                 "invalid",
                 new { invalid.Code, invalid.Detail },
                 2
@@ -72,6 +77,7 @@ internal static class RecapGridStoreCommands {
             RecapGridStoreMaintenance.Verify(repository);
         return result switch {
             RecapGridStoreVerifyResult.Healthy healthy => Print(
+                "verify",
                 "healthy",
                 new {
                     instanceId = healthy.Info.Identity.InstanceId.Value,
@@ -82,17 +88,21 @@ internal static class RecapGridStoreCommands {
                     healthy.Info.FulfilledViewCount
                 }
             ),
-            RecapGridStoreVerifyResult.Absent => Print("absent"),
-            RecapGridStoreVerifyResult.Busy => Print("busy", exitCode: 2),
+            RecapGridStoreVerifyResult.Absent => Print("verify", "absent"),
+            RecapGridStoreVerifyResult.Busy => Print(
+                "verify", "busy", exitCode: 2
+            ),
             RecapGridStoreVerifyResult.UnsupportedSchema unsupported =>
                 Print(
+                    "verify",
                     "unsupported-schema",
                     new { unsupported.SchemaVersion },
                     2
                 ),
             RecapGridStoreVerifyResult.PlatformUnsupported =>
-                Print("platform-unsupported", exitCode: 2),
+                Print("verify", "platform-unsupported", exitCode: 2),
             RecapGridStoreVerifyResult.Unhealthy unhealthy => Print(
+                "verify",
                 "unhealthy",
                 new { unhealthy.Errors, unhealthy.Incomplete },
                 2
@@ -123,6 +133,7 @@ internal static class RecapGridStoreCommands {
             );
         return result switch {
             RecapGridStoreExportResult.Page page => Print(
+                "export",
                 "page",
                 new {
                     items = page.Value.Items.Select(static item => new {
@@ -139,17 +150,21 @@ internal static class RecapGridStoreCommands {
                     page.Value.Incomplete
                 }
             ),
-            RecapGridStoreExportResult.Absent => Print("absent"),
-            RecapGridStoreExportResult.Busy => Print("busy", exitCode: 2),
+            RecapGridStoreExportResult.Absent => Print("export", "absent"),
+            RecapGridStoreExportResult.Busy => Print(
+                "export", "busy", exitCode: 2
+            ),
             RecapGridStoreExportResult.UnsupportedSchema unsupported =>
                 Print(
+                    "export",
                     "unsupported-schema",
                     new { unsupported.SchemaVersion },
                     2
                 ),
             RecapGridStoreExportResult.PlatformUnsupported =>
-                Print("platform-unsupported", exitCode: 2),
+                Print("export", "platform-unsupported", exitCode: 2),
             RecapGridStoreExportResult.Invalid invalid => Print(
+                "export",
                 "invalid",
                 new { invalid.Code, invalid.Detail },
                 2
@@ -197,14 +212,18 @@ internal static class RecapGridStoreCommands {
         return result switch {
             RecapGridStoreResetResult.Reset reset => Print(
                 "reset",
+                "reset",
                 new {
                     instanceId = reset.Identity.InstanceId.Value,
                     schemaVersion = reset.Identity.SchemaVersion
                 }
             ),
-            RecapGridStoreResetResult.Absent => Print("absent"),
-            RecapGridStoreResetResult.Busy => Print("busy", exitCode: 2),
+            RecapGridStoreResetResult.Absent => Print("reset", "absent"),
+            RecapGridStoreResetResult.Busy => Print(
+                "reset", "busy", exitCode: 2
+            ),
             RecapGridStoreResetResult.StaleConfirmation stale => Print(
+                "reset",
                 "stale-confirmation",
                 new {
                     actualLength = stale.Actual.Length,
@@ -214,14 +233,16 @@ internal static class RecapGridStoreCommands {
             ),
             RecapGridStoreResetResult.OfflineCleanupRequired cleanup =>
                 Print(
+                    "reset",
                     "offline-cleanup-required",
                     new { cleanup.Slot },
                     2
                 ),
             RecapGridStoreResetResult.Limit limit =>
-                Print("limit", new { limit.Name }, 2),
+                Print("reset", "limit", new { limit.Name }, 2),
             RecapGridStoreResetResult.CommitIndeterminate settlement =>
                 Print(
+                    "reset",
                     "commit-indeterminate",
                     new {
                         intendedInstanceId =
@@ -232,8 +253,9 @@ internal static class RecapGridStoreCommands {
                     2
                 ),
             RecapGridStoreResetResult.PlatformUnsupported =>
-                Print("platform-unsupported", exitCode: 2),
+                Print("reset", "platform-unsupported", exitCode: 2),
             RecapGridStoreResetResult.Invalid invalid => Print(
+                "reset",
                 "invalid",
                 new { invalid.Code, invalid.Detail },
                 2
@@ -249,26 +271,31 @@ internal static class RecapGridStoreCommands {
             RecapGridStoreMaintenance.PrepareReset(repository);
         return result switch {
             RecapGridStorePrepareResetResult.Prepared prepared => Print(
+                "reset",
                 "prepared",
                 new {
                     length = prepared.Witness.Length,
                     sha256 = prepared.Witness.Sha256
                 }
             ),
-            RecapGridStorePrepareResetResult.Absent => Print("absent"),
+            RecapGridStorePrepareResetResult.Absent => Print(
+                "reset", "absent"
+            ),
             RecapGridStorePrepareResetResult.Busy =>
-                Print("busy", exitCode: 2),
+                Print("reset", "busy", exitCode: 2),
             RecapGridStorePrepareResetResult.OfflineCleanupRequired cleanup =>
                 Print(
+                    "reset",
                     "offline-cleanup-required",
                     new { cleanup.Slot },
                     2
                 ),
             RecapGridStorePrepareResetResult.Limit limit =>
-                Print("limit", new { limit.Name }, 2),
+                Print("reset", "limit", new { limit.Name }, 2),
             RecapGridStorePrepareResetResult.PlatformUnsupported =>
-                Print("platform-unsupported", exitCode: 2),
+                Print("reset", "platform-unsupported", exitCode: 2),
             RecapGridStorePrepareResetResult.Invalid invalid => Print(
+                "reset",
                 "invalid",
                 new { invalid.Code, invalid.Detail },
                 2
@@ -277,18 +304,5 @@ internal static class RecapGridStoreCommands {
                 "Unknown RecapGrid Store prepare-reset result."
             )
         };
-    }
-
-    private static int Print(
-        string status,
-        object? detail = null,
-        int exitCode = 0
-    ) {
-        Console.WriteLine(JsonSerializer.Serialize(new {
-            schema = "atelia.session-journal.recap-grid-store-cli.v1",
-            status,
-            detail
-        }));
-        return exitCode;
     }
 }

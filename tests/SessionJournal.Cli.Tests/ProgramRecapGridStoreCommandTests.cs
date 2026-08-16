@@ -1,6 +1,9 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.Store;
+using System.Text;
 using System.Text.Json;
 using Xunit;
 
@@ -8,6 +11,9 @@ namespace Atelia.SessionJournal.Cli.Tests;
 
 [Collection(ConsoleSerialCollection.Name)]
 public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
+    private const string ReportSchema =
+        "atelia.session-journal.recap-grid-cli.v1";
+
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
         "atelia-recap-grid-cli-tests",
@@ -58,19 +64,207 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
             length = detail.GetProperty("length").GetInt64();
             sha256 = detail.GetProperty("sha256").GetString()!;
         }
-        Assert.Equal(2, Run(
+        Assert.Equal(JsonSerializer.Serialize(new {
+            schema = ReportSchema,
+            command = "reset",
+            status = "prepared",
+            detail = new { length, sha256 }
+        }), prepareJson);
+        (int staleCode, string staleJson) = RunCaptured(
             "reset",
             "--input", _root,
             "--confirm-length", length.ToString(),
             "--confirm-sha256", new string('0', 64)
-        ));
-        Assert.Equal(0, Run(
+        );
+        Assert.Equal(2, staleCode);
+        Assert.Equal(JsonSerializer.Serialize(new {
+            schema = ReportSchema,
+            command = "reset",
+            status = "stale-confirmation",
+            detail = new {
+                actualLength = length,
+                actualSha256 = sha256
+            }
+        }), staleJson);
+        (int resetCode, string resetJson) = RunCaptured(
             "reset",
             "--input", _root,
             "--confirm-length", length.ToString(),
             "--confirm-sha256", sha256
-        ));
+        );
+        Assert.Equal(0, resetCode);
+        using (JsonDocument reset = JsonDocument.Parse(resetJson)) {
+            Assert.Equal(ReportSchema, reset.RootElement.GetProperty(
+                "schema"
+            ).GetString());
+            Assert.Equal("reset", reset.RootElement.GetProperty(
+                "command"
+            ).GetString());
+            Assert.Equal("reset", reset.RootElement.GetProperty(
+                "status"
+            ).GetString());
+        }
         Assert.Equal(0, Run("verify", "--input", _root));
+    }
+
+    [Theory]
+    [InlineData("inspect")]
+    [InlineData("export")]
+    [InlineData("verify")]
+    public void AbsentStoreCommandsUseTheSharedExactEnvelope(string command) {
+        Directory.CreateDirectory(_root);
+
+        (int exitCode, string json) = RunCaptured(
+            command, "--input", _root
+        );
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(
+            $$"""{"schema":"{{ReportSchema}}","command":"{{command}}","status":"absent","detail":null}""",
+            json
+        );
+        Assert.DoesNotContain(
+            "atelia.session-journal.recap-grid-store-cli.v1",
+            json,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
+    public void ResetPrepareUsesResetCommandInTheSharedExactEnvelope() {
+        Directory.CreateDirectory(_root);
+
+        (int exitCode, string json) = RunCaptured(
+            "reset", "--prepare", "--input", _root
+        );
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(
+            $$"""{"schema":"{{ReportSchema}}","command":"reset","status":"absent","detail":null}""",
+            json
+        );
+    }
+
+    [Fact]
+    public void SharedEnvelopeAcceptsTheExactUtf8LimitAndFailsClosedAboveIt() {
+        const string command = "boundary";
+        const string status = "ok";
+        int fixedBytes = JsonSerializer.SerializeToUtf8Bytes(new {
+            schema = ReportSchema,
+            command,
+            status,
+            detail = string.Empty
+        }).Length;
+        string exactDetail = new(
+            'a',
+            RecapGridCommands.MaximumReportUtf8Bytes - fixedBytes
+        );
+
+        (int exactCode, string exactJson) = CaptureOutput(
+            () => RecapGridCommands.Print(command, status, exactDetail)
+        );
+
+        Assert.Equal(0, exactCode);
+        Assert.Equal(
+            RecapGridCommands.MaximumReportUtf8Bytes,
+            Encoding.UTF8.GetByteCount(exactJson)
+        );
+        using (JsonDocument exact = JsonDocument.Parse(exactJson)) {
+            Assert.Equal(
+                status,
+                exact.RootElement.GetProperty("status").GetString()
+            );
+        }
+
+        (int exceededCode, string exceededJson) = CaptureOutput(
+            () => RecapGridCommands.Print(
+                command,
+                status,
+                exactDetail + "a"
+            )
+        );
+
+        Assert.Equal(2, exceededCode);
+        Assert.Equal(
+            """{"schema":"atelia.session-journal.recap-grid-cli.v1","command":"boundary","status":"limit-exceeded","detail":{"limit":"RecapGridReportUtf8Bytes"}}""",
+            exceededJson
+        );
+    }
+
+    [Fact]
+    public void PreviousFourMiBCanonicalPageCanExceedTheReportLimit() {
+        const int previousMaximumPageBytes = 4 * 1024 * 1024;
+        string content = new('\u9ffe', 10_600);
+        RecapGridStoreExportItem[] items = Enumerable.Range(1, 128)
+            .Select(index => {
+                RecapCellArtifact cell = Cell(index, content);
+                byte[] canonical = cell.ToCanonicalBytes();
+                return new RecapGridStoreExportItem(
+                    "cell",
+                    cell.CellDigest.Value,
+                    canonical.Length,
+                    canonical
+                );
+            })
+            .ToArray();
+        int canonicalBytes = items.Sum(static item => item.CanonicalBytes);
+        object detail = ExportDetail(items);
+
+        byte[] report = JsonSerializer.SerializeToUtf8Bytes(new {
+            schema = ReportSchema,
+            command = "export",
+            status = "page",
+            detail
+        });
+
+        Assert.Equal(128, items.Length);
+        Assert.InRange(
+            canonicalBytes,
+            previousMaximumPageBytes - 64 * 1024,
+            previousMaximumPageBytes
+        );
+        Assert.True(
+            report.Length > RecapGridCommands.MaximumReportUtf8Bytes,
+            $"Adversarial report was only {report.Length} UTF-8 bytes."
+        );
+    }
+
+    [Fact]
+    public void MaximumItemAdversarialPageFitsTheSharedReportEnvelope() {
+        string content = new('\u9ffe', 5_196);
+        RecapGridStoreExportItem[] items = Enumerable.Range(1, 128)
+            .Select(index => {
+                RecapCellArtifact cell = Cell(index, content);
+                byte[] canonical = cell.ToCanonicalBytes();
+                return new RecapGridStoreExportItem(
+                    "cell",
+                    cell.CellDigest.Value,
+                    canonical.Length,
+                    canonical
+                );
+            })
+            .ToArray();
+        int canonicalBytes = items.Sum(static item => item.CanonicalBytes);
+        byte[] report = JsonSerializer.SerializeToUtf8Bytes(new {
+            schema = ReportSchema,
+            command = "export",
+            status = "page",
+            detail = ExportDetail(items)
+        });
+
+        Assert.Equal(
+            RecapGridStoreLimits.MaximumPageItems,
+            items.Length
+        );
+        Assert.InRange(
+            canonicalBytes,
+            RecapGridStoreLimits.MaximumPageBytes - 64 * 1024,
+            RecapGridStoreLimits.MaximumPageBytes
+        );
+        Assert.True(
+            report.Length < RecapGridCommands.MaximumReportUtf8Bytes,
+            $"Adversarial report was {report.Length} UTF-8 bytes."
+        );
     }
 
     private static int Run(params string[] args) => Program.MainCore(
@@ -80,12 +274,16 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
 
     private static (int ExitCode, string Json) RunCaptured(
         params string[] args
+    ) => CaptureOutput(() => Run(args));
+
+    private static (int ExitCode, string Json) CaptureOutput(
+        Func<int> action
     ) {
         TextWriter original = Console.Out;
         using var output = new StringWriter();
         try {
             Console.SetOut(output);
-            int exitCode = Run(args);
+            int exitCode = action();
             string json = output.ToString().Split(
                 Environment.NewLine,
                 StringSplitOptions.RemoveEmptyEntries
@@ -95,6 +293,39 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
         finally {
             Console.SetOut(original);
         }
+    }
+
+    private static object ExportDetail(
+        IReadOnlyList<RecapGridStoreExportItem> items
+    ) => new {
+        items = items.Select(static item => new {
+            item.Kind,
+            item.Key,
+            item.CanonicalBytes,
+            fulfilledViewDigest = item.FulfilledViewDigest?.Value,
+            canonicalBase64 = item.Canonical is null
+                ? null
+                : Convert.ToBase64String(item.Canonical)
+        }),
+        nextCursor = (string?)null,
+        Incomplete = false
+    };
+
+    private static RecapCellArtifact Cell(int descriptor, string content) {
+        var definition = new MaintainerDefinitionDigest(new string('a', 64));
+        EvaluationKey evaluation = EvaluationKey.Create(
+            new HistorySegmentDescriptorDigest(descriptor.ToString("x64")),
+            definition,
+            PriorInputReference.FirstRow.Value
+        );
+        return RecapCellArtifact.Create(
+            new LogicalColumnId("case.culprit"),
+            definition,
+            evaluation,
+            RecapCellOutcome.Updated,
+            content,
+            RecapGridLimits.MaximumContentUtf8Bytes
+        );
     }
 
     public void Dispose() {

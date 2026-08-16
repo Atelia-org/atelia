@@ -419,6 +419,46 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
     }
 
     [Fact]
+    public void ExportContractedByteBoundStillPermitsMaximumItemPage() {
+        Directory.CreateDirectory(_root);
+        Assert.IsType<RecapGridStoreCreateResult.Created>(
+            RecapGridStoreFactory.Create(_root)
+        );
+        string content = new('\u9ffe', 5_196);
+        RecapCellArtifact[] cells = Enumerable.Range(1, 129)
+            .Select(index => Cell(index, content))
+            .ToArray();
+        InsertCellsRaw(cells);
+
+        RecapGridStoreExportPage first = Assert.IsType<
+            RecapGridStoreExportResult.Page
+        >(RecapGridStoreMaintenance.Export(
+            _root,
+            includeContent: true
+        )).Value;
+
+        Assert.Equal(RecapGridStoreLimits.MaximumPageItems, first.Items.Count);
+        Assert.InRange(
+            first.Items.Sum(static item => item.CanonicalBytes),
+            RecapGridStoreLimits.MaximumPageBytes - 64 * 1024,
+            RecapGridStoreLimits.MaximumPageBytes
+        );
+        Assert.True(first.Incomplete);
+        Assert.NotNull(first.NextCursor);
+
+        RecapGridStoreExportPage second = Assert.IsType<
+            RecapGridStoreExportResult.Page
+        >(RecapGridStoreMaintenance.Export(
+            _root,
+            first.NextCursor,
+            includeContent: true
+        )).Value;
+        Assert.Single(second.Items);
+        Assert.False(second.Incomplete);
+        Assert.Null(second.NextCursor);
+    }
+
+    [Fact]
     public void ExportUsesTypedReversibleCursorAcrossMoreThanTwoPages() {
         Directory.CreateDirectory(_root);
         Assert.IsType<RecapGridStoreCreateResult.Created>(
@@ -428,60 +468,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             .Select(static index => Cell(index, $"answer-{index}"))
             .OrderBy(static cell => cell.CellDigest.Value, StringComparer.Ordinal)
             .ToArray();
-        using (SqliteConnection connection = OpenRaw()) {
-            connection.Open();
-            using SqliteTransaction transaction = connection.BeginTransaction();
-            foreach (RecapCellArtifact cell in cells) {
-                using SqliteCommand insert = connection.CreateCommand();
-                insert.Transaction = transaction;
-                insert.CommandText = """
-                    INSERT INTO cell_artifact(
-                        cell_digest, evaluation_key_digest,
-                        history_segment_digest, logical_column_id,
-                        definition_digest, content_digest, canonical
-                    ) VALUES (
-                        $cell, $evaluation, $history, $column,
-                        $definition, $content, $canonical
-                    );
-                    """;
-                insert.Parameters.AddWithValue(
-                    "$cell",
-                    cell.CellDigest.Value
-                );
-                insert.Parameters.AddWithValue(
-                    "$evaluation",
-                    cell.EvaluationKey.Digest.Value
-                );
-                insert.Parameters.AddWithValue(
-                    "$history",
-                    cell.EvaluationKey.HistorySegmentDigest.Value
-                );
-                insert.Parameters.AddWithValue(
-                    "$column",
-                    cell.LogicalColumnId.Value
-                );
-                insert.Parameters.AddWithValue(
-                    "$definition",
-                    cell.DefinitionDigest.Value
-                );
-                insert.Parameters.AddWithValue(
-                    "$content",
-                    cell.ContentDigest.Value
-                );
-                insert.Parameters.AddWithValue(
-                    "$canonical",
-                    cell.ToCanonicalBytes()
-                );
-                insert.ExecuteNonQuery();
-            }
-            using SqliteCommand count = connection.CreateCommand();
-            count.Transaction = transaction;
-            count.CommandText =
-                "UPDATE store_metadata SET cell_count = $count;";
-            count.Parameters.AddWithValue("$count", cells.Length);
-            Assert.Equal(1, count.ExecuteNonQuery());
-            transaction.Commit();
-        }
+        InsertCellsRaw(cells);
 
         var exported = new List<string>();
         RecapGridStoreExportCursor? cursor = null;
@@ -799,6 +786,58 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
     private SqliteConnection OpenRaw() => new(
         $"Data Source={new StorePaths(_root).DatabasePath};Mode=ReadWrite;Pooling=False"
     );
+
+    private void InsertCellsRaw(IReadOnlyList<RecapCellArtifact> cells) {
+        using SqliteConnection connection = OpenRaw();
+        connection.Open();
+        using SqliteTransaction transaction = connection.BeginTransaction();
+        foreach (RecapCellArtifact cell in cells) {
+            using SqliteCommand insert = connection.CreateCommand();
+            insert.Transaction = transaction;
+            insert.CommandText = """
+                INSERT INTO cell_artifact(
+                    cell_digest, evaluation_key_digest,
+                    history_segment_digest, logical_column_id,
+                    definition_digest, content_digest, canonical
+                ) VALUES (
+                    $cell, $evaluation, $history, $column,
+                    $definition, $content, $canonical
+                );
+                """;
+            insert.Parameters.AddWithValue("$cell", cell.CellDigest.Value);
+            insert.Parameters.AddWithValue(
+                "$evaluation",
+                cell.EvaluationKey.Digest.Value
+            );
+            insert.Parameters.AddWithValue(
+                "$history",
+                cell.EvaluationKey.HistorySegmentDigest.Value
+            );
+            insert.Parameters.AddWithValue(
+                "$column",
+                cell.LogicalColumnId.Value
+            );
+            insert.Parameters.AddWithValue(
+                "$definition",
+                cell.DefinitionDigest.Value
+            );
+            insert.Parameters.AddWithValue(
+                "$content",
+                cell.ContentDigest.Value
+            );
+            insert.Parameters.AddWithValue(
+                "$canonical",
+                cell.ToCanonicalBytes()
+            );
+            insert.ExecuteNonQuery();
+        }
+        using SqliteCommand count = connection.CreateCommand();
+        count.Transaction = transaction;
+        count.CommandText = "UPDATE store_metadata SET cell_count = $count;";
+        count.Parameters.AddWithValue("$count", cells.Count);
+        Assert.Equal(1, count.ExecuteNonQuery());
+        transaction.Commit();
+    }
 
     private RecapGridStoreHandle OpenWithHooks(
         StorePersistenceTestHooks hooks

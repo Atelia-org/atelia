@@ -11,7 +11,7 @@ namespace Atelia.SessionJournal.Cli;
 internal static partial class RecapGridCommands {
     private const string ReportSchema =
         "atelia.session-journal.recap-grid-cli.v1";
-    private const int MaximumReportUtf8Bytes = 16 * 1024 * 1024;
+    internal const int MaximumReportUtf8Bytes = 16 * 1024 * 1024;
     private const int MaximumInputUtf8Bytes = 1024 * 1024;
 
     internal static ValueTask<int> RunAsync(
@@ -137,7 +137,7 @@ internal static partial class RecapGridCommands {
         };
     }
 
-    private static int Print(
+    internal static int Print(
         string command,
         string status,
         object? detail = null,

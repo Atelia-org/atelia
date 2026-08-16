@@ -6,7 +6,7 @@ namespace Atelia.SessionJournal.RecapGrid.Store;
 
 public static class RecapGridStoreLimits {
     public const int MaximumPageItems = 128;
-    public const int MaximumPageBytes = 4 * 1024 * 1024;
+    public const int MaximumPageBytes = 2 * 1024 * 1024;
     public const int MaximumVerificationErrors = 128;
 }
 
