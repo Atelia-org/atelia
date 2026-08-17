@@ -137,13 +137,18 @@ public static class HistoryTimelineFactory {
                     repositoryPath,
                     paths.LocatorPath)) {
                 ActiveTimelineLocator existing = ReadLocator(paths);
-                return existing.RefId == refId
-                    ? new HistoryTimelineCreateResult
-                        .AlreadyExists(existing)
-                    : new HistoryTimelineCreateResult.Invalid(
+                if (existing.RefId != refId) {
+                    return new HistoryTimelineCreateResult.Invalid(
                         "LocatorRefMismatch",
                         "The canonical locator belongs to another Ref."
                     );
+                }
+                return ValidateExistingForCreate(
+                    paths,
+                    existing,
+                    limits,
+                    hooks
+                );
             }
             if (!HistoryPartitionAlgorithms.IsSupported(
                     initialPolicy.PartitionAlgorithmId)) {
@@ -227,6 +232,88 @@ public static class HistoryTimelineFactory {
                 exception.Message
             );
         }
+    }
+
+    private static HistoryTimelineCreateResult ValidateExistingForCreate(
+        HistoryTimelinePaths paths,
+        ActiveTimelineLocator locator,
+        HistoryTimelineStorageLimits limits,
+        HistoryTimelinePersistenceTestHooks hooks
+    ) {
+        string databasePath = paths.TimelineDatabasePath(
+            locator.ActiveTimelineId
+        );
+        HistoryTimelineDurableFiles.RequireSafePath(
+            paths.RepositoryPath,
+            databasePath
+        );
+        var ledger = new SqliteHistoryTimelineLedger(
+            databasePath,
+            locator.ActiveTimelineId,
+            paths.RefId,
+            limits,
+            hooks,
+            readOnly: true
+        );
+        HistoryTimelineStoreReadResult<TimelineHeadRef> head =
+            ledger.VerifyAndReadHead();
+        if (head is HistoryTimelineStoreReadResult<TimelineHeadRef>.Busy) {
+            return new HistoryTimelineCreateResult.Busy();
+        }
+        if (head is HistoryTimelineStoreReadResult<
+                TimelineHeadRef>.UnsupportedSchema headUnsupported) {
+            return new HistoryTimelineCreateResult.Invalid(
+                "TimelineStoreUnsupportedSchema",
+                HistoryTimelineCoordinator.UnsupportedSchemaDetail(
+                    headUnsupported.SchemaVersion
+                )
+            );
+        }
+        if (head is HistoryTimelineStoreReadResult<
+                TimelineHeadRef>.Invalid headInvalid) {
+            return new HistoryTimelineCreateResult.Invalid(
+                headInvalid.Code,
+                headInvalid.Detail
+            );
+        }
+        if (head is not HistoryTimelineStoreReadResult<
+                TimelineHeadRef>.Found found) {
+            return new HistoryTimelineCreateResult.Invalid(
+                "TimelineHeadUnavailable",
+                "The active Timeline database has no canonical head."
+            );
+        }
+
+        HistoryTimelineStoreReadResult<PartitionPolicyRevision> policy =
+            ledger.ReadPolicy(found.Value.ActivePartitionPolicyDigest);
+        if (policy is HistoryTimelineStoreReadResult<
+                PartitionPolicyRevision>.Busy) {
+            return new HistoryTimelineCreateResult.Busy();
+        }
+        if (policy is HistoryTimelineStoreReadResult<
+                PartitionPolicyRevision>.UnsupportedSchema policyUnsupported) {
+            return new HistoryTimelineCreateResult.Invalid(
+                "TimelineStoreUnsupportedSchema",
+                HistoryTimelineCoordinator.UnsupportedSchemaDetail(
+                    policyUnsupported.SchemaVersion
+                )
+            );
+        }
+        if (policy is HistoryTimelineStoreReadResult<
+                PartitionPolicyRevision>.Invalid policyInvalid) {
+            return new HistoryTimelineCreateResult.Invalid(
+                policyInvalid.Code,
+                policyInvalid.Detail
+            );
+        }
+        if (policy is not HistoryTimelineStoreReadResult<
+                PartitionPolicyRevision>.Found) {
+            return new HistoryTimelineCreateResult.Invalid(
+                "PartitionPolicyUnavailable",
+                found.Value.ActivePartitionPolicyDigest
+            );
+        }
+        return new HistoryTimelineCreateResult.AlreadyExists(locator);
     }
 
     private static HistoryTimelineOpenResult OpenCore(

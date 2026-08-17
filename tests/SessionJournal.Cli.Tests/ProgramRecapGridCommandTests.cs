@@ -665,6 +665,83 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
     }
 
     [Fact]
+    public void TimelineCreateExistingFutureDatabaseFailsClosedWithoutMutation() {
+        CreateJournal();
+        RefId refId;
+        using (SessionJournalEngine journal =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            refId = journal.BranchRefId;
+        }
+        string[] arguments = [
+            "timeline", "create", "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--partition-algorithm",
+            HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+            "--history-load-estimator",
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
+            "--target-history-load", "1",
+            "--max-raw-events", "64",
+            "--max-rendered-bytes", "1048576"
+        ];
+        var provider = new DeterministicCompletionClientFactory();
+        Assert.Equal(0, RunWithFactory(provider, arguments));
+        HistoryTimelineInspectResult.Available available = Assert.IsType<
+            HistoryTimelineInspectResult.Available
+        >(HistoryTimelineMaintenance.Inspect(_root, refId));
+        string databasePath = Path.Combine(
+            _root,
+            "derived",
+            "history-timeline",
+            "v2",
+            "refs",
+            refId.ToHexString(),
+            "timelines",
+            $"{available.Locator.ActiveTimelineId.Value}.sqlite"
+        );
+        using (var connection = new SqliteConnection(
+                   $"Data Source={databasePath};Mode=ReadWrite;Pooling=False")) {
+            connection.Open();
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "PRAGMA user_version = 3;";
+            _ = command.ExecuteNonQuery();
+        }
+        DomainSnapshot before = SnapshotDomains();
+
+        (int code, JsonElement report) = RunCapturedWithFactory(
+            provider,
+            arguments
+        );
+
+        Assert.Equal(2, code);
+        Assert.Equal(
+            "atelia.session-journal.recap-grid-cli.v1",
+            report.GetProperty("schema").GetString()
+        );
+        Assert.Equal(
+            "timeline.create",
+            report.GetProperty("command").GetString()
+        );
+        Assert.Equal("failed", report.GetProperty("status").GetString());
+        JsonElement detail = report.GetProperty("detail");
+        Assert.Equal(
+            "already-exists",
+            detail.GetProperty("cadence").GetProperty("status").GetString()
+        );
+        JsonElement timeline = detail.GetProperty("timeline");
+        Assert.Equal("invalid", timeline.GetProperty("status").GetString());
+        Assert.Equal(
+            "TimelineStoreUnsupportedSchema",
+            timeline.GetProperty("Code").GetString()
+        );
+        Assert.False(string.IsNullOrWhiteSpace(
+            timeline.GetProperty("Detail").GetString()
+        ));
+        Assert.Equal(0, provider.CallCount);
+        AssertDomainsEqual(before, SnapshotDomains());
+    }
+
+    [Fact]
     public void WrongRefAndUnknownOptionAreSyntaxFailuresWithNoDerivedMutation() {
         CreateJournal();
         string admission = WriteAdmission(["create"]);

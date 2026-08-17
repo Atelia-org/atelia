@@ -111,6 +111,23 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                 unsupported.BranchRefId
             ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
             ExecuteSql(databasePath, "PRAGMA user_version = 3;");
+            byte[] unsupportedBytes = File.ReadAllBytes(databasePath);
+
+            HistoryTimelineCreateResult.Invalid createInvalid = Assert.IsType<
+                HistoryTimelineCreateResult.Invalid
+            >(HistoryTimelineFactory.Create(
+                unsupported.ReadView,
+                InitialPolicy(),
+                _estimator
+            ));
+            Assert.Equal(
+                "TimelineStoreUnsupportedSchema",
+                createInvalid.Code
+            );
+            Assert.Equal(
+                unsupportedBytes,
+                File.ReadAllBytes(databasePath)
+            );
 
             HistoryTimelineOpenResult.UnsupportedSchema result =
                 Assert.IsType<HistoryTimelineOpenResult.UnsupportedSchema>(
@@ -171,7 +188,23 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                 missingPath,
                 missing.BranchRefId
             ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
+            string locatorPath = new HistoryTimelinePaths(
+                missingPath,
+                missing.BranchRefId
+            ).LocatorPath;
+            byte[] locatorBytes = File.ReadAllBytes(locatorPath);
             File.Delete(databasePath);
+
+            HistoryTimelineCreateResult.Invalid createInvalid = Assert.IsType<
+                HistoryTimelineCreateResult.Invalid
+            >(HistoryTimelineFactory.Create(
+                missing.ReadView,
+                InitialPolicy(),
+                _estimator
+            ));
+            Assert.Equal("TimelineStoreSlotMissing", createInvalid.Code);
+            Assert.False(File.Exists(databasePath));
+            Assert.Equal(locatorBytes, File.ReadAllBytes(locatorPath));
 
             HistoryTimelineOpenResult.Invalid result = Assert.IsType<
                 HistoryTimelineOpenResult.Invalid
@@ -247,6 +280,19 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                 """
                 DELETE FROM policies;
                 """
+            );
+            byte[] missingPolicyBytes = File.ReadAllBytes(databasePath);
+            HistoryTimelineCreateResult.Invalid createInvalid = Assert.IsType<
+                HistoryTimelineCreateResult.Invalid
+            >(HistoryTimelineFactory.Create(
+                missingPolicy.ReadView,
+                InitialPolicy(),
+                _estimator
+            ));
+            Assert.Equal("PartitionPolicyUnavailable", createInvalid.Code);
+            Assert.Equal(
+                missingPolicyBytes,
+                File.ReadAllBytes(databasePath)
             );
             HistoryTimelineReaderOpenResult.Invalid invalid = Assert.IsType<
                 HistoryTimelineReaderOpenResult.Invalid
@@ -1067,6 +1113,17 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             default:
                 throw new InvalidOperationException(corruption);
         }
+
+        byte[] corruptedBytes = File.ReadAllBytes(databasePath);
+        HistoryTimelineCreateResult.Invalid createInvalid = Assert.IsType<
+            HistoryTimelineCreateResult.Invalid
+        >(HistoryTimelineFactory.Create(
+            journal.ReadView,
+            InitialPolicy(),
+            _estimator
+        ));
+        Assert.Equal("TimelineStoreInvalid", createInvalid.Code);
+        Assert.Equal(corruptedBytes, File.ReadAllBytes(databasePath));
 
         HistoryTimelineOpenResult.Invalid opened = Assert.IsType<
             HistoryTimelineOpenResult.Invalid
