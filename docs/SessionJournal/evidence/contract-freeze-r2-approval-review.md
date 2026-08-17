@@ -21,7 +21,7 @@ real-provider content quality、physical SQLite/RBF bytes与assembly binary ABI�
 |:--|:--|:--|
 | Tier A logical raw/recovery wire | Conditional Go | 锁住retired raw ID `12`，并补齐剩余unique body shape的independent literal goldens |
 | Tier B blanket approval | Defer | 改为逐owner/current-generation裁决；先精确列slot、identifier与operator action |
-| Store SQLite V2 logical wire | Conditional Go | 文档精确列出logical schema/catalog/canonical record边界；不冻结SQLite physical bytes |
+| Store SQLite V2 logical wire | Defer | 现有fingerprint与validator足以实现/验证，但批准前仍缺独立exact logical-schema appendix；不冻结SQLite physical bytes |
 | Rewriter five protocol axes | Partial Go | 只批准五个exact identifier与pre-route/pre-dispatch mismatch，不顺带冻结provider输出实现 |
 | Completion connections V1 | Go | exact numeric V1、bounds、source rules、fingerprint/secret boundary与no-dual-reader |
 | Galatea HTTP/SSE V1 | Go | tracked server/browser协议；operator config与real provider只阻塞deployment，不阻塞wire批准 |
@@ -50,7 +50,7 @@ focused与SessionJournal full分别通过；最终SessionJournal suite为461/461
 
 - Route manifest锁identifier UTF-8、route count、concurrency、timeout与maximum output token边界；
 - AgentControl profile锁profile id、canonical profile/admission bytes、registry count与id/runtime uniqueness；
-- 只增加tests，不增加schema framework、compatibility reader或production option。
+- 以tests锁定边界，并只引入下列两项最窄producer/reader修复；不增加schema framework、compatibility reader或production option。
 
 实现commit：
 
@@ -111,7 +111,9 @@ exact source `cd966fc7fddfa6acbda6f80431cf9b588177d969`已完成：
 ### 4.2 Current isolated inventory
 
 inventory root为`/tmp/atelia-ap-inventory.HC3k5g/`，SDK `.NET 10.0.110`，Linux WSL2 x86_64。tool
-`Program.cs` / `.csproj` SHA-256仍为`8a4f233d...e44b6f7` / `4659c618...5aafa4`；tool与S/T/O/C/G/H
+`Program.cs` / `.csproj` SHA-256仍为
+`8a4f233dc5a4a2c5a8cd94a5611907b653f7583a54cd2ee6dcf53a967e44b6f7` /
+`4659c618b6dba7701e58431487c416c01bb65d466be3c2b49e5a14bb855aafa4`；tool与S/T/O/C/G/H
 分别isolated restore/build 0W/0E。每次tool内部double-generation与每assembly run1/run2外层比较均byte-identical。
 
 current totals为901 effective-public types / 9,419 logical API rows / 2,123 construction lines；六assembly的
@@ -133,13 +135,16 @@ renewal run root为`/tmp/atelia-ap-renewal.cbuszS/`；machine summary是
 - scaffold、四owner init、Timeline sync、asset provision、recipe compose/put、owner inspect/verify均成功；
 - main scaffold的route id是exact 128 strict UTF-8 bytes，包含non-ASCII、LF与backslash，并贯穿production
   create/encode/decode/write/read/decode；普通Admission为353 bytes、profile为548 bytes，不能冒充64 KiB边界；
-- 三项scaffold source assets及compose后的四项operator assets在其消费前后byte-exact不变；
+- 三项scaffold source assets在init/sync/provision workflow前后exact；compose加入recipe后，四项operator assets
+  到put/owner/repeat/final gates结束仍byte-exact不变；
 - repeat-init与standalone Timeline create都返回ready/already-exists，各自13-file repository snapshot前后exact；
 - 每个product CLI都在`bwrap --unshare-net`内执行；actual Galatea root在namespace内由tmpfs遮蔽，只有已批准
   legacy export单文件映射到中性输入路径；21个product stderr合计0 bytes，provider/call-log artifacts为0。
 
-隔离harness在产品运行前校准过只读mount target与`/dev`，并在四条成功import/validate之后修正了一条旧事实
-断言；没有覆盖或重跑已成功的imports。完整calibration保存在run root。current rebuild的product semantic failure为0。
+隔离harness有两次只读mount-target pre-product失败；另一次product import在`Guid.NewGuid()`阶段因缺`/dev`
+失败，但repository尚未创建，stderr独立保留。补齐device mount后的final-gate 21个product stderr均为0；四条成功
+import/validate之后还修正了一条旧事实断言，没有覆盖或重跑已成功的imports。完整calibration保存在run root。
+current rebuild的product semantic failure为0。
 该证据不含provider factory counter，所以只承诺禁网、命令集不含online/materialize及artifact扫描为0；不把它
 夸大成真实provider integration。
 
@@ -154,14 +159,16 @@ closure、统一gates与package review完成后，用户仍需明确选择：
 当前推荐批准边界是：
 
 - Tier A logical raw/recovery wire；不含physical RBF bytes；
+- Rewriter五个exact protocol axes；不扩展到provider renderer/output实现；
 - Completion connections V1、Route manifest V1、AgentControl profile V1、Galatea HTTP/SSE V1；
-- RecapGrid CLI outer envelope与Store `inspect/verify/export/reset` ledger，以及表中独立versioned reports；
-- Tier D表中named-role source compatibility；不含blanket exported surface或binary ABI。
+- RecapGrid CLI outer envelope与Store `inspect/verify/export/reset` ledger；
+- Tier D §2.3 exact named-role source compatibility；不含candidate navigation categories、blanket exported surface或binary ABI。
 
 当前推荐继续Defer：blanket Tier B、History/Cadence/Control损坏或旧代状态的统一operator action、完整root-config
-field language、非Store CLI command的全部detail/status、五个Rewriter轴之外的provider renderer/protocol，以及
-任何physical SQLite/RBF determinism。Store SQLite V2 logical schema与Rewriter五个exact protocol轴可以作为
-Tier B中的独立sub-surface另行批准，但不应借此把整个Tier B标成frozen。
+field language、所有independent reports的完整field/status language、非Store CLI command的全部detail/status、
+Store SQLite V2 exact logical schema appendix、五个Rewriter轴之外的provider renderer/protocol，以及任何physical
+SQLite/RBF determinism。Rewriter五个exact protocol轴可以作为Tier B中的独立sub-surface另行批准，但不应借此
+把整个Tier B标成frozen。
 
 若创建tag，推荐让tag指向包含approval contract/evidence的docs commit，并在annotated message中固定真正经过
 final code gates的source candidate `cd966fc7`、获批Tier及明确non-promises。tag不得移动。

@@ -58,21 +58,34 @@ isolated tracked archive重新生成，两层byte stability均通过，且逐ass
 相对R0为`+10 types / -17 API rows / -48 construction lines`。count/hash用于精确识别candidate，不能把下表
 未列出的export自动解释为stable role。
 
-### 2.2 Supported roles与non-promises
+### 2.2 Candidate navigation map（非批准承诺）
 
-| Owner | Candidate supported roles | Explicit non-promise / internal boundary |
+下表帮助定位current owner API，但不是Tier D source-compatibility allowlist。只有§2.3明确列出的named roles拟进入
+本轮批准；下表其余大类继续是candidate navigation。
+
+| Owner | Candidate navigation categories | Explicit non-promise / internal boundary |
 |:--|:--|:--|
 | S | engine create/open/runtime binding；desired-setup reconciliation；exact-head `SendAsync`/`ResumeAsync`；`ExecutePendingToolToBoundaryAsync`；`PrepareContextLifecycleMaintenanceAsync`；`AbandonFailedTurn`/`RewindLatestCompletedTurn`；read-only/offline/audit；legacy import；typed recovery、bounded planning/recent/pop；external `ICoherentContextCandidateSource`与`ISessionContextLifecycleCoordinator`及其合法output variants | test hook、arbitrary raw payload escape、owner-issued internal body、pending-boundary result construction、selected-lineage snapshot implementation、result record synthesis不是support目标 |
 | T | Timeline create/open/read/coordinator；policy与partition input；descriptor/canonical codec；maintenance/operator result；external `IHistoryUnitLoadEstimator`与`HistoryUnitLoadMeasurement` construction | SQLite/path/syscall helper、test persistence hook、`BoundHistorySegmentRange`与`HistorySegmentDescriptorFactory` owner-local assembly |
 | O | fixed O200k estimator implementation与stable estimator ID | tokenizer/renderer implementation detail |
 | C | cadence policy/head、factory/coordinator、reserve/seal与maintenance result | durable syscall/codec helper及owner-issued state construction |
-| G | Abstractions consumer input/value；Control/Store/Manager/Getter/Runtime/Online/AgentControl owner APIs；external `IRecapCellBatchExecutor`及全部ordinary outcome/batch results；external `IRecapCompletionInvoker`、`IRecapCompletionRouteResolver`、`IRecapCompletionTelemetry`及其必要input/output shape | source-module mechanics、diagnostic/test shape；Manager/Getter/Online owner-issued output的argument construction/mutation不承诺；telemetry event只由Runtime签发；不建立cross-owner generic result family |
+| G | Abstractions consumer input/value；Control/Store/Manager/Getter/Runtime/Online/AgentControl owner APIs；external `IRecapCellBatchExecutor`及全部ordinary outcome/batch results；external `IRecapCompletionInvoker`、`IRecapCompletionRouteResolver`、`IRecapCompletionTelemetry`及其必要input/output shape | source-module mechanics、diagnostic/test shape；Manager/Getter/Online owner-issued output的argument construction/mutation不承诺；supported telemetry flow由Runtime签发，external event construction不属于support promise；不建立cross-owner generic result family |
 | H | first-party route/config composition、Host lifetime/factory、telemetry snapshot read；standalone injectable telemetry/collector；Host composition需要的`ICompletionClientFactory`、`ICompletionClient`与`CompletionConnectionConfig` named shape | 不把Completion assembly的其他export、duplicate syntax reader、lazy registry或host-owned mutable collector identity/materialization state升级为承诺 |
 
-普通consumer可以依赖上表role中的public inputs、factories、handles、readable results与documented external implementer
-seams；不得仅因reflection发现exported symbol，就假设其constructor、record clone、diagnostic text或assembly-qualified
-identity是冻结承诺。candidate批准前仍要求consumer clean rebuild；批准后的breaking support-role变化必须形成新的
-candidate与显式policy，不通过compatibility wrapper或普通consumer `InternalsVisibleTo`掩盖。
+### 2.3 Approval-scoped exact named roles
+
+| Owner | Exact role/member | Transitive public shape与oracle |
+|:--|:--|:--|
+| S | `ICoherentContextCandidateSource.SelectAsync/MaterializeAsync`；`ISessionContextLifecycleCoordinator.PrepareAsync` | selection七个current status、materialization `Materialized/Stale/Busy/Disposed/Invalid`、lifecycle `Ready/Backpressure/Unavailable/RawHistoryAuthorized`及其public request/descriptor/candidate/result shape；[nonfriend oracle](../../../../tests/SessionJournal.PublicSurface.Tests/SessionJournalNamedRoleTests.cs) |
+| T/O | `IHistoryUnitLoadEstimator.Id/Measure`、`HistoryUnitLoadMeasurement`；`O200kBaseHistoryUnitLoadEstimator`与`EstimatorId` | external estimator可构造measurement，O assembly只export fixed estimator；[nonfriend oracle](../../../../tests/SessionJournal.HistoryTimeline.PublicSurface.Tests/HistoryTimelinePublicSurfaceTests.cs) |
+| G Manager | `IRecapCellBatchExecutor.ExecuteAsync` | `RecapCellBatchExecutionResult.Completed/RejectedBeforeDispatch`与`RecapCellExecutionOutcome.Updated/KeepUnchanged/Failed/NotStartedDueToCallerCancellation`；[nonfriend oracle](../../../../tests/SessionJournal.RecapGrid.Manager.PublicSurface.Tests/ManagerPublicSurfaceTests.cs) |
+| G Runtime | `IRecapCompletionRouteResolver.Resolve`、`IRecapCompletionInvoker.ProviderId/ApiSpecId/InvokeAsync`、`IRecapCompletionTelemetry.Record` | route resolution `Bound/Unavailable/Invalid`、minimal legal `CompletionResult`与telemetry event readable input；[nonfriend oracle](../../../../tests/SessionJournal.RecapGrid.Runtime.PublicSurface.Tests/PublicSurfaceTests.cs) |
+| H + named Completion dependency | `ICompletionClientFactory.Create(CompletionConnectionConfig) -> ICompletionClient`；`RecapGridRuntimeHost.Create`、`RecapGridCompletionHost.Create`与其exact inspect/bind/snapshot flows | 只承诺linked oracle实际编译的named cross-assembly dependency，不承诺Completion assembly其余export；[nonfriend oracle](../../../../tests/SessionJournal.RecapGrid.Hosting.PublicSurface.Tests/PublicSurfaceTests.cs) |
+
+普通consumer只能把本节的exact role/member及其linked transitive shape视为拟批准support promise；§2.2的owner API
+大类只是导航。不得仅因reflection发现exported symbol，就假设其constructor、record clone、diagnostic text或
+assembly-qualified identity已冻结。candidate批准前仍要求consumer clean rebuild；批准后的breaking named-role变化
+必须形成新的candidate与显式policy，不通过compatibility wrapper或普通consumer `InternalsVisibleTo`掩盖。
 
 ## 3. Tier A raw/recovery wire inventory
 
@@ -124,7 +137,7 @@ reconstructor/recovery tests。未来Tier A breaking change必须先给出raw-pr
 | History ledger | `derived/history-timeline/v2/refs/<ref>/timelines/<timelineId>.sqlite`；application id `0x41544854`、Schema V2 | exact pragma、6 tables+6 triggers、metadata scope/head hash/counts、canonical policy/row、selected path与Merkle；normal open bounded、maintenance full verify | unsupported typed；backup/restore/reprovision；existing create在同一exclusive lease内验证head与active policy后才`AlreadyExists` |
 | Cadence | `control/recap-grid/v1/refs/<ref>/cadence/cadence.json`；`atelia.session-journal.recap-grid.cadence.v1` | 2..4,096 bytes、canonical exact；Ref/generation/domain digest与expected Timeline policy；fd-relative publish | stale/busy/invalid/indeterminate typed；不fallback到Timeline或active config猜测 |
 | Control | `control/recap-grid/v1/refs/<ref>/timelines/<timelineId>/control.json`；content `schemaVersion=2` | 2 bytes..32 MiB、strict whole JSON；whole head/state digest、canonical closure、bootstrap、definitions/recipes与receipts | strict non-V2 discriminator typed Unsupported；V2 malformed Invalid；backup/restore/reinitialize，无silent migration |
-| Grid Store | `derived/recap-grid/v1/grid.sqlite`；application id `0x41544752`、Schema V2 | exact pragma/catalog、single metadata identity、canonical payload+indexed columns/FK/counts；transactional writes与physical reset witness | future version优先typed Unsupported；V2 corruption Invalid/Unhealthy；explicit reset/reprovision，不auto-repair |
+| Grid Store | `derived/recap-grid/v1/grid.sqlite`；application id `0x41544752`、Schema V2 | exact pragma/catalog、single metadata identity、canonical payload+indexed columns/FK/counts；transactional writes与physical reset witness；implementation/verification candidate，尚未形成approval-grade exact logical-schema appendix | future version优先typed Unsupported；V2 corruption Invalid/Unhealthy；explicit reset/reprovision，不auto-repair；approval Defer |
 | Rewriter | IDs durable in Control Family/Definition：runtime `text-runtime-v3`、output `atelia.recap.output.v3`、input `atelia.recap.input.v1`、prior `atelia.recap.prior.v1`、history `atelia.history.segment.v1` | 五个独立protocol轴在route/dispatch前exact preflight；provider output仍是Completion block shape | 任一mismatch为`ProtocolUnavailable`且provider call为0；不合并为suite ID或兼容grammar |
 
 History/Store metadata version、head/digest/count、indexed columns等是corruption/scope/query proof，不是待删双authority。
@@ -147,10 +160,10 @@ current companion state拼成混合generation。raw append后的rollback必须ra
 | Completion connections | Completion-owned numeric `v:1`；1 MiB、depth 8、1..256 entries；id/env 128 UTF-8 bytes、endpoint 4 KiB、secret 64 KiB；wire endpoint exactly-one、API key at-most-one | strict syntax与owner-local path/no-follow分层；resolved `BaseAddress`是non-secret且进入Completion durable connection fingerprint；API key（inline或env-resolved secret value）不进report/fingerprint；code+manifest停服成对迁移，无dual reader |
 | AgentControl profile | canonical `v:1`；profile id strict UTF-8 128 bytes；profile最多128 KiB；admission inclusive 2..64 KiB；registry 1..256且profile id/runtime identity分别exact unique | admission canonical bytes进入durable tool runtime identity；profile id与whole profile bytes不进入该identity；unknown/version/order/duplicate mismatch fail closed；public admission producer不会生成owner decoder拒绝的bytes |
 | Galatea root config | root raw integer `v:1`；1 MiB、最多256 users；profile files 1..256；strict duplicate/unknown/case/version/path rules；bootstrap no BOM | existing file不自动重写；停服迁移，no-version/future拒绝；users/routes/secrets不并入connections superset |
-| RecapGrid CLI JSON | `atelia.session-journal.recap-grid-cli.v1`、`{schema,command,status,detail}`、16 MiB final report；Store page 128 items / 2 MiB | outer envelope/fallback与Store `inspect/verify/export/reset` status/detail/exit ledger是freeze-ready machine contract；其他command的具体detail/status仍按owner result为candidate，不因共享printer自动冻结；human stdout/stderr/help与逐字diagnostic不冻结 |
-| Other reports | offline validation v2、legacy import v1、desired setup v1、history-load v1、legacy-root v2 | 各自versioned operator artifact；不因外层相似抽generic envelope |
+| RecapGrid CLI JSON | `atelia.session-journal.recap-grid-cli.v1`、`{schema,command,status,detail}`、16 MiB final report；Store page 128 items / 2 MiB | outer envelope/fallback与Store `inspect/verify/export/reset` [status/detail/exit ledger](../../evidence/contract-freeze-r2-r1-priority-review.md#52-stable-detail-ledger)是freeze-ready machine contract；其他command的具体detail/status仍按owner result为candidate，不因共享printer自动冻结；human stdout/stderr/help与逐字diagnostic不冻结 |
+| Other reports | offline validation v2、legacy import v1、desired setup v1、history-load v1、legacy-root v2 | 只登记current schema IDs；完整field/status/exit language未形成本轮approval ledger，继续Defer；不因外层相似抽generic envelope |
 | Galatea HTTP | complete group `/api/v1`；old `/api/*` exact 404；strict endpoint-local JSON，body 1 MiB；original/normalized message各64 KiB；typed status/success/error | server与cache-busted browser原子共部署；不保留route alias/redirect/dual DTO；breaking change需新candidate/path policy |
-| Galatea SSE | `status`、`reasoning-delta`、`text-delta`、`done`、`error`；strict UTF-8/LF与exact terminal；4 MiB preview + 5 MiB terminal = 9 MiB whole replay，最多16,384 events；subscriber 256 refs；browser 9 MiB connection/5 MiB frame | cap hit只internal suppress preview，不取消provider/durable；`done {recent:null}`后HTTP reconciliation；无Last-Event-ID、ack、heartbeat或dual grammar |
+| Galatea SSE | `status`、`reasoning-delta`、`text-delta`、`done`、`error`；strict UTF-8/LF与exact terminal；4 MiB preview + 5 MiB terminal = 9 MiB whole replay，最多16,384 events；subscriber 256 refs；browser 9 MiB connection/5 MiB frame | cap hit只internal suppress preview，不取消provider/durable；`done {recent:null}`后HTTP reconciliation；closed error codes与exact payload见[tracked SSE ledger](../../../../prototypes/Galatea/README.md#sse-v1-candidate)；无Last-Event-ID、ack、heartbeat或dual grammar |
 
 HTTP/SSE numeric budgets、terminal/reconciliation语义和first-party client在本candidate中是`Prototype locked`；只有用户
 明确批准Tier C后才能提升为stable V1。ignored operator config与real provider并非本文可读取的tracked contract；

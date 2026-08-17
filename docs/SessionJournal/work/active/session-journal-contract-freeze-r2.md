@@ -329,9 +329,10 @@ generic schema framework或新的public authority。
 
 ## 14. R5 candidate preparation
 
-exact source candidate为`a77ed16c1ddef949dc519811fde56600db38316e`。当前
-[Contract R2 candidate](../../current/contracts/session-journal-contract-r2.md)按Tier A-D分别记录支持角色、
-raw/companion/operational wire、compatibility/reprovision与non-promise；
+historical R5 source candidate为`a77ed16c1ddef949dc519811fde56600db38316e`。当时的contract map按Tier A-D
+记录支持角色、raw/companion/operational wire、compatibility/reprovision与non-promise；current
+[Contract R2 candidate](../../current/contracts/session-journal-contract-r2.md)已经前进到AP renewal source，
+不能用该current链接反向描述historical R5 source；
 [R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)记录完整commit map、inventory hashes与
 final gate ledger。
 
