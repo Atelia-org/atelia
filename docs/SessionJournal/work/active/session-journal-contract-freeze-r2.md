@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；priority code/operator cutover complete；CF-D-02 candidate implementation + combined R4 complete；R5 Pending  
+状态：Active；CF-D-02、CF-D-03、targeted CF-B与CF-C-01 package closure complete；CF-C-02 next；R5 Pending  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -213,7 +213,8 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | R0-C operational wire inventory | Complete | connections/config/CLI/HTTP/SSE support-boundary map |
 | R0 synthesis | Complete | [R0 current inventory](../../evidence/contract-freeze-r2-r0.md) |
 | R1 priority reviews | Complete | [CF-A-01 / CF-D-01 / CF-D-04 evidence](../../evidence/contract-freeze-r2-r1-priority-review.md) |
-| R1 remaining reviews | Pending | CF-D-03；CF-C-01/02；不重开raw/durable字段删除 |
+| R1 CF-D-03 / targeted CF-B / CF-C-01 | Complete | [commit-pinned implementation evidence](../../evidence/contract-freeze-r2-d03-cfb-cfc01-implementation.md)；保持Prototype candidate |
+| CF-C-02 companion evidence | Pending | 下一自然包：History/Store/Rewriter independent golden、fingerprint与classification evidence |
 | R2 priority plan lock | Complete | [priority implementation evidence](../../evidence/contract-freeze-r2-r2-priority-implementation.md) + [HTTP/SSE plan lock](../../evidence/contract-freeze-r2-http-sse-plan-lock.md) |
 | R3 priority implementation | Complete | 七个原子commits + test-only `87079eaa`；未增加compatibility/framework层 |
 | CF-D-01 operator cutover | Complete | live ignored V1 manifest；Idle/Prepared=0；actual-env Completion/Galatea provider-free load；independent PASS |
@@ -221,7 +222,10 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | CF-D-02-P0 / D02b-A0 decisions | Complete | 4,096 headers / 16 MiB payload / 4 MiB recent；256 KiB pop source / 2 MiB receipt；4+5=9 MiB SSE；preview suppression |
 | CF-D-02 R3 implementation | Complete | `66dd87fc` → `0f441f90`；bounded recent、minimal pop receipt、HTTP/SSE atomic server+browser cuts及P0 API hygiene tail |
 | CF-D-02 combined R4 | Complete | [commit-pinned implementation evidence](../../evidence/contract-freeze-r2-d02-r4-implementation.md)；candidate/Prototype locked，未作tier freeze |
-| R4 priority code gates | Complete | solution + owner/PublicSurface/CLI/wire/nonfriend gates；与D02的分时R4 evidence分别记录 |
+| CF-D-03 root config V1 | Complete | `23392263` + no-BOM tail `8f72cb66`；ignored operator manifest已停服迁移并通过provider-free load |
+| Targeted CF-B | Complete / stop | Galatea file DTO、History owner-local assembly、Hosting snapshot-only telemetry；不为inventory count继续扩大cut |
+| CF-C-01 Control classification | Complete | `8a2186f8`；future schema typed Unsupported与empty whole-state independent golden |
+| R4 priority code gates | Complete | solution + owner/PublicSurface/CLI/wire/nonfriend gates；D02与post-D02分时R4 evidence分别记录 |
 | R5 freeze closure | Pending | 分 tier 发布稳定性声明 |
 
 ## 9. R0 完成标准
@@ -255,10 +259,12 @@ R0 只有在以下条件同时满足时完成：
 
 - `CF-D-02a/02b` 已按shared `/api/v1` direct cut、strict endpoint DTO/error与closed SSE event language实施并完成
   combined R4；D02-P0先于wire cut关闭unbounded recent blocker，未引入通用JSON framework。
-- `CF-D-03` root config继续独立，不把users/routes/secrets/runtime policy并入connections superset。
-- broad `CF-B` 排在HTTP/SSE之后；P0-local result已删除无需求的record synthesis，但不为降低inventory count
-  继续改写既有output-only result algebra或抽跨owner hierarchy。
-- `CF-C` 继续补companion wire goldens/classification；不重开已证明承担corruption/query/CAS职责的
+- `CF-D-03` 已独立direct cut到root exact `v:1`并关闭production bootstrap BOM blocker；没有把users、routes、
+  secrets或runtime policy并入connections superset，也没有versionless/dual reader。
+- targeted `CF-B` 已完成Galatea file DTO、History owner-local proof/factory与Hosting snapshot-only telemetry三项
+  高置信cut，本轮到此停止；不为降低inventory count继续改写output result algebra或抽跨owner hierarchy。
+- `CF-C-01` 已稳定Control future-schema operator classification并增加empty whole-state independent golden；
+  下一自然包是`CF-C-02` History/Store/Rewriter evidence，不重开已证明承担corruption/query/CAS职责的
   head/digest/schema/index proof。
 - 所有outer wire bound新增composed encoded-byte relation gate；内层payload cap不能作为外层安全上限的证明。
 - CF-D-01 operator migration已完成；未来回滚仍必须停服并让code+manifest成对执行。
@@ -290,3 +296,14 @@ R0 只有在以下条件同时满足时完成：
 combined R4已完成，但这里只形成commit-pinned candidate。数值仍为`Prototype locked`，R5仍Pending；本计划
 没有批准stable/frozen tier，也没有引入pagination、cursor、truncation、Last-Event-ID、ack、dual grammar、
 generic schema framework或新的public authority。
+
+## 13. Post-D02 package closure与下一检查点
+
+[D03 / targeted CF-B / CF-C-01 implementation evidence](../../evidence/contract-freeze-r2-d03-cfb-cfc01-implementation.md)
+记录了后续原子提交、public inventory、root config/operator cutover、Control classification与分时验证。结论是：
+
+- root config exact V1/no-BOM、三项targeted support-role cut与Control classification均已形成package-local R4
+  complete的Prototype candidate；
+- broad CF-B停止，避免为了surface count进入result-family overreach；
+- 下一检查点覆盖`CF-C-02` History/Store/Rewriter independent evidence，再整理CF-C support map与R5 preparation；
+- R5继续Pending，本文不批准stable/frozen tier。
