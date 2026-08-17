@@ -426,7 +426,8 @@ jq -e --arg head "$raw_head" --arg ref "$ref_id" '
 runbook用来排除stale receipt的operator precondition。若command exit 1、report缺失或V2 gate失败，不能据此推断raw
 未变，也不得用旧`pre_setup_head`盲重试。必须重新只读inspect/validate current exact head、Idle boundary与governing
 setup，再以observed exact head幂等执行同一desired intent；不要rollback或手工补raw setup。Exact report contract与
-failure recovery见[Desired setup reconciliation report V2 candidate](../current/contracts/desired-setup-reconciliation-report-v2.md)。
+failure recovery见[Desired setup reconciliation report V2 approved contract](../current/contracts/desired-setup-reconciliation-report-v2.md)；
+其surface set 3 unified gates与annotated tag仍Pending，runbook存在不等于本轮activation已Passed。
 
 随后按以下顺序执行：
 

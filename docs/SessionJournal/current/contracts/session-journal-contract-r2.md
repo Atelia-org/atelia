@@ -1,9 +1,10 @@
 # SessionJournal Contract R2 — approved surfaces and candidate map
 
-状态：approved surface sets 1 + 2 anchored；未列入批准表的surface继续candidate/Defer  
+状态：approved surface sets 1 + 2 anchored；additive surface set 3 user-authorized / unified gates and tag Pending；未列入批准表的surface继续candidate/Defer  
 surface set 1 validated product source：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
 surface set 2 validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`；integration evidence：`6c5d3d50e68b84b9dca1391c16438a86cef418c1`  
-approval anchors：immutable v1 `session-journal-contract-r2-approved-surfaces-v1`；immutable v2 `session-journal-contract-r2-approved-surfaces-v2`（tag object `13111f3d` → `c4c6dd16`）  
+surface set 3 production source：`da3aa27af56add07bc70229120c522b8d24c99ba`；contract test evidence：`8a54e613f7c1a92bab3a4dd0806aad19411c41b1`  
+approval anchors：immutable v1 `session-journal-contract-r2-approved-surfaces-v1`；immutable v2 `session-journal-contract-r2-approved-surfaces-v2`（tag object `13111f3d` → `c4c6dd16`）；authorized v3 `session-journal-contract-r2-approved-surfaces-v3` pending creation  
 记录日期：2026-08-17
 
 本文是current SessionJournal、HistoryTimeline与RecapGrid contract的候选Shape/Rule入口。它把明确支持的
@@ -13,7 +14,10 @@ approval anchors：immutable v1 `session-journal-contract-r2-approved-surfaces-v
 producer/reader问题，并为新source重新完成solution、Node、inventory与provider-free disposable rebuild。用户已于
 2026-08-17批准本文件精确列出的surface set 1，随后又明确批准
 [additive surface set 2](../../evidence/contract-freeze-r2-approval-surface-set-2.md)中的Store SQLite V2与Galatea root
-config V1；annotated v2 tag已锚定exact approval ledger。其余surface仍是candidate/Defer，不能由任一tag顺带认证。
+config V1；annotated v2 tag已锚定exact approval ledger。用户之后又批准
+[additive surface set 3](../../evidence/contract-freeze-r2-approval-surface-set-3.md)中的Desired Setup reconciliation
+report V2 exact narrow scope；v3 unified gates与annotated tag仍Pending。其余surface仍是candidate/Defer，不能由
+任一tag或pending authorization顺带认证。
 
 源码、strict codec、tests和goldens仍是实现事实；本文不把所有CLR `public`、human diagnostic文本、provider行为、
 ignored operator state或历史candidate自动升级为兼容承诺。
@@ -33,7 +37,7 @@ ignored operator state或历史candidate自动升级为兼容承诺。
 |:--|:--|:--|
 | A | raw SessionJournal event/recovery wire | **Approved / Frozen R2 logical wire**；不含physical RBF bytes；未来breaking change必须另有version/migration/recovery plan |
 | B | Timeline/Cadence/Control/Store/Rewriter companion wire | **Partial**：批准Rewriter五个exact protocol axes与Store SQLite V2 exact logical-schema sub-surface；History/Cadence/Control仍Defer并按显式reprovision/no-dual-reader政策演进 |
-| C | config、CLI JSON、Galatea HTTP/SSE | **Partial Stable V1**：批准§5列出的Connections、Route、Profile、root config、HTTP/SSE及CLI outer+Store ledger；其余Defer |
+| C | config、CLI JSON、Galatea HTTP/SSE | **Partial Stable operational wire**：批准§5列出的Connections、Route、Profile、root config、HTTP/SSE、CLI outer+Store ledger，以及user-approved/tag-pending Desired Setup report V2 narrow scope；其余Defer |
 | D | S/T/O/C/G/H public .NET support roles | **Approved Stable source-compatible**：只承诺§2.3 exact named roles；不承诺blanket export或binary ABI |
 
 strict versioning与旧格式拒绝只说明hard-cut policy清晰，不等于backward compatibility。
@@ -169,13 +173,15 @@ current companion state拼成混合generation。raw append后的rollback必须ra
 | AgentControl profile | canonical `v:1`；profile id strict UTF-8 128 bytes；profile最多128 KiB；admission inclusive 2..64 KiB；registry 1..256且profile id/runtime identity分别exact unique | admission canonical bytes进入durable tool runtime identity；profile id与whole profile bytes不进入该identity；unknown/version/order/duplicate mismatch fail closed；public admission producer不会生成owner decoder拒绝的bytes |
 | Galatea root config | **Approved Stable V1**：[exact appendix](galatea-root-config-v1.md)锁required/optional/count、prompt precedence、config-directory-relative path与profile/route dependencies；root 1 MiB、prompt 1 MiB、profile 128 KiB；bootstrap no BOM/existing no-rewrite policy | product source `8c450bf0` + integration evidence `6c5d3d50`；无CWD/existence fallback、auto rewrite/move或confinement；由immutable surface-set-2 tag锚定；deployment/provider与appendix non-promises不在批准范围 |
 | RecapGrid CLI JSON | `atelia.session-journal.recap-grid-cli.v1`、`{schema,command,status,detail}`、16 MiB final report；Store page 128 items / 2 MiB | outer envelope/fallback与Store `inspect/verify/export/reset` [status/detail/exit ledger](../../evidence/contract-freeze-r2-r1-priority-review.md#52-stable-detail-ledger)是freeze-ready machine contract；其他command的具体detail/status仍按owner result为candidate，不因共享printer自动冻结；human stdout/stderr/help与逐字diagnostic不冻结 |
-| Other reports | offline validation v2、legacy import v1、[desired setup reconciliation V2 candidate](desired-setup-reconciliation-report-v2.md)、history-load v1、legacy-root v2 | desired-setup V2锁producer-only exact 10-field receipt与mutation-before-report recovery rule，但形成于surface-set-2 tag之后、approval Defer；其他report仍只登记schema IDs；不因外层相似抽generic envelope |
+| Other reports | offline validation v2、legacy import v1、[desired setup reconciliation V2 approved contract](desired-setup-reconciliation-report-v2.md)、history-load v1、legacy-root v2 | **User-approved Stable V2 narrow sub-surface / v3 anchor pending**：desired-setup锁producer-only exact 10-field receipt与raw-before-report fail-closed recovery；不承诺完整command inputs、JSON bytes/order、diagnostics或raw/report atomicity；其他report仍只登记schema IDs并继续Defer；不因外层相似抽generic envelope |
 | Galatea HTTP | complete group `/api/v1`；old `/api/*` exact 404；strict endpoint-local JSON，body 1 MiB；original/normalized message各64 KiB；typed status/success/error | server与cache-busted browser原子共部署；不保留route alias/redirect/dual DTO；breaking change需新candidate/path policy |
 | Galatea SSE | `status`、`reasoning-delta`、`text-delta`、`done`、`error`；strict UTF-8/LF与exact terminal；4 MiB preview + 5 MiB terminal = 9 MiB whole replay，最多16,384 events；subscriber 256 refs；browser 9 MiB connection/5 MiB frame | cap hit只internal suppress preview，不取消provider/durable；`done {recent:null}`后HTTP reconciliation；closed error codes与exact payload见[tracked SSE ledger](../../../../prototypes/Galatea/README.md#sse-v1-stable-protocol)；无Last-Event-ID、ack、heartbeat或dual grammar |
 
 Connections、Route manifest、AgentControl profile、Galatea HTTP/SSE与CLI outer+Store ledger是surface set 1中批准的
-Stable V1；[root config V1](galatea-root-config-v1.md)由additive surface set 2批准为Stable V1。Other reports与非Store
-CLI detail/status仍是candidate/Defer。root批准不引入dual interpretation，不把absolute/`..`改成非法或把repository
+Stable V1；[root config V1](galatea-root-config-v1.md)由additive surface set 2批准为Stable V1；
+[Desired Setup report V2](desired-setup-reconciliation-report-v2.md)的exact narrow receipt/recovery scope由additive
+surface set 3批准、等待v3 unified gates与tag。其他reports与非Store CLI detail/status仍是candidate/Defer。root批准
+不引入dual interpretation，不把absolute/`..`改成非法或把repository
 限制在config目录内；也不承诺password at rest、permissions、Kestrel、diagnostic、provider或deployment readiness。
 ignored operator config与real provider并非本文可读取的tracked contract；不得用历史local observation冒充current
 deployment或provider gate。
@@ -195,5 +201,7 @@ stable可观察语义是slow subscriber可单独断开、无不可靠in-band ove
   cross-owner result hierarchy或silent migration。
 - 数值bound变更必须重新验证最终encoded bytes，不能只从inner payload cap纸面推导outer envelope安全。
 - surface sets 1与2分别由immutable v1/v2 tags锚定；v2 tag exact object为`13111f3d`，dereferenced target为
-  `c4c6dd16`。未列出的surface、本机deployment readiness与real-provider readiness仍不在批准范围；
-  exact additive范围见[surface set 2 addendum](../../evidence/contract-freeze-r2-approval-surface-set-2.md)。
+  `c4c6dd16`。Surface set 3已获用户授权，但unified gates与v3 tag仍Pending，不移动或重释v1/v2。未列出的surface、
+  本机deployment readiness与real-provider readiness仍不在批准范围；exact additive范围见
+  [surface set 2 addendum](../../evidence/contract-freeze-r2-approval-surface-set-2.md)与
+  [surface set 3 addendum](../../evidence/contract-freeze-r2-approval-surface-set-3.md)。

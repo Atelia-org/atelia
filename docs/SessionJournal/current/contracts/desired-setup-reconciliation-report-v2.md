@@ -1,13 +1,15 @@
-# Desired setup reconciliation report V2 candidate
+# Desired setup reconciliation report V2 approved contract
 
-状态：**post-surface-set-2-tag candidate；approval Defer**  
+状态：**user-approved Stable V2 operational receipt；surface set 3 unified gates/tag Pending**  
 production source：`da3aa27af56add07bc70229120c522b8d24c99ba`  
 test evidence：`8a54e613f7c1a92bab3a4dd0806aad19411c41b1`  
-approval boundary：不属于immutable tag `session-journal-contract-r2-approved-surfaces-v2`
+approval boundary：不属于immutable v1/v2 tags；authorized v3 tag
+`session-journal-contract-r2-approved-surfaces-v3`尚未创建
 
 本文定义`reconcile-desired-setup --report-json` current producer输出的exact V2 machine-readable shape与operator
-consumption rule。它是producer-only report candidate，不是raw authority、recovery proof或通用CLI envelope；源码与owning
-tests仍是实现事实。
+consumption rule。用户已将[surface set 3 addendum](../../evidence/contract-freeze-r2-approval-surface-set-3.md#1-approved-additive-surface)
+列出的narrow scope批准为Stable V2 operational receipt；unified gates与annotated v3 tag仍Pending。它是producer-only
+report contract，不是raw authority、recovery proof或通用CLI envelope；源码与owning tests仍是实现事实。
 
 ## 1. Producer、schema与exact field set
 
@@ -83,7 +85,7 @@ Report不包含system-prompt text、base address、API key、env secret locator�
 它包含branch/connection/model/surface identifiers、raw head addresses与prompt hash；这些仍是operational metadata，prompt
 hash可能泄露相等性或可猜文本，不应自动视为可公开或无敏感性。
 
-本candidate不承诺：
+本contract不承诺：
 
 - `--system-prompt-file`的decode/BOM/newline/`Trim()`等input semantics、connections manifest language或其他CLI inputs；
 - prompt text、provider request/content、endpoint/secret、deployment success或real-provider readiness；
@@ -92,5 +94,6 @@ hash可能泄露相等性或可猜文本，不应自动视为可公开或无敏�
 - 将report作为raw mutation absence proof、recovery authority、governing setup authority或跨command generic envelope；
 - V1 compatibility、unknown-field tolerance、canonical JSON bytes或任何未列入本文的future field。
 
-该appendix形成于immutable surface-set-2 tag之后；测试通过、文档合入或first-party runbook消费都不会自动批准它。
-后续只能由显式user decision将其加入新的additive surface set，或继续Defer。
+该appendix形成于immutable surface-set-2 tag之后；用户随后已明确批准additive surface set 3的exact narrow scope，
+但该批准不移动或重释v1/v2 tags，也不把本节non-promises纳入承诺。Containing promotion docs、unified gates与
+annotated v3 tag仍Pending；tag创建前不得将本文件表述成已anchored，tag创建后也只能认证addendum精确列出的scope。

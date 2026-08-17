@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；approved surface sets 1 + 2 anchored；remaining Defer packages按新candidate继续  
+状态：Active；approved surface sets 1 + 2 anchored；surface set 3 user-authorized、unified gates/tag Pending；remaining Defer packages按新candidate继续  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -243,7 +243,8 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | ROOT-CONFIG-PATH-A0 | Approved via anchored ROOT-CONFIG-A1 | `0f0afb2c` config-directory-relative cut与absolute-target semantics进入surface set 2；无CWD fallback、auto move/create或confinement |
 | ROOT-CONFIG-A1 | Approved / anchored in additive surface set 2 | [root config V1 appendix](../../current/contracts/galatea-root-config-v1.md)；product source `8c450bf0`、integration `6c5d3d50`；secret/permissions/Kestrel/diagnostic/provider/deployment仍非承诺 |
 | AP-PROMOTE-V2 | Complete / tag anchored | promotion `a07de1f4`；Store54、Galatea162、solution38/4694、build0W/0E、HTTP/SSE Node、docs18/0与independent review PASS；inventory/rebuild NotRun且无需；v2 tag object `13111f3d` → `c4c6dd16`，v1 tag未移动 |
-| OTHER-REPORT-A1 | Candidate complete / approval Defer | post-v2-tag [desired setup report V2 appendix](../../current/contracts/desired-setup-reconciliation-report-v2.md)；production `da3aa27a` + test tail `8a54e613`；activation runbook exact consumer gate；不属于surface-set-2 tag |
+| OTHER-REPORT-A1 | Approved narrow scope / surface set 3 gates+tag Pending | post-v2-tag [desired setup report V2 appendix](../../current/contracts/desired-setup-reconciliation-report-v2.md)；production `da3aa27a` + test tail `8a54e613`；activation runbook exact consumer gate；用户已批准surface set 3，但不属于immutable surface-set-2 tag |
+| AP-PROMOTE-V3 | User-authorized / promotion docs in progress；unified gates+tag Pending | [surface set 3 addendum](../../evidence/contract-freeze-r2-approval-surface-set-3.md)只加入Desired Setup report V2 exact narrow scope；authorized tag `session-journal-contract-r2-approved-surfaces-v3`尚未创建；不得抄旧gate counts |
 
 ## 9. R0 完成标准
 
@@ -411,7 +412,7 @@ v2 tag object `13111f3d`已创建并dereference到`c4c6dd16`；v1 tag未移动�
 不反向移动tag；exact non-promises与tag record见
 [surface set 2 addendum](../../evidence/contract-freeze-r2-approval-surface-set-2.md)。
 
-## 20. Post-v2-tag OTHER-REPORT-A1 candidate
+## 20. Post-v2-tag OTHER-REPORT-A1 contract
 
 `da3aa27a`把desired-setup reconciliation report hard cut到schema V2与exact 10-field producer shape，`8a54e613`
 将test oracle收窄为field set/types/meaning而不冻结JSON order/bytes。[V2 appendix](../../current/contracts/desired-setup-reconciliation-report-v2.md)
@@ -421,5 +422,21 @@ ordering：exit 1或missing receipt不证明无raw mutation，operator必须重�
 
 [Activation runbook](../../operations/galatea-g2a-staging-acceptance.md#9-actual-activation-after-a-passed-disposable-candidate)
 现于读取`afterHead`前fail closed验证exact V2 schema、10-field set与types，并把create-only report限定为operator
-precondition；production writer仍可atomic overwrite。该candidate形成于immutable surface-set-2 tag之后，approval
-Defer，不反向扩大或移动v2 tag，也不修改historical approval evidence。
+precondition；production writer仍可atomic overwrite。该contract形成于immutable surface-set-2 tag之后，不反向扩大、
+移动或重释v2 tag，也不修改historical approval evidence。用户随后已批准其exact narrow scope进入additive surface
+set 3；完整CLI input/prompt-file、其他reports、JSON bytes/order/escaping、diagnostics、raw/report atomicity、
+provider/deployment仍不在批准范围。
+
+## 21. AP-PROMOTE-V3 authorization与tag前状态
+
+用户已明确批准[Desired Setup reconciliation report V2 appendix](../../current/contracts/desired-setup-reconciliation-report-v2.md)
+中由[surface set 3 addendum](../../evidence/contract-freeze-r2-approval-surface-set-3.md#1-approved-additive-surface)
+精确圈定的producer-only 10-field receipt、changed/head/SHA-256 meanings、success publication boundary与raw-before-report
+fail-closed recovery rule。Production source为`da3aa27a`，contract test evidence为`8a54e613`，candidate docs为
+`60904628`；本promotion不修改production/tests。
+
+该批准是surface set 2之上的单项additive surface set 3。Immutable v1/v2 tags继续认证各自原始targets，不能移动、
+重释或被本授权续期。Authorized tag exact name为`session-journal-contract-r2-approved-surfaces-v3`，但本轮统一验证、
+promotion commit pin、independent pre-tag review与annotated tag创建仍全部Pending；不得复制surface-set-1/2 historical
+counts充当本轮结果。Other reports、non-Store CLI、完整command input/prompt-file、JSON bytes/order/escaping、diagnostics、
+raw/report atomicity、provider/deployment继续Defer或明确non-promise。
