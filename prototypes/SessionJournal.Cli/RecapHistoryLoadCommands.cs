@@ -6,7 +6,7 @@ namespace Atelia.SessionJournal.Cli;
 
 internal static class RecapHistoryLoadCommands {
     private const string ReportSchema =
-        "atelia.session-journal.recap-history-load-calibration.v1";
+        "atelia.session-journal.recap-history-load-calibration.v2";
 
     internal static Task<int> RunAsync(string[] args) {
         ArgumentNullException.ThrowIfNull(args);
@@ -107,11 +107,7 @@ internal static class RecapHistoryLoadCommands {
                     )
                 ),
                 units,
-                MapBoundaries(measurement),
-                Array.AsReadOnly([
-                    CreateContinuousWindowDistribution(units, 20),
-                    CreateContinuousWindowDistribution(units, 24)
-                ])
+                MapBoundaries(measurement)
             );
         }
 
@@ -189,39 +185,6 @@ internal static class RecapHistoryLoadCommands {
                 )
         )
     ]);
-
-    private static RecapContinuousWindowLoadDistributionReport
-        CreateContinuousWindowDistribution(
-        IReadOnlyList<RecapHistoryLoadUnitReport> units,
-        int historyUnitWidth
-    ) {
-        var loads = new List<long>(
-            Math.Max(0, units.Count - historyUnitWidth + 1)
-        );
-        if (units.Count >= historyUnitWidth) {
-            long current = 0;
-            for (int index = 0;
-                 index < historyUnitWidth;
-                 index++) {
-                current = checked(current + units[index].Load);
-            }
-            loads.Add(current);
-            for (int index = historyUnitWidth;
-                 index < units.Count;
-                 index++) {
-                current = checked(
-                    current
-                    - units[index - historyUnitWidth].Load
-                    + units[index].Load
-                );
-                loads.Add(current);
-            }
-        }
-        return new RecapContinuousWindowLoadDistributionReport(
-            historyUnitWidth,
-            NearestRankDistribution.Create(loads)
-        );
-    }
 
     private static void PrintReport(
         RecapHistoryLoadCalibrationReport report,
@@ -343,9 +306,7 @@ internal sealed record RecapHistoryLoadCalibrationReport(
     IReadOnlyList<RecapHistoryLoadByKindReport> ByKind,
     RecapHistoryLoadUnitDistributionsReport UnitDistributions,
     IReadOnlyList<RecapHistoryLoadUnitReport> Units,
-    IReadOnlyList<HistoryLoadBoundaryProjectionReport> Boundaries,
-    IReadOnlyList<RecapContinuousWindowLoadDistributionReport>
-        ContinuousWindowLoadDistributions
+    IReadOnlyList<HistoryLoadBoundaryProjectionReport> Boundaries
 );
 
 internal sealed record RecapHistoryLoadTotalsReport(
@@ -393,9 +354,4 @@ internal sealed record HistoryLoadBoundaryProjectionReport(
     string Address,
     int CompletedHistoryUnitCountSinceBaseline,
     long AbsorbedHistoryLoadSinceBaseline
-);
-
-internal sealed record RecapContinuousWindowLoadDistributionReport(
-    int HistoryUnitWidth,
-    RecapNearestRankDistributionReport HistoryLoad
 );

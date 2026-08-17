@@ -65,9 +65,42 @@ public sealed class ProgramRecapHistoryLoadCommandTests : IDisposable {
         using JsonDocument report = JsonDocument.Parse(json);
         JsonElement root = report.RootElement;
         Assert.Equal(
-            "atelia.session-journal.recap-history-load-calibration.v1",
+            "atelia.session-journal.recap-history-load-calibration.v2",
             root.GetProperty("schema").GetString()
         );
+        var expectedProperties = new (
+            string Name,
+            JsonValueKind Kind
+        )[] {
+            ("baseline", JsonValueKind.String),
+            ("boundaries", JsonValueKind.Array),
+            ("branchName", JsonValueKind.String),
+            ("branchRefId", JsonValueKind.String),
+            ("byKind", JsonValueKind.Array),
+            ("capturedHead", JsonValueKind.String),
+            ("estimatorId", JsonValueKind.String),
+            ("schema", JsonValueKind.String),
+            ("totals", JsonValueKind.Object),
+            ("unitDistributions", JsonValueKind.Object),
+            ("units", JsonValueKind.Array)
+        };
+        Assert.Equal(
+            expectedProperties,
+            root.EnumerateObject()
+                .Select(static property => (
+                    property.Name,
+                    property.Value.ValueKind
+                ))
+                .OrderBy(
+                    static property => property.Name,
+                    StringComparer.Ordinal
+                )
+                .ToArray()
+        );
+        Assert.False(root.TryGetProperty(
+            "continuousWindowLoadDistributions",
+            out _
+        ));
         Assert.Equal(
             O200kBaseHistoryUnitLoadEstimator.EstimatorId,
             root.GetProperty("estimatorId").GetString()
@@ -187,40 +220,6 @@ public sealed class ProgramRecapHistoryLoadCommandTests : IDisposable {
                     "absorbedHistoryLoadSinceBaseline"
                 )
                 .GetInt64()
-        );
-
-        JsonElement[] windows = root
-            .GetProperty("continuousWindowLoadDistributions")
-            .EnumerateArray()
-            .ToArray();
-        Assert.Collection(
-            windows,
-            width20 => {
-                Assert.Equal(
-                    20,
-                    width20.GetProperty("historyUnitWidth").GetInt32()
-                );
-                Assert.Equal(
-                    5,
-                    width20
-                        .GetProperty("historyLoad")
-                        .GetProperty("count")
-                        .GetInt32()
-                );
-            },
-            width24 => {
-                Assert.Equal(
-                    24,
-                    width24.GetProperty("historyUnitWidth").GetInt32()
-                );
-                Assert.Equal(
-                    1,
-                    width24
-                        .GetProperty("historyLoad")
-                        .GetProperty("count")
-                        .GetInt32()
-                );
-            }
         );
     }
 
