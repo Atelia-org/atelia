@@ -558,29 +558,42 @@ public sealed partial class ControlVerticalTests {
     }
 
     [Fact]
-    public void Admission_PublicProducerRejectsBytesBeyondDecoderCap() {
+    public void Admission_PublicProducerAndDecoderShareExactInclusiveByteCap() {
+        const int MaximumCanonicalUtf8Bytes = 64 * 1024;
         FamilyDefinitionDigest[] families = AdmissionFamilyDigests(256);
         string[] capabilities = AdmissionCapabilityDigests(256);
         string[] escapingPrefixes = Enumerable.Range(0, 128)
             .Select(index => new string('\\', 126)
                 + index.ToString("X2", CultureInfo.InvariantCulture))
             .ToArray();
-        var nearBound = new RecapGridControlAdmission(
+        string[] exactPrefixes = [
+            .. escapingPrefixes[..118],
+            .. Enumerable.Range(0, 3).Select(index =>
+                new string('\\', 119)
+                    + $"X{index.ToString(CultureInfo.InvariantCulture)}")
+        ];
+        var exactBound = new RecapGridControlAdmission(
             RecapGridControlPermission.None,
             families,
             capabilities,
             [],
-            escapingPrefixes[..118],
+            exactPrefixes,
             0,
             0
         );
-        byte[] nearBoundBytes = nearBound.ToCanonicalBytes();
+        byte[] exactBoundBytes = exactBound.ToCanonicalBytes();
 
-        Assert.InRange(nearBoundBytes.Length, 60 * 1024, 64 * 1024);
+        Assert.Equal(MaximumCanonicalUtf8Bytes, exactBoundBytes.Length);
         Assert.Equal(
-            nearBoundBytes,
-            RecapGridControlAdmission.DecodeCanonical(nearBoundBytes)
+            exactBoundBytes,
+            RecapGridControlAdmission.DecodeCanonical(exactBoundBytes)
                 .ToCanonicalBytes()
+        );
+        string[] oneByteOverPrefixes = exactPrefixes.ToArray();
+        oneByteOverPrefixes[^1] += "x";
+        Assert.Equal(
+            exactPrefixes[^1].Length + 1,
+            oneByteOverPrefixes[^1].Length
         );
         Assert.Throws<ArgumentException>(() =>
             new RecapGridControlAdmission(
@@ -588,10 +601,37 @@ public sealed partial class ControlVerticalTests {
                 families,
                 capabilities,
                 [],
-                escapingPrefixes,
+                oneByteOverPrefixes,
                 0,
                 0
             ));
+    }
+
+    [Fact]
+    public void Admission_OwnsSourceCollectionsAndReturnedCanonicalBytes() {
+        FamilyDefinitionDigest[] families = AdmissionFamilyDigests(1);
+        string[] capabilities = AdmissionCapabilityDigests(1);
+        ContextHeaderCarrier[] carriers = [ContextHeaderCarrier.System];
+        string[] prefixes = ["case."];
+        var admission = new RecapGridControlAdmission(
+            RecapGridControlPermission.All,
+            families,
+            capabilities,
+            carriers,
+            prefixes,
+            1,
+            1
+        );
+        byte[] expected = admission.ToCanonicalBytes();
+
+        families[0] = new FamilyDefinitionDigest(new string('f', 64));
+        capabilities[0] = new string('e', 64);
+        carriers[0] = ContextHeaderCarrier.Action;
+        prefixes[0] = "mutated.";
+        byte[] exposed = admission.ToCanonicalBytes();
+        exposed[0] ^= 0xff;
+
+        Assert.Equal(expected, admission.ToCanonicalBytes());
     }
 
     [Fact]
