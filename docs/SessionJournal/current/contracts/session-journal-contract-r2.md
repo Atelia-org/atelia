@@ -1,15 +1,16 @@
-# SessionJournal Contract R2 candidate
+# SessionJournal Contract R2 — approved surfaces and candidate map
 
-状态：AP renewal candidate ready for user approval decision；逐Tier approval与tag Pending；**未声明任何tier stable/frozen，未创建tag**  
-source candidate：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
+状态：approved surface set 1；未列入批准表的surface继续candidate/Defer  
+validated product source：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
+immutable approval anchor：`session-journal-contract-r2-approved-surfaces-v1`  
 记录日期：2026-08-17
 
 本文是current SessionJournal、HistoryTimeline与RecapGrid contract的候选Shape/Rule入口。它把明确支持的
 .NET role、raw/companion/operational wire与upgrade policy放在同一张地图中，但只有
 [R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)记录了prior source `a77ed16c`的final gates；
 [approval review](../../evidence/contract-freeze-r2-approval-review.md)又关闭了freeze-specific证据缺口和两个最窄
-producer/reader问题，并为新source重新完成solution、Node、inventory与provider-free disposable rebuild。
-只有用户明确批准具体tier后，才可以把该tier改为stable/frozen或创建tag。
+producer/reader问题，并为新source重新完成solution、Node、inventory与provider-free disposable rebuild。用户已于
+2026-08-17批准本文件精确列出的surface set 1；其余surface仍是candidate/Defer，不能由同一tag顺带认证。
 
 源码、strict codec、tests和goldens仍是实现事实；本文不把所有CLR `public`、human diagnostic文本、provider行为、
 ignored operator state或历史candidate自动升级为兼容承诺。
@@ -25,12 +26,12 @@ ignored operator state或历史candidate自动升级为兼容承诺。
    recovery authority。
 5. 本candidate按四tier分别裁决，批准一个tier不自动批准其他tier：
 
-| Tier | Surface | Candidate policy |
+| Tier | Surface | R2 approval state / policy |
 |:--|:--|:--|
-| A | raw SessionJournal event/recovery wire | 最高兼容风险；R2无wire cut，未来breaking change必须另有migration/recovery plan |
-| B | Timeline/Cadence/Control/Store/Rewriter companion wire | pre-release hard cut；unsupported/legacy state显式拒绝或reprovision，不dual-read/silent migrate |
-| C | config、CLI JSON、Galatea HTTP/SSE | versioned direct cut；code、tracked first-party client与operator manifest按各自部署边界成对迁移 |
-| D | S/T/O/C/G/H public .NET support roles | 只承诺本节明确role；`public`本身不构成support或binary compatibility承诺 |
+| A | raw SessionJournal event/recovery wire | **Approved / Frozen R2 logical wire**；不含physical RBF bytes；未来breaking change必须另有version/migration/recovery plan |
+| B | Timeline/Cadence/Control/Store/Rewriter companion wire | **Partial**：只批准Rewriter五个exact protocol axes；其余Defer，仍按显式reprovision/no-dual-reader政策演进 |
+| C | config、CLI JSON、Galatea HTTP/SSE | **Partial Stable V1**：只批准§5列出的Connections、Route、Profile、HTTP/SSE及CLI outer+Store ledger；其余Defer |
+| D | S/T/O/C/G/H public .NET support roles | **Approved Stable source-compatible**：只承诺§2.3 exact named roles；不承诺blanket export或binary ABI |
 
 strict versioning与旧格式拒绝只说明hard-cut policy清晰，不等于backward compatibility。
 
@@ -60,8 +61,8 @@ isolated tracked archive重新生成，两层byte stability均通过，且逐ass
 
 ### 2.2 Candidate navigation map（非批准承诺）
 
-下表帮助定位current owner API，但不是Tier D source-compatibility allowlist。只有§2.3明确列出的named roles拟进入
-本轮批准；下表其余大类继续是candidate navigation。
+下表帮助定位current owner API，但不是Tier D source-compatibility allowlist。只有§2.3明确列出的named roles已进入
+surface set 1；下表其余大类继续是candidate navigation。
 
 | Owner | Candidate navigation categories | Explicit non-promise / internal boundary |
 |:--|:--|:--|
@@ -72,7 +73,7 @@ isolated tracked archive重新生成，两层byte stability均通过，且逐ass
 | G | Abstractions consumer input/value；Control/Store/Manager/Getter/Runtime/Online/AgentControl owner APIs；external `IRecapCellBatchExecutor`及全部ordinary outcome/batch results；external `IRecapCompletionInvoker`、`IRecapCompletionRouteResolver`、`IRecapCompletionTelemetry`及其必要input/output shape | source-module mechanics、diagnostic/test shape；Manager/Getter/Online owner-issued output的argument construction/mutation不承诺；supported telemetry flow由Runtime签发，external event construction不属于support promise；不建立cross-owner generic result family |
 | H | first-party route/config composition、Host lifetime/factory、telemetry snapshot read；standalone injectable telemetry/collector；Host composition需要的`ICompletionClientFactory`、`ICompletionClient`与`CompletionConnectionConfig` named shape | 不把Completion assembly的其他export、duplicate syntax reader、lazy registry或host-owned mutable collector identity/materialization state升级为承诺 |
 
-### 2.3 Approval-scoped exact named roles
+### 2.3 Approved stable exact named roles
 
 | Owner | Exact role/member | Transitive public shape与oracle |
 |:--|:--|:--|
@@ -82,9 +83,9 @@ isolated tracked archive重新生成，两层byte stability均通过，且逐ass
 | G Runtime | `IRecapCompletionRouteResolver.Resolve`、`IRecapCompletionInvoker.ProviderId/ApiSpecId/InvokeAsync`、`IRecapCompletionTelemetry.Record` | route resolution `Bound/Unavailable/Invalid`、minimal legal `CompletionResult`与telemetry event readable input；[nonfriend oracle](../../../../tests/SessionJournal.RecapGrid.Runtime.PublicSurface.Tests/PublicSurfaceTests.cs) |
 | H + named Completion dependency | `ICompletionClientFactory.Create(CompletionConnectionConfig) -> ICompletionClient`；`RecapGridRuntimeHost.Create`、`RecapGridCompletionHost.Create`与其exact inspect/bind/snapshot flows | 只承诺linked oracle实际编译的named cross-assembly dependency，不承诺Completion assembly其余export；[nonfriend oracle](../../../../tests/SessionJournal.RecapGrid.Hosting.PublicSurface.Tests/PublicSurfaceTests.cs) |
 
-普通consumer只能把本节的exact role/member及其linked transitive shape视为拟批准support promise；§2.2的owner API
+普通consumer只能把本节的exact role/member及其linked transitive shape视为stable source-compatibility promise；§2.2的owner API
 大类只是导航。不得仅因reflection发现exported symbol，就假设其constructor、record clone、diagnostic text或
-assembly-qualified identity已冻结。candidate批准前仍要求consumer clean rebuild；批准后的breaking named-role变化
+assembly-qualified identity已冻结。consumer仍需clean build；breaking named-role变化
 必须形成新的candidate与显式policy，不通过compatibility wrapper或普通consumer `InternalsVisibleTo`掩盖。
 
 ## 3. Tier A raw/recovery wire inventory
@@ -138,7 +139,7 @@ reconstructor/recovery tests。未来Tier A breaking change必须先给出raw-pr
 | Cadence | `control/recap-grid/v1/refs/<ref>/cadence/cadence.json`；`atelia.session-journal.recap-grid.cadence.v1` | 2..4,096 bytes、canonical exact；Ref/generation/domain digest与expected Timeline policy；fd-relative publish | stale/busy/invalid/indeterminate typed；不fallback到Timeline或active config猜测 |
 | Control | `control/recap-grid/v1/refs/<ref>/timelines/<timelineId>/control.json`；content `schemaVersion=2` | 2 bytes..32 MiB、strict whole JSON；whole head/state digest、canonical closure、bootstrap、definitions/recipes与receipts | strict non-V2 discriminator typed Unsupported；V2 malformed Invalid；backup/restore/reinitialize，无silent migration |
 | Grid Store | `derived/recap-grid/v1/grid.sqlite`；application id `0x41544752`、Schema V2 | exact pragma/catalog、single metadata identity、canonical payload+indexed columns/FK/counts；transactional writes与physical reset witness；implementation/verification candidate，尚未形成approval-grade exact logical-schema appendix | future version优先typed Unsupported；V2 corruption Invalid/Unhealthy；explicit reset/reprovision，不auto-repair；approval Defer |
-| Rewriter | IDs durable in Control Family/Definition：runtime `text-runtime-v3`、output `atelia.recap.output.v3`、input `atelia.recap.input.v1`、prior `atelia.recap.prior.v1`、history `atelia.history.segment.v1` | 五个独立protocol轴在route/dispatch前exact preflight；provider output仍是Completion block shape | 任一mismatch为`ProtocolUnavailable`且provider call为0；不合并为suite ID或兼容grammar |
+| Rewriter | IDs durable in Control Family/Definition：runtime `text-runtime-v3`、output `atelia.recap.output.v3`、input `atelia.recap.input.v1`、prior `atelia.recap.prior.v1`、history `atelia.history.segment.v1` | **Approved / Frozen R2 sub-surface**：五个独立protocol轴在route/dispatch前exact preflight；provider renderer/output实现不在批准范围 | 任一mismatch为`ProtocolUnavailable`且provider call为0；不合并为suite ID或兼容grammar |
 
 History/Store metadata version、head/digest/count、indexed columns等是corruption/scope/query proof，不是待删双authority。
 `a77ed16c`只让一份owner-local `SchemaEntry[]`驱动History create+verify；test-owned independent fingerprint保持外部
@@ -165,8 +166,8 @@ current companion state拼成混合generation。raw append后的rollback必须ra
 | Galatea HTTP | complete group `/api/v1`；old `/api/*` exact 404；strict endpoint-local JSON，body 1 MiB；original/normalized message各64 KiB；typed status/success/error | server与cache-busted browser原子共部署；不保留route alias/redirect/dual DTO；breaking change需新candidate/path policy |
 | Galatea SSE | `status`、`reasoning-delta`、`text-delta`、`done`、`error`；strict UTF-8/LF与exact terminal；4 MiB preview + 5 MiB terminal = 9 MiB whole replay，最多16,384 events；subscriber 256 refs；browser 9 MiB connection/5 MiB frame | cap hit只internal suppress preview，不取消provider/durable；`done {recent:null}`后HTTP reconciliation；closed error codes与exact payload见[tracked SSE ledger](../../../../prototypes/Galatea/README.md#sse-v1-candidate)；无Last-Event-ID、ack、heartbeat或dual grammar |
 
-HTTP/SSE numeric budgets、terminal/reconciliation语义和first-party client在本candidate中是`Prototype locked`；只有用户
-明确批准Tier C后才能提升为stable V1。ignored operator config与real provider并非本文可读取的tracked contract；
+Connections、Route manifest、AgentControl profile、Galatea HTTP/SSE与CLI outer+Store ledger是surface set 1中批准的
+Stable V1；root config、Other reports与非Store CLI detail/status仍是candidate/Defer。ignored operator config与real provider并非本文可读取的tracked contract；
 current renewal只做禁网、provider-free disposable rebuild，仍不得用历史local observation冒充deployment或provider gate。
 
 HTTP普通`{code,error}`中的existing machine code保持含义，但code namespace允许additive新值，first-party client必须有
@@ -183,5 +184,5 @@ stable可观察语义是slow subscriber可单独断开、无不可靠in-band ove
 - future direct cut不得增加versionless fallback、dual reader/writer、compatibility wrapper、generic parser options、
   cross-owner result hierarchy或silent migration。
 - 数值bound变更必须重新验证最终encoded bytes，不能只从inner payload cap纸面推导outer envelope安全。
-- stable/frozen tier、tag名称及本机deployment readiness均不由本文自行宣布；current批准边界与remaining gates见
-  [approval review](../../evidence/contract-freeze-r2-approval-review.md)。
+- approved/frozen surface set由本文件与immutable tag共同锚定；未列出的surface、本机deployment readiness与real-provider
+  readiness仍不在批准范围，remaining gates见[approval review](../../evidence/contract-freeze-r2-approval-review.md)。

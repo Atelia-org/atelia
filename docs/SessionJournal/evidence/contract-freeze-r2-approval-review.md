@@ -1,7 +1,8 @@
 # SessionJournal Contract Freeze R2 — approval review
 
-状态：AP closure、unified renewal gates与independent docs review **complete**；ready for user approval decision；未批准任何Tier，未创建tag  
+状态：AP closure、unified renewal gates与independent docs review **complete**；user approval recorded；surface set 1 anchored  
 source candidate：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
+approval anchor：`session-journal-contract-r2-approved-surfaces-v1`  
 review docs baseline：`fa9701dfd8f7be47f292625063bca4c75c9fb255`  
 记录日期：2026-08-17
 
@@ -148,30 +149,24 @@ current rebuild的product semantic failure为0。
 该证据不含provider factory counter，所以只承诺禁网、命令集不含online/materialize及artifact扫描为0；不把它
 夸大成真实provider integration。
 
-## 5. 仍需用户批准的外层决策
+## 5. 用户批准结果
 
-closure、统一gates与package review完成后，用户仍需明确选择：
+用户于2026-08-17批准主线程推荐的精确surface set与annotated tag。批准范围是：
 
-1. 哪些Tier或sub-surface声明为stable/frozen；未获批部分继续保持candidate/Prototype；
-2. 是否接受Tier D的named-role source compatibility，而不是完整public-symbol/binary ABI兼容；
-3. 是否创建annotated tag，以及tag名称。
-
-当前推荐批准边界是：
-
-- Tier A logical raw/recovery wire；不含physical RBF bytes；
-- Rewriter五个exact protocol axes；不扩展到provider renderer/output实现；
+- Tier A logical raw/recovery wire，Frozen R2；不含physical RBF bytes；
+- Rewriter五个exact protocol axes，Frozen R2 sub-surface；不扩展到provider renderer/output实现；
 - Completion connections V1、Route manifest V1、AgentControl profile V1、Galatea HTTP/SSE V1；
 - RecapGrid CLI outer envelope与Store `inspect/verify/export/reset` ledger；
 - Tier D §2.3 exact named-role source compatibility；不含candidate navigation categories、blanket exported surface或binary ABI。
 
-当前推荐继续Defer：blanket Tier B、History/Cadence/Control损坏或旧代状态的统一operator action、完整root-config
+用户接受继续Defer：blanket Tier B、History/Cadence/Control损坏或旧代状态的统一operator action、完整root-config
 field language、所有independent reports的完整field/status language、非Store CLI command的全部detail/status、
 Store SQLite V2 exact logical schema appendix、五个Rewriter轴之外的provider renderer/protocol，以及任何physical
 SQLite/RBF determinism。Rewriter五个exact protocol轴可以作为Tier B中的独立sub-surface另行批准，但不应借此
 把整个Tier B标成frozen。
 
-若创建tag，推荐让tag指向包含approval contract/evidence的docs commit，并在annotated message中固定真正经过
-final code gates的source candidate `cd966fc7`、获批Tier及明确non-promises。tag不得移动。
+annotated tag `session-journal-contract-r2-approved-surfaces-v1`指向包含本批准记录的promotion docs commit；tag
+message固定validated product source `cd966fc7`、批准范围及non-promises。该tag不得移动；未来变更使用新tag/version。
 
 初始approval docs commit为`3575bf30`；三位independent reviewer发现的事实与承诺范围问题由`8585d889`关闭，
 三位tail re-review均PASS。scoped docs checker为18 files / 0 diagnostics；all-tracked仅保留11条既有archive

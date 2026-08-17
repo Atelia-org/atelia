@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；AP closure、renewal gates与approval docs review complete；逐Tier approval/tag Pending  
+状态：Active；approved surface set 1 anchored；remaining Defer packages按新candidate继续  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -238,7 +238,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | AP renewal inventory | Complete | `cd966fc7` isolated S/T/O/C/G/H仍为901 / 9,419 / 2,123；逐assembly counts/hashes与R5 byte-identical；两层byte stability PASS |
 | AP renewal disposable rebuild | Complete | `cd966fc7` two fresh imports/validations、raw/assets exact、four-owner gates、repeat-init与standalone Timeline create；exact 128-byte mixed route贯穿scaffold；禁网/provider artifacts 0 |
 | AP approval docs review | Complete | `3575bf30` initial docs + `8585d889` scope/fact tail；三位independent tail re-review均PASS；scoped docs 18/0 |
-| Tier approval与tag | Pending | renewal gates与docs review完成后，由用户逐surface批准；未批准部分保持candidate/Prototype |
+| Tier approval与tag | Complete | user approved exact surface set 1；annotated tag `session-journal-contract-r2-approved-surfaces-v1`锚定promotion docs commit与validated source `cd966fc7` |
 
 ## 9. R0 完成标准
 
@@ -357,4 +357,5 @@ closure已经完成：
 current source candidate为`cd966fc7fddfa6acbda6f80431cf9b588177d969`。它没有public type/member、raw event、
 durable schema version、HTTP/SSE grammar或CLI envelope delta，但有production implementation/accepted-language修正，
 因此已重新运行inventory、solution/Node与provider-free disposable rebuild。所有renewal gates与independent docs
-review均通过；candidate现已到用户逐surface批准检查点，但在明确批准前仍不宣布stable/frozen或创建tag。
+review均通过；用户已批准exact surface set 1并授权annotated tag。未批准surface继续candidate/Defer；后续工作不得
+移动该tag或用新HEAD反向改写已批准基线。
