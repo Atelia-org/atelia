@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；R5 final gates complete，candidate ready for approval；逐Tier approval/tag Pending  
+状态：Active；AP closure与renewal candidate gates complete，approval docs review pending；逐Tier approval/tag Pending  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -232,6 +232,13 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | R5 final code gates | Complete | `a77ed16c` solution 37 projects / 4,629 passed / 0 failed / 0 skipped；build 0W/0E；11 PublicSurface、Walking 27、Galatea.RG 7与HTTP/SSE Node均green |
 | R5 disposable rebuild | Complete | `a77ed16c` two fresh imports、offline/raw equality、four-owner gates、repeat-init与standalone Timeline create 13-file snapshots exact；禁网/provider artifacts 0 |
 | R5 docs review / approval / tag | Ready for approval；approval/tag Pending | `3e9a4b8d`关闭两位initial reviewer findings，两位tail re-review均PASS；等待用户逐Tier批准 |
+| AP approval review | Complete | [approval review](../../evidence/contract-freeze-r2-approval-review.md)；Tier A/B/C/D拆分Go/Defer，发现raw literal、Route/Profile与named-role closure缺口 |
+| AP-A / AP-C1 / AP-D1 closure | Complete | `e9b966e7`→`cd966fc7`；independent review findings由`02be1510`、`5e458238`、`d8517bac`、`c50356c0`、`cd966fc7`关闭 |
+| AP renewal solution/Node gates | Complete | source candidate `cd966fc7`；38 projects / 4,677 passed；12 PublicSurface 40/40；build 0W/0E；HTTP/SSE Node各1/1 |
+| AP renewal inventory | Complete | `cd966fc7` isolated S/T/O/C/G/H仍为901 / 9,419 / 2,123；逐assembly counts/hashes与R5 byte-identical；两层byte stability PASS |
+| AP renewal disposable rebuild | Complete | `cd966fc7` two fresh imports/validations、raw/assets exact、four-owner gates、repeat-init与standalone Timeline create；exact 128-byte mixed route贯穿scaffold；禁网/provider artifacts 0 |
+| AP approval docs review | In progress | current contract、approval evidence与router完成事实校准后，执行双人independent review；不在review前宣布freeze |
+| Tier approval与tag | Pending | renewal gates与docs review完成后，由用户逐surface批准；未批准部分保持candidate/Prototype |
 
 ## 9. R0 完成标准
 
@@ -334,3 +341,19 @@ fresh isolated inventory为901 effective-public types、9,419 logical API rows�
 同一source candidate的final solution/owner/PublicSurface、HTTP/SSE Node、provider-free disposable rebuild、docs checker、
 source diff与independent review均已complete，candidate现为`ready for approval`。ignored operator config和real provider
 本轮明确`NotRun`，不能拿历史local observation代替current gate；stable/frozen tier与tag必须由用户另行批准。
+
+## 15. AP approval closure与renewal candidate
+
+[approval review](../../evidence/contract-freeze-r2-approval-review.md)把blanket Tier批准拆成逐surface承诺。三项小型
+closure已经完成：
+
+- AP-A登记raw ID `11/12`均retired，并为全部unique raw body shapes增加test-owned exact literals；
+- AP-C1补齐Route/Profile/Admission accepted-language gates，并修复Route JSON-escaped/source-UTF8计数漂移、
+  Control Admission超过64 KiB时producer/reader不闭合与culture-sensitive排序；
+- AP-D1新增无IVT的SessionJournal PublicSurface project，把external source/lifecycle、estimator、executor、
+  runtime/hosting composition改为named-role source oracle，同时排除owner-issued output construction。
+
+current source candidate为`cd966fc7fddfa6acbda6f80431cf9b588177d969`。它没有public type/member、raw event、
+durable schema version、HTTP/SSE grammar或CLI envelope delta，但有production implementation/accepted-language修正，
+因此已重新运行inventory、solution/Node与provider-free disposable rebuild。所有renewal gates通过；在approval docs
+完成独立review前仍不把candidate宣布为stable/frozen，也不请求用户创建tag。

@@ -1,13 +1,15 @@
 # SessionJournal Contract R2 candidate
 
-状态：R5 candidate **ready for approval**；逐Tier approval与tag Pending；**未声明任何tier stable/frozen，未创建tag**  
-source candidate：`a77ed16c1ddef949dc519811fde56600db38316e`  
+状态：AP renewal candidate ready for docs review；逐Tier approval与tag Pending；**未声明任何tier stable/frozen，未创建tag**  
+source candidate：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
 记录日期：2026-08-17
 
 本文是current SessionJournal、HistoryTimeline与RecapGrid contract的候选Shape/Rule入口。它把明确支持的
 .NET role、raw/companion/operational wire与upgrade policy放在同一张地图中，但只有
-[R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)记录的final gates与独立复核已经通过，
-本文现为`ready for approval`；只有用户明确批准具体tier后，才可以把该tier改为stable/frozen或创建tag。
+[R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)记录了prior source `a77ed16c`的final gates；
+[approval review](../../evidence/contract-freeze-r2-approval-review.md)又关闭了freeze-specific证据缺口和两个最窄
+producer/reader问题，并为新source重新完成solution、Node、inventory与provider-free disposable rebuild。
+只有用户明确批准具体tier后，才可以把该tier改为stable/frozen或创建tag。
 
 源码、strict codec、tests和goldens仍是实现事实；本文不把所有CLR `public`、human diagnostic文本、provider行为、
 ignored operator state或历史candidate自动升级为兼容承诺。
@@ -37,8 +39,10 @@ strict versioning与旧格式拒绝只说明hard-cut policy清晰，不等于bac
 ### 2.1 Exact compiled inventory
 
 inventory口径是effective-public type，以及其declared-only public/protected/protected-internal logical API member。
-construction inventory另清点visible constructor、`init`/`set`与record clone。下表由exact source candidate的
-isolated tracked archive生成；复现方法、tool identity与完整hash见
+construction inventory另清点visible constructor、`init`/`set`与record clone。下表已从current `cd966fc7`的
+isolated tracked archive重新生成，两层byte stability均通过，且逐assembly counts/hashes与prior R5
+`a77ed16c` byte-identical。复现方法、tool identity与current run见
+[approval review](../../evidence/contract-freeze-r2-approval-review.md)；prior方法全文见
 [R5 evidence §3](../../evidence/contract-freeze-r2-r5-candidate.md#3-current-public-inventory)。
 
 | Assembly | Alias | Types | API rows | API SHA-256 | Construction lines | Construction SHA-256 |
@@ -58,12 +62,12 @@ isolated tracked archive生成；复现方法、tool identity与完整hash见
 
 | Owner | Candidate supported roles | Explicit non-promise / internal boundary |
 |:--|:--|:--|
-| S | engine create/open/runtime binding；desired-setup reconciliation；exact-head `SendAsync`/`ResumeAsync`；`AbandonFailedTurn`/`RewindLatestCompletedTurn`；read-only/offline/audit；legacy import；typed recovery、bounded planning/recent/pop input与readable result | test hook、arbitrary raw payload escape、owner-issued internal body、result record synthesis不是support目标 |
-| T | Timeline create/open/read/coordinator；policy与partition input；descriptor/canonical codec；maintenance/operator result；estimator seam | SQLite/path/syscall helper、test persistence hook、`BoundHistorySegmentRange`与`HistorySegmentDescriptorFactory` owner-local assembly |
+| S | engine create/open/runtime binding；desired-setup reconciliation；exact-head `SendAsync`/`ResumeAsync`；`ExecutePendingToolToBoundaryAsync`；`PrepareContextLifecycleMaintenanceAsync`；`AbandonFailedTurn`/`RewindLatestCompletedTurn`；read-only/offline/audit；legacy import；typed recovery、bounded planning/recent/pop；external `ICoherentContextCandidateSource`与`ISessionContextLifecycleCoordinator`及其合法output variants | test hook、arbitrary raw payload escape、owner-issued internal body、pending-boundary result construction、selected-lineage snapshot implementation、result record synthesis不是support目标 |
+| T | Timeline create/open/read/coordinator；policy与partition input；descriptor/canonical codec；maintenance/operator result；external `IHistoryUnitLoadEstimator`与`HistoryUnitLoadMeasurement` construction | SQLite/path/syscall helper、test persistence hook、`BoundHistorySegmentRange`与`HistorySegmentDescriptorFactory` owner-local assembly |
 | O | fixed O200k estimator implementation与stable estimator ID | tokenizer/renderer implementation detail |
 | C | cadence policy/head、factory/coordinator、reserve/seal与maintenance result | durable syscall/codec helper及owner-issued state construction |
-| G | Abstractions consumer input/value；Control/Store/Manager/Getter/Runtime/Online/AgentControl owner APIs；明确external implementer seams | source-module mechanics、diagnostic/test shape；Manager/Getter/Online output可读但argument construction/mutation不承诺；不建立cross-owner generic result family |
-| H | first-party route/config composition、Host lifetime/factory、telemetry snapshot read；standalone injectable `IRecapCompletionTelemetry`/collector | duplicate syntax reader、lazy registry与host-owned mutable collector identity/materialization state |
+| G | Abstractions consumer input/value；Control/Store/Manager/Getter/Runtime/Online/AgentControl owner APIs；external `IRecapCellBatchExecutor`及全部ordinary outcome/batch results；external `IRecapCompletionInvoker`、`IRecapCompletionRouteResolver`、`IRecapCompletionTelemetry`及其必要input/output shape | source-module mechanics、diagnostic/test shape；Manager/Getter/Online owner-issued output的argument construction/mutation不承诺；telemetry event只由Runtime签发；不建立cross-owner generic result family |
+| H | first-party route/config composition、Host lifetime/factory、telemetry snapshot read；standalone injectable telemetry/collector；Host composition需要的`ICompletionClientFactory`、`ICompletionClient`与`CompletionConnectionConfig` named shape | 不把Completion assembly的其他export、duplicate syntax reader、lazy registry或host-owned mutable collector identity/materialization state升级为承诺 |
 
 普通consumer可以依赖上表role中的public inputs、factories、handles、readable results与documented external implementer
 seams；不得仅因reflection发现exported symbol，就假设其constructor、record clone、diagnostic text或assembly-qualified
@@ -89,7 +93,7 @@ off-lineage address、Parent/setup/hash drift均fail closed。
 | `ImportedAgentAction` | 10 | 1 |
 | `CompletionAttemptStarted` | 13 | 1 |
 
-ID 11 retired。current identifier与commitment language是：
+ID 11、12 retired，均不得重新分配。current identifier与commitment language是：
 
 | Fact | Exact identifier / hash domain | Current owner |
 |:--|:--|:--|
@@ -117,11 +121,11 @@ reconstructor/recovery tests。未来Tier A breaking change必须先给出raw-pr
 | Artifact | Exact slot / version | Owner proof、bounds与accepted language | Failure / upgrade policy |
 |:--|:--|:--|:--|
 | History locator | `derived/history-timeline/v2/refs/<ref>/locator.json`；JSON v1 | 1..4,096 bytes、canonical exact；path Ref、Timeline ID与generation绑定active DB/ABA | invalid/non-v1不fallback；旧v1 root inert；显式重建V2 domains |
-| History ledger | locator-selected SQLite under the same Ref domain；application id `0x41544854`、Schema V2 | exact pragma、6 tables+6 triggers、metadata scope/head hash/counts、canonical policy/row、selected path与Merkle；normal open bounded、maintenance full verify | unsupported typed；backup/restore/reprovision；existing create在同一exclusive lease内验证head与active policy后才`AlreadyExists` |
-| Cadence | `control/recap-grid/v1/.../cadence.json`；`atelia.session-journal.recap-grid.cadence.v1` | 2..4,096 bytes、canonical exact；Ref/generation/domain digest与expected Timeline policy；fd-relative publish | stale/busy/invalid/indeterminate typed；不fallback到Timeline或active config猜测 |
-| Control | layout v1 `control.json`；content `schemaVersion=2` | 2 bytes..32 MiB、strict whole JSON；whole head/state digest、canonical closure、bootstrap、definitions/recipes与receipts | strict non-V2 discriminator typed Unsupported；V2 malformed Invalid；backup/restore/reinitialize，无silent migration |
+| History ledger | `derived/history-timeline/v2/refs/<ref>/timelines/<timelineId>.sqlite`；application id `0x41544854`、Schema V2 | exact pragma、6 tables+6 triggers、metadata scope/head hash/counts、canonical policy/row、selected path与Merkle；normal open bounded、maintenance full verify | unsupported typed；backup/restore/reprovision；existing create在同一exclusive lease内验证head与active policy后才`AlreadyExists` |
+| Cadence | `control/recap-grid/v1/refs/<ref>/cadence/cadence.json`；`atelia.session-journal.recap-grid.cadence.v1` | 2..4,096 bytes、canonical exact；Ref/generation/domain digest与expected Timeline policy；fd-relative publish | stale/busy/invalid/indeterminate typed；不fallback到Timeline或active config猜测 |
+| Control | `control/recap-grid/v1/refs/<ref>/timelines/<timelineId>/control.json`；content `schemaVersion=2` | 2 bytes..32 MiB、strict whole JSON；whole head/state digest、canonical closure、bootstrap、definitions/recipes与receipts | strict non-V2 discriminator typed Unsupported；V2 malformed Invalid；backup/restore/reinitialize，无silent migration |
 | Grid Store | `derived/recap-grid/v1/grid.sqlite`；application id `0x41544752`、Schema V2 | exact pragma/catalog、single metadata identity、canonical payload+indexed columns/FK/counts；transactional writes与physical reset witness | future version优先typed Unsupported；V2 corruption Invalid/Unhealthy；explicit reset/reprovision，不auto-repair |
-| Rewriter | IDs durable inControl Family/Definition；runtime/output v3，input/prior/history v1 | 五个独立protocol轴在route/dispatch前exact preflight；provider output仍是Completion block shape | 任一mismatch为`ProtocolUnavailable`且provider call为0；不合并为suite ID或兼容grammar |
+| Rewriter | IDs durable in Control Family/Definition：runtime `text-runtime-v3`、output `atelia.recap.output.v3`、input `atelia.recap.input.v1`、prior `atelia.recap.prior.v1`、history `atelia.history.segment.v1` | 五个独立protocol轴在route/dispatch前exact preflight；provider output仍是Completion block shape | 任一mismatch为`ProtocolUnavailable`且provider call为0；不合并为suite ID或兼容grammar |
 
 History/Store metadata version、head/digest/count、indexed columns等是corruption/scope/query proof，不是待删双authority。
 `a77ed16c`只让一份owner-local `SchemaEntry[]`驱动History create+verify；test-owned independent fingerprint保持外部
@@ -139,18 +143,24 @@ current companion state拼成混合generation。raw append后的rollback必须ra
 
 | Surface | Current candidate language | Boundary / compatibility policy |
 |:--|:--|:--|
-| Route manifest | canonical numeric `v:1`；1 MiB / 4,096 entries；unknown/missing/duplicate/noncanonical reject | operator routing policy，无secret，不是durable semantic identity；old language不兼容读取 |
+| Route manifest | canonical numeric `v:1`；1 MiB / 4,096 entries；connection id strict UTF-8 128 bytes；concurrency 1..1,024；timeout 1 ms..1 day且整毫秒；maximum output tokens为null或positive；unknown/missing/duplicate/noncanonical reject | operator routing policy，无secret，不是durable semantic identity；old language不兼容读取；runtime/model/family identifiers服从各自owner而不被route的connection-id bound顺带覆盖 |
 | Completion connections | Completion-owned numeric `v:1`；1 MiB、depth 8、1..256 entries；id/env 128 UTF-8 bytes、endpoint 4 KiB、secret 64 KiB；wire endpoint exactly-one、API key at-most-one | strict syntax与owner-local path/no-follow分层；resolved `BaseAddress`是non-secret且进入Completion durable connection fingerprint；API key（inline或env-resolved secret value）不进report/fingerprint；code+manifest停服成对迁移，无dual reader |
-| AgentControl profile | canonical `v:1`；bounded profile/admission bytes | admission canonical bytes进入durable tool runtime identity；profile id与whole profile bytes不进入该identity；unknown/version mismatch fail closed |
+| AgentControl profile | canonical `v:1`；profile id strict UTF-8 128 bytes；profile最多128 KiB；admission inclusive 2..64 KiB；registry 1..256且profile id/runtime identity分别exact unique | admission canonical bytes进入durable tool runtime identity；profile id与whole profile bytes不进入该identity；unknown/version/order/duplicate mismatch fail closed；public admission producer不会生成owner decoder拒绝的bytes |
 | Galatea root config | root raw integer `v:1`；1 MiB、最多256 users；profile files 1..256；strict duplicate/unknown/case/version/path rules；bootstrap no BOM | existing file不自动重写；停服迁移，no-version/future拒绝；users/routes/secrets不并入connections superset |
-| RecapGrid CLI JSON | `atelia.session-journal.recap-grid-cli.v1`、`{schema,command,status,detail}`、16 MiB final report；Store page 128 items / 2 MiB | machine workflow contract；old Store-specific envelope不再emit；human stdout/stderr/help与逐字diagnostic不冻结 |
+| RecapGrid CLI JSON | `atelia.session-journal.recap-grid-cli.v1`、`{schema,command,status,detail}`、16 MiB final report；Store page 128 items / 2 MiB | outer envelope/fallback与Store `inspect/verify/export/reset` status/detail/exit ledger是freeze-ready machine contract；其他command的具体detail/status仍按owner result为candidate，不因共享printer自动冻结；human stdout/stderr/help与逐字diagnostic不冻结 |
 | Other reports | offline validation v2、legacy import v1、desired setup v1、history-load v1、legacy-root v2 | 各自versioned operator artifact；不因外层相似抽generic envelope |
 | Galatea HTTP | complete group `/api/v1`；old `/api/*` exact 404；strict endpoint-local JSON，body 1 MiB；original/normalized message各64 KiB；typed status/success/error | server与cache-busted browser原子共部署；不保留route alias/redirect/dual DTO；breaking change需新candidate/path policy |
 | Galatea SSE | `status`、`reasoning-delta`、`text-delta`、`done`、`error`；strict UTF-8/LF与exact terminal；4 MiB preview + 5 MiB terminal = 9 MiB whole replay，最多16,384 events；subscriber 256 refs；browser 9 MiB connection/5 MiB frame | cap hit只internal suppress preview，不取消provider/durable；`done {recent:null}`后HTTP reconciliation；无Last-Event-ID、ack、heartbeat或dual grammar |
 
 HTTP/SSE numeric budgets、terminal/reconciliation语义和first-party client在本candidate中是`Prototype locked`；只有用户
 明确批准Tier C后才能提升为stable V1。ignored operator config与real provider并非本文可读取的tracked contract；
-R5 evidence把它们分别记录为`NotRun`，不得用历史local observation续期。
+current renewal只做禁网、provider-free disposable rebuild，仍不得用历史local observation冒充deployment或provider gate。
+
+HTTP普通`{code,error}`中的existing machine code保持含义，但code namespace允许additive新值，first-party client必须有
+unknown fallback；`turn-busy`专用shape与SSE error code集合仍是closed。`error`逐字文本、property order、login HTML、
+cookie实现与bootstrap不是stable network contract。SSE subscriber channel字面容量256是tracked operational bound，
+stable可观察语义是slow subscriber可单独断开、无不可靠in-band overflow code、不停止turn/provider/durable processing，
+并可从bounded whole-turn replay重连。
 
 ## 6. Cross-tier non-promises与变更纪律
 
@@ -160,5 +170,5 @@ R5 evidence把它们分别记录为`NotRun`，不得用历史local observation�
 - future direct cut不得增加versionless fallback、dual reader/writer、compatibility wrapper、generic parser options、
   cross-owner result hierarchy或silent migration。
 - 数值bound变更必须重新验证最终encoded bytes，不能只从inner payload cap纸面推导outer envelope安全。
-- stable/frozen tier、tag名称及本机deployment readiness均不由本文自行宣布；批准边界与remaining gates见
-  [R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)。
+- stable/frozen tier、tag名称及本机deployment readiness均不由本文自行宣布；current批准边界与remaining gates见
+  [approval review](../../evidence/contract-freeze-r2-approval-review.md)。

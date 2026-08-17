@@ -17,7 +17,7 @@
 | Core API、raw wire、Prepared/Resume 与 crash recovery | [Beta contract snapshot](current/contracts/session-journal-beta-contract-snapshot.md)、[Core guide](../../prototypes/SessionJournal/README.md) | [Uncertain external effects contract](current/recovery/uncertain-external-effects.md) 与 current codec/recovery tests |
 | Timeline、partition、HistoryLoad 与 branch reconcile | [HistoryLoad](current/derived-recap/history-load.md)、[HistoryTimeline code](../../prototypes/SessionJournal.HistoryTimeline/)、[HistoryTimeline tests](../../tests/SessionJournal.HistoryTimeline.Tests/) | [Durable authority](current/derived-recap/durable-target.md) |
 | Grid Store、Control、Manager、Getter 与 Runtime | [Grid concepts](current/derived-recap/concepts.md)、[target design](work/active/derived-recap-grid-target-design.md) | owning product/tests；不要从旧slot推导current contract |
-| 审阅 current public API / wire-format candidate | [Contract R2 candidate](current/contracts/session-journal-contract-r2.md) | [Contract Freeze R2 plan](work/active/session-journal-contract-freeze-r2.md)与[R5 candidate evidence](evidence/contract-freeze-r2-r5-candidate.md)；当前尚未批准stable/frozen/tag |
+| 审阅 current public API / wire-format candidate | [Contract R2 candidate](current/contracts/session-journal-contract-r2.md) | [Contract Freeze R2 plan](work/active/session-journal-contract-freeze-r2.md)、[R5 baseline evidence](evidence/contract-freeze-r2-r5-candidate.md)与[current approval review](evidence/contract-freeze-r2-approval-review.md)；当前尚未批准stable/frozen/tag |
 | 审阅 post-cutover cadence、recent reserve、长期容量或 cyber 激活边界 | [Cadence/capacity audit](work/active/derived-recap-grid-cadence-capacity-and-activation-audit.md) | A0-A2已实现24k target reserve；C2/C5 activation完成，C4仍Open |
 | 实现 Galatea 自传/world-understanding rolling maintainers，或审阅未来 Editor/ExperienceRefiner 边界 | [C2 Galatea rolling maintainers](work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md) | shared Family、runtime-configurable model、operator asset assembly与验收矩阵 |
 | CLI operator 或 Galatea integration | [CLI guide](../../prototypes/SessionJournal.Cli/README.md)、[Galatea guide](../../prototypes/Galatea/README.md)、[Host integration](current/host-integration/derived-recap-host-integration.md) | current composition/code/tests |
@@ -39,7 +39,7 @@
   记录首个production recipe、runtime model policy、prompt/asset owner与未来refiner扩展边界。
   [SessionJournal Contract Freeze R2](work/active/session-journal-contract-freeze-r2.md)
   记录候选direct cut与分阶段freeze gates；[Contract R2 candidate](current/contracts/session-journal-contract-r2.md)
-  汇总current support-role、wire与upgrade policy；final gates complete，candidate ready for approval，但逐Tier approval与tag仍Pending。
+  汇总current support-role、wire与upgrade policy；AP closure与current renewal gates已完成，approval docs review进行中，逐Tier approval与tag Pending。
   精确事实仍以owning code/tests与`current/`文档为准。
 
 目录、标题、日期、`README.md` 或 `public` 均不自动授予 authority。
