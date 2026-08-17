@@ -385,8 +385,8 @@ config未由本包修改。root config完整field language继续candidate/Defer�
 ## 18. Post-tag ROOT-CONFIG-A1 candidate
 
 [Galatea root config V1 appendix](../../current/contracts/galatea-root-config-v1.md)在`0f0afb2c` path cut与`319bd425`
-初始记录之上，用`0515083f` handwritten field-language tests和`8c450bf0` classification tail锁定whole root
-`config.json` candidate。范围包括required/optional/count、prompt file precedence、config-directory paths、
+初始记录之上，用`0515083f` handwritten field-language tests和`8c450bf0` root JSON materialization
+classification tail锁定whole root `config.json` candidate。范围包括required/optional/count、prompt file precedence、config-directory paths、
 eager profile与deferred route dependency、root/prompt/profile bounds，以及bootstrap no-BOM/single-LF writer事实。
 
 该appendix明确bootstrap不是canonical writer，且不承诺password-at-rest protection、file permissions、Kestrel对

@@ -48,6 +48,10 @@ Root file必须是Linux no-follow regular file，长度为1 byte..1 MiB，JSON m
 
 ## 3. Exact field language
 
+本节所有path field除各自semantic rule外，还必须通过underlying Linux/.NET lexical path operations；不能由
+`Path.GetFullPath`表示的输入（例如包含NUL）不属于accepted language。本文不会把这些platform rules复制成另一套
+portable path grammar。
+
 ### 3.1 Root object
 
 | Field | Required shape | Semantic rule |
@@ -55,7 +59,7 @@ Root file必须是Linux no-follow regular file，长度为1 byte..1 MiB，JSON m
 | `v` | required number token | raw token exact `1` |
 | `users` | required array，1..256 items | 每项服从§3.2；`userId`与resolved session path必须分别unique |
 | `listenUrls` | optional；missing/`null`为runtime `null`；否则array 0..256 | item必须是nonblank string；duplicate与order保留；loader把内容视为opaque string |
-| `callLogDir` | optional；missing/`null`为disabled；否则string | nonblank；relative以config directory为base，runtime为absolute；必须与每个resolved `sessionDir`双向non-nested |
+| `callLogDir` | optional；missing/`null`为disabled；否则string | nonblank；relative以config directory为base，runtime为absolute；existing components不得是symlink/reparse point；必须与每个resolved `sessionDir`双向non-nested |
 | `maintenanceMode` | optional boolean | missing为`false`；explicit `null`或非boolean拒绝 |
 | `recapGrid` | required object | 服从§3.3；没有`null`/default fallback |
 
@@ -84,12 +88,14 @@ UTF-8；decode后执行`Trim()`，结果必须nonblank。有效文件允许inlin
 
 | Field | Required shape | Load-time rule |
 |:--|:--|:--|
-| `routeManifestPath` | required nonblank string | relative以config directory为base；root load只resolve并检查existing path components，不要求route file已存在 |
+| `routeManifestPath` | required nonblank string | relative以config directory为base；root load只resolve并拒绝existing symlink/reparse components，不要求route file已存在 |
 | `agentControlProfileFiles` | required array，1..256 strings | 每项nonblank，relative以config directory为base；resolved path按platform comparer unique；file必须存在并eager strict decode |
 | `currentAgentControlProfileId` | required nonblank string | 必须exact匹配一个已加载profile的ID |
 
 每个profile file必须是1 byte..128 KiB no-follow regular file，并服从已批准AgentControl profile V1的canonical
-language；root appendix不复制或扩张该协议。Route manifest延迟到首次RecapGrid work读取；届时file必须是
+language；distinct paths decode出的profiles还必须形成owner-valid registry，`ProfileId`与`RuntimeIdentity`分别exact
+unique。Registry identity duplicate由current loader传播`ArgumentException`，但其message逐字文本不构成本candidate。
+root appendix不复制或扩张profile协议。Route manifest延迟到首次RecapGrid work读取；届时file必须是
 1 byte..1 MiB并服从已批准Route manifest V1。route不存在不会阻止root load，但会使需要route的后续work失败；
 没有wildcard/default route fallback。
 
@@ -124,6 +130,10 @@ JSON materialization failure均归类为`InvalidDataException`；materialization
 diagnostic不回显具体field value。missing required semantic field、blank、zero lower bound、duplicate user/session、
 current-profile mismatch或call-log nesting等为`InvalidOperationException`；missing config/dependency file为
 `FileNotFoundException`。这些exception types描述current loader分类，不把message逐字文本冻结为machine protocol。
+
+上述分类只覆盖root reader/loader拥有的syntax、materialization与semantic cases。Underlying path/IO/permission failure
+以及owned profile registry拒绝可能传播.NET或owner-local exception（current duplicate identity为`ArgumentException`）；
+本candidate既不统一包装这些低层failure，也不把其exact type或message提升为稳定classification contract。
 
 Operator升级必须停服、备份并确认实际`Galatea:ConfigPath`；需要改变relative-path target时显式改成目标absolute或
 config-relative value。应用不会自动移动repository或重写existing config。Provider/deployment acceptance必须另跑，
