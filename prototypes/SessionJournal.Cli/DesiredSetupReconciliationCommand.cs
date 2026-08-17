@@ -52,7 +52,7 @@ internal static class DesiredSetupReconciliationCommand {
             reportPath
         );
 
-        // Match GalateaConfigLoader's systemPromptFile semantics exactly.
+        // Operator prompt-file input semantics are outside report V2.
         string desiredSystemPrompt = File.ReadAllText(systemPromptPath).Trim();
         CompletionConnectionsFileConfig connections =
             CompletionConnectionConfigLoader.LoadFile(connectionsPath);

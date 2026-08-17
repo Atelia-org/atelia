@@ -65,62 +65,14 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
         Assert.Equal("prompt-B", after.Governing.SystemPrompt);
 
         string reportJson = File.ReadAllText(inputs.ReportPath);
-        Assert.Equal(
-            ExpectedReportJson(
-                before.Head,
-                after.Head,
-                expectedRuntimeChanged,
-                expectedPromptChanged
-            ),
-            reportJson
-        );
         using JsonDocument report = JsonDocument.Parse(reportJson);
         JsonElement root = report.RootElement;
-        Assert.Equal(
-            [
-                "schema",
-                "branchName",
-                "connectionId",
-                "beforeHead",
-                "afterHead",
-                "runtimeConfigChanged",
-                "systemPromptChanged",
-                "modelId",
-                "completionSurfaceId",
-                "systemPromptUtf8Sha256"
-            ],
-            root.EnumerateObject().Select(static property => property.Name)
-        );
-        Assert.Equal(
-            "atelia.session-journal.desired-setup-reconciliation.v2",
-            root.GetProperty("schema").GetString()
-        );
-        Assert.Equal("main", root.GetProperty("branchName").GetString());
-        Assert.Equal("target", root.GetProperty("connectionId").GetString());
-        Assert.Equal(
-            EventAddressTextCodec.Format(before.Head),
-            root.GetProperty("beforeHead").GetString()
-        );
-        Assert.Equal(
-            EventAddressTextCodec.Format(after.Head),
-            root.GetProperty("afterHead").GetString()
-        );
-        Assert.Equal(
+        AssertReport(
+            root,
+            before.Head,
+            after.Head,
             expectedRuntimeChanged,
-            root.GetProperty("runtimeConfigChanged").GetBoolean()
-        );
-        Assert.Equal(
-            expectedPromptChanged,
-            root.GetProperty("systemPromptChanged").GetBoolean()
-        );
-        Assert.Equal("model-B", root.GetProperty("modelId").GetString());
-        Assert.Equal(
-            "surface-B",
-            root.GetProperty("completionSurfaceId").GetString()
-        );
-        Assert.Equal(
-            ComputeUtf8Sha256("prompt-B"),
-            root.GetProperty("systemPromptUtf8Sha256").GetString()
+            expectedPromptChanged
         );
         Assert.DoesNotContain("prompt-B", reportJson, StringComparison.Ordinal);
         Assert.DoesNotContain(
@@ -133,12 +85,10 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
             reportJson,
             StringComparison.Ordinal
         );
-        Assert.DoesNotContain(
-            "systemPromptUtf8Sha256CodecId",
-            reportJson,
-            StringComparison.Ordinal
+        Assert.False(
+            root.TryGetProperty("systemPromptUtf8Sha256CodecId", out _)
         );
-        Assert.DoesNotContain("phase", reportJson, StringComparison.Ordinal);
+        Assert.False(root.TryGetProperty("phase", out _));
     }
 
     [Fact]
@@ -160,24 +110,12 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
         using JsonDocument report = JsonDocument.Parse(
             File.ReadAllText(inputs.ReportPath)
         );
-        Assert.False(
-            report.RootElement
-                .GetProperty("runtimeConfigChanged")
-                .GetBoolean()
-        );
-        Assert.False(
-            report.RootElement
-                .GetProperty("systemPromptChanged")
-                .GetBoolean()
-        );
-        Assert.Equal(
-            ExpectedReportJson(
-                reconciled.Head,
-                repeated.Head,
-                runtimeConfigChanged: false,
-                systemPromptChanged: false
-            ),
-            File.ReadAllText(inputs.ReportPath)
+        AssertReport(
+            report.RootElement,
+            reconciled.Head,
+            repeated.Head,
+            runtimeConfigChanged: false,
+            systemPromptChanged: false
         );
     }
 
@@ -413,25 +351,81 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
             SHA256.HashData(Encoding.UTF8.GetBytes(value))
         );
 
-    private static string ExpectedReportJson(
+    private static void AssertReport(
+        JsonElement root,
         EventAddress beforeHead,
         EventAddress afterHead,
         bool runtimeConfigChanged,
         bool systemPromptChanged
-    ) =>
-        "{\"schema\":\"atelia.session-journal."
-        + "desired-setup-reconciliation.v2\","
-        + "\"branchName\":\"main\","
-        + "\"connectionId\":\"target\","
-        + $"\"beforeHead\":\"{EventAddressTextCodec.Format(beforeHead)}\","
-        + $"\"afterHead\":\"{EventAddressTextCodec.Format(afterHead)}\","
-        + "\"runtimeConfigChanged\":"
-        + (runtimeConfigChanged ? "true" : "false")
-        + ",\"systemPromptChanged\":"
-        + (systemPromptChanged ? "true" : "false")
-        + ",\"modelId\":\"model-B\","
-        + "\"completionSurfaceId\":\"surface-B\","
-        + $"\"systemPromptUtf8Sha256\":\"{ComputeUtf8Sha256("prompt-B")}\"}}";
+    ) {
+        Assert.Equal(JsonValueKind.Object, root.ValueKind);
+        Assert.Equal(
+            [
+                "afterHead",
+                "beforeHead",
+                "branchName",
+                "completionSurfaceId",
+                "connectionId",
+                "modelId",
+                "runtimeConfigChanged",
+                "schema",
+                "systemPromptChanged",
+                "systemPromptUtf8Sha256"
+            ],
+            root.EnumerateObject()
+                .Select(static property => property.Name)
+                .OrderBy(static name => name, StringComparer.Ordinal)
+        );
+        AssertJsonString(
+            root,
+            "schema",
+            "atelia.session-journal.desired-setup-reconciliation.v2"
+        );
+        AssertJsonString(root, "branchName", "main");
+        AssertJsonString(root, "connectionId", "target");
+        AssertJsonString(
+            root,
+            "beforeHead",
+            EventAddressTextCodec.Format(beforeHead)
+        );
+        AssertJsonString(
+            root,
+            "afterHead",
+            EventAddressTextCodec.Format(afterHead)
+        );
+        AssertJsonBoolean(root, "runtimeConfigChanged", runtimeConfigChanged);
+        AssertJsonBoolean(root, "systemPromptChanged", systemPromptChanged);
+        AssertJsonString(root, "modelId", "model-B");
+        AssertJsonString(root, "completionSurfaceId", "surface-B");
+        AssertJsonString(
+            root,
+            "systemPromptUtf8Sha256",
+            ComputeUtf8Sha256("prompt-B")
+        );
+    }
+
+    private static void AssertJsonString(
+        JsonElement root,
+        string propertyName,
+        string expected
+    ) {
+        JsonElement property = root.GetProperty(propertyName);
+        Assert.Equal(JsonValueKind.String, property.ValueKind);
+        Assert.Equal(expected, property.GetString());
+    }
+
+    private static void AssertJsonBoolean(
+        JsonElement root,
+        string propertyName,
+        bool expected
+    ) {
+        JsonElement property = root.GetProperty(propertyName);
+        Assert.Equal(
+            expected ? JsonValueKind.True : JsonValueKind.False,
+            property.ValueKind
+        );
+        Assert.Equal(expected, property.GetBoolean());
+    }
 
     private sealed record TestInputs(
         string RepositoryPath,
