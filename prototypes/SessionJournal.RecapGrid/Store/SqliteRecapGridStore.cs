@@ -1673,6 +1673,8 @@ internal sealed class SqliteRecapGridStore {
                 "RecapGrid Store is missing a required schema object."
             );
         }
+        rows.Close();
+        _ = ReadIdentity(connection, transaction: null);
     }
 
     private static RecapGridStoreIdentity ReadIdentity(
@@ -1691,10 +1693,18 @@ internal sealed class SqliteRecapGridStore {
                 "RecapGrid Store metadata is missing."
             );
         }
-        return new RecapGridStoreIdentity(
-            new RecapGridStoreInstanceId(reader.GetString(1)),
-            SchemaVersion
-        );
+        try {
+            return new RecapGridStoreIdentity(
+                new RecapGridStoreInstanceId(reader.GetString(1)),
+                SchemaVersion
+            );
+        }
+        catch (ArgumentException exception) {
+            throw new InvalidDataException(
+                "RecapGrid Store instance identity is invalid.",
+                exception
+            );
+        }
     }
 
     private static StoreCounts ReadCounts(
