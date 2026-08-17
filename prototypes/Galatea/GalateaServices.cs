@@ -1409,9 +1409,11 @@ internal static class GalateaConfigLoader {
         CompletionConnectionsFileConfig connectionsFile =
             CompletionConnectionConfigLoader.Decode(connectionsJson);
         if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("Galatea config must contain at least one user."); }
+        IReadOnlyList<GalateaUserConfig> users =
+            ResolveSessionDirectories(usersFile.Users, configDir);
 
         var config = new GalateaConfig(
-            Users: usersFile.Users,
+            Users: users,
             Connections: connectionsFile.Connections,
             DefaultConnectionId: connectionsFile.DefaultConnectionId!,
             ListenUrls: usersFile.ListenUrls,
@@ -1578,6 +1580,35 @@ internal static class GalateaConfigLoader {
         }
 
         return config with { Users = resolvedUsers };
+    }
+
+    private static IReadOnlyList<GalateaUserConfig>
+        ResolveSessionDirectories(
+            IReadOnlyList<GalateaUserConfig> configuredUsers,
+            string configDirectory
+        ) {
+        var resolvedUsers = new List<GalateaUserConfig>(
+            configuredUsers.Count
+        );
+        for (int index = 0; index < configuredUsers.Count; index++) {
+            GalateaUserConfig user = configuredUsers[index]
+                ?? throw new InvalidOperationException(
+                    $"Galatea config user[{index}] must not be null."
+                );
+            if (string.IsNullOrWhiteSpace(user.SessionDir)) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' must have a "
+                    + "non-empty sessionDir."
+                );
+            }
+            resolvedUsers.Add(user with {
+                SessionDir = Path.GetFullPath(
+                    user.SessionDir,
+                    configDirectory
+                )
+            });
+        }
+        return resolvedUsers;
     }
 
     private static string? ResolveCallLogDirectory(
@@ -1791,8 +1822,8 @@ internal static class GalateaConfigTemplateFactory {
         return new GalateaUsersFileConfig(
             Version: GalateaStrictConfigReader.CurrentConfigVersion,
             Users: [
-                CreateUser("alice", "alice123", ".atelia/galatea/sessions/alice"),
-                CreateUser("bob", "bob123", ".atelia/galatea/sessions/bob"),
+                CreateUser("alice", "alice123", "sessions/alice"),
+                CreateUser("bob", "bob123", "sessions/bob"),
             ],
             ListenUrls: ["http://0.0.0.0:3510"],
             RecapGrid: new GalateaRecapGridFileConfig(

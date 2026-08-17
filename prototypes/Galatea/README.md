@@ -16,7 +16,7 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
     {
       "userId": "alice",
       "password": "REPLACE_WITH_A_PRIVATE_PASSWORD",
-      "sessionDir": ".atelia/galatea/sessions/alice",
+      "sessionDir": "sessions/alice",
       "systemPrompt": "你是家庭局域网里的私人助手。",
       "systemPromptFile": null
     }
@@ -35,6 +35,10 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
 writer固定把`v`放在首字段，reader不要求property order。missing version、future version、`null`、string、
 `1.0`或`1e0`都拒绝；没有versionless compatibility reader或自动迁移。已有无版本文件必须在停服、备份并确认
 实际`Galatea:ConfigPath`后人工加入`"v": 1`，应用不会重写其中的password或其他operator配置。
+
+相对`sessionDir`以`config.json`所在目录为base，loader向runtime只交付absolute path；absolute值保持同一target。
+这里没有process-CWD fallback、existence-based双解释、自动创建或移动repository。`..`与absolute path仍是合法的
+lexical path，这项规则不承诺把session限制在config目录内，也不声称提供额外的no-follow filesystem边界。
 
 `connections.json` 只包含 Completion connections 与 exact default connection。历史
 Agent Control profiles 必须继续保留，供 Prepared/ToolContinuation 按 frozen identity

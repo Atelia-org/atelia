@@ -51,6 +51,10 @@ public sealed class GalateaConfigValidationTests {
             GalateaStrictConfigReader.CurrentConfigVersion,
             decoded.Version
         );
+        Assert.Equal(
+            ["sessions/alice", "sessions/bob"],
+            decoded.Users.Select(static user => user.SessionDir)
+        );
         Assert.Null(typeof(GalateaConfig).GetProperty("Version"));
     }
 
@@ -84,6 +88,151 @@ public sealed class GalateaConfigValidationTests {
                 GalateaConfigTemplateFactory.DefaultConnectionId,
                 loaded.DefaultConnectionId
             );
+            Assert.Equal(
+                [
+                    Path.Combine(root, "sessions", "alice"),
+                    Path.Combine(root, "sessions", "bob")
+                ],
+                loaded.Users.Select(static user => user.SessionDir)
+            );
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RelativeSessionDirectoryUsesConfigDirectoryNotProcessCurrentDirectory() {
+        string root = NewRoot();
+        string configDirectory = Path.Combine(root, "configuration");
+        Directory.CreateDirectory(configDirectory);
+        string expectedSessionDirectory = Path.Combine(
+            configDirectory,
+            "sessions",
+            "alice"
+        );
+        try {
+            Assert.NotEqual(
+                Path.GetFullPath(Path.Combine("sessions", "alice")),
+                expectedSessionDirectory
+            );
+            using (SessionJournalEngine engine =
+                   SessionJournalEngine.Create(
+                       expectedSessionDirectory,
+                       new SessionCreateOptions(
+                           "model-a",
+                           "prompt",
+                           "openai-chat/strict"
+                       ))) {
+                Assert.Equal(expectedSessionDirectory, engine.Path);
+            }
+
+            string configPath = WriteConfig(
+                configDirectory,
+                [User("alice", "sessions/alice")]
+            );
+            GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
+            Assert.Equal(
+                expectedSessionDirectory,
+                Assert.Single(loaded.Users).SessionDir
+            );
+
+            var factory = new TrackingFactory();
+            await using var service = new GalateaHostService(
+                loaded with { MaintenanceMode = true },
+                factory,
+                DisabledGalateaUserMessageNormalizer.Instance
+            );
+            UserSessionHost session = await service.GetSessionAsync(
+                "alice",
+                CancellationToken.None
+            );
+            Assert.Equal(expectedSessionDirectory, session.Engine.Path);
+            Assert.Equal(0, factory.CreateCallCount);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AbsoluteSessionDirectoryTargetIsPreserved() {
+        string root = NewRoot();
+        string repositoryRoot = NewRoot();
+        string absoluteSessionDirectory = Path.Combine(
+            repositoryRoot,
+            "session"
+        );
+        try {
+            string configPath = WriteConfig(
+                root,
+                [User("alice", absoluteSessionDirectory)]
+            );
+
+            GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
+
+            Assert.Equal(
+                absoluteSessionDirectory,
+                Assert.Single(loaded.Users).SessionDir
+            );
+            Assert.False(Directory.Exists(absoluteSessionDirectory));
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(repositoryRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void RelativeAndAbsoluteSessionAliasesAreRejectedAfterResolution() {
+        string root = NewRoot();
+        string expectedSessionDirectory = Path.Combine(
+            root,
+            "sessions",
+            "alice"
+        );
+        try {
+            string configPath = WriteConfig(
+                root,
+                [
+                    User("alice", "sessions/alice"),
+                    User("bob", expectedSessionDirectory)
+                ]
+            );
+
+            InvalidOperationException failure = Assert.Throws<
+                InvalidOperationException
+            >(() => GalateaConfigLoader.Load(configPath));
+
+            AssertDuplicateDetail(failure, expectedSessionDirectory);
+            Assert.False(Directory.Exists(expectedSessionDirectory));
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolvedRelativeSessionAndCallLogNestingIsRejected() {
+        string root = NewRoot();
+        string expectedSessionDirectory = Path.Combine(
+            root,
+            "sessions",
+            "alice"
+        );
+        try {
+            string configPath = WriteConfig(
+                root,
+                [User("alice", "sessions/alice")],
+                callLogDirectory: "sessions/alice/call-logs"
+            );
+
+            InvalidOperationException failure = Assert.Throws<
+                InvalidOperationException
+            >(() => GalateaConfigLoader.Load(configPath));
+
+            Assert.Contains("disjoint", failure.Message);
+            Assert.False(Directory.Exists(expectedSessionDirectory));
         }
         finally {
             Directory.Delete(root, recursive: true);
@@ -726,7 +875,8 @@ public sealed class GalateaConfigValidationTests {
 
     private static string WriteConfig(
         string root,
-        IReadOnlyList<GalateaUserConfig> users
+        IReadOnlyList<GalateaUserConfig> users,
+        string? callLogDirectory = null
     ) {
         string configPath = Path.Combine(root, "config.json");
         File.WriteAllText(
@@ -735,6 +885,7 @@ public sealed class GalateaConfigValidationTests {
                 new GalateaUsersFileConfig(
                     Version: GalateaStrictConfigReader.CurrentConfigVersion,
                     Users: users,
+                    CallLogDir: callLogDirectory,
                     RecapGrid: new GalateaRecapGridFileConfig(
                         "routes.json",
                         ["profile.json"],
