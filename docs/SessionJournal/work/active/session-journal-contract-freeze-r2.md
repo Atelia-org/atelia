@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；approved surface sets 1 + 2 + 3 anchored；surface set 4 user-authorized、unified gates complete / tag-ready、review/tag Pending；remaining Defer packages继续  
+状态：Active；approved surface sets 1 + 2 + 3 + 4 anchored；remaining Defer packages继续  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -246,7 +246,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | OTHER-REPORT-A1 | Approved / anchored in additive surface set 3 | post-v2-tag [desired setup report V2 appendix](../../current/contracts/desired-setup-reconciliation-report-v2.md)；production `da3aa27a` + test tail `8a54e613`；activation runbook exact consumer gate；不属于immutable surface-set-2 tag，由v3 tag锚定 |
 | AP-PROMOTE-V3 | Complete / tag anchored | [surface set 3 addendum](../../evidence/contract-freeze-r2-approval-surface-set-3.md)只加入Desired Setup report V2 exact narrow scope；promotion `cb8ba558`；gate ledger `adf547e2`；CLI113、solution38/4694、build0W/0E、HTTP/SSE、docs18/0均PASS；v3 tag object `511c5099` → `adf547e2` |
 | HISTORY-LOAD-REPORT-A1 | Candidate complete / top-level narrow scope user-approved | post-v3-tag [HistoryLoad report V2 appendix](../../current/contracts/history-load-report-v2.md)；production/test `881afb39`；focused3、CLI113、build0W/0E是implementation-package历史证据；runbook exact 11-field gate；unbounded/offline，无final cap/oversize contract，不属于v3 tag |
-| AP-PROMOTE-V4 | Tag-ready / independent review与tag Pending | [surface set 4 addendum](../../evidence/contract-freeze-r2-approval-surface-set-4.md)只新增HistoryLoad V2 exact top-level/types/meanings、V1字段删除与read-only publication/retry；exact `494d215a`上CLI113、solution38/4694、build0W/0E、HTTP/SSE与docs18/0均PASS；inventory/rebuild NotRun/无需；authorized v4 tag尚未创建 |
+| AP-PROMOTE-V4 | Complete / tag anchored | [surface set 4 addendum](../../evidence/contract-freeze-r2-approval-surface-set-4.md)只新增HistoryLoad V2 exact top-level/types/meanings、V1字段删除与read-only publication/retry；exact `494d215a`上CLI113、solution38/4694、build0W/0E、HTTP/SSE与docs18/0均PASS；inventory/rebuild NotRun/无需；v4 tag object `76dcdc70` → `0dac57a9` |
 
 ## 9. R0 完成标准
 
@@ -475,14 +475,19 @@ publication/retry semantics。Production/test source为`881afb39`，candidate ap
 promotion只改docs，不修改production/tests。
 
 该批准是immutable surface set 3之上的单项additive surface set 4。Immutable v1/v2/v3 tags继续认证各自原始targets
-`6378cebb`/`c4c6dd16`/`adf547e2`，不能移动、重释或由本授权续期。Authorized tag exact name为
-`session-journal-contract-r2-approved-surfaces-v4`，当前尚未创建。
+`6378cebb`/`c4c6dd16`/`adf547e2`，不能移动、重释或由本授权续期。Approval tag exact name为
+`session-journal-contract-r2-approved-surfaces-v4`。
 
 Exact clean promotion HEAD `494d215a`上的CLI full 113、solution 38 projects / 4,694、build 0W/0E、HTTP/SSE Node各1/1、
 scoped docs18/0及diff/status/tag preflight均通过，没有retry或命令calibration。Public inventory与legacy rebuild因无
 .NET API、raw或rebuild semantics delta而NotRun/无需；ignored operator state、provider与deployment亦NotRun。
-Independent pre-tag review仍Pending；authorized tag尚未创建，因此当前只是tag-ready candidate，不是anchored closure。
+Independent pre-tag review已通过；annotated v4 tag object `76dcdc7010f5899fbd4238757cc387a2de140b13`现已锚定
+final gate ledger `0dac57a9e32ae5d0367394404524404689dfa4ef`。v1/v2/v3 targets仍为
+`6378cebb`/`c4c6dd16`/`adf547e2`，没有移动、重释或续期。
 
 批准不包含bounded work/memory/final bytes、pagination/oversize、nested exact shape、JSON order/bytes、complete CLI
 input/diagnostic、current operator data、provider/deployment或historical V1 values。2026-07-31 V1 calibration evidence保持
 原样，不被v4重新解释。
+
+当前post-tag status docs只记录已经发生的closure；v4 tag继续指向`0dac57a9`，不会因本次或未来docs commit而反向
+移动、续期product/provider/deployment evidence或扩大surface set 4 exact scope。

@@ -1,10 +1,12 @@
 # SessionJournal Contract Freeze R2 — additive surface set 4 approval
 
-状态：**user approval recorded；unified gates complete / tag-ready；independent review与annotated tag Pending**  
+状态：**approval complete；unified gates与independent review complete；annotated surface set 4 tag anchored**  
 production/test source：`881afb39af511567b8bb900c5db103426791ab95`  
 candidate appendix commit：`2fa9808bfac0d8836da490548e9b3c98c38f2395`  
 promotion docs / unified gate candidate：`494d215ad2d3504b6e997b8ea2bf13fb3e50270c`  
-authorized tag：`session-journal-contract-r2-approved-surfaces-v4`（尚未创建）  
+approval tag：`session-journal-contract-r2-approved-surfaces-v4`  
+tag object：`76dcdc7010f5899fbd4238757cc387a2de140b13`  
+dereferenced target：`0dac57a9e32ae5d0367394404524404689dfa4ef`  
 记录日期：2026-08-18
 
 本文只记录用户在immutable surface sets 1、2、3之上新增批准的HistoryLoad calibration report V2窄surface。
@@ -61,7 +63,7 @@ surface set 4不修改、重释或认证其中的历史values，也不把它升�
 - public inventory与legacy rebuild为**NotRun / 本次无需**：本promotion没有.NET API、raw wire或rebuild semantics
   delta。Ignored operator state、real provider与deployment为**NotRun**，不因批准一个content-free report contract而
   自动成为gate。
-- independent pre-tag review仍Pending；unified gates通过不等于tag已创建或已锚定。
+- independent pre-tag review已通过，确认批准范围未扩大、historical V1 evidence未重释且v1/v2/v3 tags未移动。
 
 ### 3.1 Unified gate ledger at `494d215a`
 
@@ -77,17 +79,21 @@ surface set 4不修改、重释或认证其中的历史values，也不把它升�
 | public inventory / disposable legacy rebuild | NotRun / 本次无需；无.NET API、raw或rebuild semantics delta |
 | ignored operator state / provider / deployment | NotRun；不属于本promotion gate |
 
-所有命令均使用首次选择的正确path/arguments通过，没有retry或命令calibration。当前状态是**tag-ready promotion
-candidate**；independent review与annotated tag仍Pending，因此不是tagged/anchored completion。
+所有命令均使用首次选择的正确path/arguments通过，没有retry或命令calibration。随后independent review通过，且
+annotated v4 tag已锚定包含本gate ledger的`0dac57a9`。
 
-## 4. Tag-before checklist
-
-创建annotated tag前必须：
+## 4. Tag closure record
 
 1. exact clean promotion HEAD `494d215a`上的unified gates已按§3.1完成；
-2. **Pending**：由独立reviewer核对本addendum、current contract、appendix、routers、active plan与runbook没有扩大批准范围，且
+2. independent reviewer已核对本addendum、current contract、appendix、routers、active plan与runbook没有扩大批准范围，且
    v1/v2/v3 tags及historical V1 evidence均未改变；
-3. preflight已确认`session-journal-contract-r2-approved-surfaces-v4`不存在；final reviewed gate ledger与tag target仍待记录；
-4. annotated tag message同时pin production/test source `881afb39`、candidate appendix `2fa9808b`、promotion/gate ledger、
-   approved exact top-level/read-only scope和§2 non-promises；
-5. tag创建后另做post-tag status docs commit；不得移动tag来吸收post-tag文档。
+3. annotated tag已exact创建为`session-journal-contract-r2-approved-surfaces-v4`；tag object为
+   `76dcdc7010f5899fbd4238757cc387a2de140b13`，dereferenced target为包含final gate ledger的
+   `0dac57a9e32ae5d0367394404524404689dfa4ef`；
+4. tag message pin production/test source `881afb39`、candidate appendix `2fa9808b`、promotion/gate ledger、approved exact
+   top-level/read-only scope、§2 non-promises与immutable prior tags；
+5. v1/v2/v3 dereferenced targets仍为`6378cebbde4cf150ecb4d8de5699ef1f77ce4f0b`、
+   `c4c6dd1698c7460fbf8ff3563d7800203f3202e0`与`adf547e2a2319fd3009a7015a4289ab875af43f7`。
+
+本post-tag status commit只记录已经发生的closure；v4 tag继续指向`0dac57a9`，不会因本commit或未来docs commit而
+反向移动、续期product/provider/deployment evidence或扩大§1批准范围。
