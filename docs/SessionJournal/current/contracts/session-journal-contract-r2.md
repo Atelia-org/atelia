@@ -1,6 +1,6 @@
 # SessionJournal Contract R2 candidate
 
-状态：AP renewal candidate ready for docs review；逐Tier approval与tag Pending；**未声明任何tier stable/frozen，未创建tag**  
+状态：AP renewal candidate ready for user approval decision；逐Tier approval与tag Pending；**未声明任何tier stable/frozen，未创建tag**  
 source candidate：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
 记录日期：2026-08-17
 

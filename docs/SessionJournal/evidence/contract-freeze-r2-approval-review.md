@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 — approval review
 
-状态：AP closure与unified renewal gates **complete**；approval docs review pending；未批准任何Tier，未创建tag  
+状态：AP closure、unified renewal gates与independent docs review **complete**；ready for user approval decision；未批准任何Tier，未创建tag  
 source candidate：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
 review docs baseline：`fa9701dfd8f7be47f292625063bca4c75c9fb255`  
 记录日期：2026-08-17
@@ -172,3 +172,7 @@ SQLite/RBF determinism。Rewriter五个exact protocol轴可以作为Tier B中的
 
 若创建tag，推荐让tag指向包含approval contract/evidence的docs commit，并在annotated message中固定真正经过
 final code gates的source candidate `cd966fc7`、获批Tier及明确non-promises。tag不得移动。
+
+初始approval docs commit为`3575bf30`；三位independent reviewer发现的事实与承诺范围问题由`8585d889`关闭，
+三位tail re-review均PASS。scoped docs checker为18 files / 0 diagnostics；all-tracked仅保留11条既有archive
+missing-target diagnostics。

@@ -39,7 +39,7 @@
   记录首个production recipe、runtime model policy、prompt/asset owner与未来refiner扩展边界。
   [SessionJournal Contract Freeze R2](work/active/session-journal-contract-freeze-r2.md)
   记录候选direct cut与分阶段freeze gates；[Contract R2 candidate](current/contracts/session-journal-contract-r2.md)
-  汇总current support-role、wire与upgrade policy；AP closure与current renewal gates已完成，approval docs review进行中，逐Tier approval与tag Pending。
+  汇总current support-role、wire与upgrade policy；AP closure、current renewal gates与approval docs review已完成，等待用户逐surface approval/tag决策。
   精确事实仍以owning code/tests与`current/`文档为准。
 
 目录、标题、日期、`README.md` 或 `public` 均不自动授予 authority。
