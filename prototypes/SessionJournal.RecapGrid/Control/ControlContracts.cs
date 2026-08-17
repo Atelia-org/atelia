@@ -8,6 +8,7 @@ using Atelia.SessionJournal.HistoryTimeline;
 namespace Atelia.SessionJournal.RecapGrid.Control;
 
 internal static class RecapGridControlAdmissionLimits {
+    public const int MaximumCanonicalUtf8Bytes = 64 * 1024;
     public const int MaximumBootstrapRows = 1_000_000;
 }
 
@@ -327,6 +328,7 @@ public sealed class RecapGridControlAdmission {
     private readonly HashSet<string> _capabilityAllowlist;
     private readonly HashSet<ContextHeaderCarrier> _targetCarrierAllowlist;
     private readonly ReadOnlyCollection<string> _logicalColumnPrefixes;
+    private readonly byte[] _canonicalBytes;
 
     public RecapGridControlAdmission(
         RecapGridControlPermission permissions,
@@ -407,34 +409,26 @@ public sealed class RecapGridControlAdmission {
         }
         MaximumBootstrapRows = maximumBootstrapRows;
         MaximumProjectedCalls = maximumProjectedCalls;
+        _canonicalBytes = EncodeCanonical();
+        if (_canonicalBytes.Length
+            > RecapGridControlAdmissionLimits.MaximumCanonicalUtf8Bytes) {
+            throw new ArgumentException(
+                "Control admission exceeds its canonical V1 byte bound."
+            );
+        }
     }
 
     public RecapGridControlPermission Permissions { get; }
     public int MaximumBootstrapRows { get; }
     public int MaximumProjectedCalls { get; }
 
-    public byte[] ToCanonicalBytes() => JsonSerializer.SerializeToUtf8Bytes(
-        new ControlAdmissionDto(
-            1,
-            (int)Permissions,
-            _familyAllowlist.Select(static value => value.Value)
-                .Order(StringComparer.Ordinal)
-                .ToArray(),
-            _capabilityAllowlist.Order(StringComparer.Ordinal).ToArray(),
-            _targetCarrierAllowlist.Select(static value => (int)value)
-                .Order()
-                .ToArray(),
-            _logicalColumnPrefixes.Order(StringComparer.Ordinal).ToArray(),
-            MaximumBootstrapRows,
-            MaximumProjectedCalls
-        ),
-        ControlJson.Options
-    );
+    public byte[] ToCanonicalBytes() => _canonicalBytes.ToArray();
 
     public static RecapGridControlAdmission DecodeCanonical(
         ReadOnlySpan<byte> bytes
     ) {
-        if (bytes.Length is < 2 or > 64 * 1024) {
+        if (bytes.Length is < 2
+            or > RecapGridControlAdmissionLimits.MaximumCanonicalUtf8Bytes) {
             throw new InvalidDataException(
                 "Control admission canonical bytes exceed the V1 bound."
             );
@@ -470,10 +464,16 @@ public sealed class RecapGridControlAdmission {
                 "Control admission sets must not be null."
             );
         }
-        RequireSortedUnique(value.FamilyDigests);
-        RequireSortedUnique(value.CapabilityFingerprints);
-        RequireSortedUnique(value.LogicalColumnPrefixes);
-        RequireSortedUnique(value.TargetCarriers);
+        RequireSortedUnique(value.FamilyDigests, StringComparer.Ordinal);
+        RequireSortedUnique(
+            value.CapabilityFingerprints,
+            StringComparer.Ordinal
+        );
+        RequireSortedUnique(
+            value.LogicalColumnPrefixes,
+            StringComparer.Ordinal
+        );
+        RequireSortedUnique(value.TargetCarriers, Comparer<int>.Default);
         return new RecapGridControlAdmission(
             (RecapGridControlPermission)value.Permissions,
             value.FamilyDigests.Select(static digest =>
@@ -486,10 +486,12 @@ public sealed class RecapGridControlAdmission {
             value.MaximumProjectedCalls
         );
 
-        static void RequireSortedUnique<T>(IReadOnlyList<T> values)
-            where T : IComparable<T> {
+        static void RequireSortedUnique<T>(
+            IReadOnlyList<T> values,
+            IComparer<T> comparer
+        ) {
             for (int index = 1; index < values.Count; index++) {
-                if (values[index - 1].CompareTo(values[index]) >= 0) {
+                if (comparer.Compare(values[index - 1], values[index]) >= 0) {
                     throw new InvalidDataException(
                         "Control admission sets must be strictly sorted."
                     );
@@ -497,6 +499,24 @@ public sealed class RecapGridControlAdmission {
             }
         }
     }
+
+    private byte[] EncodeCanonical() => JsonSerializer.SerializeToUtf8Bytes(
+        new ControlAdmissionDto(
+            1,
+            (int)Permissions,
+            _familyAllowlist.Select(static value => value.Value)
+                .Order(StringComparer.Ordinal)
+                .ToArray(),
+            _capabilityAllowlist.Order(StringComparer.Ordinal).ToArray(),
+            _targetCarrierAllowlist.Select(static value => (int)value)
+                .Order()
+                .ToArray(),
+            _logicalColumnPrefixes.Order(StringComparer.Ordinal).ToArray(),
+            MaximumBootstrapRows,
+            MaximumProjectedCalls
+        ),
+        ControlJson.Options
+    );
 
     internal bool Allows(RecapGridControlPermission permission)
         => (Permissions & permission) == permission;

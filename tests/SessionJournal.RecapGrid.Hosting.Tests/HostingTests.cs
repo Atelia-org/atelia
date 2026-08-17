@@ -199,6 +199,24 @@ public sealed class HostingTests {
             Encoding.UTF8.GetString(highEscaping.ToCanonicalBytes()),
             StringComparison.Ordinal
         );
+        RecapGridRouteManifest controlContaining =
+            RecapGridRouteManifest.Create([
+                new RecapGridRouteManifestEntry(
+                    key,
+                    "route\nline",
+                    1,
+                    TimeSpan.FromMilliseconds(1),
+                    1
+                )
+            ]);
+        RecapGridRouteManifest controlRoundtrip =
+            RecapGridRouteManifest.DecodeCanonical(
+                controlContaining.ToCanonicalBytes()
+            );
+        Assert.Equal(
+            "route\nline",
+            Assert.Single(controlRoundtrip.Routes).ConnectionId
+        );
         Assert.Equal(1, minimum.MaximumConcurrency);
         Assert.Equal(TimeSpan.FromMilliseconds(1), minimum.DispatchTimeout);
         Assert.Null(minimum.MaximumOutputTokens);
@@ -222,7 +240,6 @@ public sealed class HostingTests {
         ));
         foreach (string invalidIdentifier in new[] {
                      " ",
-                     "route\n",
                      "\ud800"
                  }) {
             Assert.Throws<ArgumentException>(() =>

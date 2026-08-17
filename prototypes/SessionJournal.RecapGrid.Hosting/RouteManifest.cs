@@ -49,8 +49,7 @@ public sealed record RecapGridRouteManifestEntry {
         string value,
         string parameterName
     ) {
-        if (string.IsNullOrWhiteSpace(value)
-            || value.Any(char.IsControl)) {
+        if (string.IsNullOrWhiteSpace(value)) {
             throw new ArgumentException(
                 "A bounded non-empty identifier is required.",
                 parameterName

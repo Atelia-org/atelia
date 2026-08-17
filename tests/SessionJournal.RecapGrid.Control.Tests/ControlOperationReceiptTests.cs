@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Xunit;
@@ -487,6 +489,253 @@ public sealed partial class ControlVerticalTests {
         }
     }
 
+    [Fact]
+    public void Admission_ExactLiteralRoundtripsAsOwnerCanonicalBytes() {
+        byte[] expected =
+            """{"schemaVersion":1,"permissions":0,"familyDigests":[],"capabilityFingerprints":[],"targetCarriers":[],"logicalColumnPrefixes":["case."],"maximumBootstrapRows":0,"maximumProjectedCalls":0}"""u8.ToArray();
+
+        RecapGridControlAdmission decoded =
+            RecapGridControlAdmission.DecodeCanonical(expected);
+
+        Assert.Equal(expected, decoded.ToCanonicalBytes());
+    }
+
+    [Theory]
+    [InlineData("future-version")]
+    [InlineData("fractional-version")]
+    [InlineData("duplicate-version")]
+    [InlineData("root-order")]
+    [InlineData("unknown")]
+    [InlineData("duplicate-prefix")]
+    [InlineData("descending-prefix")]
+    public void Admission_RejectsNoncanonicalV1Mutations(string kind) {
+        const string canonical =
+            """{"schemaVersion":1,"permissions":0,"familyDigests":[],"capabilityFingerprints":[],"targetCarriers":[],"logicalColumnPrefixes":["case."],"maximumBootstrapRows":0,"maximumProjectedCalls":0}""";
+        string invalid = kind switch {
+            "future-version" => canonical.Replace(
+                "\"schemaVersion\":1",
+                "\"schemaVersion\":2",
+                StringComparison.Ordinal
+            ),
+            "fractional-version" => canonical.Replace(
+                "\"schemaVersion\":1",
+                "\"schemaVersion\":1.0",
+                StringComparison.Ordinal
+            ),
+            "duplicate-version" => canonical.Replace(
+                "{\"schemaVersion\":1,",
+                "{\"schemaVersion\":1,\"schemaVersion\":1,",
+                StringComparison.Ordinal
+            ),
+            "root-order" => canonical.Replace(
+                "{\"schemaVersion\":1,\"permissions\":0,",
+                "{\"permissions\":0,\"schemaVersion\":1,",
+                StringComparison.Ordinal
+            ),
+            "unknown" => canonical.Replace(
+                "{\"schemaVersion\":1,",
+                "{\"schemaVersion\":1,\"unknown\":0,",
+                StringComparison.Ordinal
+            ),
+            "duplicate-prefix" => canonical.Replace(
+                "[\"case.\"]",
+                "[\"case.\",\"case.\"]",
+                StringComparison.Ordinal
+            ),
+            "descending-prefix" => canonical.Replace(
+                "[\"case.\"]",
+                "[\"z.\",\"a.\"]",
+                StringComparison.Ordinal
+            ),
+            _ => throw new InvalidOperationException()
+        };
+        Assert.NotEqual(canonical, invalid);
+
+        Assert.Throws<InvalidDataException>(() =>
+            RecapGridControlAdmission.DecodeCanonical(
+                Encoding.UTF8.GetBytes(invalid)
+            ));
+    }
+
+    [Fact]
+    public void Admission_PublicProducerRejectsBytesBeyondDecoderCap() {
+        FamilyDefinitionDigest[] families = AdmissionFamilyDigests(256);
+        string[] capabilities = AdmissionCapabilityDigests(256);
+        string[] escapingPrefixes = Enumerable.Range(0, 128)
+            .Select(index => new string('\\', 126)
+                + index.ToString("X2", CultureInfo.InvariantCulture))
+            .ToArray();
+        var nearBound = new RecapGridControlAdmission(
+            RecapGridControlPermission.None,
+            families,
+            capabilities,
+            [],
+            escapingPrefixes[..118],
+            0,
+            0
+        );
+        byte[] nearBoundBytes = nearBound.ToCanonicalBytes();
+
+        Assert.InRange(nearBoundBytes.Length, 60 * 1024, 64 * 1024);
+        Assert.Equal(
+            nearBoundBytes,
+            RecapGridControlAdmission.DecodeCanonical(nearBoundBytes)
+                .ToCanonicalBytes()
+        );
+        Assert.Throws<ArgumentException>(() =>
+            new RecapGridControlAdmission(
+                RecapGridControlPermission.None,
+                families,
+                capabilities,
+                [],
+                escapingPrefixes,
+                0,
+                0
+            ));
+    }
+
+    [Fact]
+    public void Admission_OrdinalOrderIsIndependentOfCurrentCulture() {
+        CultureInfo priorCulture = CultureInfo.CurrentCulture;
+        try {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+            var owner = new RecapGridControlAdmission(
+                RecapGridControlPermission.None,
+                [],
+                [],
+                [],
+                ["z.", "ä."],
+                0,
+                0
+            );
+            byte[] ownerBytes = owner.ToCanonicalBytes();
+            string ownerText = Encoding.UTF8.GetString(ownerBytes);
+            Assert.Contains(
+                "\"logicalColumnPrefixes\":[\"z.\",\"ä.\"]",
+                ownerText,
+                StringComparison.Ordinal
+            );
+
+            Assert.Equal(
+                ownerBytes,
+                RecapGridControlAdmission.DecodeCanonical(ownerBytes)
+                    .ToCanonicalBytes()
+            );
+            string cultureOrdered = ownerText.Replace(
+                "[\"z.\",\"ä.\"]",
+                "[\"ä.\",\"z.\"]",
+                StringComparison.Ordinal
+            );
+            Assert.NotEqual(ownerText, cultureOrdered);
+            Assert.Throws<InvalidDataException>(() =>
+                RecapGridControlAdmission.DecodeCanonical(
+                    Encoding.UTF8.GetBytes(cultureOrdered)
+                ));
+        }
+        finally {
+            CultureInfo.CurrentCulture = priorCulture;
+        }
+    }
+
+    [Fact]
+    public void Admission_CollectionAndNumericBoundsAreInclusive() {
+        FamilyDefinitionDigest[] maximumFamilies =
+            AdmissionFamilyDigests(256);
+        string[] maximumCapabilities = AdmissionCapabilityDigests(256);
+        string[] maximumPrefixes = Enumerable.Range(0, 128)
+            .Select(index => $"p{index:D3}.")
+            .ToArray();
+
+        AssertAdmissionRoundtrips(new RecapGridControlAdmission(
+            RecapGridControlPermission.None,
+            maximumFamilies,
+            [],
+            [],
+            ["case."],
+            0,
+            0
+        ));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new RecapGridControlAdmission(
+                RecapGridControlPermission.None,
+                AdmissionFamilyDigests(257),
+                [],
+                [],
+                ["case."],
+                0,
+                0
+            ));
+        AssertAdmissionRoundtrips(new RecapGridControlAdmission(
+            RecapGridControlPermission.None,
+            [],
+            maximumCapabilities,
+            [],
+            ["case."],
+            0,
+            0
+        ));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new RecapGridControlAdmission(
+                RecapGridControlPermission.None,
+                [],
+                AdmissionCapabilityDigests(257),
+                [],
+                ["case."],
+                0,
+                0
+            ));
+        AssertAdmissionRoundtrips(new RecapGridControlAdmission(
+            RecapGridControlPermission.None,
+            [],
+            [],
+            [],
+            maximumPrefixes,
+            0,
+            0
+        ));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new RecapGridControlAdmission(
+                RecapGridControlPermission.None,
+                [],
+                [],
+                [],
+                [.. maximumPrefixes, "overflow."],
+                0,
+                0
+            ));
+        AssertAdmissionRoundtrips(new RecapGridControlAdmission(
+            RecapGridControlPermission.None,
+            [],
+            [],
+            [],
+            ["case."],
+            1_000_000,
+            1_000_000
+        ));
+        foreach (int invalid in new[] { -1, 1_000_001 }) {
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                new RecapGridControlAdmission(
+                    RecapGridControlPermission.None,
+                    [],
+                    [],
+                    [],
+                    ["case."],
+                    invalid,
+                    0
+                ));
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                new RecapGridControlAdmission(
+                    RecapGridControlPermission.None,
+                    [],
+                    [],
+                    [],
+                    ["case."],
+                    0,
+                    invalid
+                ));
+        }
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
@@ -702,5 +951,31 @@ public sealed partial class ControlVerticalTests {
                 )
             );
         Assert.Equal(1, unsupported.SchemaVersion);
+    }
+
+    private static FamilyDefinitionDigest[] AdmissionFamilyDigests(int count)
+        => Enumerable.Range(0, count)
+            .Select(index => new FamilyDefinitionDigest(
+                index.ToString("x64", CultureInfo.InvariantCulture)
+            ))
+            .ToArray();
+
+    private static string[] AdmissionCapabilityDigests(int count)
+        => Enumerable.Range(0, count)
+            .Select(index => (index + 4_096).ToString(
+                "x64",
+                CultureInfo.InvariantCulture
+            ))
+            .ToArray();
+
+    private static void AssertAdmissionRoundtrips(
+        RecapGridControlAdmission admission
+    ) {
+        byte[] bytes = admission.ToCanonicalBytes();
+        Assert.Equal(
+            bytes,
+            RecapGridControlAdmission.DecodeCanonical(bytes)
+                .ToCanonicalBytes()
+        );
     }
 }
