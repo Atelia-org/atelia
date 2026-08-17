@@ -16,16 +16,12 @@ internal sealed record DesiredSetupReconciliationReport(
     bool SystemPromptChanged,
     string ModelId,
     string CompletionSurfaceId,
-    string SystemPromptUtf8Sha256CodecId,
-    string SystemPromptUtf8Sha256,
-    string Phase
+    string SystemPromptUtf8Sha256
 );
 
 internal static class DesiredSetupReconciliationCommand {
     private const string ReportSchema =
-        "atelia.session-journal.desired-setup-reconciliation.v1";
-    private const string SystemPromptUtf8Sha256CodecId =
-        "atelia.utf8-text.sha256.v1";
+        "atelia.session-journal.desired-setup-reconciliation.v2";
 
     internal static int Run(CliOptions options) {
         ArgumentNullException.ThrowIfNull(options);
@@ -145,7 +141,6 @@ internal static class DesiredSetupReconciliationCommand {
         Console.WriteLine(
             $"completionSurfaceId: {report.CompletionSurfaceId}"
         );
-        Console.WriteLine($"phase: {report.Phase}");
         if (reportPath is not null) {
             Console.WriteLine(
                 $"jsonReport: {Path.GetFullPath(reportPath)}"
@@ -211,9 +206,7 @@ internal static class DesiredSetupReconciliationCommand {
             ready.SystemPromptChanged,
             governing.RuntimeConfig.ModelId,
             governing.RuntimeConfig.CompletionSurfaceId,
-            SystemPromptUtf8Sha256CodecId,
-            ComputeUtf8Sha256(governing.SystemPrompt),
-            after.Phase.ToString()
+            ComputeUtf8Sha256(governing.SystemPrompt)
         );
     }
 

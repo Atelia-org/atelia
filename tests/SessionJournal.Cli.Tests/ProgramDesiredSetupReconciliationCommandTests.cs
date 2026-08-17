@@ -64,14 +64,39 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
         );
         Assert.Equal("prompt-B", after.Governing.SystemPrompt);
 
-        using JsonDocument report = JsonDocument.Parse(
-            File.ReadAllText(inputs.ReportPath)
+        string reportJson = File.ReadAllText(inputs.ReportPath);
+        Assert.Equal(
+            ExpectedReportJson(
+                before.Head,
+                after.Head,
+                expectedRuntimeChanged,
+                expectedPromptChanged
+            ),
+            reportJson
         );
+        using JsonDocument report = JsonDocument.Parse(reportJson);
         JsonElement root = report.RootElement;
         Assert.Equal(
-            "atelia.session-journal.desired-setup-reconciliation.v1",
+            [
+                "schema",
+                "branchName",
+                "connectionId",
+                "beforeHead",
+                "afterHead",
+                "runtimeConfigChanged",
+                "systemPromptChanged",
+                "modelId",
+                "completionSurfaceId",
+                "systemPromptUtf8Sha256"
+            ],
+            root.EnumerateObject().Select(static property => property.Name)
+        );
+        Assert.Equal(
+            "atelia.session-journal.desired-setup-reconciliation.v2",
             root.GetProperty("schema").GetString()
         );
+        Assert.Equal("main", root.GetProperty("branchName").GetString());
+        Assert.Equal("target", root.GetProperty("connectionId").GetString());
         Assert.Equal(
             EventAddressTextCodec.Format(before.Head),
             root.GetProperty("beforeHead").GetString()
@@ -94,19 +119,26 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
             root.GetProperty("completionSurfaceId").GetString()
         );
         Assert.Equal(
-            "atelia.utf8-text.sha256.v1",
-            root.GetProperty("systemPromptUtf8Sha256CodecId").GetString()
-        );
-        Assert.Equal(
             ComputeUtf8Sha256("prompt-B"),
             root.GetProperty("systemPromptUtf8Sha256").GetString()
         );
-        Assert.Equal("Idle", root.GetProperty("phase").GetString());
+        Assert.DoesNotContain("prompt-B", reportJson, StringComparison.Ordinal);
         Assert.DoesNotContain(
-            "prompt-B",
-            File.ReadAllText(inputs.ReportPath),
+            "SECRET-API-KEY",
+            reportJson,
             StringComparison.Ordinal
         );
+        Assert.DoesNotContain(
+            "https://example.invalid",
+            reportJson,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "systemPromptUtf8Sha256CodecId",
+            reportJson,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain("phase", reportJson, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -137,6 +169,15 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
             report.RootElement
                 .GetProperty("systemPromptChanged")
                 .GetBoolean()
+        );
+        Assert.Equal(
+            ExpectedReportJson(
+                reconciled.Head,
+                repeated.Head,
+                runtimeConfigChanged: false,
+                systemPromptChanged: false
+            ),
+            File.ReadAllText(inputs.ReportPath)
         );
     }
 
@@ -338,7 +379,8 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
                   "kind": "openai-chat",
                   "modelId": "model-B",
                   "completionSurfaceId": "surface-B",
-                  "baseAddress": "https://example.invalid"
+                  "baseAddress": "https://example.invalid",
+                  "apiKey": "SECRET-API-KEY"
                 }
               ]
             }
@@ -370,6 +412,26 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
         Convert.ToHexStringLower(
             SHA256.HashData(Encoding.UTF8.GetBytes(value))
         );
+
+    private static string ExpectedReportJson(
+        EventAddress beforeHead,
+        EventAddress afterHead,
+        bool runtimeConfigChanged,
+        bool systemPromptChanged
+    ) =>
+        "{\"schema\":\"atelia.session-journal."
+        + "desired-setup-reconciliation.v2\","
+        + "\"branchName\":\"main\","
+        + "\"connectionId\":\"target\","
+        + $"\"beforeHead\":\"{EventAddressTextCodec.Format(beforeHead)}\","
+        + $"\"afterHead\":\"{EventAddressTextCodec.Format(afterHead)}\","
+        + "\"runtimeConfigChanged\":"
+        + (runtimeConfigChanged ? "true" : "false")
+        + ",\"systemPromptChanged\":"
+        + (systemPromptChanged ? "true" : "false")
+        + ",\"modelId\":\"model-B\","
+        + "\"completionSurfaceId\":\"surface-B\","
+        + $"\"systemPromptUtf8Sha256\":\"{ComputeUtf8Sha256("prompt-B")}\"}}";
 
     private sealed record TestInputs(
         string RepositoryPath,
