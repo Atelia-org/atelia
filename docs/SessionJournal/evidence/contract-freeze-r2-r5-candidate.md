@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 — R5 candidate evidence
 
-状态：R5 candidate draft；code/rebuild gates complete、docs closure与用户approval Pending；**未声明stable/frozen，未创建tag**  
+状态：R5 candidate **ready for approval**；final gates complete；逐Tier approval与tag Pending；**未声明stable/frozen，未创建tag**  
 source candidate：`a77ed16c1ddef949dc519811fde56600db38316e`  
 记录日期：2026-08-17
 
@@ -149,7 +149,7 @@ independent test fingerprint未改，accepted Schema V2不变。
 | HTTP/SSE server与Node client contracts | Passed | `galatea-http-v1.test.mjs` 1/1；`galatea-sse-v1.test.mjs` 1/1；同一source candidate |
 | Provider-free disposable legacy rebuild/repeat-init | Passed | §5.1；`/tmp/atelia-r5-rebuild.fdXFt0/`，two fresh imports、offline/raw invariants、四owner gates与13-file repeat snapshots green |
 | Scoped docs checker与source-vs-docs diff | Passed | checker 18 files / 0 diagnostics；`git diff a77ed16c -- ':!docs/**'`为空；all-tracked report-only为86 files / 11 diagnostics，全部是既有`archive/` missing targets，本包不修改archive |
-| Independent docs review | Pending | 两位reviewer的finding已由本tail逐项修订；tail re-review仍Pending，不把finding closure预写成review PASS |
+| Independent docs review | Passed | initial review分别报告2项P1加precision findings、以及6项findings；`3e9a4b8d`逐项关闭后，两位reviewer tail re-review均PASS |
 | Current ignored operator config | **NotRun** | 本轮禁止读取；历史content-free cutover不续期为current deployment证据 |
 | Real provider / content quality canary | **NotRun** | 不属于contract freeze gate；provider calls必须为0 |
 | Tier approval与tag | **Pending** | 由用户逐tier批准；本文不创建或建议既成tag |
@@ -201,6 +201,7 @@ import结果，没有重跑import。这是test harness assertion校准，不是p
 ## 6. Approval boundary
 
 current source code与provider-free disposable rebuild gates已在`a77ed16c`收口；scoped docs checker为18 files / 0
-diagnostics，且本docs-only candidate相对`a77ed16c`没有product/test diff。剩余required `Pending`只有independent
-docs review；它无blocking finding后，才达到`ready for approval`。即使如此，也必须由用户明确选择Tier A/B/C/D中的哪些声明为
-stable/frozen并批准tag名称；未批准tier继续保持candidate/Prototype，不被相邻tier带上。
+diagnostics，且docs-only candidate相对`a77ed16c`没有product/test diff。两位reviewer的initial findings由
+`3e9a4b8d`关闭，tail re-review均PASS，因此本candidate达到`ready for approval`。剩余`Pending`只有用户逐Tier
+approval与tag；必须由用户明确选择Tier A/B/C/D中的哪些声明为stable/frozen并批准tag名称，未批准tier继续保持
+candidate/Prototype，不被相邻tier带上。

@@ -1,13 +1,13 @@
 # SessionJournal Contract R2 candidate
 
-状态：R5 candidate；code/rebuild gates complete、docs closure Pending；**未声明任何tier stable/frozen，未创建tag**  
+状态：R5 candidate **ready for approval**；逐Tier approval与tag Pending；**未声明任何tier stable/frozen，未创建tag**  
 source candidate：`a77ed16c1ddef949dc519811fde56600db38316e`  
 记录日期：2026-08-17
 
 本文是current SessionJournal、HistoryTimeline与RecapGrid contract的候选Shape/Rule入口。它把明确支持的
 .NET role、raw/companion/operational wire与upgrade policy放在同一张地图中，但只有
-[R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)记录的final gates完成、独立复核通过，
-且用户明确批准具体tier后，才可以改变本文状态或创建tag。
+[R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)记录的final gates与独立复核已经通过，
+本文现为`ready for approval`；只有用户明确批准具体tier后，才可以把该tier改为stable/frozen或创建tag。
 
 源码、strict codec、tests和goldens仍是实现事实；本文不把所有CLR `public`、human diagnostic文本、provider行为、
 ignored operator state或历史candidate自动升级为兼容承诺。

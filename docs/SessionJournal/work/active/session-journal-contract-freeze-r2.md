@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；R3/R4、readiness tails与R5 code/rebuild gates complete；docs closure in progress；tier approval/tag Pending  
+状态：Active；R5 final gates complete，candidate ready for approval；逐Tier approval/tag Pending  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -228,10 +228,10 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | CF-C-01 Control classification | Complete | `8a2186f8`；future schema typed Unsupported与empty whole-state independent golden |
 | R4 priority code gates | Complete | solution + owner/PublicSurface/CLI/wire/nonfriend gates；D02与post-D02分时R4 evidence分别记录 |
 | R5 current inventory | Complete | `a77ed16c` S/T/O/C/G/H = 901 types / 9,419 rows / 2,123 construction lines；[R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md) |
-| R5 support/wire/upgrade candidate docs | Draft | [Contract R2 candidate](../../current/contracts/session-journal-contract-r2.md)；不构成freeze声明 |
+| R5 support/wire/upgrade candidate docs | Complete / candidate | [Contract R2 candidate](../../current/contracts/session-journal-contract-r2.md)；ready for approval，不构成freeze声明 |
 | R5 final code gates | Complete | `a77ed16c` solution 37 projects / 4,629 passed / 0 failed / 0 skipped；build 0W/0E；11 PublicSurface、Walking 27、Galatea.RG 7与HTTP/SSE Node均green |
 | R5 disposable rebuild | Complete | `a77ed16c` two fresh imports、offline/raw equality、four-owner gates、repeat-init与standalone Timeline create 13-file snapshots exact；禁网/provider artifacts 0 |
-| R5 docs review / approval / tag | Pending | 两位initial reviewer findings已由docs tail修订，tail re-review仍Pending；之后由用户逐tier批准 |
+| R5 docs review / approval / tag | Ready for approval；approval/tag Pending | `3e9a4b8d`关闭两位initial reviewer findings，两位tail re-review均PASS；等待用户逐Tier批准 |
 
 ## 9. R0 完成标准
 
@@ -298,7 +298,7 @@ R0 只有在以下条件同时满足时完成：
 - cap hit不停provider、不改durable outcome，只进入internal `PreviewSuppressed`并丢弃后续preview；durable完成但
   bounded view不可得时仍发`done {recent:null}`。fatal EOF必须查询current并有限重试，不能当success。
 
-combined R4已完成，但这里只形成commit-pinned candidate。数值仍为`Prototype locked`，R5仍Pending；本计划
+combined R4已完成，但这里只形成commit-pinned candidate。数值仍为`Prototype locked`；在该阶段R5尚未完成，本计划
 没有批准stable/frozen tier，也没有引入pagination、cursor、truncation、Last-Event-ID、ack、dual grammar、
 generic schema framework或新的public authority。
 
@@ -317,8 +317,8 @@ generic schema framework或新的public authority。
 - History schema-source去重由`a77ed16c`以单一12-entry DDL列表完成，净减53行；没有SQL parser/framework，
   independent fingerprint与Schema V2 accepted language不变；
 - current support map、wire inventory、upgrade policy、candidate commit map与fresh compiled inventory已进入
-  [R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)；code/rebuild gates已填入，docs closure仍Pending；
-- R5仍处于candidate阶段，本文不批准stable/frozen tier。
+  [R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)；final gates与independent docs review均已通过；
+- R5 candidate已ready for approval，但本文不批准stable/frozen tier。
 
 ## 14. R5 candidate preparation
 
@@ -331,6 +331,6 @@ final gate ledger。
 fresh isolated inventory为901 effective-public types、9,419 logical API rows与2,123 construction rows；相对R0
 分别`+10 / -17 / -48`。这些数字识别candidate，不表示所有export都已获得stable support promise。
 
-同一source candidate的final solution/owner/PublicSurface、HTTP/SSE Node与provider-free disposable rebuild gates
-均已complete；下一步只剩docs commit/checker/source diff与independent review。ignored operator config和real provider本轮明确`NotRun`，不能拿历史local observation
-代替current gate。required gates完成后也只能标`ready for approval`；stable/frozen tier与tag必须由用户另行批准。
+同一source candidate的final solution/owner/PublicSurface、HTTP/SSE Node、provider-free disposable rebuild、docs checker、
+source diff与independent review均已complete，candidate现为`ready for approval`。ignored operator config和real provider
+本轮明确`NotRun`，不能拿历史local observation代替current gate；stable/frozen tier与tag必须由用户另行批准。
