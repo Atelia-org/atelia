@@ -527,8 +527,7 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
             "user-version-priority" => """
                 PRAGMA user_version = 99;
                 PRAGMA application_id = 0;
-                PRAGMA ignore_check_constraints = ON;
-                UPDATE store_metadata SET schema_version = 3;
+                DROP TABLE store_metadata;
                 """,
             "application-id" => "PRAGMA application_id = 0;",
             "metadata-absent" => "DELETE FROM store_metadata;",

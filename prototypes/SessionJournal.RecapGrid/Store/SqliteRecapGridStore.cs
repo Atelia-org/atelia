@@ -1614,9 +1614,21 @@ internal sealed class SqliteRecapGridStore {
 
     private static void ValidateSchemaIdentity(SqliteConnection connection) {
         using (SqliteCommand command = connection.CreateCommand()) {
+            command.CommandText = "PRAGMA user_version;";
+            using SqliteDataReader reader = command.ExecuteReader();
+            if (!reader.Read()) {
+                throw new InvalidDataException(
+                    "RecapGrid Store schema version is unavailable."
+                );
+            }
+            int schemaVersion = reader.GetInt32(0);
+            if (schemaVersion != SchemaVersion) {
+                throw new StoreUnsupportedSchemaException(schemaVersion);
+            }
+        }
+        using (SqliteCommand command = connection.CreateCommand()) {
             command.CommandText = """
                 SELECT
-                    (SELECT user_version FROM pragma_user_version),
                     (SELECT application_id FROM pragma_application_id),
                     (SELECT COUNT(*) FROM store_metadata);
                 """;
@@ -1626,12 +1638,8 @@ internal sealed class SqliteRecapGridStore {
                     "RecapGrid Store schema identity is unavailable."
                 );
             }
-            int schemaVersion = reader.GetInt32(0);
-            if (schemaVersion != SchemaVersion) {
-                throw new StoreUnsupportedSchemaException(schemaVersion);
-            }
-            if (reader.GetInt32(1) != ApplicationId
-                || reader.GetInt32(2) != 1) {
+            if (reader.GetInt32(0) != ApplicationId
+                || reader.GetInt32(1) != 1) {
                 throw new InvalidDataException(
                     "RecapGrid Store schema identity is invalid."
                 );
