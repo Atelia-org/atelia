@@ -24,10 +24,11 @@ exact appendix。它不改变product、schema或accepted language，也不把候
 | logical schema objects | exactly five user tables below；no user index/trigger/view object |
 | metadata | exactly one `store_metadata` row，`singleton=1`、`schema_version=2`、32-char lowercase hex `store_instance_id`，four nonnegative counters |
 
-Open首先独立读取`user_version`；任何非`2`值优先分类为future/unsupported，即使application ID、metadata或
-catalog同时损坏。current V2随后要求exact application ID、exactly one metadata row、以及按`type,name`
-ordinal排序后与owner SQL materialize所得的五个`(type,name,tbl_name,sql)`完全相同；extra、missing或不同SQL
-都不是V2。
+Open必须先通过path/file/lease、connection与persistent-PRAGMA gates。进入schema identity validation后，首先
+独立读取`user_version`；任何非`2`值优先于application ID、metadata与catalog问题分类为future/unsupported。
+current V2随后要求exact application ID、exactly one metadata row、以及按`type,name` ordinal排序后与owner SQL
+materialize所得的五个`(type,name,tbl_name,sql)`完全相同；extra、missing或不同SQL都不是V2。这里不承诺
+`user_version`优先于更早执行的connection/persistent-PRAGMA gate。
 
 ## 2. Exact logical schema shape
 
@@ -93,9 +94,14 @@ transcript，因此新增gate不改变既有logical-schema fingerprint。
 
 ## 6. Operator classification与upgrade policy
 
+Operator只有在path/file/lease、platform与connection/persistent-PRAGMA gates通过后才进入schema identity
+validation；因此下表的schema identity rows以这些前置gate通过为前提。persistent PRAGMA row单独记录更早的
+current-store invalid分类。
+
 | Disk fact | `Create` existing | `Open` / `OpenReader` / `Inspect` / `Export` | `Verify` |
 |:--|:--|:--|:--|
 | valid exact V2 | `AlreadyExists`（同一exclusive lease内先验证） | ordinary opened/available/page | `Healthy` |
+| persistent `page_size != 4096`或`journal_mode != delete` | `Invalid(code=GridStoreInvalid)`且不rewrite existing bytes | typed `Invalid(code=GridStoreInvalid,...)` | `Unhealthy(Incomplete=true, nonempty errors)` |
 | `user_version != 2` | `Invalid(code=GridStoreUnsupportedSchema)` | typed `UnsupportedSchema(actualVersion)` | typed `UnsupportedSchema(actualVersion)` |
 | current-version identity/catalog/metadata invalid | `Invalid(code=GridStoreInvalid)` | typed `Invalid(code=GridStoreInvalid,...)` | `Unhealthy(Incomplete=true, nonempty errors)` |
 

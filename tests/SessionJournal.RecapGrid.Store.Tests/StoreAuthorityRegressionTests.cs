@@ -446,6 +446,7 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
 
     [Theory]
     [InlineData("user-version-priority", true)]
+    [InlineData("journal-mode", false)]
     [InlineData("application-id", false)]
     [InlineData("metadata-absent", false)]
     [InlineData("metadata-duplicate", false)]
@@ -553,6 +554,7 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
                 PRAGMA application_id = 0;
                 DROP TABLE store_metadata;
                 """,
+            "journal-mode" => "PRAGMA journal_mode = WAL;",
             "application-id" => "PRAGMA application_id = 0;",
             "metadata-absent" => "DELETE FROM store_metadata;",
             "metadata-duplicate" => """
