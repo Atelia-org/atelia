@@ -146,6 +146,8 @@ CODEX_BRIDGE_RUN_LIVE=1 npm run test:integration
 
 ## 7. Secure MCP Tunnel（推荐）
 
+Windows 原生部署另见 [Windows Secure MCP Tunnel 配置](./WINDOWS-TUNNEL.md)。
+
 Bridge 不实现 tunnel protocol，直接使用 OpenAI 官方 `tunnel-client`。先在 [Platform tunnel settings](https://platform.openai.com/settings/organization/tunnels) 创建 tunnel，并把目标 ChatGPT workspace/account 与 Platform organization 关联。
 
 从 tunnel settings 下载当前 `tunnel-client` 后：
