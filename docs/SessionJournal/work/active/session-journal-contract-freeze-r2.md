@@ -218,12 +218,12 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | Post-CF-C-02 readiness tails | Complete | RT-01 `c00df3d8` same-lease existing validation；SC-01 `a77ed16c` single DDL source，Schema V2不变 |
 | R2 priority plan lock | Complete | [priority implementation evidence](../../evidence/contract-freeze-r2-r2-priority-implementation.md) + [HTTP/SSE plan lock](../../evidence/contract-freeze-r2-http-sse-plan-lock.md) |
 | R3 priority implementation | Complete | 七个原子commits + test-only `87079eaa`；未增加compatibility/framework层 |
-| CF-D-01 operator cutover | Complete | live ignored V1 manifest；Idle/Prepared=0；actual-env Completion/Galatea provider-free load；independent PASS |
+| CF-D-01 operator cutover | Complete；historical cut-time | 当时的ignored V1 manifest、Idle/Prepared=0与actual-env provider-free load；不构成R5 current deployment gate |
 | CF-D-02a/02b review + plan lock | Complete | HTTP/SSE split；Adopt/Retain/Prototype/Reject与P0 blocker已锁；该阶段只读，后续R3/R4另列 |
 | CF-D-02-P0 / D02b-A0 decisions | Complete | 4,096 headers / 16 MiB payload / 4 MiB recent；256 KiB pop source / 2 MiB receipt；4+5=9 MiB SSE；preview suppression |
 | CF-D-02 R3 implementation | Complete | `66dd87fc` → `0f441f90`；bounded recent、minimal pop receipt、HTTP/SSE atomic server+browser cuts及P0 API hygiene tail |
 | CF-D-02 combined R4 | Complete | [commit-pinned implementation evidence](../../evidence/contract-freeze-r2-d02-r4-implementation.md)；candidate/Prototype locked，未作tier freeze |
-| CF-D-03 root config V1 | Complete | `23392263` + no-BOM tail `8f72cb66`；ignored operator manifest已停服迁移并通过provider-free load |
+| CF-D-03 root config V1 | Complete；historical cut-time | `23392263` + no-BOM tail `8f72cb66`；当时的ignored operator manifest停服迁移/provider-free load不构成R5 current deployment gate |
 | Targeted CF-B | Complete / stop | Galatea file DTO、History owner-local assembly、Hosting snapshot-only telemetry；不为inventory count继续扩大cut |
 | CF-C-01 Control classification | Complete | `8a2186f8`；future schema typed Unsupported与empty whole-state independent golden |
 | R4 priority code gates | Complete | solution + owner/PublicSurface/CLI/wire/nonfriend gates；D02与post-D02分时R4 evidence分别记录 |
@@ -231,7 +231,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | R5 support/wire/upgrade candidate docs | Draft | [Contract R2 candidate](../../current/contracts/session-journal-contract-r2.md)；不构成freeze声明 |
 | R5 final code gates | Complete | `a77ed16c` solution 37 projects / 4,629 passed / 0 failed / 0 skipped；build 0W/0E；11 PublicSurface、Walking 27、Galatea.RG 7与HTTP/SSE Node均green |
 | R5 disposable rebuild | Complete | `a77ed16c` two fresh imports、offline/raw equality、four-owner gates、repeat-init与standalone Timeline create 13-file snapshots exact；禁网/provider artifacts 0 |
-| R5 docs review / approval / tag | Pending | docs commit/checker/source diff/independent review后由用户逐tier批准 |
+| R5 docs review / approval / tag | Pending | 两位initial reviewer findings已由docs tail修订，tail re-review仍Pending；之后由用户逐tier批准 |
 
 ## 9. R0 完成标准
 

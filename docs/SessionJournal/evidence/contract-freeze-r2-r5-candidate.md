@@ -35,11 +35,13 @@ final gate填入前不把分时结果描述成current-HEAD rerun。
 | `dba729749fbe6e2013d634386ad7f0d7b7b305a3` | product/tests | Online evidence construction cut |
 | `58d8ae0656959570b5a48b4d4527c621759fc03b` | product/tests | Completion-owned strict connections V1 |
 | `87079eaa14681e83b7d2db584b3b5bf59dd99ab5` | tests | connections migration equivalence/depth tail |
+| `e1d785f0e29942ce698dcefe0392c5c535432b4d` | docs/semantic | priority cuts implementation evidence与active-plan closure |
 
 ### 2.2 D02 bounded recent、HTTP与SSE
 
 | Commit | Kind | Semantic unit |
 |:--|:--|:--|
+| `fd863fea0b13f5751172999b95313e7d9da27b62` | docs/semantic | HTTP/SSE accepted-language、consumer与P0/A0 plan lock |
 | `66dd87fc2f38ce657241a905f5b997cebe577355` | docs | P0/A0 numeric与cap-hit product lock |
 | `b65f3ad66cc0dd668081e8ffc3d4d7094004ca0d` | product/tests | bounded recent与prepared pop-before-CAS |
 | `818387e4e27c280d03c2c79ed835298da0efc644` | product/tests | P0 corruption/scope/public tail |
@@ -49,6 +51,8 @@ final gate填入前不把分时结果描述成current-HEAD rerun。
 | `57d05f4d6c193cf0c87466f8a4d7fc580dc29e2a` | product/tests/browser | typed bounded SSE V1 candidate |
 | `201fec7498a87bf2a51426bbf7f9c71429c0977d` | product/tests/browser | terminal/UTF-8/overflow/reconnect tails |
 | `0f441f901569adcadafbcc81a8dc3fe1a253c60a` | product/tests | P0 closed result record synthesis removal |
+| `3167942ce088bcc281637584360fd12f22730ab3` | docs/semantic | D02 combined R4 evidence与candidate-facing Galatea contract |
+| `c61b978e29eee02340b55acdcab6d1ea0317259a` | docs/semantic | D02 deployment、reconnect与validation boundary clarification |
 
 ### 2.3 Post-D02 support、config与companion evidence
 
@@ -58,18 +62,21 @@ final gate填入前不把分时结果描述成current-HEAD rerun。
 | `f1a8da0b8d87bd6c417c857535df8799229aafd4` | product/tests | History owner-local descriptor assembly cut |
 | `9f5de810c557659f339407c68402f1d3ef655b0d` | product/tests | Hosting snapshot-only telemetry |
 | `233922635ff318b0d95557628023791c16701bd8` | product/tests | Galatea root config exact V1 hard cut |
-| `8f72cb663a234a1a9776e47a862d3437e04d53e4` | product/tests | root config no-BOM production bootstrap tail |
 | `8a2186f8d5e289aafffd7f79c30be2e8316210ea` | product/tests | Control future-schema classification与empty golden |
+| `8f72cb663a234a1a9776e47a862d3437e04d53e4` | product/tests | root config no-BOM production bootstrap tail |
+| `5f597c7ef38796fae780e3b05cbf7699791ade7d` | docs/semantic | D03、targeted CF-B与CF-C-01 closure evidence |
 | `8605a62194d638544c3c702885344d3fa3645a0b` | tests | Rewriter五轴independent literal evidence |
 | `6e4955cacf45fc8de40ade5099c0b8f574c99e5c` | tests | History locator/head/SQLite independent evidence |
 | `b4559d7c7b7e186cbfea1eec9a3e38d3c73efc77` | product/tests | Store full metadata identity validation |
 | `fa6a05954cee948a718c964b86b0e96fcfdb7524` | product/tests | Store future-version classification precedence |
 | `3599c510188656b282722baddaee974b75a4ffb9` | product/tests | repeat-init existing Store readiness |
+| `79413c78a57783efff858c4609baa19bfb861323` | docs/semantic | CF-C-02 implementation/readiness evidence closure |
 | `c00df3d8cd8f25d9c97814d6aedceb7aeb242f07` | product/tests | RT-01 existing Timeline create readiness under same lease |
 | `a77ed16c1ddef949dc519811fde56600db38316e` | product | SC-01 single History SQLite DDL source；final source candidate |
 
 没有compatibility wrapper、dual reader/writer、generic parser framework、cross-owner result hierarchy、Schema V3或raw
-event wire commit。R5 docs commit与tag均Pending；tag只能在final gate与用户tier approval之后创建。
+event wire commit。初版R5 docs candidate为`29cc5561`；本review-tail docs commit只关闭文档finding。tag仍Pending，
+且只能在final gate与用户tier approval之后创建。
 
 ## 3. Current public inventory
 
@@ -142,7 +149,7 @@ independent test fingerprint未改，accepted Schema V2不变。
 | HTTP/SSE server与Node client contracts | Passed | `galatea-http-v1.test.mjs` 1/1；`galatea-sse-v1.test.mjs` 1/1；同一source candidate |
 | Provider-free disposable legacy rebuild/repeat-init | Passed | §5.1；`/tmp/atelia-r5-rebuild.fdXFt0/`，two fresh imports、offline/raw invariants、四owner gates与13-file repeat snapshots green |
 | Scoped docs checker与source-vs-docs diff | Passed | checker 18 files / 0 diagnostics；`git diff a77ed16c -- ':!docs/**'`为空；all-tracked report-only为86 files / 11 diagnostics，全部是既有`archive/` missing targets，本包不修改archive |
-| Independent docs review | Pending | docs-only candidate commit后执行；不得把自审替代独立复核 |
+| Independent docs review | Pending | 两位reviewer的finding已由本tail逐项修订；tail re-review仍Pending，不把finding closure预写成review PASS |
 | Current ignored operator config | **NotRun** | 本轮禁止读取；历史content-free cutover不续期为current deployment证据 |
 | Real provider / content quality canary | **NotRun** | 不属于contract freeze gate；provider calls必须为0 |
 | Tier approval与tag | **Pending** | 由用户逐tier批准；本文不创建或建议既成tag |
@@ -150,10 +157,11 @@ independent test fingerprint未改，accepted Schema V2不变。
 ### 5.1 Provider-free disposable rebuild
 
 final rebuild固定source candidate `a77ed16c1ddef949dc519811fde56600db38316e`，run root为
-`/tmp/atelia-r5-rebuild.fdXFt0/`，machine summary为`reports/r5-summary.json`。production CLI SHA-256是
+`/tmp/atelia-r5-rebuild.fdXFt0/`，machine summary为`reports/r5-summary.json`。current candidate CLI DLL SHA-256是
 `018c2dd23c4fa9716bc35984753aa9b4b2c85d99938d6927aafb1e3a7c87c1ae`。输入legacy export identity为
 1,281,881 bytes、SHA-256
-`b71822a27003e8d9f9b9c0ff956ca7c268267aba72221be89df154ed7d4751f3`；actual/ignored repo或config未访问。
+`b71822a27003e8d9f9b9c0ff956ca7c268267aba72221be89df154ed7d4751f3`。本gate只读这份固定legacy export；
+actual target repository与operator config均未访问。
 
 两次fresh import的path-normalized reports exact相等；offline validation均为
 `atelia.session-journal.offline-validation.v2`且normalized exact相等。final logical facts为148 events、
@@ -184,9 +192,11 @@ snapshot，before/after byte-exact且没有新增/删除文件，从black-box路
 provider/call-log artifacts为0。black-box CLI没有injectable provider-factory counter，因此本gate不把“没有网络且
 artifact为0”夸大成可观测的factory call count；它只证明这些命令在禁网条件下完成且未留下provider artifact。
 
-首轮harness曾用错误的schema V1字符串断言import report，读取production output后校准为exact
-`atelia.session-journal.legacy-import-report.v1`；这是test harness assertion校准，不是product failure或compatibility
-fallback。最终两次fresh import与上述全部gate均使用校准后的exact schema assertion。
+首轮harness把offline validation schema预设成v1，但current CLI exact schema是
+`atelia.session-journal.offline-validation.v2`；import report的
+`atelia.session-journal.legacy-import-report.v1`预设本来正确。两条fresh import及紧随其后的两条offline validation
+共四条CLI进程均已成功；校准只修正harness的offline-validation assertion，复用已写入disposable run root的两份
+import结果，没有重跑import。这是test harness assertion校准，不是product failure、retry或compatibility fallback。
 
 ## 6. Approval boundary
 

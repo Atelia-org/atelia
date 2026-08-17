@@ -58,7 +58,7 @@ isolated tracked archive生成；复现方法、tool identity与完整hash见
 
 | Owner | Candidate supported roles | Explicit non-promise / internal boundary |
 |:--|:--|:--|
-| S | engine create/open/runtime binding；read-only/offline/audit；legacy import；typed recovery、bounded planning/recent/pop input与readable result | test hook、arbitrary raw payload escape、owner-issued internal body、result record synthesis不是support目标 |
+| S | engine create/open/runtime binding；desired-setup reconciliation；exact-head `SendAsync`/`ResumeAsync`；`AbandonFailedTurn`/`RewindLatestCompletedTurn`；read-only/offline/audit；legacy import；typed recovery、bounded planning/recent/pop input与readable result | test hook、arbitrary raw payload escape、owner-issued internal body、result record synthesis不是support目标 |
 | T | Timeline create/open/read/coordinator；policy与partition input；descriptor/canonical codec；maintenance/operator result；estimator seam | SQLite/path/syscall helper、test persistence hook、`BoundHistorySegmentRange`与`HistorySegmentDescriptorFactory` owner-local assembly |
 | O | fixed O200k estimator implementation与stable estimator ID | tokenizer/renderer implementation detail |
 | C | cadence policy/head、factory/coordinator、reserve/seal与maintenance result | durable syscall/codec helper及owner-issued state construction |
@@ -89,7 +89,20 @@ off-lineage address、Parent/setup/hash drift均fail closed。
 | `ImportedAgentAction` | 10 | 1 |
 | `CompletionAttemptStarted` | 13 | 1 |
 
-ID 11 retired。Prepared exact inputs最多128；artifact context snapshot最多4 MiB。`CompletionAttemptStarted`是
+ID 11 retired。current identifier与commitment language是：
+
+| Fact | Exact identifier / hash domain | Current owner |
+|:--|:--|:--|
+| trunk schema | `atelia.session-journal.trunk.v1` | [`SessionJournalDefaults.Schema`](../../../../prototypes/SessionJournal/SessionJournalContracts.cs) |
+| Prepared recipe | `atelia.session-journal.coherent-artifact-tail.recipe.v1` | [`SessionRequestManifestDefaults`](../../../../prototypes/SessionJournal/SessionRequestManifest.cs) |
+| canonical request codec | `atelia.completion-request.canonical-json.v1` | [`SessionRequestManifestDefaults`](../../../../prototypes/SessionJournal/SessionRequestManifest.cs)、[`SessionRequestCanonicalizer`](../../../../prototypes/SessionJournal/SessionRequestCanonicalizer.cs) |
+| tool definition codec | `atelia.tool-definition.canonical-json.v1` | [`SessionRequestManifestDefaults`](../../../../prototypes/SessionJournal/SessionRequestManifest.cs)、[`SessionRequestCanonicalizer`](../../../../prototypes/SessionJournal/SessionRequestCanonicalizer.cs) |
+| raw-range SHA-256 | `atelia.session-journal.raw-range.v1`；start-exclusive、end-inclusive与ordered parent-contiguous `(address,parent,event kind,body schema version,payload SHA-256)` | [`SessionRawRangeHasher`](../../../../prototypes/SessionJournal/SessionRawRangeHasher.cs) |
+| artifact snapshot SHA-256 | `atelia.session-journal.artifact-context-snapshot.sha256.v1`；length-prefixed `systemPromptFragment`、`observationMessage`、`actionMessage` UTF-8 | [`SessionArtifactContextSnapshotHasher`](../../../../prototypes/SessionJournal/SessionArtifactContextSnapshotHasher.cs) |
+| history semantic commitment | `atelia.session-journal.history-semantic-commitment.v1`；`history-message`、`tool-result`、`tool-results-contribution`、`history-contribution-sequence` subdomains | [`SessionHistorySemanticCommitment`](../../../../prototypes/SessionJournal/SessionHistorySemanticCommitment.cs) |
+| context-contribution SHA-256 | `atelia.session-journal.context-contribution-text-sha256.v1` + NUL + exact UTF-8 text | [`SessionContextContributionHasher`](../../../../prototypes/SessionJournal/SessionContextCandidateContracts.cs) |
+
+Prepared exact inputs最多128；artifact context snapshot最多4 MiB。`CompletionAttemptStarted`是
 uncertain external dispatch的durable phase proof；`ImportedAgentAction`虽复用action body shape，但lineage/origin
 不同。`EventAddress`文本是`ej1:`加32个lowercase hex；filename codec独立。R2没有删除或重编号raw字段/ID，
 也不以legacy export的逻辑可重建性承诺physical RBF bytes deterministic。
@@ -104,7 +117,7 @@ reconstructor/recovery tests。未来Tier A breaking change必须先给出raw-pr
 | Artifact | Exact slot / version | Owner proof、bounds与accepted language | Failure / upgrade policy |
 |:--|:--|:--|:--|
 | History locator | `derived/history-timeline/v2/refs/<ref>/locator.json`；JSON v1 | 1..4,096 bytes、canonical exact；path Ref、Timeline ID与generation绑定active DB/ABA | invalid/non-v1不fallback；旧v1 root inert；显式重建V2 domains |
-| History ledger | locator sibling SQLite；application id `0x41544854`、Schema V2 | exact pragma、6 tables+6 triggers、metadata scope/head hash/counts、canonical policy/row、selected path与Merkle；normal open bounded、maintenance full verify | unsupported typed；backup/restore/reprovision；existing create在同一exclusive lease内验证head与active policy后才`AlreadyExists` |
+| History ledger | locator-selected SQLite under the same Ref domain；application id `0x41544854`、Schema V2 | exact pragma、6 tables+6 triggers、metadata scope/head hash/counts、canonical policy/row、selected path与Merkle；normal open bounded、maintenance full verify | unsupported typed；backup/restore/reprovision；existing create在同一exclusive lease内验证head与active policy后才`AlreadyExists` |
 | Cadence | `control/recap-grid/v1/.../cadence.json`；`atelia.session-journal.recap-grid.cadence.v1` | 2..4,096 bytes、canonical exact；Ref/generation/domain digest与expected Timeline policy；fd-relative publish | stale/busy/invalid/indeterminate typed；不fallback到Timeline或active config猜测 |
 | Control | layout v1 `control.json`；content `schemaVersion=2` | 2 bytes..32 MiB、strict whole JSON；whole head/state digest、canonical closure、bootstrap、definitions/recipes与receipts | strict non-V2 discriminator typed Unsupported；V2 malformed Invalid；backup/restore/reinitialize，无silent migration |
 | Grid Store | `derived/recap-grid/v1/grid.sqlite`；application id `0x41544752`、Schema V2 | exact pragma/catalog、single metadata identity、canonical payload+indexed columns/FK/counts；transactional writes与physical reset witness | future version优先typed Unsupported；V2 corruption Invalid/Unhealthy；explicit reset/reprovision，不auto-repair |
@@ -114,6 +127,11 @@ History/Store metadata version、head/digest/count、indexed columns等是corrup
 `a77ed16c`只让一份owner-local `SchemaEntry[]`驱动History create+verify；test-owned independent fingerprint保持外部
 oracle，Schema V2与accepted language不变。
 
+Control只有在完整strict JSON root的首字段是exact、unescaped `schemaVersion`，其值是plain Int32且不等于2，
+并且整个top-level不存在duplicate或case-confusable property时才分类为`Unsupported`。malformed/truncated、
+`schemaVersion`不在首位、wrong-case/escaped name、wrong type、fraction、exponent、Int32 overflow或任何top-level
+duplicate/case-confusable均为`Invalid`，不能借future discriminator绕过strict corruption classification。
+
 Tier B hard cut的部署规则是显式provision Cadence、Timeline、Control、Store四域；不得把旧Timeline locator/head与
 current companion state拼成混合generation。raw append后的rollback必须raw-preserving，不能用旧backup覆盖新经历。
 
@@ -122,8 +140,8 @@ current companion state拼成混合generation。raw append后的rollback必须ra
 | Surface | Current candidate language | Boundary / compatibility policy |
 |:--|:--|:--|
 | Route manifest | canonical numeric `v:1`；1 MiB / 4,096 entries；unknown/missing/duplicate/noncanonical reject | operator routing policy，无secret，不是durable semantic identity；old language不兼容读取 |
-| Completion connections | Completion-owned numeric `v:1`；1 MiB、depth 8、1..256 entries；id/env 128 UTF-8 bytes、endpoint 4 KiB、secret 64 KiB；wire endpoint exactly-one、API key at-most-one | strict syntax与owner-local path/no-follow分层；secret/resolved value不进report/fingerprint；code+manifest停服成对迁移，无dual reader |
-| AgentControl profile | canonical `v:1`；bounded profile/admission bytes | operator profile且参与durable runtime fingerprint；unknown/version mismatch fail closed |
+| Completion connections | Completion-owned numeric `v:1`；1 MiB、depth 8、1..256 entries；id/env 128 UTF-8 bytes、endpoint 4 KiB、secret 64 KiB；wire endpoint exactly-one、API key at-most-one | strict syntax与owner-local path/no-follow分层；resolved `BaseAddress`是non-secret且进入Completion durable connection fingerprint；API key（inline或env-resolved secret value）不进report/fingerprint；code+manifest停服成对迁移，无dual reader |
+| AgentControl profile | canonical `v:1`；bounded profile/admission bytes | admission canonical bytes进入durable tool runtime identity；profile id与whole profile bytes不进入该identity；unknown/version mismatch fail closed |
 | Galatea root config | root raw integer `v:1`；1 MiB、最多256 users；profile files 1..256；strict duplicate/unknown/case/version/path rules；bootstrap no BOM | existing file不自动重写；停服迁移，no-version/future拒绝；users/routes/secrets不并入connections superset |
 | RecapGrid CLI JSON | `atelia.session-journal.recap-grid-cli.v1`、`{schema,command,status,detail}`、16 MiB final report；Store page 128 items / 2 MiB | machine workflow contract；old Store-specific envelope不再emit；human stdout/stderr/help与逐字diagnostic不冻结 |
 | Other reports | offline validation v2、legacy import v1、desired setup v1、history-load v1、legacy-root v2 | 各自versioned operator artifact；不因外层相似抽generic envelope |
