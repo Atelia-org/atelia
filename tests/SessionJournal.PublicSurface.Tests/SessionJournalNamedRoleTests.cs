@@ -89,6 +89,25 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
         );
         Assert.Equal("pending-observation", lifecycle.LastRequest.PendingObservation);
 
+        var rawHistoryLifecycle = new ExternalLifecycle(
+            SessionContextLifecycleResult.RawHistoryAuthorized
+        );
+        SessionContextLifecycleResult rawHistoryAuthorized = await engine
+            .PrepareContextLifecycleMaintenanceAsync(
+                head,
+                rawHistoryLifecycle,
+                "pending-observation",
+                CancellationToken.None
+            );
+        Assert.Same(
+            SessionContextLifecycleResult.RawHistoryAuthorized,
+            rawHistoryAuthorized
+        );
+        Assert.Equal(
+            SessionContextLifecycleStatus.RawHistoryAuthorized,
+            rawHistoryAuthorized.Status
+        );
+
         Func<EventAddress, string, CancellationToken, Task<TurnResult>> send =
             engine.SendAsync;
         Func<EventAddress, CancellationToken, Task<ResumeOutcome>> resume =
