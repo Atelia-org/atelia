@@ -173,7 +173,7 @@ current companion state拼成混合generation。raw append后的rollback必须ra
 | AgentControl profile | canonical `v:1`；profile id strict UTF-8 128 bytes；profile最多128 KiB；admission inclusive 2..64 KiB；registry 1..256且profile id/runtime identity分别exact unique | admission canonical bytes进入durable tool runtime identity；profile id与whole profile bytes不进入该identity；unknown/version/order/duplicate mismatch fail closed；public admission producer不会生成owner decoder拒绝的bytes |
 | Galatea root config | **Approved Stable V1**：[exact appendix](galatea-root-config-v1.md)锁required/optional/count、prompt precedence、config-directory-relative path与profile/route dependencies；root 1 MiB、prompt 1 MiB、profile 128 KiB；bootstrap no BOM/existing no-rewrite policy | product source `8c450bf0` + integration evidence `6c5d3d50`；无CWD/existence fallback、auto rewrite/move或confinement；由immutable surface-set-2 tag锚定；deployment/provider与appendix non-promises不在批准范围 |
 | RecapGrid CLI JSON | `atelia.session-journal.recap-grid-cli.v1`、`{schema,command,status,detail}`、16 MiB final report；Store page 128 items / 2 MiB | outer envelope/fallback与Store `inspect/verify/export/reset` [status/detail/exit ledger](../../evidence/contract-freeze-r2-r1-priority-review.md#52-stable-detail-ledger)是freeze-ready machine contract；其他command的具体detail/status仍按owner result为candidate，不因共享printer自动冻结；human stdout/stderr/help与逐字diagnostic不冻结 |
-| Other reports | offline validation v2、legacy import v1、[desired setup reconciliation V2 approved contract](desired-setup-reconciliation-report-v2.md)、history-load v1、legacy-root v2 | **Approved Stable V2 narrow sub-surface / v3 anchored**：desired-setup锁producer-only exact 10-field receipt与raw-before-report fail-closed recovery；不承诺完整command inputs、JSON bytes/order、diagnostics或raw/report atomicity；其他report仍只登记schema IDs并继续Defer；不因外层相似抽generic envelope |
+| Other reports | offline validation v2、legacy import v1、[desired setup reconciliation V2 approved contract](desired-setup-reconciliation-report-v2.md)、[history-load V2 candidate](history-load-report-v2.md)、legacy-root v2 | **Partial**：desired-setup Stable V2 narrow sub-surface由v3 tag锚定；history-load V2锁producer-only exact 11-field full-window report，但unbounded/offline、approval Defer且不属于v3；其余report仍只登记schema IDs并继续Defer；不因外层相似抽generic envelope |
 | Galatea HTTP | complete group `/api/v1`；old `/api/*` exact 404；strict endpoint-local JSON，body 1 MiB；original/normalized message各64 KiB；typed status/success/error | server与cache-busted browser原子共部署；不保留route alias/redirect/dual DTO；breaking change需新candidate/path policy |
 | Galatea SSE | `status`、`reasoning-delta`、`text-delta`、`done`、`error`；strict UTF-8/LF与exact terminal；4 MiB preview + 5 MiB terminal = 9 MiB whole replay，最多16,384 events；subscriber 256 refs；browser 9 MiB connection/5 MiB frame | cap hit只internal suppress preview，不取消provider/durable；`done {recent:null}`后HTTP reconciliation；closed error codes与exact payload见[tracked SSE ledger](../../../../prototypes/Galatea/README.md#sse-v1-stable-protocol)；无Last-Event-ID、ack、heartbeat或dual grammar |
 
@@ -185,6 +185,10 @@ surface set 3批准、通过unified gates并由v3 tag锚定。其他reports与�
 限制在config目录内；也不承诺password at rest、permissions、Kestrel、diagnostic、provider或deployment readiness。
 ignored operator config与real provider并非本文可读取的tracked contract；不得用历史local observation冒充current
 deployment或provider gate。
+
+[HistoryLoad report V2](history-load-report-v2.md)形成于immutable surface-set-3 tag之后；它直接materialize full
+`ReadHistoryPlanningWindow()`的units/boundaries，没有final byte cap、pagination或stable oversize semantics，只能作为
+offline candidate。Code/test commit、runbook consumer gate或本文件记录都不反向扩大v3 tag。
 
 HTTP普通`{code,error}`中的existing machine code保持含义，但code namespace允许additive新值，first-party client必须有
 unknown fallback；`turn-busy`专用shape与SSE error code集合仍是closed。`error`逐字文本、property order、login HTML、

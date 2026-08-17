@@ -19,7 +19,7 @@ gitignore/galatea-grid-acceptance/<run-id>/
   acceptance-clones/
     deterministic-<id>/      # 可写raw，用完丢弃
     real-<id>/               # 可写raw，用完丢弃
-  reports/                   # bounded content-free reports
+  reports/                   # content-free reports；history-load V2 explicitly unbounded/offline
   call-logs/                 # 可能含正文，限制访问
   host-config/               # strict acceptance-only config
 ```
@@ -47,16 +47,62 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   validate --input "$staging_repo" --branch main \
   --report-json "$reports/validate-imported.json"
 
+ref_id="$(jq -er '.branchRefId | select(type == "string")' \
+  "$reports/validate-imported.json")"
+raw_head="$(jq -er '.head | select(type == "string")' \
+  "$reports/validate-imported.json")"
+
+history_load_report="$reports/history-load.json"
 dotnet run --project prototypes/SessionJournal.Cli -- \
   recap-grid timeline history-load inspect \
   --input "$staging_repo" --branch main \
-  --report-json "$reports/history-load.json"
+  --report-json "$history_load_report"
+
+if ! jq -e '
+  .schema == "atelia.session-journal.recap-history-load-calibration.v2"
+  and (keys == [
+    "baseline",
+    "boundaries",
+    "branchName",
+    "branchRefId",
+    "byKind",
+    "capturedHead",
+    "estimatorId",
+    "schema",
+    "totals",
+    "unitDistributions",
+    "units"
+  ])
+  and (.baseline | type == "string")
+  and (.boundaries | type == "array")
+  and (.branchName | type == "string")
+  and (.branchRefId | type == "string")
+  and (.byKind | type == "array")
+  and (.capturedHead | type == "string")
+  and (.estimatorId | type == "string")
+  and (.schema | type == "string")
+  and (.totals | type == "object")
+  and (.unitDistributions | type == "object")
+  and (.units | type == "array")
+' "$history_load_report" >/dev/null; then
+  echo "history-load report is not exact V2; stop before reading capturedHead" >&2
+  exit 1
+fi
+
+history_load_head="$(jq -er '.capturedHead' "$history_load_report")"
+if [[ "$history_load_head" != "$raw_head" ]]; then
+  echo "history-load capturedHead does not match validated raw head" >&2
+  exit 1
+fi
 ```
 
 记录source length/SHA-256、import report、selected RefId与raw head。对raw repository做sorted
 `relative-path + length + SHA-256` inventory；在provider canary前的所有derived-only步骤后必须exact相同。
 `ref_id`与`raw_head`分别从validation report的`.branchRefId`与`.head`读取；import report不包含RefId，
-不得从旧repo或历史run复制。`history-load.json`的`.capturedHead`必须等于本轮`raw_head`。
+不得从旧repo或历史run复制。只有上面的exact V2/11-field/type gate通过后才能读取`capturedHead`；
+`history_load_head`必须等于本轮`raw_head`。History-load report是full-window unbounded offline report，没有final byte cap或
+stable oversize结果；若report write失败，raw repo不变，可重新执行inspect并用fresh `capturedHead`复核，不要消费partial/stale output。
+Exact candidate见[HistoryLoad report V2](../current/contracts/history-load-report-v2.md)。
 
 ## 3. Explicit formal provisioning
 
