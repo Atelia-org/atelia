@@ -253,6 +253,10 @@ internal sealed class ControlState {
                 "The canonical Control state exceeds the code-owned byte cap."
             );
         }
+        int? unsupportedSchemaVersion = ReadUnsupportedSchemaVersion(bytes);
+        if (unsupportedSchemaVersion is int version) {
+            throw new ControlUnsupportedSchemaException(version);
+        }
         ControlFileDto? dto;
         try {
             dto = JsonSerializer.Deserialize<ControlFileDto>(
@@ -419,6 +423,43 @@ internal sealed class ControlState {
             );
         }
         return valueState;
+    }
+
+    private static int? ReadUnsupportedSchemaVersion(
+        ReadOnlySpan<byte> bytes
+    ) {
+        var reader = new Utf8JsonReader(bytes);
+        try {
+            if (!reader.Read()
+                || reader.TokenType != JsonTokenType.StartObject
+                || !reader.Read()
+                || reader.TokenType != JsonTokenType.PropertyName
+                || reader.ValueIsEscaped
+                || !reader.ValueTextEquals("schemaVersion"u8)
+                || !reader.Read()
+                || reader.TokenType != JsonTokenType.Number
+                || !reader.TryGetInt32(out int version)
+                || version == SchemaVersion) {
+                return null;
+            }
+
+            var topLevelNames = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase
+            ) {
+                "schemaVersion"
+            };
+            while (reader.Read()) {
+                if (reader.TokenType == JsonTokenType.PropertyName
+                    && reader.CurrentDepth == 1
+                    && !topLevelNames.Add(reader.GetString()!)) {
+                    return null;
+                }
+            }
+            return version;
+        }
+        catch (JsonException) {
+            return null;
+        }
     }
 
     private ControlState With(
