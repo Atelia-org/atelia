@@ -1,8 +1,9 @@
 # SessionJournal Contract Freeze R2 — additive surface set 2 approval
 
-状态：**user approval recorded；promotion docs commit pending；annotated tag authorized / pending**  
+状态：**user approval recorded；pre-tag unified gates complete；tag-ready / annotated tag pending**  
 validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`  
 integration evidence：`6c5d3d50e68b84b9dca1391c16438a86cef418c1`  
+promotion docs commit：`a07de1f40b5f`  
 authorized tag：`session-journal-contract-r2-approved-surfaces-v2`（尚未创建）  
 记录日期：2026-08-17
 
@@ -37,26 +38,46 @@ Surface set 2明确不批准：
 
 ## 3. Evidence与verification boundary
 
-- Store owner source仍来自surface-set-1 product line；post-v1-tag appendix与independent fingerprint/persistent-PRAGMA
-  gates补齐了logical-schema approval evidence，validated product source统一pin到`8c450bf0`；
+- Store owner source仍来自surface-set-1 product line；appendix commits `43e9ce9a` + `d012ceaf`登记independent
+  ordered five-row `sqlite_schema` fingerprint（SHA-256
+  `3b14f5e58f4012f699b9314b96f145dc43e878fbbc7e8d25574991319281343c`）、persistent-PRAGMA与validation
+  precedence。Stored canonical digest domains包括`atelia.recap-grid.content.v1`、`atelia.recap-grid.cell.v1`与
+  `atelia.recap-grid.row-view.v2`；validated product source统一pin到`8c450bf0`；
 - root path implementation为`0f0afb2c`，field/classification gates为`0515083f`与`8c450bf0`；test-only
   `6c5d3d50`通过full `GalateaConfigLoader`锁duplicate `ProfileId` / `RuntimeIdentity` conflict；
 - owning exact oracles是
   [`StoreAuthorityRegressionTests`](../../../tests/SessionJournal.RecapGrid.Store.Tests/StoreAuthorityRegressionTests.cs)、
   [`GalateaRootConfigFieldLanguageTests`](../../../tests/Galatea.Server.Tests/GalateaRootConfigFieldLanguageTests.cs)与
   [`GalateaConfigValidationTests`](../../../tests/Galatea.Server.Tests/GalateaConfigValidationTests.cs)；
-- 本promotion draft只修改文档；由于root含post-v1-tag production delta，tag前必须在exact code/test source
-  `6c5d3d50`加docs-only promotion HEAD上重新串行运行Store full、Galatea full、full solution test/build、HTTP/SSE Node
-  与scoped docs checker。当前这些unified gates均为**Pending**，不得用historical v1 green evidence替代；
+- 本promotion只修改文档；由于root含post-v1-tag production delta，tag前统一验证已在exact code/test source
+  `6c5d3d50` + docs-only promotion HEAD `a07de1f4`上重新串行完成，不使用historical v1 green evidence替代；
 - public inventory与disposable rebuild为**NotRun / 本次无需**：surface set 2不批准.NET API且没有raw/rebuild contract delta。
   provider/deployment、ignored operator config仍不读取、不运行，也不从tag前gates推导。
 
+### 3.1 Unified pre-tag gate ledger
+
+| Gate | Result at `a07de1f4` |
+|:--|:--|
+| Store full | 54 / 54 passed |
+| Galatea full | 162 / 162 passed |
+| `dotnet test Atelia.sln --no-restore -m:1 -nr:false` | 38 projects / 4,694 passed / 0 failed / 0 skipped |
+| `dotnet build Atelia.sln --no-restore -m:1 -nr:false` | 0 warnings / 0 errors；15.25 s |
+| production HTTP Node contract suite | 1 passed / 0 failed |
+| production SSE Node contract suite | 1 passed / 0 failed |
+| scoped docs / repository diff | 18 files / 0 diagnostics；diff/status clean |
+| independent pre-tag docs review | PASS |
+| public inventory / disposable rebuild | NotRun / 本次无需 |
+
+最初两条Node命令误写了不存在的`Browser`子目录，均立即以file-not-found退出、没有启动test；随后使用correct
+production test paths重跑，HTTP与SSE各1/1通过。该calibration不计作product failure，也没有被省略。
+
 ## 4. Tag-before checklist
 
-1. containing promotion docs commit必须先产生；当前commit ID为Pending，待提交后记录；
-2. exact code/test source `6c5d3d50` + docs-only promotion HEAD上的Store full、Galatea full、full solution test/build、
-   HTTP/SSE Node、scoped docs checker、diff check与independent scope review全部通过；当前均Pending；
-3. annotated tag必须exact命名为`session-journal-contract-r2-approved-surfaces-v2`并指向经review的promotion docs commit；
+1. containing promotion docs commit `a07de1f4`已产生；
+2. exact code/test source `6c5d3d50` + docs-only promotion HEAD上的Store/Galatea/full solution/Node/docs gates与
+   independent scope review已按§3.1通过；
+3. annotated tag仍待创建；必须exact命名为`session-journal-contract-r2-approved-surfaces-v2`并指向包含本批准与
+   final gate ledger的reviewed docs commit；
 4. tag message必须pin product source `8c450bf0`、integration evidence `6c5d3d50`、§1两项approved scope、§2
    non-promises，以及immutable v1 tag不移动；
 5. 创建tag前再次确认同名tag不存在、worktree无本包遗漏，并核对tag target；创建后记录exact tag object/target。

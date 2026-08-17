@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；approved surface set 1 anchored；additive surface set 2 user-authorized / tag pending；remaining Defer packages按新candidate继续  
+状态：Active；approved surface set 1 anchored；additive surface set 2 tag-ready / annotated tag pending；remaining Defer packages按新candidate继续  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -239,10 +239,10 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | AP renewal disposable rebuild | Complete | `cd966fc7` two fresh imports/validations、raw/assets exact、four-owner gates、repeat-init与standalone Timeline create；exact 128-byte mixed route贯穿scaffold；禁网/provider artifacts 0 |
 | AP approval docs review | Complete | `3575bf30` initial docs + `8585d889` scope/fact tail；三位independent tail re-review均PASS；scoped docs 18/0 |
 | Tier approval与tag | Complete | user approved exact surface set 1；annotated tag `session-journal-contract-r2-approved-surfaces-v1`锚定promotion docs commit与validated source `cd966fc7` |
-| STORE-SCHEMA-A1 | User-approved additive surface set 2 / tag pending | [SQLite V2 logical-schema appendix](../../current/contracts/recap-grid-store-sqlite-v2.md) + independent persistent pragma/fingerprint gate；批准logical schema/operator mapping，不含physical SQLite |
+| STORE-SCHEMA-A1 | User-approved additive surface set 2 / tag-ready | [SQLite V2 logical-schema appendix](../../current/contracts/recap-grid-store-sqlite-v2.md) + independent persistent pragma/fingerprint gate；批准logical schema/operator mapping，不含physical SQLite；v2 tag pending |
 | ROOT-CONFIG-PATH-A0 | Absorbed into user-approved ROOT-CONFIG-A1 / tag pending | `0f0afb2c` config-directory-relative cut与absolute-target semantics进入surface set 2；无CWD fallback、auto move/create或confinement |
-| ROOT-CONFIG-A1 | User-approved additive surface set 2 / tag pending | [root config V1 appendix](../../current/contracts/galatea-root-config-v1.md)；product source `8c450bf0`、integration `6c5d3d50`；secret/permissions/Kestrel/diagnostic/provider/deployment仍非承诺 |
-| AP-PROMOTE-V2 | Authorized / pre-tag gates pending | [surface set 2 addendum](../../evidence/contract-freeze-r2-approval-surface-set-2.md)已记录用户授权；Store/Galatea/full solution/Node/docs unified gates、independent review与annotated v2 tag仍pending；inventory/rebuild NotRun且本次无需；v1 tag immutable |
+| ROOT-CONFIG-A1 | User-approved additive surface set 2 / tag-ready | [root config V1 appendix](../../current/contracts/galatea-root-config-v1.md)；product source `8c450bf0`、integration `6c5d3d50`；secret/permissions/Kestrel/diagnostic/provider/deployment仍非承诺；v2 tag pending |
+| AP-PROMOTE-V2 | Pre-tag gates complete / tag-ready | promotion `a07de1f4`；Store54、Galatea162、solution38/4694、build0W/0E、HTTP/SSE Node、docs18/0与independent review均PASS；inventory/rebuild NotRun且无需；annotated v2 tag仍pending，v1 tag immutable |
 
 ## 9. R0 完成标准
 
@@ -404,7 +404,7 @@ schema/persistent pragmas/operator mapping，以及[Galatea root config V1 appen
 integration evidence为`6c5d3d50`；本promotion不修改production/tests，也不续期provider/deployment evidence。
 
 该批准是surface set 1之上的additive surface set 2；immutable v1 tag不得移动或扩大。授权tag exact name为
-`session-journal-contract-r2-approved-surfaces-v2`，但只有promotion docs commit通过scoped checker、diff check与
-Store/Galatea/full solution/HTTP-SSE Node unified gates、independent review后才可创建。inventory/rebuild为NotRun且
-本次无需。当前状态必须保持authorized/pending；exact non-promises与tag checklist见
+`session-journal-contract-r2-approved-surfaces-v2`。promotion docs `a07de1f4`、Store/Galatea/full solution/HTTP-SSE
+Node unified gates、scoped docs/diff与independent review均已通过；inventory/rebuild为NotRun且本次无需。当前状态为
+tag-ready，但annotated tag仍pending；exact non-promises与tag checklist见
 [surface set 2 addendum](../../evidence/contract-freeze-r2-approval-surface-set-2.md)。

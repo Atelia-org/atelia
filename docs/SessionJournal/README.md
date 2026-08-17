@@ -16,8 +16,8 @@
 |---|---|---|
 | Core API、raw wire、Prepared/Resume 与 crash recovery | [Beta contract snapshot](current/contracts/session-journal-beta-contract-snapshot.md)、[Core guide](../../prototypes/SessionJournal/README.md) | [Uncertain external effects contract](current/recovery/uncertain-external-effects.md) 与 current codec/recovery tests |
 | Timeline、partition、HistoryLoad 与 branch reconcile | [HistoryLoad](current/derived-recap/history-load.md)、[HistoryTimeline code](../../prototypes/SessionJournal.HistoryTimeline/)、[HistoryTimeline tests](../../tests/SessionJournal.HistoryTimeline.Tests/) | [Durable authority](current/derived-recap/durable-target.md) |
-| Grid Store、Control、Manager、Getter 与 Runtime | [Grid concepts](current/derived-recap/concepts.md)、[target design](work/active/derived-recap-grid-target-design.md) | [Store SQLite V2 approved logical-schema appendix](current/contracts/recap-grid-store-sqlite-v2.md)与owning product/tests；logical schema/persistent pragmas/operator mapping进入additive surface set 2，physical SQLite不在批准范围，v2 tag pending |
-| 审阅 Galatea root `config.json` V1 | [Root config V1 approved appendix](current/contracts/galatea-root-config-v1.md)、[Galatea guide](../../prototypes/Galatea/README.md) | exact field/path/bounds/bootstrap policy进入additive surface set 2；不要将批准扩张到connections/Route/Profile owner contract、secret/deployment或appendix non-promises，v2 tag pending |
+| Grid Store、Control、Manager、Getter 与 Runtime | [Grid concepts](current/derived-recap/concepts.md)、[target design](work/active/derived-recap-grid-target-design.md) | [Store SQLite V2 approved logical-schema appendix](current/contracts/recap-grid-store-sqlite-v2.md)与owning product/tests；logical schema/persistent pragmas/operator mapping进入additive surface set 2，physical SQLite不在批准范围；tag-ready、v2 tag pending |
+| 审阅 Galatea root `config.json` V1 | [Root config V1 approved appendix](current/contracts/galatea-root-config-v1.md)、[Galatea guide](../../prototypes/Galatea/README.md) | exact field/path/bounds/bootstrap policy进入additive surface set 2；不要将批准扩张到connections/Route/Profile owner contract、secret/deployment或appendix non-promises；tag-ready、v2 tag pending |
 | 审阅 approved public API / wire-format surface与remaining candidate | [Contract R2 approved surfaces and candidate map](current/contracts/session-journal-contract-r2.md) | immutable v1 tag锚定surface set 1；[surface set 2 addendum](evidence/contract-freeze-r2-approval-surface-set-2.md)记录additive批准与pending v2 tag；[plan](work/active/session-journal-contract-freeze-r2.md)保留其余Defer边界 |
 | 审阅 post-cutover cadence、recent reserve、长期容量或 cyber 激活边界 | [Cadence/capacity audit](work/active/derived-recap-grid-cadence-capacity-and-activation-audit.md) | A0-A2已实现24k target reserve；C2/C5 activation完成，C4仍Open |
 | 实现 Galatea 自传/world-understanding rolling maintainers，或审阅未来 Editor/ExperienceRefiner 边界 | [C2 Galatea rolling maintainers](work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md) | shared Family、runtime-configurable model、operator asset assembly与验收矩阵 |
@@ -41,7 +41,7 @@
   [SessionJournal Contract Freeze R2](work/active/session-journal-contract-freeze-r2.md)
   记录候选direct cut与分阶段freeze gates；[Contract R2 candidate](current/contracts/session-journal-contract-r2.md)
   汇总approved exact support-role/wire与remaining candidate；surface set 1已由immutable v1 tag锚定，additive surface set 2
-  已获用户批准但v2 tag仍pending，未列出的surface继续按Defer边界推进。
+  已获用户批准且pre-tag gates complete，但v2 tag仍pending；未列出的surface继续按Defer边界推进。
   精确事实仍以owning code/tests与`current/`文档为准。
 
 目录、标题、日期、`README.md` 或 `public` 均不自动授予 authority。

@@ -1,6 +1,6 @@
 # Galatea root config V1 approved contract
 
-状态：**additive surface set 2 user-approved；annotated tag authorized / pending**  
+状态：**additive surface set 2 user-approved；pre-tag gates complete；tag-ready / annotated tag pending**  
 validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`  
 integration evidence：`6c5d3d50e68b84b9dca1391c16438a86cef418c1`  
 approval boundary：不属于immutable v1 tag；`session-journal-contract-r2-approved-surfaces-v2`尚未创建
@@ -8,7 +8,7 @@ approval boundary：不属于immutable v1 tag；`session-journal-contract-r2-app
 本文整理Galatea `config.json` current V1的accepted language、path semantics与composition dependencies。
 它是root-config field language的审阅入口，不改变Completion connections、Route manifest或AgentControl profile
 各自owner的协议。用户已将本文列出的exact field language、path/bounds、dependency与bootstrap/existing-file policy
-批准为Stable V1 scope；freeze anchor仍待pre-tag gates与annotated v2 tag。§6与各节局部non-promises继续排除
+批准为Stable V1 scope；pre-tag gates已通过，freeze anchor只待annotated v2 tag。§6与各节局部non-promises继续排除
 未获批准的surface。
 
 ## 1. Authority、文件与提交边界
@@ -161,4 +161,4 @@ config-relative value。应用不会自动移动repository或重写existing conf
 
 用户已显式批准本appendix进入additive surface set 2；immutable surface-set-1 tag不因此扩大或移动。批准范围只由
 本文与[surface set 2 addendum](../../evidence/contract-freeze-r2-approval-surface-set-2.md)列出的root V1 contract及
-non-promises界定；annotated v2 tag在promotion docs commit完成后才可创建，当前仍pending。
+non-promises界定；pre-tag unified gates与independent review已通过，annotated v2 tag当前仍pending。

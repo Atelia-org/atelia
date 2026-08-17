@@ -42,7 +42,7 @@ lexical path，这项规则不承诺把session限制在config目录内，也不�
 
 Root `config.json`的exact V1 field language、path/bounds与bootstrap/existing-file policy已获用户批准进入
 SessionJournal Contract R2 additive surface set 2；annotated tag
-`session-journal-contract-r2-approved-surfaces-v2`仍pending。批准范围与password-at-rest、permissions、Kestrel、
+`session-journal-contract-r2-approved-surfaces-v2`在pre-tag gates通过后已tag-ready，但仍pending。批准范围与password-at-rest、permissions、Kestrel、
 diagnostic、provider/deployment等non-promises见
 [root config V1 appendix](../../docs/SessionJournal/current/contracts/galatea-root-config-v1.md)；immutable v1 tag不因此扩大。
 

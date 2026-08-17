@@ -1,12 +1,12 @@
 # RecapGrid Store SQLite V2 approved logical-schema contract
 
-状态：**additive surface set 2 user-approved；annotated tag authorized / pending**  
+状态：**additive surface set 2 user-approved；pre-tag gates complete；tag-ready / annotated tag pending**  
 validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`  
 approval boundary：不属于immutable v1 tag；`session-journal-contract-r2-approved-surfaces-v2`尚未创建
 
 本文把当前Grid Store SQLite V2的logical schema、canonical payload边界与operator分类整理成可审阅的
 exact appendix。用户已将本文列出的logical schema、persistent pragmas与operator mapping批准为additive R2
-logical-schema scope；freeze anchor仍待pre-tag gates与annotated v2 tag。该批准不改变product、schema或accepted
+logical-schema scope；pre-tag gates已通过，freeze anchor只待annotated v2 tag。该批准不改变product、schema或accepted
 language，也不包含physical SQLite determinism。
 
 ## 1. Authority与slot identity
@@ -123,4 +123,4 @@ physical reset继续受witness与commit-indeterminate contract约束。
 
 用户已显式批准本appendix进入additive surface set 2；immutable surface-set-1 tag不因此扩大或移动。批准范围只由
 本文与[surface set 2 addendum](../../evidence/contract-freeze-r2-approval-surface-set-2.md)列出的logical contract及
-non-promises界定；annotated v2 tag在promotion docs commit完成后才可创建，当前仍pending。
+non-promises界定；pre-tag unified gates与independent review已通过，annotated v2 tag当前仍pending。
