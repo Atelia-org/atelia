@@ -151,6 +151,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "targetHistoryLoad").GetInt64());
         Assert.Equal(65536, initialPolicy.GetProperty(
             "maxRawEvents").GetInt32());
+        Assert.Equal(JsonValueKind.String, initial.GetProperty(
+            "canonicalBase64").ValueKind);
         byte[] initialBytes = File.ReadAllBytes(cadencePath);
 
         Assert.Equal(1, RunWithFactory(
@@ -171,6 +173,9 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--minimum-recent-history-load", "24000");
         Assert.Equal(2, staleCode);
         Assert.Equal("stale", stale.GetProperty("status").GetString());
+        Assert.Equal(
+            JsonValueKind.Null,
+            stale.GetProperty("detail").ValueKind);
         Assert.Equal(initialBytes, File.ReadAllBytes(cadencePath));
 
         (int updatedCode, JsonElement updated) = RunCapturedWithFactory(
@@ -185,18 +190,34 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "updated",
             updated.GetProperty("status").GetString());
         JsonElement updatedDetail = updated.GetProperty("detail");
-        JsonElement updatedPolicy = updatedDetail.GetProperty("policy");
-        Assert.Equal(24000, updatedPolicy.GetProperty(
+        AssertExactPropertyNames(
+            updatedDetail,
+            "head",
+            "minimumRecentHistoryLoad");
+        Assert.Equal(24000, updatedDetail.GetProperty(
             "minimumRecentHistoryLoad").GetInt64());
-        Assert.Equal(60000, updatedPolicy.GetProperty(
-            "targetHistoryLoad").GetInt64());
-        Assert.Equal(65536, updatedPolicy.GetProperty(
-            "maxRawEvents").GetInt32());
         JsonElement updatedHead = updatedDetail.GetProperty("head");
         Assert.Equal(generation + 1,
             updatedHead.GetProperty("generation").GetInt64());
         string updatedDigest = updatedHead.GetProperty(
             "domainDigest").GetString()!;
+
+        (int reconciledCode, JsonElement reconciled) =
+            RunCapturedWithFactory(
+                provider,
+                "cadence", "inspect", "--input", _root);
+        Assert.Equal(0, reconciledCode);
+        JsonElement reconciledDetail = reconciled.GetProperty("detail");
+        JsonElement reconciledPolicy = reconciledDetail.GetProperty("policy");
+        Assert.Equal(24000, reconciledPolicy.GetProperty(
+            "minimumRecentHistoryLoad").GetInt64());
+        Assert.Equal(60000, reconciledPolicy.GetProperty(
+            "targetHistoryLoad").GetInt64());
+        Assert.Equal(65536, reconciledPolicy.GetProperty(
+            "maxRawEvents").GetInt32());
+        Assert.Equal(updatedDigest, reconciledDetail.GetProperty("head")
+            .GetProperty("domainDigest").GetString());
+        byte[] updatedBytes = File.ReadAllBytes(cadencePath);
 
         (int oldHeadCode, JsonElement oldHead) = RunCapturedWithFactory(
             provider,
@@ -207,6 +228,10 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--minimum-recent-history-load", "24000");
         Assert.Equal(2, oldHeadCode);
         Assert.Equal("stale", oldHead.GetProperty("status").GetString());
+        Assert.Equal(
+            JsonValueKind.Null,
+            oldHead.GetProperty("detail").ValueKind);
+        Assert.Equal(updatedBytes, File.ReadAllBytes(cadencePath));
 
         (int unchangedCode, JsonElement unchanged) = RunCapturedWithFactory(
             provider,
@@ -219,7 +244,224 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal(
             "unchanged",
             unchanged.GetProperty("status").GetString());
+        JsonElement unchangedDetail = unchanged.GetProperty("detail");
+        AssertExactPropertyNames(
+            unchangedDetail,
+            "head",
+            "minimumRecentHistoryLoad");
+        Assert.Equal(24000, unchangedDetail.GetProperty(
+            "minimumRecentHistoryLoad").GetInt64());
+        Assert.Equal(updatedDigest, unchangedDetail.GetProperty("head")
+            .GetProperty("domainDigest").GetString());
+        Assert.Equal(updatedBytes, File.ReadAllBytes(cadencePath));
+
+        EventAddress? rawHeadBeforeOverflow;
+        using (SessionJournalEngine reader =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            rawHeadBeforeOverflow = reader.ReadCurrentHead();
+        }
+        (int overflowCode, JsonElement overflow) = RunCapturedWithFactory(
+            provider,
+            "cadence", "set-reserve", "--input", _root,
+            "--confirm-ref", refText,
+            "--expected-generation", (generation + 1).ToString(),
+            "--expected-domain-digest", updatedDigest,
+            "--minimum-recent-history-load", long.MaxValue.ToString());
+        Assert.Equal(2, overflowCode);
+        Assert.Equal("invalid", overflow.GetProperty("status").GetString());
+        JsonElement overflowDetail = overflow.GetProperty("detail");
+        AssertExactPropertyNames(overflowDetail, "code");
+        Assert.Equal(
+            "CadenceReserveRangeInvalid",
+            overflowDetail.GetProperty("code").GetString());
+        Assert.Equal(updatedBytes, File.ReadAllBytes(cadencePath));
+        using (SessionJournalEngine reader =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            Assert.Equal(rawHeadBeforeOverflow, reader.ReadCurrentHead());
+        }
         Assert.Equal(0, provider.CallCount);
+    }
+
+    [Fact]
+    public void CadenceSetReserveClosedResultMappingsAreExactAndPrivate() {
+        AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveOpenFailure(
+                new RecapGridCadenceOpenResult.Absent()),
+            "absent",
+            JsonValueKind.Null);
+        AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveOpenFailure(
+                new RecapGridCadenceOpenResult.Busy()),
+            "busy",
+            JsonValueKind.Null);
+        JsonElement openUnsupported = AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveOpenFailure(
+                new RecapGridCadenceOpenResult.UnsupportedSchema(2)),
+            "unsupported-schema",
+            JsonValueKind.Object);
+        AssertExactPropertyNames(openUnsupported, "version");
+        Assert.Equal(2, openUnsupported.GetProperty("version").GetInt32());
+        AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveOpenFailure(
+                new RecapGridCadenceOpenResult.PlatformUnsupported()),
+            "platform-unsupported",
+            JsonValueKind.Null);
+        JsonElement openInvalid = AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveOpenFailure(
+                new RecapGridCadenceOpenResult.Invalid(
+                    "CadenceOpenInvalid",
+                    "SECRET /tmp/operator/path")),
+            "invalid",
+            JsonValueKind.Object);
+        AssertCodeOnly(openInvalid, "CadenceOpenInvalid");
+
+        AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveReadFailure(
+                new RecapGridCadenceReadResult.Disposed()),
+            "disposed",
+            JsonValueKind.Null);
+        AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveReadFailure(
+                new RecapGridCadenceReadResult.Busy()),
+            "busy",
+            JsonValueKind.Null);
+        JsonElement readUnsupported = AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveReadFailure(
+                new RecapGridCadenceReadResult.UnsupportedSchema(3)),
+            "unsupported-schema",
+            JsonValueKind.Object);
+        AssertExactPropertyNames(readUnsupported, "version");
+        Assert.Equal(3, readUnsupported.GetProperty("version").GetInt32());
+        JsonElement readInvalid = AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveReadFailure(
+                new RecapGridCadenceReadResult.Invalid(
+                    "CadenceReadInvalid",
+                    "SECRET /tmp/operator/path")),
+            "invalid",
+            JsonValueKind.Object);
+        AssertCodeOnly(readInvalid, "CadenceReadInvalid");
+
+        CreateJournal();
+        RecapGridCadenceSnapshot snapshot;
+        using (SessionJournalEngine owner =
+               SessionJournalEngine.Open(_root)) {
+            var policy = new RecapGridCadencePolicySpec(
+                24000,
+                HistoryPartitionAlgorithms
+                    .FirstReplaySafeBoundaryAtTargetV1,
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                60000,
+                4096,
+                1024 * 1024);
+            snapshot = Assert.IsType<RecapGridCadenceCreateResult.Created>(
+                RecapGridCadenceFactory.Create(owner, policy)
+            ).Snapshot;
+        }
+        RecapGridCadenceHeadRef expectedHead = snapshot.Head;
+        var intendedHead = new RecapGridCadenceHeadRef(
+            expectedHead.RefId,
+            expectedHead.Generation + 1,
+            new RecapGridCadenceDomainDigest(new string('a', 64)));
+
+        JsonElement updated = AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveCompareExchange(
+                expectedHead,
+                24000,
+                new RecapGridCadenceCompareExchangeResult.Updated(snapshot)),
+            "updated",
+            JsonValueKind.Object,
+            exitCode: 0);
+        AssertCadenceReserveReceipt(updated, expectedHead, 24000);
+        JsonElement unchanged = AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveCompareExchange(
+                expectedHead,
+                24000,
+                new RecapGridCadenceCompareExchangeResult.Unchanged(snapshot)),
+            "unchanged",
+            JsonValueKind.Object,
+            exitCode: 0);
+        AssertCadenceReserveReceipt(unchanged, expectedHead, 24000);
+        AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveCompareExchange(
+                expectedHead,
+                24000,
+                new RecapGridCadenceCompareExchangeResult.Stale(intendedHead)),
+            "stale",
+            JsonValueKind.Null);
+        AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveCompareExchange(
+                expectedHead,
+                24000,
+                new RecapGridCadenceCompareExchangeResult.Busy()),
+            "busy",
+            JsonValueKind.Null);
+        JsonElement commitWithoutObservation = AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveCompareExchange(
+                expectedHead,
+                24000,
+                new RecapGridCadenceCompareExchangeResult.CommitIndeterminate(
+                    intendedHead,
+                    null)),
+            "commit-indeterminate",
+            JsonValueKind.Object);
+        JsonElement commitWithObservation = AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveCompareExchange(
+                expectedHead,
+                24000,
+                new RecapGridCadenceCompareExchangeResult.CommitIndeterminate(
+                    intendedHead,
+                    intendedHead)),
+            "commit-indeterminate",
+            JsonValueKind.Object);
+        Assert.Equal(
+            commitWithoutObservation.GetRawText(),
+            commitWithObservation.GetRawText());
+        AssertExactPropertyNames(
+            commitWithoutObservation,
+            "expectedHead",
+            "intendedHead",
+            "minimumRecentHistoryLoad");
+        Assert.False(commitWithoutObservation.TryGetProperty(
+            "observed",
+            out _));
+        Assert.False(commitWithoutObservation.TryGetProperty(
+            "nextAction",
+            out _));
+        Assert.Equal(24000, commitWithoutObservation.GetProperty(
+            "minimumRecentHistoryLoad").GetInt64());
+        AssertCadenceHead(
+            commitWithoutObservation.GetProperty("expectedHead"),
+            expectedHead);
+        AssertCadenceHead(
+            commitWithoutObservation.GetProperty("intendedHead"),
+            intendedHead);
+        AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveCompareExchange(
+                expectedHead,
+                24000,
+                new RecapGridCadenceCompareExchangeResult.Disposed()),
+            "disposed",
+            JsonValueKind.Null);
+        JsonElement compareUnsupported = AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveCompareExchange(
+                expectedHead,
+                24000,
+                new RecapGridCadenceCompareExchangeResult
+                    .UnsupportedSchema(4)),
+            "unsupported-schema",
+            JsonValueKind.Object);
+        AssertExactPropertyNames(compareUnsupported, "version");
+        Assert.Equal(4, compareUnsupported.GetProperty("version").GetInt32());
+        JsonElement compareInvalid = AssertCadencePresentation(
+            RecapGridCommands.MapCadenceSetReserveCompareExchange(
+                expectedHead,
+                24000,
+                new RecapGridCadenceCompareExchangeResult.Invalid(
+                    "CadenceCompareInvalid",
+                    "SECRET /tmp/operator/path")),
+            "invalid",
+            JsonValueKind.Object);
+        AssertCodeOnly(compareInvalid, "CadenceCompareInvalid");
     }
 
     [Fact]
@@ -2736,6 +2978,83 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             )
             ? args
             : ["recap-grid", .. args];
+
+    private static void AssertExactPropertyNames(
+        JsonElement value,
+        params string[] expected
+    ) => Assert.Equal(
+        expected.OrderBy(static name => name, StringComparer.Ordinal),
+        value.EnumerateObject()
+            .Select(static property => property.Name)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+    );
+
+    private static JsonElement AssertCadencePresentation(
+        (string Status, object? Detail, int ExitCode) presentation,
+        string status,
+        JsonValueKind detailKind,
+        int exitCode = 2
+    ) {
+        Assert.Equal(status, presentation.Status);
+        Assert.Equal(exitCode, presentation.ExitCode);
+        JsonElement detail = JsonSerializer.SerializeToElement(
+            presentation.Detail);
+        Assert.Equal(detailKind, detail.ValueKind);
+        return detail;
+    }
+
+    private static void AssertCodeOnly(
+        JsonElement detail,
+        string code
+    ) {
+        AssertExactPropertyNames(detail, "code");
+        Assert.Equal(code, detail.GetProperty("code").GetString());
+        Assert.DoesNotContain(
+            "SECRET",
+            detail.GetRawText(),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "/tmp/",
+            detail.GetRawText(),
+            StringComparison.Ordinal);
+    }
+
+    private static void AssertCadenceReserveReceipt(
+        JsonElement detail,
+        RecapGridCadenceHeadRef expectedHead,
+        long minimumRecentHistoryLoad
+    ) {
+        AssertExactPropertyNames(
+            detail,
+            "head",
+            "minimumRecentHistoryLoad");
+        AssertCadenceHead(detail.GetProperty("head"), expectedHead);
+        Assert.Equal(
+            minimumRecentHistoryLoad,
+            detail.GetProperty("minimumRecentHistoryLoad").GetInt64());
+        Assert.False(detail.TryGetProperty("policy", out _));
+        Assert.False(detail.TryGetProperty("canonicalBase64", out _));
+    }
+
+    private static void AssertCadenceHead(
+        JsonElement detail,
+        RecapGridCadenceHeadRef expected
+    ) {
+        AssertExactPropertyNames(
+            detail,
+            "domainDigest",
+            "generation",
+            "refId");
+        Assert.Equal(
+            expected.RefId.ToHexString(),
+            detail.GetProperty("refId").GetString());
+        Assert.Equal(
+            expected.Generation,
+            detail.GetProperty("generation").GetInt64());
+        Assert.Equal(
+            expected.DomainDigest.Value,
+            detail.GetProperty("domainDigest").GetString());
+    }
 
     private static int RunGrid(params string[] args) => Program.MainCore(
         ["recap-grid", .. args],

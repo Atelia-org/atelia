@@ -65,91 +65,42 @@ internal static partial class RecapGridCommands {
         RecapGridCadenceOpenResult opened =
             RecapGridCadenceFactory.OpenMutable(engine);
         if (opened is not RecapGridCadenceOpenResult.Opened available) {
-            return Print(
-                "cadence.set-reserve",
-                CadenceOpenStatus(opened),
-                DescribeCadenceOpen(opened),
-                2);
+            return PrintCadenceSetReserve(
+                MapCadenceSetReserveOpenFailure(opened));
         }
         using RecapGridCadenceHandle handle = available.Handle;
         RecapGridCadenceReadResult read = handle.Reader.ReadSnapshot();
         if (read is not RecapGridCadenceReadResult.Available current) {
-            return Print(
-                "cadence.set-reserve",
-                CadenceReadStatus(read),
-                DescribeCadenceRead(read),
-                2);
+            return PrintCadenceSetReserve(
+                MapCadenceSetReserveReadFailure(read));
         }
         if (current.Snapshot.Head != expected) {
-            return Print(
-                "cadence.set-reserve",
-                "stale",
-                new {
-                    expected = DescribeCadenceHead(expected),
-                    actual = DescribeCadenceHead(current.Snapshot.Head)
-                },
-                2);
+            return PrintCadenceSetReserve(("stale", null, 2));
         }
         RecapGridCadencePolicySpec prior = current.Snapshot.Policy;
-        var desired = new RecapGridCadencePolicySpec(
-            minimumRecentHistoryLoad,
-            prior.PartitionAlgorithmId,
-            prior.HistoryLoadEstimatorId,
-            prior.TargetHistoryLoad,
-            prior.MaxRawEvents,
-            prior.MaxRenderedBytes);
+        RecapGridCadencePolicySpec desired;
+        try {
+            desired = new RecapGridCadencePolicySpec(
+                minimumRecentHistoryLoad,
+                prior.PartitionAlgorithmId,
+                prior.HistoryLoadEstimatorId,
+                prior.TargetHistoryLoad,
+                prior.MaxRawEvents,
+                prior.MaxRenderedBytes);
+        }
+        catch (OverflowException) {
+            return PrintCadenceSetReserve((
+                "invalid",
+                new { code = "CadenceReserveRangeInvalid" },
+                2));
+        }
         RecapGridCadenceCompareExchangeResult result =
             handle.Coordinator.CompareExchangePolicy(expected, desired);
-        return result switch {
-            RecapGridCadenceCompareExchangeResult.Updated updated => Print(
-                "cadence.set-reserve",
-                "updated",
-                DescribeCadenceSnapshot(updated.Snapshot)),
-            RecapGridCadenceCompareExchangeResult.Unchanged unchanged => Print(
-                "cadence.set-reserve",
-                "unchanged",
-                DescribeCadenceSnapshot(unchanged.Snapshot)),
-            RecapGridCadenceCompareExchangeResult.Stale stale => Print(
-                "cadence.set-reserve",
-                "stale",
-                new {
-                    expected = DescribeCadenceHead(expected),
-                    actual = DescribeCadenceHead(stale.Actual)
-                },
-                2),
-            RecapGridCadenceCompareExchangeResult.Busy => Print(
-                "cadence.set-reserve", "busy", exitCode: 2),
-            RecapGridCadenceCompareExchangeResult.CommitIndeterminate value
-                => Print(
-                    "cadence.set-reserve",
-                    "commit-indeterminate",
-                    new {
-                        intended = DescribeCadenceHead(value.Intended),
-                        observed = value.Observed is null
-                            ? null
-                            : DescribeCadenceHead(value.Observed),
-                        nextAction = "inspect"
-                    },
-                    2),
-            RecapGridCadenceCompareExchangeResult.Disposed => Print(
-                "cadence.set-reserve", "disposed", exitCode: 2),
-            RecapGridCadenceCompareExchangeResult.UnsupportedSchema schema
-                => Print(
-                    "cadence.set-reserve",
-                    "unsupported-schema",
-                    new { version = schema.Version },
-                    2),
-            RecapGridCadenceCompareExchangeResult.Invalid invalid => Print(
-                "cadence.set-reserve",
-                "invalid",
-                new { code = invalid.Code, detail = invalid.Detail },
-                2),
-            _ => Print(
-                "cadence.set-reserve",
-                "invalid",
-                new { code = "CadenceCompareExchangeOutcomeInvalid" },
-                2)
-        };
+        return PrintCadenceSetReserve(
+            MapCadenceSetReserveCompareExchange(
+                expected,
+                minimumRecentHistoryLoad,
+                result));
     }
 
     private static object DescribeCadenceSnapshot(
@@ -177,45 +128,109 @@ internal static partial class RecapGridCommands {
         domainDigest = head.DomainDigest.Value
     };
 
-    private static string CadenceOpenStatus(
-        RecapGridCadenceOpenResult result
+    internal static (string Status, object? Detail, int ExitCode)
+        MapCadenceSetReserveOpenFailure(
+            RecapGridCadenceOpenResult result
     ) => result switch {
-        RecapGridCadenceOpenResult.Absent => "absent",
-        RecapGridCadenceOpenResult.Busy => "busy",
-        RecapGridCadenceOpenResult.UnsupportedSchema => "unsupported-schema",
+        RecapGridCadenceOpenResult.Absent => ("absent", null, 2),
+        RecapGridCadenceOpenResult.Busy => ("busy", null, 2),
+        RecapGridCadenceOpenResult.UnsupportedSchema schema => (
+            "unsupported-schema",
+            new { version = schema.Version },
+            2),
         RecapGridCadenceOpenResult.PlatformUnsupported
-            => "platform-unsupported",
-        RecapGridCadenceOpenResult.Invalid => "invalid",
-        _ => "invalid"
+            => ("platform-unsupported", null, 2),
+        RecapGridCadenceOpenResult.Invalid invalid => (
+            "invalid",
+            new { code = invalid.Code },
+            2),
+        _ => (
+            "invalid",
+            new { code = "CadenceOpenOutcomeInvalid" },
+            2)
     };
 
-    private static object DescribeCadenceOpen(
-        RecapGridCadenceOpenResult result
+    internal static (string Status, object? Detail, int ExitCode)
+        MapCadenceSetReserveReadFailure(
+            RecapGridCadenceReadResult result
     ) => result switch {
-        RecapGridCadenceOpenResult.UnsupportedSchema schema
-            => new { version = schema.Version },
-        RecapGridCadenceOpenResult.Invalid invalid
-            => new { code = invalid.Code, detail = invalid.Detail },
-        _ => new { }
+        RecapGridCadenceReadResult.Disposed => ("disposed", null, 2),
+        RecapGridCadenceReadResult.Busy => ("busy", null, 2),
+        RecapGridCadenceReadResult.UnsupportedSchema schema => (
+            "unsupported-schema",
+            new { version = schema.Version },
+            2),
+        RecapGridCadenceReadResult.Invalid invalid => (
+            "invalid",
+            new { code = invalid.Code },
+            2),
+        _ => (
+            "invalid",
+            new { code = "CadenceReadOutcomeInvalid" },
+            2)
     };
 
-    private static string CadenceReadStatus(
-        RecapGridCadenceReadResult result
+    internal static (string Status, object? Detail, int ExitCode)
+        MapCadenceSetReserveCompareExchange(
+            RecapGridCadenceHeadRef expectedHead,
+            long minimumRecentHistoryLoad,
+            RecapGridCadenceCompareExchangeResult result
     ) => result switch {
-        RecapGridCadenceReadResult.Disposed => "disposed",
-        RecapGridCadenceReadResult.Busy => "busy",
-        RecapGridCadenceReadResult.UnsupportedSchema => "unsupported-schema",
-        RecapGridCadenceReadResult.Invalid => "invalid",
-        _ => "invalid"
+        RecapGridCadenceCompareExchangeResult.Updated updated => (
+            "updated",
+            DescribeCadenceReserveReceipt(updated.Snapshot),
+            0),
+        RecapGridCadenceCompareExchangeResult.Unchanged unchanged => (
+            "unchanged",
+            DescribeCadenceReserveReceipt(unchanged.Snapshot),
+            0),
+        RecapGridCadenceCompareExchangeResult.Stale => (
+            "stale",
+            null,
+            2),
+        RecapGridCadenceCompareExchangeResult.Busy => (
+            "busy",
+            null,
+            2),
+        RecapGridCadenceCompareExchangeResult.CommitIndeterminate value => (
+            "commit-indeterminate",
+            new {
+                expectedHead = DescribeCadenceHead(expectedHead),
+                intendedHead = DescribeCadenceHead(value.Intended),
+                minimumRecentHistoryLoad
+            },
+            2),
+        RecapGridCadenceCompareExchangeResult.Disposed => (
+            "disposed",
+            null,
+            2),
+        RecapGridCadenceCompareExchangeResult.UnsupportedSchema schema => (
+            "unsupported-schema",
+            new { version = schema.Version },
+            2),
+        RecapGridCadenceCompareExchangeResult.Invalid invalid => (
+            "invalid",
+            new { code = invalid.Code },
+            2),
+        _ => (
+            "invalid",
+            new { code = "CadenceCompareExchangeOutcomeInvalid" },
+            2)
     };
 
-    private static object DescribeCadenceRead(
-        RecapGridCadenceReadResult result
-    ) => result switch {
-        RecapGridCadenceReadResult.UnsupportedSchema schema
-            => new { version = schema.Version },
-        RecapGridCadenceReadResult.Invalid invalid
-            => new { code = invalid.Code, detail = invalid.Detail },
-        _ => new { }
+    private static object DescribeCadenceReserveReceipt(
+        RecapGridCadenceSnapshot snapshot
+    ) => new {
+        head = DescribeCadenceHead(snapshot.Head),
+        minimumRecentHistoryLoad =
+            snapshot.Policy.MinimumRecentHistoryLoad
     };
+
+    private static int PrintCadenceSetReserve(
+        (string Status, object? Detail, int ExitCode) presentation
+    ) => Print(
+        "cadence.set-reserve",
+        presentation.Status,
+        presentation.Detail,
+        presentation.ExitCode);
 }
