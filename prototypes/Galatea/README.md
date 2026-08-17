@@ -70,7 +70,7 @@ Fresh/NewRequest 才创建 per-turn Online context。生命周期在合法 raw b
 Timeline reconcile/seal、必要的 Manager build，再由 Getter 产生 coherent candidate。
 empty Timeline 或 no-active recipe 走 raw-only，不打开 Store 或 recap provider。
 
-## HTTP V1 candidate
+## HTTP V1 stable protocol
 
 Galatea的first-party browser与server一起直接使用`/api/v1`；旧`/api/*`没有alias、redirect或compatibility
 route。当前versioned endpoints是：
@@ -96,7 +96,7 @@ recent operation共享最多4,096次physical header preview visit与16 MiB cumul
 最终production JSON最多4 MiB。pop的display source最多256 KiB UTF-8，exact receipt最多2 MiB；receipt在CAS前
 预编码，response-loss只允许browser做current/recent reconciliation，不能自动重发mutation。
 
-## SSE V1 candidate
+## SSE V1 stable protocol
 
 SSE只接受下列closed event language：
 
@@ -120,8 +120,10 @@ nonterminal preview最多4 MiB / 16,383 events，terminal reserve为5 MiB / 1 ev
 fatal transport EOF可能没有terminal，browser必须查询current并有限重试，绝不能当success。durable completion后的
 view不可用表达为`done {recent:null}`，typed原因由独立HTTP recent读取。
 
-这些HTTP/SSE bounds是combined-R4-complete的pre-release candidate，仍是`Prototype locked`，不是
-stable/frozen compatibility承诺。没有真实需求前不增加pagination、cursor、Last-Event-ID、ack或dual grammar。
+这些HTTP/SSE bounds、terminal/reconciliation语义与tracked first-party browser已由
+`session-journal-contract-r2-approved-surfaces-v1`批准为Stable V1。该批准不包含deployment/provider readiness、
+diagnostic逐字文本、cookie实现或ignored operator state。没有真实需求前不增加pagination、cursor、
+Last-Event-ID、ack或dual grammar；breaking change必须形成新candidate/version。
 
 ## Readiness
 

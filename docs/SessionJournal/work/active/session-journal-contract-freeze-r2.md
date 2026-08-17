@@ -228,10 +228,10 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | CF-C-01 Control classification | Complete | `8a2186f8`；future schema typed Unsupported与empty whole-state independent golden |
 | R4 priority code gates | Complete | solution + owner/PublicSurface/CLI/wire/nonfriend gates；D02与post-D02分时R4 evidence分别记录 |
 | R5 current inventory | Complete | `a77ed16c` S/T/O/C/G/H = 901 types / 9,419 rows / 2,123 construction lines；[R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md) |
-| R5 support/wire/upgrade candidate docs | Complete / candidate | [Contract R2 candidate](../../current/contracts/session-journal-contract-r2.md)；ready for approval，不构成freeze声明 |
+| Historical R5 support/wire/upgrade docs | Complete / historical candidate | `a77ed16c`当时的contract map ready for approval；current contract已由后续AP promotion取代 |
 | R5 final code gates | Complete | `a77ed16c` solution 37 projects / 4,629 passed / 0 failed / 0 skipped；build 0W/0E；11 PublicSurface、Walking 27、Galatea.RG 7与HTTP/SSE Node均green |
 | R5 disposable rebuild | Complete | `a77ed16c` two fresh imports、offline/raw equality、four-owner gates、repeat-init与standalone Timeline create 13-file snapshots exact；禁网/provider artifacts 0 |
-| R5 docs review / approval / tag | Ready for approval；approval/tag Pending | `3e9a4b8d`关闭两位initial reviewer findings，两位tail re-review均PASS；等待用户逐Tier批准 |
+| Historical R5 docs review / approval / tag | Complete / historical Pending | `3e9a4b8d`关闭两位initial reviewer findings；在`a77ed16c`检查点approval/tag仍Pending，后续由AP promotion完成 |
 | AP approval review | Complete | [approval review](../../evidence/contract-freeze-r2-approval-review.md)；Tier A/B/C/D拆分Go/Defer，发现raw literal、Route/Profile与named-role closure缺口 |
 | AP-A / AP-C1 / AP-D1 closure | Complete | `e9b966e7`→`cd966fc7`；independent review findings由`02be1510`、`5e458238`、`d8517bac`、`c50356c0`、`cd966fc7`关闭 |
 | AP renewal solution/Node gates | Complete | source candidate `cd966fc7`；38 projects / 4,677 passed；12 PublicSurface 40/40；build 0W/0E；HTTP/SSE Node各1/1 |
@@ -325,7 +325,7 @@ generic schema framework或新的public authority。
   independent fingerprint与Schema V2 accepted language不变；
 - current support map、wire inventory、upgrade policy、candidate commit map与fresh compiled inventory已进入
   [R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)；final gates与independent docs review均已通过；
-- R5 candidate已ready for approval，但本文不批准stable/frozen tier。
+- 在该historical R5检查点candidate已ready for approval，但当时本文尚未批准stable/frozen tier；后续批准见§15。
 
 ## 14. R5 candidate preparation
 
@@ -339,9 +339,9 @@ final gate ledger。
 fresh isolated inventory为901 effective-public types、9,419 logical API rows与2,123 construction rows；相对R0
 分别`+10 / -17 / -48`。这些数字识别candidate，不表示所有export都已获得stable support promise。
 
-同一source candidate的final solution/owner/PublicSurface、HTTP/SSE Node、provider-free disposable rebuild、docs checker、
-source diff与independent review均已complete，candidate现为`ready for approval`。ignored operator config和real provider
-本轮明确`NotRun`，不能拿历史local observation代替current gate；stable/frozen tier与tag必须由用户另行批准。
+同一historical source candidate的final solution/owner/PublicSurface、HTTP/SSE Node、provider-free disposable rebuild、
+docs checker、source diff与independent review均已complete；它在当时是`ready for approval`且approval/tag仍Pending。
+ignored operator config和real provider明确`NotRun`。后续批准事实只由§15 AP promotion拥有，不能反向改写该历史检查点。
 
 ## 15. AP approval closure与renewal candidate
 

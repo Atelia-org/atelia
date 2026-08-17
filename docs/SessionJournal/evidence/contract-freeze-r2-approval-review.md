@@ -162,8 +162,8 @@ current rebuild的product semantic failure为0。
 用户接受继续Defer：blanket Tier B、History/Cadence/Control损坏或旧代状态的统一operator action、完整root-config
 field language、所有independent reports的完整field/status language、非Store CLI command的全部detail/status、
 Store SQLite V2 exact logical schema appendix、五个Rewriter轴之外的provider renderer/protocol，以及任何physical
-SQLite/RBF determinism。Rewriter五个exact protocol轴可以作为Tier B中的独立sub-surface另行批准，但不应借此
-把整个Tier B标成frozen。
+SQLite/RBF determinism。Rewriter五个exact protocol轴已在本次作为Tier B独立sub-surface批准，但不应借此把
+整个Tier B标成frozen。
 
 annotated tag `session-journal-contract-r2-approved-surfaces-v1`指向包含本批准记录的promotion docs commit；tag
 message固定validated product source `cd966fc7`、批准范围及non-promises。该tag不得移动；未来变更使用新tag/version。
