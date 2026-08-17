@@ -1,12 +1,12 @@
-# HistoryLoad calibration report V2 candidate
+# HistoryLoad calibration report V2 approved top-level contract
 
-状态：**post-surface-set-3-tag candidate；approval Defer**  
+状态：**surface set 4 exact top-level/read-only scope user-approved；unified gates、review与tag Pending**  
 production/test source：`881afb39af511567b8bb900c5db103426791ab95`  
-approval boundary：不属于immutable tag `session-journal-contract-r2-approved-surfaces-v3`
+approval boundary：不属于immutable v3 tag；authorized v4 tag尚未创建
 
 本文定义`recap-grid timeline history-load inspect --report-json` current producer输出的V2 machine-readable
-calibration report。它是producer-only、read-only、offline report candidate，不是raw、Timeline、cadence或provider
-authority；源码与owning tests仍是实现事实。
+calibration report。Surface set 4只批准§1的exact top-level field set/types/meanings、V1字段删除与§4的read-only
+publication/retry semantics；它不是raw、Timeline、cadence或provider authority。其余实现细节仍是candidate事实。
 
 ## 1. Producer、schema与exact top-level field set
 
@@ -49,9 +49,9 @@ V2删除V1的`continuousWindowLoadDistributions`；producer不dual-write该field
   `absorbedHistoryLoadSinceBaseline`。最后一个boundary只在current measurement实际产生时表达whole suffix progress；
   consumer不得凭数组非空假设某个固定unit/raw比例。
 
-这些是current V2 producer candidate的decoded shape与meaning，不冻结record declaration order、serializer byte output或
-任意历史fixture的具体counts/distribution values。Changing nested field set/type/meaning也必须形成新schema/candidate，
-不能在V2下静默漂移。
+这些是current V2 producer的nested decoded shape与meaning，但**不属于surface set 4批准范围**；本批准不冻结nested
+key set/type、record declaration order、serializer byte output、精确percentile member language或任意历史fixture的
+counts/distribution values。未来nested evolution必须另立candidate与consumer review，不能把v4 tag解释为预先批准。
 
 ## 3. Full-window、unbounded与offline boundary
 
@@ -89,7 +89,7 @@ Report不包含message/tool/prompt正文、Completion connection、call log或pr
 addresses、per-unit kinds、source ranges、load与rendered-byte measurements。这些是content-free operational metadata，
 仍可能泄露会话长度、结构与变化，不应自动视为可公开。
 
-本candidate不承诺：
+本contract不承诺：
 
 - V1 compatibility、V1 continuous-window fields、unknown-field tolerance或generic Other-report envelope；
 - JSON property order、whitespace、escaping、terminal newline、canonical bytes或byte identity；
@@ -100,5 +100,6 @@ addresses、per-unit kinds、source ranges、load与rendered-byte measurements�
 
 2026-07-31的
 [`history-load-galatea-calibration.md`](../../evidence/history-load-galatea-calibration.md)是V1 single-fixture历史证据，
-保持原样且不认证V2 current output。本文形成于immutable surface-set-3 tag之后；code/tests/docs通过都不会自动将其
-加入v3或批准，后续必须经新的显式user decision，或继续Defer。
+保持原样且不认证V2 current output。本文形成于immutable surface-set-3 tag之后；用户已明确批准
+[surface set 4 addendum](../../evidence/contract-freeze-r2-approval-surface-set-4.md)圈定的窄scope，但unified gates、
+independent review与authorized v4 tag仍Pending，且该批准不反向移动或扩大v3 tag。

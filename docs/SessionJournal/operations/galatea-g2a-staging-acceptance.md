@@ -102,7 +102,9 @@ fi
 不得从旧repo或历史run复制。只有上面的exact V2/11-field/type gate通过后才能读取`capturedHead`；
 `history_load_head`必须等于本轮`raw_head`。History-load report是full-window unbounded offline report，没有final byte cap或
 stable oversize结果；若report write失败，raw repo不变，可重新执行inspect并用fresh `capturedHead`复核，不要消费partial/stale output。
-Exact candidate见[HistoryLoad report V2](../current/contracts/history-load-report-v2.md)。
+Exact top-level/read-only contract见[HistoryLoad report V2](../current/contracts/history-load-report-v2.md)；该窄scope已获
+surface set 4用户批准，但unified gates、independent review与authorized v4 tag仍Pending。Runbook消费约束不把nested
+shape、resource bounds或current operator state顺带升级为批准承诺。
 
 ## 3. Explicit formal provisioning
 
