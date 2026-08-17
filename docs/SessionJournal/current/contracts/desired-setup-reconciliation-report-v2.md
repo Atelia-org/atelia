@@ -1,16 +1,14 @@
 # Desired setup reconciliation report V2 approved contract
 
-状态：**user-approved Stable V2 operational receipt；surface set 3 unified gates complete / tag Pending**  
+状态：**Approved Stable V2 operational receipt；surface set 3 anchored**  
 production source：`da3aa27af56add07bc70229120c522b8d24c99ba`  
 test evidence：`8a54e613f7c1a92bab3a4dd0806aad19411c41b1`  
-approval boundary：不属于immutable v1/v2 tags；authorized v3 tag
-`session-journal-contract-r2-approved-surfaces-v3`尚未创建
+approval anchor：不属于immutable v1/v2 tags；v3 tag object `511c5099` dereferences to approval ledger `adf547e2`
 
 本文定义`reconcile-desired-setup --report-json` current producer输出的exact V2 machine-readable shape与operator
 consumption rule。用户已将[surface set 3 addendum](../../evidence/contract-freeze-r2-approval-surface-set-3.md#1-approved-additive-surface)
-列出的narrow scope批准为Stable V2 operational receipt；unified gates已通过，independent pre-tag review与annotated
-v3 tag仍Pending。它是producer-only report contract，不是raw authority、recovery proof或通用CLI envelope；源码与
-owning tests仍是实现事实。
+列出的narrow scope批准为Stable V2 operational receipt；unified gates已通过并由annotated v3 tag锚定。它是
+producer-only report contract，不是raw authority、recovery proof或通用CLI envelope；源码与owning tests仍是实现事实。
 
 ## 1. Producer、schema与exact field set
 
@@ -96,6 +94,6 @@ hash可能泄露相等性或可猜文本，不应自动视为可公开或无敏�
 - V1 compatibility、unknown-field tolerance、canonical JSON bytes或任何未列入本文的future field。
 
 该appendix形成于immutable surface-set-2 tag之后；用户随后已明确批准additive surface set 3的exact narrow scope，
-但该批准不移动或重释v1/v2 tags，也不把本节non-promises纳入承诺。Containing promotion docs与unified gates已完成；
-independent pre-tag review与annotated v3 tag仍Pending。Tag创建前不得将本文件表述成已anchored，tag创建后也只能
-认证addendum精确列出的scope。
+但该批准不移动或重释v1/v2 tags，也不把本节non-promises纳入承诺。Containing promotion docs与unified gates已完成，
+annotated v3 tag现已锚定final gate ledger `adf547e2`；它只认证addendum精确列出的scope，当前post-tag docs不会
+反向移动该tag。

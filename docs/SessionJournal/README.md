@@ -18,8 +18,8 @@
 | Timeline、partition、HistoryLoad 与 branch reconcile | [HistoryLoad](current/derived-recap/history-load.md)、[HistoryTimeline code](../../prototypes/SessionJournal.HistoryTimeline/)、[HistoryTimeline tests](../../tests/SessionJournal.HistoryTimeline.Tests/) | [Durable authority](current/derived-recap/durable-target.md) |
 | Grid Store、Control、Manager、Getter 与 Runtime | [Grid concepts](current/derived-recap/concepts.md)、[target design](work/active/derived-recap-grid-target-design.md) | [Store SQLite V2 approved logical-schema appendix](current/contracts/recap-grid-store-sqlite-v2.md)与owning product/tests；logical schema/persistent pragmas/operator mapping由surface-set-2 tag锚定，physical SQLite不在批准范围 |
 | 审阅 Galatea root `config.json` V1 | [Root config V1 approved appendix](current/contracts/galatea-root-config-v1.md)、[Galatea guide](../../prototypes/Galatea/README.md) | exact field/path/bounds/bootstrap policy由surface-set-2 tag锚定；不要将批准扩张到connections/Route/Profile owner contract、secret/deployment或appendix non-promises |
-| 消费或恢复 desired-setup reconciliation report | [Desired setup report V2 approved contract](current/contracts/desired-setup-reconciliation-report-v2.md)、[activation runbook](operations/galatea-g2a-staging-acceptance.md#9-actual-activation-after-a-passed-disposable-candidate) | producer-only exact 10-field gate；raw mutation先于report publication，失败后必须重新inspect exact head/Idle/governing setup；surface set 3已获用户批准且unified gates通过，v3 tag Pending |
-| 审阅 approved public API / wire-format surface与remaining candidate | [Contract R2 approved surfaces and candidate map](current/contracts/session-journal-contract-r2.md) | immutable v1/v2 tags分别锚定surface sets 1/2；[surface set 2 addendum](evidence/contract-freeze-r2-approval-surface-set-2.md)记录exact tag object/target；[surface set 3 addendum](evidence/contract-freeze-r2-approval-surface-set-3.md)记录narrow report scope与tag前Pending；[plan](work/active/session-journal-contract-freeze-r2.md)保留其余Defer边界 |
+| 消费或恢复 desired-setup reconciliation report | [Desired setup report V2 approved contract](current/contracts/desired-setup-reconciliation-report-v2.md)、[activation runbook](operations/galatea-g2a-staging-acceptance.md#9-actual-activation-after-a-passed-disposable-candidate) | producer-only exact 10-field gate；raw mutation先于report publication，失败后必须重新inspect exact head/Idle/governing setup；surface set 3已通过unified gates并由immutable v3 tag锚定 |
+| 审阅 approved public API / wire-format surface与remaining candidate | [Contract R2 approved surfaces and candidate map](current/contracts/session-journal-contract-r2.md) | immutable v1/v2/v3 tags分别锚定surface sets 1/2/3；[surface set 2 addendum](evidence/contract-freeze-r2-approval-surface-set-2.md)与[surface set 3 addendum](evidence/contract-freeze-r2-approval-surface-set-3.md)记录各自exact tag object/target；[plan](work/active/session-journal-contract-freeze-r2.md)保留其余Defer边界 |
 | 审阅 post-cutover cadence、recent reserve、长期容量或 cyber 激活边界 | [Cadence/capacity audit](work/active/derived-recap-grid-cadence-capacity-and-activation-audit.md) | A0-A2已实现24k target reserve；C2/C5 activation完成，C4仍Open |
 | 实现 Galatea 自传/world-understanding rolling maintainers，或审阅未来 Editor/ExperienceRefiner 边界 | [C2 Galatea rolling maintainers](work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md) | shared Family、runtime-configurable model、operator asset assembly与验收矩阵 |
 | CLI operator 或 Galatea integration | [CLI guide](../../prototypes/SessionJournal.Cli/README.md)、[Galatea guide](../../prototypes/Galatea/README.md)、[Host integration](current/host-integration/derived-recap-host-integration.md) | current composition/code/tests |
@@ -42,8 +42,8 @@
   [SessionJournal Contract Freeze R2](work/active/session-journal-contract-freeze-r2.md)
   记录候选direct cut与分阶段freeze gates；[Contract R2 candidate](current/contracts/session-journal-contract-r2.md)
   汇总approved exact support-role/wire与remaining candidate；surface set 1已由immutable v1 tag锚定，additive surface set 2
-  已获用户批准、通过pre-tag gates并由immutable v2 tag锚定；additive surface set 3已获用户批准且unified gates通过，
-  independent pre-tag review与annotated v3 tag仍Pending；未列出的surface继续按Defer边界推进。
+  已获用户批准、通过pre-tag gates并由immutable v2 tag锚定；additive surface set 3也已通过unified gates并由immutable
+  v3 tag锚定；未列出的surface继续按Defer边界推进。
   精确事实仍以owning code/tests与`current/`文档为准。
 
 目录、标题、日期、`README.md` 或 `public` 均不自动授予 authority。

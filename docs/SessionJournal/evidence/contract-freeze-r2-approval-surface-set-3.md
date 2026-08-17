@@ -1,11 +1,13 @@
 # SessionJournal Contract Freeze R2 — additive surface set 3 approval
 
-状态：**user approval recorded；unified gates complete；tag-ready candidate；annotated tag authorized / pending**  
+状态：**approval complete；unified gates complete；annotated surface set 3 tag anchored**  
 production source：`da3aa27af56add07bc70229120c522b8d24c99ba`  
 contract test evidence：`8a54e613f7c1a92bab3a4dd0806aad19411c41b1`  
 candidate appendix commit：`60904628f90f203cb59eebfb5bcc8438e33aebaa`  
 promotion docs commit：`cb8ba5581c456fdc264005ce3d7a3eedda198430`  
-authorized tag：`session-journal-contract-r2-approved-surfaces-v3`（尚未创建）  
+approval tag：`session-journal-contract-r2-approved-surfaces-v3`  
+tag object：`511c5099cd045f6131e8a6090b6e512bf3112a99`  
+dereferenced target：`adf547e2a2319fd3009a7015a4289ab875af43f7`  
 记录日期：2026-08-18
 
 本文只记录用户在immutable surface sets 1与2之后明确批准的一个additive surface：Desired Setup reconciliation
@@ -70,19 +72,20 @@ implementation fact，不被本approval扩张成通用CLI accepted-language或fi
 
 HTTP与SSE均在首次命令中使用correct production test paths并通过，没有file-not-found、retry或其他命令calibration。
 
-## 4. Tag-before checklist
+## 4. Tag closure record
 
-1. containing promotion docs commit `cb8ba558`已产生；本gate ledger tail的commit ID待本次docs提交后记录；
+1. containing promotion docs commit `cb8ba558`与final gate ledger `adf547e2`已产生；
 2. exact clean promotion HEAD `cb8ba558`上的SessionJournal CLI owner suite、full solution test/build、HTTP/SSE Node、
    scoped docs checker、diff/status/tag preflight已按§3.1通过；
 3. inventory、disposable rebuild、ignored operator state、provider/deployment的NotRun/无需边界已按§3.1明确记录，未复制
    surface-set-1/2 counts；
-4. annotated tag必须exact命名为`session-journal-contract-r2-approved-surfaces-v3`并指向包含final gate ledger、已通过
-   independent review的promotion docs commit；
-5. tag message必须pin production source `da3aa27a`、contract test evidence `8a54e613`、candidate appendix
-   `60904628`、§1 exact scope、§2 non-promises，以及immutable v1/v2 tags不移动；
-6. 当前candidate已完成统一gates、达到independent pre-tag review入口；review仍须针对包含本ledger的docs commit PASS。
-   创建tag前再次确认同名tag不存在、worktree无本包遗漏并核对target；创建后另行记录exact tag object/target。
+4. annotated tag已exact创建为`session-journal-contract-r2-approved-surfaces-v3`；tag object为
+   `511c5099cd045f6131e8a6090b6e512bf3112a99`，dereferenced target为包含reviewed final gate ledger的
+   `adf547e2a2319fd3009a7015a4289ab875af43f7`；
+5. tag message pin production source `da3aa27a`、contract test evidence `8a54e613`、candidate appendix `60904628`、
+   promotion docs `cb8ba558`、§1 exact scope、§2 non-promises，以及immutable v1/v2 tags不移动；
+6. v1/v2 dereferenced targets仍为`6378cebbde4cf150ecb4d8de5699ef1f77ce4f0b`与
+   `c4c6dd1698c7460fbf8ff3563d7800203f3202e0`。
 
-Surface set 3现为gate-complete、tag-ready candidate；independent review与annotated tag仍Pending。任何文档都不得声称
-该tag已经创建，或用授权/green gates反向认证surface-set-2 tag之后的整个repository HEAD。
+本post-tag status tail只记录已经发生的tag closure；tag继续指向`adf547e2`，不会因当前或未来docs commit而反向移动、
+续期product/provider/deployment evidence或扩大§1批准范围。
