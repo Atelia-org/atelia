@@ -11,6 +11,49 @@ namespace Atelia.SessionJournal.RecapGrid.Manager.PublicSurface.Tests;
 
 public sealed class ManagerPublicSurfaceTests {
     [Fact]
+    public void ExternalExecutorCanConstructOrdinaryResults() {
+        RecapCellExecutionOutcome[] outcomes = [
+            new RecapCellExecutionOutcome.Updated(
+                new EvaluationKeyDigest(new string('a', 64)),
+                "updated"
+            ),
+            new RecapCellExecutionOutcome.KeepUnchanged(
+                new EvaluationKeyDigest(new string('b', 64))
+            ),
+            new RecapCellExecutionOutcome.Failed(
+                new EvaluationKeyDigest(new string('c', 64)),
+                "provider-failed",
+                "Provider did not return a usable result."
+            )
+        ];
+        var completed = new RecapCellBatchExecutionResult.Completed(outcomes);
+        IRecapCellBatchExecutor executor = new ConstructingExecutor(completed);
+
+        Assert.IsType<ConstructingExecutor>(executor);
+        Assert.Equal(outcomes, completed.OrderedOutcomes.ToArray());
+        Assert.Collection(
+            completed.OrderedOutcomes,
+            static outcome => Assert.IsType<
+                RecapCellExecutionOutcome.Updated
+            >(outcome),
+            static outcome => Assert.IsType<
+                RecapCellExecutionOutcome.KeepUnchanged
+            >(outcome),
+            static outcome => Assert.IsType<
+                RecapCellExecutionOutcome.Failed
+            >(outcome)
+        );
+
+        var rejected = new RecapCellBatchExecutionResult
+            .RejectedBeforeDispatch(
+                "not-dispatched",
+                "The batch was rejected before any provider call."
+            );
+        Assert.Equal("not-dispatched", rejected.Code);
+        Assert.NotEmpty(rejected.Detail);
+    }
+
+    [Fact]
     public void ProgressRecordsArePublicReadOnlyAndNotPubliclyConstructible() {
         AssertProgressRecordShape(
             typeof(RecapGridBuildProgressAuthority),
@@ -325,5 +368,14 @@ public sealed class ManagerPublicSurfaceTests {
         ) => throw new InvalidOperationException(
             $"Zero-column recipe dispatched {batch.OrderedMissingWork.Count} work items."
         );
+    }
+
+    private sealed class ConstructingExecutor(
+        RecapCellBatchExecutionResult result
+    ) : IRecapCellBatchExecutor {
+        public ValueTask<RecapCellBatchExecutionResult> ExecuteAsync(
+            FrozenRowBatch batch,
+            CancellationToken cancellationToken
+        ) => ValueTask.FromResult(result);
     }
 }

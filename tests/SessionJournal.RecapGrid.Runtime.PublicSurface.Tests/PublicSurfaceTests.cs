@@ -7,6 +7,51 @@ namespace Atelia.SessionJournal.RecapGrid.Runtime.PublicSurface.Tests;
 
 public sealed class PublicSurfaceTests {
     [Fact]
+    public void ExternalTelemetryCanImplementNamedEventSink() {
+        var implementation = new PublicTelemetry();
+        IRecapCompletionTelemetry telemetry = implementation;
+        var routeKey = new RecapCompletionRouteKey(
+            new FamilyDefinitionDigest(new string('a', 64)),
+            RecapRewriterProtocolV3.RuntimeProtocolId,
+            semanticModelId: null
+        );
+        var telemetryEvent = new RecapCompletionTelemetryEvent(
+            kind: "Completed",
+            routeKey: routeKey,
+            connectionId: "connection-v1",
+            modelId: "model-v1",
+            providerId: "public-provider",
+            apiSpecId: "public-api-v1",
+            evaluationKey: new EvaluationKeyDigest(new string('b', 64)),
+            familyDigest: routeKey.FamilyDigest,
+            definitionDigest: new MaintainerDefinitionDigest(
+                new string('c', 64)
+            ),
+            historySegmentDigest: new string('d', 64),
+            isFirstRowPrior: true,
+            priorProjectionDigest: null,
+            role: RecapCompletionWorkRole.Leader,
+            admissionWait: TimeSpan.Zero,
+            laneWait: TimeSpan.Zero,
+            elapsed: TimeSpan.Zero,
+            cacheReuseHint: PromptCacheReuseHint.ConnectionDefault,
+            resultReceived: true,
+            termination: null,
+            providerErrorCount: 0,
+            usage: null,
+            providerOutcome: "completed",
+            code: null,
+            detail: null
+        );
+
+        telemetry.Record(telemetryEvent);
+
+        Assert.Same(implementation, telemetry);
+        Assert.Equal(1, implementation.RecordCount);
+        Assert.Same(telemetryEvent, implementation.LastEvent);
+    }
+
+    [Fact]
     public void ExternalComposition_CanConstructExactLazyRouteRuntime() {
         var key = new RecapCompletionRouteKey(
             new FamilyDefinitionDigest(new string('a', 64)),
@@ -94,5 +139,16 @@ public sealed class PublicSurfaceTests {
             CompletionInvocationOptions invocationOptions,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
+    }
+
+    private sealed class PublicTelemetry : IRecapCompletionTelemetry {
+        internal int RecordCount { get; private set; }
+        internal RecapCompletionTelemetryEvent? LastEvent { get; private set; }
+
+        public void Record(RecapCompletionTelemetryEvent value) {
+            ArgumentNullException.ThrowIfNull(value);
+            LastEvent = value;
+            RecordCount++;
+        }
     }
 }

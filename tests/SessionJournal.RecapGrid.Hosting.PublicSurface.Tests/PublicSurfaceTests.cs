@@ -9,6 +9,28 @@ namespace Atelia.SessionJournal.RecapGrid.Hosting.PublicSurface.Tests;
 
 public sealed class PublicSurfaceTests {
     [Fact]
+    public void CompletionDependenciesStayAtNamedHostCompositionBoundary() {
+        var create = typeof(ICompletionClientFactory).GetMethods()
+            .SingleOrDefault(static method =>
+                method.Name == nameof(ICompletionClientFactory.Create)
+                && method.ReturnType == typeof(ICompletionClient)
+                && method.GetParameters()
+                    .Select(static parameter => parameter.ParameterType)
+                    .SequenceEqual([typeof(CompletionConnectionConfig)])
+            );
+
+        Assert.NotNull(create);
+        Assert.Equal(typeof(ICompletionClient), create!.ReturnType);
+        Assert.DoesNotContain(
+            typeof(RecapGridRuntimeHost).Assembly.GetExportedTypes(),
+            static type => type.Namespace?.StartsWith(
+                "Atelia.Completion",
+                StringComparison.Ordinal
+            ) is true
+        );
+    }
+
+    [Fact]
     public async Task ExternalCompositionCanCreateAndDisposeLazyHost() {
         var key = new RecapCompletionRouteKey(
             new FamilyDefinitionDigest(new string('a', 64)),

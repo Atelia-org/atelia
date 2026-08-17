@@ -1,3 +1,4 @@
+using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Xunit;
@@ -10,6 +11,25 @@ public sealed class HistoryTimelinePublicSurfaceTests : IDisposable {
         "atelia-history-timeline-public-surface-tests",
         Guid.NewGuid().ToString("N")
     );
+
+    [Fact]
+    public void ExternalEstimatorCanMeasureAndConstructResult() {
+        IHistoryUnitLoadEstimator estimator = new ExternalEstimator();
+        var unit = new SessionHistoryPlanningUnit(
+            new ObservationMessage("external-estimator"),
+            default,
+            default
+        );
+
+        HistoryUnitLoadMeasurement measurement = estimator.Measure(
+            unit,
+            maxRenderedUtf8Bytes: 1024
+        );
+
+        Assert.Equal("public-surface-estimator-v1", estimator.Id);
+        Assert.Equal(new HistoryLoadUnit(7), measurement.Load);
+        Assert.Equal(11, measurement.RenderedUtf8Bytes);
+    }
 
     [Fact]
     public void ExternalCompositionCanCreateOpenReadAndDisposeWithoutBackendAccess() {
@@ -241,6 +261,26 @@ public sealed class HistoryTimelinePublicSurfaceTests : IDisposable {
     public void Dispose() {
         if (Directory.Exists(_path)) {
             Directory.Delete(_path, recursive: true);
+        }
+    }
+
+    private sealed class ExternalEstimator : IHistoryUnitLoadEstimator {
+        public string Id => "public-surface-estimator-v1";
+
+        public HistoryUnitLoadMeasurement Measure(
+            SessionHistoryPlanningUnit unit,
+            int maxRenderedUtf8Bytes
+        ) {
+            ArgumentNullException.ThrowIfNull(unit);
+            if (maxRenderedUtf8Bytes <= 0) {
+                throw new ArgumentOutOfRangeException(
+                    nameof(maxRenderedUtf8Bytes)
+                );
+            }
+            return new HistoryUnitLoadMeasurement(
+                new HistoryLoadUnit(7),
+                RenderedUtf8Bytes: 11
+            );
         }
     }
 }
