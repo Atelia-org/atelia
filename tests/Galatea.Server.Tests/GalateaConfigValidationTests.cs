@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
@@ -51,6 +52,66 @@ public sealed class GalateaConfigValidationTests {
             decoded.Version
         );
         Assert.Null(typeof(GalateaConfig).GetProperty("Version"));
+    }
+
+    [Fact]
+    public void ProductionBootstrapWritesBomlessRootConfigThatStrictLoaderReads() {
+        string root = NewRoot();
+        try {
+            string configPath = Path.Combine(root, "config.json");
+            File.WriteAllBytes(
+                Path.Combine(
+                    root,
+                    "recap-grid-agent-control-profile.json"
+                ),
+                CreateProfile("default").ToCanonicalBytes()
+            );
+
+            Assert.Throws<InvalidOperationException>(() =>
+                GalateaConfigBootstrapper.EnsureExistsOrBootstrap(configPath)
+            );
+
+            byte[] usersBytes = File.ReadAllBytes(configPath);
+            Assert.False(usersBytes.AsSpan().StartsWith(
+                Encoding.UTF8.GetPreamble()
+            ));
+            GalateaStrictConfigReader.ValidateUsers(usersBytes);
+
+            GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
+            Assert.Equal(["alice", "bob"],
+                loaded.Users.Select(static user => user.UserId));
+            Assert.Equal(
+                GalateaConfigTemplateFactory.DefaultConnectionId,
+                loaded.DefaultConnectionId
+            );
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void RootConfigAcceptsExactV1OutsideFirstProperty() {
+        string root = NewRoot();
+        try {
+            string configPath = WriteConfig(
+                root,
+                [User("alice", Path.Combine(root, "session"))]
+            );
+            string original = File.ReadAllText(configPath);
+            const string LeadingVersion = "{\"v\":1,";
+            Assert.StartsWith(LeadingVersion, original);
+            string reordered = "{"
+                + original[LeadingVersion.Length..^1]
+                + ",\"v\":1}";
+            File.WriteAllText(configPath, reordered);
+
+            GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
+            Assert.Equal("alice", Assert.Single(loaded.Users).UserId);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]
@@ -695,14 +756,16 @@ public sealed class GalateaConfigValidationTests {
         return configPath;
     }
 
-    private static RecapGridAgentControlProfile CreateProfile() {
+    private static RecapGridAgentControlProfile CreateProfile(
+        string profileId = "test-profile"
+    ) {
         Assert.True(RecapGridAgentControlBuiltIns
             .TryCreateRegistrationBundle(
                 RecapGridAgentControlBuiltIns.MysteryInvestigationV3,
                 out RecapGridControlRegistrationBundle? builtIn
             ));
         return RecapGridAgentControlProfile.Create(
-            "test-profile",
+            profileId,
             new RecapGridControlAdmission(
                 RecapGridControlPermission.All,
                 [builtIn!.Families[0].Digest],

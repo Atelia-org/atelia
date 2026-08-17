@@ -1747,11 +1747,16 @@ internal static class GalateaConfigBootstrapper {
 
         var generated = new List<string>();
         if (!configExists) {
-            File.WriteAllText(
-                resolvedPath,
-                JsonSerializer.Serialize(GalateaConfigTemplateFactory.CreateUsersFile(), jsonOptions) + Environment.NewLine,
-                Encoding.UTF8
+            byte[] document = JsonSerializer.SerializeToUtf8Bytes(
+                GalateaConfigTemplateFactory.CreateUsersFile(),
+                jsonOptions
             );
+            byte[] terminated = GC.AllocateUninitializedArray<byte>(
+                document.Length + 1
+            );
+            document.CopyTo(terminated, 0);
+            terminated[^1] = (byte)'\n';
+            File.WriteAllBytes(resolvedPath, terminated);
             generated.Add(resolvedPath);
         }
 
