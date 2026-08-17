@@ -355,14 +355,53 @@ system_prompt_file="prototypes/Galatea/.atelia/galatea/prompts/cyber.md"
 setup_report="$reports/reconcile-actual-setup.json"
 validate_after_setup="$reports/validate-actual-after-setup.json"
 
-dotnet run --project prototypes/SessionJournal.Cli -- \
+if [[ -e "$setup_report" || -e "$validate_after_setup" ]]; then
+  echo "activation reports must be create-only for this run" >&2
+  exit 1
+fi
+
+if ! dotnet run --project prototypes/SessionJournal.Cli -- \
   reconcile-desired-setup \
   --input "$actual_repo" --branch main \
   --expected-head "$pre_setup_head" \
   --connections "$actual_connections" \
   --connection "$main_connection_id" \
   --system-prompt-file "$system_prompt_file" \
-  --report-json "$setup_report"
+  --report-json "$setup_report"; then
+  echo "desired setup reconcile failed; re-inspect current raw authority before retry" >&2
+  exit 1
+fi
+
+if ! jq -e '
+  .schema == "atelia.session-journal.desired-setup-reconciliation.v2"
+  and (keys == [
+    "afterHead",
+    "beforeHead",
+    "branchName",
+    "completionSurfaceId",
+    "connectionId",
+    "modelId",
+    "runtimeConfigChanged",
+    "schema",
+    "systemPromptChanged",
+    "systemPromptUtf8Sha256"
+  ])
+  and ([
+    .schema,
+    .branchName,
+    .connectionId,
+    .beforeHead,
+    .afterHead,
+    .modelId,
+    .completionSurfaceId,
+    .systemPromptUtf8Sha256
+  ] | all(.[]; type == "string"))
+  and (.runtimeConfigChanged | type == "boolean")
+  and (.systemPromptChanged | type == "boolean")
+' "$setup_report" >/dev/null; then
+  echo "desired setup report is not exact V2; re-inspect current raw authority" >&2
+  exit 1
+fi
 
 raw_head="$(jq -er '.afterHead' "$setup_report")"
 if [[ "$raw_head" == "$pre_setup_head" ]]; then
@@ -382,6 +421,12 @@ jq -e --arg head "$raw_head" --arg ref "$ref_id" '
 
 所有report/config output必须create-only且预先不存在。setup已exact时允许`afterHead == pre_setup_head`，但上面的gate要求report同时证明
 两项均未改变。
+
+`reconcile-desired-setup`先修改raw、再atomic publish report；production writer本身允许overwrite，create-only只是本
+runbook用来排除stale receipt的operator precondition。若command exit 1、report缺失或V2 gate失败，不能据此推断raw
+未变，也不得用旧`pre_setup_head`盲重试。必须重新只读inspect/validate current exact head、Idle boundary与governing
+setup，再以observed exact head幂等执行同一desired intent；不要rollback或手工补raw setup。Exact report contract与
+failure recovery见[Desired setup reconciliation report V2 candidate](../current/contracts/desired-setup-reconciliation-report-v2.md)。
 
 随后按以下顺序执行：
 

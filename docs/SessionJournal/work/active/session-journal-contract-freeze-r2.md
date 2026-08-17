@@ -243,6 +243,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | ROOT-CONFIG-PATH-A0 | Approved via anchored ROOT-CONFIG-A1 | `0f0afb2c` config-directory-relative cut与absolute-target semantics进入surface set 2；无CWD fallback、auto move/create或confinement |
 | ROOT-CONFIG-A1 | Approved / anchored in additive surface set 2 | [root config V1 appendix](../../current/contracts/galatea-root-config-v1.md)；product source `8c450bf0`、integration `6c5d3d50`；secret/permissions/Kestrel/diagnostic/provider/deployment仍非承诺 |
 | AP-PROMOTE-V2 | Complete / tag anchored | promotion `a07de1f4`；Store54、Galatea162、solution38/4694、build0W/0E、HTTP/SSE Node、docs18/0与independent review PASS；inventory/rebuild NotRun且无需；v2 tag object `13111f3d` → `c4c6dd16`，v1 tag未移动 |
+| OTHER-REPORT-A1 | Candidate complete / approval Defer | post-v2-tag [desired setup report V2 appendix](../../current/contracts/desired-setup-reconciliation-report-v2.md)；production `da3aa27a` + test tail `8a54e613`；activation runbook exact consumer gate；不属于surface-set-2 tag |
 
 ## 9. R0 完成标准
 
@@ -409,3 +410,16 @@ Node unified gates、scoped docs/diff与independent review均已通过；invento
 v2 tag object `13111f3d`已创建并dereference到`c4c6dd16`；v1 tag未移动。当前post-tag status docs只记录closure，
 不反向移动tag；exact non-promises与tag record见
 [surface set 2 addendum](../../evidence/contract-freeze-r2-approval-surface-set-2.md)。
+
+## 20. Post-v2-tag OTHER-REPORT-A1 candidate
+
+`da3aa27a`把desired-setup reconciliation report hard cut到schema V2与exact 10-field producer shape，`8a54e613`
+将test oracle收窄为field set/types/meaning而不冻结JSON order/bytes。[V2 appendix](../../current/contracts/desired-setup-reconciliation-report-v2.md)
+记录changed/head/SHA-256语义、privacy、producer-only/no-dual-writer边界，以及最关键的raw-reconcile-before-report
+ordering：exit 1或missing receipt不证明无raw mutation，operator必须重新inspect current exact head、Idle与governing setup，
+再以observed head幂等reconcile。
+
+[Activation runbook](../../operations/galatea-g2a-staging-acceptance.md#9-actual-activation-after-a-passed-disposable-candidate)
+现于读取`afterHead`前fail closed验证exact V2 schema、10-field set与types，并把create-only report限定为operator
+precondition；production writer仍可atomic overwrite。该candidate形成于immutable surface-set-2 tag之后，approval
+Defer，不反向扩大或移动v2 tag，也不修改historical approval evidence。
