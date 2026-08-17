@@ -61,8 +61,14 @@ public sealed class HostingTests {
 
     [Theory]
     [InlineData("missing-semantic")]
+    [InlineData("missing-version")]
+    [InlineData("future-version")]
+    [InlineData("fractional-version")]
     [InlineData("unknown")]
     [InlineData("duplicate")]
+    [InlineData("duplicate-version")]
+    [InlineData("root-order")]
+    [InlineData("entry-order")]
     [InlineData("whitespace")]
     public void Manifest_RejectsNoncanonicalOrAmbiguousInput(string kind) {
         string canonical = Encoding.UTF8.GetString(
@@ -72,6 +78,21 @@ public sealed class HostingTests {
             "missing-semantic" => canonical.Replace(
                 "\"semanticModelId\":null,",
                 "",
+                StringComparison.Ordinal
+            ),
+            "missing-version" => canonical.Replace(
+                "\"v\":1,",
+                "",
+                StringComparison.Ordinal
+            ),
+            "future-version" => canonical.Replace(
+                "\"v\":1",
+                "\"v\":2",
+                StringComparison.Ordinal
+            ),
+            "fractional-version" => canonical.Replace(
+                "\"v\":1",
+                "\"v\":1.0",
                 StringComparison.Ordinal
             ),
             "unknown" => canonical.Replace(
@@ -84,6 +105,30 @@ public sealed class HostingTests {
                 "\"semanticModelId\":null,\"connectionId\":",
                 StringComparison.Ordinal
             ),
+            "duplicate-version" => canonical.Replace(
+                "{\"v\":1,",
+                "{\"v\":1,\"v\":1,",
+                StringComparison.Ordinal
+            ),
+            "root-order" => canonical.Replace(
+                "{\"v\":1,\"routes\":[",
+                "{\"routes\":[",
+                StringComparison.Ordinal
+            ).Replace(
+                "]}",
+                "],\"v\":1}",
+                StringComparison.Ordinal
+            ),
+            "entry-order" => canonical.Replace(
+                "{\"familyDigest\":\"",
+                "{\"runtimeProtocolId\":\"text-runtime-v3\","
+                    + "\"familyDigest\":\"",
+                StringComparison.Ordinal
+            ).Replace(
+                "\",\"runtimeProtocolId\":\"text-runtime-v3\"",
+                "\"",
+                StringComparison.Ordinal
+            ),
             "whitespace" => canonical.Replace(
                 "{\"v\"",
                 "{ \"v\"",
@@ -91,11 +136,205 @@ public sealed class HostingTests {
             ),
             _ => throw new InvalidOperationException()
         };
+        Assert.NotEqual(canonical, invalid);
 
         Assert.Throws<InvalidDataException>(() =>
             RecapGridRouteManifest.DecodeCanonical(
                 Encoding.UTF8.GetBytes(invalid)
             ));
+    }
+
+    [Fact]
+    public void Manifest_IdentifierAndRouteFieldBoundsAreInclusive() {
+        const int MaximumIdentifierBytes =
+            RecapGridRouteManifestLimits.MaximumIdentifierUtf8Bytes;
+        string maximumIdentifier = new('x', MaximumIdentifierBytes);
+        string maximumNonAsciiIdentifier = new('\u00e9', 64);
+        string maximumEscapingIdentifier = new('\\', MaximumIdentifierBytes);
+        RecapCompletionRouteKey key = new(
+            Family,
+            "runtime",
+            semanticModelId: null
+        );
+
+        RecapGridRouteManifestEntry minimum = new(
+            key,
+            maximumIdentifier,
+            maximumConcurrency: 1,
+            dispatchTimeout: TimeSpan.FromMilliseconds(1),
+            maximumOutputTokens: null
+        );
+        RecapGridRouteManifestEntry maximum = new(
+            key,
+            maximumIdentifier,
+            maximumConcurrency: 1_024,
+            dispatchTimeout: TimeSpan.FromDays(1),
+            maximumOutputTokens: int.MaxValue
+        );
+
+        Assert.Equal(MaximumIdentifierBytes,
+            Encoding.UTF8.GetByteCount(minimum.ConnectionId));
+        Assert.Equal(
+            MaximumIdentifierBytes,
+            Encoding.UTF8.GetByteCount(new RecapGridRouteManifestEntry(
+                key,
+                maximumNonAsciiIdentifier,
+                1,
+                TimeSpan.FromMilliseconds(1),
+                1
+            ).ConnectionId)
+        );
+        RecapGridRouteManifest highEscaping =
+            RecapGridRouteManifest.Create([
+                new RecapGridRouteManifestEntry(
+                    key,
+                    maximumEscapingIdentifier,
+                    1,
+                    TimeSpan.FromMilliseconds(1),
+                    1
+                )
+            ]);
+        Assert.Contains(
+            "\\\\\\\\",
+            Encoding.UTF8.GetString(highEscaping.ToCanonicalBytes()),
+            StringComparison.Ordinal
+        );
+        Assert.Equal(1, minimum.MaximumConcurrency);
+        Assert.Equal(TimeSpan.FromMilliseconds(1), minimum.DispatchTimeout);
+        Assert.Null(minimum.MaximumOutputTokens);
+        Assert.Equal(1_024, maximum.MaximumConcurrency);
+        Assert.Equal(TimeSpan.FromDays(1), maximum.DispatchTimeout);
+        Assert.Equal(int.MaxValue, maximum.MaximumOutputTokens);
+
+        Assert.Throws<ArgumentException>(() => new RecapGridRouteManifestEntry(
+            key,
+            maximumIdentifier + "x",
+            1,
+            TimeSpan.FromMilliseconds(1),
+            1
+        ));
+        Assert.Throws<ArgumentException>(() => new RecapGridRouteManifestEntry(
+            key,
+            maximumNonAsciiIdentifier + "x",
+            1,
+            TimeSpan.FromMilliseconds(1),
+            1
+        ));
+        foreach (string invalidIdentifier in new[] {
+                     " ",
+                     "route\n",
+                     "\ud800"
+                 }) {
+            Assert.Throws<ArgumentException>(() =>
+                new RecapGridRouteManifestEntry(
+                    key,
+                    invalidIdentifier,
+                    1,
+                    TimeSpan.FromMilliseconds(1),
+                    1
+                ));
+        }
+        foreach (int invalidConcurrency in new[] { 0, 1_025 }) {
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                new RecapGridRouteManifestEntry(
+                    key,
+                    "connection",
+                    invalidConcurrency,
+                    TimeSpan.FromMilliseconds(1),
+                    1
+                ));
+        }
+        foreach (TimeSpan invalidTimeout in new[] {
+                     TimeSpan.Zero,
+                     TimeSpan.FromTicks(TimeSpan.TicksPerMillisecond + 1),
+                     TimeSpan.FromDays(1) + TimeSpan.FromMilliseconds(1)
+                 }) {
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                new RecapGridRouteManifestEntry(
+                    key,
+                    "connection",
+                    1,
+                    invalidTimeout,
+                    1
+                ));
+        }
+        foreach (int invalidOutputTokens in new[] { 0, -1 }) {
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                new RecapGridRouteManifestEntry(
+                    key,
+                    "connection",
+                    1,
+                    TimeSpan.FromMilliseconds(1),
+                    invalidOutputTokens
+                ));
+        }
+    }
+
+    [Fact]
+    public void Manifest_RouteCountBoundIsInclusive() {
+        RecapGridRouteManifestEntry[] maximum = Enumerable.Range(
+                0,
+                RecapGridRouteManifestLimits.MaximumRouteCount
+            )
+            .Select(index => new RecapGridRouteManifestEntry(
+                new RecapCompletionRouteKey(
+                    Family,
+                    index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    semanticModelId: null
+                ),
+                "c",
+                1,
+                TimeSpan.FromMilliseconds(1),
+                maximumOutputTokens: null
+            ))
+            .ToArray();
+
+        RecapGridRouteManifest accepted =
+            RecapGridRouteManifest.Create(maximum);
+        Assert.Equal(
+            RecapGridRouteManifestLimits.MaximumRouteCount,
+            accepted.Routes.Count
+        );
+        Assert.True(
+            accepted.ToCanonicalBytes().Length
+                <= RecapGridRouteManifestLimits.MaximumCanonicalUtf8Bytes
+        );
+        Assert.Equal(
+            accepted.ToCanonicalBytes(),
+            RecapGridRouteManifest.DecodeCanonical(
+                accepted.ToCanonicalBytes()
+            ).ToCanonicalBytes()
+        );
+
+        string maximumEscapingIdentifier = new(
+            '\\',
+            RecapGridRouteManifestLimits.MaximumIdentifierUtf8Bytes
+        );
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            RecapGridRouteManifest.Create(maximum.Select(route =>
+                new RecapGridRouteManifestEntry(
+                    route.Key,
+                    maximumEscapingIdentifier,
+                    route.MaximumConcurrency,
+                    route.DispatchTimeout,
+                    route.MaximumOutputTokens
+                ))));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            RecapGridRouteManifest.Create([
+                .. maximum,
+                new RecapGridRouteManifestEntry(
+                    new RecapCompletionRouteKey(
+                        Family,
+                        "overflow",
+                        semanticModelId: null
+                    ),
+                    "c",
+                    1,
+                    TimeSpan.FromMilliseconds(1),
+                    maximumOutputTokens: null
+                )
+            ]));
     }
 
     [Fact]

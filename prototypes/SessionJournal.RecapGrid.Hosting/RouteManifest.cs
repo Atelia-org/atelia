@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Text;
 using System.Text.Json;
 using Atelia.SessionJournal.RecapGrid.Runtime;
 
@@ -11,6 +12,8 @@ public static class RecapGridRouteManifestLimits {
 }
 
 public sealed record RecapGridRouteManifestEntry {
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+
     public RecapGridRouteManifestEntry(
         RecapCompletionRouteKey key,
         string connectionId,
@@ -47,11 +50,26 @@ public sealed record RecapGridRouteManifestEntry {
         string parameterName
     ) {
         if (string.IsNullOrWhiteSpace(value)
-            || JsonEncodedText.Encode(value).EncodedUtf8Bytes.Length
-                > RecapGridRouteManifestLimits.MaximumIdentifierUtf8Bytes) {
+            || value.Any(char.IsControl)) {
             throw new ArgumentException(
                 "A bounded non-empty identifier is required.",
                 parameterName
+            );
+        }
+        try {
+            if (StrictUtf8.GetByteCount(value)
+                    > RecapGridRouteManifestLimits.MaximumIdentifierUtf8Bytes) {
+                throw new ArgumentException(
+                    "A bounded non-empty identifier is required.",
+                    parameterName
+                );
+            }
+        }
+        catch (EncoderFallbackException exception) {
+            throw new ArgumentException(
+                "A bounded strict UTF-8 identifier is required.",
+                parameterName,
+                exception
             );
         }
         return value;
