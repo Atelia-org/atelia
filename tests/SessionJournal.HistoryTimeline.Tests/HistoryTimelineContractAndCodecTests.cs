@@ -505,6 +505,72 @@ public sealed class HistoryTimelineContractAndCodecTests {
     }
 
     [Fact]
+    public void LocatorAndEmptyAndSelectedHeadsHaveExactLiteralCanonicalBytes() {
+        const string timelineId =
+            "00112233445566778899aabbccddeeff";
+        const string policyDigest =
+            "102307b45502e4e3d9d47e0c3b3065449838a66f757d4283d8d06e4e3a431f48";
+        const string emptySelectedPathDigest =
+            "d3676eac2e1782a9797549c8529f06c46d52fa3acaee3e0a68c21366875e8ea9";
+        var locator = new ActiveTimelineLocator(
+            new RefId(1),
+            new TimelineId(timelineId),
+            generation: 7
+        );
+        var empty = new TimelineHeadRef(
+            new TimelineId(timelineId),
+            new RefId(1),
+            headRowId: null,
+            policyDigest,
+            selectedRawHeadAtCommit: null,
+            selectedPathCount: 0,
+            emptySelectedPathDigest,
+            generation: 0
+        );
+        var selected = new TimelineHeadRef(
+            new TimelineId(timelineId),
+            new RefId(1),
+            new HistoryRowId(new string('b', 64)),
+            policyDigest,
+            Address(101),
+            selectedPathCount: 1,
+            new string('c', 64),
+            generation: 7
+        );
+
+        Assert.Equal(
+            "{\"v\":1,\"refId\":\"0000000000000001\","
+            + "\"activeTimelineId\":\"00112233445566778899aabbccddeeff\","
+            + "\"generation\":7}",
+            Encoding.UTF8.GetString(locator.ToCanonicalBytes())
+        );
+        Assert.Equal(
+            "{\"v\":1,\"timelineId\":\"00112233445566778899aabbccddeeff\","
+            + "\"refId\":\"0000000000000001\",\"headRowId\":null,"
+            + "\"activePartitionPolicyDigest\":"
+            + "\"102307b45502e4e3d9d47e0c3b3065449838a66f757d4283d8d06e4e3a431f48\","
+            + "\"selectedRawHeadAtCommit\":null,\"selectedPathCount\":0,"
+            + "\"selectedPathDigest\":"
+            + "\"d3676eac2e1782a9797549c8529f06c46d52fa3acaee3e0a68c21366875e8ea9\","
+            + "\"generation\":0}",
+            Encoding.UTF8.GetString(empty.ToCanonicalBytes())
+        );
+        Assert.Equal(
+            "{\"v\":1,\"timelineId\":\"00112233445566778899aabbccddeeff\","
+            + "\"refId\":\"0000000000000001\",\"headRowId\":"
+            + "\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\","
+            + "\"activePartitionPolicyDigest\":"
+            + "\"102307b45502e4e3d9d47e0c3b3065449838a66f757d4283d8d06e4e3a431f48\","
+            + "\"selectedRawHeadAtCommit\":"
+            + "\"ej1:00000000000000650000000100000000\","
+            + "\"selectedPathCount\":1,\"selectedPathDigest\":"
+            + "\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\","
+            + "\"generation\":7}",
+            Encoding.UTF8.GetString(selected.ToCanonicalBytes())
+        );
+    }
+
+    [Fact]
     public void DurableEnvelopeCodecsAreExactBoundedAndRejectNonCanonicalJson() {
         PartitionPolicyRevision policy = Policy(
             "atelia.tests.history-load.numeric-v1"

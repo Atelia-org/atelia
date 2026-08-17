@@ -2,7 +2,10 @@ using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Microsoft.Data.Sqlite;
+using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using static Atelia.SessionJournal.HistoryTimeline.Tests.HistoryTimelineTestData;
 
 namespace Atelia.SessionJournal.HistoryTimeline.Tests;
@@ -887,6 +890,233 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
                     """
         );
 
+        Assert.IsType<HistoryTimelineOpenResult.Invalid>(
+            HistoryTimelineFactory.Open(
+                journal.ReadView,
+                _estimator
+            )
+        );
+        Assert.IsType<HistoryTimelineInspectResult.Invalid>(
+            HistoryTimelineMaintenance.Verify(
+                path,
+                journal.BranchRefId
+            )
+        );
+    }
+
+    [Fact]
+    public void SqliteV2IdentityAndOrderedSchemaHaveIndependentFingerprint() {
+        string path = NewPath();
+        using SessionJournalEngine journal = CreateJournal(path);
+        HistoryTimelineCreateResult.Created created = Assert.IsType<
+            HistoryTimelineCreateResult.Created
+        >(HistoryTimelineFactory.Create(
+            journal.ReadView,
+            InitialPolicy(),
+            _estimator
+        ));
+        string databasePath = new HistoryTimelinePaths(
+            path,
+            journal.BranchRefId
+        ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
+
+        using SqliteConnection connection = OpenSqlite(databasePath);
+        Assert.Equal(
+            0x41544854L,
+            ReadSqliteInt64(connection, "PRAGMA application_id;")
+        );
+        Assert.Equal(
+            2L,
+            ReadSqliteInt64(connection, "PRAGMA user_version;")
+        );
+        using SqliteCommand schema = connection.CreateCommand();
+        schema.CommandText = """
+            SELECT type, name, tbl_name, sql
+            FROM sqlite_schema
+            WHERE name NOT LIKE 'sqlite_%'
+            ORDER BY type, name;
+            """;
+        using SqliteDataReader reader = schema.ExecuteReader();
+        var identities = new List<string>();
+        using IncrementalHash fingerprint = IncrementalHash.CreateHash(
+            HashAlgorithmName.SHA256
+        );
+        AppendHashField(
+            fingerprint,
+            "atelia.tests.history-timeline.sqlite-schema-fingerprint.v1"
+        );
+        while (reader.Read()) {
+            string type = reader.GetString(0);
+            string name = reader.GetString(1);
+            string tableName = reader.GetString(2);
+            string sql = reader.GetString(3);
+            identities.Add($"{type}:{name}:{tableName}");
+            AppendHashField(fingerprint, type);
+            AppendHashField(fingerprint, name);
+            AppendHashField(fingerprint, tableName);
+            AppendHashField(fingerprint, sql);
+        }
+
+        string[] expectedIdentities = [
+            "table:current_selected_path:current_selected_path",
+            "table:current_selected_path_guard:"
+                + "current_selected_path_guard",
+            "table:current_selected_path_merkle:"
+                + "current_selected_path_merkle",
+            "table:policies:policies",
+            "table:rows:rows",
+            "table:store_metadata:store_metadata",
+            "trigger:guard_selected_path_ad:current_selected_path",
+            "trigger:guard_selected_path_ai:current_selected_path",
+            "trigger:guard_selected_path_au:current_selected_path",
+            "trigger:guard_selected_path_commitments_ad:"
+                + "current_selected_path_merkle",
+            "trigger:guard_selected_path_commitments_ai:"
+                + "current_selected_path_merkle",
+            "trigger:guard_selected_path_commitments_au:"
+                + "current_selected_path_merkle"
+        ];
+        Assert.Equal(expectedIdentities, identities);
+        string actualFingerprint = Convert.ToHexString(
+            fingerprint.GetHashAndReset()
+        ).ToLowerInvariant();
+        Assert.Equal(
+            "7fbd3b1ee14ecfa50cb5194ac5d9b3cda3e55edaed5131f6d72ad7fada321b11",
+            actualFingerprint
+        );
+    }
+
+    [Theory]
+    [InlineData("application-id")]
+    [InlineData("metadata-schema")]
+    [InlineData("metadata-timeline")]
+    [InlineData("metadata-ref")]
+    [InlineData("head-digest")]
+    [InlineData("head-scope-with-valid-digest")]
+    public void V2CoreIdentityMetadataAndHeadMismatchBlockNormalOpen(
+        string corruption
+    ) {
+        string path = NewPath();
+        using SessionJournalEngine journal = CreateJournal(path);
+        HistoryTimelineCreateResult.Created created = Assert.IsType<
+            HistoryTimelineCreateResult.Created
+        >(HistoryTimelineFactory.Create(
+            journal.ReadView,
+            InitialPolicy(),
+            _estimator
+        ));
+        string databasePath = new HistoryTimelinePaths(
+            path,
+            journal.BranchRefId
+        ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
+
+        switch (corruption) {
+            case "application-id":
+                ExecuteSql(
+                    databasePath,
+                    "PRAGMA application_id = 1096042581;"
+                );
+                break;
+            case "metadata-schema":
+                ExecuteSql(
+                    databasePath,
+                    """
+                    UPDATE store_metadata
+                    SET schema_version = 3
+                    WHERE singleton = 1;
+                    """
+                );
+                break;
+            case "metadata-timeline":
+                ExecuteSql(
+                    databasePath,
+                    """
+                    UPDATE store_metadata
+                    SET timeline_id = 'ffffffffffffffffffffffffffffffff'
+                    WHERE singleton = 1;
+                    """
+                );
+                break;
+            case "metadata-ref":
+                ExecuteSql(
+                    databasePath,
+                    """
+                    UPDATE store_metadata
+                    SET ref_id = 'ffffffffffffffff'
+                    WHERE singleton = 1;
+                    """
+                );
+                break;
+            case "head-digest":
+                ExecuteSql(
+                    databasePath,
+                    """
+                    UPDATE store_metadata
+                    SET head_sha256 =
+                        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+                    WHERE singleton = 1;
+                    """
+                );
+                break;
+            case "head-scope-with-valid-digest":
+                ReplaceHeadWithForeignScope(
+                    databasePath,
+                    created.InitialHead
+                );
+                break;
+            default:
+                throw new InvalidOperationException(corruption);
+        }
+
+        HistoryTimelineOpenResult.Invalid opened = Assert.IsType<
+            HistoryTimelineOpenResult.Invalid
+        >(HistoryTimelineFactory.Open(
+            journal.ReadView,
+            _estimator
+        ));
+        Assert.Equal("TimelineStoreInvalid", opened.Code);
+        Assert.IsType<HistoryTimelineInspectResult.Invalid>(
+            HistoryTimelineMaintenance.Verify(
+                path,
+                journal.BranchRefId
+            )
+        );
+    }
+
+    [Theory]
+    [InlineData("policy_count")]
+    [InlineData("row_count")]
+    public void StoredCountsAreFullVerifyEvidenceNotNormalOpenAuthority(
+        string column
+    ) {
+        string path = NewPath();
+        using SessionJournalEngine journal = CreateJournal(path);
+        HistoryTimelineCreateResult.Created created = Assert.IsType<
+            HistoryTimelineCreateResult.Created
+        >(HistoryTimelineFactory.Create(
+            journal.ReadView,
+            InitialPolicy(),
+            _estimator
+        ));
+        string databasePath = new HistoryTimelinePaths(
+            path,
+            journal.BranchRefId
+        ).TimelineDatabasePath(created.Locator.ActiveTimelineId);
+        ExecuteSql(
+            databasePath,
+            $"UPDATE store_metadata SET {column} = {column} + 1 WHERE singleton = 1;"
+        );
+
+        using (HistoryTimelineHandle handle = Assert.IsType<
+                   HistoryTimelineOpenResult.Opened
+               >(HistoryTimelineFactory.Open(
+                   journal.ReadView,
+                   _estimator
+               )).Handle) {
+            Assert.IsType<HistoryTimelineSnapshotResult.Available>(
+                handle.Reader.ReadSnapshot()
+            );
+        }
         Assert.IsType<HistoryTimelineInspectResult.Invalid>(
             HistoryTimelineMaintenance.Verify(
                 path,
@@ -2531,6 +2761,66 @@ public sealed class HistoryTimelineDurableLedgerTests : IDisposable {
             WHERE singleton = 1;
             """;
         return Assert.IsType<long>(command.ExecuteScalar());
+    }
+
+    private static long ReadSqliteInt64(
+        SqliteConnection connection,
+        string sql
+    ) {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = sql;
+        return Convert.ToInt64(command.ExecuteScalar());
+    }
+
+    private static void ReplaceHeadWithForeignScope(
+        string databasePath,
+        TimelineHeadRef existing
+    ) {
+        var foreign = new TimelineHeadRef(
+            new TimelineId("ffffffffffffffffffffffffffffffff"),
+            existing.RefId,
+            headRowId: null,
+            existing.ActivePartitionPolicyDigest,
+            selectedRawHeadAtCommit: null,
+            selectedPathCount: 0,
+            "d3676eac2e1782a9797549c8529f06c46d52fa3acaee3e0a68c21366875e8ea9",
+            generation: 0
+        );
+        byte[] canonical = foreign.ToCanonicalBytes();
+        using IncrementalHash hash = IncrementalHash.CreateHash(
+            HashAlgorithmName.SHA256
+        );
+        AppendHashField(hash, "atelia.history-timeline.head.v1");
+        AppendHashField(hash, canonical);
+        string digest = Convert.ToHexString(hash.GetHashAndReset())
+            .ToLowerInvariant();
+
+        using SqliteConnection connection = OpenSqlite(databasePath);
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE store_metadata
+            SET head_canonical = $canonical,
+                head_sha256 = $digest
+            WHERE singleton = 1;
+            """;
+        command.Parameters.AddWithValue("$canonical", canonical);
+        command.Parameters.AddWithValue("$digest", digest);
+        Assert.Equal(1, command.ExecuteNonQuery());
+    }
+
+    private static void AppendHashField(
+        IncrementalHash hash,
+        string value
+    ) => AppendHashField(hash, Encoding.UTF8.GetBytes(value));
+
+    private static void AppendHashField(
+        IncrementalHash hash,
+        ReadOnlySpan<byte> value
+    ) {
+        Span<byte> length = stackalloc byte[sizeof(int)];
+        BinaryPrimitives.WriteInt32BigEndian(length, value.Length);
+        hash.AppendData(length);
+        hash.AppendData(value);
     }
 
     private static void ExecuteSql(string databasePath, string sql) {
