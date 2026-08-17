@@ -46,6 +46,11 @@ public static class RecapGridStoreFactory {
                 paths,
                 paths.DatabasePath
             )) {
+                _ = new SqliteRecapGridStore(
+                    paths,
+                    limits,
+                    readOnly: true
+                ).ReadIdentity();
                 return new RecapGridStoreCreateResult.AlreadyExists();
             }
             RequireNoSidecars(paths);

@@ -448,6 +448,11 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
         Create();
         ApplySchemaIdentityMutation(mutation);
 
+        string databasePath = new StorePaths(_root).DatabasePath;
+        byte[] beforeCreate = File.ReadAllBytes(databasePath);
+        RecapGridStoreCreateResult createdAgain =
+            RecapGridStoreFactory.Create(_root);
+        Assert.Equal(beforeCreate, File.ReadAllBytes(databasePath));
         RecapGridStoreOpenResult opened = RecapGridStoreFactory.Open(_root);
         RecapGridStoreReaderOpenResult readerOpened =
             RecapGridStoreFactory.OpenReader(_root);
@@ -459,6 +464,9 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
             RecapGridStoreMaintenance.Verify(_root);
 
         if (unsupported) {
+            Assert.Equal("GridStoreUnsupportedSchema", Assert.IsType<
+                RecapGridStoreCreateResult.Invalid
+            >(createdAgain).Code);
             Assert.Equal(99, Assert.IsType<
                 RecapGridStoreOpenResult.UnsupportedSchema
             >(opened).SchemaVersion);
@@ -477,6 +485,9 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
             return;
         }
 
+        Assert.Equal("GridStoreInvalid", Assert.IsType<
+            RecapGridStoreCreateResult.Invalid
+        >(createdAgain).Code);
         Assert.Equal("GridStoreInvalid", Assert.IsType<
             RecapGridStoreOpenResult.Invalid
         >(opened).Code);

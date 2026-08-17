@@ -13,6 +13,7 @@ using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Runtime;
 using Atelia.SessionJournal.RecapGrid.Store;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace Atelia.SessionJournal.Cli.Tests;
@@ -573,6 +574,94 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--boundary", EventAddressTextCodec.Format(head),
             "--nth-previous", "0"
         ));
+    }
+
+    [Fact]
+    public void InitExistingFutureStoreFailsClosedWithoutProviderOrMutation() {
+        CreateJournal();
+        string admission = WriteAdmission(["create"]);
+        RefId refId;
+        using (SessionJournalEngine journal =
+               SessionJournalEngine.OpenReadOnly(_root)) {
+            refId = journal.BranchRefId;
+        }
+        Assert.Equal(0, RunInit(
+            SessionJournalDefaults.MainBranchName,
+            refId,
+            admission
+        ));
+
+        string databasePath = Path.Combine(
+            _root,
+            "derived",
+            "recap-grid",
+            "v1",
+            "grid.sqlite"
+        );
+        using (var connection = new SqliteConnection(
+                   $"Data Source={databasePath};Mode=ReadWrite;Pooling=False")) {
+            connection.Open();
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "PRAGMA user_version = 99;";
+            _ = command.ExecuteNonQuery();
+        }
+        DomainSnapshot before = SnapshotDomains();
+        var provider = new DeterministicCompletionClientFactory();
+
+        (int code, JsonElement report) = RunCapturedWithFactory(
+            provider,
+            "init", "--input", _root,
+            "--branch", SessionJournalDefaults.MainBranchName,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", admission,
+            "--partition-algorithm",
+            HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+            "--history-load-estimator",
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            "--minimum-recent-history-load", "1",
+            "--target-history-load", "1",
+            "--max-raw-events", "64",
+            "--max-rendered-bytes", "1048576"
+        );
+
+        Assert.Equal(2, code);
+        Assert.Equal(
+            "atelia.session-journal.recap-grid-cli.v1",
+            report.GetProperty("schema").GetString()
+        );
+        Assert.Equal("init", report.GetProperty("command").GetString());
+        Assert.Equal(
+            "store-failed",
+            report.GetProperty("status").GetString()
+        );
+        JsonElement detail = report.GetProperty("detail");
+        Assert.Equal(
+            refId.ToHexString(),
+            detail.GetProperty("refId").GetString()
+        );
+        Assert.Equal(
+            "already-exists",
+            detail.GetProperty("cadence").GetProperty("status").GetString()
+        );
+        Assert.Equal(
+            "already-exists",
+            detail.GetProperty("timeline").GetProperty("status").GetString()
+        );
+        Assert.Equal(
+            "already-exists",
+            detail.GetProperty("control").GetProperty("status").GetString()
+        );
+        JsonElement store = detail.GetProperty("store");
+        Assert.Equal("invalid", store.GetProperty("status").GetString());
+        Assert.Equal(
+            "GridStoreUnsupportedSchema",
+            store.GetProperty("Code").GetString()
+        );
+        Assert.False(string.IsNullOrWhiteSpace(
+            store.GetProperty("Detail").GetString()
+        ));
+        Assert.Equal(0, provider.CallCount);
+        AssertDomainsEqual(before, SnapshotDomains());
     }
 
     [Fact]
