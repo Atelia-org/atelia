@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；CF-D-02、CF-D-03、targeted CF-B与CF-C-01 package closure complete；CF-C-02 next；R5 Pending  
+状态：Active；CF-D-02、CF-D-03、targeted CF-B、CF-C-01与CF-C-02 complete；Post-CF-C-02 readiness tails next；R5 Pending  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -214,7 +214,8 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | R0 synthesis | Complete | [R0 current inventory](../../evidence/contract-freeze-r2-r0.md) |
 | R1 priority reviews | Complete | [CF-A-01 / CF-D-01 / CF-D-04 evidence](../../evidence/contract-freeze-r2-r1-priority-review.md) |
 | R1 CF-D-03 / targeted CF-B / CF-C-01 | Complete | [commit-pinned implementation evidence](../../evidence/contract-freeze-r2-d03-cfb-cfc01-implementation.md)；保持Prototype candidate |
-| CF-C-02 companion evidence | Pending | 下一自然包：History/Store/Rewriter independent golden、fingerprint与classification evidence |
+| CF-C-02 companion evidence | Complete | [commit-pinned implementation evidence](../../evidence/contract-freeze-r2-cfc02-implementation.md)；History/Store/Rewriter independent evidence + disposable rebuild |
+| Post-CF-C-02 readiness tails | Pending | standalone Timeline create existing validation；History schema-source去重仅在明显净减时实施 |
 | R2 priority plan lock | Complete | [priority implementation evidence](../../evidence/contract-freeze-r2-r2-priority-implementation.md) + [HTTP/SSE plan lock](../../evidence/contract-freeze-r2-http-sse-plan-lock.md) |
 | R3 priority implementation | Complete | 七个原子commits + test-only `87079eaa`；未增加compatibility/framework层 |
 | CF-D-01 operator cutover | Complete | live ignored V1 manifest；Idle/Prepared=0；actual-env Completion/Galatea provider-free load；independent PASS |
@@ -264,8 +265,8 @@ R0 只有在以下条件同时满足时完成：
 - targeted `CF-B` 已完成Galatea file DTO、History owner-local proof/factory与Hosting snapshot-only telemetry三项
   高置信cut，本轮到此停止；不为降低inventory count继续改写output result algebra或抽跨owner hierarchy。
 - `CF-C-01` 已稳定Control future-schema operator classification并增加empty whole-state independent golden；
-  下一自然包是`CF-C-02` History/Store/Rewriter evidence，不重开已证明承担corruption/query/CAS职责的
-  head/digest/schema/index proof。
+  `CF-C-02`也已补齐History/Store/Rewriter independent evidence，关闭Store metadata/version classification与
+  repeat-init false-ready，未重开承担corruption/query/CAS职责的head/digest/schema/index proof。
 - 所有outer wire bound新增composed encoded-byte relation gate；内层payload cap不能作为外层安全上限的证明。
 - CF-D-01 operator migration已完成；未来回滚仍必须停服并让code+manifest成对执行。
 
@@ -305,5 +306,9 @@ generic schema framework或新的public authority。
 - root config exact V1/no-BOM、三项targeted support-role cut与Control classification均已形成package-local R4
   complete的Prototype candidate；
 - broad CF-B停止，避免为了surface count进入result-family overreach；
-- 下一检查点覆盖`CF-C-02` History/Store/Rewriter independent evidence，再整理CF-C support map与R5 preparation；
+- [CF-C-02 implementation evidence](../../evidence/contract-freeze-r2-cfc02-implementation.md)已锁定
+  History/Store/Rewriter independent golden/fingerprint、Store typed classification与legacy disposable rebuild；
+- 下一检查点优先调查standalone Timeline create existing readiness；History schema-source去重只作为较低优先的
+  internal simplification，若需要parser/framework或不能明显净减则Retain；
+- 随后整理CF-C support map、wire inventory、upgrade policy与R5 preparation；
 - R5继续Pending，本文不批准stable/frozen tier。
