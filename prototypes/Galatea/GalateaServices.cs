@@ -1391,7 +1391,19 @@ internal static class GalateaConfigLoader {
         byte[] usersBytes = GalateaStrictConfigReader.ReadUsersAndValidate(
             resolvedPath
         );
-        var usersFile = JsonSerializer.Deserialize(usersBytes, GalateaJsonContext.Default.GalateaUsersFileConfig);
+        GalateaUsersFileConfig? usersFile;
+        try {
+            usersFile = JsonSerializer.Deserialize(
+                usersBytes,
+                GalateaJsonContext.Default.GalateaUsersFileConfig
+            );
+        }
+        catch (JsonException exception) {
+            throw new InvalidDataException(
+                "Galatea config JSON could not be materialized.",
+                exception
+            );
+        }
         if (usersFile is null) { throw new InvalidOperationException($"Failed to deserialize Galatea config: {resolvedPath}"); }
 
         if (!File.Exists(connectionsPath)) {
