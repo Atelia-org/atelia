@@ -1,10 +1,12 @@
 # SessionJournal Contract Freeze R2 — additive surface set 2 approval
 
-状态：**user approval recorded；pre-tag unified gates complete；tag-ready / annotated tag pending**  
+状态：**approval complete；annotated surface set 2 tag anchored**  
 validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`  
 integration evidence：`6c5d3d50e68b84b9dca1391c16438a86cef418c1`  
 promotion docs commit：`a07de1f40b5f`  
-authorized tag：`session-journal-contract-r2-approved-surfaces-v2`（尚未创建）  
+approval tag：`session-journal-contract-r2-approved-surfaces-v2`  
+tag object：`13111f3df6c74813e7e47673be7e9d0a1c1309ee`  
+dereferenced target：`c4c6dd1698c7460fbf8ff3563d7800203f3202e0`  
 记录日期：2026-08-17
 
 本文只记录用户在immutable
@@ -71,16 +73,17 @@ Surface set 2明确不批准：
 最初两条Node命令误写了不存在的`Browser`子目录，均立即以file-not-found退出、没有启动test；随后使用correct
 production test paths重跑，HTTP与SSE各1/1通过。该calibration不计作product failure，也没有被省略。
 
-## 4. Tag-before checklist
+## 4. Tag closure record
 
 1. containing promotion docs commit `a07de1f4`已产生；
 2. exact code/test source `6c5d3d50` + docs-only promotion HEAD上的Store/Galatea/full solution/Node/docs gates与
    independent scope review已按§3.1通过；
-3. annotated tag仍待创建；必须exact命名为`session-journal-contract-r2-approved-surfaces-v2`并指向包含本批准与
-   final gate ledger的reviewed docs commit；
-4. tag message必须pin product source `8c450bf0`、integration evidence `6c5d3d50`、§1两项approved scope、§2
-   non-promises，以及immutable v1 tag不移动；
-5. 创建tag前再次确认同名tag不存在、worktree无本包遗漏，并核对tag target；创建后记录exact tag object/target。
+3. annotated tag已exact创建为`session-journal-contract-r2-approved-surfaces-v2`；tag object为
+   `13111f3df6c74813e7e47673be7e9d0a1c1309ee`，dereferenced target为包含final gate ledger的
+   `c4c6dd1698c7460fbf8ff3563d7800203f3202e0`；
+4. verified tag message pin product source `8c450bf0`、code/test source `6c5d3d50`、promotion draft `a07de1f4`、
+   cumulative approved scope/non-promises与prior immutable v1 target `6378cebb`；
+5. v1 dereferenced target仍为`6378cebbde4cf150ecb4d8de5699ef1f77ce4f0b`，没有移动。
 
-在以上checklist完成前，surface set 2的用户授权已经记录，但annotated tag状态必须保持pending，任何文档都不得声称
-该tag已经创建。
+本post-tag status tail只记录已经发生的tag closure；tag继续指向`c4c6dd16`，不会因当前或未来文档commit而反向移动、
+续期product/deployment evidence或扩大§1批准范围。
