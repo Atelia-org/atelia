@@ -40,6 +40,12 @@ writer固定把`v`放在首字段，reader不要求property order。missing vers
 这里没有process-CWD fallback、existence-based双解释、自动创建或移动repository。`..`与absolute path仍是合法的
 lexical path，这项规则不承诺把session限制在config目录内，也不声称提供额外的no-follow filesystem边界。
 
+Root `config.json`的exact V1 field language、path/bounds与bootstrap/existing-file policy已获用户批准进入
+SessionJournal Contract R2 additive surface set 2；annotated tag
+`session-journal-contract-r2-approved-surfaces-v2`仍pending。批准范围与password-at-rest、permissions、Kestrel、
+diagnostic、provider/deployment等non-promises见
+[root config V1 appendix](../../docs/SessionJournal/current/contracts/galatea-root-config-v1.md)；immutable v1 tag不因此扩大。
+
 `connections.json` 只包含 Completion connections 与 exact default connection。历史
 Agent Control profiles 必须继续保留，供 Prepared/ToolContinuation 按 frozen identity
 绑定；current profile 只用于新 request。route manifest 延迟到首次 RecapGrid work 才

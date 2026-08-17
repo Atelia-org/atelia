@@ -1,0 +1,65 @@
+# SessionJournal Contract Freeze R2 — additive surface set 2 approval
+
+状态：**user approval recorded；promotion docs commit pending；annotated tag authorized / pending**  
+validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`  
+integration evidence：`6c5d3d50e68b84b9dca1391c16438a86cef418c1`  
+authorized tag：`session-journal-contract-r2-approved-surfaces-v2`（尚未创建）  
+记录日期：2026-08-17
+
+本文只记录用户在immutable
+`session-journal-contract-r2-approved-surfaces-v1`之后明确批准的两个additive surfaces。surface set 2不替换、
+移动或重新解释surface set 1；v1 tag继续只认证其原始promotion docs与product source `cd966fc7`。
+
+## 1. Approved additive surfaces
+
+| Tier / surface | Exact approved scope | Upgrade / failure policy |
+|:--|:--|:--|
+| Tier B — [RecapGrid Store SQLite V2 logical schema](../current/contracts/recap-grid-store-sqlite-v2.md) | repository slot、application/user version、exact five-table logical shape与metadata；stored canonical payload/version/bounds；indexed locator/FK/counter proof；persistent `page_size=4096`与`journal_mode=delete`；appendix §6的Create/Open/OpenReader/Inspect/Export/Verify operator mapping | future version typed Unsupported；current V2 corruption Invalid/Unhealthy；explicit reset/reprovision或另立version/migration proof；无auto-repair/dual reader |
+| Tier C — [Galatea root config V1](../current/contracts/galatea-root-config-v1.md) | strict V1 JSON accepted language；root/user/recapGrid required/optional/count rules；prompt-file precedence；config-directory-relative path与absolute-target semantics；profile/route dependencies；root/prompt/profile bounds；bootstrap only-if-missing、no-BOM与existing-file no-rewrite policy | versionless/future/invalid fail closed；停服、备份、确认actual config path后显式升级；无CWD/existence fallback、auto rewrite/move或silent migration |
+
+Store批准的是logical SQLite contract，不是SQLite physical representation。Root批准的是exact file language与operator
+policy；它不吸收Completion connections、Route manifest或AgentControl profile各自已批准的owner contracts。
+
+## 2. Explicit non-promises
+
+Surface set 2明确不批准：
+
+- Store database/page/file byte identity、allocation、freelist、VACUUM/backup byte identity、SQLite runtime/source ID、
+  compile options或未列出的connection-local PRAGMAs；
+- root password/secret at-rest protection、redaction或secret-store integration；bootstrap file mode、ownership、ACL或
+  permissions enforcement；
+- `listenUrls`的Kestrel parsing/binding、TLS、port availability或network exposure；
+- exception/diagnostic逐字文本，以及path/IO/permission/owner-registry低层异常的统一包装或稳定type；
+- provider construction/content quality、real deployment readiness、ignored operator state或historical operator evidence renewal；
+- root bootstrap的byte identity、whitespace/property order/escaping/newline formatting；auto migration/rewrite、session
+  create/move、path confinement或完整hostile-filesystem defense；
+- 任何未在§1精确列出的Tier B/C surface、blanket CLR public API、physical RBF或surface set 1既有non-promise。
+
+## 3. Evidence与verification boundary
+
+- Store owner source仍来自surface-set-1 product line；post-v1-tag appendix与independent fingerprint/persistent-PRAGMA
+  gates补齐了logical-schema approval evidence，validated product source统一pin到`8c450bf0`；
+- root path implementation为`0f0afb2c`，field/classification gates为`0515083f`与`8c450bf0`；test-only
+  `6c5d3d50`通过full `GalateaConfigLoader`锁duplicate `ProfileId` / `RuntimeIdentity` conflict；
+- owning exact oracles是
+  [`StoreAuthorityRegressionTests`](../../../tests/SessionJournal.RecapGrid.Store.Tests/StoreAuthorityRegressionTests.cs)、
+  [`GalateaRootConfigFieldLanguageTests`](../../../tests/Galatea.Server.Tests/GalateaRootConfigFieldLanguageTests.cs)与
+  [`GalateaConfigValidationTests`](../../../tests/Galatea.Server.Tests/GalateaConfigValidationTests.cs)；
+- 本promotion draft只修改文档；由于root含post-v1-tag production delta，tag前必须在exact code/test source
+  `6c5d3d50`加docs-only promotion HEAD上重新串行运行Store full、Galatea full、full solution test/build、HTTP/SSE Node
+  与scoped docs checker。当前这些unified gates均为**Pending**，不得用historical v1 green evidence替代；
+- public inventory与disposable rebuild为**NotRun / 本次无需**：surface set 2不批准.NET API且没有raw/rebuild contract delta。
+  provider/deployment、ignored operator config仍不读取、不运行，也不从tag前gates推导。
+
+## 4. Tag-before checklist
+
+1. containing promotion docs commit必须先产生；当前commit ID为Pending，待提交后记录；
+2. exact code/test source `6c5d3d50` + docs-only promotion HEAD上的Store full、Galatea full、full solution test/build、
+   HTTP/SSE Node、scoped docs checker、diff check与independent scope review全部通过；当前均Pending；
+3. annotated tag必须exact命名为`session-journal-contract-r2-approved-surfaces-v2`并指向经review的promotion docs commit；
+4. tag message必须pin product source `8c450bf0`、integration evidence `6c5d3d50`、§1两项approved scope、§2
+   non-promises，以及immutable v1 tag不移动；
+5. 创建tag前再次确认同名tag不存在、worktree无本包遗漏，并核对tag target；创建后记录exact tag object/target。
+
+在以上checklist完成前，surface set 2的用户授权已经记录，但annotated tag状态必须保持pending，任何文档都不得声称
+该tag已经创建。

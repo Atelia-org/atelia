@@ -1,12 +1,15 @@
-# Galatea root config V1 candidate
+# Galatea root config V1 approved contract
 
-状态：**post-tag approval candidate；尚未批准**  
-适用product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`  
-不属于immutable tag：`session-journal-contract-r2-approved-surfaces-v1`
+状态：**additive surface set 2 user-approved；annotated tag authorized / pending**  
+validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`  
+integration evidence：`6c5d3d50e68b84b9dca1391c16438a86cef418c1`  
+approval boundary：不属于immutable v1 tag；`session-journal-contract-r2-approved-surfaces-v2`尚未创建
 
 本文整理Galatea `config.json` current V1的accepted language、path semantics与composition dependencies。
 它是root-config field language的审阅入口，不改变Completion connections、Route manifest或AgentControl profile
-各自owner的协议，也不把root config提升为Stable V1。
+各自owner的协议。用户已将本文列出的exact field language、path/bounds、dependency与bootstrap/existing-file policy
+批准为Stable V1 scope；freeze anchor仍待pre-tag gates与annotated v2 tag。§6与各节局部non-promises继续排除
+未获批准的surface。
 
 ## 1. Authority、文件与提交边界
 
@@ -96,7 +99,7 @@ UTF-8；decode后执行`Trim()`，结果必须nonblank。有效文件允许inlin
 
 每个profile file必须是1 byte..128 KiB no-follow regular file，并服从已批准AgentControl profile V1的canonical
 language；distinct paths decode出的profiles还必须形成owner-valid registry，`ProfileId`与`RuntimeIdentity`分别exact
-unique。Registry identity duplicate由current loader传播`ArgumentException`，但其message逐字文本不构成本candidate。
+unique。Registry identity duplicate由current loader传播`ArgumentException`，但其message逐字文本不构成本批准。
 root appendix不复制或扩张profile协议。Route manifest延迟到首次RecapGrid work读取；届时file必须是
 1 byte..1 MiB并服从已批准Route manifest V1。route不存在不会阻止root load，但会使需要route的后续work失败；
 没有wildcard/default route fallback。
@@ -135,7 +138,7 @@ current-profile mismatch或call-log nesting等为`InvalidOperationException`；m
 
 上述分类只覆盖root reader/loader拥有的syntax、materialization与semantic cases。Underlying path/IO/permission failure
 以及owned profile registry拒绝可能传播.NET或owner-local exception（current duplicate identity为`ArgumentException`）；
-本candidate既不统一包装这些低层failure，也不把其exact type或message提升为稳定classification contract。
+本批准既不统一包装这些低层failure，也不把其exact type或message提升为稳定classification contract。
 
 Operator升级必须停服、备份并确认实际`Galatea:ConfigPath`；需要改变relative-path target时显式改成目标absolute或
 config-relative value。应用不会自动移动repository或重写existing config。Provider/deployment acceptance必须另跑，
@@ -143,7 +146,7 @@ config-relative value。应用不会自动移动repository或重写existing conf
 
 ## 6. Explicit non-promises
 
-本candidate不批准、也不承诺：
+本批准不包含、也不承诺：
 
 - password或其他secret的at-rest encryption/hashing、redaction、secret-store integration；
 - bootstrap生成文件的Unix mode、ownership、ACL或`0600`强制；operator必须单独管理permissions；
@@ -156,4 +159,6 @@ config-relative value。应用不会自动移动repository或重写existing conf
   defense；
 - 把root fields、connections、Route或AgentControl profile合并成superset schema，或为旧language保留dual reader。
 
-批准本appendix必须是后续显式user decision；测试通过、文档合入或既有surface-set-1 tag都不能自动提升其状态。
+用户已显式批准本appendix进入additive surface set 2；immutable surface-set-1 tag不因此扩大或移动。批准范围只由
+本文与[surface set 2 addendum](../../evidence/contract-freeze-r2-approval-surface-set-2.md)列出的root V1 contract及
+non-promises界定；annotated v2 tag在promotion docs commit完成后才可创建，当前仍pending。

@@ -1,11 +1,13 @@
-# RecapGrid Store SQLite V2 logical-schema candidate
+# RecapGrid Store SQLite V2 approved logical-schema contract
 
-状态：**post-tag approval candidate；尚未批准**  
-适用product source：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
-不属于immutable tag：`session-journal-contract-r2-approved-surfaces-v1`
+状态：**additive surface set 2 user-approved；annotated tag authorized / pending**  
+validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`  
+approval boundary：不属于immutable v1 tag；`session-journal-contract-r2-approved-surfaces-v2`尚未创建
 
 本文把当前Grid Store SQLite V2的logical schema、canonical payload边界与operator分类整理成可审阅的
-exact appendix。它不改变product、schema或accepted language，也不把候选提升为stable/frozen。
+exact appendix。用户已将本文列出的logical schema、persistent pragmas与operator mapping批准为additive R2
+logical-schema scope；freeze anchor仍待pre-tag gates与annotated v2 tag。该批准不改变product、schema或accepted
+language，也不包含physical SQLite determinism。
 
 ## 1. Authority与slot identity
 
@@ -84,7 +86,7 @@ V2 create并在open时复核两个persistent invariants：
 
 这些值不承诺SQLite physical bytes determinism。`foreign_keys`、`synchronous`、`trusted_schema`、`busy_timeout`、
 `temp_store`、`locking_mode`、`read_uncommitted`、`query_only`与`max_page_count`等connection/runtime policy不属于
-本logical-schema candidate。
+本approved logical-schema sub-surface。
 
 Test-owned
 [`CreatedStoreMatchesIndependentV2LogicalSchemaFingerprint`](../../../../tests/SessionJournal.RecapGrid.Store.Tests/StoreAuthorityRegressionTests.cs)
@@ -111,7 +113,7 @@ physical reset继续受witness与commit-indeterminate contract约束。
 
 ## 7. Explicit non-promises
 
-本candidate不批准、也不承诺：
+本批准不包含、也不承诺：
 
 - SQLite database/file/page的byte identity、file length、page allocation、freelist、VACUUM结果或backup byte identity；
 - SQLite runtime/source ID、compile options或等价logical state的physical layout；
@@ -119,4 +121,6 @@ physical reset继续受witness与commit-indeterminate contract约束。
 - 新旧schema dual reader、automatic migration/repair，或未列入本appendix的future fields/indexes；
 - hostile out-of-band writer、filesystem/platform行为超出现有Store durability/operator contract的保证。
 
-批准本appendix必须是后续显式user decision；其状态不能由测试通过、文档合入或既有surface-set-1 tag自动提升。
+用户已显式批准本appendix进入additive surface set 2；immutable surface-set-1 tag不因此扩大或移动。批准范围只由
+本文与[surface set 2 addendum](../../evidence/contract-freeze-r2-approval-surface-set-2.md)列出的logical contract及
+non-promises界定；annotated v2 tag在promotion docs commit完成后才可创建，当前仍pending。
