@@ -80,10 +80,7 @@ internal sealed class SqliteHistoryTimelineLedger
                 limits
             );
             ConfigureCreatedDatabase(connection, limits);
-            using (SqliteCommand schema = connection.CreateCommand()) {
-                schema.CommandText = SchemaSql;
-                schema.ExecuteNonQuery();
-            }
+            CreateSchema(connection);
             var head = new TimelineHeadRef(
                 initialPolicy.TimelineId,
                 refId,
@@ -2045,14 +2042,25 @@ internal sealed class SqliteHistoryTimelineLedger
             ORDER BY type, name;
             """;
         using SqliteDataReader schemaReader = schema.ExecuteReader();
+        SchemaEntry[] expectedEntries = [..
+            SchemaEntriesInCreationOrder
+                .OrderBy(
+                    static entry => entry.Type,
+                    StringComparer.Ordinal
+                )
+                .ThenBy(
+                    static entry => entry.Name,
+                    StringComparer.Ordinal
+                )
+        ];
         int index = 0;
         while (schemaReader.Read()) {
-            if (index >= ExpectedSchemaEntries.Length) {
+            if (index >= expectedEntries.Length) {
                 throw new InvalidDataException(
                     "Timeline SQLite schema contains an unexpected object."
                 );
             }
-            SchemaEntry expected = ExpectedSchemaEntries[index++];
+            SchemaEntry expected = expectedEntries[index++];
             if (!string.Equals(
                     schemaReader.GetString(0),
                     expected.Type,
@@ -2075,10 +2083,39 @@ internal sealed class SqliteHistoryTimelineLedger
                 );
             }
         }
-        if (index != ExpectedSchemaEntries.Length) {
+        if (index != expectedEntries.Length) {
             throw new InvalidDataException(
                 "Timeline SQLite schema is missing a required object."
             );
+        }
+    }
+
+    private static void CreateSchema(SqliteConnection connection) {
+        using SqliteCommand command = connection.CreateCommand();
+        foreach (SchemaEntry entry in SchemaEntriesInCreationOrder) {
+            if (!string.Equals(
+                    entry.Type,
+                    "table",
+                    StringComparison.Ordinal)) {
+                continue;
+            }
+            command.CommandText = entry.Sql;
+            command.ExecuteNonQuery();
+        }
+        command.CommandText = """
+            INSERT INTO current_selected_path_guard(singleton, dirty)
+            VALUES (1, 0);
+            """;
+        command.ExecuteNonQuery();
+        foreach (SchemaEntry entry in SchemaEntriesInCreationOrder) {
+            if (!string.Equals(
+                    entry.Type,
+                    "trigger",
+                    StringComparison.Ordinal)) {
+                continue;
+            }
+            command.CommandText = entry.Sql;
+            command.ExecuteNonQuery();
         }
     }
 
@@ -2343,46 +2380,22 @@ internal sealed class SqliteHistoryTimelineLedger
 
     private const int ApplicationId = 0x41544854;
 
-    private static readonly SchemaEntry[] ExpectedSchemaEntries = [
+    private static readonly SchemaEntry[] SchemaEntriesInCreationOrder = [
         new(
             "table",
-            "current_selected_path",
-            "current_selected_path",
+            "store_metadata",
+            "store_metadata",
             """
-            CREATE TABLE current_selected_path(
-                ordinal INTEGER PRIMARY KEY CHECK(ordinal >= 0),
-                row_id TEXT NOT NULL UNIQUE,
-                previous_row_id TEXT NULL,
-                end_address BLOB NOT NULL UNIQUE,
-                leaf_digest TEXT NOT NULL,
-                FOREIGN KEY(row_id) REFERENCES rows(row_id)
-            ) STRICT
-            """
-        ),
-        new(
-            "table",
-            "current_selected_path_guard",
-            "current_selected_path_guard",
-            """
-            CREATE TABLE current_selected_path_guard(
+            CREATE TABLE store_metadata(
                 singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                dirty INTEGER NOT NULL CHECK(dirty IN (0, 1))
+                schema_version INTEGER NOT NULL,
+                timeline_id TEXT NOT NULL,
+                ref_id TEXT NOT NULL,
+                head_canonical BLOB NOT NULL,
+                head_sha256 TEXT NOT NULL,
+                policy_count INTEGER NOT NULL CHECK(policy_count >= 0),
+                row_count INTEGER NOT NULL CHECK(row_count >= 0)
             ) STRICT
-            """
-        ),
-        new(
-            "table",
-            "current_selected_path_merkle",
-            "current_selected_path_merkle",
-            """
-            CREATE TABLE current_selected_path_merkle(
-                level INTEGER NOT NULL CHECK(level >= 0 AND level <= 62),
-                node_index INTEGER NOT NULL CHECK(node_index >= 0),
-                range_start INTEGER NOT NULL CHECK(range_start >= 0),
-                range_end INTEGER NOT NULL CHECK(range_end >= range_start),
-                digest TEXT NOT NULL,
-                PRIMARY KEY(level, node_index)
-            ) STRICT, WITHOUT ROWID
             """
         ),
         new(
@@ -2413,22 +2426,46 @@ internal sealed class SqliteHistoryTimelineLedger
         ),
         new(
             "table",
-            "store_metadata",
-            "store_metadata",
+            "current_selected_path",
+            "current_selected_path",
             """
-            CREATE TABLE store_metadata(
-                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                schema_version INTEGER NOT NULL,
-                timeline_id TEXT NOT NULL,
-                ref_id TEXT NOT NULL,
-                head_canonical BLOB NOT NULL,
-                head_sha256 TEXT NOT NULL,
-                policy_count INTEGER NOT NULL CHECK(policy_count >= 0),
-                row_count INTEGER NOT NULL CHECK(row_count >= 0)
+            CREATE TABLE current_selected_path(
+                ordinal INTEGER PRIMARY KEY CHECK(ordinal >= 0),
+                row_id TEXT NOT NULL UNIQUE,
+                previous_row_id TEXT NULL,
+                end_address BLOB NOT NULL UNIQUE,
+                leaf_digest TEXT NOT NULL,
+                FOREIGN KEY(row_id) REFERENCES rows(row_id)
             ) STRICT
             """
-        )
-        ,new(
+        ),
+        new(
+            "table",
+            "current_selected_path_merkle",
+            "current_selected_path_merkle",
+            """
+            CREATE TABLE current_selected_path_merkle(
+                level INTEGER NOT NULL CHECK(level >= 0 AND level <= 62),
+                node_index INTEGER NOT NULL CHECK(node_index >= 0),
+                range_start INTEGER NOT NULL CHECK(range_start >= 0),
+                range_end INTEGER NOT NULL CHECK(range_end >= range_start),
+                digest TEXT NOT NULL,
+                PRIMARY KEY(level, node_index)
+            ) STRICT, WITHOUT ROWID
+            """
+        ),
+        new(
+            "table",
+            "current_selected_path_guard",
+            "current_selected_path_guard",
+            """
+            CREATE TABLE current_selected_path_guard(
+                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                dirty INTEGER NOT NULL CHECK(dirty IN (0, 1))
+            ) STRICT
+            """
+        ),
+        new(
             "trigger",
             "guard_selected_path_ad",
             "current_selected_path",
@@ -2501,96 +2538,6 @@ internal sealed class SqliteHistoryTimelineLedger
             """
         )
     ];
-
-    private const string SchemaSql = """
-        CREATE TABLE store_metadata(
-            singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-            schema_version INTEGER NOT NULL,
-            timeline_id TEXT NOT NULL,
-            ref_id TEXT NOT NULL,
-            head_canonical BLOB NOT NULL,
-            head_sha256 TEXT NOT NULL,
-            policy_count INTEGER NOT NULL CHECK(policy_count >= 0),
-            row_count INTEGER NOT NULL CHECK(row_count >= 0)
-        ) STRICT;
-
-        CREATE TABLE policies(
-            policy_digest TEXT PRIMARY KEY,
-            canonical BLOB NOT NULL
-        ) STRICT, WITHOUT ROWID;
-
-        CREATE TABLE rows(
-            row_id TEXT PRIMARY KEY,
-            previous_row_id TEXT NULL,
-            end_address BLOB NOT NULL,
-            descriptor_digest TEXT NOT NULL,
-            canonical BLOB NOT NULL,
-            FOREIGN KEY(previous_row_id) REFERENCES rows(row_id)
-        ) STRICT, WITHOUT ROWID;
-
-        CREATE TABLE current_selected_path(
-            ordinal INTEGER PRIMARY KEY CHECK(ordinal >= 0),
-            row_id TEXT NOT NULL UNIQUE,
-            previous_row_id TEXT NULL,
-            end_address BLOB NOT NULL UNIQUE,
-            leaf_digest TEXT NOT NULL,
-            FOREIGN KEY(row_id) REFERENCES rows(row_id)
-        ) STRICT;
-
-        CREATE TABLE current_selected_path_merkle(
-            level INTEGER NOT NULL CHECK(level >= 0 AND level <= 62),
-            node_index INTEGER NOT NULL CHECK(node_index >= 0),
-            range_start INTEGER NOT NULL CHECK(range_start >= 0),
-            range_end INTEGER NOT NULL CHECK(range_end >= range_start),
-            digest TEXT NOT NULL,
-            PRIMARY KEY(level, node_index)
-        ) STRICT, WITHOUT ROWID;
-
-        CREATE TABLE current_selected_path_guard(
-            singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-            dirty INTEGER NOT NULL CHECK(dirty IN (0, 1))
-        ) STRICT;
-
-        INSERT INTO current_selected_path_guard(singleton, dirty)
-        VALUES (1, 0);
-
-        CREATE TRIGGER guard_selected_path_ad
-        AFTER DELETE ON current_selected_path
-        BEGIN
-            UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
-        END;
-
-        CREATE TRIGGER guard_selected_path_ai
-        AFTER INSERT ON current_selected_path
-        BEGIN
-            UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
-        END;
-
-        CREATE TRIGGER guard_selected_path_au
-        AFTER UPDATE ON current_selected_path
-        BEGIN
-            UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
-        END;
-
-        CREATE TRIGGER guard_selected_path_commitments_ad
-        AFTER DELETE ON current_selected_path_merkle
-        BEGIN
-            UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
-        END;
-
-        CREATE TRIGGER guard_selected_path_commitments_ai
-        AFTER INSERT ON current_selected_path_merkle
-        BEGIN
-            UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
-        END;
-
-        CREATE TRIGGER guard_selected_path_commitments_au
-        AFTER UPDATE ON current_selected_path_merkle
-        BEGIN
-            UPDATE current_selected_path_guard SET dirty = 1 WHERE singleton = 1;
-        END;
-
-        """;
 
     private sealed record StoreCounts(
         long PolicyCount,
