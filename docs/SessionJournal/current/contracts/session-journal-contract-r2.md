@@ -1,6 +1,6 @@
 # SessionJournal Contract R2 — approved surfaces and candidate map
 
-状态：approved surface sets 1 + 2 anchored；additive surface set 3 user-authorized / unified gates and tag Pending；未列入批准表的surface继续candidate/Defer  
+状态：approved surface sets 1 + 2 anchored；additive surface set 3 user-authorized / unified gates complete / tag Pending；未列入批准表的surface继续candidate/Defer  
 surface set 1 validated product source：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
 surface set 2 validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`；integration evidence：`6c5d3d50e68b84b9dca1391c16438a86cef418c1`  
 surface set 3 production source：`da3aa27af56add07bc70229120c522b8d24c99ba`；contract test evidence：`8a54e613f7c1a92bab3a4dd0806aad19411c41b1`  
@@ -16,7 +16,7 @@ producer/reader问题，并为新source重新完成solution、Node、inventory�
 [additive surface set 2](../../evidence/contract-freeze-r2-approval-surface-set-2.md)中的Store SQLite V2与Galatea root
 config V1；annotated v2 tag已锚定exact approval ledger。用户之后又批准
 [additive surface set 3](../../evidence/contract-freeze-r2-approval-surface-set-3.md)中的Desired Setup reconciliation
-report V2 exact narrow scope；v3 unified gates与annotated tag仍Pending。其余surface仍是candidate/Defer，不能由
+report V2 exact narrow scope；v3 unified gates已通过，independent pre-tag review与annotated tag仍Pending。其余surface仍是candidate/Defer，不能由
 任一tag或pending authorization顺带认证。
 
 源码、strict codec、tests和goldens仍是实现事实；本文不把所有CLR `public`、human diagnostic文本、provider行为、
@@ -180,7 +180,7 @@ current companion state拼成混合generation。raw append后的rollback必须ra
 Connections、Route manifest、AgentControl profile、Galatea HTTP/SSE与CLI outer+Store ledger是surface set 1中批准的
 Stable V1；[root config V1](galatea-root-config-v1.md)由additive surface set 2批准为Stable V1；
 [Desired Setup report V2](desired-setup-reconciliation-report-v2.md)的exact narrow receipt/recovery scope由additive
-surface set 3批准、等待v3 unified gates与tag。其他reports与非Store CLI detail/status仍是candidate/Defer。root批准
+surface set 3批准、已通过unified gates并等待independent pre-tag review与v3 tag。其他reports与非Store CLI detail/status仍是candidate/Defer。root批准
 不引入dual interpretation，不把absolute/`..`改成非法或把repository
 限制在config目录内；也不承诺password at rest、permissions、Kestrel、diagnostic、provider或deployment readiness。
 ignored operator config与real provider并非本文可读取的tracked contract；不得用历史local observation冒充current
@@ -201,7 +201,8 @@ stable可观察语义是slow subscriber可单独断开、无不可靠in-band ove
   cross-owner result hierarchy或silent migration。
 - 数值bound变更必须重新验证最终encoded bytes，不能只从inner payload cap纸面推导outer envelope安全。
 - surface sets 1与2分别由immutable v1/v2 tags锚定；v2 tag exact object为`13111f3d`，dereferenced target为
-  `c4c6dd16`。Surface set 3已获用户授权，但unified gates与v3 tag仍Pending，不移动或重释v1/v2。未列出的surface、
+  `c4c6dd16`。Surface set 3已获用户授权且unified gates通过，但independent pre-tag review与v3 tag仍Pending，不移动或
+  重释v1/v2。未列出的surface、
   本机deployment readiness与real-provider readiness仍不在批准范围；exact additive范围见
   [surface set 2 addendum](../../evidence/contract-freeze-r2-approval-surface-set-2.md)与
   [surface set 3 addendum](../../evidence/contract-freeze-r2-approval-surface-set-3.md)。

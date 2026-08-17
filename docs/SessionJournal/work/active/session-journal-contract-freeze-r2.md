@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；approved surface sets 1 + 2 anchored；surface set 3 user-authorized、unified gates/tag Pending；remaining Defer packages按新candidate继续  
+状态：Active；approved surface sets 1 + 2 anchored；surface set 3 user-authorized、unified gates complete、tag Pending；remaining Defer packages按新candidate继续  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -243,8 +243,8 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | ROOT-CONFIG-PATH-A0 | Approved via anchored ROOT-CONFIG-A1 | `0f0afb2c` config-directory-relative cut与absolute-target semantics进入surface set 2；无CWD fallback、auto move/create或confinement |
 | ROOT-CONFIG-A1 | Approved / anchored in additive surface set 2 | [root config V1 appendix](../../current/contracts/galatea-root-config-v1.md)；product source `8c450bf0`、integration `6c5d3d50`；secret/permissions/Kestrel/diagnostic/provider/deployment仍非承诺 |
 | AP-PROMOTE-V2 | Complete / tag anchored | promotion `a07de1f4`；Store54、Galatea162、solution38/4694、build0W/0E、HTTP/SSE Node、docs18/0与independent review PASS；inventory/rebuild NotRun且无需；v2 tag object `13111f3d` → `c4c6dd16`，v1 tag未移动 |
-| OTHER-REPORT-A1 | Approved narrow scope / surface set 3 gates+tag Pending | post-v2-tag [desired setup report V2 appendix](../../current/contracts/desired-setup-reconciliation-report-v2.md)；production `da3aa27a` + test tail `8a54e613`；activation runbook exact consumer gate；用户已批准surface set 3，但不属于immutable surface-set-2 tag |
-| AP-PROMOTE-V3 | User-authorized / promotion docs in progress；unified gates+tag Pending | [surface set 3 addendum](../../evidence/contract-freeze-r2-approval-surface-set-3.md)只加入Desired Setup report V2 exact narrow scope；authorized tag `session-journal-contract-r2-approved-surfaces-v3`尚未创建；不得抄旧gate counts |
+| OTHER-REPORT-A1 | Approved narrow scope / surface set 3 tag Pending | post-v2-tag [desired setup report V2 appendix](../../current/contracts/desired-setup-reconciliation-report-v2.md)；production `da3aa27a` + test tail `8a54e613`；activation runbook exact consumer gate；unified gates通过，但不属于immutable surface-set-2 tag |
+| AP-PROMOTE-V3 | Gate complete / tag-ready candidate；review+tag Pending | [surface set 3 addendum](../../evidence/contract-freeze-r2-approval-surface-set-3.md)只加入Desired Setup report V2 exact narrow scope；promotion `cb8ba558`；CLI113、solution38/4694、build0W/0E、HTTP/SSE、docs18/0均PASS；authorized v3 tag尚未创建 |
 
 ## 9. R0 完成标准
 
@@ -436,7 +436,9 @@ fail-closed recovery rule。Production source为`da3aa27a`，contract test evide
 `60904628`；本promotion不修改production/tests。
 
 该批准是surface set 2之上的单项additive surface set 3。Immutable v1/v2 tags继续认证各自原始targets，不能移动、
-重释或被本授权续期。Authorized tag exact name为`session-journal-contract-r2-approved-surfaces-v3`，但本轮统一验证、
-promotion commit pin、independent pre-tag review与annotated tag创建仍全部Pending；不得复制surface-set-1/2 historical
-counts充当本轮结果。Other reports、non-Store CLI、完整command input/prompt-file、JSON bytes/order/escaping、diagnostics、
-raw/report atomicity、provider/deployment继续Defer或明确non-promise。
+重释或被本授权续期。Authorized tag exact name为`session-journal-contract-r2-approved-surfaces-v3`。Exact clean promotion
+HEAD `cb8ba558`上的CLI full 113、solution 38 projects / 4,694、build 0W/0E、HTTP/SSE Node各1/1、scoped docs18/0及
+diff/status/tag preflight均通过；public inventory与legacy rebuild因无.NET API/raw/rebuild delta而NotRun/无需，ignored
+state/provider/deployment亦NotRun。Candidate现已gate-complete；independent pre-tag review与annotated tag创建仍Pending。
+Other reports、non-Store CLI、完整command input/prompt-file、JSON bytes/order/escaping、diagnostics、raw/report atomicity、
+provider/deployment继续Defer或明确non-promise。

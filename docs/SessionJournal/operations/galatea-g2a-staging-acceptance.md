@@ -427,7 +427,7 @@ runbook用来排除stale receipt的operator precondition。若command exit 1、r
 未变，也不得用旧`pre_setup_head`盲重试。必须重新只读inspect/validate current exact head、Idle boundary与governing
 setup，再以observed exact head幂等执行同一desired intent；不要rollback或手工补raw setup。Exact report contract与
 failure recovery见[Desired setup reconciliation report V2 approved contract](../current/contracts/desired-setup-reconciliation-report-v2.md)；
-其surface set 3 unified gates与annotated tag仍Pending，runbook存在不等于本轮activation已Passed。
+其surface set 3 unified gates已通过但annotated tag仍Pending；runbook存在与contract gate通过均不等于本轮activation已Passed。
 
 随后按以下顺序执行：
 
