@@ -10,6 +10,25 @@ public sealed class SessionEventCodecGoldenTests {
         "capability-A"
     );
 
+    [Fact]
+    public void RuntimeConfigSetup_HasExactV2Utf8AndRelaxedEscapingShape() {
+        ReadOnlySpan<byte> expected =
+            """{"v":2,"body":{"modelId":"模型<&>\"line\nbreak","completionSurfaceId":"surface-A","schema":"atelia.session-journal.trunk.v1","derivedContext":{"nthPrevious":7}}}"""u8;
+        var body = new SessionRuntimeConfiguration(
+            "模型<&>\"line\nbreak",
+            "surface-A",
+            SessionJournalDefaults.Schema,
+            new SessionDerivedContextConfiguration(7)
+        );
+
+        AssertExactUtf8WriterAndLiteralRoundtrip(
+            SessionEventKind.RuntimeConfigSetup,
+            body,
+            expected,
+            expectedVersion: 2
+        );
+    }
+
     [Theory]
     [InlineData(SessionEventKind.AgentActionProduced)]
     [InlineData(SessionEventKind.ImportedAgentAction)]
@@ -71,11 +90,11 @@ public sealed class SessionEventCodecGoldenTests {
     [Fact]
     public void CompletionAttemptFailed_HasExactV2Utf8BodyShape() {
         ReadOnlySpan<byte> expected =
-            """{"v":2,"body":{"terminationKind":"incomplete","providerReason":"length","detail":"max tokens","errors":["stream warning"]}}"""u8;
+            """{"v":2,"body":{"terminationKind":"incomplete","providerReason":null,"detail":null,"errors":["stream warning"]}}"""u8;
         var body = new CompletionAttemptFailedBody(
             CompletionTerminationKind.Incomplete,
-            "length",
-            "max tokens",
+            null,
+            null,
             ["stream warning"]
         );
 
