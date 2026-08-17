@@ -108,6 +108,32 @@ public sealed class HistoryTimelinePublicSurfaceTests : IDisposable {
     }
 
     [Fact]
+    public void OwnerLocalRangeProofAndDescriptorFactoryAreNotExported() {
+        string[] exportedNames = typeof(HistoryTimelineFactory).Assembly
+            .GetExportedTypes()
+            .Select(static type => type.FullName)
+            .OfType<string>()
+            .ToArray();
+
+        Assert.DoesNotContain(
+            "Atelia.SessionJournal.HistoryTimeline.BoundHistorySegmentRange",
+            exportedNames
+        );
+        Assert.DoesNotContain(
+            "Atelia.SessionJournal.HistoryTimeline.HistorySegmentDescriptorFactory",
+            exportedNames
+        );
+        Assert.Contains(
+            typeof(HistorySegmentDescriptor).FullName!,
+            exportedNames
+        );
+        Assert.Contains(
+            typeof(HistoryPartitioner).FullName!,
+            exportedNames
+        );
+    }
+
+    [Fact]
     public void PublicFactoryAndHandlesExposeNoBackendSelector() {
         Type[] publicTypes = typeof(HistoryTimelineFactory)
             .Assembly

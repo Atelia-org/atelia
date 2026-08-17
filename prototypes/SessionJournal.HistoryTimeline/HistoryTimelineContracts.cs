@@ -466,7 +466,7 @@ public abstract record HistoryPartitionResult {
     }
 }
 
-public sealed record BoundHistorySegmentRange {
+internal sealed record BoundHistorySegmentRange {
     internal BoundHistorySegmentRange(
         RefId refId,
         EventAddress startExclusive,
@@ -629,7 +629,7 @@ public sealed record HistorySegmentDescriptor {
         => HistoryTimelineCanonicalCodec.Encode(this);
 }
 
-public static class HistorySegmentDescriptorFactory {
+internal static class HistorySegmentDescriptorFactory {
     public static HistorySegmentDescriptor Create(
         HistoryPartitionPoint point,
         BoundHistorySegmentRange boundRange,
