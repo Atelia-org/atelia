@@ -240,6 +240,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | AP approval docs review | Complete | `3575bf30` initial docs + `8585d889` scope/fact tail；三位independent tail re-review均PASS；scoped docs 18/0 |
 | Tier approval与tag | Complete | user approved exact surface set 1；annotated tag `session-journal-contract-r2-approved-surfaces-v1`锚定promotion docs commit与validated source `cd966fc7` |
 | STORE-SCHEMA-A1 | Candidate complete / approval Defer | post-tag [SQLite V2 logical-schema appendix](../../current/contracts/recap-grid-store-sqlite-v2.md) + independent persistent pragma/fingerprint gate；不属于surface-set-1 tag，等待后续显式approval |
+| ROOT-CONFIG-PATH-A0 | Candidate implementation complete / approval Defer | post-tag `0f0afb2c`；relative `sessionDir`以config directory为base、absolute target保持、template为`sessions/*`；root完整field language仍Defer |
 
 ## 9. R0 完成标准
 
@@ -368,3 +369,14 @@ source `cd966fc7`补齐了Tier B Store的approval-grade审阅入口，并在test
 `page_size=4096`与`journal_mode=delete`。本包不改production、Schema V2、public API、wire或tag；appendix及其
 post-tag test evidence也不属于immutable surface set 1。下一步只能是独立review后由用户显式批准或继续Defer，
 不能用文档合入或green gate自动宣布stable/frozen。
+
+## 17. Post-tag ROOT-CONFIG-PATH-A0 candidate
+
+`0f0afb2c`把root config file DTO中的relative `sessionDir`以`config.json`所在目录为base解析，并只向runtime
+交付absolute path；absolute配置保持同一target。bootstrap template同步从旧CWD-oriented
+`.atelia/galatea/sessions/*`改为`sessions/*`，避免默认config目录下出现double prefix。
+
+该direct cut没有增加schema/version、public record、Host constructor、CWD/existence fallback、`chdir`、auto
+move/create或generic path framework；absolute与`..`仍合法，也不承诺config-directory confinement或新增no-follow
+filesystem边界。新增focused 6/6、config 20/20、Galatea full 150/150与solution build 0W/0E均通过；ignored operator
+config未由本包修改。root config完整field language继续candidate/Defer，且不属于immutable surface-set-1 tag。
