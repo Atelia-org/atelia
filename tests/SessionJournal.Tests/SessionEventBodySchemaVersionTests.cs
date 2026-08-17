@@ -151,7 +151,7 @@ public sealed class SessionEventBodySchemaVersionTests {
     }
 
     [Fact]
-    public void FailedV1AndRetiredKind11AreUnsupported() {
+    public void FailedV1_IsUnsupported() {
         Assert.Throws<NotSupportedException>(() =>
             SessionEventCodec.Decode(
                 SessionEventKind.CompletionAttemptFailed,
@@ -159,8 +159,22 @@ public sealed class SessionEventBodySchemaVersionTests {
                 out _
             )
         );
+    }
+
+    [Theory]
+    [InlineData(11u)]
+    [InlineData(12u)]
+    public void RetiredRawKindIds_ArePermanentlyUnsupported(uint rawKind) {
+        var kind = (SessionEventKind)rawKind;
+
         Assert.Throws<NotSupportedException>(() =>
-            SessionEventCodec.GetExpectedBodySchemaVersion((SessionEventKind)11)
+            SessionEventCodec.GetExpectedBodySchemaVersion(kind)
+        );
+        Assert.Throws<NotSupportedException>(() =>
+            SessionEventCodec.Encode(kind, new object())
+        );
+        Assert.Throws<NotSupportedException>(() =>
+            SessionEventCodec.Decode(kind, "not-json"u8, out _)
         );
     }
 
