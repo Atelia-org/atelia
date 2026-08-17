@@ -27,14 +27,14 @@ public sealed record GalateaRecapGridRuntimeConfig(
 );
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
-public sealed record GalateaRecapGridFileConfig(
+internal sealed record GalateaRecapGridFileConfig(
     string RouteManifestPath,
     IReadOnlyList<string> AgentControlProfileFiles,
     string CurrentAgentControlProfileId
 );
 
 /// <summary>Shape of config.json: user accounts + server settings, with no LLM binding.</summary>
-public sealed record GalateaUsersFileConfig(
+internal sealed record GalateaUsersFileConfig(
     IReadOnlyList<GalateaUserConfig> Users,
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,

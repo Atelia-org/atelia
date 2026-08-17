@@ -11,6 +11,22 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaConfigValidationTests {
     [Fact]
+    public void FileConfigDtosAreInternalWhileRuntimeAndHttpDtosRemainPublic() {
+        Type assemblyMarker = typeof(GalateaConfig);
+        Type[] exported = assemblyMarker.Assembly.GetExportedTypes();
+
+        Assert.False(typeof(GalateaUsersFileConfig).IsPublic);
+        Assert.False(typeof(GalateaRecapGridFileConfig).IsPublic);
+        Assert.DoesNotContain(typeof(GalateaUsersFileConfig), exported);
+        Assert.DoesNotContain(typeof(GalateaRecapGridFileConfig), exported);
+
+        Assert.Contains(typeof(GalateaConfig), exported);
+        Assert.Contains(typeof(GalateaUserConfig), exported);
+        Assert.Contains(typeof(GalateaMeDto), exported);
+        Assert.Contains(typeof(RecentTurnsResponseDto), exported);
+    }
+
+    [Fact]
     public async Task StrictRecapGridConfigDefersRouteReadAndClientCreation() {
         string root = NewRoot();
         try {
