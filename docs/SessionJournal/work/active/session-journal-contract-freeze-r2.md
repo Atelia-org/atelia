@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；CF-D-02、CF-D-03、targeted CF-B、CF-C-01与CF-C-02 complete；Post-CF-C-02 readiness tails next；R5 Pending  
+状态：Active；R3/R4、readiness tails与R5 code/rebuild gates complete；docs closure in progress；tier approval/tag Pending  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -215,7 +215,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | R1 priority reviews | Complete | [CF-A-01 / CF-D-01 / CF-D-04 evidence](../../evidence/contract-freeze-r2-r1-priority-review.md) |
 | R1 CF-D-03 / targeted CF-B / CF-C-01 | Complete | [commit-pinned implementation evidence](../../evidence/contract-freeze-r2-d03-cfb-cfc01-implementation.md)；保持Prototype candidate |
 | CF-C-02 companion evidence | Complete | [commit-pinned implementation evidence](../../evidence/contract-freeze-r2-cfc02-implementation.md)；History/Store/Rewriter independent evidence + disposable rebuild |
-| Post-CF-C-02 readiness tails | Pending | standalone Timeline create existing validation；History schema-source去重仅在明显净减时实施 |
+| Post-CF-C-02 readiness tails | Complete | RT-01 `c00df3d8` same-lease existing validation；SC-01 `a77ed16c` single DDL source，Schema V2不变 |
 | R2 priority plan lock | Complete | [priority implementation evidence](../../evidence/contract-freeze-r2-r2-priority-implementation.md) + [HTTP/SSE plan lock](../../evidence/contract-freeze-r2-http-sse-plan-lock.md) |
 | R3 priority implementation | Complete | 七个原子commits + test-only `87079eaa`；未增加compatibility/framework层 |
 | CF-D-01 operator cutover | Complete | live ignored V1 manifest；Idle/Prepared=0；actual-env Completion/Galatea provider-free load；independent PASS |
@@ -227,7 +227,11 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | Targeted CF-B | Complete / stop | Galatea file DTO、History owner-local assembly、Hosting snapshot-only telemetry；不为inventory count继续扩大cut |
 | CF-C-01 Control classification | Complete | `8a2186f8`；future schema typed Unsupported与empty whole-state independent golden |
 | R4 priority code gates | Complete | solution + owner/PublicSurface/CLI/wire/nonfriend gates；D02与post-D02分时R4 evidence分别记录 |
-| R5 freeze closure | Pending | 分 tier 发布稳定性声明 |
+| R5 current inventory | Complete | `a77ed16c` S/T/O/C/G/H = 901 types / 9,419 rows / 2,123 construction lines；[R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md) |
+| R5 support/wire/upgrade candidate docs | Draft | [Contract R2 candidate](../../current/contracts/session-journal-contract-r2.md)；不构成freeze声明 |
+| R5 final code gates | Complete | `a77ed16c` solution 37 projects / 4,629 passed / 0 failed / 0 skipped；build 0W/0E；11 PublicSurface、Walking 27、Galatea.RG 7与HTTP/SSE Node均green |
+| R5 disposable rebuild | Complete | `a77ed16c` two fresh imports、offline/raw equality、four-owner gates、repeat-init与standalone Timeline create 13-file snapshots exact；禁网/provider artifacts 0 |
+| R5 docs review / approval / tag | Pending | docs commit/checker/source diff/independent review后由用户逐tier批准 |
 
 ## 9. R0 完成标准
 
@@ -308,7 +312,25 @@ generic schema framework或新的public authority。
 - broad CF-B停止，避免为了surface count进入result-family overreach；
 - [CF-C-02 implementation evidence](../../evidence/contract-freeze-r2-cfc02-implementation.md)已锁定
   History/Store/Rewriter independent golden/fingerprint、Store typed classification与legacy disposable rebuild；
-- 下一检查点优先调查standalone Timeline create existing readiness；History schema-source去重只作为较低优先的
-  internal simplification，若需要parser/framework或不能明显净减则Retain；
-- 随后整理CF-C support map、wire inventory、upgrade policy与R5 preparation；
-- R5继续Pending，本文不批准stable/frozen tier。
+- standalone Timeline create existing readiness已由`c00df3d8`关闭：同一exclusive lease内read-only验证schema、
+  head与active policy，失败不迁移、不repair、不误报`ready`；
+- History schema-source去重由`a77ed16c`以单一12-entry DDL列表完成，净减53行；没有SQL parser/framework，
+  independent fingerprint与Schema V2 accepted language不变；
+- current support map、wire inventory、upgrade policy、candidate commit map与fresh compiled inventory已进入
+  [R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)；code/rebuild gates已填入，docs closure仍Pending；
+- R5仍处于candidate阶段，本文不批准stable/frozen tier。
+
+## 14. R5 candidate preparation
+
+exact source candidate为`a77ed16c1ddef949dc519811fde56600db38316e`。当前
+[Contract R2 candidate](../../current/contracts/session-journal-contract-r2.md)按Tier A-D分别记录支持角色、
+raw/companion/operational wire、compatibility/reprovision与non-promise；
+[R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)记录完整commit map、inventory hashes与
+final gate ledger。
+
+fresh isolated inventory为901 effective-public types、9,419 logical API rows与2,123 construction rows；相对R0
+分别`+10 / -17 / -48`。这些数字识别candidate，不表示所有export都已获得stable support promise。
+
+同一source candidate的final solution/owner/PublicSurface、HTTP/SSE Node与provider-free disposable rebuild gates
+均已complete；下一步只剩docs commit/checker/source diff与independent review。ignored operator config和real provider本轮明确`NotRun`，不能拿历史local observation
+代替current gate。required gates完成后也只能标`ready for approval`；stable/frozen tier与tag必须由用户另行批准。
