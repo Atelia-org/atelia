@@ -24,7 +24,11 @@ public sealed class ManagerPublicSurfaceTests {
                 new EvaluationKeyDigest(new string('c', 64)),
                 "provider-failed",
                 "Provider did not return a usable result."
-            )
+            ),
+            new RecapCellExecutionOutcome
+                .NotStartedDueToCallerCancellation(
+                    new EvaluationKeyDigest(new string('d', 64))
+                )
         ];
         var completed = new RecapCellBatchExecutionResult.Completed(outcomes);
         IRecapCellBatchExecutor executor = new ConstructingExecutor(completed);
@@ -41,6 +45,10 @@ public sealed class ManagerPublicSurfaceTests {
             >(outcome),
             static outcome => Assert.IsType<
                 RecapCellExecutionOutcome.Failed
+            >(outcome),
+            static outcome => Assert.IsType<
+                RecapCellExecutionOutcome
+                    .NotStartedDueToCallerCancellation
             >(outcome)
         );
 

@@ -10,45 +10,56 @@ public sealed class PublicSurfaceTests {
     public void ExternalTelemetryCanImplementNamedEventSink() {
         var implementation = new PublicTelemetry();
         IRecapCompletionTelemetry telemetry = implementation;
-        var routeKey = new RecapCompletionRouteKey(
-            new FamilyDefinitionDigest(new string('a', 64)),
-            RecapRewriterProtocolV3.RuntimeProtocolId,
-            semanticModelId: null
-        );
-        var telemetryEvent = new RecapCompletionTelemetryEvent(
-            kind: "Completed",
-            routeKey: routeKey,
-            connectionId: "connection-v1",
-            modelId: "model-v1",
-            providerId: "public-provider",
-            apiSpecId: "public-api-v1",
-            evaluationKey: new EvaluationKeyDigest(new string('b', 64)),
-            familyDigest: routeKey.FamilyDigest,
-            definitionDigest: new MaintainerDefinitionDigest(
-                new string('c', 64)
-            ),
-            historySegmentDigest: new string('d', 64),
-            isFirstRowPrior: true,
-            priorProjectionDigest: null,
-            role: RecapCompletionWorkRole.Leader,
-            admissionWait: TimeSpan.Zero,
-            laneWait: TimeSpan.Zero,
-            elapsed: TimeSpan.Zero,
-            cacheReuseHint: PromptCacheReuseHint.ConnectionDefault,
-            resultReceived: true,
-            termination: null,
-            providerErrorCount: 0,
-            usage: null,
-            providerOutcome: "completed",
-            code: null,
-            detail: null
-        );
-
-        telemetry.Record(telemetryEvent);
+        var record = typeof(IRecapCompletionTelemetry).GetMethods()
+            .SingleOrDefault(static method =>
+                method.Name == nameof(IRecapCompletionTelemetry.Record)
+                && method.ReturnType == typeof(void)
+                && method.GetParameters()
+                    .Select(static parameter => parameter.ParameterType)
+                    .SequenceEqual([
+                        typeof(RecapCompletionTelemetryEvent)
+                    ])
+            );
 
         Assert.Same(implementation, telemetry);
-        Assert.Equal(1, implementation.RecordCount);
-        Assert.Same(telemetryEvent, implementation.LastEvent);
+        Assert.NotNull(record);
+        Assert.Equal(
+            [typeof(RecapCompletionTelemetryEvent)],
+            record!.GetParameters()
+                .Select(static parameter => parameter.ParameterType)
+                .ToArray()
+        );
+        Assert.Throws<ArgumentNullException>(() => telemetry.Record(null!));
+        Assert.Equal(0, implementation.RecordCount);
+    }
+
+    [Fact]
+    public async Task ExternalInvokerCanReturnMinimalLegalResult() {
+        IRecapCompletionInvoker invoker = new PublicInvoker();
+        var request = new CompletionRequest(
+            "model-v1",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault([]),
+                Array.Empty<IHistoryMessage>()
+            ),
+            [new ObservationMessage("tail")]
+        );
+
+        CompletionResult result = await invoker.InvokeAsync(
+            request,
+            CompletionInvocationOptions.Default,
+            CancellationToken.None
+        );
+
+        Assert.Equal("public-result", result.Message.GetFlattenedText());
+        Assert.Equal(invoker.ProviderId, result.Invocation.ProviderId);
+        Assert.Equal(invoker.ApiSpecId, result.Invocation.ApiSpecId);
+        Assert.Equal(request.ModelId, result.Invocation.Model);
+        Assert.Equal(
+            CompletionTerminationKind.Completed,
+            result.Termination.Kind
+        );
     }
 
     [Fact]
@@ -108,6 +119,32 @@ public sealed class PublicSurfaceTests {
             new RecapCompletionRouteResolution.Unavailable("", "detail"));
         Assert.ThrowsAny<ArgumentException>(() =>
             new RecapCompletionRouteResolution.Invalid("code", ""));
+        RecapCompletionRoute route = RecapCompletionRoute.Create(
+            key,
+            "connection-v1",
+            "model-v1",
+            new PublicInvoker(),
+            RecapCompletionResourceOwnership.Borrowed,
+            1,
+            TimeSpan.FromMinutes(1)
+        );
+        var resolver = new PublicResolver(route);
+        RecapCompletionRouteResolution.Invalid invalid = Assert.IsType<
+            RecapCompletionRouteResolution.Invalid
+        >(resolver.Resolve(new RecapCompletionRouteKey(
+            key.FamilyDigest,
+            "unsupported-protocol-v1",
+            semanticModelId: null
+        )));
+        Assert.Equal("RouteInvalid", invalid.Code);
+        RecapCompletionRouteResolution.Unavailable unavailable = Assert.IsType<
+            RecapCompletionRouteResolution.Unavailable
+        >(resolver.Resolve(new RecapCompletionRouteKey(
+            new FamilyDefinitionDigest(new string('e', 64)),
+            key.RuntimeProtocolId,
+            semanticModelId: null
+        )));
+        Assert.Equal("RouteAbsent", unavailable.Code);
         Assert.True(typeof(RecapCompletionRouteResolution).IsAbstract);
     }
 
@@ -121,12 +158,19 @@ public sealed class PublicSurfaceTests {
             RecapCompletionRouteKey key
         ) {
             ResolveCount++;
-            return key == _route.Key
-                ? new RecapCompletionRouteResolution.Bound(_route)
-                : new RecapCompletionRouteResolution.Unavailable(
-                    "RouteAbsent",
-                    "No exact route exists."
+            if (key == _route.Key) {
+                return new RecapCompletionRouteResolution.Bound(_route);
+            }
+            if (key.RuntimeProtocolId == "unsupported-protocol-v1") {
+                return new RecapCompletionRouteResolution.Invalid(
+                    "RouteInvalid",
+                    "The route key is not supported."
                 );
+            }
+            return new RecapCompletionRouteResolution.Unavailable(
+                "RouteAbsent",
+                "No exact route exists."
+            );
         }
     }
 
@@ -138,16 +182,33 @@ public sealed class PublicSurfaceTests {
             CompletionRequest request,
             CompletionInvocationOptions invocationOptions,
             CancellationToken cancellationToken
-        ) => throw new NotSupportedException();
+        ) {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(invocationOptions);
+            invocationOptions.Validate();
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(new CompletionResult(
+                new ActionMessage([new ActionBlock.Text("public-result")]),
+                new CompletionDescriptor(
+                    ProviderId,
+                    ApiSpecId,
+                    request.ModelId
+                )
+            ));
+        }
     }
 
     private sealed class PublicTelemetry : IRecapCompletionTelemetry {
         internal int RecordCount { get; private set; }
-        internal RecapCompletionTelemetryEvent? LastEvent { get; private set; }
+        internal string? LastKind { get; private set; }
+        internal RecapCompletionRouteKey LastRouteKey { get; private set; }
+        internal string? LastProviderOutcome { get; private set; }
 
         public void Record(RecapCompletionTelemetryEvent value) {
             ArgumentNullException.ThrowIfNull(value);
-            LastEvent = value;
+            LastKind = value.Kind;
+            LastRouteKey = value.RouteKey;
+            LastProviderOutcome = value.ProviderOutcome;
             RecordCount++;
         }
     }

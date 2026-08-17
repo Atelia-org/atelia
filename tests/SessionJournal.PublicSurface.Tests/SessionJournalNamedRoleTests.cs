@@ -102,10 +102,47 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
         Assert.NotNull(send);
         Assert.NotNull(executePending);
         Assert.NotNull(prepareLifecycle);
-        SessionPendingToolBoundaryResult.Settled settled = new(head);
-        SessionPendingToolBoundaryResult.MorePending morePending = new(head);
-        Assert.Equal(head, settled.Head);
-        Assert.Equal(head, morePending.Head);
+        Func<SessionPendingToolBoundaryResult, EventAddress>
+            readPendingBoundaryHead = ReadPendingBoundaryHead;
+        Assert.NotNull(readPendingBoundaryHead);
+
+        var backpressureLifecycle = new ExternalLifecycle(
+            new SessionContextLifecycleResult(
+                SessionContextLifecycleStatus.Backpressure,
+                "Derived maintenance is temporarily full."
+            )
+        );
+        SessionJournalNotReadyException backpressure = await Assert.ThrowsAsync<
+            SessionJournalNotReadyException
+        >(() => engine.PrepareContextLifecycleMaintenanceAsync(
+            head,
+            backpressureLifecycle,
+            "pending-observation",
+            CancellationToken.None
+        ).AsTask());
+        Assert.Equal(
+            SessionJournalNotReadyReason.RecapMaintenanceBackpressure,
+            backpressure.Reason
+        );
+
+        var unavailableLifecycle = new ExternalLifecycle(
+            new SessionContextLifecycleResult(
+                SessionContextLifecycleStatus.Unavailable,
+                "Derived maintenance is unavailable."
+            )
+        );
+        SessionJournalNotReadyException unavailable = await Assert.ThrowsAsync<
+            SessionJournalNotReadyException
+        >(() => engine.PrepareContextLifecycleMaintenanceAsync(
+            head,
+            unavailableLifecycle,
+            "pending-observation",
+            CancellationToken.None
+        ).AsTask());
+        Assert.Equal(
+            SessionJournalNotReadyReason.RecapMaintenanceUnavailable,
+            unavailable.Reason
+        );
 
         ResumeOutcome idleResume = await resume(
             head,
@@ -118,6 +155,108 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
         Assert.IsType<SessionTurnRetractionResult.Unavailable>(
             engine.RewindLatestCompletedTurn(head)
         );
+    }
+
+    [Fact]
+    public async Task ExternalCandidateSourceCanProduceLegalPublicOutcomes() {
+        EventAddress anchor = EventAddressTextCodec.Parse(
+            "ej1:00000000000000010000000100000000"
+        );
+        var setup = new SessionContextSetupReference(
+            anchor,
+            1,
+            new string('a', 64)
+        );
+        var anchorSetups = new SessionContextAnchorSetupReferences(
+            setup,
+            setup
+        );
+        var descriptor = new SessionContextCandidateDescriptor(
+            "external-handle",
+            "external-snapshot",
+            anchor,
+            anchorSetups
+        );
+        var candidate = new SessionContextCandidate(
+            anchor,
+            anchorSetups,
+            Array.Empty<SessionContextContribution>()
+        );
+        SessionContextCandidateSelection[] selections = [
+            new(
+                SessionContextCandidateSelectionStatus.Selected,
+                descriptor
+            ),
+            new(
+                SessionContextCandidateSelectionStatus.EmptyLineage,
+                Candidate: null
+            ),
+            new(
+                SessionContextCandidateSelectionStatus.OrdinalUnavailable,
+                Candidate: null
+            ),
+            new(
+                SessionContextCandidateSelectionStatus.ExactPublishedSetInvalid,
+                Candidate: null
+            ),
+            new(
+                SessionContextCandidateSelectionStatus.StoreUnavailable,
+                Candidate: null
+            ),
+            SessionContextCandidateSelection.BeyondPrefix(
+                "The exact anchor is beyond the bounded prefix."
+            ),
+            new(
+                SessionContextCandidateSelectionStatus.RawHistoryAuthorized,
+                Candidate: null
+            )
+        ];
+
+        foreach (SessionContextCandidateSelection expected in selections) {
+            var source = new ExternalCandidateSource(
+                selection: expected
+            );
+            SessionContextCandidateSelection observed = await source
+                .SelectAsync(
+                    new SessionContextSelectionRequest(anchor, 0),
+                    CancellationToken.None
+                );
+            observed.ValidateShape();
+            Assert.Same(expected, observed);
+        }
+
+        SessionContextCandidateMaterializationResult[] materializations = [
+            new SessionContextCandidateMaterializationResult.Materialized(
+                candidate
+            ),
+            new SessionContextCandidateMaterializationResult.Stale(
+                "The selected snapshot changed."
+            ),
+            new SessionContextCandidateMaterializationResult.Busy(
+                "The derived store is busy."
+            ),
+            new SessionContextCandidateMaterializationResult.Disposed(
+                "The derived store was disposed."
+            ),
+            new SessionContextCandidateMaterializationResult.Invalid(
+                "The selected snapshot is invalid."
+            )
+        ];
+
+        foreach (
+            SessionContextCandidateMaterializationResult expected
+            in materializations
+        ) {
+            var source = new ExternalCandidateSource(
+                materialization: expected
+            );
+            SessionContextCandidateMaterializationResult observed =
+                await source.MaterializeAsync(
+                    descriptor,
+                    CancellationToken.None
+                );
+            Assert.Same(expected, observed);
+        }
     }
 
     [Fact]
@@ -141,29 +280,63 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
         }
     }
 
+    private static EventAddress ReadPendingBoundaryHead(
+        SessionPendingToolBoundaryResult result
+    ) => result switch {
+        SessionPendingToolBoundaryResult.Settled settled => settled.Head,
+        SessionPendingToolBoundaryResult.MorePending morePending =>
+            morePending.Head,
+        _ => throw new ArgumentOutOfRangeException(nameof(result))
+    };
+
     private sealed class ExternalCandidateSource
         : ICoherentContextCandidateSource {
+        private readonly SessionContextCandidateSelection _selection;
+        private readonly SessionContextCandidateMaterializationResult
+            _materialization;
+
+        internal ExternalCandidateSource(
+            SessionContextCandidateSelection? selection = null,
+            SessionContextCandidateMaterializationResult? materialization = null
+        ) {
+            _selection = selection ?? new SessionContextCandidateSelection(
+                SessionContextCandidateSelectionStatus.EmptyLineage,
+                Candidate: null
+            );
+            _materialization = materialization
+                ?? new SessionContextCandidateMaterializationResult.Invalid(
+                    "External fixture has no materialized candidate."
+                );
+        }
+
         public ValueTask<SessionContextCandidateSelection> SelectAsync(
             SessionContextSelectionRequest request,
             CancellationToken cancellationToken
-        ) => ValueTask.FromResult(new SessionContextCandidateSelection(
-            SessionContextCandidateSelectionStatus.EmptyLineage,
-            Candidate: null
-        ));
+        ) {
+            request.ValidateShape();
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(_selection);
+        }
 
         public ValueTask<SessionContextCandidateMaterializationResult>
             MaterializeAsync(
             SessionContextCandidateDescriptor descriptor,
             CancellationToken cancellationToken
-        ) => ValueTask.FromResult<SessionContextCandidateMaterializationResult>(
-            new SessionContextCandidateMaterializationResult.Invalid(
-                "External fixture has no materialized candidate."
-            )
-        );
+        ) {
+            ArgumentNullException.ThrowIfNull(descriptor);
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(_materialization);
+        }
     }
 
     private sealed class ExternalLifecycle
         : ISessionContextLifecycleCoordinator {
+        private readonly SessionContextLifecycleResult _result;
+
+        internal ExternalLifecycle(
+            SessionContextLifecycleResult? result = null
+        ) => _result = result ?? SessionContextLifecycleResult.Ready;
+
         internal SessionContextLifecycleRequest? LastRequest { get; private set; }
 
         public ValueTask<SessionContextLifecycleResult> PrepareAsync(
@@ -173,7 +346,7 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
         ) {
             Assert.NotNull(readView);
             LastRequest = request;
-            return ValueTask.FromResult(SessionContextLifecycleResult.Ready);
+            return ValueTask.FromResult(_result);
         }
     }
 
