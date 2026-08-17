@@ -282,6 +282,54 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     }
 
     [Fact]
+    public void ProfileRegistryRejectsDuplicateProfileAndRuntimeIdentities() {
+        using var fixture = new RootConfigFixture();
+
+        fixture.WriteProfile(
+            "registry/duplicate-profile-a.json",
+            "duplicate-profile",
+            identityDiscriminator: 1
+        );
+        fixture.WriteProfile(
+            "registry/duplicate-profile-b.json",
+            "duplicate-profile",
+            identityDiscriminator: 2
+        );
+        JsonObject duplicateProfileRoot = ParseRoot(MinimalV1);
+        JsonObject duplicateProfileRecap = RecapObject(duplicateProfileRoot);
+        duplicateProfileRecap["agentControlProfileFiles"] = new JsonArray(
+            "registry/duplicate-profile-a.json",
+            "registry/duplicate-profile-b.json"
+        );
+        duplicateProfileRecap["currentAgentControlProfileId"] =
+            "duplicate-profile";
+        Assert.Throws<ArgumentException>(() => fixture.Load(
+            duplicateProfileRoot.ToJsonString()
+        ));
+
+        fixture.WriteProfile(
+            "registry/duplicate-runtime-a.json",
+            "runtime-a",
+            identityDiscriminator: 3
+        );
+        fixture.WriteProfile(
+            "registry/duplicate-runtime-b.json",
+            "runtime-b",
+            identityDiscriminator: 3
+        );
+        JsonObject duplicateRuntimeRoot = ParseRoot(MinimalV1);
+        JsonObject duplicateRuntimeRecap = RecapObject(duplicateRuntimeRoot);
+        duplicateRuntimeRecap["agentControlProfileFiles"] = new JsonArray(
+            "registry/duplicate-runtime-a.json",
+            "registry/duplicate-runtime-b.json"
+        );
+        duplicateRuntimeRecap["currentAgentControlProfileId"] = "runtime-a";
+        Assert.Throws<ArgumentException>(() => fixture.Load(
+            duplicateRuntimeRoot.ToJsonString()
+        ));
+    }
+
+    [Fact]
     public void PromptInlineAndFileLanguageIsExact() {
         using var fixture = new RootConfigFixture();
 
