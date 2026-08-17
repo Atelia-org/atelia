@@ -40,8 +40,7 @@ public sealed class PublicSurfaceTests {
 
         Assert.NotNull(host.Executor);
         Assert.Equal(0, factory.CallCount);
-        Assert.Empty(host.Telemetry.ReadSnapshot().Events);
-        Assert.False(host.Telemetry.IsMaterialized);
+        Assert.Empty(host.ReadTelemetrySnapshot().Events);
         await host.DisposeAsync();
     }
 
@@ -93,6 +92,31 @@ public sealed class PublicSurfaceTests {
 
         await host.DisposeAsync();
         Assert.Equal(1, factory.Client.DisposeCount);
+    }
+
+    [Fact]
+    public void HostTelemetrySurfaceIsReadOnlyWhileStandaloneCollectorRemainsPublic() {
+        Type runtimeHost = typeof(RecapGridRuntimeHost);
+        Type completionHost = typeof(RecapGridCompletionHost);
+
+        Assert.Null(runtimeHost.GetProperty("Telemetry"));
+        Assert.Null(completionHost.GetProperty("Telemetry"));
+        Assert.Equal(
+            typeof(RecapCompletionTelemetrySnapshot),
+            runtimeHost.GetMethod("ReadTelemetrySnapshot")?.ReturnType
+        );
+        Assert.Equal(
+            typeof(RecapCompletionTelemetrySnapshot),
+            completionHost.GetMethod("ReadTelemetrySnapshot")?.ReturnType
+        );
+        Assert.Null(typeof(BoundedRecapCompletionTelemetry).GetProperty(
+            "IsMaterialized"
+        ));
+
+        IRecapCompletionTelemetry telemetry =
+            new BoundedRecapCompletionTelemetry();
+        Assert.Empty(Assert.IsType<BoundedRecapCompletionTelemetry>(telemetry)
+            .ReadSnapshot().Events);
     }
 
     [Fact]

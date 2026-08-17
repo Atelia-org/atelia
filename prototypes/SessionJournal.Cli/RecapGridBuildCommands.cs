@@ -144,7 +144,7 @@ internal static partial class RecapGridCommands {
             return PrintBuildResult(
                 "build",
                 result,
-                host.Telemetry.ReadSnapshot()
+                host.ReadTelemetrySnapshot()
             );
         }
     }

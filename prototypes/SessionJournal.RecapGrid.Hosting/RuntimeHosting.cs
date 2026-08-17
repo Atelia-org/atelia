@@ -86,7 +86,7 @@ public sealed class BoundedRecapCompletionTelemetry
     /// True only after the first operational event reaches the collector.
     /// Reading an empty snapshot does not allocate the retained evidence queue.
     /// </summary>
-    public bool IsMaterialized {
+    internal bool IsMaterialized {
         get { lock (_gate) { return _state is not null; } }
     }
 
@@ -204,7 +204,10 @@ public sealed class RecapGridRuntimeHost : IDisposable, IAsyncDisposable {
 
     public RecapCompletionRuntime Runtime { get; }
     public IRecapCellBatchExecutor Executor => Runtime;
-    public BoundedRecapCompletionTelemetry Telemetry { get; }
+    internal BoundedRecapCompletionTelemetry Telemetry { get; }
+
+    public RecapCompletionTelemetrySnapshot ReadTelemetrySnapshot()
+        => Telemetry.ReadSnapshot();
 
     public static RecapGridRuntimeHost Create(
         RecapGridRouteManifest manifest,
@@ -364,7 +367,10 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
 
     public RecapCompletionRuntime Runtime { get; }
     public IRecapCellBatchExecutor Executor => Runtime;
-    public BoundedRecapCompletionTelemetry Telemetry { get; }
+    internal BoundedRecapCompletionTelemetry Telemetry { get; }
+
+    public RecapCompletionTelemetrySnapshot ReadTelemetrySnapshot()
+        => Telemetry.ReadSnapshot();
 
     public static RecapGridCompletionHost Create(
         Func<RecapGridRouteManifest> routeManifestLoader,

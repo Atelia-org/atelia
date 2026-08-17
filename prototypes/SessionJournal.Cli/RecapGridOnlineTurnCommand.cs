@@ -393,7 +393,7 @@ internal static partial class RecapGridCommands {
                     invocation.ApiSpecId,
                     invocation.Model,
                     errorCount = errors?.Count ?? 0,
-                    recapEvidence = completionHost.Telemetry.ReadSnapshot()
+                    recapEvidence = completionHost.ReadTelemetrySnapshot()
                 }
             );
         }

@@ -114,7 +114,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.Equal("world-r1", world.Content);
         Assert.Equal(RecapCellOutcome.KeepUnchanged, autobiography.Outcome);
         Assert.Equal("autobiography-r2", autobiography.Content);
-        Assert.All(completion.Telemetry.ReadSnapshot().Events, value => {
+        Assert.All(completion.ReadTelemetrySnapshot().Events, value => {
             Assert.Equal(RecapConnectionId, value.ConnectionId);
             Assert.Equal("recap-model-a", value.ModelId);
             Assert.Equal(fixture.Family.Digest, value.FamilyDigest);
@@ -188,8 +188,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         );
         Assert.Equal(fixture.Autobiography.LogicalColumnId,
             missing.LogicalColumnId);
-        RecapCompletionTelemetryEvent[] modelAEvents = completionA.Telemetry
-            .ReadSnapshot().Events.ToArray();
+        RecapCompletionTelemetryEvent[] modelAEvents = completionA
+            .ReadTelemetrySnapshot().Events.ToArray();
         Assert.Equal(2, modelAEvents.Length);
         Assert.All(modelAEvents, value => {
             Assert.Equal(RecapConnectionId, value.ConnectionId);
@@ -246,7 +246,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.Equal("autobiography", modelBInvocation.LogicalColumnId);
         Assert.Equal("recap-model-b", modelBInvocation.Request.ModelId);
         RecapCompletionTelemetryEvent modelBEvent = Assert.Single(
-            completionB.Telemetry.ReadSnapshot().Events
+            completionB.ReadTelemetrySnapshot().Events
         );
         Assert.Equal(RecapConnectionId, modelBEvent.ConnectionId);
         Assert.Equal("recap-model-b", modelBEvent.ModelId);
@@ -388,8 +388,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             await RunFreshAsync(seedService, seedSession, "seed one");
             await RunFreshAsync(seedService, seedSession, "seed two");
         }
-        EvaluationKeyDigest[] healthyKeys = seedCompletion.Telemetry
-            .ReadSnapshot().Events.Select(static value => value.EvaluationKey)
+        EvaluationKeyDigest[] healthyKeys = seedCompletion
+            .ReadTelemetrySnapshot().Events.Select(
+                static value => value.EvaluationKey)
             .ToArray();
         Assert.Equal(2, healthyKeys.Length);
 
@@ -490,8 +491,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 StringComparison.Ordinal
             );
         });
-        EvaluationKeyDigest[] continuationKeys = recoveryCompletion.Telemetry
-            .ReadSnapshot().Events.Select(static value => value.EvaluationKey)
+        EvaluationKeyDigest[] continuationKeys = recoveryCompletion
+            .ReadTelemetrySnapshot().Events.Select(
+                static value => value.EvaluationKey)
             .ToArray();
         Assert.Equal(continuationKeys.Length,
             continuationKeys.Distinct().Count());
