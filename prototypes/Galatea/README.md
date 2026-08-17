@@ -120,9 +120,9 @@ nonterminal preview最多4 MiB / 16,383 events，terminal reserve为5 MiB / 1 ev
 fatal transport EOF可能没有terminal，browser必须查询current并有限重试，绝不能当success。durable completion后的
 view不可用表达为`done {recent:null}`，typed原因由独立HTTP recent读取。
 
-这些HTTP/SSE bounds、terminal/reconciliation语义与tracked first-party browser已由
-`session-journal-contract-r2-approved-surfaces-v1`批准为Stable V1。该批准不包含deployment/provider readiness、
-diagnostic逐字文本、cookie实现或ignored operator state。没有真实需求前不增加pagination、cursor、
+这些HTTP/SSE grammar、bounds、terminal/reconciliation语义，以及tracked first-party browser对它们的消费行为，
+已由`session-journal-contract-r2-approved-surfaces-v1`批准为Stable V1。该批准不包含deployment/provider readiness、
+diagnostic逐字文本、login HTML、bootstrap、cache token、cookie实现或ignored operator state。没有真实需求前不增加pagination、cursor、
 Last-Event-ID、ack或dual grammar；breaking change必须形成新candidate/version。
 
 ## Readiness
