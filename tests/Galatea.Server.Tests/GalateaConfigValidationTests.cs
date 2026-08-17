@@ -27,6 +27,182 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
+    public void RootConfigTemplateStartsWithExactV1AndRoundTrips() {
+        byte[] template = JsonSerializer.SerializeToUtf8Bytes(
+            GalateaConfigTemplateFactory.CreateUsersFile(),
+            GalateaJson.Options
+        );
+
+        GalateaStrictConfigReader.ValidateUsers(template);
+        using JsonDocument document = JsonDocument.Parse(template);
+        JsonProperty first = document.RootElement
+            .EnumerateObject()
+            .First();
+        Assert.Equal("v", first.Name);
+        Assert.Equal("1", first.Value.GetRawText());
+
+        GalateaUsersFileConfig? decoded = JsonSerializer.Deserialize(
+            template,
+            GalateaJsonContext.Default.GalateaUsersFileConfig
+        );
+        Assert.NotNull(decoded);
+        Assert.Equal(
+            GalateaStrictConfigReader.CurrentConfigVersion,
+            decoded.Version
+        );
+        Assert.Null(typeof(GalateaConfig).GetProperty("Version"));
+    }
+
+    [Fact]
+    public void RootConfigRequiresExactIntegerV1() {
+        string root = NewRoot();
+        try {
+            string configPath = WriteConfig(
+                root,
+                [User("alice", Path.Combine(root, "session"))]
+            );
+            string original = File.ReadAllText(configPath);
+            const string Version = "\"v\":1";
+            Assert.Contains(Version, original, StringComparison.Ordinal);
+
+            string[] invalid = [
+                original.Replace(
+                    Version + ",",
+                    string.Empty,
+                    StringComparison.Ordinal
+                ),
+                original.Replace(Version, "\"v\":null",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"v\":\"1\"",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"v\":0",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"v\":2",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"v\":1.0",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"v\":1e0",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"V\":1",
+                    StringComparison.Ordinal),
+                original.Replace(
+                    Version + ",",
+                    Version + "," + Version + ",",
+                    StringComparison.Ordinal
+                )
+            ];
+
+            foreach (string candidate in invalid) {
+                Assert.NotEqual(original, candidate);
+                File.WriteAllText(configPath, candidate);
+                Assert.Throws<InvalidDataException>(
+                    () => GalateaConfigLoader.Load(configPath)
+                );
+            }
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void InvalidRootVersionPrecedesSiblingReadsAndWritesNothing() {
+        string root = NewRoot();
+        try {
+            string configPath = Path.Combine(root, "config.json");
+            File.WriteAllText(
+                configPath,
+                """
+                {"v":2,"users":[{"userId":"alice","password":"pw","sessionDir":"session","systemPrompt":"","systemPromptFile":"missing-prompt.txt"}],"recapGrid":{"routeManifestPath":"missing-routes.json","agentControlProfileFiles":["missing-profile.json"],"currentAgentControlProfileId":"missing"}}
+                """
+            );
+
+            InvalidDataException bootstrapFailure = Assert.Throws<
+                InvalidDataException
+            >(() => GalateaConfigBootstrapper.EnsureExistsOrBootstrap(
+                configPath
+            ));
+
+            Assert.Contains(
+                "migrate",
+                bootstrapFailure.Message,
+                StringComparison.OrdinalIgnoreCase
+            );
+            Assert.Equal(
+                [Path.GetFullPath(configPath)],
+                Directory.EnumerateFiles(
+                        root,
+                        "*",
+                        SearchOption.AllDirectories
+                    )
+                    .Select(Path.GetFullPath)
+                    .ToArray()
+            );
+            Assert.Empty(Directory.EnumerateDirectories(
+                root,
+                "*",
+                SearchOption.AllDirectories
+            ));
+
+            InvalidDataException loadFailure = Assert.Throws<
+                InvalidDataException
+            >(() => GalateaConfigLoader.Load(configPath));
+            Assert.Contains(
+                "migrate",
+                loadFailure.Message,
+                StringComparison.OrdinalIgnoreCase
+            );
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void BootstrapDoesNotRewriteExistingVersionlessConfig() {
+        string root = NewRoot();
+        try {
+            string configPath = WriteConfig(
+                root,
+                [User("alice", Path.Combine(root, "session"))]
+            );
+            string connectionsPath = Path.Combine(
+                root,
+                GalateaConfigLoader.ConnectionsFileName
+            );
+            byte[] versionless = File.ReadAllBytes(configPath);
+            versionless = System.Text.Encoding.UTF8.GetBytes(
+                System.Text.Encoding.UTF8.GetString(versionless).Replace(
+                    "\"v\":1,",
+                    string.Empty,
+                    StringComparison.Ordinal
+                )
+            );
+            File.WriteAllBytes(configPath, versionless);
+            byte[] connectionsBefore = File.ReadAllBytes(connectionsPath);
+
+            GalateaConfigBootstrapper.EnsureExistsOrBootstrap(configPath);
+
+            Assert.Equal(versionless, File.ReadAllBytes(configPath));
+            Assert.Equal(
+                connectionsBefore,
+                File.ReadAllBytes(connectionsPath)
+            );
+            InvalidDataException failure = Assert.Throws<
+                InvalidDataException
+            >(() => GalateaConfigLoader.Load(configPath));
+            Assert.Contains(
+                "migrate",
+                failure.Message,
+                StringComparison.OrdinalIgnoreCase
+            );
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task StrictRecapGridConfigDefersRouteReadAndClientCreation() {
         string root = NewRoot();
         try {
@@ -93,7 +269,8 @@ public sealed class GalateaConfigValidationTests {
                 configPath,
                 JsonSerializer.Serialize(
                     new GalateaUsersFileConfig(
-                        [User("alice", Path.Combine(root, "session"))],
+                        Version: GalateaStrictConfigReader.CurrentConfigVersion,
+                        Users: [User("alice", Path.Combine(root, "session"))],
                         RecapGrid: new GalateaRecapGridFileConfig(
                             "routes.json",
                             ["profile.json"],
@@ -142,8 +319,8 @@ public sealed class GalateaConfigValidationTests {
 
             string[] invalidConfigs = [
                 originalConfig.Replace(
-                    "{\"users\"",
-                    "{\"unknown\":1,\"users\"",
+                    "{\"v\":1,\"users\"",
+                    "{\"v\":1,\"unknown\":1,\"users\"",
                     StringComparison.Ordinal
                 ),
                 originalConfig.Replace(
@@ -495,7 +672,8 @@ public sealed class GalateaConfigValidationTests {
             configPath,
             JsonSerializer.Serialize(
                 new GalateaUsersFileConfig(
-                    users,
+                    Version: GalateaStrictConfigReader.CurrentConfigVersion,
+                    Users: users,
                     RecapGrid: new GalateaRecapGridFileConfig(
                         "routes.json",
                         ["profile.json"],

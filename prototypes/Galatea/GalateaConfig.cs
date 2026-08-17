@@ -35,6 +35,7 @@ internal sealed record GalateaRecapGridFileConfig(
 
 /// <summary>Shape of config.json: user accounts + server settings, with no LLM binding.</summary>
 internal sealed record GalateaUsersFileConfig(
+    [property: JsonPropertyName("v")] int Version,
     IReadOnlyList<GalateaUserConfig> Users,
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,

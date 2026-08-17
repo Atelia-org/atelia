@@ -229,7 +229,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             profile.ToCanonicalBytes()
         );
         var users = new GalateaUsersFileConfig(
-            [
+            Version: GalateaStrictConfigReader.CurrentConfigVersion,
+            Users: [
                 new GalateaUserConfig(
                     TestUserId,
                     TestPassword,

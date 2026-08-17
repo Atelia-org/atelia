@@ -6,10 +6,24 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
 
 ## 配置
 
-`config.json` 必须包含 strict `recapGrid`：
+`config.json` 使用单一 strict V1 language，必须包含exact integer `"v": 1`、至少一个user与strict
+`recapGrid`：
 
 ```json
 {
+  "v": 1,
+  "users": [
+    {
+      "userId": "alice",
+      "password": "REPLACE_WITH_A_PRIVATE_PASSWORD",
+      "sessionDir": ".atelia/galatea/sessions/alice",
+      "systemPrompt": "你是家庭局域网里的私人助手。",
+      "systemPromptFile": null
+    }
+  ],
+  "listenUrls": ["http://0.0.0.0:3510"],
+  "callLogDir": null,
+  "maintenanceMode": false,
   "recapGrid": {
     "routeManifestPath": "recap-grid-routes.json",
     "agentControlProfileFiles": ["recap-grid-agent-control-profile.json"],
@@ -17,6 +31,10 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
   }
 }
 ```
+
+writer固定把`v`放在首字段，reader不要求property order。missing version、future version、`null`、string、
+`1.0`或`1e0`都拒绝；没有versionless compatibility reader或自动迁移。已有无版本文件必须在停服、备份并确认
+实际`Galatea:ConfigPath`后人工加入`"v": 1`，应用不会重写其中的password或其他operator配置。
 
 `connections.json` 只包含 Completion connections 与 exact default connection。历史
 Agent Control profiles 必须继续保留，供 Prepared/ToolContinuation 按 frozen identity

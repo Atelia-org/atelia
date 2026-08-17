@@ -1732,6 +1732,11 @@ internal static class GalateaConfigBootstrapper {
         bool configExists = File.Exists(resolvedPath);
         bool connectionsExists = File.Exists(connectionsPath);
         if (configExists && connectionsExists) { return; }
+        if (configExists) {
+            _ = GalateaStrictConfigReader.ReadUsersAndValidate(
+                resolvedPath
+            );
+        }
 
         Directory.CreateDirectory(parentDir);
 
@@ -1779,6 +1784,7 @@ internal static class GalateaConfigTemplateFactory {
 
     public static GalateaUsersFileConfig CreateUsersFile() {
         return new GalateaUsersFileConfig(
+            Version: GalateaStrictConfigReader.CurrentConfigVersion,
             Users: [
                 CreateUser("alice", "alice123", ".atelia/galatea/sessions/alice"),
                 CreateUser("bob", "bob123", ".atelia/galatea/sessions/bob"),

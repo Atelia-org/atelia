@@ -205,7 +205,8 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             configPath,
             JsonSerializer.Serialize(
                 new GalateaUsersFileConfig(
-                    [new GalateaUserConfig(
+                    Version: GalateaStrictConfigReader.CurrentConfigVersion,
+                    Users: [new GalateaUserConfig(
                         "alice",
                         "pw",
                         repository,
