@@ -138,12 +138,15 @@ reconstructor/recovery tests。未来Tier A breaking change必须先给出raw-pr
 | History ledger | `derived/history-timeline/v2/refs/<ref>/timelines/<timelineId>.sqlite`；application id `0x41544854`、Schema V2 | exact pragma、6 tables+6 triggers、metadata scope/head hash/counts、canonical policy/row、selected path与Merkle；normal open bounded、maintenance full verify | unsupported typed；backup/restore/reprovision；existing create在同一exclusive lease内验证head与active policy后才`AlreadyExists` |
 | Cadence | `control/recap-grid/v1/refs/<ref>/cadence/cadence.json`；`atelia.session-journal.recap-grid.cadence.v1` | 2..4,096 bytes、canonical exact；Ref/generation/domain digest与expected Timeline policy；fd-relative publish | stale/busy/invalid/indeterminate typed；不fallback到Timeline或active config猜测 |
 | Control | `control/recap-grid/v1/refs/<ref>/timelines/<timelineId>/control.json`；content `schemaVersion=2` | 2 bytes..32 MiB、strict whole JSON；whole head/state digest、canonical closure、bootstrap、definitions/recipes与receipts | strict non-V2 discriminator typed Unsupported；V2 malformed Invalid；backup/restore/reinitialize，无silent migration |
-| Grid Store | `derived/recap-grid/v1/grid.sqlite`；application id `0x41544752`、Schema V2 | exact pragma/catalog、single metadata identity、canonical payload+indexed columns/FK/counts；transactional writes与physical reset witness；implementation/verification candidate，尚未形成approval-grade exact logical-schema appendix | future version优先typed Unsupported；V2 corruption Invalid/Unhealthy；explicit reset/reprovision，不auto-repair；approval Defer |
+| Grid Store | `derived/recap-grid/v1/grid.sqlite`；application id `0x41544752`、Schema V2 | [post-tag exact logical-schema appendix candidate](recap-grid-store-sqlite-v2.md)列persistent pragma、5-table shape、metadata、canonical payload/bounds与indexed locator proof；implementation/verification完整，但appendix尚未批准 | future version优先typed Unsupported；V2 corruption Invalid/Unhealthy；explicit reset/reprovision，不auto-repair；approval Defer，不属于surface-set-1 tag |
 | Rewriter | IDs durable in Control Family/Definition：runtime `text-runtime-v3`、output `atelia.recap.output.v3`、input `atelia.recap.input.v1`、prior `atelia.recap.prior.v1`、history `atelia.history.segment.v1` | **Approved / Frozen R2 sub-surface**：五个独立protocol轴在route/dispatch前exact preflight；provider renderer/output实现不在批准范围 | 任一mismatch为`ProtocolUnavailable`且provider call为0；不合并为suite ID或兼容grammar |
 
 History/Store metadata version、head/digest/count、indexed columns等是corruption/scope/query proof，不是待删双authority。
 `a77ed16c`只让一份owner-local `SchemaEntry[]`驱动History create+verify；test-owned independent fingerprint保持外部
 oracle，Schema V2与accepted language不变。
+
+Grid Store appendix是在immutable surface-set-1 tag之后为同一validated product source整理的candidate；其tests/docs
+可以提高可审阅性，但不会反向扩大该tag的批准范围。只有后续显式user approval才能提升这项Tier B surface。
 
 Control只有在完整strict JSON root的首字段是exact、unescaped `schemaVersion`，其值是plain Int32且不等于2，
 并且整个top-level不存在duplicate或case-confusable property时才分类为`Unsupported`。malformed/truncated、

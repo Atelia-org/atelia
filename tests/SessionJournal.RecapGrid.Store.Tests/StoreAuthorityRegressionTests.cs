@@ -396,6 +396,19 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
             Assert.False(reader.Read());
         }
 
+        using (SqliteCommand persistentPragmas = connection.CreateCommand()) {
+            persistentPragmas.CommandText = """
+                SELECT
+                    (SELECT page_size FROM pragma_page_size),
+                    (SELECT journal_mode FROM pragma_journal_mode);
+                """;
+            using SqliteDataReader reader = persistentPragmas.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(4096, reader.GetInt64(0));
+            Assert.Equal("delete", reader.GetString(1));
+            Assert.False(reader.Read());
+        }
+
         var names = new List<string>();
         using (SqliteCommand schema = connection.CreateCommand()) {
             schema.CommandText = """

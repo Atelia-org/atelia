@@ -239,6 +239,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | AP renewal disposable rebuild | Complete | `cd966fc7` two fresh imports/validations、raw/assets exact、four-owner gates、repeat-init与standalone Timeline create；exact 128-byte mixed route贯穿scaffold；禁网/provider artifacts 0 |
 | AP approval docs review | Complete | `3575bf30` initial docs + `8585d889` scope/fact tail；三位independent tail re-review均PASS；scoped docs 18/0 |
 | Tier approval与tag | Complete | user approved exact surface set 1；annotated tag `session-journal-contract-r2-approved-surfaces-v1`锚定promotion docs commit与validated source `cd966fc7` |
+| STORE-SCHEMA-A1 | Candidate complete / approval Defer | post-tag [SQLite V2 logical-schema appendix](../../current/contracts/recap-grid-store-sqlite-v2.md) + independent persistent pragma/fingerprint gate；不属于surface-set-1 tag，等待后续显式approval |
 
 ## 9. R0 完成标准
 
@@ -359,3 +360,11 @@ durable schema version、HTTP/SSE grammar或CLI envelope delta，但有productio
 因此已重新运行inventory、solution/Node与provider-free disposable rebuild。所有renewal gates与independent docs
 review均通过；用户已批准exact surface set 1并授权annotated tag。未批准surface继续candidate/Defer；后续工作不得
 移动该tag或用新HEAD反向改写已批准基线。
+
+## 16. Post-tag STORE-SCHEMA-A1 candidate
+
+[Store SQLite V2 logical-schema appendix](../../current/contracts/recap-grid-store-sqlite-v2.md)针对同一validated product
+source `cd966fc7`补齐了Tier B Store的approval-grade审阅入口，并在test-owned independent fingerprint旁另锁
+`page_size=4096`与`journal_mode=delete`。本包不改production、Schema V2、public API、wire或tag；appendix及其
+post-tag test evidence也不属于immutable surface set 1。下一步只能是独立review后由用户显式批准或继续Defer，
+不能用文档合入或green gate自动宣布stable/frozen。
