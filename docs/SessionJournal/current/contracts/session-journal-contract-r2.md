@@ -163,7 +163,7 @@ current companion state拼成混合generation。raw append后的rollback必须ra
 | Route manifest | canonical numeric `v:1`；1 MiB / 4,096 entries；connection id strict UTF-8 128 bytes；concurrency 1..1,024；timeout 1 ms..1 day且整毫秒；maximum output tokens为null或positive；unknown/missing/duplicate/noncanonical reject | operator routing policy，无secret，不是durable semantic identity；old language不兼容读取；runtime/model/family identifiers服从各自owner而不被route的connection-id bound顺带覆盖 |
 | Completion connections | Completion-owned numeric `v:1`；1 MiB、depth 8、1..256 entries；id/env 128 UTF-8 bytes、endpoint 4 KiB、secret 64 KiB；wire endpoint exactly-one、API key at-most-one | strict syntax与owner-local path/no-follow分层；resolved `BaseAddress`是non-secret且进入Completion durable connection fingerprint；API key（inline或env-resolved secret value）不进report/fingerprint；code+manifest停服成对迁移，无dual reader |
 | AgentControl profile | canonical `v:1`；profile id strict UTF-8 128 bytes；profile最多128 KiB；admission inclusive 2..64 KiB；registry 1..256且profile id/runtime identity分别exact unique | admission canonical bytes进入durable tool runtime identity；profile id与whole profile bytes不进入该identity；unknown/version/order/duplicate mismatch fail closed；public admission producer不会生成owner decoder拒绝的bytes |
-| Galatea root config | root raw integer `v:1`；1 MiB、最多256 users；profile files 1..256；strict duplicate/unknown/case/version/path rules；bootstrap no BOM；relative `sessionDir`以config directory为base并向runtime交付absolute path，absolute target保持；template使用`sessions/*` | `0f0afb2c` post-tag direct cut；无process-CWD/existence fallback、auto move/create或config-directory confinement；existing file不自动重写；停服迁移，no-version/future拒绝；完整field language仍candidate/Defer，不属于surface-set-1 tag |
+| Galatea root config | [post-tag V1 appendix candidate](galatea-root-config-v1.md)锁required/optional/count、prompt precedence、config-directory-relative path与profile/route dependencies；root 1 MiB、prompt 1 MiB、profile 128 KiB；bootstrap no BOM | `0f0afb2c` path cut + `0515083f`/`8c450bf0` field/classification gates；无CWD/existence fallback、auto rewrite/move或confinement；完整field language仍approval Defer，不属于surface-set-1 tag |
 | RecapGrid CLI JSON | `atelia.session-journal.recap-grid-cli.v1`、`{schema,command,status,detail}`、16 MiB final report；Store page 128 items / 2 MiB | outer envelope/fallback与Store `inspect/verify/export/reset` [status/detail/exit ledger](../../evidence/contract-freeze-r2-r1-priority-review.md#52-stable-detail-ledger)是freeze-ready machine contract；其他command的具体detail/status仍按owner result为candidate，不因共享printer自动冻结；human stdout/stderr/help与逐字diagnostic不冻结 |
 | Other reports | offline validation v2、legacy import v1、desired setup v1、history-load v1、legacy-root v2 | 只登记current schema IDs；完整field/status/exit language未形成本轮approval ledger，继续Defer；不因外层相似抽generic envelope |
 | Galatea HTTP | complete group `/api/v1`；old `/api/*` exact 404；strict endpoint-local JSON，body 1 MiB；original/normalized message各64 KiB；typed status/success/error | server与cache-busted browser原子共部署；不保留route alias/redirect/dual DTO；breaking change需新candidate/path policy |
@@ -173,9 +173,9 @@ Connections、Route manifest、AgentControl profile、Galatea HTTP/SSE与CLI out
 Stable V1；root config、Other reports与非Store CLI detail/status仍是candidate/Defer。ignored operator config与real provider并非本文可读取的tracked contract；
 current renewal只做禁网、provider-free disposable rebuild，仍不得用历史local observation冒充deployment或provider gate。
 
-Root-config path cut只消除了relative `sessionDir`对process CWD的隐藏依赖；它不引入dual interpretation，也不把
-absolute/`..`改成非法或把repository限制在config目录内。该post-tag implementation与green tests提高了candidate
-可审阅性，但不能反向扩大immutable surface-set-1 tag。
+[Root-config V1 appendix](galatea-root-config-v1.md)把path cut扩展为可审阅的whole field-language candidate；它不引入
+dual interpretation，也不把absolute/`..`改成非法或把repository限制在config目录内。该post-tag implementation、
+tests与文档提高了candidate可审阅性，但不能反向扩大immutable surface-set-1 tag。
 
 HTTP普通`{code,error}`中的existing machine code保持含义，但code namespace允许additive新值，first-party client必须有
 unknown fallback；`turn-busy`专用shape与SSE error code集合仍是closed。`error`逐字文本、property order、login HTML、

@@ -241,6 +241,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | Tier approval与tag | Complete | user approved exact surface set 1；annotated tag `session-journal-contract-r2-approved-surfaces-v1`锚定promotion docs commit与validated source `cd966fc7` |
 | STORE-SCHEMA-A1 | Candidate complete / approval Defer | post-tag [SQLite V2 logical-schema appendix](../../current/contracts/recap-grid-store-sqlite-v2.md) + independent persistent pragma/fingerprint gate；不属于surface-set-1 tag，等待后续显式approval |
 | ROOT-CONFIG-PATH-A0 | Candidate implementation complete / approval Defer | post-tag `0f0afb2c`；relative `sessionDir`以config directory为base、absolute target保持、template为`sessions/*`；root完整field language仍Defer |
+| ROOT-CONFIG-A1 | Candidate complete / approval Defer | post-tag [root config V1 appendix](../../current/contracts/galatea-root-config-v1.md)；`0515083f` + `8c450bf0`锁field language与InvalidData classification；不属于surface-set-1 tag |
 
 ## 9. R0 完成标准
 
@@ -380,3 +381,14 @@ post-tag test evidence也不属于immutable surface set 1。下一步只能是�
 move/create或generic path framework；absolute与`..`仍合法，也不承诺config-directory confinement或新增no-follow
 filesystem边界。新增focused 6/6、config 20/20、Galatea full 150/150与solution build 0W/0E均通过；ignored operator
 config未由本包修改。root config完整field language继续candidate/Defer，且不属于immutable surface-set-1 tag。
+
+## 18. Post-tag ROOT-CONFIG-A1 candidate
+
+[Galatea root config V1 appendix](../../current/contracts/galatea-root-config-v1.md)在`0f0afb2c` path cut与`319bd425`
+初始记录之上，用`0515083f` handwritten field-language tests和`8c450bf0` classification tail锁定whole root
+`config.json` candidate。范围包括required/optional/count、prompt file precedence、config-directory paths、
+eager profile与deferred route dependency、root/prompt/profile bounds，以及bootstrap no-BOM/single-LF writer事实。
+
+该appendix明确bootstrap不是canonical writer，且不承诺password-at-rest protection、file permissions、Kestrel对
+opaque `listenUrls`的解释、diagnostic/provider/deployment、whitespace/property order或auto rewrite。完整root V1
+仍是post-tag candidate/approval Defer，不属于immutable surface-set-1 tag；green tests与文档不能替代后续显式approval。
