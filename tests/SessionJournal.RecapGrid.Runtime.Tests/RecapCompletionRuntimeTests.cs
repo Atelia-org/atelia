@@ -39,38 +39,46 @@ public sealed class RecapCompletionRuntimeTests {
             Assert.IsType<RecapCellExecutionOutcome.Updated>(outcome));
     }
 
-    [Fact]
-    public async Task PreflightProtocolMismatch_RejectsWholeBatchBeforeRemoteStart() {
-        FrozenRowBatch batch = RuntimeTestFixture.Batch(
-            columnCount: 2,
-            inputProtocolId: "unsupported-input-v1"
-        );
-        var invoker = new ScriptedInvoker((_, _) => throw new InvalidOperationException());
-        RecapCompletionRoute route = RuntimeTestFixture.Route(batch, invoker);
-        using var runtime = Runtime(route);
-
-        var rejected = Assert.IsType<
-            RecapCellBatchExecutionResult.RejectedBeforeDispatch
-        >(await runtime.ExecuteAsync(batch, default));
-
-        Assert.Equal("ProtocolUnavailable", rejected.Code);
-        Assert.Equal(0, invoker.CallCount);
-    }
-
-    [Fact]
-    public async Task NonExactV3OutputProtocol_RejectsBeforeRemoteStart() {
-        FrozenRowBatch batch = RuntimeTestFixture.Batch(
-            outputProtocolId: "unsupported-output-v3"
-        );
+    [Theory]
+    [InlineData("runtime")]
+    [InlineData("output")]
+    [InlineData("input")]
+    [InlineData("prior")]
+    [InlineData("history")]
+    public async Task EveryProtocolAxisMismatch_RejectsBeforeRouteOrDispatch(
+        string axis
+    ) {
+        FrozenRowBatch batch = axis switch {
+            "runtime" => RuntimeTestFixture.Batch(
+                runtimeProtocolId: "unsupported-runtime-v3"
+            ),
+            "output" => RuntimeTestFixture.Batch(
+                outputProtocolId: "unsupported-output-v3"
+            ),
+            "input" => RuntimeTestFixture.Batch(
+                inputProtocolId: "unsupported-input-v1"
+            ),
+            "prior" => RuntimeTestFixture.Batch(
+                priorProjectionSchemaId: "unsupported-prior-v1"
+            ),
+            "history" => RuntimeTestFixture.Batch(
+                historySegmentRenderingSchemaId: "unsupported-history-v1"
+            ),
+            _ => throw new ArgumentOutOfRangeException(nameof(axis))
+        };
         var invoker = new ScriptedInvoker((_, _) =>
             throw new InvalidOperationException("must not dispatch"));
-        using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
+        RecapCompletionRoute route = RuntimeTestFixture.Route(batch, invoker);
+        var resolver = new ScriptedResolver(_ =>
+            new RecapCompletionRouteResolution.Bound(route));
+        using var runtime = new RecapCompletionRuntime(resolver);
 
         var rejected = Assert.IsType<
             RecapCellBatchExecutionResult.RejectedBeforeDispatch
         >(await runtime.ExecuteAsync(batch, default));
 
         Assert.Equal("ProtocolUnavailable", rejected.Code);
+        Assert.Equal(0, resolver.CallCount);
         Assert.Equal(0, invoker.CallCount);
     }
 

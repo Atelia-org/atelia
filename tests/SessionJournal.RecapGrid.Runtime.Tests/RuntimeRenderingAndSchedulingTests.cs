@@ -79,9 +79,15 @@ public sealed class RuntimeRenderingAndSchedulingTests {
         var tail = Assert.IsType<ObservationMessage>(
             Assert.Single(captured.TailMessages)
         );
-        Assert.Contains("\"topic\":\"Question 0\"", tail.Content, StringComparison.Ordinal);
-        Assert.Contains("\"carrier\":\"system\"", tail.Content, StringComparison.Ordinal);
-        Assert.DoesNotContain("Digest", tail.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(
+            "{\"schema\":\"atelia.recap.input.v1\","
+            + "\"logicalColumnId\":\"case.column-0\","
+            + "\"topic\":\"Question 0\","
+            + "\"userPromptTemplate\":\"Maintain question 0 literally.\","
+            + "\"target\":{\"carrier\":\"system\","
+            + "\"blockKey\":\"column-0\"}}",
+            tail.Content
+        );
     }
 
     [Fact]

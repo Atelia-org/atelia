@@ -21,13 +21,19 @@ internal static class RuntimeTestFixture {
         bool distinctSemanticModels = false,
         int semanticModelGroupSize = 0,
         IReadOnlyList<string>? runtimeProtocolIds = null,
-        string outputProtocolId = RecapRewriterProtocolV3.OutputProtocolId
+        string outputProtocolId = RecapRewriterProtocolV3.OutputProtocolId,
+        string priorProjectionSchemaId =
+            RecapRewriterProtocolV3.PriorProjectionSchemaId,
+        string historySegmentRenderingSchemaId =
+            RecapRewriterProtocolV3.HistorySegmentRenderingSchemaId
     ) {
         FamilyDefinition[] families = [.. Enumerable.Range(0, columnCount)
             .Select(index => Family(
                 inputProtocolId,
                 distinctFamilies ? $"-{index}" : string.Empty,
-                outputProtocolId
+                outputProtocolId,
+                priorProjectionSchemaId,
+                historySegmentRenderingSchemaId
             ))];
         var definitions = new MaintainerDefinitionRevision[columnCount];
         for (int index = 0; index < columnCount; index++) {
@@ -162,7 +168,11 @@ internal static class RuntimeTestFixture {
     internal static FamilyDefinition Family(
         string inputProtocolId = RecapRewriterProtocolV3.InputProtocolId,
         string systemPromptSuffix = "",
-        string outputProtocolId = RecapRewriterProtocolV3.OutputProtocolId
+        string outputProtocolId = RecapRewriterProtocolV3.OutputProtocolId,
+        string priorProjectionSchemaId =
+            RecapRewriterProtocolV3.PriorProjectionSchemaId,
+        string historySegmentRenderingSchemaId =
+            RecapRewriterProtocolV3.HistorySegmentRenderingSchemaId
     ) {
         return FamilyDefinition.Create(
             "Maintain the inquiry." + systemPromptSuffix,
@@ -173,8 +183,8 @@ internal static class RuntimeTestFixture {
             ),
             new FamilyInputRenderingProtocol(
                 inputProtocolId,
-                RecapRewriterProtocolV3.PriorProjectionSchemaId,
-                RecapRewriterProtocolV3.HistorySegmentRenderingSchemaId
+                priorProjectionSchemaId,
+                historySegmentRenderingSchemaId
             )
         );
     }
