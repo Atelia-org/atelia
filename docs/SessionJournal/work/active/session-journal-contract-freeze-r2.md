@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；approved surface sets 1 + 2 + 3 anchored；surface set 4 user-authorized、gates/review/tag Pending；remaining Defer packages继续  
+状态：Active；approved surface sets 1 + 2 + 3 anchored；surface set 4 user-authorized、unified gates complete / tag-ready、review/tag Pending；remaining Defer packages继续  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -246,7 +246,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | OTHER-REPORT-A1 | Approved / anchored in additive surface set 3 | post-v2-tag [desired setup report V2 appendix](../../current/contracts/desired-setup-reconciliation-report-v2.md)；production `da3aa27a` + test tail `8a54e613`；activation runbook exact consumer gate；不属于immutable surface-set-2 tag，由v3 tag锚定 |
 | AP-PROMOTE-V3 | Complete / tag anchored | [surface set 3 addendum](../../evidence/contract-freeze-r2-approval-surface-set-3.md)只加入Desired Setup report V2 exact narrow scope；promotion `cb8ba558`；gate ledger `adf547e2`；CLI113、solution38/4694、build0W/0E、HTTP/SSE、docs18/0均PASS；v3 tag object `511c5099` → `adf547e2` |
 | HISTORY-LOAD-REPORT-A1 | Candidate complete / top-level narrow scope user-approved | post-v3-tag [HistoryLoad report V2 appendix](../../current/contracts/history-load-report-v2.md)；production/test `881afb39`；focused3、CLI113、build0W/0E是implementation-package历史证据；runbook exact 11-field gate；unbounded/offline，无final cap/oversize contract，不属于v3 tag |
-| AP-PROMOTE-V4 | User-authorized / promotion docs in progress | [surface set 4 addendum](../../evidence/contract-freeze-r2-approval-surface-set-4.md)只新增HistoryLoad V2 exact top-level/types/meanings、V1字段删除与read-only publication/retry；unified gates、independent review与authorized v4 tag均Pending，不复制旧counts |
+| AP-PROMOTE-V4 | Tag-ready / independent review与tag Pending | [surface set 4 addendum](../../evidence/contract-freeze-r2-approval-surface-set-4.md)只新增HistoryLoad V2 exact top-level/types/meanings、V1字段删除与read-only publication/retry；exact `494d215a`上CLI113、solution38/4694、build0W/0E、HTTP/SSE与docs18/0均PASS；inventory/rebuild NotRun/无需；authorized v4 tag尚未创建 |
 
 ## 9. R0 完成标准
 
@@ -478,10 +478,10 @@ promotion只改docs，不修改production/tests。
 `6378cebb`/`c4c6dd16`/`adf547e2`，不能移动、重释或由本授权续期。Authorized tag exact name为
 `session-journal-contract-r2-approved-surfaces-v4`，当前尚未创建。
 
-本轮unified gates与independent pre-tag review仍Pending；不得把HISTORY-LOAD-REPORT-A1 focused3、CLI113、build0W/0E或
-surface set 3的solution/Node/docs counts复制为本次结果。Tag前还须记录exact clean promotion HEAD上的本轮gates与review。
-Public inventory、legacy rebuild是否需要由delta review裁决；ignored operator state、provider与deployment均不因这项
-content-free report批准而成为已运行证据。
+Exact clean promotion HEAD `494d215a`上的CLI full 113、solution 38 projects / 4,694、build 0W/0E、HTTP/SSE Node各1/1、
+scoped docs18/0及diff/status/tag preflight均通过，没有retry或命令calibration。Public inventory与legacy rebuild因无
+.NET API、raw或rebuild semantics delta而NotRun/无需；ignored operator state、provider与deployment亦NotRun。
+Independent pre-tag review仍Pending；authorized tag尚未创建，因此当前只是tag-ready candidate，不是anchored closure。
 
 批准不包含bounded work/memory/final bytes、pagination/oversize、nested exact shape、JSON order/bytes、complete CLI
 input/diagnostic、current operator data、provider/deployment或historical V1 values。2026-07-31 V1 calibration evidence保持

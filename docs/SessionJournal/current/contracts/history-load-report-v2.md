@@ -1,6 +1,6 @@
 # HistoryLoad calibration report V2 approved top-level contract
 
-状态：**surface set 4 exact top-level/read-only scope user-approved；unified gates、review与tag Pending**  
+状态：**surface set 4 exact top-level/read-only scope user-approved；unified gates complete / tag-ready；review与tag Pending**  
 production/test source：`881afb39af511567b8bb900c5db103426791ab95`  
 approval boundary：不属于immutable v3 tag；authorized v4 tag尚未创建
 
@@ -101,5 +101,5 @@ addresses、per-unit kinds、source ranges、load与rendered-byte measurements�
 2026-07-31的
 [`history-load-galatea-calibration.md`](../../evidence/history-load-galatea-calibration.md)是V1 single-fixture历史证据，
 保持原样且不认证V2 current output。本文形成于immutable surface-set-3 tag之后；用户已明确批准
-[surface set 4 addendum](../../evidence/contract-freeze-r2-approval-surface-set-4.md)圈定的窄scope，但unified gates、
-independent review与authorized v4 tag仍Pending，且该批准不反向移动或扩大v3 tag。
+[surface set 4 addendum](../../evidence/contract-freeze-r2-approval-surface-set-4.md)圈定的窄scope，本轮unified gates已
+通过，但independent review与authorized v4 tag仍Pending；该批准不反向移动或扩大v3 tag。

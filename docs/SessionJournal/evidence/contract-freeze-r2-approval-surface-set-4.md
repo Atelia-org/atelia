@@ -1,8 +1,9 @@
 # SessionJournal Contract Freeze R2 — additive surface set 4 approval
 
-状态：**user approval recorded；promotion docs candidate；unified gates与independent review Pending；annotated tag authorized / Pending**  
+状态：**user approval recorded；unified gates complete / tag-ready；independent review与annotated tag Pending**  
 production/test source：`881afb39af511567b8bb900c5db103426791ab95`  
 candidate appendix commit：`2fa9808bfac0d8836da490548e9b3c98c38f2395`  
+promotion docs / unified gate candidate：`494d215ad2d3504b6e997b8ea2bf13fb3e50270c`  
 authorized tag：`session-journal-contract-r2-approved-surfaces-v4`（尚未创建）  
 记录日期：2026-08-18
 
@@ -52,26 +53,41 @@ Surface set 4明确不批准：
 [`history-load-galatea-calibration.md`](history-load-galatea-calibration.md)继续是V1 single-fixture historical evidence；
 surface set 4不修改、重释或认证其中的历史values，也不把它升级为current deployment evidence。
 
-## 3. Evidence与Pending boundary
+## 3. Evidence与verification boundary
 
 - `881afb39`是V2 producer与owning contract tests的source pin；`2fa9808b`是consumer gate与candidate appendix pin。
-- 本commit只准备promotion docs，不修改production、tests、operator state或tag。
-- 本轮unified solution/CLI/Node/docs gates尚未运行或登记；independent pre-tag review尚未完成。历史surface set 3或
-  HISTORY-LOAD-REPORT-A1的counts不能复制为本次gate结果。
-- public inventory、legacy rebuild、ignored operator state、real provider与deployment均NotRun；是否需要前两项由tag前
-  delta review裁决，后四项不因批准一个content-free report contract而自动成为gate。
+- `494d215a`只准备promotion docs，不修改production/tests，并作为本轮exact clean unified gate candidate；以下结果不是
+  surface set 3或HISTORY-LOAD-REPORT-A1旧counts的复制。
+- public inventory与legacy rebuild为**NotRun / 本次无需**：本promotion没有.NET API、raw wire或rebuild semantics
+  delta。Ignored operator state、real provider与deployment为**NotRun**，不因批准一个content-free report contract而
+  自动成为gate。
+- independent pre-tag review仍Pending；unified gates通过不等于tag已创建或已锚定。
 
-因此当前状态只是**user-authorized promotion candidate**，不是tagged/anchored completion。
+### 3.1 Unified gate ledger at `494d215a`
+
+| Gate | Result |
+|:--|:--|
+| `dotnet test tests/SessionJournal.Cli.Tests/SessionJournal.Cli.Tests.csproj --no-restore -m:1 -nr:false` | 113 passed / 0 failed / 0 skipped；test duration 1m41s；command elapsed 140.36s |
+| `dotnet test Atelia.sln --no-restore -m:1 -nr:false` | 38 projects / 4,694 passed / 0 failed / 0 skipped；command elapsed 1,282.48s |
+| `dotnet build Atelia.sln --no-restore -m:1 -nr:false` | 0 warnings / 0 errors；MSBuild 16.93s；command elapsed 17.32s |
+| production HTTP Node contract suite | 1 passed / 0 failed / 0 skipped；command elapsed 0.76s |
+| production SSE Node contract suite | 1 passed / 0 failed / 0 skipped；command elapsed 0.34s |
+| scoped docs checker | 18 files / 0 diagnostics |
+| candidate diff / status / tag preflight | diff clean；worktree clean；v4 tag absent；immutable v1/v2/v3 targets仍为`6378cebb` / `c4c6dd16` / `adf547e2` |
+| public inventory / disposable legacy rebuild | NotRun / 本次无需；无.NET API、raw或rebuild semantics delta |
+| ignored operator state / provider / deployment | NotRun；不属于本promotion gate |
+
+所有命令均使用首次选择的正确path/arguments通过，没有retry或命令calibration。当前状态是**tag-ready promotion
+candidate**；independent review与annotated tag仍Pending，因此不是tagged/anchored completion。
 
 ## 4. Tag-before checklist
 
 创建annotated tag前必须：
 
-1. 在exact clean promotion HEAD上完成并记录本轮选择的unified gates与结果；
-2. 由独立reviewer核对本addendum、current contract、appendix、routers、active plan与runbook没有扩大批准范围，且
+1. exact clean promotion HEAD `494d215a`上的unified gates已按§3.1完成；
+2. **Pending**：由独立reviewer核对本addendum、current contract、appendix、routers、active plan与runbook没有扩大批准范围，且
    v1/v2/v3 tags及historical V1 evidence均未改变；
-3. 确认`session-journal-contract-r2-approved-surfaces-v4`仍不存在，记录promotion docs commit与tag target；
+3. preflight已确认`session-journal-contract-r2-approved-surfaces-v4`不存在；final reviewed gate ledger与tag target仍待记录；
 4. annotated tag message同时pin production/test source `881afb39`、candidate appendix `2fa9808b`、promotion/gate ledger、
    approved exact top-level/read-only scope和§2 non-promises；
 5. tag创建后另做post-tag status docs commit；不得移动tag来吸收post-tag文档。
-
