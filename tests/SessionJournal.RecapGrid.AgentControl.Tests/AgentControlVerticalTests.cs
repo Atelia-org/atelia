@@ -485,6 +485,239 @@ public sealed class AgentControlVerticalTests : IDisposable {
     }
 
     [Fact]
+    public void ProfileAndAdmissionByteGatesAreInclusiveAndOwnerCanonical() {
+        const int MaximumProfileBytes = 128 * 1024;
+        const int MaximumAdmissionBytes = 64 * 1024;
+        RecapGridControlAdmission admission = CreateAdmission();
+        byte[] admissionBytes = admission.ToCanonicalBytes();
+
+        Assert.InRange(admissionBytes.Length, 2, MaximumAdmissionBytes);
+        Assert.Equal(
+            admissionBytes,
+            RecapGridControlAdmission.DecodeCanonical(admissionBytes)
+                .ToCanonicalBytes()
+        );
+        RecapGridAgentControlProfile profile =
+            RecapGridAgentControlProfile.Create("profile", admission);
+        Assert.InRange(profile.ToCanonicalBytes().Length, 1,
+            MaximumProfileBytes);
+        Assert.Equal(
+            profile.ToCanonicalBytes(),
+            RecapGridAgentControlProfile.DecodeCanonical(
+                profile.ToCanonicalBytes()
+            ).ToCanonicalBytes()
+        );
+
+        byte[] admissionMinimumBytes = "xx"u8.ToArray();
+        InvalidDataException admissionMinimum = Assert.Throws<
+            InvalidDataException>(() =>
+                RecapGridControlAdmission.DecodeCanonical(
+                    admissionMinimumBytes
+                ));
+        Assert.IsType<JsonException>(admissionMinimum.InnerException);
+        byte[] admissionBelowMinimumBytes = "x"u8.ToArray();
+        InvalidDataException admissionBelowMinimum = Assert.Throws<
+            InvalidDataException>(() =>
+                RecapGridControlAdmission.DecodeCanonical(
+                    admissionBelowMinimumBytes
+                ));
+        Assert.Null(admissionBelowMinimum.InnerException);
+
+        byte[] admissionMaximum = Enumerable.Repeat(
+            (byte)'x',
+            MaximumAdmissionBytes
+        ).ToArray();
+        InvalidDataException admissionAtMaximum = Assert.Throws<
+            InvalidDataException>(() =>
+                RecapGridControlAdmission.DecodeCanonical(admissionMaximum));
+        Assert.IsType<JsonException>(admissionAtMaximum.InnerException);
+        InvalidDataException admissionAboveMaximum = Assert.Throws<
+            InvalidDataException>(() =>
+                RecapGridControlAdmission.DecodeCanonical([
+                    .. admissionMaximum,
+                    (byte)'x'
+                ]));
+        Assert.Null(admissionAboveMaximum.InnerException);
+
+        byte[] profileAtMaximum = PadJsonWithSpaces(
+            "{\"v\":1,\"profileId\":\"profile\","
+                + "\"admissionCanonicalBase64\":\"%\"}",
+            MaximumProfileBytes
+        );
+        InvalidDataException profileMaximum = Assert.Throws<
+            InvalidDataException>(() =>
+                RecapGridAgentControlProfile.DecodeCanonical(
+                    profileAtMaximum
+                ));
+        Assert.IsType<FormatException>(profileMaximum.InnerException);
+        InvalidDataException profileAboveMaximum = Assert.Throws<
+            InvalidDataException>(() =>
+                RecapGridAgentControlProfile.DecodeCanonical([
+                    .. profileAtMaximum,
+                    (byte)' '
+                ]));
+        Assert.Null(profileAboveMaximum.InnerException);
+    }
+
+    [Fact]
+    public void ProfileIdUtf8BoundIsInclusive() {
+        const int MaximumProfileIdUtf8Bytes = 128;
+        string maximum = new('x', MaximumProfileIdUtf8Bytes);
+        string maximumNonAscii = new('\u00e9', 64);
+        RecapGridControlAdmission admission = CreateAdmission();
+
+        RecapGridAgentControlProfile accepted =
+            RecapGridAgentControlProfile.Create(maximum, admission);
+        RecapGridAgentControlProfile acceptedNonAscii =
+            RecapGridAgentControlProfile.Create(
+                maximumNonAscii,
+                admission
+            );
+
+        Assert.Equal(
+            MaximumProfileIdUtf8Bytes,
+            Encoding.UTF8.GetByteCount(accepted.ProfileId)
+        );
+        Assert.Equal(
+            MaximumProfileIdUtf8Bytes,
+            Encoding.UTF8.GetByteCount(acceptedNonAscii.ProfileId)
+        );
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            RecapGridAgentControlProfile.Create(maximum + "x", admission));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            RecapGridAgentControlProfile.Create(
+                maximumNonAscii + "x",
+                admission
+            ));
+        foreach (string invalidId in new[] { " ", "profile\n", "\ud800" }) {
+            Assert.Throws<ArgumentException>(() =>
+                RecapGridAgentControlProfile.Create(invalidId, admission));
+        }
+    }
+
+    [Theory]
+    [InlineData("missing-version")]
+    [InlineData("future-version")]
+    [InlineData("fractional-version")]
+    [InlineData("unknown")]
+    [InlineData("duplicate")]
+    [InlineData("duplicate-version")]
+    [InlineData("root-order")]
+    [InlineData("wrong-case")]
+    [InlineData("missing-admission")]
+    public void ProfileCodecRejectsNoncanonicalV1Mutations(string kind) {
+        RecapGridAgentControlProfile profile =
+            RecapGridAgentControlProfile.Create(
+                "operator-v1",
+                CreateAdmission()
+            );
+        string canonical = Encoding.UTF8.GetString(
+            profile.ToCanonicalBytes()
+        );
+        string invalid = kind switch {
+            "missing-version" => canonical.Replace(
+                "{\"v\":1,",
+                "{",
+                StringComparison.Ordinal
+            ),
+            "future-version" => canonical.Replace(
+                "\"v\":1",
+                "\"v\":2",
+                StringComparison.Ordinal
+            ),
+            "fractional-version" => canonical.Replace(
+                "\"v\":1",
+                "\"v\":1.0",
+                StringComparison.Ordinal
+            ),
+            "unknown" => canonical.Replace(
+                "\"profileId\":",
+                "\"unknown\":1,\"profileId\":",
+                StringComparison.Ordinal
+            ),
+            "duplicate" => canonical.Replace(
+                "\"profileId\":",
+                "\"profileId\":\"operator-v1\",\"profileId\":",
+                StringComparison.Ordinal
+            ),
+            "duplicate-version" => canonical.Replace(
+                "{\"v\":1,",
+                "{\"v\":1,\"v\":1,",
+                StringComparison.Ordinal
+            ),
+            "root-order" => canonical.Replace(
+                "{\"v\":1,\"profileId\":\"operator-v1\",",
+                "{\"profileId\":\"operator-v1\",\"v\":1,",
+                StringComparison.Ordinal
+            ),
+            "wrong-case" => canonical.Replace(
+                "\"profileId\":",
+                "\"ProfileId\":",
+                StringComparison.Ordinal
+            ),
+            "missing-admission" => RemoveFinalJsonProperty(
+                canonical,
+                ",\"admissionCanonicalBase64\":"
+            ),
+            _ => throw new InvalidOperationException()
+        };
+        Assert.NotEqual(canonical, invalid);
+
+        Assert.Throws<InvalidDataException>(() =>
+            RecapGridAgentControlProfile.DecodeCanonical(
+                Encoding.UTF8.GetBytes(invalid)
+            ));
+    }
+
+    [Fact]
+    public void ProfileRegistryCountAndIdentityBoundsAreExact() {
+        RecapGridAgentControlProfile[] maximum = Enumerable.Range(0, 256)
+            .Select(index => RecapGridAgentControlProfile.Create(
+                $"profile-{index:D3}",
+                AdmissionWithProjectedCalls(index)
+            ))
+            .ToArray();
+
+        var registry = new RecapGridAgentControlProfileRegistry(maximum);
+        Assert.Equal(256, registry.ProfileIds.Count);
+        Assert.Throws<ArgumentException>(() =>
+            new RecapGridAgentControlProfileRegistry([]));
+        Assert.Throws<ArgumentException>(() =>
+            new RecapGridAgentControlProfileRegistry([
+                .. maximum,
+                RecapGridAgentControlProfile.Create(
+                    "profile-overflow",
+                    AdmissionWithProjectedCalls(256)
+                )
+            ]));
+
+        Assert.Throws<ArgumentException>(() =>
+            new RecapGridAgentControlProfileRegistry([
+                RecapGridAgentControlProfile.Create(
+                    "duplicate-id",
+                    AdmissionWithProjectedCalls(1)
+                ),
+                RecapGridAgentControlProfile.Create(
+                    "duplicate-id",
+                    AdmissionWithProjectedCalls(2)
+                )
+            ]));
+        RecapGridControlAdmission sharedAdmission =
+            AdmissionWithProjectedCalls(3);
+        Assert.Throws<ArgumentException>(() =>
+            new RecapGridAgentControlProfileRegistry([
+                RecapGridAgentControlProfile.Create(
+                    "runtime-a",
+                    sharedAdmission
+                ),
+                RecapGridAgentControlProfile.Create(
+                    "runtime-b",
+                    sharedAdmission
+                )
+            ]));
+    }
+
+    [Fact]
     public async Task FrozenBindingIsDerivedLazyAndFirstExecutionFailsClosed() {
         string path = Path.Combine(
             Directory.Exists("/dev/shm") ? "/dev/shm" : Path.GetTempPath(),
@@ -827,6 +1060,40 @@ public sealed class AgentControlVerticalTests : IDisposable {
             maximumBootstrapRows: 64,
             maximumProjectedCalls: 128
         );
+    }
+
+    private static RecapGridControlAdmission AdmissionWithProjectedCalls(
+        int maximumProjectedCalls
+    ) => new(
+        RecapGridControlPermission.None,
+        [],
+        [],
+        [],
+        ["case."],
+        maximumBootstrapRows: 0,
+        maximumProjectedCalls: maximumProjectedCalls
+    );
+
+    private static string RemoveFinalJsonProperty(
+        string canonical,
+        string propertyMarker
+    ) {
+        int propertyOffset = canonical.IndexOf(
+            propertyMarker,
+            StringComparison.Ordinal
+        );
+        Assert.True(propertyOffset >= 0);
+        Assert.EndsWith("}", canonical, StringComparison.Ordinal);
+        return canonical[..propertyOffset] + "}";
+    }
+
+    private static byte[] PadJsonWithSpaces(string json, int exactLength) {
+        byte[] bytes = Encoding.UTF8.GetBytes(json);
+        Assert.True(bytes.Length <= exactLength);
+        int contentLength = bytes.Length;
+        Array.Resize(ref bytes, exactLength);
+        bytes.AsSpan(contentLength).Fill((byte)' ');
+        return bytes;
     }
 
     private RecapGridAgentControlHandle Open(Fixture fixture) {
