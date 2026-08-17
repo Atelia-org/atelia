@@ -25,6 +25,10 @@ no-create且不构造provider；`cadence set-reserve`只允许CAS更新
 `MinimumRecentHistoryLoad`，要求exact Ref、generation与domain digest，并原样保留
 partition algorithm、estimator、`TargetHistoryLoad`和segment caps。它不能修改B来绕过
 Timeline policy matching；Busy、Stale与CommitIndeterminate均返回typed report且不自动retry。
+Exact command-local ledger与恢复矩阵见
+[Cadence set-reserve receipt candidate](../../docs/SessionJournal/current/contracts/cadence-set-reserve-receipt.md)：stdout丢失或
+commit-indeterminate后必须fresh `cadence inspect`完整head/policy，不能从receipt absence推断未提交，也不能自动retry。
+该appendix形成于immutable surface-set-4 tag之后，当前approval Defer。
 
 所有 branch mutation 都要求与 selected SessionJournal branch 相同的
 `--confirm-ref`。`init` 显式按 Timeline、Cadence、Control、Grid 四域创建，且

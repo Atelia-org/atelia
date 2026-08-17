@@ -247,6 +247,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | AP-PROMOTE-V3 | Complete / tag anchored | [surface set 3 addendum](../../evidence/contract-freeze-r2-approval-surface-set-3.md)只加入Desired Setup report V2 exact narrow scope；promotion `cb8ba558`；gate ledger `adf547e2`；CLI113、solution38/4694、build0W/0E、HTTP/SSE、docs18/0均PASS；v3 tag object `511c5099` → `adf547e2` |
 | HISTORY-LOAD-REPORT-A1 | Candidate complete / top-level narrow scope user-approved | post-v3-tag [HistoryLoad report V2 appendix](../../current/contracts/history-load-report-v2.md)；production/test `881afb39`；focused3、CLI113、build0W/0E是implementation-package历史证据；runbook exact 11-field gate；unbounded/offline，无final cap/oversize contract，不属于v3 tag |
 | AP-PROMOTE-V4 | Complete / tag anchored | [surface set 4 addendum](../../evidence/contract-freeze-r2-approval-surface-set-4.md)只新增HistoryLoad V2 exact top-level/types/meanings、V1字段删除与read-only publication/retry；exact `494d215a`上CLI113、solution38/4694、build0W/0E、HTTP/SSE与docs18/0均PASS；inventory/rebuild NotRun/无需；v4 tag object `76dcdc70` → `0dac57a9` |
+| CADENCE-RECEIPT-A1 | Candidate docs/consumer closure / approval Defer | post-v4-tag [Cadence set-reserve receipt appendix](../../current/contracts/cadence-set-reserve-receipt.md)；production/test `4e1e80e6`；exact minimal success/failure ledger与fresh-inspect recovery；不属于v4 tag |
 
 ## 9. R0 完成标准
 
@@ -491,3 +492,18 @@ input/diagnostic、current operator data、provider/deployment或historical V1 v
 
 当前post-tag status docs只记录已经发生的closure；v4 tag继续指向`0dac57a9`，不会因本次或未来docs commit而反向
 移动、续期product/provider/deployment evidence或扩大surface set 4 exact scope。
+
+## 24. Post-v4-tag CADENCE-RECEIPT-A1 candidate
+
+`4e1e80e6`把`cadence.set-reserve`输出收窄为command-local closed receipt：updated/unchanged只返回exact head与R；
+stale/absent/busy/disposed/platform-unsupported返回null；unsupported-schema只返回version；invalid只返回code；commit-indeterminate只返回
+expected/intended heads与R，不透出owner `Observed`或next-action建议。R+B range overflow在CAS前映射为
+`CadenceReserveRangeInvalid`，invalid owner message/path不会进入receipt。
+
+[Current appendix](../../current/contracts/cadence-set-reserve-receipt.md)把fresh `cadence inspect`锁为stdout loss与
+commit-indeterminate的恢复authority：intended head且R匹配才证明desired visible；expected head表示change未visible，须人工
+确认后才可same-expected exact retry；其他head或不匹配均停止。Command不得自动retry，receipt absence也不证明无mutation。
+
+该candidate形成于immutable surface-set-4 tag之后，approval Defer且不属于v4。它不冻结owner public result/Observed、
+diagnostic code全集、JSON bytes/order、完整CLI input、generic outer envelope、Cadence durable V1或receipt/raw atomicity；
+source/test与本docs closure都不会反向移动、续期或扩大v4 tag。
