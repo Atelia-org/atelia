@@ -241,7 +241,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | Tier approval与tag | Complete | user approved exact surface set 1；annotated tag `session-journal-contract-r2-approved-surfaces-v1`锚定promotion docs commit与validated source `cd966fc7` |
 | STORE-SCHEMA-A1 | Candidate complete / approval Defer | post-tag [SQLite V2 logical-schema appendix](../../current/contracts/recap-grid-store-sqlite-v2.md) + independent persistent pragma/fingerprint gate；不属于surface-set-1 tag，等待后续显式approval |
 | ROOT-CONFIG-PATH-A0 | Candidate implementation complete / approval Defer | post-tag `0f0afb2c`；relative `sessionDir`以config directory为base、absolute target保持、template为`sessions/*`；root完整field language仍Defer |
-| ROOT-CONFIG-A1 | Candidate complete / approval Defer | post-tag [root config V1 appendix](../../current/contracts/galatea-root-config-v1.md)；`0515083f` + `8c450bf0`锁field language与InvalidData classification；不属于surface-set-1 tag |
+| ROOT-CONFIG-A1 | Candidate complete / approval Defer | post-tag [root config V1 appendix](../../current/contracts/galatea-root-config-v1.md)；`0515083f` + `8c450bf0`锁field language/root JSON classification，`6c5d3d50`锁full-loader profile registry conflict；不属于surface-set-1 tag |
 
 ## 9. R0 完成标准
 

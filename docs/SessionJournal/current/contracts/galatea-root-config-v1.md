@@ -23,6 +23,8 @@ assembly中的`GalateaConfigBootstrapper`与`GalateaConfigTemplateFactory`拥有
 | `319bd425` | 将path cut登记为post-tag candidate，明确不扩大surface-set-1 tag |
 | `0515083f` | 新增test-owned handwritten full/minimal V1、required/optional/count/path/prompt/dependency/strict-byte field-language gates |
 | `8c450bf0` | 将JSON materialization `JsonException`归类为`InvalidDataException`，补empty/count/blank/missing-file/prompt-precedence与invalid-UTF8分类tails |
+| `e2aa5c8d` | precision review tail：锁定platform path、owner-registry与低层exception non-promise边界 |
+| `6c5d3d50` | 通过full `GalateaConfigLoader`锁定duplicate `ProfileId`与duplicate `RuntimeIdentity`的registry conflict integration gate |
 
 Field-language oracle位于
 [`GalateaRootConfigFieldLanguageTests`](../../../../tests/Galatea.Server.Tests/GalateaRootConfigFieldLanguageTests.cs)，
