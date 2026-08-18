@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；approved surface sets 1 + 2 + 3 + 4 + 5 anchored；surface set 5 post-tag docs independent review PASS；remaining Defer packages继续  
+状态：Active；approved surface sets 1 + 2 + 3 + 4 + 5 anchored；surface set 6 user-authorized；unified gates/rebuild/review/tag Pending  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -249,7 +249,8 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | AP-PROMOTE-V4 | Complete / tag anchored | [surface set 4 addendum](../../evidence/contract-freeze-r2-approval-surface-set-4.md)只新增HistoryLoad V2 exact top-level/types/meanings、V1字段删除与read-only publication/retry；exact `494d215a`上CLI113、solution38/4694、build0W/0E、HTTP/SSE与docs18/0均PASS；inventory/rebuild NotRun/无需；v4 tag object `76dcdc70` → `0dac57a9` |
 | CADENCE-RECEIPT-A1 | Candidate complete / exact narrow scope user-approved | post-v4-tag [Cadence set-reserve receipt appendix](../../current/contracts/cadence-set-reserve-receipt.md)；production/test `4e1e80e6`、docs `6ed308f0`、independent final review PASS；exact minimal success/failure ledger与fresh-inspect recovery；不属于v4 tag |
 | AP-PROMOTE-V5 | Complete / tag anchored | [surface set 5 addendum](../../evidence/contract-freeze-r2-approval-surface-set-5.md)只新增Cadence set-reserve command-local exact ledger/privacy/recovery；promotion/gate candidate `aebc4040`上CLI114、solution38/4695、build0W/0E、HTTP/SSE与docs18/0均PASS；reviewed ledger `89d61ba2`；v5 tag object `e1100017` → `89d61ba2`；post-tag docs review `845539c5` + actual tag PASS |
-| OFFLINE-REPORT-A1 | Candidate complete / approval Defer | post-v5 [Offline validation report V3 appendix](../../current/contracts/offline-validation-report-v3.md)；production/test `97ec7c1c` + provider-zero tail `e9dbf4aa`；exact 25-field、7 phase/11 kind tokens、full-audit/resource/publication/privacy boundary与tracked runbook consumer gate；不属于v5 tag |
+| OFFLINE-REPORT-A1 | Candidate complete / exact scope user-approved | post-v5 [Offline validation report V3 appendix](../../current/contracts/offline-validation-report-v3.md)；production/test `97ec7c1c` + provider-zero tail `e9dbf4aa`；exact 25-field/current nested/7 phase/11 kind、full-audit/resource/publication/privacy boundary与tracked runbook consumer gate；不属于v5 tag |
+| AP-PROMOTE-V6 | User-authorized / gates, rebuild, review, tag Pending | [surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md)只新增Offline Validation V3 producer-decoded/read-only/publication/retry/privacy/resource窄surface；pins `97ec7c1c` + `e9dbf4aa` + `d9fcc9db` + `c5b22d52`；authorized tag `session-journal-contract-r2-approved-surfaces-v6`尚不存在；不得复制旧gate counts |
 
 ## 9. R0 完成标准
 
@@ -559,5 +560,27 @@ dual writer或generic report framework。
 [G2A activation runbook](../../operations/galatea-g2a-staging-acceptance.md#2-import-and-raw-baseline)现在于两处读取
 `.branchRefId` / `.head` / `.executionPhase`前复用exact V3 root-key/type/Idle gate，并拒绝旧numeric `1`、extra/missing
 fields与stale output；不顺带冻结nested/order/bytes。Historical R5/V2 evidence保持零改动，immutable v1-v5 tags不移动。
-该candidate形成于surface-set-5 tag之后，不属于v5；approval保持Defer，未来如要批准须另做promotion/review，而不能借现有
-tag续期。
+该candidate形成于surface-set-5 tag之后，不属于v5；用户随后批准§27精确圈定的surface set 6窄scope，但fresh gates、
+provider-free rebuild、final review与tag仍Pending，不能借现有tag续期或提前称为anchored。
+
+## 27. AP-PROMOTE-V6 authorization与tag前状态
+
+用户已明确批准[Offline Validation Report V3 appendix](../../current/contracts/offline-validation-report-v3.md)中由
+[surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md#1-approved-additive-surface)精确圈定的
+producer decoded exact 25 root names/types/meanings、current nested producer shapes、7 phase/11 event-kind tokens，以及
+read-only captured-head、publication/fail-closed/retry、privacy与unbounded resource boundary。Production source为
+`97ec7c1c`，provider-zero tail为`e9dbf4aa`，candidate docs/consumer为`d9fcc9db`，review tail为`c5b22d52`。
+
+该授权是immutable surface set 5之上的单项additive surface set 6。Immutable v1-v5 tags继续认证各自原始targets；v5
+仍为`89d61ba2`，不能移动、重释或由本授权续期。Authorized tag exact name为
+`session-journal-contract-r2-approved-surfaces-v6`，当前尚未创建。
+
+本promotion不批准public CLR/binary compatibility、JSON bytes/order/escaping、supported whole-document reader/V2 compat、
+bounded work/memory/final bytes或pagination、raw/durable/physical schema、其他reports/CLI、provider/deployment/ignored state。
+Typed constructor/property signatures、record equality与clone shape虽未改，三个public property上的observable
+`JsonConverterAttribute`与`ReportSchema` V3仍是intentional serialization metadata/behavior hard cut。
+
+Fresh owning/full solution/build/HTTP-SSE/docs unified gates、provider-free disposable rebuild、independent final pre-tag review
+与annotated tag都尚未运行或登记；public inventory亦NotRun。不得复制OFFLINE-REPORT-A1 implementation package或surface
+sets 1至5的旧counts作为本轮结果。因此当前只是user-authorized promotion candidate；完成addendum checklist前不是
+tag-ready candidate，也不是anchored surface。

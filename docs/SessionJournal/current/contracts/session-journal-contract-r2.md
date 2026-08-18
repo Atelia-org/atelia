@@ -1,12 +1,13 @@
 # SessionJournal Contract R2 — approved surfaces and candidate map
 
-状态：approved surface sets 1 + 2 + 3 + 4 + 5 anchored；surface set 5 post-tag docs independent review PASS；其余surface继续candidate/Defer  
+状态：approved surface sets 1 + 2 + 3 + 4 + 5 anchored；surface set 6 user-authorized promotion candidate；unified gates/rebuild/review/tag Pending  
 surface set 1 validated product source：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
 surface set 2 validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`；integration evidence：`6c5d3d50e68b84b9dca1391c16438a86cef418c1`  
 surface set 3 production source：`da3aa27af56add07bc70229120c522b8d24c99ba`；contract test evidence：`8a54e613f7c1a92bab3a4dd0806aad19411c41b1`  
 surface set 4 production/test source：`881afb39af511567b8bb900c5db103426791ab95`；candidate appendix：`2fa9808bfac0d8836da490548e9b3c98c38f2395`  
 surface set 5 production/test source：`4e1e80e6875a3a963bd90c3845250da261548730`；candidate docs：`6ed308f0268d8e337753252aad0d2ad4f5039eb8`；promotion/gate candidate：`aebc4040370029bedb1ed46e26423f079cbe59a9`  
-approval anchors：immutable v1 `session-journal-contract-r2-approved-surfaces-v1`；immutable v2 `session-journal-contract-r2-approved-surfaces-v2`（tag object `13111f3d` → `c4c6dd16`）；immutable v3 `session-journal-contract-r2-approved-surfaces-v3`（tag object `511c5099` → `adf547e2`）；immutable v4 `session-journal-contract-r2-approved-surfaces-v4`（tag object `76dcdc70` → `0dac57a9`）；immutable v5 `session-journal-contract-r2-approved-surfaces-v5`（tag object `e1100017` → `89d61ba2`）  
+surface set 6 production/test source：`97ec7c1c6129b73062f9e46725c1fe3f2dcece92` + `e9dbf4aa0834418bea10c6fe98d379fb826e7829`；candidate docs/review tail：`d9fcc9db6e9cc160afdc085d0a7cece889d47269` + `c5b22d5230fe2b1889b3559dd05b64448594054c`  
+approval anchors：immutable v1 `session-journal-contract-r2-approved-surfaces-v1`；immutable v2 `session-journal-contract-r2-approved-surfaces-v2`（tag object `13111f3d` → `c4c6dd16`）；immutable v3 `session-journal-contract-r2-approved-surfaces-v3`（tag object `511c5099` → `adf547e2`）；immutable v4 `session-journal-contract-r2-approved-surfaces-v4`（tag object `76dcdc70` → `0dac57a9`）；immutable v5 `session-journal-contract-r2-approved-surfaces-v5`（tag object `e1100017` → `89d61ba2`）；authorized v6 `session-journal-contract-r2-approved-surfaces-v6`（尚未创建）  
 记录日期：2026-08-18
 
 本文是current SessionJournal、HistoryTimeline与RecapGrid contract的候选Shape/Rule入口。它把明确支持的
@@ -24,7 +25,10 @@ top-level/read-only窄scope；unified gates与independent review已通过，并�
 [additive surface set 5](../../evidence/contract-freeze-r2-approval-surface-set-5.md)中的Cadence `set-reserve` command-local
 ledger/recovery窄scope；unified gates与final pre-tag review已通过，并由annotated v5 tag锚定。对post-tag commit
 `845539c5`与actual v5 tag的independent review已PASS；本commit不反向移动tag、续期证据或扩大scope。除上述exact scope外的
-surface继续candidate/Defer，不能由任一tag顺带认证。
+surface继续candidate/Defer，不能由任一tag顺带认证。用户又明确批准
+[additive surface set 6](../../evidence/contract-freeze-r2-approval-surface-set-6.md)中的Offline Validation Report V3
+producer-decoded/read-only/publication/retry/privacy/resource窄scope；其fresh unified gates、provider-free rebuild、final
+review与annotated v6 tag仍Pending，不能提前称为anchored stable surface。
 
 源码、strict codec、tests和goldens仍是实现事实；本文不把所有CLR `public`、human diagnostic文本、provider行为、
 ignored operator state或历史candidate自动升级为兼容承诺。
@@ -44,7 +48,7 @@ ignored operator state或历史candidate自动升级为兼容承诺。
 |:--|:--|:--|
 | A | raw SessionJournal event/recovery wire | **Approved / Frozen R2 logical wire**；不含physical RBF bytes；未来breaking change必须另有version/migration/recovery plan |
 | B | Timeline/Cadence/Control/Store/Rewriter companion wire | **Partial**：批准Rewriter五个exact protocol axes与Store SQLite V2 exact logical-schema sub-surface；History/Cadence/Control仍Defer并按显式reprovision/no-dual-reader政策演进 |
-| C | config、CLI JSON、Galatea HTTP/SSE | **Partial Stable operational wire**：批准§5列出的Connections、Route、Profile、root config、HTTP/SSE、CLI outer+Store ledger，以及v3-anchored Desired Setup report V2、v4-anchored HistoryLoad report V2 top-level/read-only窄scope与v5-anchored Cadence set-reserve command-local ledger/recovery；其余Defer |
+| C | config、CLI JSON、Galatea HTTP/SSE | **Partial Stable operational wire**：批准§5列出的Connections、Route、Profile、root config、HTTP/SSE、CLI outer+Store ledger，以及v3-anchored Desired Setup report V2、v4-anchored HistoryLoad report V2 top-level/read-only窄scope与v5-anchored Cadence set-reserve command-local ledger/recovery；Offline Validation V3 surface set 6已获用户授权但gates/rebuild/review/tag Pending；其余Defer |
 | D | S/T/O/C/G/H public .NET support roles | **Approved Stable source-compatible**：只承诺§2.3 exact named roles；不承诺blanket export或binary ABI |
 
 strict versioning与旧格式拒绝只说明hard-cut policy清晰，不等于backward compatibility。
@@ -180,7 +184,7 @@ current companion state拼成混合generation。raw append后的rollback必须ra
 | AgentControl profile | canonical `v:1`；profile id strict UTF-8 128 bytes；profile最多128 KiB；admission inclusive 2..64 KiB；registry 1..256且profile id/runtime identity分别exact unique | admission canonical bytes进入durable tool runtime identity；profile id与whole profile bytes不进入该identity；unknown/version/order/duplicate mismatch fail closed；public admission producer不会生成owner decoder拒绝的bytes |
 | Galatea root config | **Approved Stable V1**：[exact appendix](galatea-root-config-v1.md)锁required/optional/count、prompt precedence、config-directory-relative path与profile/route dependencies；root 1 MiB、prompt 1 MiB、profile 128 KiB；bootstrap no BOM/existing no-rewrite policy | product source `8c450bf0` + integration evidence `6c5d3d50`；无CWD/existence fallback、auto rewrite/move或confinement；由immutable surface-set-2 tag锚定；deployment/provider与appendix non-promises不在批准范围 |
 | RecapGrid CLI JSON | `atelia.session-journal.recap-grid-cli.v1`、`{schema,command,status,detail}`、16 MiB final report；Store page 128 items / 2 MiB | outer envelope/fallback与Store `inspect/verify/export/reset` [status/detail/exit ledger](../../evidence/contract-freeze-r2-r1-priority-review.md#52-stable-detail-ledger)是freeze-ready machine contract；[Cadence `set-reserve` receipt](cadence-set-reserve-receipt.md) exact command-local ledger/recovery由surface set 5 immutable tag锚定；其他non-Store command detail/status仍按owner result为candidate，不因共享printer自动冻结；human stdout/stderr/help与逐字diagnostic不冻结 |
-| Other reports | [offline validation V3 candidate contract](offline-validation-report-v3.md)、legacy import v1、[desired setup reconciliation V2 approved contract](desired-setup-reconciliation-report-v2.md)、[history-load V2 approved top-level contract](history-load-report-v2.md)、legacy-root v2 | **Partial**：desired-setup Stable V2 narrow sub-surface由v3 tag锚定；history-load V2 top-level/read-only scope由v4 tag锚定；offline validation V3 exact 25-field/closed-token/full-audit boundary是post-v5 candidate/Defer；其余report继续Defer；不因外层相似抽generic envelope |
+| Other reports | [offline validation V3 user-authorized candidate](offline-validation-report-v3.md)、legacy import v1、[desired setup reconciliation V2 approved contract](desired-setup-reconciliation-report-v2.md)、[history-load V2 approved top-level contract](history-load-report-v2.md)、legacy-root v2 | **Partial**：desired-setup Stable V2 narrow sub-surface由v3 tag锚定；history-load V2 top-level/read-only scope由v4 tag锚定；offline validation V3 exact 25-field/nested/closed-token/read-only/publication/retry/privacy/resource scope已获surface set 6用户授权，但unified gates/rebuild/review/tag Pending；其余report继续Defer；不因外层相似抽generic envelope |
 | Galatea HTTP | complete group `/api/v1`；old `/api/*` exact 404；strict endpoint-local JSON，body 1 MiB；original/normalized message各64 KiB；typed status/success/error | server与cache-busted browser原子共部署；不保留route alias/redirect/dual DTO；breaking change需新candidate/path policy |
 | Galatea SSE | `status`、`reasoning-delta`、`text-delta`、`done`、`error`；strict UTF-8/LF与exact terminal；4 MiB preview + 5 MiB terminal = 9 MiB whole replay，最多16,384 events；subscriber 256 refs；browser 9 MiB connection/5 MiB frame | cap hit只internal suppress preview，不取消provider/durable；`done {recent:null}`后HTTP reconciliation；closed error codes与exact payload见[tracked SSE ledger](../../../../prototypes/Galatea/README.md#sse-v1-stable-protocol)；无Last-Event-ID、ack、heartbeat或dual grammar |
 
@@ -206,9 +210,11 @@ result、generic outer envelope、Cadence durable V1或receipt atomicity。该�
 `e1100017`已锚定reviewed ledger `89d61ba2`。本post-tag docs commit不移动tag、不续期证据或扩大scope。
 
 [Offline validation report V3 candidate](offline-validation-report-v3.md)形成于immutable surface-set-5 tag之后。Current
-producer exact输出25个root fields、7个phase与11个event-kind closed tokens，并执行read-only full selected-lineage audit；
-work、memory、cumulative payload与final JSON都没有production cap。该candidate不属于surface set 5，approval继续Defer；
-existing v1-v5 tags与historical V2/R5 evidence都不因本记录移动、重释或续期。
+producer exact输出25个root fields、current nested shapes、7个phase与11个event-kind closed tokens，并执行read-only full
+selected-lineage audit；work、memory、cumulative payload与final JSON都没有production cap。用户已批准
+[surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md)圈定的exact scope，但unified gates、
+provider-free rebuild、final review与v6 tag仍Pending。该candidate不属于surface set 5；existing v1-v5 tags与historical
+V2/R5 evidence都不因本记录移动、重释或续期。
 
 HTTP普通`{code,error}`中的existing machine code保持含义，但code namespace允许additive新值，first-party client必须有
 unknown fallback；`turn-busy`专用shape与SSE error code集合仍是closed。`error`逐字文本、property order、login HTML、

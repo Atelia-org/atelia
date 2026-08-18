@@ -181,7 +181,9 @@ nested property order或serializer bytes。Offline validation是full selected-li
 final JSON都没有production cap；它包含absolute path、model/surface、addresses、hashes与counts，不是content-free。
 若validation失败或publication不确定，使用fresh absent output重新执行read-only validation，不能消费existing stale report。
 Exact producer/report边界见[Offline validation report V3 candidate contract](../current/contracts/offline-validation-report-v3.md)；
-它是post-v5 candidate/approval Defer，不属于immutable surface set 5。
+用户已批准[surface set 6 addendum](../evidence/contract-freeze-r2-approval-surface-set-6.md)精确圈定的scope，但fresh
+unified gates、provider-free rebuild、independent final review与v6 tag仍Pending；它不属于immutable surface set 5，runbook
+存在也不证明本轮acceptance Passed。
 
 只有上面的exact V2/11-field/type gate通过后才能读取HistoryLoad `capturedHead`；
 `history_load_head`必须等于本轮`raw_head`。History-load report是full-window unbounded offline report，没有final byte cap或
