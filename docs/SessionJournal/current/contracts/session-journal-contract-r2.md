@@ -47,7 +47,7 @@ ignored operator state或历史candidate自动升级为兼容承诺。
    不能被active config或derived availability改写。
 4. CLI report、HTTP/SSE display、telemetry与call log是operational output，不是raw、provider invocation或
    recovery authority。
-5. 本candidate按四tier分别裁决，批准一个tier不自动批准其他tier：
+5. 本R2 contract按四tier分别裁决，批准一个tier不自动批准其他tier：
 
 | Tier | Surface | R2 approval state / policy |
 |:--|:--|:--|

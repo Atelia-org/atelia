@@ -35,7 +35,7 @@
 - `operations/`：可重复 procedure，不是执行成功证明。
 - `evidence/`：exact run、candidate 或 review 的记录，不随 HEAD 自动续期。
 - `archive/`：已完成、被替代或历史材料；正常实现任务不得从这里推导 current API。
-- 当前 active plans：
+- 计划入口（含为链接稳定保留原路径的closed plan）：
   [DerivedRecap Sparse Versioned Grid 目标设计](work/active/derived-recap-grid-target-design.md)
   记录Timeline rows、analysis columns、content-addressed immutable cells与Control/Store/Manager/Getter的current Rule/Shape。
   [DerivedRecap Grid Rewrite 总施工计划](work/active/derived-recap-grid-rewrite-master-plan.md)
