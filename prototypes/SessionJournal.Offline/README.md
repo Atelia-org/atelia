@@ -14,8 +14,11 @@ facts。scan 负责完整 Parent-chain/header/codec 检查及所有 historical P
 Current machine report是producer-only
 `atelia.session-journal.offline-validation.v3`：root exact 25 fields，`executionPhase`使用7个closed
 lower-kebab tokens，`headKind`与`eventKindCounts[].kind`使用11个closed lower-kebab tokens。Public DTO的typed enum
-properties保持不变，internal property converters定义V3 wire；没有supported whole-document reader、V2 compatibility或dual
-writer。Exact field/nested shape、resource与recovery boundary见
+constructor/property signatures、record equality与clone shape保持不变；但`ExecutionPhase`、`HeadKind`和count-row `Kind`
+三个public properties新增observable `JsonConverterAttribute`，其internal converter references是intentional serialization
+metadata/behavior hard cut。因此assembly metadata与serializer output不和旧candidate byte-identical，不能声称public API
+metadata unchanged。没有supported whole-document reader、V2 compatibility或dual writer。Exact field/nested shape、
+resource与recovery boundary见
 [Offline validation report V3 candidate contract](../../docs/SessionJournal/current/contracts/offline-validation-report-v3.md)。
 
 report 不包含完整 context、完整 `SessionExecutionState`、明文 system prompt 或 addressed

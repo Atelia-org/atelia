@@ -51,8 +51,12 @@ wrong-type或用旧numeric enum representation均不属于V3：
 | `scanDiagnostics` | object | 本次checked audit scan的work diagnostics；nested shape见§3 |
 
 V3是对旧report representation的intentional hard cut：producer只写V3，不提供V2/V3 dual writer、compat parser或schema
-negotiation。Public DTO的CLR properties仍保留typed `SessionExecutionPhase` / `SessionEventKind` signatures；internal
-property converters只定义这三个property positions的closed JSON representation，不新增public wire-authority type。
+negotiation。Public DTO constructor/property的typed `SessionExecutionPhase` / `SessionEventKind` signatures、record equality与
+clone shape保持不变；但`SessionJournalOfflineValidationReport.ExecutionPhase`、`HeadKind`和
+`SessionJournalOfflineEventKindCount.Kind`三个public properties新增了observable `JsonConverterAttribute`。这些internal
+converter types及其attribute references是intentional observable serialization metadata/behavior hard cut；assembly metadata
+与serializer output不和旧candidate byte-identical。它不新增public wire-authority type，也不能表述为public API metadata
+unchanged。
 
 仓内没有supported whole-document V3 reader。Tests对public DTO做typed serializer round-trip是writer/metadata闭合gate，
 不等于承诺任意`JsonSerializer.Deserialize` options、unknown-root-field policy或future compatibility language。

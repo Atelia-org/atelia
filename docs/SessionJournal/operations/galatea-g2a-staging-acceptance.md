@@ -553,9 +553,12 @@ if ! require_offline_validation_v3_idle "$validate_after_setup"; then
   echo "post-setup validation report is not exact idle V3; re-inspect current raw authority" >&2
   exit 1
 fi
-jq -e --arg head "$raw_head" --arg ref "$ref_id" '
+if ! jq -e --arg head "$raw_head" --arg ref "$ref_id" '
   .head == $head and .branchRefId == $ref
-' "$validate_after_setup" >/dev/null
+' "$validate_after_setup" >/dev/null; then
+  echo "post-setup validation head/ref mismatch; re-inspect current raw authority" >&2
+  exit 1
+fi
 ```
 
 所有report/config output必须create-only且预先不存在。setup已exact时允许`afterHead == pre_setup_head`，但上面的gate要求report同时证明
