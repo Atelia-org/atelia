@@ -28,8 +28,8 @@ Timeline policy matching；Busy、Stale与CommitIndeterminate均返回typed repo
 Exact command-local ledger与恢复矩阵见
 [Cadence set-reserve approved receipt contract](../../docs/SessionJournal/current/contracts/cadence-set-reserve-receipt.md)：stdout丢失或
 commit-indeterminate后必须fresh `cadence inspect`完整head/policy，不能从receipt absence推断未提交，也不能自动retry。
-该appendix形成于immutable surface-set-4 tag之后；surface set 5 exact narrow scope已获用户批准且unified gates通过/
-tag-ready，promotion draft review已PASS；final ledger re-review与authorized v5 tag仍Pending。
+该appendix形成于immutable surface-set-4 tag之后；surface set 5 exact narrow scope现由immutable v5 tag object
+`e1100017`锚定到reviewed ledger `89d61ba2`。Post-tag docs不移动tag、不续期证据或扩大scope；其independent review仍Pending。
 
 所有 branch mutation 都要求与 selected SessionJournal branch 相同的
 `--confirm-ref`。`init` 显式按 Timeline、Cadence、Control、Grid 四域创建，且

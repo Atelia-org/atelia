@@ -1,11 +1,11 @@
 # SessionJournal Contract Freeze R2 — additive surface set 5 approval
 
-状态：**user approval recorded；unified gates complete / tag-ready；promotion draft review PASS；final ledger re-review与annotated tag Pending**  
+状态：**surface set 5 anchored complete；post-tag docs independent review Pending**  
 production/test source：`4e1e80e6875a3a963bd90c3845250da261548730`  
 candidate appendix/docs commit：`6ed308f0268d8e337753252aad0d2ad4f5039eb8`  
 candidate independent final review：PASS  
 promotion docs / unified gate candidate：`aebc4040370029bedb1ed46e26423f079cbe59a9`  
-authorized tag：`session-journal-contract-r2-approved-surfaces-v5`（尚未创建）  
+approval anchor：`session-journal-contract-r2-approved-surfaces-v5`（tag object `e11000177af2877a9d7351dbb17d4bb6b591735e` → dereferenced target `89d61ba2c561d84eed235ee196b24d2016ecd3ff`）  
 记录日期：2026-08-18
 
 本文只记录用户在immutable surface sets 1至4之上新增批准的Cadence `set-reserve` command-local receipt与recovery
@@ -65,12 +65,12 @@ Surface set 5明确不批准：
 - receipt/raw、receipt/Cadence或stdout/filesystem atomicity、rollback、exactly-once、automatic retry或receipt-as-commit-record；
 - current operator data、ignored state、provider behavior、deployment readiness、physical storage bytes或其他candidate。
 
-## 3. Evidence与Pending boundary
+## 3. Evidence与anchored boundary
 
 - `4e1e80e6`是production与owning contract tests的source pin；`6ed308f0`是candidate appendix与first-party consumer docs
   pin；candidate independent final review已PASS。
-- `aebc4040`是promotion draft与本轮unified gate candidate；其independent draft review已PASS。本ledger commit仍须
-  final independent pre-tag re-review，不能用draft review替代最终ledger review。
+- `aebc4040`是promotion draft与本轮unified gate candidate；其independent draft review已PASS。Reviewed final gate
+  ledger为`89d61ba2`，pre-tag review已关闭。
 - 本promotion只修改docs，不修改production、tests、operator state或tag。
 
 ### 3.1 Unified gate ledger
@@ -94,10 +94,12 @@ Public inventory与legacy/disposable rebuild均**NotRun / 无需**：Cadence rec
 raw/derived rebuild semantics；owner PublicSurface tests已由solution test覆盖。Ignored operator state、provider与deployment均
 **NotRun**，且不是本provider-free promotion的gate。
 
-因此当前状态是**gate-complete / tag-ready candidate**，但最终ledger的independent pre-tag re-review与annotated tag仍
-Pending；不是tagged/anchored completion。
+Annotated tag message已核对：它只累计继承immutable surface sets 1至4，并只新增§1 Cadence command-local boundary，
+同时逐项保留§2 non-promises；tag object `e11000177af2877a9d7351dbb17d4bb6b591735e` dereference到reviewed ledger
+`89d61ba2c561d84eed235ee196b24d2016ecd3ff`。因此surface set 5已经**anchored complete**；本post-tag status docs
+commit不反向移动tag、不续期其证据，也不扩大approved scope。Post-tag docs independent review仍Pending。
 
-## 4. Immutable anchors与tag-before checklist
+## 4. Immutable anchors与tag closure
 
 Immutable prior dereferenced targets继续为：
 
@@ -106,13 +108,11 @@ Immutable prior dereferenced targets继续为：
 - v3 `adf547e2a2319fd3009a7015a4289ab875af43f7`；
 - v4 `0dac57a9e32ae5d0367394404524404689dfa4ef`。
 
-创建annotated tag前必须：
+Tag closure facts：
 
-1. 已在exact clean promotion HEAD `aebc4040`上完成并记录本轮unified gates；
-2. promotion draft independent review已PASS；仍须由独立reviewer核对包含最终gate ledger的本commit、current
-   appendix/contract、routers、active plan与CLI guide没有扩大§1；
-3. 已确认v1至v4 targets未移动且`session-journal-contract-r2-approved-surfaces-v5`不存在；tag前仍须以reviewed final
-   ledger commit复核一次；
-4. annotated tag message同时pin production/test `4e1e80e6`、candidate docs `6ed308f0`、promotion/gate ledger、§1 exact
-   scope与§2 non-promises；
-5. tag创建后另做post-tag status docs commit；不得移动tag吸收post-tag文档。
+1. exact clean promotion HEAD `aebc4040`的unified gates与reviewed ledger `89d61ba2`均已记录；
+2. final pre-tag review已关闭，tag message已核对为§1 exact scope与§2 non-promises；
+3. annotated tag `session-journal-contract-r2-approved-surfaces-v5` object为`e11000177af2877a9d7351dbb17d4bb6b591735e`，
+   dereferenced target为`89d61ba2c561d84eed235ee196b24d2016ecd3ff`；
+4. v1至v4 targets仍为上列四个commit，未移动或由v5续期；
+5. 本post-tag status docs commit位于anchor之后，不移动tag、不续期gate evidence、不扩大§1；其独立review仍Pending。

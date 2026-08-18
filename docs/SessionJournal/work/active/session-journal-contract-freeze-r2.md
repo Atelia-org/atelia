@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；approved surface sets 1 + 2 + 3 + 4 anchored；surface set 5 user-authorized、unified gates complete / tag-ready、final ledger re-review/tag Pending；remaining Defer packages继续  
+状态：Active；approved surface sets 1 + 2 + 3 + 4 + 5 anchored；surface set 5 post-tag docs independent review Pending；remaining Defer packages继续  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -248,7 +248,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | HISTORY-LOAD-REPORT-A1 | Candidate complete / top-level narrow scope user-approved | post-v3-tag [HistoryLoad report V2 appendix](../../current/contracts/history-load-report-v2.md)；production/test `881afb39`；focused3、CLI113、build0W/0E是implementation-package历史证据；runbook exact 11-field gate；unbounded/offline，无final cap/oversize contract，不属于v3 tag |
 | AP-PROMOTE-V4 | Complete / tag anchored | [surface set 4 addendum](../../evidence/contract-freeze-r2-approval-surface-set-4.md)只新增HistoryLoad V2 exact top-level/types/meanings、V1字段删除与read-only publication/retry；exact `494d215a`上CLI113、solution38/4694、build0W/0E、HTTP/SSE与docs18/0均PASS；inventory/rebuild NotRun/无需；v4 tag object `76dcdc70` → `0dac57a9` |
 | CADENCE-RECEIPT-A1 | Candidate complete / exact narrow scope user-approved | post-v4-tag [Cadence set-reserve receipt appendix](../../current/contracts/cadence-set-reserve-receipt.md)；production/test `4e1e80e6`、docs `6ed308f0`、independent final review PASS；exact minimal success/failure ledger与fresh-inspect recovery；不属于v4 tag |
-| AP-PROMOTE-V5 | Gate-complete / tag-ready | [surface set 5 addendum](../../evidence/contract-freeze-r2-approval-surface-set-5.md)只新增Cadence set-reserve command-local exact ledger/privacy/recovery；promotion/gate candidate `aebc4040`上CLI114、solution38/4695、build0W/0E、HTTP/SSE与docs18/0均PASS；promotion draft review PASS；final ledger re-review与authorized v5 tag Pending |
+| AP-PROMOTE-V5 | Complete / tag anchored | [surface set 5 addendum](../../evidence/contract-freeze-r2-approval-surface-set-5.md)只新增Cadence set-reserve command-local exact ledger/privacy/recovery；promotion/gate candidate `aebc4040`上CLI114、solution38/4695、build0W/0E、HTTP/SSE与docs18/0均PASS；reviewed ledger `89d61ba2`；v5 tag object `e1100017` → `89d61ba2`；post-tag docs review Pending |
 
 ## 9. R0 完成标准
 
@@ -510,17 +510,18 @@ commit-indeterminate的恢复authority：intended head且R匹配才证明desired
 diagnostic code全集、JSON bytes/order、完整CLI input、generic outer envelope、Cadence durable V1或receipt/raw atomicity；
 source/test与本docs closure都不会反向移动、续期或扩大v4 tag。
 
-## 25. AP-PROMOTE-V5 authorization与tag前状态
+## 25. AP-PROMOTE-V5 approval与tag closure
 
 用户已明确批准[Cadence set-reserve receipt appendix](../../current/contracts/cadence-set-reserve-receipt.md)中由
 [surface set 5 addendum](../../evidence/contract-freeze-r2-approval-surface-set-5.md#1-approved-additive-surface)精确圈定的
 command-local status/exit/detail ledger、code-only overflow/privacy与fresh-inspect recovery。Production/test source为
 `4e1e80e6`，candidate docs为`6ed308f0`且independent final review PASS；promotion/gate candidate为`aebc4040`，
-其promotion draft independent review亦PASS；本promotion只改docs。
+其promotion draft independent review亦PASS；reviewed final ledger为`89d61ba2`。本promotion只改docs。
 
 该批准是immutable surface set 4之上的单项additive surface set 5。Immutable v1/v2/v3/v4 tags继续认证各自原始targets
-`6378cebb`/`c4c6dd16`/`adf547e2`/`0dac57a9`，不能移动、重释或由本授权续期。Authorized tag exact name为
-`session-journal-contract-r2-approved-surfaces-v5`，当前尚未创建。
+`6378cebb`/`c4c6dd16`/`adf547e2`/`0dac57a9`，不能移动、重释或由本授权续期。Annotated tag
+`session-journal-contract-r2-approved-surfaces-v5`已创建：tag object `e11000177af2877a9d7351dbb17d4bb6b591735e`
+dereference到reviewed ledger `89d61ba2c561d84eed235ee196b24d2016ecd3ff`；v1-v4 targets未移动。
 
 本轮actual unified gates已在exact clean `aebc4040`通过：CLI full 114/114；solution test 38 projects / 4,695 passed /
 0 failed / 0 skipped；solution build 0 warnings / 0 errors（16.07s）；production HTTP与SSE Node suites各1/1；scoped docs
@@ -532,9 +533,10 @@ failure。
 
 Public inventory与legacy/disposable rebuild均NotRun/无需，因为Cadence receipt change不扩public .NET API、不修改
 raw/derived rebuild semantics；owner PublicSurface由solution test覆盖。Ignored operator state、provider与deployment均
-NotRun且不是本promotion gate。当前是gate-complete/tag-ready；包含最终gate ledger的本commit仍须independent pre-tag
-re-review，authorized v5 tag仍Pending。
+NotRun且不是本promotion gate。Final pre-tag review已关闭；actual tag message已核对为只新增§25 exact Cadence boundary，
+并保留generic outer、owner/durable wire、JSON bytes、atomicity、operator/provider/deployment等non-promises。
 
 批准不包含generic CLI envelope、Cadence durable wire/public results、JSON bytes/order、完整invalid code集合、atomicity、
-完整CLI input/diagnostics、current operator/ignored state、provider/deployment或其他candidate。Final ledger review通过后
-才可创建authorized tag；不得在本包创建tag。
+完整CLI input/diagnostics、current operator/ignored state、provider/deployment或其他candidate。当前surface set 5为
+anchored complete；本post-tag status docs commit不反向移动tag、不续期gate evidence、不扩大scope，其independent review
+仍Pending。
