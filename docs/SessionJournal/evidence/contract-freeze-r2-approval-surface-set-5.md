@@ -1,9 +1,10 @@
 # SessionJournal Contract Freeze R2 — additive surface set 5 approval
 
-状态：**user approval recorded；promotion docs candidate；unified gates、independent promotion review与annotated tag Pending**  
+状态：**user approval recorded；unified gates complete / tag-ready；promotion draft review PASS；final ledger re-review与annotated tag Pending**  
 production/test source：`4e1e80e6875a3a963bd90c3845250da261548730`  
 candidate appendix/docs commit：`6ed308f0268d8e337753252aad0d2ad4f5039eb8`  
 candidate independent final review：PASS  
+promotion docs / unified gate candidate：`aebc4040370029bedb1ed46e26423f079cbe59a9`  
 authorized tag：`session-journal-contract-r2-approved-surfaces-v5`（尚未创建）  
 记录日期：2026-08-18
 
@@ -68,13 +69,33 @@ Surface set 5明确不批准：
 
 - `4e1e80e6`是production与owning contract tests的source pin；`6ed308f0`是candidate appendix与first-party consumer docs
   pin；candidate independent final review已PASS。
+- `aebc4040`是promotion draft与本轮unified gate candidate；其independent draft review已PASS。本ledger commit仍须
+  final independent pre-tag re-review，不能用draft review替代最终ledger review。
 - 本promotion只修改docs，不修改production、tests、operator state或tag。
-- 本轮unified CLI/solution/build/Node/docs gates尚未运行或登记；promotion docs independent review尚未完成。不得复制
-  surface set 4或candidate implementation package的counts作为本轮结果。
-- Public inventory、disposable rebuild、ignored operator state、provider与deployment均NotRun；是否需要前两项由tag前
-  delta review裁决，后三项不因批准一个provider-free CLI receipt而自动成为gate。
 
-因此当前状态只是**user-authorized promotion candidate**，不是tagged/anchored completion。
+### 3.1 Unified gate ledger
+
+下列结果均来自exact clean `aebc4040`，不是surface set 4或implementation package的旧counts：
+
+| Gate | Result |
+|:--|:--|
+| `SessionJournal.Cli.Tests` full | 114 passed / 0 failed / 0 skipped |
+| `dotnet test Atelia.sln --no-restore -m:1 -nr:false` | 38 projects / 4,695 passed / 0 failed / 0 skipped |
+| `dotnet build Atelia.sln --no-restore -m:1 -nr:false` | 0 warnings / 0 errors；16.07s |
+| Galatea production HTTP Node contract suite | 1 passed / 0 failed |
+| Galatea production SSE Node contract suite | 1 passed / 0 failed |
+| scoped SessionJournal docs checker | 18 checked / 0 diagnostics |
+| diff、status与tag preflight | clean；v1-v4 dereferenced targets未移动；v5 tag不存在 |
+
+第一次functions tool orchestration因脚本含`rm -f`而被安全层在`CreateProcess`前拒绝；它没有启动process、test或build，
+也没有修改repository。去掉清理语句后，actual gate chain首次执行即全部PASS；这是command calibration，不是product failure。
+
+Public inventory与legacy/disposable rebuild均**NotRun / 无需**：Cadence receipt change不扩public .NET API，也不修改
+raw/derived rebuild semantics；owner PublicSurface tests已由solution test覆盖。Ignored operator state、provider与deployment均
+**NotRun**，且不是本provider-free promotion的gate。
+
+因此当前状态是**gate-complete / tag-ready candidate**，但最终ledger的independent pre-tag re-review与annotated tag仍
+Pending；不是tagged/anchored completion。
 
 ## 4. Immutable anchors与tag-before checklist
 
@@ -87,10 +108,11 @@ Immutable prior dereferenced targets继续为：
 
 创建annotated tag前必须：
 
-1. 在exact clean promotion HEAD上完成并记录本轮选择的unified gates；
-2. 由独立reviewer核对本addendum、current appendix/contract、routers、active plan与CLI guide没有扩大§1；
-3. 确认v1至v4 targets未移动，`session-journal-contract-r2-approved-surfaces-v5`仍不存在，并记录reviewed gate ledger；
+1. 已在exact clean promotion HEAD `aebc4040`上完成并记录本轮unified gates；
+2. promotion draft independent review已PASS；仍须由独立reviewer核对包含最终gate ledger的本commit、current
+   appendix/contract、routers、active plan与CLI guide没有扩大§1；
+3. 已确认v1至v4 targets未移动且`session-journal-contract-r2-approved-surfaces-v5`不存在；tag前仍须以reviewed final
+   ledger commit复核一次；
 4. annotated tag message同时pin production/test `4e1e80e6`、candidate docs `6ed308f0`、promotion/gate ledger、§1 exact
    scope与§2 non-promises；
 5. tag创建后另做post-tag status docs commit；不得移动tag吸收post-tag文档。
-
