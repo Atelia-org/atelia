@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 — additive surface set 6 approval
 
-状态：**surface set 6 anchored complete；final pre-tag independent review PASS；post-tag docs independent review Pending**  
+状态：**surface set 6 anchored complete；final pre-tag与post-tag docs independent reviews PASS**  
 production source：`97ec7c1c6129b73062f9e46725c1fe3f2dcece92`  
 provider-zero test tail：`e9dbf4aa0834418bea10c6fe98d379fb826e7829`  
 candidate appendix/consumer docs：`d9fcc9db6e9cc160afdc085d0a7cece889d47269`  
@@ -95,7 +95,8 @@ compatibility claims。
 - 本promotion只修改docs，不修改production、tests、operator state或tag。
 - `a2aa4d3d`是exact clean promotion docs与本轮unified gate/rebuild source pin；pre-promotion draft independent review已PASS。
 - Final pre-tag independent review已PASS，并核对reviewed gate ledger、approved scope/non-promises、immutable v1-v5 targets与
-  actual annotated tag message一致；reviewed ledger/tag target为`14b570cb`。
+  actual annotated tag message一致；reviewed ledger/tag target为`14b570cb`。对post-tag review object `bbfd7823`与actual
+  tag的independent review也已PASS。
 - Public inventory为**NotRun / 无需**：existing six-assembly inventory没有type/member delta；Offline observable serialization
   metadata由external wire/reflection tests覆盖。这不产生§2排除的CLR compatibility承诺。
 - Ignored config、actual target repository、real provider与deployment均**NotRun**且不属于本promotion gate。
@@ -142,7 +143,7 @@ Disposable rebuild证明candidate在该fresh fixture上的reconstructability与t
 current operator state、unbounded work上限或跨版本migration authority。
 
 因此unified gates、provider-free rebuild与final pre-tag review均已完成；actual annotated tag已锚定reviewed ledger，
-surface set 6为**anchored complete**。当前post-tag docs independent review仍Pending。
+surface set 6为**anchored complete**。Post-tag docs independent review也已PASS。
 
 ## 4. Immutable anchors与tag closure
 
@@ -167,5 +168,7 @@ Tag closure facts：
    reviewed ledger `14b570cb125e40d349c9a50fe11bcc27211ba462`；
 5. **Complete**：actual tag message已核对，pin production/test/candidate/promotion/reviewed-ledger/rebuild identities、§1
    exact scope与§2 non-promises，并明确v1-v5 tags unchanged；
-6. **Pending**：本post-tag status docs的independent review。当前post-tag commit不反向移动tag，不续期gate/rebuild/provider
-   evidence，也不扩大§1 approved scope；后续不得移动tag吸收本commit。
+6. **Complete**：independent reviewer已核对post-tag review object
+   `bbfd7823a4327dcc3aeec8e5e9951c1eb3c71fb3`与actual annotated tag，确认wording/status、object/target/message及prior
+   anchors一致。本tail不反向移动tag、不续期gate/rebuild/provider evidence、不扩大§1 approved scope；后续不得移动tag
+   吸收post-tag docs。

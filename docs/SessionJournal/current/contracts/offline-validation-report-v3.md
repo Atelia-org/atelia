@@ -1,6 +1,6 @@
-# SessionJournal offline validation report V3 candidate contract
+# SessionJournal offline validation report V3 contract
 
-状态：**Approved Stable V3 operational report；surface set 6 anchored；post-tag docs review Pending**  
+状态：**Approved Stable V3 operational report；surface set 6 anchored；post-tag docs independent review PASS**  
 production/test source：`97ec7c1c6129b73062f9e46725c1fe3f2dcece92` + `e9dbf4aa0834418bea10c6fe98d379fb826e7829`  
 approval boundary：[surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md)精确圈定scope；v6 tag
 object `acc73dab` → reviewed ledger `14b570cb`；不属于immutable surface-set-5 tag
@@ -111,7 +111,7 @@ facts，不应把nested property order或array order复制成隐式compat contra
   indexedEventLookupCount:integer, decodedPayloadBytes:integer, preparedReconstructionCount:integer}`。这些是本次audit
   work observations，不是repository authority、resource budget或performance SLA。
 
-V3 candidate记录这些nested names/types/meanings以避免producer与tracked consumer漂移；它不承诺JSON property declaration
+V3 contract记录这些nested names/types/meanings以避免producer与tracked consumer漂移；它不承诺JSON property declaration
 order、whitespace、escaping、terminal newline、byte identity，亦不承诺`eventKindCounts`或其他array的serialization order。
 
 ## 4. Read-only captured-head与resource boundary
@@ -151,7 +151,7 @@ API key、provider response或call log。但它包含absolute repository path、
 addresses、prompt/history hashes、event/history counts与scan diagnostics。因此它**不是content-free**，会泄露identity、
 equality、规模、结构与变化，应按operational metadata处理。
 
-本candidate不承诺：
+本contract不承诺：
 
 - V1/V2 compatibility、dual reader/writer、supported whole-document deserializer或unknown-field tolerance；
 - bounded work/memory/cumulative payload/final bytes、pagination/truncation、oversize status或online latency；
@@ -164,5 +164,5 @@ equality、规模、结构与变化，应按operational metadata处理。
 Historical R5/V2 evidence与immutable v1-v5 approval tags保持原样。本文形成于v5 tag之后，不属于surface set 5；用户已
 明确批准[surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md)圈定的exact
 producer/report boundary；unified gates、provider-free rebuild与final pre-tag review均已完成，annotated v6 tag object
-`acc73dab`已锚定reviewed ledger `14b570cb`。本post-tag docs commit不移动tag、不续期gate/rebuild/provider evidence、不扩大
-approved scope；其independent review仍Pending。批准不移动、续期或重释任何prior anchor。
+`acc73dab`已锚定reviewed ledger `14b570cb`。对post-tag review object `bbfd7823`与actual tag的independent review已PASS；
+本tail不移动tag、不续期gate/rebuild/provider evidence、不扩大approved scope。批准不移动、续期或重释任何prior anchor。

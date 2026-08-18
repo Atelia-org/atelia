@@ -1,6 +1,6 @@
 # SessionJournal Contract R2 — approved surfaces and candidate map
 
-状态：approved surface sets 1 + 2 + 3 + 4 + 5 + 6 anchored；surface set 6 post-tag docs independent review Pending  
+状态：approved surface sets 1 + 2 + 3 + 4 + 5 + 6 anchored；surface set 6 post-tag docs independent review PASS  
 surface set 1 validated product source：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
 surface set 2 validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`；integration evidence：`6c5d3d50e68b84b9dca1391c16438a86cef418c1`  
 surface set 3 production source：`da3aa27af56add07bc70229120c522b8d24c99ba`；contract test evidence：`8a54e613f7c1a92bab3a4dd0806aad19411c41b1`  
@@ -28,8 +28,8 @@ ledger/recovery窄scope；unified gates与final pre-tag review已通过，并由
 surface继续candidate/Defer，不能由任一tag顺带认证。用户又明确批准
 [additive surface set 6](../../evidence/contract-freeze-r2-approval-surface-set-6.md)中的Offline Validation Report V3
 producer-decoded/read-only/publication/retry/privacy/resource窄scope；fresh gates/rebuild与final pre-tag review已完成，并由
-annotated v6 tag object `acc73dab`锚定reviewed ledger `14b570cb`。本post-tag docs independent review仍Pending；本commit
-不移动tag、不续期证据或扩大scope。
+annotated v6 tag object `acc73dab`锚定reviewed ledger `14b570cb`。对post-tag review object `bbfd7823`与actual tag的
+independent review已PASS；本tail不移动tag、不续期证据或扩大scope。
 
 源码、strict codec、tests和goldens仍是实现事实；本文不把所有CLR `public`、human diagnostic文本、provider行为、
 ignored operator state或历史candidate自动升级为兼容承诺。
@@ -210,13 +210,14 @@ surface set 5只批准updated/unchanged minimal receipt、closed failure details
 result、generic outer envelope、Cadence durable V1或receipt atomicity。该授权不会反向扩大v4 tag；v5 tag object
 `e1100017`已锚定reviewed ledger `89d61ba2`。本post-tag docs commit不移动tag、不续期证据或扩大scope。
 
-[Offline validation report V3 candidate](offline-validation-report-v3.md)形成于immutable surface-set-5 tag之后。Current
+[Offline validation report V3 approved contract](offline-validation-report-v3.md)形成于immutable surface-set-5 tag之后。Current
 producer exact输出25个root fields、current nested shapes、7个phase与11个event-kind closed tokens，并执行read-only full
 selected-lineage audit；work、memory、cumulative payload与final JSON都没有production cap。用户已批准
 [surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md)圈定的exact scope；gates/rebuild与final
 pre-tag review已完成，annotated v6 tag object `acc73dab`已锚定reviewed ledger `14b570cb`。该approved surface不属于surface
 set 5；existing v1-v5 tags与historical V2/R5 evidence未移动、重释或续期。Rebuild PASS不批准physical bytes或current
-operator/provider/deployment state；本post-tag docs review仍Pending，且本commit不反向移动tag或扩大scope。
+operator/provider/deployment state。对post-tag review object `bbfd7823`与actual tag的independent review已PASS；本tail不反向
+移动tag、不续期证据或扩大scope。
 
 HTTP普通`{code,error}`中的existing machine code保持含义，但code namespace允许additive新值，first-party client必须有
 unknown fallback；`turn-busy`专用shape与SSE error code集合仍是closed。`error`逐字文本、property order、login HTML、

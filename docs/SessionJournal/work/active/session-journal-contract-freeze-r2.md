@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；approved surface sets 1 + 2 + 3 + 4 + 5 + 6 anchored；surface set 6 post-tag docs independent review Pending  
+状态：Active；approved surface sets 1 + 2 + 3 + 4 + 5 + 6 anchored；surface set 6 post-tag docs independent review PASS  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -250,7 +250,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | CADENCE-RECEIPT-A1 | Candidate complete / exact narrow scope user-approved | post-v4-tag [Cadence set-reserve receipt appendix](../../current/contracts/cadence-set-reserve-receipt.md)；production/test `4e1e80e6`、docs `6ed308f0`、independent final review PASS；exact minimal success/failure ledger与fresh-inspect recovery；不属于v4 tag |
 | AP-PROMOTE-V5 | Complete / tag anchored | [surface set 5 addendum](../../evidence/contract-freeze-r2-approval-surface-set-5.md)只新增Cadence set-reserve command-local exact ledger/privacy/recovery；promotion/gate candidate `aebc4040`上CLI114、solution38/4695、build0W/0E、HTTP/SSE与docs18/0均PASS；reviewed ledger `89d61ba2`；v5 tag object `e1100017` → `89d61ba2`；post-tag docs review `845539c5` + actual tag PASS |
 | OFFLINE-REPORT-A1 | Candidate complete / exact scope user-approved | post-v5 [Offline validation report V3 appendix](../../current/contracts/offline-validation-report-v3.md)；production/test `97ec7c1c` + provider-zero tail `e9dbf4aa`；exact 25-field/current nested/7 phase/11 kind、full-audit/resource/publication/privacy boundary与tracked runbook consumer gate；不属于v5 tag |
-| AP-PROMOTE-V6 | Complete / tag anchored；post-tag docs review Pending | [surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md)只新增Offline Validation V3 producer-decoded/read-only/publication/retry/privacy/resource窄surface；promotion `a2aa4d3d` gates/rebuild PASS；final pre-tag review PASS；v6 tag object `acc73dab` → reviewed ledger `14b570cb`；v1-v5未移动 |
+| AP-PROMOTE-V6 | Complete / tag anchored；post-tag docs review PASS | [surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md)只新增Offline Validation V3 producer-decoded/read-only/publication/retry/privacy/resource窄surface；promotion `a2aa4d3d` gates/rebuild PASS；final pre-tag review PASS；v6 tag object `acc73dab` → reviewed ledger `14b570cb`；post-tag review object `bbfd7823` + actual tag PASS；v1-v5未移动 |
 
 ## 9. R0 完成标准
 
@@ -591,8 +591,9 @@ compatibility承诺。
 Independent final pre-tag review已PASS，并核对actual tag message准确pin identities、§1 scope与non-promises。Annotated v6 tag
 object `acc73dab771b05233f2b0e0fe6ed81081d2f960d`已dereference到reviewed ledger
 `14b570cb125e40d349c9a50fe11bcc27211ba462`；v1-v5 targets未移动。Surface set 6现为anchored complete，但本post-tag docs
-independent review仍Pending。
+independent review已对`bbfd7823`与actual tag PASS。
 
 Ignored config、actual target repo、real provider与deployment均NotRun；rebuild PASS不批准physical bytes、bounds、migration或
-current operator/provider state。本post-tag commit不反向移动tag、不续期gate/rebuild/provider evidence、不扩大approved
-scope；暂不执行R2-CLOSE。
+current operator/provider state。对post-tag review object `bbfd7823a4327dcc3aeec8e5e9951c1eb3c71fb3`与actual tag的
+independent review确认上述wording/status与tag facts一致。本tail不移动tag、不续期gate/rebuild/provider evidence、不扩大
+approved scope；暂不执行R2-CLOSE。

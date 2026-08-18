@@ -19,11 +19,11 @@ constructor/property signatures、record equality与clone shape保持不变；�
 metadata/behavior hard cut。因此assembly metadata与serializer output不和旧candidate byte-identical，不能声称public API
 metadata unchanged。没有supported whole-document reader、V2 compatibility或dual writer。Exact field/nested shape、
 resource与recovery boundary见
-[Offline validation report V3 candidate contract](../../docs/SessionJournal/current/contracts/offline-validation-report-v3.md)。
+[Offline validation report V3 approved contract](../../docs/SessionJournal/current/contracts/offline-validation-report-v3.md)。
 用户已批准其[surface set 6 addendum](../../docs/SessionJournal/evidence/contract-freeze-r2-approval-surface-set-6.md)
 精确圈定的producer-decoded/consumer boundary；fresh gates/rebuild与final pre-tag review已完成，annotated v6 tag object
-`acc73dab`已锚定reviewed ledger `14b570cb`。本post-tag docs independent review仍Pending；本提交不移动tag、不续期证据
-或扩大scope。
+`acc73dab`已锚定reviewed ledger `14b570cb`。对post-tag review object `bbfd7823`与actual tag的independent review已PASS；
+本tail不移动tag、不续期证据或扩大scope。
 
 report 不包含完整 context、完整 `SessionExecutionState`、明文 system prompt 或 addressed
 history。它只输出 exact branch/ref/head、最终 phase/head-kind/sequence checkpoint、setup

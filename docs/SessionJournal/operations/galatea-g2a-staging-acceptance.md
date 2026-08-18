@@ -180,11 +180,11 @@ fi
 nested property order或serializer bytes。Offline validation是full selected-lineage audit，work、memory、cumulative payload与
 final JSON都没有production cap；它包含absolute path、model/surface、addresses、hashes与counts，不是content-free。
 若validation失败或publication不确定，使用fresh absent output重新执行read-only validation，不能消费existing stale report。
-Exact producer/report边界见[Offline validation report V3 candidate contract](../current/contracts/offline-validation-report-v3.md)；
+Exact producer/report边界见[Offline validation report V3 approved contract](../current/contracts/offline-validation-report-v3.md)；
 用户已批准[surface set 6 addendum](../evidence/contract-freeze-r2-approval-surface-set-6.md)精确圈定的scope；fresh gates/rebuild
 与final pre-tag review已完成，annotated v6 tag object `acc73dab`已锚定reviewed ledger `14b570cb`。它不属于immutable
-surface set 5；runbook存在、contract approval或rebuild PASS都不证明current operator acceptance Passed。本post-tag docs
-review仍Pending，且本提交不移动tag、续期证据或扩大scope。
+surface set 5；runbook存在、contract approval或rebuild PASS都不证明current operator acceptance Passed。对post-tag review
+object `bbfd7823`与actual tag的independent review已PASS；本tail不移动tag、不续期证据或扩大scope。
 
 只有上面的exact V2/11-field/type gate通过后才能读取HistoryLoad `capturedHead`；
 `history_load_head`必须等于本轮`raw_head`。History-load report是full-window unbounded offline report，没有final byte cap或
