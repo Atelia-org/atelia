@@ -48,7 +48,7 @@
   v3 tag锚定；additive surface set 4只新增HistoryLoad V2 exact top-level/read-only contract，也已通过unified gates与
   independent review并由immutable v4 tag锚定；additive surface set 5只新增Cadence set-reserve command-local
   ledger/recovery，已通过unified gates与final pre-tag review并由immutable v5 tag锚定；本post-tag docs commit不移动tag、
-  不续期证据或扩大scope，independent post-tag review仍Pending；未列出的surface继续按Defer边界推进。
+  不续期证据或扩大scope，对`845539c5`与actual v5 tag的independent post-tag review已PASS；未列出的surface继续按Defer边界推进。
   精确事实仍以owning code/tests与`current/`文档为准。
 
 目录、标题、日期、`README.md` 或 `public` 均不自动授予 authority。

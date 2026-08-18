@@ -1,6 +1,6 @@
 # Cadence `set-reserve` approved receipt contract
 
-状态：**surface set 5 exact command-local scope approved / anchored；post-tag docs independent review Pending**  
+状态：**surface set 5 exact command-local scope approved / anchored；post-tag docs independent review PASS**  
 production/test source：`4e1e80e6875a3a963bd90c3845250da261548730`  
 approval anchor：不属于immutable v4 tag；由v5 tag object `e1100017` → target `89d61ba2`锚定  
 记录日期：2026-08-18
@@ -83,4 +83,4 @@ atomic。Missing/partial/stale stdout不能证明“没有mutation”，但也�
 本文形成于immutable surface-set-4 tag之后；用户已明确批准
 [surface set 5 addendum](../../evidence/contract-freeze-r2-approval-surface-set-5.md)圈定的exact command-local scope，但
 该scope现由immutable v5 tag object `e1100017`锚定到reviewed ledger `89d61ba2`。本post-tag docs commit不移动tag、
-不续期证据或扩大scope；post-tag docs independent review仍Pending。该批准不会反向扩大、移动或重释v4 tag。
+不续期证据或扩大scope；对`845539c5`与actual v5 tag的post-tag docs independent review已PASS。该批准不会反向扩大、移动或重释v4 tag。

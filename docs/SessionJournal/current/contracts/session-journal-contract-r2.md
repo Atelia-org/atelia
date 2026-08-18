@@ -1,6 +1,6 @@
 # SessionJournal Contract R2 — approved surfaces and candidate map
 
-状态：approved surface sets 1 + 2 + 3 + 4 + 5 anchored；surface set 5 post-tag docs independent review Pending；其余surface继续candidate/Defer  
+状态：approved surface sets 1 + 2 + 3 + 4 + 5 anchored；surface set 5 post-tag docs independent review PASS；其余surface继续candidate/Defer  
 surface set 1 validated product source：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
 surface set 2 validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`；integration evidence：`6c5d3d50e68b84b9dca1391c16438a86cef418c1`  
 surface set 3 production source：`da3aa27af56add07bc70229120c522b8d24c99ba`；contract test evidence：`8a54e613f7c1a92bab3a4dd0806aad19411c41b1`  
@@ -22,8 +22,8 @@ report V2 exact narrow scope；v3 unified gates已通过并由annotated tag锚�
 [additive surface set 4](../../evidence/contract-freeze-r2-approval-surface-set-4.md)中的HistoryLoad report V2 exact
 top-level/read-only窄scope；unified gates与independent review已通过，并由annotated v4 tag锚定。用户现又批准
 [additive surface set 5](../../evidence/contract-freeze-r2-approval-surface-set-5.md)中的Cadence `set-reserve` command-local
-ledger/recovery窄scope；unified gates与final pre-tag review已通过，并由annotated v5 tag锚定。Post-tag docs independent
-review仍Pending，但本commit不反向移动tag、续期证据或扩大scope。除上述exact scope外的
+ledger/recovery窄scope；unified gates与final pre-tag review已通过，并由annotated v5 tag锚定。对post-tag commit
+`845539c5`与actual v5 tag的independent review已PASS；本commit不反向移动tag、续期证据或扩大scope。除上述exact scope外的
 surface继续candidate/Defer，不能由任一tag顺带认证。
 
 源码、strict codec、tests和goldens仍是实现事实；本文不把所有CLR `public`、human diagnostic文本、provider行为、

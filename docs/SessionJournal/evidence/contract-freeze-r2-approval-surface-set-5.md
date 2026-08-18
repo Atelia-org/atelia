@@ -1,11 +1,12 @@
 # SessionJournal Contract Freeze R2 — additive surface set 5 approval
 
-状态：**surface set 5 anchored complete；post-tag docs independent review Pending**  
+状态：**surface set 5 anchored complete；post-tag docs independent review PASS**  
 production/test source：`4e1e80e6875a3a963bd90c3845250da261548730`  
 candidate appendix/docs commit：`6ed308f0268d8e337753252aad0d2ad4f5039eb8`  
 candidate independent final review：PASS  
 promotion docs / unified gate candidate：`aebc4040370029bedb1ed46e26423f079cbe59a9`  
 approval anchor：`session-journal-contract-r2-approved-surfaces-v5`（tag object `e11000177af2877a9d7351dbb17d4bb6b591735e` → dereferenced target `89d61ba2c561d84eed235ee196b24d2016ecd3ff`）  
+post-tag docs review：PASS（review object `845539c5b3dfe1a45295588cd1bdcf5d902c9e8e` + actual annotated tag）  
 记录日期：2026-08-18
 
 本文只记录用户在immutable surface sets 1至4之上新增批准的Cadence `set-reserve` command-local receipt与recovery
@@ -97,7 +98,8 @@ raw/derived rebuild semantics；owner PublicSurface tests已由solution test覆�
 Annotated tag message已核对：它只累计继承immutable surface sets 1至4，并只新增§1 Cadence command-local boundary，
 同时逐项保留§2 non-promises；tag object `e11000177af2877a9d7351dbb17d4bb6b591735e` dereference到reviewed ledger
 `89d61ba2c561d84eed235ee196b24d2016ecd3ff`。因此surface set 5已经**anchored complete**；本post-tag status docs
-commit不反向移动tag、不续期其证据，也不扩大approved scope。Post-tag docs independent review仍Pending。
+commit不反向移动tag、不续期其证据，也不扩大approved scope。对`845539c5`与actual annotated tag的post-tag docs
+independent review已PASS。
 
 ## 4. Immutable anchors与tag closure
 
@@ -115,4 +117,5 @@ Tag closure facts：
 3. annotated tag `session-journal-contract-r2-approved-surfaces-v5` object为`e11000177af2877a9d7351dbb17d4bb6b591735e`，
    dereferenced target为`89d61ba2c561d84eed235ee196b24d2016ecd3ff`；
 4. v1至v4 targets仍为上列四个commit，未移动或由v5续期；
-5. 本post-tag status docs commit位于anchor之后，不移动tag、不续期gate evidence、不扩大§1；其独立review仍Pending。
+5. 本post-tag status docs commit位于anchor之后，不移动tag、不续期gate evidence、不扩大§1；对`845539c5`与actual
+   annotated tag的独立review已PASS。
