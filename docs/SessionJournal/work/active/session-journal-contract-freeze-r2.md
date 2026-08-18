@@ -1,6 +1,6 @@
 # SessionJournal Contract Freeze R2 计划
 
-状态：Active；approved surface sets 1 + 2 + 3 + 4 + 5 anchored；surface set 6 tag-ready after fresh gates/rebuild；final review/tag Pending  
+状态：Active；approved surface sets 1 + 2 + 3 + 4 + 5 + 6 anchored；surface set 6 post-tag docs independent review Pending  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
 
@@ -250,7 +250,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | CADENCE-RECEIPT-A1 | Candidate complete / exact narrow scope user-approved | post-v4-tag [Cadence set-reserve receipt appendix](../../current/contracts/cadence-set-reserve-receipt.md)；production/test `4e1e80e6`、docs `6ed308f0`、independent final review PASS；exact minimal success/failure ledger与fresh-inspect recovery；不属于v4 tag |
 | AP-PROMOTE-V5 | Complete / tag anchored | [surface set 5 addendum](../../evidence/contract-freeze-r2-approval-surface-set-5.md)只新增Cadence set-reserve command-local exact ledger/privacy/recovery；promotion/gate candidate `aebc4040`上CLI114、solution38/4695、build0W/0E、HTTP/SSE与docs18/0均PASS；reviewed ledger `89d61ba2`；v5 tag object `e1100017` → `89d61ba2`；post-tag docs review `845539c5` + actual tag PASS |
 | OFFLINE-REPORT-A1 | Candidate complete / exact scope user-approved | post-v5 [Offline validation report V3 appendix](../../current/contracts/offline-validation-report-v3.md)；production/test `97ec7c1c` + provider-zero tail `e9dbf4aa`；exact 25-field/current nested/7 phase/11 kind、full-audit/resource/publication/privacy boundary与tracked runbook consumer gate；不属于v5 tag |
-| AP-PROMOTE-V6 | Tag-ready / final review and tag Pending | [surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md)只新增Offline Validation V3 producer-decoded/read-only/publication/retry/privacy/resource窄surface；promotion `a2aa4d3d` fresh Offline11/CLI116/solution38/4702/build/Node/docs + provider-free rebuild PASS；public inventory NotRun/无需；authorized v6 tag尚不存在 |
+| AP-PROMOTE-V6 | Complete / tag anchored；post-tag docs review Pending | [surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md)只新增Offline Validation V3 producer-decoded/read-only/publication/retry/privacy/resource窄surface；promotion `a2aa4d3d` gates/rebuild PASS；final pre-tag review PASS；v6 tag object `acc73dab` → reviewed ledger `14b570cb`；v1-v5未移动 |
 
 ## 9. R0 完成标准
 
@@ -560,8 +560,9 @@ dual writer或generic report framework。
 [G2A activation runbook](../../operations/galatea-g2a-staging-acceptance.md#2-import-and-raw-baseline)现在于两处读取
 `.branchRefId` / `.head` / `.executionPhase`前复用exact V3 root-key/type/Idle gate，并拒绝旧numeric `1`、extra/missing
 fields与stale output；不顺带冻结nested/order/bytes。Historical R5/V2 evidence保持零改动，immutable v1-v5 tags不移动。
-该candidate形成于surface-set-5 tag之后，不属于v5；用户随后批准§27精确圈定的surface set 6窄scope。Fresh gates与
-provider-free rebuild已完成，candidate已tag-ready；final review与tag仍Pending，不能借现有tag续期或提前称为anchored。
+该candidate形成于surface-set-5 tag之后，不属于v5；用户随后批准§27精确圈定的surface set 6窄scope。Fresh
+gates/rebuild与final pre-tag review已完成，annotated v6 tag object `acc73dab`已锚定reviewed ledger `14b570cb`；v1-v5
+未移动或续期。
 
 ## 27. AP-PROMOTE-V6 authorization与tag前状态
 
@@ -573,7 +574,7 @@ read-only captured-head、publication/fail-closed/retry、privacy与unbounded re
 
 该授权是immutable surface set 5之上的单项additive surface set 6。Immutable v1-v5 tags继续认证各自原始targets；v5
 仍为`89d61ba2`，不能移动、重释或由本授权续期。Authorized tag exact name为
-`session-journal-contract-r2-approved-surfaces-v6`，当前尚未创建。
+`session-journal-contract-r2-approved-surfaces-v6`；actual tag object `acc73dab`现已锚定reviewed ledger `14b570cb`。
 
 本promotion不批准public CLR/binary compatibility、JSON bytes/order/escaping、supported whole-document reader/V2 compat、
 bounded work/memory/final bytes或pagination、raw/durable/physical schema、其他reports/CLI、provider/deployment/ignored state。
@@ -587,5 +588,11 @@ standalone Timeline invariants闭合；full identities与limitations见addendum 
 six-assembly type/member inventory无delta；observable Offline metadata hard cut由wire/reflection tests覆盖，不产生CLR
 compatibility承诺。
 
-当前candidate已tag-ready；independent final pre-tag review与annotated v6 tag仍Pending。Ignored config、actual target repo、
-real provider与deployment均NotRun；rebuild PASS不批准physical bytes、bounds、migration或current operator/provider state。
+Independent final pre-tag review已PASS，并核对actual tag message准确pin identities、§1 scope与non-promises。Annotated v6 tag
+object `acc73dab771b05233f2b0e0fe6ed81081d2f960d`已dereference到reviewed ledger
+`14b570cb125e40d349c9a50fe11bcc27211ba462`；v1-v5 targets未移动。Surface set 6现为anchored complete，但本post-tag docs
+independent review仍Pending。
+
+Ignored config、actual target repo、real provider与deployment均NotRun；rebuild PASS不批准physical bytes、bounds、migration或
+current operator/provider state。本post-tag commit不反向移动tag、不续期gate/rebuild/provider evidence、不扩大approved
+scope；暂不执行R2-CLOSE。

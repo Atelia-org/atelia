@@ -1,12 +1,12 @@
 # SessionJournal Contract Freeze R2 — additive surface set 6 approval
 
-状态：**user approval recorded；unified gates与provider-free rebuild complete；tag-ready；independent final pre-tag review与annotated tag Pending**  
+状态：**surface set 6 anchored complete；final pre-tag independent review PASS；post-tag docs independent review Pending**  
 production source：`97ec7c1c6129b73062f9e46725c1fe3f2dcece92`  
 provider-zero test tail：`e9dbf4aa0834418bea10c6fe98d379fb826e7829`  
 candidate appendix/consumer docs：`d9fcc9db6e9cc160afdc085d0a7cece889d47269`  
 candidate review tail：`c5b22d5230fe2b1889b3559dd05b64448594054c`  
 promotion docs / unified gate candidate：`a2aa4d3ddc84993fbb24f27402b25990b84ac5ac`  
-authorized tag：`session-journal-contract-r2-approved-surfaces-v6`（尚未创建）  
+approval anchor：`session-journal-contract-r2-approved-surfaces-v6`（tag object `acc73dab771b05233f2b0e0fe6ed81081d2f960d` → dereferenced target `14b570cb125e40d349c9a50fe11bcc27211ba462`）  
 记录日期：2026-08-19
 
 本文只记录用户在immutable surface sets 1至5之上新增批准的SessionJournal Offline Validation Report V3
@@ -94,6 +94,8 @@ compatibility claims。
   serialization metadata表述两项review findings。
 - 本promotion只修改docs，不修改production、tests、operator state或tag。
 - `a2aa4d3d`是exact clean promotion docs与本轮unified gate/rebuild source pin；pre-promotion draft independent review已PASS。
+- Final pre-tag independent review已PASS，并核对reviewed gate ledger、approved scope/non-promises、immutable v1-v5 targets与
+  actual annotated tag message一致；reviewed ledger/tag target为`14b570cb`。
 - Public inventory为**NotRun / 无需**：existing six-assembly inventory没有type/member delta；Offline observable serialization
   metadata由external wire/reflection tests覆盖。这不产生§2排除的CLR compatibility承诺。
 - Ignored config、actual target repository、real provider与deployment均**NotRun**且不属于本promotion gate。
@@ -139,10 +141,10 @@ Rebuild使用fresh run root `/tmp/atelia-ap-v6-rebuild.Ngc4Eg`；summary SHA-256
 Disposable rebuild证明candidate在该fresh fixture上的reconstructability与tracked V3 consumer闭合，不批准physical bytes、
 current operator state、unbounded work上限或跨版本migration authority。
 
-因此当前candidate的unified gates与provider-free rebuild已经完成，状态为**tag-ready**；independent final pre-tag review与
-annotated tag仍Pending，所以还不是tagged/anchored completion。
+因此unified gates、provider-free rebuild与final pre-tag review均已完成；actual annotated tag已锚定reviewed ledger，
+surface set 6为**anchored complete**。当前post-tag docs independent review仍Pending。
 
-## 4. Immutable anchors与tag-before checklist
+## 4. Immutable anchors与tag closure
 
 Immutable prior dereferenced targets继续为：
 
@@ -152,17 +154,18 @@ Immutable prior dereferenced targets继续为：
 - v4 `0dac57a9e32ae5d0367394404524404689dfa4ef`；
 - v5 `89d61ba2c561d84eed235ee196b24d2016ecd3ff`。
 
-创建annotated tag前checklist：
+Tag closure facts：
 
 1. **Complete**：exact clean `a2aa4d3d`上的fresh owning tests、full solution test/build、production HTTP/SSE Node suites、
    scoped docs/diff/status gates已记录于§3.1；
 2. **Complete**：provider-free disposable rebuild已按§3.2核对V3 report、tracked consumer与raw/repository invariants；
    ignored operator data、actual target与real provider未运行；
-3. **Pending**：由independent reviewer核对本addendum、current appendix/contract、routers、active plan、owner guide与runbook没有扩大§1，
-   且historical evidence与v1-v5 tags未重释；
-4. **Pending final review ledger**：再次确认v1-v5 dereferenced targets仍为上列commits，
-   `session-journal-contract-r2-approved-surfaces-v6`仍不存在，并记录
-   reviewed final gate ledger；
-5. **Pending tag**：annotated tag message同时pin production `97ec7c1c`、test tail `e9dbf4aa`、candidate docs `d9fcc9db`、review tail
-   `c5b22d52`、promotion/final gate ledger、§1 exact scope与§2 non-promises；
-6. **Pending post-tag closure**：tag创建后另做status docs commit；不得移动tag吸收post-tag文档。
+3. **Complete**：independent final pre-tag reviewer确认本addendum、current appendix/contract、routers、active plan、owner guide
+   与runbook没有扩大§1，historical evidence与v1-v5 tags未重释；
+4. **Complete**：v1-v5 dereferenced targets仍为上列commits；annotated tag
+   `session-journal-contract-r2-approved-surfaces-v6` object为`acc73dab771b05233f2b0e0fe6ed81081d2f960d`，dereference到
+   reviewed ledger `14b570cb125e40d349c9a50fe11bcc27211ba462`；
+5. **Complete**：actual tag message已核对，pin production/test/candidate/promotion/reviewed-ledger/rebuild identities、§1
+   exact scope与§2 non-promises，并明确v1-v5 tags unchanged；
+6. **Pending**：本post-tag status docs的independent review。当前post-tag commit不反向移动tag，不续期gate/rebuild/provider
+   evidence，也不扩大§1 approved scope；后续不得移动tag吸收本commit。

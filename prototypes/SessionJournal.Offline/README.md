@@ -21,8 +21,9 @@ metadata unchanged。没有supported whole-document reader、V2 compatibility或
 resource与recovery boundary见
 [Offline validation report V3 candidate contract](../../docs/SessionJournal/current/contracts/offline-validation-report-v3.md)。
 用户已批准其[surface set 6 addendum](../../docs/SessionJournal/evidence/contract-freeze-r2-approval-surface-set-6.md)
-精确圈定的producer-decoded/consumer boundary；fresh unified gates与provider-free rebuild已完成，candidate已tag-ready；
-independent final review与annotated v6 tag仍Pending，不能称为anchored stable surface。
+精确圈定的producer-decoded/consumer boundary；fresh gates/rebuild与final pre-tag review已完成，annotated v6 tag object
+`acc73dab`已锚定reviewed ledger `14b570cb`。本post-tag docs independent review仍Pending；本提交不移动tag、不续期证据
+或扩大scope。
 
 report 不包含完整 context、完整 `SessionExecutionState`、明文 system prompt 或 addressed
 history。它只输出 exact branch/ref/head、最终 phase/head-kind/sequence checkpoint、setup
