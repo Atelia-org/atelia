@@ -1,8 +1,8 @@
-# Cadence `set-reserve` receipt candidate
+# Cadence `set-reserve` approved receipt contract
 
-状态：**post-surface-set-4-tag candidate；approval Defer**  
+状态：**surface set 5 exact command-local scope user-approved；unified gates、promotion review与tag Pending**  
 production/test source：`4e1e80e6875a3a963bd90c3845250da261548730`  
-approval boundary：不属于immutable tag `session-journal-contract-r2-approved-surfaces-v4`  
+approval boundary：不属于immutable v4 tag；authorized v5 tag尚未创建  
 记录日期：2026-08-18
 
 本文定义`recap-grid cadence set-reserve` current machine receipt与operator recovery rule。它是
@@ -80,5 +80,6 @@ atomic。Missing/partial/stale stdout不能证明“没有mutation”，但也�
 - receipt/raw、receipt/Cadence或stdout/filesystem的atomicity、rollback、exactly-once或automatic retry；
 - current operator state、ignored config、provider/deployment readiness或任何未列出的non-Store CLI status/detail。
 
-本文形成于immutable surface-set-4 tag之后；source/tests/docs green不会反向扩大、移动或重释v4 tag。后续必须由新的
-显式user decision批准该exact command-local ledger，或继续Defer。
+本文形成于immutable surface-set-4 tag之后；用户已明确批准
+[surface set 5 addendum](../../evidence/contract-freeze-r2-approval-surface-set-5.md)圈定的exact command-local scope，但
+unified gates、promotion docs independent review与authorized v5 tag仍Pending。该批准不会反向扩大、移动或重释v4 tag。
