@@ -111,6 +111,74 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
             reportJson,
             StringComparison.Ordinal
         );
+        using (JsonDocument document = JsonDocument.Parse(reportJson)) {
+            JsonElement root = document.RootElement;
+            AssertExactPropertyNames(
+                root,
+                "schema",
+                "repositoryPath",
+                "branchName",
+                "branchRefId",
+                "head",
+                "eventCount",
+                "logicalPayloadBytes",
+                "executionPhase",
+                "headKind",
+                "toolExecutionSequenceCheckpoint",
+                "runtimeConfigSetup",
+                "systemPromptSetup",
+                "runtimeConfig",
+                "systemPromptUtf8Sha256CodecId",
+                "systemPromptUtf8Sha256",
+                "preparedRequestCount",
+                "observationCount",
+                "agentActionCount",
+                "importedAgentActionCount",
+                "toolResultHistoryCount",
+                "historyContributionCount",
+                "historySemanticCommitmentCodecId",
+                "historySemanticCommitmentSha256",
+                "eventKindCounts",
+                "scanDiagnostics");
+            Assert.Equal(
+                "atelia.session-journal.offline-validation.v3",
+                root.GetProperty("schema").GetString());
+            Assert.Equal(
+                "idle",
+                root.GetProperty("executionPhase").GetString());
+            Assert.Equal(
+                "imported-agent-action",
+                root.GetProperty("headKind").GetString());
+            JsonElement runtime = root.GetProperty("runtimeConfig");
+            AssertExactPropertyNames(
+                runtime,
+                "modelId",
+                "completionSurfaceId",
+                "schema",
+                "derivedContext");
+            AssertExactPropertyNames(
+                runtime.GetProperty("derivedContext"),
+                "nthPrevious");
+            Assert.All(
+                root.GetProperty("eventKindCounts").EnumerateArray(),
+                count => {
+                    AssertExactPropertyNames(count, "kind", "count");
+                    Assert.Equal(
+                        JsonValueKind.String,
+                        count.GetProperty("kind").ValueKind);
+                    Assert.Equal(
+                        JsonValueKind.Number,
+                        count.GetProperty("count").ValueKind);
+                });
+            AssertExactPropertyNames(
+                root.GetProperty("scanDiagnostics"),
+                "capturedEventCount",
+                "repositoryEventReadCount",
+                "indexedHeaderLookupCount",
+                "indexedEventLookupCount",
+                "decodedPayloadBytes",
+                "preparedReconstructionCount");
+        }
         SessionJournalOfflineValidationReport report =
             JsonSerializer.Deserialize<SessionJournalOfflineValidationReport>(
                 reportJson,
@@ -328,6 +396,63 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
         );
     }
 
+    [Fact]
+    public async Task FutureEnumCannotReplaceExistingValidationReport() {
+        string repoPath = CreateJournal();
+        SessionJournalOfflineValidationReport report =
+            await SessionJournalOfflineValidator.ValidateAsync(repoPath);
+        SessionJournalOfflineValidationReport future = report with {
+            ExecutionPhase = (SessionExecutionPhase)int.MaxValue
+        };
+        Directory.CreateDirectory(_tempRoot);
+        string reportPath = Path.Combine(
+            _tempRoot,
+            "existing-validation.json");
+        byte[] sentinel = "existing-report"u8.ToArray();
+        File.WriteAllBytes(reportPath, sentinel);
+
+        Assert.Throws<JsonException>(() =>
+            CliIo.WriteJsonAtomically(reportPath, future));
+
+        Assert.Equal(sentinel, File.ReadAllBytes(reportPath));
+    }
+
+    [Fact]
+    public void FutureRawBodyFailsBeforeValidationReportPublication() {
+        string repoPath = CreateJournal();
+        using (EventJournal.EventJournal journal =
+               EventJournal.EventJournal.OpenExisting(repoPath)) {
+            RefId main = journal.OpenBranch(
+                SessionJournalDefaults.MainBranchName
+            ).Unwrap();
+            EventAddress head = journal.GetHead(main)!.Value;
+            EventAddress future = journal.AppendEventFrame(
+                head,
+                """{"v":2,"body":"future"}"""u8,
+                opaqueEventKind:
+                    (uint)SessionEventKind.ObservationAccepted
+            ).Unwrap();
+            Assert.True(journal.MoveRef(main, head, future).Unwrap());
+        }
+        IReadOnlyDictionary<string, string> before =
+            CaptureRepositoryFileHashes(repoPath);
+        string reportPath = Path.Combine(
+            _tempRoot,
+            "future-body-validation.json");
+
+        int exitCode = Program.MainCore(
+            [
+                "validate",
+                "--input", repoPath,
+                "--report-json", reportPath
+            ],
+            ThrowingCompletionClientFactory.Instance);
+
+        Assert.Equal(1, exitCode);
+        Assert.False(File.Exists(reportPath));
+        Assert.Equal(before, CaptureRepositoryFileHashes(repoPath));
+    }
+
     private string CreateJournal() {
         string repoPath = Path.Combine(_tempRoot, Guid.NewGuid().ToString("N"));
         using var engine = SessionJournalEngine.Create(
@@ -368,6 +493,15 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
                 StringComparer.Ordinal
             );
     }
+
+    private static void AssertExactPropertyNames(
+        JsonElement value,
+        params string[] expected
+    ) => Assert.Equal(
+        expected.OrderBy(static name => name, StringComparer.Ordinal),
+        value.EnumerateObject()
+            .Select(static property => property.Name)
+            .OrderBy(static name => name, StringComparer.Ordinal));
 
     private sealed class ThrowingCompletionClientFactory
         : ICompletionClientFactory {

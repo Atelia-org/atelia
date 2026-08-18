@@ -10,7 +10,7 @@ namespace Atelia.SessionJournal.Offline;
 /// </summary>
 public static class SessionJournalOfflineValidator {
     public const string ReportSchema =
-        "atelia.session-journal.offline-validation.v2";
+        "atelia.session-journal.offline-validation.v3";
     public const string SystemPromptUtf8Sha256CodecId =
         "atelia.utf8-text.sha256.v1";
 

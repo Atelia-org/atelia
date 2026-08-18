@@ -1,8 +1,11 @@
+using System.Text.Json.Serialization;
 using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal.Offline;
 
 public sealed record SessionJournalOfflineEventKindCount(
+    [property: JsonConverter(
+        typeof(SessionJournalOfflineEventKindJsonConverter))]
     SessionEventKind Kind,
     int Count
 );
@@ -15,7 +18,11 @@ public sealed record SessionJournalOfflineValidationReport(
     string? Head,
     int EventCount,
     long LogicalPayloadBytes,
+    [property: JsonConverter(
+        typeof(SessionJournalOfflineExecutionPhaseJsonConverter))]
     SessionExecutionPhase ExecutionPhase,
+    [property: JsonConverter(
+        typeof(SessionJournalOfflineEventKindJsonConverter))]
     SessionEventKind? HeadKind,
     long ToolExecutionSequenceCheckpoint,
     string? RuntimeConfigSetup,
