@@ -439,6 +439,7 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
         string reportPath = Path.Combine(
             _tempRoot,
             "future-body-validation.json");
+        var factory = new CountingThrowingCompletionClientFactory();
 
         int exitCode = Program.MainCore(
             [
@@ -446,9 +447,10 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
                 "--input", repoPath,
                 "--report-json", reportPath
             ],
-            ThrowingCompletionClientFactory.Instance);
+            factory);
 
         Assert.Equal(1, exitCode);
+        Assert.Equal(0, factory.CallCount);
         Assert.False(File.Exists(reportPath));
         Assert.Equal(before, CaptureRepositoryFileHashes(repoPath));
     }
@@ -511,6 +513,18 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
             => throw new InvalidOperationException(
                 $"Offline command must not create completion client '{connection.Id}'."
             );
+    }
+
+    private sealed class CountingThrowingCompletionClientFactory
+        : ICompletionClientFactory {
+        public int CallCount { get; private set; }
+
+        public ICompletionClient Create(CompletionConnectionConfig connection) {
+            CallCount++;
+            throw new InvalidOperationException(
+                $"Offline command must not create completion client '{connection.Id}'."
+            );
+        }
     }
 
     private sealed class NeverCalledCompletionClient : ICompletionClient {
