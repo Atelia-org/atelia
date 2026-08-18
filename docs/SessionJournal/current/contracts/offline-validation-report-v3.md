@@ -1,6 +1,6 @@
 # SessionJournal offline validation report V3 candidate contract
 
-状态：**User-approved additive surface set 6 candidate；unified gates/rebuild/review/tag Pending**  
+状态：**User-approved additive surface set 6；unified gates/rebuild complete；tag-ready；final review/tag Pending**  
 production/test source：`97ec7c1c6129b73062f9e46725c1fe3f2dcece92` + `e9dbf4aa0834418bea10c6fe98d379fb826e7829`  
 approval boundary：[surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md)精确圈定已授权scope；
 不属于immutable surface-set-5 tag，且v6 tag尚未创建
@@ -8,7 +8,7 @@ approval boundary：[surface set 6 addendum](../../evidence/contract-freeze-r2-a
 本文定义`SessionJournal.Cli validate --report-json` current producer输出的V3 machine-readable report，以及tracked
 activation runbook消费该report时必须遵守的fail-closed规则。它是read-only offline audit的captured-head witness，不是raw
 authority、continuous readiness proof、generic CLI envelope或bounded service contract。Current source/tests仍是实现事实；
-用户已批准addendum圈定的scope，但fresh unified gates、provider-free rebuild、independent final review与v6 tag仍Pending。
+用户已批准addendum圈定的scope，fresh unified gates与provider-free rebuild已完成；independent final review与v6 tag仍Pending。
 
 ## 1. Producer、schema与exact root shape
 
@@ -163,5 +163,5 @@ equality、规模、结构与变化，应按operational metadata处理。
 
 Historical R5/V2 evidence与immutable v1-v5 approval tags保持原样。本文形成于v5 tag之后，不属于surface set 5；用户已
 明确批准[surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md)圈定的exact
-producer/report boundary，但本轮unified gates/rebuild/final review尚未关闭，authorized v6 tag也尚未创建。批准不移动、
-续期或重释任何prior anchor。
+producer/report boundary；本轮unified gates与provider-free rebuild已完成，candidate已tag-ready，但independent final review
+尚未关闭，authorized v6 tag也尚未创建。批准不移动、续期或重释任何prior anchor。
