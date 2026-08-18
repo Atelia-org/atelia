@@ -22,7 +22,7 @@
 | Grid Store、Control、Manager、Getter 与 Runtime | [Grid concepts](current/derived-recap/concepts.md)、[target design](work/active/derived-recap-grid-target-design.md) | [Store SQLite V2 approved logical-schema appendix](current/contracts/recap-grid-store-sqlite-v2.md)与owning product/tests；logical schema/persistent pragmas/operator mapping由surface-set-2 tag锚定，physical SQLite不在批准范围 |
 | 审阅 Galatea root `config.json` V1 | [Root config V1 approved appendix](current/contracts/galatea-root-config-v1.md)、[Galatea guide](../../prototypes/Galatea/README.md) | exact field/path/bounds/bootstrap policy由surface-set-2 tag锚定；不要将批准扩张到connections/Route/Profile owner contract、secret/deployment或appendix non-promises |
 | 消费或恢复 desired-setup reconciliation report | [Desired setup report V2 approved contract](current/contracts/desired-setup-reconciliation-report-v2.md)、[activation runbook](operations/galatea-g2a-staging-acceptance.md#9-actual-activation-after-a-passed-disposable-candidate) | producer-only exact 10-field gate；raw mutation先于report publication，失败后必须重新inspect exact head/Idle/governing setup；surface set 3已通过unified gates并由immutable v3 tag锚定 |
-| 审阅 approved public API / wire-format surface与remaining candidate | [Contract R2 approved surfaces and candidate map](current/contracts/session-journal-contract-r2.md) | immutable v1/v2/v3/v4/v5/v6 tags分别锚定surface sets 1/2/3/4/5/6；[surface set 6 addendum](evidence/contract-freeze-r2-approval-surface-set-6.md)记录Offline V3 exact scope、gates/rebuild/non-promises与tag closure；[plan](work/active/session-journal-contract-freeze-r2.md)保留其余Defer边界 |
+| 审阅 approved public API / wire-format surface与R2停止边界 | [Contract R2 anchored surfaces and intentional Defer map](current/contracts/session-journal-contract-r2.md)、[R2 closure evidence](evidence/contract-freeze-r2-closure.md) | immutable v1-v6 tags分别锚定surface sets 1-6；closure记录exact tag map、Stop-after-V6理由、intentional remaining matrix与fresh-candidate reopen triggers；remaining Defer/non-promises不是active backlog |
 | 审阅 post-cutover cadence、recent reserve、长期容量或 cyber 激活边界 | [Cadence/capacity audit](work/active/derived-recap-grid-cadence-capacity-and-activation-audit.md) | A0-A2已实现24k target reserve；C2/C5 activation完成，C4仍Open |
 | 实现 Galatea 自传/world-understanding rolling maintainers，或审阅未来 Editor/ExperienceRefiner 边界 | [C2 Galatea rolling maintainers](work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md) | shared Family、runtime-configurable model、operator asset assembly与验收矩阵 |
 | CLI operator 或 Galatea integration | [CLI guide](../../prototypes/SessionJournal.Cli/README.md)、[Galatea guide](../../prototypes/Galatea/README.md)、[Host integration](current/host-integration/derived-recap-host-integration.md) | current composition/code/tests |
@@ -42,9 +42,11 @@
   记录WP-00至WP-08的implementation/review evidence；WP-08负责正式caller cutover与旧owner删除。
   [C2 Galatea rolling maintainers](work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md)
   记录首个production recipe、runtime model policy、prompt/asset owner与未来refiner扩展边界。
+  已关闭但为避免link/archive churn而保留原路径的
   [SessionJournal Contract Freeze R2](work/active/session-journal-contract-freeze-r2.md)
-  记录候选direct cut与分阶段freeze gates；[Contract R2 candidate](current/contracts/session-journal-contract-r2.md)
-  汇总approved exact support-role/wire与remaining candidate；surface set 1已由immutable v1 tag锚定，additive surface set 2
+  记录候选direct cut与分阶段freeze gates；该`work/active/`路径名不表示R2仍active。
+  [Contract R2](current/contracts/session-journal-contract-r2.md)汇总approved exact support-role/wire与intentional Defer边界；
+  surface set 1已由immutable v1 tag锚定，additive surface set 2
   已获用户批准、通过pre-tag gates并由immutable v2 tag锚定；additive surface set 3也已通过unified gates并由immutable
   v3 tag锚定；additive surface set 4只新增HistoryLoad V2 exact top-level/read-only contract，也已通过unified gates与
   independent review并由immutable v4 tag锚定；additive surface set 5只新增Cadence set-reserve command-local
@@ -54,7 +56,8 @@
   annotated v6 tag object `acc73dab`已锚定reviewed ledger `14b570cb`。它不反向扩大surface set 5，也不把full
   audit/rebuild误写为bounded/content-free/physical-byte promise，或把public serialization metadata hard cut误写成CLR
   compatibility承诺。对post-tag review object `bbfd7823`与actual tag的independent review已PASS；本tail不移动tag、不续期
-  证据或扩大scope。
+  证据或扩大scope。[R2 closure evidence](evidence/contract-freeze-r2-closure.md)记录v1-v6 exact anchors、
+  Stop-after-V6理由、remaining matrix与reopen triggers；剩余项不是待继续穷举的缺陷。
   精确事实仍以owning code/tests与`current/`文档为准。
 
 目录、标题、日期、`README.md` 或 `public` 均不自动授予 authority。

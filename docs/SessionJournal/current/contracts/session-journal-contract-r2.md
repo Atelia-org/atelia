@@ -1,6 +1,6 @@
-# SessionJournal Contract R2 — approved surfaces and candidate map
+# SessionJournal Contract R2 — anchored v1-v6 surfaces and intentional Defer map
 
-状态：approved surface sets 1 + 2 + 3 + 4 + 5 + 6 anchored；surface set 6 post-tag docs independent review PASS  
+状态：**R2 normalization Complete / Closed / Stop**；approved surface sets 1 + 2 + 3 + 4 + 5 + 6 anchored；surface set 6 post-tag docs independent review PASS  
 surface set 1 validated product source：`cd966fc7fddfa6acbda6f80431cf9b588177d969`  
 surface set 2 validated product source：`8c450bf03f58cb62753d8b3732e66adae36b1809`；integration evidence：`6c5d3d50e68b84b9dca1391c16438a86cef418c1`  
 surface set 3 production source：`da3aa27af56add07bc70229120c522b8d24c99ba`；contract test evidence：`8a54e613f7c1a92bab3a4dd0806aad19411c41b1`  
@@ -10,7 +10,7 @@ surface set 6 production/test source：`97ec7c1c6129b73062f9e46725c1fe3f2dcece92
 approval anchors：immutable v1 `session-journal-contract-r2-approved-surfaces-v1`；immutable v2 `session-journal-contract-r2-approved-surfaces-v2`（tag object `13111f3d` → `c4c6dd16`）；immutable v3 `session-journal-contract-r2-approved-surfaces-v3`（tag object `511c5099` → `adf547e2`）；immutable v4 `session-journal-contract-r2-approved-surfaces-v4`（tag object `76dcdc70` → `0dac57a9`）；immutable v5 `session-journal-contract-r2-approved-surfaces-v5`（tag object `e1100017` → `89d61ba2`）；immutable v6 `session-journal-contract-r2-approved-surfaces-v6`（tag object `acc73dab` → `14b570cb`）  
 记录日期：2026-08-19
 
-本文是current SessionJournal、HistoryTimeline与RecapGrid contract的候选Shape/Rule入口。它把明确支持的
+本文是current SessionJournal、HistoryTimeline与RecapGrid contract的Shape/Rule入口。它把明确支持的
 .NET role、raw/companion/operational wire与upgrade policy放在同一张地图中，但只有
 [R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)记录了prior source `a77ed16c`的final gates；
 [surface set 1 approval review](../../evidence/contract-freeze-r2-approval-review.md)又关闭了freeze-specific证据缺口和两个最窄
@@ -25,11 +25,15 @@ top-level/read-only窄scope；unified gates与independent review已通过，并�
 [additive surface set 5](../../evidence/contract-freeze-r2-approval-surface-set-5.md)中的Cadence `set-reserve` command-local
 ledger/recovery窄scope；unified gates与final pre-tag review已通过，并由annotated v5 tag锚定。对post-tag commit
 `845539c5`与actual v5 tag的independent review已PASS；本commit不反向移动tag、续期证据或扩大scope。除上述exact scope外的
-surface继续candidate/Defer，不能由任一tag顺带认证。用户又明确批准
+surface继续作为显式`Defer` / non-promises，不能由任一tag顺带认证。用户又明确批准
 [additive surface set 6](../../evidence/contract-freeze-r2-approval-surface-set-6.md)中的Offline Validation Report V3
 producer-decoded/read-only/publication/retry/privacy/resource窄scope；fresh gates/rebuild与final pre-tag review已完成，并由
 annotated v6 tag object `acc73dab`锚定reviewed ledger `14b570cb`。对post-tag review object `bbfd7823`与actual tag的
 independent review已PASS；本tail不移动tag、不续期证据或扩大scope。
+
+Contract Freeze R2已在surface set 6后有意停止；[closure evidence](../../evidence/contract-freeze-r2-closure.md)
+记录六个exact tag anchors、Stop-after-V6理由、remaining matrix与reopen triggers。本文后续列出的`Defer`与
+non-promises是R2的intentional boundary，不是尚待逐项处理的backlog或缺陷。
 
 源码、strict codec、tests和goldens仍是实现事实；本文不把所有CLR `public`、human diagnostic文本、provider行为、
 ignored operator state或历史candidate自动升级为兼容承诺。
@@ -227,7 +231,7 @@ stable可观察语义是slow subscriber可单独断开、无不可靠in-band ove
 
 ## 6. Cross-tier non-promises与变更纪律
 
-- 本candidate不承诺arbitrary仓外consumer、assembly binary compatibility、physical SQLite/RBF byte-for-byte
+- 本R2 contract不承诺arbitrary仓外consumer、assembly binary compatibility、physical SQLite/RBF byte-for-byte
   determinism、真实断电、hostile same-directory writer、provider exactly-once或内容质量。
 - report、telemetry、call log、recent projection与SSE preview不能成为raw或durable completion的第二truth。
 - future direct cut不得增加versionless fallback、dual reader/writer、compatibility wrapper、generic parser options、

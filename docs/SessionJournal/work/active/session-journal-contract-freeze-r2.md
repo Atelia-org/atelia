@@ -1,8 +1,12 @@
-# SessionJournal Contract Freeze R2 计划
+# SessionJournal Contract Freeze R2 计划（Closed）
 
-状态：Active；approved surface sets 1 + 2 + 3 + 4 + 5 + 6 anchored；surface set 6 post-tag docs independent review PASS  
+状态：**Complete / Closed / Stop**；approved surface sets 1 + 2 + 3 + 4 + 5 + 6 anchored；surface set 6 post-tag docs independent review PASS  
 计划基线：`13ca21f7106fbbec6e18e461360419ebeff952cc`  
 启动日期：2026-08-16
+
+本文件保留在`work/active/`只是为了避免既有链接与审计路径发生churn；路径名不表示R2仍在active推进。
+最终停止边界、六个immutable anchors、remaining matrix与reopen triggers见
+[R2 closure evidence](../../evidence/contract-freeze-r2-closure.md)。
 
 ## 1. 目标与裁决边界
 
@@ -251,6 +255,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | AP-PROMOTE-V5 | Complete / tag anchored | [surface set 5 addendum](../../evidence/contract-freeze-r2-approval-surface-set-5.md)只新增Cadence set-reserve command-local exact ledger/privacy/recovery；promotion/gate candidate `aebc4040`上CLI114、solution38/4695、build0W/0E、HTTP/SSE与docs18/0均PASS；reviewed ledger `89d61ba2`；v5 tag object `e1100017` → `89d61ba2`；post-tag docs review `845539c5` + actual tag PASS |
 | OFFLINE-REPORT-A1 | Candidate complete / exact scope user-approved | post-v5 [Offline validation report V3 appendix](../../current/contracts/offline-validation-report-v3.md)；production/test `97ec7c1c` + provider-zero tail `e9dbf4aa`；exact 25-field/current nested/7 phase/11 kind、full-audit/resource/publication/privacy boundary与tracked runbook consumer gate；不属于v5 tag |
 | AP-PROMOTE-V6 | Complete / tag anchored；post-tag docs review PASS | [surface set 6 addendum](../../evidence/contract-freeze-r2-approval-surface-set-6.md)只新增Offline Validation V3 producer-decoded/read-only/publication/retry/privacy/resource窄surface；promotion `a2aa4d3d` gates/rebuild PASS；final pre-tag review PASS；v6 tag object `acc73dab` → reviewed ledger `14b570cb`；post-tag review object `bbfd7823` + actual tag PASS；v1-v5未移动 |
+| R2-CLOSE | **Complete / Closed / Stop** | [closure evidence](../../evidence/contract-freeze-r2-closure.md)记录v1-v6 exact anchors、Stop-after-V6理由、intentional remaining matrix与fresh-candidate reopen triggers；不再按field count扩张cut |
 
 ## 9. R0 完成标准
 
@@ -596,4 +601,20 @@ independent review已对`bbfd7823`与actual tag PASS。
 Ignored config、actual target repo、real provider与deployment均NotRun；rebuild PASS不批准physical bytes、bounds、migration或
 current operator/provider state。对post-tag review object `bbfd7823a4327dcc3aeec8e5e9951c1eb3c71fb3`与actual tag的
 independent review确认上述wording/status与tag facts一致。本tail不移动tag、不续期gate/rebuild/provider evidence、不扩大
-approved scope；暂不执行R2-CLOSE。
+approved scope。
+
+## 28. R2-CLOSE — Complete / Closed / Stop
+
+Contract Freeze R2 normalization在immutable surface set 6之后完成并停止。Remaining entries是显式
+`Defer` / non-promises，不是未完成缺陷。不再因field count继续cut，不抽generic envelope/result hierarchy，
+也不以相邻surface已批准为理由顺带批准。未来变更必须由新的consumer/security/upgrade trigger触发，并建立
+fresh command-或owner-local candidate。
+
+[Closure evidence](../../evidence/contract-freeze-r2-closure.md)记录六个annotated tag的exact object/target map、停止理由、
+remaining matrix与可审计reopen triggers。`repositoryPath`隐私/审计取舍、legacy import warnings、Offline caps、
+其他non-Store CLI、legacy-root、HistoryLoad nested shape、blanket Tier B/D与generic result families均不作为R2待办；
+它们保持显式`Defer` / non-promises，直到出现新的tracked consumer、安全事件或upgrade需求。
+
+R2关闭不等于整个系统GA、blanket source/binary ABI freeze、部署ready或provider认证。v1-v6 tags保持immutable，
+本closure不移动tag、不续期historical evidence，也不认证未来HEAD。本文继续留在`work/active/`只为保持链接稳定；
+其路径名不表示计划仍active。
