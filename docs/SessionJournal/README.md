@@ -18,6 +18,7 @@
 | Timeline、partition、HistoryLoad 与 branch reconcile | [HistoryLoad](current/derived-recap/history-load.md)、[HistoryTimeline code](../../prototypes/SessionJournal.HistoryTimeline/)、[HistoryTimeline tests](../../tests/SessionJournal.HistoryTimeline.Tests/) | [Durable authority](current/derived-recap/durable-target.md) |
 | 修改 Cadence recent reserve或恢复丢失receipt | [Cadence set-reserve approved receipt contract](current/contracts/cadence-set-reserve-receipt.md)、[CLI guide](../../prototypes/SessionJournal.Cli/README.md) | exact command-local status/detail/exit与fresh-inspect矩阵由immutable surface set 5 tag锚定；不要自动retry或把receipt当Cadence authority |
 | 生成或消费 HistoryLoad calibration report | [HistoryLoad report V2 approved top-level contract](current/contracts/history-load-report-v2.md)、[activation runbook](operations/galatea-g2a-staging-acceptance.md#2-import-and-raw-baseline) | exact 11-field/types/meanings、V1字段删除与read-only retry由immutable v4 tag锚定；full planning window仍unbounded/offline、无final byte cap/oversize contract |
+| 生成或消费 SessionJournal offline validation report | [Offline validation report V3 candidate](current/contracts/offline-validation-report-v3.md)、[Offline owner guide](../../prototypes/SessionJournal.Offline/README.md)、[activation runbook](operations/galatea-g2a-staging-acceptance.md#2-import-and-raw-baseline) | producer-only exact 25-field、7 phase/11 kind closed tokens与full-audit/publication boundary；post-v5 candidate/approval Defer，不属于immutable v5 tag |
 | Grid Store、Control、Manager、Getter 与 Runtime | [Grid concepts](current/derived-recap/concepts.md)、[target design](work/active/derived-recap-grid-target-design.md) | [Store SQLite V2 approved logical-schema appendix](current/contracts/recap-grid-store-sqlite-v2.md)与owning product/tests；logical schema/persistent pragmas/operator mapping由surface-set-2 tag锚定，physical SQLite不在批准范围 |
 | 审阅 Galatea root `config.json` V1 | [Root config V1 approved appendix](current/contracts/galatea-root-config-v1.md)、[Galatea guide](../../prototypes/Galatea/README.md) | exact field/path/bounds/bootstrap policy由surface-set-2 tag锚定；不要将批准扩张到connections/Route/Profile owner contract、secret/deployment或appendix non-promises |
 | 消费或恢复 desired-setup reconciliation report | [Desired setup report V2 approved contract](current/contracts/desired-setup-reconciliation-report-v2.md)、[activation runbook](operations/galatea-g2a-staging-acceptance.md#9-actual-activation-after-a-passed-disposable-candidate) | producer-only exact 10-field gate；raw mutation先于report publication，失败后必须重新inspect exact head/Idle/governing setup；surface set 3已通过unified gates并由immutable v3 tag锚定 |
@@ -49,6 +50,8 @@
   independent review并由immutable v4 tag锚定；additive surface set 5只新增Cadence set-reserve command-local
   ledger/recovery，已通过unified gates与final pre-tag review并由immutable v5 tag锚定；本post-tag docs commit不移动tag、
   不续期证据或扩大scope，对`845539c5`与actual v5 tag的independent post-tag review已PASS；未列出的surface继续按Defer边界推进。
+  Offline validation report V3是其后的producer-only candidate；它不反向扩大surface set 5，也不把full audit误写为bounded或
+  content-free。
   精确事实仍以owning code/tests与`current/`文档为准。
 
 目录、标题、日期、`README.md` 或 `public` 均不自动授予 authority。

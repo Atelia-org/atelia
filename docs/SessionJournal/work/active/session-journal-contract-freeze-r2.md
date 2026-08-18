@@ -249,6 +249,7 @@ independent reviewer → tail-fix 闭环。若 wire candidate 与 API candidate 
 | AP-PROMOTE-V4 | Complete / tag anchored | [surface set 4 addendum](../../evidence/contract-freeze-r2-approval-surface-set-4.md)只新增HistoryLoad V2 exact top-level/types/meanings、V1字段删除与read-only publication/retry；exact `494d215a`上CLI113、solution38/4694、build0W/0E、HTTP/SSE与docs18/0均PASS；inventory/rebuild NotRun/无需；v4 tag object `76dcdc70` → `0dac57a9` |
 | CADENCE-RECEIPT-A1 | Candidate complete / exact narrow scope user-approved | post-v4-tag [Cadence set-reserve receipt appendix](../../current/contracts/cadence-set-reserve-receipt.md)；production/test `4e1e80e6`、docs `6ed308f0`、independent final review PASS；exact minimal success/failure ledger与fresh-inspect recovery；不属于v4 tag |
 | AP-PROMOTE-V5 | Complete / tag anchored | [surface set 5 addendum](../../evidence/contract-freeze-r2-approval-surface-set-5.md)只新增Cadence set-reserve command-local exact ledger/privacy/recovery；promotion/gate candidate `aebc4040`上CLI114、solution38/4695、build0W/0E、HTTP/SSE与docs18/0均PASS；reviewed ledger `89d61ba2`；v5 tag object `e1100017` → `89d61ba2`；post-tag docs review `845539c5` + actual tag PASS |
+| OFFLINE-REPORT-A1 | Candidate complete / approval Defer | post-v5 [Offline validation report V3 appendix](../../current/contracts/offline-validation-report-v3.md)；production/test `97ec7c1c` + provider-zero tail `e9dbf4aa`；exact 25-field、7 phase/11 kind tokens、full-audit/resource/publication/privacy boundary与tracked runbook consumer gate；不属于v5 tag |
 
 ## 9. R0 完成标准
 
@@ -540,3 +541,23 @@ NotRun且不是本promotion gate。Final pre-tag review已关闭；actual tag me
 完整CLI input/diagnostics、current operator/ignored state、provider/deployment或其他candidate。当前surface set 5为
 anchored complete；本post-tag status docs commit不反向移动tag、不续期gate evidence、不扩大scope，其independent review
 已对`845539c5`与actual v5 tag PASS。
+
+## 26. Post-v5-tag OFFLINE-REPORT-A1 candidate
+
+`97ec7c1c`把`SessionJournal.Cli validate --report-json` intentional hard cut到schema
+`atelia.session-journal.offline-validation.v3`：root exact 25 fields保持，`executionPhase`改为7个closed lower-kebab
+tokens，`headKind`与`eventKindCounts[].kind`改为11个closed lower-kebab tokens；public DTO properties仍是typed enums，
+internal converters只拥有wire representation。`e9dbf4aa`补齐future raw/body failure时provider construction/calls为0的gate。
+Offline full 11、CLI full 116、Galatea composition 15与solution build 0W/0E通过，independent code review PASS。
+
+[V3 appendix](../../current/contracts/offline-validation-report-v3.md)记录25-field meanings、current nested producer shapes、
+read-only captured-head witness、publication/retry与privacy inventory。Audit遍历并decode完整selected Parent lineage、重建所有
+Prepared，因此work、memory、cumulative payload与final JSON都没有production cap或stable oversize result；report含absolute
+path、model/surface、addresses、hashes与counts，不是content-free。仓内没有supported whole-document reader、compat parser、
+dual writer或generic report framework。
+
+[G2A activation runbook](../../operations/galatea-g2a-staging-acceptance.md#2-import-and-raw-baseline)现在于两处读取
+`.branchRefId` / `.head` / `.executionPhase`前复用exact V3 root-key/type/Idle gate，并拒绝旧numeric `1`、extra/missing
+fields与stale output；不顺带冻结nested/order/bytes。Historical R5/V2 evidence保持零改动，immutable v1-v5 tags不移动。
+该candidate形成于surface-set-5 tag之后，不属于v5；approval保持Defer，未来如要批准须另做promotion/review，而不能借现有
+tag续期。

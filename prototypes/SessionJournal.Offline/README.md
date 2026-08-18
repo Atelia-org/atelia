@@ -11,11 +11,23 @@ facts。scan 负责完整 Parent-chain/header/codec 检查及所有 historical P
 与 sequence legality，并与同一 captured head 的 tail execution state 和 governing setup
 做 differential。
 
+Current machine report是producer-only
+`atelia.session-journal.offline-validation.v3`：root exact 25 fields，`executionPhase`使用7个closed
+lower-kebab tokens，`headKind`与`eventKindCounts[].kind`使用11个closed lower-kebab tokens。Public DTO的typed enum
+properties保持不变，internal property converters定义V3 wire；没有supported whole-document reader、V2 compatibility或dual
+writer。Exact field/nested shape、resource与recovery boundary见
+[Offline validation report V3 candidate contract](../../docs/SessionJournal/current/contracts/offline-validation-report-v3.md)。
+
 report 不包含完整 context、完整 `SessionExecutionState`、明文 system prompt 或 addressed
 history。它只输出 exact branch/ref/head、最终 phase/head-kind/sequence checkpoint、setup
 address 与 runtime config、system prompt 的 UTF-8 SHA-256、event-kind/history-contribution
 counts、semantic history commitment 及 scan diagnostics。因此 tool raw arguments、
-operation id、correlation id 等只参与内部 legality/differential 检查，不进入 report。
+operation id、correlation id 等只参与内部 legality/differential 检查，不进入 report。但report包含absolute repository
+path、model/surface、addresses、hashes与counts，**不是content-free**，应按operational metadata处理。
+
+这是full selected-lineage audit：work、memory、cumulative payload与final JSON没有production cap、pagination或stable
+oversize result。CLI先完成read-only audit，再以same-directory temporary file + `Flush(true)` + replace-capable move publish；
+production writer允许overwrite。Runbook的fresh/create-only output是排除stale receipt的operator rule，不是writer contract。
 
 `historySemanticCommitmentSha256` 使用显式版本化的
 `atelia.session-journal.history-semantic-commitment.v1`。Observation、Action 和按声明顺序

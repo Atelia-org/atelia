@@ -19,7 +19,7 @@ gitignore/galatea-grid-acceptance/<run-id>/
   acceptance-clones/
     deterministic-<id>/      # 可写raw，用完丢弃
     real-<id>/               # 可写raw，用完丢弃
-  reports/                   # content-free reports；history-load V2 explicitly unbounded/offline
+  reports/                   # operational metadata；offline/history-load reports explicitly unbounded
   call-logs/                 # 可能含正文，限制访问
   host-config/               # strict acceptance-only config
 ```
@@ -34,23 +34,100 @@ ancestors拒绝symlink/reparse。任何clone都不得提升为production reposit
 - 自动create/provision/activate或从payload自授权；
 - route wildcard/default fallback；
 - normal path读取、修复或删除old `derived/recap` roots；
-- 把secret、request/response正文、recap正文或content digest写入汇总报告。
+- 把secret、request/response正文或recap正文写入汇总报告；已有hash/address/path仍按operational metadata限制访问。
 
 ## 2. Import and raw baseline
 
 ```bash
+require_offline_validation_v3_idle() {
+  local report_path="$1"
+  jq -e '
+    .schema == "atelia.session-journal.offline-validation.v3"
+    and (keys == [
+      "agentActionCount",
+      "branchName",
+      "branchRefId",
+      "eventCount",
+      "eventKindCounts",
+      "executionPhase",
+      "head",
+      "headKind",
+      "historyContributionCount",
+      "historySemanticCommitmentCodecId",
+      "historySemanticCommitmentSha256",
+      "importedAgentActionCount",
+      "logicalPayloadBytes",
+      "observationCount",
+      "preparedRequestCount",
+      "repositoryPath",
+      "runtimeConfig",
+      "runtimeConfigSetup",
+      "scanDiagnostics",
+      "schema",
+      "systemPromptSetup",
+      "systemPromptUtf8Sha256",
+      "systemPromptUtf8Sha256CodecId",
+      "toolExecutionSequenceCheckpoint",
+      "toolResultHistoryCount"
+    ])
+    and ([
+      .schema,
+      .repositoryPath,
+      .branchName,
+      .branchRefId,
+      .head,
+      .executionPhase,
+      .headKind,
+      .runtimeConfigSetup,
+      .systemPromptSetup,
+      .systemPromptUtf8Sha256CodecId,
+      .systemPromptUtf8Sha256,
+      .historySemanticCommitmentCodecId,
+      .historySemanticCommitmentSha256
+    ] | all(.[]; type == "string"))
+    and ([
+      .eventCount,
+      .logicalPayloadBytes,
+      .toolExecutionSequenceCheckpoint,
+      .preparedRequestCount,
+      .observationCount,
+      .agentActionCount,
+      .importedAgentActionCount,
+      .toolResultHistoryCount,
+      .historyContributionCount
+    ] | all(.[]; type == "number" and . == floor))
+    and (.branchName == "main")
+    and (.executionPhase == "idle")
+    and (.runtimeConfig | type == "object")
+    and (.eventKindCounts | type == "array")
+    and (.scanDiagnostics | type == "object")
+  ' "$report_path" >/dev/null
+}
+
 dotnet run --project prototypes/SessionJournal.Cli -- \
   import-legacy-json --input "$source_export" --output "$staging_repo" \
   --report-json "$reports/import.json"
 
-dotnet run --project prototypes/SessionJournal.Cli -- \
+validate_imported="$reports/validate-imported.json"
+if [[ -e "$validate_imported" ]]; then
+  echo "offline validation report must be absent for this run" >&2
+  exit 1
+fi
+if ! dotnet run --project prototypes/SessionJournal.Cli -- \
   validate --input "$staging_repo" --branch main \
-  --report-json "$reports/validate-imported.json"
+  --report-json "$validate_imported"; then
+  echo "offline validation failed; do not consume an old report" >&2
+  exit 1
+fi
+if ! require_offline_validation_v3_idle "$validate_imported"; then
+  echo "offline validation report is not exact idle V3; stop before reading raw authority witnesses" >&2
+  exit 1
+fi
 
 ref_id="$(jq -er '.branchRefId | select(type == "string")' \
-  "$reports/validate-imported.json")"
+  "$validate_imported")"
 raw_head="$(jq -er '.head | select(type == "string")' \
-  "$reports/validate-imported.json")"
+  "$validate_imported")"
 
 history_load_report="$reports/history-load.json"
 dotnet run --project prototypes/SessionJournal.Cli -- \
@@ -99,7 +176,14 @@ fi
 记录source length/SHA-256、import report、selected RefId与raw head。对raw repository做sorted
 `relative-path + length + SHA-256` inventory；在provider canary前的所有derived-only步骤后必须exact相同。
 `ref_id`与`raw_head`分别从validation report的`.branchRefId`与`.head`读取；import report不包含RefId，
-不得从旧repo或历史run复制。只有上面的exact V2/11-field/type gate通过后才能读取`capturedHead`；
+不得从旧repo或历史run复制。读取任何raw witness前必须先通过同一exact V3/25-field/root-type/Idle gate；该gate不验证
+nested property order或serializer bytes。Offline validation是full selected-lineage audit，work、memory、cumulative payload与
+final JSON都没有production cap；它包含absolute path、model/surface、addresses、hashes与counts，不是content-free。
+若validation失败或publication不确定，使用fresh absent output重新执行read-only validation，不能消费existing stale report。
+Exact producer/report边界见[Offline validation report V3 candidate contract](../current/contracts/offline-validation-report-v3.md)；
+它是post-v5 candidate/approval Defer，不属于immutable surface set 5。
+
+只有上面的exact V2/11-field/type gate通过后才能读取HistoryLoad `capturedHead`；
 `history_load_head`必须等于本轮`raw_head`。History-load report是full-window unbounded offline report，没有final byte cap或
 stable oversize结果；若report write失败，raw repo不变，可重新执行inspect并用fresh `capturedHead`复核，不要消费partial/stale output。
 Exact top-level/read-only contract见[HistoryLoad report V2](../current/contracts/history-load-report-v2.md)；该窄scope已获
@@ -396,6 +480,7 @@ Passed disposable clone不能直接提升为actual repository。停服后必须�
 reconcile产生的新head提升为后续唯一raw authority witness：
 
 ```bash
+# 复用§2在同一operator shell中定义的require_offline_validation_v3_idle。
 pre_setup_head="$raw_head"
 actual_connections="$host_config/candidate-connections.json"
 main_connection_id="opus4-6"
@@ -458,12 +543,18 @@ if [[ "$raw_head" == "$pre_setup_head" ]]; then
   ' "$setup_report" >/dev/null
 fi
 
-dotnet run --project prototypes/SessionJournal.Cli -- \
+if ! dotnet run --project prototypes/SessionJournal.Cli -- \
   validate --input "$actual_repo" --branch main \
-  --report-json "$validate_after_setup"
+  --report-json "$validate_after_setup"; then
+  echo "post-setup validation failed; re-inspect current raw authority" >&2
+  exit 1
+fi
+if ! require_offline_validation_v3_idle "$validate_after_setup"; then
+  echo "post-setup validation report is not exact idle V3; re-inspect current raw authority" >&2
+  exit 1
+fi
 jq -e --arg head "$raw_head" --arg ref "$ref_id" '
-  # SessionExecutionPhase.Idle当前按enum数值1写入validation report。
-  .head == $head and .branchRefId == $ref and .executionPhase == 1
+  .head == $head and .branchRefId == $ref
 ' "$validate_after_setup" >/dev/null
 ```
 
