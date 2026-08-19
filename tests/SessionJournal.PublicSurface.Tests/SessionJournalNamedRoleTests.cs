@@ -26,19 +26,11 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
         EventAddress head = engine.ReadCurrentHead()!.Value;
         var source = new ExternalCandidateSource();
         var lifecycle = new ExternalLifecycle();
-        var supplemental = new ExternalSupplementalSource(
-            new SessionSupplementalContextSelection.Selected(
-                "external exact supplemental"
-            )
-        );
-        var runtime = new SessionRuntime(
+        engine.UseRuntime(new SessionRuntime(
             new RejectingCompletionClient(),
             ContextCandidateSource: source,
-            ContextLifecycle: lifecycle,
-            SupplementalContextSource: supplemental
-        );
-        engine.UseRuntime(runtime);
-        Assert.Same(supplemental, runtime.SupplementalContextSource);
+            ContextLifecycle: lifecycle
+        ));
 
         SessionDesiredSetupReconciliationResult.Ready desired = Assert.IsType<
             SessionDesiredSetupReconciliationResult.Ready
@@ -182,26 +174,6 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
         Assert.IsType<SessionTurnRetractionResult.Unavailable>(
             engine.RewindLatestCompletedTurn(head)
         );
-
-        var supplementalRequest = new SessionSupplementalContextRequest(
-            head,
-            "external exact query"
-        );
-        SessionSupplementalContextSelection supplementalSelection =
-            await supplemental.SelectAsync(
-                supplementalRequest,
-                CancellationToken.None
-            );
-        Assert.Equal(
-            "external exact query",
-            supplemental.LastRequest!.ExactObservationContent
-        );
-        Assert.Equal(
-            "external exact supplemental",
-            Assert.IsType<SessionSupplementalContextSelection.Selected>(
-                supplementalSelection
-            ).ExactObservationContent
-        );
     }
 
     [Fact]
@@ -321,94 +293,6 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
             Assert.Null(property.SetMethod));
     }
 
-    [Fact]
-    public void SupplementalContractsExposeOnlyValidatedReadOnlyDataShapes() {
-        Type request = typeof(SessionSupplementalContextRequest);
-        Type selection = typeof(SessionSupplementalContextSelection);
-        Type selected = typeof(SessionSupplementalContextSelection.Selected);
-        Type source = typeof(ISessionSupplementalContextSource);
-
-        Assert.True(request.IsSealed);
-        Assert.True(selection.IsAbstract);
-        Assert.True(selected.IsSealed);
-        Assert.Empty(selection.GetConstructors(
-            BindingFlags.Public | BindingFlags.Instance
-        ));
-        ConstructorInfo baseConstructor = Assert.Single(
-            selection.GetConstructors(
-                BindingFlags.NonPublic | BindingFlags.Instance
-            )
-        );
-        Assert.Empty(baseConstructor.GetParameters());
-        Assert.True(baseConstructor.IsPrivate);
-        Assert.DoesNotContain(
-            selection.GetInterfaces(),
-            type => type.IsGenericType
-                && type.GetGenericTypeDefinition() == typeof(IEquatable<>)
-        );
-        Assert.Null(selection.GetMethod(
-            "<Clone>$",
-            BindingFlags.Public
-                | BindingFlags.NonPublic
-                | BindingFlags.Instance
-        ));
-        Assert.DoesNotContain(
-            selected.GetInterfaces(),
-            type => type.IsGenericType
-                && type.GetGenericTypeDefinition() == typeof(IEquatable<>)
-        );
-        Assert.All(request.GetProperties(), static property =>
-            Assert.Null(property.SetMethod));
-        Assert.All(selected.GetProperties(), static property =>
-            Assert.Null(property.SetMethod));
-        Assert.Equal(
-            new[] {
-                nameof(SessionSupplementalContextRequest.ExactObservationContent),
-                nameof(SessionSupplementalContextRequest.ObservationAddress)
-            },
-            request.GetProperties()
-                .Select(static property => property.Name)
-                .Order(StringComparer.Ordinal)
-                .ToArray()
-        );
-        Assert.Equal(
-            [nameof(SessionSupplementalContextSelection.Selected.ExactObservationContent)],
-            selected.GetProperties()
-                .Select(static property => property.Name)
-                .ToArray()
-        );
-        Assert.Equal(
-            new[] { "NoMatch", "Selected" },
-            selection.GetNestedTypes(BindingFlags.Public)
-                .Select(static type => type.Name)
-                .Order(StringComparer.Ordinal)
-                .ToArray()
-        );
-        MethodInfo select = Assert.Single(source.GetMethods());
-        Assert.Equal("SelectAsync", select.Name);
-        Assert.Equal(
-            typeof(ValueTask<SessionSupplementalContextSelection>),
-            select.ReturnType
-        );
-        Assert.Equal(
-            new[] {
-                typeof(SessionSupplementalContextRequest),
-                typeof(CancellationToken)
-            },
-            select.GetParameters()
-                .Select(static parameter => parameter.ParameterType)
-                .ToArray()
-        );
-        ConstructorInfo runtimeConstructor = Assert.Single(
-            typeof(SessionRuntime).GetConstructors()
-        );
-        ParameterInfo runtimeTail = runtimeConstructor.GetParameters()[^1];
-        Assert.Equal("SupplementalContextSource", runtimeTail.Name);
-        Assert.Equal(typeof(ISessionSupplementalContextSource), runtimeTail.ParameterType);
-        Assert.True(runtimeTail.HasDefaultValue);
-        Assert.Null(runtimeTail.DefaultValue);
-    }
-
     public void Dispose() {
         if (Directory.Exists(_path)) {
             Directory.Delete(_path, recursive: true);
@@ -482,24 +366,6 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
             Assert.NotNull(readView);
             LastRequest = request;
             return ValueTask.FromResult(_result);
-        }
-    }
-
-    private sealed class ExternalSupplementalSource(
-        SessionSupplementalContextSelection selection
-    ) : ISessionSupplementalContextSource {
-        internal SessionSupplementalContextRequest? LastRequest {
-            get;
-            private set;
-        }
-
-        public ValueTask<SessionSupplementalContextSelection> SelectAsync(
-            SessionSupplementalContextRequest request,
-            CancellationToken cancellationToken
-        ) {
-            cancellationToken.ThrowIfCancellationRequested();
-            LastRequest = request;
-            return ValueTask.FromResult(selection);
         }
     }
 

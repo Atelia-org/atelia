@@ -7,12 +7,9 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal;
 
 internal static class SessionRequestManifestCodec {
-    public const int PreparedV5BodySchemaVersion = 5;
-    public const int PreparedV6BodySchemaVersion = 6;
-    private const int MaxPreparedV5ExactContextInputCount = 128;
-
+    private const int MaxExactContextInputCount = 128;
     public static byte[] Encode(CompletionRequestPreparedBody body) {
-        Validate(body, GetBodySchemaVersion(body));
+        Validate(body);
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, SessionRequestCanonicalizer.WriterOptions)) {
             writer.WriteStartObject();
@@ -30,10 +27,7 @@ internal static class SessionRequestManifestCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    public static CompletionRequestPreparedBody Decode(
-        JsonElement body,
-        int bodySchemaVersion
-    ) {
+    public static CompletionRequestPreparedBody Decode(JsonElement body) {
         RequireExactProperties(
             body,
             "completion-request-prepared body",
@@ -58,29 +52,11 @@ internal static class SessionRequestManifestCodec {
             ReadTarget(ReadRequiredObject(body, "target")),
             ReadCommitment(ReadRequiredObject(body, "commitment"))
         );
-        Validate(result, bodySchemaVersion);
+        Validate(result);
         return result;
     }
 
-    public static int GetBodySchemaVersion(CompletionRequestPreparedBody body) {
-        ArgumentNullException.ThrowIfNull(body);
-        ArgumentNullException.ThrowIfNull(body.Recipe);
-        return body.Recipe.RecipeId switch {
-            SessionRequestManifestDefaults.RecipeId => PreparedV5BodySchemaVersion,
-            SessionSupplementalContextRecipe.RecipeId => PreparedV6BodySchemaVersion,
-            _ => throw new NotSupportedException(
-                $"Unsupported request recipe '{body.Recipe.RecipeId}'."
-            )
-        };
-    }
-
-    public static void Validate(CompletionRequestPreparedBody body)
-        => Validate(body, GetBodySchemaVersion(body));
-
-    public static void Validate(
-        CompletionRequestPreparedBody body,
-        int bodySchemaVersion
-    ) {
+    public static void Validate(CompletionRequestPreparedBody body) {
         ArgumentNullException.ThrowIfNull(body);
         RequireText(body.Origin.CorrelationId, "origin.correlationId");
         RequireText(body.Origin.Reason, "origin.reason");
@@ -95,13 +71,22 @@ internal static class SessionRequestManifestCodec {
         RequireSha256(body.Plan.RawRangeSha256, "plan.rawRangeSha256");
         ValidateSetup(body.Plan.RawStartSetups.RuntimeConfig, "plan.rawStartSetups.runtimeConfig");
         ValidateSetup(body.Plan.RawStartSetups.SystemPrompt, "plan.rawStartSetups.systemPrompt");
-        if (body.Plan.ExactContextInputs.IsDefault) {
+        if (body.Plan.ExactContextInputs.Length > MaxExactContextInputCount) {
             throw new InvalidDataException(
-                "plan.exactContextInputs must be initialized."
+                $"Prepared v5 plan.exactContextInputs cannot exceed {MaxExactContextInputCount} entries."
             );
         }
         foreach (SessionRequestContextInput input in body.Plan.ExactContextInputs) {
             ValidateExactContextInput(input);
+            int populatedCarriers =
+                (string.IsNullOrWhiteSpace(input.ContextSnapshot.SystemPromptFragment) ? 0 : 1)
+                + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ObservationMessage) ? 0 : 1)
+                + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ActionMessage) ? 0 : 1);
+            if (populatedCarriers != 1) {
+                throw new InvalidDataException(
+                    "Prepared v5 exact context inputs must populate exactly one contextSnapshot carrier."
+                );
+            }
         }
 
         ValidateSetup(body.Setups.RuntimeConfig, "setups.runtimeConfig");
@@ -133,7 +118,16 @@ internal static class SessionRequestManifestCodec {
             );
         }
 
-        ValidateBodyVersionRecipePair(body, bodySchemaVersion);
+        RequireText(body.Recipe.RecipeId, "recipe.recipeId");
+        if (!string.Equals(
+                body.Recipe.RecipeId,
+                SessionRequestManifestDefaults.RecipeId,
+                StringComparison.Ordinal
+            )) {
+            throw new NotSupportedException(
+                $"Unsupported request recipe '{body.Recipe.RecipeId}'."
+            );
+        }
         if (!string.Equals(
                 body.Recipe.CanonicalRequestCodecId,
                 SessionRequestManifestDefaults.CanonicalRequestCodecId,
@@ -152,81 +146,6 @@ internal static class SessionRequestManifestCodec {
             throw new ArgumentOutOfRangeException(nameof(body), "commitment.byteLength must be positive.");
         }
         RequireSha256(body.Commitment.Sha256, "commitment.sha256");
-    }
-
-    private static void ValidateBodyVersionRecipePair(
-        CompletionRequestPreparedBody body,
-        int bodySchemaVersion
-    ) {
-        RequireText(body.Recipe.RecipeId, "recipe.recipeId");
-        switch (bodySchemaVersion) {
-            case PreparedV5BodySchemaVersion:
-                if (!string.Equals(
-                        body.Recipe.RecipeId,
-                        SessionRequestManifestDefaults.RecipeId,
-                        StringComparison.Ordinal
-                    )) {
-                    throw new NotSupportedException(
-                        $"Prepared v5 does not support request recipe '{body.Recipe.RecipeId}'."
-                    );
-                }
-                if (body.Plan.ExactContextInputs.Length
-                    > MaxPreparedV5ExactContextInputCount) {
-                    throw new InvalidDataException(
-                        $"Prepared v5 plan.exactContextInputs cannot exceed {MaxPreparedV5ExactContextInputCount} entries."
-                    );
-                }
-                foreach (SessionRequestContextInput input
-                    in body.Plan.ExactContextInputs) {
-                    ValidateOneHotRecapInput(input, "Prepared v5");
-                }
-                break;
-            case PreparedV6BodySchemaVersion:
-                if (!string.Equals(
-                        body.Recipe.RecipeId,
-                        SessionSupplementalContextRecipe.RecipeId,
-                        StringComparison.Ordinal
-                    )) {
-                    throw new NotSupportedException(
-                        $"Prepared v6 does not support request recipe '{body.Recipe.RecipeId}'."
-                    );
-                }
-                SessionSupplementalContextPartition partition =
-                    SessionSupplementalContextRecipe.ValidateAndPartition(
-                        body.Plan.ExactContextInputs
-                    );
-                foreach (SessionRequestContextInput input
-                    in partition.RecapInputs) {
-                    ValidateOneHotRecapInput(input, "Prepared v6 recap");
-                }
-                break;
-            default:
-                throw new NotSupportedException(
-                    $"Unsupported CompletionRequestPrepared body schema version '{bodySchemaVersion}'."
-                );
-        }
-    }
-
-    private static void ValidateOneHotRecapInput(
-        SessionRequestContextInput input,
-        string versionLabel
-    ) {
-        if (SessionSupplementalContextRecipe.IsCanonicalControlSnapshot(
-                input.ContextSnapshot
-            )) {
-            throw new InvalidDataException(
-                $"{versionLabel} input contains a canonical supplemental control in the nonterminal Recap segment."
-            );
-        }
-        int populatedCarriers =
-            (string.IsNullOrWhiteSpace(input.ContextSnapshot.SystemPromptFragment) ? 0 : 1)
-            + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ObservationMessage) ? 0 : 1)
-            + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ActionMessage) ? 0 : 1);
-        if (populatedCarriers != 1) {
-            throw new InvalidDataException(
-                $"{versionLabel} exact recap inputs must populate exactly one contextSnapshot carrier."
-            );
-        }
     }
 
     private static void ValidateExactContextInput(SessionRequestContextInput input) {

@@ -104,8 +104,7 @@ public sealed record SessionRuntime(
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null,
     ICoherentContextCandidateSource? ContextCandidateSource = null,
     long? MaximumCanonicalRequestBytes = null,
-    ISessionContextLifecycleCoordinator? ContextLifecycle = null,
-    ISessionSupplementalContextSource? SupplementalContextSource = null
+    ISessionContextLifecycleCoordinator? ContextLifecycle = null
 );
 
 public sealed record TurnResult(
@@ -191,7 +190,6 @@ public sealed class SessionJournalTurnAbortedException : InvalidOperationExcepti
 internal enum SessionJournalFailpoint {
     None,
     AfterObservationCommitted,
-    AfterSupplementalContextSelected,
     AfterRequestPreparedCommitted,
     AfterCompletionAttemptStartedCommitted,
     AfterCompletionBeforeActionCommitted,

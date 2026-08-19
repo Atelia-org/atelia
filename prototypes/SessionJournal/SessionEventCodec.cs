@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
@@ -16,12 +15,7 @@ internal static class SessionEventCodec {
     };
 
     public static byte[] Encode(SessionEventKind kind, object body) {
-        EnsureKnownKind(kind);
-        int bodySchemaVersion = kind == SessionEventKind.CompletionRequestPrepared
-            ? SessionRequestManifestCodec.GetBodySchemaVersion(
-                (CompletionRequestPreparedBody)body
-            )
-            : GetExpectedBodySchemaVersion(kind);
+        int bodySchemaVersion = GetExpectedBodySchemaVersion(kind);
         return kind switch {
             SessionEventKind.RuntimeConfigSetup => EncodeRuntimeConfiguration((SessionRuntimeConfiguration)body, bodySchemaVersion),
             SessionEventKind.SystemPromptSetup => EncodeSystemPromptSetup((SystemPromptSetupBody)body, bodySchemaVersion),
@@ -39,7 +33,7 @@ internal static class SessionEventCodec {
     }
 
     public static object Decode(SessionEventKind kind, ReadOnlySpan<byte> payload, out int bodySchemaVersion) {
-        EnsureKnownKind(kind);
+        int expectedBodySchemaVersion = GetExpectedBodySchemaVersion(kind);
         JsonDocument document;
         try {
             document = JsonDocument.Parse(payload.ToArray());
@@ -53,8 +47,13 @@ internal static class SessionEventCodec {
         using (document) {
             JsonElement root = document.RootElement;
             RequireObject(root, "envelope");
-            bodySchemaVersion = ReadRequiredCanonicalBodySchemaVersion(root);
-            ValidateSupportedBodySchemaVersion(kind, bodySchemaVersion);
+            bodySchemaVersion = ReadRequiredInt32(root, "v");
+            if (bodySchemaVersion != expectedBodySchemaVersion) {
+                throw new NotSupportedException(
+                    $"Unsupported body schema version for session event kind '{kind}': "
+                    + $"actual={bodySchemaVersion}, expected={expectedBodySchemaVersion}."
+                );
+            }
 
             RequireExactProperties(root, $"{kind} envelope", "v", "body");
             if (!root.TryGetProperty("body", out JsonElement body)) { throw new InvalidDataException("Session event envelope is missing required property 'body'."); }
@@ -68,10 +67,7 @@ internal static class SessionEventCodec {
                     SessionEventKind.AgentActionProduced => DecodeAgentActionProduced(body, bodySchemaVersion),
                     SessionEventKind.ToolExecutionStarted => DecodeToolExecutionStarted(body),
                     SessionEventKind.ToolResultObserved => DecodeToolResultObserved(body),
-                    SessionEventKind.CompletionRequestPrepared => SessionRequestManifestCodec.Decode(
-                        body,
-                        bodySchemaVersion
-                    ),
+                    SessionEventKind.CompletionRequestPrepared => SessionRequestManifestCodec.Decode(body),
                     SessionEventKind.CompletionAttemptFailed => DecodeCompletionAttemptFailed(body),
                     SessionEventKind.ImportedAgentAction => DecodeAgentActionProduced(body, bodySchemaVersion),
                     SessionEventKind.CompletionAttemptStarted => DecodeCompletionAttemptStarted(body),
@@ -104,57 +100,12 @@ internal static class SessionEventCodec {
             SessionEventKind.AgentActionProduced => 1,
             SessionEventKind.ToolExecutionStarted => 1,
             SessionEventKind.ToolResultObserved => 1,
-            SessionEventKind.CompletionRequestPrepared => throw new InvalidOperationException(
-                "CompletionRequestPrepared has multiple supported body schema versions; use the manifest recipe to select v5 or v6."
-            ),
+            SessionEventKind.CompletionRequestPrepared => 5,
             SessionEventKind.CompletionAttemptFailed => 2,
             SessionEventKind.ImportedAgentAction => 1,
             SessionEventKind.CompletionAttemptStarted => 1,
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
-
-    private static void EnsureKnownKind(SessionEventKind kind) {
-        _ = kind switch {
-            SessionEventKind.RuntimeConfigSetup
-                or SessionEventKind.SystemPromptSetup
-                or SessionEventKind.SessionCreated
-                or SessionEventKind.ObservationAccepted
-                or SessionEventKind.AgentActionProduced
-                or SessionEventKind.ToolExecutionStarted
-                or SessionEventKind.ToolResultObserved
-                or SessionEventKind.CompletionRequestPrepared
-                or SessionEventKind.CompletionAttemptFailed
-                or SessionEventKind.ImportedAgentAction
-                or SessionEventKind.CompletionAttemptStarted => true,
-            _ => throw new NotSupportedException(
-                $"Session event kind '{kind}' is not implemented."
-            )
-        };
-    }
-
-    private static void ValidateSupportedBodySchemaVersion(
-        SessionEventKind kind,
-        int actual
-    ) {
-        if (kind == SessionEventKind.CompletionRequestPrepared) {
-            if (actual is SessionRequestManifestCodec.PreparedV5BodySchemaVersion
-                or SessionRequestManifestCodec.PreparedV6BodySchemaVersion) {
-                return;
-            }
-            throw new NotSupportedException(
-                $"Unsupported body schema version for session event kind '{kind}': "
-                + $"actual={actual}, supported=5|6."
-            );
-        }
-
-        int expected = GetExpectedBodySchemaVersion(kind);
-        if (actual != expected) {
-            throw new NotSupportedException(
-                $"Unsupported body schema version for session event kind '{kind}': "
-                + $"actual={actual}, expected={expected}."
-            );
-        }
-    }
 
     private static byte[] EncodeRuntimeConfiguration(
         SessionRuntimeConfiguration body,
@@ -897,24 +848,6 @@ internal static class SessionEventCodec {
             if (!seen.Add(property.Name)) { throw new InvalidDataException($"{name} contains duplicate property '{property.Name}'."); }
             if (!allowed.Contains(property.Name)) { throw new InvalidDataException($"{name} contains unknown property '{property.Name}'."); }
         }
-    }
-
-    private static int ReadRequiredCanonicalBodySchemaVersion(
-        JsonElement element
-    ) {
-        if (!element.TryGetProperty("v", out JsonElement property)
-            || property.ValueKind != JsonValueKind.Number
-            || !property.TryGetInt32(out int value)
-            || !string.Equals(
-                property.GetRawText(),
-                value.ToString(CultureInfo.InvariantCulture),
-                StringComparison.Ordinal
-            )) {
-            throw new InvalidDataException(
-                "Required body schema version property 'v' is missing or is not a canonical integer."
-            );
-        }
-        return value;
     }
 
     private static int ReadRequiredInt32(JsonElement element, string propertyName) {

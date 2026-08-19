@@ -1,6 +1,5 @@
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
-using System.Xml.Linq;
 using Xunit;
 
 namespace Atelia.SessionJournal.Tests;
@@ -245,34 +244,29 @@ public sealed class SessionContextCandidateMaterializationContractTests {
     }
 
     [Fact]
-    public void SessionJournalProjectFile_HasExactProductionProjectReferences() {
+    public void SessionJournalProjectFile_DoesNotReferenceConcreteDerivedOrHostAssemblies() {
         string repoRoot = FindRepositoryRoot();
-        string projectPath = Path.Combine(
+        string project = File.ReadAllText(Path.Combine(
             repoRoot,
             "prototypes",
             "SessionJournal",
             "SessionJournal.csproj"
-        );
-        XDocument project = XDocument.Load(projectPath);
-        string[] actual = project.Descendants("ProjectReference")
-            .Select(reference =>
-                reference.Attribute("Include")?.Value.Replace('\\', '/')
-                ?? throw new Xunit.Sdk.XunitException(
-                    "ProjectReference must have an Include attribute."
-                )
-            )
-            .Order(StringComparer.Ordinal)
-            .ToArray();
-        string[] expected = [
-            "../../src/Diagnostics/Diagnostics.csproj",
-            "../../src/EventJournal/EventJournal.csproj",
-            "../Completion.Abstractions/Completion.Abstractions.csproj",
-            "../Completion.Tools/Completion.Tools.csproj"
-        ];
+        ));
 
-        Assert.Equal(
-            expected.Order(StringComparer.Ordinal).ToArray(),
-            actual
+        Assert.DoesNotContain(
+            "SessionJournal.DerivedRecap.Maintainers",
+            project,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "SessionJournal.DerivedMemory",
+            project,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "Agent.Core",
+            project,
+            StringComparison.Ordinal
         );
     }
 

@@ -9,34 +9,6 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
     private readonly List<string> _paths = [];
 
     [Fact]
-    public async Task MixedPreparedVersions_OfflineValidationReadsWithoutRewrite() {
-        string path = NewPath();
-        PreparedV6Fixture.MixedWriterRepository fixture =
-            await PreparedV6Fixture.CreateMixedWriterRepositoryAsync(
-                path
-            );
-        Assert.Equal(
-            new[] { 5, 6, 5 },
-            fixture.PreparedBodySchemaVersions.ToArray()
-        );
-        string before =
-            PreparedV6Fixture.ComputeRepositoryTreeDigest(path);
-
-        SessionJournalOfflineValidationReport report =
-            await SessionJournalOfflineValidator.ValidateAsync(path);
-
-        Assert.Equal(3, report.PreparedRequestCount);
-        Assert.Equal(
-            3,
-            report.ScanDiagnostics.PreparedReconstructionCount
-        );
-        Assert.Equal(
-            before,
-            PreparedV6Fixture.ComputeRepositoryTreeDigest(path)
-        );
-    }
-
-    [Fact]
     public async Task ReconstructsEveryHistoricalPreparedCommitment() {
         string path = NewPath();
         var client = new NeverCalledCompletionClient();
