@@ -13,6 +13,7 @@ docs/SessionJournal/work/active/derived-recap-grid-c2-galatea-rolling-maintainer
 docs/SessionJournal/work/active/derived-recap-grid-c3-incremental-row-frontier.md
 docs/SessionJournal/work/active/memo-pod-target-design-and-implementation-plan.md
 docs/SessionJournal/work/active/memo-pod-galatea-integration-plan.md
+docs/SessionJournal/work/active/completion-request-prepared-v6-tier-a-amendment.md
 docs/SessionJournal/work/active/session-journal-contract-freeze-r2.md
 docs/SessionJournal/current/host-integration/derived-recap-host-integration.md
 docs/SessionJournal/current/recovery/uncertain-external-effects.md
