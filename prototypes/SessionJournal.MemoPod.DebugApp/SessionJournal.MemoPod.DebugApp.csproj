@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../Completion/Completion.csproj" />
     <ProjectReference Include="../Completion.Abstractions/Completion.Abstractions.csproj" />
     <ProjectReference Include="../SessionJournal.MemoPod/SessionJournal.MemoPod.csproj" />
   </ItemGroup>

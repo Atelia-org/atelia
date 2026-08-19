@@ -41,15 +41,14 @@ internal static class Program {
         "pod",
         "memo"
     );
-    private static readonly IReadOnlySet<string> RecallSingleKeys = Set(
+    private static readonly IReadOnlySet<string> FakeRecallSingleKeys = Set(
         "root",
         "pod",
         "query-file"
     );
-    private static readonly IReadOnlySet<string> RecallRepeatedKeys = Set(
+    private static readonly IReadOnlySet<string> FakeRecallRepeatedKeys = Set(
         "fake-return-id"
     );
-
     public static async Task<int> Main(string[] args) {
         using var cancellation = new CancellationTokenSource();
         ConsoleCancelEventHandler handler = (_, eventArgs) => {
@@ -77,7 +76,8 @@ internal static class Program {
         TextWriter standardError,
         Func<IReadOnlyList<string>, ICompletionClient>?
             fakeClientFactory = null,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        LiveMemoRecallServices? liveServices = null
     ) {
         ArgumentNullException.ThrowIfNull(args);
         ArgumentNullException.ThrowIfNull(standardOutput);
@@ -115,7 +115,8 @@ internal static class Program {
                     parsed,
                     standardOutput,
                     fakeClientFactory,
-                    cancellationToken
+                    cancellationToken,
+                    liveServices
                 ).ConfigureAwait(false),
                 _ => throw new OperatorSyntaxException()
             };
@@ -132,6 +133,20 @@ internal static class Program {
                 standardError,
                 "input",
                 exitCode: 1
+            ).ConfigureAwait(false);
+        }
+        catch (LiveMemoRecallConfigurationException) {
+            return await FailAsync(
+                standardError,
+                "live-config",
+                exitCode: 1
+            ).ConfigureAwait(false);
+        }
+        catch (LiveMemoRecallSafetyException) {
+            return await FailAsync(
+                standardError,
+                "live-safety",
+                exitCode: 2
             ).ConfigureAwait(false);
         }
         catch (MemoRecallException exception) {
@@ -304,9 +319,29 @@ internal static class Program {
         OperatorArguments arguments,
         TextWriter output,
         Func<IReadOnlyList<string>, ICompletionClient> fakeClientFactory,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        LiveMemoRecallServices? liveServices
     ) {
-        arguments.RequireShape(RecallSingleKeys, RecallRepeatedKeys);
+        if (arguments.Contains("live")) {
+            if (!string.Equals(
+                    arguments.RequireSingle("live"),
+                    "true",
+                    StringComparison.Ordinal
+                )) {
+                throw new OperatorSyntaxException();
+            }
+            return await LiveMemoRecallRunner.RunAsync(
+                arguments,
+                output,
+                liveServices,
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
+
+        arguments.RequireShape(
+            FakeRecallSingleKeys,
+            FakeRecallRepeatedKeys
+        );
         string query = StrictUtf8File.Read(
             arguments.RequireSingle("query-file"),
             MemoPodLimits.MaximumRecallQueryUtf8Bytes
@@ -401,6 +436,9 @@ internal static class Program {
         ).ConfigureAwait(false);
         await output.WriteLineAsync(
             "  recall --root <dir> --pod <id> --query-file <file> [--fake-return-id <raw>]..."
+        ).ConfigureAwait(false);
+        await output.WriteLineAsync(
+            "  recall --live true --root <dir> --pod <id> --connections <v1-file> --connection <exact-id> --case <label> --query-file <file> [--query-file <file>]... [--max-prompt-bytes <n>] [--max-tokens <n>] [--delay-ms <n>]"
         ).ConfigureAwait(false);
     }
 

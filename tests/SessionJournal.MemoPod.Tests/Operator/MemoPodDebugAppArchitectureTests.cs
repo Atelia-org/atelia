@@ -22,7 +22,11 @@ public sealed class MemoPodDebugAppArchitectureTests {
         ));
 
         Assert.Equal(
-            new[] { "Completion.Abstractions", "SessionJournal.MemoPod" },
+            new[] {
+                "Completion",
+                "Completion.Abstractions",
+                "SessionJournal.MemoPod"
+            },
             project.Descendants("ProjectReference")
                 .Select(static element => Path.GetFileNameWithoutExtension(
                     (string)element.Attribute("Include")!
@@ -61,6 +65,7 @@ public sealed class MemoPodDebugAppArchitectureTests {
 
         Assert.Equal(
             new[] {
+                "Atelia.Completion",
                 "Atelia.Completion.Abstractions",
                 "Atelia.SessionJournal.MemoPod"
             },
@@ -76,22 +81,54 @@ public sealed class MemoPodDebugAppArchitectureTests {
     }
 
     [Fact]
-    public void DebugAppSourceHasNoLiveConnectionOrEnvironmentAccess() {
+    public void LiveOwnedSourceContainsConcreteCompositionAndNoLoggingSink() {
         string sourceRoot = Path.Combine(
             FindRepositoryRoot(),
             "prototypes",
             "SessionJournal.MemoPod.DebugApp"
         );
-        string source = string.Join(
-            "\n",
-            Directory.EnumerateFiles(sourceRoot, "*.cs")
-                .Select(File.ReadAllText)
-        );
+        Dictionary<string, string> sources = Directory
+            .EnumerateFiles(sourceRoot, "*.cs")
+            .ToDictionary(
+                static path => Path.GetFileName(path)
+                    ?? throw new InvalidDataException(
+                        "DebugApp source path has no file name."
+                    ),
+                File.ReadAllText,
+                StringComparer.Ordinal
+            );
+        const string liveOwnedFile = "LiveMemoRecall.cs";
+        Assert.True(sources.ContainsKey(liveOwnedFile));
 
-        Assert.DoesNotContain("Environment.", source);
-        Assert.DoesNotContain("GetEnvironmentVariable", source);
-        Assert.DoesNotContain("DebugUtil", source);
-        Assert.DoesNotContain("Connection", source);
+        foreach ((string fileName, string source) in sources) {
+            Assert.DoesNotContain("LoggingCompletionClient", source);
+            Assert.DoesNotContain("ICompletionHttpExchangeSink", source);
+            Assert.DoesNotContain("DebugHttpExchangeSink", source);
+            Assert.DoesNotContain("DebugUtil", source);
+            if (string.Equals(
+                    fileName,
+                    liveOwnedFile,
+                    StringComparison.Ordinal
+                )) {
+                continue;
+            }
+
+            Assert.DoesNotContain("Environment.", source);
+            Assert.DoesNotContain("GetEnvironmentVariable", source);
+            Assert.DoesNotContain("CompletionConnectionRegistry", source);
+            Assert.DoesNotContain("CompletionConnectionConfigLoader", source);
+            Assert.DoesNotContain("DefaultCompletionClientFactory", source);
+        }
+
+        string liveSource = sources[liveOwnedFile];
+        Assert.Contains("Environment.GetEnvironmentVariable", liveSource);
+        Assert.Contains("CompletionConnectionRegistry", liveSource);
+        Assert.Contains("CompletionConnectionConfigLoader", liveSource);
+        Assert.Contains("DefaultCompletionClientFactory", liveSource);
+        Assert.Contains("#if DEBUG", liveSource);
+        Assert.Contains("ATELIA_DEBUG_FILE_LEVEL", liveSource);
+        Assert.Contains("ATELIA_DEBUG_CONSOLE_LEVEL", liveSource);
+        Assert.Contains("\"ERROR\"", liveSource);
     }
 
     private static string FindRepositoryRoot() {

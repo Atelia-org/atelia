@@ -3,6 +3,7 @@
 docs/SessionJournal/README.md
 docs/SessionJournal/current/architecture-and-code-map.md
 docs/SessionJournal/evidence/README.md
+docs/SessionJournal/evidence/memo-pod-deepseek-v4-flash-candidate.md
 docs/SessionJournal/current/contracts/session-journal-beta-contract-snapshot.md
 docs/SessionJournal/current/derived-recap/concepts.md
 docs/SessionJournal/current/derived-recap/durable-target.md

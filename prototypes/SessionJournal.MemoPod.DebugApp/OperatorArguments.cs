@@ -67,6 +67,18 @@ internal sealed class OperatorArguments {
         return values[0];
     }
 
+    internal bool Contains(string key) => _values.ContainsKey(key);
+
+    internal string? GetSingleOrDefault(string key) {
+        if (!_values.TryGetValue(key, out List<string>? values)) {
+            return null;
+        }
+        if (values.Count != 1) {
+            throw new OperatorSyntaxException();
+        }
+        return values[0];
+    }
+
     internal IReadOnlyList<string> GetRepeated(string key)
         => _values.TryGetValue(key, out List<string>? values)
             ? Array.AsReadOnly(values.ToArray())

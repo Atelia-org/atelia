@@ -1,10 +1,10 @@
 # SessionJournal.MemoPod.DebugApp
 
 This is a Linux-only, fake-first operator for the single-Pod MemoPod
-lifecycle. It never loads Completion connection files, environment-backed
-credentials, concrete providers, or call logging. Explicit `--live` support is
-deferred to Track C2 together with real-provider acceptance and logging/privacy
-review.
+lifecycle. The default path never loads Completion connection files,
+environment-backed credentials, concrete providers, or call logging. Track C2
+adds a separately gated `recall --live true` path; it is a candidate runner,
+not production activation or proof that the route is compatible.
 
 Every invocation owns one complete phase. `create` and `edit` finish with one
 successful `FreezeAsync`; `inspect`, `get`, and `recall` open an already Frozen
@@ -69,3 +69,83 @@ The deterministic fake returns exactly the raw strings supplied through
 production `MemoPod.RecallAsync` parser still validates the tool call, IDs,
 ordering, hydration limits, and Frozen epoch. The fake does not claim semantic
 retrieval quality.
+
+## Provider-free live source gate
+
+The live source slice is covered without network access. Its composition test
+passes a Frozen Pod through `RecallAsync`, the real DeepSeek V4 OpenAI Chat
+converter, fake HTTP/SSE, normalized cache usage, and Memo hydration. The
+current converter emits all of the following:
+
+- `thinking.type=disabled`;
+- `stream_options.include_usage=true`;
+- the required named `recall_memos` tool choice;
+- `parallel_tool_calls:false`.
+
+The last field is only the current local wire shape. Its acceptance by the live
+DeepSeek route remains unknown until an authenticated canary succeeds.
+
+## Authenticated candidate runner
+
+Live execution is Release-only and fail closed. Before loading a connections
+file or constructing a Completion client, set both logging sinks to `ERROR`:
+
+```bash
+export ATELIA_DEBUG_FILE_LEVEL=ERROR
+export ATELIA_DEBUG_CONSOLE_LEVEL=ERROR
+```
+
+Use a disposable working directory and a disposable synthetic Pod. Do not use
+a user Pod or a working directory whose `.atelia/debug-logs` contains retained
+production diagnostics. The strict V1 connections file must select one exact
+ID with this policy:
+
+- `kind`: `openai-chat`;
+- `modelId`: `deepseek-v4-flash`;
+- `completionSurfaceId`: `openai-chat/deepseek-v4`;
+- `reasoningEffort`: `disabled`;
+- origin: exactly `https://api.deepseek.com/` (no userinfo, alternate port,
+  path, query, or fragment);
+- credentials: nonblank `apiKeyEnv`; the candidate route policy rejects an
+  inline-only `apiKey` source.
+
+The runner uses `TryGet` followed by `GetClient`; an unknown requested ID never
+falls back to `defaultConnectionId`. It does not use `LoggingCompletionClient`
+or an HTTP exchange sink, does not retry, and treats repeated `--query-file`
+arguments as explicit separate provider calls.
+
+Example shape (the referenced files and environment variable must be created
+by the operator; never commit their contents):
+
+```bash
+dotnet run -c Release \
+  --project prototypes/SessionJournal.MemoPod.DebugApp -- \
+  recall --live true \
+  --root "$disposable_pod_root" \
+  --pod 11111111111111111111111111111111 \
+  --connections "$disposable_connections_v1" \
+  --connection deepseek-v4-flash-recall \
+  --case cold-01 \
+  --query-file "$synthetic_query_1" \
+  --query-file "$synthetic_query_2" \
+  --max-prompt-bytes 33554432 \
+  --max-tokens 256 \
+  --delay-ms 0
+```
+
+`--case` is 1–64 lowercase ASCII letters/digits plus `.`, `_`, and `-` after
+the first character. Live mode accepts 1–8 query files, prompt bytes in
+1–33,554,432, max tokens in 1–4,096, and delay in 0–30,000 milliseconds. Fake
+arguments and live arguments are mutually exclusive.
+
+Each attempted provider call writes one content-free JSONL evidence record.
+It contains route identifiers, Pod/active counts, prompt hash/bytes, query
+bytes, bounds, delay, elapsed time, outcome, normalized cache status/token
+fields, and selected Memo IDs. It never contains Topic, Memo/query text, system
+prompt, raw request/response, command arguments, diagnostics, exception text,
+endpoint configuration, or credentials. The live runner computes the shared
+Frozen Observation hash/UTF-8 length transiently, clears its temporary byte
+buffer, and checks the hash against `MemoRecallResult.FrozenPromptSha256`.
+
+The tracked candidate record starts at `NotRun`:
+[`memo-pod-deepseek-v4-flash-candidate.md`](../../docs/SessionJournal/evidence/memo-pod-deepseek-v4-flash-candidate.md).
