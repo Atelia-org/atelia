@@ -86,6 +86,7 @@ public sealed class MemoPodArchitectureTests {
                     )
             ))
             .ToArray();
+        Assert.Contains("Completion.Abstractions", projectReferences);
         Assert.All(
             projectReferences,
             static reference => Assert.Contains(
@@ -128,12 +129,27 @@ public sealed class MemoPodArchitectureTests {
             project.Descendants("TreatWarningsAsErrors").Single().Value
         );
 
-        Assert.DoesNotContain(
-            typeof(Memo).Assembly.GetReferencedAssemblies(),
-            static reference => reference.Name?.StartsWith(
+        string[] productAssemblyReferences = typeof(Memo).Assembly
+            .GetReferencedAssemblies()
+            .Where(static reference => reference.Name?.StartsWith(
                 "Atelia.",
                 StringComparison.Ordinal
-            ) is true
+            ) is true)
+            .Select(static reference => reference.Name!)
+            .ToArray();
+        Assert.Contains(
+            "Atelia.Completion.Abstractions",
+            productAssemblyReferences
+        );
+        Assert.All(
+            productAssemblyReferences,
+            static reference => Assert.Contains(
+                reference,
+                new[] {
+                    "Atelia.Completion.Abstractions",
+                    "Atelia.Diagnostics"
+                }
+            )
         );
     }
 

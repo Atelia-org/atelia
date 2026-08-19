@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../Completion.Abstractions/Completion.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Atelia.SessionJournal.MemoPod.Tests" />
     <InternalsVisibleTo Include="Atelia.SessionJournal.MemoPod.CrashHarness" />
   </ItemGroup>
