@@ -1,18 +1,19 @@
 # CompletionRequestPrepared v6 Tier-A amendment
 
-状态：**Candidate / Under Review — documentation-only；尚未获用户显式授权，不得开始 B1 product mutation**  
+状态：**Candidate / Gate A Authorized — B1 product/tests Authorized / Not Started；不是current contract或approval authority**  
 proposal baseline：[MemoPod Galatea / SessionJournal integration plan](memo-pod-galatea-integration-plan.md)，locked at `d5a403c4`  
 frozen antecedent：[SessionJournal Contract R2](../../current/contracts/session-journal-contract-r2.md)、
 [R2 closure](../../evidence/contract-freeze-r2-closure.md)  
 记录日期：2026-08-20
 
 本文是 post-R2、SessionJournal-owner 的 Tier-A raw/recovery wire amendment Candidate。它只定义
-`CompletionRequestPrepared` v5/v6 split-write、dual-read、reconstruction 与 deployment boundary，供 B1 在获得
-用户显式开工授权后实施。它不是 current contract、implementation evidence、approval evidence、migration runbook、
+`CompletionRequestPrepared` v5/v6 split-write、dual-read、reconstruction 与 deployment boundary，供已获 Gate A 授权的
+B1 product/tests 实施。它不是 current contract、implementation evidence、approval evidence、migration runbook、
 deployment approval 或 tag authority。
 
-截至本文提交时，用户**尚未显式授权 B1 product mutation**。独立文档审阅通过也不能替代该授权；任何 Agent 都不得
-仅凭本文或 integration plan 修改下文 §7 列出的 production files。
+Gate A 已于 2026-08-20 由用户以原文显式授权：`授权 Gate A：按 Prepared v6 Tier-A Candidate 实施 WP-07B B1。`
+该授权只允许按本 Candidate 修改 §7 product 与 §8.1 tests；B1 仍是 **Authorized / Not Started**。它不授权
+WP-07B B2、Gate B、current contract、approval evidence、deployment 或 tag，也不表示 v6 已实现、已审阅或已批准。
 
 ## 1. Why this candidate exists
 
@@ -190,7 +191,7 @@ pair 是 initial Prepared 固化的 turn-level execution input，而不是每次
 
 ## 7. Exact B1 product write scope
 
-获得 §10 Gate A 用户显式授权后，B1 production mutation 只允许：
+Gate A 已于 2026-08-20 获得用户显式授权；B1 production mutation 仍只允许：
 
 - new `prototypes/SessionJournal/SessionSupplementalContextContracts.cs`
 - new `prototypes/SessionJournal/SessionSupplementalContextRecipe.cs`
@@ -271,15 +272,16 @@ focused/full commands、platform/runtime 与 residual risks。它不得使用 Ap
 
 ## 10. Two-stage approval and promotion gates
 
-### Current state — Candidate / Under Review
+### Current state — Candidate / Gate A Authorized / B1 Not Started
 
-本文件只能接受文档独立审阅。**尚未获得用户显式开工授权，不得修改 B1 production。** reviewer PASS 也只说明
-candidate 足够精确，不批准 implementation、current contract 或 tag。
+本文件已完成独立文档审阅，Gate A 亦已于 2026-08-20 获用户显式授权；B1 product/tests 目前仍为
+**Authorized / Not Started**。reviewer PASS 与 Gate A 都不批准 current contract、approval evidence、deployment 或 tag。
 
 ### Gate A — explicit user authorization to implement
 
-只有用户明确表示“授权按本 Candidate 实施 B1”后，才能修改 §7 product 与 §8.1 tests。Gate A 是施工授权，**不是**
-Tier-A final approval/freeze，也不授权创建 current contract、approval evidence 或 tag。
+用户已于 2026-08-20 明确“授权 Gate A：按 Prepared v6 Tier-A Candidate 实施 WP-07B B1”，因此可修改
+§7 product 与 §8.1 tests。Gate A 是施工授权，**不是** Tier-A final approval/freeze，也不授权 WP-07B B2、
+current contract、approval evidence、deployment 或 tag。
 
 ### Implementation review gate
 
@@ -305,7 +307,7 @@ rollback 和 dependency boundary。Findings closure 必须使用 independently r
 本文只有在下列事项全部发生后才能退出 active Candidate：
 
 1. independent document review confirms §§2–10 are closed and internally consistent；
-2. user grants Gate A authorization；
+2. **Complete (2026-08-20)** — user grants Gate A authorization；
 3. implementation and candidate evidence pass independent review；
 4. user grants Gate B final approval；
 5. a separate promotion package publishes the current contract/approval ledger/new immutable tag and passes post-tag review。
