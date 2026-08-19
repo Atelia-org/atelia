@@ -125,11 +125,6 @@ internal static class MemoPodDocumentPublisher {
                 postPublishDiagnostic = exception;
             }
 
-            Exception? cleanupDiagnostic = CleanupTemporary(temporaryPath);
-            postPublishDiagnostic = CombineDiagnostics(
-                postPublishDiagnostic,
-                cleanupDiagnostic
-            );
             return new MemoPodPublishResult(
                 MemoPodPublishSettlement.Published,
                 PostPublishDiagnostic: postPublishDiagnostic
@@ -140,11 +135,16 @@ internal static class MemoPodDocumentPublisher {
             throw;
         }
         catch (Exception exception) when (!IsFatal(exception)) {
-            Exception? cleanupDiagnostic = CleanupTemporary(temporaryPath);
-            Exception failure = CombineDiagnostics(
-                exception,
-                cleanupDiagnostic
-            ) ?? exception;
+            Exception failure = exception;
+            if (!settlementFenceEntered) {
+                Exception? cleanupDiagnostic = CleanupTemporary(
+                    temporaryPath
+                );
+                failure = CombineDiagnostics(
+                    exception,
+                    cleanupDiagnostic
+                ) ?? exception;
+            }
             if (directorySynced) {
                 return new MemoPodPublishResult(
                     MemoPodPublishSettlement.Published,

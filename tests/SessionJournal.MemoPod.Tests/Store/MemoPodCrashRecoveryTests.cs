@@ -44,18 +44,31 @@ public sealed class MemoPodCrashRecoveryTests : IDisposable {
         RunCrashHarness(operation, failpoint);
 
         MemoPodDocument? reopened = TryStrictReopen();
-        if (operation == "create") {
-            Assert.True(
-                reopened is null
-                    || Assert.Single(reopened.Memos).ExactText == "new"
-            );
-        }
-        else {
-            Assert.NotNull(reopened);
-            Assert.Contains(
-                Assert.Single(reopened.Memos).ExactText,
-                new[] { "old", "new" }
-            );
+        switch (operation, failpoint) {
+            case ("create", "before-publish"):
+                Assert.Null(reopened);
+                break;
+            case ("replace", "before-publish"):
+                Assert.Equal("old", ReadOnlyMemoText(reopened));
+                break;
+            case ("create", "after-install-before-fsync"):
+                Assert.True(
+                    reopened is null || ReadOnlyMemoText(reopened) == "new"
+                );
+                break;
+            case ("replace", "after-install-before-fsync"):
+                Assert.Contains(
+                    ReadOnlyMemoText(reopened),
+                    new[] { "old", "new" }
+                );
+                break;
+            case (_, "after-fsync"):
+                Assert.Equal("new", ReadOnlyMemoText(reopened));
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unexpected crash case {operation}/{failpoint}."
+                );
         }
     }
 
@@ -127,4 +140,9 @@ public sealed class MemoPodCrashRecoveryTests : IDisposable {
             2,
             [new Memo(MemoId.FromOrdinal(1), exactText)]
         );
+
+    private static string ReadOnlyMemoText(MemoPodDocument? document) {
+        Assert.NotNull(document);
+        return Assert.Single(document.Memos).ExactText;
+    }
 }

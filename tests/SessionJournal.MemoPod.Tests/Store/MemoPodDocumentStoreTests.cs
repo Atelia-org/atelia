@@ -149,7 +149,37 @@ public sealed class MemoPodDocumentStoreTests : IDisposable {
     }
 
     [Fact]
-    public void PostSyncHookAndCleanupFaultsCannotReversePublished() {
+    public void AfterInstallReoccupiedTemporaryNameIsNotCleaned() {
+        string? temporaryPath = null;
+
+        MemoPodPublishResult result = MemoPodDocumentPublisher.Publish(
+            _root,
+            Document("new"),
+            MemoPodPublishMode.CreateNew,
+            new MemoPodPublisherTestHooks(
+                BeforePublish: path => temporaryPath = path,
+                AfterInstallBeforeDirectoryFsync: _ => {
+                    File.WriteAllText(temporaryPath!, "reoccupied");
+                    throw new IOException("after install");
+                }
+            )
+        );
+
+        Assert.Equal(
+            MemoPodPublishSettlement.CommitIndeterminate,
+            result.Settlement
+        );
+        Assert.IsType<IOException>(result.Failure?.Exception);
+        Assert.Equal("reoccupied", File.ReadAllText(temporaryPath!));
+        Assert.Equal(
+            "new",
+            Assert.Single(MemoPodDocumentStore.Read(_root, PodId).Memos)
+                .ExactText
+        );
+    }
+
+    [Fact]
+    public void PostSyncHookFaultCannotReversePublishedOrCleanReoccupiedName() {
         string? temporaryPath = null;
 
         MemoPodPublishResult result = MemoPodDocumentPublisher.Publish(
@@ -159,14 +189,15 @@ public sealed class MemoPodDocumentStoreTests : IDisposable {
             new MemoPodPublisherTestHooks(
                 BeforePublish: path => temporaryPath = path,
                 AfterDirectoryFsync: _ => {
-                    Directory.CreateDirectory(temporaryPath!);
+                    File.WriteAllText(temporaryPath!, "reoccupied");
                     throw new IOException("after fsync");
                 }
             )
         );
 
         Assert.Equal(MemoPodPublishSettlement.Published, result.Settlement);
-        Assert.IsType<AggregateException>(result.PostPublishDiagnostic);
+        Assert.IsType<IOException>(result.PostPublishDiagnostic);
+        Assert.Equal("reoccupied", File.ReadAllText(temporaryPath!));
         Assert.Equal(
             "new",
             Assert.Single(MemoPodDocumentStore.Read(_root, PodId).Memos)
@@ -193,6 +224,102 @@ public sealed class MemoPodDocumentStoreTests : IDisposable {
             () => MemoPodDocumentStore.Read(_root, PodId)
         );
         Assert.Equal(MemoPodStoreErrorCode.DocumentAbsent, absent.Code);
+    }
+
+    [Fact]
+    public void AfterInstallTokenCancellationWithoutThrowIsPublished() {
+        using var cancellation = new CancellationTokenSource();
+
+        MemoPodPublishResult result = MemoPodDocumentPublisher.Publish(
+            _root,
+            Document("new"),
+            MemoPodPublishMode.CreateNew,
+            new MemoPodPublisherTestHooks(
+                AfterInstallBeforeDirectoryFsync: _ => cancellation.Cancel()
+            ),
+            cancellation.Token
+        );
+
+        Assert.True(cancellation.IsCancellationRequested);
+        Assert.Equal(MemoPodPublishSettlement.Published, result.Settlement);
+        Assert.Equal(
+            "new",
+            Assert.Single(MemoPodDocumentStore.Read(_root, PodId).Memos)
+                .ExactText
+        );
+    }
+
+    [Fact]
+    public void AfterInstallOperationCanceledExceptionIsCommitIndeterminate() {
+        using var cancellation = new CancellationTokenSource();
+
+        MemoPodPublishResult result = MemoPodDocumentPublisher.Publish(
+            _root,
+            Document("new"),
+            MemoPodPublishMode.CreateNew,
+            new MemoPodPublisherTestHooks(
+                AfterInstallBeforeDirectoryFsync: _ => {
+                    cancellation.Cancel();
+                    throw new OperationCanceledException(cancellation.Token);
+                }
+            ),
+            cancellation.Token
+        );
+
+        Assert.Equal(
+            MemoPodPublishSettlement.CommitIndeterminate,
+            result.Settlement
+        );
+        Assert.IsType<OperationCanceledException>(
+            result.Failure?.Exception
+        );
+        Assert.Equal(
+            "new",
+            Assert.Single(MemoPodDocumentStore.Read(_root, PodId).Memos)
+                .ExactText
+        );
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AfterFsyncCancellationOrThrowIsPublished(
+        bool throwCancellation
+    ) {
+        using var cancellation = new CancellationTokenSource();
+
+        MemoPodPublishResult result = MemoPodDocumentPublisher.Publish(
+            _root,
+            Document("new"),
+            MemoPodPublishMode.CreateNew,
+            new MemoPodPublisherTestHooks(
+                AfterDirectoryFsync: _ => {
+                    cancellation.Cancel();
+                    if (throwCancellation) {
+                        throw new OperationCanceledException(
+                            cancellation.Token
+                        );
+                    }
+                }
+            ),
+            cancellation.Token
+        );
+
+        Assert.True(cancellation.IsCancellationRequested);
+        Assert.Equal(MemoPodPublishSettlement.Published, result.Settlement);
+        if (throwCancellation) {
+            Assert.IsType<OperationCanceledException>(
+                result.PostPublishDiagnostic
+            );
+        }
+        else {
+            Assert.Null(result.PostPublishDiagnostic);
+        }
+        Assert.Equal(
+            "new",
+            Assert.Single(MemoPodDocumentStore.Read(_root, PodId).Memos)
+                .ExactText
+        );
     }
 
     [Fact]
