@@ -1,10 +1,16 @@
 # MemoPod 动态外置记忆目标设计与分步骤施工计划
 
-状态：Reviewed target proposal；implementation Not Started
+状态：Reviewed target proposal；WP-00–WP-06与Track C1已提交；Track C2 provider-free candidate已提交、authenticated
+canary仍NotRun；WP-07A/Tier-A Candidate独立审阅已关闭，Gate A待用户授权
 
 本文定义一种与 RecapGrid 互补、面向具体事务细节的动态外置记忆单元，并把后续实现拆成可独立审阅、
 验证和收口的工作包。本文是 target/plan，不是当前实现事实；当前事实仍以 owning code、tests 与
 [SessionJournal 当前架构地图](../../current/architecture-and-code-map.md)为准。
+
+状态证据只作导航：WP-00 target lock为`f0121f2b`；WP-01至WP-05 product/test链已收口到`7cd69639`；WP-06
+fake-first operator及tail evidence为`6f2000d6`、`eaa57715`；Track C1为`18f168b8`；Track C2的provider-free live
+runner/evidence为`2fa1ee3b`，不构成真实DeepSeek cache/质量/价格证据；WP-07A plan review收口于`d5a403c4`，Tier-A
+Candidate及review tail为`edfe5230`、`19776980`。Gate A未授权，因此WP-07B B1/B2均未开始production mutation。
 
 ## 1. Intent
 

@@ -1,11 +1,13 @@
 # MemoPod Galatea / SessionJournal integration plan
 
-状态：**Under Review — WP-07A plan lock proposal；不是current implementation authority**  
+状态：**Reviewed — WP-07A plan lock与Tier-A Candidate独立审阅已关闭；Gate A待用户授权；不是current implementation authority**  
 目标入口：[MemoPod目标设计与施工计划](memo-pod-target-design-and-implementation-plan.md) §8、WP-07A/WP-07B  
 verified production baseline：`7cd696394e8fbf09db8464508b4492b68cfc0a91`  
 baseline meaning：`7cd69639`已实现provider-neutral MemoPod recall；本文核对的SessionJournal/Galatea
 production seam没有依赖尚未提交的DebugApp。后续只增加tests/DebugApp的提交可以作为implementation baseline
 补充登记，但不得把未复核的SessionJournal/Galatea production变化自动吸收为本文事实。
+review closure：plan tail `d5a403c4`；Tier-A Candidate `edfe5230`及independent-review tail `19776980`。Track C2
+provider-free runner `2fa1ee3b`不改变本文核对的SessionJournal/Galatea production seam，也不等于Gate A授权。
 
 本文只完成WP-07A：锁定单个MemoPod的query-dependent memory如何进入Galatea main request，以及
 Prepared/recovery、failure、ownership、privacy和WP-07B施工边界。本文不修改production，也不宣称WP-07B、
@@ -650,17 +652,17 @@ B1 SessionJournal generic supplemental seam + Prepared v5/v6 split-write/dual-re
 
 **Prerequisite / Tier-A candidate sequence**
 
-1. 由独立doc-only package新增
+1. **Complete (`edfe5230`)**：由独立doc-only package新增
    `docs/SessionJournal/work/active/completion-request-prepared-v6-tier-a-amendment.md`，作为fresh
    SessionJournal-owner Tier-A Candidate；R2 closure的tracked-consumer reopen条件由本Galatea integration满足，但old
    contract、closure与immutable tags保持不动。
-2. independent reviewer确认Candidate已exact锁定v5/v1 preservation、v6/v2 grammar、old-reader Unsupported、new-reader
+2. **Complete (`19776980`)**：independent reviewer确认Candidate已exact锁定v5/v1 preservation、v6/v2 grammar、old-reader Unsupported、new-reader
    dual-read、mixed-journal replay/offline audit、no rewrite/migration与rollback到dual-reader build的operator boundary。
-3. 用户显式批准该Candidate并授权B1开工。在步骤1–3完成前，任何Agent不得修改B1 production code；本integration plan自身
+3. **Pending — Gate A**：用户显式批准该Candidate并授权B1开工。在步骤1–3完成前，任何Agent不得修改B1 production code；本integration plan自身
    不能替代Candidate review或用户授权。
-4. B1 implementation完成后，先形成candidate implementation evidence，例如
+4. **Not Started**：B1 implementation完成后，先形成candidate implementation evidence，例如
    `docs/SessionJournal/evidence/completion-request-prepared-v6-candidate.md`；该文件不是approval，不创建或暗示tag。
-5. 只有candidate code/evidence再经独立review且获用户显式批准后，单独的promotion package才可生成
+5. **Not Started — Gate B**：只有candidate code/evidence再经独立review且获用户显式批准后，单独的promotion package才可生成
    `docs/SessionJournal/current/contracts/completion-request-prepared-v6.md`、
    `docs/SessionJournal/evidence/completion-request-prepared-v6-approval.md`并创建new immutable tag，同时同步router、evidence
    index与doc-check scope。
@@ -858,10 +860,10 @@ python3 -m unittest discover -s tests/SessionJournal.DocGovernance.Tests -p '*_t
 git diff --check
 ```
 
-本文从Under Review转为Reviewed必须由independent cross-layer reviewer确认：
+本文已通过independent cross-layer review；review closure确认：
 
-1. post-R2 Tier-A reopen与v5/v1、v6/v2 exact pair已由独立active Candidate锁定并获用户显式开工授权；v5
-   bytes/language不变，v6 mixed-journal dual-read/offline audit和rollback boundary可执行；
+1. post-R2 Tier-A reopen与v5/v1、v6/v2 exact pair已由独立active Candidate锁定并通过文档审阅；v5 bytes/language
+   不变，v6 mixed-journal dual-read/offline audit和rollback boundary可执行；Gate A施工授权仍是独立pending gate；
 2. terminal control envelope不是把Memo偷塞进v1 Recap recipe或伪造raw provenance；
 3. exact query和call ordering与owning current code一致；
 4. Frozen/Started/tool continuation所有branch都能做到lazy zero Memo access，metadata-only marker不会偷做Pod/client work；
@@ -871,4 +873,5 @@ git diff --check
 7. DebugUtil/status/API error与Completion content-bearing call log的privacy claim已分开，outer Host cancellation translation
    有exact tests；remaining risks只属于C2/WP-07C或明确non-promise，不存在被隐藏的WP-07B correctness blocker。
 
-在review关闭前，Coding Agent可以使用本文做re-review输入，但不得把proposal type/path写成current implemented surface。
+review已关闭，但Gate A尚未获得用户授权。Coding Agent可以使用本文与Tier-A Candidate作为Gate A输入；在用户明确授权前
+不得开始B1 production mutation，也不得把proposal type/path写成current implemented surface。
