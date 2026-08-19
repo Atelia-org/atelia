@@ -101,6 +101,46 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
+    public void CompletionRequestPreparedV6_NoMatchHasExactNineFieldUtf8Literal() {
+        CompletionRequestPreparedBody body = PreparedV6Fixture.Create(
+            selectedObservationContent: null,
+            recapInputs: []
+        );
+
+        Assert.Equal(
+            """
+            {"v":6,"body":{"origin":{"correlationId":"correlation-01","reason":"observation"},"execution":{"lastIssuedToolExecutionSequence":0},"plan":{"rawStartExclusive":"ej1:00000000000000010000000100000000","rawRangeSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rawStartSetups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"exactContextInputs":[{"contentSha256":"cf54cbc00884e96754d6dd2830d68df4af61413a7bc8e4db45f410d82cbea5d6","contextSnapshot":{"systemPromptFragment":"","observationMessage":"{\"schema\":\"atelia.session-journal.supplemental-context.control.v1\",\"status\":\"no-match\",\"observationContent\":null}","actionMessage":""}}]},"setups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"parameters":{"modelId":"model-A","maxTokens":null},"toolSet":{"codecId":"atelia.tool-definition.canonical-json.v1","sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","runtimeIdentity":null,"definitions":[]},"recipe":{"recipeId":"atelia.session-journal.coherent-artifact-tail-plus-supplemental.recipe.v2","canonicalRequestCodecId":"atelia.completion-request.canonical-json.v1"},"target":{"connection":{"connectionId":"connection","kind":"test","connectionFingerprint":"connection-fingerprint","requestAdapterFingerprint":"adapter-fingerprint"},"clientName":"scripted","apiSpecId":"test-api-v1"},"commitment":{"byteLength":1,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}
+            """.Trim(),
+            Encoding.UTF8.GetString(
+                SessionEventCodec.Encode(
+                    SessionEventKind.CompletionRequestPrepared,
+                    body
+                )
+            )
+        );
+    }
+
+    [Fact]
+    public void CompletionRequestPreparedV6_SelectedHasExactNineFieldUtf8Literal() {
+        CompletionRequestPreparedBody body = PreparedV6Fixture.Create(
+            selectedObservationContent: "golden selected 汉😀",
+            recapInputs: []
+        );
+
+        Assert.Equal(
+            """
+            {"v":6,"body":{"origin":{"correlationId":"correlation-01","reason":"observation"},"execution":{"lastIssuedToolExecutionSequence":0},"plan":{"rawStartExclusive":"ej1:00000000000000010000000100000000","rawRangeSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rawStartSetups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"exactContextInputs":[{"contentSha256":"1e3581cddf25cda4993abf552120605b0ee0b04ce5606c869582c9610ca813a1","contextSnapshot":{"systemPromptFragment":"","observationMessage":"{\"schema\":\"atelia.session-journal.supplemental-context.control.v1\",\"status\":\"selected\",\"observationContent\":\"golden selected 汉\uD83D\uDE00\"}","actionMessage":""}}]},"setups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"parameters":{"modelId":"model-A","maxTokens":null},"toolSet":{"codecId":"atelia.tool-definition.canonical-json.v1","sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","runtimeIdentity":null,"definitions":[]},"recipe":{"recipeId":"atelia.session-journal.coherent-artifact-tail-plus-supplemental.recipe.v2","canonicalRequestCodecId":"atelia.completion-request.canonical-json.v1"},"target":{"connection":{"connectionId":"connection","kind":"test","connectionFingerprint":"connection-fingerprint","requestAdapterFingerprint":"adapter-fingerprint"},"clientName":"scripted","apiSpecId":"test-api-v1"},"commitment":{"byteLength":1,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}
+            """.Trim(),
+            Encoding.UTF8.GetString(
+                SessionEventCodec.Encode(
+                    SessionEventKind.CompletionRequestPrepared,
+                    body
+                )
+            )
+        );
+    }
+
+    [Fact]
     public void CompletionRequestPrepared_RejectsCrossVersionRecipePairs() {
         string v5 = EncodeManifestJson();
         string v6 = Encoding.UTF8.GetString(
@@ -218,6 +258,56 @@ public sealed class SessionRequestManifestCodecTests {
                 6
             )
         );
+    }
+
+    [Fact]
+    public void ManifestValidation_RejectsCanonicalControlInEveryRecapSegment() {
+        CompletionRequestPreparedBody v5 = CreateManifest();
+        SessionRequestContextInput noMatch =
+            SessionSupplementalContextRecipe.CreateNoMatchTerminalInput();
+        SessionRequestContextInput selected =
+            SessionSupplementalContextRecipe.CreateSelectedTerminalInput(
+                "selected detail"
+            );
+        CompletionRequestPreparedBody v6 = PreparedV6Fixture.Create(
+            selectedObservationContent: null,
+            recapInputs: []
+        );
+
+        InvalidDataException v5Error = Assert.Throws<InvalidDataException>(() =>
+            SessionRequestManifestCodec.Validate(
+                v5 with {
+                    Plan = v5.Plan with { ExactContextInputs = [noMatch] }
+                },
+                5
+            )
+        );
+        InvalidDataException duplicateNoMatch =
+            Assert.Throws<InvalidDataException>(() =>
+                SessionRequestManifestCodec.Validate(
+                    v6 with {
+                        Plan = v6.Plan with {
+                            ExactContextInputs = [noMatch, noMatch]
+                        }
+                    },
+                    6
+                )
+            );
+        InvalidDataException selectedBeforeNoMatch =
+            Assert.Throws<InvalidDataException>(() =>
+                SessionRequestManifestCodec.Validate(
+                    v6 with {
+                        Plan = v6.Plan with {
+                            ExactContextInputs = [selected, noMatch]
+                        }
+                    },
+                    6
+                )
+            );
+
+        Assert.Contains("nonterminal Recap segment", v5Error.Message, StringComparison.Ordinal);
+        Assert.Contains("nonterminal Recap segment", duplicateNoMatch.Message, StringComparison.Ordinal);
+        Assert.Contains("nonterminal Recap segment", selectedBeforeNoMatch.Message, StringComparison.Ordinal);
     }
 
     [Theory]

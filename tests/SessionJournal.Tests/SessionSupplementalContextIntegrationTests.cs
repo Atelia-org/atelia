@@ -70,6 +70,13 @@ public sealed class SessionSupplementalContextIntegrationTests {
     [InlineData("{\"schema\":\"atelia.session-journal.supplemental-context.control.v1\",\"status\":\"selected\",\"observationContent\":\"\u0085\"}")]
     [InlineData("{\"schema\":\"atelia.session-journal.supplemental-context.control.v1\",\"status\":\"selected\",\"observationContent\":\"\\u008A\"}")]
     [InlineData("{\"schema\":\"atelia.session-journal.supplemental-context.control.v1\",\"status\":\"selected\",\"observationContent\":\"\\uD83D\\uDE00\"}")]
+    [InlineData("{\"schema\":\"atelia.session-journal.supplemental-context.control.v1\",\"status\":\"no-match\"}")]
+    [InlineData("{\"Schema\":\"atelia.session-journal.supplemental-context.control.v1\",\"status\":\"no-match\",\"observationContent\":null}")]
+    [InlineData("{\"schema\":1,\"status\":\"no-match\",\"observationContent\":null}")]
+    [InlineData("{\"schema\":\"atelia.session-journal.supplemental-context.control.v1\",\"status\":1,\"observationContent\":null}")]
+    [InlineData("{\"schema\":\"atelia.session-journal.supplemental-context.control.v1\",\"status\":\"selected\",\"observationContent\":1}")]
+    [InlineData("{\"schema\":\"atelia.session-journal.supplemental-context.control.v2\",\"status\":\"no-match\",\"observationContent\":null}")]
+    [InlineData("{\"schema\":\"atelia.session-journal.supplemental-context.control.v1\",\"status\":\"no-match\",\"observationContent\":null")]
     public void Parser_RejectsShapeAndNonCanonicalByteGrammar(string value) {
         Assert.Throws<InvalidDataException>(
             () => SessionSupplementalContextRecipe.ParseControl(value)
@@ -107,10 +114,17 @@ public sealed class SessionSupplementalContextIntegrationTests {
             SessionArtifactContextSnapshotHasher.MaxSnapshotUtf8Bytes,
             Encoding.UTF8.GetByteCount(rendered)
         );
+        SessionSupplementalContextControl decoded =
+            SessionSupplementalContextRecipe.ParseControl(rendered);
+        Assert.Equal(exact, decoded.ObservationContent);
         Assert.Throws<ArgumentException>(
             () => SessionSupplementalContextRecipe.RenderSelectedControl(
                 exact + "a"
             )
+        );
+        string overBound = SelectedPrefix + exact + "a" + SelectedSuffix;
+        Assert.Throws<InvalidDataException>(
+            () => SessionSupplementalContextRecipe.ParseControl(overBound)
         );
     }
 

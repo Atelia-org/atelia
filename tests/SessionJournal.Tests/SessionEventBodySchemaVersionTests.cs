@@ -174,6 +174,26 @@ public sealed class SessionEventBodySchemaVersionTests {
         Assert.Contains("supported=5|6", error.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("6.0")]
+    [InlineData("6e0")]
+    [InlineData("\"6\"")]
+    public void PreparedVersion_RejectsNumericAliases(string versionLiteral) {
+        byte[] payload = Encoding.UTF8.GetBytes(
+            $"{{\"v\":{versionLiteral},\"body\":{{}}}}"
+        );
+
+        InvalidDataException error = Assert.Throws<InvalidDataException>(() =>
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                payload,
+                out _
+            )
+        );
+
+        Assert.Contains("canonical integer", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void FailedV1_IsUnsupported() {
         Assert.Throws<NotSupportedException>(() =>

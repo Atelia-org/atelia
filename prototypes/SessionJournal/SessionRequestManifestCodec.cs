@@ -211,6 +211,13 @@ internal static class SessionRequestManifestCodec {
         SessionRequestContextInput input,
         string versionLabel
     ) {
+        if (SessionSupplementalContextRecipe.IsCanonicalControlSnapshot(
+                input.ContextSnapshot
+            )) {
+            throw new InvalidDataException(
+                $"{versionLabel} input contains a canonical supplemental control in the nonterminal Recap segment."
+            );
+        }
         int populatedCarriers =
             (string.IsNullOrWhiteSpace(input.ContextSnapshot.SystemPromptFragment) ? 0 : 1)
             + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ObservationMessage) ? 0 : 1)

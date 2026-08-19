@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
@@ -52,7 +53,7 @@ internal static class SessionEventCodec {
         using (document) {
             JsonElement root = document.RootElement;
             RequireObject(root, "envelope");
-            bodySchemaVersion = ReadRequiredInt32(root, "v");
+            bodySchemaVersion = ReadRequiredCanonicalBodySchemaVersion(root);
             ValidateSupportedBodySchemaVersion(kind, bodySchemaVersion);
 
             RequireExactProperties(root, $"{kind} envelope", "v", "body");
@@ -896,6 +897,24 @@ internal static class SessionEventCodec {
             if (!seen.Add(property.Name)) { throw new InvalidDataException($"{name} contains duplicate property '{property.Name}'."); }
             if (!allowed.Contains(property.Name)) { throw new InvalidDataException($"{name} contains unknown property '{property.Name}'."); }
         }
+    }
+
+    private static int ReadRequiredCanonicalBodySchemaVersion(
+        JsonElement element
+    ) {
+        if (!element.TryGetProperty("v", out JsonElement property)
+            || property.ValueKind != JsonValueKind.Number
+            || !property.TryGetInt32(out int value)
+            || !string.Equals(
+                property.GetRawText(),
+                value.ToString(CultureInfo.InvariantCulture),
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "Required body schema version property 'v' is missing or is not a canonical integer."
+            );
+        }
+        return value;
     }
 
     private static int ReadRequiredInt32(JsonElement element, string propertyName) {

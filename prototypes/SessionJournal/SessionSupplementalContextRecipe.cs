@@ -213,6 +213,24 @@ internal static class SessionSupplementalContextRecipe {
         }
     }
 
+    public static bool IsCanonicalControlSnapshot(
+        SessionRequestArtifactContextSnapshot snapshot
+    ) {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (snapshot.SystemPromptFragment.Length != 0
+            || snapshot.ActionMessage.Length != 0
+            || snapshot.ObservationMessage.Length == 0) {
+            return false;
+        }
+        try {
+            _ = ParseControl(snapshot.ObservationMessage);
+            return true;
+        }
+        catch (InvalidDataException) {
+            return false;
+        }
+    }
+
     public static SessionSupplementalContextPartition ValidateAndPartition(
         ImmutableArray<SessionRequestContextInput> exactContextInputs
     ) {
