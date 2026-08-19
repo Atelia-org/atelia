@@ -156,15 +156,16 @@ v5/v1 完全沿用 current reconstruction。v6/v2 固定执行：
 7. canonicalize whole request 并验证 Prepared byte length/SHA-256 commitment。
 
 provider-facing prefix order 因而固定为 Recap Observation（若有）→ Recap Action（若有）→ supplemental Observation（仅
-Selected）。control envelope 自身不发给 provider。
+Selected）→ dependency-closed raw suffix。control envelope 自身不发给 provider。
 
 ### 4.3 Authority
 
 - raw EventJournal events 与 selected `RefId` Parent lineage 继续是 history/recovery authority。
 - Frozen MemoPod 是 current memo ID/text authority；Prepared inline terminal snapshot 只是一个 exact request 的 execution
   authority。它不是 current Memo authority，也不允许 recovery 回查、校正或重新选择 Memo。
-- Prepared/Started recovery、audit/replay 与 tool continuation 都只消费 durable Prepared pair/input；source、Pod open、
-  client construction 与 recall dispatch count 必须为 0。
+- 就 supplemental selection 而言，Prepared/Started recovery、audit/replay 与 tool continuation 只消费 durable Prepared
+  pair/input；source、Pod open、client construction 与 recall dispatch count 必须为 0。exact request reconstruction 仍须读取
+  并验证 raw Parent lineage/range 与 Prepared pinned setup references，不得把 Prepared copy 提升为 raw/setup authority。
 - a crash before Prepared commit may recall again；一旦 Prepared committed，recovery 必须 exact reconstruct，不得重新 recall。
 
 ## 5. Tool continuation inheritance
