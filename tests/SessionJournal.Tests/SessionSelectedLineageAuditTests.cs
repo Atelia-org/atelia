@@ -8,6 +8,81 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
     private readonly List<string> _paths = [];
 
     [Fact]
+    public async Task MixedPreparedVersions_PagedAuditMaterializesWithoutRewrite() {
+        string path = NewPath();
+        PreparedV6Fixture.MixedWriterRepository fixture =
+            await PreparedV6Fixture.CreateMixedWriterRepositoryAsync(
+                path
+            );
+        Assert.Equal(
+            new[] { 5, 6, 5 },
+            fixture.PreparedBodySchemaVersions.ToArray()
+        );
+        string before =
+            PreparedV6Fixture.ComputeRepositoryTreeDigest(path);
+
+        using (var engine =
+               SessionJournalEngine.OpenReadOnly(path)) {
+            SessionSelectedLineageAuditSession capture =
+                engine.BeginSelectedLineageAudit();
+            var pages = new List<
+                SessionSelectedLineageAuditPage
+            >();
+            while (!capture.IsCaptureComplete) {
+                pages.Add(capture.ReadNextPage(maxEventCount: 4));
+            }
+            SessionSelectedLineageAuditAuthority authority =
+                capture.Complete();
+            Assert.True(pages.Count > 1);
+            Assert.Equal(
+                new[] { 5, 6, 5 },
+                pages.SelectMany(static page =>
+                        page.HeadToOldest
+                    )
+                    .Where(static entry =>
+                        entry.Kind
+                        == SessionEventKind.CompletionRequestPrepared
+                    )
+                    .Reverse()
+                    .Select(static entry => entry.BodySchemaVersion)
+                    .ToArray()
+            );
+
+            using SessionSelectedLineageForwardCursor cursor =
+                engine.OpenSelectedLineageForwardCursor(
+                    new InMemoryPageSnapshot(
+                        capture.Capture,
+                        pages
+                    )
+                );
+            SessionSelectedLineageForwardRange range = Assert.IsType<
+                SessionSelectedLineageForwardRange
+            >(cursor.ReadNextRange(
+                SessionSelectedLineageAuditLimits
+                    .MaximumForwardRangeEventCount
+            ));
+            SessionHistoryPlanningWindow window =
+                cursor.Materialize(range);
+
+            Assert.True(range.IsFinal);
+            Assert.Equal(
+                authority.Capture.CapturedHead,
+                range.EndInclusive
+            );
+            Assert.Equal(
+                authority.Capture.CapturedHead,
+                window.ObservedRawHead
+            );
+            Assert.Null(cursor.ReadNextRange(1));
+        }
+
+        Assert.Equal(
+            before,
+            PreparedV6Fixture.ComputeRepositoryTreeDigest(path)
+        );
+    }
+
+    [Fact]
     public void PagedCapture_IsExactBoundedAndMaterializesForwardRange() {
         string path = NewPath();
         EventAddress observation;
