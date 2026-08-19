@@ -195,6 +195,7 @@ internal static class LiveMemoRecallRunner {
                         client.ApiSpecId,
                         pod.PodId.Value,
                         activeMemoCount,
+                        LiveMemoRecallEvidenceSerializer.FrozenPromptFormatId,
                         capture.Sha256,
                         capture.Utf8Bytes,
                         queryUtf8Bytes,
@@ -508,6 +509,7 @@ internal sealed record LiveMemoRecallEvidence(
     string ApiSpecId,
     string PodId,
     int ActiveMemoCount,
+    string FrozenPromptFormatId,
     string FrozenPromptSha256,
     int FrozenPromptUtf8Bytes,
     int QueryUtf8Bytes,
@@ -531,6 +533,8 @@ internal sealed record LiveMemoRecallEvidence(
 internal static class LiveMemoRecallEvidenceSerializer {
     internal const string Schema =
         "atelia.memo-pod.deepseek-v4-flash-candidate.v1";
+    internal const string FrozenPromptFormatId =
+        "atelia.memo-pod.prompt.v1";
 
     private static readonly JsonSerializerOptions Options = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -539,7 +543,13 @@ internal static class LiveMemoRecallEvidenceSerializer {
 
     internal static string Serialize(LiveMemoRecallEvidence evidence) {
         ArgumentNullException.ThrowIfNull(evidence);
-        if (evidence.Outcome is not (
+        if (!string.Equals(evidence.Schema, Schema, StringComparison.Ordinal)
+            || !string.Equals(
+                evidence.FrozenPromptFormatId,
+                FrozenPromptFormatId,
+                StringComparison.Ordinal
+            )
+            || evidence.Outcome is not (
                 "completed" or "failed" or "cancelled"
             )
             || evidence.PromptCacheRequestStatus is not (

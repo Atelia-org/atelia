@@ -346,6 +346,7 @@ public sealed class LiveMemoRecallConfigurationTests {
             "openai-chat-v1",
             LiveMemoRecallTestHost.PodIdText,
             2,
+            LiveMemoRecallEvidenceSerializer.FrozenPromptFormatId,
             new string('a', 64),
             123,
             7,
@@ -375,7 +376,8 @@ public sealed class LiveMemoRecallConfigurationTests {
         Assert.Equal([
             "schema", "caseLabel", "callIndex", "connectionId", "kind",
             "modelId", "completionSurfaceId", "clientName", "apiSpecId",
-            "podId", "activeMemoCount", "frozenPromptSha256",
+            "podId", "activeMemoCount", "frozenPromptFormatId",
+            "frozenPromptSha256",
             "frozenPromptUtf8Bytes", "queryUtf8Bytes", "maxResults",
             "maxPromptUtf8Bytes", "maxTokens", "delayMilliseconds",
             "elapsedMilliseconds", "outcome", "promptCacheRequestStatus",
@@ -396,6 +398,11 @@ public sealed class LiveMemoRecallConfigurationTests {
         Assert.Throws<InvalidOperationException>(() =>
             LiveMemoRecallEvidenceSerializer.Serialize(
                 evidence with { Outcome = "Completed" }
+            )
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            LiveMemoRecallEvidenceSerializer.Serialize(
+                evidence with { FrozenPromptFormatId = "future-format" }
             )
         );
     }

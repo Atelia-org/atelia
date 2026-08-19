@@ -75,6 +75,11 @@ public sealed class LiveMemoRecallCompositionTests {
                 StringComparison.Ordinal
             );
             Assert.Equal(1, factory.CreateCount);
+            Assert.Equal(HttpMethod.Post, Assert.Single(handler.RequestMethods));
+            Assert.Equal(
+                new Uri("https://api.deepseek.com/v1/chat/completions"),
+                Assert.Single(handler.RequestUris)
+            );
 
             using JsonDocument request = JsonDocument.Parse(
                 Assert.Single(handler.RequestBodies)
@@ -115,6 +120,10 @@ public sealed class LiveMemoRecallCompositionTests {
                 LiveMemoRecallEvidenceSerializer.Schema,
                 item.GetProperty("schema").GetString()
             );
+            Assert.Equal(
+                LiveMemoRecallEvidenceSerializer.FrozenPromptFormatId,
+                item.GetProperty("frozenPromptFormatId").GetString()
+            );
             Assert.Equal("completed", item.GetProperty("outcome").GetString());
             Assert.Equal(20, item.GetProperty("uncachedInputTokens").GetInt64());
             Assert.Equal(80, item.GetProperty("cacheReadInputTokens").GetInt64());
@@ -140,22 +149,25 @@ public sealed class LiveMemoRecallCompositionTests {
                         .EnumerateArray()
                 ).GetString()
             );
+            string frozenPrompt = root.GetProperty("messages")[1]
+                .GetProperty("content").GetString()!;
+            Assert.StartsWith(
+                "{\"schema\":\""
+                + LiveMemoRecallEvidenceSerializer.FrozenPromptFormatId
+                + "\",\"pod_id\":\"",
+                frozenPrompt,
+                StringComparison.Ordinal
+            );
             Assert.Equal(
                 item.GetProperty("frozenPromptSha256").GetString(),
                 Convert.ToHexStringLower(
                     System.Security.Cryptography.SHA256.HashData(
-                        System.Text.Encoding.UTF8.GetBytes(
-                            root.GetProperty("messages")[1]
-                                .GetProperty("content").GetString()!
-                        )
+                        System.Text.Encoding.UTF8.GetBytes(frozenPrompt)
                     )
                 )
             );
             Assert.Equal(
-                System.Text.Encoding.UTF8.GetByteCount(
-                    root.GetProperty("messages")[1]
-                        .GetProperty("content").GetString()!
-                ),
+                System.Text.Encoding.UTF8.GetByteCount(frozenPrompt),
                 item.GetProperty("frozenPromptUtf8Bytes").GetInt32()
             );
         }

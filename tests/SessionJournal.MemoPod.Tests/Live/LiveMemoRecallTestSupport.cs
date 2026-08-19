@@ -189,11 +189,15 @@ internal sealed class CapturingSseHandler(string sse) : HttpMessageHandler {
     private readonly string _sse = sse;
 
     internal List<string> RequestBodies { get; } = [];
+    internal List<HttpMethod> RequestMethods { get; } = [];
+    internal List<Uri?> RequestUris { get; } = [];
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken
     ) {
+        RequestMethods.Add(request.Method);
+        RequestUris.Add(request.RequestUri);
         RequestBodies.Add(
             request.Content is null
                 ? string.Empty

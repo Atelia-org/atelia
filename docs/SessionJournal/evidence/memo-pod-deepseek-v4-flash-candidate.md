@@ -2,8 +2,8 @@
 
 状态：**NotRun**  
 日期：2026-08-20  
-source baseline：`6f2000d6a65d`（WP-06/PRIV-01之后；本文随Track C2
-provider-free source slice提交）
+source baseline：`2fa1ee3ba3a830e867939d8baa2b8e52e571b62e`（Track C2
+provider-free source slice；本文随后锁定该source的实际wire path与renderer identity）
 
 本文只登记MemoPod Track C2候选route的provider-free source证据、官方协议事实与未来authenticated
 canary门禁。没有执行真实HTTP，没有读取现存secret，也没有形成GO/No-Go、价格、质量或cache命中结论。
@@ -29,6 +29,7 @@ provider client，不包`LoggingCompletionClient`或HTTP exchange sink。
 
 DeepSeek官方Chat Completion文档当前列出：
 
+- API base URL为`https://api.deepseek.com`，Chat Completion为`POST /chat/completions`；
 - OpenAI Chat endpoint支持model `deepseek-v4-flash`；`thinking.type`接受`enabled|disabled`；
 - `stream_options.include_usage=true`会在`[DONE]`前产生一个`choices: []`的usage chunk；
 - named `tool_choice`形状可强制一个具体function；
@@ -41,9 +42,10 @@ DeepSeek官方Chat Completion文档当前列出：
 - [DeepSeek Context Caching](https://api-docs.deepseek.com/guides/kv_cache)
 - [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)
 
-当前同一官方request schema没有列出`parallel_tool_calls`。本仓converter在
-`allowParallelToolCalls=false`时会发出`parallel_tool_calls:false`；provider-free golden只能证明local
-wire，不能证明live route接受该字段。它是authenticated canary的显式compatibility gate。
+当前同一官方request schema没有列出`parallel_tool_calls`。本仓shared client当前把locked origin解析为
+`POST https://api.deepseek.com/v1/chat/completions`，converter还会在`allowParallelToolCalls=false`时发出
+`parallel_tool_calls:false`。provider-free golden只证明这两个local wire事实；exact `/v1/chat/completions`
+path和`parallel_tool_calls`字段都必须由authenticated canary证明兼容，本文不宣称live route已支持。
 
 ## 3. Provider-free source evidence
 
@@ -53,6 +55,8 @@ wire，不能证明live route接受该字段。它是authenticated canary的显�
   C1 hit/miss parser → ID validation/hydration；
 - request golden固定`thinking.type=disabled`、`stream_options.include_usage=true`、required named
   `recall_memos`与current `parallel_tool_calls:false`；
+- fake HTTP handler固定观测一次`POST https://api.deepseek.com/v1/chat/completions`；这只是shared client的
+  current wire，不是provider compatibility证据；
 - fake terminal usage `prompt=100, hit=80, miss=20, completion=7`被规范化为
   `UncachedInputTokens=20`、`CacheReadInputTokens=80`、`CacheCreationInputTokens=null`、
   `OutputTokens=7`、cache observation `Partial`；
@@ -67,14 +71,14 @@ wire，不能证明live route接受该字段。它是authenticated canary的显�
 
 ## 4. Content-free JSONL contract
 
-每个已经进入capturing client的调用最多且恰好输出一行
+每个已经进入capturing client的调用恰好输出一行
 `atelia.memo-pod.deepseek-v4-flash-candidate.v1`：
 
 ```text
 schema, caseLabel, callIndex,
 connectionId, kind, modelId, completionSurfaceId, clientName, apiSpecId,
 podId, activeMemoCount,
-frozenPromptSha256, frozenPromptUtf8Bytes, queryUtf8Bytes,
+frozenPromptFormatId, frozenPromptSha256, frozenPromptUtf8Bytes, queryUtf8Bytes,
 maxResults, maxPromptUtf8Bytes, maxTokens, delayMilliseconds, elapsedMilliseconds,
 outcome,
 promptCacheRequestStatus, promptCacheSupportStatus, promptCacheObservationStatus,
@@ -85,7 +89,9 @@ selectedCount?, selectedIds?
 nullable token/selection字段在JSON中显式保留`null`，不以零或空集伪装权威观测。禁止字段包括Topic、Memo
 exact text、query、system prompt、raw request/response、CLI args、diagnostics、exception、endpoint配置与secret。
 prompt bytes/hash来自Recall传给client的single shared Frozen `ObservationMessage`；wrapper只保存bytes/hash，
-不保存request或正文，并校验hash等于`MemoRecallResult.FrozenPromptSha256`。
+不保存request或正文，并校验hash等于`MemoRecallResult.FrozenPromptSha256`。`frozenPromptFormatId`固定为
+`atelia.memo-pod.prompt.v1`；provider-free composition test同时锁定该字段和Frozen prompt首行header中的
+exact schema identity。
 
 ## 5. Authenticated canary gate — still NotRun
 
@@ -95,8 +101,9 @@ prompt bytes/hash来自Recall传给client的single shared Frozen `ObservationMes
 2. 使用Release build；在任何Completion config/client materialization前，显式设置
    `ATELIA_DEBUG_FILE_LEVEL=ERROR`和`ATELIA_DEBUG_CONSOLE_LEVEL=ERROR`；
 3. operator明确授权读取一个candidate-only `apiKeyEnv`并发起真实调用；
-4. 先验证single call接受`thinking.type=disabled`、named tool choice、`stream_options.include_usage`与
-   `parallel_tool_calls:false`；任何400/协议失败都保持NotRun/Failed，不删字段重试；
+4. 先验证single call接受current exact `POST https://api.deepseek.com/v1/chat/completions`、
+   `thinking.type=disabled`、named tool choice、`stream_options.include_usage`与
+   `parallel_tool_calls:false`；任一path/field的400或协议失败都保持NotRun/Failed，不改path、不删字段重试；
 5. 再按预先命名的cold/warm/repeated case执行；每个repeated query都是显式新调用，runner没有retry；
 6. 只保存content-free JSONL。人工quality评估使用现场synthetic fixture，不把正文或判断依据提交到tracked
    evidence；

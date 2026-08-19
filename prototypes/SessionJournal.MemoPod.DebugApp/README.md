@@ -82,8 +82,12 @@ current converter emits all of the following:
 - the required named `recall_memos` tool choice;
 - `parallel_tool_calls:false`.
 
-The last field is only the current local wire shape. Its acceptance by the live
-DeepSeek route remains unknown until an authenticated canary succeeds.
+The fake HTTP handler also observes the current exact target as
+`POST https://api.deepseek.com/v1/chat/completions`. The official current base
+root and Chat Completion path are `https://api.deepseek.com` and
+`POST /chat/completions`; both the local `/v1/chat/completions` path and the
+last field above are only current local wire facts. Their acceptance by the
+live DeepSeek route remains unknown until an authenticated canary succeeds.
 
 ## Authenticated candidate runner
 
@@ -114,6 +118,11 @@ falls back to `defaultConnectionId`. It does not use `LoggingCompletionClient`
 or an HTTP exchange sink, does not retry, and treats repeated `--query-file`
 arguments as explicit separate provider calls.
 
+The current shared client resolves the locked origin to
+`POST https://api.deepseek.com/v1/chat/completions`. An authenticated canary
+must accept that exact path and `parallel_tool_calls:false`; source tests do not
+claim either is live-compatible.
+
 Example shape (the referenced files and environment variable must be created
 by the operator; never commit their contents):
 
@@ -139,9 +148,10 @@ the first character. Live mode accepts 1–8 query files, prompt bytes in
 arguments and live arguments are mutually exclusive.
 
 Each attempted provider call writes one content-free JSONL evidence record.
-It contains route identifiers, Pod/active counts, prompt hash/bytes, query
-bytes, bounds, delay, elapsed time, outcome, normalized cache status/token
-fields, and selected Memo IDs. It never contains Topic, Memo/query text, system
+It contains route identifiers, Pod/active counts, the fixed
+`frozenPromptFormatId=atelia.memo-pod.prompt.v1`, prompt hash/bytes, query bytes,
+bounds, delay, elapsed time, outcome, normalized cache status/token fields, and
+selected Memo IDs. It never contains Topic, Memo/query text, system
 prompt, raw request/response, command arguments, diagnostics, exception text,
 endpoint configuration, or credentials. The live runner computes the shared
 Frozen Observation hash/UTF-8 length transiently, clears its temporary byte
