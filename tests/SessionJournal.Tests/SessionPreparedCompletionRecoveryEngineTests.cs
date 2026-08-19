@@ -127,6 +127,69 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
+    public async Task StartedV6Restart_ReplaysFrozenRequestWithoutEnteringCurrentSource() {
+        string path = NewJournalPath();
+        var sourceClient = new ScriptedClient();
+        var initialSource = new TestSupplementalContextSource(
+            new SessionSupplementalContextSelection.Selected(
+                "frozen restart supplemental"
+            )
+        );
+        _ = await CreateUncertainAsync(
+            path,
+            CreateRuntime(sourceClient) with {
+                SupplementalContextSource = initialSource
+            }
+        );
+        Assert.Equal(1, initialSource.CallCount);
+
+        var recoverySource = new TestSupplementalContextSource(
+            new SessionSupplementalContextSelection.NoMatch()
+        ) {
+            Handler = (_, _) => throw new Xunit.Sdk.XunitException(
+                "Started recovery must not call the current supplemental source."
+            )
+        };
+        var recoveryClient = new ScriptedClient();
+        recoveryClient.Enqueue(request => Success(request, "restart recovered"));
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(path),
+            CreateRuntime(
+                recoveryClient,
+                recoveryPolicy:
+                    SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+            ) with {
+                SupplementalContextSource = recoverySource
+            }
+        )) {
+            ResumeOutcome outcome = await reopened.ResumeAsync(
+                CancellationToken.None
+            );
+
+            Assert.Equal(
+                "restart recovered",
+                outcome.Message?.GetFlattenedText()
+            );
+            CompletionRequest replayed = Assert.Single(recoveryClient.Requests);
+            Assert.Contains(
+                replayed.PromptPrefix.SharedContextMessages,
+                static message => message is ObservationMessage observation
+                    && observation.Content == "frozen restart supplemental"
+            );
+        }
+
+        Assert.Equal(0, recoverySource.CallCount);
+        Assert.Equal(1, recoveryClient.Calls);
+        Assert.Equal(
+            2,
+            ReadAddressesByKind(
+                path,
+                SessionEventKind.CompletionAttemptStarted
+            ).Length
+        );
+    }
+
+    [Fact]
     public async Task ResumeAsync_DefaultRefuse_RejectsCorruptPreparedBeforePolicyRefusal() {
         string path = NewJournalPath();
         var client = new ScriptedClient();

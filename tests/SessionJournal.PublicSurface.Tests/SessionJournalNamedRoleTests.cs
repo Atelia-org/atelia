@@ -326,14 +326,41 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
         Type request = typeof(SessionSupplementalContextRequest);
         Type selection = typeof(SessionSupplementalContextSelection);
         Type selected = typeof(SessionSupplementalContextSelection.Selected);
+        Type source = typeof(ISessionSupplementalContextSource);
 
         Assert.True(request.IsSealed);
         Assert.True(selection.IsAbstract);
         Assert.True(selected.IsSealed);
+        Assert.Empty(selection.GetConstructors(
+            BindingFlags.Public | BindingFlags.Instance
+        ));
+        ConstructorInfo parameterlessBaseConstructor = Assert.Single(
+            selection.GetConstructors(
+                BindingFlags.NonPublic | BindingFlags.Instance
+            ),
+            static constructor => constructor.GetParameters().Length == 0
+        );
+        Assert.True(parameterlessBaseConstructor.IsPrivate);
         Assert.All(request.GetProperties(), static property =>
             Assert.Null(property.SetMethod));
         Assert.All(selected.GetProperties(), static property =>
             Assert.Null(property.SetMethod));
+        Assert.Equal(
+            new[] {
+                nameof(SessionSupplementalContextRequest.ExactObservationContent),
+                nameof(SessionSupplementalContextRequest.ObservationAddress)
+            },
+            request.GetProperties()
+                .Select(static property => property.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray()
+        );
+        Assert.Equal(
+            [nameof(SessionSupplementalContextSelection.Selected.ExactObservationContent)],
+            selected.GetProperties()
+                .Select(static property => property.Name)
+                .ToArray()
+        );
         Assert.Equal(
             new[] { "NoMatch", "Selected" },
             selection.GetNestedTypes(BindingFlags.Public)
@@ -341,6 +368,29 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
                 .Order(StringComparer.Ordinal)
                 .ToArray()
         );
+        MethodInfo select = Assert.Single(source.GetMethods());
+        Assert.Equal("SelectAsync", select.Name);
+        Assert.Equal(
+            typeof(ValueTask<SessionSupplementalContextSelection>),
+            select.ReturnType
+        );
+        Assert.Equal(
+            new[] {
+                typeof(SessionSupplementalContextRequest),
+                typeof(CancellationToken)
+            },
+            select.GetParameters()
+                .Select(static parameter => parameter.ParameterType)
+                .ToArray()
+        );
+        ConstructorInfo runtimeConstructor = Assert.Single(
+            typeof(SessionRuntime).GetConstructors()
+        );
+        ParameterInfo runtimeTail = runtimeConstructor.GetParameters()[^1];
+        Assert.Equal("SupplementalContextSource", runtimeTail.Name);
+        Assert.Equal(typeof(ISessionSupplementalContextSource), runtimeTail.ParameterType);
+        Assert.True(runtimeTail.HasDefaultValue);
+        Assert.Null(runtimeTail.DefaultValue);
     }
 
     public void Dispose() {

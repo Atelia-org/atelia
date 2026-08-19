@@ -349,6 +349,150 @@ public sealed class SessionSupplementalContextIntegrationTests : IDisposable {
     }
 
     [Fact]
+    public async Task SelectedCanonicalByteGuard_FailsAfterSelectionAndAcceptsExactBoundary() {
+        const string fixtureId = "supplemental-byte-cap";
+        const string observation = "canonical byte cap observation";
+        var selectedOutcome = new SessionSupplementalContextSelection.Selected(
+            "supplemental bytes that cross the base request boundary"
+        );
+        int baseLength = await CaptureCanonicalRequestLengthAsync(
+            fixtureId,
+            observation,
+            supplementalSelection: null
+        );
+        int selectedLength = await CaptureCanonicalRequestLengthAsync(
+            fixtureId,
+            observation,
+            selectedOutcome
+        );
+        Assert.True(selectedLength > baseLength);
+
+        string rejectedPath = NewJournalPath();
+        var rejectedClient = new RecordingCompletionClient();
+        var rejectedCandidateSource = new TestContextCandidateSource();
+        var rejectedSupplemental = new TestSupplementalContextSource(
+            selectedOutcome
+        );
+        using (var rejected = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(rejectedPath, CreateOptions()),
+            CreateRuntime(rejectedClient, rejectedCandidateSource) with {
+                SupplementalContextSource = rejectedSupplemental,
+                MaximumCanonicalRequestBytes = baseLength
+            }
+        )) {
+            rejectedCandidateSource.Candidate = ContextCandidateTestFixture
+                .CreateAtCurrentHead(rejected, fixtureId)
+                .Candidate;
+
+            InvalidDataException error =
+                await Assert.ThrowsAsync<InvalidDataException>(
+                    () => rejected.SendAsync(
+                        observation,
+                        CancellationToken.None
+                    )
+                );
+
+            Assert.Contains(
+                "Canonical request byte guard",
+                error.Message,
+                StringComparison.Ordinal
+            );
+            Assert.Equal(
+                SessionEventKind.ObservationAccepted,
+                rejected.ResolveExecutionTail().State.HeadKind
+            );
+            Assert.Equal(1, rejectedSupplemental.CallCount);
+            Assert.Equal(0, rejectedClient.Calls);
+        }
+        Assert.Empty(ReadAddressesByKind(
+            rejectedPath,
+            SessionEventKind.CompletionRequestPrepared
+        ));
+        Assert.Empty(ReadAddressesByKind(
+            rejectedPath,
+            SessionEventKind.CompletionAttemptStarted
+        ));
+
+        string acceptedPath = NewJournalPath();
+        var acceptedClient = new RecordingCompletionClient();
+        acceptedClient.Enqueue("accepted exact cap");
+        var acceptedCandidateSource = new TestContextCandidateSource();
+        var acceptedSupplemental = new TestSupplementalContextSource(
+            selectedOutcome
+        );
+        using (var accepted = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(acceptedPath, CreateOptions()),
+            CreateRuntime(acceptedClient, acceptedCandidateSource) with {
+                SupplementalContextSource = acceptedSupplemental,
+                MaximumCanonicalRequestBytes = selectedLength
+            }
+        )) {
+            acceptedCandidateSource.Candidate = ContextCandidateTestFixture
+                .CreateAtCurrentHead(accepted, fixtureId)
+                .Candidate;
+
+            TurnResult result = await accepted.SendAsync(
+                observation,
+                CancellationToken.None
+            );
+
+            Assert.Equal("accepted exact cap", result.Message.GetFlattenedText());
+            Assert.Equal(1, acceptedSupplemental.CallCount);
+            Assert.Equal(
+                selectedLength,
+                SessionRequestCanonicalizer.Canonicalize(
+                    Assert.Single(acceptedClient.Requests)
+                ).Length
+            );
+        }
+        Assert.Single(ReadAddressesByKind(
+            acceptedPath,
+            SessionEventKind.CompletionRequestPrepared
+        ));
+    }
+
+    [Fact]
+    public async Task NullSourceResult_FailsClosedBeforePreparedOrProvider() {
+        string path = NewJournalPath();
+        var client = new RecordingCompletionClient();
+        var candidateSource = new TestContextCandidateSource();
+        var supplemental = new TestSupplementalContextSource(
+            new SessionSupplementalContextSelection.NoMatch()
+        ) {
+            Handler = (_, _) => null!
+        };
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(path, CreateOptions()),
+            CreateRuntime(client, candidateSource) with {
+                SupplementalContextSource = supplemental
+            }
+        )) {
+            candidateSource.Candidate = ContextCandidateTestFixture
+                .CreateAtCurrentHead(engine, "null-result")
+                .Candidate;
+
+            await Assert.ThrowsAsync<ArgumentNullException>(
+                () => engine.SendAsync("pending observation", CancellationToken.None)
+            );
+
+            Assert.Equal(
+                SessionEventKind.ObservationAccepted,
+                engine.ResolveExecutionTail().State.HeadKind
+            );
+            Assert.Equal(1, supplemental.CallCount);
+            Assert.Equal(0, client.Calls);
+        }
+        Assert.Empty(ReadAddressesByKind(
+            path,
+            SessionEventKind.CompletionRequestPrepared
+        ));
+        Assert.Empty(ReadAddressesByKind(
+            path,
+            SessionEventKind.CompletionAttemptStarted
+        ));
+    }
+
+    [Fact]
     public void NoMatch_HasExactCanonicalControlAndTerminalHash() {
         SessionRequestContextInput terminal =
             SessionSupplementalContextRecipe.CreateNoMatchTerminalInput();
@@ -533,6 +677,36 @@ public sealed class SessionSupplementalContextIntegrationTests : IDisposable {
         snapshot
     );
 
+    private async Task<int> CaptureCanonicalRequestLengthAsync(
+        string fixtureId,
+        string observation,
+        SessionSupplementalContextSelection? supplementalSelection
+    ) {
+        string path = NewJournalPath();
+        var client = new RecordingCompletionClient();
+        client.Enqueue("probe");
+        var candidateSource = new TestContextCandidateSource();
+        ISessionSupplementalContextSource? supplemental =
+            supplementalSelection is null
+                ? null
+                : new TestSupplementalContextSource(supplementalSelection);
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(path, CreateOptions()),
+            CreateRuntime(client, candidateSource) with {
+                SupplementalContextSource = supplemental
+            }
+        );
+        candidateSource.Candidate = ContextCandidateTestFixture
+            .CreateAtCurrentHead(engine, fixtureId)
+            .Candidate;
+
+        _ = await engine.SendAsync(observation, CancellationToken.None);
+
+        return SessionRequestCanonicalizer.Canonicalize(
+            Assert.Single(client.Requests)
+        ).Length;
+    }
+
     private static SessionCreateOptions CreateOptions()
         => new("model-A", "system-A", "surface-A");
 
@@ -655,8 +829,9 @@ internal sealed class TestSupplementalContextSource(
     ) {
         _requests.Add(request);
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(
-            Handler?.Invoke(request, cancellationToken) ?? selection
-        );
+        SessionSupplementalContextSelection result = Handler is null
+            ? selection
+            : Handler.Invoke(request, cancellationToken);
+        return ValueTask.FromResult(result);
     }
 }

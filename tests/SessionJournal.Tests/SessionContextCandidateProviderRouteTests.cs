@@ -1904,6 +1904,93 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task ToolContinuation_PreservesInitialPreparedPairAcrossRuntimeModeChange(
+        bool initialV6
+    ) {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(ToolCall("lookup", "call-1"));
+        client.Enqueue(Terminal("continued"));
+        var source = new TestContextCandidateSource();
+        var supplemental = new TestSupplementalContextSource(
+            new SessionSupplementalContextSelection.Selected(
+                "frozen tool supplemental"
+            )
+        );
+        var tool = new RecordingTool("lookup");
+        SessionRuntime initialRuntime = CreateRuntime(
+            client,
+            source,
+            new ToolRegistry([tool]).CreateSession()
+        ) with {
+            SupplementalContextSource = initialV6 ? supplemental : null
+        };
+        using (var engine = SessionJournalEngine.CreateForTest(
+            path,
+            CreateOptions(),
+            initialRuntime,
+            new SessionJournalTestHooks(
+                SessionJournalFailpoint.AfterToolResultCommitted
+            )
+        )) {
+            source.Candidate = ContextCandidateTestFixture
+                .CreateAtCurrentHead(engine, $"pair-change-{initialV6}")
+                .Candidate;
+
+            await Assert.ThrowsAsync<SessionJournalFailpointException>(
+                () => engine.SendAsync("use one tool", CancellationToken.None)
+            );
+        }
+
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(path),
+            initialRuntime with {
+                SupplementalContextSource = initialV6 ? null : supplemental
+            }
+        )) {
+            ResumeOutcome outcome = await reopened.ResumeAsync(
+                CancellationToken.None
+            );
+            Assert.Equal("continued", outcome.Message?.GetFlattenedText());
+        }
+
+        Assert.Equal(initialV6 ? 1 : 0, supplemental.CallCount);
+        EventAddress[] prepared = ReadAddressesByKind(
+            path,
+            SessionEventKind.CompletionRequestPrepared
+        );
+        Assert.Equal(2, prepared.Length);
+        (CompletionRequestPreparedBody Body, int SchemaVersion)[] manifests =
+            prepared.Select(address => ReadBodyWithSchema<
+                CompletionRequestPreparedBody
+            >(
+                path,
+                address,
+                SessionEventKind.CompletionRequestPrepared
+            )).ToArray();
+        int expectedVersion = initialV6
+            ? SessionRequestManifestCodec.PreparedV6BodySchemaVersion
+            : SessionRequestManifestCodec.PreparedV5BodySchemaVersion;
+        string expectedRecipe = initialV6
+            ? SessionSupplementalContextRecipe.RecipeId
+            : SessionRequestManifestDefaults.RecipeId;
+        Assert.All(manifests, manifest => {
+            Assert.Equal(expectedVersion, manifest.SchemaVersion);
+            Assert.Equal(expectedRecipe, manifest.Body.Recipe.RecipeId);
+        });
+        if (initialV6) {
+            SessionRequestContextInput initialTerminal =
+                manifests[0].Body.Plan.ExactContextInputs[^1];
+            Assert.Equal(
+                initialTerminal,
+                manifests[1].Body.Plan.ExactContextInputs[^1]
+            );
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task ImportedToolResultWithoutSourcePrepared_UsesEnabledMarkerMatrix(
         bool enabled
     ) {
@@ -2330,11 +2417,24 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         EventAddress address,
         SessionEventKind kind
     ) where T : class {
+        return ReadBodyWithSchema<T>(path, address, kind).Body;
+    }
+
+    private static (T Body, int SchemaVersion) ReadBodyWithSchema<T>(
+        string path,
+        EventAddress address,
+        SessionEventKind kind
+    ) where T : class {
         using var journal = EventJournal.EventJournal.OpenExisting(path);
         using EventFrame frame = journal.ReadEvent(address).Unwrap();
-        return Assert.IsType<T>(
-            SessionEventCodec.Decode(kind, frame.Payload.ToArray(), out _)
+        T body = Assert.IsType<T>(
+            SessionEventCodec.Decode(
+                kind,
+                frame.Payload.ToArray(),
+                out int schemaVersion
+            )
         );
+        return (body, schemaVersion);
     }
 
     private string NewJournalPath() {
