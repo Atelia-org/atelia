@@ -67,6 +67,65 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         Assert.Equal(0, lifecycle.InvocationCount);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PreparedAndStartedRecovery_NeverReentersSupplementalSource(
+        bool started
+    ) {
+        string path = NewJournalPath();
+        var sourceClient = new ScriptedClient();
+        var supplemental = new TestSupplementalContextSource(
+            new SessionSupplementalContextSelection.Selected(
+                "frozen supplemental"
+            )
+        );
+        SessionRuntime sourceRuntime = CreateRuntime(sourceClient) with {
+            SupplementalContextSource = supplemental
+        };
+        EventAddress boundary = started
+            ? await CreateUncertainAsync(path, sourceRuntime)
+            : await CreatePreparedAsync(path, sourceRuntime);
+        Assert.Equal(1, supplemental.CallCount);
+
+        var recoveryClient = new ScriptedClient();
+        if (!started) {
+            recoveryClient.Enqueue(request => Success(request, "recovered"));
+        }
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(path),
+            CreateRuntime(recoveryClient) with {
+                SupplementalContextSource = supplemental
+            }
+        )) {
+            if (started) {
+                InvalidOperationException error =
+                    await Assert.ThrowsAsync<InvalidOperationException>(
+                        () => reopened.ResumeAsync(CancellationToken.None)
+                    );
+                Assert.Contains("Refuse", error.Message, StringComparison.Ordinal);
+                Assert.Equal(boundary, reopened.ReadCurrentHead());
+                Assert.Equal(0, recoveryClient.Calls);
+            }
+            else {
+                ResumeOutcome outcome = await reopened.ResumeAsync(
+                    CancellationToken.None
+                );
+                Assert.Equal("recovered", outcome.Message?.GetFlattenedText());
+                CompletionRequest request = Assert.Single(
+                    recoveryClient.Requests
+                );
+                Assert.Contains(
+                    request.PromptPrefix.SharedContextMessages,
+                    static message => message is ObservationMessage observation
+                        && observation.Content == "frozen supplemental"
+                );
+            }
+        }
+
+        Assert.Equal(1, supplemental.CallCount);
+    }
+
     [Fact]
     public async Task ResumeAsync_DefaultRefuse_RejectsCorruptPreparedBeforePolicyRefusal() {
         string path = NewJournalPath();

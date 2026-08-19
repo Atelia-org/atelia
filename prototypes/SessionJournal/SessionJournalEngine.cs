@@ -2907,17 +2907,51 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 governingSetup
             );
         _lastTailProjectionDiagnostics = tail.Diagnostics;
+        ImmutableArray<SessionRequestContextInput> recapInputs =
+            tail.ContextSnapshots.Select(static snapshot =>
+                new SessionRequestContextInput(
+                    SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
+                    snapshot
+                )
+            ).ToImmutableArray();
+        SupplementalContextMaterialization supplemental = await
+            ResolveSupplementalContextAsync(
+                runtime,
+                recovery,
+                completionBoundary,
+                cancellationToken
+            ).ConfigureAwait(false);
+        ImmutableArray<SessionRequestContextInput> exactContextInputs =
+            ComposeExactContextInputs(recapInputs, supplemental);
+        string requestSystemPrompt = tail.SystemPrompt;
+        IReadOnlyList<IHistoryMessage> requestContext = tail.Context;
+        if (supplemental.TerminalInput is not null) {
+            (
+                requestSystemPrompt,
+                ImmutableArray<IHistoryMessage> supplementalHeader
+            ) = SessionSupplementalContextRecipe.Expand(
+                governingSetup.SystemPrompt,
+                exactContextInputs
+            );
+            var context = ImmutableArray.CreateBuilder<IHistoryMessage>(
+                supplementalHeader.Length + selection.Window.Units.Count
+            );
+            context.AddRange(supplementalHeader);
+            foreach (SessionHistoryPlanningUnit unit in selection.Window.Units) {
+                context.Add(unit.Message);
+            }
+            requestContext = context.MoveToImmutable();
+        }
         var materialization = new RequestContextMaterialization(
-            tail.SystemPrompt,
-            tail.Context,
+            requestSystemPrompt,
+            requestContext,
             tail.RawStartExclusive,
             tail.RawRangeSha256,
             ToManifestSetupReferences(
                 selectedCandidate.AnchorSetups
             ),
-            tail.ContextSnapshots.Select(static snapshot => new SessionRequestContextInput(
-                SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot), snapshot
-            )).ToImmutableArray()
+            recapInputs,
+            supplemental
         );
         var request = new CompletionRequest(
             governingSetup.RuntimeConfig.ModelId,
@@ -3117,6 +3151,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
             executionCheckpoint,
             cancellationToken
         );
+        cancellationToken.ThrowIfCancellationRequested();
         EventAddress preparedAddress = AppendExpected(
             SessionEventKind.CompletionRequestPrepared,
             manifest,
@@ -3134,6 +3169,207 @@ public sealed partial class SessionJournalEngine : IDisposable {
             cancellationToken
         ).ConfigureAwait(false);
     }
+
+    private async ValueTask<SupplementalContextMaterialization>
+        ResolveSupplementalContextAsync(
+        SessionRuntime runtime,
+        SessionExecutionRecovery recovery,
+        EventAddress completionBoundary,
+        CancellationToken cancellationToken
+    ) {
+        switch (recovery.State.HeadKind) {
+            case SessionEventKind.ObservationAccepted:
+                return await SelectSupplementalContextAsync(
+                    runtime,
+                    recovery,
+                    completionBoundary,
+                    cancellationToken
+                ).ConfigureAwait(false);
+            case SessionEventKind.ToolResultObserved:
+                return CarrySupplementalContext(
+                    runtime,
+                    recovery,
+                    cancellationToken
+                );
+            default:
+                throw new InvalidDataException(
+                    $"Supplemental context cannot be resolved from '{recovery.State.HeadKind}'."
+                );
+        }
+    }
+
+    private async ValueTask<SupplementalContextMaterialization>
+        SelectSupplementalContextAsync(
+        SessionRuntime runtime,
+        SessionExecutionRecovery recovery,
+        EventAddress completionBoundary,
+        CancellationToken cancellationToken
+    ) {
+        ISessionSupplementalContextSource? source =
+            runtime.SupplementalContextSource;
+        if (source is null) {
+            return SupplementalContextMaterialization.Disabled;
+        }
+        if (recovery.Head != completionBoundary
+            || recovery.State.Phase != SessionExecutionPhase.AwaitingAgentAction
+            || recovery.State.HeadKind != SessionEventKind.ObservationAccepted
+            || recovery.Boundary.SourcePrepared is not null
+            || recovery.Boundary.SourceObservation != completionBoundary) {
+            throw new InvalidDataException(
+                "Supplemental selection requires the exact unprepared durable observation boundary."
+            );
+        }
+
+        ObservationAcceptedBody observation = ReadObservationAccepted(
+            completionBoundary
+        );
+        EnsureCurrentHead(completionBoundary);
+        var request = new SessionSupplementalContextRequest(
+            completionBoundary,
+            observation.Content
+        );
+        SessionSupplementalContextSelection selection;
+        try {
+            selection = await source
+                .SelectAsync(request, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch {
+            EnsureCurrentHead(completionBoundary);
+            throw;
+        }
+        EnsureCurrentHead(completionBoundary);
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(selection);
+
+        SupplementalContextMaterialization materialization =
+            CreateSupplementalContextMaterialization(selection);
+        TriggerFailpoint(
+            SessionJournalFailpoint.AfterSupplementalContextSelected
+        );
+        return materialization;
+    }
+
+    private SupplementalContextMaterialization CarrySupplementalContext(
+        SessionRuntime runtime,
+        SessionExecutionRecovery recovery,
+        CancellationToken cancellationToken
+    ) {
+        if (recovery.Boundary.SourcePrepared is not {
+            } sourcePreparedAddress) {
+            if (runtime.SupplementalContextSource is not null) {
+                throw new InvalidOperationException(
+                    "Enabled supplemental context cannot continue an imported tool segment without SourcePrepared."
+                );
+            }
+            return SupplementalContextMaterialization.Disabled;
+        }
+
+        SessionPreparedRequestReconstruction source =
+            SessionPreparedRequestReconstructor.Reconstruct(
+                _reader,
+                sourcePreparedAddress,
+                cancellationToken
+            );
+        return source.BodySchemaVersion switch {
+            SessionRequestManifestCodec.PreparedV5BodySchemaVersion =>
+                SupplementalContextMaterialization.Disabled,
+            SessionRequestManifestCodec.PreparedV6BodySchemaVersion =>
+                RebuildCarriedSupplementalContext(source.Manifest),
+            _ => throw new NotSupportedException(
+                "Unsupported source Prepared body schema version "
+                + $"'{source.BodySchemaVersion}'."
+            )
+        };
+    }
+
+    private static SupplementalContextMaterialization
+        RebuildCarriedSupplementalContext(
+        CompletionRequestPreparedBody sourceManifest
+    ) {
+        SessionSupplementalContextPartition partition =
+            SessionSupplementalContextRecipe.ValidateAndPartition(
+                sourceManifest.Plan.ExactContextInputs
+            );
+        SessionRequestContextInput rebuilt = partition.Control.Status switch {
+            SessionSupplementalContextStatus.NoMatch =>
+                SessionSupplementalContextRecipe.CreateNoMatchTerminalInput(),
+            SessionSupplementalContextStatus.Selected =>
+                SessionSupplementalContextRecipe.CreateSelectedTerminalInput(
+                    partition.Control.ObservationContent
+                        ?? throw new InvalidDataException(
+                            "Selected supplemental control requires observation content."
+                        )
+                ),
+            _ => throw new InvalidDataException(
+                $"Unknown supplemental control status '{partition.Control.Status}'."
+            )
+        };
+        if (rebuilt != partition.TerminalInput) {
+            throw new InvalidDataException(
+                "Carried supplemental terminal did not reproduce its exact canonical source input."
+            );
+        }
+        return SupplementalContextMaterialization.Enabled(rebuilt);
+    }
+
+    private static SupplementalContextMaterialization
+        CreateSupplementalContextMaterialization(
+        SessionSupplementalContextSelection selection
+    ) {
+        try {
+            return selection switch {
+                SessionSupplementalContextSelection.NoMatch =>
+                    SupplementalContextMaterialization.Enabled(
+                        SessionSupplementalContextRecipe
+                            .CreateNoMatchTerminalInput()
+                    ),
+                SessionSupplementalContextSelection.Selected selected =>
+                    SupplementalContextMaterialization.Enabled(
+                        SessionSupplementalContextRecipe
+                            .CreateSelectedTerminalInput(
+                                selected.ExactObservationContent
+                            )
+                    ),
+                _ => throw new InvalidDataException(
+                    "The supplemental context source returned an unknown selection outcome."
+                )
+            };
+        }
+        catch (ArgumentException exception) {
+            throw new InvalidDataException(
+                "The supplemental context source returned invalid selected content.",
+                exception
+            );
+        }
+    }
+
+    private ObservationAcceptedBody ReadObservationAccepted(
+        EventAddress address
+    ) {
+        using SessionJournalEventFrame frame =
+            _reader.ReadEvent(address).Unwrap();
+        ValidateSessionHeaderPreview(address, frame.Header);
+        var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
+        if (kind != SessionEventKind.ObservationAccepted) {
+            throw new InvalidDataException(
+                $"Expected ObservationAccepted at {address}, got '{kind}'."
+            );
+        }
+        object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
+        return body as ObservationAcceptedBody
+            ?? throw new InvalidDataException(
+                $"ObservationAccepted at {address} decoded to an unexpected body."
+            );
+    }
+
+    private static ImmutableArray<SessionRequestContextInput>
+        ComposeExactContextInputs(
+        ImmutableArray<SessionRequestContextInput> recapInputs,
+        SupplementalContextMaterialization supplemental
+    ) => supplemental.TerminalInput is { } terminal
+        ? [.. recapInputs, terminal]
+        : recapInputs;
 
     private async Task<CommittedCompletionResult> StartAndExecuteCompletionAttemptAsync(
         CompletionRequest request,
@@ -4592,7 +4828,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 RawStartExclusive: materialization.RawStartExclusive,
                 RawRangeSha256: materialization.RawRangeSha256,
                 RawStartSetups: materialization.RawStartSetups,
-                ExactContextInputs: materialization.ExactContextInputs
+                ExactContextInputs: ComposeExactContextInputs(
+                    materialization.RecapExactContextInputs,
+                    materialization.Supplemental
+                )
             ),
             new SessionGoverningSetupReferences(
                 CreateSetupReference(governingSetup.RuntimeConfigSetupAddress, SessionEventKind.RuntimeConfigSetup),
@@ -4605,10 +4844,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 tools,
                 tools.IsEmpty ? null : RequireToolRuntimeIdentity(runtime, tools)
             ),
-            new SessionRequestRecipe(
-                RecipeId: SessionRequestManifestDefaults.RecipeId,
-                CanonicalRequestCodecId: SessionRequestManifestDefaults.CanonicalRequestCodecId
-            ),
+            materialization.Supplemental.Recipe,
             new SessionRequestTarget(
                 completionTarget,
                 runtime.CompletionClient.Name,
@@ -5035,8 +5271,36 @@ public sealed partial class SessionJournalEngine : IDisposable {
         EventAddress RawStartExclusive,
         string RawRangeSha256,
         SessionGoverningSetupReferences RawStartSetups,
-        ImmutableArray<SessionRequestContextInput> ExactContextInputs
+        ImmutableArray<SessionRequestContextInput> RecapExactContextInputs,
+        SupplementalContextMaterialization Supplemental
     );
+
+    private sealed record SupplementalContextMaterialization(
+        SessionRequestRecipe Recipe,
+        SessionRequestContextInput? TerminalInput
+    ) {
+        public static SupplementalContextMaterialization Disabled { get; } =
+            new(
+                new SessionRequestRecipe(
+                    SessionRequestManifestDefaults.RecipeId,
+                    SessionRequestManifestDefaults.CanonicalRequestCodecId
+                ),
+                TerminalInput: null
+            );
+
+        public static SupplementalContextMaterialization Enabled(
+            SessionRequestContextInput terminalInput
+        ) {
+            ArgumentNullException.ThrowIfNull(terminalInput);
+            return new(
+                new SessionRequestRecipe(
+                    SessionSupplementalContextRecipe.RecipeId,
+                    SessionRequestManifestDefaults.CanonicalRequestCodecId
+                ),
+                terminalInput
+            );
+        }
+    }
 
     private sealed record SelectedContextCandidate(
         SessionContextCandidate Candidate,

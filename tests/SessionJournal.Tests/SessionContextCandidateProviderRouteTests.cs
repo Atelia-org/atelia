@@ -1841,6 +1841,168 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
+    public async Task SupplementalSelection_IsCarriedAcrossManyToolContinuations() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(ToolCall("lookup", "call-1"));
+        client.Enqueue(ToolCall("lookup", "call-2"));
+        client.Enqueue(Terminal("done"));
+        var source = new TestContextCandidateSource();
+        var supplemental = new TestSupplementalContextSource(
+            new SessionSupplementalContextSelection.Selected(
+                "turn-level supplemental"
+            )
+        );
+        var tool = new RecordingTool("lookup");
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(path, CreateOptions()),
+            CreateRuntime(
+                client,
+                source,
+                new ToolRegistry([tool]).CreateSession()
+            ) with {
+                SupplementalContextSource = supplemental
+            }
+        )) {
+            source.Candidate = ContextCandidateTestFixture
+                .CreateAtCurrentHead(engine, "supplemental-tool-chain")
+                .Candidate;
+
+            TurnResult result = await engine.SendAsync(
+                "use the tool twice",
+                CancellationToken.None
+            );
+
+            Assert.Equal("done", result.Message.GetFlattenedText());
+            Assert.Equal(1, supplemental.CallCount);
+        }
+
+        EventAddress[] prepared = ReadAddressesByKind(
+            path,
+            SessionEventKind.CompletionRequestPrepared
+        );
+        Assert.Equal(3, prepared.Length);
+        SessionRequestContextInput[] terminals = prepared
+            .Select(address => ReadBody<CompletionRequestPreparedBody>(
+                path,
+                address,
+                SessionEventKind.CompletionRequestPrepared
+            ))
+            .Select(static body => {
+                Assert.Equal(
+                    SessionSupplementalContextRecipe.RecipeId,
+                    body.Recipe.RecipeId
+                );
+                return body.Plan.ExactContextInputs[^1];
+            })
+            .ToArray();
+        Assert.All(terminals, terminal => Assert.Equal(terminals[0], terminal));
+        Assert.Equal(3, client.Calls);
+        Assert.Equal(2, tool.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ImportedToolResultWithoutSourcePrepared_UsesEnabledMarkerMatrix(
+        bool enabled
+    ) {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        if (!enabled) {
+            client.Enqueue(Terminal("disabled continuation"));
+        }
+        var candidateSource = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        var lifecycle = new TestContextLifecycle {
+            Result = SessionContextLifecycleResult.RawHistoryAuthorized
+        };
+        var supplemental = new TestSupplementalContextSource(
+            new SessionSupplementalContextSelection.NoMatch()
+        );
+        var tool = new RecordingTool("lookup");
+        ToolSession toolSession = new ToolRegistry([tool]).CreateSession();
+        SessionRuntime runtime = CreateRuntime(
+            client,
+            candidateSource,
+            toolSession
+        ) with {
+            ContextLifecycle = lifecycle,
+            SupplementalContextSource = enabled ? supplemental : null
+        };
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(path, CreateOptions()),
+            runtime
+        )) {
+            engine.AppendObservation("imported tool turn");
+            EventAddress importedAction = engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(
+                        new RawToolCall("lookup", "imported-call", "{}")
+                    )
+                ]),
+                new CompletionDescriptor("import", "import-v1", "model-A")
+            );
+            SessionPendingToolBoundaryResult settled =
+                await engine.ExecutePendingToolToBoundaryAsync(
+                    importedAction,
+                    toolSession,
+                    ToolRuntimeIdentity,
+                    CancellationToken.None
+                );
+            EventAddress toolResultHead = Assert.IsType<
+                SessionPendingToolBoundaryResult.Settled
+            >(settled).Head;
+
+            if (enabled) {
+                InvalidOperationException error =
+                    await Assert.ThrowsAsync<InvalidOperationException>(
+                        () => engine.ResumeAsync(CancellationToken.None)
+                    );
+                Assert.Contains(
+                    "without SourcePrepared",
+                    error.Message,
+                    StringComparison.Ordinal
+                );
+                Assert.Equal(toolResultHead, engine.ReadCurrentHead());
+                Assert.Equal(0, client.Calls);
+            }
+            else {
+                ResumeOutcome outcome = await engine.ResumeAsync(
+                    CancellationToken.None
+                );
+                Assert.Equal(
+                    "disabled continuation",
+                    outcome.Message?.GetFlattenedText()
+                );
+            }
+            Assert.Equal(0, supplemental.CallCount);
+        }
+
+        EventAddress[] prepared = ReadAddressesByKind(
+            path,
+            SessionEventKind.CompletionRequestPrepared
+        );
+        if (enabled) {
+            Assert.Empty(prepared);
+        }
+        else {
+            CompletionRequestPreparedBody body = ReadBody<
+                CompletionRequestPreparedBody
+            >(
+                path,
+                Assert.Single(prepared),
+                SessionEventKind.CompletionRequestPrepared
+            );
+            Assert.Equal(
+                SessionRequestManifestDefaults.RecipeId,
+                body.Recipe.RecipeId
+            );
+        }
+    }
+
+    [Fact]
     public async Task SendAndToolContinuation_InvokeLifecycleOnlyAtSafeUnpreparedBoundaries() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
