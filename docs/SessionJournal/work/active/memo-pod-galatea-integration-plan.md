@@ -908,7 +908,8 @@ git diff --check
 1. post-R2 Tier-A reopen与v5/v1、v6/v2 exact pair曾由独立Candidate锁定并通过文档审阅；historical implementation/evidence
    reviews均PASS，但用户随后撤回并由`1d8c33bb`回滚；Gate B never granted；
 2. terminal control envelope不是把Memo偷塞进v1 Recap recipe或伪造raw provenance；
-3. exact query和call ordering与owning current code一致；
+3. exact query和call ordering曾与historical pre-B1 baseline及`83477c06` evidence一致；这不裁决current Design Reopened的
+   query timing；
 4. Frozen/Started/tool continuation所有branch都能做到lazy zero Memo access，metadata-only marker不会偷做Pod/client work；
 5. independent config没有扩张root Stable V1，file bounds/depth/no-follow、四项Recall caps、separator-aware path disjoint和
    duplicate owner足够可测；

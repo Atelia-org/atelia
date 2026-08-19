@@ -186,15 +186,17 @@ pair 是 initial Prepared 固化的 turn-level execution input，而不是每次
 
 1. First deployment 必须同时包含 v5/v6 dual reader 与 split writer；不得先部署 v6 writer。
 2. v6 write 前的 repository 保持 v5-only binary compatible；v6 write 后，old reader 的 explicit `Unsupported` 是 expected。
-3. mixed v5/v6 journals are supported current data after first v6 write；backup/restore、audit、offline validation、replay 与
-   reopen 都必须保留 actual bytes/order/version。
+3. historical candidate contract曾把mixed v5/v6 journals定义为受支持数据，且`83477c06` reader曾支持其
+   backup/restore、audit、offline validation、replay与reopen并保留actual bytes/order/version；rollback后的current code
+   不支持v6，这不是current data-support claim。
 4. no rewrite/migration means no operator job, startup scan or read-time promotion modifies existing v5。
 5. first v6 write 后 rollback 只能到仍含 exact dual reader 的 build。回滚到 v5-only binary 不受支持；不得靠删除 v6 raw
    events、覆盖 old backup、skip unknown event 或重写 history 恢复。
 
 ## 7. Exact B1 product write scope
 
-Gate A 已于 2026-08-20 获得用户显式授权；B1 production mutation 仍只允许：
+Gate A曾于2026-08-20获得用户显式授权，但已随用户撤回而终止，当前不再允许任何B1 production mutation；下列scope仅为
+historical record：
 
 - new `prototypes/SessionJournal/SessionSupplementalContextContracts.cs`
 - new `prototypes/SessionJournal/SessionSupplementalContextRecipe.cs`
