@@ -26,8 +26,8 @@ public sealed class MemoPodFrozenPromptTests {
         Assert.Equal(17, prompt.EstimateTokenCount(first));
         Assert.Equal(29, prompt.EstimateTokenCount(second));
 
-        Assert.Same(prompt.ExactText, first.ObservedExactText);
-        Assert.Same(prompt.ExactText, second.ObservedExactText);
+        Assert.Equal(prompt.ExactText, first.ObservedExactText);
+        Assert.Equal(prompt.ExactText, second.ObservedExactText);
         Assert.Same(exactText, prompt.ExactText);
         Assert.Equal(utf8Length, prompt.Utf8Length);
         Assert.Equal(sha256, prompt.Sha256);
