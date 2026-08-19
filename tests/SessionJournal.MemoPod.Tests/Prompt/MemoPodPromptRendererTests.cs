@@ -111,6 +111,35 @@ public sealed class MemoPodPromptRendererTests {
     }
 
     [Fact]
+    public void FirstAppendPreservesEntireEmptyRenderAsBytePrefix() {
+        MemoPodFrozenPrompt empty = MemoPodPromptRenderer.Render(
+            CreateDocument("topic", 1)
+        );
+        MemoPodFrozenPrompt after = MemoPodPromptRenderer.Render(
+            CreateDocument(
+                "topic",
+                2,
+                new Memo(MemoId.FromOrdinal(1), "first")
+            )
+        );
+        byte[] emptyBytes = Encoding.UTF8.GetBytes(empty.ExactText);
+        byte[] afterBytes = Encoding.UTF8.GetBytes(after.ExactText);
+
+        Assert.Equal(
+            """{"schema":"atelia.memo-pod.prompt.v1","pod_id":"0123456789abcdef0123456789abcdef","topic":"topic"}"""
+                + "\n",
+            empty.ExactText
+        );
+        Assert.Equal(
+            empty.ExactText
+                + "{\"id\":\"m1:00000001\",\"exact_text\":\"first\"}\n",
+            after.ExactText
+        );
+        Assert.True(afterBytes.AsSpan().StartsWith(emptyBytes));
+        Assert.Equal(emptyBytes.Length, CommonPrefixLength(emptyBytes, afterBytes));
+    }
+
+    [Fact]
     public void AllocatorGapAloneDoesNotChangeRender() {
         Memo memo = new(MemoId.FromOrdinal(1), "text");
         MemoPodFrozenPrompt before = MemoPodPromptRenderer.Render(
@@ -143,7 +172,8 @@ public sealed class MemoPodPromptRendererTests {
     }
 
     [Fact]
-    public void RemoveFirstDivergesWithinDeletedRecord() {
+    public void RemoveMatchesExactGoldensAndLcp() {
+        const int ExpectedLongestCommonPrefixUtf8Bytes = 162;
         Memo first = new(MemoId.FromOrdinal(1), "第一条");
         Memo removed = new(MemoId.FromOrdinal(2), "remove me");
         Memo third = new(MemoId.FromOrdinal(3), "third");
@@ -155,37 +185,36 @@ public sealed class MemoPodPromptRendererTests {
         );
         byte[] beforeBytes = Encoding.UTF8.GetBytes(before.ExactText);
         byte[] afterBytes = Encoding.UTF8.GetBytes(after.ExactText);
-        int deletedLineByteOffset = Encoding.UTF8.GetByteCount(
-            before.ExactText.AsSpan(
-                0,
-                before.ExactText.IndexOf(
-                    "{\"id\":\"m1:00000002\"",
-                    StringComparison.Ordinal
-                )
-            )
-        );
+        string expectedBefore =
+            """{"schema":"atelia.memo-pod.prompt.v1","pod_id":"0123456789abcdef0123456789abcdef","topic":"topic"}"""
+            + "\n"
+            + """{"id":"m1:00000001","exact_text":"第一条"}"""
+            + "\n"
+            + """{"id":"m1:00000002","exact_text":"remove me"}"""
+            + "\n"
+            + """{"id":"m1:00000003","exact_text":"third"}"""
+            + "\n";
+        string expectedAfter =
+            """{"schema":"atelia.memo-pod.prompt.v1","pod_id":"0123456789abcdef0123456789abcdef","topic":"topic"}"""
+            + "\n"
+            + """{"id":"m1:00000001","exact_text":"第一条"}"""
+            + "\n"
+            + """{"id":"m1:00000003","exact_text":"third"}"""
+            + "\n";
 
-        int deletedLineEnd = Array.IndexOf(
-            beforeBytes,
-            (byte)'\n',
-            deletedLineByteOffset
-        ) + 1;
-        int commonPrefixLength = CommonPrefixLength(beforeBytes, afterBytes);
-
-        // Cache invalidation starts at this record structurally. The exact
-        // byte LCP extends into the line because every memo line shares a
-        // fixed JSON prefix and the canonical IDs share leading hex digits.
-        Assert.True(beforeBytes.AsSpan(0, deletedLineByteOffset)
-            .SequenceEqual(afterBytes.AsSpan(0, deletedLineByteOffset)));
-        Assert.InRange(
-            commonPrefixLength,
-            deletedLineByteOffset,
-            deletedLineEnd - 1
+        Assert.Equal(expectedBefore, before.ExactText);
+        Assert.Equal(expectedAfter, after.ExactText);
+        // The removed record starts at byte 145. Its fixed JSON prefix and
+        // leading ID digits extend the exact LCP 17 bytes into that record.
+        Assert.Equal(
+            ExpectedLongestCommonPrefixUtf8Bytes,
+            CommonPrefixLength(beforeBytes, afterBytes)
         );
     }
 
     [Fact]
-    public void RemoveAndAppendFirstDivergesWithinReplacedRecord() {
+    public void RemoveAndAppendMatchesExactGoldensAndLcp() {
+        const int ExpectedLongestCommonPrefixUtf8Bytes = 158;
         Memo first = new(MemoId.FromOrdinal(1), "first");
         Memo old = new(MemoId.FromOrdinal(2), "old");
         MemoPodFrozenPrompt before = MemoPodPromptRenderer.Render(
@@ -201,29 +230,28 @@ public sealed class MemoPodPromptRendererTests {
         );
         byte[] beforeBytes = Encoding.UTF8.GetBytes(before.ExactText);
         byte[] afterBytes = Encoding.UTF8.GetBytes(after.ExactText);
-        int oldLineOffset = Encoding.UTF8.GetByteCount(
-            before.ExactText.AsSpan(
-                0,
-                before.ExactText.IndexOf(
-                    "{\"id\":\"m1:00000002\"",
-                    StringComparison.Ordinal
-                )
-            )
-        );
+        string expectedBefore =
+            """{"schema":"atelia.memo-pod.prompt.v1","pod_id":"0123456789abcdef0123456789abcdef","topic":"topic"}"""
+            + "\n"
+            + """{"id":"m1:00000001","exact_text":"first"}"""
+            + "\n"
+            + """{"id":"m1:00000002","exact_text":"old"}"""
+            + "\n";
+        string expectedAfter =
+            """{"schema":"atelia.memo-pod.prompt.v1","pod_id":"0123456789abcdef0123456789abcdef","topic":"topic"}"""
+            + "\n"
+            + """{"id":"m1:00000001","exact_text":"first"}"""
+            + "\n"
+            + """{"id":"m1:00000003","exact_text":"corrected"}"""
+            + "\n";
 
-        int oldLineEnd = Array.IndexOf(
-            beforeBytes,
-            (byte)'\n',
-            oldLineOffset
-        ) + 1;
-        int commonPrefixLength = CommonPrefixLength(beforeBytes, afterBytes);
-
-        Assert.True(beforeBytes.AsSpan(0, oldLineOffset)
-            .SequenceEqual(afterBytes.AsSpan(0, oldLineOffset)));
-        Assert.InRange(
-            commonPrefixLength,
-            oldLineOffset,
-            oldLineEnd - 1
+        Assert.Equal(expectedBefore, before.ExactText);
+        Assert.Equal(expectedAfter, after.ExactText);
+        // The corrected record starts at byte 141. Its fixed JSON prefix and
+        // leading ID digits extend the exact LCP 17 bytes into that record.
+        Assert.Equal(
+            ExpectedLongestCommonPrefixUtf8Bytes,
+            CommonPrefixLength(beforeBytes, afterBytes)
         );
     }
 

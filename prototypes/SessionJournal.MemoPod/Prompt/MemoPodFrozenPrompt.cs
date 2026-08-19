@@ -27,6 +27,19 @@ internal sealed class MemoPodFrozenPrompt {
     internal ObservationMessage ToHistoryMessage()
         => new(ExactText);
 
+    internal int EstimateTokenCount(
+        IMemoPodPromptTokenEstimator estimator
+    ) {
+        ArgumentNullException.ThrowIfNull(estimator);
+        int estimatedTokenCount = estimator.EstimateTokenCount(ExactText);
+        if (estimatedTokenCount < 0) {
+            throw new InvalidOperationException(
+                "MemoPod prompt token estimators must return a non-negative count."
+            );
+        }
+        return estimatedTokenCount;
+    }
+
     internal static MemoPodFrozenPrompt FromOwnedUtf8(byte[] utf8) {
         ArgumentNullException.ThrowIfNull(utf8);
         string exactText = StrictUtf8.GetString(utf8);
