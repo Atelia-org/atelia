@@ -193,6 +193,24 @@ public sealed class SessionRequestManifestCodecTests {
                 6
             )
         );
+        InvalidDataException nonterminalAtMaximum =
+            Assert.Throws<InvalidDataException>(() =>
+                SessionRequestManifestCodec.Validate(
+                    body with {
+                        Plan = body.Plan with {
+                            ExactContextInputs = [
+                                .. Enumerable.Repeat(recap, 129)
+                            ]
+                        }
+                    },
+                    6
+                )
+            );
+        Assert.Contains(
+            "terminal input",
+            nonterminalAtMaximum.Message,
+            StringComparison.Ordinal
+        );
         Assert.Throws<InvalidDataException>(() =>
             SessionRequestManifestCodec.Validate(
                 body with {
@@ -377,6 +395,14 @@ public sealed class SessionRequestManifestCodecTests {
         SessionRequestManifestCodec.Validate(
             body with {
                 Plan = body.Plan with { ExactContextInputs = [first] }
+            }
+        );
+        SessionRequestManifestCodec.Validate(
+            body with {
+                Plan = body.Plan with {
+                    ExactContextInputs = Enumerable.Repeat(first, 128)
+                        .ToImmutableArray()
+                }
             }
         );
         Assert.Throws<InvalidDataException>(
