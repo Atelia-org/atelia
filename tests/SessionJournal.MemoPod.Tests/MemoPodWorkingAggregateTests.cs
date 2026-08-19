@@ -83,6 +83,65 @@ public sealed class MemoPodWorkingAggregateTests {
     }
 
     [Fact]
+    public void DoubleRemoveFailsWithoutChangingHighWaterOrActiveSet() {
+        MemoPodWorkingAggregate aggregate = CreateAggregate();
+        MemoId removed = aggregate.Append("remove once");
+        MemoId retained = aggregate.Append("retain");
+        aggregate.Remove(removed);
+        MemoPodDocument beforeSecondRemove = aggregate.CaptureDocument();
+
+        Assert.Throws<KeyNotFoundException>(() => aggregate.Remove(removed));
+
+        MemoPodDocument afterSecondRemove = aggregate.CaptureDocument();
+        Assert.Equal(
+            beforeSecondRemove.NextMemoOrdinal,
+            afterSecondRemove.NextMemoOrdinal
+        );
+        Assert.Equal(
+            beforeSecondRemove.Memos.ToArray(),
+            afterSecondRemove.Memos.ToArray()
+        );
+        Assert.Equal(retained, Assert.Single(afterSecondRemove.Memos).Id);
+    }
+
+    [Fact]
+    public void ListUsesOrdinalOrderAcrossHexDigitBoundaries() {
+        Memo[] memos = [
+            new(MemoId.FromOrdinal(0x9), "nine"),
+            new(MemoId.FromOrdinal(0xa), "ten"),
+            new(MemoId.FromOrdinal(0xf), "fifteen"),
+            new(MemoId.FromOrdinal(0x10), "sixteen")
+        ];
+        MemoPodWorkingAggregate aggregate =
+            MemoPodWorkingAggregate.FromDocument(
+                new MemoPodDocument(PodId, "topic", 0x11, memos)
+            );
+
+        Assert.Equal(
+            new[] {
+                "m1:00000009",
+                "m1:0000000a",
+                "m1:0000000f",
+                "m1:00000010"
+            },
+            aggregate.List().Select(static memo => memo.Id.Value).ToArray()
+        );
+    }
+
+    [Fact]
+    public void ListSnapshotDoesNotTrackLaterMutations() {
+        MemoPodWorkingAggregate aggregate = CreateAggregate();
+        MemoId first = aggregate.Append("first");
+        var snapshot = aggregate.List();
+
+        aggregate.Remove(first);
+        MemoId second = aggregate.Append("second");
+
+        Assert.Equal(first, Assert.Single(snapshot).Id);
+        Assert.Equal(second, Assert.Single(aggregate.List()).Id);
+    }
+
+    [Fact]
     public void ActiveTextByteLimitFailureIsAtomic() {
         string maximumMemo = new(
             'x',

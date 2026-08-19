@@ -69,7 +69,7 @@ public sealed class MemoPodArchitectureTests {
     }
 
     [Fact]
-    public void ProductProjectHasNoProductionDependenciesAndOneTestFriend() {
+    public void ProductDependenciesRemainWithinAllowlistAndFriendsAreExact() {
         string projectPath = Path.Combine(
             FindRepositoryRoot(),
             "prototypes",
@@ -78,15 +78,37 @@ public sealed class MemoPodArchitectureTests {
         );
         XDocument project = XDocument.Load(projectPath);
 
-        Assert.Empty(project.Descendants("ProjectReference"));
+        string[] projectReferences = project.Descendants("ProjectReference")
+            .Select(static element => Path.GetFileNameWithoutExtension(
+                (string?)element.Attribute("Include")
+                    ?? throw new InvalidDataException(
+                        "ProjectReference must have Include."
+                    )
+            ))
+            .ToArray();
+        Assert.All(
+            projectReferences,
+            static reference => Assert.Contains(
+                reference,
+                new[] { "Completion.Abstractions", "Diagnostics" }
+            )
+        );
+        Assert.Equal(
+            projectReferences.Length,
+            projectReferences.Distinct(StringComparer.Ordinal).Count()
+        );
         Assert.Empty(project.Descendants("PackageReference"));
         Assert.Equal(
-            ["Atelia.SessionJournal.MemoPod.Tests"],
+            new[] {
+                "Atelia.SessionJournal.MemoPod.CrashHarness",
+                "Atelia.SessionJournal.MemoPod.Tests"
+            },
             project.Descendants("InternalsVisibleTo")
                 .Select(static element =>
                     (string?)element.Attribute("Include"))
                 .Where(static value => value is not null)
                 .Select(static value => value!)
+                .Order(StringComparer.Ordinal)
                 .ToArray()
         );
         Assert.Equal(

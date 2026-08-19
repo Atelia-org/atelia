@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../../prototypes/SessionJournal.MemoPod/SessionJournal.MemoPod.csproj" />
+    <ProjectReference Include="../SessionJournal.MemoPod.CrashHarness/SessionJournal.MemoPod.CrashHarness.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>
