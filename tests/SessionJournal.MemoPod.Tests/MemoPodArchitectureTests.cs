@@ -6,7 +6,7 @@ namespace Atelia.SessionJournal.MemoPod.Tests;
 
 public sealed class MemoPodArchitectureTests {
     [Fact]
-    public void ProductExportsOnlyLockedLeafTypes() {
+    public void ProductExportsOnlyLockedLifecycleTypes() {
         string[] exported = typeof(Memo).Assembly.GetExportedTypes()
             .Select(static type => type.FullName!)
             .Order(StringComparer.Ordinal)
@@ -16,14 +16,16 @@ public sealed class MemoPodArchitectureTests {
             new[] {
                 typeof(Memo).FullName!,
                 typeof(MemoId).FullName!,
+                typeof(MemoPod).FullName!,
+                typeof(MemoPodCommitIndeterminateException).FullName!,
                 typeof(MemoPodId).FullName!,
-                typeof(MemoPodLimits).FullName!
+                typeof(MemoPodInvalidatedException).FullName!,
+                typeof(MemoPodLimits).FullName!,
+                typeof(MemoPodPersistenceException).FullName!,
+                typeof(MemoPodPersistenceFailureKind).FullName!,
+                typeof(MemoPodPhase).FullName!
             }.Order(StringComparer.Ordinal),
             exported
-        );
-        Assert.DoesNotContain(
-            exported,
-            static name => name.EndsWith(".MemoPod", StringComparison.Ordinal)
         );
     }
 

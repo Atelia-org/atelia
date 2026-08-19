@@ -77,6 +77,12 @@ internal static class MemoPodStoreLayout {
         RequireExistingDirectory(paths.PodsPath);
     }
 
+    internal static void RequireExistingRoot(MemoPodStorePaths paths) {
+        ArgumentNullException.ThrowIfNull(paths);
+        RequireLinux();
+        RequireRootAncestors(paths.RootPath);
+    }
+
     internal static void EnsureForPublish(MemoPodStorePaths paths) {
         RequireLinux();
         RequireRootAncestors(paths.RootPath);
