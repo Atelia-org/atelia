@@ -1,19 +1,20 @@
 # CompletionRequestPrepared v6 Tier-A amendment
 
-状态：**Candidate / Gate A Authorized — B1 product/tests Authorized / Not Started；不是current contract或approval authority**  
+状态：**Candidate / Gate A Authorized — B1 implementation complete；candidate evidence assembled；independent implementation review PASS；independent evidence/docs review pending；Gate B Pending**  
 proposal baseline：[MemoPod Galatea / SessionJournal integration plan](memo-pod-galatea-integration-plan.md)，locked at `d5a403c4`  
 frozen antecedent：[SessionJournal Contract R2](../../current/contracts/session-journal-contract-r2.md)、
 [R2 closure](../../evidence/contract-freeze-r2-closure.md)  
 记录日期：2026-08-20
 
-本文是 post-R2、SessionJournal-owner 的 Tier-A raw/recovery wire amendment Candidate。它只定义
-`CompletionRequestPrepared` v5/v6 split-write、dual-read、reconstruction 与 deployment boundary，供已获 Gate A 授权的
-B1 product/tests 实施。它不是 current contract、implementation evidence、approval evidence、migration runbook、
-deployment approval 或 tag authority。
+本文是 post-R2、SessionJournal-owner 的 Tier-A raw/recovery wire amendment Candidate。它定义
+`CompletionRequestPrepared` v5/v6 split-write、dual-read、reconstruction 与 deployment boundary；Gate A授权的B1
+product/tests现已实现并形成[candidate evidence](../../evidence/completion-request-prepared-v6-candidate.md)。本文仍不是
+current contract、approval evidence、migration runbook、deployment approval 或 tag authority。
 
 Gate A 已于 2026-08-20 由用户以原文显式授权：`授权 Gate A：按 Prepared v6 Tier-A Candidate 实施 WP-07B B1。`
-该授权只允许按本 Candidate 修改 §7 product 与 §8.1 tests；B1 仍是 **Authorized / Not Started**。它不授权
-WP-07B B2、Gate B、current contract、approval evidence、deployment 或 tag，也不表示 v6 已实现、已审阅或已批准。
+该授权只允许按本 Candidate 修改 §7 product 与 §8.1 tests。B1 implementation现已完成且independent implementation
+review PASS；candidate evidence/docs仍待独立审阅，Gate B仍Pending。Gate A不授权WP-07B B2、Gate B、current contract、
+approval evidence、deployment 或 tag。
 
 ## 1. Why this candidate exists
 
@@ -207,6 +208,28 @@ Gate A 已于 2026-08-20 获得用户显式授权；B1 production mutation 仍�
 要求抽取 pure helper，实施者必须先在 B1 change record 列出 exact file/reason，并证明 v1 bytes/render unchanged；不得顺带
 重写 resolver、v1 recipe、RecapGrid 或 recovery algorithm。
 
+final implementation使用下列closed public outcome family：
+
+```csharp
+public abstract class SessionSupplementalContextSelection {
+    private SessionSupplementalContextSelection() { }
+
+    public sealed class NoMatch : SessionSupplementalContextSelection { }
+
+    public sealed class Selected : SessionSupplementalContextSelection {
+        public Selected(string exactObservationContent) {
+            // Exact null/empty/Unicode guards are part of the implementation.
+            ExactObservationContent = exactObservationContent;
+        }
+        public string ExactObservationContent { get; }
+    }
+}
+```
+
+原plan中的`abstract record`经post-review hardening改为private-ctor abstract class，避免record合成protected copy
+constructor形成外部派生入口。nested outcomes仍sealed、get-only、validated并保持同名engine pattern；这是封闭性收紧，
+不增加success/failure状态，也不承诺record value equality。
+
 ## 8. Exact B1 test and evidence scope
 
 ### 8.1 Tests
@@ -222,8 +245,13 @@ Gate A 已于 2026-08-20 获得用户显式授权；B1 production mutation 仍�
 - `tests/SessionJournal.Tests/SessionEventBodySchemaVersionTests.cs`
 - `tests/SessionJournal.Tests/SessionJournalAuditScanTests.cs`
 - `tests/SessionJournal.Tests/SessionJournalOfflineValidatorTests.cs`
+- `tests/SessionJournal.Tests/SessionContextCandidateContractTests.cs`（post-review dependency-boundary test-only expansion）
+- `tests/SessionJournal.Tests/SessionSelectedLineageAuditTests.cs`（post-review paged mixed-reader test-only expansion）
 - `tests/SessionJournal.Tests/SessionTailContextProjectionTests.cs` only if needed to lock final message order
 - `tests/SessionJournal.PublicSurface.Tests/SessionJournalNamedRoleTests.cs`
+
+`SessionDependencyClosedFoldSeedTests.cs`未修改；existing dependency-closed ordering由engine/reconstructor/route tests覆盖。
+两项test-only expansion没有扩大production scope，其原因与实际文件列表登记在candidate evidence §2。
 
 The acceptance matrix must prove：
 
@@ -243,14 +271,14 @@ The acceptance matrix must prove：
 
 ### 8.2 Candidate implementation evidence
 
-B1 code/tests 完成后可新增且只新增 candidate evidence：
+B1 code/tests 已完成并新增 candidate evidence：
 
-- `docs/SessionJournal/evidence/completion-request-prepared-v6-candidate.md`
+- [completion-request-prepared-v6-candidate.md](../../evidence/completion-request-prepared-v6-candidate.md)
 - update `docs/SessionJournal/evidence/README.md` to route that candidate
 
-Candidate evidence 必须 pin code/test commit、old-reader source/tag identity、literal golden hashes、mixed-journal fixture hashes、
-focused/full commands、platform/runtime 与 residual risks。它不得使用 Approved/Current/Closed 字样，不得创建 tag，也不得
-修改旧 R2 evidence。
+Candidate evidence已pin code/test commit、old-reader source/tag identity、literal golden hashes、mixed-journal fixture hashes、
+focused/full commands、platform/runtime 与 residual risks。independent implementation review已PASS；evidence/docs独立审阅
+仍Pending。该记录不创建tag，也不修改旧R2 evidence。
 
 ## 9. Documentation scope and immutable antecedents
 
@@ -272,10 +300,11 @@ focused/full commands、platform/runtime 与 residual risks。它不得使用 Ap
 
 ## 10. Two-stage approval and promotion gates
 
-### Current state — Candidate / Gate A Authorized / B1 Not Started
+### Current state — B1 implementation complete / candidate evidence assembled / implementation review PASS / evidence-docs review pending
 
-本文件已完成独立文档审阅，Gate A 亦已于 2026-08-20 获用户显式授权；B1 product/tests 目前仍为
-**Authorized / Not Started**。reviewer PASS 与 Gate A 都不批准 current contract、approval evidence、deployment 或 tag。
+本文件的pre-B1 design已完成独立文档审阅，Gate A亦已于2026-08-20获用户显式授权。B1 product/tests已完成、candidate
+evidence已形成，exact implementation range的independent review PASS；新evidence与本轮docs同步仍待独立审阅。
+这些PASS与Gate A都不授予Gate B、current contract、approval evidence、deployment或tag。
 
 ### Gate A — explicit user authorization to implement
 
@@ -283,11 +312,12 @@ focused/full commands、platform/runtime 与 residual risks。它不得使用 Ap
 §7 product 与 §8.1 tests。Gate A 是施工授权，**不是** Tier-A final approval/freeze，也不授权 WP-07B B2、
 current contract、approval evidence、deployment 或 tag。
 
-### Implementation review gate
+### Implementation and evidence review gate
 
-B1 code/tests 和 §8.2 candidate evidence 完成后，必须由独立 reviewer 对 exact commit 检查：v5 byte preservation、v6 strict
-grammar、dual-read/cross-pair rejection、mixed journal、old-reader Unsupported、recovery zero-access、tool inheritance、hashes、
-rollback 和 dependency boundary。Findings closure 必须使用 independently reviewable commits/evidence；实施者不能自我 promotion。
+B1 code/tests的independent reviewer已对exact commit检查v5 byte preservation、v6 strict grammar、dual-read/cross-pair
+rejection、mixed journal、old-reader Unsupported、recovery zero-access、tool inheritance、hashes、rollback和dependency
+boundary，并报告PASS。§8.2 candidate evidence与docs同步仍须独立review；findings closure必须使用independently
+reviewable commits/evidence，实施者不能自我promotion。
 
 ### Gate B — explicit user final approval
 
@@ -306,11 +336,12 @@ rollback 和 dependency boundary。Findings closure 必须使用 independently r
 
 本文只有在下列事项全部发生后才能退出 active Candidate：
 
-1. independent document review confirms §§2–10 are closed and internally consistent；
+1. **Complete** — pre-B1 independent document review confirmed the authorized §§2–10 shape；
 2. **Complete (2026-08-20)** — user grants Gate A authorization；
-3. implementation and candidate evidence pass independent review；
-4. user grants Gate B final approval；
-5. a separate promotion package publishes the current contract/approval ledger/new immutable tag and passes post-tag review。
+3. **Implementation Complete / Review PASS；candidate evidence Assembled / independent docs review Pending**；
+4. **Pending** — user grants Gate B final approval；
+5. **Not Started** — a separate promotion package publishes the current contract/approval ledger/new immutable tag and passes
+   post-tag review。
 
-在此之前，current implementation authority 仍是 owning code/tests，current approved Tier-A wire 仍是 R2 中的 Prepared
-v5/recipe v1。本文不得被 router、operator 或 Agent 解释为 v6 已实现、已部署或已批准。
+在此之前，current implementation authority仍是owning code/tests，Gate B前的approved Tier-A wire authority仍是R2中的
+Prepared v5/recipe v1。本文不得被router、operator或Agent解释为v6已获Gate B授权、已部署或已进入final contract/tag。

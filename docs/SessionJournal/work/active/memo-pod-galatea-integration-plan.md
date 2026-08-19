@@ -1,18 +1,20 @@
 # MemoPod Galatea / SessionJournal integration plan
 
-状态：**Reviewed — Gate A已授权；WP-07B B1 Authorized / Not Started；不是current implementation authority**  
+状态：**Reviewed plan — B1 implementation complete；candidate evidence assembled；independent implementation review PASS；independent evidence/docs review pending；Gate B Pending；B2未授权/未开始**  
 目标入口：[MemoPod目标设计与施工计划](memo-pod-target-design-and-implementation-plan.md) §8、WP-07A/WP-07B  
-verified production baseline：`7cd696394e8fbf09db8464508b4492b68cfc0a91`  
-baseline meaning：`7cd69639`已实现provider-neutral MemoPod recall；本文核对的SessionJournal/Galatea
+verified pre-B1 MemoPod recall baseline：`7cd696394e8fbf09db8464508b4492b68cfc0a91`  
+baseline meaning：`7cd69639`已实现provider-neutral MemoPod recall；WP-07A最初核对的SessionJournal/Galatea
 production seam没有依赖尚未提交的DebugApp。后续只增加tests/DebugApp的提交可以作为implementation baseline
 补充登记，但不得把未复核的SessionJournal/Galatea production变化自动吸收为本文事实。
-review closure：plan tail `d5a403c4`；Tier-A Candidate `edfe5230`及independent-review tail `19776980`。Track C2
+review closure：plan tail `d5a403c4`；Tier-A Candidate `edfe5230`及independent-review tail `19776980`。B1
+implementation source现为`83477c06`，candidate evidence见
+[completion-request-prepared-v6-candidate.md](../../evidence/completion-request-prepared-v6-candidate.md)。Track C2
 provider-free runner `2fa1ee3b`不改变本文核对的SessionJournal/Galatea production seam，也曾不构成Gate A授权；Gate A
 现由用户于2026-08-20的显式原文单独授予，且只授权B1 product/tests。
 
-本文只完成WP-07A：锁定单个MemoPod的query-dependent memory如何进入Galatea main request，以及
-Prepared/recovery、failure、ownership、privacy和WP-07B施工边界。本文不修改production，也不宣称WP-07B、
-Track C2或WP-07C已经实现或通过。
+本文只拥有WP-07A plan lock：锁定单个MemoPod的query-dependent memory如何进入Galatea main request，以及
+Prepared/recovery、failure、ownership、privacy和WP-07B施工边界。本docs同步不修改production；B1 implementation
+fact由owning code/tests与candidate evidence拥有。本文不宣称B2、完整WP-07B、authenticated Track C2或WP-07C已经实现或通过。
 
 ## 1. Decision summary
 
@@ -233,23 +235,39 @@ public interface ISessionSupplementalContextSource {
         CancellationToken cancellationToken);
 }
 
-public sealed record SessionSupplementalContextRequest(
-    EventAddress ObservationAddress,
-    string ExactObservationContent);
+public sealed record SessionSupplementalContextRequest {
+    public SessionSupplementalContextRequest(
+        EventAddress observationAddress,
+        string exactObservationContent
+    ) {
+        // Exact address/content guards are specified in §7.2.
+        ObservationAddress = observationAddress;
+        ExactObservationContent = exactObservationContent;
+    }
 
-public abstract record SessionSupplementalContextSelection {
-    private SessionSupplementalContextSelection();
+    public EventAddress ObservationAddress { get; }
+    public string ExactObservationContent { get; }
+}
 
-    public sealed record NoMatch : SessionSupplementalContextSelection;
+public abstract class SessionSupplementalContextSelection {
+    private SessionSupplementalContextSelection() { }
 
-    public sealed record Selected(
-        string ExactObservationContent
-    ) : SessionSupplementalContextSelection;
+    public sealed class NoMatch : SessionSupplementalContextSelection { }
+
+    public sealed class Selected : SessionSupplementalContextSelection {
+        public Selected(string exactObservationContent) {
+            // Exact null/empty/Unicode guards are specified in §7.2.
+            ExactObservationContent = exactObservationContent;
+        }
+        public string ExactObservationContent { get; }
+    }
 }
 ```
 
-最终实现可为singleton `NoMatch`提供factory/property，但不得增加第二套success/failure union或让caller返回arbitrary
-`IHistoryMessage`。`SessionRuntime`只新增：
+final implementation采用上面的private-ctor abstract class而不是原draft的abstract record，消除了record合成的
+protected copy constructor和外部派生入口；nested outcomes仍sealed、closed、get-only。未来可为singleton `NoMatch`
+提供factory/property，但不得增加第二套success/failure union或让caller返回arbitrary `IHistoryMessage`。
+`SessionRuntime`只新增：
 
 ```csharp
 ISessionSupplementalContextSource? SupplementalContextSource = null
@@ -661,9 +679,10 @@ B1 SessionJournal generic supplemental seam + Prepared v5/v6 split-write/dual-re
    dual-read、mixed-journal replay/offline audit、no rewrite/migration与rollback到dual-reader build的operator boundary。
 3. **Complete (2026-08-20) — Gate A**：用户原文授权“按 Prepared v6 Tier-A Candidate 实施 WP-07B B1”。该授权
    只覆盖Candidate锁定的B1 product/tests，不覆盖B2、Gate B、current contract、approval evidence或tag。
-4. **Authorized / Not Started — B1**：实施完成后，先形成candidate implementation evidence，例如
-   `docs/SessionJournal/evidence/completion-request-prepared-v6-candidate.md`；该文件不是approval，不创建或暗示tag。
-5. **Not Started — Gate B**：只有candidate code/evidence再经独立review且获用户显式批准后，单独的promotion package才可生成
+4. **Implementation Complete / candidate evidence Assembled / implementation review PASS**：exact source为`83477c06`；
+   [candidate implementation evidence](../../evidence/completion-request-prepared-v6-candidate.md)已形成。independent
+   evidence/docs review仍Pending；该文件不是Gate B ledger，不创建或暗示new tag。
+5. **Pending — Gate B**：只有candidate evidence/docs再经独立review且获用户显式批准后，单独的promotion package才可生成
    `docs/SessionJournal/current/contracts/completion-request-prepared-v6.md`、
    `docs/SessionJournal/evidence/completion-request-prepared-v6-approval.md`并创建new immutable tag，同时同步router、evidence
    index与doc-check scope。
@@ -708,8 +727,13 @@ B1自身的documentation write scope只包括candidate implementation evidence�
 - `tests/SessionJournal.Tests/SessionEventBodySchemaVersionTests.cs`
 - `tests/SessionJournal.Tests/SessionJournalAuditScanTests.cs`
 - `tests/SessionJournal.Tests/SessionJournalOfflineValidatorTests.cs`
+- `tests/SessionJournal.Tests/SessionContextCandidateContractTests.cs`（actual dependency-boundary test-only expansion）
+- `tests/SessionJournal.Tests/SessionSelectedLineageAuditTests.cs`（actual paged mixed-reader test-only expansion）
 - `tests/SessionJournal.Tests/SessionTailContextProjectionTests.cs`，只在需要锁final message order时使用
 - `tests/SessionJournal.PublicSurface.Tests/SessionJournalNamedRoleTests.cs`
+
+`SessionDependencyClosedFoldSeedTests.cs`和optional `SessionTailContextProjectionTests.cs`最终均未修改；两项actual
+test-only expansion及abstract record→closed class hardening已登记在candidate evidence，不扩大B1 production authority。
 
 **B1 acceptance**
 
@@ -864,7 +888,8 @@ git diff --check
 本文已通过independent cross-layer review；review closure确认：
 
 1. post-R2 Tier-A reopen与v5/v1、v6/v2 exact pair已由独立active Candidate锁定并通过文档审阅；v5 bytes/language
-   不变，v6 mixed-journal dual-read/offline audit和rollback boundary可执行；Gate A已于2026-08-20被用户显式授予，B1仍Not Started；
+   不变，v6 mixed-journal dual-read/offline audit和rollback boundary可执行；Gate A已于2026-08-20被用户显式授予，
+   B1 implementation已完成、candidate evidence已形成且independent implementation review PASS，evidence/docs review与Gate B仍Pending；
 2. terminal control envelope不是把Memo偷塞进v1 Recap recipe或伪造raw provenance；
 3. exact query和call ordering与owning current code一致；
 4. Frozen/Started/tool continuation所有branch都能做到lazy zero Memo access，metadata-only marker不会偷做Pod/client work；
@@ -874,5 +899,6 @@ git diff --check
 7. DebugUtil/status/API error与Completion content-bearing call log的privacy claim已分开，outer Host cancellation translation
    有exact tests；remaining risks只属于C2/WP-07C或明确non-promise，不存在被隐藏的WP-07B correctness blocker。
 
-review已关闭，Gate A也已于2026-08-20由用户显式授权。Coding Agent可按Tier-A Candidate开始B1 product/tests；
-B1当前仍是Authorized / Not Started，B2与Gate B仍未授权，不得把proposal type/path写成current implemented surface。
+WP-07A review与pre-B1 Candidate review已关闭，Gate A也已于2026-08-20由用户显式授权。B1 product/tests已完成、candidate
+evidence已形成，exact implementation的independent review PASS；evidence/docs review与Gate B仍Pending。B2仍未授权/
+未开始，不得把plan中的Galatea adapter/config type或path写成current implemented surface。
