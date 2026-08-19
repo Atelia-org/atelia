@@ -4,10 +4,13 @@ using Xunit;
 namespace Atelia.SessionJournal.Tests;
 
 public sealed class SessionEventBodySchemaVersionTests {
-    public static TheoryData<SessionEventKind, int> DeclaredKinds {
+    public static TheoryData<SessionEventKind, int> SingleVersionKinds {
         get {
             var data = new TheoryData<SessionEventKind, int>();
             foreach (SessionEventKind kind in Enum.GetValues<SessionEventKind>()) {
+                if (kind == SessionEventKind.CompletionRequestPrepared) {
+                    continue;
+                }
                 data.Add(
                     kind,
                     ExpectedVersion(kind)
@@ -18,8 +21,10 @@ public sealed class SessionEventBodySchemaVersionTests {
     }
 
     [Fact]
-    public void ExpectedVersionMap_DefinesPreparedV5AndCurrentPerKindVersions() {
-        SessionEventKind[] kinds = Enum.GetValues<SessionEventKind>();
+    public void ExpectedVersionMap_DefinesOnlySingleVersionKinds() {
+        SessionEventKind[] kinds = Enum.GetValues<SessionEventKind>()
+            .Where(static kind => kind != SessionEventKind.CompletionRequestPrepared)
+            .ToArray();
 
         Assert.NotEmpty(kinds);
         Assert.All(
@@ -27,6 +32,11 @@ public sealed class SessionEventBodySchemaVersionTests {
             kind => Assert.Equal(
                 ExpectedVersion(kind),
                 SessionEventCodec.GetExpectedBodySchemaVersion(kind)
+            )
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            SessionEventCodec.GetExpectedBodySchemaVersion(
+                SessionEventKind.CompletionRequestPrepared
             )
         );
     }
@@ -90,7 +100,7 @@ public sealed class SessionEventBodySchemaVersionTests {
     }
 
     [Theory]
-    [MemberData(nameof(DeclaredKinds))]
+    [MemberData(nameof(SingleVersionKinds))]
     public void Decode_UnsupportedVersionReportsKindActualAndExpected(
         SessionEventKind kind,
         int expected
@@ -119,7 +129,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=2", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=5", error.Message, StringComparison.Ordinal);
+        Assert.Contains("supported=5|6", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -133,7 +143,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=3", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=5", error.Message, StringComparison.Ordinal);
+        Assert.Contains("supported=5|6", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -147,7 +157,21 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=4", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=5", error.Message, StringComparison.Ordinal);
+        Assert.Contains("supported=5|6", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PreparedV7_IsUnsupportedBeforeMalformedBodyIsParsed() {
+        var error = Assert.Throws<NotSupportedException>(() =>
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                """{"v":7,"body":"malformed-v7"}"""u8,
+                out _
+            )
+        );
+
+        Assert.Contains("actual=7", error.Message, StringComparison.Ordinal);
+        Assert.Contains("supported=5|6", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -195,7 +219,6 @@ public sealed class SessionEventBodySchemaVersionTests {
 
     private static int ExpectedVersion(SessionEventKind kind)
         => kind switch {
-            SessionEventKind.CompletionRequestPrepared => 5,
             SessionEventKind.RuntimeConfigSetup => 2,
             SessionEventKind.SessionCreated => 2,
             SessionEventKind.CompletionAttemptFailed => 2,

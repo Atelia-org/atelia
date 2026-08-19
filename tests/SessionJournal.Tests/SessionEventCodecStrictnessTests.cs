@@ -14,15 +14,19 @@ public sealed class SessionEventCodecStrictnessTests {
     [Fact]
     public void EveryEventEnvelopeRejectsUnknownAndDuplicateProperties() {
         foreach (SessionEventKind kind in Enum.GetValues<SessionEventKind>()) {
-            int version = SessionEventCodec.GetExpectedBodySchemaVersion(kind);
-            AssertInvalid(
-                kind,
-                $"{{\"v\":{version},\"body\":{{}},\"unexpected\":true}}"
-            );
-            AssertInvalid(
-                kind,
-                $"{{\"v\":{version},\"v\":{version},\"body\":{{}}}}"
-            );
+            int[] versions = kind == SessionEventKind.CompletionRequestPrepared
+                ? [5, 6]
+                : [SessionEventCodec.GetExpectedBodySchemaVersion(kind)];
+            foreach (int version in versions) {
+                AssertInvalid(
+                    kind,
+                    $"{{\"v\":{version},\"body\":{{}},\"unexpected\":true}}"
+                );
+                AssertInvalid(
+                    kind,
+                    $"{{\"v\":{version},\"v\":{version},\"body\":{{}}}}"
+                );
+            }
         }
     }
 

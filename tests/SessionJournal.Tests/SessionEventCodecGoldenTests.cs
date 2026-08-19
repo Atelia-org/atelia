@@ -1,3 +1,4 @@
+using System.Text;
 using Atelia.Completion.Abstractions;
 using Xunit;
 
@@ -104,6 +105,44 @@ public sealed class SessionEventCodecGoldenTests {
             expected,
             expectedVersion: 2
         );
+    }
+
+    [Fact]
+    public void CompletionRequestPrepared_WriterSelectsExactEnvelopeVersionFromRecipe() {
+        CompletionRequestPreparedBody v6 = PreparedV6Fixture.Create(
+            selectedObservationContent: null,
+            recapInputs: []
+        );
+        CompletionRequestPreparedBody v5 = v6 with {
+            Plan = v6.Plan with { ExactContextInputs = [] },
+            Recipe = v6.Recipe with {
+                RecipeId = SessionRequestManifestDefaults.RecipeId
+            }
+        };
+
+        byte[] v5Bytes = SessionEventCodec.Encode(
+            SessionEventKind.CompletionRequestPrepared,
+            v5
+        );
+        byte[] v6Bytes = SessionEventCodec.Encode(
+            SessionEventKind.CompletionRequestPrepared,
+            v6
+        );
+
+        Assert.StartsWith("{\"v\":5,\"body\":", Encoding.UTF8.GetString(v5Bytes), StringComparison.Ordinal);
+        Assert.StartsWith("{\"v\":6,\"body\":", Encoding.UTF8.GetString(v6Bytes), StringComparison.Ordinal);
+        _ = SessionEventCodec.Decode(
+            SessionEventKind.CompletionRequestPrepared,
+            v5Bytes,
+            out int v5Version
+        );
+        _ = SessionEventCodec.Decode(
+            SessionEventKind.CompletionRequestPrepared,
+            v6Bytes,
+            out int v6Version
+        );
+        Assert.Equal(5, v5Version);
+        Assert.Equal(6, v6Version);
     }
 
     private static void AssertExactUtf8WriterAndLiteralRoundtrip(

@@ -56,6 +56,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         );
         Assert.Equal(expected, direct.CanonicalBytes);
         Assert.Equal(expected, committed.CanonicalBytes);
+        Assert.Equal(5, direct.BodySchemaVersion);
+        Assert.Equal(5, committed.BodySchemaVersion);
         Assert.Equal(scenario.Manifest.Commitment,
             SessionRequestCanonicalizer.CreateCommitment(
                 committed.Request
@@ -71,6 +73,78 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             committed.Request.PromptPrefix.SharedContextMessages[^1]
         );
         Assert.Equal("exact result", results.Results.Single().GetFlattenedText());
+    }
+
+    [Fact]
+    public void Reconstruct_PreparedV6PlacesSelectedSupplementalAfterRecapBeforeRawTail() {
+        string path = NewJournalPath();
+        using EventJournal.EventJournal journal = CreateJournal(path);
+        Scenario scenario = CreateToolContinuationScenario(journal);
+        const string supplemental = "exact customer transaction detail";
+        ImmutableArray<IHistoryMessage> v5Context =
+            scenario.ExpectedRequest.PromptPrefix.SharedContextMessages
+                .ToImmutableArray();
+        ImmutableArray<IHistoryMessage> v6Context = v5Context.Insert(
+            1,
+            new ObservationMessage(supplemental)
+        );
+        var expectedRequest = new CompletionRequest(
+            scenario.ExpectedRequest.ModelId,
+            new CompletionPromptPrefix(
+                scenario.ExpectedRequest.PromptPrefix.SystemPrompt,
+                scenario.ExpectedRequest.PromptPrefix.OutputContract,
+                v6Context
+            ),
+            tailMessages: [],
+            scenario.ExpectedRequest.MaxTokens
+        );
+        CompletionRequestPreparedBody manifest =
+            PreparedV6Fixture.Upgrade(scenario.Manifest, supplemental) with {
+                Commitment = SessionRequestCanonicalizer.CreateCommitment(
+                    expectedRequest
+                )
+            };
+
+        SessionPreparedRequestReconstruction direct =
+            SessionPreparedRequestReconstructor.Reconstruct(
+                journal,
+                manifest,
+                scenario.RawEnd
+            );
+        EventAddress prepared = Commit(
+            journal,
+            scenario.RawEnd,
+            SessionEventKind.CompletionRequestPrepared,
+            manifest
+        );
+        SessionPreparedRequestReconstruction committed =
+            SessionPreparedRequestReconstructor.Reconstruct(journal, prepared);
+
+        byte[] expectedCanonical = SessionRequestCanonicalizer.Canonicalize(
+            expectedRequest
+        );
+        Assert.Equal(expectedCanonical, direct.CanonicalBytes);
+        Assert.Equal(expectedCanonical, committed.CanonicalBytes);
+        Assert.Equal(6, direct.BodySchemaVersion);
+        Assert.Equal(6, committed.BodySchemaVersion);
+        Assert.Equal(prepared, committed.SourcePreparedAddress);
+        Assert.Collection(
+            committed.Request.PromptPrefix.SharedContextMessages,
+            message => Assert.Equal(
+                "memory world",
+                Assert.IsType<ObservationMessage>(message).Content
+            ),
+            message => Assert.Equal(
+                supplemental,
+                Assert.IsType<ObservationMessage>(message).Content
+            ),
+            message => Assert.Equal(
+                "hello",
+                Assert.IsType<ObservationMessage>(message).Content
+            ),
+            message => Assert.IsType<ActionMessage>(message),
+            message => Assert.IsType<ToolResultsMessage>(message)
+        );
     }
 
     [Fact]

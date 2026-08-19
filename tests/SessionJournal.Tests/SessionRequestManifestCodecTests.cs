@@ -61,6 +61,165 @@ public sealed class SessionRequestManifestCodecTests {
         );
     }
 
+    [Fact]
+    public void CompletionRequestPreparedV6_RoundtripsCanonicalTerminalAndRecipe() {
+        CompletionRequestPreparedBody body = PreparedV6Fixture.Create(
+            "customer detail 汉😀"
+        );
+
+        byte[] encoded = SessionEventCodec.Encode(
+            SessionEventKind.CompletionRequestPrepared,
+            body
+        );
+        var decoded = Assert.IsType<CompletionRequestPreparedBody>(
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                encoded,
+                out int version
+            )
+        );
+
+        Assert.Equal(6, version);
+        Assert.Equal(SessionSupplementalContextRecipe.RecipeId, decoded.Recipe.RecipeId);
+        Assert.Equal(encoded,
+            SessionEventCodec.Encode(
+                SessionEventKind.CompletionRequestPrepared,
+                decoded
+            )
+        );
+        string json = Encoding.UTF8.GetString(encoded);
+        Assert.StartsWith("{\"v\":6,\"body\":{\"origin\":", json, StringComparison.Ordinal);
+        Assert.Equal(
+            body.Plan.ExactContextInputs[^1],
+            decoded.Plan.ExactContextInputs[^1]
+        );
+        Assert.Contains(
+            "\"recipe\":{\"recipeId\":\"atelia.session-journal.coherent-artifact-tail-plus-supplemental.recipe.v2\",\"canonicalRequestCodecId\":\"atelia.completion-request.canonical-json.v1\"}",
+            json,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
+    public void CompletionRequestPrepared_RejectsCrossVersionRecipePairs() {
+        string v5 = EncodeManifestJson();
+        string v6 = Encoding.UTF8.GetString(
+            SessionEventCodec.Encode(
+                SessionEventKind.CompletionRequestPrepared,
+                PreparedV6Fixture.Create()
+            )
+        );
+
+        Assert.Throws<NotSupportedException>(() => SessionEventCodec.Decode(
+            SessionEventKind.CompletionRequestPrepared,
+            Encoding.UTF8.GetBytes(ReplaceOnce(v5, "{\"v\":5", "{\"v\":6")),
+            out _
+        ));
+        Assert.Throws<NotSupportedException>(() => SessionEventCodec.Decode(
+            SessionEventKind.CompletionRequestPrepared,
+            Encoding.UTF8.GetBytes(ReplaceOnce(v6, "{\"v\":6", "{\"v\":5")),
+            out _
+        ));
+    }
+
+    [Fact]
+    public void CompletionRequestPreparedV6_RequiresTerminalAndEnforces129TotalBound() {
+        CompletionRequestPreparedBody body = PreparedV6Fixture.Create(
+            selectedObservationContent: null,
+            recapInputs: []
+        );
+        SessionRequestContextInput terminal = body.Plan.ExactContextInputs[^1];
+        SessionRequestContextInput recap = ContextInput(
+            new SessionRequestArtifactContextSnapshot("recap", "", "")
+        );
+
+        SessionRequestManifestCodec.Validate(body, 6);
+        SessionRequestManifestCodec.Validate(
+            body with {
+                Plan = body.Plan with {
+                    ExactContextInputs = [
+                        .. Enumerable.Repeat(recap, 128),
+                        terminal
+                    ]
+                }
+            },
+            6
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            SessionRequestManifestCodec.Validate(
+                body with {
+                    Plan = body.Plan with { ExactContextInputs = [] }
+                },
+                6
+            )
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            SessionRequestManifestCodec.Validate(
+                body with {
+                    Plan = body.Plan with {
+                        ExactContextInputs = [
+                            .. Enumerable.Repeat(recap, 129),
+                            terminal
+                        ]
+                    }
+                },
+                6
+            )
+        );
+    }
+
+    [Fact]
+    public void CompletionRequestPreparedV6_RejectsMalformedOrNonTerminalControl() {
+        CompletionRequestPreparedBody body = PreparedV6Fixture.Create();
+        SessionRequestContextInput terminal = body.Plan.ExactContextInputs[^1];
+        var nonCanonicalSnapshot = new SessionRequestArtifactContextSnapshot(
+            "",
+            " {\"schema\":\"atelia.session-journal.supplemental-context.control.v1\",\"status\":\"no-match\",\"observationContent\":null}",
+            ""
+        );
+        SessionRequestContextInput nonCanonical = ContextInput(nonCanonicalSnapshot);
+        SessionRequestContextInput recapAfterTerminal = ContextInput(
+            new SessionRequestArtifactContextSnapshot("late recap", "", "")
+        );
+
+        Assert.Throws<InvalidDataException>(() =>
+            SessionRequestManifestCodec.Validate(
+                body with {
+                    Plan = body.Plan with {
+                        ExactContextInputs = [
+                            .. body.Plan.ExactContextInputs[..^1],
+                            nonCanonical
+                        ]
+                    }
+                },
+                6
+            )
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            SessionRequestManifestCodec.Validate(
+                body with {
+                    Plan = body.Plan with {
+                        ExactContextInputs = [terminal, recapAfterTerminal]
+                    }
+                },
+                6
+            )
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            SessionRequestManifestCodec.Validate(
+                body with {
+                    Plan = body.Plan with {
+                        ExactContextInputs = [
+                            .. body.Plan.ExactContextInputs[..^1],
+                            terminal with { ContentSha256 = new string('0', 64) }
+                        ]
+                    }
+                },
+                6
+            )
+        );
+    }
+
     [Theory]
     [InlineData("\"origin\":{\"correlationId\":", "\"origin\":{\"unknown\":true,\"correlationId\":")]
     [InlineData("\"plan\":{\"rawStartExclusive\":", "\"plan\":{\"unknown\":true,\"rawStartExclusive\":")]

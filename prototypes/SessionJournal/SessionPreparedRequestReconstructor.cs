@@ -12,6 +12,7 @@ internal sealed record SessionPreparedRequestReconstruction(
     CompletionRequest Request,
     byte[] CanonicalBytes,
     CompletionRequestPreparedBody Manifest,
+    int BodySchemaVersion,
     EventAddress RawEndInclusive,
     EventAddress? SourcePreparedAddress
 );
@@ -54,13 +55,23 @@ internal static class SessionPreparedRequestReconstructor {
             ?? throw new InvalidDataException(
                 $"CompletionRequestPrepared at {sourcePreparedAddress} must have a raw boundary parent."
             );
-        object decoded = SessionEventCodec.Decode(kind, frame.Payload, out _);
+        object decoded = SessionEventCodec.Decode(
+            kind,
+            frame.Payload,
+            out int bodySchemaVersion
+        );
         var manifest = decoded as CompletionRequestPreparedBody
             ?? throw new InvalidDataException(
                 $"CompletionRequestPrepared at {sourcePreparedAddress} decoded to an unexpected body."
             );
 
-        return Reconstruct(reader, manifest, rawEndInclusive, cancellationToken) with {
+        return Reconstruct(
+            reader,
+            manifest,
+            rawEndInclusive,
+            bodySchemaVersion,
+            cancellationToken
+        ) with {
             SourcePreparedAddress = sourcePreparedAddress
         };
     }
@@ -84,11 +95,25 @@ internal static class SessionPreparedRequestReconstructor {
         CompletionRequestPreparedBody manifest,
         EventAddress authoritativeRawEndInclusive,
         CancellationToken cancellationToken = default
+    ) => Reconstruct(
+        reader,
+        manifest,
+        authoritativeRawEndInclusive,
+        SessionRequestManifestCodec.GetBodySchemaVersion(manifest),
+        cancellationToken
+    );
+
+    private static SessionPreparedRequestReconstruction Reconstruct(
+        SessionJournalEventReader reader,
+        CompletionRequestPreparedBody manifest,
+        EventAddress authoritativeRawEndInclusive,
+        int bodySchemaVersion,
+        CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(manifest);
         cancellationToken.ThrowIfCancellationRequested();
-        SessionRequestManifestCodec.Validate(manifest);
+        SessionRequestManifestCodec.Validate(manifest, bodySchemaVersion);
 
         IReadOnlyList<DecodedSessionEvent> rawEvents = ReadAndValidateRawRange(
             reader,
@@ -120,7 +145,7 @@ internal static class SessionPreparedRequestReconstructor {
                 StringComparison.Ordinal
             )) {
             throw new InvalidDataException(
-                "Prepared v5 plan.rawStartSetups do not match the authoritative governing setup at rawStartExclusive."
+                "Prepared request plan.rawStartSetups do not match the authoritative governing setup at rawStartExclusive."
             );
         }
         SessionRuntimeConfiguration runtimeConfig = ReadAndValidateSetupReference<SessionRuntimeConfiguration>(
@@ -145,6 +170,7 @@ internal static class SessionPreparedRequestReconstructor {
             systemPrompt.Content,
             rawEvents,
             rawStartSetup,
+            bodySchemaVersion,
             cancellationToken
         );
 
@@ -163,6 +189,7 @@ internal static class SessionPreparedRequestReconstructor {
             request,
             canonicalBytes,
             manifest,
+            bodySchemaVersion,
             authoritativeRawEndInclusive,
             SourcePreparedAddress: null
         );
@@ -176,6 +203,7 @@ internal static class SessionPreparedRequestReconstructor {
         string referencedSystemPrompt,
         IReadOnlyList<DecodedSessionEvent> rawEvents,
         SessionGoverningSetup rawStartSetup,
+        int bodySchemaVersion,
         CancellationToken cancellationToken
     ) {
         EventAddress rawStartExclusive = manifest.Plan.RawStartExclusive;
@@ -194,7 +222,7 @@ internal static class SessionPreparedRequestReconstructor {
                 or SessionEventKind.ToolResultObserved
             )) {
             throw new InvalidDataException(
-                "Prepared v5 tail boundary must be ObservationAccepted or a dependency-closed ToolResultObserved."
+                "Prepared request tail boundary must be ObservationAccepted or a dependency-closed ToolResultObserved."
             );
         }
         ValidateAttemptBoundary(
@@ -218,17 +246,28 @@ internal static class SessionPreparedRequestReconstructor {
             || folded.ToolExecutionSequenceCheckpoint != finalRecovery.State.ToolExecutionSequenceCheckpoint
             || !string.Equals(folded.ActiveCorrelationId, finalRecovery.State.ActiveCorrelationId, StringComparison.Ordinal)) {
             throw new InvalidDataException(
-                "Prepared v5 tail fold does not match its pinned setup or exact final recovery."
+                "Prepared request tail fold does not match its pinned setup or exact final recovery."
             );
         }
 
-        SessionRequestArtifactContextSnapshot aggregate =
-            SessionCoherentRequestRecipe.AggregateExactInputs(manifest.Plan.ExactContextInputs);
         (string expandedSystemPrompt, ImmutableArray<IHistoryMessage> snapshotContext) =
-            SessionCoherentRequestRecipe.Expand(
-                referencedSystemPrompt,
-                aggregate
-            );
+            bodySchemaVersion switch {
+                SessionRequestManifestCodec.PreparedV5BodySchemaVersion =>
+                    SessionCoherentRequestRecipe.Expand(
+                        referencedSystemPrompt,
+                        SessionCoherentRequestRecipe.AggregateExactInputs(
+                            manifest.Plan.ExactContextInputs
+                        )
+                    ),
+                SessionRequestManifestCodec.PreparedV6BodySchemaVersion =>
+                    SessionSupplementalContextRecipe.Expand(
+                        referencedSystemPrompt,
+                        manifest.Plan.ExactContextInputs
+                    ),
+                _ => throw new NotSupportedException(
+                    $"Unsupported CompletionRequestPrepared body schema version '{bodySchemaVersion}'."
+                )
+            };
         var context = ImmutableArray.CreateBuilder<IHistoryMessage>(
             snapshotContext.Length + folded.Context.Count
         );
