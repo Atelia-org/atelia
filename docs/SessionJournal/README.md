@@ -25,7 +25,8 @@
 | 审阅 approved public API / wire-format surface与R2停止边界 | [Contract R2 anchored surfaces and intentional Defer map](current/contracts/session-journal-contract-r2.md)、[R2 closure evidence](evidence/contract-freeze-r2-closure.md) | immutable v1-v6 tags分别锚定surface sets 1-6；closure记录exact tag map、Stop-after-V6理由、intentional remaining matrix与fresh-candidate reopen triggers；remaining Defer/non-promises不是active backlog |
 | 审阅 post-cutover cadence、recent reserve、长期容量或 cyber 激活边界 | [Cadence/capacity audit](work/active/derived-recap-grid-cadence-capacity-and-activation-audit.md) | A0-A2已实现24k target reserve；C2/C5 activation完成，C4仍Open |
 | 实现 Galatea 自传/world-understanding rolling maintainers，或审阅未来 Editor/ExperienceRefiner 边界 | [C2 Galatea rolling maintainers](work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md) | shared Family、runtime-configurable model、operator asset assembly与验收矩阵 |
-| 设计或实现面向具体事务细节的动态外置记忆 | [MemoPod目标设计与施工计划](work/active/memo-pod-target-design-and-implementation-plan.md) | MemoPod与RecapGrid互补；首版只做单Pod、Editable/Frozen、aggregate document与ID-only recall，不代表已实现 |
+| 设计或实现面向具体事务细节的动态外置记忆 | [MemoPod目标设计与施工计划](work/active/memo-pod-target-design-and-implementation-plan.md) | MemoPod与RecapGrid互补；首版只做单Pod、Editable/Frozen、aggregate document与ID-only recall；Galatea接入另读下项 |
+| 审阅或实施MemoPod进入Galatea main request | [MemoPod Galatea / SessionJournal integration plan](work/active/memo-pod-galatea-integration-plan.md) | Under Review的WP-07A proposal；锁定exact observation query、Prepared v5 recipe v2、recovery零访问、独立binding config与WP-07B exact cut，不代表已实现 |
 | CLI operator 或 Galatea integration | [CLI guide](../../prototypes/SessionJournal.Cli/README.md)、[Galatea guide](../../prototypes/Galatea/README.md)、[Host integration](current/host-integration/derived-recap-host-integration.md) | current composition/code/tests |
 | 重跑 Galatea G2A staging acceptance | [G2A runbook](operations/galatea-g2a-staging-acceptance.md) | 本轮新生成的 acceptance evidence；runbook 存在不等于本轮 Passed |
 | 审计历史 candidate、review 或交付 | [Evidence index](evidence/README.md)、[`archive/`](archive/) | [冻结的旧 router 与 claim ledger](archive/superseded/session-journal-router-and-claim-ledger-2026-08-04.md) 只用于 cut-time 审计 |
@@ -46,6 +47,9 @@
   [MemoPod动态外置记忆目标设计与施工计划](work/active/memo-pod-target-design-and-implementation-plan.md)
   记录与RecapGrid互补的细粒度事务记忆边界、Editable/Frozen状态机、单文档持久化、ID-only recall与WP-00至WP-07实施门禁；
   当前是Reviewed target proposal，不是implementation authority。
+  [MemoPod Galatea / SessionJournal integration plan](work/active/memo-pod-galatea-integration-plan.md)
+  记录WP-07A对query-dependent supplemental context、Prepared v5 recipe v2、turn-level recovery、Galatea独立binding
+  config和WP-07B exact施工边界的plan lock；当前状态是Under Review，不能据此声称Galatea已经注入Memo。
   已关闭但为避免link/archive churn而保留原路径的
   [SessionJournal Contract Freeze R2](work/active/session-journal-contract-freeze-r2.md)
   记录候选direct cut与分阶段freeze gates；该`work/active/`路径名不表示R2仍active。
