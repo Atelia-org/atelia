@@ -1,3 +1,4 @@
+using System.Text;
 using Atelia.SessionJournal.MemoPod;
 
 namespace Atelia.SessionJournal.MemoPod.Tests.Lifecycle;
@@ -100,6 +101,95 @@ public sealed class MemoPodLifecyclePersistenceTests : IDisposable {
         Assert.Equal("corrected fact", reopened.Get(corrected).ExactText);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CorrectionPreparationFailurePreservesExactWorkingSetAndRetries(
+        bool cancelBeforeSettlementFence
+    ) {
+        MemoPod created = MemoPod.Create(_root, PodId, "topic");
+        MemoId oldId = created.Append("old fact");
+        Assert.Equal("m1:00000001", oldId.Value);
+        await created.FreezeAsync();
+        AssertCorrectionDocument(
+            MemoPodDocumentStore.Read(_root, PodId),
+            oldId,
+            "old fact",
+            expectedNextMemoOrdinal: 2
+        );
+
+        bool failFirstPublish = true;
+        using var cancellation = new CancellationTokenSource();
+        MemoPod edit = MemoPod.OpenForTesting(
+            _root,
+            PodId,
+            new MemoPodLifecycleTestHooks(
+                PublisherHooks: new MemoPodPublisherTestHooks(
+                    BeforePublish: _ => {
+                        if (!failFirstPublish) { return; }
+                        failFirstPublish = false;
+                        if (cancelBeforeSettlementFence) {
+                            cancellation.Cancel();
+                            return;
+                        }
+                        throw new IOException("correction prepublish fixture");
+                    }
+                )
+            )
+        );
+        edit.ResumeEditing();
+        edit.Remove(oldId);
+        MemoId newId = edit.Append("new fact");
+        Assert.Equal("m1:00000002", newId.Value);
+
+        if (cancelBeforeSettlementFence) {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => edit.FreezeAsync(cancellation.Token)
+            );
+        }
+        else {
+            MemoPodPersistenceException failure =
+                await Assert.ThrowsAsync<MemoPodPersistenceException>(
+                    () => edit.FreezeAsync()
+                );
+            Assert.Equal(
+                MemoPodPersistenceFailureKind.IoFailure,
+                failure.FailureKind
+            );
+        }
+
+        Assert.Equal(MemoPodPhase.Editable, edit.Phase);
+        Assert.False(edit.TryGet(oldId, out _));
+        Memo working = Assert.Single(edit.List());
+        Assert.Equal(newId, working.Id);
+        Assert.Equal("new fact", working.ExactText);
+        AssertCorrectionDocument(
+            MemoPodDocumentStore.Read(_root, PodId),
+            oldId,
+            "old fact",
+            expectedNextMemoOrdinal: 2
+        );
+
+        await edit.FreezeAsync();
+
+        Assert.Equal(MemoPodPhase.Frozen, edit.Phase);
+        MemoPod reopened = MemoPod.Open(_root, PodId);
+        Assert.False(reopened.TryGet(oldId, out _));
+        Assert.Equal("new fact", reopened.Get(newId).ExactText);
+        AssertCorrectionDocument(
+            MemoPodDocumentStore.Read(_root, PodId),
+            newId,
+            "new fact",
+            expectedNextMemoOrdinal: 3
+        );
+
+        reopened.ResumeEditing();
+        Assert.Equal(
+            "m1:00000003",
+            reopened.Append("following fact").Value
+        );
+    }
+
     [Fact]
     public async Task ProvisionalIdsMayDisappearButCommittedIdsAreNotReused() {
         MemoPod abandoned = MemoPod.Create(_root, PodId, "topic");
@@ -153,8 +243,14 @@ public sealed class MemoPodLifecyclePersistenceTests : IDisposable {
     }
 
     [Fact]
-    public void MaximumLogicalV1DocumentCanOpenAndRender() {
-        string text = new('x', 1024);
+    public void MaximumLogicalV1DocumentCanPublishOpenAndWorstCaseRender() {
+        const int jsonWorstCaseExpansion = 6;
+        const int memoLineBytesExcludingText = 37;
+        string topic = new('"', MemoPodLimits.MaximumTopicUtf8Bytes);
+        int exactTextBytesPerMemo =
+            MemoPodLimits.MaximumActiveExactTextUtf8Bytes
+            / MemoPodLimits.MaximumActiveMemoCount;
+        string text = new('\0', exactTextBytesPerMemo);
         Memo[] memos = Enumerable.Range(
                 1,
                 MemoPodLimits.MaximumActiveMemoCount
@@ -166,7 +262,7 @@ public sealed class MemoPodLifecyclePersistenceTests : IDisposable {
             .ToArray();
         var document = new MemoPodDocument(
             PodId,
-            "maximum logical fixture",
+            topic,
             checked((ulong)memos.Length + 1),
             memos
         );
@@ -179,14 +275,61 @@ public sealed class MemoPodLifecyclePersistenceTests : IDisposable {
             MemoPodPublishSettlement.Published,
             publish.Settlement
         );
+        MemoPodStorePaths paths = MemoPodStoreLayout.Resolve(_root, PodId);
+        long documentLength = new FileInfo(paths.DocumentPath).Length;
+        Assert.InRange(
+            documentLength,
+            (long)jsonWorstCaseExpansion
+                * MemoPodLimits.MaximumActiveExactTextUtf8Bytes,
+            MemoPodLimits.MaximumDocumentUtf8Bytes
+        );
+        using (var stream = new FileStream(
+            paths.DocumentPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read
+        )) {
+            byte[] prefix = new byte[64 * 1024];
+            stream.ReadExactly(prefix);
+            Assert.Contains(
+                "\\u0000",
+                Encoding.UTF8.GetString(prefix),
+                StringComparison.Ordinal
+            );
+        }
 
         MemoPod pod = MemoPod.Open(_root, PodId);
+        Memo[] reopened = pod.List().ToArray();
+        string headerWithoutTopic =
+            """
+            {"schema":"atelia.memo-pod.prompt.v1","pod_id":"99999999999999999999999999999999","topic":""}
+            """ + "\n";
+        int expectedPromptLength = checked(
+            Encoding.UTF8.GetByteCount(headerWithoutTopic)
+            + (2 * MemoPodLimits.MaximumTopicUtf8Bytes)
+            + MemoPodLimits.MaximumActiveMemoCount
+                * (memoLineBytesExcludingText
+                    + jsonWorstCaseExpansion * exactTextBytesPerMemo)
+        );
 
-        Assert.Equal(MemoPodLimits.MaximumActiveMemoCount, pod.List().Length);
-        Assert.InRange(
-            pod.FrozenPrompt.Utf8Length,
-            1,
-            MemoPodLimits.MaximumRenderedPromptUtf8Bytes
+        Assert.Equal(topic, pod.Topic);
+        Assert.Equal(
+            MemoPodLimits.MaximumTopicUtf8Bytes,
+            Encoding.UTF8.GetByteCount(pod.Topic)
+        );
+        Assert.Equal(MemoPodLimits.MaximumActiveMemoCount, reopened.Length);
+        Assert.All(reopened, memo => Assert.Equal(
+            exactTextBytesPerMemo,
+            memo.ExactTextUtf8ByteCount
+        ));
+        Assert.Equal(
+            MemoPodLimits.MaximumActiveExactTextUtf8Bytes,
+            reopened.Sum(static memo => memo.ExactTextUtf8ByteCount)
+        );
+        Assert.Equal(expectedPromptLength, pod.FrozenPrompt.Utf8Length);
+        Assert.True(
+            pod.FrozenPrompt.Utf8Length
+                <= MemoPodLimits.MaximumRenderedPromptUtf8Bytes
         );
     }
 
@@ -194,5 +337,17 @@ public sealed class MemoPodLifecyclePersistenceTests : IDisposable {
         if (Directory.Exists(_root)) {
             Directory.Delete(_root, recursive: true);
         }
+    }
+
+    private static void AssertCorrectionDocument(
+        MemoPodDocument document,
+        MemoId expectedId,
+        string expectedExactText,
+        ulong expectedNextMemoOrdinal
+    ) {
+        Assert.Equal(expectedNextMemoOrdinal, document.NextMemoOrdinal);
+        Memo memo = Assert.Single(document.Memos);
+        Assert.Equal(expectedId, memo.Id);
+        Assert.Equal(expectedExactText, memo.ExactText);
     }
 }

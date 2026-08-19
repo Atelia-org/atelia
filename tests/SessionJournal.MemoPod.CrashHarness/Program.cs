@@ -9,13 +9,13 @@ internal static class Program {
 
     public static int Main(string[] args) {
         if (args.Length != 3
-            || args[0] is not ("create" or "replace")
+            || args[0] is not ("create" or "replace" or "correction")
             || args[1] is not (
                 "before-publish"
                 or "after-install-before-fsync"
                 or "after-fsync")) {
             Console.Error.WriteLine(
-                "usage: <create|replace> <before-publish|after-install-before-fsync|after-fsync> <root>"
+                "usage: <create|replace|correction> <before-publish|after-install-before-fsync|after-fsync> <root>"
             );
             return 2;
         }
@@ -38,15 +38,33 @@ internal static class Program {
                 ? _ => crash()
                 : null
         );
-        MemoPodPublishMode mode = operation == "create"
-            ? MemoPodPublishMode.CreateNew
-            : MemoPodPublishMode.ReplaceExisting;
-        _ = MemoPodDocumentPublisher.Publish(
-            root,
-            NewDocument(),
-            mode,
-            hooks
-        );
+        if (operation == "correction") {
+            MemoPod pod = MemoPod.OpenForTesting(
+                root,
+                PodId,
+                new MemoPodLifecycleTestHooks(PublisherHooks: hooks)
+            );
+            pod.ResumeEditing();
+            pod.Remove(MemoId.FromOrdinal(1));
+            MemoId newId = pod.Append("new");
+            if (newId != MemoId.FromOrdinal(2)) {
+                throw new InvalidOperationException(
+                    "Correction crash fixture did not allocate m1:00000002."
+                );
+            }
+            pod.FreezeAsync().GetAwaiter().GetResult();
+        }
+        else {
+            MemoPodPublishMode mode = operation == "create"
+                ? MemoPodPublishMode.CreateNew
+                : MemoPodPublishMode.ReplaceExisting;
+            _ = MemoPodDocumentPublisher.Publish(
+                root,
+                NewDocument(),
+                mode,
+                hooks
+            );
+        }
 
         Console.Error.WriteLine("MemoPod crash failpoint was not reached.");
         return 3;

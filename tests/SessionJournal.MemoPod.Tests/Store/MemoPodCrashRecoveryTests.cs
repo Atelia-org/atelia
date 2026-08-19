@@ -25,14 +25,19 @@ public sealed class MemoPodCrashRecoveryTests : IDisposable {
     [InlineData("replace", "before-publish")]
     [InlineData("replace", "after-install-before-fsync")]
     [InlineData("replace", "after-fsync")]
+    [InlineData("correction", "before-publish")]
+    [InlineData("correction", "after-install-before-fsync")]
+    [InlineData("correction", "after-fsync")]
     public void ProcessDeathLeavesOnlyAllowedCompleteAuthority(
         string operation,
         string failpoint
     ) {
-        if (operation == "replace") {
+        if (operation is "replace" or "correction") {
             MemoPodPublishResult setup = MemoPodDocumentPublisher.Publish(
                 _root,
-                Document("old"),
+                operation == "correction"
+                    ? CorrectionOldDocument()
+                    : Document("old"),
                 MemoPodPublishMode.CreateNew
             );
             Assert.Equal(
@@ -51,6 +56,14 @@ public sealed class MemoPodCrashRecoveryTests : IDisposable {
             case ("replace", "before-publish"):
                 Assert.Equal("old", ReadOnlyMemoText(reopened));
                 break;
+            case ("correction", "before-publish"):
+                AssertCorrectionDocument(
+                    reopened,
+                    MemoId.FromOrdinal(1),
+                    "old",
+                    expectedNextMemoOrdinal: 2
+                );
+                break;
             case ("create", "after-install-before-fsync"):
                 Assert.True(
                     reopened is null || ReadOnlyMemoText(reopened) == "new"
@@ -60,6 +73,17 @@ public sealed class MemoPodCrashRecoveryTests : IDisposable {
                 Assert.Contains(
                     ReadOnlyMemoText(reopened),
                     new[] { "old", "new" }
+                );
+                break;
+            case ("correction", "after-install-before-fsync"):
+                AssertCorrectionOldOrNew(reopened);
+                break;
+            case ("correction", "after-fsync"):
+                AssertCorrectionDocument(
+                    reopened,
+                    MemoId.FromOrdinal(2),
+                    "new",
+                    expectedNextMemoOrdinal: 3
                 );
                 break;
             case (_, "after-fsync"):
@@ -139,6 +163,65 @@ public sealed class MemoPodCrashRecoveryTests : IDisposable {
             "crash fixture",
             2,
             [new Memo(MemoId.FromOrdinal(1), exactText)]
+        );
+
+    private static MemoPodDocument CorrectionOldDocument()
+        => new(
+            PodId,
+            "crash fixture",
+            2,
+            [new Memo(MemoId.FromOrdinal(1), "old")]
+        );
+
+    private static void AssertCorrectionOldOrNew(
+        MemoPodDocument? document
+    ) {
+        Assert.NotNull(document);
+        bool isOld = IsCorrectionDocument(
+            document,
+            MemoId.FromOrdinal(1),
+            "old",
+            expectedNextMemoOrdinal: 2
+        );
+        bool isNew = IsCorrectionDocument(
+            document,
+            MemoId.FromOrdinal(2),
+            "new",
+            expectedNextMemoOrdinal: 3
+        );
+        Assert.True(
+            isOld || isNew,
+            "Correction authority must be the exact old or exact new document."
+        );
+    }
+
+    private static void AssertCorrectionDocument(
+        MemoPodDocument? document,
+        MemoId expectedId,
+        string expectedExactText,
+        ulong expectedNextMemoOrdinal
+    ) {
+        Assert.NotNull(document);
+        Assert.True(IsCorrectionDocument(
+            document,
+            expectedId,
+            expectedExactText,
+            expectedNextMemoOrdinal
+        ));
+    }
+
+    private static bool IsCorrectionDocument(
+        MemoPodDocument document,
+        MemoId expectedId,
+        string expectedExactText,
+        ulong expectedNextMemoOrdinal
+    ) => document.NextMemoOrdinal == expectedNextMemoOrdinal
+        && document.Memos is [{ } memo]
+        && memo.Id == expectedId
+        && string.Equals(
+            memo.ExactText,
+            expectedExactText,
+            StringComparison.Ordinal
         );
 
     private static string ReadOnlyMemoText(MemoPodDocument? document) {
