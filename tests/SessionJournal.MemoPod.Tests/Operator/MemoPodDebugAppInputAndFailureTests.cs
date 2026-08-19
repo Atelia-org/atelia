@@ -28,6 +28,74 @@ public sealed class MemoPodDebugAppInputAndFailureTests {
         Assert.Equal("committed body", Assert.Single(reopened.List()).ExactText);
     }
 
+    [Fact]
+    public async Task PreCancelledCreatePublishesNoDocumentOrProvisionalId() {
+        using var host = new MemoPodDebugAppTestHost();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        OperatorRunResult result = await host.RunAsync([
+            "create",
+            "--root", host.StoreRoot,
+            "--pod", MemoPodDebugAppTestHost.PodIdText,
+            "--topic-file", host.WriteText("cancelled topic"),
+            "--memo-file", host.WriteText("cancelled provisional body")
+        ], cancellationToken: cancellation.Token);
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Empty(result.StandardOutput);
+        Assert.Equal("error=cancelled\n", result.StandardError);
+        Assert.DoesNotContain("m1:", result.StandardError);
+        MemoPodPersistenceException exception = Assert.Throws<
+            MemoPodPersistenceException
+        >(() => MemoPod.Open(
+            host.StoreRoot,
+            MemoPodId.Parse(MemoPodDebugAppTestHost.PodIdText)
+        ));
+        Assert.Equal(
+            MemoPodPersistenceFailureKind.NotFound,
+            exception.FailureKind
+        );
+    }
+
+    [Fact]
+    public async Task PreCancelledEditKeepsOldAuthorityAndAllocator() {
+        using var host = new MemoPodDebugAppTestHost();
+        Assert.Equal(
+            0,
+            (await host.CreateAsync("topic", "old authority")).ExitCode
+        );
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        OperatorRunResult result = await host.RunAsync([
+            "edit",
+            "--root", host.StoreRoot,
+            "--pod", MemoPodDebugAppTestHost.PodIdText,
+            "--remove", "m1:00000001",
+            "--memo-file", host.WriteText("cancelled replacement")
+        ], cancellationToken: cancellation.Token);
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Empty(result.StandardOutput);
+        Assert.Equal("error=cancelled\n", result.StandardError);
+        Assert.DoesNotContain("m1:", result.StandardError);
+
+        MemoPod reopened = MemoPod.Open(
+            host.StoreRoot,
+            MemoPodId.Parse(MemoPodDebugAppTestHost.PodIdText)
+        );
+        Memo oldMemo = Assert.Single(reopened.List());
+        Assert.Equal(MemoId.Parse("m1:00000001"), oldMemo.Id);
+        Assert.Equal("old authority", oldMemo.ExactText);
+
+        reopened.ResumeEditing();
+        Assert.Equal(
+            MemoId.Parse("m1:00000002"),
+            reopened.Append("next committed candidate")
+        );
+    }
+
     [Theory]
     [MemberData(nameof(InvalidSyntaxCases))]
     public async Task ManualParserRejectsInvalidOrLiveShapes(string[] args) {

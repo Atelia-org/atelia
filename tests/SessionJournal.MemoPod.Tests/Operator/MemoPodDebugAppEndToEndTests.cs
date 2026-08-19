@@ -17,8 +17,11 @@ public sealed class MemoPodDebugAppEndToEndTests {
         using (JsonDocument report = JsonDocument.Parse(
             created.StandardOutput
         )) {
+            AssertContentFreeReportShape(report, "create");
             Assert.Equal("create", String(report, "command"));
             Assert.Equal("Frozen", String(report, "phase"));
+            Assert.Equal(1, Int32(report, "activeCount"));
+            Assert.Equal(["m1:00000001"], Strings(report, "activeIds"));
             Assert.Equal(
                 ["m1:00000001"],
                 Strings(report, "committedIds")
@@ -34,6 +37,7 @@ public sealed class MemoPodDebugAppEndToEndTests {
         using (JsonDocument report = JsonDocument.Parse(
             inspected.StandardOutput
         )) {
+            AssertContentFreeReportShape(report, "inspect");
             Assert.Equal(1, Int32(report, "activeCount"));
             Assert.Equal(["m1:00000001"], Strings(report, "activeIds"));
         }
@@ -49,6 +53,7 @@ public sealed class MemoPodDebugAppEndToEndTests {
         using (JsonDocument report = JsonDocument.Parse(
             recalled.StandardOutput
         )) {
+            AssertContentFreeReportShape(report, "recall");
             Assert.Equal(1, Int32(report, "selectedCount"));
             Assert.Equal(["m1:00000001"], Strings(report, "selectedIds"));
         }
@@ -80,6 +85,8 @@ public sealed class MemoPodDebugAppEndToEndTests {
         using (JsonDocument report = JsonDocument.Parse(
             edited.StandardOutput
         )) {
+            AssertContentFreeReportShape(report, "edit");
+            Assert.Equal(1, Int32(report, "activeCount"));
             Assert.Equal(["m1:00000002"], Strings(report, "activeIds"));
             Assert.Equal(
                 ["m1:00000002"],
@@ -140,6 +147,7 @@ public sealed class MemoPodDebugAppEndToEndTests {
         using JsonDocument report = JsonDocument.Parse(
             recalled.StandardOutput
         );
+        AssertContentFreeReportShape(report, "recall");
         Assert.Equal(selectionCount, Int32(report, "selectedCount"));
         Assert.Equal(selectedIds, Strings(report, "selectedIds"));
     }
@@ -161,6 +169,7 @@ public sealed class MemoPodDebugAppEndToEndTests {
         using JsonDocument report = JsonDocument.Parse(
             recalled.StandardOutput
         );
+        AssertContentFreeReportShape(report, "recall");
         Assert.Equal(0, Int32(report, "selectedCount"));
         Assert.Empty(Strings(report, "selectedIds"));
     }
@@ -175,6 +184,106 @@ public sealed class MemoPodDebugAppEndToEndTests {
             Assert.DoesNotContain(canary, result.StandardOutput);
             Assert.DoesNotContain(canary, result.StandardError);
         }
+    }
+
+    private static void AssertContentFreeReportShape(
+        JsonDocument report,
+        string command
+    ) {
+        string[] expectedProperties = command switch {
+            "create" or "edit" => [
+                "schema",
+                "command",
+                "podId",
+                "phase",
+                "activeCount",
+                "activeIds",
+                "committedIds"
+            ],
+            "inspect" => [
+                "schema",
+                "command",
+                "podId",
+                "phase",
+                "activeCount",
+                "activeIds"
+            ],
+            "recall" => [
+                "schema",
+                "command",
+                "podId",
+                "phase",
+                "selectedCount",
+                "selectedIds"
+            ],
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(command),
+                command,
+                "Unknown content-free operator report."
+            )
+        };
+
+        JsonElement root = report.RootElement;
+        Assert.Equal(JsonValueKind.Object, root.ValueKind);
+        Assert.Equal(
+            expectedProperties,
+            root.EnumerateObject()
+                .Select(static property => property.Name)
+                .ToArray()
+        );
+        AssertStringProperty(
+            root,
+            "schema",
+            "atelia.memo-pod.debug-app.v1"
+        );
+        AssertStringProperty(root, "command", command);
+        AssertStringProperty(
+            root,
+            "podId",
+            MemoPodDebugAppTestHost.PodIdText
+        );
+        AssertStringProperty(root, "phase", "Frozen");
+
+        string countProperty = command == "recall"
+            ? "selectedCount"
+            : "activeCount";
+        string idsProperty = command == "recall"
+            ? "selectedIds"
+            : "activeIds";
+        Assert.Equal(
+            JsonValueKind.Number,
+            root.GetProperty(countProperty).ValueKind
+        );
+        AssertStringArray(root, idsProperty);
+        Assert.Equal(
+            root.GetProperty(idsProperty).GetArrayLength(),
+            root.GetProperty(countProperty).GetInt32()
+        );
+        if (command is "create" or "edit") {
+            AssertStringArray(root, "committedIds");
+        }
+    }
+
+    private static void AssertStringProperty(
+        JsonElement root,
+        string name,
+        string expectedValue
+    ) {
+        JsonElement property = root.GetProperty(name);
+        Assert.Equal(JsonValueKind.String, property.ValueKind);
+        Assert.Equal(expectedValue, property.GetString());
+    }
+
+    private static void AssertStringArray(JsonElement root, string name) {
+        JsonElement property = root.GetProperty(name);
+        Assert.Equal(JsonValueKind.Array, property.ValueKind);
+        Assert.All(
+            property.EnumerateArray(),
+            static item => Assert.Equal(
+                JsonValueKind.String,
+                item.ValueKind
+            )
+        );
     }
 
     private static string String(JsonDocument report, string name)
