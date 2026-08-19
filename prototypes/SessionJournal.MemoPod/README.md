@@ -25,5 +25,13 @@ single-owner contract: it does not claim resistance to an attacker racing path
 replacement between checks and filesystem operations. Readers open only the
 exact mapped final document and never enumerate or promote temporary remnants.
 
-Recall and provider integration are not delivered yet. No prompt, renderer,
-Store backend, snapshot, or detached resolver is part of the public API.
+Frozen Pods support one provider-neutral `RecallAsync` operation through
+`ICompletionClient`. It sends exactly one shared corpus observation and one
+query tail, requires exactly one `recall_memos` tool call, validates canonical
+active IDs, and hydrates immutable Memo values before the Frozen epoch can be
+left. Provider failures, malformed model output, local byte caps, and caller
+cancellation remain distinct outcomes; no automatic retry occurs.
+
+Concrete provider configuration and live canary activation are not delivered
+here. No prompt, renderer, Store backend, snapshot, detached resolver, or
+provider-specific client is part of the public API.

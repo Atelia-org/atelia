@@ -23,7 +23,11 @@ public sealed class MemoPodArchitectureTests {
                 typeof(MemoPodLimits).FullName!,
                 typeof(MemoPodPersistenceException).FullName!,
                 typeof(MemoPodPersistenceFailureKind).FullName!,
-                typeof(MemoPodPhase).FullName!
+                typeof(MemoPodPhase).FullName!,
+                typeof(MemoRecallException).FullName!,
+                typeof(MemoRecallFailureKind).FullName!,
+                typeof(MemoRecallOptions).FullName!,
+                typeof(MemoRecallResult).FullName!
             }.Order(StringComparer.Ordinal),
             exported
         );

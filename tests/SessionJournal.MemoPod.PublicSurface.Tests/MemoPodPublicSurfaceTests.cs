@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Reflection;
+using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.MemoPod;
 using Xunit;
 
@@ -19,6 +20,10 @@ public sealed class MemoPodPublicSurfaceTests {
             typeof(MemoPodPersistenceException),
             typeof(MemoPodPersistenceFailureKind),
             typeof(MemoPodPhase),
+            typeof(MemoRecallException),
+            typeof(MemoRecallFailureKind),
+            typeof(MemoRecallOptions),
+            typeof(MemoRecallResult),
         ];
 
         Assert.Equal(
@@ -70,6 +75,7 @@ public sealed class MemoPodPublicSurfaceTests {
                 "Get",
                 "List",
                 "Open",
+                "RecallAsync",
                 "Remove",
                 "ResumeEditing",
                 "TryGet",
@@ -92,7 +98,6 @@ public sealed class MemoPodPublicSurfaceTests {
             ) || method.Name.Contains("Update", StringComparison.Ordinal)
                 || method.Name.Contains("Upsert", StringComparison.Ordinal)
                 || method.Name.Contains("SetTopic", StringComparison.Ordinal)
-                || method.Name.Contains("Recall", StringComparison.Ordinal)
                 || method.Name.Contains("Prompt", StringComparison.Ordinal)
                 || method.Name.Contains("Snapshot", StringComparison.Ordinal)
                 || method.Name.Contains("Backend", StringComparison.Ordinal)
@@ -141,6 +146,21 @@ public sealed class MemoPodPublicSurfaceTests {
             typeof(Memo).MakeByRefType(),
             tryGet.GetParameters()[1].ParameterType
         );
+        MethodInfo recall = type.GetMethod(nameof(MemoPod.RecallAsync))!;
+        Assert.Equal(typeof(Task<MemoRecallResult>), recall.ReturnType);
+        Assert.Equal(
+            [
+                typeof(ICompletionClient),
+                typeof(string),
+                typeof(string),
+                typeof(MemoRecallOptions),
+                typeof(CancellationToken),
+            ],
+            recall.GetParameters()
+                .Select(static parameter => parameter.ParameterType)
+                .ToArray()
+        );
+        Assert.True(recall.GetParameters()[4].HasDefaultValue);
     }
 
     [Fact]
@@ -182,6 +202,81 @@ public sealed class MemoPodPublicSurfaceTests {
         Assert.Equal(
             ["Editable", "Frozen"],
             Enum.GetNames<MemoPodPhase>()
+        );
+    }
+
+    [Fact]
+    public void RecallTypesExposeOnlyValidatedOptionsAndClosedResult() {
+        Assert.Null(typeof(MemoPodLimits).GetField(
+            "MaximumRecallToolArgumentsUtf8Bytes",
+            BindingFlags.Public | BindingFlags.Static
+        ));
+        Assert.Null(typeof(MemoPodLimits).GetField(
+            "MaximumToolCallIdUtf8Bytes",
+            BindingFlags.Public | BindingFlags.Static
+        ));
+        Assert.Equal(
+            new[] {
+                "MaxResults",
+                "MaxTokens",
+                "MaximumFrozenPromptUtf8Bytes",
+                "MaximumHydratedExactTextUtf8Bytes",
+            },
+            typeof(MemoRecallOptions).GetProperties(
+                    BindingFlags.Public
+                    | BindingFlags.Instance
+                    | BindingFlags.DeclaredOnly)
+                .Select(static property => property.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray()
+        );
+        Assert.All(
+            typeof(MemoRecallOptions).GetProperties(
+                BindingFlags.Public
+                | BindingFlags.Instance
+                | BindingFlags.DeclaredOnly),
+            static property => Assert.False(property.CanWrite)
+        );
+        ConstructorInfo optionsConstructor = Assert.Single(
+            typeof(MemoRecallOptions).GetConstructors(
+                BindingFlags.Public | BindingFlags.Instance
+            )
+        );
+        Assert.Equal(
+            [typeof(int), typeof(int), typeof(int), typeof(int)],
+            optionsConstructor.GetParameters()
+                .Select(static parameter => parameter.ParameterType)
+                .ToArray()
+        );
+
+        Assert.Empty(typeof(MemoRecallResult).GetConstructors(
+            BindingFlags.Public | BindingFlags.Instance
+        ));
+        Assert.Equal(
+            ["FrozenPromptSha256", "Memos", "Usage"],
+            typeof(MemoRecallResult).GetProperties(
+                    BindingFlags.Public
+                    | BindingFlags.Instance
+                    | BindingFlags.DeclaredOnly)
+                .Select(static property => property.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray()
+        );
+        Assert.All(
+            typeof(MemoRecallResult).GetProperties(
+                BindingFlags.Public
+                | BindingFlags.Instance
+                | BindingFlags.DeclaredOnly),
+            static property => Assert.False(property.CanWrite)
+        );
+        Assert.Empty(typeof(MemoRecallException).GetConstructors(
+            BindingFlags.Public | BindingFlags.Instance
+        ));
+        Assert.Equal(
+            ["InvalidModelOutput", "LocalLimitExceeded", "ProviderFailure"],
+            Enum.GetNames<MemoRecallFailureKind>()
+                .Order(StringComparer.Ordinal)
+                .ToArray()
         );
     }
 }
