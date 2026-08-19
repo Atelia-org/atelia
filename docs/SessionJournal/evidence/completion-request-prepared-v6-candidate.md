@@ -102,9 +102,9 @@ final source通过public `SendAsync`写入一个v6/NoMatch turn：
   `3b98f54673faced330ddb1c7aab7c96f1078ef0a9b9f978b095c73f0e8b8bdf4`；
 - Started/final head `ej1:000000069c00001b0000000100000000`；6 events；new-reader reconstruction 1；
   fake completion calls 1；supplemental source calls 1；
-- state-review runner的sorted-manifest digest在new read、old public harness与old CLI前后均为
+- new reader成功reconstruct后，state-review runner建立sorted-manifest baseline
   `7d261ddf91a16ad57652f572d13573a0859a3968c45b68d034011de0ba57ea49`；传给old reader的两个recursive
-  copies与原repo物理diff均为0；
+  copies与该baseline repo物理diff均为0。old public harness copy和old CLI copy各自的before/after digest均保持该值；
 - physical files：event segment 1,804 bytes / SHA-256
   `967563ca9c671e474a5e01db998e2067bfced86ee21d40868157ca79479462ff`；Ref object 872 bytes /
   `88ea743198928e5edc7c790c9f5ea8b51c4d1c26595a2551f35f1d5bc531fc64`；Ref op 260 bytes /
@@ -138,18 +138,19 @@ public real `SendAsync`依次写`[v5, v6 NoMatch, v5]`，final head
 | 6 | `ej1:0000000cd80000fc0000000100000000` | `93369f2dc330dd091297e1aff414c8382ac47a67d18c93e82b26f0e929e77fb9` |
 | 5 | `ej1:00000013740001dd0000000100000000` | `3156abe6edeb8ddd9de926256d166448e8a3d2f905f5dbb5babfcdd304dd5a81` |
 
-checked audit、offline validation与paged selected-lineage materialization逐event读取actual body version；
-`atelia.session-journal.test-tree-digest.v1`在三种read前后均为
-`e16bf0fbeb3d86513104ce86ee628930b59cbe3213aa937a5eeaa7ad99bbc278`。fixture的exact counter labels为
-`fakeCompletion=3`、`contextSelection=12`、`lifecycle=6`、`materialization=0`、`supplemental=1`。raw-range test还证明把中间v6
-entry伪降为v5会改变range hash。这里的test-tree digest只承诺fixture定义的sorted final bytes；不承诺transient
-syscall、filesystem metadata或不同runtime的physical layout。
+external public checked-audit runner逐event读取actual body version；其
+`atelia.session-journal.test-tree-digest.v1` before/after exact为
+`e16bf0fbeb3d86513104ce86ee628930b59cbe3213aa937a5eeaa7ad99bbc278`，counter labels为
+`fakeCompletion=3`、`contextSelection=12`、`lifecycle=6`、`materialization=0`、`supplemental=1`。committed offline
+validation与paged selected-lineage tests各自创建独立repo、验证`[5,6,5]`并只断言各自before/after digest相等；它们不共享
+上述literal digest。raw-range test还证明把中间v6 entry伪降为v5会改变range hash。这里的test-tree digest只承诺各fixture
+定义的sorted final bytes；不承诺transient syscall、filesystem metadata或不同runtime的physical layout。
 
 ## 5. Validation ledger
 
 所有命令在`83477c06`、Linux WSL2 x64、Ubuntu 24.04、kernel
-`6.18.33.2-microsoft-standard-WSL2`、.NET SDK `10.0.111` / host `10.0.11`执行。没有读取secret、构造real
-provider或访问network。
+`6.18.33.2-microsoft-standard-WSL2`、.NET SDK `10.0.111` / host `10.0.11`执行。compatibility harness未配置、
+构造或调用real provider，也未主动读取secret；本轮未采集network-deny evidence，restore-enabled build不能证明zero network。
 
 | Gate | Exact command / result |
 |:--|:--|

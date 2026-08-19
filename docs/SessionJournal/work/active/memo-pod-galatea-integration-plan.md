@@ -119,14 +119,15 @@ Owning current evidence至少包括：
 
 ### 3.2 Target proposal introduced by this plan
 
-下列内容在WP-07B实现前都只是proposal：
+在pre-B1 baseline，下列内容都只是proposal。current split必须区分：
 
-- `ISessionSupplementalContextSource`及其request/result types；
-- `SessionRuntime.SupplementalContextSource`；
-- supplemental recipe v2/control envelope；
-- Galatea MemoPod adapter、JSONL carrier和`memo-pods.json`；
-- recall-specific failpoint、call ledger和cross-layer tests；
-- 任何关于Galatea main request已经使用Memo的claim。
+- **B1 candidate-implemented**：`ISessionSupplementalContextSource`及其request/result types、
+  `SessionRuntime.SupplementalContextSource`、supplemental recipe v2/control envelope和SessionJournal-owner tests已在
+  `83477c06`实现，independent implementation review PASS；candidate evidence/docs review与Gate B仍Pending，因此这些
+  不是final Tier-A authority；
+- **B2仍是proposal**：Galatea MemoPod adapter、JSONL carrier、`memo-pods.json`、recall-specific call ledger和
+  Galatea cross-layer tests均未实现；
+- 任何“Galatea main request已经使用Memo”的claim仍为false；B1的internal failpoint/tests不能被误读成B2接入。
 
 ## 4. Authority model
 
@@ -365,16 +366,17 @@ reopen/replay、offline audit、old-reader拒绝和rollback runbook；最终curr
 
 ### 9.1 Version-aware codec boundary
 
-current `SessionEventCodec`假设每个event kind只有一个expected body version；B1必须把
-`CompletionRequestPrepared`改成version-aware special case，而不放宽其他event kind：
+在pre-B1 baseline，`SessionEventCodec`假设每个event kind只有一个expected body version；B1 plan decision要求把
+`CompletionRequestPrepared`改成version-aware special case，而不放宽其他event kind。该decision现已在candidate source
+`83477c06`实现并通过independent implementation review，但evidence/docs review与Gate B仍Pending。candidate implementation为：
 
 - encode由已strict验证的recipe pair确定envelope version：recipe v1→5，recipe v2→6，unknown不写bytes；
 - decode先接受Prepared version set `{5,6}`，再把actual version传给manifest validator；
 - manifest validator按version锁定recipe、exact-input count和terminal grammar，不能先用一个union validator吞掉非法cross-pair；
 - post-decode internal body可以继续用recipe区分reconstruction，前提是codec入口已证明version/recipe exact pair；
 - canonical request codec与tool codec ID不变；old v5 fixture必须byte-identical；
-- 所有仍表达“single expected version”的helper/test oracle必须改成version-aware API或exact supported-set oracle，不能让
-  `GetExpectedBodySchemaVersion(CompletionRequestPrepared)`继续谎报唯一值。
+- 所有曾表达“single expected version”的helper/test oracle已改成version-aware API或exact supported-set oracle；
+  `GetExpectedBodySchemaVersion(CompletionRequestPrepared)`不再谎报唯一值。
 
 ### 9.2 Recipe IDs and exact-input partition
 
@@ -756,7 +758,14 @@ test-only expansion及abstract record→closed class hardening已登记在candid
 
 **Prerequisite**
 
-- B1 reviewed/merged；WP-05 provider-neutral MemoPod recall closed。WP-06/Track C2不阻塞provider-free B2。
+- B1 implementation固定在exact reviewed source `83477c06`，且candidate implementation evidence已形成；
+- candidate evidence/docs independent review必须PASS；
+- 用户必须对exact reviewed candidate显式授予Gate B；
+- Gate B后的独立promotion package必须先生成并审阅final Tier-A current contract、approval evidence与new immutable tag，
+  且该package已关闭；B2只能消费该正式Tier-A authority，不能仅凭B1 implementation review PASS开工；
+- 在上述Tier-A gates之后，用户还必须单独授权B2 product/tests施工；Gate A与Gate B都不自动授权B2；
+- WP-05 provider-neutral MemoPod recall已closed。WP-06/Track C2不阻塞这些gates之后的provider-free B2，但也不能替代
+  evidence/docs review、Gate B、promotion或B2授权。
 
 **Exact product write scope**
 
