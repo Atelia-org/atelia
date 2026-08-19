@@ -38,6 +38,14 @@ public sealed class SessionSupplementalContextIntegrationTests : IDisposable {
         Assert.Equal(address, request.ObservationAddress);
         Assert.Equal(exact, request.ExactObservationContent);
         Assert.Equal(exact, selected.ExactObservationContent);
+        Assert.NotEqual(
+            new SessionSupplementalContextSelection.NoMatch(),
+            new SessionSupplementalContextSelection.NoMatch()
+        );
+        Assert.NotEqual(
+            new SessionSupplementalContextSelection.Selected("same"),
+            new SessionSupplementalContextSelection.Selected("same")
+        );
         Assert.Throws<ArgumentException>(
             () => new SessionSupplementalContextRequest(address, "   ")
         );

@@ -54,12 +54,12 @@ public sealed record SessionSupplementalContextRequest {
 /// Closed result of one supplemental lookup. Failures and cancellation are
 /// represented by exceptions, never by a third result state.
 /// </summary>
-public abstract record SessionSupplementalContextSelection {
+public abstract class SessionSupplementalContextSelection {
     private SessionSupplementalContextSelection() { }
 
-    public sealed record NoMatch : SessionSupplementalContextSelection;
+    public sealed class NoMatch : SessionSupplementalContextSelection { }
 
-    public sealed record Selected : SessionSupplementalContextSelection {
+    public sealed class Selected : SessionSupplementalContextSelection {
         public Selected(string exactObservationContent) {
             ArgumentNullException.ThrowIfNull(exactObservationContent);
             if (exactObservationContent.Length == 0) {

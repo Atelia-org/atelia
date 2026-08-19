@@ -334,13 +334,29 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
         Assert.Empty(selection.GetConstructors(
             BindingFlags.Public | BindingFlags.Instance
         ));
-        ConstructorInfo parameterlessBaseConstructor = Assert.Single(
+        ConstructorInfo baseConstructor = Assert.Single(
             selection.GetConstructors(
                 BindingFlags.NonPublic | BindingFlags.Instance
-            ),
-            static constructor => constructor.GetParameters().Length == 0
+            )
         );
-        Assert.True(parameterlessBaseConstructor.IsPrivate);
+        Assert.Empty(baseConstructor.GetParameters());
+        Assert.True(baseConstructor.IsPrivate);
+        Assert.DoesNotContain(
+            selection.GetInterfaces(),
+            type => type.IsGenericType
+                && type.GetGenericTypeDefinition() == typeof(IEquatable<>)
+        );
+        Assert.Null(selection.GetMethod(
+            "<Clone>$",
+            BindingFlags.Public
+                | BindingFlags.NonPublic
+                | BindingFlags.Instance
+        ));
+        Assert.DoesNotContain(
+            selected.GetInterfaces(),
+            type => type.IsGenericType
+                && type.GetGenericTypeDefinition() == typeof(IEquatable<>)
+        );
         Assert.All(request.GetProperties(), static property =>
             Assert.Null(property.SetMethod));
         Assert.All(selected.GetProperties(), static property =>
