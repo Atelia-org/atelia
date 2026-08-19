@@ -2,7 +2,7 @@
 
 状态：Reviewed target proposal；WP-00–WP-06与Track C1已提交；Track C2 provider-free candidate已提交、authenticated
 canary仍NotRun；WP-07B B1 implementation complete、candidate evidence assembled、independent implementation review PASS、
-independent evidence/docs review与Gate B Pending；B2未授权/未开始
+independent evidence/docs review PASS、Ready for Gate B / Gate B Pending；promotion未开始，B2未授权/未开始
 
 本文定义一种与 RecapGrid 互补、面向具体事务细节的动态外置记忆单元，并把后续实现拆成可独立审阅、
 验证和收口的工作包。本文是 target/plan，不是当前实现事实；当前事实仍以 owning code、tests 与
@@ -14,7 +14,8 @@ runner/evidence为`2fa1ee3b`，不构成真实DeepSeek cache/质量/价格证据
 Candidate及review tail为`edfe5230`、`19776980`。Gate A已于2026-08-20由用户显式授权，只允许按Candidate实施
 WP-07B B1 product/tests；B1 implementation source为`83477c06`，candidate evidence见
 [completion-request-prepared-v6-candidate.md](../../evidence/completion-request-prepared-v6-candidate.md)。independent
-implementation review已PASS，evidence/docs review与Gate B仍Pending；B2、current contract、approval evidence与new tag均未授权。
+implementation与evidence/docs review均PASS，candidate已Ready for Gate B、Gate B仍Pending；promotion未开始，B2、current
+contract、approval evidence与new tag均未授权。
 
 ## 1. Intent
 
@@ -931,7 +932,7 @@ Galatea integration design。
 **Current split status**
 
 - B1 SessionJournal generic supplemental seam与Prepared v6 implementation已完成、candidate evidence已形成，independent
-  implementation review PASS；independent evidence/docs review与Gate B Pending；
+  implementation review与independent evidence/docs review均PASS；Ready for Gate B / Gate B Pending，promotion未开始；
 - B2 Galatea MemoPod adapter/config/provider-free vertical未授权、未开始，因此完整WP-07B仍未完成。
 
 **Intent**

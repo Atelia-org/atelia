@@ -26,8 +26,8 @@
 | 审阅 post-cutover cadence、recent reserve、长期容量或 cyber 激活边界 | [Cadence/capacity audit](work/active/derived-recap-grid-cadence-capacity-and-activation-audit.md) | A0-A2已实现24k target reserve；C2/C5 activation完成，C4仍Open |
 | 实现 Galatea 自传/world-understanding rolling maintainers，或审阅未来 Editor/ExperienceRefiner 边界 | [C2 Galatea rolling maintainers](work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md) | shared Family、runtime-configurable model、operator asset assembly与验收矩阵 |
 | 设计或实现面向具体事务细节的动态外置记忆 | [MemoPod目标设计与施工计划](work/active/memo-pod-target-design-and-implementation-plan.md) | MemoPod与RecapGrid互补；首版只做单Pod、Editable/Frozen、aggregate document与ID-only recall；Galatea接入另读下项 |
-| 审阅MemoPod进入Galatea main request | [MemoPod Galatea / SessionJournal integration plan](work/active/memo-pod-galatea-integration-plan.md) | Reviewed WP-07A plan lock；B1 implementation complete、candidate evidence assembled且independent implementation review PASS，evidence/docs review与Gate B Pending；B2未授权/未开始 |
-| 审阅post-R2 Prepared v6 Tier-A candidate或其B1 evidence | [CompletionRequestPrepared v6 Tier-A amendment](work/active/completion-request-prepared-v6-tier-a-amendment.md)、[implementation candidate evidence](evidence/completion-request-prepared-v6-candidate.md) | exact source `83477c06`；split-write/dual-read、old-reader与mixed-reader evidence已形成；independent evidence/docs review与Gate B Pending，不是final contract/tag或B2 |
+| 审阅MemoPod进入Galatea main request | [MemoPod Galatea / SessionJournal integration plan](work/active/memo-pod-galatea-integration-plan.md) | B1 implementation/evidence已形成，两类independent review均PASS；Ready for Gate B / Gate B Pending，promotion未开始，B2未授权/未开始 |
+| 审阅post-R2 Prepared v6 Tier-A candidate或其B1 evidence | [CompletionRequestPrepared v6 Tier-A amendment](work/active/completion-request-prepared-v6-tier-a-amendment.md)、[implementation candidate evidence](evidence/completion-request-prepared-v6-candidate.md) | exact source `83477c06`；implementation与evidence/docs review均PASS；Ready for Gate B / Gate B Pending，不是current/final contract、deployment、tag或B2 authority |
 | CLI operator 或 Galatea integration | [CLI guide](../../prototypes/SessionJournal.Cli/README.md)、[Galatea guide](../../prototypes/Galatea/README.md)、[Host integration](current/host-integration/derived-recap-host-integration.md) | current composition/code/tests |
 | 重跑 Galatea G2A staging acceptance | [G2A runbook](operations/galatea-g2a-staging-acceptance.md) | 本轮新生成的 acceptance evidence；runbook 存在不等于本轮 Passed |
 | 审计历史 candidate、review 或交付 | [Evidence index](evidence/README.md)、[`archive/`](archive/) | [冻结的旧 router 与 claim ledger](archive/superseded/session-journal-router-and-claim-ledger-2026-08-04.md) 只用于 cut-time 审计 |
@@ -51,13 +51,13 @@
   [MemoPod Galatea / SessionJournal integration plan](work/active/memo-pod-galatea-integration-plan.md)
   记录WP-07A对query-dependent supplemental context、post-R2 Prepared v5/v6 split-write/dual-read、turn-level recovery、
   Galatea独立binding config和WP-07B exact施工边界的Reviewed plan lock；B1 implementation已完成、candidate evidence已形成且
-  independent implementation review PASS，evidence/docs review与Gate B Pending。B2仍未授权/未开始，不能据此声称
+  independent implementation与evidence/docs review均PASS；Ready for Gate B / Gate B Pending，promotion未开始。B2仍未授权/未开始，不能据此声称
   Galatea已经注入Memo或Tier-A v6已获Gate B授权。
   [CompletionRequestPrepared v6 Tier-A amendment](work/active/completion-request-prepared-v6-tier-a-amendment.md)
   是SessionJournal owner对split-write/dual-read的active Candidate：定义v5/v1 byte preservation、v6/v2 terminal grammar、
   mixed journal、tool continuation、old-reader Unsupported与rollback边界。Gate A授权的B1已实现并形成
-  [candidate evidence](evidence/completion-request-prepared-v6-candidate.md)，independent implementation review PASS；
-  evidence/docs review与Gate B仍Pending，未生成final current-contract/approval/tag。
+  [candidate evidence](evidence/completion-request-prepared-v6-candidate.md)，independent implementation与evidence/docs
+  review均PASS；Ready for Gate B / Gate B Pending，promotion未开始，未生成final current-contract/approval/tag。
   已关闭但为避免link/archive churn而保留原路径的
   [SessionJournal Contract Freeze R2](work/active/session-journal-contract-freeze-r2.md)
   记录候选direct cut与分阶段freeze gates；该`work/active/`路径名不表示R2仍active。

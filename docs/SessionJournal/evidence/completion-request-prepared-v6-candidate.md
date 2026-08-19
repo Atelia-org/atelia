@@ -1,6 +1,6 @@
 # CompletionRequestPrepared v6 implementation candidate evidence
 
-状态：**B1 implementation complete；candidate evidence assembled；independent implementation review PASS；independent evidence/docs review pending；Gate B Pending**  
+状态：**B1 implementation complete；candidate evidence assembled；independent implementation review PASS；independent evidence/docs review PASS；Ready for Gate B / Gate B Pending；promotion Not Started；B2未授权/未开始；非current/approval/deployment/tag authority**  
 记录日期：2026-08-20  
 implementation source：`83477c06d75d86eaa57940e7a244fbcc7c1e4e8a`  
 implementation tree：`571d10b6be9fa1704e3af811204d5d4de23cb954`
@@ -170,7 +170,8 @@ dotnet test tests/SessionJournal.Tests/SessionJournal.Tests.csproj --no-restore 
 
 ## 6. Remaining boundary
 
-- independent implementation review已PASS；本evidence与同步docs仍须独立review，Gate B尚未授予；
+- independent implementation review与independent evidence/docs review均已PASS、findings为0；candidate已Ready for Gate B，
+  但Gate B尚未授予；
 - 没有生成final contract、Gate B ledger或新tag，旧R2 contract/evidence/tag均未改动；
 - v6首次写入后的rollback floor是含exact dual reader的build；v5-only reader只用于证明expected Unsupported；
 - B2 Galatea adapter/config、MemoPod访问、真实provider、route activation、migration/rewrite和deployment均未实施；

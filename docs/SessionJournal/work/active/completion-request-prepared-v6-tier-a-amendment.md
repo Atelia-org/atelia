@@ -1,6 +1,6 @@
 # CompletionRequestPrepared v6 Tier-A amendment
 
-状态：**Candidate / Gate A Authorized — B1 implementation complete；candidate evidence assembled；independent implementation review PASS；independent evidence/docs review pending；Gate B Pending**  
+状态：**Candidate / Gate A Authorized — B1 implementation complete；candidate evidence assembled；independent implementation review PASS；independent evidence/docs review PASS；Ready for Gate B / Gate B Pending；promotion Not Started；B2未授权/未开始**  
 proposal baseline：[MemoPod Galatea / SessionJournal integration plan](memo-pod-galatea-integration-plan.md)，locked at `d5a403c4`  
 frozen antecedent：[SessionJournal Contract R2](../../current/contracts/session-journal-contract-r2.md)、
 [R2 closure](../../evidence/contract-freeze-r2-closure.md)  
@@ -12,8 +12,8 @@ product/tests现已实现并形成[candidate evidence](../../evidence/completion
 current contract、approval evidence、migration runbook、deployment approval 或 tag authority。
 
 Gate A 已于 2026-08-20 由用户以原文显式授权：`授权 Gate A：按 Prepared v6 Tier-A Candidate 实施 WP-07B B1。`
-该授权只允许按本 Candidate 修改 §7 product 与 §8.1 tests。B1 implementation现已完成且independent implementation
-review PASS；candidate evidence/docs仍待独立审阅，Gate B仍Pending。Gate A不授权WP-07B B2、Gate B、current contract、
+该授权只允许按本 Candidate 修改 §7 product 与 §8.1 tests。B1 implementation现已完成，independent implementation
+review与independent evidence/docs review均PASS，candidate已Ready for Gate B但Gate B仍Pending。Gate A不授权WP-07B B2、Gate B、current contract、
 approval evidence、deployment 或 tag。
 
 ## 1. Why this candidate exists
@@ -277,8 +277,8 @@ B1 code/tests 已完成并新增 candidate evidence：
 - update `docs/SessionJournal/evidence/README.md` to route that candidate
 
 Candidate evidence已pin code/test commit、old-reader source/tag identity、literal golden hashes、mixed-journal fixture hashes、
-focused/full commands、platform/runtime 与 residual risks。independent implementation review已PASS；evidence/docs独立审阅
-仍Pending。该记录不创建tag，也不修改旧R2 evidence。
+focused/full commands、platform/runtime 与 residual risks。independent implementation review与independent evidence/docs
+review均PASS；candidate已Ready for Gate B但Gate B仍Pending。该记录不创建tag，也不修改旧R2 evidence。
 
 ## 9. Documentation scope and immutable antecedents
 
@@ -300,10 +300,10 @@ focused/full commands、platform/runtime 与 residual risks。independent implem
 
 ## 10. Two-stage approval and promotion gates
 
-### Current state — B1 implementation complete / candidate evidence assembled / implementation review PASS / evidence-docs review pending
+### Current state — implementation review PASS / evidence-docs review PASS / Ready for Gate B / Gate B Pending
 
 本文件的pre-B1 design已完成独立文档审阅，Gate A亦已于2026-08-20获用户显式授权。B1 product/tests已完成、candidate
-evidence已形成，exact implementation range的independent review PASS；新evidence与本轮docs同步仍待独立审阅。
+evidence已形成；exact implementation range与evidence/docs的independent review均PASS、findings为0，candidate已Ready for Gate B。
 这些PASS与Gate A都不授予Gate B、current contract、approval evidence、deployment或tag。
 
 ### Gate A — explicit user authorization to implement
@@ -316,8 +316,8 @@ current contract、approval evidence、deployment 或 tag。
 
 B1 code/tests的independent reviewer已对exact commit检查v5 byte preservation、v6 strict grammar、dual-read/cross-pair
 rejection、mixed journal、old-reader Unsupported、recovery zero-access、tool inheritance、hashes、rollback和dependency
-boundary，并报告PASS。§8.2 candidate evidence与docs同步仍须独立review；findings closure必须使用independently
-reviewable commits/evidence，实施者不能自我promotion。
+boundary，并报告PASS。§8.2 candidate evidence与docs同步也已通过独立review、findings为0。两类PASS只使candidate
+Ready for Gate B；实施者不能自我promotion。
 
 ### Gate B — explicit user final approval
 
@@ -338,7 +338,7 @@ reviewable commits/evidence，实施者不能自我promotion。
 
 1. **Complete** — pre-B1 independent document review confirmed the authorized §§2–10 shape；
 2. **Complete (2026-08-20)** — user grants Gate A authorization；
-3. **Implementation Complete / Review PASS；candidate evidence Assembled / independent docs review Pending**；
+3. **Implementation Complete / Review PASS；candidate evidence Assembled / independent docs review PASS**；
 4. **Pending** — user grants Gate B final approval；
 5. **Not Started** — a separate promotion package publishes the current contract/approval ledger/new immutable tag and passes
    post-tag review。

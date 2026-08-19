@@ -1,6 +1,6 @@
 # MemoPod Galatea / SessionJournal integration plan
 
-状态：**Reviewed plan — B1 implementation complete；candidate evidence assembled；independent implementation review PASS；independent evidence/docs review pending；Gate B Pending；B2未授权/未开始**  
+状态：**Reviewed plan — B1 implementation complete；candidate evidence assembled；independent implementation review PASS；independent evidence/docs review PASS；Ready for Gate B / Gate B Pending；promotion Not Started；B2未授权/未开始；非current Tier-A/approval/deployment/tag authority**  
 目标入口：[MemoPod目标设计与施工计划](memo-pod-target-design-and-implementation-plan.md) §8、WP-07A/WP-07B  
 verified pre-B1 MemoPod recall baseline：`7cd696394e8fbf09db8464508b4492b68cfc0a91`  
 baseline meaning：`7cd69639`已实现provider-neutral MemoPod recall；WP-07A最初核对的SessionJournal/Galatea
@@ -123,7 +123,8 @@ Owning current evidence至少包括：
 
 - **B1 candidate-implemented**：`ISessionSupplementalContextSource`及其request/result types、
   `SessionRuntime.SupplementalContextSource`、supplemental recipe v2/control envelope和SessionJournal-owner tests已在
-  `83477c06`实现，independent implementation review PASS；candidate evidence/docs review与Gate B仍Pending，因此这些
+  `83477c06`实现，independent implementation review与independent evidence/docs review均PASS；candidate已Ready for Gate B、
+  Gate B仍Pending，因此这些
   不是final Tier-A authority；
 - **B2仍是proposal**：Galatea MemoPod adapter、JSONL carrier、`memo-pods.json`、recall-specific call ledger和
   Galatea cross-layer tests均未实现；
@@ -368,7 +369,8 @@ reopen/replay、offline audit、old-reader拒绝和rollback runbook；最终curr
 
 在pre-B1 baseline，`SessionEventCodec`假设每个event kind只有一个expected body version；B1 plan decision要求把
 `CompletionRequestPrepared`改成version-aware special case，而不放宽其他event kind。该decision现已在candidate source
-`83477c06`实现并通过independent implementation review，但evidence/docs review与Gate B仍Pending。candidate implementation为：
+`83477c06`实现，independent implementation review与independent evidence/docs review均PASS；candidate已Ready for Gate B、
+Gate B仍Pending。candidate implementation为：
 
 - encode由已strict验证的recipe pair确定envelope version：recipe v1→5，recipe v2→6，unknown不写bytes；
 - decode先接受Prepared version set `{5,6}`，再把actual version传给manifest validator；
@@ -683,8 +685,8 @@ B1 SessionJournal generic supplemental seam + Prepared v5/v6 split-write/dual-re
    只覆盖Candidate锁定的B1 product/tests，不覆盖B2、Gate B、current contract、approval evidence或tag。
 4. **Implementation Complete / candidate evidence Assembled / implementation review PASS**：exact source为`83477c06`；
    [candidate implementation evidence](../../evidence/completion-request-prepared-v6-candidate.md)已形成。independent
-   evidence/docs review仍Pending；该文件不是Gate B ledger，不创建或暗示new tag。
-5. **Pending — Gate B**：只有candidate evidence/docs再经独立review且获用户显式批准后，单独的promotion package才可生成
+   evidence/docs review也已PASS、findings为0；candidate已Ready for Gate B。该文件不是Gate B ledger，不创建或暗示new tag。
+5. **Ready / Pending — Gate B**：只有获用户显式Gate B授权后，仍为Not Started的单独promotion package才可生成
    `docs/SessionJournal/current/contracts/completion-request-prepared-v6.md`、
    `docs/SessionJournal/evidence/completion-request-prepared-v6-approval.md`并创建new immutable tag，同时同步router、evidence
    index与doc-check scope。
@@ -759,7 +761,7 @@ test-only expansion及abstract record→closed class hardening已登记在candid
 **Prerequisite**
 
 - B1 implementation固定在exact reviewed source `83477c06`，且candidate implementation evidence已形成；
-- candidate evidence/docs independent review必须PASS；
+- **Complete** — candidate evidence/docs independent review PASS、findings为0；
 - 用户必须对exact reviewed candidate显式授予Gate B；
 - Gate B后的独立promotion package必须先生成并审阅final Tier-A current contract、approval evidence与new immutable tag，
   且该package已关闭；B2只能消费该正式Tier-A authority，不能仅凭B1 implementation review PASS开工；
@@ -898,7 +900,8 @@ git diff --check
 
 1. post-R2 Tier-A reopen与v5/v1、v6/v2 exact pair已由独立active Candidate锁定并通过文档审阅；v5 bytes/language
    不变，v6 mixed-journal dual-read/offline audit和rollback boundary可执行；Gate A已于2026-08-20被用户显式授予，
-   B1 implementation已完成、candidate evidence已形成且independent implementation review PASS，evidence/docs review与Gate B仍Pending；
+   B1 implementation已完成、candidate evidence已形成，independent implementation与evidence/docs review均PASS；candidate已
+   Ready for Gate B、Gate B仍Pending；
 2. terminal control envelope不是把Memo偷塞进v1 Recap recipe或伪造raw provenance；
 3. exact query和call ordering与owning current code一致；
 4. Frozen/Started/tool continuation所有branch都能做到lazy zero Memo access，metadata-only marker不会偷做Pod/client work；
@@ -909,5 +912,5 @@ git diff --check
    有exact tests；remaining risks只属于C2/WP-07C或明确non-promise，不存在被隐藏的WP-07B correctness blocker。
 
 WP-07A review与pre-B1 Candidate review已关闭，Gate A也已于2026-08-20由用户显式授权。B1 product/tests已完成、candidate
-evidence已形成，exact implementation的independent review PASS；evidence/docs review与Gate B仍Pending。B2仍未授权/
+evidence已形成，exact implementation与evidence/docs的independent review均PASS；candidate已Ready for Gate B、Gate B仍Pending。B2仍未授权/
 未开始，不得把plan中的Galatea adapter/config type或path写成current implemented surface。
