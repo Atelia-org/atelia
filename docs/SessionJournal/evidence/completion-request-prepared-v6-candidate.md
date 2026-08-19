@@ -1,14 +1,26 @@
-# CompletionRequestPrepared v6 implementation candidate evidence
+# CompletionRequestPrepared v6 historical rolled-back candidate evidence
 
-状态：**B1 implementation complete；candidate evidence assembled；independent implementation review PASS；independent evidence/docs review PASS；Ready for Gate B / Gate B Pending；promotion Not Started；B2未授权/未开始；非current/approval/deployment/tag authority**  
+状态：**Historical Rolled-back candidate — historical `83477c06` implementation/reviews PASS；用户于2026-08-20撤回；`1d8c33bb`已回滚；Gate B Canceled / Never Granted；promotion Never Started；旧B2 Canceled / Never Authorized；非current/approval/deployment/tag authority**  
 记录日期：2026-08-20  
-implementation source：`83477c06d75d86eaa57940e7a244fbcc7c1e4e8a`  
-implementation tree：`571d10b6be9fa1704e3af811204d5d4de23cb954`
+historical implementation source：`83477c06d75d86eaa57940e7a244fbcc7c1e4e8a` / tree `571d10b6be9fa1704e3af811204d5d4de23cb954`  
+rollback source：`1d8c33bb6b88e588e45e0ac1a77183578b1f3310` / tree `a4137ac18c51da7157228fe1f73bf109e0bd0530`
 
-本文记录[Prepared v6 Tier-A Candidate](../work/active/completion-request-prepared-v6-tier-a-amendment.md)
-获 Gate A 授权后的 B1 product/tests candidate、可执行 fixture 与验证结果。它不是 final Tier-A contract、
-Gate B ledger、deployment evidence 或 tag authority；B2、真实 provider、Galatea MemoPod adapter 与 route activation
-均不在本记录范围。
+本文保留[已撤回的Prepared v6 Tier-A Candidate](../archive/superseded/completion-request-prepared-v6-tier-a-amendment.md)
+曾获Gate A授权后的历史B1 product/tests、可执行fixture与review事实。它不再是active candidate，也不是current/final
+Tier-A contract、Gate B ledger、deployment evidence或tag authority；旧B2、真实provider、Galatea MemoPod adapter与
+route activation从未进入获授权实现状态。
+
+## 0. Withdrawal and durable-v6 audit
+
+- 用户于2026-08-20撤回旧方向；Gate B canceled且从未授予，promotion从未开始，旧B2 canceled且从未授权；
+- code/test通过单一atomic rollback `1d8c33bb`撤回七个B1提交；rollback后的
+  `prototypes/SessionJournal`、`tests/SessionJournal.Tests`与`tests/SessionJournal.PublicSurface.Tests`相对
+  `a5098a77fefdfeaf18e2ab845dee389d56ce106b` exact无diff；
+- durable-v6 audit以rollback前source `ba200a83536ebe9b445f31019cf88c8fae63600b`执行：20个workspace roots、
+  3,218 events，Prepared body version统计为v5=60、v6=0、other=0；19个roots通过strict reader，另1个raw-only root
+  通过checked raw proof；
+- audit没有raw mutation、provider调用或content output。它只覆盖被枚举的20个workspace roots，不宣称未枚举的外部
+  repository不存在v6；任何外部v6风险只记录，不自动扫描、迁移、删除或改写数据。
 
 ## 1. Exact source and commit ledger
 
@@ -170,9 +182,10 @@ dotnet test tests/SessionJournal.Tests/SessionJournal.Tests.csproj --no-restore 
 
 ## 6. Remaining boundary
 
-- independent implementation review与independent evidence/docs review均已PASS、findings为0；candidate已Ready for Gate B，
-  但Gate B尚未授予；
-- 没有生成final contract、Gate B ledger或新tag，旧R2 contract/evidence/tag均未改动；
-- v6首次写入后的rollback floor是含exact dual reader的build；v5-only reader只用于证明expected Unsupported；
-- B2 Galatea adapter/config、MemoPod访问、真实provider、route activation、migration/rewrite和deployment均未实施；
+- `83477c06` implementation及其independent implementation/evidence/docs reviews PASS仍是历史事实，但不认证rollback后的
+  current code；
+- 用户已撤回旧candidate；Gate B Canceled / Never Granted，promotion Never Started，旧B2 Canceled / Never Authorized；
+- rollback后current code与current approved Tier-A authority均为Prepared v5/recipe v1/count `0..128`；没有生成v6 final
+  contract、Gate B ledger或新tag，旧R2 contract/evidence/tag均未改动；
+- historical v6首次写入后的rollback风险仍用于解释old-reader evidence；本包没有发现或处理任何外部v6 repository；
 - evidence hashes证明列明的literal、payload与fixture final bytes，不承诺跨runtime physical byte determinism。

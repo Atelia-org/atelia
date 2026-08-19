@@ -1,24 +1,41 @@
 # MemoPod Galatea / SessionJournal integration plan
 
-状态：**Reviewed plan — B1 implementation complete；candidate evidence assembled；independent implementation review PASS；independent evidence/docs review PASS；Ready for Gate B / Gate B Pending；promotion Not Started；B2未授权/未开始；非current Tier-A/approval/deployment/tag authority**  
-目标入口：[MemoPod目标设计与施工计划](memo-pod-target-design-and-implementation-plan.md) §8、WP-07A/WP-07B  
-verified pre-B1 MemoPod recall baseline：`7cd696394e8fbf09db8464508b4492b68cfc0a91`  
-baseline meaning：`7cd69639`已实现provider-neutral MemoPod recall；WP-07A最初核对的SessionJournal/Galatea
-production seam没有依赖尚未提交的DebugApp。后续只增加tests/DebugApp的提交可以作为implementation baseline
-补充登记，但不得把未复核的SessionJournal/Galatea production变化自动吸收为本文事实。
-review closure：plan tail `d5a403c4`；Tier-A Candidate `edfe5230`及independent-review tail `19776980`。B1
-implementation source现为`83477c06`，candidate evidence见
-[completion-request-prepared-v6-candidate.md](../../evidence/completion-request-prepared-v6-candidate.md)。Track C2
-provider-free runner `2fa1ee3b`不改变本文核对的SessionJournal/Galatea production seam，也曾不构成Gate A授权；Gate A
-现由用户于2026-08-20的显式原文单独授予，且只授权B1 product/tests。
+状态：**Design Reopened — 旧WP-07A/B已撤回并仅作历史输入；没有active B1/B2 authorization；不得设计或实现SessionJournal结合接口/wire**  
+目标入口：[MemoPod目标设计与施工计划](memo-pod-target-design-and-implementation-plan.md) §8、WP-07  
+current rollback source：`1d8c33bb6b88e588e45e0ac1a77183578b1f3310` / tree `a4137ac18c51da7157228fe1f73bf109e0bd0530`  
+historical source：旧plan `d5a403c4`、withdrawn Tier-A Candidate `edfe5230`/`19776980`、historical B1
+`83477c06`与[rolled-back evidence](../../evidence/completion-request-prepared-v6-candidate.md)
 
-本文只拥有WP-07A plan lock：锁定单个MemoPod的query-dependent memory如何进入Galatea main request，以及
-Prepared/recovery、failure、ownership、privacy和WP-07B施工边界。本docs同步不修改production；B1 implementation
-fact由owning code/tests与candidate evidence拥有。本文不宣称B2、完整WP-07B、authenticated Track C2或WP-07C已经实现或通过。
+用户于2026-08-20撤回旧方向；single atomic rollback `1d8c33bb`已使SessionJournal product/tests回到
+`a5098a77` exact tree。旧Gate A随撤回终止且不可续用，Gate B canceled/never granted，promotion never started，旧B2
+canceled/never authorized；current code与current approved Tier-A authority均为Prepared v5/recipe v1/count `0..128`。
+本文保留active路径只为了拥有**Design Reopened**状态与未决设计闸；§1–§16全部是旧
+WP-07A/B的历史输入，不是active decision、accepted shape、implementation plan或authorization。
 
-## 1. Decision summary
+## 0. Active design-reopen authority
 
-WP-07A锁定以下决策：
+current事实：MemoPod core、fake-first operator、provider-neutral recall与provider-free Track C2均不因SessionJournal rollback
+而撤回；但MemoPod目前没有product upper consumer。`SessionJournal.MemoPod.csproj`的production显式依赖仅有
+`Completion.Abstractions`，没有SessionJournal、Galatea或RecapGrid dependency。
+
+重新讨论上层结合前，必须分别形成可审阅decision并关闭以下设计闸：
+
+1. **Query timing**：何时相对raw Observation、Recap lifecycle、main completion与recovery查询；哪些失败可重试、会重复计费；
+2. **Pod动态create/classify/split/merge**：owner、stable identity、条目迁移、冻结/编辑时序与失败恢复；
+3. **Pod Indexer**：索引对象、durable/rebuildable authority、增量更新、删除/分裂/合并一致性与查询边界；
+4. **Empty-query prompt-cache renewal**：是否允许、由谁调度、cache expiry/成本/side effect语义，以及无新user query时的
+   privacy与provider-call authority；
+5. **Main-thread injection**：是否注入、注入何种carrier、位置/bounds/provenance，以及与RecapGrid连续性职责的边界；
+6. **Duplicate injection与cross-turn dangling/reference continuity**：dedup identity、跨turn引用寿命、Memo删除/编辑后语义、
+   recovery/replay与失效引用的closed behavior。
+
+在六项全部完成独立review并获得fresh user design authorization之前，不再设计或实现任何SessionJournal结合interface、
+Prepared recipe/body version、recovery wire、Galatea adapter/config或main-thread injection。未来施工必须新建fresh Candidate与
+fresh gates；不得续用旧Gate A、旧WP-07A/B exact cut或historical PASS。
+
+## 1. Historical withdrawn decision summary
+
+旧WP-07A曾锁定以下决策；以下内容现仅供比较和问题发现：
 
 1. MemoPod、RecapGrid、raw SessionJournal和Prepared副本继续是四种不同authority；Memo不伪造raw provenance，
    Prepared副本只负责一个request的execution/recovery。
@@ -45,7 +62,7 @@ WP-07A锁定以下决策：
 10. WP-07B拆为B1 SessionJournal generic seam/recipe和B2 Galatea adapter/config vertical；real DeepSeek证据仍属于
     Track C2，route activation仍属于WP-07C。
 
-## 2. Scope and non-goals
+## 2. Historical withdrawn scope and non-goals
 
 ### 2.1 In scope
 
@@ -69,9 +86,9 @@ WP-07A锁定以下决策：
 - 跨用户共享Pod、secure erasure、自动purge或历史Prepared重写；
 - 修改Galatea root Stable V1或保留root config dual reader。
 
-## 3. Verified current code versus proposal
+## 3. Historical baseline versus withdrawn proposal
 
-### 3.1 Verified current code at `7cd69639`
+### 3.1 Verified pre-B1 baseline at `7cd69639`
 
 以下是current code/tests事实，不是本文建议：
 
@@ -121,13 +138,11 @@ Owning current evidence至少包括：
 
 在pre-B1 baseline，下列内容都只是proposal。current split必须区分：
 
-- **B1 candidate-implemented**：`ISessionSupplementalContextSource`及其request/result types、
+- **B1 historical then rolled back**：`ISessionSupplementalContextSource`及其request/result types、
   `SessionRuntime.SupplementalContextSource`、supplemental recipe v2/control envelope和SessionJournal-owner tests已在
-  `83477c06`实现，independent implementation review与independent evidence/docs review均PASS；candidate已Ready for Gate B、
-  Gate B仍Pending，因此这些
-  不是final Tier-A authority；
-- **B2仍是proposal**：Galatea MemoPod adapter、JSONL carrier、`memo-pods.json`、recall-specific call ledger和
-  Galatea cross-layer tests均未实现；
+  `83477c06`实现且reviews均PASS，随后由用户撤回并在`1d8c33bb`回滚；这些只属于historical candidate；
+- **旧B2 canceled / never authorized**：Galatea MemoPod adapter、JSONL carrier、`memo-pods.json`、recall-specific call
+  ledger和Galatea cross-layer tests均未实现；
 - 任何“Galatea main request已经使用Memo”的claim仍为false；B1的internal failpoint/tests不能被误读成B2接入。
 
 ## 4. Authority model
@@ -360,7 +375,7 @@ accepted language、failure/recovery、numeric bounds、mixed-journal read与rol
 - tool continuation按source Prepared exact pair继续split-write：v5/v1 source写v5/v1，v6/v2 source写v6/v2。
 
 这不是silent migration，也不移动或续期R2 immutable tags。任何B1 production mutation之前，必须先由独立doc-only
-package新增并审阅`work/active/completion-request-prepared-v6-tier-a-amendment.md` Candidate，再取得用户对exact candidate与
+package曾新增并审阅现已归档为`archive/superseded/completion-request-prepared-v6-tier-a-amendment.md`的Candidate，再取得用户对exact candidate与
 B1开工的显式授权。B1实现后才产生candidate implementation evidence，覆盖old v1 byte golden、v6 candidate、mixed-journal
 reopen/replay、offline audit、old-reader拒绝和rollback runbook；最终current contract、approval evidence与new immutable tag
 只能在独立review和用户批准之后生成。任何阶段都不得预先把后续产物写成已批准事实。
@@ -369,8 +384,7 @@ reopen/replay、offline audit、old-reader拒绝和rollback runbook；最终curr
 
 在pre-B1 baseline，`SessionEventCodec`假设每个event kind只有一个expected body version；B1 plan decision要求把
 `CompletionRequestPrepared`改成version-aware special case，而不放宽其他event kind。该decision现已在candidate source
-`83477c06`实现，independent implementation review与independent evidence/docs review均PASS；candidate已Ready for Gate B、
-Gate B仍Pending。candidate implementation为：
+`83477c06`实现且reviews均PASS，随后在`1d8c33bb`回滚。下列只描述historical candidate implementation：
 
 - encode由已strict验证的recipe pair确定envelope version：recipe v1→5，recipe v2→6，unknown不写bytes；
 - decode先接受Prepared version set `{5,6}`，再把actual version传给manifest validator；
@@ -662,7 +676,7 @@ content-free；这要求移除current `GalateaServices`、`GalateaInputPreproces
 preview，provider/internal exception只能经stable safe outer error分类。WP-07C real-route activation另要求operator确认recall/main
 provider与两类call-log retention、备份/删除procedure、路径隔离和rollback限制；没有这些运营证据时不得启用真实route。
 
-## 13. WP-07B exact implementation cut
+## 13. Historical withdrawn WP-07B exact implementation cut
 
 WP-07B分成两个依赖顺序明确、各自可编译/review的slice：
 
@@ -671,25 +685,22 @@ B1 SessionJournal generic supplemental seam + Prepared v5/v6 split-write/dual-re
   -> B2 Galatea MemoPod adapter + independent config + provider-free vertical
 ```
 
-### 13.1 B1 — SessionJournal generic seam and Prepared v6
+### 13.1 Historical B1 — SessionJournal generic seam and Prepared v6
 
 **Prerequisite / Tier-A candidate sequence**
 
 1. **Complete (`edfe5230`)**：由独立doc-only package新增
-   `docs/SessionJournal/work/active/completion-request-prepared-v6-tier-a-amendment.md`，作为fresh
+   `docs/SessionJournal/archive/superseded/completion-request-prepared-v6-tier-a-amendment.md`，曾作为fresh
    SessionJournal-owner Tier-A Candidate；R2 closure的tracked-consumer reopen条件由本Galatea integration满足，但old
    contract、closure与immutable tags保持不动。
 2. **Complete (`19776980`)**：independent reviewer确认Candidate已exact锁定v5/v1 preservation、v6/v2 grammar、old-reader Unsupported、new-reader
    dual-read、mixed-journal replay/offline audit、no rewrite/migration与rollback到dual-reader build的operator boundary。
 3. **Complete (2026-08-20) — Gate A**：用户原文授权“按 Prepared v6 Tier-A Candidate 实施 WP-07B B1”。该授权
    只覆盖Candidate锁定的B1 product/tests，不覆盖B2、Gate B、current contract、approval evidence或tag。
-4. **Implementation Complete / candidate evidence Assembled / implementation review PASS**：exact source为`83477c06`；
+4. **Historical implementation/reviews Complete, then Rolled Back**：exact source为`83477c06`；
    [candidate implementation evidence](../../evidence/completion-request-prepared-v6-candidate.md)已形成。independent
-   evidence/docs review也已PASS、findings为0；candidate已Ready for Gate B。该文件不是Gate B ledger，不创建或暗示new tag。
-5. **Ready / Pending — Gate B**：只有获用户显式Gate B授权后，仍为Not Started的单独promotion package才可生成
-   `docs/SessionJournal/current/contracts/completion-request-prepared-v6.md`、
-   `docs/SessionJournal/evidence/completion-request-prepared-v6-approval.md`并创建new immutable tag，同时同步router、evidence
-   index与doc-check scope。
+   evidence/docs review也曾PASS、findings为0；用户随后撤回，`1d8c33bb`完成rollback。
+5. **Canceled / Never Granted — Gate B**：promotion Never Started；没有生成v6 current contract、approval evidence或new tag。
 
 B1自身的documentation write scope只包括candidate implementation evidence；pre-B1 Candidate与post-B1 promotion分别是
 独立工作包。旧R2文档/tag只作为antecedent引用，任何阶段都不得修改、移动、续期或把new evidence命名成R2续期。
@@ -756,18 +767,14 @@ test-only expansion及abstract record→closed class hardening已登记在candid
 - single-version helper不再对Prepared谎报唯一expected version；other event kind version oracle不变；
 - SessionJournal product仍不引用MemoPod、Galatea或RecapGrid assembly。
 
-### 13.2 B2 — Galatea adapter, config and provider-free vertical
+### 13.2 Historical canceled B2 — Galatea adapter, config and provider-free vertical
 
-**Prerequisite**
+**Historical prerequisite disposition**
 
-- B1 implementation固定在exact reviewed source `83477c06`，且candidate implementation evidence已形成；
-- **Complete** — candidate evidence/docs independent review PASS、findings为0；
-- 用户必须对exact reviewed candidate显式授予Gate B；
-- Gate B后的独立promotion package必须先生成并审阅final Tier-A current contract、approval evidence与new immutable tag，
-  且该package已关闭；B2只能消费该正式Tier-A authority，不能仅凭B1 implementation review PASS开工；
-- 在上述Tier-A gates之后，用户还必须单独授权B2 product/tests施工；Gate A与Gate B都不自动授权B2；
-- WP-05 provider-neutral MemoPod recall已closed。WP-06/Track C2不阻塞这些gates之后的provider-free B2，但也不能替代
-  evidence/docs review、Gate B、promotion或B2授权。
+- B1 historical implementation/evidence曾形成并通过review，但随后撤回和rollback；
+- Gate B never granted，promotion never started，B2 never authorized，因此旧prerequisites永远没有形成可消费的正式
+  Tier-A authority；
+- 本节下方product/test scope只作历史估算，不是active scope或未来授权；fresh design不得默认复用。
 
 **Exact product write scope**
 
@@ -865,7 +872,7 @@ Galatea.Server.Tests -> SessionJournal.MemoPod (test construction only)
 | Privacy | inline/full-request call-log/provider retention与Remove non-purge明确；只有diagnostic/status/error ledger content-free |
 | Dependency | 只有Galatea→MemoPod；core/provider-neutral boundaries不反转 |
 
-## 15. C2 and WP-07C remain separate
+## 15. Historical C2 and WP-07C separation
 
 WP-07B是fake-provider correctness/recovery gate，不依赖real DeepSeek：
 
@@ -879,7 +886,7 @@ WP-07B是fake-provider correctness/recovery gate，不依赖real DeepSeek：
   WP-07A/B review；
 - 没有authenticated canary权限时不触网，也不把fake telemetry当cache evidence。
 
-## 16. WP-07A documentation validation and review exit
+## 16. Historical WP-07A review and withdrawal disposition
 
 本WP只允许修改：
 
@@ -898,10 +905,8 @@ git diff --check
 
 本文已通过independent cross-layer review；review closure确认：
 
-1. post-R2 Tier-A reopen与v5/v1、v6/v2 exact pair已由独立active Candidate锁定并通过文档审阅；v5 bytes/language
-   不变，v6 mixed-journal dual-read/offline audit和rollback boundary可执行；Gate A已于2026-08-20被用户显式授予，
-   B1 implementation已完成、candidate evidence已形成，independent implementation与evidence/docs review均PASS；candidate已
-   Ready for Gate B、Gate B仍Pending；
+1. post-R2 Tier-A reopen与v5/v1、v6/v2 exact pair曾由独立Candidate锁定并通过文档审阅；historical implementation/evidence
+   reviews均PASS，但用户随后撤回并由`1d8c33bb`回滚；Gate B never granted；
 2. terminal control envelope不是把Memo偷塞进v1 Recap recipe或伪造raw provenance；
 3. exact query和call ordering与owning current code一致；
 4. Frozen/Started/tool continuation所有branch都能做到lazy zero Memo access，metadata-only marker不会偷做Pod/client work；
@@ -911,6 +916,6 @@ git diff --check
 7. DebugUtil/status/API error与Completion content-bearing call log的privacy claim已分开，outer Host cancellation translation
    有exact tests；remaining risks只属于C2/WP-07C或明确non-promise，不存在被隐藏的WP-07B correctness blocker。
 
-WP-07A review与pre-B1 Candidate review已关闭，Gate A也已于2026-08-20由用户显式授权。B1 product/tests已完成、candidate
-evidence已形成，exact implementation与evidence/docs的independent review均PASS；candidate已Ready for Gate B、Gate B仍Pending。B2仍未授权/
-未开始，不得把plan中的Galatea adapter/config type或path写成current implemented surface。
+这些review与历史PASS只认证withdrawn candidate。旧Gate A已终止且不可续用；Gate B canceled/never granted，promotion never
+started，旧B2 canceled/never authorized。current active work只能从§0的六项设计闸开始，不得把本plan中的旧type、path、
+recipe、wire或test scope写成current/next implementation surface。

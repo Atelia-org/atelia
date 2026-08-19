@@ -1,20 +1,22 @@
-# CompletionRequestPrepared v6 Tier-A amendment
+# CompletionRequestPrepared v6 Tier-A amendment — withdrawn historical candidate
 
-状态：**Candidate / Gate A Authorized — B1 implementation complete；candidate evidence assembled；independent implementation review PASS；independent evidence/docs review PASS；Ready for Gate B / Gate B Pending；promotion Not Started；B2未授权/未开始**  
-proposal baseline：[MemoPod Galatea / SessionJournal integration plan](memo-pod-galatea-integration-plan.md)，locked at `d5a403c4`  
+状态：**Historical / Superseded / Withdrawn — 用户于2026-08-20撤回；`1d8c33bb`已回滚；Gate B Canceled / Never Granted；promotion Never Started；旧B2 Canceled / Never Authorized**  
+withdrawal disposition：历史`83477c06` implementation/reviews仍是其exact candidate事实，但不认证current code、current authority或未来方案；旧Gate A已随撤回终止且不可续用  
+proposal baseline：[MemoPod Galatea / SessionJournal integration plan](../../work/active/memo-pod-galatea-integration-plan.md)，locked at `d5a403c4`  
 frozen antecedent：[SessionJournal Contract R2](../../current/contracts/session-journal-contract-r2.md)、
 [R2 closure](../../evidence/contract-freeze-r2-closure.md)  
 记录日期：2026-08-20
 
-本文是 post-R2、SessionJournal-owner 的 Tier-A raw/recovery wire amendment Candidate。它定义
+本文曾是 post-R2、SessionJournal-owner 的 Tier-A raw/recovery wire amendment Candidate。它历史上定义
 `CompletionRequestPrepared` v5/v6 split-write、dual-read、reconstruction 与 deployment boundary；Gate A授权的B1
-product/tests现已实现并形成[candidate evidence](../../evidence/completion-request-prepared-v6-candidate.md)。本文仍不是
-current contract、approval evidence、migration runbook、deployment approval 或 tag authority。
+product/tests曾实现并形成[candidate evidence](../../evidence/completion-request-prepared-v6-candidate.md)，随后由用户撤回并在
+`1d8c33bb`回滚。本文现在只作历史设计输入，不是active Candidate、current contract、approval evidence、migration
+runbook、deployment approval或tag authority。
 
 Gate A 已于 2026-08-20 由用户以原文显式授权：`授权 Gate A：按 Prepared v6 Tier-A Candidate 实施 WP-07B B1。`
-该授权只允许按本 Candidate 修改 §7 product 与 §8.1 tests。B1 implementation现已完成，independent implementation
-review与independent evidence/docs review均PASS，candidate已Ready for Gate B但Gate B仍Pending。Gate A不授权WP-07B B2、Gate B、current contract、
-approval evidence、deployment 或 tag。
+该历史授权只曾允许按本Candidate修改§7 product与§8.1 tests；用户后续撤回使它终止，不得被未来工作包续用。
+Gate B从未授予，promotion从未开始，旧B2从未授权。rollback后current code与current approved Tier-A authority均为
+Prepared v5/recipe v1/count `0..128`；任何新方向都必须从fresh Candidate、fresh review和fresh user gates重新开始。
 
 ## 1. Why this candidate exists
 
@@ -277,8 +279,9 @@ B1 code/tests 已完成并新增 candidate evidence：
 - update `docs/SessionJournal/evidence/README.md` to route that candidate
 
 Candidate evidence已pin code/test commit、old-reader source/tag identity、literal golden hashes、mixed-journal fixture hashes、
-focused/full commands、platform/runtime 与 residual risks。independent implementation review与independent evidence/docs
-review均PASS；candidate已Ready for Gate B但Gate B仍Pending。该记录不创建tag，也不修改旧R2 evidence。
+focused/full commands、platform/runtime与residual risks。independent implementation review与independent evidence/docs
+review均曾PASS；这些是历史candidate事实。用户随后撤回，Gate B canceled/never granted，promotion never started，旧B2
+canceled/never authorized。该记录不创建tag，也不修改旧R2 evidence。
 
 ## 9. Documentation scope and immutable antecedents
 
@@ -298,50 +301,19 @@ review均PASS；candidate已Ready for Gate B但Gate B仍Pending。该记录不�
 - `docs/SessionJournal/evidence/contract-freeze-r2-closure.md`
 - all `session-journal-contract-r2-approved-surfaces-v1` through `v6` tags and their approval ledgers
 
-## 10. Two-stage approval and promotion gates
+## 10. Historical gate disposition
 
-### Current state — implementation review PASS / evidence-docs review PASS / Ready for Gate B / Gate B Pending
+1. pre-B1 document review、历史Gate A、`83477c06` implementation与implementation/evidence/docs reviews均曾完成；
+2. 用户于2026-08-20撤回旧方向；旧Gate A随之终止，不得续用或解释为future implementation authority；
+3. Gate B **Canceled / Never Granted**；promotion **Never Started**；没有v6 current contract、approval ledger或new tag；
+4. 旧B2 **Canceled / Never Authorized**；Galatea从未获得使用这组SessionJournal seam/wire的product授权；
+5. code/test已由single atomic rollback `1d8c33bb`回到`a5098a77` exact SessionJournal product/test tree；
+6. current code与current approved Tier-A authority均为Prepared v5/recipe v1/count `0..128`；旧R2 contract/evidence/tags
+   保持不动。
 
-本文件的pre-B1 design已完成独立文档审阅，Gate A亦已于2026-08-20获用户显式授权。B1 product/tests已完成、candidate
-evidence已形成；exact implementation range与evidence/docs的independent review均PASS、findings为0，candidate已Ready for Gate B。
-这些PASS与Gate A都不授予Gate B、current contract、approval evidence、deployment或tag。
+## 11. Terminal historical boundary
 
-### Gate A — explicit user authorization to implement
-
-用户已于 2026-08-20 明确“授权 Gate A：按 Prepared v6 Tier-A Candidate 实施 WP-07B B1”，因此可修改
-§7 product 与 §8.1 tests。Gate A 是施工授权，**不是** Tier-A final approval/freeze，也不授权 WP-07B B2、
-current contract、approval evidence、deployment 或 tag。
-
-### Implementation and evidence review gate
-
-B1 code/tests的independent reviewer已对exact commit检查v5 byte preservation、v6 strict grammar、dual-read/cross-pair
-rejection、mixed journal、old-reader Unsupported、recovery zero-access、tool inheritance、hashes、rollback和dependency
-boundary，并报告PASS。§8.2 candidate evidence与docs同步也已通过独立review、findings为0。两类PASS只使candidate
-Ready for Gate B；实施者不能自我promotion。
-
-### Gate B — explicit user final approval
-
-只有 independent code/evidence review PASS 后，用户才能对 exact reviewed candidate 给出 final approval。仅在 Gate B 后，
-独立 promotion package 才可：
-
-- add `docs/SessionJournal/current/contracts/completion-request-prepared-v6.md`
-- add `docs/SessionJournal/evidence/completion-request-prepared-v6-approval.md`
-- update router、evidence index 与 doc-check scope to current/approved state
-- create one new immutable annotated tag that pins the exact approval ledger and reviewed implementation
-
-新 tag 名称、target、message 与 evidence hashes 必须在 promotion review 中 exact 锁定，不能由本 Candidate 预占或暗示已
-存在。Gate B approval 不移动任何旧 R2 tag；new contract/tag 是 post-R2 amendment authority，不是 R2 surface-set v7。
-
-## 11. Candidate exit criteria
-
-本文只有在下列事项全部发生后才能退出 active Candidate：
-
-1. **Complete** — pre-B1 independent document review confirmed the authorized §§2–10 shape；
-2. **Complete (2026-08-20)** — user grants Gate A authorization；
-3. **Implementation Complete / Review PASS；candidate evidence Assembled / independent docs review PASS**；
-4. **Pending** — user grants Gate B final approval；
-5. **Not Started** — a separate promotion package publishes the current contract/approval ledger/new immutable tag and passes
-   post-tag review。
-
-在此之前，current implementation authority仍是owning code/tests，Gate B前的approved Tier-A wire authority仍是R2中的
-Prepared v5/recipe v1。本文不得被router、operator或Agent解释为v6已获Gate B授权、已部署或已进入final contract/tag。
+本文已经以**Withdrawn / Rolled Back / Superseded**终止，不再等待任何旧gate。未来若重新考虑MemoPod与
+SessionJournal/Galatea结合，必须先解决active integration plan列出的设计闸，再建立fresh Candidate、fresh independent
+review、fresh user implementation authorization与fresh final approval gates。不得复制旧Gate A原文、提交链或历史PASS来
+跳过任何fresh gate，也不得把本文重新移动回active后直接施工。

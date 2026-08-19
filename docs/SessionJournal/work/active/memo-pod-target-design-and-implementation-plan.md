@@ -1,21 +1,22 @@
 # MemoPod 动态外置记忆目标设计与分步骤施工计划
 
-状态：Reviewed target proposal；WP-00–WP-06与Track C1已提交；Track C2 provider-free candidate已提交、authenticated
-canary仍NotRun；WP-07B B1 implementation complete、candidate evidence assembled、independent implementation review PASS、
-independent evidence/docs review PASS、Ready for Gate B / Gate B Pending；promotion未开始，B2未授权/未开始
+状态：Reviewed MemoPod core target；WP-00–WP-06、Track C1与Track C2 provider-free candidate不受rollback影响；authenticated
+canary仍NotRun；**WP-07 Design Reopened**，旧WP-07A/B已撤回，B1已由`1d8c33bb`回滚，旧Gate A不可续用，
+Gate B/B2 canceled且从未授权
 
 本文定义一种与 RecapGrid 互补、面向具体事务细节的动态外置记忆单元，并把后续实现拆成可独立审阅、
 验证和收口的工作包。本文是 target/plan，不是当前实现事实；当前事实仍以 owning code、tests 与
 [SessionJournal 当前架构地图](../../current/architecture-and-code-map.md)为准。
 
+current MemoPod是standalone library/operator能力，没有product upper consumer；其production显式`ProjectReference`仅为
+`Completion.Abstractions`，不依赖SessionJournal、Galatea或RecapGrid。
+
 状态证据只作导航：WP-00 target lock为`f0121f2b`；WP-01至WP-05 product/test链已收口到`7cd69639`；WP-06
 fake-first operator及tail evidence为`6f2000d6`、`eaa57715`；Track C1为`18f168b8`；Track C2的provider-free live
 runner/evidence为`2fa1ee3b`，不构成真实DeepSeek cache/质量/价格证据；WP-07A plan review收口于`d5a403c4`，Tier-A
-Candidate及review tail为`edfe5230`、`19776980`。Gate A已于2026-08-20由用户显式授权，只允许按Candidate实施
-WP-07B B1 product/tests；B1 implementation source为`83477c06`，candidate evidence见
-[completion-request-prepared-v6-candidate.md](../../evidence/completion-request-prepared-v6-candidate.md)。independent
-implementation与evidence/docs review均PASS，candidate已Ready for Gate B、Gate B仍Pending；promotion未开始，B2、current
-contract、approval evidence与new tag均未授权。
+Candidate及review tail为`edfe5230`、`19776980`，historical B1为`83477c06`。用户于2026-08-20撤回旧方向；
+[historical evidence](../../evidence/completion-request-prepared-v6-candidate.md)保留原implementation/review事实，code/test由
+`1d8c33bb`回到`a5098a77` exact SessionJournal tree。Gate B never granted，promotion never started，旧B2 never authorized。
 
 ## 1. Intent
 
@@ -523,13 +524,12 @@ focused tests是后一包的输入；不允许为了跑通 vertical在后续包�
 
 ```text
 WP-00 -> WP-01 -> { WP-02, WP-03 } -> WP-04 -> WP-05 -> WP-06
-                                                |
-                                                +-> WP-07A -> WP-07B
 
 WP-06 ----+
-           +-> Track C2 -+
-Track C1 --+              +-> WP-07C
-WP-07B ------------------+
+           +-> Track C2 provider-free candidate
+Track C1 --+
+
+WP-07 Design Reopened (no implementation edge until fresh design gates close)
 ```
 
 Track C1/C2是route-specific证据旁路；它们不改变MemoPod library主链的correctness gate。
@@ -889,78 +889,32 @@ Galatea integration design。
 
 - 当前route有可复现质量/经济性证据；telemetry不权威或质量不达标时明确No-Go或缩小claim。
 
-### WP-07A：Galatea/SessionJournal integration plan lock
+### WP-07：Design Reopened — no active implementation package
 
-**Intent**
+**Terminal disposition of the old attempt**
 
-- 先以docs/tests design关闭query-dependent memory进入main request的跨层authority、recovery与cost边界。
+- 旧WP-07A plan和Prepared v6 Candidate只作historical input；
+- historical B1 `83477c06`及其reviews曾PASS，但已由single atomic rollback `1d8c33bb`撤回；
+- 旧Gate A随用户撤回终止且不可续用；Gate B canceled/never granted，promotion never started；
+- 旧B2 canceled/never authorized，Galatea MemoPod adapter/config/vertical从未实现；
+- WP-00–WP-06、Track C1、Track C2与MemoPod core不受影响。
 
-**Plan-lock prerequisites**
+**Current design gates**
 
-- WP-05关闭；
-- 重新核对当时owning current code/tests中的context-candidate seam、Prepared manifest与
-  `SessionRuntimeRecoveryRequirements`分支。WP-06 operator证据可并行补齐，不要求Track C2先通过。
+active owner是[Design Reopened integration plan](memo-pod-galatea-integration-plan.md) §0。必须先分别关闭：query timing、
+Pod动态create/classify/split/merge、Pod Indexer、empty-query prompt-cache renewal、main-thread injection、duplicate injection与
+cross-turn dangling/reference continuity。
 
-**In scope**
+**Hard stop**
 
-- 锁定MemoPod owner scope、pending-observation query、failure policy与privacy boundary；
-- 指定supplemental context的新seam或recipe evolution，不复用`ICoherentContextCandidateSource`伪造provenance；
-- 锁定selected Memo carrier、order、delimiter、recipe/version与request commitment；
-- 证明Prepared request自包含selected exact text；锁定recall发生在Prepared之前、crash重试可能重复调用/计费；
-- 对`FrozenCompletionRequired`锁定Prepared/Started recovery零MemoPod/recall access；对
-  `NewRequestRequired`、`ToolContinuationRequired`及tool result后下一次completion锁定selection复用/重选策略；
-- disabled/missing/unavailable/no-match与主completion的closed Host policy；
-- cross-layer test matrix，并产出WP-07B的exact code/test write scope。
-
-**Out of scope**
-
-- production code、真实provider激活、自动写Memo、多Pod、聚类、跨用户共享、RecapGrid schema变化。
-
-**Write scope**
-
-- `docs/SessionJournal/work/active/memo-pod-galatea-integration-plan.md`
-- `docs/SessionJournal/README.md`
-- `docs/SessionJournal/session-journal-doc-check-scope.txt`
+六项设计闸全部完成独立review并获得fresh user design authorization前，不得继续设计或实现SessionJournal integration
+interface、Prepared recipe/body version、recovery wire、Galatea adapter/config或main-thread injection。未来若继续，必须新建
+fresh Candidate、fresh code/test scope与fresh user gates；旧WP-07A/B text、Gate A和historical PASS都不能直接复用。
 
 **Done when**
 
-- independent cross-layer review确认Prepared副本只是request recovery authority，且方案没有改变raw/RecapGrid
-  authority；`FrozenCompletionRequired`与new/tool-continuation分支不混淆；WP-07B可以按exact scope施工。
-
-### WP-07B：fake-provider Galatea vertical
-
-**Current split status**
-
-- B1 SessionJournal generic supplemental seam与Prepared v6 implementation已完成、candidate evidence已形成，independent
-  implementation review与independent evidence/docs review均PASS；Ready for Gate B / Gate B Pending，promotion未开始；
-- B2 Galatea MemoPod adapter/config/provider-free vertical未授权、未开始，因此完整WP-07B仍未完成。
-
-**Intent**
-
-- 只实现WP-07A锁定的单Pod、query-dependent supplemental context vertical。
-
-**In scope**
-
-- 一个显式配置的单Pod Galatea route；
-- pre-main-completion recall；
-- selected Memo bounded context projection；
-- Prepared/Started/recovery与provider-call ordering tests；
-- disabled/missing/unavailable/no-match的closed Host behavior。
-
-**Out of scope**
-
-- 未在WP-07A锁定的tool-loop语义、真实provider激活、自动写Memo、多Pod、聚类、跨用户共享、
-  RecapGrid schema变化。
-
-**Done when**
-
-- fresh turn、tool continuation与reopen均证明MemoPod只是补充context owner，不改变raw authority或RecapGrid
-  continuity职责；Prepared/Started replay路径对MemoPod与recall provider均是零访问。
-
-### WP-07C：route-specific activation gate
-
-Track C2通过、WP-07B provider-free vertical关闭、隐私/retention/operator rollback前置条件满足后，才可为具体
-Galatea route建立candidate activation与rollback工作包。它不是library correctness或fake vertical的验收条件。
+- 只表示六项设计问题已有可独立审阅的决策与authority/cost/privacy/recovery边界；不表示任何upper-consumer
+  implementation获准开始。
 
 ## 10. Acceptance matrix
 
@@ -978,7 +932,7 @@ Galatea route建立candidate activation与rollback工作包。它不是library c
 | Recall protocol | exactly-one required tool、strict IDs、empty≠failure、same-Frozen-Pod hydrate；production无detached prompt/resolve |
 | Safety | untrusted Memo无写权限/其他工具；logs/reports默认不泄漏正文 |
 | Cache evidence | Track C2：real DeepSeek cold/warm telemetry；无权威字段则记录unavailable且不宣称命中 |
-| Recovery integration | 仅WP-07B：`FrozenCompletionRequired`以Prepared自包含副本恢复且零MemoPod/recall access；`NewRequestRequired`/`ToolContinuationRequired`按WP-07A锁定策略执行 |
+| Upper-consumer integration | 当前无product upper consumer；WP-07 Design Reopened六项闸关闭并获得fresh授权前，无SessionJournal/Galatea interface、wire、recovery或injection acceptance |
 | Documentation | current/target/evidence分层、README routing、docs checker与diff check通过 |
 
 ## 11. Review checklist
