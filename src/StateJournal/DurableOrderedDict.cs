@@ -39,9 +39,10 @@ public abstract class DurableOrderedDict<TKey, TValue> : DurableDictBase<TKey>
 
     /// <summary>插入或更新。</summary>
     /// <remarks>
-    /// 对 <see cref="DurableObject"/> 和 <see cref="Symbol"/> 这类可表达空值的 facade，空值会被正确持久化
-    /// （DurableObject → <see cref="LocalId.Null"/>，Symbol → <see cref="SymbolId.Null"/>）并在 <see cref="Get"/> 时原样返回。
-    /// 裸 <c>string</c> 走值语义 payload 路线；<c>null</c> 会按空字符串写出。
+    /// <see cref="DurableObject"/> 引用值可为 <c>null</c>，wire 上表示为 <see cref="LocalId.Null"/>；
+    /// <see cref="string"/> value 保留 <c>null</c>，并与空字符串区分；
+    /// <see cref="Symbol"/> 与 <see cref="ByteString"/> 是没有 null 状态的值类型，<c>default</c> 分别表示具体的
+    /// <see cref="Symbol.Empty"/> 与 <see cref="ByteString.Empty"/>。
     /// </remarks>
     public abstract UpsertStatus Upsert(TKey key, TValue? value);
 

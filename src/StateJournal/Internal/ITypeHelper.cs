@@ -221,6 +221,20 @@ internal readonly struct StringHelper : ITypeHelper<string> {
 }
 
 /// <summary>
+/// 值语义 <see cref="ByteString"/> 的序列化 Helper。
+/// 直接把 byte payload 写入帧体，不经过 per-Revision symbol table 或任何 intern/dedup 层。
+/// </summary>
+internal readonly struct ByteStringHelper : ITypeHelper<ByteString> {
+    public static bool Equals(ByteString a, ByteString b) => a.Equals(b);
+    public static int Compare(ByteString a, ByteString b) => a.CompareTo(b);
+    public static int GetHashCode(ByteString value) => value.GetHashCode();
+    public static void Write(BinaryDiffWriter writer, ByteString v, bool asKey) => writer.BareBlobPayload(v.AsSpan(), asKey);
+    public static ByteString Read(ref BinaryDiffReader reader, bool asKey) => reader.BareBlobPayload(asKey);
+    public static void UpdateOrInit(ref BinaryDiffReader reader, ref ByteString old) => old = Read(ref reader, asKey: false);
+    public static uint EstimateBareSize(ByteString value, bool asKey) => CostEstimateUtil.WriteBytesSize(value.AsSpan());
+}
+
+/// <summary>
 /// <see cref="LocalId"/> 的序列化 Helper。
 /// 用于 <see cref="DurObjDictImpl{TKey, TDurObj, KHelper}"/> 内部以 LocalId 存储 DurableObject 引用。
 /// </summary>

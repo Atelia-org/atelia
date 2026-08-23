@@ -345,12 +345,26 @@ Typed 容器的优点：
 - 更适合作为长期 schema。
 - `DurableHashSet<T>` 目前只有 typed 路线；元素支持矩阵与 dict key 一致，不支持 `DurableObject` 作为元素。
 
-typed 容器里的字符串类型选择：
+当前 typed scalar leaf 支持矩阵：
+
+| 类型 | Dict / OrderedDict key | Dict / OrderedDict value、Deque element | HashSet element | ValueTuple element |
+|---|---:|---:|---:|---:|
+| `bool` | ✅ | ✅ | ✅ | ✅ |
+| `string` / `Symbol` / `ByteString` | ✅ | ✅ | ✅ | ✅ |
+| `double` / `float` / `Half` | ✅ | ✅ | ✅ | ✅ |
+| `ulong` / `uint` / `ushort` / `byte` | ✅ | ✅ | ✅ | ✅ |
+| `long` / `int` / `short` / `sbyte` | ✅ | ✅ | ✅ | ✅ |
+
+`ValueTuple` 支持由上述 leaf 递归组成的 2–7 元 tuple。`DurableObject` / durable container value 属于另一条专用 value 路线，不是 scalar。
+
+typed 容器里的字符串 / 字节序列类型选择：
 
 - `string` 是值语义 payload-backed 字符串，适合作为普通 typed key/value。
-- `ByteString` 是值语义 payload-backed 字节串，适合 mixed 容器里的 blob/opaque bytes 值。
-- `Symbol` 是显式 symbol-backed facade，适合需要表达“身份/驻留字符串”语义的字段。
-- mixed 容器里的 `Symbol` 走 intern 池；mixed 容器里的 `string` / `ByteString` 走独立 owned payload，不再 silent intern。
+- `ByteString` 是以 byte 为元素的值语义 payload-backed 字节串，可作为 typed key/value、deque 元素、hash-set 元素和 tuple 元素；也可作为 mixed 容器的 blob value。
+- typed `string` / `ByteString` 都直接写 payload，不经过 per-Revision symbol table，也不提供跨逻辑位置的 intern/dedup；两者都使用内容 equality，并沿用各 typed 容器自身的 dirty tracking 语义。
+- `string` key 使用 ordinal 字符序；`ByteString` key 使用 unsigned byte 字典序。
+- `Symbol` 是显式 symbol-backed facade，适合确实需要 intern/身份语义的字段。
+- mixed 容器里的 `Symbol` 走 intern 池；mixed `string` / `ByteString` 走各自的 owned payload pool。
 
 例如：
 
@@ -393,6 +407,8 @@ null
     - `DurableDeque`：`PushFrontTrustedBlob(value)`、`PushBackTrustedBlob(value)`、`TrySetFrontTrustedBlob(value)`、`TrySetBackTrustedBlob(value)`、`TrySetAtTrustedBlob(index, value)`。
     - 这些 trusted API 要求传入由 `ByteString.FromTrustedOwned(byte[])` 构造的值，或具备等价的“caller 独占 + 后续不可变”契约；转交后继续 mutate 原数组会静默破坏 StateJournal 内部状态。
 
+typed 容器不经过 `ValueBox` / owned blob pool，也不会在写入时再做一次 defensive clone；它直接保存 `ByteString` 值。普通 `new ByteString(byte[])` 已隔离外部数组；若使用 `FromTrustedOwned`，调用方必须从构造时起遵守所有权转交契约，尤其不能在该值作为 dict/ordered-dict key 或 hash-set element 后继续修改原数组。
+
 ### 4.3 null 语义
 
 所有容器类型参数都有 `where T : notnull`，但这不表示引用类型值不能存 `null`。
@@ -400,11 +416,11 @@ null
 ```csharp
 var typedString = rev.CreateDict<string, string>();
 typedString.Upsert("nickname", null);
-typedString.Get("nickname", out string? nickname); // nickname == "", issue == None
+typedString.Get("nickname", out string? nickname); // nickname == null
 
-var typedSymbol = rev.CreateDict<string, Symbol>();
-typedSymbol.Upsert("owner", null);
-typedSymbol.Get("owner", out Symbol owner); // owner.IsNull
+var typedBlob = rev.CreateDict<string, ByteString>();
+typedBlob.Upsert("payload", default);
+typedBlob.Get("payload", out ByteString payload); // payload == ByteString.Empty
 
 var mixed = rev.CreateDict<string>();
 mixed.Upsert<string>("nickname", null);
@@ -413,7 +429,7 @@ mixed.Upsert("child", (DurableObject?)null);
 mixed.TryGet("child", out DurableDict<string, int>? child); // child == null
 ```
 
-也就是说：typed `string` 会把 `null` 规范化为空字符串；mixed `string`、typed `Symbol` 和 mixed `DurableObject` 则保留显式 null facade；`ByteString` 是值类型，没有 `null` 概念，`default(ByteString)` 等价于 `ByteString.Empty`。
+也就是说：typed `string` value 会保留 `null`，并与 `""` 区分；mixed `string` 的 `null` 存为 `ValueBox.Null`。`Symbol` 与 `ByteString` 都没有 null 状态：`default(Symbol) == Symbol.Empty`，`default(ByteString) == ByteString.Empty`。两者的 empty 都是具体值，不表示 mixed null。
 
 对值类型，如 `int`，`TValue?` 在 `where TValue : notnull` 下只是 nullable annotation，不是 `Nullable<T>` 包装。
 
@@ -842,7 +858,7 @@ repo.Commit(root).Value;
 - dirty frozen source 若只是想拿 committed clone，可改用 `Repository.ReplayCommitted(source, LoadMaterializationMode.ForceMutable)`。
 - `DurableHashSet<T>` 当前只有 typed 版本；若需求是异构集合，当前没有 mixed hash set，通常改用 mixed dict 模拟 membership。
 - mixed 容器里的 `double` 默认可能采用紧凑编码；需要精确保存所有 double bit 时使用 `UpsertExactDouble` 或 exact double helpers。
-- typed `string` 和 mixed `string` 都走值语义 payload 路线；typed/mixed `Symbol` 才走 intern 池。注意 typed `string` 的 `null` 规范化为空字符串，而 mixed `string` 的 `null` 存为 `ValueBox.Null`。
+- typed/mixed `string` 与 `ByteString` 都走值语义 payload 路线，不做 symbol intern；typed/mixed `Symbol` 才走 intern 池。typed `string` value 保留 `null`，mixed `string` 的 `null` 存为 `ValueBox.Null`；`ByteString` 自身没有 null 状态。
 - `SymbolTable` 是持久化 mirror，不是业务可见数据表。
 - `Repository` 目录文件不要手工改；branch refs 是 CAS 保护的元数据。
 - 业务对象创建优先用 `Revision.Create*`，不要直接用 `Durable.*` 工厂绕过绑定。

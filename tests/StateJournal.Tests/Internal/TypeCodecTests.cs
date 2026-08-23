@@ -44,6 +44,7 @@ public class TypeCodecTests {
     [InlineData((byte)TypeOpCode.PushDouble, typeof(double))]
     [InlineData((byte)TypeOpCode.PushSymbol, typeof(Symbol))]
     [InlineData((byte)TypeOpCode.PushString, typeof(string))]
+    [InlineData((byte)TypeOpCode.PushByteString, typeof(ByteString))]
     public void PushLeaf_DecodesCorrectType(byte op, Type expected) {
         Assert.True(Decode([op], out var result));
         Assert.Equal(expected, result);

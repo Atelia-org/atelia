@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `src/StateJournal` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-06-18
+> **最后更新**：2026-08-24
 
 > **使用者入口**：面向实际接入与 API 调用的高密度手册见 [`usage-guide.md`](usage-guide.md)。
 
@@ -70,7 +70,7 @@ private T[]?[] _slabs;
 
 当前 typed 路线的运行时模型已经改变：
 
-- `TypedDict<TKey, Symbol>` / `TypedDeque<Symbol>` / `Symbol key`
+- `Symbol` 是完整 scalar leaf，可用于 typed key/value、deque/hash-set element 与 tuple element
 - 运行时 facade 是 `Symbol`
 - `Symbol.Value` 承载实际字符串内容（**契约非 null**；`default(Symbol)` 等价于 `Symbol.Empty`，对应空字符串 symbol）
 - 不存在 "null symbol" 这一态：构造器 / 隐式转换遇到 null 会抛 `ArgumentNullException`；wire 上禁止 typed `Symbol` 出现 `SymbolId.Null`，遇到则抛 `InvalidDataException`
@@ -86,26 +86,34 @@ private T[]?[] _slabs;
 
 但 mixed 路线现在已**对称分流**为三条独立通路：
 
-- `MixedDict<TKey, Symbol>` / `MixedDeque<Symbol>`（视图：`OfSymbol`）：
+- `DurableDict<TKey>` / `DurableDeque` / `DurableOrderedDict<TKey>` 的 `Symbol` 视图（`OfSymbol`）：
   - `Upsert<Symbol>(...)` 走 intern 通路 → `Revision._symbolPool` → 同内容去重；
   - 容器中存 `ValueBox(HeapValueKind.Symbol, SymbolId)`；
   - wire 上落 SymbolId VarUInt（同 typed Symbol）；
   - `ValueKind.Symbol`。
-- `MixedDict<TKey, string>` / `MixedDeque<string>`（视图：`OfString`）：
-  - `Upsert(key, "literal")` 经类型推断走 string payload 通路 → `ValuePools.OfOwnedString` → **不去重**，每次独立 slot；
+- `DurableDict<TKey>` / `DurableDeque` / `DurableOrderedDict<TKey>` 的 `string` 视图（`OfString`）：
+  - `Upsert(key, "literal")` 经类型推断走 string payload 通路 → `ValuePools.OfOwnedString` → 不做跨逻辑位置去重，不同位置各自持有 owned slot；同位置等值更新复用旧 slot；
   - 容器中存 `ValueBox(HeapValueKind.StringPayload, OwnedSlotHandle)`；
   - wire 上落 `0xC0` tag + UTF-8/UTF-16LE 自适应 payload；
   - `ValueKind.String`；
   - 写 `null` → `ValueBox.Null`（不抛 ANE）；
   - empty `""` 不进 intern 池。
-- `MixedDict<TKey, ByteString>` / `MixedDeque<ByteString>`（视图：`OfBlob`）：
-  - `Upsert(key, new ByteString(bytes))` 走 blob payload 通路 → `ValuePools.OfOwnedBlob` → **不去重**，每次独立 slot；
+- `DurableDict<TKey>` / `DurableDeque` / `DurableOrderedDict<TKey>` 的 `ByteString` 视图（`OfBlob`）：
+  - `Upsert(key, new ByteString(bytes))` 走 blob payload 通路 → `ValuePools.OfOwnedBlob` → 不做跨逻辑位置去重，不同位置各自持有 owned slot；同位置等值更新复用旧 slot；
   - 容器中存 `ValueBox(HeapValueKind.BlobPayload, OwnedSlotHandle)`；
   - wire 上落 `0xC1` tag + `VarUInt(byteLength)` + raw bytes；
   - `ValueKind.Blob`；
   - `ByteString` 是值类型，没有 `null` 概念；`default(ByteString)` / `ByteString.Empty` 表示具体空 blob，不等价于 `ValueBox.Null`。
 - 三条通路互**不互通**：同一 key 先 `Upsert<Symbol>` 再 `OfString.Get` / `OfBlob.Get` 返回 `GetIssue.TypeMismatch`，其他跨 kind 组合同理；ValueKind 严格区分。
 - string/blob payload 通路是 owned 资源：dirty 修改 inplace 复用 slot；commit/discard/fork 时由五件套（`UpdateOrInit`/`Freeze`/`CloneFrozenForNewOwner`/`ReleaseSlot`/equality）维护生命周期。
+
+typed `ByteString` 已作为完整 scalar leaf 接入 `HelperRegistry`：
+
+- 可作为 dict / ordered-dict key、hash-set element、typed value、deque element 和 tuple element；
+- equality / hash 按字节内容，ordered compare 按 unsigned byte 字典序；
+- wire 直接写 `VarUInt(byteLength) + raw bytes`，不经过 `ValueBox`、owned blob pool、`StringPool` 或任何 intern/dedup 层；
+- `default(ByteString) == ByteString.Empty`，没有 null 状态。
+- typed 路线不会在容器写入时二次 clone；`FromTrustedOwned` 的所有权转交契约会直接延续到容器内部，作为 key/hash-set element 后尤其禁止外部 mutation。
 
 ### 4. DurableObject 已引入 fork / frozen 对象级语义
 
@@ -249,6 +257,7 @@ load / 历史回放完成后：
 
 - 对 `double` / `float` / `Half`，当前 helper 的 `Compare` 已做 bit-pattern tie-break
 - 这样 `OrderedDict` 会区分 `+0.0` / `-0.0` 和不同 NaN payload，不再像默认 `CompareTo` 那样把它们折叠成同一个 key
+- 对 `ByteString`，`Compare` 是 unsigned byte 字典序；`Equals` / `GetHashCode` 都基于完整字节内容，因此满足 ordered-key helper 不变量
 
 ### 9. `LeafChainStore` 里移动 committed 槽位的 GC 不能与活跃 dirty tracking 共存
 
@@ -434,13 +443,15 @@ rev.CreateHashSet<int>();             // DurableHashSet
 - heap slot
 - durable ref
 - symbol-backed `Symbol`
-- payload-backed `string`
+- payload-backed `string` / `ByteString`
 
 当前关键边界：
 
 - mixed `Symbol` 保存 `SymbolId`，走 `Revision._symbolPool` intern。
 - mixed `string` 保存 `HeapValueKind.StringPayload` + `ValuePools.OfOwnedString` owned slot，不去重、不进 intern 池。
+- mixed `ByteString` 保存 `HeapValueKind.BlobPayload` + `ValuePools.OfOwnedBlob` owned slot，不去重、不进 intern 池。
 - typed `Symbol` 的公开 facade 不再裸露 `SymbolId`。
+- typed `string` / `ByteString` 直接保存 facade 并写 payload，不经过 owned pool 或 intern。
 
 这几条路线不能混淆。
 
@@ -476,8 +487,8 @@ StringPool      // InternPool<string> + identity cache
 
 - `_symbolPool` 是运行时 symbol 真源
 - `_symbolMirror` 是 durable mirror，不是运行时真源
-- 用户对象写出时，typed `Symbol` / mixed string 会通过 writer 的 write-through 路径把 mirror 补齐
-- typed `string` 走 inline payload 路线，不触达 symbol mirror
+- 用户对象写出时，typed `Symbol` / mixed `Symbol` 会通过 writer 的 write-through 路径把 mirror 补齐
+- typed/mixed `string` 与 `ByteString` 的 payload 路线均不触达 symbol mirror
 - 提交期随后只需 prune 不可达旧 symbol，并可选做 full validation
 
 相关 API：
@@ -589,6 +600,9 @@ PushInt32, PushString -> MakeTypedDict
 PushString            -> MakeMixedDict
 PushInt32             -> MakeTypedDeque
 PushInt32, PushString -> MakeTypedOrderedDict
+PushByteString                    -> MakeTypedDeque
+PushByteString, PushString        -> MakeTypedDict
+PushInt32, PushByteString         -> MakeTypedOrderedDict
 ```
 
 关键文件：
@@ -624,7 +638,7 @@ PushInt32, PushString -> MakeTypedOrderedDict
 
 `HelperRegistry` 内部已做拆分重构：
 
-- 基元标量类型的解析提取为 `ResolveScalarValueLeafHelper`（与 `ResolveKeyHelper` 共享逻辑）
+- 基元标量类型的解析提取为 `ResolveScalarValueLeafHelper`（与 `ResolveKeyHelper` 共享逻辑）；shared scalar leaf 当前包含 `ByteString`，因此 key/value/tuple/hash-set 能力自然对齐
 - Tuple 元素解析 `ResolveTupleElementHelper` 不再递归调用完整的 `ResolveValueHelper`，而是先尝试 scalar leaf，再尝试嵌套 tuple
 - 这使得 tuple 内部不会意外匹配到 `DurableDict`/`DurableDeque`/`DurableOrderedDict` 等容器类型作为 tuple 元素
 
@@ -632,7 +646,7 @@ PushInt32, PushString -> MakeTypedOrderedDict
 
 - 用于 `SkipListCore` 等有序容器的键比较
 - 默认委托 `Comparer<T>.Default`（对数值类型已跨平台稳定）
-- 对 `Symbol` / `string` 覆盖为 `StringComparison.Ordinal` 语义
+- 对 `Symbol` / `string` 使用 ordinal 字符序；对 `ByteString` 使用 unsigned byte 字典序
 - 所有 `ValueTupleHelper` 也实现了字典序 `Compare`
 
 关键文件：
@@ -838,7 +852,7 @@ Load ObjectMap frame chain
 
 | 模块 | 状态 | 备注 |
 |:-----|:-----|:-----|
-| ValueBox（Tagged-Pointer + Faces） | ✅ 已完成 | mixed string 继续 symbol-backed |
+| ValueBox（Tagged-Pointer + Faces） | ✅ 已完成 | mixed `string` / `ByteString` payload-backed；只有 `Symbol` symbol-backed |
 | SlotPool / GcPool / InternPool / StringPool | ✅ 已完成 | `SlotPool` 已支持 sparse value slab |
 | DictChangeTracker / DequeChangeTracker / SetChangeTracker | ✅ 已完成 | dict + deque + hash set 三条都已工作 |
 | DurableDict（Typed / Mixed / DurObj） | ✅ 已完成 | typed Symbol 延迟 intern 已打通 |
@@ -871,16 +885,21 @@ Load ObjectMap frame chain
 - `ApplyDelta` 先写 staging store 形态
 - `OnLoadCompleted` 前再 materialize 成 facade `string`
 
-### 2. Mixed 与 typed 的 string 语义绝不能混淆
+### 2. Symbol 与 payload string / ByteString 的语义绝不能混淆
 
 typed：
 
-- 运行时是 `string`
-- commit / load bridge 才碰 `SymbolId`
+- `Symbol` 运行时保存非 null facade；commit / load bridge 使用 `SymbolId` 并走 per-Revision intern
+- `default(Symbol) == Symbol.Empty`，empty symbol 会 intern 为非零 id，typed wire 禁止 `SymbolId.Null`
+- `string` / `ByteString` 运行时直接保存 facade 值，wire 直接写 payload
+- 两者都不经过 `SymbolId` 或 intern 池
+- `string` value 可为 null，`ByteString` 没有 null 状态
 
 mixed：
 
-- 运行时存的就是 `ValueBox(SymbolId)`
+- `Symbol` 存 `ValueBox(SymbolId)`，同内容 intern
+- `string` / `ByteString` 存各自 owned payload slot，不跨槽位去重
+- mixed null 是独立 `ValueBox.Null`，不等于 empty string/blob
 
 ### 3. 底层仍有 compaction 原语，不等于上层仍有 compaction 语义
 

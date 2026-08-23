@@ -21,6 +21,7 @@ public class TypeCodePrecomputeTests {
     [Theory]
     [InlineData(typeof(bool))]
     [InlineData(typeof(string))]
+    [InlineData(typeof(ByteString))]
     [InlineData(typeof(Symbol))]
     [InlineData(typeof(double))]
     [InlineData(typeof(float))]

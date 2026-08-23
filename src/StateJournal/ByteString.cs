@@ -3,14 +3,16 @@ using System.Text;
 namespace Atelia.StateJournal;
 
 /// <summary>
-/// Immutable 字节串值类型，作为 mixed payload <c>BlobPayload</c> 的业务侧 API。
-/// 与 <see cref="string"/> / <see cref="Symbol"/> 对称：值语义、不可变、<c>default</c> 等价于 <see cref="Empty"/>。
+/// Immutable 字节串值类型：既是 typed 容器的完整 scalar leaf，也是 mixed payload <c>BlobPayload</c> 的业务侧 API。
+/// 与 inline <see cref="string"/> 对称：值语义、不可变、按内容相等且不做跨逻辑位置的 intern/dedup；
+/// <c>default</c> 等价于 <see cref="Empty"/>。
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>术语对照</strong>：本类在用户侧称为 <c>ByteString</c>；在框架内部 / wire / pool / face 实现中统称为
-/// "Blob"（如 <c>HeapValueKind.BlobPayload</c> / <c>ValueKind.Blob</c> / <c>OfOwnedBlob</c> / <c>BlobPayloadFace</c> /
-/// <c>OfBlob</c> view / wire tag <c>0xC1</c>）。两个名字指代同一概念：immutable byte sequence with payload semantics。
+/// <strong>术语对照</strong>：本类及 typed registry / TypeCode 使用 <c>ByteString</c>；mixed value、tagged payload wire、
+/// pool 与 face 实现中通常称为 "Blob"（如 <c>HeapValueKind.BlobPayload</c> / <c>ValueKind.Blob</c> /
+/// <c>OfOwnedBlob</c> / <c>BlobPayloadFace</c> / <c>OfBlob</c> view / wire tag <c>0xC1</c>）。
+/// 两个名字指代同一概念：immutable byte sequence with payload semantics。
 /// 这与 <see cref="string"/>（业务 API）↔ <c>StringPayload</c>（内部前缀）的分工完全对称——业务侧用 BCL/简短名，
 /// 实现侧用 payload 概念专有术语。详见 <c>MixedValueCatalog.cs</c> 的术语表。
 /// </para>
@@ -20,13 +22,16 @@ namespace Atelia.StateJournal;
 /// 可用 <see cref="FromTrustedOwned(byte[])"/> 跳过 <see cref="ByteString"/> 自身的 clone；若还要跳过 mixed
 /// face 入池 clone，必须显式选择 trusted 入池路径。
 /// </para>
-/// <para><see cref="Equals(ByteString)"/> 走字节序列等值；<see cref="GetHashCode"/> 走 FNV-1a 32-bit。</para>
+/// <para>
+/// <see cref="Equals(ByteString)"/> 走字节序列等值；<see cref="CompareTo(ByteString)"/> 走 unsigned byte 字典序；
+/// <see cref="GetHashCode"/> 走 FNV-1a 32-bit。
+/// </para>
 /// <para>
 /// 暂不支持 <c>null</c> 概念：上层（mixed 容器 / wire）通过单独的 null tag 表达“无”，<see cref="ByteString"/> 自身只表示
 /// “一个具体的字节序列”（可以为空）。
 /// </para>
 /// </remarks>
-public readonly struct ByteString : IEquatable<ByteString> {
+public readonly struct ByteString : IEquatable<ByteString>, IComparable<ByteString> {
     private readonly byte[]? _data;
 
     /// <summary>
@@ -108,6 +113,11 @@ public readonly struct ByteString : IEquatable<ByteString> {
     internal byte[] DangerousGetUnderlyingArray() => _data ?? Array.Empty<byte>();
 
     public bool Equals(ByteString other) => AsSpan().SequenceEqual(other.AsSpan());
+
+    /// <summary>
+    /// 按 unsigned byte 的字典序比较，语义对应 <see cref="string"/> 的 ordinal comparison。
+    /// </summary>
+    public int CompareTo(ByteString other) => AsSpan().SequenceCompareTo(other.AsSpan());
 
     public override bool Equals(object? obj) => obj is ByteString other && Equals(other);
 

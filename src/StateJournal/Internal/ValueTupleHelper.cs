@@ -45,6 +45,9 @@ internal readonly struct ValueTuple2Helper<T1, T2, H1, H2> : ITypeHelper<ValueTu
     public static ValueTuple<T1, T2> Read(ref BinaryDiffReader reader, bool asKey) =>
         new(H1.Read(ref reader, asKey)!, H2.Read(ref reader, asKey)!);
 
+    public static uint EstimateBareSize(ValueTuple<T1, T2> value, bool asKey) =>
+        checked(H1.EstimateBareSize(value.Item1, asKey) + H2.EstimateBareSize(value.Item2, asKey));
+
     public static bool NeedVisitChildRefs => H1.NeedVisitChildRefs || H2.NeedVisitChildRefs;
 
     public static void VisitChildRefs<TVisitor>(ValueTuple<T1, T2> value, Revision revision, ref TVisitor visitor)
@@ -117,6 +120,13 @@ internal readonly struct ValueTuple3Helper<T1, T2, T3, H1, H2, H3> : ITypeHelper
 
     public static ValueTuple<T1, T2, T3> Read(ref BinaryDiffReader reader, bool asKey) =>
         new(H1.Read(ref reader, asKey)!, H2.Read(ref reader, asKey)!, H3.Read(ref reader, asKey)!);
+
+    public static uint EstimateBareSize(ValueTuple<T1, T2, T3> value, bool asKey) =>
+        checked(
+            H1.EstimateBareSize(value.Item1, asKey)
+            + H2.EstimateBareSize(value.Item2, asKey)
+            + H3.EstimateBareSize(value.Item3, asKey)
+        );
 
     public static bool NeedVisitChildRefs => H1.NeedVisitChildRefs || H2.NeedVisitChildRefs || H3.NeedVisitChildRefs;
 
@@ -213,6 +223,14 @@ internal readonly struct ValueTuple4Helper<T1, T2, T3, T4, H1, H2, H3, H4> : ITy
 
     public static ValueTuple<T1, T2, T3, T4> Read(ref BinaryDiffReader reader, bool asKey) =>
         new(H1.Read(ref reader, asKey)!, H2.Read(ref reader, asKey)!, H3.Read(ref reader, asKey)!, H4.Read(ref reader, asKey)!);
+
+    public static uint EstimateBareSize(ValueTuple<T1, T2, T3, T4> value, bool asKey) =>
+        checked(
+            H1.EstimateBareSize(value.Item1, asKey)
+            + H2.EstimateBareSize(value.Item2, asKey)
+            + H3.EstimateBareSize(value.Item3, asKey)
+            + H4.EstimateBareSize(value.Item4, asKey)
+        );
 
     public static bool NeedVisitChildRefs =>
         H1.NeedVisitChildRefs || H2.NeedVisitChildRefs || H3.NeedVisitChildRefs || H4.NeedVisitChildRefs;
@@ -326,6 +344,15 @@ internal readonly struct ValueTuple5Helper<T1, T2, T3, T4, T5, H1, H2, H3, H4, H
 
     public static ValueTuple<T1, T2, T3, T4, T5> Read(ref BinaryDiffReader reader, bool asKey) =>
         new(H1.Read(ref reader, asKey)!, H2.Read(ref reader, asKey)!, H3.Read(ref reader, asKey)!, H4.Read(ref reader, asKey)!, H5.Read(ref reader, asKey)!);
+
+    public static uint EstimateBareSize(ValueTuple<T1, T2, T3, T4, T5> value, bool asKey) =>
+        checked(
+            H1.EstimateBareSize(value.Item1, asKey)
+            + H2.EstimateBareSize(value.Item2, asKey)
+            + H3.EstimateBareSize(value.Item3, asKey)
+            + H4.EstimateBareSize(value.Item4, asKey)
+            + H5.EstimateBareSize(value.Item5, asKey)
+        );
 
     public static bool NeedVisitChildRefs =>
         H1.NeedVisitChildRefs || H2.NeedVisitChildRefs || H3.NeedVisitChildRefs || H4.NeedVisitChildRefs || H5.NeedVisitChildRefs;
@@ -455,6 +482,16 @@ internal readonly struct ValueTuple6Helper<T1, T2, T3, T4, T5, T6, H1, H2, H3, H
 
     public static ValueTuple<T1, T2, T3, T4, T5, T6> Read(ref BinaryDiffReader reader, bool asKey) =>
         new(H1.Read(ref reader, asKey)!, H2.Read(ref reader, asKey)!, H3.Read(ref reader, asKey)!, H4.Read(ref reader, asKey)!, H5.Read(ref reader, asKey)!, H6.Read(ref reader, asKey)!);
+
+    public static uint EstimateBareSize(ValueTuple<T1, T2, T3, T4, T5, T6> value, bool asKey) =>
+        checked(
+            H1.EstimateBareSize(value.Item1, asKey)
+            + H2.EstimateBareSize(value.Item2, asKey)
+            + H3.EstimateBareSize(value.Item3, asKey)
+            + H4.EstimateBareSize(value.Item4, asKey)
+            + H5.EstimateBareSize(value.Item5, asKey)
+            + H6.EstimateBareSize(value.Item6, asKey)
+        );
 
     public static bool NeedVisitChildRefs =>
         H1.NeedVisitChildRefs || H2.NeedVisitChildRefs || H3.NeedVisitChildRefs || H4.NeedVisitChildRefs || H5.NeedVisitChildRefs || H6.NeedVisitChildRefs;
@@ -601,6 +638,17 @@ internal readonly struct ValueTuple7Helper<T1, T2, T3, T4, T5, T6, T7, H1, H2, H
 
     public static ValueTuple<T1, T2, T3, T4, T5, T6, T7> Read(ref BinaryDiffReader reader, bool asKey) =>
         new(H1.Read(ref reader, asKey)!, H2.Read(ref reader, asKey)!, H3.Read(ref reader, asKey)!, H4.Read(ref reader, asKey)!, H5.Read(ref reader, asKey)!, H6.Read(ref reader, asKey)!, H7.Read(ref reader, asKey)!);
+
+    public static uint EstimateBareSize(ValueTuple<T1, T2, T3, T4, T5, T6, T7> value, bool asKey) =>
+        checked(
+            H1.EstimateBareSize(value.Item1, asKey)
+            + H2.EstimateBareSize(value.Item2, asKey)
+            + H3.EstimateBareSize(value.Item3, asKey)
+            + H4.EstimateBareSize(value.Item4, asKey)
+            + H5.EstimateBareSize(value.Item5, asKey)
+            + H6.EstimateBareSize(value.Item6, asKey)
+            + H7.EstimateBareSize(value.Item7, asKey)
+        );
 
     public static bool NeedVisitChildRefs =>
         H1.NeedVisitChildRefs || H2.NeedVisitChildRefs || H3.NeedVisitChildRefs || H4.NeedVisitChildRefs || H5.NeedVisitChildRefs || H6.NeedVisitChildRefs || H7.NeedVisitChildRefs;

@@ -17,6 +17,13 @@ public class ContainerCapabilityMatrixTests {
         { typeof(DurableHashSet<int>), DurableObjectKind.TypedHashSet },
         { typeof(DurableOrderedDict<int, double>), DurableObjectKind.TypedOrderedDict },
         { typeof(DurableOrderedDict<int>), DurableObjectKind.MixedOrderedDict },
+        { typeof(DurableDict<ByteString, ByteString>), DurableObjectKind.TypedDict },
+        { typeof(DurableDict<ByteString>), DurableObjectKind.MixedDict },
+        { typeof(DurableDeque<ByteString>), DurableObjectKind.TypedDeque },
+        { typeof(DurableHashSet<ByteString>), DurableObjectKind.TypedHashSet },
+        { typeof(DurableOrderedDict<ByteString, ByteString>), DurableObjectKind.TypedOrderedDict },
+        { typeof(DurableOrderedDict<ByteString>), DurableObjectKind.MixedOrderedDict },
+        { typeof(DurableDict<(ByteString, int), (ByteString, ByteString)>), DurableObjectKind.TypedDict },
     };
 
     // 使用 string key 的变体，确保引用类型 key 同样走通全管线
