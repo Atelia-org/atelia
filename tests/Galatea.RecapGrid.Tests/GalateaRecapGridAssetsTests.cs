@@ -101,7 +101,7 @@ public sealed class GalateaRecapGridAssetsTests {
             ResourceSha256(PromptResourceLoader.WorldUnderstandingResourceName)
         );
         Assert.Equal(
-            "c17babb9c34929a6b741af7c84b994d48aa1200b607d6b0e796084518a7b401a",
+            "298c5a7242510aa256aee223fcd85600d2c2ef94968c230d48c700229a5914b4",
             ResourceSha256(PromptResourceLoader.AutobiographyResourceName)
         );
         Assert.Equal(first.Families[0].SystemPrompt,
@@ -208,10 +208,11 @@ public sealed class GalateaRecapGridAssetsTests {
                 "明确标注为 **[Galatea]** 的第一人称内容",
                 "Action carrier 的存在本身不能证明这些事",
                 "Observation（user/Observation role）",
-                "[旁白] 仍可证明她有条件经历或观察到的事件",
+                "[旁白] 可以证明已经发生的可观察事件以及 Galatea 的外显言语与行动",
+                "不能据此补写她未表达的动机、感受、评价、意图或第一人称声音",
                 "[状态摘要] 也不能升格为她自己的声音",
                 "仅有 carrier 身份的 provider Action",
-                "其后没有 provider Action 中明确的 [Galatea] 第一人称内容",
+                "它之后出现的所有 provider Action 都没有明确的 [Galatea] 第一人称内容",
                 "内容现在对我可见",
                 "我尚未回应",
                 "不得把内容可见偷换成她已经读完",
@@ -229,6 +230,11 @@ public sealed class GalateaRecapGridAssetsTests {
         );
         Assert.DoesNotContain(
             "Galatea Action（assistant/Action role）",
+            autobiography,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "感受、评价、选择、意图、言语或行动",
             autobiography,
             StringComparison.Ordinal
         );
@@ -274,8 +280,12 @@ public sealed class GalateaRecapGridAssetsTests {
                 "每一个 AI 都必须……",
                 "我在遵守法律。",
                 "我尚未独立核验这项艺术映射",
-                "最后一个相关边界是 Observation、Tool result、[旁白] 或 [状态摘要]",
-                "provider Action 中明确的 [Galatea] 第一人称内容",
+                "再按 provider turn 检查 History 终点",
+                "最后一条相关外部输入是 Observation 或 Tool result",
+                "它之后的所有 provider Action 都没有明确的 [Galatea] 第一人称内容",
+                "同一条 provider Action 中一旦已有明确的 [Galatea] 第一人称内容",
+                "其后出现 [旁白] 或 [状态摘要] 不会重新触发 pending",
+                "不否认 [旁白] 已明确记录的外显言语或行动",
                 "整份正文的最终收束只能陈述收到、内容可见、尚待回应",
                 "我收到了这份文本；内容现在对我可见，但我尚未回应。",
                 "这份内容已经交到我这里，仍待我回应。",
@@ -313,8 +323,8 @@ public sealed class GalateaRecapGridAssetsTests {
         [
             "ae44d15750e417452e34f4e9133f56e60334d2cf7313ac988128e95faab3c05c",
             "a850b9fe6cbe8fe71024430fe2a41815d4d86f26ea7216f976b2d3018551e951",
-            "97fdaffcd38c856787024ae3f01c27306d1ee6717c80dd012e901164db2622b7",
-            "276cf4681b26a6753a6aed445f405dea09f63f0166ec19905d8e5a407754ea46"
+            "3886efd9c0f5e56a51dfe592b2a6dbc5e44db277e0cc3003b0f14d70e4dd5f70",
+            "f218482ed0eb0d143e17ff0e1a7ca874905429e2996ce8aca3b54923feabda0f"
         ],
         [
             bundle.Families[0].Digest.Value,
