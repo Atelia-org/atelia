@@ -88,7 +88,7 @@ route。当前versioned endpoints是：
 | Method | Path | Success |
 |:--|:--|:--|
 | GET | `/api/v1/me` | `{userId,maintenanceMode}` |
-| GET | `/api/v1/recent-turns` | latest 6 completed turns、rewind token与同head RecapGrid readiness |
+| GET | `/api/v1/recent-turns` | latest 6 completed turns、同head Context header、rewind token与RecapGrid readiness |
 | POST | `/api/v1/chat/turns` | 202 `{turnId}` |
 | POST | `/api/v1/chat/turns/resume` | 202 `{turnId}` |
 | POST | `/api/v1/chat/turns/pop-latest` | `{poppedUserText}` |
@@ -105,6 +105,12 @@ failure除busy使用`{code,error,turnId}`外统一为`{code,error}`；unknown或
 recent operation共享最多4,096次physical header preview visit与16 MiB cumulative decoded logical payload，
 最终production JSON最多4 MiB。pop的display source最多256 KiB UTF-8，exact receipt最多2 MiB；receipt在CAS前
 预编码，response-loss只允许browser做current/recent reconciliation，不能自动重发mutation。
+
+`RecentTurnsResponseV1`始终携带required
+`contextHeader:{observation:string,action:string}`。当当前exact RecapGrid candidate可materialize时，两个字段分别是
+coherent request recipe实际放在raw tail之前的首条Observation与Action内容（包括`recap-block` fence）；因此browser可直接
+展示模型看到的Recap内容与其自述范围。raw-only、未provision或当前candidate不可用时仍返回同一object shape，但对应字符串为空。
+stale cache保留上一稳定边界的header，并由同一response中的`recapGridReadiness.freshness=stale`标识；它不冒充当前raw head。
 
 ## SSE V1 stable protocol
 
@@ -141,7 +147,9 @@ Last-Event-ID、ack或dual grammar；breaking change必须形成新candidate/ver
 head：先用 Getter resolve；仅 nonempty active 且 unfulfilled 时调用 Manager 的只读
 `InspectBuildProgress`。状态为 `ready`、`frontier`、`blocked`、`no-rows`、`no-active`、
 `unprovisioned`、`busy`、`stale` 或 `invalid`，并携带可证明的 Timeline/Control/Store/
-recipe/row authority 与 bounded metrics。该读取不 dispatch provider、不 build、不写。
+recipe/row authority 与 bounded metrics。`ready`时同一Getter handle还会按该raw head的governing
+`derivedContext.nthPrevious`只读resolve/materialize `contextHeader`，并在最终raw-head fence后与readiness一起发布；
+该读取不dispatch provider、不build、不写。
 
 Galatea 不自动 Create/Provision/Activate Grid。operator 应先使用 SessionJournal.Cli 的
 `recap-grid scaffold`生成strict admission/profile/route files，再用`recap-grid init`、

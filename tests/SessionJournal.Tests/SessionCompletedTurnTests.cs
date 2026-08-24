@@ -74,6 +74,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
                 latest.Turns
             );
             Assert.Equal(secondAction, latest.CapturedHead);
+            Assert.Equal(0, latest.DerivedContextNthPrevious);
             Assert.Equal("two", turn.ObservationContent);
             Assert.Equal(secondAction, turn.TerminalAction.Address);
             Assert.Equal(structured.Blocks, turn.TerminalAction.Message.Blocks);
@@ -83,7 +84,11 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             Assert.Equal("one", Assert.Single(historical.Turns)
                 .ObservationContent);
 
-            Assert.Empty(Snapshot(engine.ReadRecentCompletedTurns(0)).Turns);
+            SessionCompletedTurnsSnapshot zero = Snapshot(
+                engine.ReadRecentCompletedTurns(0)
+            );
+            Assert.Empty(zero.Turns);
+            Assert.Null(zero.DerivedContextNthPrevious);
             Assert.Throws<ArgumentOutOfRangeException>(
                 () => engine.ReadRecentCompletedTurns(-1)
             );

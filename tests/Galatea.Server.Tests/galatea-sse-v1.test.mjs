@@ -17,6 +17,7 @@ const validRecent = {
     assistant: { text: "assistant", reasoningText: null },
   }],
   rewindLatestToken: null,
+  contextHeader: { observation: "recap observation", action: "recap action" },
   recapGridReadiness: null,
 };
 

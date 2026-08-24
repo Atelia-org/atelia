@@ -58,6 +58,32 @@ public static class SessionContextContributionContract {
         ];
     }
 
+    /// <summary>
+    /// Renders the provider-facing Context header carried by one validated
+    /// candidate. The returned Observation and Action strings are the exact
+    /// leading messages produced by the coherent request recipe.
+    /// </summary>
+    public static ContextHeaderSnapshot RenderProviderHeader(
+        IReadOnlyList<SessionContextContribution> contributions
+    ) {
+        ImmutableArray<SessionContextContribution> normalized =
+            ValidateAndNormalize(contributions);
+        SessionRequestArtifactContextSnapshot rendered =
+            SessionCoherentRequestRecipe.Aggregate([
+                .. normalized.Select(static contribution =>
+                    SessionCoherentRequestRecipe.CreateOneHotSnapshot(
+                        contribution.Target,
+                        contribution.ExactText
+                    )
+                )
+            ]);
+        return new ContextHeaderSnapshot(
+            rendered.SystemPromptFragment,
+            rendered.ObservationMessage,
+            rendered.ActionMessage
+        );
+    }
+
     private static ImmutableArray<SessionContextContribution> SnapshotOnce(
         IReadOnlyList<SessionContextContribution> contributions
     ) {

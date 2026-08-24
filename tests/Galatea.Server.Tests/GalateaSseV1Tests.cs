@@ -485,6 +485,7 @@ public sealed class GalateaSseV1Tests {
             new AssistantMessageDto(text, ReasoningText: null)
         )],
         RewindLatestToken: null,
+        ContextHeader: ContextHeaderDto.Empty,
         RecapGridReadiness: null
     );
 

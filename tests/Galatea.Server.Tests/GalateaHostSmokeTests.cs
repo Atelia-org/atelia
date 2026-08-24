@@ -53,6 +53,7 @@ public sealed class GalateaHostSmokeTests {
             .GetFromJsonAsync<RecentTurnsResponseDto>("/api/v1/recent-turns");
         Assert.NotNull(recent);
         Assert.Empty(recent!.Turns);
+        Assert.Equal(ContextHeaderDto.Empty, recent.ContextHeader);
         RecapGridReadinessSnapshotDto recap = Assert.IsType<
             RecapGridReadinessSnapshotDto
         >(recent.RecapGridReadiness);
@@ -120,6 +121,7 @@ public sealed class GalateaHostSmokeTests {
         RecentTurnDto turn = Assert.Single(recent!.Turns);
         Assert.Equal("visible user", turn.UserText);
         Assert.Equal("visible assistant", turn.Assistant.Text);
+        Assert.Equal(ContextHeaderDto.Empty, recent.ContextHeader);
         Assert.NotNull(recent.RewindLatestToken);
         RecapGridReadinessSnapshotDto recap = Assert.IsType<
             RecapGridReadinessSnapshotDto

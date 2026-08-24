@@ -36,7 +36,8 @@ public sealed partial class SessionJournalEngine {
             : new SessionCompletedTurnsReadResult.Snapshot(
                 new SessionCompletedTurnsSnapshot(
                     CapturedHead: null,
-                    Array.Empty<SessionCompletedTurnProjection>()
+                    Array.Empty<SessionCompletedTurnProjection>(),
+                    DerivedContextNthPrevious: null
                 )
             );
     }
@@ -115,7 +116,8 @@ public sealed partial class SessionJournalEngine {
         if (maximumCount == 0) {
             return new SessionCompletedTurnsSnapshot(
                 capturedHead,
-                Array.Empty<SessionCompletedTurnProjection>()
+                Array.Empty<SessionCompletedTurnProjection>(),
+                DerivedContextNthPrevious: null
             );
         }
         CompletedTurnLocationSnapshot located = LocateCompletedTurns(
@@ -127,7 +129,8 @@ public sealed partial class SessionJournalEngine {
         if (turns.Count == 0) {
             return new SessionCompletedTurnsSnapshot(
                 capturedHead,
-                Array.Empty<SessionCompletedTurnProjection>()
+                Array.Empty<SessionCompletedTurnProjection>(),
+                located.DerivedContextNthPrevious
             );
         }
 
@@ -138,7 +141,8 @@ public sealed partial class SessionJournalEngine {
         }
         return new SessionCompletedTurnsSnapshot(
             capturedHead,
-            Array.AsReadOnly(newestFirst)
+            Array.AsReadOnly(newestFirst),
+            located.DerivedContextNthPrevious
         );
     }
 
@@ -518,7 +522,12 @@ public sealed partial class SessionJournalEngine {
         }
         return new CompletedTurnLocationSnapshot(
             completed.AsReadOnly(),
-            open
+            open,
+            window.Folded?.GoverningSetup.RuntimeConfig
+                .DerivedContext.NthPrevious
+                ?? throw new InvalidDataException(
+                    "Completed-turn planning window has no folded governing setup."
+                )
         );
     }
 
@@ -720,6 +729,7 @@ public sealed partial class SessionJournalEngine {
 
     private sealed record CompletedTurnLocationSnapshot(
         IReadOnlyList<CompletedTurnLocation> CompletedTurns,
-        OpenTurnLocation? OpenTurn
+        OpenTurnLocation? OpenTurn,
+        int DerivedContextNthPrevious
     );
 }

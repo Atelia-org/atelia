@@ -16,6 +16,7 @@ const valid = {
     assistant: { text: "assistant", reasoningText: null },
   }],
   rewindLatestToken: null,
+  contextHeader: { observation: "recap <world>", action: "recap self" },
   recapGridReadiness: null,
 };
 
@@ -28,6 +29,13 @@ assert.throws(
   () => production.requireRecentTurnsResponse({
     ...valid,
     turns: [{ userText: "user", assistant: { text: "assistant" } }],
+  }),
+  /unexpected fields/,
+);
+assert.throws(
+  () => production.requireRecentTurnsResponse({
+    ...valid,
+    contextHeader: { observation: "recap" },
   }),
   /unexpected fields/,
 );
@@ -48,6 +56,17 @@ assert.throws(
   }),
   /state is unknown/,
 );
+
+const renderedContext = production.renderContextHeader(
+  valid.contextHeader,
+  "stale",
+);
+assert.ok(
+  renderedContext.indexOf("Context · Action (Assistant)")
+    < renderedContext.indexOf("Context · Observation (User)"),
+);
+assert.match(renderedContext, /recap &lt;world&gt;/);
+assert.match(renderedContext, /上一稳定边界/);
 
 const popSource = {
   ...valid,

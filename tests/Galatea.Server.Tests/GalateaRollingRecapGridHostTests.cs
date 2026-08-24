@@ -114,6 +114,53 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.Equal("world-r1", world.Content);
         Assert.Equal(RecapCellOutcome.KeepUnchanged, autobiography.Outcome);
         Assert.Equal("autobiography-r2", autobiography.Content);
+        int providerCallsBeforeRecent = factory.Agent.DispatchCallCount
+            + factory.Recap.Invocations.Count;
+        RecentTurnsResponseDto recent = await service.GetRecentTurnsAsync(
+            session,
+            CancellationToken.None
+        );
+        Assert.Contains(
+            "~~~~recap-block\nworld-r1\n~~~~",
+            recent.ContextHeader.Observation,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "~~~~recap-block\nautobiography-r2\n~~~~",
+            recent.ContextHeader.Action,
+            StringComparison.Ordinal
+        );
+        Assert.Equal("ready", recent.RecapGridReadiness?.State);
+
+        SessionGoverningSetup governing = session.Engine
+            .ResolveGoverningSetup(
+                session.Engine.ReadCurrentHead()!.Value
+            );
+        _ = session.Engine.AppendRuntimeConfigSetup(
+            governing.RuntimeConfig with {
+                DerivedContext = new SessionDerivedContextConfiguration(2)
+            }
+        );
+        RecentTurnsResponseDto olderContext =
+            await service.GetRecentTurnsAsync(
+                session,
+                CancellationToken.None
+            );
+        Assert.Contains(
+            "~~~~recap-block\nautobiography-r1\n~~~~",
+            olderContext.ContextHeader.Action,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "autobiography-r2",
+            olderContext.ContextHeader.Action,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(
+            providerCallsBeforeRecent,
+            factory.Agent.DispatchCallCount
+                + factory.Recap.Invocations.Count
+        );
         Assert.All(completion.ReadTelemetrySnapshot().Events, value => {
             Assert.Equal(RecapConnectionId, value.ConnectionId);
             Assert.Equal("recap-model-a", value.ModelId);

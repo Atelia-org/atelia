@@ -221,9 +221,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return new StableRecentTurnsProjection(
             new RecentTurnsResponseDto(
                 turns,
-                rewindLatestToken
+                rewindLatestToken,
+                ContextHeaderDto.Empty
             ),
-            snapshot.CapturedHead
+            snapshot.CapturedHead,
+            snapshot.DerivedContextNthPrevious
         );
     }
 
@@ -381,22 +383,30 @@ public sealed class GalateaHostService : IAsyncDisposable {
         StableRecentTurnsProjection projection = BuildRecentTurnsResponse(
             host.Engine
         );
-        RecapGridReadinessSnapshotDto readiness =
+        GalateaRecentContextInspection inspection =
             projection.CapturedHead is { } capturedHead
-                ? GalateaRecapGridReadiness.Inspect(
+                ? GalateaRecapGridReadiness.InspectRecentContext(
                     host.Engine.ReadView,
                     capturedHead,
+                    projection.DerivedContextNthPrevious
+                        ?? throw new InvalidDataException(
+                            "Recent projection has no governing derived-context ordinal."
+                        ),
                     cancellationToken
                 )
-                : new RecapGridReadinessSnapshotDto(
-                    GalateaRecapGridReadiness.ExactFreshness,
-                    "unprovisioned",
-                    null,
-                    Code: "raw-head-absent"
+                : new GalateaRecentContextInspection(
+                    new RecapGridReadinessSnapshotDto(
+                        GalateaRecapGridReadiness.ExactFreshness,
+                        "unprovisioned",
+                        null,
+                        Code: "raw-head-absent"
+                    ),
+                    ContextHeaderDto.Empty
                 );
         RecentTurnsResponseDto recent = projection.Response with {
-            RecapGridReadiness = readiness,
-            RewindLatestToken = readiness.Freshness
+            ContextHeader = inspection.ContextHeader,
+            RecapGridReadiness = inspection.Readiness,
+            RewindLatestToken = inspection.Readiness.Freshness
                     == GalateaRecapGridReadiness.ExactFreshness
                 ? projection.Response.RewindLatestToken
                 : null
@@ -412,7 +422,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
     private sealed record StableRecentTurnsProjection(
         RecentTurnsResponseDto Response,
-        EventAddress? CapturedHead
+        EventAddress? CapturedHead,
+        int? DerivedContextNthPrevious
     );
 
     private static CurrentTurnDto BuildDurableCurrentTurn(

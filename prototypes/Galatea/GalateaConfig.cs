@@ -110,6 +110,16 @@ public sealed record RecentTurnDto(
     AssistantMessageDto Assistant
 );
 
+public sealed record ContextHeaderDto(
+    string Observation,
+    string Action
+) {
+    internal static ContextHeaderDto Empty { get; } = new(
+        string.Empty,
+        string.Empty
+    );
+}
+
 public sealed record RecapGridReadinessAuthorityDto(
     string RefId,
     string TimelineId,
@@ -178,6 +188,7 @@ public sealed record RecapGridReadinessSnapshotDto(
 public sealed record RecentTurnsResponseDto(
     IReadOnlyList<RecentTurnDto> Turns,
     string? RewindLatestToken,
+    ContextHeaderDto ContextHeader,
     RecapGridReadinessSnapshotDto? RecapGridReadiness = null
 );
 

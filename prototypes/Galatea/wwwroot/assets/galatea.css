@@ -243,6 +243,16 @@ button:disabled {
   background: rgba(255, 252, 247, 0.92);
 }
 
+.turn-card.context-header {
+  border-style: dashed;
+  box-shadow: none;
+  background: rgba(235, 241, 234, 0.72);
+}
+
+.turn-card.context-header header {
+  color: #46665d;
+}
+
 .turn-card header {
   font-size: 12px;
   letter-spacing: 0.08em;

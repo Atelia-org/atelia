@@ -61,6 +61,44 @@ public sealed class SessionContextCandidateMaterializationContractTests {
     }
 
     [Fact]
+    public void RenderProviderHeader_ReturnsExactLeadingObservationAndAction() {
+        SessionContextContribution[] contributions = [
+            Contribution(
+                ContextHeaderCarrier.Action,
+                "self",
+                "action memory",
+                Boundary
+            ),
+            Contribution(
+                ContextHeaderCarrier.Observation,
+                "world-b",
+                "second observation memory",
+                Anchor
+            ),
+            Contribution(
+                ContextHeaderCarrier.Observation,
+                "world-a",
+                "first observation memory",
+                Anchor
+            )
+        ];
+
+        ContextHeaderSnapshot rendered = SessionContextContributionContract
+            .RenderProviderHeader(contributions);
+
+        Assert.Equal(string.Empty, rendered.SystemPromptFragment);
+        Assert.Equal(
+            "~~~~recap-block\nfirst observation memory\n~~~~\n\n"
+            + "~~~~recap-block\nsecond observation memory\n~~~~",
+            rendered.ObservationMessage
+        );
+        Assert.Equal(
+            "~~~~recap-block\naction memory\n~~~~",
+            rendered.ActionMessage
+        );
+    }
+
+    [Fact]
     public void MaterializedCandidate_RejectsDescriptorMismatch() {
         SessionContextCandidate candidate = CreateCandidate(
             Contribution(

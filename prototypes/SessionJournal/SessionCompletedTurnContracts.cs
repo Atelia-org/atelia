@@ -21,10 +21,14 @@ public sealed record SessionTerminalActionProjection(
 /// <summary>
 /// Completed visible turns at one immutable raw head, ordered newest first.
 /// Protocol events, tool results, and non-terminal tool-call Actions are not returned.
+/// DerivedContextNthPrevious is captured from the governing setup during the
+/// same bounded materialization; it is null only when no head or no projection
+/// was requested.
 /// </summary>
 public sealed record SessionCompletedTurnsSnapshot(
     EventAddress? CapturedHead,
-    IReadOnlyList<SessionCompletedTurnProjection> Turns
+    IReadOnlyList<SessionCompletedTurnProjection> Turns,
+    int? DerivedContextNthPrevious
 );
 
 public enum SessionCompletedTurnsLimit {

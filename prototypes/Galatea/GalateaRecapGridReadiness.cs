@@ -8,6 +8,11 @@ using Atelia.SessionJournal.RecapGrid.Store;
 
 namespace Atelia.Galatea.Server;
 
+internal sealed record GalateaRecentContextInspection(
+    RecapGridReadinessSnapshotDto Readiness,
+    ContextHeaderDto ContextHeader
+);
+
 internal static class GalateaRecapGridReadiness {
     internal const string ExactFreshness = "exact";
     internal const string StaleFreshness = "stale";
@@ -25,6 +30,33 @@ internal static class GalateaRecapGridReadiness {
         SessionJournalReadView selectedRef,
         EventAddress capturedRawHead,
         CancellationToken cancellationToken
+    ) => InspectCore(
+        selectedRef,
+        capturedRawHead,
+        includeContextHeader: false,
+        contextNthPrevious: 0,
+        cancellationToken
+    ).Readiness;
+
+    internal static GalateaRecentContextInspection InspectRecentContext(
+        SessionJournalReadView selectedRef,
+        EventAddress capturedRawHead,
+        int contextNthPrevious,
+        CancellationToken cancellationToken
+    ) => InspectCore(
+        selectedRef,
+        capturedRawHead,
+        includeContextHeader: true,
+        contextNthPrevious,
+        cancellationToken
+    );
+
+    private static GalateaRecentContextInspection InspectCore(
+        SessionJournalReadView selectedRef,
+        EventAddress capturedRawHead,
+        bool includeContextHeader,
+        int contextNthPrevious,
+        CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(selectedRef);
         cancellationToken.ThrowIfCancellationRequested();
@@ -37,7 +69,7 @@ internal static class GalateaRecapGridReadiness {
             return RequireRawHead(
                 selectedRef,
                 capturedRawHead,
-                MapGetterOpen(opened, capturedRawHead)
+                WithoutContext(MapGetterOpen(opened, capturedRawHead))
             );
         }
         using RecapGridContextHandle getter = available.Handle;
@@ -46,78 +78,240 @@ internal static class GalateaRecapGridReadiness {
             nthPrevious: 0,
             cancellationToken
         );
-        RecapGridReadinessSnapshotDto result = resolved switch {
+        GalateaRecentContextInspection result = resolved switch {
             RecapGridContextResolveResult.RawHistoryAuthorized
-                => Exact("raw-only", capturedRawHead),
+                => WithoutContext(Exact("raw-only", capturedRawHead)),
             RecapGridContextResolveResult.ReserveBootstrapRawOnly bootstrap
-                => ReserveBootstrap(capturedRawHead, bootstrap.Evidence),
+                => WithoutContext(ReserveBootstrap(
+                    capturedRawHead,
+                    bootstrap.Evidence
+                )),
             RecapGridContextResolveResult.Selected selected
-                => new RecapGridReadinessSnapshotDto(
-                    ExactFreshness,
-                    "ready",
-                    Format(capturedRawHead),
-                    Authority(selected.Selection)
+                => InspectSelected(
+                    getter,
+                    selected.Selection,
+                    capturedRawHead,
+                    includeContextHeader,
+                    contextNthPrevious,
+                    cancellationToken
                 ),
             RecapGridContextResolveResult.Unfulfilled
-                => InspectUnfulfilled(
+                => WithoutContext(InspectUnfulfilled(
                     selectedRef,
                     capturedRawHead,
                     cancellationToken
-                ),
+                )),
             RecapGridContextResolveResult.OrdinalUnavailable
-                => Exact(
+                => WithoutContext(Exact(
                     "invalid",
                     capturedRawHead,
                     code: "current-row-unavailable"
-                ),
+                )),
             RecapGridContextResolveResult.LimitExceeded limit
-                => Exact(
+                => WithoutContext(Exact(
                     "limited",
                     capturedRawHead,
                     code: limit.Limit
-                ),
+                )),
             RecapGridContextResolveResult.Stale stale
-                => Stale(capturedRawHead, stale.Detail),
+                => WithoutContext(Stale(capturedRawHead, stale.Detail)),
             RecapGridContextResolveResult.NotOnSelectedPath missing
-                => Exact(
+                => WithoutContext(Exact(
                     "invalid",
                     capturedRawHead,
                     code: "row-not-on-selected-path",
                     detail: missing.RowId.Value
-                ),
+                )),
             RecapGridContextResolveResult.Busy busy
-                => Exact(
+                => WithoutContext(Exact(
                     "busy",
                     capturedRawHead,
                     code: busy.Component.ToString()
-                ),
+                )),
             RecapGridContextResolveResult.Disposed disposed
-                => Exact(
+                => WithoutContext(Exact(
                     "unavailable",
                     capturedRawHead,
                     code: $"{disposed.Component}-disposed"
-                ),
+                )),
             RecapGridContextResolveResult.UnsupportedSchema schema
-                => Exact(
+                => WithoutContext(Exact(
                     "invalid",
                     capturedRawHead,
                     code: $"{schema.Component}-schema-{schema.SchemaVersion}"
-                ),
+                )),
             RecapGridContextResolveResult.Invalid invalid
-                => Exact(
+                => WithoutContext(Exact(
                     "invalid",
                     capturedRawHead,
                     code: $"{invalid.Component}:{invalid.Code}",
                     detail: invalid.Detail
-                ),
-            _ => Exact(
+                )),
+            _ => WithoutContext(Exact(
                 "invalid",
                 capturedRawHead,
                 code: "getter-outcome-unknown"
-            )
+            ))
         };
         return RequireRawHead(selectedRef, capturedRawHead, result);
     }
+
+    private static GalateaRecentContextInspection InspectSelected(
+        RecapGridContextHandle getter,
+        RecapGridContextSelection selection,
+        EventAddress capturedRawHead,
+        bool includeContextHeader,
+        int contextNthPrevious,
+        CancellationToken cancellationToken
+    ) {
+        var ready = new RecapGridReadinessSnapshotDto(
+            ExactFreshness,
+            "ready",
+            Format(capturedRawHead),
+            Authority(selection)
+        );
+        if (!includeContextHeader) {
+            return WithoutContext(ready);
+        }
+
+        RecapGridContextSelection contextSelection = selection;
+        if (contextNthPrevious != 0) {
+            RecapGridContextResolveResult contextResolved = getter.Resolve(
+                capturedRawHead,
+                contextNthPrevious,
+                cancellationToken
+            );
+            if (contextResolved is not RecapGridContextResolveResult.Selected
+                    selected) {
+                return WithoutContext(MapContextSelectionFailure(
+                    contextResolved,
+                    capturedRawHead
+                ));
+            }
+            contextSelection = selected.Selection;
+        }
+
+        RecapGridContextMaterializeResult materialized = getter.Materialize(
+            contextSelection,
+            cancellationToken
+        );
+        return materialized switch {
+            RecapGridContextMaterializeResult.Available available
+                => WithContext(ready, available.Candidate),
+            RecapGridContextMaterializeResult.Stale stale
+                => WithoutContext(Stale(
+                    capturedRawHead,
+                    stale.Detail
+                )),
+            RecapGridContextMaterializeResult.Busy busy
+                => WithoutContext(Exact(
+                    "busy",
+                    capturedRawHead,
+                    code: $"{busy.Component}-materialization-busy"
+                )),
+            RecapGridContextMaterializeResult.Disposed disposed
+                => WithoutContext(Exact(
+                    "unavailable",
+                    capturedRawHead,
+                    code: $"{disposed.Component}-materialization-disposed"
+                )),
+            RecapGridContextMaterializeResult.Invalid invalid
+                => WithoutContext(Exact(
+                    "invalid",
+                    capturedRawHead,
+                    code: $"{invalid.Component}:{invalid.Code}",
+                    detail: invalid.Detail
+                )),
+            _ => WithoutContext(Exact(
+                "invalid",
+                capturedRawHead,
+                code: "materialization-outcome-unknown"
+            ))
+        };
+    }
+
+    private static RecapGridReadinessSnapshotDto MapContextSelectionFailure(
+        RecapGridContextResolveResult result,
+        EventAddress capturedRawHead
+    ) => result switch {
+        RecapGridContextResolveResult.RawHistoryAuthorized
+            or RecapGridContextResolveResult.ReserveBootstrapRawOnly
+            or RecapGridContextResolveResult.Unfulfilled
+            => Stale(
+                capturedRawHead,
+                "RecapGrid context changed after readiness resolution."
+            ),
+        RecapGridContextResolveResult.OrdinalUnavailable
+            => Exact(
+                "invalid",
+                capturedRawHead,
+                code: "configured-context-row-unavailable"
+            ),
+        RecapGridContextResolveResult.LimitExceeded limit
+            => Exact(
+                "limited",
+                capturedRawHead,
+                code: limit.Limit
+            ),
+        RecapGridContextResolveResult.Stale stale
+            => Stale(capturedRawHead, stale.Detail),
+        RecapGridContextResolveResult.NotOnSelectedPath missing
+            => Exact(
+                "invalid",
+                capturedRawHead,
+                code: "configured-context-row-not-on-selected-path",
+                detail: missing.RowId.Value
+            ),
+        RecapGridContextResolveResult.Busy busy
+            => Exact(
+                "busy",
+                capturedRawHead,
+                code: busy.Component.ToString()
+            ),
+        RecapGridContextResolveResult.Disposed disposed
+            => Exact(
+                "unavailable",
+                capturedRawHead,
+                code: $"{disposed.Component}-disposed"
+            ),
+        RecapGridContextResolveResult.UnsupportedSchema schema
+            => Exact(
+                "invalid",
+                capturedRawHead,
+                code: $"{schema.Component}-schema-{schema.SchemaVersion}"
+            ),
+        RecapGridContextResolveResult.Invalid invalid
+            => Exact(
+                "invalid",
+                capturedRawHead,
+                code: $"{invalid.Component}:{invalid.Code}",
+                detail: invalid.Detail
+            ),
+        _ => Exact(
+            "invalid",
+            capturedRawHead,
+            code: "configured-context-outcome-unknown"
+        )
+    };
+
+    private static GalateaRecentContextInspection WithContext(
+        RecapGridReadinessSnapshotDto readiness,
+        SessionContextCandidate candidate
+    ) {
+        ContextHeaderSnapshot rendered = SessionContextContributionContract
+            .RenderProviderHeader(candidate.Contributions);
+        return new GalateaRecentContextInspection(
+            readiness,
+            new ContextHeaderDto(
+                rendered.ObservationMessage,
+                rendered.ActionMessage
+            )
+        );
+    }
+
+    private static GalateaRecentContextInspection WithoutContext(
+        RecapGridReadinessSnapshotDto readiness
+    ) => new(readiness, ContextHeaderDto.Empty);
 
     private static RecapGridReadinessSnapshotDto ReserveBootstrap(
         EventAddress capturedRawHead,
@@ -346,19 +540,25 @@ internal static class GalateaRecapGridReadiness {
         _ => Exact("invalid", rawHead, code: "manager-open-unknown")
     };
 
-    private static RecapGridReadinessSnapshotDto RequireRawHead(
+    private static GalateaRecentContextInspection RequireRawHead(
         SessionJournalReadView selectedRef,
         EventAddress expected,
-        RecapGridReadinessSnapshotDto result
+        GalateaRecentContextInspection result
     ) {
         try {
             BeforeFinalRawFenceForTest.Value?.Invoke();
             return selectedRef.ReadCurrentHead() == expected
                 ? result
-                : Stale(expected, "Raw head changed during readiness read.");
+                : WithoutContext(Stale(
+                    expected,
+                    "Raw head changed during readiness read."
+                ));
         }
         catch (ObjectDisposedException) {
-            return Stale(expected, "Raw authority was disposed.");
+            return WithoutContext(Stale(
+                expected,
+                "Raw authority was disposed."
+            ));
         }
     }
 

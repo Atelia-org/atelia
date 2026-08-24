@@ -159,9 +159,18 @@ function requireReadiness(value, label) {
   return readiness;
 }
 
+function requireContextHeader(value, label) {
+  const header = requireExactKeys(value, [
+    "observation", "action",
+  ], label);
+  requireString(header.observation, `${label}.observation`);
+  requireString(header.action, `${label}.action`);
+  return header;
+}
+
 export function requireRecentTurnsResponse(value) {
   const recent = requireExactKeys(value, [
-    "turns", "rewindLatestToken", "recapGridReadiness",
+    "turns", "rewindLatestToken", "contextHeader", "recapGridReadiness",
   ], "recent turns response");
   if (!Array.isArray(recent.turns)) {
     throw new Error("recent turns response.turns must be an array");
@@ -178,6 +187,10 @@ export function requireRecentTurnsResponse(value) {
     requireNullableString(assistant.reasoningText, `turns[${index}].assistant.reasoningText`);
   });
   requireNullableString(recent.rewindLatestToken, "recent turns response.rewindLatestToken");
+  requireContextHeader(
+    recent.contextHeader,
+    "recent turns response.contextHeader",
+  );
   requireNullableObject(
     recent.recapGridReadiness,
     requireReadiness,
@@ -471,6 +484,39 @@ export function canContinueWithoutInitialRecent(
     && current.status === "running";
 }
 
+function escapeHtml(text) {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+export function renderContextHeader(contextHeaderValue, freshness = "exact") {
+  const contextHeader = requireContextHeader(
+    contextHeaderValue,
+    "context header",
+  );
+  const boundary = freshness === "stale" ? " · 上一稳定边界" : "";
+  const cards = [];
+  if (contextHeader.action.length > 0) {
+    cards.push(`
+      <article class="turn-card assistant context-header">
+        <header>Context · Action (Assistant)${boundary}</header>
+        <pre>${escapeHtml(contextHeader.action)}</pre>
+      </article>
+    `);
+  }
+  if (contextHeader.observation.length > 0) {
+    cards.push(`
+      <article class="turn-card user context-header">
+        <header>Context · Observation (User)${boundary}</header>
+        <pre>${escapeHtml(contextHeader.observation)}</pre>
+      </article>
+    `);
+  }
+  return cards.join("");
+}
+
 export async function loadInitialSessionState(
   loadCurrent,
   loadRecent,
@@ -622,6 +668,7 @@ function startGalateaApp() {
     activeTurnId: null,
     streamGeneration: 0,
     selectedConnectionId: null,
+    contextHeader: { observation: "", action: "" },
     recapGridReadiness: null,
   };
 
@@ -681,15 +728,12 @@ function startGalateaApp() {
     return await readJsonResponse(response, validator);
   }
 
-  function escapeHtml(text) {
-    return text
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
-  }
-
   function renderTurns() {
-    turnList.innerHTML = state.recentTurns.map(renderTurn).join("");
+    turnList.innerHTML = state.recentTurns.map(renderTurn).join("")
+      + renderContextHeader(
+        state.contextHeader,
+        state.recapGridReadiness?.freshness,
+      );
     refreshComposerMode();
   }
 
@@ -861,6 +905,7 @@ function startGalateaApp() {
     const recent = requireRecentTurnsResponse(payload);
     state.recentTurns = recent.turns;
     state.rewindLatestToken = recent.rewindLatestToken;
+    state.contextHeader = recent.contextHeader;
     state.recapGridReadiness = recent.recapGridReadiness;
     renderRecapGridReadiness();
   }
@@ -1042,6 +1087,7 @@ function startGalateaApp() {
     const stagedPop = stagePopProvisional({
       turns: state.recentTurns,
       rewindLatestToken: state.rewindLatestToken,
+      contextHeader: state.contextHeader,
       recapGridReadiness: state.recapGridReadiness,
     });
     const provisional = stagedPop.provisional;
