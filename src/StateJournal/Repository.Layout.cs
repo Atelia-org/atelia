@@ -29,7 +29,13 @@ public sealed partial class Repository {
         }
     }
 
-    private static void WriteJsonAtomically<T>(string filePath, T data, JsonTypeInfo<T> typeInfo, bool overwrite = true) {
+    private static void WriteJsonAtomically<T>(
+        string filePath,
+        T data,
+        JsonTypeInfo<T> typeInfo,
+        bool overwrite = true,
+        Action? beforeAtomicReplace = null
+    ) {
         var tmpPath = filePath + ".tmp";
         var json = JsonSerializer.Serialize(data, typeInfo);
         var utf8 = Encoding.UTF8.GetBytes(json);
@@ -37,6 +43,7 @@ public sealed partial class Repository {
             stream.Write(utf8);
             stream.Flush(flushToDisk: true);
         }
+        beforeAtomicReplace?.Invoke();
         File.Move(tmpPath, filePath, overwrite: overwrite);
     }
 

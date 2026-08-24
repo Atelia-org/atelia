@@ -115,9 +115,10 @@ public sealed partial class Repository {
         }
 
         public void CommitRotation(PendingRotation rotation) {
-            _activeFile.Dispose();
+            var formerActiveFile = _activeFile;
             _activeFile = rotation.File;
             _recentCount++;
+            formerActiveFile.Dispose();
         }
 
         public void ArchiveExcessRecentSegments() {
@@ -136,8 +137,12 @@ public sealed partial class Repository {
         }
 
         public void RollbackRotation(PendingRotation rotation) {
-            rotation.File.Dispose();
-            TryDeleteSegmentFile(_repoDir, rotation.RelativePath);
+            try {
+                rotation.File.Dispose();
+            }
+            finally {
+                TryDeleteSegmentFile(_repoDir, rotation.RelativePath);
+            }
         }
 
         public void Dispose() {

@@ -15,14 +15,20 @@ public sealed partial class Repository {
         public Revision? LoadedRevision { get; set; }
     }
 
+    private sealed class BranchPublicationProgress {
+        public RepositoryCommitFailurePhase FailurePhase { get; set; } = RepositoryCommitFailurePhase.DataDurability;
+        public RepositoryCommitPublicationState PublicationState { get; set; } = RepositoryCommitPublicationState.NotPublished;
+    }
+
     private static void CompareAndSwapBranchAtomically(
         string repoDir,
         string branchName,
         CommitAddress? expectedHead,
         CommitAddress newHead,
-        string? note
+        string? note,
+        BranchPublicationProgress progress
     ) {
-        var branchPath = GetBranchFilePath(repoDir, branchName);
+        progress.FailurePhase = RepositoryCommitFailurePhase.VerifyExpectedHead;
         var branchRef = ReadBestBranchRefOrDefault(repoDir, branchName);
         var currentHead = branchRef?.Head;
 
@@ -36,13 +42,31 @@ public sealed partial class Repository {
             );
         }
 
-        WriteBranchAtomically(repoDir, branchName, branchRef, newHead, note, overwrite: true, operation: "advance");
+        WriteBranchAtomically(
+            repoDir,
+            branchName,
+            branchRef,
+            newHead,
+            note,
+            overwrite: true,
+            operation: "advance",
+            progress: progress
+        );
     }
 
     private static void WriteNewBranchAtomically(string repoDir, string branchName, CommitAddress? head) {
         var branchPath = GetBranchFilePath(repoDir, branchName);
         if (File.Exists(branchPath)) { throw new InvalidOperationException($"Branch file '{branchName}' already exists on disk."); }
-        WriteBranchAtomically(repoDir, branchName, previous: null, head, note: null, overwrite: false, operation: "create");
+        WriteBranchAtomically(
+            repoDir,
+            branchName,
+            previous: null,
+            head,
+            note: null,
+            overwrite: false,
+            operation: "create",
+            progress: null
+        );
     }
 
     private static void WriteBranchAtomically(
@@ -52,8 +76,12 @@ public sealed partial class Repository {
         CommitAddress? head,
         string? note,
         bool overwrite,
-        string operation
+        string operation,
+        BranchPublicationProgress? progress
     ) {
+        if (progress is not null) {
+            progress.FailurePhase = RepositoryCommitFailurePhase.BackupPreviousRef;
+        }
         var branchPath = GetBranchFilePath(repoDir, branchName);
         var backupPath = GetBranchBackupFilePath(repoDir, branchName);
         var generation = checked((previous?.Generation ?? 0UL) + 1UL);
@@ -75,10 +103,35 @@ public sealed partial class Repository {
             File.Move(backupPath + ".tmp", backupPath, overwrite: true);
         }
 
-        WriteJsonAtomically(branchPath, data, RepositoryJsonContext.Default.BranchData, overwrite);
+        if (progress is not null) {
+            progress.FailurePhase = RepositoryCommitFailurePhase.PublishPrimaryRef;
+            ThrowIfCommitFaultInjected(RepositoryCommitFaultPoint.BeforePrimaryRefPublication);
+        }
+
+        WriteJsonAtomically(
+            branchPath,
+            data,
+            RepositoryJsonContext.Default.BranchData,
+            overwrite,
+            beforeAtomicReplace: progress is null
+                ? null
+                : () => {
+                    progress.PublicationState = RepositoryCommitPublicationState.MayHavePublished;
+                    ThrowIfCommitFaultInjected(RepositoryCommitFaultPoint.DuringPrimaryRefPublication);
+                }
+        );
+        if (progress is not null) {
+            progress.PublicationState = RepositoryCommitPublicationState.Published;
+            progress.FailurePhase = RepositoryCommitFailurePhase.EnsureBackupRef;
+        }
 
         if (!File.Exists(backupPath)) {
             WriteJsonAtomically(backupPath, data, RepositoryJsonContext.Default.BranchData, overwrite: true);
+        }
+
+        if (progress is not null) {
+            progress.FailurePhase = RepositoryCommitFailurePhase.AppendReflog;
+            ThrowIfCommitFaultInjected(RepositoryCommitFaultPoint.BeforeReflogAppend);
         }
 
         AppendBranchReflog(

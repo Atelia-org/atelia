@@ -311,6 +311,11 @@ public sealed partial class Repository : IDisposable {
     /// <summary>
     /// 对外的简洁提交入口。从 <paramref name="graphRoot"/> 反查所属 Revision，再映射到对应 branch。
     /// </summary>
+    /// <remarks>
+    /// candidate data 写出后会先执行 durable flush，再开始更新 branch metadata。
+    /// 若此后的 durable/publication 步骤失败，返回 <see cref="RepositoryCommitError"/> 并 poison 当前实例；
+    /// 调用方必须 dispose/open 后，以 expected parent、exact candidate、irreconcilable 三态裁决，不能透明重试。
+    /// </remarks>
     public AteliaResult<CommitAddress> Commit(DurableObject graphRoot) {
         return Commit(graphRoot, note: null);
     }
@@ -319,6 +324,11 @@ public sealed partial class Repository : IDisposable {
     /// 对外的简洁提交入口。从 <paramref name="graphRoot"/> 反查所属 Revision，再映射到对应 branch。
     /// 可选的 <paramref name="note"/> 会写入 branch ref 的最近一次说明，以及 branch reflog。
     /// </summary>
+    /// <remarks>
+    /// candidate data 写出后会先执行 durable flush，再开始更新 branch metadata。
+    /// 若此后的 durable/publication 步骤失败，返回 <see cref="RepositoryCommitError"/> 并 poison 当前实例；
+    /// 调用方必须 dispose/open 后，以 expected parent、exact candidate、irreconcilable 三态裁决，不能透明重试。
+    /// </remarks>
     public AteliaResult<CommitAddress> Commit(DurableObject graphRoot, string? note) {
         using var scope = _gate.EnterScope();
         if (!EnsureUsable(out var err)) { return err; }
@@ -512,18 +522,23 @@ public sealed partial class Repository : IDisposable {
 
         var expectedHead = branchState.Head;
         var newHead = CommitAddress.Create(writePlan.TargetSegmentNumber, commitResult.Value.HeadCommitTicket);
+        var progress = new BranchPublicationProgress();
 
         try {
-            CompareAndSwapBranchAtomically(DirectoryPath, branchName, expectedHead, newHead, note);
+            ThrowIfCommitFaultInjected(RepositoryCommitFaultPoint.BeforeDataDurabilityFlush);
+            writePlan.TargetFile.DurableFlush();
+            CompareAndSwapBranchAtomically(DirectoryPath, branchName, expectedHead, newHead, note, progress);
         }
         catch (Exception ex) {
             _isPoisoned = true;
-            if (writePlan.PendingRotation is { } abandonedRotation) {
-                _segments.RollbackRotation(abandonedRotation);
-            }
-            return new SjRepositoryError(
-                $"Commit data was written, but advancing branch '{branchName}' failed: {ex.Message}",
-                RecoveryHint: "Dispose this Repository instance and reopen it before continuing."
+            CompleteFailedWritePlanAfterCandidate(revision, writePlan, progress.PublicationState);
+            return new RepositoryCommitError(
+                branchName,
+                expectedHead,
+                newHead,
+                progress.FailurePhase,
+                progress.PublicationState,
+                ex
             );
         }
 
@@ -586,6 +601,43 @@ public sealed partial class Repository : IDisposable {
     private void CompleteWritePlanAfterCasSuccess(Revision revision, RevisionWritePlan writePlan) {
         if (writePlan.PendingRotation is { } rotation) {
             _segments.CommitRotation(rotation);
+        }
+
+        revision.AcceptPersistedSegment(writePlan.TargetSegmentNumber);
+    }
+
+    private void CompleteFailedWritePlanAfterCandidate(
+        Revision revision,
+        RevisionWritePlan writePlan,
+        RepositoryCommitPublicationState publicationState
+    ) {
+        if (publicationState == RepositoryCommitPublicationState.NotPublished) {
+            if (writePlan.PendingRotation is { } abandonedRotation) {
+                try {
+                    _segments.RollbackRotation(abandonedRotation);
+                }
+                catch (Exception cleanupFailure) {
+                    DebugUtil.Warning(
+                        "StateJournal.Repository",
+                        $"Failed to roll back unpublished segment {abandonedRotation.SegmentNumber}: {cleanupFailure.Message}"
+                    );
+                }
+            }
+            return;
+        }
+
+        if (writePlan.PendingRotation is { } candidateRotation) {
+            try {
+                _segments.CommitRotation(candidateRotation);
+            }
+            catch (Exception cleanupFailure) {
+                // CommitRotation transfers ownership before disposing the former active file. Keep the
+                // original publication failure as the caller-visible error even if old-file cleanup fails.
+                DebugUtil.Warning(
+                    "StateJournal.Repository",
+                    $"Adopted publication-uncertain segment {candidateRotation.SegmentNumber}, but cleanup of the former active segment failed: {cleanupFailure.Message}"
+                );
+            }
         }
 
         revision.AcceptPersistedSegment(writePlan.TargetSegmentNumber);

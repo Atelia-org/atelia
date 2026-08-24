@@ -264,11 +264,13 @@ Repository.CommitCore(branchName, graphRoot):  // internal 入口
         - 否则：SaveAs 到 active file
   3. 调用 Revision.Commit(graphRoot, targetFile)
      或 Revision.SaveAs(graphRoot, targetFile)
-  4. 确定 targetSegmentNumber（active 或新 rotated segment 的编号）
-  5. 以 CAS 语义原子推进 refs/branches/{branchName}.json：
+  4. 确定 candidate = CommitAddress(targetSegmentNumber, newTicket)
+  5. 对 targetFile 调用 DurableFlush，建立 data → branch metadata barrier
+  6. 以 CAS 语义推进 refs/branches/{branchName}.json：
        expected = oldBranch
-       new = { segmentNumber, newTicket }
-  6. CAS 成功后：
+       new = candidate
+     并依次维护 previous-ref backup、primary ref、backup presence、reflog
+  7. primary + backup + reflog 成功后：
      - 如有 pending rotation，则提交 active segment 切换
      - 调用 revision.AcceptPersistedSegment(targetSegmentNumber)
      - 更新内存中的 branch 状态 / loaded revision 状态
@@ -276,12 +278,13 @@ Repository.CommitCore(branchName, graphRoot):  // internal 入口
 
 注意：
 
-- durable 顺序上，commit 数据必须先落盘，再推进 branch。
-- 如果 branch CAS 失败，该 `Repository` 实例标记为 poisoned，要求 dispose + reopen。
+- durable 顺序上，candidate data 必须先 `DurableFlush`，再推进 branch metadata；这是显式 data-before-metadata barrier。
+- candidate 产生后若 durable flush / CAS / backup / primary ref / reflog 失败，返回 public `RepositoryCommitError`，携带 expected HEAD、candidate address、failure phase 与 publication state；该 `Repository` 实例同时 poison，要求 dispose + reopen。
 - Revision 方法不再接收 `commitSequence` 参数（Phase B 已消除）。
 - `Revision` 不再用 `BoundFile` 做对象身份比较；改为只记录 `HeadSegmentNumber`，由 `Repository` 决定这次传入哪个 file。
-- `HeadSegmentNumber` 的推进时机后移到 branch CAS 成功之后；因此"写盘成功"与"branch 前进成功"是两个明确分离的阶段。
+- `HeadSegmentNumber` 通常在完整 metadata publication 成功后推进；若已进入 primary ref 原子替换边界而结果不确定，则为保证可能已发布的 rotated candidate 可恢复，也会保守接纳真实 target segment，随后当前 Repository 仍必须关闭。
 - 归档维护不在 commit 事务路径内；commit 成功不依赖 recent 目录整理成功。
+- 这里不宣称 directory entry 已 fsync，也不把现有 RBF torn-tail recovery 或各平台 power-loss 行为提升为完整事务保证。
 
 ### 6.1 Branch 更新使用 CAS
 
@@ -292,6 +295,36 @@ CompareAndSwapBranchAtomically(branchName, expectedOld, newHead)
 ```
 
 CAS 失败说明 repo 内存视角与 branch 文件已分叉。新 commit 数据可能已 durable，但 branch 未推进；该实例进入 poisoned 状态。
+
+### 6.2 Publication phase 与失败裁决
+
+candidate address 产生后的失败阶段为：
+
+```text
+DataDurability
+VerifyExpectedHead
+BackupPreviousRef
+PublishPrimaryRef
+EnsureBackupRef
+AppendReflog
+```
+
+`Unknown = 0` 保留给 default/future unmapped 值；当前执行路径会在 candidate 产生后显式从 `DataDurability` 开始记录。
+
+primary ref 原子 replace 调用前是 `NotPublished`；进入 replace 边界前先标为 `MayHavePublished`；replace 返回后为 `Published`。因此 reflog append failure 会准确返回 `AppendReflog + Published`，而不是普通的无阶段 `SJ.Repository` failure。
+
+对于 pending rotation：
+
+- `NotPublished` 可回滚并删除 candidate segment。
+- `MayHavePublished` / `Published` 必须把 candidate segment 转交给 `SegmentCatalog`，不能删除一个可能已被 HEAD 引用的 segment。
+
+调用方收到 `RepositoryCommitError` 后不得透明 retry。应保留 expected parent、proposed canonical envelope 原始 bytes 和 expected domain post-state，dispose/open 后把 physical HEAD 裁决为：
+
+1. expected parent：candidate 未成为当前 HEAD；
+2. exact candidate：继续核验 parent lineage、canonical envelope bytes 与 domain post-state；
+3. 其他地址：irreconcilable，交给上层冲突/人工恢复策略。
+
+StateJournal 只提供 commit 地址与 publication phase，不保存应用 envelope/domain state，也不自动做 domain reconciliation。
 
 ---
 
@@ -357,6 +390,8 @@ CheckoutBranch(branchName):
 - `Revision.BranchName`（set-once 反向索引）：`Commit(graphRoot)` O(1) 定位 branch
 - `Revision.HeadSegmentNumber`：决定当前 branch 提交时走原地 `Commit` 还是跨 segment `SaveAs`
 - branch CAS 推进（基于 `CommitAddress`）
+- candidate data `DurableFlush` → branch metadata barrier
+- `RepositoryCommitError`（phase + candidate + publication state）与 parent/exact candidate/irreconcilable 恢复裁决
 - poisoned repository 语义
 - `_maxCommittedSegmentNumber` 缓存：对 rotation 决策 O(1)
 - `MaintainSegmentLayout()`：显式 best-effort 归档维护

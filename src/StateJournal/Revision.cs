@@ -530,7 +530,8 @@ public partial class Revision {
     internal partial AteliaResult<CommitOutcome> SaveAs(DurableObject graphRoot, IRbfFile targetFile);
 
     /// <summary>
-    /// 由 Repository 在 branch CAS 成功后确认当前 Revision 已切换到新的 segment。
+    /// 由 Repository 在 metadata publication 成功，或已进入 publication 不确定边界而必须保留 candidate 时，
+    /// 确认当前 Revision 已切换到真实 target segment。
     /// </summary>
     internal void AcceptPersistedSegment(uint segmentNumber) {
         ArgumentOutOfRangeException.ThrowIfZero(segmentNumber);

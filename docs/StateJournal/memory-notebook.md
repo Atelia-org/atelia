@@ -291,6 +291,16 @@ load / 历史回放完成后：
 - 因此单个 `main.json` 损坏或被回退时，`Repository.Open` 仍可能通过 backup / reflog 恢复
 - 只有当全部 authority 都被回退/破坏时，branch CAS 才会按“metadata divergence”失败并 poison 当前 `Repository`
 
+commit publication 的当前边界：
+
+- Revision 写出 candidate address 后，Repository 先对 target segment `DurableFlush`，再开始 branch metadata；这是 data-before-metadata barrier
+- candidate 之后的失败统一返回 public `RepositoryCommitError`，包含 `ExpectedHeadAddress`、`CandidateAddress`、`FailurePhase`、`PublicationState`；两个 enum 都以 `Unknown = 0` 保留 default/future 值
+- primary ref replace 之前为 `NotPublished`，进入原子 replace 边界为 `MayHavePublished`，replace 返回后为 `Published`
+- rotated candidate 只有在确定 `NotPublished` 时才可删除；`MayHavePublished` / `Published` 必须保留 segment 并转交 `SegmentCatalog`
+- failure 后实例 poison；调用方必须 dispose/open，再裁决 physical HEAD = parent / exact candidate / irreconcilable，绝不透明 retry
+- exact candidate 仍需由上层核验 canonical envelope 原始 bytes 与 expected domain post-state；StateJournal 不保存这些应用数据
+- 该 barrier 不等同于 directory-fsync 或完整 torn-tail / power-loss transaction 保证
+
 兼容性边界：
 
 - 仍兼容读取旧的 `version: 1` branch 文件（`segmentNumber + ticket`）
@@ -848,7 +858,11 @@ Load ObjectMap frame chain
 
 - commit 地址 = `CommitAddress(segmentNumber, commitTicket)`
 - `Revision` 只记录自己当前绑定的 `segmentNumber`
-- `Repository` 在 branch CAS 成功后，再调用 `revision.AcceptPersistedSegment(...)`
+- `Repository` 在 metadata publication 成功后调用 `revision.AcceptPersistedSegment(...)`；若 publication 已进入不确定边界，则为保住可能已发布的 rotated segment 也会保守 accept，随后实例仍 poison
+- candidate 产生后先 `DurableFlush` data segment，再更新 branch metadata
+- post-candidate failure 返回 `RepositoryCommitError`；phase 覆盖 data durability、expected-head verify、backup、primary publication、backup ensure、reflog append
+- publication 不确定或已完成时，rotated candidate segment 必须保留；只有 definite `NotPublished` 才 rollback
+- recovery contract 是 dispose/open 后裁决 parent / exact candidate / irreconcilable；不能透明 retry，exact candidate 仍由应用核验 envelope bytes/domain post-state
 - 每个 Repository 独占一个 shared lifetime token；newborn branch、checkout/open、historical detached root 与 replay clone 都继承它
 - `Repository.Dispose()` 先 signal token，使其产生的 Revision/Object operational API 统一抛 `ObjectDisposedException`；这不是 `DurableState.Detached`
 - dispose 前返回的 snapshot collection 结构与普通 scalar 独立可读（其中的 `DurableObject` 元素仍会失效）；dict `Keys` 等 owner-backed live enumerable 的 getter/enumerator 随 owner lifetime 失效

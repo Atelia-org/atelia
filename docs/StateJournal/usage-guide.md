@@ -124,7 +124,7 @@ using var reopened = Repository.Open(repoDir).Value;
 - `Repository.Open` 只恢复 repo 元数据；具体对象图在 `CheckoutBranch` 时加载。
 - `Repository` 拥有由它创建或物化的所有 `Revision` 与 `DurableObject` 的 operational lifetime；`Dispose()` 后这些对象的读、写、状态、freeze/fork 与 view acquisition 会立即抛 `ObjectDisposedException`。只有 `DurableObject.Kind` / `LocalId` 仍可用于身份与诊断。
 - `Repository` 不是线程安全的对象图编辑器；内部锁只保护 repo 元数据。
-- 出现 branch metadata CAS 失败后，当前 `Repository` 实例会进入 poisoned 状态，应 dispose 并 reopen。
+- candidate data 写出后的 durable flush 或 branch metadata publication 失败时，当前 `Repository` 实例会进入 poisoned 状态；若返回 `RepositoryCommitError`，应按其中的 expected/candidate/phase/publication state dispose、reopen 并裁决，不能透明 retry。
 
 ### 2.2 Branch
 
@@ -738,6 +738,25 @@ repo.Commit(root).Value; // child 不可达，会被 sweep/detach
 - `ExportTo(root, targetFile)`：把当前内存图导出到另一个 RBF 文件，不改变当前 `Revision.HeadId`。
 - `SaveAs(root, targetFile)`：把当前图写入新文件，并把当前 `Revision` 的 head 切换过去。
 - Repository segment rotation 内部会使用 SaveAs 路线。
+
+### 9.4 Candidate 已产生后的 Commit failure
+
+`Repository.Commit(root)` 保持返回 `AteliaResult<CommitAddress>`。如果 Revision 写入尚未产生 candidate，仍返回原有 StateJournal error；如果 candidate address 已产生，而后续 data durability 或 branch metadata 步骤失败，则返回强类型 `RepositoryCommitError`：
+
+- `ExpectedHeadAddress`：本次提交预期的 physical parent（unborn 时为 `null`）。
+- `CandidateAddress`：已经写出的 candidate commit 地址。
+- `FailurePhase`：`DataDurability`、`VerifyExpectedHead`、`BackupPreviousRef`、`PublishPrimaryRef`、`EnsureBackupRef` 或 `AppendReflog`（`Unknown` 为保守扩展/default 值）。
+- `PublicationState`：`NotPublished`、`MayHavePublished`、`Published`（`Unknown` 为保守扩展值）。
+- `RequiresRepositoryReopen == true`，`CanRetryTransparently == false`；`MayHavePublished` 是 convenience 判断。
+
+收到该错误后，必须保留应用侧的 expected physical parent、proposed canonical envelope 原始 bytes 和 expected domain post-state，然后：
+
+1. dispose 已 poison 的 Repository，重新 `Repository.Open`。
+2. 读取 physical branch HEAD，并裁决为 `ExpectedHeadAddress`（parent）、`CandidateAddress`（exact child）或其他值（irreconcilable）。
+3. 即使 HEAD 是 exact candidate，也要核验 candidate parent lineage、canonical envelope bytes 和 domain post-state；StateJournal 不替应用保存或核验后二者。
+4. 不要把 failure 伪装成透明 retry；parent 分支下是否重新提出业务操作，应由上层幂等/冲突协议决定。
+
+数据顺序是 candidate frames → `IRbfFile.DurableFlush()` → branch metadata。它建立明确的 data-before-metadata barrier，但不宣称具备 directory-fsync、任意 torn-tail 修复或所有平台/文件系统上的完整 power-loss transaction 保证。reflog 是恢复辅助；不会为了避免这个边缘故障而交换 reflog 与 primary ref 的 authority 顺序。
 
 ---
 
