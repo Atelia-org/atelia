@@ -274,8 +274,8 @@ api_key_env="$(jq -er '.connections[0].apiKeyEnv' "$strict_connections")"
 
 scaffold_report="$(dotnet run --project prototypes/SessionJournal.Cli -- \
   recap-grid scaffold \
-  --asset galatea-rolling-rewrite-zh-cn-v4 \
-  --profile-id galatea-rolling-v4 \
+  --asset galatea-rolling-rewrite-zh-cn-v5 \
+  --profile-id galatea-rolling-v5 \
   --connection-id "$recap_connection_id" \
   --permission create --permission register-family \
   --permission register-definition --permission register-recipe \
@@ -333,7 +333,7 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   recap-grid control provision-asset \
   --input "$staging_repo" --branch main --confirm-ref "$ref_id" \
   --admission "$admission" \
-  --asset galatea-rolling-rewrite-zh-cn-v4
+  --asset galatea-rolling-rewrite-zh-cn-v5
 
 compose_report="$(dotnet run --project prototypes/SessionJournal.Cli -- \
   recap-grid control compose-full-recipe \

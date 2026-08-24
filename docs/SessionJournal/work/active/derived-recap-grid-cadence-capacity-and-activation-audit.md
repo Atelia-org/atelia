@@ -55,12 +55,15 @@ retention/rollover课题，不追溯阻断这次bounded activation。
 
 | 顺序 | 概念列 | Context target | 内容职责 |
 |---:|---|---|---|
-| 1 | `world-understanding` | `Observation / roleplay.world-understanding` | Galatea 当前对人物、环境、项目、事实、推断与 known unknowns 的工作理解 |
-| 2 | `autobiography` | `Action / roleplay.first-person-autobiography` | Galatea 如何成为现在的自己：重要经历、关系、感受、承诺、犹豫与当前内在状态 |
+| 1 | `world-understanding` | `Observation / galatea.world-understanding` | Galatea 当前对人物、环境、项目、事实、推断与 known unknowns 的工作理解 |
+| 2 | `autobiography` | `Action / galatea.first-person-autobiography` | Galatea 如何成为现在的自己：重要经历、关系、感受、承诺、犹豫与当前内在状态 |
+
+Observation/Action 是 provider carrier，不是角色身份。Galatea 是会话内角色；TRPG GM 的 provider Action 是复合回复，
+只有其中显式 `[Galatea]` 第一人称内容能作为其自身体验的直接证据。
 
 目标实现形状：
 
-- 一个 code-owned `galatea-rolling-rewrite-zh-cn-v4` operator asset；
+- 一个 code-owned `galatea-rolling-rewrite-zh-cn-v5` operator asset；
 - 两个 ordered Maintainer Definitions和一个 Full recipe；两列共用现有
   [`recap-maintainer-family/system-zh-cn.md`](../../../Galatea/prompt/recap-maintainer-family/system-zh-cn.md)
   形成一个shared Family，专业差异来自各自的zh-CN user prompt；
@@ -439,7 +442,7 @@ A3增加provider-free `recap-grid cadence inspect|set-reserve` operator surface�
 ### C2：Galatea rolling operator asset and route（complete）
 
 - C2A-C2C source已由commits `bf4beff0`、`eb3743dd`、`62b93f9a`及其closure tail实现，两路independent review均GO；
-- `galatea-rolling-rewrite-zh-cn-v4` operator asset提供一个shared Family、两Definition和provider-free Full recipe composition；
+- `galatea-rolling-rewrite-zh-cn-v5` operator asset提供一个shared Family、两Definition和provider-free Full recipe composition；
 - 固定ordered targets、strict canonical bytes/goldens与runtime identity；
 - 两列capability显式`SemanticModelId=null`；runtime route/config默认选择Opus 4.6但允许以后切换model，无fallback、
   provider/client保持lazy，actual provider/model/connection只进入operation evidence；

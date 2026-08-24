@@ -57,7 +57,7 @@ public sealed class GalateaRecapGridArchitectureTests {
             "AgentControlContracts.cs"
         ));
         Assert.DoesNotContain(
-            GalateaRecapGridAssets.RollingRewriteZhCnV4,
+            GalateaRecapGridAssets.RollingRewriteZhCnV5,
             agentControl,
             StringComparison.Ordinal
         );

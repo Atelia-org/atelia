@@ -45,7 +45,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
 
         Assert.Equal(0, Run(provider,
             "scaffold",
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV4,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV5,
             "--profile-id", ProfileId,
             "--connection-id", RecapConnectionId,
             "--permission", "create",
@@ -98,10 +98,10 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             "--input", repository,
             "--confirm-ref", refText,
             "--admission", admission,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV4
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV5
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV4,
+            GalateaRecapGridAssets.RollingRewriteZhCnV5,
             out RecapGridControlRegistrationBundle? created
         ));
         RecapGridControlRegistrationBundle bundle = created!;

@@ -6,11 +6,11 @@ namespace Atelia.Galatea.RecapGrid;
 
 /// <summary>Code-owned, provider-free Galatea RecapGrid assets.</summary>
 public static class GalateaRecapGridAssets {
-    public const string RollingRewriteZhCnV4 =
-        "galatea-rolling-rewrite-zh-cn-v4";
+    public const string RollingRewriteZhCnV5 =
+        "galatea-rolling-rewrite-zh-cn-v5";
 
     public static IReadOnlyList<string> AssetIds { get; } =
-        Array.AsReadOnly([RollingRewriteZhCnV4]);
+        Array.AsReadOnly([RollingRewriteZhCnV5]);
 
     public static bool TryCreateRegistrationBundle(
         string assetId,
@@ -18,7 +18,7 @@ public static class GalateaRecapGridAssets {
     ) {
         if (!string.Equals(
                 assetId,
-                RollingRewriteZhCnV4,
+                RollingRewriteZhCnV5,
                 StringComparison.Ordinal)) {
             bundle = null;
             return false;
@@ -55,8 +55,8 @@ public static class GalateaRecapGridAssets {
                 family.Digest,
                 new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.Observation,
-                    "roleplay.world-understanding",
-                    "派生上下文：Galatea 的世界理解（来自先前历史，不是新的用户请求）"
+                    "galatea.world-understanding",
+                    "galatea.world-understanding Galatea积累的世界理解："
                 ),
                 capability,
                 new MaintainerDeclarativeSpec(
@@ -71,8 +71,8 @@ public static class GalateaRecapGridAssets {
                 family.Digest,
                 new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.Action,
-                    "roleplay.first-person-autobiography",
-                    "派生上下文：Galatea 的第一人称自传（来自先前历史，不是本轮 Assistant 回复）"
+                    "galatea.first-person-autobiography",
+                    "galatea.first-person-autobiography Galatea积累的第一人称自传："
                 ),
                 capability,
                 new MaintainerDeclarativeSpec(

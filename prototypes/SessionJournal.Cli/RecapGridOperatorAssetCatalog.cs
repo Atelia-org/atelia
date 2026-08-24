@@ -26,7 +26,7 @@ internal static class RecapGridOperatorAssetCatalog {
             case RecapGridAgentControlBuiltIns.MysteryInvestigationV4:
                 return RecapGridAgentControlBuiltIns
                     .TryCreateRegistrationBundle(assetId, out bundle);
-            case GalateaRecapGridAssets.RollingRewriteZhCnV4:
+            case GalateaRecapGridAssets.RollingRewriteZhCnV5:
                 return GalateaRecapGridAssets
                     .TryCreateRegistrationBundle(assetId, out bundle);
             default:

@@ -33,8 +33,8 @@
 
 | Maintainer | 目标内容 | Memory Pack 注入位置 | 文档形态 |
 | --- | --- | --- | --- |
-| autobiographical | Galatea 经历过什么、如何成为现在的自己；保留第一人称声音、重要原话、未解决情绪与时间轨迹 | `Action / roleplay.first-person-autobiography` | 第一人称 memoir，偏时间轨迹与体验连续性 |
-| world-understanding | Galatea 当前相信世界是什么样；保留认识来源、置信纹理、人物与项目的可行动信息、known unknowns | `Observation / roleplay.world-understanding` | 面向检索的结构化 working map，偏当前复合理解 |
+| autobiographical | Galatea 经历过什么、如何成为现在的自己；保留第一人称声音、重要原话、未解决情绪与时间轨迹 | `Action / galatea.first-person-autobiography` | 第一人称 memoir，偏时间轨迹与体验连续性 |
+| world-understanding | Galatea 当前相信世界是什么样；保留认识来源、置信纹理、人物与项目的可行动信息、known unknowns | `Observation / galatea.world-understanding` | 面向检索的结构化 working map，偏当前复合理解 |
 
 边界原则：
 

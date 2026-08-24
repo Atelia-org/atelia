@@ -11,9 +11,9 @@
 - 不再只问“这段历史如何压缩”。
 - 改为问“这段即将消失的经历，对 Galatea 的世界理解和自我连续性分别留下了什么”。
 
-## 2. Galatea 没有“用户”概念
+## 2. Galatea 是会话内角色，provider role 不是角色身份
 
-`prototypes/Galatea` 是 Role-Play 应用。Galatea 是故事世界里的一个角色，只是种族设定上是完全写实的 AI。她不应被 maintainer 提示成“服务用户的助手”。
+`prototypes/Galatea` 是 Role-Play 应用。Galatea 是故事世界与会话内的一个角色，只是种族设定上是完全写实的 AI；她不等于承载整条回复的 provider Assistant。Observation/Action 仅是 provider user-role/assistant-role carrier，不能据此推断消息中的说话者或把整条 TRPG GM 复合回复归为 Galatea 自身言行。她不应被 maintainer 提示成“服务用户的助手”。
 
 因此内容 maintainer 的语言应避免：
 
@@ -34,10 +34,10 @@
 目标路径：
 
 ```text
-MemoryPackCarrier.Observation / roleplay.world-understanding
+ContextHeaderCarrier.Observation / galatea.world-understanding
 ```
 
-渲染位置是 Observation，即 provider user-role 边界。它保存 Galatea 看到的外层世界与故事世界事实：
+渲染位置是 Observation，即 provider user-role carrier；它是派生上下文，不是新的玩家请求。它保存 Galatea 看到的外层世界与故事世界事实：
 
 - 人物、关系、项目、创作素材。
 - 技术状态、命令、路径、验证结果。
@@ -51,10 +51,10 @@ MemoryPackCarrier.Observation / roleplay.world-understanding
 目标路径：
 
 ```text
-MemoryPackCarrier.Action / roleplay.first-person-autobiography
+ContextHeaderCarrier.Action / galatea.first-person-autobiography
 ```
 
-渲染位置是首条 Action，即 provider assistant-role 边界。它保存 Galatea 的第一人称连续性。
+渲染位置是首条 Action，即 provider assistant-role carrier。carrier 只决定注入位置，不表示任意 provider Action 都是 Galatea 的回复；实际 TRPG GM Action 可以同时包含 `[Galatea]`、`[旁白]` 与 `[状态摘要]`，只有明确 `[Galatea]` 第一人称内容是她自身体验的直接证据。这个派生 block 保存 Galatea 的第一人称连续性。
 
 这个 maintainer 应该像忠实的自传 ghostwriter：
 

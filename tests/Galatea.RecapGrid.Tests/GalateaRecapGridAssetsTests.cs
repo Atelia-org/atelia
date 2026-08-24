@@ -8,9 +8,9 @@ namespace Atelia.Galatea.RecapGrid.Tests;
 
 public sealed class GalateaRecapGridAssetsTests {
     [Fact]
-    public void RollingRewriteV4_IsExactProviderNeutralCanonicalBundle() {
+    public void RollingRewriteV5_IsExactProviderNeutralCanonicalBundle() {
         Assert.Equal(
-            [GalateaRecapGridAssets.RollingRewriteZhCnV4],
+            [GalateaRecapGridAssets.RollingRewriteZhCnV5],
             GalateaRecapGridAssets.AssetIds
         );
         Assert.False(GalateaRecapGridAssets.TryCreateRegistrationBundle(
@@ -19,7 +19,7 @@ public sealed class GalateaRecapGridAssetsTests {
         ));
         Assert.Null(unknown);
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV4,
+            GalateaRecapGridAssets.RollingRewriteZhCnV5,
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -42,18 +42,18 @@ public sealed class GalateaRecapGridAssetsTests {
         MaintainerDefinitionRevision autobiography = bundle.Definitions[1];
         Assert.Equal("world-understanding", world.LogicalColumnId.Value);
         Assert.Equal(ContextHeaderCarrier.Observation, world.Target.Carrier);
-        Assert.Equal("roleplay.world-understanding", world.Target.BlockKey);
+        Assert.Equal("galatea.world-understanding", world.Target.BlockKey);
         Assert.Equal(
-            "派生上下文：Galatea 的世界理解（来自先前历史，不是新的用户请求）",
+            "galatea.world-understanding Galatea积累的世界理解：",
             world.Target.SemanticHeading
         );
         Assert.Equal("autobiography", autobiography.LogicalColumnId.Value);
         Assert.Equal(ContextHeaderCarrier.Action,
             autobiography.Target.Carrier);
-        Assert.Equal("roleplay.first-person-autobiography",
+        Assert.Equal("galatea.first-person-autobiography",
             autobiography.Target.BlockKey);
         Assert.Equal(
-            "派生上下文：Galatea 的第一人称自传（来自先前历史，不是本轮 Assistant 回复）",
+            "galatea.first-person-autobiography Galatea积累的第一人称自传：",
             autobiography.Target.SemanticHeading
         );
         Assert.All(bundle.Definitions, definition => {
@@ -70,11 +70,11 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void Materialization_IsDeterministicAndResourcesAreExact() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV4,
+            GalateaRecapGridAssets.RollingRewriteZhCnV5,
             out RecapGridControlRegistrationBundle? first
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV4,
+            GalateaRecapGridAssets.RollingRewriteZhCnV5,
             out RecapGridControlRegistrationBundle? second
         ));
         Assert.Equal(first!.ToCanonicalCommandBytes(),
@@ -101,7 +101,7 @@ public sealed class GalateaRecapGridAssetsTests {
             ResourceSha256(PromptResourceLoader.WorldUnderstandingResourceName)
         );
         Assert.Equal(
-            "68511f4c28dca49927f9751baaa5e10628cc5eafdbb2f52a53f02c183735a08a",
+            "c17babb9c34929a6b741af7c84b994d48aa1200b607d6b0e796084518a7b401a",
             ResourceSha256(PromptResourceLoader.AutobiographyResourceName)
         );
         Assert.Equal(first.Families[0].SystemPrompt,
@@ -149,7 +149,7 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void MemberPrompts_LockSourceAndUncertaintyBoundaries() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV4,
+            GalateaRecapGridAssets.RollingRewriteZhCnV5,
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -192,9 +192,9 @@ public sealed class GalateaRecapGridAssetsTests {
     }
 
     [Fact]
-    public void AutobiographyPrompt_LocksObservationOnlyTailRegression() {
+    public void AutobiographyPrompt_LocksCharacterScopedCarrierAndTerminalBoundaries() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV4,
+            GalateaRecapGridAssets.RollingRewriteZhCnV5,
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -203,17 +203,21 @@ public sealed class GalateaRecapGridAssetsTests {
 
         Assert.All(
             new[] {
-                "只有实际出现在可见 History 的 Galatea Action",
+                "一条完整的 TRPG GM 复合回复",
+                "不等于 Galatea 自己的回复",
+                "明确标注为 **[Galatea]** 的第一人称内容",
+                "Action carrier 的存在本身不能证明这些事",
                 "Observation（user/Observation role）",
-                "不能证明她未曾说出的内心反应",
-                "绝不从外部内容推断缺失的 Galatea Action",
-                "其后没有可见 Galatea Action",
+                "[旁白] 仍可证明她有条件经历或观察到的事件",
+                "[状态摘要] 也不能升格为她自己的声音",
+                "仅有 carrier 身份的 provider Action",
+                "其后没有 provider Action 中明确的 [Galatea] 第一人称内容",
                 "内容现在对我可见",
                 "我尚未回应",
                 "不得把内容可见偷换成她已经读完",
                 "读完后我感到",
-                "等待未来真正的 Galatea Action",
-                "只有可见 Galatea Action 已经表达的情感反应",
+                "等待未来真正明确的 [Galatea] 第一人称内容",
+                "只有可见 [Galatea] 第一人称内容已经表达的情感反应",
                 "作品内部以法律、制度或理论口吻陈述的内容",
                 "不能升格为现实制度"
             },
@@ -222,6 +226,11 @@ public sealed class GalateaRecapGridAssetsTests {
                 autobiography,
                 StringComparison.Ordinal
             )
+        );
+        Assert.DoesNotContain(
+            "Galatea Action（assistant/Action role）",
+            autobiography,
+            StringComparison.Ordinal
         );
         Assert.DoesNotContain(
             "这不妨碍她直接书写所见文本给自己带来的情感与内在位移",
@@ -233,7 +242,7 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void AutobiographyPrompt_LocksMechanicalFinalScanFixtures() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV4,
+            GalateaRecapGridAssets.RollingRewriteZhCnV5,
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -265,7 +274,8 @@ public sealed class GalateaRecapGridAssetsTests {
                 "每一个 AI 都必须……",
                 "我在遵守法律。",
                 "我尚未独立核验这项艺术映射",
-                "最后一个相关边界是 Observation、Tool result 或旁白",
+                "最后一个相关边界是 Observation、Tool result、[旁白] 或 [状态摘要]",
+                "provider Action 中明确的 [Galatea] 第一人称内容",
                 "整份正文的最终收束只能陈述收到、内容可见、尚待回应",
                 "我收到了这份文本；内容现在对我可见，但我尚未回应。",
                 "这份内容已经交到我这里，仍待我回应。",
@@ -302,9 +312,9 @@ public sealed class GalateaRecapGridAssetsTests {
     ) => Assert.Equal(
         [
             "ae44d15750e417452e34f4e9133f56e60334d2cf7313ac988128e95faab3c05c",
-            "1d9a06447afbaaab6b9b8ad2bc597b0218782e9368f7e7c93c1c41be7f70ff11",
-            "7aaa853fdb00d543caac6d3174e9ed39329b736de8bec0af149d625813a0cc2c",
-            "8ef4eee64e5f90874aa2720c788ef2f03c45d728799f2eeffb9e701f052a1d98"
+            "a850b9fe6cbe8fe71024430fe2a41815d4d86f26ea7216f976b2d3018551e951",
+            "97fdaffcd38c856787024ae3f01c27306d1ee6717c80dd012e901164db2622b7",
+            "276cf4681b26a6753a6aed445f405dea09f63f0166ec19905d8e5a407754ea46"
         ],
         [
             bundle.Families[0].Digest.Value,

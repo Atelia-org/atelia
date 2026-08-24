@@ -87,7 +87,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         string[] arguments = ScaffoldArguments(paths)
             .ReplaceOption(
                 "asset",
-                GalateaRecapGridAssets.RollingRewriteZhCnV4
+                GalateaRecapGridAssets.RollingRewriteZhCnV5
             )
             .ReplaceOption("logical-column-prefix", "world-understanding")
             .AppendOptions(
@@ -100,7 +100,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         Assert.Equal("created", report.GetProperty("status").GetString());
         Assert.Equal(0, _factory.CreateCallCount);
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV4,
+            GalateaRecapGridAssets.RollingRewriteZhCnV5,
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -121,8 +121,8 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         );
         Assert.Equal(
             [
-                "roleplay.world-understanding",
-                "roleplay.first-person-autobiography"
+                "galatea.world-understanding",
+                "galatea.first-person-autobiography"
             ],
             bundle.Definitions.Select(static value => value.Target.BlockKey)
         );
@@ -158,16 +158,16 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         );
         Assert.Equal(
             [
-                "roleplay.world-understanding",
-                "roleplay.first-person-autobiography"
+                "galatea.world-understanding",
+                "galatea.first-person-autobiography"
             ],
             definitions.Select(static value =>
                 value.GetProperty("targetBlockKey").GetString())
         );
         Assert.Equal(
             [
-                "派生上下文：Galatea 的世界理解（来自先前历史，不是新的用户请求）",
-                "派生上下文：Galatea 的第一人称自传（来自先前历史，不是本轮 Assistant 回复）"
+                "galatea.world-understanding Galatea积累的世界理解：",
+                "galatea.first-person-autobiography Galatea积累的第一人称自传："
             ],
             definitions.Select(static value =>
                 value.GetProperty("semanticHeading").GetString())

@@ -12,8 +12,11 @@ C2让Galatea首次真正使用RecapGrid维护两个rolling rewrite context block
 
 | ordered column | logical column | target | 职责 |
 |---:|---|---|---|
-| 1 | `world-understanding` | `Observation / roleplay.world-understanding` | 人物、环境、项目、事实、推断、矛盾与known unknowns的当前工作理解 |
-| 2 | `autobiography` | `Action / roleplay.first-person-autobiography` | 重要经历、关系、感受、承诺、犹豫，以及Galatea当前的内在状态 |
+| 1 | `world-understanding` | `Observation / galatea.world-understanding` | 人物、环境、项目、事实、推断、矛盾与known unknowns的当前工作理解 |
+| 2 | `autobiography` | `Action / galatea.first-person-autobiography` | 重要经历、关系、感受、承诺、犹豫，以及Galatea当前的内在状态 |
+
+Galatea 是会话内角色；这里的 Observation/Action 只表示 provider carrier，不表示玩家/角色身份。尤其是主流程中的 provider Action
+是一条 TRPG GM 复合回复，可能同时含 `[Galatea]`、`[旁白]` 与 `[状态摘要]`；只有显式 `[Galatea]` 第一人称内容是其角色体验证据。
 
 以下需求已经锁定，不再作为实施期开放问题：
 
@@ -136,7 +139,7 @@ namespace Atelia.Galatea.RecapGrid
 
 ```text
 GalateaRecapGridAssets
-  AssetId = "galatea-rolling-rewrite-zh-cn-v4"
+  AssetId = "galatea-rolling-rewrite-zh-cn-v5"
   TryCreateRegistrationBundle(assetId, out bundle)
   Describe(assetId) -> ordered definition digests/targets/resource digests
 ```
@@ -296,7 +299,8 @@ revision；最终production prompt在固定export的B=60,000/R=24,000 policy下�
 2. Timeline row以用户Observation提交文本结束时，autobiography虚构Galatea已经阅读、感受、评价或“正在读”；
 3. 来源限定只在段首出现、后续可独立流通的绝对句又失去局部source/uncertainty scope。
 
-对应prompt revisions把法律/制度/故事机制改为逐句或同一条目局部绑定source与未核验状态，并规定无Galatea Action的terminal segment只能
+对应prompt revisions把法律/制度/故事机制改为逐句或同一条目局部绑定source与未核验状态，并规定无provider Action中明确`[Galatea]`
+第一人称内容的terminal segment只能
 记录“收到/可见/尚未回应”，不得补写心理吸收、评价、选择或进行中的动作。最终fresh B60 candidate的两项P0均关闭，independent review
 给出promotion GO：world与autobiography分别为7,464与7,841 UTF-8 bytes，低于32 KiB；两列无协议词污染，identity-bearing `Agent`/
 `Role-Play Agent`保持原词；autobiography把法律命题限定为老刘剧本的艺术解读并注明未独立核验，末句只记录文本可见且尚未回应。

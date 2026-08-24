@@ -121,12 +121,12 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             CancellationToken.None
         );
         Assert.Equal(
-            "## 派生上下文：Galatea 的世界理解（来自先前历史，不是新的用户请求）\n\n"
+            "## galatea.world-understanding Galatea积累的世界理解：\n\n"
             + "~~~~recap-block\nworld-r1\n~~~~",
             recent.ContextHeader.Observation
         );
         Assert.Equal(
-            "## 派生上下文：Galatea 的第一人称自传（来自先前历史，不是本轮 Assistant 回复）\n\n"
+            "## galatea.first-person-autobiography Galatea积累的第一人称自传：\n\n"
             + "~~~~recap-block\nautobiography-r2\n~~~~",
             recent.ContextHeader.Action
         );
@@ -147,7 +147,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 CancellationToken.None
             );
         Assert.Equal(
-            "## 派生上下文：Galatea 的第一人称自传（来自先前历史，不是本轮 Assistant 回复）\n\n"
+            "## galatea.first-person-autobiography Galatea积累的第一人称自传：\n\n"
             + "~~~~recap-block\nautobiography-r1\n~~~~",
             olderContext.ContextHeader.Action
         );
@@ -553,7 +553,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
     private RollingRepository CreateRollingRepository() {
         string path = NewPath();
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV4,
+            GalateaRecapGridAssets.RollingRewriteZhCnV5,
             out RecapGridControlRegistrationBundle? created
         ));
         RecapGridControlRegistrationBundle bundle = created!;
@@ -636,7 +636,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         >(control.Reader.ReadSnapshot()).Snapshot.Head;
         RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
             .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV4,
+                GalateaRecapGridAssets.RollingRewriteZhCnV5,
                 initial.InstanceId
             );
         ControlHeadRef registered = Assert.IsType<

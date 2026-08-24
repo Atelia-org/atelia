@@ -109,9 +109,9 @@ recent operation共享最多4,096次physical header preview visit与16 MiB cumul
 `RecentTurnsResponseV1`始终携带required
 `contextHeader:{observation:string,action:string}`。当当前exact RecapGrid candidate可materialize时，两个字段分别是
 coherent request recipe实际放在raw tail之前的首条Observation与Action内容（包括`recap-block` fence）；因此browser可直接
-展示模型看到的Recap内容与其自述范围。raw-only、未provision或当前candidate不可用时仍返回同一object shape，但对应字符串为空。
+展示模型看到的Recap正文及各标题声明的语义范围。raw-only、未provision或当前candidate不可用时仍返回同一object shape，但对应字符串为空。
 stale cache保留上一稳定边界的header，并由同一response中的`recapGridReadiness.freshness=stale`标识；它不冒充当前raw head。
-每个derived block都由后端统一渲染为`## {SemanticHeading}`加空行，再接动态长度的`recap-block`围栏；Galatea V4 asset为
+每个derived block都由后端统一渲染为`## {SemanticHeading}`加空行，再接动态长度的`recap-block`围栏；Galatea V5 asset为
 World Understanding与Autobiography分别声明稳定的中文语义标题，browser不根据`BlockKey`自行拼接标题。
 
 ## SSE V1 stable protocol
@@ -155,9 +155,15 @@ recipe/row authority 与 bounded metrics。`ready`时同一Getter handle还会�
 
 Galatea 不自动 Create/Provision/Activate Grid。operator 应先使用 SessionJournal.Cli 的
 `recap-grid scaffold`生成strict admission/profile/route files，再用`recap-grid init`、
-`recap-grid control provision-asset --asset galatea-rolling-rewrite-zh-cn-v4`、
+`recap-grid control provision-asset --asset galatea-rolling-rewrite-zh-cn-v5`、
 Control compose/put-recipe/activate 与 build 命令完成显式配置。该asset提供一个shared Family下的
 `world-understanding`与`autobiography`两列；实际connection/model只来自route/connections配置，不进入durable semantic identity。
+Galatea 是会话内角色，不等于 provider Assistant；两列使用 Observation/Action 只是为了选择 provider carrier。
+主流程中的 provider Action 是 TRPG GM 的复合回复，可能含 `[Galatea]`、`[旁白]` 与 `[状态摘要]`，只有显式
+`[Galatea]` 第一人称内容是 Galatea 自身体验的直接证据。
+当前两条exact target分别是
+`Observation / galatea.world-understanding / galatea.world-understanding Galatea积累的世界理解：`与
+`Action / galatea.first-person-autobiography / galatea.first-person-autobiography Galatea积累的第一人称自传：`。
 两列Definition将provider-facing `SemanticHeading`与carrier/`BlockKey`成套定义；heading进入Definition v2 digest，但不参与
 context contribution的routing identity/order，且不进入冻结的maintainer input `atelia.recap.input.v1`。
 scaffold不会构造provider、
