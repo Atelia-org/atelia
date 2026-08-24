@@ -27,20 +27,33 @@ public sealed class DurableText : DurableObject {
     internal DurableText() { }
 
     public override DurableObjectKind Kind => DurableObjectKind.Text;
-    public override bool HasChanges => _core.HasChanges;
+    private protected override bool HasChangesCore => _core.HasChanges;
 
     /// <summary>块数。</summary>
-    public int BlockCount => _core.Count;
+    public int BlockCount {
+        get {
+            ThrowIfDisposed();
+            return _core.Count;
+        }
+    }
 
     /// <summary>获取指定 block 的内容。</summary>
-    public TextBlock GetBlock(uint blockId) => new(blockId, _core.GetBlock(blockId));
+    public TextBlock GetBlock(uint blockId) {
+        ThrowIfDisposed();
+        return new(blockId, _core.GetBlock(blockId));
+    }
 
     /// <summary>按链序返回所有 block。</summary>
-    public IReadOnlyList<TextBlock> GetAllBlocks() => _core.GetAllBlocks();
+    public IReadOnlyList<TextBlock> GetAllBlocks() {
+        ThrowIfDisposed();
+        return _core.GetAllBlocks();
+    }
 
     /// <summary>从指定 block 开始，按链序返回最多 <paramref name="maxCount"/> 个 block。</summary>
-    public IReadOnlyList<TextBlock> GetBlocksFrom(uint startBlockId, int maxCount)
-        => _core.GetBlocksFrom(startBlockId, maxCount);
+    public IReadOnlyList<TextBlock> GetBlocksFrom(uint startBlockId, int maxCount) {
+        ThrowIfDisposed();
+        return _core.GetBlocksFrom(startBlockId, maxCount);
+    }
 
     /// <summary>在指定 block 之后插入，返回新 blockId。</summary>
     public uint InsertAfter(uint afterBlockId, string content) {
@@ -98,6 +111,7 @@ public sealed class DurableText : DurableObject {
 
     /// <summary>便捷方法：按换行符拆分加载。仅空文本可用。</summary>
     public void LoadText(string text) {
+        ThrowIfDisposed();
         // 按 \n 分割为块，兼容 \r\n（\r 保留在块内容中由调用方处理，
         // 或在渲染时统一）
         var lines = text.Split('\n');

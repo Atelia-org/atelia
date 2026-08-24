@@ -53,6 +53,7 @@ where TKey : notnull {
     public abstract IEnumerable<TKey> Keys { get; }
 
     public bool TryGetValueKind(TKey key, out ValueKind kind) {
+        ThrowIfDisposed();
         if (!TryGetValueBox(key, out ValueBox box)) {
             kind = default;
             return false;
@@ -150,6 +151,7 @@ where TKey : notnull {
     }
 
     private protected UpsertStatus UpsertSymbol(TKey key, Symbol value) {
+        ThrowIfDisposed();
         SymbolId id = Revision.InternSymbol(value.Value);
         return UpsertCore<SymbolId, ValueBox.SymbolIdFace>(key, id);
     }

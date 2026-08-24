@@ -22,7 +22,7 @@ public class ValueBoxEqualityTests {
 
     private sealed class FakeDurable : DurableObject {
         public override DurableObjectKind Kind => DurableObjectKind.MixedDict;
-        public override bool HasChanges => false;
+        private protected override bool HasChangesCore => false;
         internal override SizedPtr HeadTicket => default;
         internal override bool IsTracked => false;
         internal override FrameTag WritePendingDiff(BinaryDiffWriter writer, ref DiffWriteContext context) => throw new NotSupportedException();

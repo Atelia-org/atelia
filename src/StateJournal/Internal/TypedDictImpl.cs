@@ -16,7 +16,7 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
 
     #region DurableDictBase abstract properties
 
-    public override bool HasChanges => _core.HasChanges;
+    private protected override bool HasChangesCore => _core.HasChanges;
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes<KHelper, VHelper>();
     private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes<KHelper, VHelper>();
 
@@ -24,9 +24,17 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
 
     #region IDict<TKey>
 
-    public override bool ContainsKey(TKey key) => _core.Current.ContainsKey(key);
-    public override int Count => _core.Current.Count;
-    public override IEnumerable<TKey> Keys => _core.Current.Keys;
+    public override bool ContainsKey(TKey key) {
+        ThrowIfDisposed();
+        return _core.Current.ContainsKey(key);
+    }
+    public override int Count {
+        get {
+            ThrowIfDisposed();
+            return _core.Current.Count;
+        }
+    }
+    public override IEnumerable<TKey> Keys => GuardLiveEnumerable(_core.Current.Keys);
     internal override IReadOnlyCollection<TKey> CommittedKeys => _core.CommittedKeys;
 
     public override bool Remove(TKey key) {
@@ -45,6 +53,7 @@ internal class TypedDictImpl<TKey, TValue, KHelper, VHelper> : DurableDict<TKey,
     #region IDict<TKey, TValue>
 
     public override GetIssue Get(TKey key, out TValue? value) {
+        ThrowIfDisposed();
         return _core.Current.TryGetValue(key, out value)
             ? GetIssue.None
             : GetIssue.NotFound;

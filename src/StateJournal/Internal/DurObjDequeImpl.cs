@@ -11,8 +11,13 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
         _core = new();
     }
 
-    public override bool HasChanges => _core.HasChanges;
-    public override int Count => _core.Current.Count;
+    private protected override bool HasChangesCore => _core.HasChanges;
+    public override int Count {
+        get {
+            ThrowIfDisposed();
+            return _core.Current.Count;
+        }
+    }
     public override void PushFront(T? value) {
         ThrowIfDetachedOrFrozen();
         _core.PushFront<LocalIdAsRefHelper>(ToLocalId(value));
@@ -22,6 +27,7 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
         _core.PushBack<LocalIdAsRefHelper>(ToLocalId(value));
     }
     public override GetIssue GetAt(int index, out T? value) {
+        ThrowIfDisposed();
         if (!_core.TryGetAt(index, out var localId)) {
             value = null;
             return GetIssue.OutOfRange;
@@ -29,6 +35,7 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
         return Load(localId, out value);
     }
     public override GetIssue PeekFront(out T? value) {
+        ThrowIfDisposed();
         if (!_core.TryPeekFront(out var localId)) {
             value = null;
             return GetIssue.NotFound;
@@ -36,6 +43,7 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
         return Load(localId, out value);
     }
     public override GetIssue PeekBack(out T? value) {
+        ThrowIfDisposed();
         if (!_core.TryPeekBack(out var localId)) {
             value = null;
             return GetIssue.NotFound;

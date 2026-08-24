@@ -27,7 +27,7 @@ where TKey : notnull {
 
     #region DurableDictBase abstract properties
 
-    public override bool HasChanges => _core.HasChanges;
+    private protected override bool HasChangesCore => _core.HasChanges;
     // EstimatedRebaseBytes/EstimatedDeltifyBytes 由 MixedDictImpl<TKey, KHelper> 提供（需要 KHelper）。
 
     #endregion
@@ -72,8 +72,16 @@ where TKey : notnull {
 
     #region IDict<TKey>
 
-    public bool ContainsKey(TKey key) => _core.Current.ContainsKey(key);
-    public int Count => _core.Current.Count;
+    public bool ContainsKey(TKey key) {
+        ThrowIfDisposed();
+        return _core.Current.ContainsKey(key);
+    }
+    public int Count {
+        get {
+            ThrowIfDisposed();
+            return _core.Current.Count;
+        }
+    }
     public bool Remove(TKey key) {
         ThrowIfDetachedOrFrozen();
         if (!_core.Current.TryGetValue(key, out ValueBox removedValue)) { return false; }
@@ -87,6 +95,7 @@ where TKey : notnull {
         return true;
     }
     public bool TryGetValueKind(TKey key, out ValueKind kind) {
+        ThrowIfDisposed();
         if (!_core.Current.TryGetValue(key, out ValueBox box)) {
             kind = default;
             return false;
@@ -96,7 +105,7 @@ where TKey : notnull {
     }
 
     /// <summary>所有键的枚举。</summary>
-    public IEnumerable<TKey> Keys => _core.Current.Keys;
+    public IEnumerable<TKey> Keys => GuardLiveEnumerable(_core.Current.Keys);
 
     #endregion
 
@@ -105,6 +114,7 @@ where TKey : notnull {
     private GetIssue GetCore<TValue, VFace>(TKey key, out TValue? value)
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
+        ThrowIfDisposed();
         if (!_core.Current.TryGetValue(key, out ValueBox box)) {
             value = default;
             return GetIssue.NotFound;
@@ -213,6 +223,7 @@ where TKey : notnull {
     }
 
     private UpsertStatus UpsertSymbol(TKey key, Symbol value) {
+        ThrowIfDisposed();
         SymbolId id = Revision.InternSymbol(value.Value);
         return UpsertCore<SymbolId, ValueBox.SymbolIdFace>(key, id);
     }

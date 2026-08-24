@@ -27,7 +27,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
 
     #region DurableDequeBase abstract properties
 
-    public override bool HasChanges => _core.HasChanges;
+    private protected override bool HasChangesCore => _core.HasChanges;
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes<ValueBoxHelper>();
     private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes<ValueBoxHelper>();
 
@@ -40,7 +40,12 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
 
     #endregion
 
-    public int Count => _core.Current.Count;
+    public int Count {
+        get {
+            ThrowIfDisposed();
+            return _core.Current.Count;
+        }
+    }
 
     #region Generated Dispatch (partial — bodies in .g.cs)
 
@@ -87,6 +92,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     public bool TryPopBack<TValue>(out TValue? value) where TValue : notnull => PopBack<TValue>(out value) == GetIssue.None;
 
     public bool TryPeekFrontValueKind(out ValueKind kind) {
+        ThrowIfDisposed();
         if (!_core.TryPeekFront(out var front)) {
             kind = default;
             return false;
@@ -96,6 +102,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     }
 
     public bool TryPeekBackValueKind(out ValueKind kind) {
+        ThrowIfDisposed();
         if (!_core.TryPeekBack(out var back)) {
             kind = default;
             return false;
@@ -118,6 +125,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     private GetIssue PeekCore<TValue, VFace>(bool front, out TValue? value)
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
+        ThrowIfDisposed();
         bool found = front
             ? _core.TryPeekFront(out ValueBox box)
             : _core.TryPeekBack(out box);
@@ -131,6 +139,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     private GetIssue GetCore<TValue, VFace>(int index, out TValue? value)
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
+        ThrowIfDisposed();
         if (!_core.TryGetAt(index, out ValueBox box)) {
             value = default;
             return GetIssue.OutOfRange;
@@ -141,6 +150,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     private bool TrySetCore<TValue, VFace>(int index, TValue? value)
         where TValue : notnull
         where VFace : ValueBox.ITypedFace<TValue> {
+        ThrowIfDisposed();
         if ((uint)index >= (uint)_core.Current.Count) { return false; }
 
         SetCore<TValue, VFace>(index, value);
@@ -234,6 +244,7 @@ public abstract partial class DurableDeque : DurableDequeBase, IDeque,
     private bool TrySetAtCoreTrusted<TValue, VFace>(int index, TValue value)
         where TValue : notnull
         where VFace : ValueBox.ITrustedTypedFace<TValue> {
+        ThrowIfDisposed();
         if ((uint)index >= (uint)_core.Current.Count) { return false; }
 
         ThrowIfDetachedOrFrozen();

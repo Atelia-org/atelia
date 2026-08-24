@@ -405,6 +405,7 @@ GC Sweep(不可达) -> Detached
 
 - `State` 仍只表达 dirty / clean / detached 生命周期
 - `IsFrozen` 是与 `DurableState` 正交的对象级 mutability 语义，不单独占一个 `DurableState`
+- owning `Repository` disposed 是另一条正交的 external lifetime 边界，不编码进 `DurableState`，也不把对象改成 `Detached`
 - 当前合法组合里，最需要记忆的是：
   - `Clean + IsFrozen = true`：已提交 readonly 对象
   - `PersistentDirty + IsFrozen = true`：dirty freeze 后等待以 rebase 落盘的 frozen working state
@@ -414,7 +415,8 @@ GC Sweep(不可达) -> Detached
 公开创建入口仍是 `Revision` 实例方法：
 
 ```csharp
-var rev = new Revision(boundSegmentNumber: 1);
+using var repo = Repository.Create(repoDir).Value;
+var rev = repo.CreateBranch("main").Value;
 
 rev.CreateDict<string, int>();        // TypedDict
 rev.CreateDict<string>();             // MixedDict
@@ -424,6 +426,8 @@ rev.CreateDeque<int>();               // TypedDeque
 rev.CreateDeque();                    // MixedDeque
 rev.CreateHashSet<int>();             // DurableHashSet
 ```
+
+`new Revision(boundSegmentNumber)` 是 internal 测试/底层入口；没有 Repository lifetime token，不能替代普通消费者的 `Repository.Create/Open` → `CreateBranch/CheckoutBranch` 路径。
 
 创建时自动：
 
@@ -845,6 +849,9 @@ Load ObjectMap frame chain
 - commit 地址 = `CommitAddress(segmentNumber, commitTicket)`
 - `Revision` 只记录自己当前绑定的 `segmentNumber`
 - `Repository` 在 branch CAS 成功后，再调用 `revision.AcceptPersistedSegment(...)`
+- 每个 Repository 独占一个 shared lifetime token；newborn branch、checkout/open、historical detached root 与 replay clone 都继承它
+- `Repository.Dispose()` 先 signal token，使其产生的 Revision/Object operational API 统一抛 `ObjectDisposedException`；这不是 `DurableState.Detached`
+- dispose 前返回的 snapshot collection 结构与普通 scalar 独立可读（其中的 `DurableObject` 元素仍会失效）；dict `Keys` 等 owner-backed live enumerable 的 getter/enumerator 随 owner lifetime 失效
 
 ---
 

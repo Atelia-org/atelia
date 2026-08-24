@@ -20,7 +20,7 @@ internal sealed class DurObjOrderedDictImpl<TKey, TDurObj, KHelper> : DurableOrd
 
     #region DurableDictBase abstract hooks
 
-    public override bool HasChanges => _core.HasChanges;
+    private protected override bool HasChangesCore => _core.HasChanges;
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes();
     private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes();
 
@@ -44,10 +44,19 @@ internal sealed class DurObjOrderedDictImpl<TKey, TDurObj, KHelper> : DurableOrd
 
     #region DurableOrderedDict API
 
-    public override bool ContainsKey(TKey key) => _core.ContainsKey(key);
-    public override int Count => _core.Count;
+    public override bool ContainsKey(TKey key) {
+        ThrowIfDisposed();
+        return _core.ContainsKey(key);
+    }
+    public override int Count {
+        get {
+            ThrowIfDisposed();
+            return _core.Count;
+        }
+    }
 
     public override GetIssue Get(TKey key, out TDurObj? value) {
+        ThrowIfDisposed();
         value = null;
         if (!_core.TryGet(key, out var localId)) { return GetIssue.NotFound; }
         if (localId.IsNull) { return GetIssue.None; }
@@ -73,9 +82,13 @@ internal sealed class DurObjOrderedDictImpl<TKey, TDurObj, KHelper> : DurableOrd
         return _core.Remove(key);
     }
 
-    public override IReadOnlyList<TKey> GetKeys() => _core.GetAllKeys();
+    public override IReadOnlyList<TKey> GetKeys() {
+        ThrowIfDisposed();
+        return _core.GetAllKeys();
+    }
 
     public override List<KeyValuePair<TKey, TDurObj?>> ReadAscendingFrom(TKey minInclusive, int maxCount) {
+        ThrowIfDisposed();
         var raw = _core.ReadAscendingFrom(minInclusive, maxCount);
         var result = new List<KeyValuePair<TKey, TDurObj?>>(raw.Count);
         foreach (var pair in raw) {

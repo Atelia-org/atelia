@@ -15,7 +15,7 @@ internal sealed class TypedOrderedDictImpl<TKey, TValue, KHelper, VHelper> : Dur
 
     #region DurableDictBase abstract hooks
 
-    public override bool HasChanges => _core.HasChanges;
+    private protected override bool HasChangesCore => _core.HasChanges;
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes();
     private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes();
 
@@ -39,11 +39,21 @@ internal sealed class TypedOrderedDictImpl<TKey, TValue, KHelper, VHelper> : Dur
 
     #region DurableOrderedDict API
 
-    public override bool ContainsKey(TKey key) => _core.ContainsKey(key);
-    public override int Count => _core.Count;
+    public override bool ContainsKey(TKey key) {
+        ThrowIfDisposed();
+        return _core.ContainsKey(key);
+    }
+    public override int Count {
+        get {
+            ThrowIfDisposed();
+            return _core.Count;
+        }
+    }
 
-    public override GetIssue Get(TKey key, out TValue? value) =>
-        _core.TryGet(key, out value) ? GetIssue.None : GetIssue.NotFound;
+    public override GetIssue Get(TKey key, out TValue? value) {
+        ThrowIfDisposed();
+        return _core.TryGet(key, out value) ? GetIssue.None : GetIssue.NotFound;
+    }
     // value! : notnull 约束下 TValue? 仅是 NRT 注解；引用类型的 null 值在运行时被正确传递和存储。
     public override UpsertStatus Upsert(TKey key, TValue? value) {
         ThrowIfDetachedOrFrozen();
@@ -55,9 +65,14 @@ internal sealed class TypedOrderedDictImpl<TKey, TValue, KHelper, VHelper> : Dur
         return _core.Remove(key);
     }
 
-    public override IReadOnlyList<TKey> GetKeys() => _core.GetAllKeys();
-    public override List<KeyValuePair<TKey, TValue?>> ReadAscendingFrom(TKey minInclusive, int maxCount) =>
-        _core.ReadAscendingFrom(minInclusive, maxCount)!;
+    public override IReadOnlyList<TKey> GetKeys() {
+        ThrowIfDisposed();
+        return _core.GetAllKeys();
+    }
+    public override List<KeyValuePair<TKey, TValue?>> ReadAscendingFrom(TKey minInclusive, int maxCount) {
+        ThrowIfDisposed();
+        return _core.ReadAscendingFrom(minInclusive, maxCount)!;
+    }
 
     #endregion
 

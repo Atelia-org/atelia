@@ -122,6 +122,7 @@ using var reopened = Repository.Open(repoDir).Value;
 
 - 一个 repository 目录通过 `state-journal.lock` 做进程独占锁。
 - `Repository.Open` 只恢复 repo 元数据；具体对象图在 `CheckoutBranch` 时加载。
+- `Repository` 拥有由它创建或物化的所有 `Revision` 与 `DurableObject` 的 operational lifetime；`Dispose()` 后这些对象的读、写、状态、freeze/fork 与 view acquisition 会立即抛 `ObjectDisposedException`。只有 `DurableObject.Kind` / `LocalId` 仍可用于身份与诊断。
 - `Repository` 不是线程安全的对象图编辑器；内部锁只保护 repo 元数据。
 - 出现 branch metadata CAS 失败后，当前 `Repository` 实例会进入 poisoned 状态，应 dispose 并 reopen。
 
@@ -149,7 +150,7 @@ var replay = repo.CreateBranch("replay", head).Value;
 - 每个 branch 还会维护 `*.json.last` backup 和 `*.reflog.jsonl` 追加日志；`Repository.Open` 会在主 ref 损坏时尝试从 backup / reflog 恢复。
 - 离线分析或救援工具若只需要发现所有历史候选地址，可用 `RepositoryHistoryReader.EnumerateBranchRawCommitAddresses(repoDir, branchName)` 读取 branch ref / backup / reflog 元数据并枚举 `CommitAddress`；raw 结果会包含 reflog / recentHeads 中出现过但不在当前 HEAD 父链上的短旁支。
 - 若只需要当前 branch HEAD 的有效历史，可用 `RepositoryHistoryReader.EnumerateBranchEffectiveCommitAddresses(repo, branchName)` 从 HEAD 沿 commit parent metadata 反向遍历；该路径会打开 commit metadata / root，因此需要已打开的 `Repository`。
-- 离线分析或救援工具若要读取某个历史 root，可在打开 repo 后调用 `Repository.LoadRootAtCommit(commitAddress)`；它复用 commit load 路径，不创建 branch、不写 branch metadata，返回的 root 不绑定任何 branch，不能用于推进 repository head。这里的“只读”指 repository 持久化层只读；返回对象仍是普通内存 durable object，不是不可变 facade。
+- 离线分析或救援工具若要读取某个历史 root，可在打开 repo 后调用 `Repository.LoadRootAtCommit(commitAddress)`；它复用 commit load 路径，不创建 branch、不写 branch metadata，返回的 root 不绑定任何 branch，不能用于推进 repository head。这里的“只读”指 repository 持久化层只读；返回对象仍是普通内存 durable object，不是不可变 facade，并且仍受创建它的 `Repository` lifetime 约束。
 - 如果需要从较早提交继续演化，通常做法是先从 branch ref 的 `recentHeads` 或 reflog 找到旧 `CommitAddress`，再调用 `CreateBranch(name, fromCommitAddress)`。
 
 ### 2.3 Segment
@@ -277,6 +278,7 @@ replay.Upsert(2, "gamma");
 语义要点：
 
 - replay 结果仍然绑定到 **同一个 `Revision`**，只是拿到新的 `LocalId`。
+- replay 结果与 source 共享 owning `Repository` lifetime；repository dispose 后二者同时失效。
 - replay 只看 `source.HeadTicket` 对应的 committed snapshot，不看 source 当前未提交 working state。
 - 因此 dirty source 也能 replay；dirty frozen source 也能 replay committed clone。
 - `LoadMaterializationMode.ForceMutable` 是最常用模式，表示“无论源 committed flags 是否 frozen，都把 replay 结果物化成 mutable working view”。
@@ -844,6 +846,7 @@ repo.Commit(root).Value;
 ## 12. 当前边界与易踩坑
 
 - 当前 `Open` 是全量加载，不要假设按对象 lazy load。
+- 不要在 `Repository.Dispose()` 后继续使用它产生的 `Revision` / `DurableObject`；重新 `Open` 会得到新的、独立 lifetime 下的对象。dispose 前已取得的 caller-owned snapshot 的集合结构与普通 scalar 可继续读取，但 snapshot 中若包含 `DurableObject`，该对象本身仍会失效；dict `Keys` 这类 owner-backed live enumerable 会随 owner 失效。
 - StateJournal 不是任意 C# 对象图 serializer；只持久化 durable 容器和支持的 scalar。
 - 不要跨 `Revision` 存 DurableObject。
 - 不要继续使用被 GC sweep 后的 detached 对象。

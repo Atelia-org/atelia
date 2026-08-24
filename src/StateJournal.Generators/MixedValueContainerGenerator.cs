@@ -74,6 +74,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
 
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
         builder.AppendLine("    public partial global::Atelia.StateJournal.IDeque<TValue> Of<TValue>() where TValue : notnull {");
+        builder.AppendLine("        ThrowIfDisposed();");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             builder.Append("            return (global::Atelia.StateJournal.IDeque<TValue>)(object)(global::Atelia.StateJournal.IDeque<")
@@ -92,6 +93,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
     private static void EmitDequeWriteDispatchMethod(StringBuilder builder, string methodName, string coreMethodName, string coreArgumentPrefix, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types) {
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
         builder.Append("    public partial void ").Append(methodName).AppendLine("<TValue>(TValue? value) where TValue : notnull {");
+        builder.AppendLine("        ThrowIfDisposed();");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             switch (type.SpecialHandling) {
@@ -129,6 +131,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
     private static void EmitDequeTryWriteDispatchMethod(StringBuilder builder, string methodName, string coreMethodName, string coreArgumentPrefix, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types) {
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
         builder.Append("    public partial bool ").Append(methodName).AppendLine("<TValue>(TValue? value) where TValue : notnull {");
+        builder.AppendLine("        ThrowIfDisposed();");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             switch (type.SpecialHandling) {
@@ -164,6 +167,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
     private static void EmitDequeTrySetAtDispatchMethod(StringBuilder builder, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types) {
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
         builder.AppendLine("    public partial bool TrySetAt<TValue>(int index, TValue? value) where TValue : notnull {");
+        builder.AppendLine("        ThrowIfDisposed();");
         foreach (var type in types) {
             EmitDequeTrySetAtDispatchBranch(builder, type);
         }
@@ -201,6 +205,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
     private static void EmitDequeReadDispatchMethod(StringBuilder builder, string methodName, string methodParameter, string coreArgument, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types) {
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
         builder.Append("    private partial global::Atelia.StateJournal.GetIssue ").Append(methodName).Append("<TValue>(").Append(methodParameter).Append(", out TValue? value) where TValue : notnull {").AppendLine();
+        builder.AppendLine("        ThrowIfDisposed();");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             switch (type.SpecialHandling) {
@@ -268,7 +273,12 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         builder.AppendLine();
         foreach (var type in types) {
             var nullableValueType = type.RenderNullableValueType();
-            builder.Append("    public global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append("> Of").Append(type.PropertySuffix).AppendLine(" => this;");
+            builder.Append("    public global::Atelia.StateJournal.IDeque<").Append(type.ValueType).Append("> Of").Append(type.PropertySuffix).AppendLine(" {");
+            builder.AppendLine("        get {");
+            builder.AppendLine("            ThrowIfDisposed();");
+            builder.AppendLine("            return this;");
+            builder.AppendLine("        }");
+            builder.AppendLine("    }");
 
             switch (type.SpecialHandling) {
                 case MixedTypeGenerationCommon.MixedValueSpecialHandling.DurableObject:
@@ -317,6 +327,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
     private static void EmitDictGenericDispatch(StringBuilder builder, ImmutableArray<MixedTypeGenerationCommon.TypeSpec> types, string keyType, string containerDisplayName = "DurableDict") {
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
         builder.Append("    public partial global::Atelia.StateJournal.UpsertStatus Upsert<TValue>(").Append(keyType).AppendLine(" key, TValue? value) where TValue : notnull {");
+        builder.AppendLine("        ThrowIfDisposed();");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             switch (type.SpecialHandling) {
@@ -346,6 +357,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
 
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
         builder.Append("    public partial global::Atelia.StateJournal.IDict<").Append(keyType).Append(", TValue> Of<TValue>() where TValue : notnull {").AppendLine();
+        builder.AppendLine("        ThrowIfDisposed();");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             builder.Append("            return (global::Atelia.StateJournal.IDict<").Append(keyType).Append(", TValue>)(object)(global::Atelia.StateJournal.IDict<").Append(keyType).Append(", ").Append(type.ValueType).AppendLine(">)this;");
@@ -357,6 +369,7 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
 
         builder.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
         builder.Append("    public partial global::Atelia.StateJournal.GetIssue Get<TValue>(").Append(keyType).AppendLine(" key, out TValue? value) where TValue : notnull {");
+        builder.AppendLine("        ThrowIfDisposed();");
         foreach (var type in types) {
             builder.Append("        if (typeof(TValue) == typeof(").Append(type.ValueType).AppendLine(")) {");
             switch (type.SpecialHandling) {
@@ -410,7 +423,12 @@ public sealed class MixedValueContainerGenerator : IIncrementalGenerator {
         builder.AppendLine();
         foreach (var type in types) {
             var nullableValueType = type.RenderNullableValueType();
-            builder.Append("    public global::Atelia.StateJournal.IDict<").Append(keyType).Append(", ").Append(type.ValueType).Append("> Of").Append(type.PropertySuffix).AppendLine(" => this;");
+            builder.Append("    public global::Atelia.StateJournal.IDict<").Append(keyType).Append(", ").Append(type.ValueType).Append("> Of").Append(type.PropertySuffix).AppendLine(" {");
+            builder.AppendLine("        get {");
+            builder.AppendLine("            ThrowIfDisposed();");
+            builder.AppendLine("            return this;");
+            builder.AppendLine("        }");
+            builder.AppendLine("    }");
 
             switch (type.SpecialHandling) {
                 case MixedTypeGenerationCommon.MixedValueSpecialHandling.DurableObject:

@@ -42,7 +42,7 @@
 - active segment 的选择与轮换
 - active segment 可写句柄的长期持有
 - 历史 segment 的按次只读打开
-- 已加载 `Revision` 实例的生命周期管理
+- 由该 Repository 创建/物化的全部 `Revision` / `DurableObject` operational lifetime 管理
 
 ### 1.2 Revision
 
@@ -64,6 +64,8 @@
 - `Revision.Commit(...)` / `Revision.SaveAs(...)` 所需的 `IRbfFile` 由调用方显式传入
 
 这样把"对象图工作态"与"文件句柄生命周期"解耦，recent/archive 维护也不再被已加载 `Revision` 长期阻塞。
+
+文件句柄解耦不表示 `Revision` 可以脱离 owning `Repository` 独立存活。每个 `Repository` 持有一个轻量、thread-visible 的 shared lifetime token，并传给它创建或物化的所有 Revision（包括不进入 branch cache 的 `LoadRootAtCommit` detached Revision）。`Repository.Dispose()` 先 signal token，再关闭 segment 与 repo lock；因此无需遍历对象图即可让全部 operational API 统一抛 `ObjectDisposedException`。这个状态不写入 `DurableState`，也不会把对象改成 `Detached`；`Kind` / `LocalId` 仍可用于诊断。
 
 `BranchName` 的存在使 `Repository.Commit(graphRoot)` 能从 `graphRoot.Revision.BranchName` O(1) 定位所属 branch，避免遍历所有 branch 做 `ReferenceEquals` 匹配。
 

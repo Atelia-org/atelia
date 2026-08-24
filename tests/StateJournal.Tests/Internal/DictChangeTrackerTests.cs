@@ -280,7 +280,7 @@ public class DictChangeTrackerTests {
         }
 
         public override DurableObjectKind Kind => DurableObjectKind.TypedDict;
-        public override bool HasChanges => _hasChanges;
+        private protected override bool HasChangesCore => _hasChanges;
         private protected override ReadOnlySpan<byte> TypeCode => _typeCode;
         private protected override uint EstimatedRebaseBytes => _estimatedRebaseBytes;
         private protected override uint EstimatedDeltifyBytes => _estimatedDeltifyBytes;

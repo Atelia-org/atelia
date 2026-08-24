@@ -13,13 +13,18 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
 
     #region DurableObject
 
-    public override bool HasChanges => _core.HasChanges;
+    private protected override bool HasChangesCore => _core.HasChanges;
 
     #endregion
 
     #region DurableDeque<T>
 
-    public override int Count => _core.Current.Count;
+    public override int Count {
+        get {
+            ThrowIfDisposed();
+            return _core.Current.Count;
+        }
+    }
     public override void PushFront(T? value) {
         ThrowIfDetachedOrFrozen();
         _core.PushFront<VHelper>(value);
@@ -29,6 +34,7 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
         _core.PushBack<VHelper>(value);
     }
     public override GetIssue GetAt(int index, out T? value) {
+        ThrowIfDisposed();
         if (!_core.TryGetAt(index, out value)) {
             value = default;
             return GetIssue.OutOfRange;
@@ -36,6 +42,7 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
         return GetIssue.None;
     }
     public override GetIssue PeekFront(out T? value) {
+        ThrowIfDisposed();
         if (!_core.TryPeekFront(out value)) {
             value = default;
             return GetIssue.NotFound;
@@ -43,6 +50,7 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
         return GetIssue.None;
     }
     public override GetIssue PeekBack(out T? value) {
+        ThrowIfDisposed();
         if (!_core.TryPeekBack(out value)) {
             value = default;
             return GetIssue.NotFound;

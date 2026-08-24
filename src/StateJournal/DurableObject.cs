@@ -20,7 +20,14 @@ public abstract class DurableObject {
 
     /// <summary>所属 Revision。对象一经绑定即不可更改。</summary>
     /// <exception cref="InvalidOperationException">对象尚未绑定到 Revision。</exception>
-    public Revision Revision => _revision ?? throw new InvalidOperationException("DurableObject not bound to a Revision.");
+    /// <exception cref="ObjectDisposedException">owning Repository 已 dispose。</exception>
+    public Revision Revision {
+        get {
+            Revision revision = _revision ?? throw new InvalidOperationException("DurableObject not bound to a Revision.");
+            revision.ThrowIfDisposed();
+            return revision;
+        }
+    }
 
     /// <summary>由 Revision 调用，将对象与 Revision 绑定并分配 LocalId。一经绑定不可更改。</summary>
     /// <param name="revision">所属 Revision。</param>
@@ -34,12 +41,29 @@ public abstract class DurableObject {
     }
 
     /// <inheritdoc/>
-    public DurableState State => _state;
+    public DurableState State {
+        get {
+            ThrowIfDisposed();
+            return _state;
+        }
+    }
 
-    public bool IsFrozen => _isFrozen;
+    public bool IsFrozen {
+        get {
+            ThrowIfDisposed();
+            return _isFrozen;
+        }
+    }
 
     /// <inheritdoc/>
-    public abstract bool HasChanges { get; }
+    public bool HasChanges {
+        get {
+            ThrowIfDisposed();
+            return HasChangesCore;
+        }
+    }
+
+    private protected abstract bool HasChangesCore { get; }
 
     internal bool HasPersistenceChanges => HasChanges || _mutabilityDirty || _pendingObjectMapRegistration;
 
@@ -168,7 +192,15 @@ public abstract class DurableObject {
     /// <summary>如果对象已分离则抛出异常。</summary>
     /// <exception cref="ObjectDetachedException">对象已分离。</exception>
     protected void ThrowIfDetached() {
+        ThrowIfDisposed();
         if (_state == DurableState.Detached) { throw new ObjectDetachedException(LocalId); }
+    }
+
+    internal void ThrowIfDisposed() => _revision?.ThrowIfDisposed();
+
+    private protected IEnumerable<T> GuardLiveEnumerable<T>(IEnumerable<T> source) {
+        ThrowIfDisposed();
+        return new LifecycleCheckedEnumerable<T>(this, source);
     }
 
     /// <summary>

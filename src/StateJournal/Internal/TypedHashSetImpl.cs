@@ -11,11 +11,22 @@ internal sealed class TypedHashSetImpl<T, THelper> : DurableHashSet<T>
         _core = new();
     }
 
-    public override bool HasChanges => _core.HasChanges;
-    public override int Count => _core.Count;
-    public override IReadOnlyCollection<T> Items => _core.Items;
+    private protected override bool HasChangesCore => _core.HasChanges;
+    public override int Count {
+        get {
+            ThrowIfDisposed();
+            return _core.Count;
+        }
+    }
+    public override IReadOnlyCollection<T> Items {
+        get {
+            ThrowIfDisposed();
+            return _core.Items;
+        }
+    }
 
     public override bool Contains(T value) {
+        ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(value);
         return _core.Contains<THelper>(value);
     }

@@ -17,6 +17,7 @@ public partial class Revision {
     private const uint CommitTailMetaV2Marker = 0x324D4353; // "SCM2" little-endian marker.
 
     private uint _headSegmentNumber;
+    private readonly RepositoryLifetime? _ownerLifetime;
 
     /// <summary>
     /// 当前活跃的 ObjectMap，始终占据 pool slot 0。
@@ -41,13 +42,33 @@ public partial class Revision {
     private CommitSnapshot? _head;
 
     internal CommitTicket HeadId => _head?.Id ?? default;
-    public CommitTicket HeadParentId => _head?.ParentAddress?.CommitTicket ?? default;
+    public CommitTicket HeadParentId {
+        get {
+            ThrowIfDisposed();
+            return _head?.ParentAddress?.CommitTicket ?? default;
+        }
+    }
     /// <summary>最近一次成功 Commit 的父提交完整地址。root commit 或首次 Commit 前为 null。</summary>
-    public CommitAddress? HeadParentAddress => _head?.ParentAddress;
+    public CommitAddress? HeadParentAddress {
+        get {
+            ThrowIfDisposed();
+            return _head?.ParentAddress;
+        }
+    }
     /// <summary>最近一次 Commit 时使用的 GraphRoot。首次 Commit 前为 null。Open 后自动从 TailMeta 恢复。</summary>
-    public DurableObject? GraphRoot => _head?.GraphRoot;
+    public DurableObject? GraphRoot {
+        get {
+            ThrowIfDisposed();
+            return _head?.GraphRoot;
+        }
+    }
     /// <summary>最近一次成功 Commit 的完整地址。首次 Commit 前为 null。</summary>
-    public CommitAddress? HeadAddress => HeadId.IsNull ? null : CommitAddress.Create(_headSegmentNumber, HeadId);
+    public CommitAddress? HeadAddress {
+        get {
+            ThrowIfDisposed();
+            return HeadId.IsNull ? null : CommitAddress.Create(_headSegmentNumber, HeadId);
+        }
+    }
     /// <summary>最近一次 Commit 所在的 segment 编号，与 <see cref="HeadId"/> 组合构成完整的 <see cref="CommitAddress"/>。</summary>
     internal uint HeadSegmentNumber => _headSegmentNumber;
 
@@ -65,6 +86,7 @@ public partial class Revision {
     /// </list>
     /// </remarks>
     public AteliaResult<T> GetGraphRoot<T>() where T : DurableObject {
+        ThrowIfDisposed();
         var root = _head?.GraphRoot;
         if (root is null) {
             return new SjStateError(
@@ -100,8 +122,9 @@ public partial class Revision {
     /// 这是 internal 测试入口。普通使用者请走 public 路径：
     /// <see cref="Repository.Create(string)"/> → <see cref="Repository.CreateBranch(string)"/>。
     /// </remarks>
-    internal Revision(uint boundSegmentNumber) {
+    internal Revision(uint boundSegmentNumber, RepositoryLifetime? ownerLifetime = null) {
         ArgumentOutOfRangeException.ThrowIfZero(boundSegmentNumber);
+        _ownerLifetime = ownerLifetime;
         _headSegmentNumber = boundSegmentNumber;
         _objectMap = Durable.Dict<uint, ulong>();
         _pool = new GcPool<DurableObject>();
@@ -118,9 +141,11 @@ public partial class Revision {
         DurableDict<uint, ulong> objectMap,
         GcPool<DurableObject> pool,
         DurableDict<uint, string> symbolMirror,
-        StringPool symbolPool
+        StringPool symbolPool,
+        RepositoryLifetime? ownerLifetime
     ) {
         ArgumentOutOfRangeException.ThrowIfZero(boundSegmentNumber);
+        _ownerLifetime = ownerLifetime;
         _headSegmentNumber = boundSegmentNumber;
         _objectMap = objectMap;
         _pool = pool;
@@ -132,7 +157,12 @@ public partial class Revision {
     /// <param name="id">commit 的标识（内含 ObjectMap 帧的 SizedPtr）。</param>
     /// <param name="file">RBF 文件。</param>
     /// <param name="segmentNumber">此 commit 所在的 segment number。</param>
-    internal static AteliaResult<Revision> Open(CommitTicket id, IRbfFile file, uint segmentNumber) {
+    internal static AteliaResult<Revision> Open(
+        CommitTicket id,
+        IRbfFile file,
+        uint segmentNumber,
+        RepositoryLifetime? ownerLifetime = null
+    ) {
         var loadResult = VersionChain.LoadFull(
             file, id.Ticket,
             expectUsage: FrameUsage.ObjectMap,
@@ -226,7 +256,7 @@ public partial class Revision {
 
         var pool = GcPool<DurableObject>.Rebuild(entries.AsSpan(0, i));
 
-        var revision = new Revision(segmentNumber, objectMap, pool, symbolTable, symbolPool);
+        var revision = new Revision(segmentNumber, objectMap, pool, symbolTable, symbolPool, ownerLifetime);
 
         // 绑定所有用户对象到 Revision（skip ObjectMap slot 0 和 SymbolTable）
         foreach (uint key in objectMap.Keys) {
@@ -269,6 +299,7 @@ public partial class Revision {
 
     /// <summary>获取指定 LocalId 的 DurableObject（全量加载模式下直接从 pool 读取）。</summary>
     public AteliaResult<DurableObject> Load(LocalId id) {
+        ThrowIfDisposed();
         if (id.IsNull) { return new SjCorruptionError("Cannot load null LocalId.", RecoveryHint: "Use a valid LocalId."); }
         var handle = id.ToSlotHandle();
         if (!_pool.TryGetValue(handle, out var obj)) {
@@ -324,6 +355,7 @@ public partial class Revision {
 
     /// <summary>创建 TypedDict 并绑定到当前 Revision。</summary>
     public DurableDict<TKey, TValue> CreateDict<TKey, TValue>() where TKey : notnull where TValue : notnull {
+        ThrowIfDisposed();
         var obj = Durable.Dict<TKey, TValue>();
         BindNewObject(obj);
         return obj;
@@ -331,6 +363,7 @@ public partial class Revision {
 
     /// <summary>创建 MixedDict 并绑定到当前 Revision。</summary>
     public DurableDict<TKey> CreateDict<TKey>() where TKey : notnull {
+        ThrowIfDisposed();
         var obj = Durable.Dict<TKey>();
         BindNewObject(obj);
         return obj;
@@ -338,6 +371,7 @@ public partial class Revision {
 
     /// <summary>创建 TypedDeque 并绑定到当前 Revision。</summary>
     public DurableDeque<T> CreateDeque<T>() where T : notnull {
+        ThrowIfDisposed();
         var obj = Durable.Deque<T>();
         BindNewObject(obj);
         return obj;
@@ -345,6 +379,7 @@ public partial class Revision {
 
     /// <summary>创建 TypedHashSet 并绑定到当前 Revision。支持的 TKey 与 dict key 一致。</summary>
     public DurableHashSet<T> CreateHashSet<T>() where T : notnull {
+        ThrowIfDisposed();
         var obj = Durable.HashSet<T>();
         BindNewObject(obj);
         return obj;
@@ -352,6 +387,7 @@ public partial class Revision {
 
     /// <summary>创建 MixedDeque 并绑定到当前 Revision。</summary>
     public DurableDeque CreateDeque() {
+        ThrowIfDisposed();
         var obj = Durable.Deque();
         BindNewObject(obj);
         return obj;
@@ -359,6 +395,7 @@ public partial class Revision {
 
     /// <summary>创建 TypedOrderedDict 并绑定到当前 Revision。</summary>
     public DurableOrderedDict<TKey, TValue> CreateOrderedDict<TKey, TValue>() where TKey : notnull where TValue : notnull {
+        ThrowIfDisposed();
         var obj = Durable.OrderedDict<TKey, TValue>();
         BindNewObject(obj);
         return obj;
@@ -366,6 +403,7 @@ public partial class Revision {
 
     /// <summary>创建 MixedOrderedDict 并绑定到当前 Revision。</summary>
     public DurableOrderedDict<TKey> CreateOrderedDict<TKey>() where TKey : notnull {
+        ThrowIfDisposed();
         var obj = Durable.OrderedDict<TKey>();
         BindNewObject(obj);
         return obj;
@@ -373,6 +411,7 @@ public partial class Revision {
 
     /// <summary>创建 DurableText 并绑定到当前 Revision。</summary>
     public DurableText CreateText() {
+        ThrowIfDisposed();
         var obj = Durable.Text();
         BindNewObject(obj);
         return obj;
@@ -383,6 +422,8 @@ public partial class Revision {
         var id = LocalId.FromSlotHandle(handle);
         obj.Bind(this, id, DurableState.TransientDirty);
     }
+
+    internal void ThrowIfDisposed() => _ownerLifetime?.ThrowIfDisposed();
 
     private void BindForkedObject(DurableObject obj) {
         var handle = _pool.Store(obj);

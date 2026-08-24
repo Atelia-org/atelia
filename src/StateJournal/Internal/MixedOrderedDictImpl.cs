@@ -15,7 +15,7 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
     internal MixedOrderedDictImpl() { }
 
     // ── DurableDictBase abstract hooks ──
-    public override bool HasChanges => _core.HasChanges;
+    private protected override bool HasChangesCore => _core.HasChanges;
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes();
     private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes();
 
@@ -59,23 +59,42 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
     }
 
     // ── IDict<TKey> ──
-    public override bool ContainsKey(TKey key) => _core.ContainsKey(key);
-    public override int Count => _core.Count;
+    public override bool ContainsKey(TKey key) {
+        ThrowIfDisposed();
+        return _core.ContainsKey(key);
+    }
+    public override int Count {
+        get {
+            ThrowIfDisposed();
+            return _core.Count;
+        }
+    }
     public override bool Remove(TKey key) {
         ThrowIfDetachedOrFrozen();
         if (!_core.TryRemove(key, out var oldBox)) { return false; }
         OnCurrentValueRemoved(oldBox);
         return true;
     }
-    public override IEnumerable<TKey> Keys => _core.GetAllKeys();
+    public override IEnumerable<TKey> Keys {
+        get {
+            ThrowIfDisposed();
+            return _core.GetAllKeys();
+        }
+    }
 
     // ── Ordered operations ──
-    public override IReadOnlyList<TKey> GetKeys() => _core.GetAllKeys();
-    public override IReadOnlyList<TKey> GetKeysFrom(TKey minInclusive, int maxCount) =>
-        _core.ReadKeysAscendingFrom(minInclusive, maxCount);
+    public override IReadOnlyList<TKey> GetKeys() {
+        ThrowIfDisposed();
+        return _core.GetAllKeys();
+    }
+    public override IReadOnlyList<TKey> GetKeysFrom(TKey minInclusive, int maxCount) {
+        ThrowIfDisposed();
+        return _core.ReadKeysAscendingFrom(minInclusive, maxCount);
+    }
 
     // ── Core Impl ──
     private protected override GetIssue GetCore<TValue, VFace>(TKey key, out TValue value) {
+        ThrowIfDisposed();
         value = default!;
         if (!_core.TryGet(key, out var box)) { return GetIssue.NotFound; }
         return VFace.Get(box, out value!);
@@ -111,8 +130,10 @@ internal sealed class MixedOrderedDictImpl<TKey, KHelper> : DurableOrderedDict<T
         return existed ? UpsertStatus.Updated : UpsertStatus.Inserted;
     }
 
-    private protected override bool TryGetValueBox(TKey key, out ValueBox box) =>
-        _core.TryGet(key, out box);
+    private protected override bool TryGetValueBox(TKey key, out ValueBox box) {
+        ThrowIfDisposed();
+        return _core.TryGet(key, out box);
+    }
 
     // ── Ref counting hooks ──
     private protected override void OnCurrentValueRemoved(ValueBox removedValue) {

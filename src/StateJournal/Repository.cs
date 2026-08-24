@@ -52,6 +52,7 @@ public sealed partial class Repository : IDisposable {
     private readonly Dictionary<string, BranchState> _branches;
     private readonly SegmentCatalog _segments;
     private readonly FileStream _lockStream;
+    private readonly RepositoryLifetime _lifetime = new();
     private uint _maxCommittedSegmentNumber;
     private bool _disposed;
     private bool _isPoisoned;
@@ -401,6 +402,8 @@ public sealed partial class Repository : IDisposable {
     /// 离线/诊断用途：从指定历史 commit 加载 graph root，不创建 branch、不写 refs / backup / reflog。
     /// 返回的对象图不绑定任何 branch，不能通过 <see cref="Commit(DurableObject)"/> 推进 repository head；
     /// 这里的只读语义限定在 repository 持久化层，返回对象不是不可变 facade。
+    /// 返回对象仍受本 <see cref="Repository"/> 的 lifetime 约束；本实例 dispose 后其 operational API 会抛
+    /// <see cref="ObjectDisposedException"/>。
     /// </summary>
     public AteliaResult<DurableObject> LoadRootAtCommit(CommitAddress commitAddress) {
         using var scope = _gate.EnterScope();
@@ -622,7 +625,7 @@ public sealed partial class Repository : IDisposable {
 
         AteliaResult<Revision> revisionResult = sourceAddress is { } address
             ? CreateDetachedRevisionAtAddress(address, sourceDescription ?? $"commit {address}")
-            : new Revision(_segments.ActiveSegmentNumber);
+            : new Revision(_segments.ActiveSegmentNumber, _lifetime);
         if (revisionResult.IsFailure) { return revisionResult.Error!; }
 
         var revision = revisionResult.Value!;
@@ -653,15 +656,20 @@ public sealed partial class Repository : IDisposable {
     public void Dispose() {
         using var scope = _gate.EnterScope();
         if (_disposed) { return; }
+        _lifetime.SignalDisposed();
         _disposed = true;
 
-        _segments.Dispose();
-        _lockStream.Dispose();
+        try {
+            _segments.Dispose();
+        }
+        finally {
+            _lockStream.Dispose();
+        }
     }
 
     private AteliaResult<Revision> CreateDetachedRevisionForBranch(BranchState branchState) {
         try {
-            if (branchState.Head is not { } head) { return new Revision(_segments.ActiveSegmentNumber); }
+            if (branchState.Head is not { } head) { return new Revision(_segments.ActiveSegmentNumber, _lifetime); }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException) {
             return new SjRepositoryError(
@@ -675,10 +683,12 @@ public sealed partial class Repository : IDisposable {
 
     private AteliaResult<Revision> CreateDetachedRevisionAtAddress(CommitAddress address, string targetDescription) {
         try {
-            if (address.SegmentNumber == _segments.ActiveSegmentNumber) { return Revision.Open(address.CommitTicket, _segments.ActiveFile, address.SegmentNumber); }
+            if (address.SegmentNumber == _segments.ActiveSegmentNumber) {
+                return Revision.Open(address.CommitTicket, _segments.ActiveFile, address.SegmentNumber, _lifetime);
+            }
 
             using var file = _segments.OpenHistoricalFile(address.SegmentNumber);
-            return Revision.Open(address.CommitTicket, file, address.SegmentNumber);
+            return Revision.Open(address.CommitTicket, file, address.SegmentNumber, _lifetime);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException) {
             return new SjRepositoryError(
