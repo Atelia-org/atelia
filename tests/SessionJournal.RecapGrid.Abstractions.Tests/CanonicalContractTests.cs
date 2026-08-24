@@ -43,6 +43,88 @@ public sealed class CanonicalContractTests {
             definition.ToCanonicalBytes(),
             decodedDefinition.ToCanonicalBytes()
         );
+        Assert.StartsWith(
+            "{\"schemaVersion\":2,",
+            Encoding.UTF8.GetString(definition.ToCanonicalBytes()),
+            StringComparison.Ordinal
+        );
+        Assert.Equal(
+            definition.Target.SemanticHeading,
+            decodedDefinition.Target.SemanticHeading
+        );
+    }
+
+    [Fact]
+    public void DefinitionSemanticHeading_ParticipatesInV2Digest() {
+        FamilyDefinition family = Family();
+        MaintainerDefinitionRevision original = Definition(
+            "culprit",
+            family.Digest
+        );
+        MaintainerDefinitionRevision changed =
+            MaintainerDefinitionRevision.Create(
+                original.LogicalColumnId,
+                original.FamilyDigest,
+                new ContextHeaderBlockTarget(
+                    original.Target.Carrier,
+                    original.Target.BlockKey,
+                    original.Target.SemanticHeading + " updated"
+                ),
+                original.Capability,
+                original.DeclarativeSpec,
+                original.MaxContentUtf8Bytes
+            );
+
+        Assert.NotEqual(original.Digest, changed.Digest);
+        Assert.Throws<InvalidDataException>(() =>
+            MaintainerDefinitionRevision.DecodeCanonical("{"u8)
+        );
+    }
+
+    [Theory]
+    [InlineData(
+        "system",
+        "59d07e92d18b09470d57be97d633cc96d2cc33346c4e7a0865adf46c069896c1",
+        "Derived context from prior history: culprit"
+    )]
+    [InlineData(
+        "observation",
+        "8aa3751bdd1dfca388dea7da3e50adff82e561448f204f7d6b160c3289feab93",
+        "Derived context from prior history, not a new user request: culprit"
+    )]
+    [InlineData(
+        "action",
+        "511ed63c5b01e43b574b8c5f9f5316ba174b8e1e272b2e54e9380fea788d25dc",
+        "Derived context from prior history, not the current Assistant reply: culprit"
+    )]
+    public void DefinitionV1_DecodesExactBytesWithCarrierAwareLegacyHeading(
+        string carrier,
+        string digest,
+        string expectedHeading
+    ) {
+        string canonical =
+            $"{{\"schemaVersion\":1,\"digest\":\"{digest}\","
+            + "\"logicalColumnId\":\"culprit\",\"familyDigest\":\"d53cead7c23bb8a318751127d013971414dee255fed4ef5b81bfd376f18b4fc1\","
+            + $"\"target\":{{\"carrier\":\"{carrier}\",\"blockKey\":\"culprit\"}},"
+            + "\"capability\":{\"schemaVersion\":1,\"runtimeProtocolId\":\"text-runtime-v3\","
+            + "\"readableScope\":\"full-prior-build-target-and-current-history-segment-v1\",\"semanticModelId\":\"model-class-v1\"},"
+            + "\"capabilityFingerprint\":\"65c6a496022d0f884be1fa83a26174138c78f18d3d8617688eae9692908f7601\","
+            + "\"declarativeSpec\":{\"topic\":\"Investigate culprit\",\"userPromptTemplate\":\"Maintain the culprit hypothesis.\"},"
+            + "\"maxContentUtf8Bytes\":8192}";
+        byte[] canonicalBytes = Encoding.UTF8.GetBytes(canonical);
+
+        MaintainerDefinitionRevision decoded =
+            MaintainerDefinitionRevision.DecodeCanonical(canonicalBytes);
+
+        Assert.Equal(
+            digest,
+            decoded.Digest.Value
+        );
+        Assert.Equal(canonicalBytes, decoded.ToCanonicalBytes());
+        Assert.Equal(
+            expectedHeading,
+            decoded.Target.SemanticHeading
+        );
     }
 
     [Fact]
@@ -290,14 +372,14 @@ public sealed class CanonicalContractTests {
         FormalFixture value = FormalValues();
         Assert.Equal(
             "d53cead7c23bb8a318751127d013971414dee255fed4ef5b81bfd376f18b4fc1\n"
-            + "59d07e92d18b09470d57be97d633cc96d2cc33346c4e7a0865adf46c069896c1\n"
-            + "247b830371b3d74207cf74c39c935d9b2e99c45e6913316db81d241b7cbc4d7e\n"
-            + "8f34516ad0337ee9e5c6696ebb92d8253831adae15a0a4432d390b5de14469b0\n"
+            + "fadf96f1c8bb19c837d2f3c9c2e2cb0ff3b76cbaacce78aaa0ca18e38e5c6084\n"
+            + "d3e5570da30f97bb33fdefe2f3effb14ec706a7320e21471eea34e24958666a3\n"
+            + "4b281e3de8409b88eeb330813b36526ed150aaf958c7a29ecfafc64541cadd19\n"
             + "7b622b3e5ba946841d45722375ae7a5ae0f15b75b3f28b4ccb7c74ba642cb753\n"
-            + "3050c9060bee307442a4dfe833eccd8cd67abd7b47548368ec3d7ce6520d1c98\n"
+            + "7cf35b2ecb7b791420b2e5bdeecaf99c7da3131e087343239eb2ef677c2136ec\n"
             + "13abe0196f72da491691abb9bf9f1747c7e57ee5f0f2d65e5988fd738ac38344\n"
-            + "0663597ee6fa6a48ad4bd89bc3ef29d2827d53c0cd9c3d27ba8dd231951c0b1d\n"
-            + "0df25d6ca140c493f8dd5c8ef50493d5d484f280f6e07181b7be3cc86ffeb15e",
+            + "257f0375c657316a776134fedaf8d9970ca971e8b5c24e0a392b842cc50c902d\n"
+            + "ea0300b1a12eb5848beac3693cb476f7602adc972f35a2e6b15f4404ef0cc993",
             string.Join("\n", new[] {
                 value.Family.Digest.Value,
                 value.Definition.Digest.Value,
@@ -378,8 +460,12 @@ public sealed class CanonicalContractTests {
             Encoding.UTF8.GetString(value.Family.ToCanonicalBytes()),
             StringComparison.Ordinal
         );
+        Assert.StartsWith(
+            "{\"schemaVersion\":2,",
+            Encoding.UTF8.GetString(value.Definition.ToCanonicalBytes()),
+            StringComparison.Ordinal
+        );
         Assert.All(new[] {
-            value.Definition.ToCanonicalBytes(),
             value.Target.ToCanonicalBytes(),
             value.Recipe.ToCanonicalBytes(),
             value.Projection.ToCanonicalBytes(),
@@ -409,14 +495,14 @@ public sealed class CanonicalContractTests {
         }.Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(
             "9522354f4dca93dc4499bb7f5f4567c02c2c885d3e0b1a10a81624dd4dba7315\n"
-            + "3c864ff40691355b101f2d8830e7ef812ac7d6f289e69f3f232fe73e8bf65b69\n"
-            + "ddbbf53ccf6d2db8dd3f5740b0a1f445eda353ae87b029950481474a5b839c1b\n"
-            + "7a000cfc5e48befa140c22fa676a819cb6556ac2bc2763f4674087067d22a8cb\n"
+            + "551f58efc84fc7164e4f7aad1c1f0e4cb38dfa00de77c0e41bcda24028df51d6\n"
+            + "111b651063cd05c6c75fb9dc819936cbcb33bf1919f32f22c99356fa13278731\n"
+            + "7fd854fa376c08cc22bd3e57c970eef98e2bf344141a945ec3c3f96af38a32cd\n"
             + "436ac01f8031b636eeaf77b02aa1fd4df81f4bb98decae7cf7b01907adced7a2\n"
-            + "5e2b244a1af4ae3f253f909be1a9ce3af6fb7ec6b40ca9c2ec5c893a9fa4d3c8\n"
-            + "e538f61824e762bce34fd467b75bd5e9152ee235d2f53bd63aa504d125c0a71e\n"
-            + "eee21bedbf66e6dd73aebc7fe3b41a416c62d3cf448af437c2f20e90653c7caa\n"
-            + "78a487b81b6e6f5177bdc3deacc1b2d8067222e69cf42b541c91dfd8a529b53a",
+            + "4f1506dca06b9a785801dce0ce7ca6e37d42fda05fa78fa3ac1766bc2c0db6b4\n"
+            + "962adc4d5e174799ff321155f48fd7945fe53e32128f65779a106b0318de6b19\n"
+            + "e051374b7f1e7fc9bb64dbba8f5e97b4041ee79ca67474409a453201a2f17629\n"
+            + "007aba886874c97fbfbdcdf12259a75e245b365eba68ed9a5c3802d4ead8e43e",
             string.Join("\n", new[] {
                 CanonicalSha(value.Family.ToCanonicalBytes()),
                 CanonicalSha(value.Definition.ToCanonicalBytes()),
@@ -808,7 +894,11 @@ public sealed class CanonicalContractTests {
     ) => MaintainerDefinitionRevision.Create(
         new LogicalColumnId(column),
         familyDigest,
-        new ContextHeaderBlockPath(ContextHeaderCarrier.System, column),
+        new ContextHeaderBlockTarget(
+            ContextHeaderCarrier.System,
+            column,
+            $"Derived context from prior history: {column}"
+        ),
         new MaintainerCapabilitySpec(
             "text-runtime-v3",
             MaintainerReadableScope

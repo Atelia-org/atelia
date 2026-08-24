@@ -274,7 +274,7 @@ public sealed record SessionContextAnchorSetupReferences(
 /// One exact derived text contribution. It deliberately carries no artifact, epoch, profile, or store identity.
 /// </summary>
 public sealed record SessionContextContribution(
-    ContextHeaderBlockPath Target,
+    ContextHeaderBlockTarget Target,
     string ExactText,
     string ContentCodecId,
     string ContentSha256,

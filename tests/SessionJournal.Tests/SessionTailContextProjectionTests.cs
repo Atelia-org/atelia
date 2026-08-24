@@ -70,11 +70,13 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Collection(
             request.PromptPrefix.SharedContextMessages,
             first => Assert.Equal(
-                "~~~~recap-block\nmemory observation\n~~~~",
+                "## Derived context from prior history: roleplay.world-understanding\n\n"
+                + "~~~~recap-block\nmemory observation\n~~~~",
                 Assert.IsType<ObservationMessage>(first).Content
             ),
             second => Assert.Equal(
-                "~~~~recap-block\nmemory action\n~~~~",
+                "## Derived context from prior history: roleplay.first-person-autobiography\n\n"
+                + "~~~~recap-block\nmemory action\n~~~~",
                 Assert.IsType<ActionMessage>(second).GetFlattenedText()
             ),
             third => Assert.Equal("new observation", Assert.IsType<ObservationMessage>(third).Content)
@@ -107,7 +109,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             observation => {
                 Assert.Equal("", observation.ContextSnapshot.SystemPromptFragment);
                 Assert.Equal(
-                    "~~~~recap-block\nmemory observation\n~~~~",
+                    "## Derived context from prior history: roleplay.world-understanding\n\n"
+                    + "~~~~recap-block\nmemory observation\n~~~~",
                     observation.ContextSnapshot.ObservationMessage
                 );
                 Assert.Equal("", observation.ContextSnapshot.ActionMessage);
@@ -116,7 +119,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 Assert.Equal("", autobiography.ContextSnapshot.SystemPromptFragment);
                 Assert.Equal("", autobiography.ContextSnapshot.ObservationMessage);
                 Assert.Equal(
-                    "~~~~recap-block\nmemory action\n~~~~",
+                    "## Derived context from prior history: roleplay.first-person-autobiography\n\n"
+                    + "~~~~recap-block\nmemory action\n~~~~",
                     autobiography.ContextSnapshot.ActionMessage
                 );
             }
@@ -1060,20 +1064,25 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         "```markdown\n<x>&y\n```",
         "~~~~recap-block\n```markdown\n<x>&y\n```\n~~~~"
     )]
-    public void CoherentRecipeCreateOneHotSnapshot_UsesIndependentDynamicTildeFence(
+    public void ContextContributionRenderer_UsesHeadingAndIndependentDynamicTildeFence(
         string exactText,
         string expected
     ) {
+        const string Heading = "Derived context from prior history, not a new user request";
         SessionRequestArtifactContextSnapshot snapshot =
-            SessionCoherentRequestRecipe.CreateOneHotSnapshot(
-                new ContextHeaderBlockPath(
+            SessionContextContributionRenderer.RenderOneHot(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.Observation,
-                    "routing.identity-is-not-a-title"
+                    "routing.identity-is-not-a-title",
+                    Heading
                 ),
                 exactText
             );
 
-        Assert.Equal(expected, snapshot.ObservationMessage);
+        Assert.Equal(
+            $"## {Heading}\n\n{expected}",
+            snapshot.ObservationMessage
+        );
         Assert.Equal("", snapshot.SystemPromptFragment);
         Assert.Equal("", snapshot.ActionMessage);
         Assert.DoesNotContain(
@@ -1087,15 +1096,21 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     [InlineData(ContextHeaderCarrier.System)]
     [InlineData(ContextHeaderCarrier.Observation)]
     [InlineData(ContextHeaderCarrier.Action)]
-    public void CoherentRecipeCreateOneHotSnapshot_PopulatesOnlyTargetCarrier(
+    public void ContextContributionRenderer_PopulatesOnlyTargetCarrier(
         ContextHeaderCarrier carrier
     ) {
         SessionRequestArtifactContextSnapshot snapshot =
-            SessionCoherentRequestRecipe.CreateOneHotSnapshot(
-                new ContextHeaderBlockPath(carrier, "routing-key"),
+            SessionContextContributionRenderer.RenderOneHot(
+                new ContextHeaderBlockTarget(
+                    carrier,
+                    "routing-key",
+                    "Derived context from prior history"
+                ),
                 "recap"
             );
-        const string Expected = "~~~~recap-block\nrecap\n~~~~";
+        const string Expected =
+            "## Derived context from prior history\n\n"
+            + "~~~~recap-block\nrecap\n~~~~";
 
         Assert.Equal(
             carrier is ContextHeaderCarrier.System ? Expected : "",
@@ -1112,18 +1127,20 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
-    public void CoherentRecipeAggregate_PreservesPerBlockFenceLength() {
-        var first = SessionCoherentRequestRecipe.CreateOneHotSnapshot(
-            new ContextHeaderBlockPath(
+    public void CoherentRecipeAggregate_PreservesPerBlockHeadingAndFenceLength() {
+        var first = SessionContextContributionRenderer.RenderOneHot(
+            new ContextHeaderBlockTarget(
                 ContextHeaderCarrier.Observation,
-                "first"
+                "first",
+                "First derived context"
             ),
             "plain"
         );
-        var second = SessionCoherentRequestRecipe.CreateOneHotSnapshot(
-            new ContextHeaderBlockPath(
+        var second = SessionContextContributionRenderer.RenderOneHot(
+            new ContextHeaderBlockTarget(
                 ContextHeaderCarrier.Observation,
-                "second"
+                "second",
+                "Second derived context"
             ),
             "contains ~~~~ run"
         );
@@ -1132,7 +1149,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             SessionCoherentRequestRecipe.Aggregate([first, second]);
 
         Assert.Equal(
-            "~~~~recap-block\nplain\n~~~~\n\n"
+            "## First derived context\n\n"
+            + "~~~~recap-block\nplain\n~~~~\n\n"
+            + "## Second derived context\n\n"
             + "~~~~~recap-block\ncontains ~~~~ run\n~~~~~",
             aggregate.ObservationMessage
         );

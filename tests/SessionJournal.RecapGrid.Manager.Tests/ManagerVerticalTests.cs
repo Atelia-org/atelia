@@ -3089,9 +3089,10 @@ public sealed class ManagerVerticalTests : IDisposable {
         return MaintainerDefinitionRevision.Create(
             new LogicalColumnId(logicalColumnId),
             family.Digest,
-            new ContextHeaderBlockPath(
+            new ContextHeaderBlockTarget(
                 ContextHeaderCarrier.System,
-                blockKey
+                blockKey,
+                $"Derived context from prior history: {blockKey}"
             ),
             capability,
             new MaintainerDeclarativeSpec(

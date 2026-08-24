@@ -360,9 +360,10 @@ public sealed partial class GetterVerticalTests {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("case.large"),
                 oversize.Family.Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.System,
-                    "large"
+                    "large",
+                    "Derived context from prior history: large"
                 ),
                 oversize.Definition.Capability,
                 oversize.Definition.DeclarativeSpec,

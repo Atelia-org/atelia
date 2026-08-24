@@ -632,7 +632,15 @@ internal static partial class RecapGridCommands {
     ) => new {
         snapshot.Head,
         families = snapshot.Families.Select(static item => item.Digest.Value),
-        definitions = snapshot.Definitions.Select(static item => item.Digest.Value),
+        definitions = snapshot.Definitions.Select(static item => new {
+            digest = item.Digest.Value,
+            logicalColumnId = item.LogicalColumnId.Value,
+            targetCarrier = ContextHeaderCarrierTokens.ToStorageToken(
+                item.Target.Carrier
+            ),
+            targetBlockKey = item.Target.BlockKey,
+            semanticHeading = item.Target.SemanticHeading
+        }),
         recipes = snapshot.Recipes.Select(static item => item.Recipe.Digest.Value)
     };
 

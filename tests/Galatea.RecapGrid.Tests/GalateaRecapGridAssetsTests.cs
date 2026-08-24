@@ -8,9 +8,9 @@ namespace Atelia.Galatea.RecapGrid.Tests;
 
 public sealed class GalateaRecapGridAssetsTests {
     [Fact]
-    public void RollingRewriteV3_IsExactProviderNeutralCanonicalBundle() {
+    public void RollingRewriteV4_IsExactProviderNeutralCanonicalBundle() {
         Assert.Equal(
-            [GalateaRecapGridAssets.RollingRewriteZhCnV3],
+            [GalateaRecapGridAssets.RollingRewriteZhCnV4],
             GalateaRecapGridAssets.AssetIds
         );
         Assert.False(GalateaRecapGridAssets.TryCreateRegistrationBundle(
@@ -19,7 +19,7 @@ public sealed class GalateaRecapGridAssetsTests {
         ));
         Assert.Null(unknown);
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV3,
+            GalateaRecapGridAssets.RollingRewriteZhCnV4,
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -43,11 +43,19 @@ public sealed class GalateaRecapGridAssetsTests {
         Assert.Equal("world-understanding", world.LogicalColumnId.Value);
         Assert.Equal(ContextHeaderCarrier.Observation, world.Target.Carrier);
         Assert.Equal("roleplay.world-understanding", world.Target.BlockKey);
+        Assert.Equal(
+            "派生上下文：Galatea 的世界理解（来自先前历史，不是新的用户请求）",
+            world.Target.SemanticHeading
+        );
         Assert.Equal("autobiography", autobiography.LogicalColumnId.Value);
         Assert.Equal(ContextHeaderCarrier.Action,
             autobiography.Target.Carrier);
         Assert.Equal("roleplay.first-person-autobiography",
             autobiography.Target.BlockKey);
+        Assert.Equal(
+            "派生上下文：Galatea 的第一人称自传（来自先前历史，不是本轮 Assistant 回复）",
+            autobiography.Target.SemanticHeading
+        );
         Assert.All(bundle.Definitions, definition => {
             Assert.Equal(family.Digest, definition.FamilyDigest);
             Assert.Equal(RecapRewriterProtocolV3.RuntimeProtocolId,
@@ -62,11 +70,11 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void Materialization_IsDeterministicAndResourcesAreExact() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV3,
+            GalateaRecapGridAssets.RollingRewriteZhCnV4,
             out RecapGridControlRegistrationBundle? first
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV3,
+            GalateaRecapGridAssets.RollingRewriteZhCnV4,
             out RecapGridControlRegistrationBundle? second
         ));
         Assert.Equal(first!.ToCanonicalCommandBytes(),
@@ -141,7 +149,7 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void MemberPrompts_LockSourceAndUncertaintyBoundaries() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV3,
+            GalateaRecapGridAssets.RollingRewriteZhCnV4,
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -186,7 +194,7 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void AutobiographyPrompt_LocksObservationOnlyTailRegression() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV3,
+            GalateaRecapGridAssets.RollingRewriteZhCnV4,
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -225,7 +233,7 @@ public sealed class GalateaRecapGridAssetsTests {
     [Fact]
     public void AutobiographyPrompt_LocksMechanicalFinalScanFixtures() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV3,
+            GalateaRecapGridAssets.RollingRewriteZhCnV4,
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -294,9 +302,9 @@ public sealed class GalateaRecapGridAssetsTests {
     ) => Assert.Equal(
         [
             "ae44d15750e417452e34f4e9133f56e60334d2cf7313ac988128e95faab3c05c",
-            "0946787617b0c7876f18605a99be2a6e99f55e2720751b89b79a1a1495be3e84",
-            "148edb7346b7812d1b9505d6e2188b78fc6641a2da14dc5437a18673aa7bec04",
-            "fd13bbda63abcd4f813290bb6eab5899041373510d59f508837acd54e99f25aa"
+            "1d9a06447afbaaab6b9b8ad2bc597b0218782e9368f7e7c93c1c41be7f70ff11",
+            "7aaa853fdb00d543caac6d3174e9ed39329b736de8bec0af149d625813a0cc2c",
+            "8ef4eee64e5f90874aa2720c788ef2f03c45d728799f2eeffb9e701f052a1d98"
         ],
         [
             bundle.Families[0].Digest.Value,

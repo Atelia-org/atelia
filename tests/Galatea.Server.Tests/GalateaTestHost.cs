@@ -313,7 +313,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
 
     private static RecapGridAgentControlProfile AssertBuiltInProfile() {
         if (!RecapGridAgentControlBuiltIns.TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV3,
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
                 out RecapGridControlRegistrationBundle? bundle)
             || bundle is null) {
             throw new InvalidOperationException(

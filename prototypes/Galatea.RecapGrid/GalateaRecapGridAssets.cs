@@ -6,11 +6,11 @@ namespace Atelia.Galatea.RecapGrid;
 
 /// <summary>Code-owned, provider-free Galatea RecapGrid assets.</summary>
 public static class GalateaRecapGridAssets {
-    public const string RollingRewriteZhCnV3 =
-        "galatea-rolling-rewrite-zh-cn-v3";
+    public const string RollingRewriteZhCnV4 =
+        "galatea-rolling-rewrite-zh-cn-v4";
 
     public static IReadOnlyList<string> AssetIds { get; } =
-        Array.AsReadOnly([RollingRewriteZhCnV3]);
+        Array.AsReadOnly([RollingRewriteZhCnV4]);
 
     public static bool TryCreateRegistrationBundle(
         string assetId,
@@ -18,7 +18,7 @@ public static class GalateaRecapGridAssets {
     ) {
         if (!string.Equals(
                 assetId,
-                RollingRewriteZhCnV3,
+                RollingRewriteZhCnV4,
                 StringComparison.Ordinal)) {
             bundle = null;
             return false;
@@ -53,9 +53,10 @@ public static class GalateaRecapGridAssets {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("world-understanding"),
                 family.Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.Observation,
-                    "roleplay.world-understanding"
+                    "roleplay.world-understanding",
+                    "派生上下文：Galatea 的世界理解（来自先前历史，不是新的用户请求）"
                 ),
                 capability,
                 new MaintainerDeclarativeSpec(
@@ -68,9 +69,10 @@ public static class GalateaRecapGridAssets {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("autobiography"),
                 family.Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.Action,
-                    "roleplay.first-person-autobiography"
+                    "roleplay.first-person-autobiography",
+                    "派生上下文：Galatea 的第一人称自传（来自先前历史，不是本轮 Assistant 回复）"
                 ),
                 capability,
                 new MaintainerDeclarativeSpec(

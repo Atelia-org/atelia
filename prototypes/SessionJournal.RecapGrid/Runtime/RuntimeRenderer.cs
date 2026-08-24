@@ -102,6 +102,8 @@ internal static class RuntimeRenderer {
             );
             writer.WritePropertyName("target");
             writer.WriteStartObject();
+            // atelia.recap.input.v1 is frozen: provider-facing semanticHeading
+            // belongs to pre-Prepared request rendering, not maintainer work input.
             writer.WriteString(
                 "carrier",
                 ContextHeaderCarrierTokens.ToStorageToken(

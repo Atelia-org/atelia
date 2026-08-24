@@ -28,6 +28,55 @@ public sealed class SessionContextCandidateMaterializationContractTests {
         new HashSet<EventAddress> { Anchor, Boundary };
 
     [Fact]
+    public void ContextHeaderBlockTarget_RequiresStrictSingleLineSemanticHeading() {
+        string[] invalidHeadings = [
+            "",
+            " ",
+            " leading",
+            "trailing ",
+            "line\nbreak",
+            "line\rbreak",
+            "control\u0001character",
+            "invalid\ud800utf16",
+            new('界', 86)
+        ];
+
+        foreach (string heading in invalidHeadings) {
+            Assert.ThrowsAny<ArgumentException>(() =>
+                new ContextHeaderBlockTarget(
+                    ContextHeaderCarrier.Observation,
+                    "world",
+                    heading
+                ));
+        }
+
+        var accepted = new ContextHeaderBlockTarget(
+            ContextHeaderCarrier.Observation,
+            "world",
+            "派生上下文：世界理解"
+        );
+        Assert.Equal("派生上下文：世界理解", accepted.SemanticHeading);
+    }
+
+    [Fact]
+    public void MaterializedCandidate_RevalidatesProviderSemanticHeading() {
+        var malformedTarget = (ContextHeaderBlockTarget)
+            System.Runtime.CompilerServices.RuntimeHelpers
+                .GetUninitializedObject(typeof(ContextHeaderBlockTarget));
+        var contribution = new SessionContextContribution(
+            malformedTarget,
+            "memory",
+            SessionContextContributionHasher.CodecId,
+            SessionContextContributionHasher.ComputeSha256("memory"),
+            Anchor
+        );
+
+        Assert.Throws<InvalidDataException>(() =>
+            Validate(CreateCandidate(contribution))
+        );
+    }
+
+    [Fact]
     public void MaterializedCandidate_LegalUnorderedContributions_AreNormalized() {
         SessionContextCandidate candidate = CreateCandidate(
             Contribution(
@@ -88,12 +137,15 @@ public sealed class SessionContextCandidateMaterializationContractTests {
 
         Assert.Equal(string.Empty, rendered.SystemPromptFragment);
         Assert.Equal(
-            "~~~~recap-block\nfirst observation memory\n~~~~\n\n"
+            "## Derived context from prior history: world-a\n\n"
+            + "~~~~recap-block\nfirst observation memory\n~~~~\n\n"
+            + "## Derived context from prior history: world-b\n\n"
             + "~~~~recap-block\nsecond observation memory\n~~~~",
             rendered.ObservationMessage
         );
         Assert.Equal(
-            "~~~~recap-block\naction memory\n~~~~",
+            "## Derived context from prior history: self\n\n"
+            + "~~~~recap-block\naction memory\n~~~~",
             rendered.ActionMessage
         );
     }
@@ -149,7 +201,8 @@ public sealed class SessionContextCandidateMaterializationContractTests {
                 ContextHeaderCarrier.Observation,
                 "world",
                 "second",
-                Boundary
+                Boundary,
+                "A different heading does not create a distinct target"
             )
         );
         Assert.Throws<InvalidDataException>(
@@ -325,9 +378,15 @@ public sealed class SessionContextCandidateMaterializationContractTests {
         ContextHeaderCarrier carrier,
         string blockKey,
         string text,
-        EventAddress sourceRawHead
+        EventAddress sourceRawHead,
+        string? semanticHeading = null
     ) => new(
-        new ContextHeaderBlockPath(carrier, blockKey),
+        new ContextHeaderBlockTarget(
+            carrier,
+            blockKey,
+            semanticHeading
+                ?? $"Derived context from prior history: {blockKey}"
+        ),
         text,
         SessionContextContributionHasher.CodecId,
         SessionContextContributionHasher.ComputeSha256(text),

@@ -111,6 +111,8 @@ recent operation共享最多4,096次physical header preview visit与16 MiB cumul
 coherent request recipe实际放在raw tail之前的首条Observation与Action内容（包括`recap-block` fence）；因此browser可直接
 展示模型看到的Recap内容与其自述范围。raw-only、未provision或当前candidate不可用时仍返回同一object shape，但对应字符串为空。
 stale cache保留上一稳定边界的header，并由同一response中的`recapGridReadiness.freshness=stale`标识；它不冒充当前raw head。
+每个derived block都由后端统一渲染为`## {SemanticHeading}`加空行，再接动态长度的`recap-block`围栏；Galatea V4 asset为
+World Understanding与Autobiography分别声明稳定的中文语义标题，browser不根据`BlockKey`自行拼接标题。
 
 ## SSE V1 stable protocol
 
@@ -153,8 +155,10 @@ recipe/row authority 与 bounded metrics。`ready`时同一Getter handle还会�
 
 Galatea 不自动 Create/Provision/Activate Grid。operator 应先使用 SessionJournal.Cli 的
 `recap-grid scaffold`生成strict admission/profile/route files，再用`recap-grid init`、
-`recap-grid control provision-asset --asset galatea-rolling-rewrite-zh-cn-v3`、
+`recap-grid control provision-asset --asset galatea-rolling-rewrite-zh-cn-v4`、
 Control compose/put-recipe/activate 与 build 命令完成显式配置。该asset提供一个shared Family下的
 `world-understanding`与`autobiography`两列；实际connection/model只来自route/connections配置，不进入durable semantic identity。
+两列Definition将provider-facing `SemanticHeading`与carrier/`BlockKey`成套定义；heading进入Definition v2 digest，但不参与
+context contribution的routing identity/order，且不进入冻结的maintainer input `atelia.recap.input.v1`。
 scaffold不会构造provider、
 Timeline、Control或Store；Galatea仍只消费其strict canonical outputs。

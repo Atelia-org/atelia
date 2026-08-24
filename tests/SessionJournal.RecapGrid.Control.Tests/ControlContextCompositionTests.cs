@@ -191,7 +191,11 @@ public sealed partial class ControlVerticalTests {
     ) => MaintainerDefinitionRevision.Create(
         new LogicalColumnId(column),
         values.Family.Digest,
-        new ContextHeaderBlockPath(ContextHeaderCarrier.System, block),
+        new ContextHeaderBlockTarget(
+            ContextHeaderCarrier.System,
+            block,
+            $"Derived context from prior history: {block}"
+        ),
         values.Definition.Capability,
         values.Definition.DeclarativeSpec,
         maximumContentUtf8Bytes

@@ -52,22 +52,35 @@ internal static class CoherentArtifactSetTestFixture {
             "Coherent request is missing the exact derived context prefix."
         );
         var world = Assert.IsType<ObservationMessage>(request.PromptPrefix.SharedContextMessages[0]);
-        AssertRecapBlock(world.Content, "bounded world ");
+        AssertRecapBlock(
+            world.Content,
+            "Derived context from prior history, not a new user request: world",
+            "bounded world "
+        );
         var autobiography =
             Assert.IsType<ActionMessage>(request.PromptPrefix.SharedContextMessages[1]);
         AssertRecapBlock(
             autobiography.GetFlattenedText(),
+            "Derived context from prior history, not the current Assistant reply: self",
             "bounded self "
         );
     }
 
     private static void AssertRecapBlock(
         string? rendered,
+        string expectedHeading,
         string expectedBodyPrefix
     ) {
         Assert.NotNull(rendered);
+        string headingPrefix = $"## {expectedHeading}\n\n";
+        Assert.StartsWith(
+            headingPrefix,
+            rendered,
+            StringComparison.Ordinal
+        );
+        string block = rendered[headingPrefix.Length..];
         const string InfoLineSuffix = "recap-block\n";
-        int infoLineStart = rendered.IndexOf(
+        int infoLineStart = block.IndexOf(
             InfoLineSuffix,
             StringComparison.Ordinal
         );
@@ -75,17 +88,17 @@ internal static class CoherentArtifactSetTestFixture {
             infoLineStart >= 4,
             "Recap block is missing its minimum tilde fence."
         );
-        string fence = rendered[..infoLineStart];
+        string fence = block[..infoLineStart];
         Assert.All(fence, static character => Assert.Equal('~', character));
         int bodyStart = infoLineStart + InfoLineSuffix.Length;
         Assert.StartsWith(
             expectedBodyPrefix,
-            rendered[bodyStart..],
+            block[bodyStart..],
             StringComparison.Ordinal
         );
         Assert.EndsWith(
             "\n" + fence,
-            rendered,
+            block,
             StringComparison.Ordinal
         );
     }

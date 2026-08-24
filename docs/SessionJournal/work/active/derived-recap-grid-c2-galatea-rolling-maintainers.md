@@ -55,7 +55,9 @@ FamilyDefinition
 ```
 
 - `FamilyDefinition`是exact shared prompt/protocol equivalence class；它的digest决定可共享的prepared prefix。
-- `MaintainerDefinitionRevision`只描述某一列的logical identity、target、readable scope、内容任务和byte bound。
+- `MaintainerDefinitionRevision`只描述某一列的logical identity、成套的routing target与provider-facing
+  `SemanticHeading`、readable scope、内容任务和byte bound。heading由pre-Prepared renderer生成Markdown标题，
+  不混入Maintainer正文或冻结的`atelia.recap.input.v1`。
 - 同row两列都读取previous selected RowView与current History segment，互相不读取同row刚生成的sibling output；跨列信息在下一row传播。
 - Runtime可因相同route/cache策略按leader/follower顺序调用，但该调度顺序不是durable dependency。
 - Manager独占Cell/RowView publish。provider execution可以安全重试，不承诺exactly-once远端调用。
@@ -134,7 +136,7 @@ namespace Atelia.Galatea.RecapGrid
 
 ```text
 GalateaRecapGridAssets
-  AssetId = "galatea-rolling-rewrite-zh-cn-v3"
+  AssetId = "galatea-rolling-rewrite-zh-cn-v4"
   TryCreateRegistrationBundle(assetId, out bundle)
   Describe(assetId) -> ordered definition digests/targets/resource digests
 ```
@@ -314,7 +316,7 @@ prototypes/Galatea/.atelia/galatea/sessions/cyber-session-journal-recap-grid
 
 在RecapGrid init之前，operator用exact old head显式reconcile governing setup到main connection `opus4-6`、Anthropic surface与当前
 `prompts/cyber.md`；新raw head为`ej1:00000498c80004b10000000100000000`。随后按B=60,000/R=24,000显式创建Cadence/Timeline/
-Control/Grid、sync一个row、provision V3 asset、world-first compose/put、用独立recap connection执行2-call build、zero-call复验、promotion与
+Control/Grid、sync一个row、provision V4 asset、world-first compose/put、用独立recap connection执行2-call build、zero-call复验、promotion与
 materialization。actual recipe digest为`2aaade63404d086393ee3e9998f71620ae1e4748f35a3d634d6e66ba4faff0d3`；actual两份输出与已批准
 的final disposable candidate逐字相等。
 

@@ -148,6 +148,11 @@ uncertain external dispatch的durable phase proof；`ImportedAgentAction`虽复�
 不同。`EventAddress`文本是`ej1:`加32个lowercase hex；filename codec独立。R2没有删除或重编号raw字段/ID，
 也不以legacy export的逻辑可重建性承诺physical RBF bytes deterministic。
 
+derived contribution在Prepared之前由`SessionContextContributionRenderer`渲染：每个block为
+`## {SemanticHeading}`、空行及动态长度的`recap-block`围栏。`SemanticHeading`不进入上述content SHA-256；
+Prepared v5持久化渲染后的exact snapshot，因此recipe id与Prepared schema不因该pre-Prepared定义字段升级而变化，
+旧Prepared snapshot也不会被重渲染。
+
 owner入口是[`SessionEventCodec`](../../../../prototypes/SessionJournal/SessionEventCodec.cs)、
 [`SessionRequestManifestCodec`](../../../../prototypes/SessionJournal/SessionRequestManifestCodec.cs)及current
 reconstructor/recovery tests。未来Tier A breaking change必须先给出raw-preserving migration、full phase replay/reopen

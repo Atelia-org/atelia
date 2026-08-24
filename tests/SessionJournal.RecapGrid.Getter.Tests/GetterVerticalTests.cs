@@ -33,6 +33,10 @@ public sealed partial class GetterVerticalTests : IDisposable {
         SessionContextContribution contribution = Assert.Single(
             materialized.Candidate.Contributions
         );
+        Assert.Equal(
+            fixture.Definition.Target,
+            contribution.Target
+        );
         string expectedContent = $"recap-{fixture.Rows.Count - 1}";
         Assert.Equal(expectedContent, contribution.ExactText);
         Assert.Equal(fixture.Rows[^1].Descriptor.EndInclusive,
@@ -497,9 +501,10 @@ public sealed partial class GetterVerticalTests : IDisposable {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("case.culprit"),
                 family.Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.System,
-                    "culprit"
+                    "culprit",
+                    "Derived context from prior history: culprit"
                 ),
                 capability,
                 new MaintainerDeclarativeSpec(

@@ -217,6 +217,8 @@ internal static partial class RecapGridCommands {
                         targetCarrier = ContextHeaderCarrierTokens
                             .ToStorageToken(definition.Target.Carrier),
                         targetBlockKey = definition.Target.BlockKey,
+                        semanticHeading =
+                            definition.Target.SemanticHeading,
                         digest = definition.Digest.Value
                     }),
                 profileId = profile.ProfileId,

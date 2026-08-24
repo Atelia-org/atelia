@@ -120,15 +120,15 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             session,
             CancellationToken.None
         );
-        Assert.Contains(
-            "~~~~recap-block\nworld-r1\n~~~~",
-            recent.ContextHeader.Observation,
-            StringComparison.Ordinal
+        Assert.Equal(
+            "## 派生上下文：Galatea 的世界理解（来自先前历史，不是新的用户请求）\n\n"
+            + "~~~~recap-block\nworld-r1\n~~~~",
+            recent.ContextHeader.Observation
         );
-        Assert.Contains(
-            "~~~~recap-block\nautobiography-r2\n~~~~",
-            recent.ContextHeader.Action,
-            StringComparison.Ordinal
+        Assert.Equal(
+            "## 派生上下文：Galatea 的第一人称自传（来自先前历史，不是本轮 Assistant 回复）\n\n"
+            + "~~~~recap-block\nautobiography-r2\n~~~~",
+            recent.ContextHeader.Action
         );
         Assert.Equal("ready", recent.RecapGridReadiness?.State);
 
@@ -146,10 +146,10 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                 session,
                 CancellationToken.None
             );
-        Assert.Contains(
-            "~~~~recap-block\nautobiography-r1\n~~~~",
-            olderContext.ContextHeader.Action,
-            StringComparison.Ordinal
+        Assert.Equal(
+            "## 派生上下文：Galatea 的第一人称自传（来自先前历史，不是本轮 Assistant 回复）\n\n"
+            + "~~~~recap-block\nautobiography-r1\n~~~~",
+            olderContext.ContextHeader.Action
         );
         Assert.DoesNotContain(
             "autobiography-r2",
@@ -553,7 +553,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
     private RollingRepository CreateRollingRepository() {
         string path = NewPath();
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV3,
+            GalateaRecapGridAssets.RollingRewriteZhCnV4,
             out RecapGridControlRegistrationBundle? created
         ));
         RecapGridControlRegistrationBundle bundle = created!;
@@ -636,7 +636,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         >(control.Reader.ReadSnapshot()).Snapshot.Head;
         RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
             .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV3,
+                GalateaRecapGridAssets.RollingRewriteZhCnV4,
                 initial.InstanceId
             );
         ControlHeadRef registered = Assert.IsType<

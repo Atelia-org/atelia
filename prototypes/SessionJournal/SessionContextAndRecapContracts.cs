@@ -94,6 +94,69 @@ public sealed record ContextHeaderBlockPath(
         : BlockKey;
 }
 
+/// <summary>
+/// Provider-facing target for one derived context contribution. Carrier and
+/// block key are its routing identity; semantic heading is a presentation
+/// envelope and deliberately does not participate in identity or ordering.
+/// </summary>
+public sealed record ContextHeaderBlockTarget {
+    public const int MaximumSemanticHeadingUtf8Bytes = 256;
+
+    public ContextHeaderBlockTarget(
+        ContextHeaderCarrier carrier,
+        string blockKey,
+        string semanticHeading
+    ) {
+        Carrier = carrier;
+        BlockKey = string.IsNullOrWhiteSpace(blockKey)
+            ? throw new ArgumentException(
+                "Context-header block key cannot be empty.",
+                nameof(blockKey)
+            )
+            : blockKey;
+        SemanticHeading = ValidateSemanticHeading(
+            semanticHeading,
+            nameof(semanticHeading)
+        );
+    }
+
+    public ContextHeaderCarrier Carrier { get; }
+    public string BlockKey { get; }
+    public string SemanticHeading { get; }
+
+    internal static string ValidateSemanticHeading(
+        string value,
+        string parameterName
+    ) {
+        ArgumentNullException.ThrowIfNull(value, parameterName);
+        if (string.IsNullOrWhiteSpace(value)
+            || !string.Equals(value, value.Trim(), StringComparison.Ordinal)
+            || value.Any(char.IsControl)) {
+            throw new ArgumentException(
+                "Context-header semantic heading must be non-empty, trimmed, single-line, and contain no control characters.",
+                parameterName
+            );
+        }
+        try {
+            if (new UTF8Encoding(false, true).GetByteCount(value)
+                > MaximumSemanticHeadingUtf8Bytes) {
+                throw new ArgumentOutOfRangeException(
+                    parameterName,
+                    $"Context-header semantic heading exceeds {MaximumSemanticHeadingUtf8Bytes} UTF-8 bytes."
+                );
+            }
+        }
+        catch (EncoderFallbackException exception) {
+            throw new ArgumentException(
+                "Context-header semantic heading contains invalid UTF-16.",
+                parameterName,
+                exception
+            );
+        }
+        return value;
+    }
+}
+
 public sealed class ContextHeaderPack {
     public OrderedDictionary<string, ContextHeaderBlock> System { get; } = new(StringComparer.Ordinal);
     public OrderedDictionary<string, ContextHeaderBlock> Observation { get; } = new(StringComparer.Ordinal);

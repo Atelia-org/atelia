@@ -329,7 +329,7 @@ active policy pointer；它不是另一套operation lifecycle。
 MaintainerDefinitionRevision {
   LogicalColumnId
   FamilyDefinitionDigest
-  Target
+  Target { Carrier, BlockKey, SemanticHeading }
   CapabilityFingerprint
   DeclarativeSpec
   MaxContentBytes
@@ -339,6 +339,10 @@ MaintainerDefinitionRevision {
 
 `LogicalColumnId` 表示长期概念身份；`DefinitionDigest` 表示一次确切实现版本。Developer prompt A/B使用不同
 definition revisions，不覆盖同一版本。
+
+新Definition写schema v2，`SemanticHeading`作为provider-facing单行语义信封进入canonical body与digest；
+`(Carrier, BlockKey)`仍是唯一routing identity与排序依据。读取schema v1时保留原canonical bytes/digest，并从其
+carrier与block key确定性生成legacy英文heading，不做隐式升级重写。
 
 system prompt、tool schema与output protocol只属于immutable FamilyDefinition；column definition只能引用
 `FamilyDefinitionDigest`，不存在独立override入口。`DeclarativeSpec`只能进入family定义的动态user/data区域。
@@ -374,6 +378,8 @@ Manager仍独占whole-batch budget、row barrier和artifact settlement。Runtime
 provider、model connection、cache hint、usage、call-log或lane identity写入Family/Definition/EvaluationKey/Cell。Provider input只允许
 V1 schema marker、有序previous `logicalColumnId/content`、visible History，以及本work的Topic/literal UserPromptTemplate/Target；
 reasoning、inline think与未commit Grid metadata不进入prompt。
+冻结的Target投影仍只有carrier与block key；`SemanticHeading`只用于main-agent request的pre-Prepared渲染，
+其exact结果随后由Prepared v5持久化，旧Prepared snapshot不会被新renderer重渲染。
 Runtime scheduling使用不持lane的leader pre-admission与真实provider-call start/terminal barrier；followers只能在本batch所有leaders已started
 或形成terminal decision后释放。fatal一旦被观察只drain已started work，不再dispatch任何未started follower；admission wait与dispatch
 lane wait是分离的bounded operational evidence，二者都不进入semantic identity。

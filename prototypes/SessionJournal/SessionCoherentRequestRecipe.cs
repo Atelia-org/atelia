@@ -11,9 +11,6 @@ namespace Atelia.SessionJournal;
 /// empty-memory bootstrap recipe.
 /// </summary>
 internal static class SessionCoherentRequestRecipe {
-    private const int MinimumRecapFenceLength = 4;
-    private const string RecapFenceInfoString = "recap-block";
-
     public static SessionRequestArtifactContextSnapshot AggregateExactInputs(
         IReadOnlyList<SessionRequestContextInput> inputs
     ) => Aggregate(
@@ -29,65 +26,6 @@ internal static class SessionCoherentRequestRecipe {
         JoinSnapshotField(snapshots, static snapshot => snapshot.ObservationMessage),
         JoinSnapshotField(snapshots, static snapshot => snapshot.ActionMessage)
     );
-
-    /// <summary>
-    /// Renders one raw derived block through the core-owned request recipe.
-    /// Providers supply only the block body; routing keys are not presentation
-    /// titles, and content-owned titles remain the Maintainer's responsibility.
-    /// </summary>
-    public static SessionRequestArtifactContextSnapshot CreateOneHotSnapshot(
-        ContextHeaderBlockPath target,
-        string exactText
-    ) {
-        ArgumentNullException.ThrowIfNull(target);
-        ArgumentNullException.ThrowIfNull(exactText);
-        string rendered = RenderRecapBlock(exactText);
-        return target.Carrier switch {
-            ContextHeaderCarrier.System => new SessionRequestArtifactContextSnapshot(
-                rendered, "", ""
-            ),
-            ContextHeaderCarrier.Observation => new SessionRequestArtifactContextSnapshot(
-                "", rendered, ""
-            ),
-            ContextHeaderCarrier.Action => new SessionRequestArtifactContextSnapshot(
-                "", "", rendered
-            ),
-            _ => throw new InvalidDataException(
-                $"Unsupported coherent request carrier '{target.Carrier}'."
-            )
-        };
-    }
-
-    private static string RenderRecapBlock(string exactText) {
-        int fenceLength = Math.Max(
-            MinimumRecapFenceLength,
-            GetLongestTildeRun(exactText) + 1
-        );
-        string fence = new('~', fenceLength);
-        var builder = new StringBuilder();
-        builder.Append(fence)
-            .Append(RecapFenceInfoString)
-            .Append('\n')
-            .Append(exactText);
-        if (!exactText.EndsWith('\n')) { builder.Append('\n'); }
-        builder.Append(fence);
-        return builder.ToString();
-    }
-
-    private static int GetLongestTildeRun(string text) {
-        int longestRun = 0;
-        int currentRun = 0;
-        foreach (char character in text) {
-            if (character == '~') {
-                currentRun++;
-                longestRun = Math.Max(longestRun, currentRun);
-            }
-            else {
-                currentRun = 0;
-            }
-        }
-        return longestRun;
-    }
 
     public static (
         string SystemPrompt,

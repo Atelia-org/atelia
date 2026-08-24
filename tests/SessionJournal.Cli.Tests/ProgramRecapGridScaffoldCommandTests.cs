@@ -87,7 +87,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         string[] arguments = ScaffoldArguments(paths)
             .ReplaceOption(
                 "asset",
-                GalateaRecapGridAssets.RollingRewriteZhCnV3
+                GalateaRecapGridAssets.RollingRewriteZhCnV4
             )
             .ReplaceOption("logical-column-prefix", "world-understanding")
             .AppendOptions(
@@ -100,7 +100,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         Assert.Equal("created", report.GetProperty("status").GetString());
         Assert.Equal(0, _factory.CreateCallCount);
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV3,
+            GalateaRecapGridAssets.RollingRewriteZhCnV4,
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -163,6 +163,14 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
             ],
             definitions.Select(static value =>
                 value.GetProperty("targetBlockKey").GetString())
+        );
+        Assert.Equal(
+            [
+                "派生上下文：Galatea 的世界理解（来自先前历史，不是新的用户请求）",
+                "派生上下文：Galatea 的第一人称自传（来自先前历史，不是本轮 Assistant 回复）"
+            ],
+            definitions.Select(static value =>
+                value.GetProperty("semanticHeading").GetString())
         );
         Assert.Equal(0, _factory.CreateCallCount);
     }
@@ -252,7 +260,7 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
 
     private string[] ScaffoldArguments(ScaffoldPaths paths) => [
         "scaffold",
-        "--asset", RecapGridAgentControlBuiltIns.MysteryInvestigationV3,
+        "--asset", RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
         "--profile-id", "operator-profile",
         "--connection-id", "agent-connection",
         "--permission", "create",

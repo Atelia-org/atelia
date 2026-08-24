@@ -407,7 +407,11 @@ public sealed class GridWalkingSkeletonTests {
     ) => MaintainerDefinitionRevision.Create(
         new LogicalColumnId(column),
         familyDigest,
-        new ContextHeaderBlockPath(ContextHeaderCarrier.System, column),
+        new ContextHeaderBlockTarget(
+            ContextHeaderCarrier.System,
+            column,
+            $"Derived context from prior history: {column}"
+        ),
         new MaintainerCapabilitySpec(
             "text-runtime-v3",
             MaintainerReadableScope

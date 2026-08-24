@@ -516,9 +516,10 @@ public sealed partial class ControlVerticalTests : IDisposable {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("case.secondary"),
                 secondFamily.Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.System,
-                    "secondary"
+                    "secondary",
+                    "Derived context from prior history: secondary"
                 ),
                 values.Definition.Capability,
                 new MaintainerDeclarativeSpec(
@@ -1389,9 +1390,10 @@ public sealed partial class ControlVerticalTests : IDisposable {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("case.culprit"),
                 family.Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.System,
-                    "culprit"
+                    "culprit",
+                    "Derived context from prior history: culprit"
                 ),
                 capability,
                 new MaintainerDeclarativeSpec(

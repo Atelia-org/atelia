@@ -622,7 +622,7 @@ public sealed class MaintainerDefinitionRevision {
     private MaintainerDefinitionRevision(
         LogicalColumnId logicalColumnId,
         FamilyDefinitionDigest familyDigest,
-        ContextHeaderBlockPath target,
+        ContextHeaderBlockTarget target,
         MaintainerCapabilitySpec capability,
         MaintainerDeclarativeSpec declarativeSpec,
         int maxContentUtf8Bytes,
@@ -641,7 +641,7 @@ public sealed class MaintainerDefinitionRevision {
 
     public LogicalColumnId LogicalColumnId { get; }
     public FamilyDefinitionDigest FamilyDigest { get; }
-    public ContextHeaderBlockPath Target { get; }
+    public ContextHeaderBlockTarget Target { get; }
     public MaintainerCapabilitySpec Capability { get; }
     public MaintainerDeclarativeSpec DeclarativeSpec { get; }
     public int MaxContentUtf8Bytes { get; }
@@ -650,7 +650,7 @@ public sealed class MaintainerDefinitionRevision {
     public static MaintainerDefinitionRevision Create(
         LogicalColumnId logicalColumnId,
         FamilyDefinitionDigest familyDigest,
-        ContextHeaderBlockPath target,
+        ContextHeaderBlockTarget target,
         MaintainerCapabilitySpec capability,
         MaintainerDeclarativeSpec declarativeSpec,
         int maxContentUtf8Bytes
@@ -676,7 +676,7 @@ public sealed class MaintainerDefinitionRevision {
             throw new ArgumentOutOfRangeException(nameof(maxContentUtf8Bytes));
         }
         MaintainerDefinitionBodyDto body = new(
-            1,
+            2,
             logicalColumnId.Value,
             familyDigest.Value,
             new ContextHeaderTargetDto(
@@ -684,7 +684,8 @@ public sealed class MaintainerDefinitionRevision {
                 RecapGridSyntax.RequireIdentifier(
                     target.BlockKey,
                     nameof(target)
-                )
+                ),
+                target.SemanticHeading
             ),
             capability.CapabilityFingerprint,
             new MaintainerDeclarativeDto(
@@ -694,12 +695,12 @@ public sealed class MaintainerDefinitionRevision {
             maxContentUtf8Bytes
         );
         MaintainerDefinitionDigest digest = new(RecapGridHash.Compute(
-            "atelia.recap-grid.maintainer-definition.v1",
+            "atelia.recap-grid.maintainer-definition.v2",
             RecapGridCanonical.Encode(body)
         ));
         byte[] canonical = RecapGridCanonical.Encode(
             new MaintainerDefinitionDto(
-                1,
+                2,
                 digest.Value,
                 body.LogicalColumnId,
                 body.FamilyDigest,
@@ -722,7 +723,11 @@ public sealed class MaintainerDefinitionRevision {
         return new MaintainerDefinitionRevision(
             logicalColumnId,
             familyDigest,
-            new ContextHeaderBlockPath(target.Carrier, target.BlockKey),
+            new ContextHeaderBlockTarget(
+                target.Carrier,
+                target.BlockKey,
+                target.SemanticHeading
+            ),
             capability,
             declarativeSpec,
             maxContentUtf8Bytes,
@@ -744,7 +749,8 @@ public sealed class MaintainerDefinitionRevision {
         }
         catch (Exception exception) when (exception is ArgumentException
             or InvalidOperationException
-            or NullReferenceException) {
+            or NullReferenceException
+            or System.Text.Json.JsonException) {
             throw new InvalidDataException(
                 "The maintainer definition canonical value is invalid.",
                 exception
@@ -755,13 +761,26 @@ public sealed class MaintainerDefinitionRevision {
     private static MaintainerDefinitionRevision DecodeCanonicalCore(
         ReadOnlySpan<byte> bytes
     ) {
+        int schemaVersion = ReadSchemaVersion(bytes);
+        return schemaVersion switch {
+            1 => DecodeCanonicalV1(bytes),
+            2 => DecodeCanonicalV2(bytes),
+            _ => throw new InvalidDataException(
+                "The maintainer definition schema version is unsupported."
+            )
+        };
+    }
+
+    private static MaintainerDefinitionRevision DecodeCanonicalV2(
+        ReadOnlySpan<byte> bytes
+    ) {
         MaintainerDefinitionDto dto = RecapGridCanonical
             .DecodeExact<MaintainerDefinitionDto>(
                 bytes,
                 RecapGridLimits.MaximumDefinitionCanonicalUtf8Bytes,
                 nameof(bytes)
             );
-        if (dto.SchemaVersion != 1
+        if (dto.SchemaVersion != 2
             || dto.Target is null
             || dto.Capability is null
             || dto.Capability.SchemaVersion != 1
@@ -777,7 +796,11 @@ public sealed class MaintainerDefinitionRevision {
         MaintainerDefinitionRevision value = Create(
             new LogicalColumnId(dto.LogicalColumnId),
             new FamilyDefinitionDigest(dto.FamilyDigest),
-            new ContextHeaderBlockPath(carrier, dto.Target.BlockKey),
+            new ContextHeaderBlockTarget(
+                carrier,
+                dto.Target.BlockKey,
+                dto.Target.SemanticHeading
+            ),
             new MaintainerCapabilitySpec(
                 dto.Capability.RuntimeProtocolId,
                 MaintainerCapabilitySpec.ParseReadableScope(
@@ -803,6 +826,133 @@ public sealed class MaintainerDefinitionRevision {
         }
         return value;
     }
+
+    private static MaintainerDefinitionRevision DecodeCanonicalV1(
+        ReadOnlySpan<byte> bytes
+    ) {
+        MaintainerDefinitionV1Dto dto = RecapGridCanonical
+            .DecodeExact<MaintainerDefinitionV1Dto>(
+                bytes,
+                RecapGridLimits.MaximumDefinitionCanonicalUtf8Bytes,
+                nameof(bytes)
+            );
+        if (dto.SchemaVersion != 1
+            || dto.Target is null
+            || dto.Capability is null
+            || dto.Capability.SchemaVersion != 1
+            || dto.DeclarativeSpec is null
+            || !ContextHeaderCarrierTokens.TryParseStorageToken(
+                dto.Target.Carrier,
+                out ContextHeaderCarrier carrier)) {
+            throw new InvalidDataException(
+                "The context-header carrier is unsupported.",
+                new ArgumentException(nameof(bytes))
+            );
+        }
+        LogicalColumnId logicalColumnId = new(dto.LogicalColumnId);
+        FamilyDefinitionDigest familyDigest = new(dto.FamilyDigest);
+        string blockKey = RecapGridSyntax.RequireIdentifier(
+            dto.Target.BlockKey,
+            nameof(bytes)
+        );
+        var capability = new MaintainerCapabilitySpec(
+            dto.Capability.RuntimeProtocolId,
+            MaintainerCapabilitySpec.ParseReadableScope(
+                dto.Capability.ReadableScope
+            ),
+            dto.Capability.SemanticModelId
+        );
+        var declarativeSpec = new MaintainerDeclarativeSpec(
+            dto.DeclarativeSpec.Topic,
+            dto.DeclarativeSpec.UserPromptTemplate
+        );
+        if (dto.MaxContentUtf8Bytes is < 1
+            or > RecapGridLimits.MaximumContentUtf8Bytes) {
+            throw new ArgumentOutOfRangeException(nameof(bytes));
+        }
+        var body = new MaintainerDefinitionBodyV1Dto(
+            1,
+            logicalColumnId.Value,
+            familyDigest.Value,
+            new ContextHeaderTargetV1Dto(
+                ContextHeaderCarrierTokens.ToStorageToken(carrier),
+                blockKey
+            ),
+            capability.CapabilityFingerprint,
+            new MaintainerDeclarativeDto(
+                declarativeSpec.Topic,
+                declarativeSpec.UserPromptTemplate
+            ),
+            dto.MaxContentUtf8Bytes
+        );
+        MaintainerDefinitionDigest digest = new(RecapGridHash.Compute(
+            "atelia.recap-grid.maintainer-definition.v1",
+            RecapGridCanonical.Encode(body)
+        ));
+        if (!string.Equals(
+                capability.CapabilityFingerprint,
+                dto.CapabilityFingerprint,
+                StringComparison.Ordinal)
+            || !string.Equals(digest.Value, dto.Digest, StringComparison.Ordinal)) {
+            throw new ArgumentException(
+                "The maintainer definition digest does not match its body.",
+                nameof(bytes)
+            );
+        }
+        return new MaintainerDefinitionRevision(
+            logicalColumnId,
+            familyDigest,
+            new ContextHeaderBlockTarget(
+                carrier,
+                blockKey,
+                LegacySemanticHeading(carrier, blockKey)
+            ),
+            capability,
+            declarativeSpec,
+            dto.MaxContentUtf8Bytes,
+            digest,
+            bytes.ToArray()
+        );
+    }
+
+    private static int ReadSchemaVersion(ReadOnlySpan<byte> bytes) {
+        if (bytes.Length is < 2
+            || bytes.Length
+                > RecapGridLimits.MaximumDefinitionCanonicalUtf8Bytes) {
+            throw new ArgumentOutOfRangeException(nameof(bytes));
+        }
+        var reader = new System.Text.Json.Utf8JsonReader(bytes);
+        if (!reader.Read()
+            || reader.TokenType
+                != System.Text.Json.JsonTokenType.StartObject
+            || !reader.Read()
+            || reader.TokenType
+                != System.Text.Json.JsonTokenType.PropertyName
+            || !reader.ValueTextEquals("schemaVersion")
+            || !reader.Read()
+            || reader.TokenType
+                != System.Text.Json.JsonTokenType.Number
+            || !reader.TryGetInt32(out int schemaVersion)) {
+            throw new ArgumentException(
+                "The maintainer definition canonical value must begin with schemaVersion.",
+                nameof(bytes)
+            );
+        }
+        return schemaVersion;
+    }
+
+    private static string LegacySemanticHeading(
+        ContextHeaderCarrier carrier,
+        string blockKey
+    ) => carrier switch {
+        ContextHeaderCarrier.System =>
+            $"Derived context from prior history: {blockKey}",
+        ContextHeaderCarrier.Observation =>
+            $"Derived context from prior history, not a new user request: {blockKey}",
+        ContextHeaderCarrier.Action =>
+            $"Derived context from prior history, not the current Assistant reply: {blockKey}",
+        _ => throw new ArgumentOutOfRangeException(nameof(carrier))
+    };
 }
 
 internal sealed record FamilyToolPropertyDto(
@@ -857,6 +1007,12 @@ internal sealed record FamilyDefinitionDto(
 
 internal sealed record ContextHeaderTargetDto(
     string Carrier,
+    string BlockKey,
+    string SemanticHeading
+);
+
+internal sealed record ContextHeaderTargetV1Dto(
+    string Carrier,
     string BlockKey
 );
 
@@ -888,6 +1044,28 @@ internal sealed record MaintainerDefinitionDto(
     string LogicalColumnId,
     string FamilyDigest,
     ContextHeaderTargetDto Target,
+    MaintainerCapabilityDto Capability,
+    string CapabilityFingerprint,
+    MaintainerDeclarativeDto DeclarativeSpec,
+    int MaxContentUtf8Bytes
+);
+
+internal sealed record MaintainerDefinitionBodyV1Dto(
+    int SchemaVersion,
+    string LogicalColumnId,
+    string FamilyDigest,
+    ContextHeaderTargetV1Dto Target,
+    string CapabilityFingerprint,
+    MaintainerDeclarativeDto DeclarativeSpec,
+    int MaxContentUtf8Bytes
+);
+
+internal sealed record MaintainerDefinitionV1Dto(
+    int SchemaVersion,
+    string Digest,
+    string LogicalColumnId,
+    string FamilyDigest,
+    ContextHeaderTargetV1Dto Target,
     MaintainerCapabilityDto Capability,
     string CapabilityFingerprint,
     MaintainerDeclarativeDto DeclarativeSpec,

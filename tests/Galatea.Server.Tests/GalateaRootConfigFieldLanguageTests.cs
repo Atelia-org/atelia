@@ -662,7 +662,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     ) {
         Assert.True(RecapGridAgentControlBuiltIns
             .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV3,
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
                 out RecapGridControlRegistrationBundle? builtIn
             ));
         return RecapGridAgentControlProfile.Create(

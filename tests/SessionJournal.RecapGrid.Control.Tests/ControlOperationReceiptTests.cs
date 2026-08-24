@@ -128,9 +128,10 @@ public sealed partial class ControlVerticalTests {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("case.unauthorized"),
                 new FamilyDefinitionDigest(new string('f', 64)),
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.System,
-                    "unauthorized"
+                    "unauthorized",
+                    "Derived context from prior history: unauthorized"
                 ),
                 values.Definition.Capability,
                 new MaintainerDeclarativeSpec(

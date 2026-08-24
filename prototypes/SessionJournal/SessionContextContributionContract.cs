@@ -71,7 +71,7 @@ public static class SessionContextContributionContract {
         SessionRequestArtifactContextSnapshot rendered =
             SessionCoherentRequestRecipe.Aggregate([
                 .. normalized.Select(static contribution =>
-                    SessionCoherentRequestRecipe.CreateOneHotSnapshot(
+                    SessionContextContributionRenderer.RenderOneHot(
                         contribution.Target,
                         contribution.ExactText
                     )
@@ -120,6 +120,18 @@ public static class SessionContextContributionContract {
             )) {
             throw new InvalidDataException(
                 "Context candidate contribution has an invalid block key."
+            );
+        }
+        try {
+            ContextHeaderBlockTarget.ValidateSemanticHeading(
+                contribution.Target.SemanticHeading,
+                nameof(contribution.Target.SemanticHeading)
+            );
+        }
+        catch (ArgumentException exception) {
+            throw new InvalidDataException(
+                "Context candidate contribution has an invalid semantic heading.",
+                exception
             );
         }
         if (string.IsNullOrEmpty(contribution.ExactText)

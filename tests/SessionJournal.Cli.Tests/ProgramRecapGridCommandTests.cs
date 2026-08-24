@@ -468,12 +468,12 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
     public void OperatorProvisionAssetOperationIdentityIsExact() {
         RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
             .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV3,
+                GalateaRecapGridAssets.RollingRewriteZhCnV4,
                 new ControlInstanceId(
                     "0123456789abcdef0123456789abcdef")
             );
         Assert.Equal(
-            "5ace771dfecf51367e2dcbf77fe3169b64eb4ca4a11bf685aa859acc4697e3ea",
+            "d8e41702c87771e6a58d77076298e5c5bf48d7cb68e0758ede047f3d253befc5",
             operation.OperationKey
         );
         Assert.Equal(1, operation.ExecutionSequence);
@@ -520,7 +520,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         CreateJournal();
         Assert.True(GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV3,
+                GalateaRecapGridAssets.RollingRewriteZhCnV4,
                 out RecapGridControlRegistrationBundle? bundle
             ));
         string createOnly = WriteAdmission(["create"]);
@@ -542,7 +542,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV3
+            GalateaRecapGridAssets.RollingRewriteZhCnV4
         );
         Assert.Equal(2, unauthorizedCode);
         Assert.Equal(
@@ -569,12 +569,27 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV3
+            GalateaRecapGridAssets.RollingRewriteZhCnV4
         );
         Assert.Equal(0, appliedCode);
         Assert.Equal("applied", applied.GetProperty("status").GetString());
         ControlHeadRef provisioned = ReadControlHead(refId.ToHexString());
         Assert.Equal(initial.Generation + 1, provisioned.Generation);
+        (int inspectCode, JsonElement inspected) = RunCaptured(
+            "control", "inspect",
+            "--input", _root
+        );
+        Assert.Equal(0, inspectCode);
+        JsonElement[] inspectedDefinitions = [.. inspected
+            .GetProperty("detail")
+            .GetProperty("definitions")
+            .EnumerateArray()];
+        Assert.Equal(
+            bundle.Definitions.Select(static value =>
+                value.Target.SemanticHeading),
+            inspectedDefinitions.Select(static value =>
+                value.GetProperty("semanticHeading").GetString())
+        );
 
         (int replayCode, JsonElement replay) = RunCaptured(
             "control", "provision-asset",
@@ -582,7 +597,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV3
+            GalateaRecapGridAssets.RollingRewriteZhCnV4
         );
         Assert.Equal(0, replayCode);
         Assert.Equal("replayed", replay.GetProperty("status").GetString());
@@ -624,7 +639,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV3
+            GalateaRecapGridAssets.RollingRewriteZhCnV4
         );
         Assert.Equal(0, reappliedCode);
         Assert.Equal("applied", reapplied.GetProperty("status").GetString());
@@ -639,7 +654,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV3
+            GalateaRecapGridAssets.RollingRewriteZhCnV4
         );
         Assert.Equal(0, retryCode);
         Assert.Equal("replayed", retry.GetProperty("status").GetString());
@@ -660,7 +675,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         CreateJournal();
         Assert.True(GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV3,
+                GalateaRecapGridAssets.RollingRewriteZhCnV4,
                 out RecapGridControlRegistrationBundle? bundle
             ));
         RefId refId;
@@ -690,7 +705,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV3
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV4
         ));
         string output = _root + "-full-recipe.json";
         _externalPaths.Add(output);
@@ -1668,9 +1683,10 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("case.culprit"),
                 family.Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.System,
-                    "culprit"
+                    "culprit",
+                    "Derived context from prior history: culprit"
                 ),
                 new MaintainerCapabilitySpec(
                     RecapRewriterProtocolV3.RuntimeProtocolId,
@@ -1687,9 +1703,10 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("case.x-suspicion"),
                 family.Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.System,
-                    "x-suspicion"
+                    "x-suspicion",
+                    "Derived context from prior history: suspicion about X"
                 ),
                 new MaintainerCapabilitySpec(
                     RecapRewriterProtocolV3.RuntimeProtocolId,
@@ -2323,7 +2340,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         CompletionConnectionConfig connection = CandidateConnection();
         Assert.True(RecapGridAgentControlBuiltIns
             .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV3,
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
                 out RecapGridControlRegistrationBundle? builtIn
             ));
         var admissionValue = new RecapGridControlAdmission(
@@ -3317,7 +3334,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                 "recap_grid.control",
                 "control-call",
                 "{\"action\":\"provision-built-in\","
-                + "\"builtInAssetId\":\"mystery-investigation-v3\"}"
+                + "\"builtInAssetId\":\"mystery-investigation-v4\"}"
             ))]),
             new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
         ));

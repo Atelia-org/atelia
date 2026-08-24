@@ -1739,8 +1739,11 @@ public sealed class OnlineVerticalTests : IDisposable {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("case.culprit"),
                 family.Digest,
-                new ContextHeaderBlockPath(
-                    ContextHeaderCarrier.System, "culprit"),
+                new ContextHeaderBlockTarget(
+                    ContextHeaderCarrier.System,
+                    "culprit",
+                    "Derived context from prior history: culprit"
+                ),
                 new MaintainerCapabilitySpec(
                     "runtime-v1",
                     MaintainerReadableScope
@@ -1758,8 +1761,11 @@ public sealed class OnlineVerticalTests : IDisposable {
     ) => MaintainerDefinitionRevision.Create(
         new LogicalColumnId($"case.column-{ordinal}"),
         family.Digest,
-        new ContextHeaderBlockPath(
-            ContextHeaderCarrier.System, $"column-{ordinal}"),
+        new ContextHeaderBlockTarget(
+            ContextHeaderCarrier.System,
+            $"column-{ordinal}",
+            $"Derived context from prior history: column {ordinal}"
+        ),
         new MaintainerCapabilitySpec(
             "runtime-v1",
             MaintainerReadableScope

@@ -155,11 +155,11 @@ internal sealed class RecapGridAgentControlLifetime : IDisposable {
 }
 
 public static class RecapGridAgentControlBuiltIns {
-    public const string MysteryInvestigationV3 =
-        "mystery-investigation-v3";
+    public const string MysteryInvestigationV4 =
+        "mystery-investigation-v4";
 
     public static IReadOnlyList<string> AssetIds { get; } =
-        Array.AsReadOnly([MysteryInvestigationV3]);
+        Array.AsReadOnly([MysteryInvestigationV4]);
 
     public static bool TryCreateRegistrationBundle(
         string assetId,
@@ -167,7 +167,7 @@ public static class RecapGridAgentControlBuiltIns {
     ) {
         if (!string.Equals(
                 assetId,
-                MysteryInvestigationV3,
+                MysteryInvestigationV4,
                 StringComparison.Ordinal)) {
             bundle = null;
             return false;
@@ -182,9 +182,10 @@ public static class RecapGridAgentControlBuiltIns {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("case.culprit-hypothesis"),
                 family.Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.System,
-                    "culprit-hypothesis"
+                    "culprit-hypothesis",
+                    "Derived context from prior history: culprit hypothesis"
                 ),
                 capability,
                 new MaintainerDeclarativeSpec(
@@ -197,9 +198,10 @@ public static class RecapGridAgentControlBuiltIns {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("case.x-suspicion"),
                 family.Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.System,
-                    "x-suspicion"
+                    "x-suspicion",
+                    "Derived context from prior history: suspicion about X"
                 ),
                 capability,
                 new MaintainerDeclarativeSpec(

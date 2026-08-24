@@ -1297,7 +1297,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
     private static RecapGridAgentControlProfile AgentProfile() {
         Assert.True(RecapGridAgentControlBuiltIns
             .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV3,
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
                 out RecapGridControlRegistrationBundle? builtIn
             ));
         var admission = new RecapGridControlAdmission(
@@ -1336,8 +1336,11 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("galatea.culprit"),
                 family.Digest,
-                new ContextHeaderBlockPath(
-                    ContextHeaderCarrier.System, "culprit"),
+                new ContextHeaderBlockTarget(
+                    ContextHeaderCarrier.System,
+                    "culprit",
+                    "Derived context from prior history: culprit"
+                ),
                 new MaintainerCapabilitySpec(
                     RecapRewriterProtocolV3.RuntimeProtocolId,
                     MaintainerReadableScope
@@ -1453,8 +1456,11 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             MaintainerDefinitionRevision.Create(
                 new LogicalColumnId("galatea.culprit"),
                 family.Digest,
-                new ContextHeaderBlockPath(
-                    ContextHeaderCarrier.System, "culprit"),
+                new ContextHeaderBlockTarget(
+                    ContextHeaderCarrier.System,
+                    "culprit",
+                    "Derived context from prior history: culprit"
+                ),
                 new MaintainerCapabilitySpec(
                     RecapRewriterProtocolV3.RuntimeProtocolId,
                     MaintainerReadableScope
@@ -1782,7 +1788,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 "recap_grid.control",
                 "control-call",
                 "{\"action\":\"provision-built-in\","
-                + "\"builtInAssetId\":\"mystery-investigation-v3\"}"
+                + "\"builtInAssetId\":\"mystery-investigation-v4\"}"
             ))]),
             new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
         ));

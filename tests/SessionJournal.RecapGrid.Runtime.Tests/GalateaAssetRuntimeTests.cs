@@ -11,7 +11,7 @@ public sealed class GalateaAssetRuntimeTests {
     [Fact]
     public async Task SharedFamily_UsesOnePrefixAndIndependentMemberTails() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV3,
+            GalateaRecapGridAssets.RollingRewriteZhCnV4,
             out RecapGridControlRegistrationBundle? bundle
         ));
         FrozenRowBatch batch = RuntimeTestFixture.Batch(

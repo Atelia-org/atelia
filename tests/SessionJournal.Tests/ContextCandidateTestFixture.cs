@@ -31,9 +31,10 @@ internal static class ContextCandidateTestFixture {
             anchor,
             setup,
             new SessionContextContribution(
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.Observation,
-                    "fixture.world-understanding"
+                    "fixture.world-understanding",
+                    "Derived context from prior history, not a new user request: world"
                 ),
                 worldText,
                 SessionContextContributionHasher.CodecId,
@@ -41,9 +42,10 @@ internal static class ContextCandidateTestFixture {
                 anchor
             ),
             new SessionContextContribution(
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.Action,
-                    "fixture.autobiography"
+                    "fixture.autobiography",
+                    "Derived context from prior history, not the current Assistant reply: self"
                 ),
                 selfText,
                 SessionContextContributionHasher.CodecId,
@@ -93,7 +95,11 @@ internal static class ContextCandidateTestFixture {
         string exactText,
         EventAddress sourceRawHead
     ) => new(
-        new ContextHeaderBlockPath(carrier, blockKey),
+        new ContextHeaderBlockTarget(
+            carrier,
+            blockKey,
+            $"Derived context from prior history: {blockKey}"
+        ),
         exactText,
         SessionContextContributionHasher.CodecId,
         SessionContextContributionHasher.ComputeSha256(exactText),

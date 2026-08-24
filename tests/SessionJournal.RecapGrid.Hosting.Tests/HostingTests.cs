@@ -700,9 +700,10 @@ public sealed class HostingTests {
             MaintainerDefinitionRevision.Create(
                 logical,
                 family.Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.System,
-                    "column-0"
+                    "column-0",
+                    "Derived context from prior history: column 0"
                 ),
                 new MaintainerCapabilitySpec(
                     RecapRewriterProtocolV3.RuntimeProtocolId,

@@ -41,9 +41,10 @@ internal static class RuntimeTestFixture {
             definitions[index] = MaintainerDefinitionRevision.Create(
                 logical,
                 families[index].Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.System,
-                    $"column-{index}"
+                    $"column-{index}",
+                    $"Derived context from prior history: column {index}"
                 ),
                 new MaintainerCapabilitySpec(
                     runtimeProtocolIds?[index] ?? runtimeProtocolId,
@@ -246,9 +247,10 @@ internal static class RuntimeTestFixture {
             MaintainerDefinitionRevision.Create(
                 logical,
                 family.Digest,
-                new ContextHeaderBlockPath(
+                new ContextHeaderBlockTarget(
                     ContextHeaderCarrier.System,
-                    "column-0"
+                    "column-0",
+                    "Derived context from prior history: column 0"
                 ),
                 new MaintainerCapabilitySpec(
                     RecapRewriterProtocolV3.RuntimeProtocolId,
@@ -617,9 +619,10 @@ internal static class RuntimeTestFixture {
     ) => MaintainerDefinitionRevision.Create(
         logical,
         family.Digest,
-        new ContextHeaderBlockPath(
+        new ContextHeaderBlockTarget(
             ContextHeaderCarrier.System,
-            blockKey
+            blockKey,
+            $"Derived context from prior history: {blockKey}"
         ),
         new MaintainerCapabilitySpec(
             RecapRewriterProtocolV3.RuntimeProtocolId,

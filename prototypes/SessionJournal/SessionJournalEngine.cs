@@ -3018,8 +3018,8 @@ public sealed partial class SessionJournalEngine : IDisposable {
             snapshots = [
                 .. selection.Candidate.Contributions.Select(
                     static contribution =>
-                        SessionCoherentRequestRecipe
-                            .CreateOneHotSnapshot(
+                        SessionContextContributionRenderer
+                            .RenderOneHot(
                                 contribution.Target,
                                 contribution.ExactText
                             )
@@ -4503,7 +4503,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
     ) {
         SessionRequestArtifactContextSnapshot[] snapshots = [
             .. contributions.Select(static contribution =>
-                SessionCoherentRequestRecipe.CreateOneHotSnapshot(
+                SessionContextContributionRenderer.RenderOneHot(
                     contribution.Target,
                     contribution.ExactText
                 )

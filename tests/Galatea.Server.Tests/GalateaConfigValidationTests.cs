@@ -450,7 +450,7 @@ public sealed class GalateaConfigValidationTests {
                 [
                     "recap-grid", "scaffold",
                     "--asset",
-                    RecapGridAgentControlBuiltIns.MysteryInvestigationV3,
+                    RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
                     "--profile-id", "test-profile",
                     "--connection-id", "test",
                     "--permission", "create",
@@ -912,7 +912,7 @@ public sealed class GalateaConfigValidationTests {
     ) {
         Assert.True(RecapGridAgentControlBuiltIns
             .TryCreateRegistrationBundle(
-                RecapGridAgentControlBuiltIns.MysteryInvestigationV3,
+                RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
                 out RecapGridControlRegistrationBundle? builtIn
             ));
         return RecapGridAgentControlProfile.Create(
