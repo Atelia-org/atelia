@@ -212,6 +212,46 @@ public sealed class RepositoryCommitFailureTests : IDisposable {
     }
 
     [Fact]
+    public void FormerActiveCleanupFailure_AfterRotation_DoesNotChangeCommitSuccess() {
+        var dir = GetTempDir();
+        using var repo = CreateRepositoryWithBranch(dir, out var revision);
+        var root = revision.CreateDict<string, int>();
+        var cleanupFaultCalls = 0;
+
+        CommitAddress parent;
+        CommitAddress candidate;
+        using (Repository.InjectCommitFaultScope(
+            RepositoryCommitFaultPoint.BeforeFormerActiveSegmentDispose,
+            () => {
+                cleanupFaultCalls++;
+                return new IOException("injected former-active cleanup failure");
+            }
+        )) {
+            root.Upsert("before", 1);
+            parent = AssertSuccess(repo.Commit(root));
+            Assert.Equal(0, cleanupFaultCalls); // First commit does not rotate.
+
+            repo.SetRotationThreshold(1);
+            root.Upsert("after", 2);
+            candidate = AssertSuccess(repo.Commit(root));
+            Assert.Equal(1, cleanupFaultCalls);
+        }
+
+        Assert.Equal(2U, candidate.SegmentNumber);
+        Assert.Equal(candidate, revision.HeadAddress);
+        Assert.Equal(parent, revision.HeadParentAddress);
+        Assert.True(repo.HasBranch("main"));
+        Assert.True(repo.TryGetBranchHeadAddress("main", out var inProcessHead));
+        Assert.Equal(candidate, inProcessHead);
+        Assert.Equal(2, Assert.IsAssignableFrom<DurableDict<string, int>>(
+            AssertSuccess(repo.LoadRootAtCommit(candidate))
+        ).Count);
+
+        repo.Dispose();
+        AssertExactCandidateState(dir, parent, candidate);
+    }
+
+    [Fact]
     public void CommitFaultScope_DoesNotAffectCreateBranch_AndInvokesFactoryOnce() {
         var dir = GetTempDir();
         using var repo = AssertSuccess(Repository.Create(dir));

@@ -5,6 +5,7 @@ internal enum RepositoryCommitFaultPoint {
     BeforePrimaryRefPublication,
     DuringPrimaryRefPublication,
     BeforeReflogAppend,
+    BeforeFormerActiveSegmentDispose,
 }
 
 public sealed partial class Repository {

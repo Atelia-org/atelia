@@ -118,7 +118,7 @@ public sealed partial class Repository {
             var formerActiveFile = _activeFile;
             _activeFile = rotation.File;
             _recentCount++;
-            formerActiveFile.Dispose();
+            DisposeFormerActiveFileBestEffort(formerActiveFile, rotation.SegmentNumber);
         }
 
         public void ArchiveExcessRecentSegments() {
@@ -155,6 +155,32 @@ public sealed partial class Repository {
             }
             catch {
                 // best-effort cleanup
+            }
+        }
+
+        private static void DisposeFormerActiveFileBestEffort(IRbfFile formerActiveFile, uint newActiveSegmentNumber) {
+            try {
+                ThrowIfCommitFaultInjected(RepositoryCommitFaultPoint.BeforeFormerActiveSegmentDispose);
+                formerActiveFile.Dispose();
+                return;
+            }
+            catch (Exception firstFailure) {
+                TryLogCleanupWarning(
+                    $"Segment {newActiveSegmentNumber} is already active, but disposing its former active file failed",
+                    firstFailure
+                );
+            }
+
+            // The injected fault fires before Dispose, and a real Dispose may fail before completing all
+            // cleanup. Retry once, but never let former-file cleanup reverse the already transferred ownership.
+            try {
+                formerActiveFile.Dispose();
+            }
+            catch (Exception retryFailure) {
+                TryLogCleanupWarning(
+                    $"Best-effort retry for the former active file of segment {newActiveSegmentNumber} also failed",
+                    retryFailure
+                );
             }
         }
     }

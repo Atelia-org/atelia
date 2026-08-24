@@ -235,11 +235,17 @@ Commit 热路径上不做 segment 扫描，也不做归档维护。
 
 ## 5. TailMeta 与 commit 身份
 
-`ObjectMap` 帧的 TailMeta 只包含 4 字节：
+`ObjectMap` commit 帧当前写出的 TailMeta v2 固定为 24 字节：
 
 ```text
-[0..3]   GraphRoot.LocalId.Value (uint LE)
+[0..3]    v2 marker (uint LE)
+[4..7]    GraphRoot.LocalId.Value (uint LE)
+[8..11]   SymbolTable.LocalId.Value (uint LE)
+[12..15]  Parent CommitAddress.SegmentNumber；无 parent 时为 0 (uint LE)
+[16..23]  Parent CommitAddress.CommitTicket；无 parent 时为 0 (ulong LE)
 ```
+
+兼容读取的 legacy TailMeta 是 8 字节：`[0..3] GraphRoot.LocalId` + `[4..7] SymbolTable.LocalId`。legacy 格式不在这 8 字节内保存完整 parent `CommitAddress`；非空 legacy parent ticket 会按当前 segment 推断。新写入统一使用 v2。
 
 commit 身份完全由 `CommitAddress(uint SegmentNumber, CommitTicket)` 确定：
 - `SegmentNumber` 由 branch JSON 记录

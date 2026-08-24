@@ -617,9 +617,9 @@ public sealed partial class Repository : IDisposable {
                     _segments.RollbackRotation(abandonedRotation);
                 }
                 catch (Exception cleanupFailure) {
-                    DebugUtil.Warning(
-                        "StateJournal.Repository",
-                        $"Failed to roll back unpublished segment {abandonedRotation.SegmentNumber}: {cleanupFailure.Message}"
+                    TryLogCleanupWarning(
+                        $"Failed to roll back unpublished segment {abandonedRotation.SegmentNumber}",
+                        cleanupFailure
                     );
                 }
             }
@@ -633,14 +633,24 @@ public sealed partial class Repository : IDisposable {
             catch (Exception cleanupFailure) {
                 // CommitRotation transfers ownership before disposing the former active file. Keep the
                 // original publication failure as the caller-visible error even if old-file cleanup fails.
-                DebugUtil.Warning(
-                    "StateJournal.Repository",
-                    $"Adopted publication-uncertain segment {candidateRotation.SegmentNumber}, but cleanup of the former active segment failed: {cleanupFailure.Message}"
+                TryLogCleanupWarning(
+                    $"Adopted publication-uncertain segment {candidateRotation.SegmentNumber}, but cleanup of the former active segment failed",
+                    cleanupFailure
                 );
             }
         }
 
         revision.AcceptPersistedSegment(writePlan.TargetSegmentNumber);
+    }
+
+    private static void TryLogCleanupWarning(string message, Exception? failure = null) {
+        try {
+            if (failure is not null) { message = $"{message}: {failure.Message}"; }
+            DebugUtil.Warning("StateJournal.Repository", message);
+        }
+        catch {
+            // Cleanup diagnostics must never replace the commit result they are trying to explain.
+        }
     }
 
     private static void TryMaintainSegmentLayout(SegmentCatalog segments, string reason) {
