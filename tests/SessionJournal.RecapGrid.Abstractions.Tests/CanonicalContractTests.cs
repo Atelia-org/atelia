@@ -81,6 +81,48 @@ public sealed class CanonicalContractTests {
         );
     }
 
+    [Fact]
+    public void DefinitionV2_StrictCanonicalRejectsMissingUnknownOrReorderedSemanticHeading() {
+        MaintainerDefinitionRevision definition = Definition(
+            "culprit",
+            Family().Digest
+        );
+        string canonical = Encoding.UTF8.GetString(
+            definition.ToCanonicalBytes()
+        );
+        const string Target =
+            "\"target\":{\"carrier\":\"system\",\"blockKey\":\"culprit\","
+            + "\"semanticHeading\":\"Derived context from prior history: culprit\"}";
+        Assert.Contains(Target, canonical, StringComparison.Ordinal);
+        string[] malformed = [
+            canonical.Replace(
+                ",\"semanticHeading\":\"Derived context from prior history: culprit\"",
+                "",
+                StringComparison.Ordinal
+            ),
+            canonical.Replace(
+                Target,
+                Target[..^1] + ",\"unknown\":true}",
+                StringComparison.Ordinal
+            ),
+            canonical.Replace(
+                Target,
+                "\"target\":{\"carrier\":\"system\","
+                + "\"semanticHeading\":\"Derived context from prior history: culprit\","
+                + "\"blockKey\":\"culprit\"}",
+                StringComparison.Ordinal
+            )
+        ];
+
+        Assert.All(malformed, value =>
+            Assert.Throws<InvalidDataException>(() =>
+                MaintainerDefinitionRevision.DecodeCanonical(
+                    Encoding.UTF8.GetBytes(value)
+                )
+            )
+        );
+    }
+
     [Theory]
     [InlineData(
         "system",

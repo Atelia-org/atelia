@@ -316,7 +316,7 @@ prototypes/Galatea/.atelia/galatea/sessions/cyber-session-journal-recap-grid
 
 在RecapGrid init之前，operator用exact old head显式reconcile governing setup到main connection `opus4-6`、Anthropic surface与当前
 `prompts/cyber.md`；新raw head为`ej1:00000498c80004b10000000100000000`。随后按B=60,000/R=24,000显式创建Cadence/Timeline/
-Control/Grid、sync一个row、provision V4 asset、world-first compose/put、用独立recap connection执行2-call build、zero-call复验、promotion与
+Control/Grid、sync一个row、provision V3 asset、world-first compose/put、用独立recap connection执行2-call build、zero-call复验、promotion与
 materialization。actual recipe digest为`2aaade63404d086393ee3e9998f71620ae1e4748f35a3d634d6e66ba4faff0d3`；actual两份输出与已批准
 的final disposable candidate逐字相等。
 

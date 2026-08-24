@@ -36,6 +36,8 @@ public sealed class SessionContextCandidateMaterializationContractTests {
             "trailing ",
             "line\nbreak",
             "line\rbreak",
+            "line\u2028separator",
+            "paragraph\u2029separator",
             "control\u0001character",
             "invalid\ud800utf16",
             new('界', 86)
