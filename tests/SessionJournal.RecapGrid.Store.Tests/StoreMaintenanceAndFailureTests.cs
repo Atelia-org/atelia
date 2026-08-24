@@ -712,7 +712,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
     }
 
     [Fact]
-    public async Task TwoHandlesHaveOneWinnerAndDisposeDrainsEnteredOperation() {
+    public async Task TwoHandlesSettleToOneExactWinner() {
         Directory.CreateDirectory(_root);
         Assert.IsType<RecapGridStoreCreateResult.Created>(
             RecapGridStoreFactory.Create(_root)
@@ -748,14 +748,28 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
         RecapGridCellPutResult resultTwo = await taskTwo;
         Assert.Single(new[] { resultOne, resultTwo },
             static result => result is RecapGridCellPutResult.Inserted);
-        Assert.Single(new[] { resultOne, resultTwo },
-            static result => result is RecapGridCellPutResult.Busy);
         RecapGridStoreHandle loser = resultOne
-            is RecapGridCellPutResult.Busy ? one : two;
-        Assert.IsType<RecapGridCellPutResult.AlreadyFilled>(
-            loser.Writer.PutCell(cell)
+            is RecapGridCellPutResult.Inserted ? two : one;
+        RecapGridCellPutResult loserResult = resultOne
+            is RecapGridCellPutResult.Inserted ? resultTwo : resultOne;
+        if (loserResult is RecapGridCellPutResult.Busy) {
+            loserResult = loser.Writer.PutCell(cell);
+        }
+        RecapGridCellPutResult.AlreadyFilled settled = Assert.IsType<
+            RecapGridCellPutResult.AlreadyFilled
+        >(loserResult);
+        Assert.Equal(
+            cell.ToCanonicalBytes(),
+            settled.Winner.ToCanonicalBytes()
         );
+    }
 
+    [Fact]
+    public async Task DisposeDrainsEnteredOperation() {
+        Directory.CreateDirectory(_root);
+        Assert.IsType<RecapGridStoreCreateResult.Created>(
+            RecapGridStoreFactory.Create(_root)
+        );
         using var entered = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
         RecapGridStoreHandle draining = OpenWithHooks(
