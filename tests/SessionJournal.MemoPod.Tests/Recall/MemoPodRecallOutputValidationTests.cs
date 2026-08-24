@@ -27,6 +27,14 @@ public sealed class MemoPodRecallOutputValidationTests {
         UnknownTermination,
     }
 
+    public enum InvalidToolCallIdShape {
+        Null,
+        Empty,
+        Whitespace,
+        InvalidUtf16,
+        TooLong,
+    }
+
     public static TheoryData<string?> InvalidArguments { get; } = new() {
         null,
         string.Empty,
@@ -49,15 +57,6 @@ public sealed class MemoPodRecallOutputValidationTests {
         "{\"memoIds\":[],}",
         "{\"memoIds\":[]/*comment*/}",
         "{\"memoIds\":[]}{}",
-    };
-
-    public static TheoryData<string?> InvalidToolCallIds { get; } = new() {
-        null,
-        string.Empty,
-        " \t\r\n",
-        "\ud800",
-        new string('x',
-            MemoPodRecallValidation.MaximumToolCallIdUtf8Bytes + 1),
     };
 
     [Theory]
@@ -221,14 +220,29 @@ public sealed class MemoPodRecallOutputValidationTests {
     }
 
     [Theory]
-    [MemberData(nameof(InvalidToolCallIds))]
+    [InlineData(InvalidToolCallIdShape.Null)]
+    [InlineData(InvalidToolCallIdShape.Empty)]
+    [InlineData(InvalidToolCallIdShape.Whitespace)]
+    [InlineData(InvalidToolCallIdShape.InvalidUtf16)]
+    [InlineData(InvalidToolCallIdShape.TooLong)]
     public async Task InvalidToolCallIdsAreInvalidModelOutput(
-        string? toolCallId
+        InvalidToolCallIdShape shape
     ) {
         using MemoPodRecallFixture fixture =
             await MemoPodRecallFixture.CreateAsync(
                 exactTexts: ["memo"]
             );
+        string? toolCallId = shape switch {
+            InvalidToolCallIdShape.Null => null,
+            InvalidToolCallIdShape.Empty => string.Empty,
+            InvalidToolCallIdShape.Whitespace => " \t\r\n",
+            InvalidToolCallIdShape.InvalidUtf16 => "\ud800",
+            InvalidToolCallIdShape.TooLong => new string(
+                'x',
+                MemoPodRecallValidation.MaximumToolCallIdUtf8Bytes + 1
+            ),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+        };
         var client = new FakeMemoRecallCompletionClient {
             Handler = (self, request, _) => Task.FromResult(
                 self.Result(
