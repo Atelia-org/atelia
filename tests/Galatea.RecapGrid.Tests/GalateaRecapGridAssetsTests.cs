@@ -101,7 +101,7 @@ public sealed class GalateaRecapGridAssetsTests {
             ResourceSha256(PromptResourceLoader.WorldUnderstandingResourceName)
         );
         Assert.Equal(
-            "298c5a7242510aa256aee223fcd85600d2c2ef94968c230d48c700229a5914b4",
+            "0abc0a25cf2411cfcbf9d4cd958fd72c7a5c438b74086be1b615a34776b05ec9",
             ResourceSha256(PromptResourceLoader.AutobiographyResourceName)
         );
         Assert.Equal(first.Families[0].SystemPrompt,
@@ -212,12 +212,17 @@ public sealed class GalateaRecapGridAssetsTests {
                 "不能据此补写她未表达的动机、感受、评价、意图或第一人称声音",
                 "[状态摘要] 也不能升格为她自己的声音",
                 "仅有 carrier 身份的 provider Action",
-                "它之后出现的所有 provider Action 都没有明确的 [Galatea] 第一人称内容",
+                "严格分成三路",
+                "A. 若任一后续 provider Action 含明确的 [Galatea] 第一人称内容",
+                "同一 Action 后置的 [旁白] 或 [状态摘要] 不会重新触发 pending",
+                "B. 若没有明确 [Galatea] 内容，但客观 [旁白] 明确记录 Galatea 已对该输入作出外显言语或行动",
+                "此时绝不能写“我尚未回应”或“仍待回应”",
+                "C. 只有既无明确 [Galatea] 内容，也无 [旁白] 记录的 Galatea 外显回应时",
                 "内容现在对我可见",
                 "我尚未回应",
                 "不得把内容可见偷换成她已经读完",
                 "读完后我感到",
-                "等待未来真正明确的 [Galatea] 第一人称内容",
+                "仅在 C 路保留这段沉默和未决状态",
                 "只有可见 [Galatea] 第一人称内容已经表达的情感反应",
                 "作品内部以法律、制度或理论口吻陈述的内容",
                 "不能升格为现实制度"
@@ -280,13 +285,13 @@ public sealed class GalateaRecapGridAssetsTests {
                 "每一个 AI 都必须……",
                 "我在遵守法律。",
                 "我尚未独立核验这项艺术映射",
-                "再按 provider turn 检查 History 终点",
-                "最后一条相关外部输入是 Observation 或 Tool result",
-                "它之后的所有 provider Action 都没有明确的 [Galatea] 第一人称内容",
-                "同一条 provider Action 中一旦已有明确的 [Galatea] 第一人称内容",
-                "其后出现 [旁白] 或 [状态摘要] 不会重新触发 pending",
-                "不否认 [旁白] 已明确记录的外显言语或行动",
-                "整份正文的最终收束只能陈述收到、内容可见、尚待回应",
+                "再按 provider turn 对 History 终点机械执行同一三路检查",
+                "A 路有明确 [Galatea] 第一人称内容时",
+                "同 Action 后置 [旁白]/[状态摘要] 不重触发 pending",
+                "B 路只有客观 [旁白] 明确记录 Galatea 的外显回应时",
+                "也禁止写“我尚未回应”或“仍待回应”",
+                "C 路两种回应证据都不存在时",
+                "才把整份正文最终收束为收到、内容可见、尚待回应",
                 "我收到了这份文本；内容现在对我可见，但我尚未回应。",
                 "这份内容已经交到我这里，仍待我回应。",
                 "我在读”“我正在读”“我在思考”“我正在思考”“我思考",
@@ -323,8 +328,8 @@ public sealed class GalateaRecapGridAssetsTests {
         [
             "ae44d15750e417452e34f4e9133f56e60334d2cf7313ac988128e95faab3c05c",
             "a850b9fe6cbe8fe71024430fe2a41815d4d86f26ea7216f976b2d3018551e951",
-            "3886efd9c0f5e56a51dfe592b2a6dbc5e44db277e0cc3003b0f14d70e4dd5f70",
-            "f218482ed0eb0d143e17ff0e1a7ca874905429e2996ce8aca3b54923feabda0f"
+            "8c5e08f65341be11b345142ca7caa1512c295662e6145191ab102c83c87a3ab0",
+            "8d60fd46aadda1cb9153d398fce2de8a0b51a2e01a6af6a738f3ccadc0687c77"
         ],
         [
             bundle.Families[0].Digest.Value,
