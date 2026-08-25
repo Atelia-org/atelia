@@ -160,12 +160,21 @@ public sealed class GalateaHostService : IAsyncDisposable {
             (Service: this, User: user)
         );
 
-        var session = await lazy.Value.ConfigureAwait(false);
-        DebugUtil.Info(
-            "Galatea.Session",
-            $"GetSessionAsync: user={userId}"
-        );
-        return session;
+        try {
+            var session = await lazy.Value.ConfigureAwait(false);
+            DebugUtil.Info(
+                "Galatea.Session",
+                $"GetSessionAsync: user={userId}"
+            );
+            return session;
+        }
+        catch {
+            _sessions.TryRemove(new KeyValuePair<
+                string,
+                Lazy<Task<UserSessionHost>>
+            >(userId, lazy));
+            throw;
+        }
     }
 
     private StableRecentTurnsProjection BuildRecentTurnsResponse(
@@ -991,38 +1000,64 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ct.ThrowIfCancellationRequested();
         var sessionDir = Path.GetFullPath(user.SessionDir);
-        if (!Directory.Exists(sessionDir)
+        bool directoryExists = Directory.Exists(sessionDir);
+        bool fileExists = File.Exists(sessionDir);
+        bool createIfMissing = !_maintenanceMode
+            && user.SessionProvisioning
+                == GalateaSessionProvisioning.CreateIfMissing;
+
+        SessionJournalEngine? engine = null;
+        if (!directoryExists && !fileExists && createIfMissing) {
+            CompletionConnectionConfig defaultConnection =
+                _connectionCatalog[_defaultConnectionId];
+            engine = SessionJournalEngine.Create(
+                sessionDir,
+                new SessionCreateOptions(
+                    defaultConnection.ModelId,
+                    user.SystemPrompt,
+                    defaultConnection.CompletionSurfaceId
+                )
+            );
+        }
+        else if (!directoryExists
             || !Directory.EnumerateFileSystemEntries(sessionDir).Any()) {
             throw new GalateaSessionUnavailableException(
                 "session-unprovisioned",
                 "Galatea requires a provisioned SessionJournal repository."
             );
         }
-        SessionJournalEngine engine;
+
         try {
-            engine = _maintenanceMode
+            engine ??= _maintenanceMode
                 ? SessionJournalEngine.OpenReadOnly(sessionDir)
                 : SessionJournalEngine.Open(sessionDir);
+            SessionExecutionBoundaryInspection boundary =
+                engine.InspectExecutionBoundary(ct);
+            DebugUtil.Info(
+                "Galatea.Session",
+                $"CreateSessionAsync: user={user.UserId}, sessionDir={sessionDir}, phase={boundary.Phase}, head={boundary.Head}"
+            );
+            RecentTurnsResponseDto recent = BuildRecentTurnsResponse(engine)
+                .Response;
+            return Task.FromResult(
+                new UserSessionHost(user, engine, recent)
+            );
         }
         catch (Exception exception) when (
             exception is DirectoryNotFoundException
                 or FileNotFoundException
         ) {
+            engine?.Dispose();
             throw new GalateaSessionUnavailableException(
                 "session-unprovisioned",
                 "Galatea SessionJournal repository is incomplete.",
                 exception
             );
         }
-        SessionExecutionBoundaryInspection boundary =
-            engine.InspectExecutionBoundary(ct);
-        DebugUtil.Info(
-            "Galatea.Session",
-            $"CreateSessionAsync: user={user.UserId}, sessionDir={sessionDir}, phase={boundary.Phase}, head={boundary.Head}"
-        );
-        RecentTurnsResponseDto recent = BuildRecentTurnsResponse(engine)
-            .Response;
-        return Task.FromResult(new UserSessionHost(user, engine, recent));
+        catch {
+            engine?.Dispose();
+            throw;
+        }
     }
 
     private static void ValidateRecoveryConnection(

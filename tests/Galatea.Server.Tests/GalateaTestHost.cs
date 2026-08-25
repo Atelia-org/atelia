@@ -116,6 +116,78 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
     }
 
     /// <summary>
+    /// Creates an isolated Galatea configuration whose session path does not
+    /// exist. The configured provisioning policy decides what the host does
+    /// when that user's session is first requested.
+    /// </summary>
+    public static GalateaTestHost CreateMissingSession(
+        ICompletionClientFactory completionClientFactory,
+        IGalateaUserMessageNormalizer normalizer,
+        GalateaSessionProvisioning sessionProvisioning =
+            GalateaSessionProvisioning.CreateIfMissing,
+        IReadOnlyList<CompletionConnectionConfig>? connections = null,
+        string defaultConnectionId = "test",
+        string systemPrompt = "test system prompt",
+        bool maintenanceMode = false,
+        bool deleteFilesOnDispose = true
+    ) {
+        ArgumentNullException.ThrowIfNull(completionClientFactory);
+        ArgumentNullException.ThrowIfNull(normalizer);
+        ArgumentException.ThrowIfNullOrWhiteSpace(defaultConnectionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(systemPrompt);
+
+        string tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-galatea-missing-session-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        string configDirectory = Path.Combine(
+            tempRoot,
+            ".atelia",
+            "galatea"
+        );
+        Directory.CreateDirectory(configDirectory);
+        string sessionDirectory = Path.Combine(tempRoot, "session");
+        IReadOnlyList<CompletionConnectionConfig> configuredConnections =
+            connections ?? [
+                new CompletionConnectionConfig(
+                    "test",
+                    "openai-chat",
+                    "model-a",
+                    "openai-chat/strict",
+                    "http://localhost:8000/",
+                    ApiKey: "test-key"
+                )
+            ];
+
+        try {
+            string configPath = WriteConfiguration(
+                configDirectory,
+                Path.GetFullPath(sessionDirectory),
+                configuredConnections,
+                defaultConnectionId,
+                systemPrompt,
+                callLogDirectory: null,
+                maintenanceMode,
+                agentControlProfile: null,
+                sessionProvisioning
+            );
+            return new GalateaTestHost(
+                tempRoot,
+                sessionDirectory,
+                configPath,
+                completionClientFactory,
+                normalizer,
+                deleteFilesOnDispose
+            );
+        }
+        catch {
+            Directory.Delete(tempRoot, recursive: true);
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Creates only an isolated Galatea configuration root and points it at an
     /// already provisioned SessionJournal repository. The repository is never
     /// created, initialized, or owned by this host and therefore is never
@@ -130,7 +202,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string systemPrompt = "test system prompt",
         string? callLogDirectory = null,
         bool maintenanceMode = false,
-        RecapGridAgentControlProfile? agentControlProfile = null
+        RecapGridAgentControlProfile? agentControlProfile = null,
+        GalateaSessionProvisioning sessionProvisioning =
+            GalateaSessionProvisioning.ExistingOnly
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionDirectory);
         ArgumentNullException.ThrowIfNull(connections);
@@ -164,7 +238,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 systemPrompt,
                 callLogDirectory,
                 maintenanceMode,
-                agentControlProfile
+                agentControlProfile,
+                sessionProvisioning
             );
             return new GalateaTestHost(
                 configurationRoot,
@@ -216,7 +291,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string systemPrompt,
         string? callLogDirectory,
         bool maintenanceMode,
-        RecapGridAgentControlProfile? agentControlProfile
+        RecapGridAgentControlProfile? agentControlProfile,
+        GalateaSessionProvisioning sessionProvisioning =
+            GalateaSessionProvisioning.ExistingOnly
     ) {
         string agentControlProfileFile = "recap-grid-profile.json";
         RecapGridAgentControlProfile profile = agentControlProfile
@@ -235,7 +312,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     TestUserId,
                     TestPassword,
                     absoluteSessionDirectory,
-                    GalateaSessionProvisioning.ExistingOnly,
+                    sessionProvisioning,
                     SystemPrompt: systemPrompt
                 )
             ],
