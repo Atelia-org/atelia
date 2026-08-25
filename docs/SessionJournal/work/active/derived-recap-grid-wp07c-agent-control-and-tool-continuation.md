@@ -23,7 +23,7 @@
   `ControlHeadRef`，并分别报告`HeadAdvancedSinceApply`与`InstanceReplaced`。same operation+same command只返回
   `Replayed`且零写/零generation；same operation+different command返回`Conflict`。receipt lookup在writer lock内先于
   stale-head判断，最多16,384条；V1明确`UnsupportedSchema`，不静默迁移。
-- Agent-facing唯一tool为`recap_grid.control`。payload只允许`action`与该action所需的
+- Agent-facing唯一tool为`recap_grid_control`。payload只允许`action`与该action所需的
   `canonicalValueBase64`、`builtInAssetId`或`recipeDigest`；不接受Control/Timeline authority。mutation所需whole heads
   由owner-bound Control/Timeline handle在operation开始时捕获，Control内部生成command digest。
 - registration bundle与promotion分别是单次Control transaction。promotion对current Timeline head pure-read执行
@@ -83,7 +83,7 @@ WP-07B与WP-07C都GO后才可开始。
 - `SessionJournal.RecapGrid.Control` 已升级strict schema V2，并加入bounded terminal operation receipts、registration/promotion
   whole-state bundle、same-operation replay/conflict、restore union与reinitialize receipt preservation。receipt只提供at-least-once
   tool重入下的durable settlement/idempotency authority，**不把SessionJournal恢复宣称为exactly-once**。
-- 新增provider-neutral `SessionJournal.RecapGrid.AgentControl`：唯一strict `recap_grid.control` tool、owner-bound lazy dependencies、
+- 新增provider-neutral `SessionJournal.RecapGrid.AgentControl`：唯一exact-schema `recap_grid_control` tool、owner-bound lazy dependencies、
   immutable profile registry、code-owned built-in assets与同一asset resolver驱动的显式operator provision入口。tool parser显式
   `MaxDepth=8`；normal CLI/Galatea Host不auto-create Timeline/Control/Store。
 - `Completion.Tools`显式透传unsettled/fatal execution；neutral lifecycle加入
@@ -94,7 +94,7 @@ WP-07B与WP-07C都GO后才可开始。
   `ToolResultObserved` boundary，再做bounded Online catch-up；只有Ready后才bind current completion并Resume。Started Refuse仍在最外层。
 - dense fixture以真实`ToolSession`登记Family、`CulpritHypothesis`/`XSuspicion` definitions、full base与overlay recipe作为明确
   precondition；WP-06 Runtime实际补齐missing candidate。随后main scripted provider在真实CLI
-  `run-online-turn` Host内发出`recap_grid.control` promotion ToolCall；同一Hostpure-read取得exact proof并提交
+  `run-online-turn` Host内发出`recap_grid_control` promotion ToolCall；同一Hostpure-read取得exact proof并提交
   receipt，recap provider call数不增加。对应ToolResult保留在raw tail，紧随其后的completion可见active candidate contribution；
   旧v8 sentinel保持逐字节inert。Galatea仍覆盖相同frozen recovery与authority-equivalence边界，不冒充第二条promotion fixture。
 - 最终串行证据：Control 45/45、AgentControl 20/20、AgentControl external public surface 1/1、Completion 482/482、

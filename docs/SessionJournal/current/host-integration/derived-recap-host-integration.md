@@ -62,7 +62,7 @@ enumerator/lease，不销毁共享snapshot。任何raw head变化均返回typed 
 
 - built-in assets、Store、recipe与activation必须由operator显式provision/register/compose/activate；Galatea的missing-session
   bootstrap只auto-create首轮structural三域，不是full Grid provisioning，也不读取route或dispatch provider。
-- `recap_grid.control`的receipt支持幂等replay与indeterminate settlement，但不把uncertain external effects
+- `recap_grid_control`的receipt支持幂等replay与indeterminate settlement，但不把uncertain external effects
   描述成exactly-once。
 - old v4-v8/rebuild legacy roots inert；只有formal legacy-root operator可以archive/delete。
 - real-provider HTTP/caching/economic canary已在C2D独立人工环境完成；deterministic tests仍不能替代下一次provider/config revision的

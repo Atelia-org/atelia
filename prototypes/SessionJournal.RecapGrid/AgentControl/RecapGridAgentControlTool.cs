@@ -13,7 +13,7 @@ using Atelia.SessionJournal.RecapGrid.Manager;
 namespace Atelia.SessionJournal.RecapGrid.AgentControl;
 
 internal sealed class RecapGridAgentControlTool {
-    internal const string ToolName = "recap_grid.control";
+    internal const string ToolName = "recap_grid_control";
     internal const string ToolDescription =
         "Inspect or mutate the admitted RecapGrid Control state. No authority tokens are accepted from the model.";
     private const int MaximumArgumentsUtf8Bytes = 2 * 1024 * 1024;

@@ -1168,7 +1168,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(new CompletionResult(
                 new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(
-                    "recap_grid.control",
+                    "recap_grid_control",
                     "inspect-active-recipe",
                     "{\"action\":\"inspect\"}"
                 ))]),

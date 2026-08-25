@@ -173,7 +173,7 @@ damaged anchor、budget/cancel/elapsed与zero-write paths。
 实现证据：Online production把`MaximumRecipeRowSteps`固定为1、new-call上限固定为单recipe列上限128，elapsed是safe Manager
 boundary上的soft budget；Host catch-up上限为256 pass。SessionJournal新增exact-head-bound tool-boundary primitive：frozen tool先只执行并
 提交一个durable operation，停在`ToolResultObserved`，Host完成Grid catch-up后才绑定current completion并Resume。CLI真实Host
-`recap_grid.control` promotion覆盖ToolCall -> durable ToolResult -> next completion，promotion期间recap provider call不增；Prepared/Started、
+`recap_grid_control` promotion覆盖ToolCall -> durable ToolResult -> next completion，promotion期间recap provider call不增；Prepared/Started、
 stale head、Started crash recovery与maintenance failure client-zero均有focused tests。
 本轮affected serial evidence为Manager 74/74、Online 31/31、AgentControl 20/20、CLI 97/97、Galatea 87/87、
 SessionJournal 442/442、Online external public surface 1/1与Walking 27/27；CLI和AgentControl产品build均为

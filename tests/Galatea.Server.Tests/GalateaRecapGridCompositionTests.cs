@@ -451,7 +451,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             )
         );
         Assert.Equal(
-            "recap_grid.control",
+            "recap_grid_control",
             Assert.Single(cliRequest.PromptPrefix.OutputContract.Tools).Name
         );
         Assert.Empty(cliRequest.TailMessages);
@@ -1797,7 +1797,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             CancellationToken cancellationToken = default
         ) => Task.FromResult(new CompletionResult(
             new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(
-                "recap_grid.control",
+                "recap_grid_control",
                 "control-call",
                 "{\"action\":\"provision-built-in\","
                 + "\"builtInAssetId\":\"mystery-investigation-v4\"}"

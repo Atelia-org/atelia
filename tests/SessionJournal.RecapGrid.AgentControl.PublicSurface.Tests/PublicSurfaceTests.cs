@@ -68,7 +68,7 @@ public sealed class PublicSurfaceTests {
             ToolCallExecutionResult result = await handle.ToolSession
                 .ExecuteReservedAsync(
                     new Atelia.Completion.Abstractions.RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "call-1",
                         "{\"action\":\"inspect\"}"
                     ),

@@ -23,7 +23,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
         using (fixture.Journal)
         using (RecapGridAgentControlHandle handle = Open(fixture)) {
             Assert.Equal(
-                "recap_grid.control",
+                "recap_grid_control",
                 Assert.Single(handle.ToolSession.VisibleDefinitions).Name
             );
             Assert.StartsWith(
@@ -38,7 +38,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             ToolCallExecutionResult applied = await handle.ToolSession
                 .ExecuteReservedAsync(
                     new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "call-1",
                         command
                     ),
@@ -54,7 +54,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             ToolCallExecutionResult replay = await handle.ToolSession
                 .ExecuteReservedAsync(
                     new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "call-1",
                         command
                     ),
@@ -79,7 +79,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             ToolCallExecutionResult conflict = await handle.ToolSession
                 .ExecuteReservedAsync(
                     new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "call-1",
                         conflictingCommand
                     ),
@@ -136,7 +136,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             ToolCallExecutionResult result = await handle.ToolSession
                 .ExecuteReservedAsync(
                     new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "unauthorized-definition-call",
                         JsonSerializer.Serialize(new {
                             action = "register-definition",
@@ -184,7 +184,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
                 ToolExecutionCancelledBeforeMutationException>(async () =>
                     await handle.ToolSession.ExecuteReservedAsync(
                         new RawToolCall(
-                            "recap_grid.control",
+                            "recap_grid_control",
                             "cancelled-promotion-call",
                             JsonSerializer.Serialize(new {
                                 action = "promote",
@@ -232,7 +232,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
                 ToolCallExecutionResult result = await handle.ToolSession
                     .ExecuteReservedAsync(
                         new RawToolCall(
-                            "recap_grid.control",
+                            "recap_grid_control",
                             $"promotion-{sequence}",
                             JsonSerializer.Serialize(new {
                                 action = "promote",
@@ -265,7 +265,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             ToolCallExecutionResult result = await handle.ToolSession
                 .ExecuteReservedAsync(
                     new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "call",
                         rawArguments
                     ),
@@ -316,7 +316,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             ToolCallExecutionResult result = await handle.ToolSession
                 .ExecuteReservedAsync(
                     new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "large-invalid-call",
                         rawArguments
                     ),
@@ -347,7 +347,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             ToolCallExecutionResult missing = await handle.ToolSession
                 .ExecuteAsync(
                     new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "call",
                         "{\"action\":\"inspect\"}"
                     ),
@@ -361,7 +361,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             ToolCallExecutionResult disposed = await handle.ToolSession
                 .ExecuteReservedAsync(
                     new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "call",
                         "{\"action\":\"inspect\"}"
                     ),
@@ -384,7 +384,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
         using (RecapGridAgentControlHandle second = Open(fixture)) {
             Assert.Equal(first.RuntimeIdentity, second.RuntimeIdentity);
             Assert.Equal(
-                "97543bcb9386b4315dc78be6013ebd62219a97db78c4b8c2ace510115e56efe5",
+                "206c09481894b95c86fa15f531254f5ef48a52a74d214f32b5f06ea97d837ce3",
                 first.RuntimeIdentity.ImplementationSetFingerprint
             );
             Assert.Equal(
@@ -761,7 +761,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
         ToolCallExecutionResult first = await handle.ToolSession
             .ExecuteReservedAsync(
                 new RawToolCall(
-                    "recap_grid.control",
+                    "recap_grid_control",
                     "call",
                     "{\"action\":\"inspect\"}"
                 ),
@@ -777,7 +777,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
 
         _ = await handle.ToolSession.ExecuteReservedAsync(
             new RawToolCall(
-                "recap_grid.control",
+                "recap_grid_control",
                 "call",
                 "{\"action\":\"inspect\"}"
             ),
@@ -817,7 +817,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             Task<ToolCallExecutionResult> execution = Task.Run(async () =>
                 await handle.ToolSession.ExecuteReservedAsync(
                     new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "call",
                         "{\"action\":\"inspect\"}"
                     ),
@@ -853,7 +853,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             ToolCallExecutionResult disposed = await handle.ToolSession
                 .ExecuteReservedAsync(
                     new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "call",
                         "{\"action\":\"inspect\"}"
                     ),
@@ -898,7 +898,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             Task<ToolCallExecutionResult> executing = Task.Run(async () =>
                 await handle.ToolSession.ExecuteReservedAsync(
                     new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "cancel-call",
                         "{\"action\":\"provision-built-in\",\"builtInAssetId\":\"mystery-investigation-v4\"}"
                     ),
@@ -953,7 +953,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
                 await Assert.ThrowsAsync<ToolExecutionUnsettledException>(
                     async () => await handle.ToolSession.ExecuteReservedAsync(
                         new RawToolCall(
-                            "recap_grid.control",
+                            "recap_grid_control",
                             "indeterminate-call",
                             "{\"action\":\"provision-built-in\",\"builtInAssetId\":\"mystery-investigation-v4\"}"
                         ),
@@ -992,7 +992,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
             )).Handle;
             Task Invoke() => handle.ToolSession.ExecuteReservedAsync(
                 new RawToolCall(
-                    "recap_grid.control",
+                    "recap_grid_control",
                     "fatal-call",
                     "{\"action\":\"inspect\"}"
                 ),

@@ -1821,7 +1821,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             ToolCallExecutionResult result = await agent.ToolSession
                 .ExecuteReservedAsync(
                     new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         $"control-{suffix}",
                         JsonSerializer.Serialize(new {
                             action,
@@ -3263,13 +3263,13 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                 && request.PromptPrefix.OutputContract.Tools.Any(
                     static tool => string.Equals(
                         tool.Name,
-                        "recap_grid.control",
+                        "recap_grid_control",
                         StringComparison.Ordinal))) {
                 EmitAgentControlPromoteRecipeOnce = null;
                 PromoteToolCallCount++;
                 return new ActionMessage([
                     new ActionBlock.ToolCall(new RawToolCall(
-                        "recap_grid.control",
+                        "recap_grid_control",
                         "promote-candidate-call",
                         JsonSerializer.Serialize(new {
                             action = "promote",
@@ -3337,7 +3337,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             CancellationToken cancellationToken = default
         ) => Task.FromResult(new CompletionResult(
             new ActionMessage([new ActionBlock.ToolCall(new RawToolCall(
-                "recap_grid.control",
+                "recap_grid_control",
                 "control-call",
                 "{\"action\":\"provision-built-in\","
                 + "\"builtInAssetId\":\"mystery-investigation-v4\"}"
