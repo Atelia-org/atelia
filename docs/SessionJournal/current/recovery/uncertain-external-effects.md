@@ -2,7 +2,7 @@
 
 状态：Current safety contract
 
-实现起点：`0afe6ebe`；本文新增语义由同一变更中的 owning code/tests 锁定。
+实现起点：`9860bc33`；append-failure reopen-required语义由本文列出的owning code/tests锁定。
 
 基线只证明下列 current code/tests 在该 checkout 上的行为；后续 HEAD 不自动继承本文判断。
 本文拥有 provider/tool external-effect recovery 的当前安全边界，不取代 raw wire、Prepared manifest、
@@ -31,9 +31,12 @@ Action，可以抛出窄义 `CompletionRequestRejectedException`。Core 只 catc
 
 这条翻译不适用于普通 exception、caller cancellation、transport failure、redirect、5xx、未验证的 4xx、2xx non-SSE、
 SSE malformed/EOF/protocol failure，或已经产生任意 observer delta 的调用；它们继续停在 Started uncertain。若
-`CompletionAttemptFailed` 的 append 本身失败，Core 传播该 append failure，不能声称 known outcome 已持久化，durable head
-仍保持 Started uncertain。adapter 也不得把 raw response body/message、token、account、prompt、generated output 或
-`InnerException` 放入该 typed rejection。
+`CompletionAttemptFailed` 的 append 本身抛错，Core传播原始append failure，不能声称known outcome已持久化，并立即把当前
+`SessionJournalEngine` 标记为reopen-required：同一实例不再允许读取、恢复或写入，只允许dispose。因为EventJournal的Ref move
+是append后再`DurableFlush`，异常后的物理head可能仍是Started，也可能已是exact `CompletionAttemptFailed`；当前实例的内存Ref
+cache不能裁决该结果。Host必须dispose/reopen，让repository recovery读取物理Ref，然后按reopen后观察到的`AwaitingCompletion`
+或`TurnFailed`处理。adapter也不得把raw response body/message、token、account、prompt、generated output或`InnerException`
+放入该typed rejection。
 
 ## ToolExecutionStarted：durable continuation，不等于 provider policy
 

@@ -1594,7 +1594,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_TypedRejectionFailureAppendError_RemainsUncertain() {
+    public async Task SendAsync_TypedRejectionFailureBeforeAppend_FaultsEngineUntilReopen() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
         client.Enqueue(_ => throw new CompletionRequestRejectedException(
@@ -1625,15 +1625,81 @@ public sealed class SessionJournalEngineTests : IDisposable {
             );
 
             Assert.Equal("simulated failure append error", error.Message);
-            Assert.Equal(
-                SessionExecutionPhase.AwaitingCompletion,
-                engine.ResolveExecutionTail().State.Phase
+            Assert.Throws<SessionJournalReopenRequiredException>(
+                () => engine.ResolveExecutionTail()
+            );
+            await Assert.ThrowsAsync<SessionJournalReopenRequiredException>(
+                () => engine.ResumeAsync(CancellationToken.None)
+            );
+            await Assert.ThrowsAsync<SessionJournalReopenRequiredException>(
+                () => engine.SendAsync("must not continue", CancellationToken.None)
             );
         }
         Assert.Empty(ReadJournalAddressesByKind(
             path,
             SessionEventKind.CompletionAttemptFailed
         ));
+        using var reopened = SessionJournalEngine.Open(path);
+        Assert.Equal(
+            SessionExecutionPhase.AwaitingCompletion,
+            reopened.ResolveExecutionTail().State.Phase
+        );
+    }
+
+    [Fact]
+    public async Task SendAsync_TypedRejectionFailureAfterPublishedAppend_FaultsEngineUntilReopen() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        client.Enqueue(_ => throw new CompletionRequestRejectedException(
+            CompletionTermination.Failed("provider.access-denied")
+        ));
+        var candidateSource = new TestContextCandidateSource();
+        var hooks = new SessionJournalTestHooks(
+            AfterCommitBeforeReturn: (kind, _) => {
+                if (kind == SessionEventKind.CompletionAttemptFailed) {
+                    throw new IOException(
+                        "simulated failure after published failure append"
+                    );
+                }
+            }
+        );
+        using (var engine = SessionJournalEngine.CreateForTest(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(client, candidateSource: candidateSource),
+            hooks
+        )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine,
+                candidateSource
+            );
+
+            IOException error = await Assert.ThrowsAsync<IOException>(
+                () => engine.SendAsync("hello", CancellationToken.None)
+            );
+
+            Assert.Equal(
+                "simulated failure after published failure append",
+                error.Message
+            );
+            Assert.Throws<SessionJournalReopenRequiredException>(
+                () => engine.ResolveExecutionTail()
+            );
+            await Assert.ThrowsAsync<SessionJournalReopenRequiredException>(
+                () => engine.ResumeAsync(CancellationToken.None)
+            );
+        }
+
+        Assert.Single(ReadJournalAddressesByKind(
+            path,
+            SessionEventKind.CompletionAttemptFailed
+        ));
+        using var reopened = SessionJournalEngine.Open(path);
+        Assert.Equal(
+            SessionExecutionPhase.TurnFailed,
+            reopened.ResolveExecutionTail().State.Phase
+        );
     }
 
     [Fact]

@@ -29,6 +29,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
     private GoverningSetupResolutionDiagnostics _lastGoverningSetupResolutionDiagnostics;
     private SessionTailProjectionDiagnostics _lastTailProjectionDiagnostics;
     private bool _disposed;
+    private int _reopenRequired;
 
     private SessionJournalEngine(
         EventJournal.EventJournal journal,
@@ -3259,17 +3260,29 @@ public sealed partial class SessionJournalEngine : IDisposable {
         ) {
         IReadOnlyList<string> frozenErrors = FreezeErrors(errors)
             ?? Array.AsReadOnly(Array.Empty<string>());
-        AppendExpected(
-            SessionEventKind.CompletionAttemptFailed,
-            new CompletionAttemptFailedBody(
-                failure.Kind,
-                failure.ProviderReason,
-                failure.Detail,
-                frozenErrors
-            ),
-            activeAttemptAddress,
-            requireBoundSetupCursor: false
-        );
+        try {
+            AppendExpected(
+                SessionEventKind.CompletionAttemptFailed,
+                new CompletionAttemptFailedBody(
+                    failure.Kind,
+                    failure.ProviderReason,
+                    failure.Detail,
+                    frozenErrors
+                ),
+                activeAttemptAddress,
+                requireBoundSetupCursor: false
+            );
+        }
+        catch {
+            // CommitToRef appends a Ref move before DurableFlush. If that
+            // flush (or a later return path) throws, this EventJournal
+            // instance can still report Started while reopening may recover
+            // either Started or the exact Failed move. Never continue from
+            // the stale in-memory Ref cache; repository reopen is the only
+            // authority that may classify the physical head.
+            Interlocked.Exchange(ref _reopenRequired, 1);
+            throw;
+        }
         return new SessionJournalTurnAbortedException(
             BuildTurnAbortMessage(failure),
             failure,
@@ -4737,6 +4750,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 opaqueEventKind: (uint)kind,
                 hint: default
             ).Unwrap().EventAddress;
+            _testHooks.AfterCommitBeforeReturn?.Invoke(kind, _journal);
             AdvanceGoverningSetupCursor(kind, body, expectedHead, committed);
             return committed;
         }
@@ -5121,6 +5135,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
 
     private void ThrowIfDisposed() {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (Volatile.Read(ref _reopenRequired) != 0) {
+            throw new SessionJournalReopenRequiredException();
+        }
     }
 
     internal void EnsureNotDisposedForReadView()

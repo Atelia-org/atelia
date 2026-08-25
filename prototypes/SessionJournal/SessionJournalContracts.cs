@@ -203,6 +203,8 @@ internal sealed record SessionJournalTestHooks(
     SessionJournalFailpoint Failpoint = SessionJournalFailpoint.None,
     Action<SessionEventKind, EventJournal.EventJournal>?
         BeforeCommit = null,
+    Action<SessionEventKind, EventJournal.EventJournal>?
+        AfterCommitBeforeReturn = null,
     Action<EventJournal.EventJournal>?
         AfterAuditSnapshotValidated = null,
     Action<EventJournal.EventJournal>? BeforeTurnRefMove = null,

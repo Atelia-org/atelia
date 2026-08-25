@@ -24,6 +24,21 @@ public sealed class SessionJournalConcurrentMutationException
     public string ActiveOperation { get; }
 }
 
+/// <summary>
+/// Indicates that this engine instance was retired after a repository
+/// mutation failure. Dispose and reopen the engine so repository recovery can
+/// classify the physical Ref head before any further repository-bound read,
+/// recovery, or mutation.
+/// </summary>
+public sealed class SessionJournalReopenRequiredException
+    : InvalidOperationException {
+    public SessionJournalReopenRequiredException()
+        : base(
+            "SessionJournalEngine requires dispose and reopen after an "
+            + "indeterminate repository mutation outcome."
+        ) { }
+}
+
 public sealed partial class SessionJournalEngine {
     private MutationOwnerToken? _activeMutationOwner;
     private readonly object _derivedSidecarGate = new();
