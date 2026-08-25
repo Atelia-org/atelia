@@ -28,6 +28,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly bool _maintenanceMode;
     private readonly GalateaRecapGridComposition _recapGrid;
     internal GalateaDisposeTestHooks? DisposeHooksForTest { get; set; }
+    internal GalateaSessionProvisioningTestHooks?
+        SessionProvisioningHooksForTest { get; set; }
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
     private readonly IReadOnlyDictionary<string, CompletionConnectionConfig>
@@ -1007,27 +1009,29 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 == GalateaSessionProvisioning.CreateIfMissing;
 
         SessionJournalEngine? engine = null;
-        if (!directoryExists && !fileExists && createIfMissing) {
-            CompletionConnectionConfig defaultConnection =
-                _connectionCatalog[_defaultConnectionId];
-            engine = SessionJournalEngine.Create(
-                sessionDir,
-                new SessionCreateOptions(
-                    defaultConnection.ModelId,
-                    user.SystemPrompt,
-                    defaultConnection.CompletionSurfaceId
-                )
-            );
-        }
-        else if (!directoryExists
-            || !Directory.EnumerateFileSystemEntries(sessionDir).Any()) {
-            throw new GalateaSessionUnavailableException(
-                "session-unprovisioned",
-                "Galatea requires a provisioned SessionJournal repository."
-            );
-        }
-
         try {
+            if (!directoryExists && !fileExists && createIfMissing) {
+                CompletionConnectionConfig defaultConnection =
+                    _connectionCatalog[_defaultConnectionId];
+                engine = GalateaSessionRepositoryProvisioner
+                    .CreateAndPublish(
+                        sessionDir,
+                        new SessionCreateOptions(
+                            defaultConnection.ModelId,
+                            user.SystemPrompt,
+                            defaultConnection.CompletionSurfaceId
+                        ),
+                        SessionProvisioningHooksForTest
+                    );
+            }
+            else if (!directoryExists
+                || !Directory.EnumerateFileSystemEntries(sessionDir).Any()) {
+                throw new GalateaSessionUnavailableException(
+                    "session-unprovisioned",
+                    "Galatea requires a provisioned SessionJournal repository."
+                );
+            }
+
             engine ??= _maintenanceMode
                 ? SessionJournalEngine.OpenReadOnly(sessionDir)
                 : SessionJournalEngine.Open(sessionDir);

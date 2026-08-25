@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Net;
 using System.Net.Http.Json;
 using Atelia.Completion;
@@ -32,10 +33,21 @@ public sealed class GalateaSessionProvisioningTests {
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
 
+        using var ready = new CountdownEvent(16);
+        using var start = new ManualResetEventSlim(false);
         Task<UserSessionHost>[] requests = [
-            .. Enumerable.Range(0, 16).Select(_ =>
-                service.GetSessionAsync("alice", CancellationToken.None))
+            .. Enumerable.Range(0, 16).Select(_ => Task.Run(async () => {
+                ready.Signal();
+                start.Wait();
+                return await service.GetSessionAsync(
+                    "alice",
+                    CancellationToken.None
+                );
+            }))
         ];
+        bool allReady = ready.Wait(TimeSpan.FromSeconds(15));
+        start.Set();
+        Assert.True(allReady);
         UserSessionHost[] sessions = await Task.WhenAll(requests);
 
         UserSessionHost session = sessions[0];
@@ -279,6 +291,206 @@ public sealed class GalateaSessionProvisioningTests {
     }
 
     [Fact]
+    public async Task CompetingServices_AtomicallyPublishExactlyOneCompleteRepository() {
+        var factoryA = new CountingCompletionClientFactory();
+        var factoryB = new CountingCompletionClientFactory();
+        CompletionConnectionConfig connectionA = Connection(
+            "test",
+            "model-a",
+            "surface-a"
+        );
+        CompletionConnectionConfig connectionB = Connection(
+            "test",
+            "model-b",
+            "surface-b"
+        );
+        await using var hostA = GalateaTestHost.CreateMissingSession(
+            factoryA,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [connectionA],
+            systemPrompt: "prompt-a"
+        );
+        await using var hostB = GalateaTestHost.PointAtSession(
+            hostA.SessionDirectory,
+            [connectionB],
+            connectionB.Id,
+            factoryB,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            "prompt-b",
+            GalateaSessionProvisioning.CreateIfMissing
+        );
+        GalateaHostService serviceA = hostA.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        GalateaHostService serviceB = hostB.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        using var beforePublish = new Barrier(2);
+        string? stagingA = null;
+        string? stagingB = null;
+        serviceA.SessionProvisioningHooksForTest = new(
+            BeforeSessionRepositoryPublish: (staging, final) => {
+                stagingA = staging;
+                Assert.Equal(hostA.SessionDirectory, final);
+                AssertCompleteStagingCandidate(staging);
+                Assert.True(beforePublish.SignalAndWait(
+                    TimeSpan.FromSeconds(15)
+                ));
+            }
+        );
+        serviceB.SessionProvisioningHooksForTest = new(
+            BeforeSessionRepositoryPublish: (staging, final) => {
+                stagingB = staging;
+                Assert.Equal(hostA.SessionDirectory, final);
+                AssertCompleteStagingCandidate(staging);
+                Assert.True(beforePublish.SignalAndWait(
+                    TimeSpan.FromSeconds(15)
+                ));
+            }
+        );
+
+        Task<SessionAttempt> attemptTaskA = Task.Run(() => ObserveAsync(
+            () => serviceA.GetSessionAsync(
+                "alice",
+                CancellationToken.None
+            )
+        ));
+        Task<SessionAttempt> attemptTaskB = Task.Run(() => ObserveAsync(
+            () => serviceB.GetSessionAsync(
+                "alice",
+                CancellationToken.None
+            )
+        ));
+        SessionAttempt[] attempts = await Task.WhenAll(
+            attemptTaskA,
+            attemptTaskB
+        );
+
+        SessionAttempt winner = Assert.Single(attempts,
+            static value => value.Session is not null
+        );
+        SessionAttempt loser = Assert.Single(attempts,
+            static value => value.Error is not null
+        );
+        IOException publicationConflict = Assert.IsType<IOException>(
+            loser.Error
+        );
+        Assert.Equal(
+            17,
+            Assert.IsType<Win32Exception>(
+                publicationConflict.InnerException
+            ).NativeErrorCode
+        );
+        Assert.NotEqual(stagingA, stagingB);
+        Assert.NotNull(stagingA);
+        Assert.NotNull(stagingB);
+        Assert.False(Directory.Exists(stagingA));
+        Assert.False(Directory.Exists(stagingB));
+        Assert.True(Directory.Exists(hostA.SessionDirectory));
+        Assert.False(Directory.Exists(Path.Combine(
+            hostA.SessionDirectory,
+            "derived"
+        )));
+
+        UserSessionHost winningSession = winner.Session!;
+        SessionExecutionBoundaryInspection boundary =
+            winningSession.Engine.InspectExecutionBoundary();
+        Assert.Equal(SessionExecutionPhase.Idle, boundary.Phase);
+        var winnerHead = Assert.IsType<
+            Atelia.EventJournal.EventAddress
+        >(boundary.Head);
+        Assert.Equal(
+            [
+                SessionEventKind.SessionCreated,
+                SessionEventKind.SystemPromptSetup,
+                SessionEventKind.RuntimeConfigSetup
+            ],
+            winningSession.Engine.ReadCurrentLineageHeaders()
+                .HeadToRoot.Select(static value => value.Kind)
+        );
+        SessionGoverningSetup winnerSetup =
+            winningSession.Engine.ResolveGoverningSetup(winnerHead);
+        Assert.Contains(
+            (
+                winnerSetup.RuntimeConfig.ModelId,
+                winnerSetup.RuntimeConfig.CompletionSurfaceId,
+                winnerSetup.SystemPrompt
+            ),
+            new (string, string, string)[] {
+                ("model-a", "surface-a", "prompt-a"),
+                ("model-b", "surface-b", "prompt-b")
+            }
+        );
+        GalateaHostService winnerService = ReferenceEquals(
+            winner,
+            attempts[0]
+        ) ? serviceA : serviceB;
+        RecentTurnsResponseDto recent =
+            await winnerService.GetRecentTurnsAsync(
+                winningSession,
+                CancellationToken.None
+            );
+        Assert.Empty(recent.Turns);
+        Assert.Equal(
+            "unprovisioned",
+            Assert.IsType<RecapGridReadinessSnapshotDto>(
+                recent.RecapGridReadiness
+            ).State
+        );
+        Assert.Equal(0, factoryA.CreateCallCount);
+        Assert.Equal(0, factoryB.CreateCallCount);
+
+        GalateaHostService loserService = ReferenceEquals(
+            loser,
+            attempts[0]
+        ) ? serviceA : serviceB;
+        await winningSession.DisposeAsync();
+        UserSessionHost reopened = await loserService.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        Assert.Equal(winnerHead, reopened.Engine.ReadCurrentHead());
+        SessionGoverningSetup reopenedSetup =
+            reopened.Engine.ResolveGoverningSetup(winnerHead);
+        Assert.Equal(winnerSetup, reopenedSetup);
+        Assert.Equal(0, factoryA.CreateCallCount);
+        Assert.Equal(0, factoryB.CreateCallCount);
+    }
+
+    [Fact]
+    public async Task BeforePublishHookFailure_CleansCandidateAndLeavesFinalAbsent() {
+        await using var host = GalateaTestHost.CreateMissingSession(
+            new CountingCompletionClientFactory(),
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        string? stagingPath = null;
+        service.SessionProvisioningHooksForTest = new(
+            BeforeSessionRepositoryPublish: (staging, _) => {
+                stagingPath = staging;
+                throw new TestPublishException();
+            }
+        );
+
+        _ = await Assert.ThrowsAsync<TestPublishException>(() =>
+            service.GetSessionAsync("alice", CancellationToken.None));
+
+        Assert.NotNull(stagingPath);
+        Assert.False(Directory.Exists(stagingPath));
+        Assert.False(Directory.Exists(host.SessionDirectory));
+        Assert.False(File.Exists(host.SessionDirectory));
+
+        service.SessionProvisioningHooksForTest = null;
+        UserSessionHost retry = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        Assert.Equal(
+            SessionExecutionPhase.Idle,
+            retry.Engine.InspectExecutionBoundary().Phase
+        );
+    }
+
+    [Fact]
     public async Task HttpRecentTurns_FirstAuthenticatedSessionUseCreatesRawRepository() {
         var factory = new CountingCompletionClientFactory();
         await using var host = GalateaTestHost.CreateMissingSession(
@@ -321,6 +533,24 @@ public sealed class GalateaSessionProvisioningTests {
         ApiKey: "test-key"
     );
 
+    private static void AssertCompleteStagingCandidate(string stagingPath) {
+        using SessionJournalEngine candidate =
+            SessionJournalEngine.OpenReadOnly(stagingPath);
+        Assert.Equal(
+            SessionExecutionPhase.Idle,
+            candidate.InspectExecutionBoundary().Phase
+        );
+        Assert.Equal(
+            [
+                SessionEventKind.SessionCreated,
+                SessionEventKind.SystemPromptSetup,
+                SessionEventKind.RuntimeConfigSetup
+            ],
+            candidate.ReadCurrentLineageHeaders()
+                .HeadToRoot.Select(static value => value.Kind)
+        );
+    }
+
     private sealed class CountingCompletionClientFactory
         : ICompletionClientFactory {
         private int _createCallCount;
@@ -339,4 +569,22 @@ public sealed class GalateaSessionProvisioningTests {
             );
         }
     }
+
+    private static async Task<SessionAttempt> ObserveAsync(
+        Func<Task<UserSessionHost>> action
+    ) {
+        try {
+            return new SessionAttempt(await action(), Error: null);
+        }
+        catch (Exception exception) {
+            return new SessionAttempt(Session: null, exception);
+        }
+    }
+
+    private sealed record SessionAttempt(
+        UserSessionHost? Session,
+        Exception? Error
+    );
+
+    private sealed class TestPublishException : Exception;
 }

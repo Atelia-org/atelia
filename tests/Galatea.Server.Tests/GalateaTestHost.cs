@@ -205,6 +205,58 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         RecapGridAgentControlProfile? agentControlProfile = null,
         GalateaSessionProvisioning sessionProvisioning =
             GalateaSessionProvisioning.ExistingOnly
+    ) => PointAtSessionCore(
+        sessionDirectory,
+        connections,
+        defaultConnectionId,
+        completionClientFactory,
+        normalizer,
+        systemPrompt,
+        callLogDirectory,
+        maintenanceMode,
+        agentControlProfile,
+        sessionProvisioning,
+        requireExistingDirectory: true
+    );
+
+    /// <summary>
+    /// Creates an isolated configuration root pointing at an external session
+    /// path without requiring that path to exist yet.
+    /// </summary>
+    public static GalateaTestHost PointAtSession(
+        string sessionDirectory,
+        IReadOnlyList<CompletionConnectionConfig> connections,
+        string defaultConnectionId,
+        ICompletionClientFactory completionClientFactory,
+        IGalateaUserMessageNormalizer normalizer,
+        string systemPrompt,
+        GalateaSessionProvisioning sessionProvisioning
+    ) => PointAtSessionCore(
+        sessionDirectory,
+        connections,
+        defaultConnectionId,
+        completionClientFactory,
+        normalizer,
+        systemPrompt,
+        callLogDirectory: null,
+        maintenanceMode: false,
+        agentControlProfile: null,
+        sessionProvisioning,
+        requireExistingDirectory: false
+    );
+
+    private static GalateaTestHost PointAtSessionCore(
+        string sessionDirectory,
+        IReadOnlyList<CompletionConnectionConfig> connections,
+        string defaultConnectionId,
+        ICompletionClientFactory completionClientFactory,
+        IGalateaUserMessageNormalizer normalizer,
+        string systemPrompt,
+        string? callLogDirectory,
+        bool maintenanceMode,
+        RecapGridAgentControlProfile? agentControlProfile,
+        GalateaSessionProvisioning sessionProvisioning,
+        bool requireExistingDirectory
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionDirectory);
         ArgumentNullException.ThrowIfNull(connections);
@@ -217,7 +269,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             Path.TrimEndingDirectorySeparator(
                 Path.GetFullPath(sessionDirectory)
             );
-        if (!Directory.Exists(absoluteSessionDirectory)) {
+        if (requireExistingDirectory
+            && !Directory.Exists(absoluteSessionDirectory)) {
             throw new DirectoryNotFoundException(
                 absoluteSessionDirectory
             );

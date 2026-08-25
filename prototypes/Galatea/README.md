@@ -40,9 +40,13 @@ writer固定把`v`放在首字段，reader不要求property order。missing vers
 
 相对`sessionDir`以`config.json`所在目录为base，loader向runtime只交付absolute path；absolute值保持同一target。
 每个user必须选择closed exact policy：`existing-only`只打开已provision的repository；`create-if-missing`允许普通
-writable host在首次需要该user session时，仅对完全不存在的`sessionDir`创建raw SessionJournal repository。已存在但为空、
-不完整或损坏的路径仍fail closed，maintenance mode也不会创建。创建只初始化raw SessionJournal，不创建或激活Timeline、
-Control、Store等RecapGrid sidecar。这里没有process-CWD fallback、existence-based双解释或repository move；`..`与
+writable host在首次需要该user session时，仅对完全不存在的`sessionDir`创建raw SessionJournal repository。创建先在
+final path同一parent下完成并关闭unique staging repository，再以Linux `renameat2(RENAME_NOREPLACE)`原子create-only
+发布并从final path重新打开。已存在但为空、不完整或invalid的路径不会被provisioning层adopt、reset或rebuild；普通
+writable `Open`仍保留SessionJournal owner定义的crash-tail recovery，owner recovery后仍无法打开才fail closed，且不会
+fallback到create。maintenance mode只read-only open且不会创建。创建只初始化raw SessionJournal，不创建或激活Timeline、
+Control、Store等RecapGrid sidecar。crash或candidate Create/Dispose失败可能留下unique staging residue，normal runtime不会
+扫描或自动清理历史residue。这里没有process-CWD fallback、existence-based双解释或repository move；`..`与
 absolute path仍是合法的lexical path，这项规则不承诺把session限制在config目录内，也不声称提供额外的no-follow
 filesystem边界。
 

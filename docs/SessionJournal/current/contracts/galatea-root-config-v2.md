@@ -62,18 +62,25 @@ UTF-8；decode后执行`Trim()`且结果必须nonblank。有效文件允许inlin
 两种provisioning policy的行为为：
 
 - `existing-only`：只打开已provision的raw SessionJournal repository；path missing、empty或因required file missing而
-  incomplete时，current host映射为`session-unprovisioned`且不写入该path。其他corrupt/invalid repository同样
-  fail closed且不会create或repair，但V2 root config contract不统一其owner/host classification。
+  incomplete时，current host映射为`session-unprovisioned`且不写入该path。其他existing path进入owner-defined open：普通
+  writable `Open`可以执行SessionJournal自身定义的crash-tail recovery，maintenance mode只`OpenReadOnly`。若owner open/
+  recovery仍判定corrupt或invalid，则provisioning层fail closed，不会adopt、reset、rebuild或fallback create；V2 root config
+  contract不统一这些owner/host classification。
 - `create-if-missing`：普通writable host在首次实际请求该user session且`sessionDir`完全不存在时调用
-  `SessionJournalEngine.Create`。初始化使用default connection的`ModelId`、`CompletionSurfaceId`及该user最终resolved
-  `SystemPrompt`，产生合法Idle raw repository。若path已有任何filesystem entry，则只走open/fail-closed路径；不会删除、
-  overwrite、adopt或repair empty/incomplete/corrupt path。
+  `SessionJournalEngine.Create`在final path同一parent下的不可预测unique staging path构造完整candidate。初始化使用default
+  connection的`ModelId`、`CompletionSurfaceId`及该user最终resolved `SystemPrompt`，产生合法Idle raw repository；仅当
+  candidate Create与engine Dispose都成功后，才以Linux `renameat2(RENAME_NOREPLACE)`原子create-only发布到final path，
+  随后从final path重新`Open`。若final path已有任何filesystem entry，publish不能替换它；initial observation时已存在则只走
+  owner open/fail-closed路径，不会删除、overwrite、adopt、reset或rebuild。
 - maintenance mode对两种policy都只允许read-only open，绝不create。
 - login/authentication本身不provision；首次需要`GetSessionAsync`的authenticated session operation触发lazy initialization。
 - auto-create仅涵盖raw SessionJournal。Timeline、Cadence、Control、Store、route/profile及任何RecapGrid asset仍必须由
   operator显式provision；raw-only recent view保持合法。
 - failed lazy initialization会从in-process session cache精确移除，使operator修复后可在同一process重试；失败本身不会
   自动清理可能残留的filesystem state。
+- publish前hook或atomic publish失败时，runtime只best-effort删除本次Create与Dispose都已成功的owned staging candidate；
+  crash及candidate Create/Dispose中途失败可以留下unique staging residue。Normal runtime不扫描或自动清理任何历史
+  staging residue；publish成功后final repository在后续Open/inspection/recent projection失败时也绝不删除。
 
 `sessionDir`没有process-CWD或existence-based path fallback，也没有repository move。Absolute path与`..`仍可进入
 platform lexical normalization；本合同不承诺config-directory confinement或完整hostile-filesystem defense。两个user
