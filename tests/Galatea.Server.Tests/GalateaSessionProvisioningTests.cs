@@ -636,6 +636,55 @@ public sealed class GalateaSessionProvisioningTests {
     }
 
     [Fact]
+    public async Task BootstrapAndCandidateDisposeFailure_PreservesPrimaryAndResidue() {
+        var factory = new CountingCompletionClientFactory();
+        await using var host = GalateaTestHost.CreateMissingSession(
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        string? stagingPath = null;
+        int disposeCalls = 0;
+        service.SessionProvisioningHooksForTest = new(
+            AfterSessionRepositoryBootstrapStep: (component, staging) => {
+                if (string.Equals(
+                        component,
+                        "Cadence",
+                        StringComparison.Ordinal)) {
+                    stagingPath = staging;
+                    throw new TestBootstrapException();
+                }
+            },
+            DisposeSessionRepositoryCandidate: candidate => {
+                Interlocked.Increment(ref disposeCalls);
+                candidate.Dispose();
+                throw new TestCandidateDisposeException();
+            }
+        );
+
+        AggregateException failure =
+            await Assert.ThrowsAsync<AggregateException>(() =>
+                service.GetSessionAsync(
+                    "alice",
+                    CancellationToken.None
+                )
+            );
+
+        Assert.Collection(
+            failure.InnerExceptions,
+            first => Assert.IsType<TestBootstrapException>(first),
+            second => Assert.IsType<TestCandidateDisposeException>(second)
+        );
+        Assert.Equal(1, disposeCalls);
+        Assert.NotNull(stagingPath);
+        Assert.True(Directory.Exists(stagingPath));
+        Assert.False(Directory.Exists(host.SessionDirectory));
+        Assert.False(File.Exists(host.SessionDirectory));
+        Assert.Equal(0, factory.CreateCallCount);
+    }
+
+    [Fact]
     public async Task MissingCreateIfMissing_WithoutControlCreatePermissionWritesNothing() {
         var factory = new CountingCompletionClientFactory();
         await using var host = GalateaTestHost.CreateMissingSession(
@@ -989,4 +1038,5 @@ public sealed class GalateaSessionProvisioningTests {
 
     private sealed class TestPublishException : Exception;
     private sealed class TestBootstrapException : Exception;
+    private sealed class TestCandidateDisposeException : Exception;
 }

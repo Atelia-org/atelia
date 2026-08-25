@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
@@ -51,6 +52,8 @@ internal static class GalateaSessionRepositoryProvisioner {
         bool candidateDisposeAttempted = false;
         bool candidateDisposed = false;
         bool published = false;
+        Exception? primaryFailure = null;
+        Exception? disposeFailure = null;
         try {
             candidate = SessionJournalEngine.Create(stagingPath, options);
             BootstrapAndValidate(
@@ -60,7 +63,7 @@ internal static class GalateaSessionRepositoryProvisioner {
                 ownership
             );
             candidateDisposeAttempted = true;
-            candidate.Dispose();
+            DisposeCandidate(candidate, hooks);
             candidateDisposed = true;
 
             hooks?.BeforeSessionRepositoryPublish?.Invoke(
@@ -71,16 +74,21 @@ internal static class GalateaSessionRepositoryProvisioner {
             published = true;
             return SessionJournalEngine.Open(normalizedFinalPath);
         }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
+            primaryFailure = exception;
+        }
         finally {
             if (candidate is not null && !candidateDisposeAttempted) {
                 candidateDisposeAttempted = true;
                 try {
-                    candidate.Dispose();
+                    DisposeCandidate(candidate, hooks);
                     candidateDisposed = true;
                 }
-                catch {
+                catch (Exception exception) when (
+                    GalateaExceptionClassifier.IsNonFatal(exception)) {
                     ownership.AllHandlesClosed = false;
-                    throw;
+                    disposeFailure = exception;
                 }
             }
             if (candidateDisposed
@@ -89,6 +97,34 @@ internal static class GalateaSessionRepositoryProvisioner {
                 TryDeleteOwnedCandidate(stagingPath);
             }
         }
+        if (primaryFailure is not null && disposeFailure is not null) {
+            throw new AggregateException(
+                "Galatea session candidate initialization and disposal "
+                + "both failed.",
+                primaryFailure,
+                disposeFailure
+            );
+        }
+        if (primaryFailure is not null) {
+            ExceptionDispatchInfo.Capture(primaryFailure).Throw();
+        }
+        if (disposeFailure is not null) {
+            ExceptionDispatchInfo.Capture(disposeFailure).Throw();
+        }
+        throw new InvalidOperationException(
+            "Galatea session provisioning exited without a result."
+        );
+    }
+
+    private static void DisposeCandidate(
+        SessionJournalEngine candidate,
+        GalateaSessionProvisioningTestHooks? hooks
+    ) {
+        if (hooks?.DisposeSessionRepositoryCandidate is { } dispose) {
+            dispose(candidate);
+            return;
+        }
+        candidate.Dispose();
     }
 
     private static void BootstrapAndValidate(
@@ -428,7 +464,8 @@ internal static class GalateaSessionRepositoryProvisioner {
 
 internal sealed record GalateaSessionProvisioningTestHooks(
     Action<string, string>? BeforeSessionRepositoryPublish = null,
-    Action<string, string>? AfterSessionRepositoryBootstrapStep = null
+    Action<string, string>? AfterSessionRepositoryBootstrapStep = null,
+    Action<SessionJournalEngine>? DisposeSessionRepositoryCandidate = null
 );
 
 internal static class GalateaFirstTurnBootstrapPolicy {
