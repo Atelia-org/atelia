@@ -34,7 +34,7 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (!OperatingSystem.IsLinux()) {
             throw new PlatformNotSupportedException(
-                "Galatea strict file loading V2 requires Linux no-follow file semantics."
+                "Galatea strict file loading requires Linux no-follow file semantics."
             );
         }
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -106,7 +106,7 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (!OperatingSystem.IsLinux()) {
             throw new PlatformNotSupportedException(
-                "Galatea strict file loading V2 requires Linux no-follow file semantics."
+                "Galatea strict file loading requires Linux no-follow file semantics."
             );
         }
         string? current = Path.TrimEndingDirectorySeparator(

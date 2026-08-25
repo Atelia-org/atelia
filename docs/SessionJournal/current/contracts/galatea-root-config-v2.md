@@ -61,8 +61,9 @@ UTF-8；decode后执行`Trim()`且结果必须nonblank。有效文件允许inlin
 
 两种provisioning policy的行为为：
 
-- `existing-only`：只打开已provision的raw SessionJournal repository；path missing、empty、incomplete或invalid时返回
-  `session-unprovisioned`，不写入该path。
+- `existing-only`：只打开已provision的raw SessionJournal repository；path missing、empty或因required file missing而
+  incomplete时，current host映射为`session-unprovisioned`且不写入该path。其他corrupt/invalid repository同样
+  fail closed且不会create或repair，但V2 root config contract不统一其owner/host classification。
 - `create-if-missing`：普通writable host在首次实际请求该user session且`sessionDir`完全不存在时调用
   `SessionJournalEngine.Create`。初始化使用default connection的`ModelId`、`CompletionSurfaceId`及该user最终resolved
   `SystemPrompt`，产生合法Idle raw repository。若path已有任何filesystem entry，则只走open/fail-closed路径；不会删除、
