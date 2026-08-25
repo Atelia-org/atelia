@@ -1894,6 +1894,8 @@ internal static class GalateaConfigTemplateFactory {
             UserId: userId,
             Password: password,
             SessionDir: sessionDir,
+            SessionProvisioning:
+                GalateaSessionProvisioning.CreateIfMissing,
             SystemPrompt: GalateaDefaults.SystemPrompt
         );
     }
@@ -2089,5 +2091,6 @@ internal static class GalateaJson {
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(GalateaUsersFileConfig))]
 [JsonSerializable(typeof(GalateaUserConfig))]
+[JsonSerializable(typeof(GalateaSessionProvisioning))]
 [JsonSerializable(typeof(GalateaRecapGridFileConfig))]
 internal sealed partial class GalateaJsonContext : JsonSerializerContext;

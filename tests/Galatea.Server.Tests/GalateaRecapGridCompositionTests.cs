@@ -1116,9 +1116,17 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             new GalateaConfig(
                 [
                     new GalateaUserConfig(
-                        "alice", "pw", first, "test system prompt"),
+                        "alice",
+                        "pw",
+                        first,
+                        GalateaSessionProvisioning.ExistingOnly,
+                        "test system prompt"),
                     new GalateaUserConfig(
-                        "bob", "pw", second, "test system prompt")
+                        "bob",
+                        "pw",
+                        second,
+                        GalateaSessionProvisioning.ExistingOnly,
+                        "test system prompt")
                 ],
                 [connection],
                 connection.Id),
@@ -1649,7 +1657,11 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         CompletionConnectionConfig connection
     ) => new(
         [new GalateaUserConfig(
-            "alice", "pw", path, "test system prompt")],
+            "alice",
+            "pw",
+            path,
+            GalateaSessionProvisioning.ExistingOnly,
+            "test system prompt")],
         [connection],
         connection.Id);
 

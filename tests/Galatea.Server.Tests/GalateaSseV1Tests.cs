@@ -420,7 +420,12 @@ public sealed class GalateaSseV1Tests {
     [Fact]
     public void AppBootstrapOwnsBrowserLimitsAndCacheBustedModule() {
         string html = GalateaHtml.RenderAppPage(
-            new GalateaUserConfig("alice", "password", "/session"),
+            new GalateaUserConfig(
+                "alice",
+                "password",
+                "/session",
+                GalateaSessionProvisioning.ExistingOnly
+            ),
             [new GalateaConnectionInfoDto("test", "model")],
             "test",
             maintenanceMode: false,

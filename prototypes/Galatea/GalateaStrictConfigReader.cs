@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 1;
+    internal const int CurrentConfigVersion = 2;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumUserCount = 256;
@@ -34,7 +34,7 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (!OperatingSystem.IsLinux()) {
             throw new PlatformNotSupportedException(
-                "Galatea strict file loading V1 requires Linux no-follow file semantics."
+                "Galatea strict file loading V2 requires Linux no-follow file semantics."
             );
         }
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -106,7 +106,7 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (!OperatingSystem.IsLinux()) {
             throw new PlatformNotSupportedException(
-                "Galatea strict file loading V1 requires Linux no-follow file semantics."
+                "Galatea strict file loading V2 requires Linux no-follow file semantics."
             );
         }
         string? current = Path.TrimEndingDirectorySeparator(
@@ -203,13 +203,13 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("1"u8)) {
+            || !reader.ValueSpan.SequenceEqual("2"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 1; "
+        "Galatea config requires exact integer version 'v': 2; "
         + "migrate the config before retrying."
     );
 
@@ -224,12 +224,46 @@ internal static class GalateaStrictConfigReader {
                 case "systemPrompt":
                     RequireToken(reader.TokenType, JsonTokenType.String, property);
                     break;
+                case "sessionProvisioning":
+                    RequireExactSessionProvisioning(ref reader);
+                    break;
                 case "systemPromptFile":
                     RequireStringOrNull(reader.TokenType, property);
                     break;
                 default:
                     throw Unknown("user", property);
             }
+        }
+        if (!seen.Contains("sessionProvisioning")) {
+            throw new InvalidDataException(
+                "user requires string field 'sessionProvisioning'."
+            );
+        }
+    }
+
+    private static void RequireExactSessionProvisioning(
+        ref Utf8JsonReader reader
+    ) {
+        RequireToken(
+            reader.TokenType,
+            JsonTokenType.String,
+            "sessionProvisioning"
+        );
+        string? value = reader.GetString();
+        if (!string.Equals(
+                value,
+                "existing-only",
+                StringComparison.Ordinal
+            )
+            && !string.Equals(
+                value,
+                "create-if-missing",
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "sessionProvisioning must be exactly 'existing-only' or "
+                + "'create-if-missing'."
+            );
         }
     }
 

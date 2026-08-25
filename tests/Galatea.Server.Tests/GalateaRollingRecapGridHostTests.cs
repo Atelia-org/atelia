@@ -937,7 +937,11 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         IReadOnlyList<CompletionConnectionConfig> connections
     ) => new(
         [new GalateaUserConfig(
-            "alice", "pw", path, "test system prompt")],
+            "alice",
+            "pw",
+            path,
+            GalateaSessionProvisioning.ExistingOnly,
+            "test system prompt")],
         connections,
         AgentConnectionId
     );

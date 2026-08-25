@@ -29,7 +29,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigTemplateStartsWithExactV1AndRoundTrips() {
+    public void RootConfigTemplateStartsWithExactV2AndRoundTrips() {
         byte[] template = JsonSerializer.SerializeToUtf8Bytes(
             GalateaConfigTemplateFactory.CreateUsersFile(),
             GalateaJson.Options
@@ -41,7 +41,7 @@ public sealed class GalateaConfigValidationTests {
             .EnumerateObject()
             .First();
         Assert.Equal("v", first.Name);
-        Assert.Equal("1", first.Value.GetRawText());
+        Assert.Equal("2", first.Value.GetRawText());
 
         GalateaUsersFileConfig? decoded = JsonSerializer.Deserialize(
             template,
@@ -55,6 +55,13 @@ public sealed class GalateaConfigValidationTests {
         Assert.Equal(
             ["sessions/alice", "sessions/bob"],
             decoded.Users.Select(static user => user.SessionDir)
+        );
+        Assert.All(
+            decoded.Users,
+            static user => Assert.Equal(
+                GalateaSessionProvisioning.CreateIfMissing,
+                user.SessionProvisioning
+            )
         );
         Assert.Null(typeof(GalateaConfig).GetProperty("Version"));
     }
@@ -241,7 +248,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigAcceptsExactV1OutsideFirstProperty() {
+    public void RootConfigAcceptsExactV2OutsideFirstProperty() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -249,11 +256,11 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string LeadingVersion = "{\"v\":1,";
+            const string LeadingVersion = "{\"v\":2,";
             Assert.StartsWith(LeadingVersion, original);
             string reordered = "{"
                 + original[LeadingVersion.Length..^1]
-                + ",\"v\":1}";
+                + ",\"v\":2}";
             File.WriteAllText(configPath, reordered);
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
@@ -265,7 +272,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigRequiresExactIntegerV1() {
+    public void RootConfigRequiresExactIntegerV2AndRejectsV1() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -273,7 +280,7 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string Version = "\"v\":1";
+            const string Version = "\"v\":2";
             Assert.Contains(Version, original, StringComparison.Ordinal);
 
             string[] invalid = [
@@ -284,17 +291,19 @@ public sealed class GalateaConfigValidationTests {
                 ),
                 original.Replace(Version, "\"v\":null",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":\"1\"",
+                original.Replace(Version, "\"v\":\"2\"",
                     StringComparison.Ordinal),
                 original.Replace(Version, "\"v\":0",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":2",
+                original.Replace(Version, "\"v\":1",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":1.0",
+                original.Replace(Version, "\"v\":3",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":1e0",
+                original.Replace(Version, "\"v\":2.0",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"V\":1",
+                original.Replace(Version, "\"v\":2e0",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"V\":2",
                     StringComparison.Ordinal),
                 original.Replace(
                     Version + ",",
@@ -324,7 +333,7 @@ public sealed class GalateaConfigValidationTests {
             File.WriteAllText(
                 configPath,
                 """
-                {"v":2,"users":[{"userId":"alice","password":"pw","sessionDir":"session","systemPrompt":"","systemPromptFile":"missing-prompt.txt"}],"recapGrid":{"routeManifestPath":"missing-routes.json","agentControlProfileFiles":["missing-profile.json"],"currentAgentControlProfileId":"missing"}}
+                {"v":3,"users":[{"userId":"alice","password":"pw","sessionDir":"session","sessionProvisioning":"existing-only","systemPrompt":"","systemPromptFile":"missing-prompt.txt"}],"recapGrid":{"routeManifestPath":"missing-routes.json","agentControlProfileFiles":["missing-profile.json"],"currentAgentControlProfileId":"missing"}}
                 """
             );
 
@@ -384,7 +393,7 @@ public sealed class GalateaConfigValidationTests {
             byte[] versionless = File.ReadAllBytes(configPath);
             versionless = System.Text.Encoding.UTF8.GetBytes(
                 System.Text.Encoding.UTF8.GetString(versionless).Replace(
-                    "\"v\":1,",
+                    "\"v\":2,",
                     string.Empty,
                     StringComparison.Ordinal
                 )
@@ -530,8 +539,8 @@ public sealed class GalateaConfigValidationTests {
 
             string[] invalidConfigs = [
                 originalConfig.Replace(
-                    "{\"v\":1,\"users\"",
-                    "{\"v\":1,\"unknown\":1,\"users\"",
+                    "{\"v\":2,\"users\"",
+                    "{\"v\":2,\"unknown\":1,\"users\"",
                     StringComparison.Ordinal
                 ),
                 originalConfig.Replace(
@@ -686,6 +695,7 @@ public sealed class GalateaConfigValidationTests {
                     "alice",
                     "pw",
                     Path.Combine(root, "session"),
+                    GalateaSessionProvisioning.ExistingOnly,
                     SystemPrompt: "",
                     SystemPromptFile: "prompt.txt"
                 )]
@@ -949,6 +959,7 @@ public sealed class GalateaConfigValidationTests {
         userId,
         "pw",
         sessionDirectory,
+        GalateaSessionProvisioning.ExistingOnly,
         SystemPrompt: "prompt"
     );
 

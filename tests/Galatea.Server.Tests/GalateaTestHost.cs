@@ -235,6 +235,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     TestUserId,
                     TestPassword,
                     absoluteSessionDirectory,
+                    GalateaSessionProvisioning.ExistingOnly,
                     SystemPrompt: systemPrompt
                 )
             ],

@@ -47,12 +47,21 @@ public sealed record GalateaUserConfig(
     string UserId,
     string Password,
     string SessionDir,
+    GalateaSessionProvisioning SessionProvisioning,
     string SystemPrompt = "",
     // Optional path to a markdown (or plain text) file whose content overrides the
     // inline SystemPrompt. Resolved relative to the config file's directory when not
     // absolute. Convenient for authoring long system prompts.
     string? SystemPromptFile = null
 );
+
+[JsonConverter(typeof(JsonStringEnumConverter<GalateaSessionProvisioning>))]
+public enum GalateaSessionProvisioning {
+    [JsonStringEnumMemberName("existing-only")]
+    ExistingOnly,
+    [JsonStringEnumMemberName("create-if-missing")]
+    CreateIfMissing
+}
 
 internal static class GalateaConfigValidation {
     internal static void RequireDistinctSessionDirectories(
@@ -72,6 +81,14 @@ internal static class GalateaConfigValidation {
                 ?? throw new InvalidOperationException(
                     $"Galatea config user[{index}] must not be null."
                 );
+            if (user.SessionProvisioning is not (
+                    GalateaSessionProvisioning.ExistingOnly
+                    or GalateaSessionProvisioning.CreateIfMissing)) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' has an unknown "
+                    + "sessionProvisioning policy."
+                );
+            }
             if (string.IsNullOrWhiteSpace(user.SessionDir)) {
                 throw new InvalidOperationException(
                     $"Galatea config user '{user.UserId}' must have a "
