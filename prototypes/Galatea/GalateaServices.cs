@@ -13,6 +13,7 @@ using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
+using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Online;
 
@@ -35,6 +36,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly IReadOnlyDictionary<string, CompletionConnectionConfig>
         _connectionCatalog;
     private readonly string _defaultConnectionId;
+    private readonly RecapGridControlAdmission? _sessionBootstrapAdmission;
 
     public GalateaHostService(
         GalateaConfig config,
@@ -49,6 +51,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
             ?? throw new InvalidOperationException(
                 "Galatea requires strict RecapGrid runtime configuration."
             );
+        _sessionBootstrapAdmission = ResolveSessionBootstrapAdmission(
+            recapGrid
+        );
         ICompletionClientFactory ownedFactory =
             GalateaCompletionLogging.CreateOwnedFactory(
                 completionClientFactory,
@@ -114,6 +119,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
             StringComparer.Ordinal
         );
         _defaultConnectionId = config.DefaultConnectionId;
+        _sessionBootstrapAdmission = config.RecapGrid is { } configured
+            ? ResolveSessionBootstrapAdmission(configured)
+            : null;
     }
 
     public bool TryGetUser(string userId, out GalateaUserConfig user)
@@ -1011,6 +1019,22 @@ public sealed class GalateaHostService : IAsyncDisposable {
         SessionJournalEngine? engine = null;
         try {
             if (!directoryExists && !fileExists && createIfMissing) {
+                RecapGridControlAdmission admission =
+                    _sessionBootstrapAdmission
+                    ?? throw new GalateaSessionUnavailableException(
+                        "session-unprovisioned",
+                        "Galatea first-turn bootstrap has no current "
+                        + "Agent Control profile."
+                    );
+                if ((admission.Permissions
+                        & RecapGridControlPermission.Create)
+                    != RecapGridControlPermission.Create) {
+                    throw new GalateaSessionUnavailableException(
+                        "session-unprovisioned",
+                        "The current Agent Control profile does not "
+                        + "authorize SessionJournal Control creation."
+                    );
+                }
                 CompletionConnectionConfig defaultConnection =
                     _connectionCatalog[_defaultConnectionId];
                 engine = GalateaSessionRepositoryProvisioner
@@ -1021,6 +1045,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                             user.SystemPrompt,
                             defaultConnection.CompletionSurfaceId
                         ),
+                        admission,
                         SessionProvisioningHooksForTest
                     );
             }
@@ -1062,6 +1087,20 @@ public sealed class GalateaHostService : IAsyncDisposable {
             engine?.Dispose();
             throw;
         }
+    }
+
+    private static RecapGridControlAdmission
+        ResolveSessionBootstrapAdmission(
+        GalateaRecapGridRuntimeConfig recapGrid
+    ) {
+        if (!recapGrid.AgentControlProfiles.TryGet(
+                recapGrid.CurrentAgentControlProfileId,
+                out RecapGridAgentControlProfile? profile)) {
+            throw new InvalidOperationException(
+                "The current Agent Control profile is unavailable."
+            );
+        }
+        return profile.Admission;
     }
 
     private static void ValidateRecoveryConnection(

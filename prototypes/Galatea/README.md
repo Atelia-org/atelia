@@ -40,13 +40,18 @@ writer固定把`v`放在首字段，reader不要求property order。missing vers
 
 相对`sessionDir`以`config.json`所在目录为base，loader向runtime只交付absolute path；absolute值保持同一target。
 每个user必须选择closed exact policy：`existing-only`只打开已provision的repository；`create-if-missing`允许普通
-writable host在首次需要该user session时，仅对完全不存在的`sessionDir`创建raw SessionJournal repository。创建先在
-final path同一parent下完成并关闭unique staging repository，再以Linux `renameat2(RENAME_NOREPLACE)`原子create-only
-发布并从final path重新打开。已存在但为空、不完整或invalid的路径不会被provisioning层adopt、reset或rebuild；普通
+writable host在首次需要该user session时，仅对完全不存在的`sessionDir`创建first-turn structural raw-only repository。
+Galatea在final path同一parent下的unique staging中创建raw SessionJournal、Cadence、empty Timeline与empty Control；
+Cadence/Timeline policy由`GalateaFirstTurnBootstrapPolicy`唯一拥有，Control使用exact current AgentControl profile的canonical
+Admission，且该Admission必须授权`Create`。candidate经raw Idle/三事件、三域exact empty、Store absent与Getter exact raw-head
+`RawHistoryAuthorized`验证，关闭所有handle后才以Linux `renameat2(RENAME_NOREPLACE)`原子create-only发布，并从final path
+重新打开。已存在但为空、不完整或invalid的路径不会被provisioning层adopt、reset或rebuild；普通
 writable `Open`仍保留SessionJournal owner定义的crash-tail recovery，owner recovery后仍无法打开才fail closed，且不会
-fallback到create。maintenance mode只read-only open且不会创建。创建只初始化raw SessionJournal，不创建或激活Timeline、
-Control、Store等RecapGrid sidecar。crash或candidate Create/Dispose失败可能留下unique staging residue，normal runtime不会
-扫描或自动清理历史residue。这里没有process-CWD fallback、existence-based双解释或repository move；`..`与
+fallback到create；existing raw-only或partial repository也不会自动补写三域。maintenance mode只read-only open且不会创建。
+该bootstrap不创建Store、asset、Family、Definition、recipe或activation，不读取route且不dispatch provider；它只保证首轮可以
+走正式no-active/raw-only lifecycle，不承诺完整RecapGrid activation。crash或candidate Create/Dispose失败可能留下unique
+staging residue，normal runtime不会扫描或自动清理历史residue。这里没有process-CWD fallback、existence-based双解释或
+repository move；`..`与
 absolute path仍是合法的lexical path，这项规则不承诺把session限制在config目录内，也不声称提供额外的no-follow
 filesystem边界。
 
@@ -161,7 +166,9 @@ recipe/row authority 与 bounded metrics。`ready`时同一Getter handle还会�
 `derivedContext.nthPrevious`只读resolve/materialize `contextHeader`，并在最终raw-head fence后与readiness一起发布；
 该读取不dispatch provider、不build、不写。
 
-Galatea 不自动 Create/Provision/Activate Grid。operator 应先使用 SessionJournal.Cli 的
+Galatea只在上述unpublished missing-session candidate中自动创建first-turn structural Cadence/Timeline/Control；不为existing
+repository补写，也不自动创建Store、provision asset、compose recipe或activate。需要完整RecapGrid时，operator 应先使用
+SessionJournal.Cli 的
 `recap-grid scaffold`生成strict admission/profile/route files，再用`recap-grid init`、
 `recap-grid control provision-asset --asset galatea-rolling-rewrite-zh-cn-v5`、
 Control compose/put-recipe/activate 与 build 命令完成显式配置。该asset提供一个shared Family下的

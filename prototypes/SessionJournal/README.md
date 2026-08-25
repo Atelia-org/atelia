@@ -44,7 +44,9 @@ materialize 后重新校验 whole Timeline head、Control head、raw boundary �
 - branch rewind/retarget 只改变 selected lineage，不删除 raw events。
 - 任何 derived row、view、receipt 或 cache 都必须能由 raw lineage 与 canonical contracts
   重新验证；离开 selected lineage 的 artifact 不能通过 latest/global scan 重新获得权限。
-- `OpenReadOnly` 不创建 sidecar；normal host 也不自动 provision derived stores。
+- `OpenReadOnly`与SessionJournal core的`Create/Open`不自动创建sidecar。Galatea application可在尚未发布的
+  `create-if-missing` candidate中显式组合Cadence、empty Timeline与empty Control，但这不改变core contract，也不创建Store、
+  asset、recipe或activation，不补写existing repository。
 
 ## Operator surfaces
 

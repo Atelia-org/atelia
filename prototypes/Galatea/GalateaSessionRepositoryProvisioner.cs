@@ -1,6 +1,11 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Atelia.SessionJournal;
+using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Cadence;
+using Atelia.SessionJournal.RecapGrid.Control;
+using Atelia.SessionJournal.RecapGrid.Getter;
+using Atelia.SessionJournal.RecapGrid.Store;
 
 namespace Atelia.Galatea.Server;
 
@@ -14,10 +19,19 @@ internal static class GalateaSessionRepositoryProvisioner {
     internal static SessionJournalEngine CreateAndPublish(
         string finalPath,
         SessionCreateOptions options,
+        RecapGridControlAdmission admission,
         GalateaSessionProvisioningTestHooks? hooks = null
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(finalPath);
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(admission);
+        if ((admission.Permissions & RecapGridControlPermission.Create)
+                != RecapGridControlPermission.Create) {
+            throw new InvalidOperationException(
+                "The current Agent Control profile does not authorize "
+                + "Control creation."
+            );
+        }
 
         string normalizedFinalPath = Path.TrimEndingDirectorySeparator(
             Path.GetFullPath(finalPath)
@@ -32,13 +46,22 @@ internal static class GalateaSessionRepositoryProvisioner {
             parentPath,
             $".galatea-session-{Guid.NewGuid():N}.staging"
         );
-        bool candidateClosed = false;
+        var ownership = new CandidateOwnership();
+        SessionJournalEngine? candidate = null;
+        bool candidateDisposeAttempted = false;
+        bool candidateDisposed = false;
         bool published = false;
         try {
-            SessionJournalEngine candidate =
-                SessionJournalEngine.Create(stagingPath, options);
+            candidate = SessionJournalEngine.Create(stagingPath, options);
+            BootstrapAndValidate(
+                candidate,
+                admission,
+                hooks,
+                ownership
+            );
+            candidateDisposeAttempted = true;
             candidate.Dispose();
-            candidateClosed = true;
+            candidateDisposed = true;
 
             hooks?.BeforeSessionRepositoryPublish?.Invoke(
                 stagingPath,
@@ -49,11 +72,284 @@ internal static class GalateaSessionRepositoryProvisioner {
             return SessionJournalEngine.Open(normalizedFinalPath);
         }
         finally {
-            if (candidateClosed && !published) {
+            if (candidate is not null && !candidateDisposeAttempted) {
+                candidateDisposeAttempted = true;
+                try {
+                    candidate.Dispose();
+                    candidateDisposed = true;
+                }
+                catch {
+                    ownership.AllHandlesClosed = false;
+                    throw;
+                }
+            }
+            if (candidateDisposed
+                && ownership.AllHandlesClosed
+                && !published) {
                 TryDeleteOwnedCandidate(stagingPath);
             }
         }
     }
+
+    private static void BootstrapAndValidate(
+        SessionJournalEngine candidate,
+        RecapGridControlAdmission admission,
+        GalateaSessionProvisioningTestHooks? hooks,
+        CandidateOwnership ownership
+    ) {
+        RecapGridCadenceCreateResult cadence =
+            RecapGridCadenceFactory.Create(
+                candidate,
+                GalateaFirstTurnBootstrapPolicy.Cadence
+            );
+        RequireCreated("Cadence", cadence);
+        hooks?.AfterSessionRepositoryBootstrapStep?.Invoke(
+            "Cadence",
+            candidate.Path
+        );
+
+        var estimator = new O200kBaseHistoryUnitLoadEstimator();
+        HistoryTimelineCreateResult timeline =
+            HistoryTimelineFactory.Create(
+                candidate.ReadView,
+                GalateaFirstTurnBootstrapPolicy.CreateTimelinePolicy(),
+                estimator
+            );
+        RequireCreated("Timeline", timeline);
+        hooks?.AfterSessionRepositoryBootstrapStep?.Invoke(
+            "Timeline",
+            candidate.Path
+        );
+
+        RecapGridControlCreateResult control =
+            RecapGridControlFactory.Create(
+                candidate.Path,
+                candidate.BranchRefId,
+                admission
+            );
+        RequireCreated("Control", control);
+        hooks?.AfterSessionRepositoryBootstrapStep?.Invoke(
+            "Control",
+            candidate.Path
+        );
+
+        ValidateCandidate(candidate, estimator, ownership);
+    }
+
+    private static void ValidateCandidate(
+        SessionJournalEngine candidate,
+        O200kBaseHistoryUnitLoadEstimator estimator,
+        CandidateOwnership ownership
+    ) {
+        SessionExecutionBoundaryInspection boundary =
+            candidate.InspectExecutionBoundary();
+        if (boundary.Phase != SessionExecutionPhase.Idle
+            || boundary.Head is not { } rawHead) {
+            throw InvalidCandidate("raw bootstrap is not exactly Idle");
+        }
+        SessionCurrentLineageSnapshot lineage =
+            candidate.ReadCurrentLineageHeaders();
+        SessionEventKind[] expectedKinds = [
+            SessionEventKind.SessionCreated,
+            SessionEventKind.SystemPromptSetup,
+            SessionEventKind.RuntimeConfigSetup
+        ];
+        if (lineage.CapturedHead != rawHead
+            || lineage.HeadToRoot.Count != expectedKinds.Length
+            || !lineage.HeadToRoot.Select(static value => value.Kind)
+                .SequenceEqual(expectedKinds)) {
+            throw InvalidCandidate(
+                "raw bootstrap does not contain exactly three setup events"
+            );
+        }
+
+        ValidateCadence(candidate, ownership);
+        TimelineHeadRef timelineHead = ValidateTimeline(
+            candidate,
+            estimator,
+            ownership
+        );
+        ValidateControl(candidate, timelineHead, ownership);
+        RecapGridStoreReaderOpenResult store =
+            RecapGridStoreFactory.OpenReader(candidate.Path);
+        if (store is RecapGridStoreReaderOpenResult.Opened openedStore) {
+            DisposeHandle(openedStore.Handle, ownership);
+            throw InvalidCandidate("RecapGrid Store is not absent");
+        }
+        if (store is not RecapGridStoreReaderOpenResult.Absent) {
+            throw InvalidCandidate(
+                $"Store validation returned {store.GetType().Name}"
+            );
+        }
+        ValidateGetter(candidate, rawHead, estimator, ownership);
+    }
+
+    private static void ValidateCadence(
+        SessionJournalEngine candidate,
+        CandidateOwnership ownership
+    ) {
+        RecapGridCadenceReaderOpenResult opened =
+            RecapGridCadenceFactory.OpenReader(candidate.ReadView);
+        if (opened is not RecapGridCadenceReaderOpenResult.Opened available) {
+            throw InvalidCandidate(
+                $"Cadence validation returned {opened.GetType().Name}"
+            );
+        }
+        RecapGridCadenceReaderHandle handle = available.Handle;
+        try {
+            RecapGridCadenceReadResult read = handle.Reader.ReadSnapshot();
+            if (read is not RecapGridCadenceReadResult.Available snapshot
+                || snapshot.Snapshot.Head.RefId != candidate.BranchRefId
+                || snapshot.Snapshot.Head.Generation != 0
+                || !GalateaFirstTurnBootstrapPolicy.Matches(
+                    snapshot.Snapshot.Policy
+                )) {
+                throw InvalidCandidate("Cadence policy is not exact");
+            }
+        }
+        finally {
+            DisposeHandle(handle, ownership);
+        }
+    }
+
+    private static TimelineHeadRef ValidateTimeline(
+        SessionJournalEngine candidate,
+        O200kBaseHistoryUnitLoadEstimator estimator,
+        CandidateOwnership ownership
+    ) {
+        HistoryTimelineOpenResult opened = HistoryTimelineFactory.Open(
+            candidate.ReadView,
+            estimator
+        );
+        if (opened is not HistoryTimelineOpenResult.Opened available) {
+            throw InvalidCandidate(
+                $"Timeline validation returned {opened.GetType().Name}"
+            );
+        }
+        HistoryTimelineHandle handle = available.Handle;
+        try {
+            HistoryTimelineSnapshotResult read =
+                handle.Reader.ReadSnapshot();
+            if (read is not HistoryTimelineSnapshotResult.Available snapshot
+                || snapshot.Head.RefId != candidate.BranchRefId
+                || snapshot.Head.HeadRowId is not null
+                || snapshot.Head.SelectedRawHeadAtCommit is not null
+                || snapshot.Head.SelectedPathCount != 0
+                || snapshot.Head.Generation != 0) {
+                throw InvalidCandidate("Timeline is not exact and empty");
+            }
+            PartitionPolicyRevision expected =
+                GalateaFirstTurnBootstrapPolicy.CreateTimelinePolicy(
+                    snapshot.Head.TimelineId
+                );
+            if (!string.Equals(
+                    expected.PolicyDigest,
+                    snapshot.Head.ActivePartitionPolicyDigest,
+                    StringComparison.Ordinal)) {
+                throw InvalidCandidate("Timeline policy is not exact");
+            }
+            return snapshot.Head;
+        }
+        finally {
+            DisposeHandle(handle, ownership);
+        }
+    }
+
+    private static void ValidateControl(
+        SessionJournalEngine candidate,
+        TimelineHeadRef timelineHead,
+        CandidateOwnership ownership
+    ) {
+        RecapGridControlReaderOpenResult opened =
+            RecapGridControlFactory.OpenReader(
+                candidate.Path,
+                candidate.BranchRefId
+            );
+        if (opened is not RecapGridControlReaderOpenResult.Opened available) {
+            throw InvalidCandidate(
+                $"Control validation returned {opened.GetType().Name}"
+            );
+        }
+        RecapGridControlReaderHandle handle = available.Handle;
+        try {
+            RecapGridControlSnapshotResult read =
+                handle.Reader.ReadSnapshot();
+            if (read is not RecapGridControlSnapshotResult.Available snapshot
+                || snapshot.Snapshot.Head.RefId != candidate.BranchRefId
+                || snapshot.Snapshot.Head.TimelineId
+                    != timelineHead.TimelineId
+                || snapshot.Snapshot.Head.Generation != 0
+                || snapshot.Snapshot.Head.ActiveRecipeDigest is not null
+                || snapshot.Snapshot.Families.Count != 0
+                || snapshot.Snapshot.Definitions.Count != 0
+                || snapshot.Snapshot.Recipes.Count != 0) {
+                throw InvalidCandidate("Control is not exact and empty");
+            }
+        }
+        finally {
+            DisposeHandle(handle, ownership);
+        }
+    }
+
+    private static void ValidateGetter(
+        SessionJournalEngine candidate,
+        Atelia.EventJournal.EventAddress rawHead,
+        O200kBaseHistoryUnitLoadEstimator estimator,
+        CandidateOwnership ownership
+    ) {
+        RecapGridContextOpenResult opened = RecapGridContextFactory.Open(
+            candidate.ReadView,
+            estimator
+        );
+        if (opened is not RecapGridContextOpenResult.Opened available) {
+            throw InvalidCandidate(
+                $"Getter validation returned {opened.GetType().Name}"
+            );
+        }
+        RecapGridContextHandle handle = available.Handle;
+        try {
+            if (handle.Resolve(rawHead, nthPrevious: 0)
+                    is not RecapGridContextResolveResult
+                        .RawHistoryAuthorized) {
+                throw InvalidCandidate(
+                    "Getter did not authorize the exact raw head"
+                );
+            }
+        }
+        finally {
+            DisposeHandle(handle, ownership);
+        }
+    }
+
+    private static void DisposeHandle(
+        IDisposable handle,
+        CandidateOwnership ownership
+    ) {
+        try {
+            handle.Dispose();
+        }
+        catch {
+            ownership.AllHandlesClosed = false;
+            throw;
+        }
+    }
+
+    private static void RequireCreated(string component, object result) {
+        bool created = result switch {
+            RecapGridCadenceCreateResult.Created => true,
+            HistoryTimelineCreateResult.Created => true,
+            RecapGridControlCreateResult.Created => true,
+            _ => false
+        };
+        if (!created) {
+            throw InvalidCandidate(
+                $"{component} create returned {result.GetType().Name}"
+            );
+        }
+    }
+
+    private static InvalidOperationException InvalidCandidate(string detail)
+        => new($"Galatea first-turn bootstrap candidate is invalid: {detail}.");
 
     private static void PublishNoReplace(
         string stagingPath,
@@ -124,8 +420,66 @@ internal static class GalateaSessionRepositoryProvisioner {
         string newPath,
         uint flags
     );
+
+    private sealed class CandidateOwnership {
+        internal bool AllHandlesClosed { get; set; } = true;
+    }
 }
 
 internal sealed record GalateaSessionProvisioningTestHooks(
-    Action<string, string>? BeforeSessionRepositoryPublish = null
+    Action<string, string>? BeforeSessionRepositoryPublish = null,
+    Action<string, string>? AfterSessionRepositoryBootstrapStep = null
 );
+
+internal static class GalateaFirstTurnBootstrapPolicy {
+    internal const long MinimumRecentHistoryLoad = 24_000;
+    internal const long TargetHistoryLoad = 60_000;
+    internal const int MaximumRawEvents = 65_536;
+    internal const int MaximumRenderedBytes = 1_048_576;
+
+    internal static RecapGridCadencePolicySpec Cadence { get; } = new(
+        MinimumRecentHistoryLoad,
+        HistoryPartitionAlgorithms.FirstReplaySafeBoundaryAtTargetV1,
+        O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+        TargetHistoryLoad,
+        MaximumRawEvents,
+        MaximumRenderedBytes
+    );
+
+    internal static HistoryTimelineInitialPolicySpec CreateTimelinePolicy()
+        => new(
+            Cadence.PartitionAlgorithmId,
+            Cadence.HistoryLoadEstimatorId,
+            new HistoryLoadUnit(Cadence.TargetHistoryLoad),
+            Cadence.MaxRawEvents,
+            Cadence.MaxRenderedBytes
+        );
+
+    internal static PartitionPolicyRevision CreateTimelinePolicy(
+        TimelineId timelineId
+    ) => PartitionPolicyRevision.Create(
+        timelineId,
+        Cadence.PartitionAlgorithmId,
+        Cadence.HistoryLoadEstimatorId,
+        new HistoryLoadUnit(Cadence.TargetHistoryLoad),
+        Cadence.MaxRawEvents,
+        Cadence.MaxRenderedBytes
+    );
+
+    internal static bool Matches(RecapGridCadencePolicySpec value)
+        => value.MinimumRecentHistoryLoad
+                == Cadence.MinimumRecentHistoryLoad
+            && string.Equals(
+                value.PartitionAlgorithmId,
+                Cadence.PartitionAlgorithmId,
+                StringComparison.Ordinal
+            )
+            && string.Equals(
+                value.HistoryLoadEstimatorId,
+                Cadence.HistoryLoadEstimatorId,
+                StringComparison.Ordinal
+            )
+            && value.TargetHistoryLoad == Cadence.TargetHistoryLoad
+            && value.MaxRawEvents == Cadence.MaxRawEvents
+            && value.MaxRenderedBytes == Cadence.MaxRenderedBytes;
+}

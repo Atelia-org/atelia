@@ -4,6 +4,14 @@ using System.Net.Http.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
+using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid;
+using Atelia.SessionJournal.RecapGrid.AgentControl;
+using Atelia.SessionJournal.RecapGrid.Cadence;
+using Atelia.SessionJournal.RecapGrid.Control;
+using Atelia.SessionJournal.RecapGrid.Getter;
+using Atelia.SessionJournal.RecapGrid.Hosting;
+using Atelia.SessionJournal.RecapGrid.Store;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -11,7 +19,47 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaSessionProvisioningTests {
     [Fact]
-    public async Task MissingCreateIfMissing_ConcurrentlyCreatesOneRawIdleRepositoryFromExactDefault() {
+    public void FirstTurnBootstrapPolicy_IsExactAndTimelineProjected() {
+        RecapGridCadencePolicySpec cadence =
+            GalateaFirstTurnBootstrapPolicy.Cadence;
+
+        Assert.Equal(24_000, cadence.MinimumRecentHistoryLoad);
+        Assert.Equal(60_000, cadence.TargetHistoryLoad);
+        Assert.Equal(65_536, cadence.MaxRawEvents);
+        Assert.Equal(1_048_576, cadence.MaxRenderedBytes);
+        Assert.Equal(
+            HistoryPartitionAlgorithms
+                .FirstReplaySafeBoundaryAtTargetV1,
+            cadence.PartitionAlgorithmId
+        );
+        Assert.Equal(
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            cadence.HistoryLoadEstimatorId
+        );
+
+        HistoryTimelineInitialPolicySpec timeline =
+            GalateaFirstTurnBootstrapPolicy.CreateTimelinePolicy();
+        Assert.Equal(
+            cadence.PartitionAlgorithmId,
+            timeline.PartitionAlgorithmId
+        );
+        Assert.Equal(
+            cadence.HistoryLoadEstimatorId,
+            timeline.HistoryLoadEstimatorId
+        );
+        Assert.Equal(
+            cadence.TargetHistoryLoad,
+            timeline.TargetHistoryLoad.Value
+        );
+        Assert.Equal(cadence.MaxRawEvents, timeline.MaxRawEvents);
+        Assert.Equal(
+            cadence.MaxRenderedBytes,
+            timeline.MaxRenderedBytes
+        );
+    }
+
+    [Fact]
+    public async Task MissingCreateIfMissing_ConcurrentlyCreatesOneFirstTurnReadyRepositoryFromExactDefault() {
         var factory = new CountingCompletionClientFactory();
         CompletionConnectionConfig decoy = Connection(
             "first",
@@ -53,10 +101,7 @@ public sealed class GalateaSessionProvisioningTests {
         UserSessionHost session = sessions[0];
         Assert.All(sessions, value => Assert.Same(session, value));
         Assert.True(Directory.Exists(host.SessionDirectory));
-        Assert.False(Directory.Exists(Path.Combine(
-            host.SessionDirectory,
-            "derived"
-        )));
+        AssertFirstTurnReadyRepository(session.Engine);
         SessionExecutionBoundaryInspection boundary =
             session.Engine.InspectExecutionBoundary();
         Assert.Equal(SessionExecutionPhase.Idle, boundary.Phase);
@@ -93,7 +138,7 @@ public sealed class GalateaSessionProvisioningTests {
             RecapGridReadinessSnapshotDto
         >(recent.RecapGridReadiness);
         Assert.Equal("exact", readiness.Freshness);
-        Assert.Equal("unprovisioned", readiness.State);
+        Assert.Equal("raw-only", readiness.State);
         Assert.Equal(0, factory.CreateCallCount);
     }
 
@@ -126,7 +171,8 @@ public sealed class GalateaSessionProvisioningTests {
             new CountingCompletionClientFactory(),
             DisabledGalateaUserMessageNormalizer.Instance,
             GalateaSessionProvisioning.CreateIfMissing,
-            maintenanceMode: true
+            maintenanceMode: true,
+            agentControlProfile: CreateNoControlCreateProfile()
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
@@ -217,7 +263,8 @@ public sealed class GalateaSessionProvisioningTests {
                 "current-model",
                 "current-surface"
             )],
-            systemPrompt: "current prompt"
+            systemPrompt: "current prompt",
+            agentControlProfile: CreateNoControlCreateProfile()
         );
         Atelia.EventJournal.EventAddress originalHead;
         using (SessionJournalEngine created = SessionJournalEngine.Create(
@@ -251,6 +298,76 @@ public sealed class GalateaSessionProvisioningTests {
         Assert.Equal(
             3,
             session.Engine.ReadCurrentLineageHeaders().HeadToRoot.Count
+        );
+        Assert.IsType<RecapGridCadenceReaderOpenResult.Absent>(
+            RecapGridCadenceFactory.OpenReader(session.Engine.ReadView)
+        );
+        Assert.IsType<HistoryTimelineOpenResult.Absent>(
+            HistoryTimelineFactory.Open(
+                session.Engine.ReadView,
+                new O200kBaseHistoryUnitLoadEstimator()
+            )
+        );
+    }
+
+    [Fact]
+    public async Task ExistingPartialCreateIfMissing_DoesNotCompleteDerivedBootstrap() {
+        await using var host = GalateaTestHost.CreateMissingSession(
+            new CountingCompletionClientFactory(),
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        Atelia.EventJournal.EventAddress originalHead;
+        byte[] cadenceBytes;
+        using (SessionJournalEngine created = SessionJournalEngine.Create(
+                   host.SessionDirectory,
+                   new SessionCreateOptions(
+                       "model-a",
+                       "test system prompt",
+                       "openai-chat/strict"
+                   ))) {
+            originalHead = Assert.IsType<
+                Atelia.EventJournal.EventAddress
+            >(created.ReadCurrentHead());
+            RecapGridCadenceCreateResult cadenceCreated =
+                RecapGridCadenceFactory.Create(
+                    created,
+                    GalateaFirstTurnBootstrapPolicy.Cadence
+                );
+            cadenceBytes = Assert.IsType<
+                RecapGridCadenceCreateResult.Created
+            >(cadenceCreated).Snapshot.ToCanonicalBytes();
+        }
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+
+        Assert.Equal(originalHead, session.Engine.ReadCurrentHead());
+        RecapGridCadenceReaderOpenResult cadenceOpened =
+            RecapGridCadenceFactory.OpenReader(session.Engine.ReadView);
+        using RecapGridCadenceReaderHandle cadence = Assert.IsType<
+            RecapGridCadenceReaderOpenResult.Opened
+        >(cadenceOpened).Handle;
+        Assert.Equal(
+            cadenceBytes,
+            Assert.IsType<RecapGridCadenceReadResult.Available>(
+                cadence.Reader.ReadSnapshot()
+            ).Snapshot.ToCanonicalBytes()
+        );
+        Assert.IsType<HistoryTimelineOpenResult.Absent>(
+            HistoryTimelineFactory.Open(
+                session.Engine.ReadView,
+                new O200kBaseHistoryUnitLoadEstimator()
+            )
+        );
+        Assert.IsType<RecapGridControlReaderOpenResult.TimelineAbsent>(
+            RecapGridControlFactory.OpenReader(
+                host.SessionDirectory,
+                session.Engine.BranchRefId
+            )
         );
     }
 
@@ -385,12 +502,9 @@ public sealed class GalateaSessionProvisioningTests {
         Assert.False(Directory.Exists(stagingA));
         Assert.False(Directory.Exists(stagingB));
         Assert.True(Directory.Exists(hostA.SessionDirectory));
-        Assert.False(Directory.Exists(Path.Combine(
-            hostA.SessionDirectory,
-            "derived"
-        )));
 
         UserSessionHost winningSession = winner.Session!;
+        AssertFirstTurnReadyRepository(winningSession.Engine);
         SessionExecutionBoundaryInspection boundary =
             winningSession.Engine.InspectExecutionBoundary();
         Assert.Equal(SessionExecutionPhase.Idle, boundary.Phase);
@@ -430,7 +544,7 @@ public sealed class GalateaSessionProvisioningTests {
             );
         Assert.Empty(recent.Turns);
         Assert.Equal(
-            "unprovisioned",
+            "raw-only",
             Assert.IsType<RecapGridReadinessSnapshotDto>(
                 recent.RecapGridReadiness
             ).State
@@ -491,7 +605,143 @@ public sealed class GalateaSessionProvisioningTests {
     }
 
     [Fact]
-    public async Task HttpRecentTurns_FirstAuthenticatedSessionUseCreatesRawRepository() {
+    public async Task BootstrapStepFailure_ClosesAndCleansOwnedCandidate() {
+        var factory = new CountingCompletionClientFactory();
+        await using var host = GalateaTestHost.CreateMissingSession(
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        string? stagingPath = null;
+        service.SessionProvisioningHooksForTest = new(
+            AfterSessionRepositoryBootstrapStep: (component, staging) => {
+                if (string.Equals(
+                        component,
+                        "Cadence",
+                        StringComparison.Ordinal)) {
+                    stagingPath = staging;
+                    throw new TestBootstrapException();
+                }
+            }
+        );
+
+        _ = await Assert.ThrowsAsync<TestBootstrapException>(() =>
+            service.GetSessionAsync("alice", CancellationToken.None));
+
+        Assert.NotNull(stagingPath);
+        Assert.False(Directory.Exists(stagingPath));
+        Assert.False(Directory.Exists(host.SessionDirectory));
+        Assert.Equal(0, factory.CreateCallCount);
+    }
+
+    [Fact]
+    public async Task MissingCreateIfMissing_WithoutControlCreatePermissionWritesNothing() {
+        var factory = new CountingCompletionClientFactory();
+        await using var host = GalateaTestHost.CreateMissingSession(
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            agentControlProfile: CreateNoControlCreateProfile()
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+
+        GalateaSessionUnavailableException failure =
+            await Assert.ThrowsAsync<GalateaSessionUnavailableException>(
+                () => service.GetSessionAsync(
+                    "alice",
+                    CancellationToken.None
+                )
+            );
+
+        Assert.Equal("session-unprovisioned", failure.Code);
+        Assert.False(Directory.Exists(host.SessionDirectory));
+        Assert.Empty(Directory.EnumerateDirectories(
+            host.RootDirectory,
+            ".galatea-session-*.staging",
+            SearchOption.TopDirectoryOnly
+        ));
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.False(File.Exists(Path.Combine(
+            Path.GetDirectoryName(host.ConfigPath)!,
+            "recap-grid-routes.json"
+        )));
+    }
+
+    [Fact]
+    public async Task MissingCreateIfMissing_FirstTwoOrdinaryTurnsUseRawOnlyWithoutRecapDispatch() {
+        var factory = new TwoTurnCompletionFactory();
+        await using var host = GalateaTestHost.CreateMissingSession(
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        GalateaConfig config = GalateaConfigLoader.Load(host.ConfigPath);
+        int routeLoads = 0;
+        RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
+            () => {
+                Interlocked.Increment(ref routeLoads);
+                throw new InvalidOperationException(
+                    "A first-turn raw-only repository must not load routes."
+                );
+            },
+            new CompletionConnectionsFileConfig(
+                config.Connections,
+                config.DefaultConnectionId
+            ),
+            factory,
+            config.RecapGrid!.AgentControlProfiles
+        );
+        var composition = new GalateaRecapGridComposition(
+            completion,
+            config.RecapGrid.CurrentAgentControlProfileId,
+            estimators: [new O200kBaseHistoryUnitLoadEstimator()]
+        );
+        await using var service = new GalateaHostService(
+            config,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            composition
+        );
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        Assert.Equal(0, factory.CreateCallCount);
+
+        for (int index = 1; index <= 2; index++) {
+            GalateaLiveTurn turn = service.StartTurn(
+                session,
+                $"ordinary turn {index}",
+                new GalateaTurnOptions("test")
+            );
+            await service.RunTurnAsync(
+                session,
+                turn,
+                CancellationToken.None
+            );
+            service.FinishTurn(session, turn);
+            Assert.Equal("completed", turn.Status);
+        }
+
+        Assert.Equal(1, factory.CreateCallCount);
+        Assert.Equal(2, factory.Client.MainDispatchCallCount);
+        Assert.Equal(0, factory.Client.RecapDispatchCallCount);
+        Assert.Equal(0, routeLoads);
+        Assert.Equal(
+            2,
+            session.Engine.ReadRecentCompletedTurns()
+                .RequireSnapshot().Turns.Count
+        );
+        Assert.IsType<RecapGridStoreReaderOpenResult.Absent>(
+            RecapGridStoreFactory.OpenReader(host.SessionDirectory)
+        );
+        Assert.False(File.Exists(Path.Combine(
+            Path.GetDirectoryName(host.ConfigPath)!,
+            "recap-grid-routes.json"
+        )));
+    }
+
+    [Fact]
+    public async Task HttpRecentTurns_FirstAuthenticatedSessionUseCreatesFirstTurnReadyRepository() {
         var factory = new CountingCompletionClientFactory();
         await using var host = GalateaTestHost.CreateMissingSession(
             factory,
@@ -515,7 +765,7 @@ public sealed class GalateaSessionProvisioningTests {
         RecapGridReadinessSnapshotDto readiness = Assert.IsType<
             RecapGridReadinessSnapshotDto
         >(recent.RecapGridReadiness);
-        Assert.Equal("unprovisioned", readiness.State);
+        Assert.Equal("raw-only", readiness.State);
         Assert.True(Directory.Exists(host.SessionDirectory));
         Assert.Equal(0, factory.CreateCallCount);
     }
@@ -533,9 +783,30 @@ public sealed class GalateaSessionProvisioningTests {
         ApiKey: "test-key"
     );
 
+    private static RecapGridAgentControlProfile
+        CreateNoControlCreateProfile()
+        => RecapGridAgentControlProfile.Create(
+            "no-create",
+            new RecapGridControlAdmission(
+                RecapGridControlPermission.None,
+                Array.Empty<FamilyDefinitionDigest>(),
+                Array.Empty<string>(),
+                Array.Empty<ContextHeaderCarrier>(),
+                ["test."],
+                maximumBootstrapRows: 0,
+                maximumProjectedCalls: 0
+            )
+        );
+
     private static void AssertCompleteStagingCandidate(string stagingPath) {
         using SessionJournalEngine candidate =
             SessionJournalEngine.OpenReadOnly(stagingPath);
+        AssertFirstTurnReadyRepository(candidate);
+    }
+
+    private static void AssertFirstTurnReadyRepository(
+        SessionJournalEngine candidate
+    ) {
         Assert.Equal(
             SessionExecutionPhase.Idle,
             candidate.InspectExecutionBoundary().Phase
@@ -548,6 +819,75 @@ public sealed class GalateaSessionProvisioningTests {
             ],
             candidate.ReadCurrentLineageHeaders()
                 .HeadToRoot.Select(static value => value.Kind)
+        );
+        var rawHead = Assert.IsType<Atelia.EventJournal.EventAddress>(
+            candidate.ReadCurrentHead()
+        );
+
+        RecapGridCadenceReaderOpenResult cadenceOpened =
+            RecapGridCadenceFactory.OpenReader(candidate.ReadView);
+        using RecapGridCadenceReaderHandle cadence = Assert.IsType<
+            RecapGridCadenceReaderOpenResult.Opened
+        >(cadenceOpened).Handle;
+        RecapGridCadenceSnapshot cadenceSnapshot = Assert.IsType<
+            RecapGridCadenceReadResult.Available
+        >(cadence.Reader.ReadSnapshot()).Snapshot;
+        Assert.True(GalateaFirstTurnBootstrapPolicy.Matches(
+            cadenceSnapshot.Policy
+        ));
+
+        HistoryTimelineOpenResult timelineOpened =
+            HistoryTimelineFactory.Open(
+                candidate.ReadView,
+                new O200kBaseHistoryUnitLoadEstimator()
+            );
+        using HistoryTimelineHandle timeline = Assert.IsType<
+            HistoryTimelineOpenResult.Opened
+        >(timelineOpened).Handle;
+        TimelineHeadRef timelineHead = Assert.IsType<
+            HistoryTimelineSnapshotResult.Available
+        >(timeline.Reader.ReadSnapshot()).Head;
+        Assert.Null(timelineHead.HeadRowId);
+        Assert.Equal(0, timelineHead.Generation);
+        Assert.Equal(
+            GalateaFirstTurnBootstrapPolicy.CreateTimelinePolicy(
+                timelineHead.TimelineId
+            ).PolicyDigest,
+            timelineHead.ActivePartitionPolicyDigest
+        );
+
+        RecapGridControlReaderOpenResult controlOpened =
+            RecapGridControlFactory.OpenReader(
+                candidate.Path,
+                candidate.BranchRefId
+            );
+        using RecapGridControlReaderHandle control = Assert.IsType<
+            RecapGridControlReaderOpenResult.Opened
+        >(controlOpened).Handle;
+        RecapGridControlSnapshot controlSnapshot = Assert.IsType<
+            RecapGridControlSnapshotResult.Available
+        >(control.Reader.ReadSnapshot()).Snapshot;
+        Assert.Equal(timelineHead.TimelineId,
+            controlSnapshot.Head.TimelineId);
+        Assert.Equal(0, controlSnapshot.Head.Generation);
+        Assert.Null(controlSnapshot.ActiveRecipe);
+        Assert.Empty(controlSnapshot.Families);
+        Assert.Empty(controlSnapshot.Definitions);
+        Assert.Empty(controlSnapshot.Recipes);
+        Assert.IsType<RecapGridStoreReaderOpenResult.Absent>(
+            RecapGridStoreFactory.OpenReader(candidate.Path)
+        );
+
+        RecapGridContextOpenResult getterOpened =
+            RecapGridContextFactory.Open(
+                candidate.ReadView,
+                new O200kBaseHistoryUnitLoadEstimator()
+            );
+        using RecapGridContextHandle getter = Assert.IsType<
+            RecapGridContextOpenResult.Opened
+        >(getterOpened).Handle;
+        Assert.IsType<RecapGridContextResolveResult.RawHistoryAuthorized>(
+            getter.Resolve(rawHead, nthPrevious: 0)
         );
     }
 
@@ -570,6 +910,67 @@ public sealed class GalateaSessionProvisioningTests {
         }
     }
 
+    private sealed class TwoTurnCompletionFactory
+        : ICompletionClientFactory {
+        private int _createCallCount;
+
+        internal TwoTurnCompletionClient Client { get; } = new();
+        internal int CreateCallCount => Volatile.Read(
+            ref _createCallCount
+        );
+
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) {
+            _ = connection;
+            Interlocked.Increment(ref _createCallCount);
+            return Client;
+        }
+    }
+
+    private sealed class TwoTurnCompletionClient : ICompletionClient {
+        private int _mainDispatchCallCount;
+        private int _recapDispatchCallCount;
+
+        public string Name => "galatea-first-turn-bootstrap-test";
+        public string ApiSpecId => "openai-chat-v1";
+        internal int MainDispatchCallCount => Volatile.Read(
+            ref _mainDispatchCallCount
+        );
+        internal int RecapDispatchCallCount => Volatile.Read(
+            ref _recapDispatchCallCount
+        );
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            bool isRecap = request.TailMessages is [ObservationMessage {
+                Content: { } tail
+            }] && tail.Contains(
+                $"\"schema\":\"{RecapRewriterProtocolV3.InputProtocolId}\"",
+                StringComparison.Ordinal
+            );
+            if (isRecap) {
+                Interlocked.Increment(ref _recapDispatchCallCount);
+                throw new InvalidOperationException(
+                    "A first-turn raw-only repository must not dispatch recap work."
+                );
+            }
+            int call = Interlocked.Increment(
+                ref _mainDispatchCallCount
+            );
+            string response = $"answer {call}";
+            observer?.OnTextDelta(response);
+            return Task.FromResult(new CompletionResult(
+                new ActionMessage([new ActionBlock.Text(response)]),
+                new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
+            ));
+        }
+    }
+
     private static async Task<SessionAttempt> ObserveAsync(
         Func<Task<UserSessionHost>> action
     ) {
@@ -587,4 +988,5 @@ public sealed class GalateaSessionProvisioningTests {
     );
 
     private sealed class TestPublishException : Exception;
+    private sealed class TestBootstrapException : Exception;
 }

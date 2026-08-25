@@ -129,7 +129,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string defaultConnectionId = "test",
         string systemPrompt = "test system prompt",
         bool maintenanceMode = false,
-        bool deleteFilesOnDispose = true
+        bool deleteFilesOnDispose = true,
+        RecapGridAgentControlProfile? agentControlProfile = null
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizer);
@@ -169,7 +170,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 systemPrompt,
                 callLogDirectory: null,
                 maintenanceMode,
-                agentControlProfile: null,
+                agentControlProfile,
                 sessionProvisioning
             );
             return new GalateaTestHost(

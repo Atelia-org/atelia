@@ -31,7 +31,8 @@ ancestors拒绝symlink/reparse。任何clone都不得提升为production reposit
 
 - 原地修改source或live Galatea repo；
 - `--force`覆盖已有输出；
-- 自动create/provision/activate或从payload自授权；
+- 在本operator staging流程中自动create/provision/activate或从payload自授权；Galatea V2对完全missing user path的
+  unpublished first-turn structural bootstrap是独立current product contract，不授权本runbook改写existing/live repo；
 - route wildcard/default fallback；
 - normal path读取、修复或删除old `derived/recap` roots；
 - 把secret、request/response正文或recap正文写入汇总报告；已有hash/address/path仍按operational metadata限制访问。
@@ -198,7 +199,9 @@ shape、resource bounds或current operator state顺带升级为批准承诺。
 准备strict bounded inputs：
 
 - Timeline/Cadence initial policy：partition algorithm、HistoryLoad estimator、target load、minimum recent load、
-  max raw events、max rendered bytes；本runbook目标值为B=60,000、R=24,000；
+  max raw events、max rendered bytes；本runbook目标值与Galatea missing-session bootstrap一致，但其唯一code authority是
+  `prototypes/Galatea/GalateaSessionRepositoryProvisioner.cs`中的`GalateaFirstTurnBootstrapPolicy`，本文数字只服务本轮
+  operator acceptance，不构成第二份runtime policy source；
 - Control admission：permissions、allowed families/capabilities/carriers/prefixes与budgets；
 - canonical Family/Definition values，或code-owned exact built-in asset id；
 - exact route manifest与acceptance-only strict Completion connections；`semanticModelId`必须显式，含`null`；

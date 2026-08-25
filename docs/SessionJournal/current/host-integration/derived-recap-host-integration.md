@@ -52,13 +52,16 @@ enumerator/lease，不销毁共享snapshot。任何raw head变化均返回typed 
 - CLI：稳定`recap-grid`命令树和唯一顶层`run-online-turn`；read-only/create/maintenance命令在provider
   factory前终止。所有branch mutation要求exact Ref confirmation。
 - Galatea：strict RecapGrid config包含deferred route manifest、bounded profile catalog与exact current profile；
-  historical profiles保留用于frozen recovery，禁止fallback。
+  historical profiles保留用于frozen recovery，禁止fallback。`create-if-missing`只在unpublished same-parent session candidate中，
+  以`GalateaFirstTurnBootstrapPolicy`创建并验证Cadence、empty Timeline与empty Control，使首轮进入formal raw-only；existing
+  repository与maintenance path均不补写。
 - Galatea progress使用formal `RecapGridReadiness` DTO，来源是Getter Resolve；仅Unfulfilled时调用
   Manager InspectProgress，provider/build/write为零。
 
 ## Boundaries
 
-- built-in assets必须由operator显式provision/register/compose/activate；normal Host绝不auto-create。
+- built-in assets、Store、recipe与activation必须由operator显式provision/register/compose/activate；Galatea的missing-session
+  bootstrap只auto-create首轮structural三域，不是full Grid provisioning，也不读取route或dispatch provider。
 - `recap_grid.control`的receipt支持幂等replay与indeterminate settlement，但不把uncertain external effects
   描述成exactly-once。
 - old v4-v8/rebuild legacy roots inert；只有formal legacy-root operator可以archive/delete。

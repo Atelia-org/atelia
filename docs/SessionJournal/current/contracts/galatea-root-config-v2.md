@@ -1,10 +1,11 @@
 # Galatea root config V2 current contract
 
 状态：**Current product contract；hard cut from V1**  
-Authority：current Galatea code、`GalateaRootConfigFieldLanguageTests`与`GalateaConfigValidationTests`  
+Authority：current Galatea code、`GalateaRootConfigFieldLanguageTests`、`GalateaConfigValidationTests`与
+`GalateaSessionProvisioningTests`  
 Prior historical contract：[Galatea root config V1 approved contract](galatea-root-config-v1.md)
 
-本文定义Galatea `config.json` current V2的exact field language、path semantics与per-user raw SessionJournal
+本文定义Galatea `config.json` current V2的exact field language、path semantics与per-user SessionJournal
 provisioning policy。V2只改变Galatea-owned root config及其session initialization行为；Completion
 `connections.json`、RecapGrid Route manifest、AgentControl profile、HTTP、SSE与durable SessionJournal wire仍服从
 各自owner的现有版本。
@@ -67,15 +68,24 @@ UTF-8；decode后执行`Trim()`且结果必须nonblank。有效文件允许inlin
   recovery仍判定corrupt或invalid，则provisioning层fail closed，不会adopt、reset、rebuild或fallback create；V2 root config
   contract不统一这些owner/host classification。
 - `create-if-missing`：普通writable host在首次实际请求该user session且`sessionDir`完全不存在时调用
-  `SessionJournalEngine.Create`在final path同一parent下的不可预测unique staging path构造完整candidate。初始化使用default
-  connection的`ModelId`、`CompletionSurfaceId`及该user最终resolved `SystemPrompt`，产生合法Idle raw repository；仅当
-  candidate Create与engine Dispose都成功后，才以Linux `renameat2(RENAME_NOREPLACE)`原子create-only发布到final path，
-  随后从final path重新`Open`。若final path已有任何filesystem entry，publish不能替换它；initial observation时已存在则只走
-  owner open/fail-closed路径，不会删除、overwrite、adopt、reset或rebuild。
+  `SessionJournalEngine.Create`在final path同一parent下的不可预测unique staging path构造raw candidate，并在同一unpublished
+  candidate内依次创建Cadence、empty Timeline与empty Control。raw初始化使用default connection的`ModelId`、
+  `CompletionSurfaceId`及该user最终resolved `SystemPrompt`；三域policy与validation服从下述first-turn bootstrap。仅当全部创建、
+  验证及handle/engine关闭成功后，才以Linux `renameat2(RENAME_NOREPLACE)`原子create-only发布到final path，随后从final path
+  重新`Open`。若final path已有任何filesystem entry，publish不能替换它；initial observation时已存在则只走owner
+  open/fail-closed路径，不会删除、overwrite、adopt、reset、rebuild或补写缺失三域。
 - maintenance mode对两种policy都只允许read-only open，绝不create。
 - login/authentication本身不provision；首次需要`GetSessionAsync`的authenticated session operation触发lazy initialization。
-- auto-create仅涵盖raw SessionJournal。Timeline、Cadence、Control、Store、route/profile及任何RecapGrid asset仍必须由
-  operator显式provision；raw-only recent view保持合法。
+- first-turn bootstrap的唯一Galatea-owned policy owner为`GalateaFirstTurnBootstrapPolicy`：partition algorithm为
+  `FirstReplaySafeBoundaryAtTargetV1`、estimator为O200k、R=24,000、B=60,000、max raw=65,536、max rendered=1,048,576；
+  Timeline policy必须从同一Cadence spec投影。Control使用`currentAgentControlProfileId` exact profile的canonical Admission；
+  仅在final path确实missing且即将创建时、在创建parent/staging前要求其含`Create` permission。
+- private brand-new staging中的Cadence、Timeline、Control create只接受`Created`。发布前必须验证raw为Idle且exact三事件、Cadence
+  exact policy、Timeline empty且policy match、Control绑定同一Ref/Timeline并保持generation 0与empty/no-active、Store及
+  asset/recipe absent，并由Getter对exact raw head返回`RawHistoryAuthorized`。该过程不读取route、不创建Completion client且不
+  dispatch provider。
+- auto-create不创建Store、asset、Family/Definition、recipe或activation；它只承诺first-turn structural raw-only，不承诺
+  full RecapGrid ready。完整provision/activation仍由operator拥有。
 - failed lazy initialization会从in-process session cache精确移除，使operator修复后可在同一process重试；失败本身不会
   自动清理可能残留的filesystem state。
 - candidate关闭后、atomic publish前的失败或atomic publish失败时，runtime只best-effort删除本次Create与Dispose都已成功的
@@ -102,7 +112,7 @@ owner-defined V1 language。
 
 Current root bootstrap template写exact numeric `v:2`，为`alice`与`bob`都显式写
 `sessionProvisioning:"create-if-missing"`，使用`sessions/alice|bob`相对路径。Bootstrap只生成缺失的root或sibling
-connections template；它不创建SessionJournal repository、不验证provider，也不provision RecapGrid sidecar。
+connections template；config bootstrap本身不创建SessionJournal repository、不验证provider，也不provision任何sidecar。
 
 若root file已经存在，bootstrap不会添加policy、升级version、修改password或按template重写。Operator从V1升级时必须
 停服、备份、确认实际`Galatea:ConfigPath`，为每个user明确选择policy，再把version改为2；应用不会自动迁移。
@@ -116,5 +126,6 @@ dependency mismatch等semantic failure归类为`InvalidOperationException`。Und
 dependency exception可以传播；diagnostic逐字文本不是machine contract。
 
 本合同不承诺password encryption、secret-store integration、bootstrap file permissions、Kestrel deployment、provider
-readiness、automatic config rewrite/migration、session repair/move、RecapGrid auto-provision或path confinement。Connections、
+readiness、automatic config rewrite/migration、session repair/move、existing-repository derived migration、full RecapGrid
+provision/activation或path confinement。Connections、
 Route、profile、HTTP/SSE及SessionJournal durable wire不会因root version升到V2而同步改版。
