@@ -155,11 +155,7 @@ internal static class SessionPreparedRequestReconstructor {
         );
         if (manifest.Commitment != actualCommitment) {
             throw new InvalidDataException(
-                "completion-request-prepared commitment does not match the reconstructed canonical request: "
-                + $"expectedLength={manifest.Commitment.ByteLength}, "
-                + $"actualLength={actualCommitment.ByteLength}, "
-                + $"expectedSha256={manifest.Commitment.Sha256}, "
-                + $"actualSha256={actualCommitment.Sha256}."
+                "completion-request-prepared commitment does not match the reconstructed canonical request."
             );
         }
 
