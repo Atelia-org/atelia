@@ -78,7 +78,8 @@ UTF-8；decode后执行`Trim()`且结果必须nonblank。有效文件允许inlin
   operator显式provision；raw-only recent view保持合法。
 - failed lazy initialization会从in-process session cache精确移除，使operator修复后可在同一process重试；失败本身不会
   自动清理可能残留的filesystem state。
-- publish前hook或atomic publish失败时，runtime只best-effort删除本次Create与Dispose都已成功的owned staging candidate；
+- candidate关闭后、atomic publish前的失败或atomic publish失败时，runtime只best-effort删除本次Create与Dispose都已成功的
+  owned staging candidate；
   crash及candidate Create/Dispose中途失败可以留下unique staging residue。Normal runtime不扫描或自动清理任何历史
   staging residue；publish成功后final repository在后续Open/inspection/recent projection失败时也绝不删除。
 

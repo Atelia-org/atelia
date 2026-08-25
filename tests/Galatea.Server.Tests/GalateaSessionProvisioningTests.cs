@@ -408,21 +408,21 @@ public sealed class GalateaSessionProvisioningTests {
         );
         SessionGoverningSetup winnerSetup =
             winningSession.Engine.ResolveGoverningSetup(winnerHead);
-        Assert.Contains(
+        bool winnerIsA = ReferenceEquals(winner, attempts[0]);
+        var expectedWinnerSetup = winnerIsA
+            ? ("model-a", "surface-a", "prompt-a")
+            : ("model-b", "surface-b", "prompt-b");
+        Assert.Equal(
+            expectedWinnerSetup,
             (
                 winnerSetup.RuntimeConfig.ModelId,
                 winnerSetup.RuntimeConfig.CompletionSurfaceId,
                 winnerSetup.SystemPrompt
-            ),
-            new (string, string, string)[] {
-                ("model-a", "surface-a", "prompt-a"),
-                ("model-b", "surface-b", "prompt-b")
-            }
+            )
         );
-        GalateaHostService winnerService = ReferenceEquals(
-            winner,
-            attempts[0]
-        ) ? serviceA : serviceB;
+        GalateaHostService winnerService = winnerIsA
+            ? serviceA
+            : serviceB;
         RecentTurnsResponseDto recent =
             await winnerService.GetRecentTurnsAsync(
                 winningSession,
