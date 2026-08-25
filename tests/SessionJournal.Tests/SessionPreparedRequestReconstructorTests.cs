@@ -13,10 +13,6 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     );
     private readonly List<string> _tempDirectories = [];
 
-    static SessionPreparedRequestReconstructorTests() {
-        ReasoningBlockCodecRegistry.Shared.Register(new OpaqueReasoningCodec());
-    }
-
     public void Dispose() {
         foreach (string path in _tempDirectories) {
             try {
@@ -64,8 +60,9 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         Assert.Empty(direct.Request.TailMessages);
         Assert.Empty(committed.Request.TailMessages);
         var action = Assert.IsType<ActionMessage>(committed.Request.PromptPrefix.SharedContextMessages[^2]);
-        var reasoning = Assert.IsType<OpaqueReasoningBlock>(action.Blocks[0]);
-        Assert.Equal([0, 1, 2, 254, 255], reasoning.Payload);
+        var reasoning = Assert.IsType<ActionBlock.OpaqueReasoningBlock>(action.Blocks[0]);
+        Assert.Equal("atelia.tests.unregistered-reasoning.v1", reasoning.CodecId);
+        Assert.Equal([0, 1, 2, 254, 255], reasoning.OpaquePayload.ToArray());
         Assert.Single(action.ToolCalls);
         var results = Assert.IsType<ToolResultsMessage>(
             committed.Request.PromptPrefix.SharedContextMessages[^1]
@@ -513,8 +510,9 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         );
         var actionMessage = new ActionMessage(
             [
-            new OpaqueReasoningBlock(
-                [0, 1, 2, 254, 255],
+            new ActionBlock.OpaqueReasoningBlock(
+                "atelia.tests.unregistered-reasoning.v1",
+                new byte[] { 0, 1, 2, 254, 255 },
                 new CompletionDescriptor("provider", "api", "model-A"),
                 "opaque debug"
             ),
@@ -778,34 +776,4 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         CompletionRequestPreparedBody Manifest
     );
 
-    private sealed record OpaqueReasoningBlock(
-        byte[] Payload,
-        CompletionDescriptor Origin,
-        string? PlainText
-    ) : ActionBlock.ReasoningBlock(Origin, PlainText);
-
-    private sealed class OpaqueReasoningCodec : IReasoningBlockCodec {
-        public string CodecId => "atelia.tests.opaque-reasoning.v1";
-
-        public bool CanEncode(ActionBlock.ReasoningBlock block)
-            => block is OpaqueReasoningBlock;
-
-        public SerializedReasoningBlock Encode(ActionBlock.ReasoningBlock block) {
-            var opaque = Assert.IsType<OpaqueReasoningBlock>(block);
-            return SerializedReasoningBlock.Create(
-                CodecId,
-                opaque.Origin,
-                opaque.Payload,
-                opaque.PlainText
-            );
-        }
-
-        public ActionBlock.ReasoningBlock Decode(
-            SerializedReasoningBlock serialized
-        ) => new OpaqueReasoningBlock(
-            serialized.Payload,
-            serialized.ToOrigin(),
-            serialized.PlainText
-        );
-    }
 }
