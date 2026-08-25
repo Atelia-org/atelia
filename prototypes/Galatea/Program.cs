@@ -3,7 +3,6 @@ using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Diagnostics;
-using Microsoft.AspNetCore.Authentication.Cookies;
 using Atelia.Galatea.Server;
 using Microsoft.AspNetCore.Authentication;
 using Atelia.SessionJournal;
@@ -18,13 +17,18 @@ string resolvedConfigPath = Path.GetFullPath(configuredConfigPath, builder.Envir
 GalateaConfigBootstrapper.EnsureExistsOrBootstrap(resolvedConfigPath);
 var config = GalateaConfigLoader.Load(resolvedConfigPath);
 string assetVersion = GalateaStaticAssetVersion.BuildToken(builder.Environment.ContentRootPath);
+ICompletionClientFactory completionClientFactory =
+    GalateaCodexSubscriptionComposition.CreateFactory(config);
 
-if (config.ListenUrls is { Count: > 0 }) {
-    builder.WebHost.UseUrls(config.ListenUrls.ToArray());
-}
+GalateaCodexSubscriptionComposition.ConfigureWebHost(
+    builder.WebHost,
+    config
+);
 
 builder.Services.AddSingleton(config);
-builder.Services.AddSingleton<ICompletionClientFactory, DefaultCompletionClientFactory>();
+builder.Services.AddSingleton<ICompletionClientFactory>(
+    completionClientFactory
+);
 builder.Services.AddSingleton<IGalateaUserMessageNormalizer>(_ => GalateaUserMessageNormalizerFactory.CreateFromEnvironment());
 builder.Services.AddSingleton<GalateaHostService>();
 builder.Services.ConfigureHttpJsonOptions(

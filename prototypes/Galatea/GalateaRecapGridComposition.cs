@@ -2,7 +2,6 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Online;
 using Atelia.SessionJournal.RecapGrid.AgentControl;

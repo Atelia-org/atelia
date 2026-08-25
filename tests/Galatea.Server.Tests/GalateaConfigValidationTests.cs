@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.OpenAI;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
@@ -876,7 +877,10 @@ public sealed class GalateaConfigValidationTests {
     private static string WriteConfig(
         string root,
         IReadOnlyList<GalateaUserConfig> users,
-        string? callLogDirectory = null
+        string? callLogDirectory = null,
+        IReadOnlyList<string>? listenUrls = null,
+        IReadOnlyList<CompletionConnectionConfig>? connections = null,
+        string defaultConnectionId = "test"
     ) {
         string configPath = Path.Combine(root, "config.json");
         File.WriteAllText(
@@ -885,6 +889,7 @@ public sealed class GalateaConfigValidationTests {
                 new GalateaUsersFileConfig(
                     Version: GalateaStrictConfigReader.CurrentConfigVersion,
                     Users: users,
+                    ListenUrls: listenUrls,
                     CallLogDir: callLogDirectory,
                     RecapGrid: new GalateaRecapGridFileConfig(
                         "routes.json",
@@ -901,8 +906,8 @@ public sealed class GalateaConfigValidationTests {
         );
         GalateaTestHost.WriteConnectionsFile(
             Path.Combine(root, GalateaConfigLoader.ConnectionsFileName),
-            Connections,
-            "test"
+            connections ?? Connections,
+            defaultConnectionId
         );
         return configPath;
     }

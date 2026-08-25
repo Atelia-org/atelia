@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Collections.Concurrent;
-using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Runtime.ExceptionServices;
@@ -8,17 +7,13 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading.Channels;
 using Atelia.Completion;
 using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.Tools;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Hosting;
-using Atelia.SessionJournal.RecapGrid.Manager;
-using Atelia.SessionJournal.RecapGrid.Getter;
 using Atelia.SessionJournal.RecapGrid.Online;
 
 namespace Atelia.Galatea.Server;
@@ -44,7 +39,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer userMessageNormalizer
     ) {
-        ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         GalateaConfigValidation.RequireDistinctSessionDirectories(
             config.Users
@@ -100,7 +94,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         IGalateaUserMessageNormalizer userMessageNormalizer,
         GalateaRecapGridComposition recapGrid
     ) {
-        ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(recapGrid);
         GalateaConfigValidation.RequireDistinctSessionDirectories(
             config.Users
@@ -1693,10 +1686,10 @@ internal static class GalateaConfigLoader {
 
         }
 
-        if (config.ListenUrls is null) { return; }
-
-        for (int i = 0; i < config.ListenUrls.Count; i++) {
-            if (string.IsNullOrWhiteSpace(config.ListenUrls[i])) { throw new InvalidOperationException($"Galatea config listenUrls[{i}] must not be blank."); }
+        if (config.ListenUrls is not null) {
+            for (int i = 0; i < config.ListenUrls.Count; i++) {
+                if (string.IsNullOrWhiteSpace(config.ListenUrls[i])) { throw new InvalidOperationException($"Galatea config listenUrls[{i}] must not be blank."); }
+            }
         }
     }
 

@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Net.Http;
 using System.Security;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
