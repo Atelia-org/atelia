@@ -137,14 +137,14 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     }
 
     [Fact]
-    public async Task FreshTypedRejection_SettlesIdleAndNextFreshTurnSucceeds() {
+    public async Task FreshTypedNoDispatchRejection_SettlesIdleAndNextFreshTurnSucceeds() {
         var completion = new SequencedCompletionClient();
         completion.Enqueue(_ => throw new CompletionRequestRejectedException(
             CompletionTermination.Failed(
-                "provider.access-denied",
-                "The provider rejected the request before streaming."
+                "openai.responses.invalid-function-name",
+                "The adapter rejected an invalid function name before dispatch."
             ),
-            ["http-status=403"]
+            ["adapter-validation=function-name"]
         ));
         completion.Enqueue(request => new CompletionResult(
             new ActionMessage([new ActionBlock.Text("answer after rejection")]),

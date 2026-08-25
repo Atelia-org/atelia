@@ -1512,17 +1512,16 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_TypedPreStreamRejection_PersistsExactAttemptFailure() {
+    public async Task SendAsync_TypedKnownNoDispatchRejection_PersistsExactAttemptFailure() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
         var callerErrors = new List<string> {
-            "http-status=403",
-            "request-id=req_safe-123"
+            "adapter-validation=function-name"
         };
         var rejection = new CompletionRequestRejectedException(
             CompletionTermination.Failed(
-                "provider.access-denied",
-                "The provider rejected the request before streaming."
+                "openai.responses.invalid-function-name",
+                "The adapter rejected an invalid function name before dispatch."
             ),
             callerErrors
         );
@@ -1581,7 +1580,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             );
         }
         Assert.Equal(CompletionTerminationKind.Failed, body.TerminationKind);
-        Assert.Equal("provider.access-denied", body.ProviderReason);
+        Assert.Equal(
+            "openai.responses.invalid-function-name",
+            body.ProviderReason
+        );
         Assert.Equal(rejection.Termination.Detail, body.Detail);
         Assert.Equal(callerErrors, body.Errors);
 
