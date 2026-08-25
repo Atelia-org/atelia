@@ -229,15 +229,17 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_RestartKnownFailure_BindsFailureToRestartAttempt() {
+    public async Task ResumeAsync_RestartTypedRejection_BindsFailureToNewAttempt() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
         _ = await CreateUncertainAsync(path, CreateRuntime(sourceClient));
         var recoveryClient = new ScriptedClient();
-        recoveryClient.Enqueue(request => new CompletionResult(
-            new ActionMessage([new ActionBlock.Text("unused")]),
-            Descriptor(request),
-            termination: CompletionTermination.Failed("provider-failed", "known")
+        recoveryClient.Enqueue(_ => throw new CompletionRequestRejectedException(
+            CompletionTermination.Failed(
+                "provider.rate-limited",
+                "The provider rejected the request before streaming."
+            ),
+            ["http-status=429", "retry-after-seconds=5"]
         ));
         using (var reopened = SessionJournalTestRuntime.Attach(
             SessionJournalEngine.Open(
@@ -248,8 +250,17 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
             )
         )) {
-            await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
+            SessionJournalTurnAbortedException error =
+                await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
                 () => reopened.ResumeAsync(CancellationToken.None)
+            );
+            Assert.Equal(
+                "provider.rate-limited",
+                error.Termination.ProviderReason
+            );
+            Assert.Equal(
+                ["http-status=429", "retry-after-seconds=5"],
+                error.Errors
             );
             Assert.Equal(
                 SessionExecutionPhase.TurnFailed,
@@ -263,6 +274,18 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             ReadAddressesByKind(path, SessionEventKind.CompletionAttemptFailed)
         );
         Assert.Equal(restarted, ReadParent(path, failureAddress));
+        CompletionAttemptFailedBody failure = ReadBody<
+            CompletionAttemptFailedBody
+        >(
+            path,
+            failureAddress,
+            SessionEventKind.CompletionAttemptFailed
+        );
+        Assert.Equal("provider.rate-limited", failure.ProviderReason);
+        Assert.Equal(
+            ["http-status=429", "retry-after-seconds=5"],
+            failure.Errors
+        );
     }
 
     [Fact]

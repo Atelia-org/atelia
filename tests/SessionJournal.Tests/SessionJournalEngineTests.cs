@@ -1512,6 +1512,131 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
+    public async Task SendAsync_TypedPreStreamRejection_PersistsExactAttemptFailure() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        var callerErrors = new List<string> {
+            "http-status=403",
+            "request-id=req_safe-123"
+        };
+        var rejection = new CompletionRequestRejectedException(
+            CompletionTermination.Failed(
+                "provider.access-denied",
+                "The provider rejected the request before streaming."
+            ),
+            callerErrors
+        );
+        client.Enqueue(_ => throw rejection);
+        var candidateSource = new TestContextCandidateSource();
+
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
+            CreateRuntime(client, candidateSource: candidateSource)
+        )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine,
+                candidateSource
+            );
+            SessionJournalTurnAbortedException error =
+                await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
+                    () => engine.SendAsync("hello", CancellationToken.None)
+                );
+
+            Assert.Same(rejection.Termination, error.Termination);
+            Assert.Equal(callerErrors, error.Errors);
+            Assert.Equal(
+                SessionExecutionPhase.TurnFailed,
+                engine.ResolveExecutionTail().State.Phase
+            );
+        }
+
+        EventAddress prepared = Assert.Single(ReadJournalAddressesByKind(
+            path,
+            SessionEventKind.CompletionRequestPrepared
+        ));
+        EventAddress started = Assert.Single(ReadJournalAddressesByKind(
+            path,
+            SessionEventKind.CompletionAttemptStarted
+        ));
+        EventAddress failed = Assert.Single(ReadJournalAddressesByKind(
+            path,
+            SessionEventKind.CompletionAttemptFailed
+        ));
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            Assert.Equal(prepared, journal.ReadEventHeaderChecked(started).Unwrap().Parent);
+            Assert.Equal(started, journal.ReadEventHeaderChecked(failed).Unwrap().Parent);
+        }
+        CompletionAttemptFailedBody body;
+        using (var inspection = SessionJournalEngine.Open(path)) {
+            body = Assert.IsType<CompletionAttemptFailedBody>(
+                SessionEventCodec.Decode(
+                    SessionEventKind.CompletionAttemptFailed,
+                    inspection.ReadPayloadBytes(failed),
+                    out _
+                )
+            );
+        }
+        Assert.Equal(CompletionTerminationKind.Failed, body.TerminationKind);
+        Assert.Equal("provider.access-denied", body.ProviderReason);
+        Assert.Equal(rejection.Termination.Detail, body.Detail);
+        Assert.Equal(callerErrors, body.Errors);
+
+        using var reopened = SessionJournalEngine.Open(path);
+        Assert.Equal(
+            SessionExecutionPhase.TurnFailed,
+            reopened.ResolveExecutionTail().State.Phase
+        );
+        Assert.False((await reopened.ResumeAsync(CancellationToken.None)).Advanced);
+    }
+
+    [Fact]
+    public async Task SendAsync_TypedRejectionFailureAppendError_RemainsUncertain() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        client.Enqueue(_ => throw new CompletionRequestRejectedException(
+            CompletionTermination.Failed("provider.access-denied")
+        ));
+        var candidateSource = new TestContextCandidateSource();
+        var hooks = new SessionJournalTestHooks(
+            BeforeCommit: (kind, _) => {
+                if (kind == SessionEventKind.CompletionAttemptFailed) {
+                    throw new IOException("simulated failure append error");
+                }
+            }
+        );
+        using (var engine = SessionJournalEngine.CreateForTest(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(client, candidateSource: candidateSource),
+            hooks
+        )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine,
+                candidateSource
+            );
+
+            IOException error = await Assert.ThrowsAsync<IOException>(
+                () => engine.SendAsync("hello", CancellationToken.None)
+            );
+
+            Assert.Equal("simulated failure append error", error.Message);
+            Assert.Equal(
+                SessionExecutionPhase.AwaitingCompletion,
+                engine.ResolveExecutionTail().State.Phase
+            );
+        }
+        Assert.Empty(ReadJournalAddressesByKind(
+            path,
+            SessionEventKind.CompletionAttemptFailed
+        ));
+    }
+
+    [Fact]
     public async Task SendAsync_AfterTurnFailed_RequiresExactAbandonBeforeNextObservation() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();

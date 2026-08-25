@@ -3172,28 +3172,25 @@ public sealed partial class SessionJournalEngine : IDisposable {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
-        CompletionResult result = await runtime.CompletionClient
-            .StreamCompletionAsync(request, observer, cancellationToken)
-            .ConfigureAwait(false);
+        CompletionResult result;
+        try {
+            result = await runtime.CompletionClient
+                .StreamCompletionAsync(request, observer, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (CompletionRequestRejectedException rejection) {
+            throw PersistKnownCompletionFailure(
+                activeAttemptAddress,
+                rejection.Termination,
+                rejection.Errors
+            );
+        }
 
         if (!result.Termination.IsSuccess) {
-            IReadOnlyList<string> frozenErrors = FreezeErrors(result.Errors)
-                ?? Array.AsReadOnly(Array.Empty<string>());
-            AppendExpected(
-                SessionEventKind.CompletionAttemptFailed,
-                new CompletionAttemptFailedBody(
-                    result.Termination.Kind,
-                    result.Termination.ProviderReason,
-                    result.Termination.Detail,
-                    frozenErrors
-                ),
+            throw PersistKnownCompletionFailure(
                 activeAttemptAddress,
-                requireBoundSetupCursor: false
-            );
-            throw new SessionJournalTurnAbortedException(
-                BuildTurnAbortMessage(result.Termination),
                 result.Termination,
-                frozenErrors
+                result.Errors
             );
         }
 
@@ -3247,21 +3244,36 @@ public sealed partial class SessionJournalEngine : IDisposable {
     ) {
         CompletionTermination hostFailure = CompletionTermination.Failed(reason, detail);
         IReadOnlyList<string> errors = Array.AsReadOnly([detail]);
+        throw PersistKnownCompletionFailure(
+            activeAttemptAddress,
+            hostFailure,
+            errors
+        );
+    }
+
+    private SessionJournalTurnAbortedException
+        PersistKnownCompletionFailure(
+            EventAddress activeAttemptAddress,
+            CompletionTermination failure,
+            IReadOnlyList<string>? errors
+        ) {
+        IReadOnlyList<string> frozenErrors = FreezeErrors(errors)
+            ?? Array.AsReadOnly(Array.Empty<string>());
         AppendExpected(
             SessionEventKind.CompletionAttemptFailed,
             new CompletionAttemptFailedBody(
-                hostFailure.Kind,
-                hostFailure.ProviderReason,
-                hostFailure.Detail,
-                errors
+                failure.Kind,
+                failure.ProviderReason,
+                failure.Detail,
+                frozenErrors
             ),
             activeAttemptAddress,
             requireBoundSetupCursor: false
         );
-        throw new SessionJournalTurnAbortedException(
-            BuildTurnAbortMessage(hostFailure),
-            hostFailure,
-            errors
+        return new SessionJournalTurnAbortedException(
+            BuildTurnAbortMessage(failure),
+            failure,
+            frozenErrors
         );
     }
 

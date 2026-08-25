@@ -2,7 +2,7 @@
 
 状态：Current safety contract
 
-实现基线：`6e73b2f29e378233ad8699928942f233b22266bd`（本文写作前的 exact code HEAD）
+实现起点：`0afe6ebe`；本文新增语义由同一变更中的 owning code/tests 锁定。
 
 基线只证明下列 current code/tests 在该 checkout 上的行为；后续 HEAD 不自动继承本文判断。
 本文拥有 provider/tool external-effect recovery 的当前安全边界，不取代 raw wire、Prepared manifest、
@@ -19,6 +19,21 @@ Prepared request 上创建新的 attempt，而不是证明或继续旧 attempt�
 当前 Core 没有 provider request/result lookup、reconciliation、capability discovery，也没有跨进程
 lease/single-flight。Host 不得把 idempotency key、provider handle 或 operator 推测当成 Core 已提供的
 exactly-once proof。
+
+### 明确的 pre-stream rejection：Started 后可持久化 Failed
+
+`CompletionAttemptStarted` 是 fail-closed 的默认分界，不代表所有调用异常都永久 uncertain。provider adapter
+若拥有本次调用的直接、权威证据，证明远端在任何 observer delta 前明确拒绝 request，并且该 request 不可能再产生
+Action，可以抛出窄义 `CompletionRequestRejectedException`。Core 只 catch 这个 exact provider-neutral 类型，把其中
+`CompletionTerminationKind.Failed`、稳定 `ProviderReason` 与 caller 提供的 bounded/content-free diagnostics 追加为现有
+`CompletionAttemptFailed`，随后以 `SessionJournalTurnAbortedException` 结束本轮。事件 kind、body schema 与恢复 phase
+均不新增：reopen 后仍是既有 `TurnFailed`，由 Host 按 exact failed-head policy 处理。
+
+这条翻译不适用于普通 exception、caller cancellation、transport failure、redirect、5xx、未验证的 4xx、2xx non-SSE、
+SSE malformed/EOF/protocol failure，或已经产生任意 observer delta 的调用；它们继续停在 Started uncertain。若
+`CompletionAttemptFailed` 的 append 本身失败，Core 传播该 append failure，不能声称 known outcome 已持久化，durable head
+仍保持 Started uncertain。adapter 也不得把 raw response body/message、token、account、prompt、generated output 或
+`InnerException` 放入该 typed rejection。
 
 ## ToolExecutionStarted：durable continuation，不等于 provider policy
 
@@ -47,6 +62,7 @@ provider/tool result lookup、reconcile、capability-aware retry，以及 durabl
 
 | Concern | Owning code | Focused evidence |
 |---|---|---|
+| pre-stream known rejection | [`CompletionRequestRejectedException.cs`](../../../../prototypes/Completion.Abstractions/CompletionRequestRejectedException.cs)、[`SessionJournalEngine.cs`](../../../../prototypes/SessionJournal/SessionJournalEngine.cs) | [`CompletionRequestRejectedExceptionTests.cs`](../../../../tests/Completion.Tests/CompletionRequestRejectedExceptionTests.cs)、[`SessionJournalEngineTests.cs`](../../../../tests/SessionJournal.Tests/SessionJournalEngineTests.cs) |
 | provider policy/default | [`SessionJournalContracts.cs`](../../../../prototypes/SessionJournal/SessionJournalContracts.cs)、[`SessionJournalEngine.cs`](../../../../prototypes/SessionJournal/SessionJournalEngine.cs) | [`SessionPreparedCompletionRecoveryEngineTests.cs`](../../../../tests/SessionJournal.Tests/SessionPreparedCompletionRecoveryEngineTests.cs) |
 | recovery inspection | [`SessionRuntimeRecoveryRequirements.cs`](../../../../prototypes/SessionJournal/SessionRuntimeRecoveryRequirements.cs)、[`SessionJournalEngine.RuntimeRecovery.cs`](../../../../prototypes/SessionJournal/SessionJournalEngine.RuntimeRecovery.cs) | [`SessionRuntimeRecoveryRequirementsTests.cs`](../../../../tests/SessionJournal.Tests/SessionRuntimeRecoveryRequirementsTests.cs) |
 | tool reservation/continuation | [`SessionJournalEngine.cs`](../../../../prototypes/SessionJournal/SessionJournalEngine.cs)、[`SessionExecutionTailResolver.cs`](../../../../prototypes/SessionJournal/SessionExecutionTailResolver.cs) | [`SessionJournalEngineTests.cs`](../../../../tests/SessionJournal.Tests/SessionJournalEngineTests.cs)、[`SessionExecutionTailResolverTests.cs`](../../../../tests/SessionJournal.Tests/SessionExecutionTailResolverTests.cs) |
