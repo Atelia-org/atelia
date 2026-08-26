@@ -8,6 +8,7 @@ export const bridgeErrorCodes = [
   "TURN_TIMEOUT",
   "INVALID_CWD",
   "CWD_NOT_ALLOWED",
+  "CWD_MISMATCH",
   "SANDBOX_DENIED",
   "NETWORK_DENIED",
   "BRIDGE_BUSY",
@@ -65,4 +66,3 @@ export function asBridgeError(error: unknown): BridgeError {
     cause: error,
   });
 }
-

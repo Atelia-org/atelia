@@ -37,11 +37,14 @@ export interface GalateaCodexAdapterOptions {
   interruptGraceMs: number;
   maxFinalBytes: number;
   maxOutputFrameBytes: number;
+  maxDispatchTombstones: number;
   write(frame: GalateaOutputFrame): Promise<void>;
 }
 
 export class GalateaCodexAdapter {
   private stopping = false;
+  private stopPromise?: Promise<void>;
+  private readonly dispatchTombstones = new Set<string>();
 
   constructor(private readonly options: GalateaCodexAdapterOptions) {}
 
@@ -50,12 +53,24 @@ export class GalateaCodexAdapter {
       await this.fail(input, "shutdown", "SIDECAR_STOPPING");
       return;
     }
+    if (this.dispatchTombstones.has(input.dispatchId)) {
+      await this.fail(input, "start", "DUPLICATE_DISPATCH_ID");
+      return;
+    }
+    if (this.dispatchTombstones.size >= this.options.maxDispatchTombstones) {
+      await this.fail(input, "start", "DISPATCH_CAPACITY_EXCEEDED");
+      return;
+    }
+    // Reserve before the first await. Active entries and completed tombstones share
+    // this bounded set so a duplicate can never start a second thread or turn.
+    this.dispatchTombstones.add(input.dispatchId);
 
     let snapshot: TaskSnapshot;
     try {
       snapshot = input.threadId
         ? await this.options.backend.continue({
             threadId: input.threadId,
+            expectedCwd: this.options.cwd,
             task: input.task,
             mode: this.options.mode,
             network: this.options.network,
@@ -71,7 +86,17 @@ export class GalateaCodexAdapter {
             clientUserMessageId: input.dispatchId,
           });
     } catch (error) {
-      await this.fail(input, "start", asBridgeError(error).code);
+      const bridgeError = asBridgeError(error);
+      await this.fail(
+        input,
+        this.stopping ? "shutdown" : "start",
+        this.stopping ? "SIDECAR_STOPPING" : this.startErrorCode(bridgeError),
+      );
+      return;
+    }
+
+    if (this.stopping) {
+      await this.fail(input, "shutdown", "SIDECAR_STOPPING", snapshot.threadId);
       return;
     }
 
@@ -103,6 +128,10 @@ export class GalateaCodexAdapter {
         turnId,
         this.options.turnDeadlineMs,
       );
+    }
+    if (this.stopping) {
+      await this.fail(input, "shutdown", "SIDECAR_STOPPING", threadId, turnId);
+      return;
     }
     if (terminal.status === "running") {
       await this.tryInterrupt(threadId);
@@ -150,9 +179,10 @@ export class GalateaCodexAdapter {
   }
 
   async stop(): Promise<void> {
-    if (this.stopping) return;
+    if (this.stopPromise) return this.stopPromise;
     this.stopping = true;
-    await this.options.backend.stop();
+    this.stopPromise = this.options.backend.stop();
+    return this.stopPromise;
   }
 
   private async tryInterrupt(threadId: string): Promise<void> {
@@ -164,6 +194,19 @@ export class GalateaCodexAdapter {
     await Promise.race([attempt.then(() => undefined, () => undefined), grace]);
     if (timer) clearTimeout(timer);
     void attempt.catch(() => undefined);
+  }
+
+  private startErrorCode(error: ReturnType<typeof asBridgeError>): string {
+    const method = error.details?.method;
+    const sideEffectingMethods = new Set([
+      "thread/start",
+      "thread/name/set",
+      "thread/resume",
+      "turn/start",
+    ]);
+    return error.details?.timeout === true && typeof method === "string" && sideEffectingMethods.has(method)
+      ? "START_OUTCOME_UNKNOWN"
+      : error.code;
   }
 
   private async fail(

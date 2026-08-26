@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { PassThrough } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -56,6 +56,56 @@ test("sidecar fails malformed, wrong-case, unknown, and oversize input closed th
   ]);
 });
 
+test("terminal stdout EPIPE is fatal, stops input, and remains observable through flush", async () => {
+  const input = new PassThrough();
+  const output = new class extends Writable {
+    override _write(
+      _chunk: Buffer,
+      _encoding: BufferEncoding,
+      callback: (error?: Error | null) => void,
+    ): void {
+      const error = Object.assign(new Error("broken stdout"), { code: "EPIPE" });
+      callback(error);
+    }
+  }();
+  const writer = new JsonlFrameWriter(output, 10_000);
+  let stopped = false;
+  const adapter: GalateaJsonlAdapter = {
+    async dispatch(frame) {
+      await writer.write({
+        v: 1,
+        type: "accepted",
+        requestId: frame.requestId,
+        dispatchId: frame.dispatchId,
+        threadId: "thread-1",
+        turnId: "turn-1",
+      });
+    },
+    async stop() { stopped = true; },
+  };
+  const serving = serveGalateaJsonl(
+    input,
+    adapter,
+    writer,
+    { maxInputFrameBytes: 1_000, maxTaskBytes: 100 },
+    new NullLogger(),
+  );
+  input.write(`${JSON.stringify({
+    v: 1,
+    type: "dispatch",
+    requestId: "request-epipe",
+    dispatchId: "dispatch-epipe",
+    task: "trigger terminal write",
+  })}\n`);
+
+  await assert.rejects(serving, (error: unknown) =>
+    typeof error === "object" && error !== null && "code" in error && error.code === "EPIPE");
+  assert.equal(stopped, true);
+  assert.equal(input.destroyed, true);
+  await assert.rejects(writer.flush(), (error: unknown) =>
+    typeof error === "object" && error !== null && "code" in error && error.code === "EPIPE");
+});
+
 test("composed sidecar emits ready, runs a natural turn, and reclaims app-server on EOF", { timeout: 5_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "galatea-sidecar-entry-"));
   const input = new PassThrough();
@@ -102,6 +152,43 @@ test("composed sidecar emits ready, runs a natural turn, and reclaims app-server
     await running;
     assert.deepEqual(frames.map((frame) => frame.type), ["ready", "accepted", "completed"]);
     assert.match(String(frames[2]?.final), /```ts/);
+  } finally {
+    input.destroy();
+    output.destroy();
+    await rm(root, { recursive: true });
+  }
+});
+
+test("immediate EOF during dispatch cannot restart or leak app-server", { timeout: 5_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "galatea-sidecar-eof-race-"));
+  const lifecycleFile = path.join(root, "lifecycle.log");
+  const input = new PassThrough();
+  const output = new PassThrough();
+  output.resume();
+  try {
+    const running = runGalateaSidecar(input, output, {
+      CODEX_BRIDGE_ALLOWED_ROOTS: JSON.stringify([root]),
+      CODEX_BRIDGE_DEFAULT_CWD: root,
+      CODEX_BRIDGE_CODEX_COMMAND: process.execPath,
+      CODEX_BRIDGE_CODEX_ARGS: JSON.stringify([fixture, `--lifecycle-file=${lifecycleFile}`]),
+      CODEX_BRIDGE_RPC_TIMEOUT_MS: "1000",
+      GALATEA_CODEX_TURN_DEADLINE_MS: "1000",
+    });
+    input.end(`${JSON.stringify({
+      v: 1,
+      type: "dispatch",
+      requestId: "request-eof",
+      dispatchId: "dispatch-eof",
+      task: "must not outlive EOF",
+    })}\n`);
+    await running;
+
+    const lifecycle = (await readFile(lifecycleFile, "utf8")).trimEnd().split("\n");
+    const starts = lifecycle.filter((line) => line.startsWith("start:"));
+    assert.equal(starts.length, 1);
+    const pid = Number(starts[0]?.slice("start:".length));
+    assert.throws(() => process.kill(pid, 0), (error: unknown) =>
+      typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH");
   } finally {
     input.destroy();
     output.destroy();

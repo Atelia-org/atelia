@@ -110,13 +110,18 @@ stdin/stdout 是 strict bounded JSONL V1，stdout 只有协议 frame，日志只
 ```
 
 失败以 `failed` frame 返回稳定的 `stage`/`code`。`accepted` 只在 `turn/start` 返回稳定 handle 后
-发出；RPC timeout 的 outcome unknown 不会自动 retry。terminal deadline 到期会 best-effort interrupt，
+发出；`thread/start`、`thread/name/set`、`thread/resume` 或 `turn/start` RPC timeout 会返回
+`START_OUTCOME_UNKNOWN`，并由同一 `dispatchId` tombstone 阻止进程内重试。terminal deadline 到期会 best-effort interrupt，
 缺失、截断或超过上限的 final 均不会伪装成完整回信。EOF、SIGINT 与 SIGTERM 会回收 app-server child。
 每封 frame 不接受 `cwd`、`mode` 或 `network` 字段；相关 capability 只能由启动环境决定。
 
 可选边界配置：`GALATEA_CODEX_TURN_DEADLINE_MS`、`GALATEA_CODEX_INTERRUPT_GRACE_MS`、
 `GALATEA_CODEX_MAX_INPUT_FRAME_BYTES`、`GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES`、
-`GALATEA_CODEX_MAX_TASK_BYTES`、`GALATEA_CODEX_MAX_FINAL_BYTES`。
+`GALATEA_CODEX_MAX_TASK_BYTES`、`GALATEA_CODEX_MAX_FINAL_BYTES`、
+`GALATEA_CODEX_MAX_DISPATCH_TOMBSTONES`。同一进程内，`dispatchId` 在启动前写入 bounded
+tombstone；重复 ID 稳定失败，达到容量后 fail closed，不会淘汰旧 ID 后重新执行。
+continuation 还会要求 persisted thread cwd 与启动时配置的 code-owned cwd 完全一致，即使漂移后的
+目录仍位于 allowed roots 内也会拒绝。
 
 需要 Streamable HTTP 时：
 

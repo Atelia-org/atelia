@@ -12,6 +12,7 @@ export interface DelegateTaskInput {
 
 export interface ContinueTaskInput {
   threadId: string;
+  expectedCwd?: string;
   task: string;
   mode: TaskMode;
   network: boolean;

@@ -211,7 +211,7 @@ export class CodexAppServerClient {
         this.pending.delete(id);
         reject(
           new BridgeError("CODEX_PROTOCOL_ERROR", `Codex RPC ${method} timed out.`, {
-            details: { method },
+            details: { method, timeout: true },
           }),
         );
       }, this.options.requestTimeoutMs);

@@ -196,24 +196,42 @@ export function encodedOutputFrameBytes(frame: GalateaOutputFrame): number {
 
 export class JsonlFrameWriter {
   private tail = Promise.resolve();
+  private firstFailure?: Error;
 
   constructor(
     private readonly output: Writable,
     private readonly maximumBytes = DEFAULT_MAX_OUTPUT_FRAME_BYTES,
-  ) {}
+  ) {
+    // Writable implementations may invoke the write callback and emit `error`
+    // for the same EPIPE. Keep a lifetime listener so the latter can never
+    // become an uncaught process exception after the per-write promise settles.
+    this.output.on("error", (error: Error) => {
+      this.firstFailure ??= error;
+    });
+  }
 
   write(frame: GalateaOutputFrame): Promise<void> {
     const encoded = encodeOutputFrame(frame);
     if (Buffer.byteLength(encoded, "utf8") > this.maximumBytes) {
-      return Promise.reject(new Error("Sidecar output frame exceeds its configured byte limit."));
+      this.firstFailure ??= new Error("Sidecar output frame exceeds its configured byte limit.");
+      return Promise.reject(this.firstFailure);
     }
-    const write = this.tail.then(() => this.writeEncoded(encoded));
-    this.tail = write.catch(() => undefined);
+    const write = this.tail.then(async () => {
+      if (this.firstFailure) throw this.firstFailure;
+      try {
+        await this.writeEncoded(encoded);
+      } catch (error) {
+        this.firstFailure ??= error instanceof Error ? error : new Error(String(error));
+        throw this.firstFailure;
+      }
+    });
+    this.tail = write.then(() => undefined, () => undefined);
     return write;
   }
 
-  flush(): Promise<void> {
-    return this.tail;
+  async flush(): Promise<void> {
+    await this.tail;
+    if (this.firstFailure) throw this.firstFailure;
   }
 
   private writeEncoded(encoded: string): Promise<void> {
@@ -226,7 +244,11 @@ export class JsonlFrameWriter {
         error ? reject(error) : resolve();
       };
       this.output.once("error", finish);
-      this.output.write(encoded, (error?: Error | null) => finish(error));
+      try {
+        this.output.write(encoded, (error?: Error | null) => finish(error));
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 }

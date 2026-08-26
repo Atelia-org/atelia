@@ -101,6 +101,8 @@ export class CodexBackend implements TaskBackend {
   private authenticated = false;
   private readonly continueReservations = new Set<string>();
   private readonly profile: CodexBackendProfile;
+  private stopped = false;
+  private stopPromise?: Promise<void>;
 
   constructor(private readonly options: CodexBackendOptions) {
     this.profile = { ...(options.profile ?? mcpCodexBackendProfile) };
@@ -111,17 +113,24 @@ export class CodexBackend implements TaskBackend {
   }
 
   async start(): Promise<void> {
+    this.throwIfStopped();
     await this.ensureReady();
   }
 
   async stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
+    this.stopped = true;
     this.authenticated = false;
-    await this.options.client.stop();
+    this.stopPromise = this.options.client.stop();
+    return this.stopPromise;
   }
 
   async delegate(input: DelegateTaskInput): Promise<TaskSnapshot> {
+    this.throwIfStopped();
     const cwd = await this.options.pathPolicy.resolveCwd(input.cwd);
+    this.throwIfStopped();
     await this.ensureReady();
+    this.throwIfStopped();
     const startedAt = Date.now();
     try {
       const response = await this.options.client.request<ThreadStartResponse>("thread/start", {
@@ -135,11 +144,14 @@ export class CodexBackend implements TaskBackend {
         ephemeral: false,
         threadSource: this.profile.threadSource,
       });
+      this.throwIfStopped();
       await this.validateStartedThread(response.thread, cwd);
+      this.throwIfStopped();
       await this.options.client.request("thread/name/set", {
         threadId: response.thread.id,
         name: this.ownershipName(response.thread.id),
       });
+      this.throwIfStopped();
       const snapshot = await this.startTurn(
         response.thread.id,
         input.task,
@@ -159,7 +171,9 @@ export class CodexBackend implements TaskBackend {
   }
 
   async continue(input: ContinueTaskInput): Promise<TaskSnapshot> {
+    this.throwIfStopped();
     await this.ensureReady();
+    this.throwIfStopped();
     if (this.continueReservations.has(input.threadId)) {
       throw new BridgeError("BRIDGE_BUSY", "This Codex thread already has an active turn.");
     }
@@ -168,7 +182,16 @@ export class CodexBackend implements TaskBackend {
     let cwd: string | undefined;
     try {
       const preflight = await this.readOwnedThread(input.threadId, false);
-      cwd = await this.options.pathPolicy.resolveCwd(preflight.cwd);
+      this.throwIfStopped();
+      const persistedCwd = await this.options.pathPolicy.resolveCwd(preflight.cwd);
+      this.throwIfStopped();
+      cwd = input.expectedCwd === undefined
+        ? persistedCwd
+        : await this.options.pathPolicy.resolveCwd(input.expectedCwd);
+      this.throwIfStopped();
+      if (persistedCwd !== cwd) {
+        throw new BridgeError("CWD_MISMATCH", "The Codex thread cwd differs from the configured cwd.");
+      }
       if (this.options.store.hasRunning(input.threadId) || preflight.status.type === "active") {
         throw new BridgeError("BRIDGE_BUSY", "This Codex thread already has an active turn.");
       }
@@ -182,7 +205,9 @@ export class CodexBackend implements TaskBackend {
         config: threadConfig(input.network),
         developerInstructions: this.profile.developerInstructions,
       });
+      this.throwIfStopped();
       await this.validatePersistedThread(resumed.thread, cwd);
+      this.throwIfStopped();
       const snapshot = await this.startTurn(
         input.threadId,
         input.task,
@@ -204,6 +229,7 @@ export class CodexBackend implements TaskBackend {
   }
 
   async status(threadId: string): Promise<TaskSnapshot> {
+    this.throwIfStopped();
     const startedAt = Date.now();
     let cwd: string | undefined;
     try {
@@ -220,6 +246,7 @@ export class CodexBackend implements TaskBackend {
   }
 
   async read(threadId: string, detail: "summary" | "final"): Promise<TaskSnapshot> {
+    this.throwIfStopped();
     const startedAt = Date.now();
     let cwd: string | undefined;
     try {
@@ -237,15 +264,19 @@ export class CodexBackend implements TaskBackend {
   }
 
   async interrupt(threadId: string): Promise<TaskSnapshot> {
+    this.throwIfStopped();
     const startedAt = Date.now();
     let cwd: string | undefined;
     try {
       const loaded = await this.loadSnapshot(threadId);
+      this.throwIfStopped();
       cwd = loaded.cwd;
       let snapshot = loaded.snapshot;
       if (snapshot.activeTurnId) {
         const turnId = snapshot.activeTurnId;
+        this.throwIfStopped();
         await this.options.client.request<TurnInterruptResponse>("turn/interrupt", { threadId, turnId });
+        this.throwIfStopped();
         snapshot = await this.options.store.waitForTurn(threadId, turnId, 3_000);
       }
       const sanitized = this.sanitizeSnapshot(snapshot, cwd);
@@ -259,11 +290,14 @@ export class CodexBackend implements TaskBackend {
   }
 
   private async ensureReady(): Promise<void> {
+    this.throwIfStopped();
     await this.options.client.start();
+    this.throwIfStopped();
     if (this.authenticated) return;
     const response = await this.options.client.request<GetAccountResponse>("account/read", {
       refreshToken: false,
     });
+    this.throwIfStopped();
     if (!this.isAuthenticated(response.account)) {
       throw new BridgeError(
         "CODEX_NOT_AUTHENTICATED",
@@ -286,6 +320,7 @@ export class CodexBackend implements TaskBackend {
     waitMs: number,
     clientUserMessageId?: string,
   ): Promise<TaskSnapshot> {
+    this.throwIfStopped();
     const response = await this.options.client.request<TurnStartResponse>("turn/start", {
       threadId,
       ...(clientUserMessageId === undefined ? {} : { clientUserMessageId }),
@@ -297,15 +332,18 @@ export class CodexBackend implements TaskBackend {
       summary: "concise",
       ...(this.profile.outputSchema === undefined ? {} : { outputSchema: this.profile.outputSchema }),
     });
+    this.throwIfStopped();
     this.options.store.beginTurn(threadId, response.turn.id);
     return this.options.store.waitForTurn(threadId, response.turn.id, waitMs);
   }
 
   private async readOwnedThread(threadId: string, includeTurns: boolean): Promise<Thread> {
+    this.throwIfStopped();
     const response = await this.options.client.request<ThreadReadResponse>("thread/read", {
       threadId,
       includeTurns,
     });
+    this.throwIfStopped();
     if (
       response.thread.id !== threadId ||
       response.thread.name !== this.ownershipName(threadId) ||
@@ -314,14 +352,20 @@ export class CodexBackend implements TaskBackend {
       throw new BridgeError("THREAD_NOT_FOUND", "The requested thread is not owned by this bridge.");
     }
     await this.options.pathPolicy.resolveCwd(response.thread.cwd);
+    this.throwIfStopped();
     return response.thread;
   }
 
   private async loadSnapshot(threadId: string): Promise<{ snapshot: TaskSnapshot; cwd: string }> {
+    this.throwIfStopped();
     await this.ensureReady();
+    this.throwIfStopped();
     const preflight = await this.readOwnedThread(threadId, false);
+    this.throwIfStopped();
     const cwd = await this.options.pathPolicy.resolveCwd(preflight.cwd);
+    this.throwIfStopped();
     const thread = await this.readOwnedThread(threadId, true);
+    this.throwIfStopped();
     return { snapshot: this.options.store.hydrate(thread), cwd };
   }
 
@@ -355,6 +399,12 @@ export class CodexBackend implements TaskBackend {
 
   private ownershipName(threadId: string): string {
     return `${this.profile.threadNamePrefix}${threadId}`;
+  }
+
+  private throwIfStopped(): void {
+    if (this.stopped) {
+      throw new BridgeError("CODEX_PROTOCOL_ERROR", "The Codex backend has stopped.");
+    }
   }
 
   private logTask(tool: string, cwd: string, snapshot: TaskSnapshot, durationMs: number): void {

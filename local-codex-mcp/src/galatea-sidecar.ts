@@ -24,6 +24,7 @@ import { PathPolicy } from "./security/paths.js";
 const DEFAULT_TURN_DEADLINE_MS = 20 * 60 * 1000;
 const DEFAULT_INTERRUPT_GRACE_MS = 2_000;
 const DEFAULT_MAX_FINAL_BYTES = 128 * 1024;
+const DEFAULT_MAX_DISPATCH_TOMBSTONES = 4_096;
 
 export interface GalateaSidecarConfig {
   bridge: BridgeConfig;
@@ -36,6 +37,7 @@ export interface GalateaSidecarConfig {
   maxOutputFrameBytes: number;
   maxTaskBytes: number;
   maxFinalBytes: number;
+  maxDispatchTombstones: number;
 }
 
 export interface GalateaJsonlAdapter {
@@ -127,6 +129,13 @@ export function loadGalateaSidecarConfig(env: NodeJS.ProcessEnv = process.env): 
       1,
       1024 * 1024,
     ),
+    maxDispatchTombstones: integer(
+      env.GALATEA_CODEX_MAX_DISPATCH_TOMBSTONES,
+      DEFAULT_MAX_DISPATCH_TOMBSTONES,
+      "GALATEA_CODEX_MAX_DISPATCH_TOMBSTONES",
+      1,
+      1_000_000,
+    ),
   };
 }
 
@@ -138,6 +147,11 @@ export async function serveGalateaJsonl(
   logger: BridgeLogger,
 ): Promise<void> {
   const active = new Set<Promise<void>>();
+  let fatalError: unknown;
+  const recordFatal = (error: unknown) => {
+    fatalError ??= error;
+    if (!input.destroyed) input.destroy();
+  };
   try {
     for await (const line of readBoundedJsonLines(input, config.maxInputFrameBytes)) {
       if (!line.ok) {
@@ -163,6 +177,7 @@ export async function serveGalateaJsonl(
       let task!: Promise<void>;
       task = adapter.dispatch(parsed.frame)
         .catch((error: unknown) => {
+          recordFatal(error);
           logger.log("error", "galatea_dispatch_transport_failed", {
             dispatch_id: parsed.frame.dispatchId,
             error_code: asBridgeError(error).code,
@@ -171,11 +186,22 @@ export async function serveGalateaJsonl(
         .finally(() => active.delete(task));
       active.add(task);
     }
+  } catch (error) {
+    fatalError ??= error;
   } finally {
-    await adapter.stop();
+    try {
+      await adapter.stop();
+    } catch (error) {
+      fatalError ??= error;
+    }
     await Promise.allSettled([...active]);
-    await writer.flush();
+    try {
+      await writer.flush();
+    } catch (error) {
+      fatalError ??= error;
+    }
   }
+  if (fatalError !== undefined) throw fatalError;
 }
 
 export async function runGalateaSidecar(
@@ -212,6 +238,7 @@ export async function runGalateaSidecar(
     interruptGraceMs: config.interruptGraceMs,
     maxFinalBytes: config.maxFinalBytes,
     maxOutputFrameBytes: config.maxOutputFrameBytes,
+    maxDispatchTombstones: config.maxDispatchTombstones,
     write: (frame) => writer.write(frame),
   });
 

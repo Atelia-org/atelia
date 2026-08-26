@@ -1,5 +1,5 @@
 import readline from "node:readline";
-import { closeSync } from "node:fs";
+import { appendFileSync, closeSync } from "node:fs";
 
 type Message = { id?: string | number; method?: string; params?: Record<string, unknown>; result?: unknown; error?: unknown };
 
@@ -14,7 +14,16 @@ let lastTurnParams: Record<string, unknown> | undefined;
 let lastResumeParams: Record<string, unknown> | undefined;
 let lastThreadStartParams: Record<string, unknown> | undefined;
 const allTurnParams: Record<string, unknown>[] = [];
+let threadStartCount = 0;
+let turnStartCount = 0;
 let keepAliveAfterStdinClose = false;
+
+const lifecycleFileArgument = process.argv.find((argument) => argument.startsWith("--lifecycle-file="));
+const lifecycleFile = lifecycleFileArgument?.slice("--lifecycle-file=".length);
+if (lifecycleFile) {
+  appendFileSync(lifecycleFile, `start:${process.pid}\n`);
+  process.on("exit", () => appendFileSync(lifecycleFile, `exit:${process.pid}\n`));
+}
 
 if (process.argv.includes("--ignore-sigterm")) {
   process.on("SIGTERM", () => undefined);
@@ -162,8 +171,27 @@ lines.on("line", (line) => {
       send({ id: message.id, result: {} });
       break;
     case "test/lastRequests":
-      send({ id: message.id, result: { lastTurnParams, lastResumeParams, lastThreadStartParams, allTurnParams } });
+      send({
+        id: message.id,
+        result: {
+          lastTurnParams,
+          lastResumeParams,
+          lastThreadStartParams,
+          allTurnParams,
+          threadStartCount,
+          turnStartCount,
+        },
+      });
       break;
+    case "test/setThreadCwd": {
+      const thread = threads.get(String(message.params?.threadId));
+      if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
+      else {
+        thread.cwd = message.params?.cwd;
+        send({ id: message.id, result: {} });
+      }
+      break;
+    }
     case "test/serverRequest": {
       const serverId = nextServerRequest++;
       pendingServerRequests.set(serverId, message.id!);
@@ -190,6 +218,7 @@ lines.on("line", (line) => {
       }, 5);
       break;
     case "thread/start": {
+      threadStartCount += 1;
       lastThreadStartParams = message.params;
       const id = `thread-${nextThread++}`;
       const thread = makeThread(
@@ -232,6 +261,7 @@ lines.on("line", (line) => {
       break;
     }
     case "turn/start": {
+      turnStartCount += 1;
       lastTurnParams = message.params;
       allTurnParams.push(message.params ?? {});
       const threadId = String(message.params?.threadId);
@@ -254,7 +284,10 @@ lines.on("line", (line) => {
       (thread.turns as unknown[]).push(turn);
       thread.status = { type: "active", activeFlags: ["waitingOnModel"] };
       const input = JSON.stringify(message.params?.input ?? []);
-      if (input.includes("[EARLY]")) {
+      if (input.includes("[HANG_TURN_START]")) {
+        send({ method: "turn/started", params: { threadId, turn } });
+        setTimeout(() => completeTurn(threadId, turnId, "completed", input), 10);
+      } else if (input.includes("[EARLY]")) {
         send({ method: "turn/started", params: { threadId, turn } });
         completeTurn(threadId, turnId, "completed", input);
         send({ id: message.id, result: { turn } });

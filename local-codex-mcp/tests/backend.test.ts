@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,10 +7,32 @@ import { fileURLToPath } from "node:url";
 import { CodexBackend } from "../src/codex/backend.js";
 import { CodexAppServerClient } from "../src/codex/client.js";
 import { TaskStore } from "../src/codex/task-store.js";
-import { NullLogger } from "../src/logger.js";
+import { NullLogger, type BridgeLogger, type LogLevel } from "../src/logger.js";
 import { PathPolicy } from "../src/security/paths.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-app-server.js", import.meta.url));
+
+class RecordingLogger implements BridgeLogger {
+  readonly entries: Array<{ level: LogLevel; event: string }> = [];
+
+  log(level: LogLevel, event: string): void {
+    this.entries.push({ level, event });
+  }
+}
+
+async function waitForProcessExit(pid: number, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH") return;
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(`process ${pid} did not exit within ${timeoutMs}ms`);
+}
 
 test("backend completes, continues, returns bounded data, and interrupts", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex-bridge-backend-"));
@@ -115,4 +137,59 @@ test("backend reports missing Codex authentication", async (t) => {
     (error: unknown) =>
       typeof error === "object" && error !== null && "code" in error && error.code === "CODEX_NOT_AUTHENTICATED",
   );
+});
+
+test("permanent stop gate prevents an operation paused at resolveCwd from restarting app-server", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codex-backend-stop-gate-"));
+  const logger = new RecordingLogger();
+  const client = new CodexAppServerClient({
+    command: process.execPath,
+    args: [fixture],
+    requestTimeoutMs: 1_000,
+    logger,
+  });
+  const realPolicy = await PathPolicy.create([root], root);
+  let releaseResolve!: () => void;
+  let enteredResolve!: () => void;
+  const release = new Promise<void>((resolve) => { releaseResolve = resolve; });
+  const entered = new Promise<void>((resolve) => { enteredResolve = resolve; });
+  const delayedPolicy = {
+    ...realPolicy,
+    async resolveCwd(requested?: string) {
+      enteredResolve();
+      await release;
+      return realPolicy.resolveCwd(requested);
+    },
+  } as unknown as PathPolicy;
+  const backend = new CodexBackend({
+    client,
+    pathPolicy: delayedPolicy,
+    store: new TaskStore(2_000, 100),
+    logger,
+  });
+
+  try {
+    await backend.start();
+    const state = await client.request<{ pid: number }>("test/state", {});
+    const dispatching = backend.delegate({
+      task: "must not start",
+      cwd: root,
+      mode: "work",
+      network: false,
+      waitMs: 0,
+    });
+    await entered;
+    const stopping = backend.stop();
+    releaseResolve();
+    await assert.rejects(dispatching, /backend has stopped/);
+    await stopping;
+    await waitForProcessExit(state.pid);
+    assert.equal(client.isRunning, false);
+    await assert.rejects(backend.start(), /backend has stopped/);
+    assert.equal(logger.entries.filter((entry) => entry.event === "codex_started").length, 1);
+  } finally {
+    releaseResolve();
+    await backend.stop();
+    await rm(root, { recursive: true });
+  }
 });

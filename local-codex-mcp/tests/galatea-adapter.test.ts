@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
@@ -31,6 +31,8 @@ async function harness(
     maxResultChars?: number;
     maxFinalBytes?: number;
     turnDeadlineMs?: number;
+    requestTimeoutMs?: number;
+    maxDispatchTombstones?: number;
   } = {},
 ): Promise<Harness> {
   const root = await mkdtemp(path.join(os.tmpdir(), "galatea-codex-adapter-"));
@@ -38,7 +40,7 @@ async function harness(
   const client = new CodexAppServerClient({
     command: process.execPath,
     args: [fixture, ...(options.fixtureArgs ?? [])],
-    requestTimeoutMs: 1_000,
+    requestTimeoutMs: options.requestTimeoutMs ?? 1_000,
     logger,
   });
   const store = new TaskStore(options.maxResultChars ?? 20_000, 100);
@@ -61,6 +63,7 @@ async function harness(
     interruptGraceMs: 100,
     maxFinalBytes: options.maxFinalBytes ?? 20_000,
     maxOutputFrameBytes: 100_000,
+    maxDispatchTombstones: options.maxDispatchTombstones ?? 100,
     write: async (frame) => { frames.push(frame); },
   });
   t.after(async () => {
@@ -184,4 +187,73 @@ test("app-server process exit after acceptance resolves as a stable failure", as
   await value.adapter.dispatch(dispatch("crash-1", "[CRASH] task"));
   assert.deepEqual(value.frames.map((frame) => frame.type), ["accepted", "failed"]);
   assert.equal(value.frames[1]?.type === "failed" && value.frames[1].code, "TURN_FAILED");
+});
+
+test("duplicate dispatchId is tombstoned before await and never starts a second thread or turn", async (t) => {
+  const value = await harness(t);
+  const first = value.adapter.dispatch(dispatch("duplicate-1", "[NATURAL] original"));
+  const concurrentDuplicate = value.adapter.dispatch(dispatch("duplicate-1", "must not run"));
+  await Promise.all([first, concurrentDuplicate]);
+  await value.adapter.dispatch(dispatch("duplicate-1", "must still not run"));
+
+  const failures = value.frames.filter((frame) => frame.type === "failed");
+  assert.equal(failures.length, 2);
+  assert.ok(failures.every((frame) => frame.code === "DUPLICATE_DISPATCH_ID"));
+  const counts = await value.client.request<{ threadStartCount: number; turnStartCount: number }>(
+    "test/lastRequests",
+    {},
+  );
+  assert.equal(counts.threadStartCount, 1);
+  assert.equal(counts.turnStartCount, 1);
+});
+
+test("dispatch tombstone capacity fails closed without evicting an older identity", async (t) => {
+  const value = await harness(t, { maxDispatchTombstones: 1 });
+  await value.adapter.dispatch(dispatch("capacity-1", "[NATURAL] first"));
+  await value.adapter.dispatch(dispatch("capacity-2", "must not run"));
+  await value.adapter.dispatch(dispatch("capacity-1", "old identity stays tombstoned"));
+
+  const lastTwo = value.frames.slice(-2);
+  assert.equal(lastTwo[0]?.type === "failed" && lastTwo[0].code, "DISPATCH_CAPACITY_EXCEEDED");
+  assert.equal(lastTwo[1]?.type === "failed" && lastTwo[1].code, "DUPLICATE_DISPATCH_ID");
+  const counts = await value.client.request<{ threadStartCount: number; turnStartCount: number }>(
+    "test/lastRequests",
+    {},
+  );
+  assert.equal(counts.threadStartCount, 1);
+  assert.equal(counts.turnStartCount, 1);
+});
+
+test("continuation rejects persisted cwd drift even when both directories are allowed", async (t) => {
+  const value = await harness(t);
+  const drifted = path.join(value.root, "still-allowed");
+  await mkdir(drifted);
+  await value.adapter.dispatch(dispatch("cwd-1", "[NATURAL] first"));
+  const accepted = value.frames[0];
+  assert.equal(accepted?.type, "accepted");
+  if (accepted?.type !== "accepted") return;
+
+  await value.client.request("test/setThreadCwd", { threadId: accepted.threadId, cwd: drifted });
+  await value.adapter.dispatch(dispatch("cwd-2", "must not run", accepted.threadId));
+  const failed = value.frames.at(-1);
+  assert.equal(failed?.type === "failed" && failed.code, "CWD_MISMATCH");
+  const counts = await value.client.request<{ turnStartCount: number }>("test/lastRequests", {});
+  assert.equal(counts.turnStartCount, 1);
+});
+
+test("side-effecting start RPC timeout is outcome-unknown and tombstoned without retry", async (t) => {
+  const value = await harness(t, { requestTimeoutMs: 300 });
+  await value.adapter.dispatch(dispatch("unknown-1", "[HANG_TURN_START] task"));
+  const first = value.frames.at(-1);
+  assert.equal(first?.type === "failed" && first.code, "START_OUTCOME_UNKNOWN");
+
+  await value.adapter.dispatch(dispatch("unknown-1", "must not retry"));
+  const duplicate = value.frames.at(-1);
+  assert.equal(duplicate?.type === "failed" && duplicate.code, "DUPLICATE_DISPATCH_ID");
+  const counts = await value.client.request<{ threadStartCount: number; turnStartCount: number }>(
+    "test/lastRequests",
+    {},
+  );
+  assert.equal(counts.threadStartCount, 1);
+  assert.equal(counts.turnStartCount, 1);
 });
