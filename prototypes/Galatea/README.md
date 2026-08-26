@@ -125,6 +125,9 @@ code-owned bounds；caller cancellation与transport exception直接传播。
 
 ## Mailbox 与 OutboundMailExtractor
 
+Codex 固定代行者路由、异步回信与下一玩家回合 Observation 注入仍在施工；当前已决策边界和会逐步收缩的未完成工作见
+`docs/Galatea/codex-delegation-refactor-status.md`。
+
 `POST /api/v1/mailbox/inbound` 接受authenticated strict JSON
 `{from,body,subject?,connectionId?}`。runtime生成canonical 32-lowerhex `messageId`并固定
 `To=Galatea`，以202返回`{turnId,messageId}`，随后沿用普通turn/SSE执行主线模型。Inbound mail
