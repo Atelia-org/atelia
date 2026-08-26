@@ -53,6 +53,7 @@ export class CodexAppServerClient {
   private startPromise?: Promise<void>;
   private stopPromise?: Promise<void>;
   private initialized = false;
+  private stopEpoch = 0;
 
   constructor(private readonly options: CodexClientOptions) {}
 
@@ -67,8 +68,15 @@ export class CodexAppServerClient {
   }
 
   async start(): Promise<void> {
+    const startEpoch = this.stopEpoch;
     if (this.stopPromise) await this.stopPromise;
     if (this.terminations.size > 0) await Promise.all([...this.terminations]);
+    if (this.stopEpoch !== startEpoch) {
+      throw new BridgeError(
+        "CODEX_PROTOCOL_ERROR",
+        "Codex app-server startup was superseded by stop.",
+      );
+    }
     if (this.initialized && this.isRunning) return;
     if (this.startPromise) return this.startPromise;
 
@@ -171,6 +179,7 @@ export class CodexAppServerClient {
 
   async stop(): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
+    this.stopEpoch += 1;
     const connection = this.connection;
     this.initialized = false;
     if (!connection && this.terminations.size === 0) return;

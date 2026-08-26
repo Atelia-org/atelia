@@ -196,9 +196,11 @@ test("duplicate dispatchId is tombstoned before await and never starts a second 
   await Promise.all([first, concurrentDuplicate]);
   await value.adapter.dispatch(dispatch("duplicate-1", "must still not run"));
 
-  const failures = value.frames.filter((frame) => frame.type === "failed");
-  assert.equal(failures.length, 2);
-  assert.ok(failures.every((frame) => frame.code === "DUPLICATE_DISPATCH_ID"));
+  assert.deepEqual(value.frames.map((frame) => frame.type), ["accepted", "completed", "failed"]);
+  const rejection = value.frames[2];
+  assert.equal(rejection?.type === "failed" && rejection.code, "DUPLICATE_DISPATCH_ID");
+  assert.equal(rejection?.type === "failed" && rejection.stage, "protocol");
+  assert.equal(rejection?.type === "failed" && rejection.dispatchId, undefined);
   const counts = await value.client.request<{ threadStartCount: number; turnStartCount: number }>(
     "test/lastRequests",
     {},
@@ -216,6 +218,7 @@ test("dispatch tombstone capacity fails closed without evicting an older identit
   const lastTwo = value.frames.slice(-2);
   assert.equal(lastTwo[0]?.type === "failed" && lastTwo[0].code, "DISPATCH_CAPACITY_EXCEEDED");
   assert.equal(lastTwo[1]?.type === "failed" && lastTwo[1].code, "DUPLICATE_DISPATCH_ID");
+  assert.ok(lastTwo.every((frame) => frame.type === "failed" && frame.dispatchId === undefined));
   const counts = await value.client.request<{ threadStartCount: number; turnStartCount: number }>(
     "test/lastRequests",
     {},

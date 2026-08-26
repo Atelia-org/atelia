@@ -118,8 +118,10 @@ stdin/stdout 是 strict bounded JSONL V1，stdout 只有协议 frame，日志只
 可选边界配置：`GALATEA_CODEX_TURN_DEADLINE_MS`、`GALATEA_CODEX_INTERRUPT_GRACE_MS`、
 `GALATEA_CODEX_MAX_INPUT_FRAME_BYTES`、`GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES`、
 `GALATEA_CODEX_MAX_TASK_BYTES`、`GALATEA_CODEX_MAX_FINAL_BYTES`、
-`GALATEA_CODEX_MAX_DISPATCH_TOMBSTONES`。同一进程内，`dispatchId` 在启动前写入 bounded
-tombstone；重复 ID 稳定失败，达到容量后 fail closed，不会淘汰旧 ID 后重新执行。
+`GALATEA_CODEX_MAX_DISPATCH_TOMBSTONES`、`GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS`。同一进程内，`dispatchId` 在启动前写入 bounded
+tombstone；达到容量后 fail closed，不会淘汰旧 ID 后重新执行。
+并发 active duplicate 静默依附原 dispatch 的 `accepted`/terminal business frames，避免先发冲突的
+terminal failure；已完成 duplicate 与容量拒绝只返回不带 `dispatchId` 的 request-level failure。
 continuation 还会要求 persisted thread cwd 与启动时配置的 code-owned cwd 完全一致，即使漂移后的
 目录仍位于 allowed roots 内也会拒绝。
 

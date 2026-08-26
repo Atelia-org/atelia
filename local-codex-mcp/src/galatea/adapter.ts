@@ -44,7 +44,7 @@ export interface GalateaCodexAdapterOptions {
 export class GalateaCodexAdapter {
   private stopping = false;
   private stopPromise?: Promise<void>;
-  private readonly dispatchTombstones = new Set<string>();
+  private readonly dispatchStates = new Map<string, "active" | "terminal">();
 
   constructor(private readonly options: GalateaCodexAdapterOptions) {}
 
@@ -53,18 +53,35 @@ export class GalateaCodexAdapter {
       await this.fail(input, "shutdown", "SIDECAR_STOPPING");
       return;
     }
-    if (this.dispatchTombstones.has(input.dispatchId)) {
-      await this.fail(input, "start", "DUPLICATE_DISPATCH_ID");
+    const existing = this.dispatchStates.get(input.dispatchId);
+    if (existing === "active") {
+      // The original request owns the accepted/terminal business frames. An
+      // exact concurrent replay attaches to those frames by identity and must
+      // not emit an earlier, conflicting terminal failure.
+      this.options.logger.log("warning", "galatea_dispatch_duplicate_active", {
+        dispatch_id: input.dispatchId,
+      });
       return;
     }
-    if (this.dispatchTombstones.size >= this.options.maxDispatchTombstones) {
-      await this.fail(input, "start", "DISPATCH_CAPACITY_EXCEEDED");
+    if (existing === "terminal") {
+      await this.rejectRequest(input, "DUPLICATE_DISPATCH_ID");
       return;
     }
-    // Reserve before the first await. Active entries and completed tombstones share
-    // this bounded set so a duplicate can never start a second thread or turn.
-    this.dispatchTombstones.add(input.dispatchId);
+    if (this.dispatchStates.size >= this.options.maxDispatchTombstones) {
+      await this.rejectRequest(input, "DISPATCH_CAPACITY_EXCEEDED");
+      return;
+    }
+    // Reserve before the first await. Active entries and completed tombstones
+    // share this bounded map so a duplicate can never start a second operation.
+    this.dispatchStates.set(input.dispatchId, "active");
+    try {
+      await this.dispatchReserved(input);
+    } finally {
+      this.dispatchStates.set(input.dispatchId, "terminal");
+    }
+  }
 
+  private async dispatchReserved(input: GalateaDispatchFrame): Promise<void> {
     let snapshot: TaskSnapshot;
     try {
       snapshot = input.threadId
@@ -207,6 +224,20 @@ export class GalateaCodexAdapter {
     return error.details?.timeout === true && typeof method === "string" && sideEffectingMethods.has(method)
       ? "START_OUTCOME_UNKNOWN"
       : error.code;
+  }
+
+  private async rejectRequest(input: GalateaDispatchFrame, code: string): Promise<void> {
+    await this.options.write({
+      v: GALATEA_SIDECAR_PROTOCOL_VERSION,
+      type: "failed",
+      requestId: input.requestId,
+      stage: "protocol",
+      code,
+    });
+    this.options.logger.log("warning", "galatea_dispatch_rejected", {
+      dispatch_id: input.dispatchId,
+      error_code: code,
+    });
   }
 
   private async fail(

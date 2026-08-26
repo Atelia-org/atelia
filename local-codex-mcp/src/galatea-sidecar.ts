@@ -13,6 +13,7 @@ import {
   DEFAULT_MAX_INPUT_FRAME_BYTES,
   DEFAULT_MAX_OUTPUT_FRAME_BYTES,
   DEFAULT_MAX_TASK_BYTES,
+  DEFAULT_OUTPUT_WRITE_TIMEOUT_MS,
   GALATEA_SIDECAR_PROTOCOL_VERSION,
   JsonlFrameWriter,
   parseDispatchFrame,
@@ -38,6 +39,7 @@ export interface GalateaSidecarConfig {
   maxTaskBytes: number;
   maxFinalBytes: number;
   maxDispatchTombstones: number;
+  outputWriteTimeoutMs: number;
 }
 
 export interface GalateaJsonlAdapter {
@@ -136,6 +138,13 @@ export function loadGalateaSidecarConfig(env: NodeJS.ProcessEnv = process.env): 
       1,
       1_000_000,
     ),
+    outputWriteTimeoutMs: integer(
+      env.GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS,
+      DEFAULT_OUTPUT_WRITE_TIMEOUT_MS,
+      "GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS",
+      100,
+      60_000,
+    ),
   };
 }
 
@@ -226,7 +235,11 @@ export async function runGalateaSidecar(
     logger,
     profile: galateaCodexBackendProfile,
   });
-  const writer = new JsonlFrameWriter(output, config.maxOutputFrameBytes);
+  const writer = new JsonlFrameWriter(
+    output,
+    config.maxOutputFrameBytes,
+    config.outputWriteTimeoutMs,
+  );
   const adapter = new GalateaCodexAdapter({
     backend,
     store,

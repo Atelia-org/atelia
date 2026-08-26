@@ -106,6 +106,54 @@ test("terminal stdout EPIPE is fatal, stops input, and remains observable throug
     typeof error === "object" && error !== null && "code" in error && error.code === "EPIPE");
 });
 
+test("stalled stdout backpressure hits a bounded deadline and stops the sidecar", { timeout: 1_000 }, async () => {
+  const input = new PassThrough();
+  const output = new class extends Writable {
+    override _write(
+      _chunk: Buffer,
+      _encoding: BufferEncoding,
+      _callback: (error?: Error | null) => void,
+    ): void {
+      // Deliberately never acknowledge the write.
+    }
+  }();
+  const writer = new JsonlFrameWriter(output, 10_000, 20);
+  let stopped = false;
+  const adapter: GalateaJsonlAdapter = {
+    async dispatch(frame) {
+      await writer.write({
+        v: 1,
+        type: "accepted",
+        requestId: frame.requestId,
+        dispatchId: frame.dispatchId,
+        threadId: "thread-1",
+        turnId: "turn-1",
+      });
+    },
+    async stop() { stopped = true; },
+  };
+  const serving = serveGalateaJsonl(
+    input,
+    adapter,
+    writer,
+    { maxInputFrameBytes: 1_000, maxTaskBytes: 100 },
+    new NullLogger(),
+  );
+  input.write(`${JSON.stringify({
+    v: 1,
+    type: "dispatch",
+    requestId: "request-stall",
+    dispatchId: "dispatch-stall",
+    task: "stall output",
+  })}\n`);
+
+  await assert.rejects(serving, (error: unknown) =>
+    typeof error === "object" && error !== null && "code" in error && error.code === "OUTPUT_WRITE_TIMEOUT");
+  assert.equal(stopped, true);
+  assert.equal(input.destroyed, true);
+  assert.equal(output.destroyed, true);
+});
+
 test("composed sidecar emits ready, runs a natural turn, and reclaims app-server on EOF", { timeout: 5_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "galatea-sidecar-entry-"));
   const input = new PassThrough();

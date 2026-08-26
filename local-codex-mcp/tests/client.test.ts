@@ -176,6 +176,30 @@ test("stop waits for a stubborn child before an immediate restart", async (t) =>
   assert.notEqual(second.pid, first.pid);
 });
 
+test("stop supersedes a start already waiting for an older generation to terminate", async () => {
+  const value = new CodexAppServerClient({
+    command: process.execPath,
+    args: [fixture, "--ignore-sigterm"],
+    requestTimeoutMs: 1_000,
+    stopTimeoutMs: 50,
+    logger: new NullLogger(),
+  });
+  try {
+    const first = await value.request<{ pid: number }>("test/state", {});
+    await assert.rejects(value.request("test/malformed", {}), /invalid JSON/);
+
+    const recovering = value.start();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const stopping = value.stop();
+    await assert.rejects(recovering, /startup was superseded by stop/);
+    await stopping;
+    await waitForProcessExit(first.pid);
+    assert.equal(value.isRunning, false);
+  } finally {
+    await value.stop();
+  }
+});
+
 test("stdin closure fails requests without an unhandled EPIPE", async (t) => {
   const value = client(500);
   t.after(() => value.stop());

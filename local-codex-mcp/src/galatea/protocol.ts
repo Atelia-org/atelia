@@ -5,6 +5,7 @@ export const GALATEA_SIDECAR_PROTOCOL_VERSION = 1 as const;
 export const DEFAULT_MAX_INPUT_FRAME_BYTES = 128 * 1024;
 export const DEFAULT_MAX_OUTPUT_FRAME_BYTES = 1024 * 1024;
 export const DEFAULT_MAX_TASK_BYTES = 100 * 1024;
+export const DEFAULT_OUTPUT_WRITE_TIMEOUT_MS = 10_000;
 
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const maxIdentifierBytes = 200;
@@ -201,6 +202,7 @@ export class JsonlFrameWriter {
   constructor(
     private readonly output: Writable,
     private readonly maximumBytes = DEFAULT_MAX_OUTPUT_FRAME_BYTES,
+    private readonly writeTimeoutMs = DEFAULT_OUTPUT_WRITE_TIMEOUT_MS,
   ) {
     // Writable implementations may invoke the write callback and emit `error`
     // for the same EPIPE. Keep a lifetime listener so the latter can never
@@ -237,12 +239,22 @@ export class JsonlFrameWriter {
   private writeEncoded(encoded: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       let settled = false;
+      let timer: NodeJS.Timeout | undefined;
       const finish = (error?: Error | null) => {
         if (settled) return;
         settled = true;
+        if (timer) clearTimeout(timer);
         this.output.off("error", finish);
         error ? reject(error) : resolve();
       };
+      timer = setTimeout(() => {
+        const error = Object.assign(
+          new Error("Sidecar output write timed out."),
+          { code: "OUTPUT_WRITE_TIMEOUT" },
+        );
+        finish(error);
+        if (!this.output.destroyed) this.output.destroy(error);
+      }, this.writeTimeoutMs);
       this.output.once("error", finish);
       try {
         this.output.write(encoded, (error?: Error | null) => finish(error));
