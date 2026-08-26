@@ -15,6 +15,8 @@ internal static class TextExtractorBounds {
     internal const int MaximumDiagnosticTextUtf8Bytes = 64 * 1024;
     internal const int MaximumToolCount = 32;
     internal const int MaximumToolCallCount = 64;
+    internal const int MaximumToolNameUtf8Bytes = 128;
+    internal const int MaximumToolCallIdUtf8Bytes = 1024;
     internal const int MaximumRawArgumentsUtf8Bytes = 256 * 1024;
     internal const int MaximumTotalRawArgumentsUtf8Bytes = 1024 * 1024;
 }
@@ -26,6 +28,7 @@ internal enum TextExtractionFailureKind {
     CompletionOutputInvalid,
     ClientUnavailable,
     ToolCallLimitExceeded,
+    ToolIdentifierLimitExceeded,
     ToolArgumentsLimitExceeded,
     MalformedToolCall,
     DuplicateToolCallId,
@@ -256,6 +259,14 @@ internal sealed class TextExtractor {
                 StringComparison.Ordinal
             )) {
             ValidateCodexResponsesToolNames(_toolSet.Definitions);
+            if (connection.MaxTokens is not null) {
+                throw new ArgumentException(
+                    "Text extractor openai-codex-responses connections must "
+                        + "omit MaxTokens because that client has no verified "
+                        + "mapping for this option.",
+                    nameof(connection)
+                );
+            }
         }
         _getClient = getClient
             ?? throw new ArgumentNullException(nameof(getClient));
@@ -370,7 +381,7 @@ internal sealed class TextExtractor {
             allowEmpty: true,
             failureKind: TextExtractionFailureKind.CompletionOutputInvalid
         );
-        PreflightCalls(session, calls);
+        PreflightCalls(_toolSet, calls);
 
         foreach (RawToolCall call in calls) {
             cancellationToken.ThrowIfCancellationRequested();
@@ -407,7 +418,7 @@ internal sealed class TextExtractor {
     }
 
     private static void PreflightCalls(
-        ToolSession session,
+        TextExtractorToolSet toolSet,
         IReadOnlyList<RawToolCall> calls
     ) {
         if (calls.Count > TextExtractorBounds.MaximumToolCallCount) {
@@ -423,12 +434,26 @@ internal sealed class TextExtractor {
             if (call is null
                 || string.IsNullOrWhiteSpace(call.ToolName)
                 || string.IsNullOrWhiteSpace(call.ToolCallId)
-                || call.RawArgumentsJson is null) {
+                || string.IsNullOrWhiteSpace(call.RawArgumentsJson)) {
                 throw Failure(
                     TextExtractionFailureKind.MalformedToolCall,
                     "Completion emitted a malformed artifact tool call."
                 );
             }
+            RequireProviderIdentifier(
+                call.ToolName,
+                TextExtractorBounds.MaximumToolNameUtf8Bytes,
+                "Artifact tool name",
+                call.ToolName,
+                call.ToolCallId
+            );
+            RequireProviderIdentifier(
+                call.ToolCallId,
+                TextExtractorBounds.MaximumToolCallIdUtf8Bytes,
+                "Artifact tool call id",
+                call.ToolName,
+                call.ToolCallId
+            );
             if (!callIds.Add(call.ToolCallId)) {
                 throw Failure(
                     TextExtractionFailureKind.DuplicateToolCallId,
@@ -437,7 +462,11 @@ internal sealed class TextExtractor {
                     toolCallId: call.ToolCallId
                 );
             }
-            if (!session.TryGetTool(call.ToolName, out _)) {
+            if (!toolSet.Definitions.Any(definition => string.Equals(
+                    definition.Name,
+                    call.ToolName,
+                    StringComparison.Ordinal
+                ))) {
                 throw Failure(
                     TextExtractionFailureKind.UnknownTool,
                     "Completion emitted an unknown artifact tool call.",
@@ -479,6 +508,34 @@ internal sealed class TextExtractor {
                     "Artifact tool arguments exceed the total byte limit."
                 );
             }
+        }
+    }
+
+    private static void RequireProviderIdentifier(
+        string value,
+        int maximumUtf8Bytes,
+        string description,
+        string toolName,
+        string toolCallId
+    ) {
+        int byteCount;
+        try {
+            byteCount = StrictUtf8.GetByteCount(value);
+        }
+        catch (EncoderFallbackException exception) {
+            throw Failure(
+                TextExtractionFailureKind.MalformedToolCall,
+                $"{description} is not strict UTF-8 text.",
+                innerException: exception
+            );
+        }
+        if (byteCount > maximumUtf8Bytes) {
+            throw Failure(
+                TextExtractionFailureKind.ToolIdentifierLimitExceeded,
+                $"{description} exceeds its UTF-8 byte limit.",
+                toolName: toolName,
+                toolCallId: toolCallId
+            );
         }
     }
 

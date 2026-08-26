@@ -231,6 +231,37 @@ public sealed class TextExtractorTests {
                     "{}"
                 )
             ], TextExtractionFailureKind.UnknownTool),
+            ([new RawToolCall(
+                "ARTIFACT_PERSON",
+                "wrong-case",
+                """{"name":"Wrong case"}"""
+            )], TextExtractionFailureKind.UnknownTool),
+            ([new RawToolCall(
+                "\ud800",
+                "invalid-name",
+                "{}"
+            )], TextExtractionFailureKind.MalformedToolCall),
+            ([new RawToolCall(
+                new string(
+                    'n',
+                    TextExtractorBounds.MaximumToolNameUtf8Bytes + 1
+                ),
+                "long-name",
+                "{}"
+            )], TextExtractionFailureKind.ToolIdentifierLimitExceeded),
+            ([new RawToolCall(
+                "artifact_person",
+                "\ud800",
+                """{"name":"Invalid id"}"""
+            )], TextExtractionFailureKind.MalformedToolCall),
+            ([new RawToolCall(
+                "artifact_person",
+                new string(
+                    'i',
+                    TextExtractorBounds.MaximumToolCallIdUtf8Bytes + 1
+                ),
+                """{"name":"Long id"}"""
+            )], TextExtractionFailureKind.ToolIdentifierLimitExceeded),
             ([
                 new RawToolCall(
                     "artifact_person",
@@ -289,6 +320,41 @@ public sealed class TextExtractorTests {
                 ).AsTask());
             Assert.Equal(kind, failure.Kind);
         }
+        Assert.Equal(0, handlerCalls);
+    }
+
+    [Fact]
+    public async Task BlankArgumentsForOptionalArtifactAreMalformedBeforeHandler() {
+        int handlerCalls = 0;
+        TextExtractorToolSet tools = TextExtractorToolSet.Create(
+            TextExtractorArtifactTool.Create<OptionalArtifact>(
+                "artifact_optional",
+                (_, _) => {
+                    handlerCalls++;
+                    return new ValidateResult(true, null);
+                }
+            )
+        );
+        ScriptedClient client = CallsClient(new RawToolCall(
+            "artifact_optional",
+            "blank-arguments",
+            " \t\r\n"
+        ));
+        var extractor = new TextExtractor(
+            "system fixture",
+            tools,
+            Connection(),
+            () => client
+        );
+
+        TextExtractionException failure = await Assert.ThrowsAsync<
+            TextExtractionException>(() => extractor.ExtractAsync(
+                "target",
+                "extract",
+                CancellationToken.None
+            ).AsTask());
+
+        Assert.Equal(TextExtractionFailureKind.MalformedToolCall, failure.Kind);
         Assert.Equal(0, handlerCalls);
     }
 
@@ -514,6 +580,15 @@ public sealed class TextExtractorTests {
             Connection(kind: "openai-codex-responses"),
             () => throw new InvalidOperationException("must stay lazy")
         );
+        Assert.Throws<ArgumentException>(() => new TextExtractor(
+            "system fixture",
+            TextExtractorToolSet.Create(person),
+            Connection(
+                maxTokens: 123,
+                kind: "openai-codex-responses"
+            ),
+            () => throw new InvalidOperationException("must stay lazy")
+        ));
 
         int accessorCalls = 0;
         var client = new ScriptedClient(static (self, request, _) =>
@@ -609,6 +684,13 @@ public sealed class TextExtractorTests {
         [JsonPropertyName("score")]
         [Range(0, 10)]
         public int Score { get; init; }
+    }
+
+    [Description("An artifact whose fields are all optional.")]
+    private sealed record OptionalArtifact {
+        [Description("Optional note.")]
+        [JsonPropertyName("note")]
+        public string? Note { get; init; }
     }
 
     private sealed class ScriptedClient(

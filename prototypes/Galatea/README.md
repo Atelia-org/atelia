@@ -107,15 +107,17 @@ TextExtractionResult result = await extractor.ExtractAsync(
 ```
 
 V1每次只发起一次Completion，使用`Auto`与parallel tool calls；provider返回的artifact tool calls
-就是terminal output，不进入通用tool-result/repair loop。合法结果包含0..N个按Action block顺序执行并冻结的
-异构`TextExtractionArtifact<T>` typed POCO；0 calls表示没有产物，普通正文只保留为bounded diagnostics，
+就是terminal output，不进入通用tool-result/repair loop。合法结果包含0..N个按Action block顺序执行的
+异构`TextExtractionArtifact<T>` typed POCO；artifact列表与顺序被冻结，`T`的immutability由契约类型自身负责。
+0 calls表示没有产物，普通正文只保留为bounded diagnostics，
 绝不解析为artifact。任一unknown/duplicate/malformed call、schema/DataAnnotations/custom validation失败、
 provider invocation/termination/error不匹配都会使整次调用失败，不返回partial result。
 
 每次调用创建独立`ToolSession`与collector，因此同一extractor可并发复用且不会串线；该结果不具备durable
 recovery或dedupe语义。工具契约继续由`Completion.Tools/ArtifactToolWrapper<T>`提供，无需修改其core。
 如果connection kind exact为`openai-codex-responses`，工具名还必须满足1..64个ASCII字母、数字、下划线或
-连字符（例如`artifact_person`）。system/target/instruction、tool/call数量、raw arguments与diagnostics均有
+连字符（例如`artifact_person`），且必须省略当前尚无verified mapping的`MaxTokens`。system/target/instruction、
+provider tool name/call ID、tool/call数量、raw arguments与diagnostics均有
 code-owned bounds；caller cancellation与transport exception直接传播。
 
 历史 Agent Control profiles 必须继续保留，供 Prepared/ToolContinuation 按 frozen
