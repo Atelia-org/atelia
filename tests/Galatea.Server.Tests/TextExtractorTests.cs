@@ -546,6 +546,21 @@ public sealed class TextExtractorTests {
                 )
             ).ToArray())
         );
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            TextExtractorToolSet.Create(
+                TextExtractorArtifactTool.Create<PersonArtifact>(
+                    new string(
+                        'n',
+                        TextExtractorBounds.MaximumToolNameUtf8Bytes + 1
+                    )
+                )
+            )
+        );
+        Assert.Throws<ArgumentException>(() =>
+            TextExtractorToolSet.Create(
+                TextExtractorArtifactTool.Create<PersonArtifact>("\ud800")
+            )
+        );
         Assert.Throws<InvalidOperationException>(() =>
             TextExtractorToolSet.Create(
                 person,

@@ -21,6 +21,16 @@ internal static class TextExtractorBounds {
     internal const int MaximumTotalRawArgumentsUtf8Bytes = 1024 * 1024;
 }
 
+internal static class TextExtractorUtf8 {
+    private static readonly UTF8Encoding Strict = new(
+        encoderShouldEmitUTF8Identifier: false,
+        throwOnInvalidBytes: true
+    );
+
+    internal static int GetByteCount(string value) =>
+        Strict.GetByteCount(value);
+}
+
 internal enum TextExtractionFailureKind {
     InvocationMismatch,
     CompletionTerminated,
@@ -160,6 +170,7 @@ internal sealed class TextExtractorToolSet {
     private TextExtractorToolSet(IReadOnlyList<ITool> tools) {
         _registry = new ToolRegistry(tools);
         Definitions = _registry.AllDefinitions;
+        ValidateConfiguredToolNames(Definitions);
     }
 
     internal ImmutableArray<ToolDefinition> Definitions { get; }
@@ -198,15 +209,38 @@ internal sealed class TextExtractorToolSet {
             );
         return _registry.CreateSession(items: items);
     }
+
+    private static void ValidateConfiguredToolNames(
+        ImmutableArray<ToolDefinition> definitions
+    ) {
+        foreach (ToolDefinition definition in definitions) {
+            int byteCount;
+            try {
+                byteCount = TextExtractorUtf8.GetByteCount(definition.Name);
+            }
+            catch (EncoderFallbackException exception) {
+                throw new ArgumentException(
+                    "Text extractor tool names must be strict UTF-8 text.",
+                    "artifactTools",
+                    exception
+                );
+            }
+            if (byteCount
+                    > TextExtractorBounds.MaximumToolNameUtf8Bytes) {
+                throw new ArgumentOutOfRangeException(
+                    "artifactTools",
+                    "Text extractor tool names must not exceed "
+                        + $"{TextExtractorBounds.MaximumToolNameUtf8Bytes} "
+                        + "UTF-8 bytes."
+                );
+            }
+        }
+    }
 }
 
 internal sealed class TextExtractor {
     private const string CodexResponsesConnectionKind =
         "openai-codex-responses";
-    private static readonly UTF8Encoding StrictUtf8 = new(
-        encoderShouldEmitUTF8Identifier: false,
-        throwOnInvalidBytes: true
-    );
     private const string ProtocolSuffix = """
 
 
@@ -476,7 +510,7 @@ internal sealed class TextExtractor {
             }
             int rawArgumentsBytes;
             try {
-                rawArgumentsBytes = StrictUtf8.GetByteCount(
+                rawArgumentsBytes = TextExtractorUtf8.GetByteCount(
                     call.RawArgumentsJson
                 );
             }
@@ -520,7 +554,7 @@ internal sealed class TextExtractor {
     ) {
         int byteCount;
         try {
-            byteCount = StrictUtf8.GetByteCount(value);
+            byteCount = TextExtractorUtf8.GetByteCount(value);
         }
         catch (EncoderFallbackException exception) {
             throw Failure(
@@ -595,7 +629,7 @@ internal sealed class TextExtractor {
             );
         }
         try {
-            if (StrictUtf8.GetByteCount(value) > maximumUtf8Bytes) {
+            if (TextExtractorUtf8.GetByteCount(value) > maximumUtf8Bytes) {
                 if (failureKind is { } kind) {
                     throw Failure(
                         kind,
