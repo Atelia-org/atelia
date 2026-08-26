@@ -7,6 +7,7 @@ export interface DelegateTaskInput {
   mode: TaskMode;
   network: boolean;
   waitMs: number;
+  clientUserMessageId?: string;
 }
 
 export interface ContinueTaskInput {
@@ -15,6 +16,7 @@ export interface ContinueTaskInput {
   mode: TaskMode;
   network: boolean;
   waitMs: number;
+  clientUserMessageId?: string;
 }
 
 export interface TaskSnapshot {
@@ -24,6 +26,7 @@ export interface TaskSnapshot {
   latestTurnId?: string;
   result?: string;
   final?: string;
+  finalTruncated?: boolean;
   progress?: string;
   changedFiles: string[];
   validation: string[];
@@ -40,4 +43,3 @@ export interface TaskBackend {
   read(threadId: string, detail: "summary" | "final"): Promise<TaskSnapshot>;
   interrupt(threadId: string): Promise<TaskSnapshot>;
 }
-

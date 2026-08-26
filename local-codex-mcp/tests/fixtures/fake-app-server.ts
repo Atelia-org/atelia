@@ -12,6 +12,8 @@ const pendingServerRequests = new Map<string | number, string | number>();
 const threads = new Map<string, Record<string, unknown>>();
 let lastTurnParams: Record<string, unknown> | undefined;
 let lastResumeParams: Record<string, unknown> | undefined;
+let lastThreadStartParams: Record<string, unknown> | undefined;
+const allTurnParams: Record<string, unknown>[] = [];
 let keepAliveAfterStdinClose = false;
 
 if (process.argv.includes("--ignore-sigterm")) {
@@ -51,7 +53,12 @@ function makeThread(id: string, cwd: string, threadSource: string | null): Recor
   };
 }
 
-function completeTurn(threadId: string, turnId: string, status: "completed" | "interrupted" = "completed"): void {
+function completeTurn(
+  threadId: string,
+  turnId: string,
+  status: "completed" | "failed" | "interrupted" = "completed",
+  behavior = "",
+): void {
   const thread = threads.get(threadId);
   if (!thread) return;
   const turns = thread.turns as Array<Record<string, unknown>>;
@@ -64,11 +71,12 @@ function completeTurn(threadId: string, turnId: string, status: "completed" | "i
     validation: status === "completed" ? ["fake check passed"] : [],
     warnings: [],
   });
+  const natural = "Galatea，事情已经办妥。\n\n```ts\nconst answer = `含有 ~~~ fence`;\n```";
   const agentItem = {
     type: "agentMessage",
     id: `item-${turnId}`,
-    text: report,
-    phase: "final_answer",
+    text: behavior.includes("[NATURAL]") ? natural : behavior.includes("[OVERSIZE]") ? "x".repeat(10_000) : report,
+    phase: behavior.includes("[LEGACY]") ? null : "final_answer",
     memoryCitation: null,
   };
   const fileItem = {
@@ -78,11 +86,12 @@ function completeTurn(threadId: string, turnId: string, status: "completed" | "i
     status: "completed",
   };
   turn.status = status;
+  turn.error = status === "failed" ? { message: "fake failure", codexErrorInfo: null, additionalDetails: null } : null;
   turn.completedAt = Math.floor(Date.now() / 1000);
   turn.durationMs = 10;
-  turn.items = status === "completed" ? [agentItem, fileItem] : [];
+  turn.items = status === "completed" && !behavior.includes("[MISSING]") ? [agentItem, fileItem] : [];
   thread.status = { type: "idle" };
-  if (status === "completed") {
+  if (status === "completed" && !behavior.includes("[MISSING]")) {
     send({ method: "item/completed", params: { threadId, turnId, item: agentItem, completedAtMs: Date.now() } });
     send({ method: "item/completed", params: { threadId, turnId, item: fileItem, completedAtMs: Date.now() } });
   }
@@ -153,7 +162,7 @@ lines.on("line", (line) => {
       send({ id: message.id, result: {} });
       break;
     case "test/lastRequests":
-      send({ id: message.id, result: { lastTurnParams, lastResumeParams } });
+      send({ id: message.id, result: { lastTurnParams, lastResumeParams, lastThreadStartParams, allTurnParams } });
       break;
     case "test/serverRequest": {
       const serverId = nextServerRequest++;
@@ -181,6 +190,7 @@ lines.on("line", (line) => {
       }, 5);
       break;
     case "thread/start": {
+      lastThreadStartParams = message.params;
       const id = `thread-${nextThread++}`;
       const thread = makeThread(
         id,
@@ -223,6 +233,7 @@ lines.on("line", (line) => {
     }
     case "turn/start": {
       lastTurnParams = message.params;
+      allTurnParams.push(message.params ?? {});
       const threadId = String(message.params?.threadId);
       const thread = threads.get(threadId);
       if (!thread) {
@@ -242,10 +253,21 @@ lines.on("line", (line) => {
       };
       (thread.turns as unknown[]).push(turn);
       thread.status = { type: "active", activeFlags: ["waitingOnModel"] };
-      send({ id: message.id, result: { turn } });
-      send({ method: "turn/started", params: { threadId, turn } });
       const input = JSON.stringify(message.params?.input ?? []);
-      if (!input.includes("[LONG]")) setTimeout(() => completeTurn(threadId, turnId), 10);
+      if (input.includes("[EARLY]")) {
+        send({ method: "turn/started", params: { threadId, turn } });
+        completeTurn(threadId, turnId, "completed", input);
+        send({ id: message.id, result: { turn } });
+      } else {
+        send({ id: message.id, result: { turn } });
+        send({ method: "turn/started", params: { threadId, turn } });
+        if (input.includes("[CRASH]")) {
+          setTimeout(() => process.exit(24), 5);
+        } else if (!input.includes("[LONG]")) {
+          const status = input.includes("[FAIL]") ? "failed" : "completed";
+          setTimeout(() => completeTurn(threadId, turnId, status, input), 10);
+        }
+      }
       break;
     }
     case "turn/interrupt":

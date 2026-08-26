@@ -84,6 +84,40 @@ npm start
 
 stdio 的 stdout 专用于 MCP JSON-RPC，结构化日志只写 stderr。
 
+### Galatea fixed-thread sidecar
+
+同一 backend 另有一个不暴露 MCP 的 Galatea adapter。它把工作目录、sandbox mode 与 network
+固定在启动环境中，逐封接收由 Galatea runtime 已经路由好的任务；第一封创建 Codex thread，
+后续请求带回该 `threadId`，便继续同一个 thread。Codex 的自然 Markdown final 原样返回，不使用
+`AgentReport` output schema。
+
+```bash
+export CODEX_BRIDGE_ALLOWED_ROOTS='["/repos/focus/atelia"]'
+export CODEX_BRIDGE_DEFAULT_CWD='/repos/focus/atelia'
+export GALATEA_CODEX_MODE=work
+export GALATEA_CODEX_NETWORK=false
+npm run build
+npm run start:galatea
+```
+
+stdin/stdout 是 strict bounded JSONL V1，stdout 只有协议 frame，日志只写 stderr：
+
+```json
+{"v":1,"type":"ready"}
+{"v":1,"type":"dispatch","requestId":"r1","dispatchId":"d1","threadId":null,"task":"请调查并回复"}
+{"v":1,"type":"accepted","requestId":"r1","dispatchId":"d1","threadId":"thread-id","turnId":"turn-id"}
+{"v":1,"type":"completed","dispatchId":"d1","threadId":"thread-id","turnId":"turn-id","final":"自然 Markdown 回信"}
+```
+
+失败以 `failed` frame 返回稳定的 `stage`/`code`。`accepted` 只在 `turn/start` 返回稳定 handle 后
+发出；RPC timeout 的 outcome unknown 不会自动 retry。terminal deadline 到期会 best-effort interrupt，
+缺失、截断或超过上限的 final 均不会伪装成完整回信。EOF、SIGINT 与 SIGTERM 会回收 app-server child。
+每封 frame 不接受 `cwd`、`mode` 或 `network` 字段；相关 capability 只能由启动环境决定。
+
+可选边界配置：`GALATEA_CODEX_TURN_DEADLINE_MS`、`GALATEA_CODEX_INTERRUPT_GRACE_MS`、
+`GALATEA_CODEX_MAX_INPUT_FRAME_BYTES`、`GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES`、
+`GALATEA_CODEX_MAX_TASK_BYTES`、`GALATEA_CODEX_MAX_FINAL_BYTES`。
+
 需要 Streamable HTTP 时：
 
 ```bash

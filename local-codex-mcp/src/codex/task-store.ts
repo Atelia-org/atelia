@@ -9,9 +9,9 @@ interface RuntimeState extends TaskSnapshot {
   waiters: Map<string, Set<() => void>>;
 }
 
-function truncate(value: string, maximum: number): string {
-  if (value.length <= maximum) return value;
-  return `${value.slice(0, maximum - 1)}…`;
+function truncate(value: string, maximum: number): { value: string; truncated: boolean } {
+  if (value.length <= maximum) return { value, truncated: false };
+  return { value: `${value.slice(0, maximum - 1)}…`, truncated: true };
 }
 
 function turnStatus(status: Turn["status"]): TaskStatus {
@@ -44,6 +44,7 @@ export class TaskStore {
     state.latestTurnId = turnId;
     state.result = undefined;
     state.final = undefined;
+    state.finalTruncated = undefined;
     state.progress = undefined;
     state.changedFiles = [];
     state.validation = [];
@@ -69,6 +70,7 @@ export class TaskStore {
     state.errorMessage = turn.error?.message;
     state.result = undefined;
     state.final = undefined;
+    state.finalTruncated = undefined;
     state.progress = undefined;
 
     for (const item of completedItems(turn)) this.consumeItem(state, item);
@@ -114,13 +116,16 @@ export class TaskStore {
       }
       case "item/completed": {
         if (!threadId || !("item" in params)) return;
-        this.consumeItem(this.getOrCreate(threadId), params.item as ThreadItem);
+        const turnId = "turnId" in params && typeof params.turnId === "string" ? params.turnId : undefined;
+        const state = this.getOrCreate(threadId);
+        if (!turnId || (state.latestTurnId !== undefined && state.latestTurnId !== turnId)) return;
+        this.consumeItem(state, params.item as ThreadItem);
         return;
       }
       case "item/agentMessage/delta": {
         if (!threadId || !("delta" in params) || typeof params.delta !== "string") return;
         const state = this.getOrCreate(threadId);
-        state.progress = truncate(`${state.progress ?? ""}${params.delta}`, this.maxProgressChars);
+        state.progress = truncate(`${state.progress ?? ""}${params.delta}`, this.maxProgressChars).value;
         return;
       }
       case "warning": {
@@ -174,7 +179,9 @@ export class TaskStore {
       ...(state.activeTurnId ? { activeTurnId: state.activeTurnId } : {}),
       ...(state.latestTurnId ? { latestTurnId: state.latestTurnId } : {}),
       ...(state.result ? { result: state.result } : {}),
-      ...(state.final ? { final: state.final } : {}),
+      ...(state.final !== undefined
+        ? { final: state.final, finalTruncated: state.finalTruncated ?? false }
+        : {}),
       ...(state.progress ? { progress: state.progress } : {}),
       changedFiles: [...state.changedFiles],
       validation: [...state.validation],
@@ -202,18 +209,20 @@ export class TaskStore {
   private consumeItem(state: RuntimeState, item: ThreadItem): void {
     if (item.type === "agentMessage") {
       if (item.phase === "commentary") {
-        state.progress = truncate(item.text, this.maxProgressChars);
+        state.progress = truncate(item.text, this.maxProgressChars).value;
         return;
       }
-      state.final = truncate(item.text, this.maxResultChars);
+      const final = truncate(item.text, this.maxResultChars);
+      state.final = final.value;
+      state.finalTruncated = final.truncated;
       const report = parseAgentReport(item.text);
       if (report) {
-        state.result = truncate(formatAgentReport(report), this.maxResultChars);
+        state.result = truncate(formatAgentReport(report), this.maxResultChars).value;
         state.validation = report.validation;
         state.changedFiles = [...new Set([...state.changedFiles, ...report.changed_files])];
         for (const warning of report.warnings) this.addWarning(state, warning);
       } else {
-        state.result = truncate(item.text, this.maxResultChars);
+        state.result = final.value;
       }
     } else if (item.type === "fileChange") {
       state.changedFiles = [
@@ -228,7 +237,7 @@ export class TaskStore {
   }
 
   private addWarning(state: RuntimeState, warning: string): void {
-    const bounded = truncate(warning, 1000);
+    const bounded = truncate(warning, 1000).value;
     if (!state.warnings.includes(bounded)) state.warnings.push(bounded);
     state.warnings = state.warnings.slice(-20);
   }

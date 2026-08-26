@@ -45,8 +45,12 @@ test("backend completes, continues, returns bounded data, and interrupts", async
   assert.match(first.result ?? "", /Fake task completed/);
   assert.doesNotMatch(first.result ?? "", /secret diff/);
   const researchRequest = await client.request<{
-    lastTurnParams: { approvalPolicy: string; approvalsReviewer: string; sandboxPolicy: { type: string; networkAccess: boolean } };
+    lastThreadStartParams: { serviceName: string; threadSource: string };
+    lastTurnParams: { approvalPolicy: string; approvalsReviewer: string; sandboxPolicy: { type: string; networkAccess: boolean }; outputSchema: unknown };
   }>("test/lastRequests", {});
+  assert.equal(researchRequest.lastThreadStartParams.serviceName, "atelia_local_codex_mcp");
+  assert.equal(researchRequest.lastThreadStartParams.threadSource, "atelia-local-codex-mcp");
+  assert.equal(typeof researchRequest.lastTurnParams.outputSchema, "object");
   assert.equal(researchRequest.lastTurnParams.approvalPolicy, "never");
   assert.equal(researchRequest.lastTurnParams.approvalsReviewer, "user");
   assert.deepEqual(researchRequest.lastTurnParams.sandboxPolicy, {

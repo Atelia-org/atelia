@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { JsonValue } from "../../schemas/serde_json/JsonValue.js";
 import type { Account } from "../../schemas/v2/Account.js";
 import type { GetAccountResponse } from "../../schemas/v2/GetAccountResponse.js";
 import type { SandboxMode } from "../../schemas/v2/SandboxMode.js";
@@ -23,14 +24,32 @@ import { CodexAppServerClient } from "./client.js";
 import { agentReportJsonSchema } from "./report.js";
 import { TaskStore } from "./task-store.js";
 
-const BRIDGE_THREAD_SOURCE = "atelia-local-codex-mcp";
-const BRIDGE_THREAD_NAME_PREFIX = "[local-codex-mcp] ";
-const SERVICE_NAME = "atelia_local_codex_mcp";
-
 const DEVELOPER_INSTRUCTIONS = `You are the local execution subagent behind an MCP bridge.
 Complete the requested task inside the supplied cwd and sandbox. Do not request privilege escalation.
 Keep the final report concise: outcome, important findings, changed file paths, validation results, and warnings.
 Never include chain-of-thought, full command logs, large diffs, or full file contents in the final report.`;
+
+export interface CodexBackendProfile {
+  serviceName: string;
+  threadSource: string;
+  threadNamePrefix: string;
+  developerInstructions: string;
+  outputSchema?: JsonValue;
+  logEventPrefix: string;
+  delegateOperation: string;
+  continueOperation: string;
+}
+
+export const mcpCodexBackendProfile: CodexBackendProfile = {
+  serviceName: "atelia_local_codex_mcp",
+  threadSource: "atelia-local-codex-mcp",
+  threadNamePrefix: "[local-codex-mcp] ",
+  developerInstructions: DEVELOPER_INSTRUCTIONS,
+  outputSchema: agentReportJsonSchema as unknown as JsonValue,
+  logEventPrefix: "mcp_tool",
+  delegateOperation: "codex_delegate",
+  continueOperation: "codex_continue",
+};
 
 function coarseSandbox(mode: TaskMode): SandboxMode {
   return mode === "research" ? "read-only" : "workspace-write";
@@ -51,10 +70,6 @@ function preciseSandbox(mode: TaskMode, cwd: string, network: boolean): SandboxP
 
 function threadConfig(network: boolean): Record<string, unknown> {
   return { web_search: network ? "live" : "disabled" };
-}
-
-function ownershipName(threadId: string): string {
-  return `${BRIDGE_THREAD_NAME_PREFIX}${threadId}`;
 }
 
 function sanitizeChangedFiles(files: readonly string[], cwd: string): string[] {
@@ -79,13 +94,16 @@ export interface CodexBackendOptions {
   pathPolicy: PathPolicy;
   store: TaskStore;
   logger: BridgeLogger;
+  profile?: CodexBackendProfile;
 }
 
 export class CodexBackend implements TaskBackend {
   private authenticated = false;
   private readonly continueReservations = new Set<string>();
+  private readonly profile: CodexBackendProfile;
 
   constructor(private readonly options: CodexBackendOptions) {
+    this.profile = { ...(options.profile ?? mcpCodexBackendProfile) };
     this.options.client.subscribe((notification) => {
       if (notification.method === "bridge/processExited") this.authenticated = false;
       this.options.store.handleNotification(notification);
@@ -112,15 +130,15 @@ export class CodexBackend implements TaskBackend {
         approvalsReviewer: "user",
         sandbox: coarseSandbox(input.mode),
         config: threadConfig(input.network),
-        serviceName: SERVICE_NAME,
-        developerInstructions: DEVELOPER_INSTRUCTIONS,
+        serviceName: this.profile.serviceName,
+        developerInstructions: this.profile.developerInstructions,
         ephemeral: false,
-        threadSource: BRIDGE_THREAD_SOURCE,
+        threadSource: this.profile.threadSource,
       });
       await this.validateStartedThread(response.thread, cwd);
       await this.options.client.request("thread/name/set", {
         threadId: response.thread.id,
-        name: ownershipName(response.thread.id),
+        name: this.ownershipName(response.thread.id),
       });
       const snapshot = await this.startTurn(
         response.thread.id,
@@ -129,12 +147,13 @@ export class CodexBackend implements TaskBackend {
         input.mode,
         input.network,
         input.waitMs,
+        input.clientUserMessageId,
       );
-      this.logTask("codex_delegate", cwd, snapshot, Date.now() - startedAt);
+      this.logTask(this.profile.delegateOperation, cwd, snapshot, Date.now() - startedAt);
       return this.sanitizeSnapshot(snapshot, cwd);
     } catch (error) {
       const bridgeError = asBridgeError(error);
-      this.logFailure("codex_delegate", cwd, bridgeError, Date.now() - startedAt);
+      this.logFailure(this.profile.delegateOperation, cwd, bridgeError, Date.now() - startedAt);
       throw bridgeError;
     }
   }
@@ -161,7 +180,7 @@ export class CodexBackend implements TaskBackend {
         approvalsReviewer: "user",
         sandbox: coarseSandbox(input.mode),
         config: threadConfig(input.network),
-        developerInstructions: DEVELOPER_INSTRUCTIONS,
+        developerInstructions: this.profile.developerInstructions,
       });
       await this.validatePersistedThread(resumed.thread, cwd);
       const snapshot = await this.startTurn(
@@ -171,12 +190,13 @@ export class CodexBackend implements TaskBackend {
         input.mode,
         input.network,
         input.waitMs,
+        input.clientUserMessageId,
       );
-      this.logTask("codex_continue", cwd, snapshot, Date.now() - startedAt);
+      this.logTask(this.profile.continueOperation, cwd, snapshot, Date.now() - startedAt);
       return this.sanitizeSnapshot(snapshot, cwd);
     } catch (error) {
       const bridgeError = asBridgeError(error);
-      this.logFailure("codex_continue", cwd, bridgeError, Date.now() - startedAt, input.threadId);
+      this.logFailure(this.profile.continueOperation, cwd, bridgeError, Date.now() - startedAt, input.threadId);
       throw bridgeError;
     } finally {
       this.continueReservations.delete(input.threadId);
@@ -264,16 +284,18 @@ export class CodexBackend implements TaskBackend {
     mode: TaskMode,
     network: boolean,
     waitMs: number,
+    clientUserMessageId?: string,
   ): Promise<TaskSnapshot> {
     const response = await this.options.client.request<TurnStartResponse>("turn/start", {
       threadId,
+      ...(clientUserMessageId === undefined ? {} : { clientUserMessageId }),
       input: [{ type: "text", text: task, text_elements: [] }],
       cwd,
       approvalPolicy: "never",
       approvalsReviewer: "user",
       sandboxPolicy: preciseSandbox(mode, cwd, network),
       summary: "concise",
-      outputSchema: agentReportJsonSchema,
+      ...(this.profile.outputSchema === undefined ? {} : { outputSchema: this.profile.outputSchema }),
     });
     this.options.store.beginTurn(threadId, response.turn.id);
     return this.options.store.waitForTurn(threadId, response.turn.id, waitMs);
@@ -284,7 +306,11 @@ export class CodexBackend implements TaskBackend {
       threadId,
       includeTurns,
     });
-    if (response.thread.id !== threadId || response.thread.name !== ownershipName(threadId)) {
+    if (
+      response.thread.id !== threadId ||
+      response.thread.name !== this.ownershipName(threadId) ||
+      response.thread.threadSource !== this.profile.threadSource
+    ) {
       throw new BridgeError("THREAD_NOT_FOUND", "The requested thread is not owned by this bridge.");
     }
     await this.options.pathPolicy.resolveCwd(response.thread.cwd);
@@ -300,14 +326,17 @@ export class CodexBackend implements TaskBackend {
   }
 
   private async validateStartedThread(thread: Thread, expectedCwd: string): Promise<void> {
-    if (thread.threadSource !== BRIDGE_THREAD_SOURCE) {
+    if (thread.threadSource !== this.profile.threadSource) {
       throw new BridgeError("CODEX_PROTOCOL_ERROR", "Codex did not preserve the bridge thread ownership tag.");
     }
     await this.validateThreadCwd(thread, expectedCwd);
   }
 
   private async validatePersistedThread(thread: Thread, expectedCwd: string): Promise<void> {
-    if (thread.name !== ownershipName(thread.id)) {
+    if (
+      thread.name !== this.ownershipName(thread.id) ||
+      thread.threadSource !== this.profile.threadSource
+    ) {
       throw new BridgeError("THREAD_NOT_FOUND", "The requested thread is not owned by this bridge.");
     }
     await this.validateThreadCwd(thread, expectedCwd);
@@ -324,8 +353,12 @@ export class CodexBackend implements TaskBackend {
     return { ...snapshot, changedFiles: sanitizeChangedFiles(snapshot.changedFiles, cwd) };
   }
 
+  private ownershipName(threadId: string): string {
+    return `${this.profile.threadNamePrefix}${threadId}`;
+  }
+
   private logTask(tool: string, cwd: string, snapshot: TaskSnapshot, durationMs: number): void {
-    this.options.logger.log("info", "mcp_tool_complete", {
+    this.options.logger.log("info", `${this.profile.logEventPrefix}_complete`, {
       tool,
       thread_id: snapshot.threadId,
       turn_id: snapshot.activeTurnId ?? snapshot.latestTurnId,
@@ -342,7 +375,7 @@ export class CodexBackend implements TaskBackend {
     durationMs: number,
     threadId?: string,
   ): void {
-    this.options.logger.log("error", "mcp_tool_failed", {
+    this.options.logger.log("error", `${this.profile.logEventPrefix}_failed`, {
       tool,
       thread_id: threadId,
       cwd,
