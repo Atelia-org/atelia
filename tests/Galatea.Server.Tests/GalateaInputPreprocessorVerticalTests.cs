@@ -121,6 +121,65 @@ public sealed class GalateaInputPreprocessorVerticalTests {
     }
 
     [Fact]
+    public async Task DirectFreshSend_HiddenConnectionFailsBeforeNormalizationClientOrMutation() {
+        CompletionConnectionConfig visible = Connection(
+            "test",
+            "visible-model"
+        );
+        CompletionConnectionConfig hidden = Connection(
+            "hidden",
+            "hidden-model"
+        );
+        var completion = new ScriptedCompletionClient("must not dispatch");
+        var factory = new RoutingClientFactory(new Dictionary<
+            string,
+            ScriptedCompletionClient
+        >(StringComparer.Ordinal) {
+            [visible.Id] = completion,
+            [hidden.Id] = completion,
+        });
+        var normalizer = new ReturningNormalizer("must not normalize");
+        await using var host = GalateaTestHost.Create(
+            factory,
+            normalizer,
+            connections: [visible, hidden],
+            selectableConnectionIds: [visible.Id]
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        var initialHead = session.Engine.ReadCurrentHead();
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "direct hidden fresh",
+            new GalateaTurnOptions(hidden.Id)
+        );
+        try {
+            GalateaTurnException failure = await Assert.ThrowsAsync<
+                GalateaTurnException>(() => service.RunTurnAsync(
+                    session,
+                    turn,
+                    CancellationToken.None
+                ));
+
+            Assert.Equal(
+                "recap-grid-connection-absent",
+                failure.FailureReason
+            );
+            Assert.Empty(factory.CreatedConnectionIds);
+            Assert.Equal(0, normalizer.NormalizeCallCount);
+            Assert.Equal(0, completion.DispatchCallCount);
+            Assert.Equal(initialHead, session.Engine.ReadCurrentHead());
+        }
+        finally {
+            service.FinishTurn(session, turn);
+        }
+    }
+
+    [Fact]
     public async Task NormalizedInput_ReachesRequestPersistenceAndRecentDisplay() {
         var completion = new ScriptedCompletionClient("assistant reply");
         var normalizer = new ReturningNormalizer("normalized input");

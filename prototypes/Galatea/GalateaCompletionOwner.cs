@@ -66,13 +66,12 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                 estimators: [new O200kBaseHistoryUnitLoadEstimator()]
             );
         }
-        catch {
-            try {
-                recapGridHost?.Dispose();
-            }
-            finally {
-                _registry.Dispose();
-            }
+        catch (Exception exception) {
+            DisposeAfterConstructionFailure(
+                recapGridHost,
+                _registry,
+                exception
+            );
             throw;
         }
 
@@ -132,6 +131,50 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                 + $"'{InputNormalizerBindingKey}' binding."
             );
         }
+    }
+
+    private static void DisposeAfterConstructionFailure(
+        RecapGridCompletionHost? recapGridHost,
+        CompletionConnectionRegistry registry,
+        Exception original
+    ) {
+        Exception? recapCleanup = null;
+        Exception? registryCleanup = null;
+        try {
+            recapGridHost?.Dispose();
+        }
+        catch (Exception exception) {
+            recapCleanup = exception;
+        }
+        try {
+            registry.Dispose();
+        }
+        catch (Exception exception) {
+            registryCleanup = exception;
+        }
+
+        if (recapCleanup is not null
+            && !GalateaExceptionClassifier.IsNonFatal(recapCleanup)) {
+            ExceptionDispatchInfo.Capture(recapCleanup).Throw();
+        }
+        if (registryCleanup is not null
+            && !GalateaExceptionClassifier.IsNonFatal(registryCleanup)) {
+            ExceptionDispatchInfo.Capture(registryCleanup).Throw();
+        }
+        if (!GalateaExceptionClassifier.IsNonFatal(original)) {
+            ExceptionDispatchInfo.Capture(original).Throw();
+        }
+
+        var failures = new List<Exception> { original };
+        if (recapCleanup is not null) { failures.Add(recapCleanup); }
+        if (registryCleanup is not null) { failures.Add(registryCleanup); }
+        if (failures.Count > 1) {
+            throw new AggregateException(
+                "Galatea Completion owner construction and cleanup failed.",
+                failures
+            );
+        }
+        ExceptionDispatchInfo.Capture(original).Throw();
     }
 
     public ValueTask DisposeAsync() => new(BeginDispose());

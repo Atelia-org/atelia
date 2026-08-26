@@ -419,6 +419,65 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     }
 
     [Fact]
+    public async Task DirectNewRequestRecovery_HiddenConnectionFailsBeforeClientOrMutation() {
+        CompletionConnectionConfig visible = Connection(
+            "test",
+            "visible-model"
+        );
+        CompletionConnectionConfig hidden = Connection(
+            "hidden-helper",
+            "hidden-model"
+        );
+        var completionFactory = new TrackingCompletionClientFactory(
+            "must not dispatch"
+        );
+        var normalizer = new TrackingNormalizer();
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            normalizer,
+            connections: [visible, hidden],
+            selectableConnectionIds: [visible.Id]
+        );
+        EventAddress pendingHead = AppendPendingObservation(
+            host.SessionDirectory
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        GalateaLiveTurn turn = service.StartRecovery(
+            session,
+            new GalateaTurnOptions(
+                hidden.Id,
+                GalateaTurnMode.Resume,
+                ExpectedHead: pendingHead
+            )
+        );
+        try {
+            GalateaTurnException failure = await Assert.ThrowsAsync<
+                GalateaTurnException>(() => service.RunTurnAsync(
+                    session,
+                    turn,
+                    CancellationToken.None
+                ));
+
+            Assert.Equal(
+                "recap-grid-connection-absent",
+                failure.FailureReason
+            );
+            Assert.Equal(0, completionFactory.CreateCallCount);
+            Assert.Equal(0, completionFactory.Client.DispatchCallCount);
+            Assert.Equal(0, normalizer.NormalizeCallCount);
+            Assert.Equal(pendingHead, session.Engine.ReadCurrentHead());
+        }
+        finally {
+            service.FinishTurn(session, turn);
+        }
+    }
+
+    [Fact]
     public async Task ResumePrepared_ExactBindsWithoutOpeningRecapGridRoutes() {
         var completionFactory = new TrackingCompletionClientFactory(
             "prepared recovery answer"

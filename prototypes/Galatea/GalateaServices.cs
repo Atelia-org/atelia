@@ -75,45 +75,54 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(components);
-        GalateaConfigValidation.RequireDistinctSessionDirectories(
-            config.Users
-        );
-        GalateaRecapGridRuntimeConfig recapGrid = config.RecapGrid
-            ?? throw new InvalidOperationException(
-                "Galatea requires strict RecapGrid runtime configuration."
+        try {
+            GalateaConfigValidation.RequireDistinctSessionDirectories(
+                config.Users
             );
-        _sessionBootstrapAdmission = ResolveSessionBootstrapAdmission(
-            recapGrid
-        );
-        _completionOwner = components.Owner;
-        _recapGrid = components.Owner.RecapGrid;
-        _inputPreprocessor = new GalateaInputPreprocessor(
-            components.Normalizer
-        );
-        _maintenanceMode = config.MaintenanceMode;
-        _users = config.Users.ToDictionary(
-            static value => value.UserId,
-            StringComparer.Ordinal
-        );
-        IReadOnlyDictionary<string, CompletionConnectionConfig> fullCatalog =
-            components.Owner.Connections.ToDictionary(
+            GalateaRecapGridRuntimeConfig recapGrid = config.RecapGrid
+                ?? throw new InvalidOperationException(
+                    "Galatea requires strict RecapGrid runtime configuration."
+                );
+            _sessionBootstrapAdmission = ResolveSessionBootstrapAdmission(
+                recapGrid
+            );
+            _completionOwner = components.Owner;
+            _recapGrid = components.Owner.RecapGrid;
+            _inputPreprocessor = new GalateaInputPreprocessor(
+                components.Normalizer
+            );
+            _maintenanceMode = config.MaintenanceMode;
+            _users = config.Users.ToDictionary(
+                static value => value.UserId,
+                StringComparer.Ordinal
+            );
+            IReadOnlyDictionary<string, CompletionConnectionConfig>
+                fullCatalog = components.Owner.Connections.ToDictionary(
+                    static value => value.Id,
+                    StringComparer.Ordinal
+                );
+            CompletionConnectionConfig[] selectable = components.Owner
+                .SelectableConnectionIds
+                .Select(id => fullCatalog[id])
+                .ToArray();
+            _connectionCatalog = selectable.ToDictionary(
                 static value => value.Id,
                 StringComparer.Ordinal
             );
-        CompletionConnectionConfig[] selectable = components.Owner
-            .SelectableConnectionIds
-            .Select(id => fullCatalog[id])
-            .ToArray();
-        _connectionCatalog = selectable.ToDictionary(
-            static value => value.Id,
-            StringComparer.Ordinal
-        );
-        _selectableConnections = Array.AsReadOnly(
-            selectable.Select(static value =>
-                new GalateaConnectionInfoDto(value.Id, value.ModelId)
-            ).ToArray()
-        );
-        _defaultConnectionId = components.Owner.DefaultConnectionId;
+            _selectableConnections = Array.AsReadOnly(
+                selectable.Select(static value =>
+                    new GalateaConnectionInfoDto(value.Id, value.ModelId)
+                ).ToArray()
+            );
+            _defaultConnectionId = components.Owner.DefaultConnectionId;
+        }
+        catch (Exception exception) {
+            DisposeOwnerAfterConstructionFailure(
+                components.Owner,
+                exception
+            );
+            throw;
+        }
     }
 
     internal GalateaHostService(
@@ -199,10 +208,33 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 );
             return new GalateaProductionComponents(owner, normalizer);
         }
-        catch {
-            owner?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        catch (Exception exception) {
+            if (owner is not null) {
+                DisposeOwnerAfterConstructionFailure(owner, exception);
+            }
             throw;
         }
+    }
+
+    private static void DisposeOwnerAfterConstructionFailure(
+        GalateaCompletionOwner owner,
+        Exception original
+    ) {
+        try {
+            owner.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        catch (Exception cleanup) when (
+            GalateaExceptionClassifier.IsNonFatal(cleanup)) {
+            if (!GalateaExceptionClassifier.IsNonFatal(original)) {
+                ExceptionDispatchInfo.Capture(original).Throw();
+            }
+            throw new AggregateException(
+                "Galatea construction and cleanup both failed.",
+                original,
+                cleanup
+            );
+        }
+        ExceptionDispatchInfo.Capture(original).Throw();
     }
 
     private sealed record GalateaProductionComponents(
@@ -924,6 +956,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         EventAddress capturedHead,
         CancellationToken cancellationToken
     ) {
+        RequireCurrentConnectionSelectable(
+            liveTurn.Options.ConnectionId
+        );
         GalateaRecapGridComposition recapGrid = _recapGrid;
         CompletionConnectionConfig inspected =
             recapGrid.InspectConnectionExact(liveTurn.Options.ConnectionId);
@@ -986,6 +1021,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         try {
             if (requirement is SessionRuntimeRecoveryRequirements
                     .NewRequestRequired) {
+                RequireCurrentConnectionSelectable(
+                    liveTurn.Options.ConnectionId
+                );
                 CompletionConnectionConfig inspected =
                     recapGrid.InspectConnectionExact(
                         liveTurn.Options.ConnectionId);
@@ -1084,6 +1122,15 @@ public sealed class GalateaHostService : IAsyncDisposable {
             if (turn is not null) {
                 await turn.DisposeAsync().ConfigureAwait(false);
             }
+        }
+    }
+
+    private void RequireCurrentConnectionSelectable(string connectionId) {
+        if (!_connectionCatalog.ContainsKey(connectionId)) {
+            throw new GalateaTurnException(
+                "当前模型连接不在Galatea可选连接集合中。",
+                "recap-grid-connection-absent"
+            );
         }
     }
 

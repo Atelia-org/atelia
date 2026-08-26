@@ -704,6 +704,111 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
+    public void LateDuplicateUserFailureDisposesEagerNormalizerClientOnce() {
+        string root = NewRoot();
+        try {
+            GalateaConfig config = LoadConstructionFixture(root) with {
+                Users = [
+                    User("duplicate", Path.Combine(root, "session-a")),
+                    User("duplicate", Path.Combine(root, "session-b")),
+                ],
+                InputNormalizerConnectionId = "test",
+            };
+            var client = new ConstructionClient();
+
+            Assert.Throws<ArgumentException>(() => new GalateaHostService(
+                config,
+                new ConstructionClientFactory(client),
+                new EagerNormalizerFactory()
+            ));
+
+            Assert.Equal(1, client.DisposeCount);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LateConstructionAndCleanupFailuresPreserveBothExceptions() {
+        string root = NewRoot();
+        try {
+            GalateaConfig config = LoadConstructionFixture(root) with {
+                Users = [
+                    User("duplicate", Path.Combine(root, "session-a")),
+                    User("duplicate", Path.Combine(root, "session-b")),
+                ],
+                InputNormalizerConnectionId = "test",
+            };
+            var client = new ConstructionClient(
+                new IOException("client cleanup failed")
+            );
+
+            AggregateException failure = Assert.Throws<AggregateException>(
+                () => new GalateaHostService(
+                    config,
+                    new ConstructionClientFactory(client),
+                    new EagerNormalizerFactory()
+                )
+            );
+
+            Assert.Contains(
+                failure.InnerExceptions,
+                static value => value is ArgumentException
+            );
+            Assert.Contains(
+                failure.InnerExceptions,
+                static value => value is IOException
+                    && value.Message == "client cleanup failed"
+            );
+            Assert.Equal(1, client.DisposeCount);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void NormalizerFactoryAndCleanupFailuresPreserveBothExceptions() {
+        string root = NewRoot();
+        try {
+            GalateaConfig config = LoadConstructionFixture(root) with {
+                InputNormalizerConnectionId = "test",
+            };
+            var client = new ConstructionClient(
+                new IOException("client cleanup failed")
+            );
+
+            AggregateException failure = Assert.Throws<AggregateException>(
+                () => new GalateaHostService(
+                    config,
+                    new ConstructionClientFactory(client),
+                    new EagerNormalizerFactory(
+                        new InvalidOperationException(
+                            "normalizer factory failed"
+                        )
+                    )
+                )
+            );
+
+            Assert.Contains(
+                failure.InnerExceptions,
+                static value => value is InvalidOperationException
+                    && value.Message == "normalizer factory failed"
+            );
+            Assert.Contains(
+                failure.InnerExceptions,
+                static value => value is IOException
+                    && value.Message == "client cleanup failed"
+            );
+            Assert.Equal(1, client.DisposeCount);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void StrictConfigCapsAreExactAndPathsAreNoFollow() {
         if (!OperatingSystem.IsLinux()) { return; }
         string root = NewRoot();
@@ -1028,6 +1133,14 @@ public sealed class GalateaConfigValidationTests {
         SystemPrompt: "prompt"
     );
 
+    private static GalateaConfig LoadConstructionFixture(string root) {
+        string configPath = WriteConfig(
+            root,
+            [User("alice", Path.Combine(root, "session"))]
+        );
+        return GalateaConfigLoader.Load(configPath);
+    }
+
     private static string NewRoot() {
         string root = Path.Combine(
             Path.GetTempPath(),
@@ -1078,6 +1191,55 @@ public sealed class GalateaConfigValidationTests {
             throw new InvalidOperationException(
                 "Config validation must not create a Completion client."
             );
+        }
+    }
+
+    private sealed class ConstructionClientFactory(
+        ConstructionClient client
+    ) : ICompletionClientFactory {
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) {
+            ArgumentNullException.ThrowIfNull(connection);
+            return client;
+        }
+    }
+
+    private sealed class EagerNormalizerFactory(
+        Exception? failure = null
+    ) : IGalateaUserMessageNormalizerFactory {
+        public IGalateaUserMessageNormalizer Create(
+            CompletionConnectionConfig? connection,
+            Func<ICompletionClient> getClient
+        ) {
+            Assert.NotNull(connection);
+            _ = getClient();
+            if (failure is not null) { throw failure; }
+            return DisabledGalateaUserMessageNormalizer.Instance;
+        }
+    }
+
+    private sealed class ConstructionClient(Exception? disposeFailure = null)
+        : ICompletionClient, IDisposable {
+        private int _disposeCount;
+
+        public string Name => "galatea-construction-test";
+
+        public string ApiSpecId => "test-v1";
+
+        internal int DisposeCount => Volatile.Read(ref _disposeCount);
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) => throw new InvalidOperationException(
+            "Construction tests must not dispatch."
+        );
+
+        public void Dispose() {
+            Interlocked.Increment(ref _disposeCount);
+            if (disposeFailure is not null) { throw disposeFailure; }
         }
     }
 }
