@@ -430,7 +430,61 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             inputNormalizerConnectionId,
             outboundMailExtractorConnectionId
         );
+        WriteDelegatesFile(configurationDirectory);
         return configPath;
+    }
+
+    internal static void WriteDelegatesFile(string configurationDirectory) {
+        string processPath = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(Environment.ProcessPath
+                ?? throw new InvalidOperationException(
+                    "The test process executable is unavailable."
+                ))
+        );
+        string executable = new FileInfo(processPath)
+            .ResolveLinkTarget(returnFinalTarget: true)?.FullName
+            ?? processPath;
+        string entryPoint = Path.GetFullPath(
+            typeof(GalateaTestHost).Assembly.Location
+        );
+        string cwd = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(configurationDirectory)
+        );
+        File.WriteAllText(
+            Path.Combine(
+                configurationDirectory,
+                GalateaConfigLoader.DelegatesFileName
+            ),
+            $$"""
+            {
+              "v": 1,
+              "sidecar": {
+                "nodeCommand": {{JsonSerializer.Serialize(executable)}},
+                "entryPoint": {{JsonSerializer.Serialize(entryPoint)}},
+                "codexCommand": {{JsonSerializer.Serialize(executable)}},
+                "rpcTimeoutMs": 1000,
+                "turnTimeoutMs": 1000,
+                "shutdownGraceMs": 100,
+                "maximumFrameUtf8Bytes": 1048576
+              },
+              "allowedRoots": [{{JsonSerializer.Serialize(cwd)}}],
+              "routes": [
+                {
+                  "recipient": "Codex",
+                  "kind": "codex-app-server",
+                  "cwd": {{JsonSerializer.Serialize(cwd)}},
+                  "mode": "work",
+                  "network": false,
+                  "maximumQueuedMails": 16,
+                  "maximumTaskUtf8Bytes": 100000,
+                  "maximumReplyUtf8Bytes": 100000,
+                  "maximumInboxReplies": 16,
+                  "maximumInboxUtf8Bytes": 1048576
+                }
+              ]
+            }
+            """
+        );
     }
 
     internal static void WriteConnectionsFile(

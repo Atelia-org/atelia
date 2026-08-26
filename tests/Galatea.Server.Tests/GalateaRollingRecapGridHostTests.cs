@@ -945,7 +945,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         connections,
         AgentConnectionId,
         [AgentConnectionId],
-        InputNormalizerConnectionId: null
+        InputNormalizerConnectionId: null,
+        Delegates: GalateaDelegateTestConfiguration.Create()
     );
 
     private static IReadOnlyList<CompletionConnectionConfig>

@@ -660,6 +660,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                 Connections,
                 "test"
             );
+            GalateaTestHost.WriteDelegatesFile(Root);
             WriteProfile("profile.json", "test-profile");
         }
 

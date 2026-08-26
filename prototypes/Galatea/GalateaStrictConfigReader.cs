@@ -135,6 +135,39 @@ internal static class GalateaStrictConfigReader {
         }
     }
 
+    internal static void RequireExistingRegularFileNoFollow(
+        string path,
+        string kind
+    ) {
+        if (!OperatingSystem.IsLinux()) {
+            throw new PlatformNotSupportedException(
+                "Galatea strict file loading requires Linux no-follow file semantics."
+            );
+        }
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        string resolved = Path.GetFullPath(path);
+        RequireExistingAncestorsNoReparse(resolved, kind);
+        int descriptor = Open(
+            resolved,
+            OpenReadOnly | OpenNonBlocking | OpenNoFollow | OpenCloseOnExec
+        );
+        if (descriptor < 0) {
+            throw new InvalidDataException(
+                $"{kind} must be an existing no-follow regular file."
+            );
+        }
+        try {
+            if (ReadDescriptorFileType(descriptor) != LinuxRegularFileType) {
+                throw new InvalidDataException(
+                    $"{kind} must be a regular file."
+                );
+            }
+        }
+        finally {
+            _ = Close(descriptor);
+        }
+    }
+
     internal static void ValidateUsers(ReadOnlySpan<byte> bytes) {
         try {
             var reader = new Utf8JsonReader(bytes, new JsonReaderOptions {

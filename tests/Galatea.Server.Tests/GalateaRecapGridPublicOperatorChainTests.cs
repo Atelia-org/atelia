@@ -230,6 +230,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             ],
             AgentConnectionId
         );
+        GalateaTestHost.WriteDelegatesFile(_root);
     }
 
     private static ControlHeadRef ReadControlHead(

@@ -1105,6 +1105,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         GalateaHostService service = await CreateDisposalFixtureAsync();
         int disposedSessions = 0;
         int disposedCandidate = 0;
+        var disposalOrder = new List<string>();
         service.DisposeHooksForTest = new(
             AfterSessionDisposed: index => {
                 disposedSessions++;
@@ -1114,15 +1115,19 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             },
             AfterRecapGridDisposed: () => {
                 disposedCandidate++;
+                disposalOrder.Add("completion");
                 throw new InvalidOperationException(
                     "candidate cleanup failed");
-            });
+            },
+            AfterDelegateSidecarDisposed: () =>
+                disposalOrder.Add("sidecar"));
         try {
             AggregateException failure = await Assert.ThrowsAsync<
                 AggregateException>(async () =>
                     await service.DisposeAsync());
             Assert.Equal(2, disposedSessions);
             Assert.Equal(1, disposedCandidate);
+            Assert.Equal(["sidecar", "completion"], disposalOrder);
             Assert.Collection(
                 failure.InnerExceptions,
                 static value => Assert.IsType<IOException>(value),
@@ -1200,7 +1205,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 [connection],
                 connection.Id,
                 [connection.Id],
-                InputNormalizerConnectionId: null),
+                InputNormalizerConnectionId: null,
+                Delegates: GalateaDelegateTestConfiguration.Create()),
             DisabledGalateaUserMessageNormalizer.Instance,
             candidate);
         _ = await service.GetSessionAsync("alice", CancellationToken.None);
@@ -1736,7 +1742,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         [connection],
         connection.Id,
         [connection.Id],
-        InputNormalizerConnectionId: null);
+        InputNormalizerConnectionId: null,
+        Delegates: GalateaDelegateTestConfiguration.Create());
 
     private string NewPath() {
         string path = Path.Combine(

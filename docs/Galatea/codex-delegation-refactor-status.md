@@ -81,19 +81,6 @@
 
 完成一项后，将其稳定语义移入相应 README/contract/test，并从本节删除，不在这里积累完成日志。
 
-### Strict delegate route configuration
-
-- 定义 `.atelia/galatea/delegates.json` V1 closed schema、exact `Codex` route、可执行文件定位、cwd、mode、network 与容量/超时边界。
-- startup fail closed 校验 unknown/missing/duplicate/wrong-case recipient route 和越界 cwd；不向前端暴露可选择的主线 Completion connection。
-- 更新唯一开发实例配置与 Galatea README。
-
-### Codex sidecar and fixed-thread adapter
-
-- 为 `local-codex-mcp` 增加 Galatea-facing sidecar entry，复用现有 app-server client/backend，而不暴露 MCP tool surface。
-- 增加“首次 delegate 创建 thread、后续 continue 同一 thread”的 adapter，并让 `waitMs=0` 只等待 app-server 接受请求，不等待 final。
-- 定义 bounded sidecar wire：dispatch accepted、turn completed、final response、delivery failure、process exit；所有后台 task/fault 都必须被监督和观察。
-- 为 Galatea 回信移除 `AgentReport` output schema 假设，按 authoritative terminal `agentMessage` 捕获自然 final response。
-
 ### In-memory dispatch and reply state
 
 - 将被动 `InMemorySendMailIntentBuffer` 演进为 per-candidate lifecycle，或增加独立 coordinator，同时保留 Action-head + ordinal 去重。

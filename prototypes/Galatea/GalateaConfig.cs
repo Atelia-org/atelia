@@ -16,6 +16,7 @@ public sealed record GalateaConfig(
     string DefaultConnectionId,
     IReadOnlyList<string> SelectableConnectionIds,
     string? InputNormalizerConnectionId,
+    GalateaDelegateConfig Delegates,
     string? OutboundMailExtractorConnectionId = null,
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,

@@ -32,6 +32,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly bool _maintenanceMode;
     private readonly GalateaRecapGridComposition _recapGrid;
     private readonly GalateaCompletionOwner? _completionOwner;
+    private readonly IGalateaDelegateSidecar _delegateSidecar;
     internal GalateaDisposeTestHooks? DisposeHooksForTest { get; set; }
     internal GalateaSessionProvisioningTestHooks?
         SessionProvisioningHooksForTest { get; set; }
@@ -103,6 +104,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 recapGrid
             );
             _completionOwner = components.Owner;
+            _delegateSidecar = components.DelegateSidecar;
             _recapGrid = components.Owner.RecapGrid;
             _inputPreprocessor = new GalateaInputPreprocessor(
                 components.Normalizer
@@ -134,10 +136,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             _defaultConnectionId = components.Owner.DefaultConnectionId;
         }
         catch (Exception exception) {
-            DisposeOwnerAfterConstructionFailure(
-                components.Owner,
-                exception
-            );
+            DisposeProductionAfterConstructionFailure(components, exception);
             throw;
         }
     }
@@ -149,6 +148,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(recapGrid);
         ArgumentNullException.ThrowIfNull(userMessageNormalizer);
+        GalateaDelegateConfigReader.Validate(config.Delegates);
         GalateaConfigValidation.RequireDistinctSessionDirectories(
             config.Users
         );
@@ -167,6 +167,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaCompletionOwner.ValidateGalateaRouting(normalized);
         _recapGrid = recapGrid;
         _completionOwner = null;
+        _delegateSidecar = new GalateaCodexSidecarClient(
+            config.Delegates!
+        );
         _inputPreprocessor = new GalateaInputPreprocessor(
             userMessageNormalizer
         );
@@ -233,10 +236,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         owner.GetOutboundMailExtractorClient
                     )
                     : null;
+            var delegateSidecar = new GalateaCodexSidecarClient(
+                config.Delegates
+                    ?? throw new InvalidOperationException(
+                        "Galatea requires strict delegate configuration."
+                    )
+            );
             return new GalateaProductionComponents(
                 owner,
                 normalizer,
-                outboundMailExtractor
+                outboundMailExtractor,
+                delegateSidecar
             );
         }
         catch (Exception exception) {
@@ -268,10 +278,46 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ExceptionDispatchInfo.Capture(original).Throw();
     }
 
+    private static void DisposeProductionAfterConstructionFailure(
+        GalateaProductionComponents components,
+        Exception original
+    ) {
+        Exception? cleanupFailure = null;
+        try {
+            components.DelegateSidecar.DisposeAsync().AsTask()
+                .GetAwaiter().GetResult();
+        }
+        catch (Exception cleanup) when (
+            GalateaExceptionClassifier.IsNonFatal(cleanup)) {
+            cleanupFailure = cleanup;
+        }
+        try {
+            components.Owner.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        catch (Exception cleanup) when (
+            GalateaExceptionClassifier.IsNonFatal(cleanup)) {
+            cleanupFailure = cleanupFailure is null
+                ? cleanup
+                : new AggregateException(cleanupFailure, cleanup);
+        }
+        if (cleanupFailure is not null) {
+            if (!GalateaExceptionClassifier.IsNonFatal(original)) {
+                ExceptionDispatchInfo.Capture(original).Throw();
+            }
+            throw new AggregateException(
+                "Galatea construction and cleanup both failed.",
+                original,
+                cleanupFailure
+            );
+        }
+        ExceptionDispatchInfo.Capture(original).Throw();
+    }
+
     private sealed record GalateaProductionComponents(
         GalateaCompletionOwner Owner,
         IGalateaUserMessageNormalizer Normalizer,
-        IOutboundMailExtractor? OutboundMailExtractor
+        IOutboundMailExtractor? OutboundMailExtractor,
+        IGalateaDelegateSidecar DelegateSidecar
     );
 
     private sealed class FixedGalateaUserMessageNormalizerFactory(
@@ -297,6 +343,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _selectableConnections;
 
     public string DefaultConnectionId => _defaultConnectionId;
+
+    internal IGalateaDelegateSidecar DelegateSidecar => _delegateSidecar;
 
     public bool TryGetConnection(
         string? requestedConnectionId,
@@ -1132,6 +1180,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
             sessionIndex++;
         }
         try {
+            await _delegateSidecar.DisposeAsync().ConfigureAwait(false);
+            DisposeHooksForTest?.AfterDelegateSidecarDisposed?.Invoke();
+        }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
+            (failures ??= []).Add(exception);
+        }
+        try {
             if (_completionOwner is not null) {
                 await _completionOwner.DisposeAsync().ConfigureAwait(false);
             }
@@ -1154,7 +1210,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
     internal sealed record GalateaDisposeTestHooks(
         Action<int>? AfterSessionDisposed = null,
-        Action? AfterRecapGridDisposed = null
+        Action? AfterRecapGridDisposed = null,
+        Action? AfterDelegateSidecarDisposed = null
     );
 
     private async Task<GalateaCompletedOperation>
@@ -1836,6 +1893,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
 internal static class GalateaConfigLoader {
     public const string ConnectionsFileName = "connections.json";
+    public const string DelegatesFileName = "delegates.json";
     private const int MaximumAgentControlProfileCount = 256;
     private const int MaximumAgentControlProfileUtf8Bytes = 128 * 1024;
 
@@ -1853,6 +1911,7 @@ internal static class GalateaConfigLoader {
         string configDir = Path.GetDirectoryName(resolvedPath)
             ?? throw new InvalidOperationException($"Cannot determine config directory for: {resolvedPath}");
         string connectionsPath = Path.Combine(configDir, ConnectionsFileName);
+        string delegatesPath = Path.Combine(configDir, DelegatesFileName);
         byte[] usersBytes = GalateaStrictConfigReader.ReadUsersAndValidate(
             resolvedPath
         );
@@ -1886,6 +1945,14 @@ internal static class GalateaConfigLoader {
         CompletionConnectionsFileConfig connectionsFile =
             CompletionConnectionConfigLoader.Decode(connectionsJson);
         GalateaCompletionOwner.ValidateGalateaRouting(connectionsFile);
+        if (!File.Exists(delegatesPath)) {
+            throw new FileNotFoundException(
+                $"Galatea delegates file was not found: {delegatesPath}",
+                delegatesPath
+            );
+        }
+        GalateaDelegateConfig delegates =
+            GalateaDelegateConfigReader.Read(delegatesPath);
         if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("Galatea config must contain at least one user."); }
         IReadOnlyList<GalateaUserConfig> users =
             ResolveSessionDirectories(usersFile.Users, configDir);
@@ -1902,6 +1969,7 @@ internal static class GalateaConfigLoader {
             OutboundMailExtractorConnectionId: connectionsFile.Bindings[
                 GalateaCompletionOwner.OutboundMailExtractorBindingKey
             ],
+            Delegates: delegates,
             ListenUrls: usersFile.ListenUrls,
             CallLogDir: ResolveCallLogDirectory(
                 usersFile.CallLogDir,
@@ -2116,6 +2184,7 @@ internal static class GalateaConfigLoader {
         GalateaConfigValidation.RequireDistinctSessionDirectories(
             config.Users
         );
+        GalateaDelegateConfigReader.Validate(config.Delegates);
         if (config.CallLogDir is not null) {
             RejectReparsePointsOnExistingPath(
                 config.CallLogDir,
@@ -2246,9 +2315,14 @@ internal static class GalateaConfigBootstrapper {
         );
 
         string connectionsPath = Path.Combine(parentDir, GalateaConfigLoader.ConnectionsFileName);
+        string delegatesPath = Path.Combine(
+            parentDir,
+            GalateaConfigLoader.DelegatesFileName
+        );
         bool configExists = File.Exists(resolvedPath);
         bool connectionsExists = File.Exists(connectionsPath);
-        if (configExists && connectionsExists) { return; }
+        bool delegatesExists = File.Exists(delegatesPath);
+        if (configExists && connectionsExists && delegatesExists) { return; }
         if (configExists) {
             _ = GalateaStrictConfigReader.ReadUsersAndValidate(
                 resolvedPath
@@ -2285,10 +2359,20 @@ internal static class GalateaConfigBootstrapper {
             generated.Add(connectionsPath);
         }
 
+        if (!delegatesExists) {
+            File.WriteAllBytes(
+                delegatesPath,
+                GalateaDelegateConfigReader.CreatePlaceholderTemplateUtf8()
+            );
+            generated.Add(delegatesPath);
+        }
+
         throw new InvalidOperationException(
             "Galatea config templates have been generated at "
             + string.Join(" and ", generated)
-            + ". Please update listenUrls, the connections' modelId / baseAddress / apiKey, and the default account passwords before restarting the server."
+            + ". Please replace every delegate path placeholder, update "
+            + "listenUrls, the connections' modelId / baseAddress / apiKey, "
+            + "and the default account passwords before restarting the server."
         );
     }
 }

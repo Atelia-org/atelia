@@ -83,9 +83,69 @@ Numeric V1 现在通用地允许 optional `selectableConnectionIds` / `bindings`
 Galatea 文件会被旧 closed-root binary 拒绝；operator 必须停服、备份并将 code 与
 manifest 配套发布，应用不会自动改写可能含 secret 的文件。
 
+`.atelia/galatea/delegates.json` 是独立于 Completion catalog 的 required、
+machine-local Codex 代行配置。V1 是 closed schema，并且当前只允许一条 exact、
+case-sensitive route：`recipient: "Codex"` / `kind: "codex-app-server"`。示意结构如下：
+
+```json
+{
+  "v": 1,
+  "sidecar": {
+    "nodeCommand": "/canonical/path/to/node",
+    "entryPoint": "/canonical/path/to/galatea-sidecar.js",
+    "codexCommand": "/canonical/path/to/codex.js",
+    "rpcTimeoutMs": 30000,
+    "turnTimeoutMs": 1200000,
+    "shutdownGraceMs": 5000,
+    "maximumFrameUtf8Bytes": 1048576
+  },
+  "allowedRoots": ["/repos/focus/atelia"],
+  "routes": [{
+    "recipient": "Codex",
+    "kind": "codex-app-server",
+    "cwd": "/repos/focus/atelia",
+    "mode": "work",
+    "network": false,
+    "maximumQueuedMails": 128,
+    "maximumTaskUtf8Bytes": 100000,
+    "maximumReplyUtf8Bytes": 100000,
+    "maximumInboxReplies": 128,
+    "maximumInboxUtf8Bytes": 4194304
+  }]
+}
+```
+
+所有路径都必须是Linux absolute、existing、canonical realpath；配置路径自身或任一
+ancestor含symlink会被拒绝。`nodeCommand`与`codexCommand`还必须是executable regular
+file。特别是常见的`.../bin/codex`安装入口本身是symlink时，operator必须显式填写其
+canonical resolved target，loader不会悄悄follow。`cwd`也必须canonical且落在至少一个
+`allowedRoots`内。unknown/missing/wrong-case/duplicate（包括case变体）、额外route、
+非法mode/range都会在startup fail closed。task/reply上限按strict UTF-8 bytes计数，且
+必须在JSON最坏六倍escaping加code-owned envelope reserve后仍装入
+`maximumFrameUtf8Bytes`；inbox总bytes不得小于单条reply上限。Bootstrap会同时生成一份
+带`REPLACE_WITH_...`的明显placeholder模板并停止，绝不猜测本机可执行文件或权限边界。
+
+`GalateaHostService`拥有一个host-wide、lazy `GalateaCodexSidecarClient`。首个真实dispatch
+前保持零进程；当前coordinator尚未接入，因此正常Galatea turn也不会启动sidecar。transport
+启动`nodeCommand entryPoint`并通过environment注入code-owned allowed roots、cwd、Codex
+command、mode、network及timeout/body/frame bounds，邮件正文只能进入JSONL `task`字段，
+不能覆盖任何route policy。V1 input是exact
+`{v,type:"dispatch",requestId,dispatchId,threadId?,task}`；成功accept后返回稳定
+`dispatchId/threadId/turnId`和一个terminal task，terminal只产生bounded exact final或
+stable stage/code failure。active同dispatch会在C# generation内coalesce；sidecar对已经
+terminal或超出tombstone容量的request-level protocol rejection不会终结另一个已accepted
+exchange。
+
+stdout只有一个bounded strict-UTF8 reader；malformed、oversize、unknown、重复字段、错误
+correlation或process exit会protocol-fatal当前generation，并把所有未决exchange映射为失败，
+不会自动retry outcome-unknown操作。stderr被持续drain但内容不进入普通日志。下一请求只可在
+旧process完成bounded kill/reap后lazy创建新generation，旧generation事件不能污染新状态。
+shutdown严格为sessions -> sidecar（close stdin，bounded wait，必要时kill entire process
+tree）-> Completion/RecapGrid owner，且Dispose不等待无界child task。
+
 `GalateaCompletionOwner` 唯一拥有 host-wide `CompletionConnectionRegistry`；main Agent、
-input normalizer、outbound mail extractor 与 RecapGrid exact routes 共用其惰性 clients。Shutdown 顺序为：drain
-sessions/per-turn operation，再 drain borrowed RecapGrid runtime，最后清理 distinct Completion
+input normalizer、outbound mail extractor 与 RecapGrid exact routes 共用其惰性 clients。Completion侧的Shutdown顺序为：drain
+sessions/per-turn operation与delegate sidecar，再 drain borrowed RecapGrid runtime，最后清理 distinct Completion
 clients。`callLogDir` 由统一 Completion factory decorator 服务上述所有调用；启用
 normalizer 时，清洗前输入、prompt 与 provider output 也会进入该本地调用日志。
 

@@ -90,6 +90,17 @@ public sealed class GalateaConfigValidationTests {
             ));
             GalateaStrictConfigReader.ValidateUsers(usersBytes);
 
+            string delegatesPath = Path.Combine(
+                root,
+                GalateaConfigLoader.DelegatesFileName
+            );
+            Assert.Contains(
+                "REPLACE_WITH_CANONICAL_NODE_EXECUTABLE",
+                File.ReadAllText(delegatesPath),
+                StringComparison.Ordinal
+            );
+            GalateaTestHost.WriteDelegatesFile(root);
+
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
             Assert.Equal(["alice", "bob"],
                 loaded.Users.Select(static user => user.UserId));
@@ -443,6 +454,33 @@ public sealed class GalateaConfigValidationTests {
             Assert.Equal("test", service.DefaultConnectionId);
             Assert.Single(service.Connections);
             Assert.False(File.Exists(Path.Combine(root, "routes.json")));
+            Assert.False(Assert.IsType<GalateaCodexSidecarClient>(
+                service.DelegateSidecar
+            ).HasStartedProcessForTest);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void DelegateSiblingIsRequiredByTheMergedLoader() {
+        string root = NewRoot();
+        try {
+            string configPath = WriteConfig(
+                root,
+                [User("alice", Path.Combine(root, "session"))]
+            );
+            string delegatesPath = Path.Combine(
+                root,
+                GalateaConfigLoader.DelegatesFileName
+            );
+            File.Delete(delegatesPath);
+
+            FileNotFoundException failure = Assert.Throws<
+                FileNotFoundException>(() =>
+                    GalateaConfigLoader.Load(configPath));
+            Assert.Equal(delegatesPath, failure.FileName);
         }
         finally {
             Directory.Delete(root, recursive: true);
@@ -506,6 +544,7 @@ public sealed class GalateaConfigValidationTests {
                 Connections,
                 "test"
             );
+            GalateaTestHost.WriteDelegatesFile(root);
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
             Assert.NotNull(loaded.RecapGrid);
@@ -1024,7 +1063,8 @@ public sealed class GalateaConfigValidationTests {
             Connections,
             "test",
             ["test"],
-            InputNormalizerConnectionId: null
+            InputNormalizerConnectionId: null,
+            Delegates: GalateaDelegateTestConfiguration.Create(root)
         );
         InvalidOperationException constructionFailure = Assert.Throws<
             InvalidOperationException
@@ -1096,6 +1136,7 @@ public sealed class GalateaConfigValidationTests {
             selectableConnectionIds,
             inputNormalizerConnectionId
         );
+        GalateaTestHost.WriteDelegatesFile(root);
         return configPath;
     }
 

@@ -185,6 +185,7 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
             effectiveConnections[0].Id,
             effectiveConnections.Select(static value => value.Id).ToArray(),
             InputNormalizerConnectionId: null,
+            Delegates: GalateaDelegateTestConfiguration.Create(),
             ListenUrls: useDefaultListenUrls
                 ? listenUrls ?? ["http://127.0.0.1:3510/"]
                 : listenUrls
