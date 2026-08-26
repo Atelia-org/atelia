@@ -635,11 +635,61 @@ public sealed class GalateaEndpointLockTopologyTests {
         Assert.Null(session.GetCurrentTurn());
     }
 
+    [Fact]
+    public async Task HiddenCatalogConnection_IsNeitherRenderedNorAcceptedForFreshTurn() {
+        CompletionConnectionConfig visible = Connection("test");
+        CompletionConnectionConfig hidden = Connection("hidden-helper");
+        var factory = new NonDispatchingCompletionClientFactory();
+        await using var host = GalateaTestHost.Create(
+            factory,
+            new PassThroughNormalizer(),
+            connections: [visible, hidden],
+            selectableConnectionIds: [visible.Id]
+        );
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+
+        string html = await client.GetStringAsync("/");
+        Assert.Contains("\"id\":\"test\"", html,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("hidden-helper", html,
+            StringComparison.Ordinal);
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/v1/chat/turns",
+            new ChatStreamRequest(
+                "hidden connection probe",
+                ConnectionId: hidden.Id
+            )
+        );
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, factory.CreateCallCount);
+
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        Assert.True(session.TurnLock.Wait(0));
+        session.TurnLock.Release();
+        Assert.Null(session.GetCurrentTurn());
+    }
+
     private static GalateaTestHost CreateHost() =>
         GalateaTestHost.Create(
             new NonDispatchingCompletionClientFactory(),
             new PassThroughNormalizer()
         );
+
+    private static CompletionConnectionConfig Connection(string id) => new(
+        id,
+        "openai-chat",
+        $"model-{id}",
+        "openai-chat/strict",
+        "http://localhost:8000/",
+        ApiKey: "test-key"
+    );
 
     private static async Task LoginAsync(HttpClient client) {
         using HttpResponseMessage response =

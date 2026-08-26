@@ -943,7 +943,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             GalateaSessionProvisioning.ExistingOnly,
             "test system prompt")],
         connections,
-        AgentConnectionId
+        AgentConnectionId,
+        [AgentConnectionId],
+        InputNormalizerConnectionId: null
     );
 
     private static IReadOnlyList<CompletionConnectionConfig>

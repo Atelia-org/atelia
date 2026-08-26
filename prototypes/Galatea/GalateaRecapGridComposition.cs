@@ -203,9 +203,11 @@ internal sealed class GalateaRecapGridComposition
     internal async ValueTask<GalateaRecapGridTurn> BindToolContinuationAsync(
         SessionJournalEngine engine,
         string connectionId,
+        Func<string, bool> isCurrentConnectionSelectable,
         SessionRuntimeRecoveryRequirements.ToolContinuationRequired frozen,
         CancellationToken cancellationToken
     ) {
+        ArgumentNullException.ThrowIfNull(isCurrentConnectionSelectable);
         using RecapGridAgentControlHandle frozenAgentControl =
             BindFrozenAgentControl(
                 engine,
@@ -215,6 +217,12 @@ internal sealed class GalateaRecapGridComposition
                 "冻结工具runtime缺少Agent Control profile。",
                 "tool-runtime-profile-absent"
             );
+        if (!isCurrentConnectionSelectable(connectionId)) {
+            throw new GalateaTurnException(
+                "当前模型连接不在Galatea可选连接集合中。",
+                "recap-grid-connection-absent"
+            );
+        }
         EventAddress toolHead = frozen.CapturedHead
             ?? throw new InvalidDataException(
                 "Tool continuation has no captured raw head."

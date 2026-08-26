@@ -43,10 +43,9 @@ public sealed class GalateaHostSmokeTests {
             host.Factory.Services
                 .GetRequiredService<ICompletionClientFactory>()
         );
-        Assert.Same(
-            normalizer,
-            host.Factory.Services
-                .GetRequiredService<IGalateaUserMessageNormalizer>()
+        Assert.IsNotType<GalateaUserMessageNormalizerFactory>(
+            host.Factory.Services.GetRequiredService<
+                IGalateaUserMessageNormalizerFactory>()
         );
 
         RecentTurnsResponseDto? recent = await client

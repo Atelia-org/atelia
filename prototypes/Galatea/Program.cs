@@ -29,8 +29,13 @@ builder.Services.AddSingleton(config);
 builder.Services.AddSingleton<ICompletionClientFactory>(
     completionClientFactory
 );
-builder.Services.AddSingleton<IGalateaUserMessageNormalizer>(_ => GalateaUserMessageNormalizerFactory.CreateFromEnvironment());
-builder.Services.AddSingleton<GalateaHostService>();
+builder.Services.AddSingleton<IGalateaUserMessageNormalizerFactory,
+    GalateaUserMessageNormalizerFactory>();
+builder.Services.AddSingleton(static services => new GalateaHostService(
+    services.GetRequiredService<GalateaConfig>(),
+    services.GetRequiredService<ICompletionClientFactory>(),
+    services.GetRequiredService<IGalateaUserMessageNormalizerFactory>()
+));
 builder.Services.ConfigureHttpJsonOptions(
     options => GalateaHttpV1.ConfigureJson(options.SerializerOptions)
 );
@@ -498,10 +503,10 @@ api.MapPost(
             }
             else if (recovery is SessionRuntimeRecoveryRequirements
                          .ToolContinuationRequired) {
-                // Do not inspect or construct the current completion client
-                // here. The formal composition must bind the frozen tool
-                // identity first, then this exact current connection, then
-                // Online.
+                // Do not inspect current selection here. The formal
+                // composition must validate the frozen tool identity first,
+                // then apply Galatea's current-selection allowlist without
+                // constructing a client, and only later open Online/client.
                 connectionId = request.ConnectionId
                     ?? hostService.DefaultConnectionId;
             }

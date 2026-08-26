@@ -1032,6 +1032,75 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
     }
 
     [Fact]
+    public async Task HttpToolContinuationRejectsHiddenCurrentConnectionBeforeToolExecution() {
+        string path = NewPath();
+        CompletionConnectionConfig visible = Connection();
+        CompletionConnectionConfig hidden = visible with {
+            Id = "hidden-helper",
+            ModelId = "hidden-model",
+        };
+        RecapGridAgentControlProfile profile = AgentProfile();
+        EventAddress recoveryHead = await
+            CreateAgentControlRecoveryBoundaryAsync(
+                path,
+                visible,
+                profile,
+                SessionJournalFailpoint.AfterActionCommitted,
+                SessionExecutionPhase.AwaitingToolExecution
+            );
+        var factory = new TrackingFactory("must not dispatch");
+        await using GalateaTestHost host = GalateaTestHost.OpenExisting(
+            path,
+            [visible, hidden],
+            visible.Id,
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            agentControlProfile: profile,
+            selectableConnectionIds: [visible.Id]
+        );
+        using HttpClient client = host.CreateClient();
+        using HttpResponseMessage login = await GalateaTestHost.LoginAsync(
+            client
+        );
+        Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/v1/chat/turns/resume",
+            new ResumeTurnRequest(
+                EventAddressTextCodec.Format(recoveryHead),
+                hidden.Id
+            )
+        );
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        StartTurnResponseDto? accepted = await response.Content
+            .ReadFromJsonAsync<StartTurnResponseDto>();
+        Assert.NotNull(accepted);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        GalateaLiveTurn turn = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(session, accepted!.TurnId)
+        );
+        await Assert.IsAssignableFrom<Task>(turn.RunTask)
+            .WaitAsync(HttpCompletionDeadline);
+
+        Assert.Equal("failed", turn.Status);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(recoveryHead, session.Engine.ReadCurrentHead());
+        Assert.Equal(
+            SessionExecutionPhase.AwaitingToolExecution,
+            session.Engine.InspectExecutionBoundary().Phase
+        );
+        Assert.Null(session.GetCurrentTurn());
+        Assert.True(session.TurnLock.Wait(0));
+        session.TurnLock.Release();
+    }
+
+    [Fact]
     public async Task DisposeAggregatesNonFatalSessionAndCandidateFailures() {
         GalateaHostService service = await CreateDisposalFixtureAsync();
         int disposedSessions = 0;
@@ -1129,7 +1198,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         "test system prompt")
                 ],
                 [connection],
-                connection.Id),
+                connection.Id,
+                [connection.Id],
+                InputNormalizerConnectionId: null),
             DisabledGalateaUserMessageNormalizer.Instance,
             candidate);
         _ = await service.GetSessionAsync("alice", CancellationToken.None);
@@ -1663,7 +1734,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             GalateaSessionProvisioning.ExistingOnly,
             "test system prompt")],
         [connection],
-        connection.Id);
+        connection.Id,
+        [connection.Id],
+        InputNormalizerConnectionId: null);
 
     private string NewPath() {
         string path = Path.Combine(

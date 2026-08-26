@@ -14,6 +14,8 @@ public sealed record GalateaConfig(
     IReadOnlyList<GalateaUserConfig> Users,
     IReadOnlyList<CompletionConnectionConfig> Connections,
     string DefaultConnectionId,
+    IReadOnlyList<string> SelectableConnectionIds,
+    string? InputNormalizerConnectionId,
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
     bool MaintenanceMode = false,

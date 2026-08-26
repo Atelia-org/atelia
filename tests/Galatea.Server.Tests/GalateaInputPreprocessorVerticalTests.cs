@@ -14,6 +14,113 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         TimeSpan.FromSeconds(5);
 
     [Fact]
+    public async Task ConfiguredNormalizer_UsesHiddenLazyConnectionAndConfiguredRequest() {
+        CompletionConnectionConfig main = Connection(
+            "test",
+            "main-model"
+        );
+        CompletionConnectionConfig helper = Connection(
+            "input-helper",
+            "helper-model"
+        ) with { MaxTokens = 37 };
+        var mainClient = new ScriptedCompletionClient("assistant reply");
+        var helperClient = new ScriptedCompletionClient(
+            "<cleaned>normalized input</cleaned>"
+        );
+        var factory = new RoutingClientFactory(new Dictionary<
+            string,
+            ScriptedCompletionClient
+        >(StringComparer.Ordinal) {
+            [main.Id] = mainClient,
+            [helper.Id] = helperClient,
+        });
+        await using var host = GalateaTestHost.Create(
+            factory,
+            normalizer: null,
+            connections: [main, helper],
+            selectableConnectionIds: [main.Id],
+            inputNormalizerConnectionId: helper.Id
+        );
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+
+        Assert.Empty(factory.CreatedConnectionIds);
+        StartTurnResponseDto started = await StartTurnAsync(
+            client,
+            "original input"
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        await RequireRunTask(RequireTurn(
+            service,
+            session,
+            started.TurnId
+        )).WaitAsync(CompletionDeadline);
+
+        Assert.Equal([helper.Id, main.Id], factory.CreatedConnectionIds);
+        Assert.Equal("helper-model", helperClient.LastRequest!.ModelId);
+        Assert.Equal(37, helperClient.LastRequest.MaxTokens);
+        Assert.Equal(1, helperClient.DispatchCallCount);
+        Assert.Equal(1, mainClient.DispatchCallCount);
+        Assert.Equal([main.Id], service.Connections.Select(
+            static value => value.Id
+        ));
+        Assert.False(service.TryGetConnection(helper.Id, out _));
+        Assert.Equal(
+            GalateaUserMessageEnvelope.Wrap("normalized input"),
+            Assert.Single(session.Engine.ReadRecentCompletedTurns()
+                .RequireSnapshot().Turns).ObservationContent
+        );
+    }
+
+    [Fact]
+    public async Task NormalizerAndMainAgent_ShareOneRegistryClientAndOwnerDisposesOnce() {
+        CompletionConnectionConfig shared = Connection(
+            "test",
+            "shared-model"
+        );
+        var client = new RoleAwareCompletionClient();
+        var factory = new SingleTrackedFactory(client);
+        var host = GalateaTestHost.Create(
+            factory,
+            normalizer: null,
+            connections: [shared],
+            inputNormalizerConnectionId: shared.Id
+        );
+        try {
+            using HttpClient http = host.CreateClient();
+            await LoginAsync(http);
+            StartTurnResponseDto started = await StartTurnAsync(
+                http,
+                "orignal input"
+            );
+            GalateaHostService service = host.Factory.Services
+                .GetRequiredService<GalateaHostService>();
+            UserSessionHost session = await service.GetSessionAsync(
+                "alice",
+                CancellationToken.None
+            );
+            await RequireRunTask(RequireTurn(
+                service,
+                session,
+                started.TurnId
+            )).WaitAsync(CompletionDeadline);
+
+            Assert.Equal(1, factory.CreateCallCount);
+            Assert.Equal(2, client.DispatchCallCount);
+            Assert.Equal(0, client.DisposeCount);
+        }
+        finally {
+            await host.DisposeAsync();
+        }
+        Assert.Equal(1, client.DisposeCount);
+    }
+
+    [Fact]
     public async Task NormalizedInput_ReachesRequestPersistenceAndRecentDisplay() {
         var completion = new ScriptedCompletionClient("assistant reply");
         var normalizer = new ReturningNormalizer("normalized input");
@@ -155,6 +262,18 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             await GalateaTestHost.LoginAsync(client);
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
     }
+
+    private static CompletionConnectionConfig Connection(
+        string id,
+        string modelId
+    ) => new(
+        id,
+        "openai-chat",
+        modelId,
+        "openai-chat/strict",
+        "http://localhost:8000/",
+        ApiKey: "test-key"
+    );
 
     private static async Task<StartTurnResponseDto> StartTurnAsync(
         HttpClient client,
@@ -304,5 +423,79 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             ArgumentNullException.ThrowIfNull(connection);
             return client;
         }
+    }
+
+    private sealed class RoutingClientFactory(
+        IReadOnlyDictionary<string, ScriptedCompletionClient> clients
+    ) : ICompletionClientFactory {
+        internal List<string> CreatedConnectionIds { get; } = [];
+
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) {
+            CreatedConnectionIds.Add(connection.Id);
+            return clients[connection.Id];
+        }
+    }
+
+    private sealed class SingleTrackedFactory(
+        RoleAwareCompletionClient client
+    ) : ICompletionClientFactory {
+        private int _createCallCount;
+
+        internal int CreateCallCount => Volatile.Read(
+            ref _createCallCount
+        );
+
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) {
+            ArgumentNullException.ThrowIfNull(connection);
+            Interlocked.Increment(ref _createCallCount);
+            return client;
+        }
+    }
+
+    private sealed class RoleAwareCompletionClient
+        : ICompletionClient, IDisposable {
+        private int _dispatchCallCount;
+        private int _disposeCount;
+
+        public string Name => "galatea-shared-normalizer-test";
+
+        public string ApiSpecId => "openai-chat-v1";
+
+        internal int DispatchCallCount => Volatile.Read(
+            ref _dispatchCallCount
+        );
+
+        internal int DisposeCount => Volatile.Read(ref _disposeCount);
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _dispatchCallCount);
+            bool normalization = request.PromptPrefix.SystemPrompt.Contains(
+                "玩家输入清洗器",
+                StringComparison.Ordinal
+            );
+            string text = normalization
+                ? "<cleaned>original input</cleaned>"
+                : "assistant reply";
+            observer?.OnTextDelta(text);
+            return Task.FromResult(new CompletionResult(
+                new ActionMessage([new ActionBlock.Text(text)]),
+                new CompletionDescriptor(
+                    Name,
+                    ApiSpecId,
+                    request.ModelId
+                )
+            ));
+        }
+
+        public void Dispose() => Interlocked.Increment(ref _disposeCount);
     }
 }

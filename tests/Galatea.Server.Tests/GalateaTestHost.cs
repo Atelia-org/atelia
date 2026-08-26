@@ -27,7 +27,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string sessionDirectory,
         string configPath,
         ICompletionClientFactory completionClientFactory,
-        IGalateaUserMessageNormalizer normalizer,
+        IGalateaUserMessageNormalizer? normalizer,
         bool deleteFilesOnDispose
     ) {
         _tempRoot = tempRoot;
@@ -51,15 +51,17 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
 
     public static GalateaTestHost Create(
         ICompletionClientFactory completionClientFactory,
-        IGalateaUserMessageNormalizer normalizer,
+        IGalateaUserMessageNormalizer? normalizer,
         bool deleteFilesOnDispose = true,
         string? callLogDirectory = null,
         bool maintenanceMode = false,
         RecapGridAgentControlProfile? agentControlProfile = null,
-        bool provisionRawOnly = true
+        bool provisionRawOnly = true,
+        IReadOnlyList<CompletionConnectionConfig>? connections = null,
+        IReadOnlyList<string>? selectableConnectionIds = null,
+        string? inputNormalizerConnectionId = null
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
-        ArgumentNullException.ThrowIfNull(normalizer);
 
         string tempRoot = Path.Combine(
             Path.GetTempPath(),
@@ -85,10 +87,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 ProvisionRawOnlyRecapGrid(engine);
             }
         }
-        string configPath = WriteConfiguration(
-            configDirectory,
-            Path.GetFullPath(sessionDirectory),
-            [
+        IReadOnlyList<CompletionConnectionConfig> configuredConnections =
+            connections ?? [
                 new CompletionConnectionConfig(
                     "test",
                     "openai-chat",
@@ -97,12 +97,18 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     "http://localhost:8000/",
                     ApiKey: "test-key"
                 )
-            ],
+            ];
+        string configPath = WriteConfiguration(
+            configDirectory,
+            Path.GetFullPath(sessionDirectory),
+            configuredConnections,
             "test",
             "test system prompt",
             callLogDirectory,
             maintenanceMode,
-            agentControlProfile
+            agentControlProfile,
+            selectableConnectionIds: selectableConnectionIds,
+            inputNormalizerConnectionId: inputNormalizerConnectionId
         );
 
         return new GalateaTestHost(
@@ -205,7 +211,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         bool maintenanceMode = false,
         RecapGridAgentControlProfile? agentControlProfile = null,
         GalateaSessionProvisioning sessionProvisioning =
-            GalateaSessionProvisioning.ExistingOnly
+            GalateaSessionProvisioning.ExistingOnly,
+        IReadOnlyList<string>? selectableConnectionIds = null,
+        string? inputNormalizerConnectionId = null
     ) => PointAtSessionCore(
         sessionDirectory,
         connections,
@@ -217,7 +225,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         maintenanceMode,
         agentControlProfile,
         sessionProvisioning,
-        requireExistingDirectory: true
+        requireExistingDirectory: true,
+        selectableConnectionIds,
+        inputNormalizerConnectionId
     );
 
     /// <summary>
@@ -231,7 +241,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer normalizer,
         string systemPrompt,
-        GalateaSessionProvisioning sessionProvisioning
+        GalateaSessionProvisioning sessionProvisioning,
+        IReadOnlyList<string>? selectableConnectionIds = null,
+        string? inputNormalizerConnectionId = null
     ) => PointAtSessionCore(
         sessionDirectory,
         connections,
@@ -243,7 +255,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         maintenanceMode: false,
         agentControlProfile: null,
         sessionProvisioning,
-        requireExistingDirectory: false
+        requireExistingDirectory: false,
+        selectableConnectionIds,
+        inputNormalizerConnectionId
     );
 
     private static GalateaTestHost PointAtSessionCore(
@@ -257,7 +271,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         bool maintenanceMode,
         RecapGridAgentControlProfile? agentControlProfile,
         GalateaSessionProvisioning sessionProvisioning,
-        bool requireExistingDirectory
+        bool requireExistingDirectory,
+        IReadOnlyList<string>? selectableConnectionIds,
+        string? inputNormalizerConnectionId
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionDirectory);
         ArgumentNullException.ThrowIfNull(connections);
@@ -293,7 +309,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 callLogDirectory,
                 maintenanceMode,
                 agentControlProfile,
-                sessionProvisioning
+                sessionProvisioning,
+                selectableConnectionIds,
+                inputNormalizerConnectionId
             );
             return new GalateaTestHost(
                 configurationRoot,
@@ -347,7 +365,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         bool maintenanceMode,
         RecapGridAgentControlProfile? agentControlProfile,
         GalateaSessionProvisioning sessionProvisioning =
-            GalateaSessionProvisioning.ExistingOnly
+            GalateaSessionProvisioning.ExistingOnly,
+        IReadOnlyList<string>? selectableConnectionIds = null,
+        string? inputNormalizerConnectionId = null
     ) {
         string agentControlProfileFile = "recap-grid-profile.json";
         RecapGridAgentControlProfile profile = agentControlProfile
@@ -395,7 +415,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 GalateaConfigLoader.ConnectionsFileName
             ),
             connections,
-            defaultConnectionId
+            defaultConnectionId,
+            selectableConnectionIds,
+            inputNormalizerConnectionId
         );
         return configPath;
     }
@@ -403,7 +425,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
     internal static void WriteConnectionsFile(
         string path,
         IReadOnlyList<CompletionConnectionConfig> connections,
-        string defaultConnectionId
+        string defaultConnectionId,
+        IReadOnlyList<string>? selectableConnectionIds = null,
+        string? inputNormalizerConnectionId = null
     ) {
         var output = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(output)) {
@@ -436,6 +460,26 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             }
             writer.WriteEndArray();
             writer.WriteString("defaultConnectionId", defaultConnectionId);
+            writer.WriteStartArray("selectableConnectionIds");
+            foreach (string connectionId
+                     in selectableConnectionIds
+                        ?? connections.Select(static value => value.Id)) {
+                writer.WriteStringValue(connectionId);
+            }
+            writer.WriteEndArray();
+            writer.WriteStartObject("bindings");
+            if (inputNormalizerConnectionId is null) {
+                writer.WriteNull(
+                    GalateaCompletionOwner.InputNormalizerBindingKey
+                );
+            }
+            else {
+                writer.WriteString(
+                    GalateaCompletionOwner.InputNormalizerBindingKey,
+                    inputNormalizerConnectionId
+                );
+            }
+            writer.WriteEndObject();
             writer.WriteEndObject();
         }
         byte[] bytes = output.WrittenSpan.ToArray();
@@ -536,7 +580,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
 internal sealed class GalateaWebApplicationFactory(
     string configPath,
     ICompletionClientFactory completionClientFactory,
-    IGalateaUserMessageNormalizer normalizer
+    IGalateaUserMessageNormalizer? normalizer
 ) : WebApplicationFactory<Program> {
     protected override void ConfigureWebHost(IWebHostBuilder builder) {
         builder.UseEnvironment("Testing");
@@ -544,8 +588,25 @@ internal sealed class GalateaWebApplicationFactory(
         builder.ConfigureTestServices(services => {
             services.RemoveAll<ICompletionClientFactory>();
             services.AddSingleton(completionClientFactory);
-            services.RemoveAll<IGalateaUserMessageNormalizer>();
-            services.AddSingleton(normalizer);
+            if (normalizer is not null) {
+                services.RemoveAll<IGalateaUserMessageNormalizerFactory>();
+                services.AddSingleton<IGalateaUserMessageNormalizerFactory>(
+                    new FixedNormalizerFactory(normalizer)
+                );
+            }
         });
+    }
+
+    private sealed class FixedNormalizerFactory(
+        IGalateaUserMessageNormalizer normalizer
+    ) : IGalateaUserMessageNormalizerFactory {
+        public IGalateaUserMessageNormalizer Create(
+            CompletionConnectionConfig? connection,
+            Func<Atelia.Completion.Abstractions.ICompletionClient> getClient
+        ) {
+            _ = connection;
+            ArgumentNullException.ThrowIfNull(getClient);
+            return normalizer;
+        }
     }
 }

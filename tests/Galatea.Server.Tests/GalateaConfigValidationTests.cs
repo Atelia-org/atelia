@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
@@ -608,6 +609,13 @@ public sealed class GalateaConfigValidationTests {
         CompletionConnectionsFileConfig decoded =
             CompletionConnectionConfigLoader.Decode(template);
         Assert.Single(decoded.Connections);
+        Assert.Equal(
+            [GalateaConfigTemplateFactory.DefaultConnectionId],
+            decoded.SelectableConnectionIds
+        );
+        Assert.Null(decoded.Bindings![
+            GalateaCompletionOwner.InputNormalizerBindingKey
+        ]);
         using (JsonDocument document = JsonDocument.Parse(template)) {
             JsonElement root = document.RootElement;
             Assert.Equal("1", root.GetProperty("v").GetRawText());
@@ -641,6 +649,57 @@ public sealed class GalateaConfigValidationTests {
         }
         finally {
             Directory.Delete(rootDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void GalateaConnectionsRequireExactSelectionAndNormalizerBinding() {
+        string root = NewRoot();
+        try {
+            string configPath = WriteConfig(
+                root,
+                [User("alice", Path.Combine(root, "session"))]
+            );
+            string path = Path.Combine(
+                root,
+                GalateaConfigLoader.ConnectionsFileName
+            );
+            JsonObject original = JsonNode.Parse(
+                File.ReadAllText(path)
+            )!.AsObject();
+
+            AssertRejected(original, "selectableConnectionIds");
+            AssertRejected(original, "bindings");
+
+            JsonObject missingKey = original.DeepClone().AsObject();
+            missingKey["bindings"] = new JsonObject();
+            Assert.Throws<InvalidDataException>(() => Load(
+                missingKey
+            ));
+
+            JsonObject wrongCase = original.DeepClone().AsObject();
+            wrongCase["bindings"] = new JsonObject {
+                ["Galatea.Input-Normalizer"] = null,
+            };
+            Assert.Throws<InvalidDataException>(() => Load(wrongCase));
+
+            JsonObject extra = original.DeepClone().AsObject();
+            extra["bindings"]!.AsObject()["galatea.future"] = null;
+            Assert.Throws<InvalidDataException>(() => Load(extra));
+
+            void AssertRejected(JsonObject source, string property) {
+                JsonObject candidate = source.DeepClone().AsObject();
+                Assert.True(candidate.Remove(property));
+                Assert.Throws<InvalidDataException>(() => Load(candidate));
+            }
+
+            GalateaConfig Load(JsonObject candidate) {
+                File.WriteAllText(path, candidate.ToJsonString());
+                return GalateaConfigLoader.Load(configPath);
+            }
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
         }
     }
 
@@ -851,7 +910,9 @@ public sealed class GalateaConfigValidationTests {
         var config = new GalateaConfig(
             users,
             Connections,
-            "test"
+            "test",
+            ["test"],
+            InputNormalizerConnectionId: null
         );
         InvalidOperationException constructionFailure = Assert.Throws<
             InvalidOperationException
@@ -890,7 +951,9 @@ public sealed class GalateaConfigValidationTests {
         string? callLogDirectory = null,
         IReadOnlyList<string>? listenUrls = null,
         IReadOnlyList<CompletionConnectionConfig>? connections = null,
-        string defaultConnectionId = "test"
+        string defaultConnectionId = "test",
+        IReadOnlyList<string>? selectableConnectionIds = null,
+        string? inputNormalizerConnectionId = null
     ) {
         string configPath = Path.Combine(root, "config.json");
         File.WriteAllText(
@@ -917,7 +980,9 @@ public sealed class GalateaConfigValidationTests {
         GalateaTestHost.WriteConnectionsFile(
             Path.Combine(root, GalateaConfigLoader.ConnectionsFileName),
             connections ?? Connections,
-            defaultConnectionId
+            defaultConnectionId,
+            selectableConnectionIds,
+            inputNormalizerConnectionId
         );
         return configPath;
     }

@@ -39,7 +39,8 @@ internal sealed class GalateaInputPreprocessor {
         ) {
             throw;
         }
-        catch (Exception exception) {
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
             LogFallback(liveTurn, original, exception);
             return original;
         }
@@ -80,7 +81,8 @@ internal sealed class GalateaInputPreprocessor {
         catch (GalateaTurnException) {
             throw;
         }
-        catch (Exception exception) {
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
             LogFallback(liveTurn, original, exception);
             liveTurn.PublishStatus(
                 GalateaSseStatusCode.InputNormalizationFinished,

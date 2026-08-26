@@ -1,8 +1,7 @@
 using System.Collections.Immutable;
 using System.Security;
+using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.OpenAI;
-using Atelia.Completion.Transport;
 using Atelia.Diagnostics;
 
 namespace Atelia.Galatea.Server;
@@ -11,6 +10,13 @@ public interface IGalateaUserMessageNormalizer {
     bool ShouldNormalize(string userMessage);
 
     ValueTask<string> NormalizeAsync(string userMessage, CancellationToken ct);
+}
+
+public interface IGalateaUserMessageNormalizerFactory {
+    IGalateaUserMessageNormalizer Create(
+        CompletionConnectionConfig? connection,
+        Func<ICompletionClient> getClient
+    );
 }
 
 public sealed class DisabledGalateaUserMessageNormalizer : IGalateaUserMessageNormalizer {
@@ -25,43 +31,25 @@ public sealed class DisabledGalateaUserMessageNormalizer : IGalateaUserMessageNo
     }
 }
 
-internal static class GalateaUserMessageNormalizerFactory {
-    private const string BaseUrlEnvVar = "DEEPSEEK_BASE_URL";
-    private const string ApiKeyEnvVar = "DEEPSEEK_API_KEY";
-    private const string DebugCategory = "Galatea.Input";
-
-    public static IGalateaUserMessageNormalizer CreateFromEnvironment() {
-        string? baseUrl = Environment.GetEnvironmentVariable(BaseUrlEnvVar);
-        string? apiKey = Environment.GetEnvironmentVariable(ApiKeyEnvVar);
-
-        if (string.IsNullOrWhiteSpace(baseUrl) && string.IsNullOrWhiteSpace(apiKey)) {
-            DebugUtil.Info(DebugCategory, "User input normalization disabled: DeepSeek environment variables are absent.");
-            return DisabledGalateaUserMessageNormalizer.Instance;
-        }
-
-        if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(apiKey)) {
-            DebugUtil.Warning(
-                DebugCategory,
-                $"User input normalization disabled: both {BaseUrlEnvVar} and {ApiKeyEnvVar} are required."
+public sealed class GalateaUserMessageNormalizerFactory
+    : IGalateaUserMessageNormalizerFactory {
+    public IGalateaUserMessageNormalizer Create(
+        CompletionConnectionConfig? connection,
+        Func<ICompletionClient> getClient
+    ) {
+        ArgumentNullException.ThrowIfNull(getClient);
+        return connection is null
+            ? DisabledGalateaUserMessageNormalizer.Instance
+            : new ConfiguredGalateaUserMessageNormalizer(
+                connection,
+                getClient
             );
-            return DisabledGalateaUserMessageNormalizer.Instance;
-        }
-
-        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var parsedBaseUrl)) {
-            DebugUtil.Warning(
-                DebugCategory,
-                $"User input normalization disabled: {BaseUrlEnvVar} is not a valid absolute URL: {baseUrl}"
-            );
-            return DisabledGalateaUserMessageNormalizer.Instance;
-        }
-
-        return new DeepSeekGalateaUserMessageNormalizer(parsedBaseUrl, apiKey);
     }
 }
 
-public sealed class DeepSeekGalateaUserMessageNormalizer : IGalateaUserMessageNormalizer, IDisposable {
+public sealed class ConfiguredGalateaUserMessageNormalizer
+    : IGalateaUserMessageNormalizer {
     private const string DebugCategory = "Galatea.Input";
-    private const string NormalizerModelId = "deepseek-v4-flash";
     private const int MaxMessageLengthChars = 280;
     private const int MaxMessageLines = 4;
 
@@ -78,23 +66,21 @@ public sealed class DeepSeekGalateaUserMessageNormalizer : IGalateaUserMessageNo
 6. 输出时只返回一个 <cleaned>...</cleaned> XML 片段，不要输出任何额外说明、引号、markdown 或前后缀。
 """;
 
-    private readonly HttpClient _httpClient;
-    private readonly ICompletionClient _completionClient;
+    private readonly CompletionConnectionConfig _connection;
+    private readonly Func<ICompletionClient> _getClient;
 
-    public DeepSeekGalateaUserMessageNormalizer(Uri baseAddress, string apiKey) {
-        ArgumentNullException.ThrowIfNull(baseAddress);
-        ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
-
-        _httpClient = CompletionHttpTransportFactory.CreateLiveClient(baseAddress);
-        _completionClient = new OpenAIChatClient(
-            apiKey: apiKey,
-            httpClient: _httpClient,
-            dialect: OpenAIChatDialects.DeepSeekV4
-        );
+    public ConfiguredGalateaUserMessageNormalizer(
+        CompletionConnectionConfig connection,
+        Func<ICompletionClient> getClient
+    ) {
+        _connection = connection
+            ?? throw new ArgumentNullException(nameof(connection));
+        _getClient = getClient
+            ?? throw new ArgumentNullException(nameof(getClient));
 
         DebugUtil.Info(
             DebugCategory,
-            $"User input normalization enabled: base={_httpClient.BaseAddress}, model={NormalizerModelId}, maxChars={MaxMessageLengthChars}, maxLines={MaxMessageLines}"
+            $"User input normalization enabled: connection={connection.Id}, model={connection.ModelId}, maxChars={MaxMessageLengthChars}, maxLines={MaxMessageLines}"
         );
     }
 
@@ -112,7 +98,7 @@ public sealed class DeepSeekGalateaUserMessageNormalizer : IGalateaUserMessageNo
 
         try {
             var request = new CompletionRequest(
-                NormalizerModelId,
+                _connection.ModelId,
                 new CompletionPromptPrefix(
                     NormalizerSystemPrompt,
                     CompletionOutputContract.ProviderDefault(
@@ -120,10 +106,12 @@ public sealed class DeepSeekGalateaUserMessageNormalizer : IGalateaUserMessageNo
                     ),
                     [new ObservationMessage(BuildNormalizationPrompt(userMessage))]
                 ),
-                tailMessages: []
+                tailMessages: [],
+                maxTokens: _connection.MaxTokens
             );
 
-            var result = await _completionClient.StreamCompletionAsync(request, observer: null, cancellationToken: ct)
+            ICompletionClient completionClient = _getClient();
+            var result = await completionClient.StreamCompletionAsync(request, observer: null, cancellationToken: ct)
                 .ConfigureAwait(false);
 
             if (!result.Termination.IsSuccess) {
@@ -159,7 +147,8 @@ public sealed class DeepSeekGalateaUserMessageNormalizer : IGalateaUserMessageNo
         catch (OperationCanceledException) when (ct.IsCancellationRequested) {
             throw;
         }
-        catch (Exception ex) {
+        catch (Exception ex) when (
+            GalateaExceptionClassifier.IsNonFatal(ex)) {
             DebugUtil.Warning(
                 DebugCategory,
                 $"Input normalization failed; keeping original. input={Preview(userMessage)}, error={ex.Message}",
@@ -167,10 +156,6 @@ public sealed class DeepSeekGalateaUserMessageNormalizer : IGalateaUserMessageNo
             );
             return userMessage;
         }
-    }
-
-    public void Dispose() {
-        _httpClient.Dispose();
     }
 
     internal static string BuildNormalizationPrompt(string userMessage) {

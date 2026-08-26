@@ -28,6 +28,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly GalateaInputPreprocessor _inputPreprocessor;
     private readonly bool _maintenanceMode;
     private readonly GalateaRecapGridComposition _recapGrid;
+    private readonly GalateaCompletionOwner? _completionOwner;
     internal GalateaDisposeTestHooks? DisposeHooksForTest { get; set; }
     internal GalateaSessionProvisioningTestHooks?
         SessionProvisioningHooksForTest { get; set; }
@@ -35,15 +36,45 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
     private readonly IReadOnlyDictionary<string, CompletionConnectionConfig>
         _connectionCatalog;
+    private readonly IReadOnlyList<GalateaConnectionInfoDto>
+        _selectableConnections;
     private readonly string _defaultConnectionId;
     private readonly RecapGridControlAdmission? _sessionBootstrapAdmission;
 
     public GalateaHostService(
         GalateaConfig config,
         ICompletionClientFactory completionClientFactory,
+        IGalateaUserMessageNormalizerFactory userMessageNormalizerFactory
+    ) : this(
+        config,
+        CreateProductionComponents(
+            config,
+            completionClientFactory,
+            userMessageNormalizerFactory
+        )
+    ) { }
+
+    internal GalateaHostService(
+        GalateaConfig config,
+        ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer userMessageNormalizer
+    ) : this(
+        config,
+        CreateProductionComponents(
+            config,
+            completionClientFactory,
+            new FixedGalateaUserMessageNormalizerFactory(
+                userMessageNormalizer
+            )
+        )
+    ) { }
+
+    private GalateaHostService(
+        GalateaConfig config,
+        GalateaProductionComponents components
     ) {
-        ArgumentNullException.ThrowIfNull(completionClientFactory);
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(components);
         GalateaConfigValidation.RequireDistinctSessionDirectories(
             config.Users
         );
@@ -54,46 +85,35 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _sessionBootstrapAdmission = ResolveSessionBootstrapAdmission(
             recapGrid
         );
-        ICompletionClientFactory ownedFactory =
-            GalateaCompletionLogging.CreateOwnedFactory(
-                completionClientFactory,
-                config.CallLogDir
-            );
-        RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
-            () => GalateaConfigLoader.LoadRouteManifest(
-                recapGrid.RouteManifestPath
-            ),
-            new CompletionConnectionsFileConfig(
-                config.Connections,
-                config.DefaultConnectionId
-            ),
-            ownedFactory,
-            recapGrid.AgentControlProfiles
-        );
-        try {
-            _recapGrid = new GalateaRecapGridComposition(
-                completion,
-                recapGrid.CurrentAgentControlProfileId,
-                estimators: [new O200kBaseHistoryUnitLoadEstimator()]
-            );
-        }
-        catch {
-            completion.Dispose();
-            throw;
-        }
+        _completionOwner = components.Owner;
+        _recapGrid = components.Owner.RecapGrid;
         _inputPreprocessor = new GalateaInputPreprocessor(
-            userMessageNormalizer
+            components.Normalizer
         );
         _maintenanceMode = config.MaintenanceMode;
         _users = config.Users.ToDictionary(
             static value => value.UserId,
             StringComparer.Ordinal
         );
-        _connectionCatalog = config.Connections.ToDictionary(
+        IReadOnlyDictionary<string, CompletionConnectionConfig> fullCatalog =
+            components.Owner.Connections.ToDictionary(
+                static value => value.Id,
+                StringComparer.Ordinal
+            );
+        CompletionConnectionConfig[] selectable = components.Owner
+            .SelectableConnectionIds
+            .Select(id => fullCatalog[id])
+            .ToArray();
+        _connectionCatalog = selectable.ToDictionary(
             static value => value.Id,
             StringComparer.Ordinal
         );
-        _defaultConnectionId = config.DefaultConnectionId;
+        _selectableConnections = Array.AsReadOnly(
+            selectable.Select(static value =>
+                new GalateaConnectionInfoDto(value.Id, value.ModelId)
+            ).ToArray()
+        );
+        _defaultConnectionId = components.Owner.DefaultConnectionId;
     }
 
     internal GalateaHostService(
@@ -102,10 +122,23 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaRecapGridComposition recapGrid
     ) {
         ArgumentNullException.ThrowIfNull(recapGrid);
+        ArgumentNullException.ThrowIfNull(userMessageNormalizer);
         GalateaConfigValidation.RequireDistinctSessionDirectories(
             config.Users
         );
+        CompletionConnectionsFileConfig normalized =
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                config.Connections,
+                config.DefaultConnectionId,
+                config.SelectableConnectionIds,
+                new Dictionary<string, string?>(StringComparer.Ordinal) {
+                    [GalateaCompletionOwner.InputNormalizerBindingKey] =
+                        config.InputNormalizerConnectionId,
+                }
+            ));
+        GalateaCompletionOwner.ValidateGalateaRouting(normalized);
         _recapGrid = recapGrid;
+        _completionOwner = null;
         _inputPreprocessor = new GalateaInputPreprocessor(
             userMessageNormalizer
         );
@@ -114,27 +147,90 @@ public sealed class GalateaHostService : IAsyncDisposable {
             static value => value.UserId,
             StringComparer.Ordinal
         );
-        _connectionCatalog = config.Connections.ToDictionary(
+        IReadOnlyDictionary<string, CompletionConnectionConfig> fullCatalog =
+            normalized.Connections.ToDictionary(
+                static value => value.Id,
+                StringComparer.Ordinal
+            );
+        CompletionConnectionConfig[] selectable = normalized
+            .SelectableConnectionIds!
+            .Select(id => fullCatalog[id])
+            .ToArray();
+        _connectionCatalog = selectable.ToDictionary(
             static value => value.Id,
             StringComparer.Ordinal
         );
-        _defaultConnectionId = config.DefaultConnectionId;
+        _selectableConnections = Array.AsReadOnly(selectable
+            .Select(static value => new GalateaConnectionInfoDto(
+                value.Id,
+                value.ModelId
+            ))
+            .ToArray());
+        _defaultConnectionId = normalized.DefaultConnectionId!;
         _sessionBootstrapAdmission = config.RecapGrid is { } configured
             ? ResolveSessionBootstrapAdmission(configured)
             : null;
     }
 
+    private static GalateaProductionComponents CreateProductionComponents(
+        GalateaConfig config,
+        ICompletionClientFactory completionClientFactory,
+        IGalateaUserMessageNormalizerFactory normalizerFactory
+    ) {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(completionClientFactory);
+        ArgumentNullException.ThrowIfNull(normalizerFactory);
+        GalateaConfigValidation.RequireDistinctSessionDirectories(
+            config.Users
+        );
+
+        GalateaCompletionOwner? owner = null;
+        try {
+            owner = new GalateaCompletionOwner(
+                config,
+                completionClientFactory
+            );
+            IGalateaUserMessageNormalizer normalizer =
+                normalizerFactory.Create(
+                    owner.InputNormalizerConnection,
+                    owner.GetInputNormalizerClient
+                ) ?? throw new InvalidOperationException(
+                    "Galatea input normalizer factory returned null."
+                );
+            return new GalateaProductionComponents(owner, normalizer);
+        }
+        catch {
+            owner?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            throw;
+        }
+    }
+
+    private sealed record GalateaProductionComponents(
+        GalateaCompletionOwner Owner,
+        IGalateaUserMessageNormalizer Normalizer
+    );
+
+    private sealed class FixedGalateaUserMessageNormalizerFactory(
+        IGalateaUserMessageNormalizer normalizer
+    ) : IGalateaUserMessageNormalizerFactory {
+        private readonly IGalateaUserMessageNormalizer _normalizer =
+            normalizer ?? throw new ArgumentNullException(nameof(normalizer));
+
+        public IGalateaUserMessageNormalizer Create(
+            CompletionConnectionConfig? connection,
+            Func<ICompletionClient> getClient
+        ) {
+            _ = connection;
+            ArgumentNullException.ThrowIfNull(getClient);
+            return _normalizer;
+        }
+    }
+
     public bool TryGetUser(string userId, out GalateaUserConfig user)
         => _users.TryGetValue(userId, out user!);
 
-    public IReadOnlyList<GalateaConnectionInfoDto> Connections => [
-        .. _connectionCatalog.Values
-            .OrderBy(static value => value.Id, StringComparer.Ordinal)
-            .Select(static value => new GalateaConnectionInfoDto(
-                value.Id,
-                value.ModelId
-            ))
-    ];
+    public IReadOnlyList<GalateaConnectionInfoDto> Connections =>
+        _selectableConnections;
 
     public string DefaultConnectionId => _defaultConnectionId;
 
@@ -795,7 +891,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
             sessionIndex++;
         }
         try {
-            await _recapGrid.DisposeAsync().ConfigureAwait(false);
+            if (_completionOwner is not null) {
+                await _completionOwner.DisposeAsync().ConfigureAwait(false);
+            }
+            else {
+                await _recapGrid.DisposeAsync().ConfigureAwait(false);
+            }
             DisposeHooksForTest?.AfterRecapGridDisposed?.Invoke();
         }
         catch (Exception exception) when (
@@ -940,6 +1041,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 turn = await recapGrid.BindToolContinuationAsync(
                     host.Engine,
                     liveTurn.Options.ConnectionId,
+                    id => _connectionCatalog.ContainsKey(id),
                     toolContinuation,
                     cancellationToken
                 ).ConfigureAwait(false);
@@ -1502,6 +1604,7 @@ internal static class GalateaConfigLoader {
             );
         CompletionConnectionsFileConfig connectionsFile =
             CompletionConnectionConfigLoader.Decode(connectionsJson);
+        GalateaCompletionOwner.ValidateGalateaRouting(connectionsFile);
         if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("Galatea config must contain at least one user."); }
         IReadOnlyList<GalateaUserConfig> users =
             ResolveSessionDirectories(usersFile.Users, configDir);
@@ -1510,6 +1613,11 @@ internal static class GalateaConfigLoader {
             Users: users,
             Connections: connectionsFile.Connections,
             DefaultConnectionId: connectionsFile.DefaultConnectionId!,
+            SelectableConnectionIds:
+                connectionsFile.SelectableConnectionIds!,
+            InputNormalizerConnectionId: connectionsFile.Bindings![
+                GalateaCompletionOwner.InputNormalizerBindingKey
+            ],
             ListenUrls: usersFile.ListenUrls,
             CallLogDir: ResolveCallLogDirectory(
                 usersFile.CallLogDir,
@@ -1955,6 +2063,14 @@ internal static class GalateaConfigTemplateFactory {
             writer.WriteEndObject();
             writer.WriteEndArray();
             writer.WriteString("defaultConnectionId", DefaultConnectionId);
+            writer.WriteStartArray("selectableConnectionIds");
+            writer.WriteStringValue(DefaultConnectionId);
+            writer.WriteEndArray();
+            writer.WriteStartObject("bindings");
+            writer.WriteNull(
+                GalateaCompletionOwner.InputNormalizerBindingKey
+            );
+            writer.WriteEndObject();
             writer.WriteEndObject();
         }
         byte[] document = output.WrittenSpan.ToArray();

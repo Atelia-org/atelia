@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Atelia.Completion;
 using Atelia.Galatea.Server;
 using Xunit;
 
@@ -166,6 +167,50 @@ public sealed class GalateaInputPreprocessorTests {
         Assert.Equal(0, normalizer.NormalizeCallCount);
         Assert.Null(turn.Phase);
         Assert.Empty(Replay(turn));
+    }
+
+    [Fact]
+    public async Task ProcessAsync_FatalNormalizerFailurePropagates() {
+        var failure = new OutOfMemoryException("fatal normalizer failure");
+        var normalizer = new StubNormalizer {
+            ShouldNormalizeHandler = _ => throw failure
+        };
+        GalateaLiveTurn turn = Turn("original");
+        var preprocessor = new GalateaInputPreprocessor(normalizer);
+
+        OutOfMemoryException observed = await Assert.ThrowsAsync<
+            OutOfMemoryException>(() => preprocessor.ProcessAsync(
+                turn,
+                CancellationToken.None
+            ).AsTask());
+
+        Assert.Same(failure, observed);
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+        Assert.Empty(Replay(turn));
+    }
+
+    [Fact]
+    public async Task ConfiguredNormalizer_DoesNotSwallowFatalClientCreation() {
+        var failure = new OutOfMemoryException("fatal client creation");
+        IGalateaUserMessageNormalizer normalizer =
+            new GalateaUserMessageNormalizerFactory().Create(
+                new CompletionConnectionConfig(
+                    "helper",
+                    "openai-chat",
+                    "helper-model",
+                    "openai-chat/strict",
+                    "http://localhost:8000/"
+                ),
+                () => throw failure
+            );
+
+        OutOfMemoryException observed = await Assert.ThrowsAsync<
+            OutOfMemoryException>(() => normalizer.NormalizeAsync(
+                "short input",
+                CancellationToken.None
+            ).AsTask());
+
+        Assert.Same(failure, observed);
     }
 
     [Fact]

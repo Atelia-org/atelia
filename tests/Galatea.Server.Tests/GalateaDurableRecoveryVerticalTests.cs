@@ -372,6 +372,53 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     }
 
     [Fact]
+    public async Task ResumeMatchingObservation_RejectsHiddenCurrentConnection() {
+        CompletionConnectionConfig visible = Connection(
+            "test",
+            "visible-model"
+        );
+        CompletionConnectionConfig hidden = Connection(
+            "hidden-helper",
+            "hidden-model"
+        );
+        var completionFactory = new TrackingCompletionClientFactory(
+            "must not dispatch"
+        );
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [visible, hidden],
+            selectableConnectionIds: [visible.Id]
+        );
+        EventAddress pendingHead = AppendPendingObservation(
+            host.SessionDirectory
+        );
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/v1/chat/turns/resume",
+            new ResumeTurnRequest(
+                EventAddressTextCodec.Format(pendingHead),
+                hidden.Id
+            )
+        );
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, completionFactory.CreateCallCount);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        Assert.Equal(pendingHead, session.Engine.ReadCurrentHead());
+        Assert.Null(session.GetCurrentTurn());
+        Assert.True(session.TurnLock.Wait(0));
+        session.TurnLock.Release();
+    }
+
+    [Fact]
     public async Task ResumePrepared_ExactBindsWithoutOpeningRecapGridRoutes() {
         var completionFactory = new TrackingCompletionClientFactory(
             "prepared recovery answer"
@@ -424,6 +471,59 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             SessionExecutionPhase.Idle,
             session.Engine.InspectExecutionBoundary().Phase
         );
+    }
+
+    [Fact]
+    public async Task ResumePrepared_ExactBindsHistoricalNonSelectableConnection() {
+        CompletionConnectionConfig visible = Connection(
+            "test",
+            "visible-model"
+        );
+        CompletionConnectionConfig historical = Connection(
+            "historical",
+            "historical-model"
+        );
+        var completionFactory = new TrackingCompletionClientFactory(
+            "historical recovery answer"
+        );
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [visible, historical],
+            selectableConnectionIds: [visible.Id]
+        );
+        EventAddress preparedHead = await CreateRecoveryBoundaryAsync(
+            host.SessionDirectory,
+            historical,
+            completionFactory.Client,
+            "AfterRequestPreparedCommitted",
+            SessionExecutionPhase.AwaitingCompletionDispatch
+        );
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+
+        StartTurnResponseDto started = await ResumeAsync(
+            client,
+            preparedHead,
+            connectionId: null
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        GalateaLiveTurn liveTurn = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(session, started.TurnId)
+        );
+        await Assert.IsAssignableFrom<Task>(liveTurn.RunTask)
+            .WaitAsync(CompletionDeadline);
+
+        Assert.Equal("completed", liveTurn.Status);
+        Assert.False(service.TryGetConnection(historical.Id, out _));
+        Assert.Equal(1, completionFactory.CreateCallCount);
+        Assert.Equal(historical.Id, completionFactory.LastConnectionId);
+        Assert.Equal(historical.Id, liveTurn.Options.ConnectionId);
     }
 
     [Fact]
@@ -566,6 +666,18 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     ) => host.Factory.Services
         .GetRequiredService<GalateaConfig>()
         .Connections.Single(static connection => connection.Id == "test");
+
+    private static CompletionConnectionConfig Connection(
+        string id,
+        string modelId
+    ) => new(
+        id,
+        "openai-chat",
+        modelId,
+        "openai-chat/strict",
+        "http://localhost:8000/",
+        ApiKey: "test-key"
+    );
 
     private static EventAddress AppendPendingObservation(
         string sessionPath
@@ -772,10 +884,13 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             ref _createCallCount
         );
 
+        internal string? LastConnectionId { get; private set; }
+
         public ICompletionClient Create(
             CompletionConnectionConfig connection
         ) {
             ArgumentNullException.ThrowIfNull(connection);
+            LastConnectionId = connection.Id;
             Interlocked.Increment(ref _createCallCount);
             return Client;
         }
