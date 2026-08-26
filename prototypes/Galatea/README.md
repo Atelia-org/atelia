@@ -91,8 +91,9 @@ normalizer 时，清洗前输入、prompt 与 provider output 也会进入该本
 
 ## Internal TextExtractor
 
-`TextExtractor` 是尚未接入 HTTP、SessionJournal 或 RecapGrid 主链的 internal、ephemeral
-结构化提取器。构造时固定业务 `systemPrompt` 与 immutable `TextExtractorToolSet`，并注入一个
+`TextExtractor` 是已被 mailbox specialization 使用的通用 internal、ephemeral结构化提取器；
+它自身不拥有HTTP endpoint、SessionJournal integration或任何persistence。构造时固定业务
+`systemPrompt` 与 immutable `TextExtractorToolSet`，并注入一个
 connection及惰性的borrowed `ICompletionClient` accessor；它不拥有或dispose client。每次调用只提供
 `targetText` data与`userPrompt` instruction：
 
@@ -136,14 +137,20 @@ per-session `TurnLock`、recovery admission与main connection allowlist。
 再整体剥离inline think。常驻`OutboundMailExtractor`通过
 `emit_send_mail_intent`产出0..N个有序`SendMailIntent`，字段为故事内`Recipient`、可选`Subject`、
 完整`Body`、可选canonical `InReplyToMessageId`与exact `EvidenceQuote`。Recipient仍是未解析、未验证的
-故事文本；当前阶段没有recipient allowlist、投递或外部副作用。Actor ownership、actual send、完整正文
-与exact source substring会fail closed校验；计划、草稿、他人邮件及来信引用不产生artifact。
+故事文本；当前阶段没有recipient allowlist、投递或外部副作用。Actor ownership、actual send以及计划、
+草稿、他人邮件和来信引用等语义，只由extractor LLM依据code-owned prompt保守判断，并没有被runtime
+fail-closed证明。runtime只验证artifact结构与UTF-8 bounds、single-line Recipient/Subject、canonical reply ID，
+以及Recipient/非空Subject/Body/reply ID/Evidence均为source exact substring；通过校验的结果仍只是未验证候选，
+不是发送授权。未来durable outbox必须另行定义recipient validation、provenance、review与投递policy。
 
 候选只进入每个`UserSessionHost`自己的`InMemorySendMailIntentBuffer`。每批全有或全无地加入，
 按terminal Action head防止候选重复，并有code-owned count/byte上限；满载时拒绝新批次，不静默逐出
 尚未处理的旧候选。它不是durable outbox，不承诺provider-call dedupe、exactly-once、进程重启恢复或
-真实投递，session dispose后即丢失。Extraction的nonfatal failure/cancellation只写bounded
-`Galatea.Mailbox`摘要log，不改判已经durable的主turn；fatal exception仍传播。普通player Undo成功后
+真实投递，session dispose后即丢失。Extraction有独立的code-owned 30秒elapsed deadline，并同时向
+provider传递linked shutdown/deadline cancellation；即使provider不合作，recent refresh、SSE `done`和
+`TurnLock`释放最多只额外等待该deadline。nonfatal failure/cancellation/timeout只写single-line bounded
+`Galatea.Mailbox`摘要log，不改判已经durable的主turn；deadline内观测到的fatal exception仍传播，
+超时后被放弃task的eventual fault仅被安全观察。普通player Undo成功后
 移除对应Action head的内存候选；mailbox Observation不产生普通player rewind token，commit前也再次
 防御其被player pop入口撤销。Completion call log仍可能包含完整tool arguments，debug摘要不重复正文。
 
@@ -188,7 +195,8 @@ route。当前versioned endpoints是：
 
 JSON body只接受`application/json`与可选UTF-8 charset，不接受`Content-Encoding`；exact camelCase，unknown、
 wrong-case、duplicate、missing required、wrong type、required null、comment和trailing comma均拒绝。request body上限
-为1 MiB，original与normalized message各为64 KiB UTF-8，mail body为64 KiB、sender为1 KiB、subject为4 KiB，
+为1 MiB，original与normalized message各为64 KiB UTF-8，mail body为64 KiB、sender为1 KiB、subject为4 KiB；
+mail sender/subject与outbound recipient/subject均拒绝CR/LF/NEL/Unicode line separator等换行，
 connection id为128 UTF-8 bytes。matched V1 endpoint
 failure除busy使用`{code,error,turnId}`外统一为`{code,error}`；unknown或retired route保持exact 404，但不承诺
 该endpoint-owned envelope。diagnostic文本不作为machine branch。

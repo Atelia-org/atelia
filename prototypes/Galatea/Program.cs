@@ -573,13 +573,15 @@ api.MapPost(
         string? invalid = GalateaHttpV1.ValidateMailboxText(
                 request.From,
                 "from",
-                GalateaMailboxBounds.MaximumSenderUtf8Bytes
+                GalateaMailboxBounds.MaximumSenderUtf8Bytes,
+                allowLineBreaks: false
             )
             ?? GalateaHttpV1.ValidateMailboxText(
                 request.Subject,
                 "subject",
                 GalateaMailboxBounds.MaximumSubjectUtf8Bytes,
-                allowNull: true
+                allowNull: true,
+                allowLineBreaks: false
             )
             ?? GalateaHttpV1.ValidateMailboxText(
                 request.Body,

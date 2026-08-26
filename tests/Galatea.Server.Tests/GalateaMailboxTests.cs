@@ -41,6 +41,14 @@ public sealed class GalateaMailboxTests {
             MailboxMessage.CreateInbound("Alice", "", "body"));
         Assert.Throws<ArgumentException>(() =>
             MailboxMessage.CreateInbound("Alice", null, "bad\0body"));
+        Assert.Equal(
+            "line one\nline two",
+            MailboxMessage.CreateInbound(
+                "Alice",
+                null,
+                "line one\nline two"
+            ).Body
+        );
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             MailboxMessage.CreateInbound(
                 "Alice",
@@ -64,6 +72,14 @@ public sealed class GalateaMailboxTests {
             _ => Message(
                 Tool("c3", "Mallory", null, "invented", null,
                     "sent real body")
+            ),
+            _ => Message(
+                Tool("c4", "Alice\nBcc", null, "body", null,
+                    "sent body")
+            ),
+            _ => Message(
+                Tool("c5", "Alice", "subject\u2028Injected", "body",
+                    null, "sent body")
             )
         );
         var extractor = new OutboundMailExtractor(connection, () => client);
@@ -72,6 +88,13 @@ public sealed class GalateaMailboxTests {
             "[Galatea] I only drafted a note.",
             CancellationToken.None
         ));
+        string contract = client.Requests[0].PromptPrefix.SystemPrompt;
+        Assert.Contains("composite GM carrier", contract,
+            StringComparison.Ordinal);
+        Assert.Contains("Plans, wishes, suggestions, drafts", contract,
+            StringComparison.Ordinal);
+        Assert.Contains("Never attribute another character's acts", contract,
+            StringComparison.Ordinal);
         IReadOnlyList<SendMailIntent> mails = await extractor.ExtractAsync(
             "[Galatea] sent first body to Alice with S1; then sent second body to Bob replying to 0123456789abcdef0123456789abcdef.",
             CancellationToken.None
@@ -82,6 +105,18 @@ public sealed class GalateaMailboxTests {
         await Assert.ThrowsAsync<TextExtractionException>(() => extractor
             .ExtractAsync(
                 "[Galatea] sent real body to Mallory.",
+                CancellationToken.None
+            )
+            .AsTask());
+        await Assert.ThrowsAsync<TextExtractionException>(() => extractor
+            .ExtractAsync(
+                "[Galatea] sent body to Alice\nBcc and sent body.",
+                CancellationToken.None
+            )
+            .AsTask());
+        await Assert.ThrowsAsync<TextExtractionException>(() => extractor
+            .ExtractAsync(
+                "[Galatea] sent body to Alice with subject\u2028Injected; sent body.",
                 CancellationToken.None
             )
             .AsTask());
@@ -100,6 +135,37 @@ public sealed class GalateaMailboxTests {
         );
 
         Assert.Equal("before  after", visible);
+    }
+
+    [Theory]
+    [InlineData("Alice\rBcc")]
+    [InlineData("Alice\nBcc")]
+    [InlineData("Alice\vBcc")]
+    [InlineData("Alice\fBcc")]
+    [InlineData("Alice\u0085Bcc")]
+    [InlineData("Alice\u2028Bcc")]
+    [InlineData("Alice\u2029Bcc")]
+    public void MailHeaders_RejectEveryCodeOwnedLineBreak(string injected) {
+        Assert.Throws<ArgumentException>(() =>
+            MailboxMessage.CreateInbound(injected, null, "body"));
+        Assert.Throws<ArgumentException>(() =>
+            MailboxMessage.CreateInbound("Alice", injected, "body"));
+
+        string summary = GalateaMailboxText.SummarizeForLog(
+            injected + new string('界', 200)
+        );
+        Assert.DoesNotContain('\r', summary);
+        Assert.DoesNotContain('\n', summary);
+        Assert.DoesNotContain('\v', summary);
+        Assert.DoesNotContain('\f', summary);
+        Assert.DoesNotContain('\u0085', summary);
+        Assert.DoesNotContain('\u2028', summary);
+        Assert.DoesNotContain('\u2029', summary);
+        Assert.InRange(
+            Encoding.UTF8.GetByteCount(summary),
+            1,
+            GalateaMailboxText.MaximumLogSummaryUtf8Bytes
+        );
     }
 
     [Fact]
@@ -270,6 +336,65 @@ public sealed class GalateaMailboxTests {
     }
 
     [Fact]
+    public async Task ExtractionDeadline_CompletesDurableTurnAndReleasesLockWhenProviderNeverReturns() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig extractorConnection =
+            Connection("mail-helper");
+        const string Action =
+            "[Galatea] sent body text to Alice and completed sending.";
+        var mainClient = new QueueClient(
+            _ => Message(new ActionBlock.Text(Action)),
+            _ => Message(new ActionBlock.Text(Action))
+        );
+        var extractorClient = new NeverCompletingClient();
+        var factory = new RoutingFactory(new Dictionary<
+            string,
+            ICompletionClient
+        >(StringComparer.Ordinal) {
+            [main.Id] = mainClient,
+            [extractorConnection.Id] = extractorClient,
+        });
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, extractorConnection],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: extractorConnection.Id
+        );
+        using HttpClient http = host.CreateClient();
+        await Login(http);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        service.OutboundMailExtractionDeadlineForTest =
+            TimeSpan.FromMilliseconds(60);
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+
+        StartTurnResponseDto first = await PostPlayerTurn(http);
+        await service.FindTurn(session, first.TurnId)!
+            .RunTask!.WaitAsync(Deadline);
+        Assert.Equal("completed",
+            service.FindTurn(session, first.TurnId)!.Status);
+        Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
+            .RequireSnapshot().Turns);
+        Assert.Empty(session.SendMailIntentBuffer.Snapshot());
+        Assert.True(session.TurnLock.Wait(0));
+        session.TurnLock.Release();
+
+        StartTurnResponseDto second = await PostPlayerTurn(http);
+        await service.FindTurn(session, second.TurnId)!
+            .RunTask!.WaitAsync(Deadline);
+        Assert.Equal("completed",
+            service.FindTurn(session, second.TurnId)!.Status);
+        Assert.Equal(2, extractorClient.DispatchCount);
+        Assert.Equal(2, extractorClient.CancellationCount);
+        Assert.Equal(2, session.Engine.ReadRecentCompletedTurns(2)
+            .RequireSnapshot().Turns.Count);
+    }
+
+    [Fact]
     public async Task InboundEndpoint_IsStrictBoundedAuthenticatedAndMaintenanceProtected() {
         var completion = new QueueClient(_ => Message());
         await using GalateaTestHost host = GalateaTestHost.Create(
@@ -302,6 +427,21 @@ public sealed class GalateaMailboxTests {
             new { from = " ", body = "hello" }
         );
         Assert.Equal(HttpStatusCode.BadRequest, blank.StatusCode);
+        HttpResponseMessage injectedFrom = await http.PostAsJsonAsync(
+            "/api/v1/mailbox/inbound",
+            new { from = "Alice\nBcc: Mallory", body = "hello" }
+        );
+        Assert.Equal(HttpStatusCode.BadRequest, injectedFrom.StatusCode);
+        HttpResponseMessage injectedSubject = await http.PostAsJsonAsync(
+            "/api/v1/mailbox/inbound",
+            new {
+                from = "Alice",
+                subject = "hello\u2028Injected",
+                body = "hello"
+            }
+        );
+        Assert.Equal(HttpStatusCode.BadRequest,
+            injectedSubject.StatusCode);
         HttpResponseMessage large = await http.PostAsJsonAsync(
             "/api/v1/mailbox/inbound",
             new {
@@ -401,12 +541,15 @@ public sealed class GalateaMailboxTests {
         public string Name => "galatea-mailbox-test";
         public string ApiSpecId => "test-v1";
 
+        internal List<CompletionRequest> Requests { get; } = [];
+
         public Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
             CompletionStreamObserver? observer,
             CancellationToken cancellationToken = default
         ) {
             cancellationToken.ThrowIfCancellationRequested();
+            Requests.Add(request);
             Func<CompletionRequest, ActionMessage> script = _scripts.Dequeue();
             ActionMessage message = script(request);
             foreach (ActionBlock.Text text in message.Blocks
@@ -417,6 +560,36 @@ public sealed class GalateaMailboxTests {
                 message,
                 CompletionDescriptor.From(this, request)
             ));
+        }
+    }
+
+    private sealed class NeverCompletingClient : ICompletionClient {
+        private int _dispatchCount;
+        private int _cancellationCount;
+
+        public string Name => "galatea-mailbox-never-completes";
+        public string ApiSpecId => "test-v1";
+        internal int DispatchCount => Volatile.Read(ref _dispatchCount);
+        internal int CancellationCount => Volatile.Read(
+            ref _cancellationCount
+        );
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            _ = request;
+            _ = observer;
+            _ = Interlocked.Increment(ref _dispatchCount);
+            _ = cancellationToken.Register(
+                () => _ = Interlocked.Increment(
+                    ref _cancellationCount
+                )
+            );
+            return new TaskCompletionSource<CompletionResult>(
+                TaskCreationOptions.RunContinuationsAsynchronously
+            ).Task;
         }
     }
 

@@ -17,6 +17,37 @@ internal static class GalateaMailboxBounds {
     internal const int MaximumEvidenceUtf8Bytes = 8 * 1024;
 }
 
+internal static class GalateaMailboxText {
+    internal const int MaximumLogSummaryUtf8Bytes = 256;
+
+    internal static bool ContainsHeaderLineBreak(string value) {
+        ArgumentNullException.ThrowIfNull(value);
+        return value.EnumerateRunes().Any(static rune =>
+            rune.Value is '\r' or '\n' or '\v' or '\f'
+                or 0x0085 or 0x2028 or 0x2029
+        );
+    }
+
+    internal static string SummarizeForLog(string? value) {
+        if (string.IsNullOrEmpty(value)) { return "<none>"; }
+        var builder = new StringBuilder();
+        int bytes = 0;
+        foreach (Rune source in value.EnumerateRunes()) {
+            Rune output = source.Value is '\r' or '\n' or '\v' or '\f'
+                    or 0x0085 or 0x2028 or 0x2029
+                ? new Rune(' ')
+                : source;
+            if (bytes + output.Utf8SequenceLength
+                    > MaximumLogSummaryUtf8Bytes) {
+                break;
+            }
+            _ = builder.Append(output);
+            bytes += output.Utf8SequenceLength;
+        }
+        return builder.Length == 0 ? "<none>" : builder.ToString();
+    }
+}
+
 internal sealed record MailboxMessage {
     internal const string GalateaMailboxName = "Galatea";
 
@@ -30,17 +61,20 @@ internal sealed record MailboxMessage {
         From = RequireText(
             from,
             GalateaMailboxBounds.MaximumSenderUtf8Bytes,
-            nameof(from)
+            nameof(from),
+            allowLineBreaks: false
         );
         Subject = RequireOptionalText(
             subject,
             GalateaMailboxBounds.MaximumSubjectUtf8Bytes,
-            nameof(subject)
+            nameof(subject),
+            allowLineBreaks: false
         );
         Body = RequireText(
             body,
             GalateaMailboxBounds.MaximumBodyUtf8Bytes,
-            nameof(body)
+            nameof(body),
+            allowLineBreaks: true
         );
     }
 
@@ -79,15 +113,22 @@ internal sealed record MailboxMessage {
     private static string? RequireOptionalText(
         string? value,
         int maximumBytes,
-        string parameterName
+        string parameterName,
+        bool allowLineBreaks
     ) => value is null
         ? null
-        : RequireText(value, maximumBytes, parameterName);
+        : RequireText(
+            value,
+            maximumBytes,
+            parameterName,
+            allowLineBreaks
+        );
 
     private static string RequireText(
         string? value,
         int maximumBytes,
-        string parameterName
+        string parameterName,
+        bool allowLineBreaks
     ) {
         if (string.IsNullOrWhiteSpace(value)) {
             throw new ArgumentException(
@@ -100,6 +141,13 @@ internal sealed record MailboxMessage {
                 throw new ArgumentOutOfRangeException(
                     parameterName,
                     $"{parameterName} exceeds its UTF-8 byte limit."
+                );
+            }
+            if (!allowLineBreaks
+                && GalateaMailboxText.ContainsHeaderLineBreak(value)) {
+                throw new ArgumentException(
+                    $"{parameterName} must be single-line text.",
+                    parameterName
                 );
             }
             _ = System.Xml.XmlConvert.VerifyXmlChars(value);
@@ -331,17 +379,20 @@ Extract zero or more mails that Galatea actually sent in this Action. Preserve t
         RequireText(
             intent.Recipient,
             GalateaMailboxBounds.MaximumRecipientUtf8Bytes,
-            "recipient"
+            "recipient",
+            allowLineBreaks: false
         );
         RequireOptionalText(
             intent.Subject,
             GalateaMailboxBounds.MaximumSubjectUtf8Bytes,
-            "subject"
+            "subject",
+            allowLineBreaks: false
         );
         RequireText(
             intent.Body,
             GalateaMailboxBounds.MaximumBodyUtf8Bytes,
-            "body"
+            "body",
+            allowLineBreaks: true
         );
         if (intent.InReplyToMessageId is not null
             && !GalateaHttpV1.IsCanonicalTurnId(
@@ -352,7 +403,8 @@ Extract zero or more mails that Galatea actually sent in this Action. Preserve t
         RequireText(
             intent.EvidenceQuote,
             GalateaMailboxBounds.MaximumEvidenceUtf8Bytes,
-            "evidenceQuote"
+            "evidenceQuote",
+            allowLineBreaks: true
         );
         if (!target.Contains(intent.Recipient, StringComparison.Ordinal)
             || intent.Subject is not null
@@ -374,20 +426,26 @@ Extract zero or more mails that Galatea actually sent in this Action. Preserve t
     private static void RequireOptionalText(
         string? value,
         int maximumBytes,
-        string field
+        string field,
+        bool allowLineBreaks
     ) {
         if (value is null) { return; }
-        RequireText(value, maximumBytes, field);
+        RequireText(value, maximumBytes, field, allowLineBreaks);
     }
 
     private static void RequireText(
         string? value,
         int maximumBytes,
-        string field
+        string field,
+        bool allowLineBreaks
     ) {
         try {
             if (string.IsNullOrWhiteSpace(value)
                 || TextExtractorUtf8.GetByteCount(value) > maximumBytes) {
+                throw Invalid(field);
+            }
+            if (!allowLineBreaks
+                && GalateaMailboxText.ContainsHeaderLineBreak(value)) {
                 throw Invalid(field);
             }
         }

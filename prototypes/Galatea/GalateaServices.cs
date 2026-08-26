@@ -24,6 +24,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal const int MaximumRecentResponseUtf8Bytes = 4 * 1024 * 1024;
     internal const int MaximumPoppedUserTextUtf8Bytes = 256 * 1024;
     internal const int MaximumPopReceiptUtf8Bytes = 2 * 1024 * 1024;
+    internal static readonly TimeSpan
+        DefaultOutboundMailExtractionDeadline = TimeSpan.FromSeconds(30);
 
     private readonly GalateaInputPreprocessor _inputPreprocessor;
     private readonly IOutboundMailExtractor? _outboundMailExtractor;
@@ -41,6 +43,19 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _selectableConnections;
     private readonly string _defaultConnectionId;
     private readonly RecapGridControlAdmission? _sessionBootstrapAdmission;
+    private TimeSpan _outboundMailExtractionDeadline =
+        DefaultOutboundMailExtractionDeadline;
+
+    internal TimeSpan OutboundMailExtractionDeadlineForTest {
+        get => _outboundMailExtractionDeadline;
+        set {
+            if (value <= TimeSpan.Zero
+                || value > TimeSpan.FromMinutes(5)) {
+                throw new ArgumentOutOfRangeException(nameof(value));
+            }
+            _outboundMailExtractionDeadline = value;
+        }
+    }
 
     public GalateaHostService(
         GalateaConfig config,
@@ -895,16 +910,60 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string target = GalateaVisibleActionTextRenderer.Render(action);
         if (string.IsNullOrWhiteSpace(target)) { return; }
         try {
-            IReadOnlyList<SendMailIntent> intents =
-                await _outboundMailExtractor.ExtractAsync(
+            using var deadlineCts = new CancellationTokenSource(
+                _outboundMailExtractionDeadline
+            );
+            using var linkedCts = CancellationTokenSource
+                .CreateLinkedTokenSource(
+                    cancellationToken,
+                    deadlineCts.Token
+                );
+            Task<IReadOnlyList<SendMailIntent>> extractionTask =
+                _outboundMailExtractor.ExtractAsync(
                         target,
+                        linkedCts.Token
+                    )
+                    .AsTask();
+            IReadOnlyList<SendMailIntent> intents;
+            try {
+                intents = await extractionTask.WaitAsync(
+                        _outboundMailExtractionDeadline,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
+            }
+            catch (TimeoutException) {
+                deadlineCts.Cancel();
+                ObserveAbandonedExtraction(extractionTask);
+                DebugUtil.Warning(
+                    "Galatea.Mailbox",
+                    "Outbound extraction deadline elapsed after durable "
+                    + "Action: user="
+                    + GalateaMailboxText.SummarizeForLog(host.User.UserId)
+                    + ", "
+                    + $"turnId={liveTurn.TurnId}, actionHead={actionHead}"
+                );
+                return;
+            }
+            catch (OperationCanceledException) {
+                linkedCts.Cancel();
+                ObserveAbandonedExtraction(extractionTask);
+                DebugUtil.Warning(
+                    "Galatea.Mailbox",
+                    "Outbound extraction cancelled after durable Action: "
+                    + "user="
+                    + GalateaMailboxText.SummarizeForLog(host.User.UserId)
+                    + ", "
+                    + $"turnId={liveTurn.TurnId}, actionHead={actionHead}"
+                );
+                return;
+            }
             if (intents.Count == 0) {
                 DebugUtil.Trace(
                     "Galatea.Mailbox",
-                    $"Outbound extraction found no mail: user={host.User.UserId}, turnId={liveTurn.TurnId}, actionHead={actionHead}"
+                    "Outbound extraction found no mail: user="
+                    + GalateaMailboxText.SummarizeForLog(host.User.UserId)
+                    + $", turnId={liveTurn.TurnId}, actionHead={actionHead}"
                 );
                 return;
             }
@@ -917,7 +976,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
             if (!added) {
                 DebugUtil.Warning(
                     "Galatea.Mailbox",
-                    $"Outbound candidate batch deduplicated in memory: user={host.User.UserId}, turnId={liveTurn.TurnId}, actionHead={actionHead}"
+                    "Outbound candidate batch deduplicated in memory: user="
+                    + GalateaMailboxText.SummarizeForLog(host.User.UserId)
+                    + $", turnId={liveTurn.TurnId}, actionHead={actionHead}"
                 );
                 return;
             }
@@ -926,24 +987,50 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 DebugUtil.Info(
                     "Galatea.Mailbox",
                     "Captured outbound mail candidate: "
-                    + $"user={host.User.UserId}, turnId={liveTurn.TurnId}, actionHead={actionHead}, ordinal={ordinal}, "
-                    + $"recipient={Preview(intent.Recipient)}, hasSubject={intent.Subject is not null}, bodyUtf8Bytes={TextExtractorUtf8.GetByteCount(intent.Body)}, hasReplyId={intent.InReplyToMessageId is not null}"
+                    + "user="
+                    + GalateaMailboxText.SummarizeForLog(host.User.UserId)
+                    + $", turnId={liveTurn.TurnId}, actionHead={actionHead}, ordinal={ordinal}, "
+                    + $"recipient={GalateaMailboxText.SummarizeForLog(intent.Recipient)}, hasSubject={intent.Subject is not null}, bodyUtf8Bytes={TextExtractorUtf8.GetByteCount(intent.Body)}, hasReplyId={intent.InReplyToMessageId is not null}"
                 );
             }
         }
-        catch (OperationCanceledException exception) {
+        catch (OperationCanceledException) {
             DebugUtil.Warning(
                 "Galatea.Mailbox",
-                $"Outbound extraction cancelled after durable Action: user={host.User.UserId}, turnId={liveTurn.TurnId}, detail={exception.Message}"
+                "Outbound extraction cancelled after durable Action: "
+                + "user="
+                + GalateaMailboxText.SummarizeForLog(host.User.UserId)
+                + ", "
+                + $"turnId={liveTurn.TurnId}, actionHead={actionHead}"
             );
         }
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
             DebugUtil.Warning(
                 "Galatea.Mailbox",
-                $"Outbound extraction skipped after durable Action: user={host.User.UserId}, turnId={liveTurn.TurnId}, error={exception.GetType().Name}, detail={exception.Message}"
+                "Outbound extraction skipped after durable Action: "
+                + "user="
+                + GalateaMailboxText.SummarizeForLog(host.User.UserId)
+                + ", "
+                + $"turnId={liveTurn.TurnId}, actionHead={actionHead}, "
+                + $"error={GalateaMailboxText.SummarizeForLog(exception.GetType().Name)}"
             );
         }
+    }
+
+    private static void ObserveAbandonedExtraction(Task task) {
+        if (task.IsFaulted) {
+            _ = task.Exception;
+            return;
+        }
+        if (task.IsCompleted) { return; }
+        _ = task.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted
+                | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default
+        );
     }
 
     private async Task<GalateaCompletedOperation> RunFreshSendAsync(

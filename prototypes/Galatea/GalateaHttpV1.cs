@@ -160,7 +160,8 @@ internal static class GalateaHttpV1 {
         string? value,
         string fieldName,
         int maximumUtf8Bytes,
-        bool allowNull = false
+        bool allowNull = false,
+        bool allowLineBreaks = true
     ) {
         if (value is null && allowNull) { return null; }
         if (string.IsNullOrWhiteSpace(value)) {
@@ -170,6 +171,10 @@ internal static class GalateaHttpV1 {
             if (GalateaBoundedJson.StrictUtf8.GetByteCount(value)
                     > maximumUtf8Bytes) {
                 return $"{fieldName} exceeds its UTF-8 byte limit.";
+            }
+            if (!allowLineBreaks
+                && GalateaMailboxText.ContainsHeaderLineBreak(value)) {
+                return $"{fieldName} must be single-line text.";
             }
             _ = System.Xml.XmlConvert.VerifyXmlChars(value);
         }
