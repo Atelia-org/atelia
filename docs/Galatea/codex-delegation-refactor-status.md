@@ -81,11 +81,6 @@
 
 完成一项后，将其稳定语义移入相应 README/contract/test，并从本节删除，不在这里积累完成日志。
 
-### Adaptive Markdown block
-
-- 从 `SessionContextContributionRenderer` 提取可复用的 adaptive tilde-fence renderer；保持现有 `RenderRecapBlock` exact output 不变。
-- 定义 composite Observation 的 code-owned headings、reply metadata 与界限，覆盖正文内 backtick fence、连续 tilde、无末尾换行和 Unicode。
-
 ### Strict delegate route configuration
 
 - 定义 `.atelia/galatea/delegates.json` V1 closed schema、exact `Codex` route、可执行文件定位、cwd、mode、network 与容量/超时边界。
@@ -109,15 +104,12 @@
 ### Galatea runtime integration
 
 - 在成功捕获候选后 exact route 并非阻塞地交给 coordinator；未命中收件人不得产生 Codex side effect。
-- 扩展 `GalateaFreshInput`/Observation renderer，使一次普通玩家 turn 可以携带玩家 Action 和 0..N ready replies。
-- 更新 recent projection、SSE terminal snapshot 与 rewind recognition，使 composite Observation 仍是普通玩家触发回合。
 - 更新 `cyber.md`，告诉 Galatea canonical recipient `Codex` 是固定外界代行者、回信可能在以后某个玩家回合到达，并保持自然叙事而非输出协议文本。
 
 ### Verification
 
 - fake sidecar/backend tests：首次创建、同 thread continue、FIFO、多封邮件、duplicate Action、unmatched recipient、failure/exit、late completion、one-shot reply injection 与 bounds。
 - Galatea vertical tests：Action -> extractor -> Codex dispatch accepted -> SSE done 不等待 final -> final 入内存 -> 下一次玩家 Observation 含兄弟 reply block。
-- Observation exact-render tests：嵌套 backtick fence、连续 tilde、Markdown/HTML 字符不转义，recent display 与 Undo 保持一致。
 - gated live app-server canary：连续发送两封邮件，证明第二封复用第一封的 thread/context，并证明两次 final 分别只注入一次。
 
 ## 阶段完成条件

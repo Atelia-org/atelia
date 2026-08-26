@@ -104,6 +104,10 @@ internal static class GalateaObservationDisplay {
                 out MailboxMessage mail)) {
             return GalateaMailboxObservationEnvelope.FormatForDisplay(mail);
         }
-        return GalateaUserMessageEnvelope.UnwrapForDisplay(stored);
+        return GalateaPlayerObservationClassifier.TryProject(
+            stored,
+            out _,
+            out string display
+        ) ? display : stored ?? string.Empty;
     }
 }

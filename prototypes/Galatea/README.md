@@ -128,6 +128,24 @@ code-owned bounds；caller cancellation与transport exception直接传播。
 Codex 固定代行者路由、异步回信与下一玩家回合 Observation 注入仍在施工；当前已决策边界和会逐步收缩的未完成工作见
 `docs/Galatea/codex-delegation-refactor-status.md`。
 
+所有新普通player turn（包括当前尚无ready reply的情况）都以runtime-owned composite Observation
+持久化。首个兄弟块固定为`## 玩家角色试图采取的行动`/`player-action`，随后可按顺序携带0..16个
+`Reply`或`DeliveryFailure`兄弟块；canonical `Codex`成功heading为
+`外界代行者 Codex 给 Galatea 的回信`，失败heading为
+`Galatea 发给外界代行者 Codex 的信未能送达`。每个块独立使用
+`AdaptiveMarkdownFenceRenderer`：tilde fence至少4字符且长于正文内最长连续tilde，正文不trim、
+normalize或escape，因此嵌套backtick fence、Markdown、HTML/XML与Unicode可原样呈现给LLM。
+reply正文上限256 KiB UTF-8，failure上限4 KiB，整份composite上限1 MiB；越界全部拒绝而不截断。
+
+composite parser只接受code-owned prefix、heading、info string、顺序与动态fence的canonical重渲染结果。
+recent view显示玩家文本及每条独立通知；普通Undo仍把它识别为player turn，但pop receipt只返回玩家文本。
+历史backtick player envelope继续只读兼容recent/Undo；inbound mail envelope仍不属于普通player Undo。
+input normalizer只接收玩家文本，绝不接收ready notices。当前尚未实现ReplyInbox，因此HTTP新建的普通
+player turn携带空notice集合；后续内存inbox只需在turn开始cutoff时填入已经冻结的notice值。
+
+`SessionJournal`公开的`AdaptiveMarkdownFenceRenderer.RenderBlock(infoString, exactBody)`要求1..64字符
+ASCII token作为code-owned info string。现有Recap contribution已复用它，并保持原`recap-block`输出逐字不变。
+
 `POST /api/v1/mailbox/inbound` 接受authenticated strict JSON
 `{from,body,subject?,connectionId?}`。runtime生成canonical 32-lowerhex `messageId`并固定
 `To=Galatea`，以202返回`{turnId,messageId}`，随后沿用普通turn/SSE执行主线模型。Inbound mail

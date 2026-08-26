@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace Atelia.SessionJournal;
 
 /// <summary>
@@ -8,7 +6,6 @@ namespace Atelia.SessionJournal;
 /// re-renders it through this contract.
 /// </summary>
 internal static class SessionContextContributionRenderer {
-    private const int MinimumRecapFenceLength = 4;
     private const string RecapFenceInfoString = "recap-block";
 
     internal static SessionRequestArtifactContextSnapshot RenderOneHot(
@@ -37,37 +34,9 @@ internal static class SessionContextContributionRenderer {
     private static string RenderRecapBlock(
         string semanticHeading,
         string exactText
-    ) {
-        int fenceLength = Math.Max(
-            MinimumRecapFenceLength,
-            GetLongestTildeRun(exactText) + 1
+    ) => "## " + semanticHeading + "\n\n"
+        + AdaptiveMarkdownFenceRenderer.RenderBlock(
+            RecapFenceInfoString,
+            exactText
         );
-        string fence = new('~', fenceLength);
-        var builder = new StringBuilder();
-        builder.Append("## ")
-            .Append(semanticHeading)
-            .Append("\n\n")
-            .Append(fence)
-            .Append(RecapFenceInfoString)
-            .Append('\n')
-            .Append(exactText);
-        if (!exactText.EndsWith('\n')) { builder.Append('\n'); }
-        builder.Append(fence);
-        return builder.ToString();
-    }
-
-    private static int GetLongestTildeRun(string text) {
-        int longestRun = 0;
-        int currentRun = 0;
-        foreach (char character in text) {
-            if (character == '~') {
-                currentRun++;
-                longestRun = Math.Max(longestRun, currentRun);
-            }
-            else {
-                currentRun = 0;
-            }
-        }
-        return longestRun;
-    }
 }

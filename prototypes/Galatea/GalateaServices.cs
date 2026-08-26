@@ -384,8 +384,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string? rewindLatestToken = snapshot.CapturedHead is { } head
             && snapshot.Turns.FirstOrDefault()?.TerminalAction.Address
                 == head
-            && GalateaUserMessageEnvelope.TryUnwrapForDisplay(
+            && GalateaPlayerObservationClassifier.TryProject(
                 snapshot.Turns.First().ObservationContent,
+                out _,
                 out _
             )
                 ? EventAddressTextCodec.Format(head)
@@ -710,9 +711,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
             };
         }
 
-        if (!GalateaUserMessageEnvelope.TryUnwrapForDisplay(
+        if (!GalateaPlayerObservationClassifier.TryProject(
                 ready.Value.ObservationContent,
-                out string poppedUserText)) {
+                out string poppedUserText,
+                out _)) {
             return null;
         }
         int sourceBytes;
@@ -1181,13 +1183,16 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "recap-grid-desired-setup-unavailable");
         }
         string prompted = liveTurn.FreshInput switch {
-            GalateaFreshInput.PlayerAction =>
-                GalateaUserMessageEnvelope.Wrap(
-                    await _inputPreprocessor.ProcessAsync(
-                            liveTurn,
-                            cancellationToken
-                        )
-                        .ConfigureAwait(false)
+            GalateaFreshInput.PlayerAction player =>
+                GalateaPlayerObservationEnvelope.Wrap(
+                    new GalateaPlayerObservation(
+                        await _inputPreprocessor.ProcessAsync(
+                                liveTurn,
+                                cancellationToken
+                            )
+                            .ConfigureAwait(false),
+                        player.ReadyNotices
+                    )
                 ),
             GalateaFreshInput.InboundMail mail =>
                 mail.DurableObservation,
@@ -1530,13 +1535,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
     }
 
     internal static string WrapUserMessageForEngine(string userMessage) {
-        return GalateaUserMessageEnvelope.Wrap(userMessage);
+        return GalateaPlayerObservationEnvelope.Wrap(
+            new GalateaPlayerObservation(userMessage)
+        );
     }
 
     internal static string NormalizeUserMessageForDisplay(string? storedUserMessage) {
-        return GalateaUserMessageEnvelope.UnwrapForDisplay(
-            storedUserMessage
-        );
+        return GalateaPlayerObservationClassifier.TryProject(
+            storedUserMessage,
+            out _,
+            out string display
+        ) ? display : storedUserMessage ?? string.Empty;
     }
 
     private static string DescribeTurn(RecentTurnDto? turn) {

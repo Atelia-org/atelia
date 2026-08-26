@@ -169,7 +169,21 @@ internal abstract record GalateaFreshInput {
 
     internal abstract string DisplayText { get; }
 
-    internal sealed record PlayerAction(string Text) : GalateaFreshInput {
+    internal sealed record PlayerAction : GalateaFreshInput {
+        internal PlayerAction(
+            string text,
+            IEnumerable<GalateaReadyNotice>? readyNotices = null
+        ) {
+            var observation = new GalateaPlayerObservation(
+                text,
+                readyNotices
+            );
+            Text = observation.PlayerText;
+            ReadyNotices = observation.ReadyNotices;
+        }
+
+        internal string Text { get; }
+        internal IReadOnlyList<GalateaReadyNotice> ReadyNotices { get; }
         internal override string DisplayText => Text;
     }
 

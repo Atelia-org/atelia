@@ -71,7 +71,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         ));
         Assert.False(service.TryGetConnection(helper.Id, out _));
         Assert.Equal(
-            GalateaUserMessageEnvelope.Wrap("normalized input"),
+            GalateaHostService.WrapUserMessageForEngine("normalized input"),
             Assert.Single(session.Engine.ReadRecentCompletedTurns()
                 .RequireSnapshot().Turns).ObservationContent
         );
@@ -213,7 +213,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         Assert.Equal(1, normalizer.NormalizeCallCount);
         Assert.Equal(1, completion.DispatchCallCount);
 
-        string wrapped = GalateaUserMessageEnvelope.Wrap(
+        string wrapped = GalateaHostService.WrapUserMessageForEngine(
             "normalized input"
         );
         CompletionRequest request = Assert.IsType<CompletionRequest>(

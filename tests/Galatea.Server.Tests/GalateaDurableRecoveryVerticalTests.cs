@@ -131,7 +131,9 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         SessionCompletedTurnProjection completed =
             session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns[^1];
         Assert.Equal(
-            GalateaUserMessageEnvelope.Wrap("continue after failure"),
+            GalateaHostService.WrapUserMessageForEngine(
+                "continue after failure"
+            ),
             completed.ObservationContent
         );
     }
