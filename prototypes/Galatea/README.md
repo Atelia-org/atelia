@@ -87,6 +87,37 @@ sessions/per-turn operation，再 drain borrowed RecapGrid runtime，最后清�
 clients。`callLogDir` 由统一 Completion factory decorator 服务上述所有调用；启用
 normalizer 时，清洗前输入、prompt 与 provider output 也会进入该本地调用日志。
 
+## Internal TextExtractor
+
+`TextExtractor` 是尚未接入 HTTP、SessionJournal 或 RecapGrid 主链的 internal、ephemeral
+结构化提取器。构造时固定业务 `systemPrompt` 与 immutable `TextExtractorToolSet`，并注入一个
+connection及惰性的borrowed `ICompletionClient` accessor；它不拥有或dispose client。每次调用只提供
+`targetText` data与`userPrompt` instruction：
+
+```csharp
+TextExtractorToolSet tools = TextExtractorToolSet.Create(
+    TextExtractorArtifactTool.Create<PersonArtifact>("artifact_person")
+);
+var extractor = new TextExtractor(systemPrompt, tools, connection, getClient);
+TextExtractionResult result = await extractor.ExtractAsync(
+    targetText,
+    "提取文本中明确出现的人名。",
+    cancellationToken
+);
+```
+
+V1每次只发起一次Completion，使用`Auto`与parallel tool calls；provider返回的artifact tool calls
+就是terminal output，不进入通用tool-result/repair loop。合法结果包含0..N个按Action block顺序执行并冻结的
+异构`TextExtractionArtifact<T>` typed POCO；0 calls表示没有产物，普通正文只保留为bounded diagnostics，
+绝不解析为artifact。任一unknown/duplicate/malformed call、schema/DataAnnotations/custom validation失败、
+provider invocation/termination/error不匹配都会使整次调用失败，不返回partial result。
+
+每次调用创建独立`ToolSession`与collector，因此同一extractor可并发复用且不会串线；该结果不具备durable
+recovery或dedupe语义。工具契约继续由`Completion.Tools/ArtifactToolWrapper<T>`提供，无需修改其core。
+如果connection kind exact为`openai-codex-responses`，工具名还必须满足1..64个ASCII字母、数字、下划线或
+连字符（例如`artifact_person`）。system/target/instruction、tool/call数量、raw arguments与diagnostics均有
+code-owned bounds；caller cancellation与transport exception直接传播。
+
 历史 Agent Control profiles 必须继续保留，供 Prepared/ToolContinuation 按 frozen
 identity 绑定；current profile 只用于新 request。Route manifest 仍在首次
 RecapGrid work 时延迟读取，保留 exact per-route `connectionId` 及调度 policy，
