@@ -340,14 +340,18 @@ public abstract record RecapGridAgentConnectionResult {
 }
 
 /// <summary>
-/// Candidate-host completion owner. One strict connection registry serves
-/// both the main agent and lazy RecapGrid routes. Runtime disposal drains
-/// before the registry releases its distinct borrowed clients.
+/// Candidate-host completion boundary. One strict connection registry serves
+/// both the main agent and lazy RecapGrid routes. A host created with
+/// <see cref="Create"/> owns that registry; a host created with
+/// <see cref="CreateBorrowingRegistry(Func{RecapGridRouteManifest},CompletionConnectionRegistry,RecapCompletionRuntimeOptions,int)"/>
+/// borrows it. Runtime disposal always drains before an owned registry releases
+/// its distinct clients.
 /// </summary>
 public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
     private readonly CompletionConnectionRegistry _registry;
     private readonly DeferredSharedRegistryRouteResolver _routeResolver;
     private readonly RecapGridAgentControlProfileRegistry? _agentControl;
+    private readonly bool _ownsRegistry;
     private readonly object _disposeGate = new();
     private Task? _disposeTask;
 
@@ -356,13 +360,15 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         DeferredSharedRegistryRouteResolver routeResolver,
         RecapCompletionRuntime runtime,
         BoundedRecapCompletionTelemetry telemetry,
-        RecapGridAgentControlProfileRegistry? agentControl
+        RecapGridAgentControlProfileRegistry? agentControl,
+        bool ownsRegistry
     ) {
         _registry = registry;
         _routeResolver = routeResolver;
         Runtime = runtime;
         Telemetry = telemetry;
         _agentControl = agentControl;
+        _ownsRegistry = ownsRegistry;
     }
 
     public RecapCompletionRuntime Runtime { get; }
@@ -406,6 +412,55 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         );
     }
 
+    /// <summary>
+    /// Creates a host that borrows one caller-owned connection registry while
+    /// owning its RecapGrid runtime, route resolver, and telemetry. The caller
+    /// must supply a registry created from already normalized and frozen
+    /// connection configuration, keep it alive until this host is disposed,
+    /// and dispose it after this host has drained. Disposing this host never
+    /// disposes the borrowed registry or any client owned by it.
+    /// </summary>
+    public static RecapGridCompletionHost CreateBorrowingRegistry(
+        Func<RecapGridRouteManifest> routeManifestLoader,
+        CompletionConnectionRegistry registry,
+        RecapCompletionRuntimeOptions? runtimeOptions = null,
+        int maximumTelemetryEvents = 1_024
+    ) => CreateWithRegistry(
+        routeManifestLoader,
+        registry,
+        agentControl: null,
+        runtimeOptions,
+        maximumTelemetryEvents,
+        ownsRegistry: false
+    );
+
+    /// <summary>
+    /// Creates a host that borrows one caller-owned connection registry while
+    /// owning its RecapGrid runtime, route resolver, telemetry, and exact Agent
+    /// Control profile lookup. The caller must supply a registry created from
+    /// already normalized and frozen connection configuration, keep it alive
+    /// until this host is disposed, and dispose it after this host has drained.
+    /// Disposing this host never disposes the borrowed registry or any client
+    /// owned by it.
+    /// </summary>
+    public static RecapGridCompletionHost CreateBorrowingRegistry(
+        Func<RecapGridRouteManifest> routeManifestLoader,
+        CompletionConnectionRegistry registry,
+        RecapGridAgentControlProfileRegistry agentControl,
+        RecapCompletionRuntimeOptions? runtimeOptions = null,
+        int maximumTelemetryEvents = 1_024
+    ) {
+        ArgumentNullException.ThrowIfNull(agentControl);
+        return CreateWithRegistry(
+            routeManifestLoader,
+            registry,
+            agentControl,
+            runtimeOptions,
+            maximumTelemetryEvents,
+            ownsRegistry: false
+        );
+    }
+
     private static RecapGridCompletionHost CreateCore(
         Func<RecapGridRouteManifest> routeManifestLoader,
         CompletionConnectionsFileConfig connections,
@@ -421,25 +476,46 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             RecapGridCompletionConnectionsManifest.Freeze(connections);
         var registry = new CompletionConnectionRegistry(frozen, clientFactory);
         try {
-            var telemetry = new BoundedRecapCompletionTelemetry(
-                maximumTelemetryEvents);
-            var resolver = new DeferredSharedRegistryRouteResolver(
+            return CreateWithRegistry(
                 routeManifestLoader,
-                registry);
-            var runtime = new RecapCompletionRuntime(
-                resolver, runtimeOptions, telemetry);
-            return new RecapGridCompletionHost(
                 registry,
-                resolver,
-                runtime,
-                telemetry,
-                agentControl
+                agentControl,
+                runtimeOptions,
+                maximumTelemetryEvents,
+                ownsRegistry: true
             );
         }
         catch {
             registry.Dispose();
             throw;
         }
+    }
+
+    private static RecapGridCompletionHost CreateWithRegistry(
+        Func<RecapGridRouteManifest> routeManifestLoader,
+        CompletionConnectionRegistry registry,
+        RecapGridAgentControlProfileRegistry? agentControl,
+        RecapCompletionRuntimeOptions? runtimeOptions,
+        int maximumTelemetryEvents,
+        bool ownsRegistry
+    ) {
+        ArgumentNullException.ThrowIfNull(routeManifestLoader);
+        ArgumentNullException.ThrowIfNull(registry);
+        var telemetry = new BoundedRecapCompletionTelemetry(
+            maximumTelemetryEvents);
+        var resolver = new DeferredSharedRegistryRouteResolver(
+            routeManifestLoader,
+            registry);
+        var runtime = new RecapCompletionRuntime(
+            resolver, runtimeOptions, telemetry);
+        return new RecapGridCompletionHost(
+            registry,
+            resolver,
+            runtime,
+            telemetry,
+            agentControl,
+            ownsRegistry
+        );
     }
 
     public RecapGridAgentControlOpenResult OpenAgentControl(
@@ -550,7 +626,9 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             await Runtime.DisposeAsync().ConfigureAwait(false);
         }
         finally {
-            await _registry.DisposeAsync().ConfigureAwait(false);
+            if (_ownsRegistry) {
+                await _registry.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 

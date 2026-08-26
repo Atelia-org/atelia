@@ -478,6 +478,98 @@ public sealed class HostingTests {
     }
 
     [Fact]
+    public async Task BorrowedCompletionHostDrainsButLeavesRegistryAndClientOwnedByCaller() {
+        FrozenRowBatch batch = Batch();
+        var client = new BlockingClient();
+        var factory = new SingleClientFactory(client);
+        CompletionConnectionsFileConfig frozen =
+            CompletionConnectionConfigLoader.NormalizeAndValidate(
+                Connections()
+            );
+        await using var registry = new CompletionConnectionRegistry(
+            frozen,
+            factory
+        );
+        int manifestLoads = 0;
+        RecapGridCompletionHost host =
+            RecapGridCompletionHost.CreateBorrowingRegistry(
+                () => {
+                    manifestLoads++;
+                    return RecapGridRouteManifest.Create([
+                        new RecapGridRouteManifestEntry(
+                            new RecapCompletionRouteKey(
+                                batch.OrderedMissingWork[0].Family.Digest,
+                                RecapRewriterProtocolV3.RuntimeProtocolId,
+                                null
+                            ),
+                            "main",
+                            1,
+                            TimeSpan.FromSeconds(30),
+                            1024
+                        )
+                    ]);
+                },
+                registry
+            );
+
+        Assert.Equal(0, manifestLoads);
+        Assert.Equal(0, factory.CreateCount);
+        Assert.Equal(0, client.DisposeCount);
+        Task<RecapCellBatchExecutionResult> operation = host.Executor
+            .ExecuteAsync(batch, CancellationToken.None).AsTask();
+        await client.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(1, manifestLoads);
+        Assert.Equal(1, factory.CreateCount);
+
+        Task disposing = host.DisposeAsync().AsTask();
+        await Task.Delay(20);
+        Assert.False(disposing.IsCompleted);
+        Assert.Equal(0, client.DisposeCount);
+
+        client.Release.TrySetResult();
+        Assert.IsType<RecapCellBatchExecutionResult.Completed>(
+            await operation.WaitAsync(TimeSpan.FromSeconds(10))
+        );
+        await disposing.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, client.DisposeCount);
+        Assert.Same(client, registry.GetClient("main"));
+
+        await host.DisposeAsync();
+        host.Dispose();
+        Assert.Equal(0, client.DisposeCount);
+
+        await registry.DisposeAsync();
+        registry.Dispose();
+        Assert.Equal(1, client.DisposeCount);
+    }
+
+    [Fact]
+    public async Task BorrowedCompletionHostConstructionFailureDoesNotDisposeRegistry() {
+        var client = new BlockingClient();
+        CompletionConnectionsFileConfig frozen =
+            CompletionConnectionConfigLoader.NormalizeAndValidate(
+                Connections()
+            );
+        await using var registry = new CompletionConnectionRegistry(
+            frozen,
+            new SingleClientFactory(client)
+        );
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            RecapGridCompletionHost.CreateBorrowingRegistry(
+                () => Manifest(null),
+                registry,
+                maximumTelemetryEvents: 0
+            )
+        );
+
+        Assert.Same(client, registry.GetClient("main"));
+        Assert.Equal(0, client.DisposeCount);
+        await registry.DisposeAsync();
+        Assert.Equal(1, client.DisposeCount);
+    }
+
+    [Fact]
     public async Task CompletionHostRouteInspectionFailsClosedWithoutProvider() {
         var factory = new RecordingFactory();
         FrozenRowBatch batch = Batch();
@@ -908,8 +1000,15 @@ public sealed class HostingTests {
 
     private sealed class SingleClientFactory(ICompletionClient client)
         : ICompletionClientFactory {
-        public ICompletionClient Create(CompletionConnectionConfig connection)
-            => client;
+        private int _createCount;
+        internal int CreateCount => Volatile.Read(ref _createCount);
+
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) {
+            Interlocked.Increment(ref _createCount);
+            return client;
+        }
     }
 
     private sealed class FatalDisposeClient : ICompletionClient,

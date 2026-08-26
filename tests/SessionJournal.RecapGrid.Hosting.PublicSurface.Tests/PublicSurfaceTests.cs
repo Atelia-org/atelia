@@ -1,5 +1,6 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Runtime;
 using System.Text;
@@ -114,6 +115,88 @@ public sealed class PublicSurfaceTests {
 
         await host.DisposeAsync();
         Assert.Equal(1, factory.Client.DisposeCount);
+    }
+
+    [Fact]
+    public async Task ExternalCompositionCanBorrowOneSharedRegistry() {
+        var key = new RecapCompletionRouteKey(
+            new FamilyDefinitionDigest(new string('a', 64)),
+            RecapRewriterProtocolV3.RuntimeProtocolId,
+            null
+        );
+        CompletionConnectionsFileConfig connections =
+            CompletionConnectionConfigLoader.Decode(
+                Encoding.UTF8.GetBytes("""
+                    {"v":1,"connections":[{"id":"main","kind":"test","modelId":"model","completionSurfaceId":"test-v1","baseAddress":"https://example.invalid/"}],"defaultConnectionId":"main"}
+                    """));
+        var factory = new BorrowedFactory();
+        await using var registry = new CompletionConnectionRegistry(
+            connections,
+            factory
+        );
+        RecapGridCompletionHost host =
+            RecapGridCompletionHost.CreateBorrowingRegistry(
+                () => RecapGridRouteManifest.Create([
+                    new RecapGridRouteManifestEntry(
+                        key,
+                        "main",
+                        1,
+                        TimeSpan.FromSeconds(30),
+                        1024
+                    )
+                ]),
+                registry
+            );
+
+        RecapGridConfiguredRouteInspectionResult.Configured route =
+            Assert.IsType<RecapGridConfiguredRouteInspectionResult.Configured>(
+                host.InspectRouteExact(key)
+            );
+        Assert.Equal("main", route.ConnectionId);
+        Assert.Equal(0, factory.CreateCount);
+        RecapGridAgentConnectionResult.Bound bound = Assert.IsType<
+            RecapGridAgentConnectionResult.Bound>(
+            host.BindAgentExact("main")
+        );
+        Assert.Same(factory.Client, bound.Client);
+        Assert.Equal(1, factory.CreateCount);
+
+        await host.DisposeAsync();
+        host.Dispose();
+        Assert.Equal(0, factory.Client.DisposeCount);
+        Assert.Same(factory.Client, registry.GetClient("main"));
+
+        await registry.DisposeAsync();
+        Assert.Equal(1, factory.Client.DisposeCount);
+    }
+
+    [Fact]
+    public void BorrowingFactoryExposesOptionalAgentControlComposition() {
+        Type[][] signatures = typeof(RecapGridCompletionHost).GetMethods()
+            .Where(static method => string.Equals(
+                method.Name,
+                nameof(RecapGridCompletionHost.CreateBorrowingRegistry),
+                StringComparison.Ordinal
+            ))
+            .Select(static method => method.GetParameters()
+                .Select(static parameter => parameter.ParameterType)
+                .ToArray())
+            .ToArray();
+
+        Assert.Equal(2, signatures.Length);
+        Assert.Contains(signatures, static signature => signature.SequenceEqual([
+            typeof(Func<RecapGridRouteManifest>),
+            typeof(CompletionConnectionRegistry),
+            typeof(RecapCompletionRuntimeOptions),
+            typeof(int)
+        ]));
+        Assert.Contains(signatures, static signature => signature.SequenceEqual([
+            typeof(Func<RecapGridRouteManifest>),
+            typeof(CompletionConnectionRegistry),
+            typeof(RecapGridAgentControlProfileRegistry),
+            typeof(RecapCompletionRuntimeOptions),
+            typeof(int)
+        ]));
     }
 
     [Fact]
