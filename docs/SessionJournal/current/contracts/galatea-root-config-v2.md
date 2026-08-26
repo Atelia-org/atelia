@@ -18,7 +18,9 @@ dual interpretation、automatic migration或existing-file rewrite。
 Reader与runtime materialization由`GalateaStrictConfigReader`、`GalateaConfigLoader`及
 `GalateaConfigValidation`拥有；bootstrap writer由`GalateaConfigBootstrapper`与
 `GalateaConfigTemplateFactory`拥有。`config.json`不是完整runtime配置：loader仍要求同目录的
-Completion-owned `connections.json`，并从中解析exact default connection。
+Completion-owned `connections.json`，并从中解析完整 catalog、exact default connection、
+Agent selection allowlist 与 input-normalizer binding。这些 host routing fields 不进入
+`config.json`、raw SessionJournal 或 RecapGrid durable identity。
 
 ## 2. Strict JSON与version language
 
@@ -108,11 +110,35 @@ resolve到同一normalized lexical session path时，在session/client/log side 
 Route manifest仍延迟到首次RecapGrid work读取，没有wildcard/default route fallback。Root V2不改变Route或profile的
 owner-defined V1 language。
 
+### 3.4 Completion `connections.json` 的 Galatea 收紧
+
+Sibling `connections.json` 使用 Completion-owned numeric V1。通用 owner 要求 exact
+`v` / `connections` / `defaultConnectionId`，并可选解码 `selectableConnectionIds` /
+`bindings`；Galatea 在 provider client、session、logger 或 route side effect前对后两者做
+required 收紧：
+
+- `selectableConnectionIds` 必须是 1..256 个 bounded、exact unique、exact existing ID，保留
+  operator order，且必须包含 `defaultConnectionId`。它只限制 fresh/current Agent selection；
+  RecapGrid route、input normalizer 与 frozen completion recovery 仍从完整 catalog exact bind。
+- `bindings` 必须 exact 只含 `galatea.input-normalizer`。其值必须是 exact existing
+  connection ID 或 explicit `null`；`null` 唯一表示 normalizer disabled。Missing、wrong-case、
+  extra key、blank 或 unknown ID 都 fail closed，不 fallback default。
+- Input normalizer 与 main Agent/RecapGrid 共用一个 host-wide registry，在首个合格短输入
+  到来前不创建其 client。`callLogDir` enabled 时，normalizer prompt、清洗前输入与
+  provider output 会按同一 Completion call-log contract 写入本地日志。
+
+Numeric V1 未升版：当前 binary 仍接受没有可选扩展的通用 V1，但 Galatea
+自身会因缺少 required host metadata 拒绝该文件。包含扩展字段的 manifest 会被旧
+closed-root binary 拒绝；迁移必须停服、备份并将 code/manifest 配套发布，没有
+automatic rewrite 或 dual reader。
+
 ## 4. Bootstrap与migration
 
 Current root bootstrap template写exact numeric `v:2`，为`alice`与`bob`都显式写
 `sessionProvisioning:"create-if-missing"`，使用`sessions/alice|bob`相对路径。Bootstrap只生成缺失的root或sibling
-connections template；config bootstrap本身不创建SessionJournal repository、不验证provider，也不provision任何sidecar。
+connections template；该 template 显式写 `selectableConnectionIds:["local"]` 与
+`bindings:{"galatea.input-normalizer":null}`。Config bootstrap本身不创建SessionJournal
+repository、不验证provider，也不provision任何sidecar。
 
 若root file已经存在，bootstrap不会添加policy、升级version、修改password或按template重写。Operator从V1升级时必须
 停服、备份、确认实际`Galatea:ConfigPath`，为每个user明确选择policy，再把version改为2；应用不会自动迁移。

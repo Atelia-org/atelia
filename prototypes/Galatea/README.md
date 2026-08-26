@@ -59,22 +59,38 @@ Current product contract见[root config V2](../../docs/SessionJournal/current/co
 [Root config V1 appendix](../../docs/SessionJournal/current/contracts/galatea-root-config-v1.md)仍保留其当时获批准并由
 `session-journal-contract-r2-approved-surfaces-v2`锚定的历史事实；该旧tag不认证current V2 delta。
 
-`connections.json` 只包含 Completion connections 与 exact default connection。历史
-Agent Control profiles 必须继续保留，供 Prepared/ToolContinuation 按 frozen identity
-绑定；current profile 只用于新 request。route manifest 延迟到首次 RecapGrid work 才
-读取，没有 wildcard/default fallback。
+`connections.json` 是唯一 Completion endpoint catalog，同时携带 host-level selection
+metadata。根必须包含 integer token `"v": 1`、非空 `connections`、exact
+`defaultConnectionId`、非空 `selectableConnectionIds` 与 exact `bindings` object。
+`selectableConnectionIds` 是有序的 Agent/UI allowlist：每项必须 exact 命中 catalog，
+不得重复，且必须包含 `defaultConnectionId`。不在 allowlist 中的 helper/Recap
+connection 仍可被内部 exact binding、RecapGrid route 或 frozen recovery 使用，但不会
+显示在 browser 中，也不能作为 fresh/current Agent connection 提交。
 
-该文件使用 Completion-owned strict V1 byte language：根必须包含 integer token
-`"v": 1`、非空 `connections` 与 `defaultConnectionId`；每项必须显式提供
-`completionSurfaceId`，并在 `baseAddress` / `baseAddressEnv` 中恰好选择一个，在
-`apiKey` / `apiKeyEnv` 中至多选择一个。升级旧文件时必须人工增加 `v: 1`，并删除与
-env locator 并存的空 inline source；没有 no-version compatibility reader，也不会自动
-改写可能含有 secret 的文件。
+Galatea 当前要求 `bindings` exact 只有一个 key：
+`"galatea.input-normalizer"`。其值为 connection ID 时启用 input normalization，为
+`null` 时显式禁用；不存在、blank、wrong-case、unknown ID 或多余 binding
+都会在 startup fail closed，绝不 fallback 到 `defaultConnectionId`。Normalizer 的
+model/provider/surface/endpoint/secret locator 全部来自该 connection，client 只在首次真正
+需要清洗时惰性创建。
 
-GalateaHostService 唯一拥有一个 `RecapGridCompletionHost`，shutdown 顺序为：停止并
-drain per-turn Online/runtime operation，再 dispose host-wide runtime，最后清理 distinct
-Completion clients。CallLogDir 由统一 Completion factory decorator 服务 agent 与 recap
-calls，不改变 durable identity。
+每个 connection 必须显式提供 `completionSurfaceId`，并在 `baseAddress` /
+`baseAddressEnv` 中恰好选择一个，在 `apiKey` / `apiKeyEnv` 中至多选择一个。
+Numeric V1 现在通用地允许 optional `selectableConnectionIds` / `bindings`；Galatea 对两者
+做上述 required 收紧。当前 binary 仍可读取没有这两个字段的通用 V1，但扩展后的
+Galatea 文件会被旧 closed-root binary 拒绝；operator 必须停服、备份并将 code 与
+manifest 配套发布，应用不会自动改写可能含 secret 的文件。
+
+`GalateaCompletionOwner` 唯一拥有 host-wide `CompletionConnectionRegistry`；main Agent、
+input normalizer 与 RecapGrid exact routes 共用其惰性 clients。Shutdown 顺序为：drain
+sessions/per-turn operation，再 drain borrowed RecapGrid runtime，最后清理 distinct Completion
+clients。`callLogDir` 由统一 Completion factory decorator 服务上述所有调用；启用
+normalizer 时，清洗前输入、prompt 与 provider output 也会进入该本地调用日志。
+
+历史 Agent Control profiles 必须继续保留，供 Prepared/ToolContinuation 按 frozen
+identity 绑定；current profile 只用于新 request。Route manifest 仍在首次
+RecapGrid work 时延迟读取，保留 exact per-route `connectionId` 及调度 policy，
+没有 wildcard/default fallback。
 
 ## 恢复顺序
 

@@ -62,10 +62,15 @@ client时materialize，每个实际provider call通过现有Completion call-log 
 未传时行为不变；provider-free、无missing work或exact route未命中的路径不会仅因该选项创建日志目录。日志写入失败仍沿用
 `LoggingCompletionClient`的best-effort合同，不改变provider outcome。
 
-所有 CLI connections 入口共用 Completion-owned strict V1 decoder：根必须显式包含
-integer `"v": 1`、1..256 项与 exact `defaultConnectionId`。no-v 文件不会 fallback；
-operator 应停服后人工增加版本，并把每项 endpoint source 收敛为
-`baseAddress` / `baseAddressEnv` exactly-one，再与新 binary 一起发布。
+所有 CLI connections 入口共用 Completion-owned strict numeric V1 decoder：根必须显式
+包含 integer `"v": 1`、1..256 项与 exact `defaultConnectionId`；还可携带通用
+optional `selectableConnectionIds` 与 `bindings`。前者若存在，必须为 1..256 个
+exact existing connection IDs，exact unique 且包含 default；后者若存在，必须为最多
+256 项的 bounded key 到 exact existing connection ID 或 `null` 的映射。CLI 只消费 catalog/
+default/explicit command route，不把这些 host metadata 解释为 CLI allowlist。No-v 文件不会
+fallback；operator 应停服后人工增加版本，并把每项 endpoint source 收敛为
+`baseAddress` / `baseAddressEnv` exactly-one，再与新 binary 一起发布。含扩展字段的
+V1 需要当前 binary；旧 closed-root binary 会将它们拒绝为 unknown properties。
 
 Hosting的provider-free exact route inspection只报告configured connection/model/limits，
 不会构造provider client；只有settled runtime telemetry中的`ConnectionId`、model与provider
