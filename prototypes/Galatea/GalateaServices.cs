@@ -835,6 +835,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CompletionStreamObserver observer,
         CancellationToken cancellationToken
     ) {
+        RequireCurrentConnectionSelectable(
+            liveTurn.Options.ConnectionId
+        );
         SessionRuntimeRecoveryRequirements requirement =
             host.Engine.InspectRuntimeRecoveryRequirements(
                 cancellationToken
@@ -956,9 +959,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         EventAddress capturedHead,
         CancellationToken cancellationToken
     ) {
-        RequireCurrentConnectionSelectable(
-            liveTurn.Options.ConnectionId
-        );
         GalateaRecapGridComposition recapGrid = _recapGrid;
         CompletionConnectionConfig inspected =
             recapGrid.InspectConnectionExact(liveTurn.Options.ConnectionId);

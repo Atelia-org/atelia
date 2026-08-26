@@ -137,6 +137,76 @@ public sealed class GalateaDurableRecoveryVerticalTests {
     }
 
     [Fact]
+    public async Task DirectFreshHiddenConnection_DoesNotAbandonPreviousFailedTurn() {
+        CompletionConnectionConfig visible = Connection(
+            "test",
+            "visible-model"
+        );
+        CompletionConnectionConfig hidden = Connection(
+            "hidden-helper",
+            "hidden-model"
+        );
+        var completionFactory = new TrackingCompletionClientFactory(
+            "must not dispatch"
+        );
+        var normalizer = new TrackingNormalizer();
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            normalizer,
+            connections: [visible, hidden],
+            selectableConnectionIds: [visible.Id]
+        );
+        EventAddress failedHead = await CreateFailedBoundaryAsync(
+            host.SessionDirectory,
+            visible
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        SessionExecutionBoundaryInspection before = session.Engine
+            .InspectExecutionBoundary();
+        Assert.IsType<SessionRuntimeRecoveryRequirements
+            .FailedTurnMustBeAbandoned>(
+                session.Engine.InspectRuntimeRecoveryRequirements()
+            );
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "must not abandon failed turn",
+            new GalateaTurnOptions(hidden.Id)
+        );
+        try {
+            GalateaTurnException failure = await Assert.ThrowsAsync<
+                GalateaTurnException>(() => service.RunTurnAsync(
+                    session,
+                    turn,
+                    CancellationToken.None
+                ));
+
+            Assert.Equal(
+                "recap-grid-connection-absent",
+                failure.FailureReason
+            );
+            Assert.Equal(0, normalizer.NormalizeCallCount);
+            Assert.Equal(0, completionFactory.CreateCallCount);
+            Assert.Equal(0, completionFactory.Client.DispatchCallCount);
+            Assert.Equal(failedHead, session.Engine.ReadCurrentHead());
+            Assert.Equal(before, session.Engine.InspectExecutionBoundary());
+            SessionRuntimeRecoveryRequirements.FailedTurnMustBeAbandoned
+                after = Assert.IsType<SessionRuntimeRecoveryRequirements
+                    .FailedTurnMustBeAbandoned>(
+                        session.Engine.InspectRuntimeRecoveryRequirements()
+                    );
+            Assert.Equal(failedHead, after.FailedHead);
+        }
+        finally {
+            service.FinishTurn(session, turn);
+        }
+    }
+
+    [Fact]
     public async Task FreshTypedNoDispatchRejection_SettlesIdleAndNextFreshTurnSucceeds() {
         var completion = new SequencedCompletionClient();
         completion.Enqueue(_ => throw new CompletionRequestRejectedException(
