@@ -561,6 +561,134 @@ api.MapPost(
 );
 
 api.MapPost(
+    "/mailbox/inbound",
+    async (
+        HttpContext httpContext,
+        ClaimsPrincipal user,
+        GalateaHostService hostService,
+        IHostApplicationLifetime applicationLifetime
+    ) => {
+        InboundMailboxRequest request = await GalateaHttpV1
+            .ReadJsonBodyAsync<InboundMailboxRequest>(httpContext);
+        string? invalid = GalateaHttpV1.ValidateMailboxText(
+                request.From,
+                "from",
+                GalateaMailboxBounds.MaximumSenderUtf8Bytes
+            )
+            ?? GalateaHttpV1.ValidateMailboxText(
+                request.Subject,
+                "subject",
+                GalateaMailboxBounds.MaximumSubjectUtf8Bytes,
+                allowNull: true
+            )
+            ?? GalateaHttpV1.ValidateMailboxText(
+                request.Body,
+                "body",
+                GalateaMailboxBounds.MaximumBodyUtf8Bytes
+            )
+            ?? GalateaHttpV1.ValidateConnectionId(request.ConnectionId);
+        if (invalid is not null) {
+            return Results.BadRequest(new ApiErrorDto(
+                "invalid-mailbox-message",
+                invalid
+            ));
+        }
+
+        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
+            ?? throw new InvalidOperationException(
+                "Authenticated principal is missing user id."
+            );
+        UserSessionHost session = await hostService.GetSessionAsync(
+            userId,
+            httpContext.RequestAborted
+        );
+        if (!session.TurnLock.Wait(0)) {
+            return BuildTurnBusyConflict(hostService, session);
+        }
+
+        GalateaLiveTurn? liveTurn = null;
+        bool writerOwnershipTransferred = false;
+        try {
+            SessionRuntimeRecoveryRequirements recovery =
+                session.Engine.InspectRuntimeRecoveryRequirements(
+                    httpContext.RequestAborted
+                );
+            bool acceptsFreshMail = recovery switch {
+                SessionRuntimeRecoveryRequirements.NoRuntimeRequired {
+                    Phase: SessionExecutionPhase.Idle
+                } => true,
+                SessionRuntimeRecoveryRequirements
+                    .FailedTurnMustBeAbandoned => true,
+                _ => false
+            };
+            if (!acceptsFreshMail) {
+                return RecoveryConflict(
+                    recovery,
+                    recovery.Phase == SessionExecutionPhase.Empty
+                        ? "session-unprovisioned"
+                        : "recovery-required",
+                    recovery.Phase == SessionExecutionPhase.Empty
+                        ? "会话仓库尚未完成初始化。"
+                        : "当前会话存在待恢复的持久化轮次；新邮件未被接收。"
+                );
+            }
+            if (!hostService.TryGetConnection(
+                    request.ConnectionId,
+                    out CompletionConnectionConfig connection)) {
+                return Results.BadRequest(new ApiErrorDto(
+                    "unknown-connection",
+                    $"Unknown completion connection '{request.ConnectionId}'."
+                ));
+            }
+            MailboxMessage message = MailboxMessage.CreateInbound(
+                request.From,
+                request.Subject,
+                request.Body
+            );
+            liveTurn = hostService.StartInboundMailTurn(
+                session,
+                message,
+                new GalateaTurnOptions(connection.Id)
+            );
+            _ = StartAcceptedTurn(
+                session,
+                liveTurn,
+                hostService,
+                applicationLifetime
+            );
+            writerOwnershipTransferred = true;
+            return Results.Json(
+                new InboundMailboxAcceptedDto(
+                    liveTurn.TurnId,
+                    message.MessageId
+                ),
+                statusCode: StatusCodes.Status202Accepted
+            );
+        }
+        finally {
+            if (!writerOwnershipTransferred) {
+                try {
+                    if (liveTurn is not null) {
+                        hostService.FinishTurn(session, liveTurn);
+                        liveTurn.Complete();
+                    }
+                    await hostService.RefreshRecentTurnsBestEffortAsync(
+                        session,
+                        applicationLifetime.ApplicationStopping
+                    );
+                }
+                finally {
+                    session.TurnLock.Release();
+                }
+            }
+        }
+    }
+).WithMetadata(
+    GalateaHttpV1.JsonBody,
+    GalateaHttpV1.MaintenanceWrite
+);
+
+api.MapPost(
     "/chat/turns/pop-latest",
     async (
         HttpContext httpContext,

@@ -616,6 +616,9 @@ public sealed class GalateaConfigValidationTests {
         Assert.Null(decoded.Bindings![
             GalateaCompletionOwner.InputNormalizerBindingKey
         ]);
+        Assert.Null(decoded.Bindings[
+            GalateaCompletionOwner.OutboundMailExtractorBindingKey
+        ]);
         using (JsonDocument document = JsonDocument.Parse(template)) {
             JsonElement root = document.RootElement;
             Assert.Equal("1", root.GetProperty("v").GetRawText());
@@ -653,7 +656,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void GalateaConnectionsRequireExactSelectionAndNormalizerBinding() {
+    public void GalateaConnectionsRequireExactSelectionAndFeatureBindings() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -672,7 +675,9 @@ public sealed class GalateaConfigValidationTests {
             AssertRejected(original, "bindings");
 
             JsonObject missingKey = original.DeepClone().AsObject();
-            missingKey["bindings"] = new JsonObject();
+            Assert.True(missingKey["bindings"]!.AsObject().Remove(
+                GalateaCompletionOwner.OutboundMailExtractorBindingKey
+            ));
             Assert.Throws<InvalidDataException>(() => Load(
                 missingKey
             ));
@@ -680,6 +685,8 @@ public sealed class GalateaConfigValidationTests {
             JsonObject wrongCase = original.DeepClone().AsObject();
             wrongCase["bindings"] = new JsonObject {
                 ["Galatea.Input-Normalizer"] = null,
+                [GalateaCompletionOwner.OutboundMailExtractorBindingKey] =
+                    null,
             };
             Assert.Throws<InvalidDataException>(() => Load(wrongCase));
 

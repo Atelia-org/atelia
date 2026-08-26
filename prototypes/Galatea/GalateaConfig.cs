@@ -16,6 +16,7 @@ public sealed record GalateaConfig(
     string DefaultConnectionId,
     IReadOnlyList<string> SelectableConnectionIds,
     string? InputNormalizerConnectionId,
+    string? OutboundMailExtractorConnectionId = null,
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
     bool MaintenanceMode = false,
@@ -219,6 +220,18 @@ public sealed record AssistantMessageDto(
 internal sealed record ChatStreamRequest(
     [property: JsonPropertyName("message")] string Message,
     [property: JsonPropertyName("connectionId")] string? ConnectionId = null
+);
+
+internal sealed record InboundMailboxRequest(
+    [property: JsonPropertyName("from")] string From,
+    [property: JsonPropertyName("body")] string Body,
+    [property: JsonPropertyName("subject")] string? Subject = null,
+    [property: JsonPropertyName("connectionId")] string? ConnectionId = null
+);
+
+internal sealed record InboundMailboxAcceptedDto(
+    string TurnId,
+    string MessageId
 );
 
 internal sealed record PopLatestTurnReceiptDto(

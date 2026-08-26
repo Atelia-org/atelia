@@ -156,6 +156,30 @@ internal static class GalateaHttpV1 {
         return null;
     }
 
+    internal static string? ValidateMailboxText(
+        string? value,
+        string fieldName,
+        int maximumUtf8Bytes,
+        bool allowNull = false
+    ) {
+        if (value is null && allowNull) { return null; }
+        if (string.IsNullOrWhiteSpace(value)) {
+            return $"{fieldName} must not be blank.";
+        }
+        try {
+            if (GalateaBoundedJson.StrictUtf8.GetByteCount(value)
+                    > maximumUtf8Bytes) {
+                return $"{fieldName} exceeds its UTF-8 byte limit.";
+            }
+            _ = System.Xml.XmlConvert.VerifyXmlChars(value);
+        }
+        catch (Exception exception) when (exception is
+            EncoderFallbackException or System.Xml.XmlException) {
+            return $"{fieldName} must contain valid Unicode.";
+        }
+        return null;
+    }
+
     internal sealed class JsonBodyEndpointMetadata;
 
     internal sealed class MaintenanceWriteEndpointMetadata;

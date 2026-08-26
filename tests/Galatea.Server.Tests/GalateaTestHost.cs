@@ -59,7 +59,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         bool provisionRawOnly = true,
         IReadOnlyList<CompletionConnectionConfig>? connections = null,
         IReadOnlyList<string>? selectableConnectionIds = null,
-        string? inputNormalizerConnectionId = null
+        string? inputNormalizerConnectionId = null,
+        string? outboundMailExtractorConnectionId = null
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
 
@@ -108,7 +109,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             maintenanceMode,
             agentControlProfile,
             selectableConnectionIds: selectableConnectionIds,
-            inputNormalizerConnectionId: inputNormalizerConnectionId
+            inputNormalizerConnectionId: inputNormalizerConnectionId,
+            outboundMailExtractorConnectionId:
+                outboundMailExtractorConnectionId
         );
 
         return new GalateaTestHost(
@@ -213,7 +216,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         GalateaSessionProvisioning sessionProvisioning =
             GalateaSessionProvisioning.ExistingOnly,
         IReadOnlyList<string>? selectableConnectionIds = null,
-        string? inputNormalizerConnectionId = null
+        string? inputNormalizerConnectionId = null,
+        string? outboundMailExtractorConnectionId = null
     ) => PointAtSessionCore(
         sessionDirectory,
         connections,
@@ -227,7 +231,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         sessionProvisioning,
         requireExistingDirectory: true,
         selectableConnectionIds,
-        inputNormalizerConnectionId
+        inputNormalizerConnectionId,
+        outboundMailExtractorConnectionId
     );
 
     /// <summary>
@@ -243,7 +248,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string systemPrompt,
         GalateaSessionProvisioning sessionProvisioning,
         IReadOnlyList<string>? selectableConnectionIds = null,
-        string? inputNormalizerConnectionId = null
+        string? inputNormalizerConnectionId = null,
+        string? outboundMailExtractorConnectionId = null
     ) => PointAtSessionCore(
         sessionDirectory,
         connections,
@@ -257,7 +263,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         sessionProvisioning,
         requireExistingDirectory: false,
         selectableConnectionIds,
-        inputNormalizerConnectionId
+        inputNormalizerConnectionId,
+        outboundMailExtractorConnectionId
     );
 
     private static GalateaTestHost PointAtSessionCore(
@@ -273,7 +280,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         GalateaSessionProvisioning sessionProvisioning,
         bool requireExistingDirectory,
         IReadOnlyList<string>? selectableConnectionIds,
-        string? inputNormalizerConnectionId
+        string? inputNormalizerConnectionId,
+        string? outboundMailExtractorConnectionId
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionDirectory);
         ArgumentNullException.ThrowIfNull(connections);
@@ -311,7 +319,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 agentControlProfile,
                 sessionProvisioning,
                 selectableConnectionIds,
-                inputNormalizerConnectionId
+                inputNormalizerConnectionId,
+                outboundMailExtractorConnectionId
             );
             return new GalateaTestHost(
                 configurationRoot,
@@ -367,7 +376,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         GalateaSessionProvisioning sessionProvisioning =
             GalateaSessionProvisioning.ExistingOnly,
         IReadOnlyList<string>? selectableConnectionIds = null,
-        string? inputNormalizerConnectionId = null
+        string? inputNormalizerConnectionId = null,
+        string? outboundMailExtractorConnectionId = null
     ) {
         string agentControlProfileFile = "recap-grid-profile.json";
         RecapGridAgentControlProfile profile = agentControlProfile
@@ -417,7 +427,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             connections,
             defaultConnectionId,
             selectableConnectionIds,
-            inputNormalizerConnectionId
+            inputNormalizerConnectionId,
+            outboundMailExtractorConnectionId
         );
         return configPath;
     }
@@ -427,7 +438,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IReadOnlyList<CompletionConnectionConfig> connections,
         string defaultConnectionId,
         IReadOnlyList<string>? selectableConnectionIds = null,
-        string? inputNormalizerConnectionId = null
+        string? inputNormalizerConnectionId = null,
+        string? outboundMailExtractorConnectionId = null
     ) {
         var output = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(output)) {
@@ -477,6 +489,19 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 writer.WriteString(
                     GalateaCompletionOwner.InputNormalizerBindingKey,
                     inputNormalizerConnectionId
+                );
+            }
+            if (outboundMailExtractorConnectionId is null) {
+                writer.WriteNull(
+                    GalateaCompletionOwner
+                        .OutboundMailExtractorBindingKey
+                );
+            }
+            else {
+                writer.WriteString(
+                    GalateaCompletionOwner
+                        .OutboundMailExtractorBindingKey,
+                    outboundMailExtractorConnectionId
                 );
             }
             writer.WriteEndObject();

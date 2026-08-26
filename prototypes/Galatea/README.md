@@ -67,12 +67,14 @@ metadata。根必须包含 integer token `"v": 1`、非空 `connections`、exact
 connection 仍可被内部 exact binding、RecapGrid route 或 frozen recovery 使用，但不会
 显示在 browser 中，也不能作为 fresh/current Agent connection 提交。
 
-Galatea 当前要求 `bindings` exact 只有一个 key：
-`"galatea.input-normalizer"`。其值为 connection ID 时启用 input normalization，为
-`null` 时显式禁用；不存在、blank、wrong-case、unknown ID 或多余 binding
+Galatea 当前要求 `bindings` exact 包含两个兄弟 key：
+`"galatea.input-normalizer"` 与 `"galatea.outbound-mail-extractor"`。每个值为
+connection ID 时启用对应feature，为 `null` 时显式禁用；不存在、blank、wrong-case、
+unknown ID 或多余 binding
 都会在 startup fail closed，绝不 fallback 到 `defaultConnectionId`。Normalizer 的
 model/provider/surface/endpoint/secret locator 全部来自该 connection，client 只在首次真正
-需要清洗时惰性创建。
+需要清洗时惰性创建；OutboundMailExtractor 同样使用hidden、lazy、borrowed client，且不进入
+Agent/UI selectable allowlist。
 
 每个 connection 必须显式提供 `completionSurfaceId`，并在 `baseAddress` /
 `baseAddressEnv` 中恰好选择一个，在 `apiKey` / `apiKeyEnv` 中至多选择一个。
@@ -82,7 +84,7 @@ Galatea 文件会被旧 closed-root binary 拒绝；operator 必须停服、备�
 manifest 配套发布，应用不会自动改写可能含 secret 的文件。
 
 `GalateaCompletionOwner` 唯一拥有 host-wide `CompletionConnectionRegistry`；main Agent、
-input normalizer 与 RecapGrid exact routes 共用其惰性 clients。Shutdown 顺序为：drain
+input normalizer、outbound mail extractor 与 RecapGrid exact routes 共用其惰性 clients。Shutdown 顺序为：drain
 sessions/per-turn operation，再 drain borrowed RecapGrid runtime，最后清理 distinct Completion
 clients。`callLogDir` 由统一 Completion factory decorator 服务上述所有调用；启用
 normalizer 时，清洗前输入、prompt 与 provider output 也会进入该本地调用日志。
@@ -120,6 +122,31 @@ recovery或dedupe语义。工具契约继续由`Completion.Tools/ArtifactToolWra
 provider tool name/call ID、tool/call数量、raw arguments与diagnostics均有
 code-owned bounds；caller cancellation与transport exception直接传播。
 
+## Mailbox 与 OutboundMailExtractor
+
+`POST /api/v1/mailbox/inbound` 接受authenticated strict JSON
+`{from,body,subject?,connectionId?}`。runtime生成canonical 32-lowerhex `messageId`并固定
+`To=Galatea`，以202返回`{turnId,messageId}`，随后沿用普通turn/SSE执行主线模型。Inbound mail
+使用code-owned escaped Observation envelope，不经过input normalizer；recent view则显示自然的
+发件人、主题与正文。来信正文在prompt中明确只是故事数据，不获得指令权限。该入口共享maintenance、
+per-session `TurnLock`、recovery admission与main connection allowlist。
+
+主线terminal Action durable后，host在recent refresh与SSE `done`之前使用
+`GalateaVisibleActionTextRenderer`提取可见文本：按顺序连接Text blocks，排除reasoning/tool block，
+再整体剥离inline think。常驻`OutboundMailExtractor`通过
+`emit_send_mail_intent`产出0..N个有序`SendMailIntent`，字段为故事内`Recipient`、可选`Subject`、
+完整`Body`、可选canonical `InReplyToMessageId`与exact `EvidenceQuote`。Recipient仍是未解析、未验证的
+故事文本；当前阶段没有recipient allowlist、投递或外部副作用。Actor ownership、actual send、完整正文
+与exact source substring会fail closed校验；计划、草稿、他人邮件及来信引用不产生artifact。
+
+候选只进入每个`UserSessionHost`自己的`InMemorySendMailIntentBuffer`。每批全有或全无地加入，
+按terminal Action head防止候选重复，并有code-owned count/byte上限；满载时拒绝新批次，不静默逐出
+尚未处理的旧候选。它不是durable outbox，不承诺provider-call dedupe、exactly-once、进程重启恢复或
+真实投递，session dispose后即丢失。Extraction的nonfatal failure/cancellation只写bounded
+`Galatea.Mailbox`摘要log，不改判已经durable的主turn；fatal exception仍传播。普通player Undo成功后
+移除对应Action head的内存候选；mailbox Observation不产生普通player rewind token，commit前也再次
+防御其被player pop入口撤销。Completion call log仍可能包含完整tool arguments，debug摘要不重复正文。
+
 历史 Agent Control profiles 必须继续保留，供 Prepared/ToolContinuation 按 frozen
 identity 绑定；current profile 只用于新 request。Route manifest 仍在首次
 RecapGrid work 时延迟读取，保留 exact per-route `connectionId` 及调度 policy，
@@ -153,6 +180,7 @@ route。当前versioned endpoints是：
 | GET | `/api/v1/recent-turns` | latest 6 completed turns、同head Context header、rewind token与RecapGrid readiness |
 | POST | `/api/v1/chat/turns` | 202 `{turnId}` |
 | POST | `/api/v1/chat/turns/resume` | 202 `{turnId}` |
+| POST | `/api/v1/mailbox/inbound` | 202 `{turnId,messageId}` |
 | POST | `/api/v1/chat/turns/pop-latest` | `{poppedUserText}` |
 | GET | `/api/v1/chat/turns/current` | `status,turnId,connectionId,restartRequired,recoveryHead` |
 | POST | `/api/v1/chat/turns/{turnId}/stop` | 204 empty |
@@ -160,7 +188,8 @@ route。当前versioned endpoints是：
 
 JSON body只接受`application/json`与可选UTF-8 charset，不接受`Content-Encoding`；exact camelCase，unknown、
 wrong-case、duplicate、missing required、wrong type、required null、comment和trailing comma均拒绝。request body上限
-为1 MiB，original与normalized message各为64 KiB UTF-8，connection id为128 UTF-8 bytes。matched V1 endpoint
+为1 MiB，original与normalized message各为64 KiB UTF-8，mail body为64 KiB、sender为1 KiB、subject为4 KiB，
+connection id为128 UTF-8 bytes。matched V1 endpoint
 failure除busy使用`{code,error,turnId}`外统一为`{code,error}`；unknown或retired route保持exact 404，但不承诺
 该endpoint-owned envelope。diagnostic文本不作为machine branch。
 

@@ -18,18 +18,28 @@ internal sealed class GalateaLiveTurn {
     private string? _phase;
 
     public GalateaLiveTurn(
-        string? userMessage,
+        string userMessage,
+        GalateaTurnOptions options
+    ) : this(
+        new GalateaFreshInput.PlayerAction(userMessage),
+        options
+    ) { }
+
+    public GalateaLiveTurn(
+        GalateaFreshInput? freshInput,
         GalateaTurnOptions options
     ) {
         TurnId = Guid.NewGuid().ToString("N");
-        UserMessage = userMessage;
+        FreshInput = freshInput;
         Options = options ?? throw new ArgumentNullException(nameof(options));
         StopController = new GalateaTurnStopController();
     }
 
     public string TurnId { get; }
 
-    public string? UserMessage { get; }
+    internal GalateaFreshInput? FreshInput { get; }
+
+    public string? UserMessage => FreshInput?.DisplayText;
 
     public GalateaTurnOptions Options { get; }
 

@@ -26,6 +26,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal const int MaximumPopReceiptUtf8Bytes = 2 * 1024 * 1024;
 
     private readonly GalateaInputPreprocessor _inputPreprocessor;
+    private readonly IOutboundMailExtractor? _outboundMailExtractor;
     private readonly bool _maintenanceMode;
     private readonly GalateaRecapGridComposition _recapGrid;
     private readonly GalateaCompletionOwner? _completionOwner;
@@ -91,6 +92,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             _inputPreprocessor = new GalateaInputPreprocessor(
                 components.Normalizer
             );
+            _outboundMailExtractor = components.OutboundMailExtractor;
             _maintenanceMode = config.MaintenanceMode;
             _users = config.Users.ToDictionary(
                 static value => value.UserId,
@@ -143,6 +145,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 new Dictionary<string, string?>(StringComparer.Ordinal) {
                     [GalateaCompletionOwner.InputNormalizerBindingKey] =
                         config.InputNormalizerConnectionId,
+                    [GalateaCompletionOwner.OutboundMailExtractorBindingKey] =
+                        config.OutboundMailExtractorConnectionId,
                 }
             ));
         GalateaCompletionOwner.ValidateGalateaRouting(normalized);
@@ -151,6 +155,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _inputPreprocessor = new GalateaInputPreprocessor(
             userMessageNormalizer
         );
+        _outboundMailExtractor = null;
         _maintenanceMode = config.MaintenanceMode;
         _users = config.Users.ToDictionary(
             static value => value.UserId,
@@ -206,7 +211,18 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ) ?? throw new InvalidOperationException(
                     "Galatea input normalizer factory returned null."
                 );
-            return new GalateaProductionComponents(owner, normalizer);
+            IOutboundMailExtractor? outboundMailExtractor =
+                owner.OutboundMailExtractorConnection is { } connection
+                    ? new OutboundMailExtractor(
+                        connection,
+                        owner.GetOutboundMailExtractorClient
+                    )
+                    : null;
+            return new GalateaProductionComponents(
+                owner,
+                normalizer,
+                outboundMailExtractor
+            );
         }
         catch (Exception exception) {
             if (owner is not null) {
@@ -239,7 +255,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
     private sealed record GalateaProductionComponents(
         GalateaCompletionOwner Owner,
-        IGalateaUserMessageNormalizer Normalizer
+        IGalateaUserMessageNormalizer Normalizer,
+        IOutboundMailExtractor? OutboundMailExtractor
     );
 
     private sealed class FixedGalateaUserMessageNormalizerFactory(
@@ -352,6 +369,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string? rewindLatestToken = snapshot.CapturedHead is { } head
             && snapshot.Turns.FirstOrDefault()?.TerminalAction.Address
                 == head
+            && GalateaUserMessageEnvelope.TryUnwrapForDisplay(
+                snapshot.Turns.First().ObservationContent,
+                out _
+            )
                 ? EventAddressTextCodec.Format(head)
                 : null;
         DebugUtil.Info(
@@ -611,7 +632,24 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (messageError is not null) {
             throw new ArgumentException(messageError, nameof(userMessage));
         }
-        return host.StartTurn(userMessage, options);
+        return host.StartTurn(
+            new GalateaFreshInput.PlayerAction(userMessage),
+            options
+        );
+    }
+
+    internal GalateaLiveTurn StartInboundMailTurn(
+        UserSessionHost host,
+        MailboxMessage message,
+        GalateaTurnOptions options
+    ) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentNullException.ThrowIfNull(message);
+        ArgumentNullException.ThrowIfNull(options);
+        return host.StartTurn(
+            new GalateaFreshInput.InboundMail(message),
+            options
+        );
     }
 
     internal GalateaLiveTurn StartRecovery(
@@ -657,8 +695,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
             };
         }
 
-        string poppedUserText = GalateaUserMessageEnvelope
-            .UnwrapForDisplay(ready.Value.ObservationContent);
+        if (!GalateaUserMessageEnvelope.TryUnwrapForDisplay(
+                ready.Value.ObservationContent,
+                out string poppedUserText)) {
+            return null;
+        }
         int sourceBytes;
         try {
             sourceBytes = GalateaBoundedJson.StrictUtf8.GetByteCount(
@@ -703,6 +744,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (committed is not SessionTurnRetractionResult.Moved) {
             return null;
         }
+        host.SendMailIntentBuffer.Remove(
+            ready.Value.ExpectedHead
+        );
         host.SetRecentTurns(preparedStaleSnapshot);
         return preparedReceipt;
     }
@@ -816,6 +860,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ex.Termination.ProviderReason ?? ex.Termination.Kind.ToString()
             );
         }
+        await ExtractOutboundMailBestEffortAsync(
+                host,
+                liveTurn,
+                completed.Message,
+                host.Engine.ReadCurrentHead(),
+                ct
+            )
+            .ConfigureAwait(false);
         RecentTurnsResponseDto? snapshot =
             await RefreshRecentTurnsForCompletedStreamAsync(
                 host,
@@ -827,6 +879,71 @@ public sealed class GalateaHostService : IAsyncDisposable {
             $"RunTurnAsync send done: user={host.User.UserId}, turnId={liveTurn.TurnId}, errors={completed.Errors?.Count ?? 0}, snapshotTurns={snapshot?.Turns.Count.ToString(CultureInfo.InvariantCulture) ?? "unavailable"}, head={host.Engine.ReadCurrentHead()}"
         );
         liveTurn.PublishDone(snapshot);
+    }
+
+    private async ValueTask ExtractOutboundMailBestEffortAsync(
+        UserSessionHost host,
+        GalateaLiveTurn liveTurn,
+        ActionMessage action,
+        EventAddress? sourceActionHead,
+        CancellationToken cancellationToken
+    ) {
+        if (_outboundMailExtractor is null
+            || sourceActionHead is not { } actionHead) {
+            return;
+        }
+        string target = GalateaVisibleActionTextRenderer.Render(action);
+        if (string.IsNullOrWhiteSpace(target)) { return; }
+        try {
+            IReadOnlyList<SendMailIntent> intents =
+                await _outboundMailExtractor.ExtractAsync(
+                        target,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            if (intents.Count == 0) {
+                DebugUtil.Trace(
+                    "Galatea.Mailbox",
+                    $"Outbound extraction found no mail: user={host.User.UserId}, turnId={liveTurn.TurnId}, actionHead={actionHead}"
+                );
+                return;
+            }
+            bool added = host.SendMailIntentBuffer.TryAddBatch(
+                host.User.UserId,
+                liveTurn.TurnId,
+                actionHead,
+                intents
+            );
+            if (!added) {
+                DebugUtil.Warning(
+                    "Galatea.Mailbox",
+                    $"Outbound candidate batch deduplicated in memory: user={host.User.UserId}, turnId={liveTurn.TurnId}, actionHead={actionHead}"
+                );
+                return;
+            }
+            foreach ((SendMailIntent intent, int ordinal) in intents
+                         .Select((value, index) => (value, index))) {
+                DebugUtil.Info(
+                    "Galatea.Mailbox",
+                    "Captured outbound mail candidate: "
+                    + $"user={host.User.UserId}, turnId={liveTurn.TurnId}, actionHead={actionHead}, ordinal={ordinal}, "
+                    + $"recipient={Preview(intent.Recipient)}, hasSubject={intent.Subject is not null}, bodyUtf8Bytes={TextExtractorUtf8.GetByteCount(intent.Body)}, hasReplyId={intent.InReplyToMessageId is not null}"
+                );
+            }
+        }
+        catch (OperationCanceledException exception) {
+            DebugUtil.Warning(
+                "Galatea.Mailbox",
+                $"Outbound extraction cancelled after durable Action: user={host.User.UserId}, turnId={liveTurn.TurnId}, detail={exception.Message}"
+            );
+        }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
+            DebugUtil.Warning(
+                "Galatea.Mailbox",
+                $"Outbound extraction skipped after durable Action: user={host.User.UserId}, turnId={liveTurn.TurnId}, error={exception.GetType().Name}, detail={exception.Message}"
+            );
+        }
     }
 
     private async Task<GalateaCompletedOperation> RunFreshSendAsync(
@@ -976,9 +1093,21 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "RecapGrid会话设置无法在当前边界安全更新。",
                 "recap-grid-desired-setup-unavailable");
         }
-        string effective = await _inputPreprocessor.ProcessAsync(
-            liveTurn, cancellationToken).ConfigureAwait(false);
-        string prompted = WrapUserMessageForEngine(effective);
+        string prompted = liveTurn.FreshInput switch {
+            GalateaFreshInput.PlayerAction =>
+                GalateaUserMessageEnvelope.Wrap(
+                    await _inputPreprocessor.ProcessAsync(
+                            liveTurn,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false)
+                ),
+            GalateaFreshInput.InboundMail mail =>
+                mail.DurableObservation,
+            _ => throw new InvalidOperationException(
+                "Fresh send requires a typed fresh input."
+            )
+        };
         await using GalateaRecapGridTurn turn =
             await recapGrid.OpenFreshAsync(
                 host.Engine,
@@ -1493,9 +1622,15 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
 
-    internal GalateaLiveTurn StartTurn(string userMessage, GalateaTurnOptions options) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
-        var liveTurn = new GalateaLiveTurn(userMessage, options);
+    internal InMemorySendMailIntentBuffer SendMailIntentBuffer { get; } =
+        new();
+
+    internal GalateaLiveTurn StartTurn(
+        GalateaFreshInput freshInput,
+        GalateaTurnOptions options
+    ) {
+        ArgumentNullException.ThrowIfNull(freshInput);
+        var liveTurn = new GalateaLiveTurn(freshInput, options);
         lock (_turnStateGate) {
             _lastTurn = null;
             _currentTurn = liveTurn;
@@ -1509,7 +1644,10 @@ public sealed class UserSessionHost : IAsyncDisposable {
         GalateaTurnOptions options
     ) {
         ArgumentNullException.ThrowIfNull(options);
-        var liveTurn = new GalateaLiveTurn(null, options);
+        var liveTurn = new GalateaLiveTurn(
+            freshInput: null,
+            options
+        );
         lock (_turnStateGate) {
             _lastTurn = null;
             _currentTurn = liveTurn;
@@ -1664,6 +1802,9 @@ internal static class GalateaConfigLoader {
                 connectionsFile.SelectableConnectionIds!,
             InputNormalizerConnectionId: connectionsFile.Bindings![
                 GalateaCompletionOwner.InputNormalizerBindingKey
+            ],
+            OutboundMailExtractorConnectionId: connectionsFile.Bindings[
+                GalateaCompletionOwner.OutboundMailExtractorBindingKey
             ],
             ListenUrls: usersFile.ListenUrls,
             CallLogDir: ResolveCallLogDirectory(
@@ -2116,6 +2257,9 @@ internal static class GalateaConfigTemplateFactory {
             writer.WriteStartObject("bindings");
             writer.WriteNull(
                 GalateaCompletionOwner.InputNormalizerBindingKey
+            );
+            writer.WriteNull(
+                GalateaCompletionOwner.OutboundMailExtractorBindingKey
             );
             writer.WriteEndObject();
             writer.WriteEndObject();

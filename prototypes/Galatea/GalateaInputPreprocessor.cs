@@ -25,9 +25,10 @@ internal sealed class GalateaInputPreprocessor {
         ArgumentNullException.ThrowIfNull(liveTurn);
         cancellationToken.ThrowIfCancellationRequested();
 
-        string original = liveTurn.UserMessage
+        string original = (liveTurn.FreshInput
+            as GalateaFreshInput.PlayerAction)?.Text
             ?? throw new InvalidOperationException(
-                "Input preprocessing requires a fresh user message."
+                "Input preprocessing requires a typed fresh input."
             );
         RequireMessageFits(original, "original");
         bool shouldNormalize;

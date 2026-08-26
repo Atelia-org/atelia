@@ -10,14 +10,10 @@ internal static class GalateaRecentTurnDisplayAdapter {
     ) {
         ArgumentNullException.ThrowIfNull(source);
 
-        var text = new StringBuilder();
         var reasoning = new StringBuilder();
         foreach (ActionBlock block in
                  source.TerminalAction.Message.Blocks) {
             switch (block) {
-                case ActionBlock.Text textBlock:
-                    text.Append(textBlock.Content);
-                    break;
                 case ActionBlock.ReasoningBlock reasoningBlock when reasoningBlock.PlainText is not null:
                     reasoning.Append(reasoningBlock.PlainText);
                     break;
@@ -26,12 +22,10 @@ internal static class GalateaRecentTurnDisplayAdapter {
 
         string reasoningText = reasoning.ToString();
         return new RecentTurnDto(
-            GalateaUserMessageEnvelope.UnwrapForDisplay(
-                source.ObservationContent
-            ),
+            GalateaObservationDisplay.Project(source.ObservationContent),
             new AssistantMessageDto(
-                InlineThinkTextFilter.StripInlineThinkBlocks(
-                    text.ToString()
+                GalateaVisibleActionTextRenderer.Render(
+                    source.TerminalAction.Message
                 ),
                 reasoningText.Length == 0 ? null : reasoningText
             )
@@ -83,5 +77,33 @@ internal static class GalateaUserMessageEnvelope {
             Prefix.Length,
             storedUserMessage.Length - Prefix.Length - Suffix.Length
         );
+    }
+
+    internal static bool TryUnwrapForDisplay(
+        string? stored,
+        out string display
+    ) {
+        if (stored is not null
+            && stored.StartsWith(Prefix, StringComparison.Ordinal)
+            && stored.EndsWith(Suffix, StringComparison.Ordinal)) {
+            display = stored.Substring(
+                Prefix.Length,
+                stored.Length - Prefix.Length - Suffix.Length
+            );
+            return true;
+        }
+        display = stored ?? string.Empty;
+        return false;
+    }
+}
+
+internal static class GalateaObservationDisplay {
+    internal static string Project(string? stored) {
+        if (GalateaMailboxObservationEnvelope.TryUnwrap(
+                stored,
+                out MailboxMessage mail)) {
+            return GalateaMailboxObservationEnvelope.FormatForDisplay(mail);
+        }
+        return GalateaUserMessageEnvelope.UnwrapForDisplay(stored);
     }
 }

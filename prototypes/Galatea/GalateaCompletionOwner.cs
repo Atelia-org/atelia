@@ -13,6 +13,8 @@ namespace Atelia.Galatea.Server;
 internal sealed class GalateaCompletionOwner : IAsyncDisposable {
     internal const string InputNormalizerBindingKey =
         "galatea.input-normalizer";
+    internal const string OutboundMailExtractorBindingKey =
+        "galatea.outbound-mail-extractor";
 
     private readonly CompletionConnectionRegistry _registry;
     private readonly object _disposeGate = new();
@@ -37,6 +39,8 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                 new Dictionary<string, string?>(StringComparer.Ordinal) {
                     [InputNormalizerBindingKey] =
                         config.InputNormalizerConnectionId,
+                    [OutboundMailExtractorBindingKey] =
+                        config.OutboundMailExtractorConnectionId,
                 }
             ));
         ValidateGalateaRouting(normalized);
@@ -81,6 +85,9 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         InputNormalizerConnectionId = normalized.Bindings![
             InputNormalizerBindingKey
         ];
+        OutboundMailExtractorConnectionId = normalized.Bindings[
+            OutboundMailExtractorBindingKey
+        ];
     }
 
     internal GalateaRecapGridComposition RecapGrid { get; }
@@ -107,6 +114,20 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             )
             : _registry.GetClient(InputNormalizerConnectionId);
 
+    internal string? OutboundMailExtractorConnectionId { get; }
+
+    internal CompletionConnectionConfig? OutboundMailExtractorConnection =>
+        OutboundMailExtractorConnectionId is null
+            ? null
+            : TryGetConnectionExact(OutboundMailExtractorConnectionId);
+
+    internal ICompletionClient GetOutboundMailExtractorClient() =>
+        OutboundMailExtractorConnectionId is null
+            ? throw new InvalidOperationException(
+                "Galatea outbound mail extraction is disabled."
+            )
+            : _registry.GetClient(OutboundMailExtractorConnectionId);
+
     private CompletionConnectionConfig TryGetConnectionExact(string id) =>
         _registry.TryGet(id, out CompletionConnectionConfig connection)
             ? connection
@@ -124,11 +145,15 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             );
         }
         if (config.Bindings is null
-            || config.Bindings.Count != 1
-            || !config.Bindings.ContainsKey(InputNormalizerBindingKey)) {
+            || config.Bindings.Count != 2
+            || !config.Bindings.ContainsKey(InputNormalizerBindingKey)
+            || !config.Bindings.ContainsKey(
+                OutboundMailExtractorBindingKey
+            )) {
             throw new InvalidDataException(
                 "Galatea connections require exactly the "
-                + $"'{InputNormalizerBindingKey}' binding."
+                + $"'{InputNormalizerBindingKey}' and "
+                + $"'{OutboundMailExtractorBindingKey}' bindings."
             );
         }
     }
