@@ -7,8 +7,8 @@ namespace Atelia.Galatea.Server.Tests;
 public sealed class GalateaDelegateSidecarTests {
     [Fact]
     public async Task ProcessIsLazyAndDisposeWithoutDispatchDoesNotStartIt() {
-        using var fixture = new Fixture("exit 99");
-        var client = fixture.CreateClient();
+        using var fixture = new GalateaSidecarProcessFixture("exit 99");
+        var client = fixture.CreateV1Client();
 
         Assert.False(client.HasStartedProcessForTest);
         await client.DisposeAsync();
@@ -17,8 +17,8 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task EnvironmentIsClearedAndPinnedAgainstAmbientOverrides() {
-        using var fixture = new Fixture("exit 99");
-        await using GalateaCodexSidecarClient client = fixture.CreateClient();
+        using var fixture = new GalateaSidecarProcessFixture("exit 99");
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client();
         var environment = new Dictionary<string, string?> {
             ["PATH"] = "/safe/path",
             ["HOME"] = "/safe/home",
@@ -103,8 +103,8 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task MaximumRpcTimeoutKeepsNodeOutputDeadlineInWireRange() {
-        using var fixture = new Fixture("exit 99");
-        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+        using var fixture = new GalateaSidecarProcessFixture("exit 99");
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client(
             rpcTimeoutMs: 300_000
         );
 
@@ -154,7 +154,7 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task ReadyAfterOneRpcButBeforeAggregateDeadlineIsAccepted() {
-        using var fixture = new Fixture("""
+        using var fixture = new GalateaSidecarProcessFixture("""
         sleep 0.3
         printf '%s\n' '{"v":1,"type":"ready"}'
         IFS= read -r line
@@ -164,7 +164,7 @@ public sealed class GalateaDelegateSidecarTests {
         printf '{"v":1,"type":"completed","dispatchId":"%s","threadId":"thread-1","turnId":"turn-1","final":"cold ready"}\n' "$dispatch_id"
         while IFS= read -r ignored; do :; done
         """);
-        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client(
             rpcTimeoutMs: 200
         );
         var watch = Stopwatch.StartNew();
@@ -184,14 +184,14 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task NeverReadyFailsAtAggregateDeadlineAndReapsChild() {
-        using var fixture = new Fixture(
+        using var fixture = new GalateaSidecarProcessFixture(
             $$"""
             printf '%s' "$$" > {{ShellQuote(fixturePath: "COUNT")}}
             sleep 30
             """
         );
         fixture.RewritePlaceholders();
-        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client(
             rpcTimeoutMs: 100
         );
         var watch = Stopwatch.StartNew();
@@ -215,11 +215,11 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task ReadyTimeoutSurfacesUnconfirmedReapInsteadOfPlainTimeout() {
-        using var fixture = new Fixture("sleep 30");
+        using var fixture = new GalateaSidecarProcessFixture("sleep 30");
         var hooks = new GalateaSidecarProcessTestHooks(
             WaitForExitBoundedAsync: (_, _) => Task.FromResult(false)
         );
-        GalateaCodexSidecarClient client = fixture.CreateClient(
+        GalateaCodexSidecarClient client = fixture.CreateV1Client(
             rpcTimeoutMs: 100,
             processHooks: hooks
         );
@@ -241,11 +241,11 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task SidecarThatNeverReadsStdinFailsWithinWriteDeadline() {
-        using var fixture = new Fixture("""
+        using var fixture = new GalateaSidecarProcessFixture("""
         printf '%s\n' '{"v":1,"type":"ready"}'
         sleep 30
         """);
-        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client(
             rpcTimeoutMs: 200,
             maximumFrameUtf8Bytes: 1_048_576,
             maximumBodyUtf8Bytes: 170_000
@@ -269,11 +269,11 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task DisposeUnblocksAnInFlightBlockedWrite() {
-        using var fixture = new Fixture("""
+        using var fixture = new GalateaSidecarProcessFixture("""
         printf '%s\n' '{"v":1,"type":"ready"}'
         sleep 30
         """);
-        GalateaCodexSidecarClient client = fixture.CreateClient(
+        GalateaCodexSidecarClient client = fixture.CreateV1Client(
             rpcTimeoutMs: 5_000,
             maximumFrameUtf8Bytes: 1_048_576,
             maximumBodyUtf8Bytes: 170_000
@@ -299,7 +299,7 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task AcceptedAfterOneRpcButBeforeAggregateDeadlineSucceeds() {
-        using var fixture = new Fixture("""
+        using var fixture = new GalateaSidecarProcessFixture("""
         printf '%s\n' '{"v":1,"type":"ready"}'
         IFS= read -r line
         request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
@@ -309,7 +309,7 @@ public sealed class GalateaDelegateSidecarTests {
         printf '{"v":1,"type":"completed","dispatchId":"%s","threadId":"thread-1","turnId":"turn-1","final":"aggregate accepted"}\n' "$dispatch_id"
         while IFS= read -r ignored; do :; done
         """);
-        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client(
             rpcTimeoutMs: 200
         );
         var watch = Stopwatch.StartNew();
@@ -329,7 +329,7 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task AcceptanceUnknownTombstonePreventsCrossGenerationReplay() {
-        using var fixture = new Fixture(
+        using var fixture = new GalateaSidecarProcessFixture(
             $$"""
             printf '%s\n' '{"v":1,"type":"ready"}'
             if IFS= read -r line; then
@@ -339,7 +339,7 @@ public sealed class GalateaDelegateSidecarTests {
             """
         );
         fixture.RewritePlaceholders();
-        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client(
             rpcTimeoutMs: 100
         );
         var watch = Stopwatch.StartNew();
@@ -366,7 +366,7 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task AttachedCancellationDoesNotFaultOwnerOrGeneration() {
-        using var fixture = new Fixture(
+        using var fixture = new GalateaSidecarProcessFixture(
             $$"""
             printf '%s\n' '{"v":1,"type":"ready"}'
             IFS= read -r line
@@ -380,7 +380,7 @@ public sealed class GalateaDelegateSidecarTests {
             """
         );
         fixture.RewritePlaceholders();
-        await using GalateaCodexSidecarClient client = fixture.CreateClient();
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client();
         Task<GalateaDelegateAcceptedHandle> owner = client.StartAsync(
             Request("dispatch-attached-cancel"),
             CancellationToken.None
@@ -411,7 +411,7 @@ public sealed class GalateaDelegateSidecarTests {
         bool crlf
     ) {
         string terminator = crlf ? "\\r\\n" : "\\n";
-        using var fixture = new Fixture($$"""
+        using var fixture = new GalateaSidecarProcessFixture($$"""
         printf '%s\n' '{"v":1,"type":"ready"}'
         head -c {{payloadBytes}} /dev/zero | tr '\000' x
         printf '{{terminator}}'
@@ -421,7 +421,7 @@ public sealed class GalateaDelegateSidecarTests {
             1,
             (maximumFrameUtf8Bytes - 1024) / 6
         );
-        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client(
             maximumFrameUtf8Bytes: maximumFrameUtf8Bytes,
             maximumBodyUtf8Bytes: maximumBody
         );
@@ -437,7 +437,7 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task ReadyAcceptedAndCompletedPreserveUnicodeAndRouteEnvironment() {
-        using var fixture = new Fixture(
+        using var fixture = new GalateaSidecarProcessFixture(
             $$"""
             printf '%s\n' '{"v":1,"type":"ready"}'
             printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
@@ -462,7 +462,7 @@ public sealed class GalateaDelegateSidecarTests {
         );
         // Replace symbolic fixture paths after the temp root exists.
         fixture.RewritePlaceholders();
-        await using GalateaCodexSidecarClient client = fixture.CreateClient();
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client();
 
         GalateaDelegateAcceptedHandle accepted = await client.StartAsync(
             new GalateaDelegateDispatchRequest(
@@ -497,10 +497,10 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task CorrelatedFailureBeforeAcceptThrowsStableStartFailure() {
-        using var fixture = new Fixture(CommonPrefix + "\n" + """
+        using var fixture = new GalateaSidecarProcessFixture(CommonPrefix + "\n" + """
         printf '{"v":1,"type":"failed","requestId":"%s","dispatchId":"%s","stage":"start","code":"START_OUTCOME_UNKNOWN"}\n' "$request_id" "$dispatch_id"
         """);
-        await using GalateaCodexSidecarClient client = fixture.CreateClient();
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client();
 
         GalateaDelegateStartException failure = await Assert.ThrowsAsync<
             GalateaDelegateStartException>(() => client.StartAsync(
@@ -514,11 +514,11 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task CorrelatedFailureAfterAcceptCompletesTerminalFailure() {
-        using var fixture = new Fixture(CommonPrefix + "\n" + """
+        using var fixture = new GalateaSidecarProcessFixture(CommonPrefix + "\n" + """
         printf '{"v":1,"type":"accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-1","turnId":"turn-1"}\n' "$request_id" "$dispatch_id"
         printf '{"v":1,"type":"failed","requestId":"%s","dispatchId":"%s","threadId":"thread-1","turnId":"turn-1","stage":"turn","code":"TURN_FAILED"}\n' "$request_id" "$dispatch_id"
         """);
-        await using GalateaCodexSidecarClient client = fixture.CreateClient();
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client();
 
         GalateaDelegateAcceptedHandle accepted = await client.StartAsync(
             Request("dispatch-terminal-failure"),
@@ -533,7 +533,7 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task ConcurrentDuplicateDispatchCoalescesWithoutSecondFrame() {
-        using var fixture = new Fixture(
+        using var fixture = new GalateaSidecarProcessFixture(
             $$"""
             printf '%s\n' '{"v":1,"type":"ready"}'
             IFS= read -r line
@@ -549,7 +549,7 @@ public sealed class GalateaDelegateSidecarTests {
             """
         );
         fixture.RewritePlaceholders();
-        await using GalateaCodexSidecarClient client = fixture.CreateClient();
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client();
 
         Task<GalateaDelegateAcceptedHandle> first = client.StartAsync(
             Request("dispatch-coalesce"),
@@ -572,7 +572,7 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task RequestLevelProtocolRejectionDoesNotKillGeneration() {
-        using var fixture = new Fixture("""
+        using var fixture = new GalateaSidecarProcessFixture("""
         printf '%s\n' '{"v":1,"type":"ready"}'
         IFS= read -r first
         first_request=$(printf '%s' "$first" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
@@ -584,7 +584,7 @@ public sealed class GalateaDelegateSidecarTests {
         printf '{"v":1,"type":"completed","dispatchId":"%s","threadId":"thread-1","turnId":"turn-2","final":"still alive"}\n' "$second_dispatch"
         while IFS= read -r ignored; do :; done
         """);
-        await using GalateaCodexSidecarClient client = fixture.CreateClient();
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client();
 
         GalateaDelegateStartException rejected = await Assert.ThrowsAsync<
             GalateaDelegateStartException>(() => client.StartAsync(
@@ -606,11 +606,11 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task ExitAfterAcceptMapsUnknownOutcomeToTerminalFailure() {
-        using var fixture = new Fixture(CommonPrefix + "\n" + """
+        using var fixture = new GalateaSidecarProcessFixture(CommonPrefix + "\n" + """
         printf '{"v":1,"type":"accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-1","turnId":"turn-1"}\n' "$request_id" "$dispatch_id"
         exit 7
         """);
-        await using GalateaCodexSidecarClient client = fixture.CreateClient();
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client();
 
         GalateaDelegateAcceptedHandle accepted = await client.StartAsync(
             Request("dispatch-exit"),
@@ -625,7 +625,7 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task MalformedGenerationFailsAndNextRequestStartsFreshGeneration() {
-        using var fixture = new Fixture(
+        using var fixture = new GalateaSidecarProcessFixture(
             $$"""
             count=0
             if [ -f {{ShellQuote(fixturePath: "COUNT")}} ]; then
@@ -648,7 +648,7 @@ public sealed class GalateaDelegateSidecarTests {
             """
         );
         fixture.RewritePlaceholders();
-        await using GalateaCodexSidecarClient client = fixture.CreateClient();
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client();
 
         GalateaDelegateStartException first = await Assert.ThrowsAsync<
             GalateaDelegateStartException>(() => client.StartAsync(
@@ -670,7 +670,7 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task ReapUnconfirmedFaultsBarrierAndPermanentlyBlocksRestart() {
-        using var fixture = new Fixture(
+        using var fixture = new GalateaSidecarProcessFixture(
             $$"""
             printf '%s\n' "$$" >> {{ShellQuote(fixturePath: "COUNT")}}
             printf '%s\n' '{"v":1,"type":"ready"}'
@@ -687,7 +687,7 @@ public sealed class GalateaDelegateSidecarTests {
                 return Task.FromResult(false);
             }
         );
-        GalateaCodexSidecarClient client = fixture.CreateClient(
+        GalateaCodexSidecarClient client = fixture.CreateV1Client(
             processHooks: hooks
         );
 
@@ -718,13 +718,13 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task OversizeStdoutFrameIsProtocolFatal() {
-        using var fixture = new Fixture("""
+        using var fixture = new GalateaSidecarProcessFixture("""
         printf '%s\n' '{"v":1,"type":"ready"}'
         head -c 70000 /dev/zero | tr '\000' x
         printf '\n'
         sleep 5
         """);
-        await using GalateaCodexSidecarClient client = fixture.CreateClient();
+        await using GalateaCodexSidecarClient client = fixture.CreateV1Client();
 
         GalateaDelegateStartException failure = await Assert.ThrowsAsync<
             GalateaDelegateStartException>(() => client.StartAsync(
@@ -737,11 +737,11 @@ public sealed class GalateaDelegateSidecarTests {
 
     [Fact]
     public async Task DisposeClosesThenKillsBoundedProcessTreeAndFailsTerminal() {
-        using var fixture = new Fixture(CommonPrefix + "\n" + """
+        using var fixture = new GalateaSidecarProcessFixture(CommonPrefix + "\n" + """
         printf '{"v":1,"type":"accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-1","turnId":"turn-1"}\n' "$request_id" "$dispatch_id"
         sleep 30
         """);
-        GalateaCodexSidecarClient client = fixture.CreateClient();
+        GalateaCodexSidecarClient client = fixture.CreateV1Client();
         GalateaDelegateAcceptedHandle accepted = await client.StartAsync(
             Request("dispatch-dispose"),
             CancellationToken.None
@@ -790,92 +790,5 @@ public sealed class GalateaDelegateSidecarTests {
     }
 
     private static string ShellQuote(string fixturePath) =>
-        $"'__{fixturePath}_PATH__'";
-
-    private sealed class Fixture : IDisposable {
-        private readonly string _scriptTemplate;
-
-        internal Fixture(string script) {
-            Root = Path.Combine(
-                Path.GetTempPath(),
-                "atelia-galatea-sidecar-tests",
-                Guid.NewGuid().ToString("N")
-            );
-            Directory.CreateDirectory(Root);
-            ScriptPath = Path.Combine(Root, "fake-sidecar.sh");
-            EnvironmentPath = Path.Combine(Root, "environment.txt");
-            InputPath = Path.Combine(Root, "input.jsonl");
-            CountPath = Path.Combine(Root, "count.txt");
-            _scriptTemplate = "#!/usr/bin/dash\nset -eu\n" + script + "\n";
-            RewritePlaceholders();
-        }
-
-        internal string Root { get; }
-        private string ScriptPath { get; }
-        internal string EnvironmentPath { get; }
-        internal string InputPath { get; }
-        internal string CountPath { get; }
-
-        internal void RewritePlaceholders() {
-            string script = _scriptTemplate
-                .Replace("__ENV_PATH__", EnvironmentPath,
-                    StringComparison.Ordinal)
-                .Replace("__INPUT_PATH__", InputPath,
-                    StringComparison.Ordinal)
-                .Replace("__COUNT_PATH__", CountPath,
-                    StringComparison.Ordinal);
-            File.WriteAllText(ScriptPath, script);
-        }
-
-        internal GalateaCodexSidecarClient CreateClient(
-            int rpcTimeoutMs = 2_000,
-            int maximumFrameUtf8Bytes = 65_536,
-            int maximumBodyUtf8Bytes = 8_000,
-            GalateaSidecarProcessTestHooks? processHooks = null
-        ) {
-            var config = new GalateaDelegateConfig(
-                new GalateaDelegateSidecarConfig(
-                    "/usr/bin/dash",
-                    ScriptPath,
-                    "/usr/bin/true",
-                    RpcTimeoutMs: rpcTimeoutMs,
-                    TurnTimeoutMs: 2_000,
-                    ShutdownGraceMs: 100,
-                    MaximumFrameUtf8Bytes: maximumFrameUtf8Bytes
-                ),
-                [Root],
-                [new GalateaDelegateRouteConfig(
-                    "Codex",
-                    "codex-app-server",
-                    Root,
-                    GalateaDelegateMode.Work,
-                    LocalCommandNetwork: false,
-                    Tools: new GalateaDelegateToolConfig(
-                        GalateaDelegateWebSearchMode.Live,
-                        ImageGeneration: true,
-                        ViewImage: true
-                    ),
-                    MaximumQueuedMails: 16,
-                    MaximumTaskUtf8Bytes: maximumBodyUtf8Bytes,
-                    MaximumReplyUtf8Bytes: maximumBodyUtf8Bytes,
-                    MaximumInboxReplies: 16,
-                    MaximumInboxUtf8Bytes: Math.Max(
-                        GalateaPlayerObservationEnvelope
-                            .MaximumFailureUtf8Bytes,
-                        Math.Max(
-                            maximumFrameUtf8Bytes,
-                            maximumBodyUtf8Bytes
-                        )
-                    )
-                )]
-            );
-            return new GalateaCodexSidecarClient(config, processHooks);
-        }
-
-        public void Dispose() {
-            if (Directory.Exists(Root)) {
-                Directory.Delete(Root, recursive: true);
-            }
-        }
-    }
+        GalateaSidecarProcessFixture.ShellQuote(fixturePath);
 }

@@ -1,9 +1,7 @@
-using System.Buffers;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 using Atelia.Diagnostics;
 
 namespace Atelia.Galatea.Server;
@@ -42,15 +40,14 @@ internal abstract record GalateaDelegateTerminal(
     ) : GalateaDelegateTerminal(DispatchId, ThreadId, TurnId);
 }
 
-internal sealed class GalateaDelegateStartException : Exception {
+internal sealed class GalateaDelegateStartException
+    : GalateaSidecarOperationException {
     internal GalateaDelegateStartException(string stage, string code)
-        : base($"Galatea delegate sidecar rejected dispatch at {stage}: {code}.") {
-        Stage = stage;
-        Code = code;
-    }
-
-    internal string Stage { get; }
-    internal string Code { get; }
+        : base(
+            $"Galatea delegate sidecar rejected dispatch at {stage}: {code}.",
+            stage,
+            code
+        ) { }
 }
 
 internal interface IGalateaDelegateSidecar : IAsyncDisposable {
@@ -60,77 +57,40 @@ internal interface IGalateaDelegateSidecar : IAsyncDisposable {
     );
 }
 
-internal sealed record GalateaSidecarProcessTestHooks(
-    Func<Process, TimeSpan, Task<bool>>? WaitForExitBoundedAsync = null
-);
-
 internal sealed partial class GalateaCodexSidecarClient
-    : IGalateaDelegateSidecar {
+    : GalateaSidecarProcessClientBase, IGalateaDelegateSidecar {
     private const int ProtocolVersion = 1;
     private const int MaximumDispatchTombstones = 4_096;
-    private const int DefaultInterruptGraceMs = 2_000;
-    private const int SidecarOutputWriteTimeoutMs = 10_000;
-    private const int ReadyStartupMarginMs = 5_000;
     private const int AcceptanceStartupMarginMs = 5_000;
-    private const string LogCategory = "Galatea.DelegateSidecar";
-    private static readonly HashSet<string> ParentCodexContextKeys = new(
-        StringComparer.Ordinal
-    ) {
-        "CODEX_SESSION_ID",
-        "CODEX_THREAD_ID",
-        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
-        "CODEX_PERMISSION_PROFILE",
-        "CODEX_CI"
-    };
-    private static readonly UTF8Encoding StrictUtf8 = new(
-        encoderShouldEmitUTF8Identifier: false,
-        throwOnInvalidBytes: true
-    );
     private static readonly JsonSerializerOptions WireJson = new() {
         PropertyNamingPolicy = null,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    private readonly object _stateGate = new();
-    private readonly GalateaDelegateConfig _config;
-    private readonly GalateaDelegateRouteConfig _route;
-    private readonly GalateaSidecarProcessTestHooks? _processHooks;
     private readonly HashSet<string> _dispatchTombstones = new(
         StringComparer.Ordinal
     );
-    private Generation? _generation;
-    private Task _restartBarrier = Task.CompletedTask;
-    private Task? _disposeTask;
-    private bool _disposed;
-    private int _nextGeneration;
+    private readonly object _dispatchGate = new();
 
     internal GalateaCodexSidecarClient(
         GalateaDelegateConfig config,
         GalateaSidecarProcessTestHooks? processHooks = null
-    ) {
-        _config = GalateaDelegateConfigReader.Validate(config);
-        _route = _config.CodexRoute;
-        _processHooks = processHooks;
-    }
+    ) : base(config, processHooks) { }
 
     internal bool HasStartedProcessForTest {
         get {
-            lock (_stateGate) {
-                return _nextGeneration != 0;
-            }
+            return HasStartedProcess;
         }
     }
 
     internal int GenerationCountForTest {
         get {
-            lock (_stateGate) {
-                return _nextGeneration;
-            }
+            return GenerationCount;
         }
     }
 
     private DispatchClaim TryClaimDispatchForWrite(string dispatchId) {
-        lock (_stateGate) {
+        lock (_dispatchGate) {
             if (_dispatchTombstones.Contains(dispatchId)) {
                 return DispatchClaim.Duplicate;
             }
@@ -150,124 +110,14 @@ internal sealed partial class GalateaCodexSidecarClient
         ValidateRequest(request);
         ct.ThrowIfCancellationRequested();
 
-        Generation generation = await GetReadyGenerationAsync(ct)
+        Generation generation = (Generation)await GetReadyGenerationAsync(ct)
             .ConfigureAwait(false);
         return await generation.DispatchAsync(request, ct)
             .ConfigureAwait(false);
     }
 
-    public ValueTask DisposeAsync() {
-        lock (_stateGate) {
-            _disposeTask ??= DisposeCoreAsync();
-            return new ValueTask(_disposeTask);
-        }
-    }
-
-    private async Task<Generation> GetReadyGenerationAsync(
-        CancellationToken ct
-    ) {
-        while (true) {
-            Generation? generation;
-            Task barrier;
-            lock (_stateGate) {
-                ObjectDisposedException.ThrowIf(_disposed, this);
-                generation = _generation;
-                barrier = _restartBarrier;
-                if (generation is null
-                    && barrier.Status == TaskStatus.RanToCompletion) {
-                    generation = new Generation(
-                        this,
-                        checked(++_nextGeneration),
-                        CreateStartInfo()
-                    );
-                    _generation = generation;
-                    try {
-                        generation.Start();
-                    }
-                    catch {
-                        _generation = null;
-                        throw;
-                    }
-                }
-            }
-            if (generation is null) {
-                await AwaitRestartBarrierAsync(barrier, ct)
-                    .ConfigureAwait(false);
-                continue;
-            }
-            try {
-                await generation.Ready.Task.WaitAsync(
-                        ComputeReadyDeadline(
-                            _config.Sidecar.RpcTimeoutMs
-                        ),
-                        ct
-                    )
-                    .ConfigureAwait(false);
-                Task? staleBarrier = null;
-                lock (_stateGate) {
-                    if (!ReferenceEquals(_generation, generation)
-                        || generation.IsFailed) {
-                        staleBarrier = _restartBarrier;
-                    }
-                }
-                if (staleBarrier is not null) {
-                    await staleBarrier.WaitAsync(ct).ConfigureAwait(false);
-                    continue;
-                }
-                return generation;
-            }
-            catch (TimeoutException) {
-                FailGeneration(
-                    generation,
-                    "protocol",
-                    "SIDECAR_READY_TIMEOUT",
-                    graceful: false
-                );
-                await generation.CleanupTask.ConfigureAwait(false);
-                throw new GalateaDelegateStartException(
-                    "protocol",
-                    "SIDECAR_READY_TIMEOUT"
-                );
-            }
-        }
-    }
-
-    private static async Task AwaitRestartBarrierAsync(
-        Task barrier,
-        CancellationToken ct
-    ) {
-        try {
-            await barrier.WaitAsync(ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) {
-            throw;
-        }
-        catch (GalateaDelegateStartException exception) when (
-            string.Equals(
-                exception.Code,
-                "SIDECAR_REAP_UNCONFIRMED",
-                StringComparison.Ordinal
-            )) {
-            throw;
-        }
-        catch (Exception exception) when (
-            GalateaExceptionClassifier.IsNonFatal(exception)) {
-            throw new GalateaDelegateStartException(
-                "shutdown",
-                "SIDECAR_REAP_UNCONFIRMED"
-            );
-        }
-    }
-
-    internal static TimeSpan ComputeReadyDeadline(int rpcTimeoutMs) {
-        if (rpcTimeoutMs is < 100 or > 300_000) {
-            throw new ArgumentOutOfRangeException(nameof(rpcTimeoutMs));
-        }
-        long milliseconds = checked(
-            2L * rpcTimeoutMs + ReadyStartupMarginMs
-        );
-        return TimeSpan.FromMilliseconds(milliseconds);
-    }
+    internal static new TimeSpan ComputeReadyDeadline(int rpcTimeoutMs) =>
+        GalateaSidecarProcessClientBase.ComputeReadyDeadline(rpcTimeoutMs);
 
     internal static TimeSpan ComputeAcceptanceDeadline(int rpcTimeoutMs) {
         if (rpcTimeoutMs is < 100 or > 300_000) {
@@ -279,101 +129,6 @@ internal sealed partial class GalateaCodexSidecarClient
         return TimeSpan.FromMilliseconds(milliseconds);
     }
 
-    private ProcessStartInfo CreateStartInfo() {
-        GalateaDelegateSidecarConfig sidecar = _config.Sidecar;
-        var startInfo = new ProcessStartInfo {
-            FileName = sidecar.NodeCommand,
-            WorkingDirectory = _route.Cwd,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-        startInfo.ArgumentList.Add(sidecar.EntryPoint);
-        ConfigureSidecarEnvironment(startInfo.Environment);
-        return startInfo;
-    }
-
-    private void ConfigureSidecarEnvironment(
-        IDictionary<string, string?> environment
-    ) {
-        GalateaDelegateSidecarConfig sidecar = _config.Sidecar;
-        foreach (string inherited in environment.Keys
-                     .Where(static key =>
-                         key.StartsWith(
-                             "CODEX_BRIDGE_",
-                             StringComparison.Ordinal
-                         )
-                         || key.StartsWith(
-                             "GALATEA_CODEX_",
-                             StringComparison.Ordinal
-                         )
-                         || ParentCodexContextKeys.Contains(key))
-                     .ToArray()) {
-            environment.Remove(inherited);
-        }
-        environment["CODEX_BRIDGE_TRANSPORT"] = "stdio";
-        environment["CODEX_BRIDGE_HTTP_HOST"] = "127.0.0.1";
-        environment["CODEX_BRIDGE_HTTP_PORT"] = "3000";
-        environment["CODEX_BRIDGE_ALLOW_INSECURE_HTTP"] = "false";
-        environment["CODEX_BRIDGE_ALLOWED_ROOTS"] =
-            JsonSerializer.Serialize(_config.AllowedRoots);
-        environment["CODEX_BRIDGE_DEFAULT_CWD"] = _route.Cwd;
-        environment["CODEX_BRIDGE_CODEX_COMMAND"] =
-            sidecar.CodexCommand;
-        environment["CODEX_BRIDGE_CODEX_ARGS"] =
-            "[\"app-server\",\"--listen\",\"stdio://\",\"-c\","
-            + "\"mcp_servers={}\",\"-c\",\"features.apps=false\"]";
-        environment["CODEX_BRIDGE_DEFAULT_WAIT_MS"] = "0";
-        environment["CODEX_BRIDGE_MAX_WAIT_MS"] = "60000";
-        environment["CODEX_BRIDGE_RPC_TIMEOUT_MS"] =
-            sidecar.RpcTimeoutMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        environment["CODEX_BRIDGE_MAX_RESULT_CHARS"] = "12000";
-        environment["CODEX_BRIDGE_MAX_PROGRESS_CHARS"] = "2000";
-        environment["CODEX_BRIDGE_VERBOSE"] = "false";
-        environment["GALATEA_CODEX_MODE"] =
-            _route.Mode == GalateaDelegateMode.Work ? "work" : "research";
-        environment["GALATEA_CODEX_LOCAL_COMMAND_NETWORK"] =
-            _route.LocalCommandNetwork ? "true" : "false";
-        environment["GALATEA_CODEX_WEB_SEARCH"] =
-            _route.Tools.WebSearch switch {
-                GalateaDelegateWebSearchMode.Disabled => "disabled",
-                GalateaDelegateWebSearchMode.Cached => "cached",
-                GalateaDelegateWebSearchMode.Indexed => "indexed",
-                GalateaDelegateWebSearchMode.Live => "live",
-                _ => throw new InvalidOperationException(
-                    "Galatea delegate web-search mode is invalid."
-                )
-            };
-        environment["GALATEA_CODEX_IMAGE_GENERATION"] =
-            _route.Tools.ImageGeneration ? "true" : "false";
-        environment["GALATEA_CODEX_VIEW_IMAGE"] =
-            _route.Tools.ViewImage ? "true" : "false";
-        environment["GALATEA_CODEX_TURN_DEADLINE_MS"] =
-            sidecar.TurnTimeoutMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        environment["GALATEA_CODEX_INTERRUPT_GRACE_MS"] =
-            DefaultInterruptGraceMs.ToString(
-                System.Globalization.CultureInfo.InvariantCulture
-            );
-        environment["GALATEA_CODEX_MAX_INPUT_FRAME_BYTES"] =
-            sidecar.MaximumFrameUtf8Bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        environment["GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES"] =
-            sidecar.MaximumFrameUtf8Bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        environment["GALATEA_CODEX_MAX_TASK_BYTES"] =
-            _route.MaximumTaskUtf8Bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        environment["GALATEA_CODEX_MAX_FINAL_BYTES"] =
-            _route.MaximumReplyUtf8Bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        environment["GALATEA_CODEX_MAX_DISPATCH_TOMBSTONES"] =
-            MaximumDispatchTombstones.ToString(
-                System.Globalization.CultureInfo.InvariantCulture
-            );
-        environment["GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS"] =
-            SidecarOutputWriteTimeoutMs.ToString(
-                System.Globalization.CultureInfo.InvariantCulture
-            );
-    }
-
     internal ProcessStartInfo CreateStartInfoForTest() => CreateStartInfo();
 
     internal void ConfigureSidecarEnvironmentForTest(
@@ -381,9 +136,15 @@ internal sealed partial class GalateaCodexSidecarClient
     ) => ConfigureSidecarEnvironment(environment);
 
     private void ValidateRequest(GalateaDelegateDispatchRequest request) {
-        RequireIdentifier(request.DispatchId, nameof(request.DispatchId));
+        GalateaSidecarWire.RequireIdentifier(
+            request.DispatchId,
+            nameof(request.DispatchId)
+        );
         if (request.ThreadId is not null) {
-            RequireIdentifier(request.ThreadId, nameof(request.ThreadId));
+            GalateaSidecarWire.RequireIdentifier(
+                request.ThreadId,
+                nameof(request.ThreadId)
+            );
         }
         if (string.IsNullOrWhiteSpace(request.Body)) {
             throw new ArgumentException(
@@ -393,7 +154,7 @@ internal sealed partial class GalateaCodexSidecarClient
         }
         int bytes;
         try {
-            bytes = StrictUtf8.GetByteCount(request.Body);
+            bytes = GalateaSidecarWire.StrictUtf8.GetByteCount(request.Body);
         }
         catch (EncoderFallbackException exception) {
             throw new ArgumentException(
@@ -402,7 +163,7 @@ internal sealed partial class GalateaCodexSidecarClient
                 exception
             );
         }
-        if (bytes > _route.MaximumTaskUtf8Bytes) {
+        if (bytes > Route.MaximumTaskUtf8Bytes) {
             throw new ArgumentException(
                 "Delegate task body exceeds its UTF-8 byte limit.",
                 nameof(request)
@@ -410,79 +171,11 @@ internal sealed partial class GalateaCodexSidecarClient
         }
     }
 
-    private static void RequireIdentifier(string value, string parameter) {
-        if (string.IsNullOrEmpty(value)
-            || StrictUtf8.GetByteCount(value) > 200
-            || !IdentifierRegex().IsMatch(value)) {
-            throw new ArgumentException(
-                "Delegate identifiers must match [A-Za-z0-9][A-Za-z0-9._:-]* "
-                + "and fit 200 UTF-8 bytes.",
-                parameter
-            );
-        }
-    }
-
-    private void FailGeneration(
-        Generation generation,
-        string stage,
-        string code,
-        bool graceful
+    internal override void ProcessFrame(
+        GalateaSidecarProcessGeneration processGeneration,
+        byte[] line
     ) {
-        Task cleanup;
-        lock (_stateGate) {
-            if (!generation.TryMarkFailure(stage, code)) {
-                return;
-            }
-            cleanup = generation.TerminateAsync(graceful);
-            generation.CleanupTask = cleanup;
-            if (ReferenceEquals(_generation, generation)) {
-                _generation = null;
-                _restartBarrier = cleanup;
-            }
-        }
-        generation.CompleteFailure(stage, code);
-        _ = cleanup.ContinueWith(
-            static task => _ = task.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted
-                | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default
-        );
-        DebugUtil.Warning(
-            LogCategory,
-            $"Sidecar generation failed: generation={generation.Id}, "
-            + $"stage={stage}, code={code}."
-        );
-    }
-
-    private async Task DisposeCoreAsync() {
-        Generation? generation;
-        Task barrier;
-        lock (_stateGate) {
-            if (_disposed) {
-                generation = null;
-                barrier = _restartBarrier;
-            }
-            else {
-                _disposed = true;
-                generation = _generation;
-                _generation = null;
-                barrier = _restartBarrier;
-            }
-        }
-        if (generation is not null) {
-            FailGeneration(
-                generation,
-                "shutdown",
-                "SIDECAR_DISPOSED",
-                graceful: true
-            );
-            await generation.CleanupTask.ConfigureAwait(false);
-        }
-        await barrier.ConfigureAwait(false);
-    }
-
-    private void ProcessFrame(Generation generation, byte[] line) {
+        var generation = (Generation)processGeneration;
         try {
             using JsonDocument document = JsonDocument.Parse(line, new() {
                 AllowTrailingCommas = false,
@@ -491,9 +184,15 @@ internal sealed partial class GalateaCodexSidecarClient
             });
             JsonElement root = document.RootElement;
             Dictionary<string, JsonElement> properties =
-                ReadStrictProperties(root);
-            RequireProtocolVersion(properties);
-            string type = RequireString(properties, "type");
+                GalateaSidecarWire.ReadStrictProperties(root);
+            GalateaSidecarWire.RequireProtocolVersion(
+                properties,
+                ProtocolVersion
+            );
+            string type = GalateaSidecarWire.RequireString(
+                properties,
+                "type"
+            );
             if (!string.Equals(type, "ready", StringComparison.Ordinal)
                 && !generation.IsReady) {
                 throw new InvalidDataException(
@@ -502,7 +201,10 @@ internal sealed partial class GalateaCodexSidecarClient
             }
             switch (type) {
                 case "ready":
-                    RequireExactKeys(properties, ["v", "type"]);
+                    GalateaSidecarWire.RequireExactKeys(
+                        properties,
+                        ["v", "type"]
+                    );
                     if (!generation.TrySetReady()) {
                         throw new InvalidDataException(
                             "Sidecar sent ready more than once."
@@ -516,19 +218,29 @@ internal sealed partial class GalateaCodexSidecarClient
                     );
                     break;
                 case "accepted":
-                    RequireExactKeys(properties, [
+                    GalateaSidecarWire.RequireExactKeys(properties, [
                         "v", "type", "requestId", "dispatchId",
                         "threadId", "turnId"
                     ]);
-                    string acceptedDispatchId = RequireWireIdentifier(
+                    string acceptedDispatchId = GalateaSidecarWire
+                        .RequireIdentifier(
                         properties,
                         "dispatchId"
                     );
                     generation.Accept(
-                        RequireWireIdentifier(properties, "requestId"),
+                        GalateaSidecarWire.RequireIdentifier(
+                            properties,
+                            "requestId"
+                        ),
                         acceptedDispatchId,
-                        RequireWireIdentifier(properties, "threadId"),
-                        RequireWireIdentifier(properties, "turnId")
+                        GalateaSidecarWire.RequireIdentifier(
+                            properties,
+                            "threadId"
+                        ),
+                        GalateaSidecarWire.RequireIdentifier(
+                            properties,
+                            "turnId"
+                        )
                     );
                     DebugUtil.Info(
                         LogCategory,
@@ -538,26 +250,37 @@ internal sealed partial class GalateaCodexSidecarClient
                     );
                     break;
                 case "completed":
-                    RequireExactKeys(properties, [
+                    GalateaSidecarWire.RequireExactKeys(properties, [
                         "v", "type", "dispatchId", "threadId", "turnId",
                         "final"
                     ]);
-                    string final = RequireString(properties, "final");
-                    int finalBytes = StrictUtf8.GetByteCount(final);
+                    string final = GalateaSidecarWire.RequireString(
+                        properties,
+                        "final"
+                    );
+                    int finalBytes = GalateaSidecarWire.StrictUtf8
+                        .GetByteCount(final);
                     if (finalBytes == 0
-                        || finalBytes > _route.MaximumReplyUtf8Bytes) {
+                        || finalBytes > Route.MaximumReplyUtf8Bytes) {
                         throw new InvalidDataException(
                             "Sidecar completed final violates its UTF-8 bound."
                         );
                     }
-                    string completedDispatchId = RequireWireIdentifier(
+                    string completedDispatchId = GalateaSidecarWire
+                        .RequireIdentifier(
                         properties,
                         "dispatchId"
                     );
                     generation.Complete(
                         completedDispatchId,
-                        RequireWireIdentifier(properties, "threadId"),
-                        RequireWireIdentifier(properties, "turnId"),
+                        GalateaSidecarWire.RequireIdentifier(
+                            properties,
+                            "threadId"
+                        ),
+                        GalateaSidecarWire.RequireIdentifier(
+                            properties,
+                            "turnId"
+                        ),
                         final
                     );
                     DebugUtil.Info(
@@ -594,20 +317,35 @@ internal sealed partial class GalateaCodexSidecarClient
         Generation generation,
         Dictionary<string, JsonElement> properties
     ) {
-        RequireAllowedKeys(properties, [
+        GalateaSidecarWire.RequireAllowedKeys(properties, [
             "v", "type", "requestId", "dispatchId", "threadId",
             "turnId", "stage", "code"
         ]);
-        RequirePresent(properties, ["v", "type", "stage", "code"]);
-        string stage = RequireString(properties, "stage");
+        GalateaSidecarWire.RequirePresent(
+            properties,
+            ["v", "type", "stage", "code"]
+        );
+        string stage = GalateaSidecarWire.RequireString(properties, "stage");
         if (stage is not ("protocol" or "start" or "turn" or "shutdown")) {
             throw new InvalidDataException("Sidecar failure stage is invalid.");
         }
-        string code = RequireWireIdentifier(properties, "code");
-        string? requestId = OptionalWireIdentifier(properties, "requestId");
-        string? dispatchId = OptionalWireIdentifier(properties, "dispatchId");
-        string? threadId = OptionalWireIdentifier(properties, "threadId");
-        string? turnId = OptionalWireIdentifier(properties, "turnId");
+        string code = GalateaSidecarWire.RequireIdentifier(properties, "code");
+        string? requestId = GalateaSidecarWire.OptionalIdentifier(
+            properties,
+            "requestId"
+        );
+        string? dispatchId = GalateaSidecarWire.OptionalIdentifier(
+            properties,
+            "dispatchId"
+        );
+        string? threadId = GalateaSidecarWire.OptionalIdentifier(
+            properties,
+            "threadId"
+        );
+        string? turnId = GalateaSidecarWire.OptionalIdentifier(
+            properties,
+            "turnId"
+        );
         if (!generation.FailCorrelated(
                 requestId,
                 dispatchId,
@@ -630,170 +368,30 @@ internal sealed partial class GalateaCodexSidecarClient
         );
     }
 
-    private static Dictionary<string, JsonElement> ReadStrictProperties(
-        JsonElement root
-    ) {
-        if (root.ValueKind != JsonValueKind.Object) {
-            throw new InvalidDataException("Sidecar frame must be an object.");
-        }
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        foreach (JsonProperty property in root.EnumerateObject()) {
-            if (!seen.Add(property.Name)) {
-                throw new InvalidDataException(
-                    "Sidecar frame contains duplicate properties."
-                );
-            }
-            result.Add(property.Name, property.Value);
-        }
-        return result;
-    }
+    protected override GalateaSidecarProcessGeneration CreateGeneration(
+        int id,
+        ProcessStartInfo startInfo
+    ) => new Generation(this, id, startInfo);
 
-    private static void RequireProtocolVersion(
-        Dictionary<string, JsonElement> properties
-    ) {
-        if (!properties.TryGetValue("v", out JsonElement version)
-            || !version.TryGetInt32(out int value)
-            || value != ProtocolVersion) {
-            throw new InvalidDataException(
-                "Sidecar frame has an unsupported protocol version."
-            );
-        }
-    }
+    protected override Exception CreateFailureException(
+        string stage,
+        string code
+    ) => new GalateaDelegateStartException(stage, code);
 
-    private static string RequireString(
-        Dictionary<string, JsonElement> properties,
-        string name
-    ) {
-        if (!properties.TryGetValue(name, out JsonElement element)
-            || element.ValueKind != JsonValueKind.String) {
-            throw new InvalidDataException(
-                $"Sidecar frame requires string '{name}'."
-            );
-        }
-        return element.GetString()
-            ?? throw new InvalidDataException(
-                $"Sidecar frame string '{name}' is null."
-            );
-    }
-
-    private static string RequireWireIdentifier(
-        Dictionary<string, JsonElement> properties,
-        string name
-    ) {
-        string value = RequireString(properties, name);
-        try {
-            RequireIdentifier(value, name);
-            return value;
-        }
-        catch (ArgumentException exception) {
-            throw new InvalidDataException(
-                $"Sidecar frame identifier '{name}' is invalid.",
-                exception
-            );
-        }
-    }
-
-    private static string? OptionalWireIdentifier(
-        Dictionary<string, JsonElement> properties,
-        string name
-    ) => properties.ContainsKey(name)
-        ? RequireWireIdentifier(properties, name)
-        : null;
-
-    private static void RequireExactKeys(
-        Dictionary<string, JsonElement> properties,
-        IReadOnlyList<string> expected
-    ) {
-        if (properties.Count != expected.Count
-            || expected.Any(key => !properties.ContainsKey(key))) {
-            throw new InvalidDataException(
-                "Sidecar frame has missing or unknown properties."
-            );
-        }
-    }
-
-    private static void RequireAllowedKeys(
-        Dictionary<string, JsonElement> properties,
-        IReadOnlyList<string> allowed
-    ) {
-        var set = new HashSet<string>(allowed, StringComparer.Ordinal);
-        if (properties.Keys.Any(key => !set.Contains(key))) {
-            throw new InvalidDataException(
-                "Sidecar frame has an unknown property."
-            );
-        }
-    }
-
-    private static void RequirePresent(
-        Dictionary<string, JsonElement> properties,
-        IReadOnlyList<string> required
-    ) {
-        if (required.Any(key => !properties.ContainsKey(key))) {
-            throw new InvalidDataException(
-                "Sidecar frame is missing a required property."
-            );
-        }
-    }
-
-    [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._:-]*$", RegexOptions.CultureInvariant)]
-    private static partial Regex IdentifierRegex();
-
-    private sealed class Generation {
+    private sealed class Generation : GalateaSidecarProcessGeneration {
         private readonly object _pendingGate = new();
         private readonly GalateaCodexSidecarClient _owner;
-        private readonly Process _process;
-        private readonly SemaphoreSlim _writeGate = new(1, 1);
         private readonly Dictionary<string, PendingDispatch> _byRequest =
             new(StringComparer.Ordinal);
         private readonly Dictionary<string, PendingDispatch> _byDispatch =
             new(StringComparer.Ordinal);
-        private int _failed;
-        private int _ready;
-        private string _failureStage = "protocol";
-        private string _failureCode = "SIDECAR_UNAVAILABLE";
 
         internal Generation(
             GalateaCodexSidecarClient owner,
             int id,
             ProcessStartInfo startInfo
-        ) {
+        ) : base(owner, id, startInfo) {
             _owner = owner;
-            Id = id;
-            _process = new Process {
-                StartInfo = startInfo,
-                EnableRaisingEvents = true
-            };
-        }
-
-        internal int Id { get; }
-        internal TaskCompletionSource Ready { get; } = new(
-            TaskCreationOptions.RunContinuationsAsynchronously
-        );
-        internal Task CleanupTask { get; set; } = Task.CompletedTask;
-        internal bool IsFailed => Volatile.Read(ref _failed) != 0;
-        internal bool IsReady => Volatile.Read(ref _ready) != 0;
-
-        internal void Start() {
-            try {
-                if (!_process.Start()) {
-                    throw new InvalidOperationException(
-                        "Galatea delegate sidecar process did not start."
-                    );
-                }
-            }
-            catch {
-                _process.Dispose();
-                throw;
-            }
-            Task stdout = ReadStdoutAsync();
-            _ = DrainStderrAsync();
-            _ = ObserveExitAsync(stdout);
-            DebugUtil.Info(
-                LogCategory,
-                $"Node sidecar process started: generation={Id}, pid={_process.Id}.",
-                eventKind: DebugEventKind.Start
-            );
         }
 
         internal async Task<GalateaDelegateAcceptedHandle> DispatchAsync(
@@ -804,7 +402,7 @@ internal sealed partial class GalateaCodexSidecarClient
             PendingDispatch pending;
             bool ownsWrite;
             lock (_pendingGate) {
-                if (Volatile.Read(ref _failed) != 0) {
+                if (IsFailed) {
                     throw CurrentFailure();
                 }
                 if (_byDispatch.TryGetValue(
@@ -849,7 +447,7 @@ internal sealed partial class GalateaCodexSidecarClient
                 try {
                     return await pending.Accepted.Task.WaitAsync(
                             TimeSpan.FromMilliseconds(
-                                _owner._config.Sidecar.RpcTimeoutMs
+                                _owner.ConfigForGeneration.Sidecar.RpcTimeoutMs
                             ),
                             ct
                         )
@@ -874,7 +472,8 @@ internal sealed partial class GalateaCodexSidecarClient
                 ),
                 WireJson
             );
-            if (frame.Length > _owner._config.Sidecar.MaximumFrameUtf8Bytes) {
+            if (frame.Length
+                > _owner.ConfigForGeneration.Sidecar.MaximumFrameUtf8Bytes) {
                 AbandonPending(
                     pending,
                     "protocol",
@@ -890,114 +489,57 @@ internal sealed partial class GalateaCodexSidecarClient
             );
             frame.CopyTo(framed, 0);
             framed[^1] = (byte)'\n';
-            using var deadline = new CancellationTokenSource(
-                TimeSpan.FromMilliseconds(
-                    _owner._config.Sidecar.RpcTimeoutMs
-                )
-            );
-            using var linked = CancellationTokenSource
-                .CreateLinkedTokenSource(ct, deadline.Token);
-            bool gateHeld = false;
-            bool writeStarted = false;
             try {
-                await _writeGate.WaitAsync(linked.Token)
-                    .ConfigureAwait(false);
-                gateHeld = true;
-                if (IsFailed) {
-                    AbandonPending(
-                        pending,
-                        _failureStage,
-                        _failureCode
-                    );
-                    throw CurrentFailure();
-                }
-                DispatchClaim claim = _owner.TryClaimDispatchForWrite(
-                    request.DispatchId
-                );
-                if (claim is not DispatchClaim.Claimed) {
-                    string code = claim == DispatchClaim.Duplicate
-                        ? "DUPLICATE_DISPATCH_ID"
-                        : "DISPATCH_CAPACITY_EXCEEDED";
-                    AbandonPending(pending, "protocol", code);
-                    throw new GalateaDelegateStartException(
-                        "protocol",
-                        code
-                    );
-                }
-                // From this point the kernel may have accepted any prefix of
-                // the frame. Every failure is outcome-unknown and the
-                // host-lifetime tombstone above permanently fences replay.
-                writeStarted = true;
-                Task write = _process.StandardInput.BaseStream.WriteAsync(
-                    framed,
-                    linked.Token
-                ).AsTask();
-                await AwaitHardBoundedAsync(write, linked.Token)
-                    .ConfigureAwait(false);
-                Task flush = _process.StandardInput.BaseStream.FlushAsync(
-                    linked.Token
-                );
-                await AwaitHardBoundedAsync(flush, linked.Token)
+                await WriteFrameAsync(
+                        framed,
+                        ct,
+                        () => {
+                            DispatchClaim claim = _owner
+                                .TryClaimDispatchForWrite(
+                                    request.DispatchId
+                                );
+                            if (claim is DispatchClaim.Claimed) {
+                                return;
+                            }
+                            string code = claim == DispatchClaim.Duplicate
+                                ? "DUPLICATE_DISPATCH_ID"
+                                : "DISPATCH_CAPACITY_EXCEEDED";
+                            AbandonPending(pending, "protocol", code);
+                            throw new GalateaDelegateStartException(
+                                "protocol",
+                                code
+                            );
+                        }
+                    )
                     .ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (!writeStarted) {
+            catch (OperationCanceledException) {
                 AbandonPending(
                     pending,
                     "protocol",
-                    ct.IsCancellationRequested
-                        ? "SIDECAR_WRITE_CANCELLED_BEFORE_START"
-                        : "SIDECAR_WRITE_GATE_TIMEOUT"
+                    "SIDECAR_WRITE_CANCELLED_BEFORE_START"
                 );
-                if (ct.IsCancellationRequested) {
-                    throw;
-                }
-                throw new GalateaDelegateStartException(
-                    "protocol",
-                    "SIDECAR_WRITE_GATE_TIMEOUT"
-                );
+                throw;
             }
-            catch (OperationCanceledException) when (writeStarted) {
-                _owner.FailGeneration(
-                    this,
-                    "protocol",
-                    "SIDECAR_WRITE_OUTCOME_UNKNOWN",
-                    graceful: false
-                );
+            catch (GalateaDelegateStartException exception) when (
+                exception.Code == "SIDECAR_WRITE_GATE_TIMEOUT") {
+                AbandonPending(pending, exception.Stage, exception.Code);
+                throw;
+            }
+            catch (GalateaDelegateStartException exception) when (
+                exception.Code is "SIDECAR_WRITE_OUTCOME_UNKNOWN"
+                    or "SIDECAR_WRITE_FAILED") {
                 ObserveAcceptedFault(pending);
-                throw new GalateaDelegateStartException(
-                    "protocol",
-                    "SIDECAR_WRITE_OUTCOME_UNKNOWN"
-                );
+                throw;
             }
-            catch (Exception exception) when (
-                exception is IOException
-                    or ObjectDisposedException
-                    or InvalidOperationException) {
-                _owner.FailGeneration(
-                    this,
-                    "protocol",
-                    writeStarted
-                        ? "SIDECAR_WRITE_OUTCOME_UNKNOWN"
-                        : "SIDECAR_WRITE_FAILED",
-                    graceful: false
-                );
+            catch (GalateaDelegateStartException) {
                 ObserveAcceptedFault(pending);
-                throw new GalateaDelegateStartException(
-                    "protocol",
-                    writeStarted
-                        ? "SIDECAR_WRITE_OUTCOME_UNKNOWN"
-                        : "SIDECAR_WRITE_FAILED"
-                );
-            }
-            finally {
-                if (gateHeld) {
-                    _writeGate.Release();
-                }
+                throw;
             }
             try {
                 return await pending.Accepted.Task.WaitAsync(
                         ComputeAcceptanceDeadline(
-                            _owner._config.Sidecar.RpcTimeoutMs
+                            _owner.ConfigForGeneration.Sidecar.RpcTimeoutMs
                         ),
                         ct
                     )
@@ -1007,7 +549,7 @@ internal sealed partial class GalateaCodexSidecarClient
                 exception is TimeoutException
                     || exception is OperationCanceledException
                         && ct.IsCancellationRequested) {
-                _owner.FailGeneration(
+                _owner.FailGenerationForGeneration(
                     this,
                     "protocol",
                     "SIDECAR_ACCEPTANCE_OUTCOME_UNKNOWN",
@@ -1019,15 +561,6 @@ internal sealed partial class GalateaCodexSidecarClient
                     "SIDECAR_ACCEPTANCE_OUTCOME_UNKNOWN"
                 );
             }
-        }
-
-        internal bool TrySetReady() {
-            if (Interlocked.Exchange(ref _ready, 1) != 0
-                || Volatile.Read(ref _failed) != 0) {
-                return false;
-            }
-            Ready.TrySetResult();
-            return true;
         }
 
         internal void Accept(
@@ -1162,20 +695,10 @@ internal sealed partial class GalateaCodexSidecarClient
             return true;
         }
 
-        internal bool TryMarkFailure(string stage, string code) {
-            if (Volatile.Read(ref _failed) != 0) {
-                return false;
-            }
-            _failureStage = stage;
-            _failureCode = code;
-            Volatile.Write(ref _failed, 1);
-            return true;
-        }
-
-        internal void CompleteFailure(string stage, string code) {
-            Ready.TrySetException(
-                new GalateaDelegateStartException(stage, code)
-            );
+        protected override void CompletePendingFailure(
+            string stage,
+            string code
+        ) {
             PendingDispatch[] pending;
             lock (_pendingGate) {
                 pending = [
@@ -1203,194 +726,6 @@ internal sealed partial class GalateaCodexSidecarClient
                     );
                 }
             }
-        }
-
-        internal async Task TerminateAsync(bool graceful) {
-            bool reapConfirmed = false;
-            try {
-                if (graceful && !_process.HasExited) {
-                    try {
-                        _process.StandardInput.Close();
-                    }
-                    catch (Exception exception) when (
-                        exception is IOException
-                            or InvalidOperationException
-                            or ObjectDisposedException) { }
-                    if (await WaitForExitBoundedAsync().ConfigureAwait(false)) {
-                        reapConfirmed = true;
-                        return;
-                    }
-                }
-                if (!_process.HasExited) {
-                    try {
-                        _process.Kill(entireProcessTree: true);
-                    }
-                    catch (InvalidOperationException) { }
-                }
-                if (!await WaitForExitBoundedAsync().ConfigureAwait(false)) {
-                    throw new GalateaDelegateStartException(
-                        "shutdown",
-                        "SIDECAR_REAP_UNCONFIRMED"
-                    );
-                }
-                reapConfirmed = true;
-            }
-            catch (GalateaDelegateStartException) {
-                throw;
-            }
-            catch (Exception exception) when (
-                GalateaExceptionClassifier.IsNonFatal(exception)) {
-                throw new GalateaDelegateStartException(
-                    "shutdown",
-                    "SIDECAR_REAP_UNCONFIRMED"
-                );
-            }
-            finally {
-                if (reapConfirmed) {
-                    _process.Dispose();
-                }
-            }
-        }
-
-        private async Task<bool> WaitForExitBoundedAsync() {
-            TimeSpan deadline = TimeSpan.FromMilliseconds(
-                _owner._config.Sidecar.ShutdownGraceMs
-            );
-            if (_owner._processHooks?.WaitForExitBoundedAsync is { } wait) {
-                return await wait(_process, deadline).ConfigureAwait(false);
-            }
-            try {
-                await _process.WaitForExitAsync().WaitAsync(
-                        deadline
-                    )
-                    .ConfigureAwait(false);
-                return true;
-            }
-            catch (TimeoutException) {
-                return false;
-            }
-        }
-
-        private async Task ReadStdoutAsync() {
-            var line = new ArrayBufferWriter<byte>();
-            byte[] buffer = GC.AllocateUninitializedArray<byte>(4096);
-            try {
-                while (true) {
-                    int read = await _process.StandardOutput.BaseStream
-                        .ReadAsync(buffer)
-                        .ConfigureAwait(false);
-                    if (read == 0) {
-                        if (line.WrittenCount != 0) {
-                            _owner.FailGeneration(
-                                this,
-                                "protocol",
-                                "SIDECAR_PROTOCOL_ERROR",
-                                graceful: false
-                            );
-                        }
-                        return;
-                    }
-                    int start = 0;
-                    for (int index = 0; index < read; index++) {
-                        if (buffer[index] != (byte)'\n') {
-                            continue;
-                        }
-                        Append(line, buffer.AsSpan(start, index - start));
-                        if (line.WrittenCount
-                            > _owner._config.Sidecar
-                                .MaximumFrameUtf8Bytes) {
-                            _owner.FailGeneration(
-                                this,
-                                "protocol",
-                                "SIDECAR_FRAME_TOO_LARGE",
-                                graceful: false
-                            );
-                            return;
-                        }
-                        if (line.WrittenCount == 0) {
-                            _owner.FailGeneration(
-                                this,
-                                "protocol",
-                                "SIDECAR_PROTOCOL_ERROR",
-                                graceful: false
-                            );
-                            return;
-                        }
-                        _owner.ProcessFrame(this, line.WrittenSpan.ToArray());
-                        line.Clear();
-                        if (Volatile.Read(ref _failed) != 0) {
-                            return;
-                        }
-                        start = index + 1;
-                    }
-                    Append(line, buffer.AsSpan(start, read - start));
-                    if (line.WrittenCount
-                        > _owner._config.Sidecar.MaximumFrameUtf8Bytes) {
-                        _owner.FailGeneration(
-                            this,
-                            "protocol",
-                            "SIDECAR_FRAME_TOO_LARGE",
-                            graceful: false
-                        );
-                        return;
-                    }
-                }
-            }
-            catch (Exception exception) when (
-                exception is IOException
-                    or ObjectDisposedException
-                    or InvalidOperationException) {
-                _owner.FailGeneration(
-                    this,
-                    "protocol",
-                    "SIDECAR_READ_FAILED",
-                    graceful: false
-                );
-            }
-        }
-
-        private async Task DrainStderrAsync() {
-            byte[] buffer = GC.AllocateUninitializedArray<byte>(4096);
-            long total = 0;
-            try {
-                while (true) {
-                    int read = await _process.StandardError.BaseStream
-                        .ReadAsync(buffer)
-                        .ConfigureAwait(false);
-                    if (read == 0) {
-                        break;
-                    }
-                    total = Math.Min(long.MaxValue - read, total) + read;
-                }
-            }
-            catch (Exception exception) when (
-                exception is IOException
-                    or ObjectDisposedException
-                    or InvalidOperationException) { }
-            DebugUtil.Trace(
-                LogCategory,
-                $"Sidecar stderr drained: generation={Id}, bytes={total}."
-            );
-        }
-
-        private async Task ObserveExitAsync(Task stdout) {
-            try {
-                await _process.WaitForExitAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception) when (
-                exception is InvalidOperationException
-                    or ObjectDisposedException) { }
-            try {
-                await stdout.ConfigureAwait(false);
-            }
-            catch (Exception exception) when (
-                GalateaExceptionClassifier.IsNonFatal(exception)) { }
-            _owner.FailGeneration(
-                this,
-                "protocol",
-                "SIDECAR_EXITED",
-                graceful: false
-            );
         }
 
         private PendingDispatch TakeAccepted(
@@ -1436,11 +771,6 @@ internal sealed partial class GalateaCodexSidecarClient
             _ = pending.Accepted.Task.Exception;
         }
 
-        private GalateaDelegateStartException CurrentFailure() => new(
-            _failureStage,
-            _failureCode
-        );
-
         private static void ObserveAcceptedFault(PendingDispatch pending) {
             _ = pending.Accepted.Task.ContinueWith(
                 static task => _ = task.Exception,
@@ -1451,35 +781,6 @@ internal sealed partial class GalateaCodexSidecarClient
             );
         }
 
-        private static async Task AwaitHardBoundedAsync(
-            Task operation,
-            CancellationToken ct
-        ) {
-            try {
-                await operation.WaitAsync(ct).ConfigureAwait(false);
-            }
-            catch {
-                _ = operation.ContinueWith(
-                    static task => _ = task.Exception,
-                    CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted
-                        | TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default
-                );
-                throw;
-            }
-        }
-
-        private static void Append(
-            ArrayBufferWriter<byte> target,
-            ReadOnlySpan<byte> bytes
-        ) {
-            if (bytes.IsEmpty) {
-                return;
-            }
-            bytes.CopyTo(target.GetSpan(bytes.Length));
-            target.Advance(bytes.Length);
-        }
     }
 
     private sealed class PendingDispatch(
