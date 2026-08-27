@@ -174,18 +174,31 @@ export ATELIA_RUN_GALATEA_CODEX_DELEGATION_LIVE=1
 dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'FullyQualifiedName=Atelia.Galatea.Server.Tests.GalateaCodexDelegationLiveTests.TwoMails_ReuseOneRealCodexThread_AndRepliesAreOneShot'
 ```
 
-测试只复用该config中已经strict校验的Node/Codex executable、timeout与容量界限；它不会
-读取`connections.json`，也不会调用Galatea main、normalizer或extractor LLM。实际route
-会被重建到mode=`research`（read-only sandbox、approval never）、`network=false`且
-`allowedRoots`/`cwd`都只指向一个mode 0700的随机临时空Git repository。`network=false`
-限制的是Codex委派任务的sandbox能力，不会也不能关闭app-server连接provider/auth所需的
-网络通信，因此这个canary仍然需要可用网络与已登录账号。
+测试只复用该config中已经strict校验的Node/Codex executable、RPC/turn/frame与route容量
+界限；shutdown grace钉为code-owned 2秒，cleanup deadline仍覆盖完整graceful wait、kill/reap
+wait与固定margin。它不会读取`connections.json`，也不会调用Galatea main、normalizer或
+extractor LLM。实际route会被重建到mode=`research`（read-only sandbox、approval never）、
+`network=false`且`allowedRoots`/`cwd`都只指向一个随机临时空Git repository。创建前要求
+`Path.GetTempPath()`的canonical existing ancestor chain完全无symlink/reparse，并与source
+worktree双向disjoint；candidate leaf必须尚不存在，创建后再验证exact child、no-follow与
+Unix mode exact 0700。任一precondition失败都发生在`git init`和sidecar启动之前。
+`network=false`限制的是Codex委派任务的sandbox能力，不会也不能关闭app-server连接
+provider/auth所需的网络通信，因此这个canary仍然需要可用网络与已登录账号。
+
+canary调用Git时会清除全部ambient `GIT_*`，再固定`GIT_CONFIG_NOSYSTEM=1`、
+`GIT_CONFIG_GLOBAL=/dev/null`、`core.fsmonitor=false`与`core.hooksPath=/dev/null`；不会覆盖
+`HOME`。每个Git command都有bounded output/deadline，timeout后必须kill process tree并完成
+bounded reap才会返回。
 
 canary连续发送两封邮件：第二封不携带第一封的随机token，验收同一Codex thread的上下文
 连续性；每次final都经过ReplyInbox lease验证只消费一次。退出时先关闭coordinator与
-sidecar，再确认临时repository的`git status --porcelain`为空、顶层只有`.git`，最后做
-no-follow删除。Codex保存的thread是外部持久状态，其中会留下这枚随机token；当前没有
-thread-delete契约，所以测试不会伪装成已清除此历史。
+sidecar；只有两者都被conclusive dispose/reap后，才确认临时repository的
+`git status --porcelain`为空、顶层只有`.git`并做no-follow删除。若child reaping不确定、
+repository发生变化或安全验证失败，测试会以stable cleanup code和`tempRetained=true`
+失败，并保留`Path.GetTempPath()`下`atelia-galatea-codex-live-*` residue，operator必须先确认
+没有对应child再人工处理。主测试与cleanup同时失败时两项failure都会保留。Codex保存的
+thread是外部持久状态，其中会留下这枚随机token；当前没有thread-delete契约，所以测试
+不会伪装成已清除此历史。
 
 `GalateaCompletionOwner` 唯一拥有 host-wide `CompletionConnectionRegistry`；main Agent、
 input normalizer、outbound mail extractor 与 RecapGrid exact routes 共用其惰性 clients。Completion侧的Shutdown顺序为：drain

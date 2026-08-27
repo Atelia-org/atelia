@@ -17,11 +17,18 @@ public sealed class GalateaCodexDelegationLiveTests {
         "ATELIA_GALATEA_CODEX_DELEGATES_CONFIG";
     private static readonly TimeSpan HardDeadline = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan GitDeadline = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan GitReapDeadline = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan CoordinatorDisposeDeadline =
         TimeSpan.FromSeconds(20);
-    private static readonly TimeSpan SidecarDisposeDeadline =
-        TimeSpan.FromSeconds(45);
+    private const int CanaryShutdownGraceMs = 2_000;
+    private const int MinimumShutdownGraceMs = 10;
+    private const int MaximumShutdownGraceMs = 30_000;
+    private const int SidecarDisposeMarginMs = 5_000;
     private const int MaximumGitOutputChars = 64 * 1024;
+    private const UnixFileMode OwnerDirectoryMode =
+        UnixFileMode.UserRead
+        | UnixFileMode.UserWrite
+        | UnixFileMode.UserExecute;
 
     [GalateaLiveFact]
     [Trait("Category", "LiveE2E")]
@@ -49,15 +56,21 @@ public sealed class GalateaCodexDelegationLiveTests {
             );
         }
 
-        string tempRoot = CreateOwnedTemporaryRoot();
+        OwnedTemporaryRoot temporary = CreateOwnedTemporaryRoot(
+            Path.GetTempPath(),
+            sourceRepositoryRoot
+        );
         bool gitInitialized = false;
         GalateaCodexSidecarClient? sidecar = null;
         GalateaDelegationCoordinator? coordinator = null;
         Exception? testFailure = null;
-        string? cleanupFailureCode = null;
+        CleanupResult cleanup = CleanupResult.Success;
+        TimeSpan sidecarDisposeDeadline = CreateSidecarDisposeDeadline(
+            CanaryShutdownGraceMs
+        );
         try {
             await RunGitRequiredAsync(
-                tempRoot,
+                temporary.RootPath,
                 ["-c", "init.templateDir=", "init", "--quiet"],
                 "GIT_INIT_FAILED"
             );
@@ -65,15 +78,17 @@ public sealed class GalateaCodexDelegationLiveTests {
 
             GalateaDelegateRouteConfig sourceRoute = source.CodexRoute;
             var isolatedConfig = new GalateaDelegateConfig(
-                source.Sidecar with { },
-                Array.AsReadOnly([tempRoot]),
+                source.Sidecar with {
+                    ShutdownGraceMs = CanaryShutdownGraceMs
+                },
+                Array.AsReadOnly([temporary.RootPath]),
                 Array.AsReadOnly([
                     sourceRoute with {
                         Recipient = GalateaDelegateConfigReader
                             .CanonicalRecipient,
                         Kind = GalateaDelegateConfigReader
                             .CodexAppServerKind,
-                        Cwd = tempRoot,
+                        Cwd = temporary.RootPath,
                         Mode = GalateaDelegateMode.Research,
                         Network = false
                     }
@@ -161,21 +176,198 @@ public sealed class GalateaCodexDelegationLiveTests {
             testFailure = exception;
         }
         finally {
-            cleanupFailureCode = await CleanupAsync(
+            cleanup = await CleanupAsync(
                 coordinator,
                 sidecar,
-                tempRoot,
-                gitInitialized
+                temporary,
+                gitInitialized,
+                sidecarDisposeDeadline
             );
         }
+        ThrowIfFailed(testFailure, cleanup);
+    }
 
-        if (testFailure is not null) {
-            ExceptionDispatchInfo.Capture(testFailure).Throw();
+    [Theory]
+    [InlineData(10, 5_020)]
+    [InlineData(CanaryShutdownGraceMs, 9_000)]
+    [InlineData(30_000, 65_000)]
+    public void SidecarDisposeDeadline_CoversGracefulAndKillReapPhases(
+        int shutdownGraceMs,
+        int expectedDeadlineMs
+    ) {
+        Assert.Equal(
+            TimeSpan.FromMilliseconds(expectedDeadlineMs),
+            CreateSidecarDisposeDeadline(shutdownGraceMs)
+        );
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            CreateSidecarDisposeDeadline(MinimumShutdownGraceMs - 1)
+        );
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            CreateSidecarDisposeDeadline(MaximumShutdownGraceMs + 1)
+        );
+    }
+
+    [Fact]
+    public void TemporaryRoot_IsDisjointNoFollowAndExactMode0700() {
+        if (!OperatingSystem.IsLinux()) {
+            return;
         }
-        if (cleanupFailureCode is not null) {
-            throw new XunitException(
-                "The live canary cleanup failed: " + cleanupFailureCode + "."
+        string fixture = CreateOwnedFixtureRoot();
+        try {
+            string source = CreateOwnedChild(fixture, "source");
+            Assert.Throws<ArgumentException>(() =>
+                CreateOwnedTemporaryRoot(source, source)
             );
+            Assert.Empty(Directory.EnumerateFileSystemEntries(source));
+
+            string realParent = CreateOwnedChild(fixture, "real-temp");
+            string linkedParent = Path.Combine(fixture, "linked-temp");
+            Directory.CreateSymbolicLink(linkedParent, realParent);
+            Assert.Throws<InvalidDataException>(() =>
+                CreateOwnedTemporaryRoot(linkedParent, source)
+            );
+            Assert.Empty(Directory.EnumerateFileSystemEntries(realParent));
+
+            string safeParent = CreateOwnedChild(fixture, "safe-temp");
+            OwnedTemporaryRoot temporary = CreateOwnedTemporaryRoot(
+                safeParent,
+                source
+            );
+            Assert.Equal(
+                OwnerDirectoryMode,
+                File.GetUnixFileMode(temporary.RootPath)
+            );
+            TestDirectorySafety.DeleteOwnedTreeNoFollow(
+                temporary.RootPath
+            );
+        }
+        finally {
+            TestDirectorySafety.DeleteOwnedTreeNoFollow(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task Cleanup_RetainsRootWhenReapIsUnproven_AndCombinesFailures() {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string fixture = CreateOwnedFixtureRoot();
+        try {
+            string source = CreateOwnedChild(fixture, "source");
+            string tempParent = CreateOwnedChild(fixture, "temp");
+            OwnedTemporaryRoot temporary = CreateOwnedTemporaryRoot(
+                tempParent,
+                source
+            );
+            CleanupResult cleanup = await CleanupAsync(
+                disposeCoordinator: null,
+                disposeSidecar: static () => Task.FromException(
+                    new IOException("stable fixture failure")
+                ),
+                temporary,
+                gitInitialized: false,
+                sidecarDisposeDeadline: TimeSpan.FromSeconds(1)
+            );
+
+            Assert.Equal(
+                "SIDECAR_DISPOSE_OR_REAP_FAILED",
+                cleanup.FailureCode
+            );
+            Assert.True(cleanup.TemporaryRootRetained);
+            Assert.True(Directory.Exists(temporary.RootPath));
+
+            var primary = new InvalidOperationException(
+                "stable primary fixture failure"
+            );
+            AggregateException combined = Assert.Throws<AggregateException>(
+                () => ThrowIfFailed(primary, cleanup)
+            );
+            Assert.Equal(2, combined.InnerExceptions.Count);
+            Assert.Same(primary, combined.InnerExceptions[0]);
+            Assert.Contains(
+                "SIDECAR_DISPOSE_OR_REAP_FAILED",
+                combined.InnerExceptions[1].Message,
+                StringComparison.Ordinal
+            );
+        }
+        finally {
+            TestDirectorySafety.DeleteOwnedTreeNoFollow(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task GitStatus_IgnoresAmbientGlobalFsmonitorAndRepoRedirects() {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string fixture = CreateOwnedFixtureRoot();
+        try {
+            string repository = CreateOwnedChild(fixture, "repo");
+            await RunGitRequiredAsync(
+                repository,
+                ["-c", "init.templateDir=", "init", "--quiet"],
+                "GIT_INIT_FAILED"
+            );
+            File.WriteAllText(
+                Path.Combine(repository, "tracked.txt"),
+                "fixture"
+            );
+            await RunGitRequiredAsync(
+                repository,
+                ["add", "--", "tracked.txt"],
+                "GIT_ADD_FAILED"
+            );
+
+            string witness = Path.Combine(fixture, "fsmonitor-witness");
+            string hook = Path.Combine(fixture, "fsmonitor-hook.sh");
+            File.WriteAllText(
+                hook,
+                "#!/bin/sh\n: > \"" + witness + "\"\nprintf '\\n'\n"
+            );
+            File.SetUnixFileMode(hook, OwnerDirectoryMode);
+            string globalConfig = Path.Combine(fixture, "global.gitconfig");
+            File.WriteAllText(
+                globalConfig,
+                "[core]\n\tfsmonitor = " + hook + "\n"
+            );
+            ProcessResult configured = await RunGitAsync(
+                repository,
+                [
+                    "config", "--file", globalConfig,
+                    "--get", "core.fsmonitor"
+                ]
+            );
+            Assert.Equal(0, configured.ExitCode);
+            Assert.Equal(hook, configured.StandardOutput.Trim());
+
+            var hostileAmbient = new Dictionary<string, string?> {
+                ["GIT_DIR"] = Path.Combine(fixture, "redirected-dir"),
+                ["GIT_COMMON_DIR"] = Path.Combine(
+                    fixture,
+                    "redirected-common"
+                ),
+                ["GIT_TEMPLATE_DIR"] = Path.Combine(
+                    fixture,
+                    "redirected-template"
+                ),
+                ["GIT_CONFIG_GLOBAL"] = globalConfig,
+                ["GIT_CONFIG_SYSTEM"] = globalConfig,
+                ["GIT_CONFIG_NOSYSTEM"] = "0",
+                ["GIT_CONFIG_COUNT"] = "1",
+                ["GIT_CONFIG_KEY_0"] = "core.fsmonitor",
+                ["GIT_CONFIG_VALUE_0"] = hook
+            };
+            ProcessResult status = await RunGitAsync(
+                repository,
+                ["status", "--porcelain=v1", "--untracked-files=all"],
+                hostileAmbient
+            );
+
+            Assert.Equal(0, status.ExitCode);
+            Assert.False(File.Exists(witness));
+        }
+        finally {
+            TestDirectorySafety.DeleteOwnedTreeNoFollow(fixture);
         }
     }
 
@@ -236,16 +428,85 @@ public sealed class GalateaCodexDelegationLiveTests {
         }
     }
 
-    private static string CreateOwnedTemporaryRoot() {
-        string parent = Path.GetFullPath(Path.GetTempPath());
+    private static OwnedTemporaryRoot CreateOwnedTemporaryRoot(
+        string configuredTempParent,
+        string sourceRepositoryRoot
+    ) {
+        string parent = TestDirectorySafety.Normalize(configuredTempParent);
+        TestDirectorySafety.EnsureExistingPathChainHasNoReparsePoint(parent);
+        FileAttributes parentAttributes = File.GetAttributes(parent);
+        TestDirectorySafety.RejectReparsePoint(parent, parentAttributes);
+        if ((parentAttributes & FileAttributes.Directory) == 0) {
+            throw new InvalidDataException(
+                "The live-canary temporary parent is not a directory."
+            );
+        }
+        string source = TestDirectorySafety.Normalize(sourceRepositoryRoot);
+        TestDirectorySafety.EnsureExistingPathChainHasNoReparsePoint(source);
+        FileAttributes sourceAttributes = File.GetAttributes(source);
+        TestDirectorySafety.RejectReparsePoint(source, sourceAttributes);
+        if ((sourceAttributes & FileAttributes.Directory) == 0) {
+            throw new InvalidDataException(
+                "The live-canary source repository is not a directory."
+            );
+        }
+        TestDirectorySafety.EnsureDisjoint(parent, source);
+
         string path = Path.Combine(
             parent,
             "atelia-galatea-codex-live-" + LowerHex(
                 RandomNumberGenerator.GetBytes(16)
             )
         );
+        if (Path.Exists(path)) {
+            throw new IOException(
+                "The randomized live-canary leaf already exists."
+            );
+        }
         TestDirectorySafety.CreateDirectoryNew(path);
-        return path;
+        try {
+            RequireOwnedTemporaryRoot(new(parent, path));
+            return new(parent, path);
+        }
+        catch {
+            TestDirectorySafety.DeleteOwnedTreeNoFollow(path);
+            throw;
+        }
+    }
+
+    private static void RequireOwnedTemporaryRoot(
+        OwnedTemporaryRoot temporary
+    ) {
+        if (!OperatingSystem.IsLinux()) {
+            throw new PlatformNotSupportedException(
+                "Owner-only live-canary roots require Linux."
+            );
+        }
+        string parent = TestDirectorySafety.Normalize(temporary.ParentPath);
+        string root = TestDirectorySafety.Normalize(temporary.RootPath);
+        if (!string.Equals(
+                Path.GetDirectoryName(root),
+                parent,
+                StringComparison.Ordinal
+            )
+            || !Path.GetFileName(root).StartsWith(
+                "atelia-galatea-codex-live-",
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "The live-canary root is not an exact owned child."
+            );
+        }
+        TestDirectorySafety.EnsureExistingPathChainHasNoReparsePoint(parent);
+        TestDirectorySafety.EnsureExistingPathChainHasNoReparsePoint(root);
+        FileAttributes attributes = File.GetAttributes(root);
+        TestDirectorySafety.RejectReparsePoint(root, attributes);
+        if ((attributes & FileAttributes.Directory) == 0
+            || File.GetUnixFileMode(root) != OwnerDirectoryMode) {
+            throw new InvalidDataException(
+                "The live-canary root must be an owner-only mode 0700 directory."
+            );
+        }
     }
 
     private static GalateaDelegateCandidateSnapshot RequireReplyReady(
@@ -320,48 +581,138 @@ public sealed class GalateaCodexDelegationLiveTests {
             $"ej1:{value:x16}{value:x8}{value:x8}"
         );
 
-    private static async Task<string?> CleanupAsync(
+    private static Task<CleanupResult> CleanupAsync(
         GalateaDelegationCoordinator? coordinator,
         GalateaCodexSidecarClient? sidecar,
-        string tempRoot,
-        bool gitInitialized
+        OwnedTemporaryRoot temporary,
+        bool gitInitialized,
+        TimeSpan sidecarDisposeDeadline
+    ) => CleanupAsync(
+        coordinator is null
+            ? null
+            : () => coordinator.DisposeAsync().AsTask(),
+        sidecar is null
+            ? null
+            : () => sidecar.DisposeAsync().AsTask(),
+        temporary,
+        gitInitialized,
+        sidecarDisposeDeadline
+    );
+
+    private static async Task<CleanupResult> CleanupAsync(
+        Func<Task>? disposeCoordinator,
+        Func<Task>? disposeSidecar,
+        OwnedTemporaryRoot temporary,
+        bool gitInitialized,
+        TimeSpan sidecarDisposeDeadline
     ) {
-        string? failure = null;
-        if (coordinator is not null) {
-            try {
-                await coordinator.DisposeAsync().AsTask().WaitAsync(
-                    CoordinatorDisposeDeadline
-                );
-            }
-            catch {
-                failure ??= "COORDINATOR_DISPOSE_FAILED";
-            }
+        var failures = new List<string>();
+        bool coordinatorStopped = await TryDisposeAsync(
+            disposeCoordinator,
+            CoordinatorDisposeDeadline
+        );
+        if (!coordinatorStopped) {
+            failures.Add("COORDINATOR_DISPOSE_FAILED");
         }
-        if (sidecar is not null) {
-            try {
-                await sidecar.DisposeAsync().AsTask().WaitAsync(
-                    SidecarDisposeDeadline
-                );
-            }
-            catch {
-                failure ??= "SIDECAR_DISPOSE_FAILED";
-            }
+        bool sidecarStopped = await TryDisposeAsync(
+            disposeSidecar,
+            sidecarDisposeDeadline
+        );
+        if (!sidecarStopped) {
+            failures.Add("SIDECAR_DISPOSE_OR_REAP_FAILED");
         }
-        if (gitInitialized) {
-            try {
-                await VerifyTemporaryRepositoryIsUntouchedAsync(tempRoot);
-            }
-            catch {
-                failure ??= "TEMP_REPOSITORY_CHANGED";
-            }
+
+        // The sidecar process owns this cwd. Never inspect or recursively
+        // delete it unless both lifecycle owners have conclusively stopped.
+        if (!coordinatorStopped || !sidecarStopped) {
+            return CleanupResult.Failed(failures, retained: true);
         }
+
         try {
-            DeleteValidatedTemporaryRoot(tempRoot);
+            RequireOwnedTemporaryRoot(temporary);
+            if (gitInitialized) {
+                await VerifyTemporaryRepositoryIsUntouchedAsync(
+                    temporary.RootPath
+                );
+            }
+            else {
+                TestDirectorySafety.RequireOwnedEmptyDirectory(
+                    temporary.RootPath
+                );
+            }
         }
         catch {
-            failure ??= "TEMP_REPOSITORY_CLEANUP_FAILED";
+            failures.Add("TEMP_REPOSITORY_NOT_SAFE_TO_DELETE");
+            return CleanupResult.Failed(failures, retained: true);
         }
-        return failure;
+
+        try {
+            TestDirectorySafety.DeleteOwnedTreeNoFollow(
+                temporary.RootPath
+            );
+        }
+        catch {
+            failures.Add("TEMP_REPOSITORY_DELETE_FAILED");
+            return CleanupResult.Failed(
+                failures,
+                retained: Path.Exists(temporary.RootPath)
+            );
+        }
+        return CleanupResult.Success;
+    }
+
+    private static async Task<bool> TryDisposeAsync(
+        Func<Task>? dispose,
+        TimeSpan deadline
+    ) {
+        if (dispose is null) {
+            return true;
+        }
+        try {
+            await dispose().WaitAsync(deadline);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+
+    private static TimeSpan CreateSidecarDisposeDeadline(
+        int shutdownGraceMs
+    ) {
+        if (shutdownGraceMs is < MinimumShutdownGraceMs
+            or > MaximumShutdownGraceMs) {
+            throw new ArgumentOutOfRangeException(nameof(shutdownGraceMs));
+        }
+        long milliseconds = checked(
+            2L * shutdownGraceMs + SidecarDisposeMarginMs
+        );
+        return TimeSpan.FromMilliseconds(milliseconds);
+    }
+
+    private static void ThrowIfFailed(
+        Exception? testFailure,
+        CleanupResult cleanup
+    ) {
+        if (testFailure is not null && cleanup.FailureCode is not null) {
+            throw new AggregateException(
+                "The live canary and its cleanup both failed.",
+                testFailure,
+                new XunitException(
+                    $"cleanup={cleanup.FailureCode}; "
+                    + $"tempRetained={cleanup.TemporaryRootRetained}"
+                )
+            );
+        }
+        if (testFailure is not null) {
+            ExceptionDispatchInfo.Capture(testFailure).Throw();
+        }
+        if (cleanup.FailureCode is not null) {
+            throw new XunitException(
+                $"Live-canary cleanup failed: {cleanup.FailureCode}; "
+                + $"tempRetained={cleanup.TemporaryRootRetained}."
+            );
+        }
     }
 
     private static async Task VerifyTemporaryRepositoryIsUntouchedAsync(
@@ -393,26 +744,6 @@ public sealed class GalateaCodexDelegationLiveTests {
         }
     }
 
-    private static void DeleteValidatedTemporaryRoot(string tempRoot) {
-        string normalized = TestDirectorySafety.Normalize(tempRoot);
-        string parent = TestDirectorySafety.Normalize(Path.GetTempPath());
-        string expectedPrefix = "atelia-galatea-codex-live-";
-        if (!string.Equals(
-                Path.GetDirectoryName(normalized),
-                parent,
-                StringComparison.Ordinal
-            )
-            || !Path.GetFileName(normalized).StartsWith(
-                expectedPrefix,
-                StringComparison.Ordinal
-            )) {
-            throw new InvalidDataException(
-                "Refusing to delete an unrecognized live-canary path."
-            );
-        }
-        TestDirectorySafety.DeleteOwnedTreeNoFollow(normalized);
-    }
-
     private static async Task RunGitRequiredAsync(
         string workingDirectory,
         IReadOnlyList<string> arguments,
@@ -433,7 +764,8 @@ public sealed class GalateaCodexDelegationLiveTests {
 
     private static async Task<ProcessResult> RunGitAsync(
         string workingDirectory,
-        IReadOnlyList<string> arguments
+        IReadOnlyList<string> arguments,
+        IReadOnlyDictionary<string, string?>? ambientOverridesForTest = null
     ) {
         var startInfo = new ProcessStartInfo {
             FileName = "git",
@@ -444,10 +776,24 @@ public sealed class GalateaCodexDelegationLiveTests {
             RedirectStandardInput = true,
             CreateNoWindow = true
         };
+        if (ambientOverridesForTest is not null) {
+            foreach ((string key, string? value) in ambientOverridesForTest) {
+                if (value is null) {
+                    startInfo.Environment.Remove(key);
+                }
+                else {
+                    startInfo.Environment[key] = value;
+                }
+            }
+        }
+        ScrubGitEnvironment(startInfo.Environment);
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add("core.fsmonitor=false");
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add("core.hooksPath=/dev/null");
         foreach (string argument in arguments) {
             startInfo.ArgumentList.Add(argument);
         }
-        ScrubGitEnvironment(startInfo.Environment);
         using var process = new Process { StartInfo = startInfo };
         if (!process.Start()) {
             throw new XunitException(
@@ -468,11 +814,13 @@ public sealed class GalateaCodexDelegationLiveTests {
             await process.WaitForExitAsync(deadline.Token);
         }
         catch {
-            try {
-                process.Kill(entireProcessTree: true);
-            }
-            catch {
-                // Preserve the stable command failure below.
+            bool reaped = await TryKillAndReapAsync(process);
+            await ObserveAsync(stdout);
+            await ObserveAsync(stderr);
+            if (!reaped) {
+                throw new XunitException(
+                    "A live-canary git command timed out and was not reaped."
+                );
             }
             throw new XunitException(
                 "A live-canary git command did not finish within its deadline."
@@ -483,6 +831,39 @@ public sealed class GalateaCodexDelegationLiveTests {
             await stdout,
             await stderr
         );
+    }
+
+    private static async Task ObserveAsync(Task task) {
+        try {
+            await task.WaitAsync(GitReapDeadline);
+        }
+        catch {
+            // Command failure is reported only through stable outer codes.
+        }
+    }
+
+    private static async Task<bool> TryKillAndReapAsync(Process process) {
+        try {
+            if (!process.HasExited) {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (InvalidOperationException) {
+            // A concurrent exit is equivalent to a successful kill.
+        }
+        catch {
+            return false;
+        }
+        try {
+            using var reapDeadline = new CancellationTokenSource(
+                GitReapDeadline
+            );
+            await process.WaitForExitAsync(reapDeadline.Token);
+            return process.HasExited;
+        }
+        catch {
+            return false;
+        }
     }
 
     private static async Task<string> ReadBoundedAsync(
@@ -509,20 +890,67 @@ public sealed class GalateaCodexDelegationLiveTests {
         IDictionary<string, string?> environment
     ) {
         foreach (string key in environment.Keys.Where(static key =>
-                     key is "GIT_DIR" or "GIT_WORK_TREE"
-                     or "GIT_INDEX_FILE" or "GIT_OBJECT_DIRECTORY"
-                     or "GIT_ALTERNATE_OBJECT_DIRECTORIES"
-                     or "GIT_CONFIG_COUNT" or "GIT_CONFIG_PARAMETERS"
-                     || key.StartsWith("GIT_CONFIG_KEY_", StringComparison.Ordinal)
-                     || key.StartsWith("GIT_CONFIG_VALUE_", StringComparison.Ordinal)
+                     key.StartsWith("GIT_", StringComparison.Ordinal)
                  ).ToArray()) {
             environment.Remove(key);
         }
+        environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
         environment["GIT_TERMINAL_PROMPT"] = "0";
+    }
+
+    private static string CreateOwnedFixtureRoot() {
+        string parent = TestDirectorySafety.Normalize(Path.GetTempPath());
+        TestDirectorySafety.EnsureExistingPathChainHasNoReparsePoint(parent);
+        string fixture = Path.Combine(
+            parent,
+            "atelia-galatea-live-test-" + LowerHex(
+                RandomNumberGenerator.GetBytes(16)
+            )
+        );
+        if (Path.Exists(fixture)) {
+            throw new IOException("The randomized fixture already exists.");
+        }
+        TestDirectorySafety.CreateDirectoryNew(fixture);
+        return fixture;
+    }
+
+    private static string CreateOwnedChild(string parent, string name) {
+        string path = Path.Combine(parent, name);
+        TestDirectorySafety.CreateDirectoryNew(path);
+        return path;
     }
 
     private static string LowerHex(byte[] bytes) =>
         Convert.ToHexString(bytes).ToLowerInvariant();
+
+    private sealed record OwnedTemporaryRoot(
+        string ParentPath,
+        string RootPath
+    );
+
+    private sealed record CleanupResult(
+        string? FailureCode,
+        bool TemporaryRootRetained
+    ) {
+        internal static CleanupResult Success { get; } = new(null, false);
+
+        internal static CleanupResult Failed(
+            IReadOnlyList<string> failures,
+            bool retained
+        ) {
+            if (failures.Count == 0) {
+                throw new ArgumentException(
+                    "A failed cleanup requires at least one stable code.",
+                    nameof(failures)
+                );
+            }
+            return new(
+                string.Join("+", failures.Distinct(StringComparer.Ordinal)),
+                retained
+            );
+        }
+    }
 
     private sealed record ProcessResult(
         int ExitCode,
