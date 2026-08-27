@@ -86,6 +86,31 @@ internal static class GalateaDelegationDurableContract {
             + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
 
+    internal static string CreateDeliveryFailureNotice(
+        string? stage,
+        string? code
+    ) {
+        string safeStage = NormalizeFailureToken(stage, "delegate");
+        string safeCode = NormalizeFailureToken(code, "DELEGATE_FAILURE");
+        return $"外界代行者 Codex 未能处理这封信（阶段：{safeStage}；错误代码：{safeCode}）。";
+    }
+
+    internal static string NormalizeFailureToken(
+        string? value,
+        string fallback
+    ) {
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Length > 64
+            || value.Any(static character =>
+                !(character is >= 'A' and <= 'Z'
+                    or >= 'a' and <= 'z'
+                    or >= '0' and <= '9'
+                    or '_' or '-' or '.'))) {
+            return fallback;
+        }
+        return value;
+    }
+
     private static string RouteModeText(GalateaDelegateMode value) => value switch {
         GalateaDelegateMode.Research => "research",
         GalateaDelegateMode.Work => "work",

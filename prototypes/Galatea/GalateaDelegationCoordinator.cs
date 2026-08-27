@@ -856,8 +856,10 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
         string? stage,
         string? code
     ) {
-        string safeStage = NormalizeFailureToken(stage, "delegate");
-        string safeCode = NormalizeFailureToken(code, "DELEGATE_FAILURE");
+        string safeStage = GalateaDelegationDurableContract
+            .NormalizeFailureToken(stage, "delegate");
+        string safeCode = GalateaDelegationDurableContract
+            .NormalizeFailureToken(code, "DELEGATE_FAILURE");
         DebugUtil.Info(
             LogCategory,
             "Delegate dispatch produced delivery failure: "
@@ -866,7 +868,10 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
             eventKind: DebugEventKind.Failure
         );
         var notice = new GalateaReadyNotice.DeliveryFailure(
-            $"外界代行者 Codex 未能处理这封信（阶段：{safeStage}；错误代码：{safeCode}）。"
+            GalateaDelegationDurableContract.CreateDeliveryFailureNotice(
+                safeStage,
+                safeCode
+            )
         );
         return PublishReadyAsync(
             candidate,
@@ -990,7 +995,7 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
         }
         DebugUtil.Error(
             LogCategory,
-            $"Delegate route quarantined: user={Safe(_userId)}, code={NormalizeFailureToken(code, "ROUTE_QUARANTINED")}"
+            $"Delegate route quarantined: user={Safe(_userId)}, code={GalateaDelegationDurableContract.NormalizeFailureToken(code, "ROUTE_QUARANTINED")}"
         );
     }
 
@@ -1045,22 +1050,6 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
         catch (EncoderFallbackException) {
             return false;
         }
-    }
-
-    private static string NormalizeFailureToken(
-        string? value,
-        string fallback
-    ) {
-        if (string.IsNullOrWhiteSpace(value)
-            || value.Length > 64
-            || value.Any(static character =>
-                !(character is >= 'A' and <= 'Z'
-                    or >= 'a' and <= 'z'
-                    or >= '0' and <= '9'
-                    or '_' or '-' or '.'))) {
-            return fallback;
-        }
-        return value;
     }
 
     private static string Safe(string value) =>
