@@ -257,10 +257,10 @@ failure都只形成one-shot failure notice，不透明重试。
 
 合法final必须是strict Unicode、nonblank，且同时满足route reply上限和composite单reply 256 KiB上限；
 非法或超限final转为code-owned failure，不truncate冒充回复。ReplyInbox按单调completion sequence保序，
-`BeginReadyReplyCutoff(playerText)`在同一gate冻结最早的、最多16条且能与该玩家文本精确渲染进1 MiB
-composite的FIFO前缀，其余保持Ready。一次只允许一个active lease；显式`Commit`永久变成`Consumed`，
+`BeginReadyReplyCutoff(playerText)`在同一gate冻结最早的、最多16条，并为任意合法64 KiB player text
+预留最坏render预算的保守FIFO前缀；其余保持Ready。一次只允许一个active lease；显式`Commit`永久变成`Consumed`，
 `Rollback`或未提交lease的`Dispose`恢复Ready。该lease可以跨fresh/recovery调用栈长期持有，供后续runtime
-在Observation真正durable后提交，而不是在方法返回时自动消费。
+在terminal Action durable且execution boundary回到`Idle`后提交，而不是在方法返回时自动消费。
 
 每个session至多持有一个unresolved reply lease。fresh Observation在completion/tool等recoverable boundary
 停住时，lease与其exact durable Observation identity一起保留；`StartRecovery`只继承这份lease，绝不顺手

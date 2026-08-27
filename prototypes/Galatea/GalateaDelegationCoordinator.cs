@@ -239,9 +239,10 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
         BeginReadyReplyCutoff("x");
 
     /// <summary>
-    /// Selects the earliest prefix that is exactly renderable with the
-    /// admitted player text. This keeps later completions Ready instead of
-    /// leasing a set the composite Observation cannot persist.
+    /// Selects the earliest conservative prefix after reserving the
+    /// worst-case player-section render budget for every legal normalized
+    /// player text. This keeps later completions Ready instead of leasing a
+    /// set that normalization could make impossible to persist.
     /// </summary>
     internal GalateaReadyReplyLease BeginReadyReplyCutoff(
         string playerText
