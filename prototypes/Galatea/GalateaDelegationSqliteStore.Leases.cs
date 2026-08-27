@@ -335,7 +335,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                             or GalateaReplyLeaseState.ObservationBound)) {
                         throw Conflict("The reply lease cannot roll back from this state.");
                     }
-                    RollbackLeaseRows(
+                    _ = RollbackLeaseRows(
                         connection,
                         transaction,
                         lease
@@ -348,6 +348,79 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     && snapshot.Notices.Where(value =>
                         result.Contains(value.NoticeId)).All(value =>
                             value.State == GalateaReplyNoticeState.Ready)
+            );
+        }
+    }
+
+    internal void RollbackReplyLeaseAfterExactAbandon(
+        string leaseId,
+        long expectedLeaseRevision,
+        string expectedBaseHead,
+        string expectedObservationAddress
+    ) {
+        RequireWireIdentity(leaseId, nameof(leaseId));
+        RequireEventAddress(expectedBaseHead, nameof(expectedBaseHead));
+        RequireEventAddress(
+            expectedObservationAddress,
+            nameof(expectedObservationAddress)
+        );
+        lock (_gate) {
+            ThrowIfNotWritable();
+            ExecuteWrite(
+                "rollback-reply-lease-after-exact-abandon",
+                (connection, transaction) => {
+                    GalateaReplyLeaseSnapshot lease = ReadActiveLease(
+                            connection,
+                            transaction)
+                        ?? throw Conflict("No reply lease is active.");
+                    List<GalateaReplyNoticeSnapshot> notices = ReadNotices(
+                        connection,
+                        transaction
+                    );
+                    ValidateActiveLease(lease, notices);
+                    if (!string.Equals(
+                            lease.LeaseId,
+                            leaseId,
+                            StringComparison.Ordinal)
+                        || lease.Revision != expectedLeaseRevision
+                        || lease.State
+                            != GalateaReplyLeaseState.ObservationCommitted
+                        || !string.Equals(
+                            lease.ExpectedSessionHead,
+                            expectedBaseHead,
+                            StringComparison.Ordinal)
+                        || !string.Equals(
+                            lease.ObservationAddress,
+                            expectedObservationAddress,
+                            StringComparison.Ordinal)) {
+                        throw Conflict(
+                            "The reply lease does not match the exact abandoned Observation."
+                        );
+                    }
+                    long storeRevision = RollbackLeaseRows(
+                        connection,
+                        transaction,
+                        lease
+                    );
+                    return new ExactAbandonRollbackReceipt(
+                        storeRevision,
+                        GalateaDelegationStateSnapshot.Freeze(
+                            lease.NoticeIds.Select(noticeId => {
+                                GalateaReplyNoticeSnapshot notice = notices
+                                    .Single(value => string.Equals(
+                                        value.NoticeId,
+                                        noticeId,
+                                        StringComparison.Ordinal
+                                    ));
+                                return new ExactAbandonNoticeReceipt(
+                                    noticeId,
+                                    checked(notice.Revision + 1)
+                                );
+                            })
+                        )
+                    );
+                },
+                IsExactAbandonRollbackPublished
             );
         }
     }
@@ -430,12 +503,15 @@ internal sealed partial class GalateaDelegationSqliteStore {
         );
     }
 
-    private static void RollbackLeaseRows(
+    private static long RollbackLeaseRows(
         SqliteConnection connection,
         SqliteTransaction transaction,
         GalateaReplyLeaseSnapshot lease
     ) {
-        _ = IncrementStoreRevision(connection, transaction);
+        long storeRevision = IncrementStoreRevision(
+            connection,
+            transaction
+        );
         using (SqliteCommand updateNotices = connection.CreateCommand()) {
             updateNotices.Transaction = transaction;
             updateNotices.CommandText = """
@@ -457,7 +533,44 @@ internal sealed partial class GalateaDelegationSqliteStore {
             lease,
             "reply lease rollback"
         );
+        return storeRevision;
     }
+
+    private static bool IsExactAbandonRollbackPublished(
+        GalateaDelegationStateSnapshot snapshot,
+        ExactAbandonRollbackReceipt expected
+    ) {
+        if (snapshot.ActiveLease is not null
+            || snapshot.StoreRevision != expected.StoreRevision) {
+            return false;
+        }
+        foreach (ExactAbandonNoticeReceipt expectedNotice
+                 in expected.Notices) {
+            GalateaReplyNoticeSnapshot? notice = snapshot.Notices
+                .SingleOrDefault(value => string.Equals(
+                    value.NoticeId,
+                    expectedNotice.NoticeId,
+                    StringComparison.Ordinal
+                ));
+            if (notice is null
+                || notice.State != GalateaReplyNoticeState.Ready
+                || notice.ConsumedActionAddress is not null
+                || notice.Revision != expectedNotice.Revision) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private sealed record ExactAbandonRollbackReceipt(
+        long StoreRevision,
+        IReadOnlyList<ExactAbandonNoticeReceipt> Notices
+    );
+
+    private sealed record ExactAbandonNoticeReceipt(
+        string NoticeId,
+        long Revision
+    );
 
     private static void DeleteLeaseAttemptRows(
         SqliteConnection connection,

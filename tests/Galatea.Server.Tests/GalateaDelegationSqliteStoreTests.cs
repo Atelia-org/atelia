@@ -982,6 +982,187 @@ public sealed class GalateaDelegationSqliteStoreTests {
     }
 
     [Fact]
+    public void Lease_ExactAbandonRollbackIsDurableAndRearmsNotice() {
+        bool injectUncertain = true;
+        using var fixture = RoutedStore.WithOneReadyNotice(
+            new GalateaDelegationStoreTestHooks(
+                AfterCommitBeforeReturn: operation => {
+                    if (injectUncertain
+                        && operation
+                            == "rollback-reply-lease-after-exact-abandon") {
+                        injectUncertain = false;
+                        throw new IOException("injected after exact abandon");
+                    }
+                }
+            )
+        );
+        GalateaReplyLeaseSnapshot lease = BeginBoundCommittedLease(
+            fixture.Store,
+            "lease-abandoned",
+            Address(70),
+            Address(71)
+        );
+
+        fixture.Store.RollbackReplyLeaseAfterExactAbandon(
+            lease.LeaseId,
+            lease.Revision,
+            Address(70),
+            Address(71)
+        );
+
+        Assert.False(injectUncertain);
+        fixture.Reopen();
+        GalateaDelegationStateSnapshot reopened =
+            fixture.Store.ReadSnapshot();
+        Assert.Null(reopened.ActiveLease);
+        GalateaReplyNoticeSnapshot notice = reopened.Notices.Single();
+        Assert.Equal(GalateaReplyNoticeState.Ready, notice.State);
+        Assert.Null(notice.ConsumedActionAddress);
+        Assert.Equal(0, ExecuteScalarLong(
+            fixture.DatabasePath,
+            "SELECT COUNT(*) FROM reply_lease;"
+        ));
+        Assert.Equal(0, ExecuteScalarLong(
+            fixture.DatabasePath,
+            "SELECT COUNT(*) FROM reply_lease_item;"
+        ));
+    }
+
+    [Fact]
+    public void Lease_ExactAbandonRollbackRejectsWrongStateOrEvidence() {
+        using var fixture = RoutedStore.WithOneReadyNotice();
+        GalateaReplyNoticeSnapshot notice =
+            fixture.Store.ReadSnapshot().Notices.Single();
+        GalateaReplyLeaseSnapshot lease =
+            fixture.Store.BeginReplyLeaseMembership(
+                "lease-exact",
+                "player",
+                [new(notice.NoticeId, notice.Revision)]
+            );
+        AssertExactAbandonConflictWithoutMutation(
+            fixture.Store,
+            lease.LeaseId,
+            lease.Revision,
+            Address(80),
+            Address(81)
+        );
+
+        lease = fixture.Store.BindReplyLeaseObservationBase(
+            lease.LeaseId,
+            lease.Revision,
+            Address(80),
+            Observation("player", "reply")
+        );
+        AssertExactAbandonConflictWithoutMutation(
+            fixture.Store,
+            lease.LeaseId,
+            lease.Revision,
+            Address(80),
+            Address(81)
+        );
+
+        lease = fixture.Store.RecordLeaseObservationCommitted(
+            lease.LeaseId,
+            lease.Revision,
+            Address(81)
+        );
+        GalateaDelegationStateSnapshot committed =
+            fixture.Store.ReadSnapshot();
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            fixture.Store.RollbackReplyLease(
+                lease.LeaseId,
+                lease.Revision
+            ));
+        AssertDelegationLeaseStateEqual(
+            committed,
+            fixture.Store.ReadSnapshot()
+        );
+        AssertExactAbandonConflictWithoutMutation(
+            fixture.Store,
+            "wrong-lease",
+            lease.Revision,
+            Address(80),
+            Address(81)
+        );
+        AssertExactAbandonConflictWithoutMutation(
+            fixture.Store,
+            lease.LeaseId,
+            checked(lease.Revision + 1),
+            Address(80),
+            Address(81)
+        );
+        AssertExactAbandonConflictWithoutMutation(
+            fixture.Store,
+            lease.LeaseId,
+            lease.Revision,
+            Address(82),
+            Address(81)
+        );
+        AssertExactAbandonConflictWithoutMutation(
+            fixture.Store,
+            lease.LeaseId,
+            lease.Revision,
+            Address(80),
+            Address(83)
+        );
+
+        fixture.Store.QuarantineReplyLease(
+            lease.LeaseId,
+            lease.Revision
+        );
+        lease = Assert.IsType<GalateaReplyLeaseSnapshot>(
+            fixture.Store.ReadSnapshot().ActiveLease
+        );
+        AssertExactAbandonConflictWithoutMutation(
+            fixture.Store,
+            lease.LeaseId,
+            lease.Revision,
+            Address(80),
+            Address(81)
+        );
+    }
+
+    [Fact]
+    public void Lease_ExactAbandonRollbackRejectsCorruptPersistedObservation() {
+        using var fixture = RoutedStore.WithOneReadyNotice();
+        GalateaReplyLeaseSnapshot lease = BeginBoundCommittedLease(
+            fixture.Store,
+            "lease-corrupt",
+            Address(90),
+            Address(91)
+        );
+        ExecuteSql(fixture.DatabasePath, """
+            UPDATE reply_lease
+            SET rendered_observation = 'corrupt';
+            """);
+
+        Assert.Throws<InvalidDataException>(() =>
+            fixture.Store.RollbackReplyLeaseAfterExactAbandon(
+                lease.LeaseId,
+                lease.Revision,
+                Address(90),
+                Address(91)
+            ));
+
+        Assert.Equal(1, ExecuteScalarLong(
+            fixture.DatabasePath,
+            "SELECT COUNT(*) FROM reply_lease;"
+        ));
+        Assert.Equal(1, ExecuteScalarLong(
+            fixture.DatabasePath,
+            "SELECT COUNT(*) FROM reply_lease_item;"
+        ));
+        Assert.Equal(1, ExecuteScalarLong(
+            fixture.DatabasePath,
+            "SELECT COUNT(*) FROM reply_notice WHERE state = 'Leased';"
+        ));
+        Assert.Equal(0, ExecuteScalarLong(
+            fixture.DatabasePath,
+            "SELECT COUNT(*) FROM reply_notice WHERE state = 'Ready';"
+        ));
+    }
+
+    [Fact]
     public void StrictOpen_RejectsUnknownSchemaAndCorruptCurrentState() {
         using var directory = new StoreDirectory();
         GalateaDelegationStoreOwner owner = Owner();
@@ -1121,6 +1302,81 @@ public sealed class GalateaDelegationSqliteStoreTests {
             playerText,
             [new GalateaReadyNotice.Reply(reply)]
         ));
+
+    private static GalateaReplyLeaseSnapshot BeginBoundCommittedLease(
+        GalateaDelegationSqliteStore store,
+        string leaseId,
+        string baseHead,
+        string observationAddress
+    ) {
+        GalateaReplyNoticeSnapshot notice =
+            store.ReadSnapshot().Notices.Single();
+        GalateaReplyLeaseSnapshot lease =
+            store.BeginReplyLeaseMembership(
+                leaseId,
+                "player",
+                [new(notice.NoticeId, notice.Revision)]
+            );
+        lease = store.BindReplyLeaseObservationBase(
+            lease.LeaseId,
+            lease.Revision,
+            baseHead,
+            Observation("player", "reply")
+        );
+        return store.RecordLeaseObservationCommitted(
+            lease.LeaseId,
+            lease.Revision,
+            observationAddress
+        );
+    }
+
+    private static void AssertExactAbandonConflictWithoutMutation(
+        GalateaDelegationSqliteStore store,
+        string leaseId,
+        long expectedRevision,
+        string expectedBaseHead,
+        string expectedObservationAddress
+    ) {
+        GalateaDelegationStateSnapshot before = store.ReadSnapshot();
+
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            store.RollbackReplyLeaseAfterExactAbandon(
+                leaseId,
+                expectedRevision,
+                expectedBaseHead,
+                expectedObservationAddress
+            ));
+
+        AssertDelegationLeaseStateEqual(before, store.ReadSnapshot());
+    }
+
+    private static void AssertDelegationLeaseStateEqual(
+        GalateaDelegationStateSnapshot expected,
+        GalateaDelegationStateSnapshot actual
+    ) {
+        Assert.Equal(expected.StoreRevision, actual.StoreRevision);
+        Assert.Equal(expected.ActiveLease?.LeaseId,
+            actual.ActiveLease?.LeaseId);
+        Assert.Equal(expected.ActiveLease?.State,
+            actual.ActiveLease?.State);
+        Assert.Equal(expected.ActiveLease?.PlayerText,
+            actual.ActiveLease?.PlayerText);
+        Assert.Equal(expected.ActiveLease?.ExpectedSessionHead,
+            actual.ActiveLease?.ExpectedSessionHead);
+        Assert.Equal(expected.ActiveLease?.RenderedObservation,
+            actual.ActiveLease?.RenderedObservation);
+        Assert.Equal(expected.ActiveLease?.ObservationUtf8Bytes,
+            actual.ActiveLease?.ObservationUtf8Bytes);
+        Assert.Equal(expected.ActiveLease?.ObservationSha256,
+            actual.ActiveLease?.ObservationSha256);
+        Assert.Equal(expected.ActiveLease?.ObservationAddress,
+            actual.ActiveLease?.ObservationAddress);
+        Assert.Equal(expected.ActiveLease?.Revision,
+            actual.ActiveLease?.Revision);
+        Assert.Equal(expected.ActiveLease?.NoticeIds,
+            actual.ActiveLease?.NoticeIds);
+        Assert.Equal(expected.Notices, actual.Notices);
+    }
 
     private static void ExecuteSql(string databasePath, string sql) {
         var builder = new SqliteConnectionStringBuilder {
