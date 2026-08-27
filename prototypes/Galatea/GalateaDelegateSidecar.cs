@@ -60,6 +60,10 @@ internal interface IGalateaDelegateSidecar : IAsyncDisposable {
     );
 }
 
+internal sealed record GalateaSidecarProcessTestHooks(
+    Func<Process, TimeSpan, Task<bool>>? WaitForExitBoundedAsync = null
+);
+
 internal sealed partial class GalateaCodexSidecarClient
     : IGalateaDelegateSidecar {
     private const int ProtocolVersion = 1;
@@ -80,6 +84,7 @@ internal sealed partial class GalateaCodexSidecarClient
     private readonly object _stateGate = new();
     private readonly GalateaDelegateConfig _config;
     private readonly GalateaDelegateRouteConfig _route;
+    private readonly GalateaSidecarProcessTestHooks? _processHooks;
     private readonly HashSet<string> _dispatchTombstones = new(
         StringComparer.Ordinal
     );
@@ -89,9 +94,13 @@ internal sealed partial class GalateaCodexSidecarClient
     private bool _disposed;
     private int _nextGeneration;
 
-    internal GalateaCodexSidecarClient(GalateaDelegateConfig config) {
+    internal GalateaCodexSidecarClient(
+        GalateaDelegateConfig config,
+        GalateaSidecarProcessTestHooks? processHooks = null
+    ) {
         _config = GalateaDelegateConfigReader.Validate(config);
         _route = _config.CodexRoute;
+        _processHooks = processHooks;
     }
 
     internal bool HasStartedProcessForTest {
@@ -154,7 +163,8 @@ internal sealed partial class GalateaCodexSidecarClient
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 generation = _generation;
                 barrier = _restartBarrier;
-                if (generation is null && barrier.IsCompleted) {
+                if (generation is null
+                    && barrier.Status == TaskStatus.RanToCompletion) {
                     generation = new Generation(
                         this,
                         checked(++_nextGeneration),
@@ -171,7 +181,8 @@ internal sealed partial class GalateaCodexSidecarClient
                 }
             }
             if (generation is null) {
-                await barrier.WaitAsync(ct).ConfigureAwait(false);
+                await AwaitRestartBarrierAsync(barrier, ct)
+                    .ConfigureAwait(false);
                 continue;
             }
             try {
@@ -202,21 +213,39 @@ internal sealed partial class GalateaCodexSidecarClient
                     "SIDECAR_READY_TIMEOUT",
                     graceful: false
                 );
-                try {
-                    await generation.CleanupTask.ConfigureAwait(false);
-                }
-                catch (Exception exception) when (
-                    GalateaExceptionClassifier.IsNonFatal(exception)) {
-                    DebugUtil.Warning(
-                        LogCategory,
-                        $"Ready-timeout cleanup failed: generation={generation.Id}."
-                    );
-                }
+                await generation.CleanupTask.ConfigureAwait(false);
                 throw new GalateaDelegateStartException(
                     "protocol",
                     "SIDECAR_READY_TIMEOUT"
                 );
             }
+        }
+    }
+
+    private static async Task AwaitRestartBarrierAsync(
+        Task barrier,
+        CancellationToken ct
+    ) {
+        try {
+            await barrier.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+            throw;
+        }
+        catch (GalateaDelegateStartException exception) when (
+            string.Equals(
+                exception.Code,
+                "SIDECAR_REAP_UNCONFIRMED",
+                StringComparison.Ordinal
+            )) {
+            throw;
+        }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
+            throw new GalateaDelegateStartException(
+                "shutdown",
+                "SIDECAR_REAP_UNCONFIRMED"
+            );
         }
     }
 
@@ -1106,6 +1135,7 @@ internal sealed partial class GalateaCodexSidecarClient
         }
 
         internal async Task TerminateAsync(bool graceful) {
+            bool reapConfirmed = false;
             try {
                 if (graceful && !_process.HasExited) {
                     try {
@@ -1116,6 +1146,7 @@ internal sealed partial class GalateaCodexSidecarClient
                             or InvalidOperationException
                             or ObjectDisposedException) { }
                     if (await WaitForExitBoundedAsync().ConfigureAwait(false)) {
+                        reapConfirmed = true;
                         return;
                     }
                 }
@@ -1125,19 +1156,41 @@ internal sealed partial class GalateaCodexSidecarClient
                     }
                     catch (InvalidOperationException) { }
                 }
-                _ = await WaitForExitBoundedAsync().ConfigureAwait(false);
+                if (!await WaitForExitBoundedAsync().ConfigureAwait(false)) {
+                    throw new GalateaDelegateStartException(
+                        "shutdown",
+                        "SIDECAR_REAP_UNCONFIRMED"
+                    );
+                }
+                reapConfirmed = true;
+            }
+            catch (GalateaDelegateStartException) {
+                throw;
+            }
+            catch (Exception exception) when (
+                GalateaExceptionClassifier.IsNonFatal(exception)) {
+                throw new GalateaDelegateStartException(
+                    "shutdown",
+                    "SIDECAR_REAP_UNCONFIRMED"
+                );
             }
             finally {
-                _process.Dispose();
+                if (reapConfirmed) {
+                    _process.Dispose();
+                }
             }
         }
 
         private async Task<bool> WaitForExitBoundedAsync() {
+            TimeSpan deadline = TimeSpan.FromMilliseconds(
+                _owner._config.Sidecar.ShutdownGraceMs
+            );
+            if (_owner._processHooks?.WaitForExitBoundedAsync is { } wait) {
+                return await wait(_process, deadline).ConfigureAwait(false);
+            }
             try {
                 await _process.WaitForExitAsync().WaitAsync(
-                        TimeSpan.FromMilliseconds(
-                            _owner._config.Sidecar.ShutdownGraceMs
-                        )
+                        deadline
                     )
                     .ConfigureAwait(false);
                 return true;

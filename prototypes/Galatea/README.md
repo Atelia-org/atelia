@@ -159,6 +159,9 @@ stdout只有一个bounded strict-UTF8 reader；malformed、oversize、unknown、
 correlation或process exit会protocol-fatal当前generation，并把所有未决exchange映射为失败，
 不会自动retry outcome-unknown操作。stderr被持续drain但内容不进入普通日志。下一请求只可在
 旧process完成bounded kill/reap后lazy创建新generation，旧generation事件不能污染新状态。
+kill-tree后的bounded wait若仍不能确认exit/reap，cleanup与restart barrier会稳定fault为
+`shutdown/SIDECAR_REAP_UNCONFIRMED`：process handle不会被Dispose成“成功”，当前client
+永久fail closed，后续dispatch不得创建新child，Dispose也诚实传播同一failure。
 shutdown严格为sessions -> sidecar（close stdin，bounded wait，必要时kill entire process
 tree）-> Completion/RecapGrid owner，且Dispose不等待无界child task。
 

@@ -157,6 +157,32 @@ public sealed class GalateaDelegateSidecarTests {
     }
 
     [Fact]
+    public async Task ReadyTimeoutSurfacesUnconfirmedReapInsteadOfPlainTimeout() {
+        using var fixture = new Fixture("sleep 30");
+        var hooks = new GalateaSidecarProcessTestHooks(
+            WaitForExitBoundedAsync: (_, _) => Task.FromResult(false)
+        );
+        GalateaCodexSidecarClient client = fixture.CreateClient(
+            rpcTimeoutMs: 100,
+            processHooks: hooks
+        );
+
+        GalateaDelegateStartException failure = await Assert.ThrowsAsync<
+            GalateaDelegateStartException>(() => client.StartAsync(
+                Request("dispatch-ready-reap-unconfirmed"),
+                CancellationToken.None
+            ));
+
+        Assert.Equal("shutdown", failure.Stage);
+        Assert.Equal("SIDECAR_REAP_UNCONFIRMED", failure.Code);
+        Assert.Equal(1, client.GenerationCountForTest);
+        GalateaDelegateStartException dispose = await Assert.ThrowsAsync<
+            GalateaDelegateStartException>(async () =>
+                await client.DisposeAsync());
+        Assert.Equal("SIDECAR_REAP_UNCONFIRMED", dispose.Code);
+    }
+
+    [Fact]
     public async Task SidecarThatNeverReadsStdinFailsWithinWriteDeadline() {
         using var fixture = new Fixture("""
         printf '%s\n' '{"v":1,"type":"ready"}'
@@ -545,6 +571,55 @@ public sealed class GalateaDelegateSidecarTests {
             GalateaDelegateTerminal.Completed>(await second.Completion);
         Assert.Equal("fresh", completed.Final);
         Assert.Equal("2", File.ReadAllText(fixture.CountPath));
+        Assert.Equal(2, client.GenerationCountForTest);
+    }
+
+    [Fact]
+    public async Task ReapUnconfirmedFaultsBarrierAndPermanentlyBlocksRestart() {
+        using var fixture = new Fixture(
+            $$"""
+            printf '%s\n' "$$" >> {{ShellQuote(fixturePath: "COUNT")}}
+            printf '%s\n' '{"v":1,"type":"ready"}'
+            IFS= read -r line
+            printf '%s\n' '{"v":1,"type":"accepted","V":1}'
+            sleep 30
+            """
+        );
+        fixture.RewritePlaceholders();
+        int waitCalls = 0;
+        var hooks = new GalateaSidecarProcessTestHooks(
+            WaitForExitBoundedAsync: (_, _) => {
+                Interlocked.Increment(ref waitCalls);
+                return Task.FromResult(false);
+            }
+        );
+        GalateaCodexSidecarClient client = fixture.CreateClient(
+            processHooks: hooks
+        );
+
+        GalateaDelegateStartException first = await Assert.ThrowsAsync<
+            GalateaDelegateStartException>(() => client.StartAsync(
+                Request("dispatch-unconfirmed-reap"),
+                CancellationToken.None
+            ));
+        Assert.Equal("SIDECAR_PROTOCOL_ERROR", first.Code);
+
+        GalateaDelegateStartException restart = await Assert.ThrowsAsync<
+            GalateaDelegateStartException>(() => client.StartAsync(
+                Request("dispatch-must-not-restart"),
+                CancellationToken.None
+            ));
+        Assert.Equal("shutdown", restart.Stage);
+        Assert.Equal("SIDECAR_REAP_UNCONFIRMED", restart.Code);
+        Assert.Equal(1, client.GenerationCountForTest);
+        Assert.Single(File.ReadAllLines(fixture.CountPath));
+        Assert.True(Volatile.Read(ref waitCalls) >= 1);
+
+        GalateaDelegateStartException dispose = await Assert.ThrowsAsync<
+            GalateaDelegateStartException>(async () =>
+                await client.DisposeAsync());
+        Assert.Equal("shutdown", dispose.Stage);
+        Assert.Equal("SIDECAR_REAP_UNCONFIRMED", dispose.Code);
     }
 
     [Fact]
@@ -661,7 +736,8 @@ public sealed class GalateaDelegateSidecarTests {
         internal GalateaCodexSidecarClient CreateClient(
             int rpcTimeoutMs = 2_000,
             int maximumFrameUtf8Bytes = 65_536,
-            int maximumBodyUtf8Bytes = 8_000
+            int maximumBodyUtf8Bytes = 8_000,
+            GalateaSidecarProcessTestHooks? processHooks = null
         ) {
             var config = new GalateaDelegateConfig(
                 new GalateaDelegateSidecarConfig(
@@ -694,7 +770,7 @@ public sealed class GalateaDelegateSidecarTests {
                     )
                 )]
             );
-            return new GalateaCodexSidecarClient(config);
+            return new GalateaCodexSidecarClient(config, processHooks);
         }
 
         public void Dispose() {
