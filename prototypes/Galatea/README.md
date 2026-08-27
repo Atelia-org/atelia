@@ -144,6 +144,10 @@ frame write、flush与acceptance各受`rpcTimeoutMs`约束：write开始前取�
 自动retry。attached duplicate waiter自身取消或等待超时不会伤害原owner exchange。
 Node sidecar自身向C# stdout写frame使用独立、code-owned 10000ms deadline；它不继承最长可到
 300000ms的JSON-RPC `rpcTimeoutMs`，并始终落在Node wire允许的100..60000ms范围内。
+首次lazy启动的`ready`另使用aggregate deadline：`2 * rpcTimeoutMs + 5000ms`。这是因为Node
+在`ready`前会串行完成initialize与`account/read`两次各自受`rpcTimeoutMs`约束的RPC，再加
+bounded cold-process margin；min/default/max分别为5200/65000/605000ms。该aggregate只用于
+generation ready，dispatch acceptance与每次Node JSON-RPC仍保持原`rpcTimeoutMs`。
 
 active exact同dispatch会在C# generation内coalesce；一旦frame可能写出，dispatchId就进入
 client-lifetime、最多4096项的fail-closed tombstone，正常terminal或outcome-unknown后即使换

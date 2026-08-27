@@ -81,6 +81,81 @@ public sealed class GalateaDelegateSidecarTests {
         );
     }
 
+    [Theory]
+    [InlineData(100, 5_200)]
+    [InlineData(30_000, 65_000)]
+    [InlineData(300_000, 605_000)]
+    public void ReadyDeadlineComposesTwoRpcsAndStartupMargin(
+        int rpcTimeoutMs,
+        int expectedReadyMs
+    ) {
+        Assert.Equal(
+            TimeSpan.FromMilliseconds(expectedReadyMs),
+            GalateaCodexSidecarClient.ComputeReadyDeadline(rpcTimeoutMs)
+        );
+    }
+
+    [Fact]
+    public async Task ReadyAfterOneRpcButBeforeAggregateDeadlineIsAccepted() {
+        using var fixture = new Fixture("""
+        sleep 0.3
+        printf '%s\n' '{"v":1,"type":"ready"}'
+        IFS= read -r line
+        request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
+        dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
+        printf '{"v":1,"type":"accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-1","turnId":"turn-1"}\n' "$request_id" "$dispatch_id"
+        printf '{"v":1,"type":"completed","dispatchId":"%s","threadId":"thread-1","turnId":"turn-1","final":"cold ready"}\n' "$dispatch_id"
+        while IFS= read -r ignored; do :; done
+        """);
+        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+            rpcTimeoutMs: 200
+        );
+        var watch = Stopwatch.StartNew();
+
+        GalateaDelegateAcceptedHandle accepted = await client.StartAsync(
+            Request("dispatch-cold-ready"),
+            CancellationToken.None
+        );
+        GalateaDelegateTerminal.Completed completed = Assert.IsType<
+            GalateaDelegateTerminal.Completed>(await accepted.Completion);
+
+        watch.Stop();
+        Assert.Equal("cold ready", completed.Final);
+        Assert.True(watch.Elapsed > TimeSpan.FromMilliseconds(250));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3));
+    }
+
+    [Fact]
+    public async Task NeverReadyFailsAtAggregateDeadlineAndReapsChild() {
+        using var fixture = new Fixture(
+            $$"""
+            printf '%s' "$$" > {{ShellQuote(fixturePath: "COUNT")}}
+            sleep 30
+            """
+        );
+        fixture.RewritePlaceholders();
+        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+            rpcTimeoutMs: 100
+        );
+        var watch = Stopwatch.StartNew();
+
+        GalateaDelegateStartException failure = await Assert.ThrowsAsync<
+            GalateaDelegateStartException>(() => client.StartAsync(
+                Request("dispatch-never-ready"),
+                CancellationToken.None
+            ));
+
+        watch.Stop();
+        Assert.Equal("SIDECAR_READY_TIMEOUT", failure.Code);
+        Assert.True(watch.Elapsed >= TimeSpan.FromSeconds(4.5));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(8));
+        int pid = int.Parse(
+            File.ReadAllText(fixture.CountPath),
+            System.Globalization.CultureInfo.InvariantCulture
+        );
+        Assert.False(IsProcessAlive(pid));
+    }
+
     [Fact]
     public async Task SidecarThatNeverReadsStdinFailsWithinWriteDeadline() {
         using var fixture = new Fixture("""
@@ -532,6 +607,16 @@ public sealed class GalateaDelegateSidecarTests {
         );
         while (!File.Exists(path)) {
             await Task.Delay(10, deadline.Token);
+        }
+    }
+
+    private static bool IsProcessAlive(int pid) {
+        try {
+            using Process process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException) {
+            return false;
         }
     }
 

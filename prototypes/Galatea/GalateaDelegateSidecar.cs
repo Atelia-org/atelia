@@ -66,6 +66,7 @@ internal sealed partial class GalateaCodexSidecarClient
     private const int MaximumDispatchTombstones = 4_096;
     private const int DefaultInterruptGraceMs = 2_000;
     private const int SidecarOutputWriteTimeoutMs = 10_000;
+    private const int ReadyStartupMarginMs = 5_000;
     private const string LogCategory = "Galatea.DelegateSidecar";
     private static readonly UTF8Encoding StrictUtf8 = new(
         encoderShouldEmitUTF8Identifier: false,
@@ -175,7 +176,7 @@ internal sealed partial class GalateaCodexSidecarClient
             }
             try {
                 await generation.Ready.Task.WaitAsync(
-                        TimeSpan.FromMilliseconds(
+                        ComputeReadyDeadline(
                             _config.Sidecar.RpcTimeoutMs
                         ),
                         ct
@@ -201,12 +202,32 @@ internal sealed partial class GalateaCodexSidecarClient
                     "SIDECAR_READY_TIMEOUT",
                     graceful: false
                 );
+                try {
+                    await generation.CleanupTask.ConfigureAwait(false);
+                }
+                catch (Exception exception) when (
+                    GalateaExceptionClassifier.IsNonFatal(exception)) {
+                    DebugUtil.Warning(
+                        LogCategory,
+                        $"Ready-timeout cleanup failed: generation={generation.Id}."
+                    );
+                }
                 throw new GalateaDelegateStartException(
                     "protocol",
                     "SIDECAR_READY_TIMEOUT"
                 );
             }
         }
+    }
+
+    internal static TimeSpan ComputeReadyDeadline(int rpcTimeoutMs) {
+        if (rpcTimeoutMs is < 100 or > 300_000) {
+            throw new ArgumentOutOfRangeException(nameof(rpcTimeoutMs));
+        }
+        long milliseconds = checked(
+            2L * rpcTimeoutMs + ReadyStartupMarginMs
+        );
+        return TimeSpan.FromMilliseconds(milliseconds);
     }
 
     private ProcessStartInfo CreateStartInfo() {
