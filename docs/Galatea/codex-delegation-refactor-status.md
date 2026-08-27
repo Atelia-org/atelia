@@ -51,7 +51,7 @@
 - `dispatchId` 由稳定来源身份构成，至少包含 Galatea user/session、terminal Action head 与 artifact ordinal。重复观察同一 Action 不得启动第二次 Codex turn。
 - 每次 Codex turn 的 terminal `agentMessage` final response 原样、受界限地保存在 Galatea 内存中，并保留对应 Codex `threadId`、`turnId` 与 `dispatchId` 供诊断和关联。MCP bridge 当前使用的 `AgentReport` output schema 不直接成为 Galatea 回信契约。
 - Codex turn 的失败、被中断或无法产生合法 final response，应形成有界的 delivery-failure/退信结果；不能让 Galatea 永久误以为代行者仍在处理。
-- 每次普通玩家回合开始时形成 ready-reply cutoff：cutoff 前已经 terminal 的全部回信进入本轮 Observation；之后完成的回信留到再下一轮。每封回信最多注入一次。
+- 每次普通玩家回合开始时形成 ready-reply cutoff：cutoff 前已经 terminal 的 bounded、可渲染 FIFO prefix 进入本轮 Observation；之后完成或因本轮容量未选中的回信留到后续回合。每封回信最多注入一次。
 - 现有 authenticated `/api/v1/mailbox/inbound` 保留，但不参与 Codex 回执路径。它仍代表“外界主动来信并立即创建一个 Galatea turn”；Codex 回信只进入 ReplyInbox，绝不自动开启主线回合。
 
 ### Observation 表达

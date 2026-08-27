@@ -111,6 +111,10 @@ internal static class GalateaPlayerObservationEnvelope {
     // using three (rather than two) post-fence newlines before another
     // section, or one post-fence newline at the end of the envelope.
     private const string TrailingNewlineSectionSeparator = "\n\n\n";
+    private static readonly string MaximumRenderedPlayerText = new(
+        '~',
+        GalateaHttpV1.MaximumMessageUtf8Bytes
+    );
 
     internal static string Wrap(GalateaPlayerObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
@@ -228,6 +232,30 @@ internal static class GalateaPlayerObservationEnvelope {
         }
         catch (Exception exception) when (exception is
             ArgumentException or EncoderFallbackException) {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Returns whether the notices fit with every player text accepted by the
+    /// HTTP/normalizer message bound. A full UTF-8 budget of ASCII tildes
+    /// simultaneously maximizes body character count and adaptive-fence
+    /// length; any multibyte character or non-tilde shortens one of those
+    /// terms. Its lack of a terminal newline also maximizes the rendered
+    /// player section. Therefore this concrete render is the byte worst case.
+    /// </summary>
+    internal static bool FitsEveryValidPlayerText(
+        IReadOnlyList<GalateaReadyNotice> notices
+    ) {
+        ArgumentNullException.ThrowIfNull(notices);
+        try {
+            _ = Wrap(new GalateaPlayerObservation(
+                MaximumRenderedPlayerText,
+                notices
+            ));
+            return true;
+        }
+        catch (ArgumentOutOfRangeException) {
             return false;
         }
     }

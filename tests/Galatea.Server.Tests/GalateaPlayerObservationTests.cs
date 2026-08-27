@@ -162,6 +162,51 @@ public sealed class GalateaPlayerObservationTests {
     }
 
     [Fact]
+    public void NormalizedPlayerWorstCaseHasReservedRenderableBudget() {
+        GalateaReadyNotice[] replies = Enumerable.Range(0, 9)
+            .Select(static index => (GalateaReadyNotice)
+                new GalateaReadyNotice.Reply(
+                    index + ":" + new string('r', 94_998)
+                ))
+            .ToArray();
+        Assert.InRange(
+            System.Text.Encoding.UTF8.GetByteCount(
+                GalateaPlayerObservationEnvelope.Wrap(
+                    new GalateaPlayerObservation("x", replies)
+                )),
+            1,
+            GalateaPlayerObservationEnvelope.MaximumRenderedUtf8Bytes
+        );
+        Assert.False(
+            GalateaPlayerObservationEnvelope.FitsEveryValidPlayerText(
+                replies
+            )
+        );
+
+        GalateaReadyNotice[] safePrefix = replies[..8];
+        Assert.True(
+            GalateaPlayerObservationEnvelope.FitsEveryValidPlayerText(
+                safePrefix
+            )
+        );
+        string worstNormalized = new(
+            '~',
+            GalateaHttpV1.MaximumMessageUtf8Bytes
+        );
+        string rendered = GalateaPlayerObservationEnvelope.Wrap(
+            new GalateaPlayerObservation(
+                worstNormalized,
+                safePrefix
+            )
+        );
+        Assert.InRange(
+            System.Text.Encoding.UTF8.GetByteCount(rendered),
+            1,
+            GalateaPlayerObservationEnvelope.MaximumRenderedUtf8Bytes
+        );
+    }
+
+    [Fact]
     public async Task CompositeAndLegacyArePlayerTurnsButInboundIsNot() {
         await using GalateaTestHost host = GalateaTestHost.Create(
             new NeverCalledFactory(),

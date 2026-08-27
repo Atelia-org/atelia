@@ -246,7 +246,7 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
     internal GalateaReadyReplyLease BeginReadyReplyCutoff(
         string playerText
     ) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(playerText);
+        _ = new GalateaPlayerObservation(playerText);
         lock (_gate) {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_activeLeaseId is not null) {
@@ -277,12 +277,8 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
                     .. selected.Select(static value => value.ReadyNotice!),
                     notice
                 ];
-                try {
-                    _ = GalateaPlayerObservationEnvelope.Wrap(
-                        new GalateaPlayerObservation(playerText, proposed)
-                    );
-                }
-                catch (ArgumentOutOfRangeException) {
+                if (!GalateaPlayerObservationEnvelope
+                        .FitsEveryValidPlayerText(proposed)) {
                     break;
                 }
                 selected.Add(candidate);

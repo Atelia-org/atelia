@@ -279,6 +279,87 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     }
 
     [Fact]
+    public async Task NormalizerWorstCaseStillPersistsSafeFifoPrefixWithoutRetryLivelock() {
+        const int ReplyBytes = 95_000;
+        string worstNormalized = new(
+            '~',
+            GalateaHttpV1.MaximumMessageUtf8Bytes
+        );
+        var mainClient = new QueueClient(
+            _ => Completed(mainClient: null, Connection("test"), "first")
+        );
+        var normalizer = new SequencedNormalizer(worstNormalized);
+        var sidecar = new GateSidecar();
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient> {
+                ["test"] = mainClient,
+            }),
+            normalizer,
+            connections: [Connection("test")],
+            delegateSidecar: sidecar
+        );
+        using HttpClient http = host.CreateClient();
+        await LoginAsync(http);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        string[] replies = Enumerable.Range(0, 9)
+            .Select(index => index.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture
+                ) + ":" + new string('r', ReplyBytes - 2))
+            .ToArray();
+        for (int index = 0; index < replies.Length; index++) {
+            await MakeReadyAsync(
+                session,
+                sidecar,
+                checked((uint)index + 20),
+                replies[index]
+            );
+        }
+
+        _ = await StartAndWaitAsync(
+            http,
+            service,
+            session,
+            "x"
+        );
+        SessionCompletedTurnProjection first = session.Engine
+            .ReadRecentCompletedTurns(1).RequireSnapshot().Turns.Single();
+        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+            first.ObservationContent,
+            out GalateaPlayerObservation firstComposite
+        ));
+        Assert.InRange(firstComposite.ReadyNotices.Count, 1, 8);
+        Assert.Equal(
+            replies.Take(firstComposite.ReadyNotices.Count),
+            firstComposite.ReadyNotices.Select(static notice => notice.Body)
+        );
+        Assert.InRange(
+            Encoding.UTF8.GetByteCount(first.ObservationContent),
+            1,
+            GalateaPlayerObservationEnvelope.MaximumRenderedUtf8Bytes
+        );
+
+        using GalateaDelegationCoordinator.GalateaReadyReplyLease next =
+            session.DelegationCoordinator.BeginReadyReplyCutoff("y");
+        Assert.Equal(
+            replies.Skip(firstComposite.ReadyNotices.Count),
+            next.Notices.Select(static notice => notice.Body)
+        );
+        next.Commit();
+        Assert.All(
+            session.DelegationCoordinator.Snapshot(),
+            static candidate => Assert.Equal(
+                GalateaDelegateCandidateState.Consumed,
+                candidate.State
+            )
+        );
+    }
+
+    [Fact]
     public async Task RecoverableFreshFailureKeepsOldLease_AndRecoveryDoesNotClaimNewReady() {
         CompletionConnectionConfig connection = Connection("test");
         var mainClient = new QueueClient(

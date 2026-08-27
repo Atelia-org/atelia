@@ -216,8 +216,10 @@ composite parser只接受code-owned prefix、heading、info string、顺序与�
 recent view显示玩家文本及每条独立通知；普通Undo仍把它识别为player turn，但pop receipt只返回玩家文本。
 历史backtick player envelope继续只读兼容recent/Undo；inbound mail envelope仍不属于普通player Undo。
 input normalizer只接收玩家文本，绝不接收ready notices。普通player入口在仍持有per-session `TurnLock`、
-完成recovery admission与main connection检查之后形成ready-reply cutoff；cutoff之前已经terminal的可渲染
-FIFO前缀冻结进本轮typed fresh input，之后才terminal的结果留给下一次普通player turn。inbound入口和
+完成recovery admission与main connection检查之后形成ready-reply cutoff；cutoff之前已经terminal的bounded
+FIFO前缀冻结进本轮typed fresh input，之后才terminal的结果留给下一次普通player turn。选择前缀时为任意
+合法64 KiB normalized player text的最坏adaptive-fence渲染预留空间，避免normalizer扩张令同一批reply反复
+越界；未选中的ready项保持原FIFO次序。inbound入口和
 recovery入口都不形成新cutoff。
 
 `SessionJournal`公开的`AdaptiveMarkdownFenceRenderer.RenderBlock(infoString, exactBody)`要求1..64字符
