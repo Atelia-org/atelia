@@ -51,6 +51,7 @@ public sealed record GalateaUserConfig(
     string UserId,
     string Password,
     string SessionDir,
+    string DelegationStateDir,
     GalateaSessionProvisioning SessionProvisioning,
     string SystemPrompt = "",
     // Optional path to a markdown (or plain text) file whose content overrides the
@@ -68,17 +69,26 @@ public enum GalateaSessionProvisioning {
 }
 
 internal static class GalateaConfigValidation {
-    internal static void RequireDistinctSessionDirectories(
+    internal static void RequireDistinctUserStorageDirectories(
         IReadOnlyList<GalateaUserConfig> users
     ) {
         ArgumentNullException.ThrowIfNull(users);
         StringComparer comparer = OperatingSystem.IsWindows()
             ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;
-        var owners = new Dictionary<
+        var sessionOwners = new Dictionary<
             string,
             (string UserId, string ConfiguredPath)
         >(comparer);
+        var delegationOwners = new Dictionary<
+            string,
+            (string UserId, string ConfiguredPath)
+        >(comparer);
+        var normalizedUsers = new List<(
+            string UserId,
+            string SessionDirectory,
+            string DelegationStateDirectory
+        )>(users.Count);
 
         for (int index = 0; index < users.Count; index++) {
             GalateaUserConfig user = users[index]
@@ -99,20 +109,114 @@ internal static class GalateaConfigValidation {
                     + "non-empty sessionDir."
                 );
             }
-            string normalized = Path.TrimEndingDirectorySeparator(
-                Path.GetFullPath(user.SessionDir)
-            );
-            if (owners.TryGetValue(normalized, out var existing)) {
+            if (string.IsNullOrWhiteSpace(user.DelegationStateDir)) {
                 throw new InvalidOperationException(
-                    "Galatea config users "
-                    + $"'{existing.UserId}' (sessionDir "
-                    + $"'{existing.ConfiguredPath}') and '{user.UserId}' "
-                    + $"(sessionDir '{user.SessionDir}') resolve to the "
-                    + $"same lexical session path '{normalized}'."
+                    $"Galatea config user '{user.UserId}' must have a "
+                    + "non-empty delegationStateDir."
                 );
             }
-            owners.Add(normalized, (user.UserId, user.SessionDir));
+            string normalizedSession = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(user.SessionDir)
+            );
+            string normalizedDelegation = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(user.DelegationStateDir)
+            );
+            if (sessionOwners.TryGetValue(
+                    normalizedSession,
+                    out var existingSession)) {
+                throw new InvalidOperationException(
+                    "Galatea config users "
+                    + $"'{existingSession.UserId}' (sessionDir "
+                    + $"'{existingSession.ConfiguredPath}') and '{user.UserId}' "
+                    + $"(sessionDir '{user.SessionDir}') resolve to the "
+                    + $"same lexical session path '{normalizedSession}'."
+                );
+            }
+            sessionOwners.Add(
+                normalizedSession,
+                (user.UserId, user.SessionDir)
+            );
+            if (delegationOwners.TryGetValue(
+                    normalizedDelegation,
+                    out var existingDelegation)) {
+                throw new InvalidOperationException(
+                    "Galatea config users "
+                    + $"'{existingDelegation.UserId}' (delegationStateDir "
+                    + $"'{existingDelegation.ConfiguredPath}') and "
+                    + $"'{user.UserId}' (delegationStateDir "
+                    + $"'{user.DelegationStateDir}') resolve to the same "
+                    + $"lexical delegation state path "
+                    + $"'{normalizedDelegation}'."
+                );
+            }
+            delegationOwners.Add(
+                normalizedDelegation,
+                (user.UserId, user.DelegationStateDir)
+            );
+            normalizedUsers.Add((
+                user.UserId,
+                normalizedSession,
+                normalizedDelegation
+            ));
         }
+
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        for (int delegationIndex = 0;
+             delegationIndex < normalizedUsers.Count;
+             delegationIndex++) {
+            var delegation = normalizedUsers[delegationIndex];
+            foreach (var session in normalizedUsers) {
+                RequireDisjoint(
+                    delegation.DelegationStateDirectory,
+                    $"delegationStateDir for user '{delegation.UserId}'",
+                    session.SessionDirectory,
+                    $"sessionDir for user '{session.UserId}'",
+                    comparison
+                );
+            }
+            for (int otherIndex = delegationIndex + 1;
+                 otherIndex < normalizedUsers.Count;
+                 otherIndex++) {
+                var other = normalizedUsers[otherIndex];
+                RequireDisjoint(
+                    delegation.DelegationStateDirectory,
+                    $"delegationStateDir for user '{delegation.UserId}'",
+                    other.DelegationStateDirectory,
+                    $"delegationStateDir for user '{other.UserId}'",
+                    comparison
+                );
+            }
+        }
+    }
+
+    internal static void RequireDisjoint(
+        string first,
+        string firstDescription,
+        string second,
+        string secondDescription,
+        StringComparison comparison
+    ) {
+        if (string.Equals(first, second, comparison)
+            || IsAncestor(first, second, comparison)
+            || IsAncestor(second, first, comparison)) {
+            throw new InvalidOperationException(
+                $"Galatea {firstDescription} must be disjoint from "
+                + $"{secondDescription}."
+            );
+        }
+    }
+
+    private static bool IsAncestor(
+        string ancestor,
+        string descendant,
+        StringComparison comparison
+    ) {
+        string prefix = Path.EndsInDirectorySeparator(ancestor)
+            ? ancestor
+            : ancestor + Path.DirectorySeparatorChar;
+        return descendant.StartsWith(prefix, comparison);
     }
 }
 

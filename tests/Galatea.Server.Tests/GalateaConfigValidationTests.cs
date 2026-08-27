@@ -30,7 +30,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigTemplateStartsWithExactV2AndRoundTrips() {
+    public void RootConfigTemplateStartsWithExactV3AndRoundTrips() {
         byte[] template = JsonSerializer.SerializeToUtf8Bytes(
             GalateaConfigTemplateFactory.CreateUsersFile(),
             GalateaJson.Options
@@ -42,7 +42,7 @@ public sealed class GalateaConfigValidationTests {
             .EnumerateObject()
             .First();
         Assert.Equal("v", first.Name);
-        Assert.Equal("2", first.Value.GetRawText());
+        Assert.Equal("3", first.Value.GetRawText());
 
         GalateaUsersFileConfig? decoded = JsonSerializer.Deserialize(
             template,
@@ -56,6 +56,10 @@ public sealed class GalateaConfigValidationTests {
         Assert.Equal(
             ["sessions/alice", "sessions/bob"],
             decoded.Users.Select(static user => user.SessionDir)
+        );
+        Assert.Equal(
+            ["delegation-state/alice", "delegation-state/bob"],
+            decoded.Users.Select(static user => user.DelegationStateDir)
         );
         Assert.All(
             decoded.Users,
@@ -115,6 +119,14 @@ public sealed class GalateaConfigValidationTests {
                 ],
                 loaded.Users.Select(static user => user.SessionDir)
             );
+            Assert.Equal(
+                [
+                    Path.Combine(root, "delegation-state", "alice"),
+                    Path.Combine(root, "delegation-state", "bob")
+                ],
+                loaded.Users.Select(static user =>
+                    user.DelegationStateDir)
+            );
         }
         finally {
             Directory.Delete(root, recursive: true);
@@ -129,6 +141,11 @@ public sealed class GalateaConfigValidationTests {
         string expectedSessionDirectory = Path.Combine(
             configDirectory,
             "sessions",
+            "alice"
+        );
+        string expectedDelegationStateDirectory = Path.Combine(
+            configDirectory,
+            "delegation-state",
             "alice"
         );
         try {
@@ -149,12 +166,18 @@ public sealed class GalateaConfigValidationTests {
 
             string configPath = WriteConfig(
                 configDirectory,
-                [User("alice", "sessions/alice")]
+                [User(
+                    "alice",
+                    "sessions/alice",
+                    "delegation-state/alice"
+                )]
             );
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
+            GalateaUserConfig loadedUser = Assert.Single(loaded.Users);
+            Assert.Equal(expectedSessionDirectory, loadedUser.SessionDir);
             Assert.Equal(
-                expectedSessionDirectory,
-                Assert.Single(loaded.Users).SessionDir
+                expectedDelegationStateDirectory,
+                loadedUser.DelegationStateDir
             );
 
             var factory = new TrackingFactory();
@@ -233,6 +256,108 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
+    public void DelegationStatePathsResolveExactlyAndMustRemainDisjoint() {
+        string root = NewRoot();
+        string external = NewRoot();
+        try {
+            string absolute = Path.Combine(external, "delegation-state");
+            string configPath = WriteConfig(
+                root,
+                [User("alice", "sessions/alice", absolute)]
+            );
+            Assert.Equal(
+                absolute,
+                Assert.Single(GalateaConfigLoader.Load(configPath).Users)
+                    .DelegationStateDir
+            );
+
+            GalateaUserConfig[] duplicate = [
+                User("alice", "sessions/alice", "delegation/shared"),
+                User("bob", "sessions/bob", "./delegation/shared")
+            ];
+            Assert.Throws<InvalidOperationException>(() =>
+                GalateaConfigLoader.Load(WriteConfig(root, duplicate)));
+
+            GalateaUserConfig[] nestedDelegation = [
+                User("alice", "sessions/alice", "delegation/alice"),
+                User("bob", "sessions/bob", "delegation/alice/bob")
+            ];
+            Assert.Throws<InvalidOperationException>(() =>
+                GalateaConfigLoader.Load(WriteConfig(
+                    root,
+                    nestedDelegation
+                )));
+
+            GalateaUserConfig[] crossUserNesting = [
+                User(
+                    "alice",
+                    "sessions/alice",
+                    "sessions/bob/delegation"
+                ),
+                User("bob", "sessions/bob", "delegation/bob")
+            ];
+            Assert.Throws<InvalidOperationException>(() =>
+                GalateaConfigLoader.Load(WriteConfig(
+                    root,
+                    crossUserNesting
+                )));
+
+            foreach (string delegationPath in new[] {
+                         "sessions/alice",
+                         "sessions/alice/delegation",
+                         "sessions"
+                     }) {
+                Assert.Throws<InvalidOperationException>(() =>
+                    GalateaConfigLoader.Load(WriteConfig(
+                        root,
+                        [User(
+                            "alice",
+                            "sessions/alice",
+                            delegationPath
+                        )]
+                    )));
+            }
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(external, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void DelegationStatePathRejectsExistingAncestorSymlink() {
+        if (!OperatingSystem.IsLinux()) { return; }
+        string root = NewRoot();
+        string external = NewRoot();
+        try {
+            string link = Path.Combine(root, "delegation-link");
+            Directory.CreateSymbolicLink(link, external);
+            string configPath = WriteConfig(
+                root,
+                [User(
+                    "alice",
+                    "sessions/alice",
+                    "delegation-link/alice"
+                )]
+            );
+
+            InvalidOperationException failure = Assert.Throws<
+                InvalidOperationException>(() =>
+                    GalateaConfigLoader.Load(configPath));
+            Assert.Contains(
+                "delegationStateDir",
+                failure.Message,
+                StringComparison.Ordinal
+            );
+            Assert.Contains("symlink", failure.Message);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(external, recursive: true);
+        }
+    }
+
+    [Fact]
     public void ResolvedRelativeSessionAndCallLogNestingIsRejected() {
         string root = NewRoot();
         string expectedSessionDirectory = Path.Combine(
@@ -253,6 +378,18 @@ public sealed class GalateaConfigValidationTests {
 
             Assert.Contains("disjoint", failure.Message);
             Assert.False(Directory.Exists(expectedSessionDirectory));
+
+            configPath = WriteConfig(
+                root,
+                [User(
+                    "alice",
+                    "sessions/alice",
+                    "delegation-state/alice"
+                )],
+                callLogDirectory: "delegation-state"
+            );
+            Assert.Throws<InvalidOperationException>(() =>
+                GalateaConfigLoader.Load(configPath));
         }
         finally {
             Directory.Delete(root, recursive: true);
@@ -260,7 +397,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigAcceptsExactV2OutsideFirstProperty() {
+    public void RootConfigAcceptsExactV3OutsideFirstProperty() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -268,11 +405,11 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string LeadingVersion = "{\"v\":2,";
+            const string LeadingVersion = "{\"v\":3,";
             Assert.StartsWith(LeadingVersion, original);
             string reordered = "{"
                 + original[LeadingVersion.Length..^1]
-                + ",\"v\":2}";
+                + ",\"v\":3}";
             File.WriteAllText(configPath, reordered);
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
@@ -284,7 +421,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigRequiresExactIntegerV2AndRejectsV1() {
+    public void RootConfigRequiresExactIntegerV3AndRejectsOlderVersions() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -292,7 +429,7 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string Version = "\"v\":2";
+            const string Version = "\"v\":3";
             Assert.Contains(Version, original, StringComparison.Ordinal);
 
             string[] invalid = [
@@ -309,13 +446,15 @@ public sealed class GalateaConfigValidationTests {
                     StringComparison.Ordinal),
                 original.Replace(Version, "\"v\":1",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":3",
+                original.Replace(Version, "\"v\":2",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":2.0",
+                original.Replace(Version, "\"v\":4",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":2e0",
+                original.Replace(Version, "\"v\":3.0",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"V\":2",
+                original.Replace(Version, "\"v\":3e0",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"V\":3",
                     StringComparison.Ordinal),
                 original.Replace(
                     Version + ",",
@@ -345,7 +484,7 @@ public sealed class GalateaConfigValidationTests {
             File.WriteAllText(
                 configPath,
                 """
-                {"v":3,"users":[{"userId":"alice","password":"pw","sessionDir":"session","sessionProvisioning":"existing-only","systemPrompt":"","systemPromptFile":"missing-prompt.txt"}],"recapGrid":{"routeManifestPath":"missing-routes.json","agentControlProfileFiles":["missing-profile.json"],"currentAgentControlProfileId":"missing"}}
+                {"v":4,"users":[{"userId":"alice","password":"pw","sessionDir":"session","delegationStateDir":"delegation-state","sessionProvisioning":"existing-only","systemPrompt":"","systemPromptFile":"missing-prompt.txt"}],"recapGrid":{"routeManifestPath":"missing-routes.json","agentControlProfileFiles":["missing-profile.json"],"currentAgentControlProfileId":"missing"}}
                 """
             );
 
@@ -405,7 +544,7 @@ public sealed class GalateaConfigValidationTests {
             byte[] versionless = File.ReadAllBytes(configPath);
             versionless = System.Text.Encoding.UTF8.GetBytes(
                 System.Text.Encoding.UTF8.GetString(versionless).Replace(
-                    "\"v\":2,",
+                    "\"v\":3,",
                     string.Empty,
                     StringComparison.Ordinal
                 )
@@ -606,8 +745,8 @@ public sealed class GalateaConfigValidationTests {
 
             string[] invalidConfigs = [
                 originalConfig.Replace(
-                    "{\"v\":2,\"users\"",
-                    "{\"v\":2,\"unknown\":1,\"users\"",
+                    "{\"v\":3,\"users\"",
+                    "{\"v\":3,\"unknown\":1,\"users\"",
                     StringComparison.Ordinal
                 ),
                 originalConfig.Replace(
@@ -618,6 +757,17 @@ public sealed class GalateaConfigValidationTests {
                 originalConfig.Replace(
                     "\"userId\":",
                     "\"nestedUnknown\":1,\"userId\":",
+                    StringComparison.Ordinal
+                ),
+                originalConfig.Replace(
+                    "\"delegationStateDir\":",
+                    "\"DelegationStateDir\":",
+                    StringComparison.Ordinal
+                ),
+                originalConfig.Replace(
+                    "\"delegationStateDir\":",
+                    "\"delegationStateDir\":\"first\","
+                    + "\"DelegationStateDir\":",
                     StringComparison.Ordinal
                 ),
                 originalConfig.Replace(
@@ -932,6 +1082,7 @@ public sealed class GalateaConfigValidationTests {
                     "alice",
                     "pw",
                     Path.Combine(root, "session"),
+                    Path.Combine(root, "delegation-state"),
                     GalateaSessionProvisioning.ExistingOnly,
                     SystemPrompt: "",
                     SystemPromptFile: "prompt.txt"
@@ -1199,11 +1350,14 @@ public sealed class GalateaConfigValidationTests {
 
     private static GalateaUserConfig User(
         string userId,
-        string sessionDirectory
+        string sessionDirectory,
+        string? delegationStateDirectory = null
     ) => new(
         userId,
         "pw",
         sessionDirectory,
+        delegationStateDirectory
+            ?? sessionDirectory + "-delegation-state-" + userId,
         GalateaSessionProvisioning.ExistingOnly,
         SystemPrompt: "prompt"
     );

@@ -424,6 +424,7 @@ public sealed class GalateaSseV1Tests {
                 "alice",
                 "password",
                 "/session",
+                "/delegation-state",
                 GalateaSessionProvisioning.ExistingOnly
             ),
             [new GalateaConnectionInfoDto("test", "model")],

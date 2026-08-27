@@ -92,7 +92,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(components);
         try {
-            GalateaConfigValidation.RequireDistinctSessionDirectories(
+            GalateaConfigValidation.RequireDistinctUserStorageDirectories(
                 config.Users
             );
             GalateaRecapGridRuntimeConfig recapGrid = config.RecapGrid
@@ -152,7 +152,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(userMessageNormalizer);
         GalateaDelegateConfig delegates =
             GalateaDelegateConfigReader.Validate(config.Delegates);
-        GalateaConfigValidation.RequireDistinctSessionDirectories(
+        GalateaConfigValidation.RequireDistinctUserStorageDirectories(
             config.Users
         );
         CompletionConnectionsFileConfig normalized =
@@ -217,7 +217,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizerFactory);
-        GalateaConfigValidation.RequireDistinctSessionDirectories(
+        GalateaConfigValidation.RequireDistinctUserStorageDirectories(
             config.Users
         );
 
@@ -2194,7 +2194,7 @@ internal static class GalateaConfigLoader {
             GalateaDelegateConfigReader.Read(delegatesPath);
         if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("Galatea config must contain at least one user."); }
         IReadOnlyList<GalateaUserConfig> users =
-            ResolveSessionDirectories(usersFile.Users, configDir);
+            ResolveUserDirectories(usersFile.Users, configDir);
 
         var config = new GalateaConfig(
             Users: users,
@@ -2376,7 +2376,7 @@ internal static class GalateaConfigLoader {
     }
 
     private static IReadOnlyList<GalateaUserConfig>
-        ResolveSessionDirectories(
+        ResolveUserDirectories(
             IReadOnlyList<GalateaUserConfig> configuredUsers,
             string configDirectory
         ) {
@@ -2394,11 +2394,27 @@ internal static class GalateaConfigLoader {
                     + "non-empty sessionDir."
                 );
             }
-            resolvedUsers.Add(user with {
-                SessionDir = Path.GetFullPath(
-                    user.SessionDir,
+            if (string.IsNullOrWhiteSpace(user.DelegationStateDir)) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' must have a "
+                    + "non-empty delegationStateDir."
+                );
+            }
+            string delegationStateDirectory = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(
+                    user.DelegationStateDir,
                     configDirectory
                 )
+            );
+            RejectReparsePointsOnExistingPath(
+                delegationStateDirectory,
+                $"delegationStateDir for user '{user.UserId}'"
+            );
+            resolvedUsers.Add(user with {
+                SessionDir = Path.TrimEndingDirectorySeparator(
+                    Path.GetFullPath(user.SessionDir, configDirectory)
+                ),
+                DelegationStateDir = delegationStateDirectory
             });
         }
         return resolvedUsers;
@@ -2420,7 +2436,7 @@ internal static class GalateaConfigLoader {
     }
 
     private static void Validate(GalateaConfig config) {
-        GalateaConfigValidation.RequireDistinctSessionDirectories(
+        GalateaConfigValidation.RequireDistinctUserStorageDirectories(
             config.Users
         );
         GalateaDelegateConfigReader.Validate(config.Delegates);
@@ -2441,6 +2457,8 @@ internal static class GalateaConfigLoader {
 
             if (string.IsNullOrWhiteSpace(user.SessionDir)) { throw new InvalidOperationException($"Galatea config user '{user.UserId}' must have a non-empty sessionDir."); }
 
+            if (string.IsNullOrWhiteSpace(user.DelegationStateDir)) { throw new InvalidOperationException($"Galatea config user '{user.UserId}' must have a non-empty delegationStateDir."); }
+
             if (string.IsNullOrWhiteSpace(user.SystemPrompt)) {
                 throw new InvalidOperationException(
                     $"Galatea config user '{user.UserId}' must provide a non-empty systemPrompt "
@@ -2458,6 +2476,13 @@ internal static class GalateaConfigLoader {
                 EnsurePathsDoNotNest(
                     config.CallLogDir,
                     sessionDirectory,
+                    "sessionDir",
+                    user.UserId
+                );
+                EnsurePathsDoNotNest(
+                    config.CallLogDir,
+                    Path.GetFullPath(user.DelegationStateDir),
+                    "delegationStateDir",
                     user.UserId
                 );
             }
@@ -2473,36 +2498,27 @@ internal static class GalateaConfigLoader {
 
     private static void EnsurePathsDoNotNest(
         string callLogDirectory,
-        string sessionDirectory,
+        string userStorageDirectory,
+        string storageField,
         string userId
     ) {
         string callLogs = Path.TrimEndingDirectorySeparator(
             Path.GetFullPath(callLogDirectory)
         );
-        string session = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(sessionDirectory)
+        string storage = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(userStorageDirectory)
         );
         StringComparison comparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
-        if (string.Equals(callLogs, session, comparison)
-            || IsAncestor(callLogs, session, comparison)
-            || IsAncestor(session, callLogs, comparison)) {
-            throw new InvalidOperationException(
-                $"Galatea callLogDir must be disjoint from sessionDir "
-                + $"for user '{userId}'."
-            );
-        }
+        GalateaConfigValidation.RequireDisjoint(
+            callLogs,
+            "callLogDir",
+            storage,
+            $"{storageField} for user '{userId}'",
+            comparison
+        );
     }
-
-    private static bool IsAncestor(
-        string ancestor,
-        string descendant,
-        StringComparison comparison
-    ) => descendant.StartsWith(
-        ancestor + Path.DirectorySeparatorChar,
-        comparison
-    );
 
     private static void RejectReparsePointsOnExistingPath(
         string path,
@@ -2698,6 +2714,7 @@ internal static class GalateaConfigTemplateFactory {
             UserId: userId,
             Password: password,
             SessionDir: sessionDir,
+            DelegationStateDir: $"delegation-state/{userId}",
             SessionProvisioning:
                 GalateaSessionProvisioning.CreateIfMissing,
             SystemPrompt: GalateaDefaults.SystemPrompt

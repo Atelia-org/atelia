@@ -49,6 +49,15 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
 
     internal string SessionDirectory { get; }
 
+    internal string DelegationStateDirectory => Path.Combine(
+        Path.GetDirectoryName(ConfigPath)
+            ?? throw new InvalidOperationException(
+                "The test config path has no parent directory."
+            ),
+        "delegation-state",
+        TestUserId
+    );
+
     internal string ConfigPath { get; }
 
     public static GalateaTestHost Create(
@@ -402,6 +411,11 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     TestUserId,
                     TestPassword,
                     absoluteSessionDirectory,
+                    Path.Combine(
+                        configurationDirectory,
+                        "delegation-state",
+                        TestUserId
+                    ),
                     sessionProvisioning,
                     SystemPrompt: systemPrompt
                 )

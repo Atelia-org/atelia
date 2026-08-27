@@ -196,6 +196,11 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
         id,
         "pw",
         Path.Combine(Path.GetTempPath(), "galatea-codex", id),
+        Path.Combine(
+            Path.GetTempPath(),
+            "galatea-codex-delegation-state",
+            id
+        ),
         GalateaSessionProvisioning.ExistingOnly,
         SystemPrompt: "prompt"
     );

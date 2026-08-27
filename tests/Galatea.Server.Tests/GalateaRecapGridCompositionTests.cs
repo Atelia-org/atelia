@@ -1183,12 +1183,14 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         "alice",
                         "pw",
                         first,
+                        first + "-delegation-state",
                         GalateaSessionProvisioning.ExistingOnly,
                         "test system prompt"),
                     new GalateaUserConfig(
                         "bob",
                         "pw",
                         second,
+                        second + "-delegation-state",
                         GalateaSessionProvisioning.ExistingOnly,
                         "test system prompt")
                 ],
@@ -1727,6 +1729,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             "alice",
             "pw",
             path,
+            path + "-delegation-state",
             GalateaSessionProvisioning.ExistingOnly,
             "test system prompt")],
         [connection],

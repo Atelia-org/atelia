@@ -939,6 +939,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             "alice",
             "pw",
             path,
+            path + "-delegation-state",
             GalateaSessionProvisioning.ExistingOnly,
             "test system prompt")],
         connections,

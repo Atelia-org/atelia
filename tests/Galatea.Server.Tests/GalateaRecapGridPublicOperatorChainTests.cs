@@ -210,6 +210,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                         "alice",
                         "pw",
                         repository,
+                        repository + "-delegation-state",
                         GalateaSessionProvisioning.ExistingOnly,
                         "operator-chain system prompt"
                     )],
