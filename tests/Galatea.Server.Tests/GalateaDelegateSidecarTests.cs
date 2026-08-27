@@ -126,10 +126,10 @@ public sealed class GalateaDelegateSidecarTests {
     }
 
     [Theory]
-    [InlineData(100, 5_300)]
-    [InlineData(30_000, 95_000)]
-    [InlineData(300_000, 905_000)]
-    public void AcceptanceDeadlineComposesThreeRpcsAndStartupMargin(
+    [InlineData(100, 5_500)]
+    [InlineData(30_000, 155_000)]
+    [InlineData(300_000, 1_505_000)]
+    public void AcceptanceDeadlineComposesFiveRpcsAndStartupMargin(
         int rpcTimeoutMs,
         int expectedAcceptanceMs
     ) {
@@ -340,7 +340,7 @@ public sealed class GalateaDelegateSidecarTests {
             ));
         watch.Stop();
         Assert.Equal("SIDECAR_ACCEPTANCE_OUTCOME_UNKNOWN", first.Code);
-        Assert.True(watch.Elapsed >= TimeSpan.FromSeconds(4.6));
+        Assert.True(watch.Elapsed >= TimeSpan.FromSeconds(4.8));
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(8));
 
         GalateaDelegateStartException replay = await Assert.ThrowsAsync<

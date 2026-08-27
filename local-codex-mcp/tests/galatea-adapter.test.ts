@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
@@ -22,6 +22,7 @@ interface Harness {
   client: CodexAppServerClient;
   frames: GalateaOutputFrame[];
   root: string;
+  lifecycleFile?: string;
 }
 
 async function harness(
@@ -33,13 +34,21 @@ async function harness(
     turnDeadlineMs?: number;
     requestTimeoutMs?: number;
     maxDispatchTombstones?: number;
+    persistentFixture?: boolean;
   } = {},
 ): Promise<Harness> {
   const root = await mkdtemp(path.join(os.tmpdir(), "galatea-codex-adapter-"));
+  const lifecycleFile = options.persistentFixture ? path.join(root, "lifecycle.log") : undefined;
+  const stateFile = options.persistentFixture ? path.join(root, "state.json") : undefined;
   const logger = new NullLogger();
   const client = new CodexAppServerClient({
     command: process.execPath,
-    args: [fixture, ...(options.fixtureArgs ?? [])],
+    args: [
+      fixture,
+      ...(options.fixtureArgs ?? []),
+      ...(lifecycleFile ? [`--lifecycle-file=${lifecycleFile}`] : []),
+      ...(stateFile ? [`--state-file=${stateFile}`] : []),
+    ],
     requestTimeoutMs: options.requestTimeoutMs ?? 1_000,
     logger,
   });
@@ -70,7 +79,7 @@ async function harness(
     await adapter.stop();
     await rm(root, { recursive: true });
   });
-  return { adapter, client, frames, root };
+  return { adapter, client, frames, root, ...(lifecycleFile ? { lifecycleFile } : {}) };
 }
 
 function dispatch(
@@ -157,6 +166,55 @@ test("Galatea adapter keeps two natural Markdown replies on one owned thread wit
   await value.adapter.dispatch(dispatch("cross-profile", "must be rejected", mcpThread.threadId));
   const rejected = value.frames.at(-1);
   assert.equal(rejected?.type === "failed" && rejected.code, "THREAD_NOT_FOUND");
+});
+
+test("inner app-server restart reauthenticates and continues the exact persisted Galatea thread", async (t) => {
+  const value = await harness(t, {
+    fixtureArgs: ["--drop-persisted-thread-source"],
+    persistentFixture: true,
+  });
+  await value.adapter.dispatch(dispatch("restart-mail-1", "[NATURAL] first"));
+  const firstAccepted = value.frames[0];
+  assert.equal(firstAccepted?.type, "accepted");
+  if (firstAccepted?.type !== "accepted") return;
+
+  await assert.rejects(value.client.request("test/crash", {}));
+
+  await value.adapter.dispatch(
+    dispatch("restart-mail-2", "[NATURAL] second", firstAccepted.threadId),
+  );
+  const secondAccepted = value.frames[2];
+  const secondCompleted = value.frames[3];
+  assert.equal(secondAccepted?.type, "accepted");
+  assert.equal(secondCompleted?.type, "completed");
+  if (secondAccepted?.type !== "accepted") return;
+  assert.equal(secondAccepted.threadId, firstAccepted.threadId);
+
+  const persisted = await value.client.request<{
+    thread: { id: string; name: string | null; status: { type: string } };
+  }>("thread/read", { threadId: firstAccepted.threadId, includeTurns: false });
+  assert.equal(persisted.thread.id, firstAccepted.threadId);
+  assert.equal(
+    persisted.thread.name,
+    `[galatea-codex-sidecar] ${firstAccepted.threadId}`,
+  );
+  assert.equal(persisted.thread.status.type, "notLoaded");
+
+  assert.ok(value.lifecycleFile);
+  const lifecycle = await readFile(value.lifecycleFile, "utf8");
+  const lines = lifecycle.split("\n");
+  const starts = lines.filter((line) => line.startsWith("start:"));
+  assert.equal(starts.length, 2);
+  assert.equal(lifecycle.split("\n").filter((line) => line.startsWith("exit:")).length, 1);
+  const restartedPid = starts[1]?.slice("start:".length);
+  assert.ok(restartedPid);
+  assert.deepEqual(
+    lines
+      .filter((line) => line.startsWith(`rpc:${restartedPid}:`))
+      .map((line) => line.slice(`rpc:${restartedPid}:`.length))
+      .slice(0, 5),
+    ["initialize", "account/read", "thread/read", "thread/resume", "turn/start"],
+  );
 });
 
 test("early legacy final is retained but accepted is emitted before completed", async (t) => {

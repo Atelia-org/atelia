@@ -1,15 +1,33 @@
 import readline from "node:readline";
-import { appendFileSync, closeSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 
 type Message = { id?: string | number; method?: string; params?: Record<string, unknown>; result?: unknown; error?: unknown };
 
+interface PersistedFixtureState {
+  nextThread: number;
+  nextTurn: number;
+  threads: Array<[string, Record<string, unknown>]>;
+}
+
+const stateFileArgument = process.argv.find((argument) => argument.startsWith("--state-file="));
+const stateFile = stateFileArgument?.slice("--state-file=".length);
+const restored: PersistedFixtureState | undefined = stateFile && existsSync(stateFile)
+  ? JSON.parse(readFileSync(stateFile, "utf8")) as PersistedFixtureState
+  : undefined;
+
 let initialized = false;
 let initializeCount = 0;
-let nextThread = 1;
-let nextTurn = 1;
+let nextThread = restored?.nextThread ?? 1;
+let nextTurn = restored?.nextTurn ?? 1;
 let nextServerRequest = 10_000;
 const pendingServerRequests = new Map<string | number, string | number>();
-const threads = new Map<string, Record<string, unknown>>();
+const threads = new Map<string, Record<string, unknown>>(restored?.threads ?? []);
 let lastTurnParams: Record<string, unknown> | undefined;
 let lastResumeParams: Record<string, unknown> | undefined;
 let lastThreadStartParams: Record<string, unknown> | undefined;
@@ -28,6 +46,15 @@ if (lifecycleFile) {
 
 if (process.argv.includes("--ignore-sigterm")) {
   process.on("SIGTERM", () => undefined);
+}
+
+function persistState(): void {
+  if (!stateFile) return;
+  writeFileSync(stateFile, JSON.stringify({
+    nextThread,
+    nextTurn,
+    threads: [...threads.entries()],
+  } satisfies PersistedFixtureState));
 }
 
 function send(message: unknown): void {
@@ -101,6 +128,7 @@ function completeTurn(
   turn.durationMs = 10;
   turn.items = status === "completed" && !behavior.includes("[MISSING]") ? [agentItem, fileItem] : [];
   thread.status = { type: "idle" };
+  persistState();
   if (status === "completed" && !behavior.includes("[MISSING]")) {
     send({ method: "item/completed", params: { threadId, turnId, item: agentItem, completedAtMs: Date.now() } });
     send({ method: "item/completed", params: { threadId, turnId, item: fileItem, completedAtMs: Date.now() } });
@@ -126,6 +154,9 @@ function responseForThread(thread: Record<string, unknown>) {
 const lines = readline.createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   const message = JSON.parse(line) as Message;
+  if (lifecycleFile && message.id !== undefined && message.method) {
+    appendFileSync(lifecycleFile, `rpc:${process.pid}:${message.method}\n`);
+  }
 
   if (message.id !== undefined && message.method === undefined) {
     const original = pendingServerRequests.get(message.id);
@@ -203,6 +234,7 @@ lines.on("line", (line) => {
       if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
       else {
         thread.cwd = message.params?.cwd;
+        persistState();
         send({ id: message.id, result: {} });
       }
       break;
@@ -242,6 +274,7 @@ lines.on("line", (line) => {
         typeof message.params?.threadSource === "string" ? message.params.threadSource : null,
       );
       threads.set(id, thread);
+      persistState();
       send({ id: message.id, result: responseForThread(thread) });
       break;
     }
@@ -270,6 +303,7 @@ lines.on("line", (line) => {
           thread.threadSource = null;
           thread.source = "vscode";
         }
+        persistState();
         send({ id: message.id, result: {} });
       }
       break;
@@ -280,6 +314,7 @@ lines.on("line", (line) => {
       if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
       else {
         thread.cwd = message.params?.cwd ?? thread.cwd;
+        persistState();
         const returned = structuredClone(thread);
         if (resumeResponseThreadIdOverride) {
           returned.id = resumeResponseThreadIdOverride;
@@ -312,6 +347,7 @@ lines.on("line", (line) => {
       };
       (thread.turns as unknown[]).push(turn);
       thread.status = { type: "active", activeFlags: ["waitingOnModel"] };
+      persistState();
       const input = JSON.stringify(message.params?.input ?? []);
       if (input.includes("[HANG_TURN_START]")) {
         send({ method: "turn/started", params: { threadId, turn } });

@@ -274,7 +274,7 @@ internal sealed partial class GalateaCodexSidecarClient
             throw new ArgumentOutOfRangeException(nameof(rpcTimeoutMs));
         }
         long milliseconds = checked(
-            3L * rpcTimeoutMs + AcceptanceStartupMarginMs
+            5L * rpcTimeoutMs + AcceptanceStartupMarginMs
         );
         return TimeSpan.FromMilliseconds(milliseconds);
     }

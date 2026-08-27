@@ -145,9 +145,11 @@ auth/provider/proxy环境保持不变，不使用宽泛allowlist。ambient proce
 route capability或把代行thread附着到父Codex session。C# write gate、单个完整
 frame write与flush各受1×`rpcTimeoutMs`约束：write开始前取消可安全放弃；从frame
 可能写入pipe开始，timeout/cancel/IO都映射stable outcome-unknown、fail当前generation且绝不
-自动retry。owner写出后的accepted使用`3 * rpcTimeoutMs + 5000ms` aggregate deadline，覆盖
-首次`thread/start + thread/name/set + turn/start`，以及continue的
-`thread/read + thread/resume + turn/start`；min/default/max为5300/95000/905000ms。
+自动retry。owner写出后的accepted使用`5 * rpcTimeoutMs + 5000ms` aggregate deadline；
+inner app-server仍存活时，首次业务链是`thread/start + thread/name/set + turn/start`，continue
+是`thread/read + thread/resume + turn/start`；若inner child刚退出，则在这3个业务RPC前还会
+串行重做`initialize + account/read`，因此最坏共5个response RPC。min/default/max为
+5500/155000/1505000ms。
 attached duplicate waiter仍只等待自身1×`rpcTimeoutMs`并返回`SIDECAR_ATTACHED_WAIT_TIMEOUT`，
 其取消或等待超时不会伤害原owner exchange。
 Node sidecar自身向C# stdout写frame使用独立、code-owned 10000ms deadline；它不继承最长可到
