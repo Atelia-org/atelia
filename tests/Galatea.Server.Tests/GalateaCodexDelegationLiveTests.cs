@@ -208,6 +208,47 @@ public sealed class GalateaCodexDelegationLiveTests {
     }
 
     [Fact]
+    public async Task ReplyReadyFailureDiagnosticUsesOnlyCodeOwnedNoticeAndRollsBack() {
+        const string taskSecret = "task-secret-must-not-escape";
+        const string finalSecret = "final-secret-must-not-escape";
+        GalateaDelegateConfig config =
+            GalateaDelegateTestConfiguration.Create();
+        await using var sidecar = new ThrowingStartSidecar(finalSecret);
+        await using var coordinator = new GalateaDelegationCoordinator(
+            "failure-diagnostic",
+            config.CodexRoute,
+            sidecar
+        );
+        Assert.True(coordinator.TryCaptureBatch(
+            "failure-turn",
+            Head(7),
+            [Mail(taskSecret)]
+        ));
+        await coordinator.PumpTaskForTest.WaitAsync(
+            TimeSpan.FromSeconds(5)
+        );
+
+        XunitException failure = Assert.Throws<XunitException>(() =>
+            RequireReplyReady(coordinator, index: 0, expectedCount: 1)
+        );
+        Assert.Equal(
+            "外界代行者 Codex 未能处理这封信（阶段：start；错误代码：SIDECAR_START_FAILED）。",
+            failure.Message
+        );
+        Assert.DoesNotContain(taskSecret, failure.Message,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(finalSecret, failure.Message,
+            StringComparison.Ordinal);
+
+        using GalateaDelegationCoordinator.GalateaReadyReplyLease lease =
+            coordinator.BeginReadyReplyCutoff();
+        Assert.IsType<GalateaReadyNotice.DeliveryFailure>(
+            Assert.Single(lease.Notices)
+        );
+        lease.Rollback();
+    }
+
+    [Fact]
     public void TemporaryRoot_IsDisjointNoFollowAndExactMode0700() {
         if (!OperatingSystem.IsLinux()) {
             return;
@@ -517,11 +558,28 @@ public sealed class GalateaCodexDelegationLiveTests {
         IReadOnlyList<GalateaDelegateCandidateSnapshot> snapshot =
             coordinator.Snapshot();
         Assert.Equal(expectedCount, snapshot.Count);
+        GalateaDelegateCandidateSnapshot candidate = snapshot[index];
+        if (candidate.State
+            == GalateaDelegateCandidateState.FailureReady) {
+            using GalateaDelegationCoordinator.GalateaReadyReplyLease lease =
+                coordinator.BeginReadyReplyCutoff();
+            if (lease.Notices.Count != 1
+                || lease.Notices[0]
+                    is not GalateaReadyNotice.DeliveryFailure failure) {
+                lease.Rollback();
+                throw new XunitException(
+                    "The real Codex failure did not produce exactly one code-owned delivery failure."
+                );
+            }
+            string diagnostic = failure.Body;
+            lease.Rollback();
+            throw new XunitException(diagnostic);
+        }
         Assert.Equal(
             GalateaDelegateCandidateState.ReplyReady,
-            snapshot[index].State
+            candidate.State
         );
-        return snapshot[index];
+        return candidate;
     }
 
     private static string RequireBoundThread(
@@ -580,6 +638,20 @@ public sealed class GalateaCodexDelegationLiveTests {
         EventAddressTextCodec.Parse(
             $"ej1:{value:x16}{value:x8}{value:x8}"
         );
+
+    private sealed class ThrowingStartSidecar(string finalSecret)
+        : IGalateaDelegateSidecar {
+        public Task<GalateaDelegateAcceptedHandle> StartAsync(
+            GalateaDelegateDispatchRequest request,
+            CancellationToken ct
+        ) => Task.FromException<GalateaDelegateAcceptedHandle>(
+            new InvalidOperationException(
+                $"task={request.Body}; final={finalSecret}"
+            )
+        );
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
 
     private static Task<CleanupResult> CleanupAsync(
         GalateaDelegationCoordinator? coordinator,

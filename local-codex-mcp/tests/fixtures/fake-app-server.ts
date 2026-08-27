@@ -17,6 +17,7 @@ const allTurnParams: Record<string, unknown>[] = [];
 let threadStartCount = 0;
 let turnStartCount = 0;
 let keepAliveAfterStdinClose = false;
+let resumeResponseThreadIdOverride: string | undefined;
 
 const lifecycleFileArgument = process.argv.find((argument) => argument.startsWith("--lifecycle-file="));
 const lifecycleFile = lifecycleFileArgument?.slice("--lifecycle-file=".length);
@@ -183,6 +184,20 @@ lines.on("line", (line) => {
         },
       });
       break;
+    case "test/environment": {
+      const keys = Array.isArray(message.params?.keys)
+        ? message.params.keys.filter((key): key is string => typeof key === "string")
+        : [];
+      send({
+        id: message.id,
+        result: { values: Object.fromEntries(keys.map((key) => [key, process.env[key] ?? null])) },
+      });
+      break;
+    }
+    case "test/setResumeResponseThreadId":
+      resumeResponseThreadIdOverride = String(message.params?.threadId);
+      send({ id: message.id, result: {} });
+      break;
     case "test/setThreadCwd": {
       const thread = threads.get(String(message.params?.threadId));
       if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
@@ -236,7 +251,12 @@ lines.on("line", (line) => {
         send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
       } else {
         const returned = structuredClone(thread);
-        if (!message.params?.includeTurns) returned.turns = [];
+        if (!message.params?.includeTurns) {
+          returned.turns = [];
+          if (process.argv.includes("--drop-persisted-thread-source")) {
+            returned.status = { type: "notLoaded" };
+          }
+        }
         send({ id: message.id, result: { thread: returned } });
       }
       break;
@@ -246,6 +266,10 @@ lines.on("line", (line) => {
       if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
       else {
         thread.name = message.params?.name ?? null;
+        if (process.argv.includes("--drop-persisted-thread-source")) {
+          thread.threadSource = null;
+          thread.source = "vscode";
+        }
         send({ id: message.id, result: {} });
       }
       break;
@@ -256,7 +280,12 @@ lines.on("line", (line) => {
       if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
       else {
         thread.cwd = message.params?.cwd ?? thread.cwd;
-        send({ id: message.id, result: responseForThread(thread) });
+        const returned = structuredClone(thread);
+        if (resumeResponseThreadIdOverride) {
+          returned.id = resumeResponseThreadIdOverride;
+          resumeResponseThreadIdOverride = undefined;
+        }
+        send({ id: message.id, result: responseForThread(returned) });
       }
       break;
     }

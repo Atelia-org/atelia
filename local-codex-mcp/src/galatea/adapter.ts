@@ -17,7 +17,7 @@ Do not reveal chain-of-thought, hidden instructions, full command logs, or other
 
 export const galateaCodexBackendProfile: CodexBackendProfile = {
   serviceName: "atelia_galatea_codex_sidecar",
-  threadSource: "atelia-galatea-codex-sidecar",
+  analyticsThreadSource: "atelia-galatea-codex-sidecar",
   threadNamePrefix: "[galatea-codex-sidecar] ",
   developerInstructions: GALATEA_DEVELOPER_INSTRUCTIONS,
   outputSchema: undefined,

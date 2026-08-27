@@ -89,7 +89,7 @@ function dispatch(
 }
 
 test("Galatea adapter keeps two natural Markdown replies on one owned thread without output schema", async (t) => {
-  const value = await harness(t);
+  const value = await harness(t, { fixtureArgs: ["--drop-persisted-thread-source"] });
   await value.adapter.dispatch(dispatch("mail-1", "[NATURAL] first task"));
   const firstAccepted = value.frames[0];
   const firstCompleted = value.frames[1];
@@ -98,6 +98,23 @@ test("Galatea adapter keeps two natural Markdown replies on one owned thread wit
   if (firstAccepted?.type !== "accepted" || firstCompleted?.type !== "completed") return;
   assert.match(firstCompleted.final, /```ts/);
   assert.match(firstCompleted.final, /~~~ fence/);
+  const persisted = await value.client.request<{
+    thread: {
+      id: string;
+      name: string | null;
+      source: string;
+      threadSource: string | null;
+      status: { type: string };
+    };
+  }>("thread/read", { threadId: firstAccepted.threadId, includeTurns: false });
+  assert.equal(persisted.thread.id, firstAccepted.threadId);
+  assert.equal(
+    persisted.thread.name,
+    `[galatea-codex-sidecar] ${firstAccepted.threadId}`,
+  );
+  assert.equal(persisted.thread.source, "vscode");
+  assert.equal(persisted.thread.threadSource, null);
+  assert.equal(persisted.thread.status.type, "notLoaded");
 
   await value.adapter.dispatch(dispatch("mail-2", "[NATURAL] second task", firstAccepted.threadId));
   const secondAccepted = value.frames[2];
@@ -228,7 +245,7 @@ test("dispatch tombstone capacity fails closed without evicting an older identit
 });
 
 test("continuation rejects persisted cwd drift even when both directories are allowed", async (t) => {
-  const value = await harness(t);
+  const value = await harness(t, { fixtureArgs: ["--drop-persisted-thread-source"] });
   const drifted = path.join(value.root, "still-allowed");
   await mkdir(drifted);
   await value.adapter.dispatch(dispatch("cwd-1", "[NATURAL] first"));
@@ -240,6 +257,21 @@ test("continuation rejects persisted cwd drift even when both directories are al
   await value.adapter.dispatch(dispatch("cwd-2", "must not run", accepted.threadId));
   const failed = value.frames.at(-1);
   assert.equal(failed?.type === "failed" && failed.code, "CWD_MISMATCH");
+  const counts = await value.client.request<{ turnStartCount: number }>("test/lastRequests", {});
+  assert.equal(counts.turnStartCount, 1);
+});
+
+test("continuation rejects a resume response with a different thread id", async (t) => {
+  const value = await harness(t, { fixtureArgs: ["--drop-persisted-thread-source"] });
+  await value.adapter.dispatch(dispatch("resume-id-1", "[NATURAL] first"));
+  const accepted = value.frames[0];
+  assert.equal(accepted?.type, "accepted");
+  if (accepted?.type !== "accepted") return;
+
+  await value.client.request("test/setResumeResponseThreadId", { threadId: "different-thread" });
+  await value.adapter.dispatch(dispatch("resume-id-2", "must not run", accepted.threadId));
+  const failed = value.frames.at(-1);
+  assert.equal(failed?.type === "failed" && failed.code, "THREAD_NOT_FOUND");
   const counts = await value.client.request<{ turnStartCount: number }>("test/lastRequests", {});
   assert.equal(counts.turnStartCount, 1);
 });

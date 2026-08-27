@@ -138,7 +138,11 @@ command、mode、network及timeout/body/frame bounds，邮件正文只能进入J
 `dispatchId/threadId/turnId`和一个terminal task，terminal只产生bounded exact final或
 stable stage/code failure。child继承环境中的全部`CODEX_BRIDGE_*`与`GALATEA_CODEX_*`先被
 清除，再由host显式钉死；其中`CODEX_BRIDGE_CODEX_ARGS`固定为app-server stdio并关闭继承的
-MCP/apps，ambient process environment不能改写route capability。C# write gate、单个完整
+MCP/apps。host还会在Node启动前精确清除`CODEX_SESSION_ID`、`CODEX_THREAD_ID`、
+`CODEX_INTERNAL_ORIGINATOR_OVERRIDE`、`CODEX_PERMISSION_PROFILE`、`CODEX_CI`，Node在启动
+app-server时再次清除同一组父Codex context；`HOME`、`PATH`、`CODEX_HOME`、Codex安装标记、
+auth/provider/proxy环境保持不变，不使用宽泛allowlist。ambient process environment不能改写
+route capability或把代行thread附着到父Codex session。C# write gate、单个完整
 frame write、flush与acceptance各受`rpcTimeoutMs`约束：write开始前取消可安全放弃；从frame
 可能写入pipe开始，timeout/cancel/IO都映射stable outcome-unknown、fail当前generation且绝不
 自动retry。attached duplicate waiter自身取消或等待超时不会伤害原owner exchange。
@@ -148,6 +152,11 @@ Node sidecar自身向C# stdout写frame使用独立、code-owned 10000ms deadline
 在`ready`前会串行完成initialize与`account/read`两次各自受`rpcTimeoutMs`约束的RPC，再加
 bounded cold-process margin；min/default/max分别为5200/65000/605000ms。该aggregate只用于
 generation ready，dispatch acceptance与每次Node JSON-RPC仍保持原`rpcTimeoutMs`。
+
+fixed thread的持久ownership只依赖app-server response ID exact、profile-specific exact name marker
+`[galatea-codex-sidecar] <threadId>`、path-policy canonical cwd，以及Galatea route的expected-cwd
+exact校验。`threadSource`仍在`thread/start`中作为optional analytics hint发送，但它可能在持久化后
+变为`null`；`source`也只描述CLI/VSCode/app-server来源，二者都不是ownership或authorization。
 
 active exact同dispatch会在C# generation内coalesce；一旦frame可能写出，dispatchId就进入
 client-lifetime、最多4096项的fail-closed tombstone，正常terminal或outcome-unknown后即使换

@@ -31,7 +31,8 @@ Never include chain-of-thought, full command logs, large diffs, or full file con
 
 export interface CodexBackendProfile {
   serviceName: string;
-  threadSource: string;
+  /** Optional analytics hint sent only on thread/start; never durable ownership. */
+  analyticsThreadSource: string;
   threadNamePrefix: string;
   developerInstructions: string;
   outputSchema?: JsonValue;
@@ -42,7 +43,7 @@ export interface CodexBackendProfile {
 
 export const mcpCodexBackendProfile: CodexBackendProfile = {
   serviceName: "atelia_local_codex_mcp",
-  threadSource: "atelia-local-codex-mcp",
+  analyticsThreadSource: "atelia-local-codex-mcp",
   threadNamePrefix: "[local-codex-mcp] ",
   developerInstructions: DEVELOPER_INSTRUCTIONS,
   outputSchema: agentReportJsonSchema as unknown as JsonValue,
@@ -142,7 +143,7 @@ export class CodexBackend implements TaskBackend {
         serviceName: this.profile.serviceName,
         developerInstructions: this.profile.developerInstructions,
         ephemeral: false,
-        threadSource: this.profile.threadSource,
+        threadSource: this.profile.analyticsThreadSource,
       });
       this.throwIfStopped();
       await this.validateStartedThread(response.thread, cwd);
@@ -206,7 +207,11 @@ export class CodexBackend implements TaskBackend {
         developerInstructions: this.profile.developerInstructions,
       });
       this.throwIfStopped();
-      await this.validatePersistedThread(resumed.thread, cwd);
+      await this.validatePersistedThread(
+        resumed.thread,
+        input.threadId,
+        cwd,
+      );
       this.throwIfStopped();
       const snapshot = await this.startTurn(
         input.threadId,
@@ -346,8 +351,7 @@ export class CodexBackend implements TaskBackend {
     this.throwIfStopped();
     if (
       response.thread.id !== threadId ||
-      response.thread.name !== this.ownershipName(threadId) ||
-      response.thread.threadSource !== this.profile.threadSource
+      response.thread.name !== this.ownershipName(threadId)
     ) {
       throw new BridgeError("THREAD_NOT_FOUND", "The requested thread is not owned by this bridge.");
     }
@@ -370,16 +374,17 @@ export class CodexBackend implements TaskBackend {
   }
 
   private async validateStartedThread(thread: Thread, expectedCwd: string): Promise<void> {
-    if (thread.threadSource !== this.profile.threadSource) {
-      throw new BridgeError("CODEX_PROTOCOL_ERROR", "Codex did not preserve the bridge thread ownership tag.");
-    }
     await this.validateThreadCwd(thread, expectedCwd);
   }
 
-  private async validatePersistedThread(thread: Thread, expectedCwd: string): Promise<void> {
+  private async validatePersistedThread(
+    thread: Thread,
+    expectedThreadId: string,
+    expectedCwd: string,
+  ): Promise<void> {
     if (
-      thread.name !== this.ownershipName(thread.id) ||
-      thread.threadSource !== this.profile.threadSource
+      thread.id !== expectedThreadId ||
+      thread.name !== this.ownershipName(expectedThreadId)
     ) {
       throw new BridgeError("THREAD_NOT_FOUND", "The requested thread is not owned by this bridge.");
     }

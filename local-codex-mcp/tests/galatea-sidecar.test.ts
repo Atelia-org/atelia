@@ -6,6 +6,7 @@ import { PassThrough, Writable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  createGalateaCodexChildEnvironment,
   runGalateaSidecar,
   serveGalateaJsonl,
   type GalateaJsonlAdapter,
@@ -15,6 +16,42 @@ import { JsonlFrameWriter } from "../src/galatea/protocol.js";
 import { NullLogger } from "../src/logger.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-app-server.js", import.meta.url));
+
+test("Galatea app-server environment removes only confirmed parent Codex context", () => {
+  const sanitized = createGalateaCodexChildEnvironment({
+    PATH: "/safe/path",
+    HOME: "/safe/home",
+    CODEX_HOME: "/safe/codex-home",
+    CODEX_MANAGED_BY_NPM: "1",
+    CODEX_PACKAGE_ROOT: "/safe/package-root",
+    OPENAI_API_KEY: "test-auth-sentinel",
+    OPENAI_BASE_URL: "https://provider.invalid/v1",
+    HTTPS_PROXY: "https://proxy.invalid",
+    CODEX_SESSION_ID: "ambient-session",
+    CODEX_THREAD_ID: "ambient-thread",
+    CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "ambient-origin",
+    CODEX_PERMISSION_PROFILE: "ambient-permission",
+    CODEX_CI: "1",
+  });
+
+  for (const key of [
+    "CODEX_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+    "CODEX_PERMISSION_PROFILE",
+    "CODEX_CI",
+  ]) {
+    assert.equal(sanitized[key], undefined);
+  }
+  assert.equal(sanitized.PATH, "/safe/path");
+  assert.equal(sanitized.HOME, "/safe/home");
+  assert.equal(sanitized.CODEX_HOME, "/safe/codex-home");
+  assert.equal(sanitized.CODEX_MANAGED_BY_NPM, "1");
+  assert.equal(sanitized.CODEX_PACKAGE_ROOT, "/safe/package-root");
+  assert.equal(sanitized.OPENAI_API_KEY, "test-auth-sentinel");
+  assert.equal(sanitized.OPENAI_BASE_URL, "https://provider.invalid/v1");
+  assert.equal(sanitized.HTTPS_PROXY, "https://proxy.invalid");
+});
 
 test("sidecar fails malformed, wrong-case, unknown, and oversize input closed then stops on EOF", async () => {
   const input = new PassThrough();

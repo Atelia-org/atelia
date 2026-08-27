@@ -62,6 +62,37 @@ test("notifications are dispatched without becoming responses", async (t) => {
   assert.ok(notifications.includes("warning"));
 });
 
+test("client preserves default environment inheritance and honors an explicit child environment", async () => {
+  const key = `ATELIA_CODEX_CLIENT_ENV_${process.pid}`;
+  const previous = process.env[key];
+  process.env[key] = "inherited";
+  const inherited = client();
+  const explicit = new CodexAppServerClient({
+    command: process.execPath,
+    args: [fixture],
+    env: { ...process.env, [key]: "explicit" },
+    requestTimeoutMs: 1_000,
+    logger: new NullLogger(),
+  });
+  try {
+    const inheritedValue = await inherited.request<{ values: Record<string, string | null> }>(
+      "test/environment",
+      { keys: [key] },
+    );
+    const explicitValue = await explicit.request<{ values: Record<string, string | null> }>(
+      "test/environment",
+      { keys: [key] },
+    );
+    assert.equal(inheritedValue.values[key], "inherited");
+    assert.equal(explicitValue.values[key], "explicit");
+  } finally {
+    await inherited.stop();
+    await explicit.stop();
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  }
+});
+
 test("server requests fail closed with bounded responses", async (t) => {
   const value = client();
   t.after(() => value.stop());

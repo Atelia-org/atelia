@@ -39,7 +39,7 @@ test("backend completes, continues, returns bounded data, and interrupts", async
   const logger = new NullLogger();
   const client = new CodexAppServerClient({
     command: process.execPath,
-    args: [fixture],
+    args: [fixture, "--drop-persisted-thread-source"],
     requestTimeoutMs: 1_000,
     logger,
   });
@@ -79,6 +79,20 @@ test("backend completes, continues, returns bounded data, and interrupts", async
     type: "readOnly",
     networkAccess: false,
   });
+  const persisted = await client.request<{
+    thread: {
+      id: string;
+      name: string | null;
+      source: string;
+      threadSource: string | null;
+      status: { type: string };
+    };
+  }>("thread/read", { threadId: first.threadId, includeTurns: false });
+  assert.equal(persisted.thread.id, first.threadId);
+  assert.equal(persisted.thread.name, `[local-codex-mcp] ${first.threadId}`);
+  assert.equal(persisted.thread.source, "vscode");
+  assert.equal(persisted.thread.threadSource, null);
+  assert.equal(persisted.thread.status.type, "notLoaded");
 
   const external = await client.request<{ thread: { id: string } }>("thread/start", {
     cwd: root,
@@ -110,6 +124,19 @@ test("backend completes, continues, returns bounded data, and interrupts", async
   assert.equal(workRequest.lastTurnParams.sandboxPolicy.networkAccess, false);
   const interrupted = await backend.interrupt(first.threadId);
   assert.equal(interrupted.status, "interrupted");
+
+  await client.request("test/setResumeResponseThreadId", { threadId: "different-thread" });
+  await assert.rejects(
+    backend.continue({
+      threadId: first.threadId,
+      task: "must reject a mismatched resume response",
+      mode: "research",
+      network: false,
+      waitMs: 0,
+    }),
+    (error: unknown) =>
+      typeof error === "object" && error !== null && "code" in error && error.code === "THREAD_NOT_FOUND",
+  );
 });
 
 test("backend reports missing Codex authentication", async (t) => {

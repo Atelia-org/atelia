@@ -124,6 +124,12 @@ tombstone；达到容量后 fail closed，不会淘汰旧 ID 后重新执行。
 terminal failure；已完成 duplicate 与容量拒绝只返回不带 `dispatchId` 的 request-level failure。
 continuation 还会要求 persisted thread cwd 与启动时配置的 code-owned cwd 完全一致，即使漂移后的
 目录仍位于 allowed roots 内也会拒绝。
+持久thread ownership只认response ID、profile-specific exact name marker和canonical/path-policy
+cwd；`threadSource`只是`thread/start`的optional analytics hint，持久化后为`null`也不影响
+continue，`source`同样不参与authorization。Galatea profile启动app-server前会精确移除
+`CODEX_SESSION_ID`、`CODEX_THREAD_ID`、`CODEX_INTERNAL_ORIGINATOR_OVERRIDE`、
+`CODEX_PERMISSION_PROFILE`、`CODEX_CI`，但保留`HOME`、`PATH`、`CODEX_HOME`及
+auth/provider/proxy环境；默认MCP profile不启用这层Galatea-specific scrub。
 
 需要 Streamable HTTP 时：
 
@@ -256,7 +262,7 @@ ChatGPT -> authenticated VPS HTTPS /mcp -> private link -> 127.0.0.1:3000/mcp
 - `research`：`readOnly`；只有显式 `network=true` 才开启 turn network 与 live web search。
 - 默认 child args 关闭 inherited Codex MCP servers 与 apps；如果用 `CODEX_BRIDGE_CODEX_ARGS` 覆盖，调用者必须保留等价限制。
 - approval、permission、elicitation 与未知 server requests 全部 fail-closed；绝不自动批准 escalation。
-- Bridge-created threads 用持久化 name marker 做 ownership 协调；普通其他 thread ID 会返回 `THREAD_NOT_FOUND`。这是私人同一用户进程间的防误用边界，不是对同机恶意进程的认证：能直接调用 app-server 的本机进程也能伪造 title。若威胁模型包含不可信本机进程，需要在第二阶段增加 bridge 私有持久 allowlist/签名元数据。
+- Bridge-created threads 用response ID、持久化exact name marker与canonical cwd做ownership协调；optional analytics `threadSource`和origin `source`不参与。普通其他 thread ID 会返回 `THREAD_NOT_FOUND`。这是私人同一用户进程间的防误用边界，不是对同机恶意进程的认证：能直接调用 app-server 的本机进程也能伪造 title。若威胁模型包含不可信本机进程，需要在第二阶段增加bridge私有持久allowlist/签名元数据。
 - 只存运行时 turn 状态；重启后从 `thread/read` 恢复 persisted thread。stdio child 的 in-flight turn 不保证跨 Bridge 进程重启存活。
 - 当前本机生成的 `SandboxPolicy` 还没有官方新文档展示的 restricted read roots 字段。因此 allowed roots 严格控制 cwd 与**写入**，但本版本不能承诺 Codex 完全无法读取 cwd 外文件。需要更强读取隔离时，应升级到支持该协议的 Codex 或增加 OS/container sandbox。
 - `network=false` 明确关闭内建 web search、Codex apps/MCP 与 sandboxed command network；本地 Codex hooks/未来新增执行通道仍应在部署时审计。

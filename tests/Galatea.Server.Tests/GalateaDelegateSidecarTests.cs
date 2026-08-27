@@ -21,6 +21,18 @@ public sealed class GalateaDelegateSidecarTests {
         await using GalateaCodexSidecarClient client = fixture.CreateClient();
         var environment = new Dictionary<string, string?> {
             ["PATH"] = "/safe/path",
+            ["HOME"] = "/safe/home",
+            ["CODEX_HOME"] = "/safe/codex-home",
+            ["CODEX_MANAGED_BY_NPM"] = "1",
+            ["CODEX_PACKAGE_ROOT"] = "/safe/package-root",
+            ["OPENAI_API_KEY"] = "test-auth-sentinel",
+            ["OPENAI_BASE_URL"] = "https://provider.invalid/v1",
+            ["HTTPS_PROXY"] = "https://proxy.invalid",
+            ["CODEX_SESSION_ID"] = "ambient-session",
+            ["CODEX_THREAD_ID"] = "ambient-thread",
+            ["CODEX_INTERNAL_ORIGINATOR_OVERRIDE"] = "ambient-origin",
+            ["CODEX_PERMISSION_PROFILE"] = "ambient-permission",
+            ["CODEX_CI"] = "1",
             ["CODEX_BRIDGE_CODEX_ARGS"] = "[\"malicious\"]",
             ["CODEX_BRIDGE_HTTP_HOST"] = "0.0.0.0",
             ["CODEX_BRIDGE_UNKNOWN_FUTURE_FIELD"] = "ambient",
@@ -32,6 +44,24 @@ public sealed class GalateaDelegateSidecarTests {
         client.ConfigureSidecarEnvironmentForTest(environment);
 
         Assert.Equal("/safe/path", environment["PATH"]);
+        Assert.Equal("/safe/home", environment["HOME"]);
+        Assert.Equal("/safe/codex-home", environment["CODEX_HOME"]);
+        Assert.Equal("1", environment["CODEX_MANAGED_BY_NPM"]);
+        Assert.Equal("/safe/package-root",
+            environment["CODEX_PACKAGE_ROOT"]);
+        Assert.Equal("test-auth-sentinel",
+            environment["OPENAI_API_KEY"]);
+        Assert.Equal("https://provider.invalid/v1",
+            environment["OPENAI_BASE_URL"]);
+        Assert.Equal("https://proxy.invalid",
+            environment["HTTPS_PROXY"]);
+        Assert.DoesNotContain("CODEX_SESSION_ID", environment.Keys);
+        Assert.DoesNotContain("CODEX_THREAD_ID", environment.Keys);
+        Assert.DoesNotContain("CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+            environment.Keys);
+        Assert.DoesNotContain("CODEX_PERMISSION_PROFILE",
+            environment.Keys);
+        Assert.DoesNotContain("CODEX_CI", environment.Keys);
         Assert.DoesNotContain("CODEX_BRIDGE_UNKNOWN_FUTURE_FIELD",
             environment.Keys);
         Assert.DoesNotContain("GALATEA_CODEX_UNKNOWN_FUTURE_FIELD",

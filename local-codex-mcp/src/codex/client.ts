@@ -37,6 +37,7 @@ function appendStderrTail(current: string, chunk: string): string {
 export interface CodexClientOptions {
   command: string;
   args: string[];
+  env?: NodeJS.ProcessEnv;
   requestTimeoutMs: number;
   logger: BridgeLogger;
   stopTimeoutMs?: number;
@@ -91,6 +92,7 @@ export class CodexAppServerClient {
     const child = spawn(this.options.command, this.options.args, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      ...(this.options.env === undefined ? {} : { env: this.options.env }),
     });
     const connection = this.createConnection(child);
     this.connection = connection;

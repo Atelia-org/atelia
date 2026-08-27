@@ -72,6 +72,15 @@ internal sealed partial class GalateaCodexSidecarClient
     private const int SidecarOutputWriteTimeoutMs = 10_000;
     private const int ReadyStartupMarginMs = 5_000;
     private const string LogCategory = "Galatea.DelegateSidecar";
+    private static readonly HashSet<string> ParentCodexContextKeys = new(
+        StringComparer.Ordinal
+    ) {
+        "CODEX_SESSION_ID",
+        "CODEX_THREAD_ID",
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+        "CODEX_PERMISSION_PROFILE",
+        "CODEX_CI"
+    };
     private static readonly UTF8Encoding StrictUtf8 = new(
         encoderShouldEmitUTF8Identifier: false,
         throwOnInvalidBytes: true
@@ -288,7 +297,8 @@ internal sealed partial class GalateaCodexSidecarClient
                          || key.StartsWith(
                              "GALATEA_CODEX_",
                              StringComparison.Ordinal
-                         ))
+                         )
+                         || ParentCodexContextKeys.Contains(key))
                      .ToArray()) {
             environment.Remove(inherited);
         }

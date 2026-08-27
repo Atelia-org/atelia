@@ -26,6 +26,13 @@ const DEFAULT_TURN_DEADLINE_MS = 20 * 60 * 1000;
 const DEFAULT_INTERRUPT_GRACE_MS = 2_000;
 const DEFAULT_MAX_FINAL_BYTES = 128 * 1024;
 const DEFAULT_MAX_DISPATCH_TOMBSTONES = 4_096;
+const GALATEA_PARENT_CODEX_CONTEXT_KEYS = [
+  "CODEX_SESSION_ID",
+  "CODEX_THREAD_ID",
+  "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+  "CODEX_PERMISSION_PROFILE",
+  "CODEX_CI",
+] as const;
 
 export interface GalateaSidecarConfig {
   bridge: BridgeConfig;
@@ -45,6 +52,14 @@ export interface GalateaSidecarConfig {
 export interface GalateaJsonlAdapter {
   dispatch(input: Parameters<GalateaCodexAdapter["dispatch"]>[0]): Promise<void>;
   stop(): Promise<void>;
+}
+
+export function createGalateaCodexChildEnvironment(
+  inherited: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const environment = { ...inherited };
+  for (const key of GALATEA_PARENT_CODEX_CONTEXT_KEYS) delete environment[key];
+  return environment;
 }
 
 function integer(
@@ -226,6 +241,7 @@ export async function runGalateaSidecar(
     args: config.bridge.codexArgs,
     requestTimeoutMs: config.bridge.rpcTimeoutMs,
     logger,
+    env: createGalateaCodexChildEnvironment(env),
   });
   const store = new TaskStore(config.maxFinalBytes, config.bridge.maxProgressChars);
   const backend = new CodexBackend({
