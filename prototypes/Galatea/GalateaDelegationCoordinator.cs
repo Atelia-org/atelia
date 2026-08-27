@@ -155,6 +155,8 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
         ).ToArray();
         int preparedBytes = prepared.Sum(static value =>
             value.CapturedUtf8Bytes);
+        int routedCount = prepared.Count(static value =>
+            value.State == GalateaDelegateCandidateState.Queued);
 
         lock (_gate) {
             ObjectDisposedException.ThrowIf(!_accepting, this);
@@ -168,13 +170,11 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
                     "The in-memory delegation ledger is full."
                 );
             }
-            int routed = prepared.Count(static value =>
-                value.State == GalateaDelegateCandidateState.Queued);
             int admitted = _candidates.Count(static value =>
                 value.State is GalateaDelegateCandidateState.Queued
                     or GalateaDelegateCandidateState.Starting
                     or GalateaDelegateCandidateState.Running);
-            if (admitted > _route.MaximumQueuedMails - routed) {
+            if (admitted > _route.MaximumQueuedMails - routedCount) {
                 throw new InvalidOperationException(
                     "The Codex delegation queue is full."
                 );
@@ -192,7 +192,7 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
 
         DebugUtil.Info(
             LogCategory,
-            $"Captured outbound batch: user={Safe(_userId)}, actionHead={sourceActionHead}, candidates={prepared.Length}, routed={prepared.Count(static value => value.State == GalateaDelegateCandidateState.Queued)}"
+            $"Captured outbound batch: user={Safe(_userId)}, actionHead={sourceActionHead}, candidates={prepared.Length}, routed={routedCount}"
         );
         return true;
     }
