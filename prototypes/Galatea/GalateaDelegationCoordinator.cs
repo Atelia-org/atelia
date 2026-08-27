@@ -809,6 +809,13 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
     private void CompleteLease(long leaseId, bool commit) {
         bool startPump = false;
         lock (_gate) {
+            if (_disposed) {
+                if (!commit) { return; }
+                throw new ObjectDisposedException(
+                    nameof(GalateaDelegationCoordinator),
+                    "A ready-reply lease cannot commit after coordinator shutdown."
+                );
+            }
             if (_activeLeaseId != leaseId) {
                 throw new InvalidOperationException(
                     "The ready-reply lease is no longer active."
@@ -1012,6 +1019,7 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
                 null
             );
             if (owner is null) {
+                if (!commit) { return; }
                 throw new InvalidOperationException(
                     "The ready-reply lease is already complete."
                 );

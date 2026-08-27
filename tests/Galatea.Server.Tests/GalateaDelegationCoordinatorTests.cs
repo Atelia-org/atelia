@@ -554,6 +554,43 @@ public sealed class GalateaDelegationCoordinatorTests {
         );
     }
 
+    [Fact]
+    public async Task ShutdownRollsBackLeaseAndCallerCleanupIsIdempotent() {
+        var sidecar = new FakeSidecar();
+        var coordinator = Create(sidecar);
+        await CompleteOneAsync(
+            coordinator,
+            sidecar,
+            Head(1),
+            "ready reply"
+        );
+        GalateaDelegationCoordinator.GalateaReadyReplyLease rollbackLease =
+            coordinator.BeginReadyReplyCutoff();
+
+        await coordinator.DisposeAsync();
+        rollbackLease.Rollback();
+        rollbackLease.Rollback();
+        rollbackLease.Dispose();
+        Assert.Equal(
+            GalateaDelegateCandidateState.ReplyReady,
+            Assert.Single(coordinator.Snapshot()).State
+        );
+
+        var secondSidecar = new FakeSidecar();
+        var second = Create(secondSidecar);
+        await CompleteOneAsync(
+            second,
+            secondSidecar,
+            Head(2),
+            "second reply"
+        );
+        GalateaDelegationCoordinator.GalateaReadyReplyLease commitLease =
+            second.BeginReadyReplyCutoff();
+        await second.DisposeAsync();
+        Assert.Throws<ObjectDisposedException>(commitLease.Commit);
+        commitLease.Dispose();
+    }
+
     private static async Task CompleteOneAsync(
         GalateaDelegationCoordinator coordinator,
         FakeSidecar sidecar,
