@@ -24,7 +24,7 @@ public sealed class GalateaDelegateSidecarTests {
             ["HOME"] = "/safe/home",
             ["CODEX_HOME"] = "/safe/codex-home",
             ["CODEX_MANAGED_BY_NPM"] = "1",
-            ["CODEX_PACKAGE_ROOT"] = "/safe/package-root",
+            ["CODEX_MANAGED_PACKAGE_ROOT"] = "/safe/package-root",
             ["OPENAI_API_KEY"] = "test-auth-sentinel",
             ["OPENAI_BASE_URL"] = "https://provider.invalid/v1",
             ["HTTPS_PROXY"] = "https://proxy.invalid",
@@ -48,7 +48,7 @@ public sealed class GalateaDelegateSidecarTests {
         Assert.Equal("/safe/codex-home", environment["CODEX_HOME"]);
         Assert.Equal("1", environment["CODEX_MANAGED_BY_NPM"]);
         Assert.Equal("/safe/package-root",
-            environment["CODEX_PACKAGE_ROOT"]);
+            environment["CODEX_MANAGED_PACKAGE_ROOT"]);
         Assert.Equal("test-auth-sentinel",
             environment["OPENAI_API_KEY"]);
         Assert.Equal("https://provider.invalid/v1",

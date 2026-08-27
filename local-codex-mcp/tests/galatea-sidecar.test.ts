@@ -23,7 +23,7 @@ test("Galatea app-server environment removes only confirmed parent Codex context
     HOME: "/safe/home",
     CODEX_HOME: "/safe/codex-home",
     CODEX_MANAGED_BY_NPM: "1",
-    CODEX_PACKAGE_ROOT: "/safe/package-root",
+    CODEX_MANAGED_PACKAGE_ROOT: "/safe/package-root",
     OPENAI_API_KEY: "test-auth-sentinel",
     OPENAI_BASE_URL: "https://provider.invalid/v1",
     HTTPS_PROXY: "https://proxy.invalid",
@@ -47,7 +47,7 @@ test("Galatea app-server environment removes only confirmed parent Codex context
   assert.equal(sanitized.HOME, "/safe/home");
   assert.equal(sanitized.CODEX_HOME, "/safe/codex-home");
   assert.equal(sanitized.CODEX_MANAGED_BY_NPM, "1");
-  assert.equal(sanitized.CODEX_PACKAGE_ROOT, "/safe/package-root");
+  assert.equal(sanitized.CODEX_MANAGED_PACKAGE_ROOT, "/safe/package-root");
   assert.equal(sanitized.OPENAI_API_KEY, "test-auth-sentinel");
   assert.equal(sanitized.OPENAI_BASE_URL, "https://provider.invalid/v1");
   assert.equal(sanitized.HTTPS_PROXY, "https://proxy.invalid");
