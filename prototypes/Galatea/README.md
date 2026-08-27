@@ -124,6 +124,8 @@ canonical resolved target，loader不会悄悄follow。`cwd`也必须canonical�
 必须在JSON最坏六倍escaping加code-owned envelope reserve后仍装入
 `maximumFrameUtf8Bytes`；inbox总bytes不得小于单条reply上限。Bootstrap会同时生成一份
 带`REPLACE_WITH_...`的明显placeholder模板并停止，绝不猜测本机可执行文件或权限边界。
+programmatic `GalateaConfig`也走同一套path/executable/range/frame/containment校验；sidecar
+持有canonical immutable snapshot，caller之后修改原始list不会改变生效policy。
 
 `GalateaHostService`拥有一个host-wide、lazy `GalateaCodexSidecarClient`。首个真实dispatch
 前保持零进程；当前coordinator尚未接入，因此正常Galatea turn也不会启动sidecar。transport
@@ -132,9 +134,18 @@ command、mode、network及timeout/body/frame bounds，邮件正文只能进入J
 不能覆盖任何route policy。V1 input是exact
 `{v,type:"dispatch",requestId,dispatchId,threadId?,task}`；成功accept后返回稳定
 `dispatchId/threadId/turnId`和一个terminal task，terminal只产生bounded exact final或
-stable stage/code failure。active同dispatch会在C# generation内coalesce；sidecar对已经
-terminal或超出tombstone容量的request-level protocol rejection不会终结另一个已accepted
-exchange。
+stable stage/code failure。child继承环境中的全部`CODEX_BRIDGE_*`与`GALATEA_CODEX_*`先被
+清除，再由host显式钉死；其中`CODEX_BRIDGE_CODEX_ARGS`固定为app-server stdio并关闭继承的
+MCP/apps，ambient process environment不能改写route capability。C# write gate、单个完整
+frame write、flush与acceptance各受`rpcTimeoutMs`约束：write开始前取消可安全放弃；从frame
+可能写入pipe开始，timeout/cancel/IO都映射stable outcome-unknown、fail当前generation且绝不
+自动retry。attached duplicate waiter自身取消或等待超时不会伤害原owner exchange。
+
+active exact同dispatch会在C# generation内coalesce；一旦frame可能写出，dispatchId就进入
+client-lifetime、最多4096项的fail-closed tombstone，正常terminal或outcome-unknown后即使换
+generation也不得重发。同ID携带不同thread/task直接拒绝；容量耗尽后拒绝所有新ID而不evict
+旧tombstone。sidecar的同值4096项tombstone上限也由host显式注入。request-level protocol
+rejection只结束对应尚未accepted的request，不会终结另一个已accepted business exchange。
 
 stdout只有一个bounded strict-UTF8 reader；malformed、oversize、unknown、重复字段、错误
 correlation或process exit会protocol-fatal当前generation，并把所有未决exchange映射为失败，

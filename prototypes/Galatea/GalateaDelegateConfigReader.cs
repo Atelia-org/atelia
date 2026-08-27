@@ -201,11 +201,12 @@ internal static class GalateaDelegateConfigReader {
                 )
             ])
         );
-        Validate(result);
-        return result;
+        return Validate(result);
     }
 
-    internal static void Validate(GalateaDelegateConfig? config) {
+    internal static GalateaDelegateConfig Validate(
+        GalateaDelegateConfig? config
+    ) {
         if (config is null) {
             throw new InvalidOperationException(
                 "Galatea requires strict delegate configuration."
@@ -218,7 +219,54 @@ internal static class GalateaDelegateConfigReader {
                 "Galatea delegate configuration is not a closed V1 configuration."
             );
         }
-        GalateaDelegateRouteConfig route = config.Routes[0];
+        GalateaDelegateSidecarConfig sidecar = config.Sidecar;
+        string nodeCommand = RequireCanonicalRegularFile(
+            sidecar.NodeCommand,
+            "sidecar.nodeCommand",
+            executable: true
+        );
+        string entryPoint = RequireCanonicalRegularFile(
+            sidecar.EntryPoint,
+            "sidecar.entryPoint",
+            executable: false
+        );
+        string codexCommand = RequireCanonicalRegularFile(
+            sidecar.CodexCommand,
+            "sidecar.codexCommand",
+            executable: true
+        );
+        RequireBoundedInteger(sidecar.RpcTimeoutMs, "rpcTimeoutMs",
+            MinimumRpcTimeoutMs, MaximumRpcTimeoutMs);
+        RequireBoundedInteger(sidecar.TurnTimeoutMs, "turnTimeoutMs",
+            MinimumTurnTimeoutMs, MaximumTurnTimeoutMs);
+        RequireBoundedInteger(sidecar.ShutdownGraceMs, "shutdownGraceMs",
+            MinimumShutdownGraceMs, MaximumShutdownGraceMs);
+        RequireBoundedInteger(
+            sidecar.MaximumFrameUtf8Bytes,
+            "maximumFrameUtf8Bytes",
+            MinimumFrameUtf8Bytes,
+            MaximumFrameUtf8Bytes
+        );
+
+        var roots = new List<string>(config.AllowedRoots.Count);
+        var uniqueRoots = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string? configuredRoot in config.AllowedRoots) {
+            string root = RequireCanonicalDirectory(
+                configuredRoot,
+                "allowedRoots"
+            );
+            if (!uniqueRoots.Add(root)) {
+                throw new InvalidDataException(
+                    $"delegates allowedRoots contains duplicate '{root}'."
+                );
+            }
+            roots.Add(root);
+        }
+
+        GalateaDelegateRouteConfig route = config.Routes[0]
+            ?? throw new InvalidOperationException(
+                "Galatea delegate route must not be null."
+            );
         if (!string.Equals(route.Recipient, CanonicalRecipient,
                 StringComparison.Ordinal)
             || !string.Equals(route.Kind, CodexAppServerKind,
@@ -227,6 +275,70 @@ internal static class GalateaDelegateConfigReader {
                 "Galatea delegates require the exact Codex route."
             );
         }
+        string cwd = RequireCanonicalDirectory(route.Cwd, "routes[0].cwd");
+        if (!roots.Any(root => IsContained(cwd, root))) {
+            throw new InvalidDataException(
+                "routes[0].cwd must be contained in an allowedRoots entry."
+            );
+        }
+        if (route.Mode is not (
+                GalateaDelegateMode.Research or GalateaDelegateMode.Work)) {
+            throw new InvalidDataException(
+                "routes[0].mode must be research or work."
+            );
+        }
+        RequireBoundedInteger(route.MaximumQueuedMails,
+            "maximumQueuedMails", 1, MaximumQueueCount);
+        RequireBoundedInteger(route.MaximumTaskUtf8Bytes,
+            "maximumTaskUtf8Bytes", 1, MaximumBodyUtf8Bytes);
+        RequireBoundedInteger(route.MaximumReplyUtf8Bytes,
+            "maximumReplyUtf8Bytes", 1, MaximumBodyUtf8Bytes);
+        RequireBoundedInteger(route.MaximumInboxReplies,
+            "maximumInboxReplies", 1, MaximumInboxCount);
+        RequireBoundedInteger(route.MaximumInboxUtf8Bytes,
+            "maximumInboxUtf8Bytes", 1, MaximumInboxUtf8Bytes);
+        RequireFrameCompatibility(
+            route.MaximumTaskUtf8Bytes,
+            sidecar.MaximumFrameUtf8Bytes,
+            "maximumTaskUtf8Bytes"
+        );
+        RequireFrameCompatibility(
+            route.MaximumReplyUtf8Bytes,
+            sidecar.MaximumFrameUtf8Bytes,
+            "maximumReplyUtf8Bytes"
+        );
+        if (route.MaximumInboxUtf8Bytes < route.MaximumReplyUtf8Bytes) {
+            throw new InvalidDataException(
+                "maximumInboxUtf8Bytes must be at least maximumReplyUtf8Bytes."
+            );
+        }
+
+        return new GalateaDelegateConfig(
+            new GalateaDelegateSidecarConfig(
+                nodeCommand,
+                entryPoint,
+                codexCommand,
+                sidecar.RpcTimeoutMs,
+                sidecar.TurnTimeoutMs,
+                sidecar.ShutdownGraceMs,
+                sidecar.MaximumFrameUtf8Bytes
+            ),
+            roots.AsReadOnly(),
+            Array.AsReadOnly([
+                new GalateaDelegateRouteConfig(
+                    CanonicalRecipient,
+                    CodexAppServerKind,
+                    cwd,
+                    route.Mode,
+                    route.Network,
+                    route.MaximumQueuedMails,
+                    route.MaximumTaskUtf8Bytes,
+                    route.MaximumReplyUtf8Bytes,
+                    route.MaximumInboxReplies,
+                    route.MaximumInboxUtf8Bytes
+                )
+            ])
+        );
     }
 
     internal static byte[] CreatePlaceholderTemplateUtf8() =>
@@ -470,7 +582,20 @@ internal static class GalateaDelegateConfigReader {
                 $"{property} must be an integer from {minimum} to {maximum}."
             );
         }
-        return value!;
+        return value;
+    }
+
+    private static void RequireBoundedInteger(
+        int value,
+        string property,
+        int minimum,
+        int maximum
+    ) {
+        if (value < minimum || value > maximum) {
+            throw new InvalidDataException(
+                $"{property} must be an integer from {minimum} to {maximum}."
+            );
+        }
     }
 
     private static string RequireExactString(

@@ -488,6 +488,33 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
+    public void PublicHostRejectsProgrammaticDelegateValidationBypass() {
+        string root = NewRoot();
+        try {
+            GalateaConfig loaded = LoadConstructionFixture(root);
+            var invalid = loaded with {
+                Delegates = loaded.Delegates with {
+                    Sidecar = loaded.Delegates.Sidecar with {
+                        RpcTimeoutMs = 99
+                    }
+                }
+            };
+            var factory = new TrackingFactory();
+
+            Assert.Throws<InvalidDataException>(() =>
+                new GalateaHostService(
+                    invalid,
+                    factory,
+                    DisabledGalateaUserMessageNormalizer.Instance
+                ));
+            Assert.Equal(0, factory.CreateCallCount);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void ScaffoldArtifactsLoadThroughStrictGalateaConfig() {
         string root = NewRoot();
         try {

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Xunit;
@@ -171,6 +172,79 @@ public sealed class GalateaDelegateConfigTests {
         finally {
             Directory.Delete(outside);
         }
+    }
+
+    [Fact]
+    public async Task ProgrammaticConfigGetsFullValidationAndImmutableSnapshot() {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        using var fixture = new Fixture();
+        GalateaDelegateConfig valid = fixture.Load();
+        GalateaDelegateConfig invalid = valid with {
+            Sidecar = valid.Sidecar with { RpcTimeoutMs = 99 }
+        };
+        Assert.Throws<InvalidDataException>(() =>
+            new GalateaCodexSidecarClient(invalid));
+
+        string link = Path.Combine(fixture.Root, "programmatic-node-link");
+        File.CreateSymbolicLink(link, fixture.Executable);
+        Assert.Throws<InvalidDataException>(() =>
+            new GalateaCodexSidecarClient(valid with {
+                Sidecar = valid.Sidecar with { NodeCommand = link }
+            }));
+
+        string plain = Path.Combine(fixture.Root, "programmatic-plain");
+        File.WriteAllText(plain, "plain");
+        File.SetUnixFileMode(
+            plain,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            new GalateaCodexSidecarClient(valid with {
+                Sidecar = valid.Sidecar with { CodexCommand = plain }
+            }));
+
+        Assert.Throws<InvalidDataException>(() =>
+            new GalateaCodexSidecarClient(valid with {
+                Routes = [valid.CodexRoute with {
+                    MaximumTaskUtf8Bytes = 174_600
+                }]
+            }));
+
+        string outside = Path.Combine(
+            Path.GetDirectoryName(fixture.Root)!,
+            Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(outside);
+        try {
+            Assert.Throws<InvalidDataException>(() =>
+                new GalateaCodexSidecarClient(valid with {
+                    Routes = [valid.CodexRoute with { Cwd = outside }]
+                }));
+        }
+        finally {
+            Directory.Delete(outside);
+        }
+
+        var mutableRoots = valid.AllowedRoots.ToList();
+        var mutableRoutes = valid.Routes.ToList();
+        await using var client = new GalateaCodexSidecarClient(valid with {
+            AllowedRoots = mutableRoots,
+            Routes = mutableRoutes
+        });
+        mutableRoots.Clear();
+        mutableRoutes.Clear();
+
+        ProcessStartInfo startInfo = client.CreateStartInfoForTest();
+        Assert.Equal(
+            JsonSerializer.Serialize(valid.AllowedRoots),
+            startInfo.Environment["CODEX_BRIDGE_ALLOWED_ROOTS"]
+        );
+        Assert.Equal(
+            valid.CodexRoute.Cwd,
+            startInfo.Environment["CODEX_BRIDGE_DEFAULT_CWD"]
+        );
     }
 
     [Fact]

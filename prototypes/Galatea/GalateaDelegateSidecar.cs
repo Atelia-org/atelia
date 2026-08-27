@@ -63,6 +63,8 @@ internal interface IGalateaDelegateSidecar : IAsyncDisposable {
 internal sealed partial class GalateaCodexSidecarClient
     : IGalateaDelegateSidecar {
     private const int ProtocolVersion = 1;
+    private const int MaximumDispatchTombstones = 4_096;
+    private const int DefaultInterruptGraceMs = 2_000;
     private const string LogCategory = "Galatea.DelegateSidecar";
     private static readonly UTF8Encoding StrictUtf8 = new(
         encoderShouldEmitUTF8Identifier: false,
@@ -76,6 +78,9 @@ internal sealed partial class GalateaCodexSidecarClient
     private readonly object _stateGate = new();
     private readonly GalateaDelegateConfig _config;
     private readonly GalateaDelegateRouteConfig _route;
+    private readonly HashSet<string> _dispatchTombstones = new(
+        StringComparer.Ordinal
+    );
     private Generation? _generation;
     private Task _restartBarrier = Task.CompletedTask;
     private Task? _disposeTask;
@@ -83,9 +88,8 @@ internal sealed partial class GalateaCodexSidecarClient
     private int _nextGeneration;
 
     internal GalateaCodexSidecarClient(GalateaDelegateConfig config) {
-        GalateaDelegateConfigReader.Validate(config);
-        _config = config;
-        _route = config.CodexRoute;
+        _config = GalateaDelegateConfigReader.Validate(config);
+        _route = _config.CodexRoute;
     }
 
     internal bool HasStartedProcessForTest {
@@ -104,6 +108,19 @@ internal sealed partial class GalateaCodexSidecarClient
         }
     }
 
+    private DispatchClaim TryClaimDispatchForWrite(string dispatchId) {
+        lock (_stateGate) {
+            if (_dispatchTombstones.Contains(dispatchId)) {
+                return DispatchClaim.Duplicate;
+            }
+            if (_dispatchTombstones.Count >= MaximumDispatchTombstones) {
+                return DispatchClaim.CapacityExceeded;
+            }
+            _dispatchTombstones.Add(dispatchId);
+            return DispatchClaim.Claimed;
+        }
+    }
+
     public async Task<GalateaDelegateAcceptedHandle> StartAsync(
         GalateaDelegateDispatchRequest request,
         CancellationToken ct
@@ -114,31 +131,8 @@ internal sealed partial class GalateaCodexSidecarClient
 
         Generation generation = await GetReadyGenerationAsync(ct)
             .ConfigureAwait(false);
-        try {
-            return await generation.DispatchAsync(request, ct)
-                .ConfigureAwait(false);
-        }
-        catch (TimeoutException) {
-            FailGeneration(
-                generation,
-                "protocol",
-                "SIDECAR_ACCEPTANCE_TIMEOUT",
-                graceful: false
-            );
-            throw new GalateaDelegateStartException(
-                "protocol",
-                "SIDECAR_ACCEPTANCE_TIMEOUT"
-            );
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) {
-            FailGeneration(
-                generation,
-                "protocol",
-                "SIDECAR_ACCEPTANCE_CANCELLED",
-                graceful: false
-            );
-            throw;
-        }
+        return await generation.DispatchAsync(request, ct)
+            .ConfigureAwait(false);
     }
 
     public ValueTask DisposeAsync() {
@@ -226,31 +220,79 @@ internal sealed partial class GalateaCodexSidecarClient
             CreateNoWindow = true
         };
         startInfo.ArgumentList.Add(sidecar.EntryPoint);
-        startInfo.Environment["CODEX_BRIDGE_TRANSPORT"] = "stdio";
-        startInfo.Environment["CODEX_BRIDGE_ALLOWED_ROOTS"] =
-            JsonSerializer.Serialize(_config.AllowedRoots);
-        startInfo.Environment["CODEX_BRIDGE_DEFAULT_CWD"] = _route.Cwd;
-        startInfo.Environment["CODEX_BRIDGE_CODEX_COMMAND"] =
-            sidecar.CodexCommand;
-        startInfo.Environment["CODEX_BRIDGE_RPC_TIMEOUT_MS"] =
-            sidecar.RpcTimeoutMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        startInfo.Environment["CODEX_BRIDGE_VERBOSE"] = "false";
-        startInfo.Environment["GALATEA_CODEX_MODE"] =
-            _route.Mode == GalateaDelegateMode.Work ? "work" : "research";
-        startInfo.Environment["GALATEA_CODEX_NETWORK"] =
-            _route.Network ? "true" : "false";
-        startInfo.Environment["GALATEA_CODEX_TURN_DEADLINE_MS"] =
-            sidecar.TurnTimeoutMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        startInfo.Environment["GALATEA_CODEX_MAX_INPUT_FRAME_BYTES"] =
-            sidecar.MaximumFrameUtf8Bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        startInfo.Environment["GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES"] =
-            sidecar.MaximumFrameUtf8Bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        startInfo.Environment["GALATEA_CODEX_MAX_TASK_BYTES"] =
-            _route.MaximumTaskUtf8Bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        startInfo.Environment["GALATEA_CODEX_MAX_FINAL_BYTES"] =
-            _route.MaximumReplyUtf8Bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        ConfigureSidecarEnvironment(startInfo.Environment);
         return startInfo;
     }
+
+    private void ConfigureSidecarEnvironment(
+        IDictionary<string, string?> environment
+    ) {
+        GalateaDelegateSidecarConfig sidecar = _config.Sidecar;
+        foreach (string inherited in environment.Keys
+                     .Where(static key =>
+                         key.StartsWith(
+                             "CODEX_BRIDGE_",
+                             StringComparison.Ordinal
+                         )
+                         || key.StartsWith(
+                             "GALATEA_CODEX_",
+                             StringComparison.Ordinal
+                         ))
+                     .ToArray()) {
+            environment.Remove(inherited);
+        }
+        environment["CODEX_BRIDGE_TRANSPORT"] = "stdio";
+        environment["CODEX_BRIDGE_HTTP_HOST"] = "127.0.0.1";
+        environment["CODEX_BRIDGE_HTTP_PORT"] = "3000";
+        environment["CODEX_BRIDGE_ALLOW_INSECURE_HTTP"] = "false";
+        environment["CODEX_BRIDGE_ALLOWED_ROOTS"] =
+            JsonSerializer.Serialize(_config.AllowedRoots);
+        environment["CODEX_BRIDGE_DEFAULT_CWD"] = _route.Cwd;
+        environment["CODEX_BRIDGE_CODEX_COMMAND"] =
+            sidecar.CodexCommand;
+        environment["CODEX_BRIDGE_CODEX_ARGS"] =
+            "[\"app-server\",\"--listen\",\"stdio://\",\"-c\","
+            + "\"mcp_servers={}\",\"-c\",\"features.apps=false\"]";
+        environment["CODEX_BRIDGE_DEFAULT_WAIT_MS"] = "0";
+        environment["CODEX_BRIDGE_MAX_WAIT_MS"] = "60000";
+        environment["CODEX_BRIDGE_RPC_TIMEOUT_MS"] =
+            sidecar.RpcTimeoutMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        environment["CODEX_BRIDGE_MAX_RESULT_CHARS"] = "12000";
+        environment["CODEX_BRIDGE_MAX_PROGRESS_CHARS"] = "2000";
+        environment["CODEX_BRIDGE_VERBOSE"] = "false";
+        environment["GALATEA_CODEX_MODE"] =
+            _route.Mode == GalateaDelegateMode.Work ? "work" : "research";
+        environment["GALATEA_CODEX_NETWORK"] =
+            _route.Network ? "true" : "false";
+        environment["GALATEA_CODEX_TURN_DEADLINE_MS"] =
+            sidecar.TurnTimeoutMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        environment["GALATEA_CODEX_INTERRUPT_GRACE_MS"] =
+            DefaultInterruptGraceMs.ToString(
+                System.Globalization.CultureInfo.InvariantCulture
+            );
+        environment["GALATEA_CODEX_MAX_INPUT_FRAME_BYTES"] =
+            sidecar.MaximumFrameUtf8Bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        environment["GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES"] =
+            sidecar.MaximumFrameUtf8Bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        environment["GALATEA_CODEX_MAX_TASK_BYTES"] =
+            _route.MaximumTaskUtf8Bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        environment["GALATEA_CODEX_MAX_FINAL_BYTES"] =
+            _route.MaximumReplyUtf8Bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        environment["GALATEA_CODEX_MAX_DISPATCH_TOMBSTONES"] =
+            MaximumDispatchTombstones.ToString(
+                System.Globalization.CultureInfo.InvariantCulture
+            );
+        environment["GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS"] =
+            sidecar.RpcTimeoutMs.ToString(
+                System.Globalization.CultureInfo.InvariantCulture
+            );
+    }
+
+    internal ProcessStartInfo CreateStartInfoForTest() => CreateStartInfo();
+
+    internal void ConfigureSidecarEnvironmentForTest(
+        IDictionary<string, string?> environment
+    ) => ConfigureSidecarEnvironment(environment);
 
     private void ValidateRequest(GalateaDelegateDispatchRequest request) {
         RequireIdentifier(request.DispatchId, nameof(request.DispatchId));
@@ -302,7 +344,7 @@ internal sealed partial class GalateaCodexSidecarClient
     ) {
         Task cleanup;
         lock (_stateGate) {
-            if (!generation.TryMarkFailure()) {
+            if (!generation.TryMarkFailure(stage, code)) {
                 return;
             }
             cleanup = generation.TerminateAsync(graceful);
@@ -587,6 +629,8 @@ internal sealed partial class GalateaCodexSidecarClient
             new(StringComparer.Ordinal);
         private int _failed;
         private int _ready;
+        private string _failureStage = "protocol";
+        private string _failureCode = "SIDECAR_UNAVAILABLE";
 
         internal Generation(
             GalateaCodexSidecarClient owner,
@@ -639,10 +683,7 @@ internal sealed partial class GalateaCodexSidecarClient
             bool ownsWrite;
             lock (_pendingGate) {
                 if (Volatile.Read(ref _failed) != 0) {
-                    throw new GalateaDelegateStartException(
-                        "protocol",
-                        "SIDECAR_UNAVAILABLE"
-                    );
+                    throw CurrentFailure();
                 }
                 if (_byDispatch.TryGetValue(
                         request.DispatchId,
@@ -683,13 +724,21 @@ internal sealed partial class GalateaCodexSidecarClient
             }
 
             if (!ownsWrite) {
-                return await pending.Accepted.Task.WaitAsync(
-                        TimeSpan.FromMilliseconds(
-                            _owner._config.Sidecar.RpcTimeoutMs
-                        ),
-                        ct
-                    )
-                    .ConfigureAwait(false);
+                try {
+                    return await pending.Accepted.Task.WaitAsync(
+                            TimeSpan.FromMilliseconds(
+                                _owner._config.Sidecar.RpcTimeoutMs
+                            ),
+                            ct
+                        )
+                        .ConfigureAwait(false);
+                }
+                catch (TimeoutException) {
+                    throw new GalateaDelegateStartException(
+                        "protocol",
+                        "SIDECAR_ATTACHED_WAIT_TIMEOUT"
+                    );
+                }
             }
 
             byte[] frame = JsonSerializer.SerializeToUtf8Bytes(
@@ -704,24 +753,99 @@ internal sealed partial class GalateaCodexSidecarClient
                 WireJson
             );
             if (frame.Length > _owner._config.Sidecar.MaximumFrameUtf8Bytes) {
-                RemovePending(pending);
+                AbandonPending(
+                    pending,
+                    "protocol",
+                    "SIDECAR_FRAME_TOO_LARGE"
+                );
                 throw new ArgumentException(
                     "Encoded delegate dispatch exceeds its frame limit.",
                     nameof(request)
                 );
             }
-            await _writeGate.WaitAsync(ct).ConfigureAwait(false);
+            byte[] framed = GC.AllocateUninitializedArray<byte>(
+                frame.Length + 1
+            );
+            frame.CopyTo(framed, 0);
+            framed[^1] = (byte)'\n';
+            using var deadline = new CancellationTokenSource(
+                TimeSpan.FromMilliseconds(
+                    _owner._config.Sidecar.RpcTimeoutMs
+                )
+            );
+            using var linked = CancellationTokenSource
+                .CreateLinkedTokenSource(ct, deadline.Token);
+            bool gateHeld = false;
+            bool writeStarted = false;
             try {
-                await _process.StandardInput.BaseStream.WriteAsync(
-                    frame,
-                    ct
-                ).ConfigureAwait(false);
-                await _process.StandardInput.BaseStream.WriteAsync(
-                    "\n"u8.ToArray(),
-                    ct
-                ).ConfigureAwait(false);
-                await _process.StandardInput.BaseStream.FlushAsync(ct)
+                await _writeGate.WaitAsync(linked.Token)
                     .ConfigureAwait(false);
+                gateHeld = true;
+                if (IsFailed) {
+                    AbandonPending(
+                        pending,
+                        _failureStage,
+                        _failureCode
+                    );
+                    throw CurrentFailure();
+                }
+                DispatchClaim claim = _owner.TryClaimDispatchForWrite(
+                    request.DispatchId
+                );
+                if (claim is not DispatchClaim.Claimed) {
+                    string code = claim == DispatchClaim.Duplicate
+                        ? "DUPLICATE_DISPATCH_ID"
+                        : "DISPATCH_CAPACITY_EXCEEDED";
+                    AbandonPending(pending, "protocol", code);
+                    throw new GalateaDelegateStartException(
+                        "protocol",
+                        code
+                    );
+                }
+                // From this point the kernel may have accepted any prefix of
+                // the frame. Every failure is outcome-unknown and the
+                // host-lifetime tombstone above permanently fences replay.
+                writeStarted = true;
+                Task write = _process.StandardInput.BaseStream.WriteAsync(
+                    framed,
+                    linked.Token
+                ).AsTask();
+                await AwaitHardBoundedAsync(write, linked.Token)
+                    .ConfigureAwait(false);
+                Task flush = _process.StandardInput.BaseStream.FlushAsync(
+                    linked.Token
+                );
+                await AwaitHardBoundedAsync(flush, linked.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!writeStarted) {
+                AbandonPending(
+                    pending,
+                    "protocol",
+                    ct.IsCancellationRequested
+                        ? "SIDECAR_WRITE_CANCELLED_BEFORE_START"
+                        : "SIDECAR_WRITE_GATE_TIMEOUT"
+                );
+                if (ct.IsCancellationRequested) {
+                    throw;
+                }
+                throw new GalateaDelegateStartException(
+                    "protocol",
+                    "SIDECAR_WRITE_GATE_TIMEOUT"
+                );
+            }
+            catch (OperationCanceledException) when (writeStarted) {
+                _owner.FailGeneration(
+                    this,
+                    "protocol",
+                    "SIDECAR_WRITE_OUTCOME_UNKNOWN",
+                    graceful: false
+                );
+                ObserveAcceptedFault(pending);
+                throw new GalateaDelegateStartException(
+                    "protocol",
+                    "SIDECAR_WRITE_OUTCOME_UNKNOWN"
+                );
             }
             catch (Exception exception) when (
                 exception is IOException
@@ -730,24 +854,49 @@ internal sealed partial class GalateaCodexSidecarClient
                 _owner.FailGeneration(
                     this,
                     "protocol",
-                    "SIDECAR_WRITE_FAILED",
+                    writeStarted
+                        ? "SIDECAR_WRITE_OUTCOME_UNKNOWN"
+                        : "SIDECAR_WRITE_FAILED",
                     graceful: false
                 );
+                ObserveAcceptedFault(pending);
                 throw new GalateaDelegateStartException(
                     "protocol",
-                    "SIDECAR_WRITE_FAILED"
+                    writeStarted
+                        ? "SIDECAR_WRITE_OUTCOME_UNKNOWN"
+                        : "SIDECAR_WRITE_FAILED"
                 );
             }
             finally {
-                _writeGate.Release();
+                if (gateHeld) {
+                    _writeGate.Release();
+                }
             }
-            return await pending.Accepted.Task.WaitAsync(
-                    TimeSpan.FromMilliseconds(
-                        _owner._config.Sidecar.RpcTimeoutMs
-                    ),
-                    ct
-                )
-                .ConfigureAwait(false);
+            try {
+                return await pending.Accepted.Task.WaitAsync(
+                        TimeSpan.FromMilliseconds(
+                            _owner._config.Sidecar.RpcTimeoutMs
+                        ),
+                        ct
+                    )
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (
+                exception is TimeoutException
+                    || exception is OperationCanceledException
+                        && ct.IsCancellationRequested) {
+                _owner.FailGeneration(
+                    this,
+                    "protocol",
+                    "SIDECAR_ACCEPTANCE_OUTCOME_UNKNOWN",
+                    graceful: false
+                );
+                ObserveAcceptedFault(pending);
+                throw new GalateaDelegateStartException(
+                    "protocol",
+                    "SIDECAR_ACCEPTANCE_OUTCOME_UNKNOWN"
+                );
+            }
         }
 
         internal bool TrySetReady() {
@@ -891,8 +1040,15 @@ internal sealed partial class GalateaCodexSidecarClient
             return true;
         }
 
-        internal bool TryMarkFailure() =>
-            Interlocked.Exchange(ref _failed, 1) == 0;
+        internal bool TryMarkFailure(string stage, string code) {
+            if (Volatile.Read(ref _failed) != 0) {
+                return false;
+            }
+            _failureStage = stage;
+            _failureCode = code;
+            Volatile.Write(ref _failed, 1);
+            return true;
+        }
 
         internal void CompleteFailure(string stage, string code) {
             Ready.TrySetException(
@@ -994,6 +1150,17 @@ internal sealed partial class GalateaCodexSidecarClient
                             continue;
                         }
                         Append(line, buffer.AsSpan(start, index - start));
+                        if (line.WrittenCount
+                            > _owner._config.Sidecar
+                                .MaximumFrameUtf8Bytes) {
+                            _owner.FailGeneration(
+                                this,
+                                "protocol",
+                                "SIDECAR_FRAME_TOO_LARGE",
+                                graceful: false
+                            );
+                            return;
+                        }
                         if (line.WrittenCount == 0) {
                             _owner.FailGeneration(
                                 this,
@@ -1108,10 +1275,52 @@ internal sealed partial class GalateaCodexSidecarClient
             }
         }
 
-        private void RemovePending(PendingDispatch pending) {
+        private void AbandonPending(
+            PendingDispatch pending,
+            string stage,
+            string code
+        ) {
             lock (_pendingGate) {
                 _byRequest.Remove(pending.RequestId);
                 _byDispatch.Remove(pending.DispatchId);
+            }
+            pending.Accepted.TrySetException(
+                new GalateaDelegateStartException(stage, code)
+            );
+            _ = pending.Accepted.Task.Exception;
+        }
+
+        private GalateaDelegateStartException CurrentFailure() => new(
+            _failureStage,
+            _failureCode
+        );
+
+        private static void ObserveAcceptedFault(PendingDispatch pending) {
+            _ = pending.Accepted.Task.ContinueWith(
+                static task => _ = task.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted
+                    | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default
+            );
+        }
+
+        private static async Task AwaitHardBoundedAsync(
+            Task operation,
+            CancellationToken ct
+        ) {
+            try {
+                await operation.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch {
+                _ = operation.ContinueWith(
+                    static task => _ = task.Exception,
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted
+                        | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default
+                );
+                throw;
             }
         }
 
@@ -1159,4 +1368,10 @@ internal sealed partial class GalateaCodexSidecarClient
         string? ThreadId,
         [property: JsonPropertyName("task")] string Task
     );
+
+    private enum DispatchClaim {
+        Claimed,
+        Duplicate,
+        CapacityExceeded
+    }
 }

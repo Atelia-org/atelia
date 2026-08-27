@@ -16,6 +16,213 @@ public sealed class GalateaDelegateSidecarTests {
     }
 
     [Fact]
+    public async Task EnvironmentIsClearedAndPinnedAgainstAmbientOverrides() {
+        using var fixture = new Fixture("exit 99");
+        await using GalateaCodexSidecarClient client = fixture.CreateClient();
+        var environment = new Dictionary<string, string?> {
+            ["PATH"] = "/safe/path",
+            ["CODEX_BRIDGE_CODEX_ARGS"] = "[\"malicious\"]",
+            ["CODEX_BRIDGE_HTTP_HOST"] = "0.0.0.0",
+            ["CODEX_BRIDGE_UNKNOWN_FUTURE_FIELD"] = "ambient",
+            ["GALATEA_CODEX_MODE"] = "research",
+            ["GALATEA_CODEX_INTERRUPT_GRACE_MS"] = "invalid",
+            ["GALATEA_CODEX_UNKNOWN_FUTURE_FIELD"] = "ambient"
+        };
+
+        client.ConfigureSidecarEnvironmentForTest(environment);
+
+        Assert.Equal("/safe/path", environment["PATH"]);
+        Assert.DoesNotContain("CODEX_BRIDGE_UNKNOWN_FUTURE_FIELD",
+            environment.Keys);
+        Assert.DoesNotContain("GALATEA_CODEX_UNKNOWN_FUTURE_FIELD",
+            environment.Keys);
+        Assert.Equal("stdio", environment["CODEX_BRIDGE_TRANSPORT"]);
+        Assert.Equal("127.0.0.1",
+            environment["CODEX_BRIDGE_HTTP_HOST"]);
+        Assert.Equal(
+            "[\"app-server\",\"--listen\",\"stdio://\",\"-c\","
+            + "\"mcp_servers={}\",\"-c\",\"features.apps=false\"]",
+            environment["CODEX_BRIDGE_CODEX_ARGS"]
+        );
+        Assert.Equal("work", environment["GALATEA_CODEX_MODE"]);
+        Assert.Equal("false", environment["GALATEA_CODEX_NETWORK"]);
+        Assert.Equal("65536",
+            environment["GALATEA_CODEX_MAX_INPUT_FRAME_BYTES"]);
+        Assert.Equal("65536",
+            environment["GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES"]);
+        Assert.Equal("8000",
+            environment["GALATEA_CODEX_MAX_TASK_BYTES"]);
+        Assert.Equal("8000",
+            environment["GALATEA_CODEX_MAX_FINAL_BYTES"]);
+        Assert.Equal("4096",
+            environment["GALATEA_CODEX_MAX_DISPATCH_TOMBSTONES"]);
+        Assert.Equal("2000",
+            environment["GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS"]);
+    }
+
+    [Fact]
+    public async Task SidecarThatNeverReadsStdinFailsWithinWriteDeadline() {
+        using var fixture = new Fixture("""
+        printf '%s\n' '{"v":1,"type":"ready"}'
+        sleep 30
+        """);
+        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+            rpcTimeoutMs: 200,
+            maximumFrameUtf8Bytes: 1_048_576,
+            maximumBodyUtf8Bytes: 170_000
+        );
+        var watch = Stopwatch.StartNew();
+
+        GalateaDelegateStartException failure = await Assert.ThrowsAsync<
+            GalateaDelegateStartException>(() => client.StartAsync(
+                new GalateaDelegateDispatchRequest(
+                    "dispatch-blocked-write",
+                    ThreadId: null,
+                    new string('x', 170_000)
+                ),
+                CancellationToken.None
+            ));
+
+        watch.Stop();
+        Assert.Equal("SIDECAR_WRITE_OUTCOME_UNKNOWN", failure.Code);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3));
+    }
+
+    [Fact]
+    public async Task DisposeUnblocksAnInFlightBlockedWrite() {
+        using var fixture = new Fixture("""
+        printf '%s\n' '{"v":1,"type":"ready"}'
+        sleep 30
+        """);
+        GalateaCodexSidecarClient client = fixture.CreateClient(
+            rpcTimeoutMs: 5_000,
+            maximumFrameUtf8Bytes: 1_048_576,
+            maximumBodyUtf8Bytes: 170_000
+        );
+        Task<GalateaDelegateAcceptedHandle> start = client.StartAsync(
+            new GalateaDelegateDispatchRequest(
+                "dispatch-dispose-blocked-write",
+                ThreadId: null,
+                new string('x', 170_000)
+            ),
+            CancellationToken.None
+        );
+        await Task.Delay(100);
+        var watch = Stopwatch.StartNew();
+
+        await client.DisposeAsync();
+        await Assert.ThrowsAsync<GalateaDelegateStartException>(async () =>
+            await start);
+
+        watch.Stop();
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3));
+    }
+
+    [Fact]
+    public async Task AcceptanceUnknownTombstonePreventsCrossGenerationReplay() {
+        using var fixture = new Fixture(
+            $$"""
+            printf '%s\n' '{"v":1,"type":"ready"}'
+            if IFS= read -r line; then
+              printf '%s\n' "$line" >> {{ShellQuote(fixturePath: "INPUT")}}
+            fi
+            sleep 30
+            """
+        );
+        fixture.RewritePlaceholders();
+        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+            rpcTimeoutMs: 200
+        );
+
+        GalateaDelegateStartException first = await Assert.ThrowsAsync<
+            GalateaDelegateStartException>(() => client.StartAsync(
+                Request("dispatch-unknown"),
+                CancellationToken.None
+            ));
+        Assert.Equal("SIDECAR_ACCEPTANCE_OUTCOME_UNKNOWN", first.Code);
+
+        GalateaDelegateStartException replay = await Assert.ThrowsAsync<
+            GalateaDelegateStartException>(() => client.StartAsync(
+                Request("dispatch-unknown"),
+                CancellationToken.None
+            ));
+        Assert.Equal("DUPLICATE_DISPATCH_ID", replay.Code);
+        Assert.Equal(2, client.GenerationCountForTest);
+        Assert.Single(File.ReadAllLines(fixture.InputPath));
+    }
+
+    [Fact]
+    public async Task AttachedCancellationDoesNotFaultOwnerOrGeneration() {
+        using var fixture = new Fixture(
+            $$"""
+            printf '%s\n' '{"v":1,"type":"ready"}'
+            IFS= read -r line
+            printf '%s\n' "$line" > {{ShellQuote(fixturePath: "INPUT")}}
+            request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
+            dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
+            sleep 1
+            printf '{"v":1,"type":"accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-1","turnId":"turn-1"}\n' "$request_id" "$dispatch_id"
+            printf '{"v":1,"type":"completed","dispatchId":"%s","threadId":"thread-1","turnId":"turn-1","final":"owner survived"}\n' "$dispatch_id"
+            while IFS= read -r ignored; do :; done
+            """
+        );
+        fixture.RewritePlaceholders();
+        await using GalateaCodexSidecarClient client = fixture.CreateClient();
+        Task<GalateaDelegateAcceptedHandle> owner = client.StartAsync(
+            Request("dispatch-attached-cancel"),
+            CancellationToken.None
+        );
+        await WaitForFileAsync(fixture.InputPath);
+        using var cancellation = new CancellationTokenSource(50);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            client.StartAsync(
+                Request("dispatch-attached-cancel"),
+                cancellation.Token
+            ));
+
+        GalateaDelegateAcceptedHandle accepted = await owner;
+        GalateaDelegateTerminal.Completed completed = Assert.IsType<
+            GalateaDelegateTerminal.Completed>(await accepted.Completion);
+        Assert.Equal("owner survived", completed.Final);
+        Assert.Equal(1, client.GenerationCountForTest);
+    }
+
+    [Theory]
+    [InlineData(2048, 2049, false)]
+    [InlineData(65536, 65537, false)]
+    [InlineData(2048, 2048, true)]
+    public async Task StdoutFrameCapAppliesBeforeParsingAcrossChunkShapes(
+        int maximumFrameUtf8Bytes,
+        int payloadBytes,
+        bool crlf
+    ) {
+        string terminator = crlf ? "\\r\\n" : "\\n";
+        using var fixture = new Fixture($$"""
+        printf '%s\n' '{"v":1,"type":"ready"}'
+        head -c {{payloadBytes}} /dev/zero | tr '\000' x
+        printf '{{terminator}}'
+        sleep 30
+        """);
+        int maximumBody = Math.Max(
+            1,
+            (maximumFrameUtf8Bytes - 1024) / 6
+        );
+        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+            maximumFrameUtf8Bytes: maximumFrameUtf8Bytes,
+            maximumBodyUtf8Bytes: maximumBody
+        );
+
+        GalateaDelegateStartException failure = await Assert.ThrowsAsync<
+            GalateaDelegateStartException>(() => client.StartAsync(
+                Request("dispatch-oversize-shape"),
+                CancellationToken.None
+            ));
+
+        Assert.Equal("SIDECAR_FRAME_TOO_LARGE", failure.Code);
+    }
+
+    [Fact]
     public async Task ReadyAcceptedAndCompletedPreserveUnicodeAndRouteEnvironment() {
         using var fixture = new Fixture(
             $$"""
@@ -298,6 +505,15 @@ public sealed class GalateaDelegateSidecarTests {
     private static GalateaDelegateDispatchRequest Request(string dispatchId) =>
         new(dispatchId, ThreadId: null, Body: "do work");
 
+    private static async Task WaitForFileAsync(string path) {
+        using var deadline = new CancellationTokenSource(
+            TimeSpan.FromSeconds(5)
+        );
+        while (!File.Exists(path)) {
+            await Task.Delay(10, deadline.Token);
+        }
+    }
+
     private static string ShellQuote(string fixturePath) =>
         $"'__{fixturePath}_PATH__'";
 
@@ -336,16 +552,20 @@ public sealed class GalateaDelegateSidecarTests {
             File.WriteAllText(ScriptPath, script);
         }
 
-        internal GalateaCodexSidecarClient CreateClient() {
+        internal GalateaCodexSidecarClient CreateClient(
+            int rpcTimeoutMs = 2_000,
+            int maximumFrameUtf8Bytes = 65_536,
+            int maximumBodyUtf8Bytes = 8_000
+        ) {
             var config = new GalateaDelegateConfig(
                 new GalateaDelegateSidecarConfig(
                     "/usr/bin/dash",
                     ScriptPath,
                     "/usr/bin/true",
-                    RpcTimeoutMs: 2_000,
+                    RpcTimeoutMs: rpcTimeoutMs,
                     TurnTimeoutMs: 2_000,
                     ShutdownGraceMs: 100,
-                    MaximumFrameUtf8Bytes: 65_536
+                    MaximumFrameUtf8Bytes: maximumFrameUtf8Bytes
                 ),
                 [Root],
                 [new GalateaDelegateRouteConfig(
@@ -355,10 +575,13 @@ public sealed class GalateaDelegateSidecarTests {
                     GalateaDelegateMode.Work,
                     Network: false,
                     MaximumQueuedMails: 16,
-                    MaximumTaskUtf8Bytes: 8_000,
-                    MaximumReplyUtf8Bytes: 8_000,
+                    MaximumTaskUtf8Bytes: maximumBodyUtf8Bytes,
+                    MaximumReplyUtf8Bytes: maximumBodyUtf8Bytes,
                     MaximumInboxReplies: 16,
-                    MaximumInboxUtf8Bytes: 65_536
+                    MaximumInboxUtf8Bytes: Math.Max(
+                        maximumFrameUtf8Bytes,
+                        maximumBodyUtf8Bytes
+                    )
                 )]
             );
             return new GalateaCodexSidecarClient(config);
