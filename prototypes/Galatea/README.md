@@ -190,6 +190,11 @@ export ATELIA_RUN_GALATEA_CODEX_DELEGATION_LIVE=1
 dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'FullyQualifiedName=Atelia.Galatea.Server.Tests.GalateaCodexDelegationLiveTests.TwoMails_ReuseOneRealCodexThread_AndRepliesAreOneShot'
 ```
 
+本阶段验收已于2026-08-27按上述runbook真实通过（1/1，16s）：fresh thread的第二封邮件未携带
+第一封随机token但仍准确利用同一thread/context；两次ReplyInbox lease分别Commit后，后续cutoff
+均为空，证明one-shot消费；隔离临时repository保持clean并被安全删除，sidecar没有残留；全程没有
+读取`connections.json`或调用Galatea main、normalizer、extractor Completion connection。
+
 测试只复用该config中已经strict校验的Node/Codex executable、RPC/turn/frame与route容量
 界限；shutdown grace钉为code-owned 2秒，cleanup deadline仍覆盖完整graceful wait、kill/reap
 wait与固定margin。它不会读取`connections.json`，也不会调用Galatea main、normalizer或
@@ -258,8 +263,9 @@ code-owned bounds；caller cancellation与transport exception直接传播。
 
 ## Mailbox、OutboundMailExtractor 与 Codex coordinator
 
-Codex delegation已经形成进程内自动闭环；gated real app-server canary等阶段验收状态见
-`docs/Galatea/codex-delegation-refactor-status.md`。
+Codex delegation已经形成经过真实app-server canary验收的进程内自动闭环；本节及其对应代码、
+测试是长期产品契约。阶段完成声明仅归档于
+[`docs/Galatea/codex-delegation-refactor-status.md`](../../docs/Galatea/codex-delegation-refactor-status.md)。
 
 所有新普通player turn（包括当前尚无ready reply的情况）都以runtime-owned composite Observation
 持久化。首个兄弟块固定为`## 玩家角色试图采取的行动`/`player-action`，随后可按顺序携带0..16个
