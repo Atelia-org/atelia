@@ -333,13 +333,11 @@ per-session `TurnLock`、recovery admission与main connection allowlist。
 故事文本；只有后续coordinator对case-sensitive exact `Codex`的匹配构成当前唯一recipient allowlist，
 其余recipient只保留为`Unrouted`候选且绝不调用sidecar。Actor ownership、actual send以及计划、
 草稿、他人邮件和来信引用等语义，只由extractor LLM依据code-owned prompt保守判断，并没有被runtime
-fail-closed证明。runtime只验证artifact结构与UTF-8 bounds、single-line Recipient/Subject、canonical reply ID。
-Recipient、非空Subject、reply ID与Evidence必须是source exact substring；Body也优先要求exact substring，
-但另允许一种窄且可逆的presentation projection：当source中的一个连续span把Body的每个非空行exact写成
-Markdown emphasis `*line*`并原样保留所有LF时，runtime可以只去掉每行这一对外层星号。除此之外不允许
-unescape、whitespace/Unicode normalization、拼接、改写或概括。Subject、reply ID与evidence只保留
-extractor provenance，不进入Codex能力参数；sidecar task逐字等于验证后的`Body`，cwd/mode/network只来自
-code-owned exact route。
+fail-closed证明。runtime只验证artifact结构与UTF-8 bounds、single-line Recipient/Subject、canonical reply ID；
+它有意不对Recipient、Subject、Body、reply ID或Evidence做raw Action substring、Markdown、whitespace、标点或
+其他机械source-grounding比较。actual send、actor ownership、recipient与正文语义由配置的extractor LLM
+承担；Evidence只保留extractor provenance，不是runtime authority。Subject、reply ID与evidence不进入Codex
+能力参数；sidecar task逐字等于结构验证后的`Body`，cwd/mode/network只来自code-owned exact route。
 
 每个Action extraction batch由单一authoritative coordinator ledger全有或全无地capture，按terminal
 Action head保留fail-closed tombstone。stable dispatch ID是对length-prefixed

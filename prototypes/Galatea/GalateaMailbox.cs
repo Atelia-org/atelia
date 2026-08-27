@@ -307,7 +307,7 @@ internal sealed record SendMailIntent(
     ), JsonPropertyName("subject")]
     string? Subject,
     [property: Required, Description(
-        "The complete mail body explicitly authored by Galatea. Never invent or complete it. Exclude only presentation Markdown when every non-empty source line is one *line* emphasis span."
+        "The complete mail body explicitly authored by Galatea. Never invent or complete it."
     ), JsonPropertyName("body")]
     string Body,
     [property: Description(
@@ -341,8 +341,6 @@ The provider Action is a composite GM carrier, not automatically Galatea's own v
 Emit one tool call per mail, in narrative order, only when Galatea actually sends it or explicitly completes the send action. Plans, wishes, suggestions, drafts, composing, opening an interface, and unsent outbox content are not sends.
 
 Every emitted mail must state one recipient and its complete body in the Action. Do not invent, rewrite, complete, summarize, or polish either. A subject is optional and must be omitted when absent. inReplyToMessageId is optional and must be omitted unless the Action explicitly identifies the source message id. evidenceQuote must be an exact quote proving actual sending. If recipient, complete body, actor ownership, or completed-send evidence is missing or ambiguous, emit nothing for that candidate.
-
-Markdown used only to present the mail body is not content. If every non-empty body line appears as one exact Markdown emphasis span *line*, emit the exact inner line text and preserve every line break. Do not remove or normalize any other formatting.
 
 Ordinary response text is diagnostic only. Use emit_send_mail_intent for artifacts.
 """;
@@ -384,13 +382,13 @@ Extract zero or more mails that Galatea actually sent in this Action. Preserve t
                     "Outbound mail extractor captured an unexpected artifact type."
                 );
             }
-            Validate(typed.Value, visibleActionText);
+            Validate(typed.Value);
             intents.Add(typed.Value);
         }
         return Array.AsReadOnly(intents.ToArray());
     }
 
-    private static void Validate(SendMailIntent intent, string target) {
+    private static void Validate(SendMailIntent intent) {
         RequireText(
             intent.Recipient,
             GalateaMailboxBounds.MaximumRecipientUtf8Bytes,
@@ -421,72 +419,7 @@ Extract zero or more mails that Galatea actually sent in this Action. Preserve t
             "evidenceQuote",
             allowLineBreaks: true
         );
-        RequireExactSource(intent.Recipient, target, "recipient");
-        if (intent.Subject is not null) {
-            RequireExactSource(intent.Subject, target, "subject");
-        }
-        if (intent.InReplyToMessageId is not null) {
-            RequireExactSource(
-                intent.InReplyToMessageId,
-                target,
-                "inReplyToMessageId"
-            );
-        }
-        if (!IsPermittedBodyProjection(intent.Body, target)) {
-            throw SourceMismatch("body");
-        }
-        RequireExactSource(intent.EvidenceQuote, target, "evidenceQuote");
     }
-
-    private static bool IsPermittedBodyProjection(
-        string body,
-        string target
-    ) {
-        if (target.Contains(body, StringComparison.Ordinal)) { return true; }
-        if (body.Any(static character => character is
-                '\r' or '\v' or '\f' or '\u0085' or '\u2028' or '\u2029')) {
-            return false;
-        }
-
-        // Narrative Actions commonly render each authored mail paragraph as
-        // Markdown emphasis. Reconstruct that one presentation form from the
-        // candidate body, then require the whole result as one exact source
-        // span; never parse or normalize the source into a looser match.
-        var emphasized = new StringBuilder(body.Length);
-        int lineStart = 0;
-        while (true) {
-            int newline = body.IndexOf('\n', lineStart);
-            int lineEnd = newline < 0 ? body.Length : newline;
-            if (lineEnd > lineStart) {
-                _ = emphasized.Append('*')
-                    .Append(body, lineStart, lineEnd - lineStart)
-                    .Append('*');
-            }
-            if (newline < 0) { break; }
-            _ = emphasized.Append('\n');
-            lineStart = newline + 1;
-        }
-        return target.Contains(
-            emphasized.ToString(),
-            StringComparison.Ordinal
-        );
-    }
-
-    private static void RequireExactSource(
-        string value,
-        string target,
-        string field
-    ) {
-        if (!target.Contains(value, StringComparison.Ordinal)) {
-            throw SourceMismatch(field);
-        }
-    }
-
-    private static TextExtractionException SourceMismatch(string field) =>
-        new(
-            TextExtractionFailureKind.SourceGroundingMismatch,
-            $"Outbound mail {field} is not a permitted exact projection of the target text."
-        );
 
     private static void RequireOptionalText(
         string? value,

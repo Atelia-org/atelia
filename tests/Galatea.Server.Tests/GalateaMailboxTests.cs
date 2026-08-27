@@ -58,7 +58,7 @@ public sealed class GalateaMailboxTests {
     }
 
     [Fact]
-    public async Task Extractor_ReturnsZeroAndOrderedTypedMailsAndRejectsFabrication() {
+    public async Task Extractor_ReturnsZeroAndOrderedTypedMailsAndRejectsInvalidHeaders() {
         CompletionConnectionConfig connection = Connection("extractor");
         var client = new QueueClient(
             _ => Message(),
@@ -70,15 +70,11 @@ public sealed class GalateaMailboxTests {
                     "sent second body")
             ),
             _ => Message(
-                Tool("c3", "Mallory", null, "invented", null,
-                    "sent real body")
-            ),
-            _ => Message(
-                Tool("c4", "Alice\nBcc", null, "body", null,
+                Tool("c3", "Alice\nBcc", null, "body", null,
                     "sent body")
             ),
             _ => Message(
-                Tool("c5", "Alice", "subject\u2028Injected", "body",
+                Tool("c4", "Alice", "subject\u2028Injected", "body",
                     null, "sent body")
             )
         );
@@ -102,17 +98,6 @@ public sealed class GalateaMailboxTests {
         Assert.Equal(["Alice", "Bob"], mails.Select(static x => x.Recipient));
         Assert.Equal(["first body", "second body"], mails.Select(static x => x.Body));
 
-        TextExtractionException fabricated = await Assert.ThrowsAsync<
-            TextExtractionException>(() => extractor.ExtractAsync(
-                "[Galatea] sent real body to Mallory.",
-                CancellationToken.None
-            ).AsTask());
-        Assert.Equal(
-            TextExtractionFailureKind.SourceGroundingMismatch,
-            fabricated.Kind
-        );
-        Assert.Contains("body", fabricated.Message,
-            StringComparison.Ordinal);
         await Assert.ThrowsAsync<TextExtractionException>(() => extractor
             .ExtractAsync(
                 "[Galatea] sent body to Alice\nBcc and sent body.",
@@ -128,60 +113,33 @@ public sealed class GalateaMailboxTests {
     }
 
     [Fact]
-    public async Task Extractor_AcceptsOnlyTheReversibleLinewiseEmphasisBodyProjection() {
-        const string Body = "Dear Codex,\n\nKeep **inner Markdown** exact.\n\nGalatea";
-        const string Evidence = "She pressed Send.";
-        const string Target = """
-[Galatea] opened a mail addressed to Codex.
-
-*Dear Codex,*
-
-*Keep **inner Markdown** exact.*
-
-*Galatea*
-
-She pressed Send.
-""";
-        var client = new QueueClient(
-            _ => Message(Tool(
-                "emphasized-body",
+    public async Task TypedSemanticOutput_IsNotMechanicallyGroundedAgainstRawAction() {
+        const string ReplyId = "0123456789abcdef0123456789abcdef";
+        var client = new QueueClient(_ => Message(Tool(
+                "semantic-output",
                 "Codex",
-                null,
-                Body,
-                null,
-                Evidence
-            )),
-            _ => Message(Tool(
-                "rewritten-body",
-                "Codex",
-                null,
-                "Dear Codex,\n\nKeep inner Markdown exact.\n\nGalatea",
-                null,
-                Evidence
-            ))
-        );
+                "Status",
+                "Semantically extracted body.",
+                ReplyId,
+                "The model judged that Galatea completed the send."
+            )));
         var extractor = new OutboundMailExtractor(
             Connection("extractor"),
             () => client
         );
 
-        SendMailIntent accepted = Assert.Single(await extractor.ExtractAsync(
-            Target,
+        SendMailIntent intent = Assert.Single(await extractor.ExtractAsync(
+            "[Galatea] completed a visually formatted dispatch.",
             CancellationToken.None
         ));
-        Assert.Equal(Body, accepted.Body);
-
-        TextExtractionException rewritten = await Assert.ThrowsAsync<
-            TextExtractionException>(() => extractor.ExtractAsync(
-                Target,
-                CancellationToken.None
-            ).AsTask());
+        Assert.Equal("Codex", intent.Recipient);
+        Assert.Equal("Status", intent.Subject);
+        Assert.Equal("Semantically extracted body.", intent.Body);
+        Assert.Equal(ReplyId, intent.InReplyToMessageId);
         Assert.Equal(
-            TextExtractionFailureKind.SourceGroundingMismatch,
-            rewritten.Kind
+            "The model judged that Galatea completed the send.",
+            intent.EvidenceQuote
         );
-        Assert.Contains("body", rewritten.Message,
-            StringComparison.Ordinal);
     }
 
     [Fact]
