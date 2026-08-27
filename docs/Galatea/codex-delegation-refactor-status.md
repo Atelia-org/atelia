@@ -38,6 +38,20 @@ epoch/fencing 容忍多 writer；reply lease 以 cutoff 与紧邻 `SendAsync` �
 尚未激活的产品事实。所有可回退 preflight 必须在 explicit baseline 前完成；
 baseline 建立后不得直接恢复旧 owner。
 
+durable 实施已完成两个 **dormant** 增量，不改变上述现行产品路径：
+
+- `8ec6c19a` 新增 Node sidecar V2 staged backend/protocol/adapter seam，将
+  `ensure-binding`、`start-turn` 和 read-only `inspect-dispatch` 分离。C# V2 transport、
+  durable pulse/driver 与 live sidecar entry 仍未接入。当前 checkout 重跑
+  `local-codex-mcp` `npm test`：66 passed、1 environment-gated skipped、0 failed。
+- `b95134e7` 新增 dormant Galatea SQLite state kernel，包括 per-user lifetime exclusive
+  writer lock、strict current-state schema、baseline/capture/outbox/route 与两阶段 reply lease
+  transitions。focused `GalateaDelegationSqliteStoreTests`：14 passed、0 skipped、0 failed。
+
+这两个 commit 没有将 durable store 或 V2 protocol 构造进 production
+`GalateaHostService`/`UserSessionHost`，不表示 hard cut、C# transport、scheduler 或 E2E
+恢复已完成。
+
 2026-08-27 的闭环实测后加固已完成：`TextExtractor`只对pre-response
 `TransportOutcomeUnknown`执行最多5次总尝试，使用1s/2s/4s/8s指数退避；独立30秒extraction deadline已移除，
 当前完成优先语义只保留caller cancellation。

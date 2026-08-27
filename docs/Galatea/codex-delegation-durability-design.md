@@ -242,13 +242,16 @@ active mail dispatch。只有该 mail 已确定 terminal 并完成 notice settle
 
 每个 terminal routed mail 最多一行，以 `dispatchId` 为 unique source，保存
 `Reply|DeliveryFailure`、exact bounded body/stage/code、唯一单调 `completionSequence`、
-`Ready|Leased|Consumed` 与 revision。只有已证明的 terminal outcome 可以产生 notice；
+`Ready|Leased|Consumed`、可选 exact `consumedActionAddress` 与 revision。只有已证明的
+terminal outcome 可以产生 notice；
 `OutcomeUnknown`/`Quarantined` 不得伪造成“已发送失败”。
+只有 `Consumed` notice 必须带 exact `consumedActionAddress`，它是实际接收并携带
+该 reply 的 SessionJournal terminal Action address；Ready/Leased 必须为 null。
 
 #### `reply_lease` 与 `reply_lease_item`
 
-每个 user 最多一个 nonterminal lease。lease 保存唯一 `leaseId`、state
-`CutoffFrozen|ObservationBound|ObservationCommitted|Consumed|RolledBack|Quarantined`、冻结的
+每个 user 最多一个 active lease。lease 保存唯一 `leaseId`、state
+`CutoffFrozen|ObservationBound|ObservationCommitted|Quarantined`、冻结的
 player text、ordered notice IDs/completion frontier，以及 row revision。`CutoffFrozen` 明确不保存
 SessionJournal head 或 exact composite Observation。
 
@@ -258,7 +261,11 @@ durable Observation/terminal Action addresses。
 
 `reply_lease_item` 以 `(leaseId, ordinal)` 保留 exact ordered membership，并对 notice ID 建
 unique constraint。建立 lease 的同一事务将所有选中 notice 从 Ready 变为 Leased；
-consume/rollback 也必须与所有 item 在同一事务中结算。
+consume/rollback 也必须先在同一事务中结算所有 notices，再删除该
+temporary `reply_lease_item` 与 `reply_lease` rows。不保留 RolledBack/Consumed lease
+历史、membership 或 rendered Observation 永久副本；必要的 one-shot 证据归并到
+`reply_notice.ConsumedActionAddress`。只有 `Quarantined` lease 仍保留 active rows/items/evidence
+并 fail closed，等待未来显式治理。
 
 ### 5.3 不是 effect event sourcing
 
@@ -398,20 +405,22 @@ SQLite 不得仅因为 `SendAsync`/上层函数返回或抛错而 consume/rollba
 SessionJournal selected raw lineage 上的 exact evidence：
 
 - **Bind 之前崩溃**：lease 仍为 `CutoffFrozen`，它没有 SessionJournal base/effect
-  authority；事务化 rollback，所有 notice 恢复 Ready。desired setup reconciliation 已经发生不改变
-  这一结论。
+  authority；同一事务将所有 notice 恢复 Ready，再删除 temporary lease/items。
+  desired setup reconciliation 已经发生不改变这一结论。
 - **Bind 后 Observation 未 commit**：current head 仍等于 lease `freshBaseHead`，且没有匹配
-  Observation，则事务化 rollback，所有 notice 恢复 Ready。
+  Observation，则以同一事务将所有 notice 恢复 Ready，再删除 temporary
+  lease/items 及其 rendered Observation。
 - **Observation 已 commit**：存在直接从 `freshBaseHead` 下降的 Observation，其 exact
   canonical content/byte count/SHA-256 与 lease 冻结值一致，则记录 durable Observation
   address 并改为 `ObservationCommitted`。即使 raw head 已是 SessionJournal
   Prepared/Started/Action 后代，
   也必须沿 selected lineage 识别该 exact Observation。
 - **terminal Action 已 commit**：匹配 Observation 已有 exact completed terminal Action，且该 turn
-  的 execution boundary 已按 SessionJournal contract 结算，则事务化将 lease 和所有 notices
-  永久改为 `Consumed`。
+  的 execution boundary 已按 SessionJournal contract 结算，则以同一事务将所有 notices
+  改为 `Consumed`、把该 exact terminal Action address 写入每一个
+  `ConsumedActionAddress`，再删除 temporary lease/items。
 - **明确放弃**：known failed turn 被 exact abandon 回 `freshBaseHead`，或 pre-observation
-  stop 有零 raw mutation 证据，可 rollback。
+  stop 有零 raw mutation 证据，可在 notices 恢复 Ready 后删除 temporary lease/items。
 - **证据分叉**：`freshBaseHead`、Observation bytes、selected lineage 或 terminal Action
   identity 不能同时成立，则 lease `Quarantined`，不自动恢复 Ready 也不假装
   Consumed。
@@ -422,11 +431,15 @@ SessionJournal selected raw lineage 上的 exact evidence：
 ### 8.3 One-shot 不变量
 
 - `Consumed` notice 永不因普通 Undo 重新武装。
+- 每个 `Consumed` notice 永久保留实际接收它的 exact terminal Action address，
+  但不保留已结算 lease 或 rendered Observation 副本。
 - rollback 只能发生在没有 selected durable terminal Action 的路径。
 - 同一 notice 不能同时属于两个 nonterminal lease。
 - 一个 lease 的 membership、顺序与 player text 一旦 `CutoffFrozen` 便不可变；
   base head 与 rendered Observation 一旦 `ObservationBound` 便不可变。
 - 进程重启不开始新 cutoff，而是先结算旧 lease。
+- rollback/consume 成功后 `reply_lease` 与 `reply_lease_item` 必须为零 active rows；
+  `Quarantined` 例外地保留 active row/items 并阻止新 cutoff。
 
 ## 9. Pulse 模型
 
@@ -467,10 +480,11 @@ non-overlap gate，不允许 signal 和 timer 同时对同一 user 执行 effect
 | `Accepted` durable，terminal Task 丢失 | SQLite 有 exact thread/turn | pulse 读 app-server persistent turn | 重发 task body |
 | app-server terminal，SQLite 未记录 | external terminal authority 存在 | 以 exact IDs 读取并幂等写 terminal+notice | 根据 log 猜 final |
 | notice Ready，signal 前 | `reply_notice=Ready` | 后续 player cutoff 或 1 秒 pulse 可见 | 丢弃 notice |
-| cutoff frozen，desired setup reconciliation 前/后但 bind 前 | lease 只有 membership/player text，无 SJ base | rollback，notices 恢复 Ready | 从 current head 猜测 bind |
-| `ObservationBound` commit，Observation 未 commit | lease 有 exact fresh base + Observation bytes | current head 仍为 base 时 rollback | 盲目 consume |
+| cutoff frozen，desired setup reconciliation 前/后但 bind 前 | lease 只有 membership/player text，无 SJ base | 同事务 notices -> Ready 并删除 lease/items | 保留 RolledBack lease 或从 current head 猜测 bind |
+| `ObservationBound` commit，Observation 未 commit | lease 有 exact fresh base + Observation bytes | current head 仍为 base 时，同事务 notices -> Ready 并删除 lease/items | 保留 rendered Observation 或盲目 consume |
 | Observation durable，lease 仍 `ObservationBound` | raw selected lineage 有 exact base/Observation bytes | 记录 Observation address，继承 recovery | 重新 cutoff 或重复注入 |
-| terminal Action durable，lease 未 consume | raw completed turn + SQLite lease/items | 事务化 consume | 因上层返回丢失而 rollback |
+| terminal Action durable，lease 未 consume | raw completed turn + SQLite lease/items | 同事务 notices -> Consumed + exact receiving Action address，再删除 lease/items | 保留 Consumed lease 或因上层返回丢失而 rollback |
+| lease/evidence 冲突已 quarantine | active `Quarantined` lease/items/evidence | 保留 active 并 fail closed | 删除 evidence、恢复 notices 或开新 cutoff |
 | capture 后 SessionJournal Undo | SQLite batch 仍是 delegation authority | 不修改 outbox/reply state | retract queued mail 或重新武装 consumed reply |
 | route/lease identity 冲突 | current row 与 external/raw evidence 不能同时成立 | 持久 quarantine，停止该 route/lease | last-write-wins 或自动修复 |
 
@@ -516,9 +530,9 @@ hard cut 是一个可审查的单次产品切换：
 | WP | 状态 | 边界 | 必须交付 |
 |---|---|---|---|
 | WP0 | Complete | 设计收口 | 本文、status 分阶段、authority/非目标/crash matrix 锁定 |
-| WP1 | Pending | dormant store | lifetime exclusive OS writer lock、strict schema/current-state tables、bounds、transactions、reopen、`captureFromPhysicalFrontier` 窄 seam/验证 |
+| WP1 | Complete (`b95134e7`) | dormant store/kernel | lifetime exclusive OS writer lock、strict SQLite current-state tables、bounds、transactions/reopen、baseline、capture/outbox/route/reply lease kernel；未接 production composition |
 | WP2 | Pending | dormant capture | latest-terminal-Action gap settlement、all-batch/empty tombstone、first-commit-wins、capture-after-Undo 契约测试 |
-| WP3 | Pending | dormant outbox | `ensure-binding`/`start-turn` 分离、FIFO `Queued -> Started`、fixed staged binding、accepted/terminal polling、OutcomeUnknown durable backoff/reconcile/conflict quarantine |
+| WP3 | In Progress | staged sidecar/outbox | Node V2 staged backend/protocol/adapter seam已于 `8ec6c19a` 完成；C# V2 transport、pulse/driver 与 live entry 仍 Pending |
 | WP4 | Pending | dormant inbox/lease | `CutoffFrozen -> BindObservationBase -> ObservationCommitted`、durable Ready/Leased/Consumed、exact Observation/Action evidence、restart one-shot matrix |
 | WP5 | Pending | dormant host orchestration | signal + 1s fallback、per-user non-overlap gate、startup/admission recovery，仍不接 live owner |
 | WP6 | Pending | hard cut | baseline-before/after no-return gates、candidate abandon 流程、atomic composition switch、旧 production call sites清理、README 升格 |
@@ -566,6 +580,10 @@ dual-write、branch-following inbox 或新 operator 能力的改变，都需要�
   terminal Action 后四个崩溃窗口；bind 前无 SessionJournal head/body，在 desired setup
   reconciliation 后紧邻 `SendAsync` 前才冻结 exact fresh base/Observation；
   每个 notice 最多注入一次，Consumed 不随 Undo 重新武装。
+- rollback 与 consume 都在一个 transaction 内先 exact 结算全部 notices，再删除
+  temporary lease/items；settled 后数据库中无 RolledBack/Consumed lease 或 rendered Observation
+  副本。consume 后每个 notice 为 Consumed 且带相同 exact receiving terminal Action
+  address。Quarantined lease 仍 active、保留 evidence 并阻止新 cutoff。
 - signal 全部丢失时，只依赖 1 秒 fallback 仍能把每个可推进状态推进；
   signal/timer 并发不产生重复 effect。
 
