@@ -364,6 +364,11 @@ api.MapPost(
                     $"Unknown completion connection '{request.ConnectionId}'."
                 ));
             }
+            hostService.PrepareFreshTurnAdmission(
+                session,
+                recovery,
+                httpContext.RequestAborted
+            );
             liveTurn = hostService.StartTurn(
                 session,
                 request.Message,
@@ -642,6 +647,11 @@ api.MapPost(
                     $"Unknown completion connection '{request.ConnectionId}'."
                 ));
             }
+            hostService.PrepareFreshTurnAdmission(
+                session,
+                recovery,
+                httpContext.RequestAborted
+            );
             MailboxMessage message = MailboxMessage.CreateInbound(
                 request.From,
                 request.Subject,

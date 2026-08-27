@@ -380,6 +380,44 @@ public sealed class GalateaDelegationCoordinatorTests {
     }
 
     [Fact]
+    public async Task CutoffSplitsMoreThanSixteenReadyRepliesIntoFifoRounds() {
+        var sidecar = new FakeSidecar();
+        await using var coordinator = Create(
+            sidecar,
+            maximumQueuedMails: 32,
+            maximumInboxReplies: 32
+        );
+        Assert.True(coordinator.TryCaptureBatch(
+            "turn-many",
+            Head(20),
+            Enumerable.Range(0, 17)
+                .Select(index => Mail("Codex", $"task-{index}"))
+                .ToArray()
+        ));
+        for (int index = 0; index < 17; index++) {
+            FakeCall call = await sidecar.NextCallAsync();
+            call.Accept("thread-fixed", $"codex-turn-{index}");
+            call.Complete($"reply-{index}");
+        }
+        await coordinator.PumpTaskForTest.WaitAsync(Deadline);
+
+        GalateaDelegationCoordinator.GalateaReadyReplyLease first =
+            coordinator.BeginReadyReplyCutoff("player");
+        Assert.Equal(
+            Enumerable.Range(0, 16).Select(index => $"reply-{index}"),
+            first.Notices.Select(static notice => notice.Body)
+        );
+        first.Commit();
+
+        using GalateaDelegationCoordinator.GalateaReadyReplyLease second =
+            coordinator.BeginReadyReplyCutoff("player");
+        Assert.Equal(
+            "reply-16",
+            Assert.Single(second.Notices).Body
+        );
+    }
+
+    [Fact]
     public async Task FullInboxBackpressuresTerminalUntilLeaseCommits() {
         var sidecar = new FakeSidecar();
         await using var coordinator = Create(

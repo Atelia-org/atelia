@@ -200,7 +200,7 @@ code-owned bounds；caller cancellation与transport exception直接传播。
 
 ## Mailbox、OutboundMailExtractor 与 Codex coordinator
 
-Codex 回信向下一玩家回合 Observation 的注入仍在施工；当前已决策边界和会逐步收缩的未完成工作见
+Codex delegation已经形成进程内自动闭环；gated real app-server canary等阶段验收状态见
 `docs/Galatea/codex-delegation-refactor-status.md`。
 
 所有新普通player turn（包括当前尚无ready reply的情况）都以runtime-owned composite Observation
@@ -215,8 +215,10 @@ reply正文上限256 KiB UTF-8，failure上限4 KiB，整份composite上限1 MiB
 composite parser只接受code-owned prefix、heading、info string、顺序与动态fence的canonical重渲染结果。
 recent view显示玩家文本及每条独立通知；普通Undo仍把它识别为player turn，但pop receipt只返回玩家文本。
 历史backtick player envelope继续只读兼容recent/Undo；inbound mail envelope仍不属于普通player Undo。
-input normalizer只接收玩家文本，绝不接收ready notices。ReplyInbox已经由per-session coordinator
-维护，但尚未接入fresh turn的durable lifecycle，因此当前HTTP新建的普通player turn仍携带空notice集合。
+input normalizer只接收玩家文本，绝不接收ready notices。普通player入口在仍持有per-session `TurnLock`、
+完成recovery admission与main connection检查之后形成ready-reply cutoff；cutoff之前已经terminal的可渲染
+FIFO前缀冻结进本轮typed fresh input，之后才terminal的结果留给下一次普通player turn。inbound入口和
+recovery入口都不形成新cutoff。
 
 `SessionJournal`公开的`AdaptiveMarkdownFenceRenderer.RenderBlock(infoString, exactBody)`要求1..64字符
 ASCII token作为code-owned info string。现有Recap contribution已复用它，并保持原`recap-block`输出逐字不变。
@@ -258,6 +260,15 @@ composite的FIFO前缀，其余保持Ready。一次只允许一个active lease�
 `Rollback`或未提交lease的`Dispose`恢复Ready。该lease可以跨fresh/recovery调用栈长期持有，供后续runtime
 在Observation真正durable后提交，而不是在方法返回时自动消费。
 
+每个session至多持有一个unresolved reply lease。fresh Observation在completion/tool等recoverable boundary
+停住时，lease与其exact durable Observation identity一起保留；`StartRecovery`只继承这份lease，绝不顺手
+claim后来ready的结果。`SendAsync`/`ResumeAsync`成功产生terminal Action且execution boundary回到`Idle`后，
+host在outbound extraction、recent refresh与SSE `done`之前显式`Commit`，所以已经durable的Action不会因后处理
+失败而重新投递同一回信。Observation前失败、preflight失败、明确放弃的known failed turn与pre-dispatch stop
+显式`Rollback`；罕见的“Action durable但调用返回前抛出”使用exact completed-turn projection与本lease记录的
+Observation identity分类，不仅凭raw head猜测。普通player Undo不会重新武装已`Consumed`回信；inbound turn即使
+存在ready reply也不claim，后续普通player turn仍可取得。
+
 普通player Undo只在SessionJournal exact rewind确实`Moved`后回调同一ledger gate：Unrouted/Queued变为
 `RetractedBeforeDispatch`并释放正文；与pump竞争失败而已经Starting/Running的exchange只标记
 `SourceRetracted`，不interrupt，完成结果仍可one-shot呈现；Ready/Leased/Consumed不撤回、不重新武装。
@@ -269,7 +280,8 @@ provider传递linked shutdown/deadline cancellation；即使provider不合作，
 `TurnLock`释放最多只额外等待该deadline。nonfatal failure/cancellation/timeout只写single-line bounded
 `Galatea.Mailbox`摘要log，不改判已经durable的主turn；deadline内观测到的fatal exception仍传播，
 超时后被放弃task的eventual fault仅被安全观察。capture完成只唤醒后台pump，主Galatea turn不等待
-sidecar accepted或final；mailbox Observation不产生普通player rewind token，commit前也再次防御其被
+sidecar accepted或final；即使sidecar的acceptance或terminal长期悬挂，主turn仍可发布SSE `done`并释放
+`TurnLock`。mailbox Observation不产生普通player rewind token，commit前也再次防御其被
 player pop入口撤销。session shutdown先停止capture并drain turn，再取消/监督coordinator pump；host随后
 关闭共享sidecar，最后关闭Completion/RecapGrid owner。Completion call log仍可能包含完整tool arguments，
 debug摘要不重复正文、subject或evidence。

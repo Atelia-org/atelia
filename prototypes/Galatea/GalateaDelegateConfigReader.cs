@@ -145,7 +145,10 @@ internal static class GalateaDelegateConfigReader {
             routeElement,
             "maximumReplyUtf8Bytes",
             1,
-            MaximumBodyUtf8Bytes
+            Math.Min(
+                MaximumBodyUtf8Bytes,
+                GalateaPlayerObservationEnvelope.MaximumReplyUtf8Bytes
+            )
         );
         int maximumInboxReplies = ReadBoundedInteger(
             routeElement,
@@ -295,7 +298,12 @@ internal static class GalateaDelegateConfigReader {
         RequireBoundedInteger(route.MaximumTaskUtf8Bytes,
             "maximumTaskUtf8Bytes", 1, MaximumBodyUtf8Bytes);
         RequireBoundedInteger(route.MaximumReplyUtf8Bytes,
-            "maximumReplyUtf8Bytes", 1, MaximumBodyUtf8Bytes);
+            "maximumReplyUtf8Bytes",
+            1,
+            Math.Min(
+                MaximumBodyUtf8Bytes,
+                GalateaPlayerObservationEnvelope.MaximumReplyUtf8Bytes
+            ));
         RequireBoundedInteger(route.MaximumInboxReplies,
             "maximumInboxReplies", 1, MaximumInboxCount);
         RequireBoundedInteger(route.MaximumInboxUtf8Bytes,

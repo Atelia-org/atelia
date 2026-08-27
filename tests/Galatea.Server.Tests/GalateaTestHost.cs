@@ -28,6 +28,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string configPath,
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer? normalizer,
+        IGalateaDelegateSidecar? delegateSidecar,
         bool deleteFilesOnDispose
     ) {
         _tempRoot = tempRoot;
@@ -37,7 +38,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         Factory = new GalateaWebApplicationFactory(
             configPath,
             completionClientFactory,
-            normalizer
+            normalizer,
+            delegateSidecar
         );
     }
 
@@ -60,7 +62,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IReadOnlyList<CompletionConnectionConfig>? connections = null,
         IReadOnlyList<string>? selectableConnectionIds = null,
         string? inputNormalizerConnectionId = null,
-        string? outboundMailExtractorConnectionId = null
+        string? outboundMailExtractorConnectionId = null,
+        IGalateaDelegateSidecar? delegateSidecar = null
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
 
@@ -120,6 +123,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             configPath,
             completionClientFactory,
             normalizer,
+            delegateSidecar,
             deleteFilesOnDispose
         );
     }
@@ -188,6 +192,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 configPath,
                 completionClientFactory,
                 normalizer,
+                delegateSidecar: null,
                 deleteFilesOnDispose
             );
         }
@@ -328,6 +333,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 configPath,
                 completionClientFactory,
                 normalizer,
+                delegateSidecar: null,
                 deleteFilesOnDispose: true
             );
         }
@@ -659,7 +665,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
 internal sealed class GalateaWebApplicationFactory(
     string configPath,
     ICompletionClientFactory completionClientFactory,
-    IGalateaUserMessageNormalizer? normalizer
+    IGalateaUserMessageNormalizer? normalizer,
+    IGalateaDelegateSidecar? delegateSidecar
 ) : WebApplicationFactory<Program> {
     protected override void ConfigureWebHost(IWebHostBuilder builder) {
         builder.UseEnvironment("Testing");
@@ -672,6 +679,18 @@ internal sealed class GalateaWebApplicationFactory(
                 services.AddSingleton<IGalateaUserMessageNormalizerFactory>(
                     new FixedNormalizerFactory(normalizer)
                 );
+            }
+            if (delegateSidecar is not null) {
+                services.RemoveAll<GalateaHostService>();
+                services.AddSingleton(provider =>
+                    new GalateaHostService(
+                        provider.GetRequiredService<GalateaConfig>(),
+                        provider.GetRequiredService<
+                            ICompletionClientFactory>(),
+                        provider.GetRequiredService<
+                            IGalateaUserMessageNormalizerFactory>(),
+                        delegateSidecar
+                    ));
             }
         });
     }

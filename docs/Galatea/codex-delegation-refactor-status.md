@@ -57,8 +57,8 @@
 ### Observation 表达
 
 - 玩家 Action 与每封代行者回信必须是同一 runtime-owned Observation 中的兄弟信息块。回信不得拼入玩家原文，也不得伪装成 system/developer instruction。
-- 内容面向 LLM 阅读而非程序回读，不采用 XML/JSON escaping。回信正文使用 `SessionContextContributionRenderer.RenderRecapBlock` 已验证过的 adaptive tilde-fence 算法：外层 fence 至少 4 个 `~`，且比正文中最长连续 `~` 多 1，从而允许正文中的 Markdown backtick fence、HTML/XML 字符和普通 Markdown 原样保留。
-- 实现时应提取或暴露一个语义中立的 adaptive Markdown fence renderer，并证明现有 recap block 输出逐字不变。delegate reply 使用自己的 heading/info string，不冒充 `recap-block`。
+- 内容面向 LLM 阅读而非程序回读，不采用 XML/JSON escaping。回信正文使用 public `AdaptiveMarkdownFenceRenderer.RenderBlock` 已验证过的 adaptive tilde-fence 算法：外层 fence 至少 4 个 `~`，且比正文中最长连续 `~` 多 1，从而允许正文中的 Markdown backtick fence、HTML/XML 字符和普通 Markdown 原样保留。
+- 语义中立的 public adaptive Markdown fence renderer 已由 recap 与 delegate reply 共同复用，现有 recap block 输出保持逐字不变；delegate reply 使用自己的 heading/info string，不冒充 `recap-block`。
 - recent view、SSE `done.recent` 与 Undo 必须理解新的 composite Observation。玩家文本仍按普通玩家 turn 展示并保持 rewind eligibility；代行者回信以独立可读块展示。
 
 ### 配置与进程边界
@@ -82,13 +82,8 @@
 
 完成一项后，将其稳定语义移入相应 README/contract/test，并从本节删除，不在这里积累完成日志。
 
-### Galatea runtime integration
-
-- 更新 `cyber.md`，告诉 Galatea canonical recipient `Codex` 是固定外界代行者、回信可能在以后某个玩家回合到达，并保持自然叙事而非输出协议文本。
-
 ### Verification
 
-- Galatea vertical tests：Action -> extractor -> Codex dispatch accepted -> SSE done 不等待 final -> final 入内存 -> 下一次玩家 Observation 含兄弟 reply block。
 - gated live app-server canary：连续发送两封邮件，证明第二封复用第一封的 thread/context，并证明两次 final 分别只注入一次。
 
 ## 阶段完成条件
