@@ -18,10 +18,23 @@ import type {
   TaskMode,
   TaskSnapshot,
 } from "../backend/task-backend.js";
+import type {
+  EnsureGalateaBindingInput,
+  GalateaBoundThread,
+  GalateaDispatchInspection,
+  GalateaStagedBackend,
+  GalateaStartedTurn,
+  InspectGalateaDispatchInput,
+  StartGalateaBoundTurnInput,
+} from "../backend/galatea-staged-backend.js";
 import { BridgeError, asBridgeError } from "../errors.js";
 import type { BridgeLogger } from "../logger.js";
 import { PathPolicy } from "../security/paths.js";
 import { CodexAppServerClient } from "./client.js";
+import {
+  classifyGalateaDispatch,
+  DefaultGalateaDispatchInspectionLimits,
+} from "./dispatch-inspection.js";
 import { agentReportJsonSchema } from "./report.js";
 import { TaskStore } from "./task-store.js";
 
@@ -103,7 +116,7 @@ export interface CodexBackendOptions {
   profile?: CodexBackendProfile;
 }
 
-export class CodexBackend implements TaskBackend {
+export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   private authenticated = false;
   private readonly continueReservations = new Set<string>();
   private readonly profile: CodexBackendProfile;
@@ -129,6 +142,160 @@ export class CodexBackend implements TaskBackend {
     this.authenticated = false;
     this.stopPromise = this.options.client.stop();
     return this.stopPromise;
+  }
+
+  async ensureBinding(
+    input: EnsureGalateaBindingInput,
+  ): Promise<GalateaBoundThread> {
+    this.throwIfStopped();
+    const cwd = await this.options.pathPolicy.resolveCwd(input.cwd);
+    this.throwIfStopped();
+    await this.ensureReady();
+    this.throwIfStopped();
+    const response = await this.options.client.request<ThreadStartResponse>("thread/start", {
+      cwd,
+      approvalPolicy: "never",
+      approvalsReviewer: "user",
+      sandbox: coarseSandbox(input.mode),
+      config: threadConfig(input.tools),
+      serviceName: this.profile.serviceName,
+      developerInstructions: this.profile.developerInstructions,
+      ephemeral: false,
+      threadSource: this.profile.analyticsThreadSource,
+    });
+    this.throwIfStopped();
+    await this.validateStartedThread(response.thread, cwd);
+    this.throwIfStopped();
+    await this.options.client.request("thread/name/set", {
+      threadId: response.thread.id,
+      name: this.ownershipName(response.thread.id),
+    });
+    this.throwIfStopped();
+    const verified = await this.readOwnedThread(response.thread.id, true);
+    await this.validateThreadCwd(verified, cwd);
+    if (!Array.isArray(verified.turns) || verified.turns.length !== 0) {
+      throw new BridgeError(
+        "CODEX_PROTOCOL_ERROR",
+        "A newly established Galatea binding must be an empty owned thread.",
+      );
+    }
+    return { threadId: verified.id };
+  }
+
+  async startBoundTurn(
+    input: StartGalateaBoundTurnInput,
+  ): Promise<GalateaStartedTurn> {
+    this.throwIfStopped();
+    await this.ensureReady();
+    this.throwIfStopped();
+    if (this.continueReservations.has(input.threadId)) {
+      throw new BridgeError("BRIDGE_BUSY", "This Codex thread already has an active turn.");
+    }
+    this.continueReservations.add(input.threadId);
+    try {
+      const preflight = await this.readOwnedThread(input.threadId, false);
+      this.throwIfStopped();
+      const persistedCwd = await this.options.pathPolicy.resolveCwd(preflight.cwd);
+      const expectedCwd = await this.options.pathPolicy.resolveCwd(input.expectedCwd);
+      this.throwIfStopped();
+      if (persistedCwd !== expectedCwd) {
+        throw new BridgeError("CWD_MISMATCH", "The Codex thread cwd differs from the configured cwd.");
+      }
+      if (this.options.store.hasRunning(input.threadId) || preflight.status.type === "active") {
+        throw new BridgeError("BRIDGE_BUSY", "This Codex thread already has an active turn.");
+      }
+
+      const resumed = await this.options.client.request<ThreadResumeResponse>("thread/resume", {
+        threadId: input.threadId,
+        cwd: expectedCwd,
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandbox: coarseSandbox(input.mode),
+        config: threadConfig(input.tools),
+        developerInstructions: this.profile.developerInstructions,
+      });
+      this.throwIfStopped();
+      await this.validatePersistedThread(resumed.thread, input.threadId, expectedCwd);
+      this.throwIfStopped();
+      return await this.startTurnAccepted(
+        input.threadId,
+        input.task,
+        expectedCwd,
+        input.mode,
+        input.localCommandNetwork,
+        input.dispatchId,
+      );
+    } finally {
+      this.continueReservations.delete(input.threadId);
+    }
+  }
+
+  async inspectDispatch(
+    input: InspectGalateaDispatchInput,
+  ): Promise<GalateaDispatchInspection> {
+    this.throwIfStopped();
+    await this.ensureReady();
+    this.throwIfStopped();
+    const expectedCwd = await this.options.pathPolicy.resolveCwd(input.expectedCwd);
+    let response: ThreadReadResponse;
+    try {
+      response = await this.options.client.request<ThreadReadResponse>("thread/read", {
+        threadId: input.threadId,
+        includeTurns: true,
+      });
+    } catch (error) {
+      const bridgeError = asBridgeError(error);
+      if (bridgeError.code === "THREAD_NOT_FOUND") {
+        return {
+          kind: "ambiguous",
+          threadId: input.threadId,
+          code: "THREAD_NOT_FOUND",
+        };
+      }
+      throw bridgeError;
+    }
+    this.throwIfStopped();
+    const thread = response.thread;
+    if (!thread || thread.id !== input.threadId) {
+      return {
+        kind: "ambiguous",
+        threadId: input.threadId,
+        code: "THREAD_ID_MISMATCH",
+      };
+    }
+    if (thread.name !== this.ownershipName(input.threadId)) {
+      return {
+        kind: "ambiguous",
+        threadId: input.threadId,
+        code: "THREAD_OWNERSHIP_MISMATCH",
+      };
+    }
+    let actualCwd: string;
+    try {
+      actualCwd = await this.options.pathPolicy.resolveCwd(thread.cwd);
+    } catch {
+      return {
+        kind: "ambiguous",
+        threadId: input.threadId,
+        code: "THREAD_CWD_MISMATCH",
+      };
+    }
+    if (actualCwd !== expectedCwd) {
+      return {
+        kind: "ambiguous",
+        threadId: input.threadId,
+        code: "THREAD_CWD_MISMATCH",
+      };
+    }
+    return classifyGalateaDispatch(
+      thread,
+      input.dispatchId,
+      input.task,
+      {
+        ...DefaultGalateaDispatchInspectionLimits,
+        maximumFinalUtf8Bytes: input.maximumFinalUtf8Bytes,
+      },
+    );
   }
 
   async delegate(input: DelegateTaskInput): Promise<TaskSnapshot> {
@@ -330,6 +497,29 @@ export class CodexBackend implements TaskBackend {
     waitMs: number,
     clientUserMessageId?: string,
   ): Promise<TaskSnapshot> {
+    const accepted = await this.startTurnAccepted(
+      threadId,
+      task,
+      cwd,
+      mode,
+      localCommandNetwork,
+      clientUserMessageId,
+    );
+    return this.options.store.waitForTurn(
+      accepted.threadId,
+      accepted.turnId,
+      waitMs,
+    );
+  }
+
+  private async startTurnAccepted(
+    threadId: string,
+    task: string,
+    cwd: string,
+    mode: TaskMode,
+    localCommandNetwork: boolean,
+    clientUserMessageId?: string,
+  ): Promise<GalateaStartedTurn> {
     this.throwIfStopped();
     const response = await this.options.client.request<TurnStartResponse>("turn/start", {
       threadId,
@@ -343,8 +533,11 @@ export class CodexBackend implements TaskBackend {
       ...(this.profile.outputSchema === undefined ? {} : { outputSchema: this.profile.outputSchema }),
     });
     this.throwIfStopped();
+    if (!response.turn || typeof response.turn.id !== "string" || response.turn.id.length === 0) {
+      throw new BridgeError("CODEX_PROTOCOL_ERROR", "Codex returned an invalid turn identity.");
+    }
     this.options.store.beginTurn(threadId, response.turn.id);
-    return this.options.store.waitForTurn(threadId, response.turn.id, waitMs);
+    return { threadId, turnId: response.turn.id };
   }
 
   private async readOwnedThread(threadId: string, includeTurns: boolean): Promise<Thread> {
@@ -379,6 +572,9 @@ export class CodexBackend implements TaskBackend {
   }
 
   private async validateStartedThread(thread: Thread, expectedCwd: string): Promise<void> {
+    if (!thread || typeof thread.id !== "string" || thread.id.length === 0) {
+      throw new BridgeError("CODEX_PROTOCOL_ERROR", "Codex returned an invalid thread identity.");
+    }
     await this.validateThreadCwd(thread, expectedCwd);
   }
 

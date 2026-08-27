@@ -32,7 +32,7 @@ test("turn completion before waiter registration is retained and compacted", asy
       turn: {
         id: "turn-1",
         items: [],
-        itemsView: { type: "full" },
+        itemsView: "full",
         status: "completed",
         error: null,
         startedAt: 1,

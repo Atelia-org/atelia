@@ -33,6 +33,9 @@ let lastResumeParams: Record<string, unknown> | undefined;
 let lastThreadStartParams: Record<string, unknown> | undefined;
 const allTurnParams: Record<string, unknown>[] = [];
 let threadStartCount = 0;
+let threadReadCount = 0;
+let threadNameSetCount = 0;
+let threadResumeCount = 0;
 let turnStartCount = 0;
 let keepAliveAfterStdinClose = false;
 let resumeResponseThreadIdOverride: string | undefined;
@@ -126,7 +129,12 @@ function completeTurn(
   turn.error = status === "failed" ? { message: "fake failure", codexErrorInfo: null, additionalDetails: null } : null;
   turn.completedAt = Math.floor(Date.now() / 1000);
   turn.durationMs = 10;
-  turn.items = status === "completed" && !behavior.includes("[MISSING]") ? [agentItem, fileItem] : [];
+  const userItems = (turn.items as Array<Record<string, unknown>>).filter(
+    (item) => item.type === "userMessage",
+  );
+  turn.items = status === "completed" && !behavior.includes("[MISSING]")
+    ? [...userItems, agentItem, fileItem]
+    : userItems;
   thread.status = { type: "idle" };
   persistState();
   if (status === "completed" && !behavior.includes("[MISSING]")) {
@@ -211,6 +219,9 @@ lines.on("line", (line) => {
           lastThreadStartParams,
           allTurnParams,
           threadStartCount,
+          threadReadCount,
+          threadNameSetCount,
+          threadResumeCount,
           turnStartCount,
         },
       });
@@ -279,6 +290,7 @@ lines.on("line", (line) => {
       break;
     }
     case "thread/read": {
+      threadReadCount += 1;
       const thread = threads.get(String(message.params?.threadId));
       if (!thread) {
         send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
@@ -295,6 +307,7 @@ lines.on("line", (line) => {
       break;
     }
     case "thread/name/set": {
+      threadNameSetCount += 1;
       const thread = threads.get(String(message.params?.threadId));
       if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
       else {
@@ -309,6 +322,7 @@ lines.on("line", (line) => {
       break;
     }
     case "thread/resume": {
+      threadResumeCount += 1;
       lastResumeParams = message.params;
       const thread = threads.get(String(message.params?.threadId));
       if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
@@ -337,8 +351,15 @@ lines.on("line", (line) => {
       const turnId = `turn-${nextTurn++}`;
       const turn = {
         id: turnId,
-        items: [],
-        itemsView: { type: "full" },
+        items: [{
+          type: "userMessage",
+          id: `user-${turnId}`,
+          clientId: typeof message.params?.clientUserMessageId === "string"
+            ? message.params.clientUserMessageId
+            : null,
+          content: structuredClone(message.params?.input ?? []),
+        }],
+        itemsView: "full",
         status: "inProgress",
         error: null,
         startedAt: Math.floor(Date.now() / 1000),
