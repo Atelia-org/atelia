@@ -143,15 +143,19 @@ MCP/apps。host还会在Node启动前精确清除`CODEX_SESSION_ID`、`CODEX_THR
 app-server时再次清除同一组父Codex context；`HOME`、`PATH`、`CODEX_HOME`、Codex安装标记、
 auth/provider/proxy环境保持不变，不使用宽泛allowlist。ambient process environment不能改写
 route capability或把代行thread附着到父Codex session。C# write gate、单个完整
-frame write、flush与acceptance各受`rpcTimeoutMs`约束：write开始前取消可安全放弃；从frame
+frame write与flush各受1×`rpcTimeoutMs`约束：write开始前取消可安全放弃；从frame
 可能写入pipe开始，timeout/cancel/IO都映射stable outcome-unknown、fail当前generation且绝不
-自动retry。attached duplicate waiter自身取消或等待超时不会伤害原owner exchange。
+自动retry。owner写出后的accepted使用`3 * rpcTimeoutMs + 5000ms` aggregate deadline，覆盖
+首次`thread/start + thread/name/set + turn/start`，以及continue的
+`thread/read + thread/resume + turn/start`；min/default/max为5300/95000/905000ms。
+attached duplicate waiter仍只等待自身1×`rpcTimeoutMs`并返回`SIDECAR_ATTACHED_WAIT_TIMEOUT`，
+其取消或等待超时不会伤害原owner exchange。
 Node sidecar自身向C# stdout写frame使用独立、code-owned 10000ms deadline；它不继承最长可到
 300000ms的JSON-RPC `rpcTimeoutMs`，并始终落在Node wire允许的100..60000ms范围内。
 首次lazy启动的`ready`另使用aggregate deadline：`2 * rpcTimeoutMs + 5000ms`。这是因为Node
 在`ready`前会串行完成initialize与`account/read`两次各自受`rpcTimeoutMs`约束的RPC，再加
 bounded cold-process margin；min/default/max分别为5200/65000/605000ms。该aggregate只用于
-generation ready，dispatch acceptance与每次Node JSON-RPC仍保持原`rpcTimeoutMs`。
+generation ready；每次Node JSON-RPC仍保持原`rpcTimeoutMs`。
 
 fixed thread的持久ownership只依赖app-server response ID exact、profile-specific exact name marker
 `[galatea-codex-sidecar] <threadId>`、path-policy canonical cwd，以及Galatea route的expected-cwd

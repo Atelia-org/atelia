@@ -125,6 +125,22 @@ public sealed class GalateaDelegateSidecarTests {
         );
     }
 
+    [Theory]
+    [InlineData(100, 5_300)]
+    [InlineData(30_000, 95_000)]
+    [InlineData(300_000, 905_000)]
+    public void AcceptanceDeadlineComposesThreeRpcsAndStartupMargin(
+        int rpcTimeoutMs,
+        int expectedAcceptanceMs
+    ) {
+        Assert.Equal(
+            TimeSpan.FromMilliseconds(expectedAcceptanceMs),
+            GalateaCodexSidecarClient.ComputeAcceptanceDeadline(
+                rpcTimeoutMs
+            )
+        );
+    }
+
     [Fact]
     public async Task ReadyAfterOneRpcButBeforeAggregateDeadlineIsAccepted() {
         using var fixture = new Fixture("""
@@ -271,6 +287,36 @@ public sealed class GalateaDelegateSidecarTests {
     }
 
     [Fact]
+    public async Task AcceptedAfterOneRpcButBeforeAggregateDeadlineSucceeds() {
+        using var fixture = new Fixture("""
+        printf '%s\n' '{"v":1,"type":"ready"}'
+        IFS= read -r line
+        request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
+        dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
+        sleep 0.3
+        printf '{"v":1,"type":"accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-1","turnId":"turn-1"}\n' "$request_id" "$dispatch_id"
+        printf '{"v":1,"type":"completed","dispatchId":"%s","threadId":"thread-1","turnId":"turn-1","final":"aggregate accepted"}\n' "$dispatch_id"
+        while IFS= read -r ignored; do :; done
+        """);
+        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+            rpcTimeoutMs: 200
+        );
+        var watch = Stopwatch.StartNew();
+
+        GalateaDelegateAcceptedHandle accepted = await client.StartAsync(
+            Request("dispatch-aggregate-accepted"),
+            CancellationToken.None
+        );
+        GalateaDelegateTerminal.Completed completed = Assert.IsType<
+            GalateaDelegateTerminal.Completed>(await accepted.Completion);
+
+        watch.Stop();
+        Assert.Equal("aggregate accepted", completed.Final);
+        Assert.True(watch.Elapsed > TimeSpan.FromMilliseconds(250));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3));
+    }
+
+    [Fact]
     public async Task AcceptanceUnknownTombstonePreventsCrossGenerationReplay() {
         using var fixture = new Fixture(
             $$"""
@@ -283,15 +329,19 @@ public sealed class GalateaDelegateSidecarTests {
         );
         fixture.RewritePlaceholders();
         await using GalateaCodexSidecarClient client = fixture.CreateClient(
-            rpcTimeoutMs: 200
+            rpcTimeoutMs: 100
         );
+        var watch = Stopwatch.StartNew();
 
         GalateaDelegateStartException first = await Assert.ThrowsAsync<
             GalateaDelegateStartException>(() => client.StartAsync(
                 Request("dispatch-unknown"),
                 CancellationToken.None
             ));
+        watch.Stop();
         Assert.Equal("SIDECAR_ACCEPTANCE_OUTCOME_UNKNOWN", first.Code);
+        Assert.True(watch.Elapsed >= TimeSpan.FromSeconds(4.6));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(8));
 
         GalateaDelegateStartException replay = await Assert.ThrowsAsync<
             GalateaDelegateStartException>(() => client.StartAsync(

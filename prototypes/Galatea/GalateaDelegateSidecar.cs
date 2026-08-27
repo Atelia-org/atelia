@@ -71,6 +71,7 @@ internal sealed partial class GalateaCodexSidecarClient
     private const int DefaultInterruptGraceMs = 2_000;
     private const int SidecarOutputWriteTimeoutMs = 10_000;
     private const int ReadyStartupMarginMs = 5_000;
+    private const int AcceptanceStartupMarginMs = 5_000;
     private const string LogCategory = "Galatea.DelegateSidecar";
     private static readonly HashSet<string> ParentCodexContextKeys = new(
         StringComparer.Ordinal
@@ -264,6 +265,16 @@ internal sealed partial class GalateaCodexSidecarClient
         }
         long milliseconds = checked(
             2L * rpcTimeoutMs + ReadyStartupMarginMs
+        );
+        return TimeSpan.FromMilliseconds(milliseconds);
+    }
+
+    internal static TimeSpan ComputeAcceptanceDeadline(int rpcTimeoutMs) {
+        if (rpcTimeoutMs is < 100 or > 300_000) {
+            throw new ArgumentOutOfRangeException(nameof(rpcTimeoutMs));
+        }
+        long milliseconds = checked(
+            3L * rpcTimeoutMs + AcceptanceStartupMarginMs
         );
         return TimeSpan.FromMilliseconds(milliseconds);
     }
@@ -935,7 +946,7 @@ internal sealed partial class GalateaCodexSidecarClient
             }
             try {
                 return await pending.Accepted.Task.WaitAsync(
-                        TimeSpan.FromMilliseconds(
+                        ComputeAcceptanceDeadline(
                             _owner._config.Sidecar.RpcTimeoutMs
                         ),
                         ct
