@@ -479,7 +479,6 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             DisabledGalateaUserMessageNormalizer.Instance,
             new GalateaRecapGridComposition(
                 recoveryCompletion,
-                profile.ProfileId,
                 RecapGridOnlineLimits.Production,
                 _estimator
             )

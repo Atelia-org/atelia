@@ -105,7 +105,7 @@ resolve到同一normalized lexical session path时，在session/client/log side 
 |:--|:--|:--|
 | `routeManifestPath` | required nonblank string | relative以config directory为base；root load只resolve并拒绝existing symlink/reparse components，不要求route file存在 |
 | `agentControlProfileFiles` | required array，1..256 strings | item nonblank；relative以config directory为base；resolved path按platform comparer unique；file必须存在并eager strict decode |
-| `currentAgentControlProfileId` | required nonblank string | exact匹配一个已加载profile ID |
+| `currentAgentControlProfileId` | required nonblank string | exact匹配一个已加载profile ID；仅作为missing-session bootstrap admission authority，不注入fresh/NewRequest completion |
 
 Route manifest仍延迟到首次RecapGrid work读取，没有wildcard/default route fallback。Root V2不改变Route或profile的
 owner-defined V1 language。

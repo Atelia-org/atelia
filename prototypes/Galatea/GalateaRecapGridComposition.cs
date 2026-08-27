@@ -10,50 +10,21 @@ namespace Atelia.Galatea.Server;
 
 /// <summary>
 /// Formal Galatea RecapGrid composition. It owns the single host-wide
-/// completion registry and creates bounded per-turn bindings.
+/// completion registry and creates bounded per-turn bindings. Fresh/current
+/// completions carry no Agent Control tools; only frozen recovery may bind a
+/// historical tool runtime.
 /// </summary>
 internal sealed class GalateaRecapGridComposition
     : IAsyncDisposable {
     private readonly RecapGridCompletionHost _completion;
     private readonly RecapGridOnlineLimits _limits;
     private readonly IHistoryUnitLoadEstimator[] _estimators;
-    private readonly string? _agentControlProfileId;
 
     internal GalateaRecapGridComposition(
         RecapGridCompletionHost completion,
         RecapGridOnlineLimits? limits = null,
         params IHistoryUnitLoadEstimator[] estimators
-    ) : this(completion, null, limits, estimators, initialize: true) {
-    }
-
-    internal GalateaRecapGridComposition(
-        RecapGridCompletionHost completion,
-        string agentControlProfileId,
-        RecapGridOnlineLimits? limits = null,
-        params IHistoryUnitLoadEstimator[] estimators
-    ) : this(
-        completion,
-        (string?)agentControlProfileId,
-        limits,
-        estimators,
-        initialize: true
     ) {
-        if (string.IsNullOrWhiteSpace(agentControlProfileId)) {
-            throw new ArgumentException(
-                "Agent Control profile id must be non-empty.",
-                nameof(agentControlProfileId)
-            );
-        }
-    }
-
-    private GalateaRecapGridComposition(
-        RecapGridCompletionHost completion,
-        string? agentControlProfileId,
-        RecapGridOnlineLimits? limits,
-        IHistoryUnitLoadEstimator[] estimators,
-        bool initialize
-    ) {
-        _ = initialize;
         _completion = completion
             ?? throw new ArgumentNullException(nameof(completion));
         _limits = limits ?? RecapGridOnlineLimits.Production;
@@ -65,7 +36,6 @@ internal sealed class GalateaRecapGridComposition
                 nameof(estimators));
         }
         _estimators = estimators.ToArray();
-        _agentControlProfileId = agentControlProfileId;
     }
 
     internal CompletionConnectionConfig InspectConnectionExact(
@@ -116,7 +86,6 @@ internal sealed class GalateaRecapGridComposition
             throw CandidateOpenFailure(opened);
         }
         RecapGridOnlineContextHandle? ownedOnline = available.Handle;
-        RecapGridAgentControlHandle? agentControl = null;
         try {
             RecapGridOnlinePassResult caughtUp = await ownedOnline
                 .CatchUpMaintenanceAsync(
@@ -133,32 +102,17 @@ internal sealed class GalateaRecapGridComposition
                     "RecapGrid无法构造精确模型连接。",
                     "recap-grid-connection-invalid");
             }
-            if (_agentControlProfileId is not null) {
-                RecapGridAgentControlOpenResult toolOpened =
-                    _completion.OpenAgentControl(
-                        engine.ReadView,
-                        _agentControlProfileId,
-                        _estimators
-                    );
-                if (toolOpened is not RecapGridAgentControlOpenResult
-                        .Opened tool) {
-                    throw AgentControlOpenFailure(toolOpened);
-                }
-                agentControl = tool.Handle;
-            }
             var turn = new GalateaRecapGridTurn(
                 bound.Connection,
                 bound.Client,
                 bound.Identity,
                 ownedOnline,
-                agentControl,
+                agentControl: null,
                 maintenanceEvidence: ExtractEvidence(caughtUp));
             ownedOnline = null;
-            agentControl = null;
             return turn;
         }
         finally {
-            agentControl?.Dispose();
             if (ownedOnline is not null) {
                 await ownedOnline.DisposeAsync().ConfigureAwait(false);
             }
@@ -257,7 +211,6 @@ internal sealed class GalateaRecapGridComposition
             throw CandidateOpenFailure(onlineOpened);
         }
         RecapGridOnlineContextHandle? ownedOnline = online.Handle;
-        RecapGridAgentControlHandle? currentAgentControl = null;
         try {
             RecapGridOnlinePassResult caughtUp = await ownedOnline
                 .CatchUpMaintenanceAsync(
@@ -275,33 +228,18 @@ internal sealed class GalateaRecapGridComposition
                     "recap-grid-connection-absent"
                 );
             }
-            if (_agentControlProfileId is not null) {
-                RecapGridAgentControlOpenResult current =
-                    _completion.OpenAgentControl(
-                        engine.ReadView,
-                        _agentControlProfileId,
-                        _estimators
-                    );
-                if (current is not RecapGridAgentControlOpenResult
-                        .Opened opened) {
-                    throw AgentControlOpenFailure(current);
-                }
-                currentAgentControl = opened.Handle;
-            }
             var turn = new GalateaRecapGridTurn(
                 bound.Connection,
                 bound.Client,
                 bound.Identity,
                 ownedOnline,
-                currentAgentControl,
+                agentControl: null,
                 toolHead,
                 ExtractEvidence(caughtUp));
             ownedOnline = null;
-            currentAgentControl = null;
             return turn;
         }
         finally {
-            currentAgentControl?.Dispose();
             if (ownedOnline is not null) {
                 await ownedOnline.DisposeAsync().ConfigureAwait(false);
             }

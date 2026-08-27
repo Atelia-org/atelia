@@ -67,10 +67,17 @@ internal static partial class RecapGridCommands {
                 ReadAdmission(options)
             );
         }
-        if (mode is not RecapGridOnlineMode.ResumePrepared
-            && agentProfile is null) {
+        bool requiresFrozenAgentControl = recovery switch {
+            SessionRuntimeRecoveryRequirements.FrozenCompletionRequired {
+                ToolRuntimeIdentity: not null
+            } => true,
+            SessionRuntimeRecoveryRequirements.ToolContinuationRequired
+                => true,
+            _ => false
+        };
+        if (requiresFrozenAgentControl && agentProfile is null) {
             throw new ArgumentException(
-                "--admission is required for an Agent Control turn."
+                "--admission is required for frozen Agent Control recovery."
             );
         }
         RecapGridAgentControlProfileRegistry? agentProfiles =
@@ -316,20 +323,6 @@ internal static partial class RecapGridCommands {
                 }
                 agentClient = bound.Client;
                 dispatchIdentity = bound.Identity;
-
-                if (agentControl is null) {
-                    RecapGridAgentControlOpenResult currentTool =
-                        completionHost.OpenAgentControl(
-                            engine.ReadView,
-                            agentProfile!.ProfileId,
-                            new O200kBaseHistoryUnitLoadEstimator()
-                        );
-                    if (currentTool is not RecapGridAgentControlOpenResult
-                            .Opened currentOpened) {
-                        return MapAgentControlBinding(currentTool);
-                    }
-                    agentControl = currentOpened.Handle;
-                }
             }
 
             engine.UseRuntime(new SessionRuntime(

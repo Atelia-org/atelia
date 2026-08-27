@@ -742,7 +742,6 @@ public sealed class GalateaSessionProvisioningTests {
         );
         var composition = new GalateaRecapGridComposition(
             completion,
-            config.RecapGrid.CurrentAgentControlProfileId,
             estimators: [new O200kBaseHistoryUnitLoadEstimator()]
         );
         await using var service = new GalateaHostService(

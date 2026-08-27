@@ -1656,7 +1656,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
     }
 
     [Fact]
-    public async Task ExplicitCandidateBuildUsesExactRuntimeRouteAndPromotesOnlyAfterZeroCallRevalidation() {
+    public async Task ExplicitCandidateBuildAndPromotionKeepOnlineRequestsToolFree() {
         // Bind the raw governing setup before derived provisioning so the
         // formal Host does not need to append a setup change after the
         // candidate proof has been built.
@@ -2221,42 +2221,36 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal(0, firstOnlineCode);
         Assert.Equal("completed",
             firstOnline.GetProperty("status").GetString());
-        Assert.Equal(requestsBeforeOnline + 2, factory.RequestCount);
-        Assert.Equal(1, factory.PromoteToolCallCount);
-        Assert.Null(factory.EmitAgentControlPromoteRecipeOnce);
+        Assert.Equal(requestsBeforeOnline + 1, factory.RequestCount);
+        Assert.Equal(0, factory.PromoteToolCallCount);
+        Assert.Equal(
+            recipe.Digest.Value,
+            factory.EmitAgentControlPromoteRecipeOnce
+        );
+        Assert.All(
+            factory.Requests.Skip(requestsBeforeOnline),
+            static request => Assert.Empty(
+                request.PromptPrefix.OutputContract.Tools
+            )
+        );
         Assert.Equal(
             recapRequestsBeforePromotion,
             factory.RecapRequestCount
         );
-        string promotionToolResults = string.Join("\n",
-            factory.Requests.Skip(requestsBeforeOnline)
-                .SelectMany(static request => request.TailMessages)
-                .OfType<ToolResultsMessage>()
-                .SelectMany(static message => message.Results)
-                .Select(static result => result.GetFlattenedText()));
-        string durableToolResults;
-        using (SessionJournalEngine promotionReader =
-               SessionJournalEngine.OpenReadOnly(_root)) {
-            durableToolResults = string.Join("\n",
-                promotionReader.ReadHistoryPlanningWindow().Units
-                    .Select(static unit => unit.Message)
-                    .OfType<ToolResultsMessage>()
-                    .SelectMany(static message => message.Results)
-                    .Select(static result => result.GetFlattenedText()));
-        }
-        Assert.True(
-            ReadControlHead(refId).ActiveRecipeDigest == recipe.Digest,
-            $"toolResults={promotionToolResults}; durable={durableToolResults}; tails={string.Join(',', factory.Requests.Skip(requestsBeforeOnline).SelectMany(static request => request.TailMessages).Select(static message => message.Kind))}");
+        Assert.Null(ReadControlHead(refId).ActiveRecipeDigest);
         Assert.Equal(
-            receiptsBeforePromotion + 1,
+            receiptsBeforePromotion,
             ReadControlReceiptCount(refId, timelineHead.TimelineId)
         );
-        Assert.Contains(
-            factory.Requests.Skip(requestsBeforeOnline),
-            static request => request.PromptPrefix.SystemPrompt.Contains(
-                    "candidate result",
-                    StringComparison.Ordinal
-                )
+        factory.EmitAgentControlPromoteRecipeOnce = null;
+        Assert.Equal(0, Run(PromoteArgs()));
+        Assert.Equal(
+            recipe.Digest,
+            ReadControlHead(refId).ActiveRecipeDigest
+        );
+        Assert.Equal(
+            receiptsBeforePromotion,
+            ReadControlReceiptCount(refId, timelineHead.TimelineId)
         );
         int clientsAfterFirstOnline = factory.CallCount;
         Assert.Equal(oldV8Before, File.ReadAllBytes(oldV8));
@@ -2297,6 +2291,12 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         Assert.Equal("completed",
             secondOnline.GetProperty("status").GetString());
         Assert.True(factory.RequestCount >= beforeSecondOnline + 2);
+        Assert.All(
+            factory.Requests,
+            static request => Assert.Empty(
+                request.PromptPrefix.OutputContract.Tools
+            )
+        );
         Assert.Contains(factory.Requests, static request =>
             request.PromptPrefix.SystemPrompt.Contains(
                 "candidate result",
@@ -2307,7 +2307,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             raw = await Atelia.SessionJournal.Offline
                 .SessionJournalOfflineValidator.ValidateAsync(_root);
         Assert.True(raw.PreparedRequestCount >= 2);
-        Assert.True(raw.ToolResultHistoryCount >= 1);
+        Assert.Equal(0, raw.ToolResultHistoryCount);
         Assert.Equal(SessionExecutionPhase.Idle, raw.ExecutionPhase);
     }
 

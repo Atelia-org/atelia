@@ -365,11 +365,6 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                     maximumOutputTokens: 1_024)
             ]).ToCanonicalBytes());
         RecapGridAgentControlProfile agentProfile = AgentProfile();
-        string admissionPath = Path.Combine(external, "admission.json");
-        File.WriteAllBytes(
-            admissionPath,
-            agentProfile.Admission.ToCanonicalBytes()
-        );
         string refId;
         using (SessionJournalEngine reader =
                SessionJournalEngine.OpenReadOnly(cliPath)) {
@@ -385,8 +380,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 "--message", "same next clue",
                 "--connection", connection.Id,
                 "--connections", connectionsPath,
-                "--routes", routesPath,
-                "--admission", admissionPath
+                "--routes", routesPath
             ],
             cliFactory));
 
@@ -399,7 +393,6 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             new RecapGridAgentControlProfileRegistry([agentProfile]));
         var candidate = new GalateaRecapGridComposition(
             completion,
-            agentProfile.ProfileId,
             RecapGridOnlineLimits.Production,
             _estimator);
         await using (var service = new GalateaHostService(
@@ -450,10 +443,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 galateaRequest.PromptPrefix.OutputContract.Tools
             )
         );
-        Assert.Equal(
-            "recap_grid_control",
-            Assert.Single(cliRequest.PromptPrefix.OutputContract.Tools).Name
-        );
+        Assert.Empty(cliRequest.PromptPrefix.OutputContract.Tools);
+        Assert.Empty(galateaRequest.PromptPrefix.OutputContract.Tools);
         Assert.Empty(cliRequest.TailMessages);
         Assert.Empty(galateaRequest.TailMessages);
         Assert.Equal(
@@ -630,7 +621,6 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         );
         var candidate = new GalateaRecapGridComposition(
             completion,
-            profile.ProfileId,
             RecapGridOnlineLimits.Production,
             _estimator
         );
@@ -731,7 +721,6 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         );
         var candidate = new GalateaRecapGridComposition(
             completion,
-            profile.ProfileId,
             RecapGridOnlineLimits.Production,
             _estimator
         );
@@ -757,6 +746,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         service.FinishTurn(session, turn);
 
         Assert.Equal("completed", turn.Status);
+        Assert.Empty(Assert.Single(candidateFactory.Client.AgentRequests)
+            .PromptPrefix.OutputContract.Tools);
         Assert.Equal(
             SessionExecutionPhase.Idle,
             session.Engine.InspectExecutionBoundary().Phase
@@ -853,7 +844,6 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             new RecapGridAgentControlProfileRegistry([profile]));
         var candidate = new GalateaRecapGridComposition(
             completion,
-            profile.ProfileId,
             RecapGridOnlineLimits.Production,
             _estimator);
         await using var service = new GalateaHostService(

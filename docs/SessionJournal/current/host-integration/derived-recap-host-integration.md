@@ -25,12 +25,12 @@ drain → registry distinct-client cleanup。
 
 ## Phase ordering
 
-- Fresh/NewRequest：创建per-turn Online，执行formal composite lifecycle，再开始completion。
+- Fresh/NewRequest：创建per-turn Online，执行formal composite lifecycle，再以无Agent Control tool的runtime开始completion。
 - Prepared：先按frozen identity绑定completion与tool profile；绑定本身lazy且不打开Timeline/Control/Store。
 - Started：启动时strict config/connections已冻结；Refuse早于本次current connection
   selection/client、route与derived state。
-- ToolContinuation：先exact frozen tool profile/operation/sequence，再绑定current completion，最后打开Online。
-- ToolResult NewRequest：保留ToolResult raw tail，使用current profile进入readiness；不在该phase重新seal。
+- ToolContinuation：先exact frozen tool profile/operation/sequence，再绑定无工具的current completion，最后打开Online。
+- ToolResult NewRequest：保留ToolResult raw tail，以无工具runtime进入readiness；不在该phase重新seal。
 
 Lifecycle audit authority来自同一mutable `SessionJournalEngine`在Prepare动态作用域内签发的owner-bound
 snapshot。Online可以用同一snapshot的独立cursors先offline reconcile、再offline build；cursor释放自身
@@ -50,9 +50,11 @@ enumerator/lease，不销毁共享snapshot。任何raw head变化均返回typed 
 ## Formal callers
 
 - CLI：稳定`recap-grid`命令树和唯一顶层`run-online-turn`；read-only/create/maintenance命令在provider
-  factory前终止。所有branch mutation要求exact Ref confirmation。
-- Galatea：strict RecapGrid config包含deferred route manifest、bounded profile catalog与exact current profile；
-  historical profiles保留用于frozen recovery，禁止fallback。`create-if-missing`只在unpublished same-parent session candidate中，
+  factory前终止。Fresh/NewRequest不注入`recap_grid_control`，Control mutation只走显式operator命令；
+  historical frozen recovery仍exact bind tool profile。所有branch mutation要求exact Ref confirmation。
+- Galatea：strict RecapGrid config包含deferred route manifest、bounded profile catalog与exact bootstrap profile；
+  historical profiles保留用于frozen recovery，禁止fallback；fresh/NewRequest不注入`recap_grid_control`。
+  `create-if-missing`只在unpublished same-parent session candidate中，
   以`GalateaFirstTurnBootstrapPolicy`创建并验证Cadence、empty Timeline与empty Control，使首轮进入formal raw-only；existing
   repository与maintenance path均不补写。
 - Galatea progress使用formal `RecapGridReadiness` DTO，来源是Getter Resolve；仅Unfulfilled时调用

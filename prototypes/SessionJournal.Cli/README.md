@@ -79,7 +79,9 @@ Family、Definition、Recipe、EvaluationKey、Cell或RowView identity。
 
 `run-online-turn` 是唯一正式 online CLI。Prepared 按 frozen identity exact bind；
 启动时strict config/connections已经冻结；Started/Refuse早于本次current connection
-selection/client、route与derived owner。报告使用
+selection/client、route与derived owner。Fresh/NewRequest不绑定current Agent Control
+profile，也不向新的completion注入`recap_grid_control`；`--admission`只在恢复历史上
+已经frozen的Prepared/ToolContinuation tool runtime时提供exact profile。报告使用
 `atelia.session-journal.recap-grid-cli.v1`：syntax/confirmation 返回 1，typed
 operational failure 返回 2，success/idempotent 返回 0；Busy、Stale、Unsupported、
 Indeterminate 均不自动 retry。

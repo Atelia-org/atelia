@@ -401,7 +401,9 @@ player pop入口撤销。session shutdown先停止capture并drain turn，再取�
 debug摘要不重复正文、subject或evidence。
 
 历史 Agent Control profiles 必须继续保留，供 Prepared/ToolContinuation 按 frozen
-identity 绑定；current profile 只用于新 request。Route manifest 仍在首次
+identity 绑定；fresh/NewRequest 不再绑定 current profile，也不向新的模型请求注入
+`recap_grid_control`。配置中的 current profile 仅提供 missing-session structural bootstrap
+所需的 admission authority。Route manifest 仍在首次
 RecapGrid work 时延迟读取，保留 exact per-route `connectionId` 及调度 policy，
 没有 wildcard/default fallback。
 
@@ -414,9 +416,9 @@ RecapGrid work 时延迟读取，保留 exact per-route `connectionId` 及调度
 - 当前 root strict config language为V2；connections与profile保持owner-defined V1，delegate route为owner-defined V2。当前Linux-only
   file loader对这些文件与`systemPromptFile`都执行code-owned byte cap、existing-ancestor no-reparse与final-file
   no-follow regular-file 规则读取；bootstrap 也会在首次写前验证 parent chain。
-- ToolContinuation：先 bind frozen tool profile/operation，再 bind current completion，
-  最后打开 Online readiness。
-- ToolResult NewRequest：使用 current profile，并保留 ToolResult raw tail。
+- ToolContinuation：先 bind frozen tool profile/operation，再以无工具的 current completion
+  继续，最后打开 Online readiness。
+- ToolResult NewRequest：不绑定 current tool profile，并保留 ToolResult raw tail。
 
 Fresh/NewRequest 才创建 per-turn Online context。生命周期在合法 raw boundary 执行
 Timeline reconcile/seal、必要的 Manager build，再由 Getter 产生 coherent candidate。

@@ -66,7 +66,6 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                 );
             RecapGrid = new GalateaRecapGridComposition(
                 recapGridHost,
-                recapGrid.CurrentAgentControlProfileId,
                 estimators: [new O200kBaseHistoryUnitLoadEstimator()]
             );
         }

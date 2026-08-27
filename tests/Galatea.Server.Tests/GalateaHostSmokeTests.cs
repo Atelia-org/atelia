@@ -130,6 +130,35 @@ public sealed class GalateaHostSmokeTests {
         Assert.Equal(0, completionFactory.CreateCallCount);
     }
 
+    [Fact]
+    public async Task ActualProgram_FreshRequestDoesNotInjectAgentControl() {
+        var completionFactory = new CapturingCompletionClientFactory();
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "no control tool",
+            new GalateaTurnOptions("test")
+        );
+
+        await service.RunTurnAsync(session, turn, CancellationToken.None);
+        service.FinishTurn(session, turn);
+
+        Assert.Equal("completed", turn.Status);
+        CompletionRequest request = Assert.Single(
+            completionFactory.Client.Requests
+        );
+        Assert.Empty(request.PromptPrefix.OutputContract.Tools);
+    }
+
     private sealed class TrackingCompletionClientFactory
         : ICompletionClientFactory {
         private int _createCallCount;
@@ -146,6 +175,50 @@ public sealed class GalateaHostSmokeTests {
             ArgumentNullException.ThrowIfNull(connection);
             Interlocked.Increment(ref _createCallCount);
             return Client;
+        }
+    }
+
+    private sealed class CapturingCompletionClientFactory
+        : ICompletionClientFactory {
+        internal CapturingCompletionClient Client { get; } = new();
+
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) {
+            ArgumentNullException.ThrowIfNull(connection);
+            return Client;
+        }
+    }
+
+    private sealed class CapturingCompletionClient : ICompletionClient {
+        private readonly List<CompletionRequest> _requests = [];
+
+        public string Name => "galatea-capturing-test";
+
+        public string ApiSpecId => "openai-chat-v1";
+
+        internal IReadOnlyList<CompletionRequest> Requests {
+            get {
+                lock (_requests) {
+                    return _requests.ToArray();
+                }
+            }
+        }
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_requests) {
+                _requests.Add(request);
+            }
+            observer?.OnTextDelta("captured");
+            return Task.FromResult(new CompletionResult(
+                new ActionMessage([new ActionBlock.Text("captured")]),
+                new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
+            ));
         }
     }
 
