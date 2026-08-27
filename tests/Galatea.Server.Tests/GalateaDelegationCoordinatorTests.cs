@@ -505,6 +505,101 @@ public sealed class GalateaDelegationCoordinatorTests {
     }
 
     [Fact]
+    public async Task DisposeWaitsForReleasedButIncompletePumpTail() {
+        var sidecar = new FakeSidecar();
+        var coordinator = Create(sidecar);
+        var tailEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var allowTailReturn = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        coordinator.TestHooksForTest = new() {
+            AfterPumpOwnershipReleasedBeforeReturn = async () => {
+                tailEntered.SetResult();
+                await allowTailReturn.Task.ConfigureAwait(false);
+            }
+        };
+        coordinator.TryCaptureBatch(
+            "turn-1",
+            Head(1),
+            [Mail("Codex", "one")]
+        );
+        FakeCall call = await sidecar.NextCallAsync();
+        call.Accept("thread-fixed", "turn-1");
+        call.Complete("reply one");
+        await tailEntered.Task.WaitAsync(Deadline);
+
+        Task dispose = coordinator.DisposeAsync().AsTask();
+        Assert.False(dispose.IsCompleted);
+        allowTailReturn.SetResult();
+        await dispose.WaitAsync(Deadline);
+    }
+
+    [Fact]
+    public async Task DisposeWaitsForOldAndSuccessorPumpTails() {
+        var sidecar = new FakeSidecar();
+        var coordinator = Create(sidecar);
+        var oldTailEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var successorTailEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var allowOldTailReturn = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var allowSuccessorTailReturn = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        int hookInvocation = 0;
+        coordinator.TestHooksForTest = new() {
+            AfterPumpOwnershipReleasedBeforeReturn = async () => {
+                int invocation = Interlocked.Increment(
+                    ref hookInvocation
+                );
+                if (invocation == 1) {
+                    oldTailEntered.SetResult();
+                    await allowOldTailReturn.Task.ConfigureAwait(false);
+                }
+                else if (invocation == 2) {
+                    successorTailEntered.SetResult();
+                    await allowSuccessorTailReturn.Task
+                        .ConfigureAwait(false);
+                }
+            }
+        };
+
+        coordinator.TryCaptureBatch(
+            "turn-1",
+            Head(1),
+            [Mail("Codex", "one")]
+        );
+        FakeCall first = await sidecar.NextCallAsync();
+        first.Accept("thread-fixed", "turn-1");
+        first.Complete("reply one");
+        await oldTailEntered.Task.WaitAsync(Deadline);
+
+        coordinator.TryCaptureBatch(
+            "turn-2",
+            Head(2),
+            [Mail("Codex", "two")]
+        );
+        FakeCall second = await sidecar.NextCallAsync();
+        second.Accept("thread-fixed", "turn-2");
+        second.Complete("reply two");
+        await successorTailEntered.Task.WaitAsync(Deadline);
+
+        Task dispose = coordinator.DisposeAsync().AsTask();
+        Assert.False(dispose.IsCompleted);
+        allowOldTailReturn.SetResult();
+        Assert.False(dispose.IsCompleted);
+        allowSuccessorTailReturn.SetResult();
+        await dispose.WaitAsync(Deadline);
+        Assert.Equal(2, sidecar.StartCount);
+    }
+
+    [Fact]
     public async Task UndoQueuedWinsGate_WhileStartingRunningAndReadyContinue() {
         var sidecar = new FakeSidecar();
         await using var coordinator = Create(sidecar);

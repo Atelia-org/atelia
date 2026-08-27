@@ -84,6 +84,7 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
         _candidatesByActionHead = [];
     private readonly HashSet<EventAddress> _seenActionHeads = [];
     private TaskCompletionSource<bool> _inboxCapacityChanged = NewSignal();
+    private readonly HashSet<Task> _incompletePumpTasks = [];
     private Task? _pumpTask;
     private Task? _disposeTask;
     private long _nextPumpGeneration;
@@ -391,7 +392,6 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
     }
 
     private async Task DisposeCoreAsync() {
-        Task pump;
         lock (_gate) {
             _accepting = false;
             _disposed = true;
@@ -408,10 +408,27 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
             }
             _lifetime.Cancel();
             SignalInboxCapacityChangedLocked();
-            pump = _pumpTask ?? Task.CompletedTask;
         }
         try {
-            await pump.ConfigureAwait(false);
+            while (true) {
+                Task[] pumps;
+                lock (_gate) {
+                    pumps = [.. _incompletePumpTasks];
+                }
+                if (pumps.Length == 0) { break; }
+                try {
+                    await Task.WhenAll(pumps).ConfigureAwait(false);
+                }
+                finally {
+                    lock (_gate) {
+                        foreach (Task pump in pumps) {
+                            if (pump.IsCompleted) {
+                                _incompletePumpTasks.Remove(pump);
+                            }
+                        }
+                    }
+                }
+            }
         }
         catch (OperationCanceledException) {
             // The coordinator owns this cancellation.
@@ -475,7 +492,18 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
         long generation = checked(++_nextPumpGeneration);
         _activePumpGeneration = generation;
         try {
-            _pumpTask = Task.Run(() => PumpAsync(generation));
+            Task pump = Task.Run(() => PumpAsync(generation));
+            _pumpTask = pump;
+            _incompletePumpTasks.Add(pump);
+            _ = pump.ContinueWith(
+                static (completed, state) =>
+                    ((GalateaDelegationCoordinator)state!)
+                        .OnPumpTaskCompleted(completed),
+                this,
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default
+            );
         }
         catch {
             _activePumpGeneration = 0;
@@ -563,6 +591,15 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
         if (_activePumpGeneration != generation) { return; }
         _activePumpGeneration = 0;
         _pumpTask = null;
+    }
+
+    private void OnPumpTaskCompleted(Task pump) {
+        if (pump.IsFaulted) {
+            _ = pump.Exception;
+        }
+        lock (_gate) {
+            _incompletePumpTasks.Remove(pump);
+        }
     }
 
     private async Task DispatchOneAsync(
