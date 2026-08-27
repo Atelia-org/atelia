@@ -32,6 +32,13 @@ internal sealed record GalateaDelegateCandidateSnapshot(
     string? ThreadId
 );
 
+internal sealed class GalateaDelegationCoordinatorTestHooks {
+    internal Func<ValueTask>? AfterPumpOwnershipReleasedBeforeReturn {
+        get;
+        init;
+    }
+}
+
 /// <summary>
 /// Owns the process-local lifecycle of outbound delegate exchanges for one
 /// Galatea session. The ledger and ready inbox deliberately share one gate so
@@ -79,6 +86,8 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
     private TaskCompletionSource<bool> _inboxCapacityChanged = NewSignal();
     private Task? _pumpTask;
     private Task? _disposeTask;
+    private long _nextPumpGeneration;
+    private long _activePumpGeneration;
     private Candidate? _active;
     private string? _threadId;
     private string? _quarantineCode;
@@ -90,6 +99,11 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
     private int _inboxUtf8Bytes;
     private bool _accepting = true;
     private bool _disposed;
+
+    internal GalateaDelegationCoordinatorTestHooks? TestHooksForTest {
+        get;
+        set;
+    }
 
     internal GalateaDelegationCoordinator(
         string userId,
@@ -453,71 +467,102 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
 
     private void StartPumpLocked() {
         if (_disposed
-            || _pumpTask is { IsCompleted: false }
+            || _activePumpGeneration != 0
             || !_candidates.Any(static candidate =>
                 candidate.State == GalateaDelegateCandidateState.Queued)) {
             return;
         }
-        _pumpTask = Task.Run(PumpAsync);
+        long generation = checked(++_nextPumpGeneration);
+        _activePumpGeneration = generation;
+        try {
+            _pumpTask = Task.Run(() => PumpAsync(generation));
+        }
+        catch {
+            _activePumpGeneration = 0;
+            _pumpTask = null;
+            throw;
+        }
     }
 
-    private async Task PumpAsync() {
-        while (true) {
-            Candidate candidate;
-            string? threadId;
-            string? preflightFailure;
-            lock (_gate) {
-                if (_disposed) { return; }
-                candidate = _candidates.FirstOrDefault(static value =>
-                    value.State == GalateaDelegateCandidateState.Queued
-                )!;
-                if (candidate is null) { return; }
-                candidate.State = GalateaDelegateCandidateState.Starting;
-                _active = candidate;
-                threadId = _threadId;
-                preflightFailure = candidate.PreflightFailureCode
-                    ?? (_quarantineCode is null
-                        ? null
-                        : "ROUTE_QUARANTINED");
-            }
+    private async Task PumpAsync(long generation) {
+        Func<ValueTask>? exitHook = null;
+        try {
+            while (true) {
+                Candidate candidate;
+                string? threadId;
+                string? preflightFailure;
+                lock (_gate) {
+                    if (_disposed) { return; }
+                    candidate = _candidates.FirstOrDefault(static value =>
+                        value.State == GalateaDelegateCandidateState.Queued
+                    )!;
+                    if (candidate is null) {
+                        ReleasePumpOwnershipLocked(generation);
+                        exitHook = TestHooksForTest?
+                            .AfterPumpOwnershipReleasedBeforeReturn;
+                        break;
+                    }
+                    candidate.State = GalateaDelegateCandidateState.Starting;
+                    _active = candidate;
+                    threadId = _threadId;
+                    preflightFailure = candidate.PreflightFailureCode
+                        ?? (_quarantineCode is null
+                            ? null
+                            : "ROUTE_QUARANTINED");
+                }
 
-            try {
-                if (preflightFailure is not null) {
+                try {
+                    if (preflightFailure is not null) {
+                        await PublishFailureAsync(
+                            candidate,
+                            "preflight",
+                            preflightFailure
+                        ).ConfigureAwait(false);
+                    }
+                    else {
+                        await DispatchOneAsync(candidate, threadId)
+                            .ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException) when (
+                    _lifetime.IsCancellationRequested) {
+                    return;
+                }
+                catch (Exception exception) when (
+                    GalateaExceptionClassifier.IsNonFatal(exception)) {
                     await PublishFailureAsync(
                         candidate,
-                        "preflight",
-                        preflightFailure
+                        "coordinator",
+                        "UNEXPECTED_COORDINATOR_FAILURE"
                     ).ConfigureAwait(false);
+                    DebugUtil.Warning(
+                        LogCategory,
+                        $"Delegate coordinator contained failure: dispatchId={candidate.DispatchId}, error={Safe(exception.GetType().Name)}"
+                    );
                 }
-                else {
-                    await DispatchOneAsync(candidate, threadId)
-                        .ConfigureAwait(false);
-                }
-            }
-            catch (OperationCanceledException) when (
-                _lifetime.IsCancellationRequested) {
-                return;
-            }
-            catch (Exception exception) when (
-                GalateaExceptionClassifier.IsNonFatal(exception)) {
-                await PublishFailureAsync(
-                    candidate,
-                    "coordinator",
-                    "UNEXPECTED_COORDINATOR_FAILURE"
-                ).ConfigureAwait(false);
-                DebugUtil.Warning(
-                    LogCategory,
-                    $"Delegate coordinator contained failure: dispatchId={candidate.DispatchId}, error={Safe(exception.GetType().Name)}"
-                );
-            }
-            finally {
-                lock (_gate) {
-                    if (ReferenceEquals(_active, candidate)) {
-                        _active = null;
+                finally {
+                    lock (_gate) {
+                        if (ReferenceEquals(_active, candidate)) {
+                            _active = null;
+                        }
                     }
                 }
             }
+            if (exitHook is not null) {
+                await exitHook().ConfigureAwait(false);
+            }
         }
+        finally {
+            lock (_gate) {
+                ReleasePumpOwnershipLocked(generation);
+            }
+        }
+    }
+
+    private void ReleasePumpOwnershipLocked(long generation) {
+        if (_activePumpGeneration != generation) { return; }
+        _activePumpGeneration = 0;
+        _pumpTask = null;
     }
 
     private async Task DispatchOneAsync(

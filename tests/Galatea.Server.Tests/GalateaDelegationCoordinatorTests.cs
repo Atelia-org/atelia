@@ -450,6 +450,61 @@ public sealed class GalateaDelegationCoordinatorTests {
     }
 
     [Fact]
+    public async Task CaptureDuringReleasedButIncompletePumpStartsSuccessor() {
+        var sidecar = new FakeSidecar();
+        await using var coordinator = Create(sidecar);
+        var oldPumpReleased = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var allowOldPumpReturn = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        int hookInvocation = 0;
+        coordinator.TestHooksForTest = new() {
+            AfterPumpOwnershipReleasedBeforeReturn = async () => {
+                if (Interlocked.Increment(ref hookInvocation) != 1) {
+                    return;
+                }
+                oldPumpReleased.SetResult();
+                await allowOldPumpReturn.Task.ConfigureAwait(false);
+            }
+        };
+
+        coordinator.TryCaptureBatch(
+            "turn-1",
+            Head(1),
+            [Mail("Codex", "one")]
+        );
+        Task oldPump = coordinator.PumpTaskForTest;
+        FakeCall first = await sidecar.NextCallAsync();
+        first.Accept("thread-fixed", "turn-1");
+        first.Complete("reply one");
+        await oldPumpReleased.Task.WaitAsync(Deadline);
+        Assert.False(oldPump.IsCompleted);
+
+        coordinator.TryCaptureBatch(
+            "turn-2",
+            Head(2),
+            [Mail("Codex", "two")]
+        );
+        FakeCall second = await sidecar.NextCallAsync();
+        Assert.Equal("thread-fixed", second.Request.ThreadId);
+        second.Accept("thread-fixed", "turn-2");
+        second.Complete("reply two");
+
+        allowOldPumpReturn.SetResult();
+        await oldPump.WaitAsync(Deadline);
+        await coordinator.PumpTaskForTest.WaitAsync(Deadline);
+        Assert.Equal(2, sidecar.StartCount);
+        Assert.All(coordinator.Snapshot(), static candidate =>
+            Assert.Equal(
+                GalateaDelegateCandidateState.ReplyReady,
+                candidate.State
+            )
+        );
+    }
+
+    [Fact]
     public async Task UndoQueuedWinsGate_WhileStartingRunningAndReadyContinue() {
         var sidecar = new FakeSidecar();
         await using var coordinator = Create(sidecar);
