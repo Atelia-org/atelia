@@ -107,6 +107,342 @@ public sealed partial class SessionJournalEngine {
         }
     }
 
+    internal SessionExpectedObservationTurnReadResult
+        ProveExpectedObservationTurnAtSelectedHead(
+        SessionExpectedObservationTurnRequest request,
+        CancellationToken cancellationToken = default
+    ) => ProveExpectedObservationTurnAtSelectedHead(
+        request,
+        new SessionCompletedTurnsReadBudget(),
+        cancellationToken
+    );
+
+    internal SessionExpectedObservationTurnReadResult
+        ProveExpectedObservationTurnAtSelectedHead(
+        SessionExpectedObservationTurnRequest request,
+        SessionCompletedTurnsReadBudget budget,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        ValidateExpectedObservationTurnRequest(request);
+        ArgumentNullException.ThrowIfNull(budget);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        EventAddress? observedHead = _journal.GetHead(_branchRefId);
+        if (observedHead != request.ExpectedSelectedHead) {
+            return new SessionExpectedObservationTurnReadResult.Retryable(
+                request.ExpectedSelectedHead,
+                observedHead
+            );
+        }
+
+        try {
+            using IDisposable scope = EnterCompletedTurnsReadBudget(budget);
+            SessionExecutionRecovery recovery = ResolveExecutionTail(
+                request.ExpectedSelectedHead,
+                cancellationToken
+            );
+            var boundary = new SessionExecutionBoundaryInspection(
+                request.ExpectedSelectedHead,
+                recovery.State.Phase,
+                recovery.State.HeadKind
+            );
+
+            if (request.ExpectedSelectedHead == request.FreshBaseHead) {
+                if (recovery.State.Phase != SessionExecutionPhase.Idle) {
+                    observedHead = _journal.GetHead(_branchRefId);
+                    if (observedHead != request.ExpectedSelectedHead) {
+                        return new SessionExpectedObservationTurnReadResult
+                            .Retryable(
+                                request.ExpectedSelectedHead,
+                                observedHead
+                            );
+                    }
+                    return new SessionExpectedObservationTurnReadResult
+                        .Conflict(
+                            SessionExpectedObservationConflictReason
+                                .FreshBaseNotIdle,
+                            request.ExpectedSelectedHead,
+                            observedObservationAddress: null,
+                            ExpectedObservationDiagnostics(budget)
+                        );
+                }
+
+                if (request.ExpectedObservationAddress is not { } abandoned) {
+                    observedHead = _journal.GetHead(_branchRefId);
+                    if (observedHead != request.ExpectedSelectedHead) {
+                        return new SessionExpectedObservationTurnReadResult
+                            .Retryable(
+                                request.ExpectedSelectedHead,
+                                observedHead
+                            );
+                    }
+                    return new SessionExpectedObservationTurnReadResult
+                        .NotAppended(
+                            request.ExpectedSelectedHead,
+                            boundary,
+                            ExpectedObservationDiagnostics(budget)
+                        );
+                }
+
+                (EventAddress? parent, string content) =
+                    ReadExactObservationAt(abandoned);
+                observedHead = _journal.GetHead(_branchRefId);
+                if (observedHead != request.ExpectedSelectedHead) {
+                    return new SessionExpectedObservationTurnReadResult
+                        .Retryable(
+                            request.ExpectedSelectedHead,
+                            observedHead
+                        );
+                }
+                SessionExpectedObservationTurnDiagnostics abandonedDiagnostics =
+                    ExpectedObservationDiagnostics(budget);
+                if (parent != request.FreshBaseHead) {
+                    return new SessionExpectedObservationTurnReadResult
+                        .Conflict(
+                            SessionExpectedObservationConflictReason
+                                .ObservationParentMismatch,
+                            request.ExpectedSelectedHead,
+                            abandoned,
+                            abandonedDiagnostics
+                        );
+                }
+                if (!string.Equals(
+                        content,
+                        request.ExactObservationContent,
+                        StringComparison.Ordinal)) {
+                    return new SessionExpectedObservationTurnReadResult
+                        .Conflict(
+                            SessionExpectedObservationConflictReason
+                                .ObservationContentMismatch,
+                            request.ExpectedSelectedHead,
+                            abandoned,
+                            abandonedDiagnostics
+                        );
+                }
+                return new SessionExpectedObservationTurnReadResult.Abandoned(
+                    new SessionExpectedObservationTurnEvidence(
+                        request.ExpectedSelectedHead,
+                        boundary,
+                        abandoned,
+                        parent.Value,
+                        abandonedDiagnostics
+                    )
+                );
+            }
+
+            EventAddress foldHead = recovery.State.Phase
+                == SessionExecutionPhase.AwaitingToolExecution
+                    ? ReadCurrentToolActionPredecessor(recovery)
+                    : request.ExpectedSelectedHead;
+            CompletedTurnLocationSnapshot located = LocateTurnsThrough(
+                foldHead,
+                maximumCount: 1,
+                cancellationToken
+            );
+
+            EventAddress? observationAddress;
+            EventAddress? observationParent;
+            string? observationContent;
+            SessionTerminalActionProjection? terminalAction;
+            if (located.OpenTurn is { } open) {
+                observationAddress = open.ObservationAddress;
+                observationParent = open.ObservationPredecessor;
+                observationContent = open.ObservationContent;
+                terminalAction = null;
+            }
+            else if (located.CompletedTurns.LastOrDefault()
+                     is { } completed) {
+                observationAddress =
+                    completed.Projection.ObservationAddress;
+                observationParent = completed.ObservationPredecessor;
+                observationContent =
+                    completed.Projection.ObservationContent;
+                terminalAction = completed.Projection.TerminalAction;
+            }
+            else {
+                observationAddress = null;
+                observationParent = null;
+                observationContent = null;
+                terminalAction = null;
+            }
+
+            observedHead = _journal.GetHead(_branchRefId);
+            if (observedHead != request.ExpectedSelectedHead) {
+                return new SessionExpectedObservationTurnReadResult.Retryable(
+                    request.ExpectedSelectedHead,
+                    observedHead
+                );
+            }
+
+            SessionExpectedObservationTurnDiagnostics proofDiagnostics =
+                ExpectedObservationDiagnostics(budget);
+            if (observationAddress is null) {
+                return new SessionExpectedObservationTurnReadResult.Conflict(
+                    SessionExpectedObservationConflictReason.NoVisibleTurn,
+                    request.ExpectedSelectedHead,
+                    observedObservationAddress: null,
+                    proofDiagnostics
+                );
+            }
+            if (observationParent != request.FreshBaseHead) {
+                return new SessionExpectedObservationTurnReadResult.Conflict(
+                    SessionExpectedObservationConflictReason
+                        .ObservationParentMismatch,
+                    request.ExpectedSelectedHead,
+                    observationAddress,
+                    proofDiagnostics
+                );
+            }
+            if (request.ExpectedObservationAddress is { } expectedObservation
+                && observationAddress != expectedObservation) {
+                return new SessionExpectedObservationTurnReadResult.Conflict(
+                    SessionExpectedObservationConflictReason
+                        .ObservationAddressMismatch,
+                    request.ExpectedSelectedHead,
+                    observationAddress,
+                    proofDiagnostics
+                );
+            }
+            if (!string.Equals(
+                    observationContent,
+                    request.ExactObservationContent,
+                    StringComparison.Ordinal)) {
+                return new SessionExpectedObservationTurnReadResult.Conflict(
+                    SessionExpectedObservationConflictReason
+                        .ObservationContentMismatch,
+                    request.ExpectedSelectedHead,
+                    observationAddress,
+                    proofDiagnostics
+                );
+            }
+
+            var evidence = new SessionExpectedObservationTurnEvidence(
+                request.ExpectedSelectedHead,
+                boundary,
+                observationAddress.Value,
+                observationParent.Value,
+                proofDiagnostics
+            );
+            if (terminalAction is null) {
+                if (recovery.State.Phase == SessionExecutionPhase.Idle) {
+                    throw new InvalidDataException(
+                        "An idle expected Observation turn has no terminal Action."
+                    );
+                }
+                return new SessionExpectedObservationTurnReadResult
+                    .InProgress(evidence);
+            }
+            if (recovery.State.Phase != SessionExecutionPhase.Idle) {
+                throw new InvalidDataException(
+                    "A non-idle expected Observation turn resolved a terminal Action."
+                );
+            }
+            return new SessionExpectedObservationTurnReadResult.Terminal(
+                evidence,
+                terminalAction
+            );
+        }
+        catch (SessionCompletedTurnsLimitException limit) {
+            observedHead = _journal.GetHead(_branchRefId);
+            return observedHead != request.ExpectedSelectedHead
+                ? new SessionExpectedObservationTurnReadResult.Retryable(
+                    request.ExpectedSelectedHead,
+                    observedHead
+                )
+                : new SessionExpectedObservationTurnReadResult.LimitExceeded(
+                    limit.Limit
+                );
+        }
+        catch (SessionCompletedTurnsUnsupportedSchemaException schema) {
+            observedHead = _journal.GetHead(_branchRefId);
+            return observedHead != request.ExpectedSelectedHead
+                ? new SessionExpectedObservationTurnReadResult.Retryable(
+                    request.ExpectedSelectedHead,
+                    observedHead
+                )
+                : new SessionExpectedObservationTurnReadResult
+                    .UnsupportedSchema(schema.Message);
+        }
+        catch (NotSupportedException schema) {
+            observedHead = _journal.GetHead(_branchRefId);
+            return observedHead != request.ExpectedSelectedHead
+                ? new SessionExpectedObservationTurnReadResult.Retryable(
+                    request.ExpectedSelectedHead,
+                    observedHead
+                )
+                : new SessionExpectedObservationTurnReadResult
+                    .UnsupportedSchema(schema.Message);
+        }
+        catch (InvalidDataException corruption) {
+            observedHead = _journal.GetHead(_branchRefId);
+            return observedHead != request.ExpectedSelectedHead
+                ? new SessionExpectedObservationTurnReadResult.Retryable(
+                    request.ExpectedSelectedHead,
+                    observedHead
+                )
+                : new SessionExpectedObservationTurnReadResult.Corruption(
+                    corruption.Message
+                );
+        }
+    }
+
+    private static void ValidateExpectedObservationTurnRequest(
+        SessionExpectedObservationTurnRequest request
+    ) {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.ExpectedSelectedHead == default) {
+            throw new ArgumentException(
+                "ExpectedSelectedHead cannot be default.",
+                nameof(request)
+            );
+        }
+        if (request.FreshBaseHead == default) {
+            throw new ArgumentException(
+                "FreshBaseHead cannot be default.",
+                nameof(request)
+            );
+        }
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            request.ExactObservationContent
+        );
+        if (request.ExpectedObservationAddress is { } expectedObservation
+            && expectedObservation == default) {
+            throw new ArgumentException(
+                "ExpectedObservationAddress cannot be default.",
+                nameof(request)
+            );
+        }
+    }
+
+    private static SessionExpectedObservationTurnDiagnostics
+        ExpectedObservationDiagnostics(
+        SessionCompletedTurnsReadBudget budget
+    ) => new(
+        budget.HeaderVisits,
+        budget.DecodedLogicalPayloadBytes
+    );
+
+    private (EventAddress? Parent, string Content)
+        ReadExactObservationAt(EventAddress address) {
+        using SessionJournalEventFrame frame =
+            _reader.ReadEvent(address).Unwrap();
+        ValidateSessionHeaderPreview(address, frame.Header);
+        var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
+        if (kind != SessionEventKind.ObservationAccepted) {
+            throw new InvalidDataException(
+                $"Expected ObservationAccepted at '{address}', got '{kind}'."
+            );
+        }
+        object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
+        if (body is not ObservationAcceptedBody observation) {
+            throw new InvalidDataException(
+                $"ObservationAccepted at '{address}' decoded to an unexpected body."
+            );
+        }
+        return (frame.Header.Parent, observation.Content);
+    }
+
     private SessionCompletedTurnsSnapshot
         ReadRecentCompletedTurnsSnapshotAt(
         EventAddress capturedHead,

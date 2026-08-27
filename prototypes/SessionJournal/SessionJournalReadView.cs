@@ -60,6 +60,18 @@ public sealed class SessionJournalReadView {
         return _owner.InspectExecutionBoundary(cancellationToken);
     }
 
+    public SessionExpectedObservationTurnReadResult
+        ProveExpectedObservationTurnAtSelectedHead(
+        SessionExpectedObservationTurnRequest request,
+        CancellationToken cancellationToken = default
+    ) {
+        EnsureOwnerAlive();
+        return _owner.ProveExpectedObservationTurnAtSelectedHead(
+            request,
+            cancellationToken
+        );
+    }
+
     public SessionCurrentLineagePrefix ReadCurrentLineagePrefix(
         int maxHeaderCount,
         CancellationToken cancellationToken = default

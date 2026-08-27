@@ -77,6 +77,12 @@ public sealed class SessionJournalReadViewTests : IDisposable {
                 Required<SessionHistoryPlanningSeed>(),
                 Optional<CancellationToken>()
             ),
+            Method<SessionExpectedObservationTurnReadResult>(
+                nameof(SessionJournalReadView
+                    .ProveExpectedObservationTurnAtSelectedHead),
+                Required<SessionExpectedObservationTurnRequest>(),
+                Optional<CancellationToken>()
+            ),
             Method<SessionGoverningSetupProofResult>(
                 nameof(SessionJournalReadView.ProveGoverningSetupAtBounded),
                 Required<EventAddress>(),
@@ -253,10 +259,17 @@ public sealed class SessionJournalReadViewTests : IDisposable {
             )
         );
         SessionJournalReadView view = engine.ReadView;
+        EventAddress head = view.ReadCurrentHead()!.Value;
 
         engine.Dispose();
 
         Assert.Throws<ObjectDisposedException>(() => view.ReadCurrentHead());
+        Assert.Throws<ObjectDisposedException>(() =>
+            view.ProveExpectedObservationTurnAtSelectedHead(new(
+                head,
+                head,
+                "expected observation"
+            )));
         Assert.Throws<ObjectDisposedException>(
             () => view.ReadPhysicalAppendFrontier()
         );
