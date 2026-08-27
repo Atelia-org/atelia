@@ -65,6 +65,7 @@ internal sealed partial class GalateaCodexSidecarClient
     private const int ProtocolVersion = 1;
     private const int MaximumDispatchTombstones = 4_096;
     private const int DefaultInterruptGraceMs = 2_000;
+    private const int SidecarOutputWriteTimeoutMs = 10_000;
     private const string LogCategory = "Galatea.DelegateSidecar";
     private static readonly UTF8Encoding StrictUtf8 = new(
         encoderShouldEmitUTF8Identifier: false,
@@ -283,7 +284,7 @@ internal sealed partial class GalateaCodexSidecarClient
                 System.Globalization.CultureInfo.InvariantCulture
             );
         environment["GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS"] =
-            sidecar.RpcTimeoutMs.ToString(
+            SidecarOutputWriteTimeoutMs.ToString(
                 System.Globalization.CultureInfo.InvariantCulture
             );
     }

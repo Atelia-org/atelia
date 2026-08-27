@@ -140,6 +140,8 @@ MCP/apps，ambient process environment不能改写route capability。C# write ga
 frame write、flush与acceptance各受`rpcTimeoutMs`约束：write开始前取消可安全放弃；从frame
 可能写入pipe开始，timeout/cancel/IO都映射stable outcome-unknown、fail当前generation且绝不
 自动retry。attached duplicate waiter自身取消或等待超时不会伤害原owner exchange。
+Node sidecar自身向C# stdout写frame使用独立、code-owned 10000ms deadline；它不继承最长可到
+300000ms的JSON-RPC `rpcTimeoutMs`，并始终落在Node wire允许的100..60000ms范围内。
 
 active exact同dispatch会在C# generation内coalesce；一旦frame可能写出，dispatchId就进入
 client-lifetime、最多4096项的fail-closed tombstone，正常terminal或outcome-unknown后即使换

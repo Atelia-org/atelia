@@ -56,8 +56,29 @@ public sealed class GalateaDelegateSidecarTests {
             environment["GALATEA_CODEX_MAX_FINAL_BYTES"]);
         Assert.Equal("4096",
             environment["GALATEA_CODEX_MAX_DISPATCH_TOMBSTONES"]);
-        Assert.Equal("2000",
+        Assert.Equal("10000",
             environment["GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS"]);
+    }
+
+    [Fact]
+    public async Task MaximumRpcTimeoutKeepsNodeOutputDeadlineInWireRange() {
+        using var fixture = new Fixture("exit 99");
+        await using GalateaCodexSidecarClient client = fixture.CreateClient(
+            rpcTimeoutMs: 300_000
+        );
+
+        ProcessStartInfo startInfo = client.CreateStartInfoForTest();
+
+        Assert.Equal(
+            "300000",
+            startInfo.Environment["CODEX_BRIDGE_RPC_TIMEOUT_MS"]
+        );
+        Assert.Equal(
+            "10000",
+            startInfo.Environment[
+                "GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS"
+            ]
+        );
     }
 
     [Fact]
