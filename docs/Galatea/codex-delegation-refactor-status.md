@@ -85,6 +85,9 @@
 ### Verification
 
 - gated live app-server canary：连续发送两封邮件，证明第二封复用第一封的 thread/context，并证明两次 final 分别只注入一次。
+  测试边界与operator命令见
+  [`prototypes/Galatea/README.md` 的 gated canary runbook](../../prototypes/Galatea/README.md#gated-real-codex-delegation-canary)；
+  在一次真实运行通过前，本项保持未完成。
 
 ## 阶段完成条件
 

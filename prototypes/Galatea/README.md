@@ -158,6 +158,35 @@ correlation或process exit会protocol-fatal当前generation，并把所有未决
 shutdown严格为sessions -> sidecar（close stdin，bounded wait，必要时kill entire process
 tree）-> Completion/RecapGrid owner，且Dispose不等待无界child task。
 
+### Gated real Codex delegation canary
+
+`GalateaCodexDelegationLiveTests` 是唯一显式 opt-in 的 real app-server canary；普通
+test run 会用 xUnit discovery-time skip 在读取配置或启动 sidecar 之前退出。运行前先从 repo
+root 构建 Node sidecar，并用 ignored machine-local config 中 exact `codexCommand` 检查
+当前 Codex 登录状态：
+
+```bash
+npm --prefix local-codex-mcp run build
+export ATELIA_GALATEA_CODEX_DELEGATES_CONFIG="$(realpath prototypes/Galatea/.atelia/galatea/delegates.json)"
+codex_command="$(jq -r '.sidecar.codexCommand' "$ATELIA_GALATEA_CODEX_DELEGATES_CONFIG")"
+"$codex_command" login status
+export ATELIA_RUN_GALATEA_CODEX_DELEGATION_LIVE=1
+dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'FullyQualifiedName=Atelia.Galatea.Server.Tests.GalateaCodexDelegationLiveTests.TwoMails_ReuseOneRealCodexThread_AndRepliesAreOneShot'
+```
+
+测试只复用该config中已经strict校验的Node/Codex executable、timeout与容量界限；它不会
+读取`connections.json`，也不会调用Galatea main、normalizer或extractor LLM。实际route
+会被重建到mode=`research`（read-only sandbox、approval never）、`network=false`且
+`allowedRoots`/`cwd`都只指向一个mode 0700的随机临时空Git repository。`network=false`
+限制的是Codex委派任务的sandbox能力，不会也不能关闭app-server连接provider/auth所需的
+网络通信，因此这个canary仍然需要可用网络与已登录账号。
+
+canary连续发送两封邮件：第二封不携带第一封的随机token，验收同一Codex thread的上下文
+连续性；每次final都经过ReplyInbox lease验证只消费一次。退出时先关闭coordinator与
+sidecar，再确认临时repository的`git status --porcelain`为空、顶层只有`.git`，最后做
+no-follow删除。Codex保存的thread是外部持久状态，其中会留下这枚随机token；当前没有
+thread-delete契约，所以测试不会伪装成已清除此历史。
+
 `GalateaCompletionOwner` 唯一拥有 host-wide `CompletionConnectionRegistry`；main Agent、
 input normalizer、outbound mail extractor 与 RecapGrid exact routes 共用其惰性 clients。Completion侧的Shutdown顺序为：drain
 sessions/per-turn operation与delegate sidecar，再 drain borrowed RecapGrid runtime，最后清理 distinct Completion
