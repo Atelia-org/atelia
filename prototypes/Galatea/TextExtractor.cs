@@ -44,6 +44,7 @@ internal enum TextExtractionFailureKind {
     DuplicateToolCallId,
     UnknownTool,
     ToolExecutionFailed,
+    SourceGroundingMismatch,
     ArtifactCaptureMismatch,
 }
 

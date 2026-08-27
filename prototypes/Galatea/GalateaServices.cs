@@ -1193,6 +1193,20 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
+            string extractionDetail = exception is
+                    TextExtractionException extraction
+                ? ", extractionKind=" + extraction.Kind
+                    + ", extractionMessage="
+                    + GalateaMailboxText.SummarizeForLog(
+                        extraction.Message
+                    )
+                    + ", toolName="
+                    + GalateaMailboxText.SummarizeForLog(
+                        extraction.ToolName
+                    )
+                    + ", termination="
+                    + (extraction.Termination?.Kind.ToString() ?? "<none>")
+                : string.Empty;
             DebugUtil.Warning(
                 "Galatea.Mailbox",
                 "Outbound extraction skipped after durable Action: "
@@ -1201,6 +1215,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 + ", "
                 + $"turnId={liveTurn.TurnId}, actionHead={actionHead}, "
                 + $"error={GalateaMailboxText.SummarizeForLog(exception.GetType().Name)}"
+                + extractionDetail
             );
         }
     }

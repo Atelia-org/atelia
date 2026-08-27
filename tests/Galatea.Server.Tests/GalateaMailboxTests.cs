@@ -102,12 +102,17 @@ public sealed class GalateaMailboxTests {
         Assert.Equal(["Alice", "Bob"], mails.Select(static x => x.Recipient));
         Assert.Equal(["first body", "second body"], mails.Select(static x => x.Body));
 
-        await Assert.ThrowsAsync<TextExtractionException>(() => extractor
-            .ExtractAsync(
+        TextExtractionException fabricated = await Assert.ThrowsAsync<
+            TextExtractionException>(() => extractor.ExtractAsync(
                 "[Galatea] sent real body to Mallory.",
                 CancellationToken.None
-            )
-            .AsTask());
+            ).AsTask());
+        Assert.Equal(
+            TextExtractionFailureKind.SourceGroundingMismatch,
+            fabricated.Kind
+        );
+        Assert.Contains("body", fabricated.Message,
+            StringComparison.Ordinal);
         await Assert.ThrowsAsync<TextExtractionException>(() => extractor
             .ExtractAsync(
                 "[Galatea] sent body to Alice\nBcc and sent body.",
@@ -120,6 +125,63 @@ public sealed class GalateaMailboxTests {
                 CancellationToken.None
             )
             .AsTask());
+    }
+
+    [Fact]
+    public async Task Extractor_AcceptsOnlyTheReversibleLinewiseEmphasisBodyProjection() {
+        const string Body = "Dear Codex,\n\nKeep **inner Markdown** exact.\n\nGalatea";
+        const string Evidence = "She pressed Send.";
+        const string Target = """
+[Galatea] opened a mail addressed to Codex.
+
+*Dear Codex,*
+
+*Keep **inner Markdown** exact.*
+
+*Galatea*
+
+She pressed Send.
+""";
+        var client = new QueueClient(
+            _ => Message(Tool(
+                "emphasized-body",
+                "Codex",
+                null,
+                Body,
+                null,
+                Evidence
+            )),
+            _ => Message(Tool(
+                "rewritten-body",
+                "Codex",
+                null,
+                "Dear Codex,\n\nKeep inner Markdown exact.\n\nGalatea",
+                null,
+                Evidence
+            ))
+        );
+        var extractor = new OutboundMailExtractor(
+            Connection("extractor"),
+            () => client
+        );
+
+        SendMailIntent accepted = Assert.Single(await extractor.ExtractAsync(
+            Target,
+            CancellationToken.None
+        ));
+        Assert.Equal(Body, accepted.Body);
+
+        TextExtractionException rewritten = await Assert.ThrowsAsync<
+            TextExtractionException>(() => extractor.ExtractAsync(
+                Target,
+                CancellationToken.None
+            ).AsTask());
+        Assert.Equal(
+            TextExtractionFailureKind.SourceGroundingMismatch,
+            rewritten.Kind
+        );
+        Assert.Contains("body", rewritten.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]
