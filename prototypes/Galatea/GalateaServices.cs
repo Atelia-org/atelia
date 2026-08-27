@@ -1086,6 +1086,15 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string target = GalateaVisibleActionTextRenderer.Render(action);
         if (string.IsNullOrWhiteSpace(target)) { return; }
         try {
+            DebugUtil.Info(
+                "Galatea.Mailbox",
+                "Outbound mail extraction started after durable Action: "
+                    + "user="
+                    + GalateaMailboxText.SummarizeForLog(host.User.UserId)
+                    + $", turnId={liveTurn.TurnId}, actionHead={actionHead}, "
+                    + $"visibleActionUtf8Bytes={TextExtractorUtf8.GetByteCount(target)}",
+                eventKind: DebugEventKind.Start
+            );
             using var deadlineCts = new CancellationTokenSource(
                 _outboundMailExtractionDeadline
             );
@@ -1134,13 +1143,16 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 );
                 return;
             }
-            if (intents.Count == 0) {
-                DebugUtil.Trace(
-                    "Galatea.Mailbox",
-                    "Outbound extraction found no mail: user="
+            DebugUtil.Info(
+                "Galatea.Mailbox",
+                "Outbound mail extraction finished: "
+                    + "user="
                     + GalateaMailboxText.SummarizeForLog(host.User.UserId)
-                    + $", turnId={liveTurn.TurnId}, actionHead={actionHead}"
-                );
+                    + $", turnId={liveTurn.TurnId}, actionHead={actionHead}, "
+                    + $"intents={intents.Count}",
+                eventKind: DebugEventKind.Success
+            );
+            if (intents.Count == 0) {
                 return;
             }
             bool added = host.DelegationCoordinator.TryCaptureBatch(

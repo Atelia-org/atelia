@@ -494,17 +494,33 @@ internal sealed partial class GalateaCodexSidecarClient
                             "Sidecar sent ready more than once."
                         );
                     }
+                    DebugUtil.Info(
+                        LogCategory,
+                        "Node sidecar ready; Codex app-server initialized: "
+                            + $"generation={generation.Id}.",
+                        eventKind: DebugEventKind.Success
+                    );
                     break;
                 case "accepted":
                     RequireExactKeys(properties, [
                         "v", "type", "requestId", "dispatchId",
                         "threadId", "turnId"
                     ]);
+                    string acceptedDispatchId = RequireWireIdentifier(
+                        properties,
+                        "dispatchId"
+                    );
                     generation.Accept(
                         RequireWireIdentifier(properties, "requestId"),
-                        RequireWireIdentifier(properties, "dispatchId"),
+                        acceptedDispatchId,
                         RequireWireIdentifier(properties, "threadId"),
                         RequireWireIdentifier(properties, "turnId")
+                    );
+                    DebugUtil.Info(
+                        LogCategory,
+                        "Node sidecar reports Codex turn accepted: "
+                            + $"generation={generation.Id}, dispatchId={acceptedDispatchId}.",
+                        eventKind: DebugEventKind.Success
                     );
                     break;
                 case "completed":
@@ -520,11 +536,22 @@ internal sealed partial class GalateaCodexSidecarClient
                             "Sidecar completed final violates its UTF-8 bound."
                         );
                     }
+                    string completedDispatchId = RequireWireIdentifier(
+                        properties,
+                        "dispatchId"
+                    );
                     generation.Complete(
-                        RequireWireIdentifier(properties, "dispatchId"),
+                        completedDispatchId,
                         RequireWireIdentifier(properties, "threadId"),
                         RequireWireIdentifier(properties, "turnId"),
                         final
+                    );
+                    DebugUtil.Info(
+                        LogCategory,
+                        "Node sidecar received Codex final: "
+                            + $"generation={generation.Id}, dispatchId={completedDispatchId}, "
+                            + $"finalUtf8Bytes={finalBytes}.",
+                        eventKind: DebugEventKind.Success
                     );
                     break;
                 case "failed":
@@ -579,6 +606,14 @@ internal sealed partial class GalateaCodexSidecarClient
                 "Sidecar failure frame is not correlated."
             );
         }
+        DebugUtil.Info(
+            LogCategory,
+            "Node sidecar reports delegated Codex failure: "
+                + $"generation={generation.Id}, "
+                + $"dispatchId={dispatchId ?? "<request-level>"}, "
+                + $"stage={stage}, code={code}.",
+            eventKind: DebugEventKind.Failure
+        );
     }
 
     private static Dictionary<string, JsonElement> ReadStrictProperties(
@@ -742,7 +777,8 @@ internal sealed partial class GalateaCodexSidecarClient
             _ = ObserveExitAsync(stdout);
             DebugUtil.Info(
                 LogCategory,
-                $"Sidecar process started: generation={Id}."
+                $"Node sidecar process started: generation={Id}, pid={_process.Id}.",
+                eventKind: DebugEventKind.Start
             );
         }
 

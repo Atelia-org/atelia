@@ -180,6 +180,29 @@ kill-tree后的bounded wait若仍不能确认exit/reap，cleanup与restart barri
 shutdown严格为sessions -> sidecar（close stdin，bounded wait，必要时kill entire process
 tree）-> Completion/RecapGrid owner，且Dispose不等待无界child task。
 
+### Development Codex delegation observability
+
+开发期可在repo root用Debug build启动，并显式打开三类server-side进度日志：
+
+```bash
+ATELIA_DEBUG_CATEGORIES='Galatea.Mailbox,Galatea.Delegation,Galatea.DelegateSidecar' \
+dotnet run --project prototypes/Galatea/Galatea.Server.csproj
+```
+
+`Galatea.Mailbox`显示Action可见文本进入extractor及其intent数量；`Galatea.Delegation`显示batch
+capture、FIFO dispatch、accepted、ReplyInbox ready、下一普通player turn的cutoff lease与durable
+Action后的one-shot commit/rollback；`Galatea.DelegateSidecar`显示Node child启动、Codex app-server
+初始化、accepted/final或stable failure。`Info`调用在Release被编译掉；Debug下无论console category是否
+打开，仍按`DebugUtil`规则写入`.atelia/debug-logs/galatea.mailbox.log`、
+`galatea.delegation.log`与`galatea.delegatesidecar.log`（若该目录不可写则使用既有fallback）。这些
+progress log只包含bounded identifier/recipient summary、count、byte size、boolean、stage/code和
+process id，不重复邮件正文、subject、evidence、Codex final或sidecar stderr。
+
+当前Node hop是实现边界而不是产品语义要求。未来可以让C# host直接spawn并通过stdio驱动Codex
+app-server，从而移除一层process/protocol；这项简化需要等价接管strict framing与bounds、RPC
+correlation/notification projection、fixed-thread ownership、environment scrubbing、outcome-unknown
+fencing以及bounded kill/reap。现有coordinator与`ReplyInbox`契约不应因此改变，本阶段无需迁移。
+
 ### Gated real Codex delegation canary
 
 `GalateaCodexDelegationLiveTests` 是唯一显式 opt-in 的 real app-server canary；普通

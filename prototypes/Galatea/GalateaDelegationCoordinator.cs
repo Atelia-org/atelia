@@ -263,6 +263,14 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
         string playerText
     ) {
         _ = new GalateaPlayerObservation(playerText);
+        GalateaReadyReplyLease lease;
+        int availableCount;
+        int selectedCount;
+        int selectedReplyCount;
+        int selectedFailureCount;
+        int inboxCount;
+        long frontier;
+        long leaseId;
         lock (_gate) {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_activeLeaseId is not null) {
@@ -300,17 +308,24 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
                 selected.Add(candidate);
             }
             Candidate[] ready = [.. selected];
-            long frontier = ready.Length > 0
+            frontier = ready.Length > 0
                 ? ready[^1].CompletionSequence!.Value
                 : available.Length == 0
                     ? _completionSequence
                     : checked(available[0].CompletionSequence!.Value - 1);
-            long leaseId = checked(++_nextLeaseId);
+            leaseId = checked(++_nextLeaseId);
             _activeLeaseId = leaseId;
             foreach (Candidate candidate in ready) {
                 candidate.State = GalateaDelegateCandidateState.Leased;
             }
-            return new GalateaReadyReplyLease(
+            availableCount = available.Length;
+            selectedCount = ready.Length;
+            selectedReplyCount = ready.Count(static candidate =>
+                candidate.ReadyNotice is GalateaReadyNotice.Reply
+            );
+            selectedFailureCount = selectedCount - selectedReplyCount;
+            inboxCount = _inboxCount;
+            lease = new GalateaReadyReplyLease(
                 this,
                 leaseId,
                 frontier,
@@ -322,6 +337,15 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
                 ).ToArray())
             );
         }
+        DebugUtil.Info(
+            LogCategory,
+            "Ready reply cutoff formed: "
+                + $"user={Safe(_userId)}, leaseId={leaseId}, "
+                + $"cutoffSequence={frontier}, selected={selectedCount}, "
+                + $"replies={selectedReplyCount}, failures={selectedFailureCount}, "
+                + $"deferred={availableCount - selectedCount}, inboxCount={inboxCount}"
+        );
+        return lease;
     }
 
     internal IReadOnlyList<GalateaDelegateCandidateSnapshot> Snapshot() {
@@ -613,6 +637,15 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
                     "Queued delegation candidate has no payload."
                 );
         }
+        DebugUtil.Info(
+            LogCategory,
+            "Delegate dispatch starting: "
+                + $"user={Safe(_userId)}, dispatchId={candidate.DispatchId}, "
+                + $"artifactOrdinal={candidate.ArtifactOrdinal}, "
+                + $"reusedThread={threadId is not null}, "
+                + $"taskUtf8Bytes={StrictUtf8.GetByteCount(intent.Body)}",
+            eventKind: DebugEventKind.Start
+        );
         var request = new GalateaDelegateDispatchRequest(
             candidate.DispatchId,
             threadId,
@@ -783,7 +816,10 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
         }
         DebugUtil.Info(
             LogCategory,
-            $"Delegate dispatch accepted: dispatchId={candidate.DispatchId}, reusedThread={requestedThreadId is not null}"
+            "Delegate dispatch accepted; waiting for Codex final: "
+                + $"user={Safe(_userId)}, dispatchId={candidate.DispatchId}, "
+                + $"reusedThread={requestedThreadId is not null}",
+            eventKind: DebugEventKind.Success
         );
         failureCode = string.Empty;
         return true;
@@ -841,6 +877,13 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
     ) {
         string safeStage = NormalizeFailureToken(stage, "delegate");
         string safeCode = NormalizeFailureToken(code, "DELEGATE_FAILURE");
+        DebugUtil.Info(
+            LogCategory,
+            "Delegate dispatch produced delivery failure: "
+                + $"user={Safe(_userId)}, dispatchId={candidate.DispatchId}, "
+                + $"stage={safeStage}, code={safeCode}",
+            eventKind: DebugEventKind.Failure
+        );
         var notice = new GalateaReadyNotice.DeliveryFailure(
             $"外界代行者 Codex 未能处理这封信（阶段：{safeStage}；错误代码：{safeCode}）。"
         );
@@ -874,7 +917,12 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
                     ReleaseCapturedPayloadLocked(candidate);
                     DebugUtil.Info(
                         LogCategory,
-                        $"Delegate terminal ready: dispatchId={candidate.DispatchId}, sequence={candidate.CompletionSequence}, kind={readyState}"
+                        "Delegate terminal stored in ReplyInbox: "
+                            + $"user={Safe(_userId)}, dispatchId={candidate.DispatchId}, "
+                            + $"sequence={candidate.CompletionSequence}, kind={readyState}, "
+                            + $"noticeUtf8Bytes={bytes}, inboxCount={_inboxCount}, "
+                            + $"inboxUtf8Bytes={_inboxUtf8Bytes}",
+                        eventKind: DebugEventKind.Success
                     );
                     return;
                 }
@@ -887,6 +935,8 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
 
     private void CompleteLease(long leaseId, bool commit) {
         bool startPump = false;
+        int noticeCount;
+        int inboxRemaining;
         lock (_gate) {
             if (_disposed) {
                 if (!commit) { return; }
@@ -900,6 +950,9 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
                     "The ready-reply lease is no longer active."
                 );
             }
+            noticeCount = _candidates.Count(static value =>
+                value.State == GalateaDelegateCandidateState.Leased
+            );
             if (commit) {
                 foreach (Candidate candidate in _candidates.Where(
                     static value => value.State
@@ -920,7 +973,21 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
             }
             _activeLeaseId = null;
             if (startPump) { StartPumpLocked(); }
+            inboxRemaining = _inboxCount;
         }
+        DebugUtil.Info(
+            LogCategory,
+            commit
+                ? "Ready reply lease committed after durable Galatea Action: "
+                    + $"user={Safe(_userId)}, leaseId={leaseId}, "
+                    + $"consumed={noticeCount}, inboxRemaining={inboxRemaining}"
+                : "Ready reply lease rolled back for a later player turn: "
+                    + $"user={Safe(_userId)}, leaseId={leaseId}, "
+                    + $"restored={noticeCount}, inboxRemaining={inboxRemaining}",
+            eventKind: commit
+                ? DebugEventKind.Success
+                : DebugEventKind.Skip
+        );
     }
 
     private void RollbackLeaseLocked(long leaseId) {
