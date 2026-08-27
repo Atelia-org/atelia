@@ -37,6 +37,11 @@ public sealed class GalateaDelegateSidecarTests {
             ["CODEX_BRIDGE_HTTP_HOST"] = "0.0.0.0",
             ["CODEX_BRIDGE_UNKNOWN_FUTURE_FIELD"] = "ambient",
             ["GALATEA_CODEX_MODE"] = "research",
+            ["GALATEA_CODEX_NETWORK"] = "true",
+            ["GALATEA_CODEX_LOCAL_COMMAND_NETWORK"] = "true",
+            ["GALATEA_CODEX_WEB_SEARCH"] = "disabled",
+            ["GALATEA_CODEX_IMAGE_GENERATION"] = "false",
+            ["GALATEA_CODEX_VIEW_IMAGE"] = "false",
             ["GALATEA_CODEX_INTERRUPT_GRACE_MS"] = "invalid",
             ["GALATEA_CODEX_UNKNOWN_FUTURE_FIELD"] = "ambient"
         };
@@ -66,6 +71,7 @@ public sealed class GalateaDelegateSidecarTests {
             environment.Keys);
         Assert.DoesNotContain("GALATEA_CODEX_UNKNOWN_FUTURE_FIELD",
             environment.Keys);
+        Assert.DoesNotContain("GALATEA_CODEX_NETWORK", environment.Keys);
         Assert.Equal("stdio", environment["CODEX_BRIDGE_TRANSPORT"]);
         Assert.Equal("127.0.0.1",
             environment["CODEX_BRIDGE_HTTP_HOST"]);
@@ -75,7 +81,12 @@ public sealed class GalateaDelegateSidecarTests {
             environment["CODEX_BRIDGE_CODEX_ARGS"]
         );
         Assert.Equal("work", environment["GALATEA_CODEX_MODE"]);
-        Assert.Equal("false", environment["GALATEA_CODEX_NETWORK"]);
+        Assert.Equal("false",
+            environment["GALATEA_CODEX_LOCAL_COMMAND_NETWORK"]);
+        Assert.Equal("live", environment["GALATEA_CODEX_WEB_SEARCH"]);
+        Assert.Equal("true",
+            environment["GALATEA_CODEX_IMAGE_GENERATION"]);
+        Assert.Equal("true", environment["GALATEA_CODEX_VIEW_IMAGE"]);
         Assert.Equal("65536",
             environment["GALATEA_CODEX_MAX_INPUT_FRAME_BYTES"]);
         Assert.Equal("65536",
@@ -429,12 +440,15 @@ public sealed class GalateaDelegateSidecarTests {
         using var fixture = new Fixture(
             $$"""
             printf '%s\n' '{"v":1,"type":"ready"}'
-            printf '%s|%s|%s|%s|%s|%s\n' \
+            printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
               "$CODEX_BRIDGE_ALLOWED_ROOTS" \
               "$CODEX_BRIDGE_DEFAULT_CWD" \
               "$CODEX_BRIDGE_CODEX_COMMAND" \
               "$GALATEA_CODEX_MODE" \
-              "$GALATEA_CODEX_NETWORK" \
+              "$GALATEA_CODEX_LOCAL_COMMAND_NETWORK" \
+              "$GALATEA_CODEX_WEB_SEARCH" \
+              "$GALATEA_CODEX_IMAGE_GENERATION" \
+              "$GALATEA_CODEX_VIEW_IMAGE" \
               "$GALATEA_CODEX_MAX_FINAL_BYTES" > {{ShellQuote(fixturePath: "ENV")}}
             head -c 262144 /dev/zero >&2
             while IFS= read -r line; do
@@ -477,7 +491,7 @@ public sealed class GalateaDelegateSidecarTests {
         Assert.False(input.RootElement.TryGetProperty("network", out _));
         string environment = File.ReadAllText(fixture.EnvironmentPath).Trim();
         Assert.Contains(fixture.Root, environment, StringComparison.Ordinal);
-        Assert.Contains("|work|false|8000", environment,
+        Assert.Contains("|work|false|live|true|true|8000", environment,
             StringComparison.Ordinal);
     }
 
@@ -835,7 +849,12 @@ public sealed class GalateaDelegateSidecarTests {
                     "codex-app-server",
                     Root,
                     GalateaDelegateMode.Work,
-                    Network: false,
+                    LocalCommandNetwork: false,
+                    Tools: new GalateaDelegateToolConfig(
+                        GalateaDelegateWebSearchMode.Live,
+                        ImageGeneration: true,
+                        ViewImage: true
+                    ),
                     MaximumQueuedMails: 16,
                     MaximumTaskUtf8Bytes: maximumBodyUtf8Bytes,
                     MaximumReplyUtf8Bytes: maximumBodyUtf8Bytes,

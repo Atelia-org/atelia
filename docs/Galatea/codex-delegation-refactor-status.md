@@ -22,3 +22,11 @@ rollover/selection，也没有自动 scheduler 或回信到达时主动唤醒 Ga
 2026-08-27 的闭环实测后加固已完成：`TextExtractor`只对pre-response
 `TransportOutcomeUnknown`执行最多5次总尝试，使用1s/2s/4s/8s指数退避；独立30秒extraction deadline已移除，
 当前完成优先语义只保留caller cancellation。
+
+2026-08-27 的内建工具配置增强已完成：delegate config升级为strict V2，
+`localCommandNetwork`与`tools.{webSearch,imageGeneration,viewImage}`显式解耦。唯一开发实例采用
+本地命令出网、live Web Search、Image Generation与View Image均开启；Apps/MCP继续关闭。
+真实ephemeral canary在`networkAccess=false`下完成，并在app-server事件流中观察到exact一个
+`webSearch` item；provider capability同时回报Web Search与Image Generation可用。
+第二个临时workspace canary又观察到exact一个`imageGeneration`和一个`imageView` item，
+完成后已删除生成文件与临时目录。

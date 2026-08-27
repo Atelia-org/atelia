@@ -97,7 +97,7 @@ tunnel 启动后依次检查：
 4. 先做只读测试：
 
 ```text
-请调用 codex_delegate，让本地 Codex 以 research 模式、network=false 调查
+请调用 codex_delegate，让本地 Codex 以 research 模式、local_command_network=false、web_search=disabled 调查
 E:\repos\drama-board：用短摘要说明项目用途，并列出最多 8 个关键文件。
 ```
 

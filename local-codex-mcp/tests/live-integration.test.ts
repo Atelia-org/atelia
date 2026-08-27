@@ -44,7 +44,8 @@ test("real Codex investigates, survives bridge restart, and continues the same t
       task: "Inspect this repository and tell me what it does. Do not modify files.",
       cwd: root,
       mode: "research",
-      network: false,
+      localCommandNetwork: false,
+      tools: { webSearch: "disabled", imageGeneration: true, viewImage: true },
       waitMs: 180_000,
     });
     assert.equal(research.status, "completed", research.errorMessage);
@@ -63,7 +64,8 @@ test("real Codex investigates, survives bridge restart, and continues the same t
       threadId,
       task: "Create hello.txt containing exactly the line: hello from codex bridge",
       mode: "work",
-      network: false,
+      localCommandNetwork: false,
+      tools: { webSearch: "disabled", imageGeneration: true, viewImage: true },
       waitMs: 180_000,
     });
     assert.equal(work.threadId, threadId);

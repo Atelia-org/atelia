@@ -90,7 +90,12 @@ public sealed class GalateaCodexDelegationLiveTests {
                             .CodexAppServerKind,
                         Cwd = temporary.RootPath,
                         Mode = GalateaDelegateMode.Research,
-                        Network = false
+                        LocalCommandNetwork = false,
+                        Tools = new GalateaDelegateToolConfig(
+                            GalateaDelegateWebSearchMode.Disabled,
+                            ImageGeneration: false,
+                            ViewImage: false
+                        )
                     }
                 ])
             );

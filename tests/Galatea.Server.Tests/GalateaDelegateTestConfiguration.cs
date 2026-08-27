@@ -33,7 +33,12 @@ internal static class GalateaDelegateTestConfiguration {
                 GalateaDelegateConfigReader.CodexAppServerKind,
                 effectiveCwd,
                 GalateaDelegateMode.Work,
-                Network: false,
+                LocalCommandNetwork: false,
+                Tools: new GalateaDelegateToolConfig(
+                    GalateaDelegateWebSearchMode.Live,
+                    ImageGeneration: true,
+                    ViewImage: true
+                ),
                 MaximumQueuedMails: 16,
                 MaximumTaskUtf8Bytes: 100_000,
                 MaximumReplyUtf8Bytes: 100_000,

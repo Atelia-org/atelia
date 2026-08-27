@@ -1,11 +1,19 @@
 export type TaskMode = "research" | "work";
 export type TaskStatus = "idle" | "running" | "completed" | "failed" | "interrupted";
+export type WebSearchMode = "disabled" | "cached" | "indexed" | "live";
+
+export interface BuiltInToolPolicy {
+  webSearch: WebSearchMode;
+  imageGeneration: boolean;
+  viewImage: boolean;
+}
 
 export interface DelegateTaskInput {
   task: string;
   cwd?: string;
   mode: TaskMode;
-  network: boolean;
+  localCommandNetwork: boolean;
+  tools: BuiltInToolPolicy;
   waitMs: number;
   clientUserMessageId?: string;
 }
@@ -15,7 +23,8 @@ export interface ContinueTaskInput {
   expectedCwd?: string;
   task: string;
   mode: TaskMode;
-  network: boolean;
+  localCommandNetwork: boolean;
+  tools: BuiltInToolPolicy;
   waitMs: number;
   clientUserMessageId?: string;
 }

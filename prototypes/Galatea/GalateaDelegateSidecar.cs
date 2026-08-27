@@ -334,8 +334,22 @@ internal sealed partial class GalateaCodexSidecarClient
         environment["CODEX_BRIDGE_VERBOSE"] = "false";
         environment["GALATEA_CODEX_MODE"] =
             _route.Mode == GalateaDelegateMode.Work ? "work" : "research";
-        environment["GALATEA_CODEX_NETWORK"] =
-            _route.Network ? "true" : "false";
+        environment["GALATEA_CODEX_LOCAL_COMMAND_NETWORK"] =
+            _route.LocalCommandNetwork ? "true" : "false";
+        environment["GALATEA_CODEX_WEB_SEARCH"] =
+            _route.Tools.WebSearch switch {
+                GalateaDelegateWebSearchMode.Disabled => "disabled",
+                GalateaDelegateWebSearchMode.Cached => "cached",
+                GalateaDelegateWebSearchMode.Indexed => "indexed",
+                GalateaDelegateWebSearchMode.Live => "live",
+                _ => throw new InvalidOperationException(
+                    "Galatea delegate web-search mode is invalid."
+                )
+            };
+        environment["GALATEA_CODEX_IMAGE_GENERATION"] =
+            _route.Tools.ImageGeneration ? "true" : "false";
+        environment["GALATEA_CODEX_VIEW_IMAGE"] =
+            _route.Tools.ViewImage ? "true" : "false";
         environment["GALATEA_CODEX_TURN_DEADLINE_MS"] =
             sidecar.TurnTimeoutMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
         environment["GALATEA_CODEX_INTERRUPT_GRACE_MS"] =

@@ -86,8 +86,8 @@ stdio 的 stdout 专用于 MCP JSON-RPC，结构化日志只写 stderr。
 
 ### Galatea fixed-thread sidecar
 
-同一 backend 另有一个不暴露 MCP 的 Galatea adapter。它把工作目录、sandbox mode 与 network
-固定在启动环境中，逐封接收由 Galatea runtime 已经路由好的任务；第一封创建 Codex thread，
+同一 backend 另有一个不暴露 MCP 的 Galatea adapter。它把工作目录、sandbox mode、本地命令
+出网权限与内建工具 policy 固定在启动环境中，逐封接收由 Galatea runtime 已经路由好的任务；第一封创建 Codex thread，
 后续请求带回该 `threadId`，便继续同一个 thread。Codex 的自然 Markdown final 原样返回，不使用
 `AgentReport` output schema。
 
@@ -95,7 +95,10 @@ stdio 的 stdout 专用于 MCP JSON-RPC，结构化日志只写 stderr。
 export CODEX_BRIDGE_ALLOWED_ROOTS='["/repos/focus/atelia"]'
 export CODEX_BRIDGE_DEFAULT_CWD='/repos/focus/atelia'
 export GALATEA_CODEX_MODE=work
-export GALATEA_CODEX_NETWORK=false
+export GALATEA_CODEX_LOCAL_COMMAND_NETWORK=true
+export GALATEA_CODEX_WEB_SEARCH=live
+export GALATEA_CODEX_IMAGE_GENERATION=true
+export GALATEA_CODEX_VIEW_IMAGE=true
 npm run build
 npm run start:galatea
 ```
@@ -113,7 +116,7 @@ stdin/stdout 是 strict bounded JSONL V1，stdout 只有协议 frame，日志只
 发出；`thread/start`、`thread/name/set`、`thread/resume` 或 `turn/start` RPC timeout 会返回
 `START_OUTCOME_UNKNOWN`，并由同一 `dispatchId` tombstone 阻止进程内重试。terminal deadline 到期会 best-effort interrupt，
 缺失、截断或超过上限的 final 均不会伪装成完整回信。EOF、SIGINT 与 SIGTERM 会回收 app-server child。
-每封 frame 不接受 `cwd`、`mode` 或 `network` 字段；相关 capability 只能由启动环境决定。
+每封 frame 不接受 `cwd`、`mode`、本地命令出网或内建工具字段；相关 capability 只能由启动环境决定。
 
 可选边界配置：`GALATEA_CODEX_TURN_DEADLINE_MS`、`GALATEA_CODEX_INTERRUPT_GRACE_MS`、
 `GALATEA_CODEX_MAX_INPUT_FRAME_BYTES`、`GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES`、
@@ -171,7 +174,7 @@ http://127.0.0.1:3000/mcp
 3. `codex_status`/`codex_read` 是 read-only annotations；
 4. `codex_delegate` 的空 task 被 schema 拒绝；
 5. allowed root 外 cwd 返回 `CWD_NOT_ALLOWED`；
-6. 用 `mode: research, network: false` 做一次短调查。
+6. 用 `mode: research, local_command_network: false, web_search: disabled` 做一次短调查。
 
 也可以在 Inspector UI 选择 stdio，command 填绝对路径的 `node`，arguments 填 `dist/src/index.js`；Inspector 进程必须继承上面的 Bridge 环境变量。
 
@@ -237,7 +240,7 @@ tunnel-client run --profile local-codex
 第一次测试 prompt：
 
 ```text
-请调用 codex_delegate，让本地 Codex 以 research 模式、network=false 调查 /repos/focus/atelia/local-codex-mcp：说明它解决什么问题、列出最多 8 个关键文件。不要自己读取仓库；只整合 Codex 返回的短摘要，并保留 thread_id 供后续继续。
+请调用 codex_delegate，让本地 Codex 以 research 模式、local_command_network=false、web_search=disabled 调查 /repos/focus/atelia/local-codex-mcp：说明它解决什么问题、列出最多 8 个关键文件。不要自己读取仓库；只整合 Codex 返回的短摘要，并保留 thread_id 供后续继续。
 ```
 
 随后测试 continuation：
@@ -258,14 +261,16 @@ ChatGPT -> authenticated VPS HTTPS /mcp -> private link -> 127.0.0.1:3000/mcp
 
 ## 安全与语义边界
 
-- `work`：`approvalPolicy=never`，`workspaceWrite`，唯一 writable root 是 canonical cwd，默认 `network=false`，并排除 `/tmp` 写入。
-- `research`：`readOnly`；只有显式 `network=true` 才开启 turn network 与 live web search。
+- `work`：`approvalPolicy=never`，`workspaceWrite`，唯一 writable root 是 canonical cwd，默认 `local_command_network=true`，并排除 `/tmp` 写入。
+- `research`：`readOnly`。`local_command_network`只控制sandboxed command出网；`web_search`独立选择`disabled|cached|indexed|live`。开发默认分别为`true`与`live`。
+- `image_generation`与`view_image`也按turn显式配置，默认开启；provider或运行环境不支持时仍由Codex/app-server给出真实能力结果，不由Bridge伪造fallback。
+- 成功的`imageGeneration.savedPath`会进入bounded `changed_files`投影，并在最终返回前继续接受canonical cwd containment过滤。
 - 默认 child args 关闭 inherited Codex MCP servers 与 apps；如果用 `CODEX_BRIDGE_CODEX_ARGS` 覆盖，调用者必须保留等价限制。
 - approval、permission、elicitation 与未知 server requests 全部 fail-closed；绝不自动批准 escalation。
 - Bridge-created threads 用response ID、持久化exact name marker与canonical cwd做ownership协调；optional analytics `threadSource`和origin `source`不参与。普通其他 thread ID 会返回 `THREAD_NOT_FOUND`。这是私人同一用户进程间的防误用边界，不是对同机恶意进程的认证：能直接调用 app-server 的本机进程也能伪造 title。若威胁模型包含不可信本机进程，需要在第二阶段增加bridge私有持久allowlist/签名元数据。
 - 只存运行时 turn 状态；重启后从 `thread/read` 恢复 persisted thread。stdio child 的 in-flight turn 不保证跨 Bridge 进程重启存活。
 - 当前本机生成的 `SandboxPolicy` 还没有官方新文档展示的 restricted read roots 字段。因此 allowed roots 严格控制 cwd 与**写入**，但本版本不能承诺 Codex 完全无法读取 cwd 外文件。需要更强读取隔离时，应升级到支持该协议的 Codex 或增加 OS/container sandbox。
-- `network=false` 明确关闭内建 web search、Codex apps/MCP 与 sandboxed command network；本地 Codex hooks/未来新增执行通道仍应在部署时审计。
+- `local_command_network`不再连带控制hosted tools；要关闭全部外部访问，必须显式使用`local_command_network=false, web_search=disabled`。Codex apps/MCP仍由child args独立关闭；本地Codex hooks/未来新增执行通道仍应在部署时审计。
 - MCP output 有字符/数组硬上限，不返回 reasoning、命令 stdout、完整 diff、完整文件或 thread transcript。
 
 工具 annotations 按真实能力声明：delegate/continue 是 write + potentially destructive + open-world；status/read 是 read-only；interrupt 会改变运行状态但不声明 destructive。
@@ -274,4 +279,5 @@ ChatGPT -> authenticated VPS HTTPS /mcp -> private link -> 127.0.0.1:3000/mcp
 
 - [Build an MCP server](https://developers.openai.com/plugins/build/mcp-server)
 - [Define MCP tools and annotations](https://developers.openai.com/plugins/plan/tools)
-- [Codex App Server](https://developers.openai.com/codex/app-server)
+- [Codex app-server protocol](https://developers.openai.com/codex/app-server/)
+- [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)

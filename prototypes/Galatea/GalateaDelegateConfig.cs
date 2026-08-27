@@ -25,12 +25,19 @@ public sealed record GalateaDelegateRouteConfig(
     string Kind,
     string Cwd,
     GalateaDelegateMode Mode,
-    bool Network,
+    bool LocalCommandNetwork,
+    GalateaDelegateToolConfig Tools,
     int MaximumQueuedMails,
     int MaximumTaskUtf8Bytes,
     int MaximumReplyUtf8Bytes,
     int MaximumInboxReplies,
     int MaximumInboxUtf8Bytes
+);
+
+public sealed record GalateaDelegateToolConfig(
+    GalateaDelegateWebSearchMode WebSearch,
+    bool ImageGeneration,
+    bool ViewImage
 );
 
 [JsonConverter(typeof(JsonStringEnumConverter<GalateaDelegateMode>))]
@@ -39,4 +46,16 @@ public enum GalateaDelegateMode {
     Research,
     [JsonStringEnumMemberName("work")]
     Work
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<GalateaDelegateWebSearchMode>))]
+public enum GalateaDelegateWebSearchMode {
+    [JsonStringEnumMemberName("disabled")]
+    Disabled,
+    [JsonStringEnumMemberName("cached")]
+    Cached,
+    [JsonStringEnumMemberName("indexed")]
+    Indexed,
+    [JsonStringEnumMemberName("live")]
+    Live
 }

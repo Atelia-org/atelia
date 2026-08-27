@@ -67,7 +67,8 @@ async function harness(
     logger,
     cwd: root,
     mode: "work",
-    network: false,
+    localCommandNetwork: false,
+    tools: { webSearch: "live", imageGeneration: true, viewImage: true },
     turnDeadlineMs: options.turnDeadlineMs ?? 1_000,
     interruptGraceMs: 100,
     maxFinalBytes: options.maxFinalBytes ?? 20_000,
@@ -138,6 +139,11 @@ test("Galatea adapter keeps two natural Markdown replies on one owned thread wit
   }>("test/lastRequests", {});
   assert.equal(requests.lastThreadStartParams.serviceName, "atelia_galatea_codex_sidecar");
   assert.equal(requests.lastThreadStartParams.threadSource, "atelia-galatea-codex-sidecar");
+  assert.deepEqual(requests.lastThreadStartParams.config, {
+    web_search: "live",
+    features: { image_generation: true },
+    tools: { view_image: true },
+  });
   assert.match(String(requests.lastResumeParams.developerInstructions), /Galatea's persistent delegate/);
   assert.equal(requests.allTurnParams.length, 2);
   assert.equal(requests.allTurnParams[0]?.clientUserMessageId, "mail-1");
@@ -160,7 +166,8 @@ test("Galatea adapter keeps two natural Markdown replies on one owned thread wit
     task: "MCP-owned task",
     cwd: value.root,
     mode: "research",
-    network: false,
+    localCommandNetwork: false,
+    tools: { webSearch: "disabled", imageGeneration: true, viewImage: true },
     waitMs: 1_000,
   });
   await value.adapter.dispatch(dispatch("cross-profile", "must be rejected", mcpThread.threadId));

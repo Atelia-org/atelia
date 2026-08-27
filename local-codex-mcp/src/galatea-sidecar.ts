@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import type { Readable, Writable } from "node:stream";
 import { CodexBackend } from "./codex/backend.js";
+import type { BuiltInToolPolicy, WebSearchMode } from "./backend/task-backend.js";
 import { CodexAppServerClient } from "./codex/client.js";
 import { TaskStore } from "./codex/task-store.js";
 import { loadConfig, type BridgeConfig } from "./config.js";
@@ -38,7 +39,8 @@ export interface GalateaSidecarConfig {
   bridge: BridgeConfig;
   cwd: string;
   mode: "research" | "work";
-  network: boolean;
+  localCommandNetwork: boolean;
+  tools: BuiltInToolPolicy;
   turnDeadlineMs: number;
   interruptGraceMs: number;
   maxInputFrameBytes: number;
@@ -83,6 +85,17 @@ function boolean(value: string | undefined, fallback: boolean, name: string): bo
   throw new BridgeError("INVALID_CONFIG", `${name} must be true, false, 1, or 0.`);
 }
 
+function webSearchMode(value: string | undefined): WebSearchMode {
+  const mode = value ?? "live";
+  if (mode === "disabled" || mode === "cached" || mode === "indexed" || mode === "live") {
+    return mode;
+  }
+  throw new BridgeError(
+    "INVALID_CONFIG",
+    "GALATEA_CODEX_WEB_SEARCH must be disabled, cached, indexed, or live.",
+  );
+}
+
 export function loadGalateaSidecarConfig(env: NodeJS.ProcessEnv = process.env): GalateaSidecarConfig {
   const bridge = loadConfig(env);
   const cwd = bridge.defaultCwd;
@@ -115,7 +128,24 @@ export function loadGalateaSidecarConfig(env: NodeJS.ProcessEnv = process.env): 
     bridge,
     cwd,
     mode,
-    network: boolean(env.GALATEA_CODEX_NETWORK, false, "GALATEA_CODEX_NETWORK"),
+    localCommandNetwork: boolean(
+      env.GALATEA_CODEX_LOCAL_COMMAND_NETWORK,
+      true,
+      "GALATEA_CODEX_LOCAL_COMMAND_NETWORK",
+    ),
+    tools: {
+      webSearch: webSearchMode(env.GALATEA_CODEX_WEB_SEARCH),
+      imageGeneration: boolean(
+        env.GALATEA_CODEX_IMAGE_GENERATION,
+        true,
+        "GALATEA_CODEX_IMAGE_GENERATION",
+      ),
+      viewImage: boolean(
+        env.GALATEA_CODEX_VIEW_IMAGE,
+        true,
+        "GALATEA_CODEX_VIEW_IMAGE",
+      ),
+    },
     turnDeadlineMs: integer(
       env.GALATEA_CODEX_TURN_DEADLINE_MS,
       DEFAULT_TURN_DEADLINE_MS,
@@ -262,7 +292,8 @@ export async function runGalateaSidecar(
     logger,
     cwd: config.cwd,
     mode: config.mode,
-    network: config.network,
+    localCommandNetwork: config.localCommandNetwork,
+    tools: config.tools,
     turnDeadlineMs: config.turnDeadlineMs,
     interruptGraceMs: config.interruptGraceMs,
     maxFinalBytes: config.maxFinalBytes,
@@ -277,7 +308,10 @@ export async function runGalateaSidecar(
     logger.log("info", "galatea_sidecar_ready", {
       cwd: config.cwd,
       mode: config.mode,
-      network: config.network,
+      local_command_network: config.localCommandNetwork,
+      web_search: config.tools.webSearch,
+      image_generation: config.tools.imageGeneration,
+      view_image: config.tools.viewImage,
     });
     await serveGalateaJsonl(input, adapter, writer, config, logger);
   } catch (error) {

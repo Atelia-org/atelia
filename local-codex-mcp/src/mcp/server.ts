@@ -144,7 +144,18 @@ export function createMcpServer(
           .enum(["research", "work"])
           .default("work")
           .describe("research is read-only; work allows writes only inside cwd."),
-        network: z.boolean().default(false).describe("Enable network for this turn only when explicitly needed."),
+        local_command_network: z.boolean().default(true).describe(
+          "Allow sandboxed local commands to access the network for this turn.",
+        ),
+        web_search: z.enum(["disabled", "cached", "indexed", "live"]).default("live").describe(
+          "Configure OpenAI hosted web search independently from local command network access.",
+        ),
+        image_generation: z.boolean().default(true).describe(
+          "Expose OpenAI hosted image generation when the provider supports it.",
+        ),
+        view_image: z.boolean().default(true).describe(
+          "Expose Codex local image viewing for files available to the thread.",
+        ),
         wait_ms: waitSchema,
       },
       outputSchema,
@@ -156,14 +167,19 @@ export function createMcpServer(
         openWorldHint: true,
       },
     },
-    async ({ task, cwd, mode, network, wait_ms }) =>
+    async ({ task, cwd, mode, local_command_network, web_search, image_generation, view_image, wait_ms }) =>
       invoke("codex_delegate", logger, async () =>
         payloadFromSnapshot(
           await backend.delegate({
             task,
             ...(cwd === undefined ? {} : { cwd }),
             mode,
-            network,
+            localCommandNetwork: local_command_network,
+            tools: {
+              webSearch: web_search,
+              imageGeneration: image_generation,
+              viewImage: view_image,
+            },
             waitMs: wait_ms,
           }),
         ),
@@ -180,7 +196,10 @@ export function createMcpServer(
         thread_id: threadIdSchema,
         task: taskSchema,
         mode: z.enum(["research", "work"]).default("work"),
-        network: z.boolean().default(false),
+        local_command_network: z.boolean().default(true),
+        web_search: z.enum(["disabled", "cached", "indexed", "live"]).default("live"),
+        image_generation: z.boolean().default(true),
+        view_image: z.boolean().default(true),
         wait_ms: waitSchema,
       },
       outputSchema,
@@ -192,10 +211,21 @@ export function createMcpServer(
         openWorldHint: true,
       },
     },
-    async ({ thread_id, task, mode, network, wait_ms }) =>
+    async ({ thread_id, task, mode, local_command_network, web_search, image_generation, view_image, wait_ms }) =>
       invoke("codex_continue", logger, async () =>
         payloadFromSnapshot(
-          await backend.continue({ threadId: thread_id, task, mode, network, waitMs: wait_ms }),
+          await backend.continue({
+            threadId: thread_id,
+            task,
+            mode,
+            localCommandNetwork: local_command_network,
+            tools: {
+              webSearch: web_search,
+              imageGeneration: image_generation,
+              viewImage: view_image,
+            },
+            waitMs: wait_ms,
+          }),
         ),
       ),
   );
@@ -271,4 +301,3 @@ export function createMcpServer(
 
   return server;
 }
-

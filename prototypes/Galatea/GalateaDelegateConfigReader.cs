@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaDelegateConfigReader {
-    internal const int CurrentVersion = 1;
+    internal const int CurrentVersion = 2;
     internal const int MaximumInputUtf8Bytes = 256 * 1024;
     internal const string CanonicalRecipient = "Codex";
     internal const string CodexAppServerKind = "codex-app-server";
@@ -128,7 +128,29 @@ internal static class GalateaDelegateConfigReader {
                 "routes[0].mode must be exactly 'research' or 'work'."
             )
         };
-        bool network = routeElement.GetProperty("network").GetBoolean();
+        bool localCommandNetwork = routeElement
+            .GetProperty("localCommandNetwork")
+            .GetBoolean();
+        JsonElement toolsElement = routeElement.GetProperty("tools");
+        string webSearchText = toolsElement.GetProperty("webSearch").GetString()
+            ?? throw new InvalidDataException(
+                "routes[0].tools.webSearch is null."
+            );
+        GalateaDelegateWebSearchMode webSearch = webSearchText switch {
+            "disabled" => GalateaDelegateWebSearchMode.Disabled,
+            "cached" => GalateaDelegateWebSearchMode.Cached,
+            "indexed" => GalateaDelegateWebSearchMode.Indexed,
+            "live" => GalateaDelegateWebSearchMode.Live,
+            _ => throw new InvalidDataException(
+                "routes[0].tools.webSearch must be exactly 'disabled', "
+                + "'cached', 'indexed', or 'live'."
+            )
+        };
+        var tools = new GalateaDelegateToolConfig(
+            webSearch,
+            toolsElement.GetProperty("imageGeneration").GetBoolean(),
+            toolsElement.GetProperty("viewImage").GetBoolean()
+        );
         int maximumQueuedMails = ReadBoundedInteger(
             routeElement,
             "maximumQueuedMails",
@@ -198,7 +220,8 @@ internal static class GalateaDelegateConfigReader {
                     kind,
                     cwd,
                     mode,
-                    network,
+                    localCommandNetwork,
+                    tools,
                     maximumQueuedMails,
                     maximumTaskUtf8Bytes,
                     maximumReplyUtf8Bytes,
@@ -222,7 +245,7 @@ internal static class GalateaDelegateConfigReader {
             || config.Routes is not { Count: 1 }
             || config.Sidecar is null) {
             throw new InvalidOperationException(
-                "Galatea delegate configuration is not a closed V1 configuration."
+                "Galatea delegate configuration is not a closed V2 configuration."
             );
         }
         GalateaDelegateSidecarConfig sidecar = config.Sidecar;
@@ -293,6 +316,16 @@ internal static class GalateaDelegateConfigReader {
                 "routes[0].mode must be research or work."
             );
         }
+        if (route.Tools is null
+            || route.Tools.WebSearch is not (
+                GalateaDelegateWebSearchMode.Disabled
+                or GalateaDelegateWebSearchMode.Cached
+                or GalateaDelegateWebSearchMode.Indexed
+                or GalateaDelegateWebSearchMode.Live)) {
+            throw new InvalidDataException(
+                "routes[0].tools contains an invalid webSearch mode."
+            );
+        }
         RequireBoundedInteger(route.MaximumQueuedMails,
             "maximumQueuedMails", 1, MaximumQueueCount);
         RequireBoundedInteger(route.MaximumTaskUtf8Bytes,
@@ -344,7 +377,12 @@ internal static class GalateaDelegateConfigReader {
                     CodexAppServerKind,
                     cwd,
                     route.Mode,
-                    route.Network,
+                    route.LocalCommandNetwork,
+                    new GalateaDelegateToolConfig(
+                        route.Tools.WebSearch,
+                        route.Tools.ImageGeneration,
+                        route.Tools.ViewImage
+                    ),
                     route.MaximumQueuedMails,
                     route.MaximumTaskUtf8Bytes,
                     route.MaximumReplyUtf8Bytes,
@@ -358,7 +396,7 @@ internal static class GalateaDelegateConfigReader {
     internal static byte[] CreatePlaceholderTemplateUtf8() =>
         """
         {
-          "v": 1,
+          "v": 2,
           "sidecar": {
             "nodeCommand": "/REPLACE_WITH_CANONICAL_NODE_EXECUTABLE",
             "entryPoint": "/REPLACE_WITH_GALATEA_SIDECAR_ENTRY_POINT",
@@ -377,7 +415,12 @@ internal static class GalateaDelegateConfigReader {
               "kind": "codex-app-server",
               "cwd": "/REPLACE_WITH_CANONICAL_CODEX_WORKING_DIRECTORY",
               "mode": "work",
-              "network": false,
+              "localCommandNetwork": true,
+              "tools": {
+                "webSearch": "live",
+                "imageGeneration": true,
+                "viewImage": true
+              },
               "maximumQueuedMails": 128,
               "maximumTaskUtf8Bytes": 100000,
               "maximumReplyUtf8Bytes": 100000,
@@ -402,7 +445,7 @@ internal static class GalateaDelegateConfigReader {
                         || !value.TryGetInt32(out int version)
                         || version != CurrentVersion) {
                         throw new InvalidDataException(
-                            "delegates requires exact integer version 'v': 1."
+                            "delegates requires exact integer version 'v': 2."
                         );
                     }
                 },
@@ -463,7 +506,9 @@ internal static class GalateaDelegateConfigReader {
             ["kind"] = RequireString,
             ["cwd"] = RequireString,
             ["mode"] = RequireString,
-            ["network"] = RequireBoolean,
+            ["localCommandNetwork"] = RequireBoolean,
+            ["tools"] = static (ref Utf8JsonReader value) =>
+                ValidateTools(ref value),
             ["maximumQueuedMails"] = RequireNumber,
             ["maximumTaskUtf8Bytes"] = RequireNumber,
             ["maximumReplyUtf8Bytes"] = RequireNumber,
@@ -471,7 +516,8 @@ internal static class GalateaDelegateConfigReader {
             ["maximumInboxUtf8Bytes"] = RequireNumber
         });
         RequireExactProperties(seen, "route", [
-            "recipient", "kind", "cwd", "mode", "network",
+            "recipient", "kind", "cwd", "mode", "localCommandNetwork",
+            "tools",
             "maximumQueuedMails", "maximumTaskUtf8Bytes",
             "maximumReplyUtf8Bytes", "maximumInboxReplies",
             "maximumInboxUtf8Bytes"
@@ -481,6 +527,18 @@ internal static class GalateaDelegateConfigReader {
                 "delegates routes must contain exactly one object."
             );
         }
+    }
+
+    private static void ValidateTools(ref Utf8JsonReader reader) {
+        RequireToken(reader.TokenType, JsonTokenType.StartObject, "tools");
+        var seen = ReadProperties(ref reader, "tools", new() {
+            ["webSearch"] = RequireString,
+            ["imageGeneration"] = RequireBoolean,
+            ["viewImage"] = RequireBoolean
+        });
+        RequireExactProperties(seen, "tools", [
+            "webSearch", "imageGeneration", "viewImage"
+        ]);
     }
 
     private static void ValidateStringArray(

@@ -1,4 +1,9 @@
-import type { TaskBackend, TaskMode, TaskSnapshot } from "../backend/task-backend.js";
+import type {
+  BuiltInToolPolicy,
+  TaskBackend,
+  TaskMode,
+  TaskSnapshot,
+} from "../backend/task-backend.js";
 import type { CodexBackendProfile } from "../codex/backend.js";
 import { TaskStore } from "../codex/task-store.js";
 import { asBridgeError } from "../errors.js";
@@ -32,7 +37,8 @@ export interface GalateaCodexAdapterOptions {
   logger: BridgeLogger;
   cwd: string;
   mode: TaskMode;
-  network: boolean;
+  localCommandNetwork: boolean;
+  tools: BuiltInToolPolicy;
   turnDeadlineMs: number;
   interruptGraceMs: number;
   maxFinalBytes: number;
@@ -90,7 +96,8 @@ export class GalateaCodexAdapter {
             expectedCwd: this.options.cwd,
             task: input.task,
             mode: this.options.mode,
-            network: this.options.network,
+            localCommandNetwork: this.options.localCommandNetwork,
+            tools: this.options.tools,
             waitMs: 0,
             clientUserMessageId: input.dispatchId,
           })
@@ -98,7 +105,8 @@ export class GalateaCodexAdapter {
             task: input.task,
             cwd: this.options.cwd,
             mode: this.options.mode,
-            network: this.options.network,
+            localCommandNetwork: this.options.localCommandNetwork,
+            tools: this.options.tools,
             waitMs: 0,
             clientUserMessageId: input.dispatchId,
           });

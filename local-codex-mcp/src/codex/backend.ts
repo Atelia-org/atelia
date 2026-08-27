@@ -13,6 +13,7 @@ import type { TurnStartResponse } from "../../schemas/v2/TurnStartResponse.js";
 import type {
   ContinueTaskInput,
   DelegateTaskInput,
+  BuiltInToolPolicy,
   TaskBackend,
   TaskMode,
   TaskSnapshot,
@@ -56,21 +57,25 @@ function coarseSandbox(mode: TaskMode): SandboxMode {
   return mode === "research" ? "read-only" : "workspace-write";
 }
 
-function preciseSandbox(mode: TaskMode, cwd: string, network: boolean): SandboxPolicy {
+function preciseSandbox(mode: TaskMode, cwd: string, localCommandNetwork: boolean): SandboxPolicy {
   if (mode === "research") {
-    return { type: "readOnly", networkAccess: network };
+    return { type: "readOnly", networkAccess: localCommandNetwork };
   }
   return {
     type: "workspaceWrite",
     writableRoots: [cwd],
-    networkAccess: network,
+    networkAccess: localCommandNetwork,
     excludeTmpdirEnvVar: true,
     excludeSlashTmp: true,
   };
 }
 
-function threadConfig(network: boolean): Record<string, unknown> {
-  return { web_search: network ? "live" : "disabled" };
+function threadConfig(tools: BuiltInToolPolicy): Record<string, unknown> {
+  return {
+    web_search: tools.webSearch,
+    features: { image_generation: tools.imageGeneration },
+    tools: { view_image: tools.viewImage },
+  };
 }
 
 function sanitizeChangedFiles(files: readonly string[], cwd: string): string[] {
@@ -139,7 +144,7 @@ export class CodexBackend implements TaskBackend {
         approvalPolicy: "never",
         approvalsReviewer: "user",
         sandbox: coarseSandbox(input.mode),
-        config: threadConfig(input.network),
+        config: threadConfig(input.tools),
         serviceName: this.profile.serviceName,
         developerInstructions: this.profile.developerInstructions,
         ephemeral: false,
@@ -158,7 +163,7 @@ export class CodexBackend implements TaskBackend {
         input.task,
         cwd,
         input.mode,
-        input.network,
+        input.localCommandNetwork,
         input.waitMs,
         input.clientUserMessageId,
       );
@@ -203,7 +208,7 @@ export class CodexBackend implements TaskBackend {
         approvalPolicy: "never",
         approvalsReviewer: "user",
         sandbox: coarseSandbox(input.mode),
-        config: threadConfig(input.network),
+        config: threadConfig(input.tools),
         developerInstructions: this.profile.developerInstructions,
       });
       this.throwIfStopped();
@@ -218,7 +223,7 @@ export class CodexBackend implements TaskBackend {
         input.task,
         cwd,
         input.mode,
-        input.network,
+        input.localCommandNetwork,
         input.waitMs,
         input.clientUserMessageId,
       );
@@ -321,7 +326,7 @@ export class CodexBackend implements TaskBackend {
     task: string,
     cwd: string,
     mode: TaskMode,
-    network: boolean,
+    localCommandNetwork: boolean,
     waitMs: number,
     clientUserMessageId?: string,
   ): Promise<TaskSnapshot> {
@@ -333,7 +338,7 @@ export class CodexBackend implements TaskBackend {
       cwd,
       approvalPolicy: "never",
       approvalsReviewer: "user",
-      sandboxPolicy: preciseSandbox(mode, cwd, network),
+      sandboxPolicy: preciseSandbox(mode, cwd, localCommandNetwork),
       summary: "concise",
       ...(this.profile.outputSchema === undefined ? {} : { outputSchema: this.profile.outputSchema }),
     });

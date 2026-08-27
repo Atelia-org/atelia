@@ -463,7 +463,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             ),
             $$"""
             {
-              "v": 1,
+              "v": 2,
               "sidecar": {
                 "nodeCommand": {{JsonSerializer.Serialize(executable)}},
                 "entryPoint": {{JsonSerializer.Serialize(entryPoint)}},
@@ -480,7 +480,12 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                   "kind": "codex-app-server",
                   "cwd": {{JsonSerializer.Serialize(cwd)}},
                   "mode": "work",
-                  "network": false,
+                  "localCommandNetwork": false,
+                  "tools": {
+                    "webSearch": "live",
+                    "imageGeneration": true,
+                    "viewImage": true
+                  },
                   "maximumQueuedMails": 16,
                   "maximumTaskUtf8Bytes": 100000,
                   "maximumReplyUtf8Bytes": 100000,

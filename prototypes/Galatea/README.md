@@ -84,12 +84,12 @@ Galatea 文件会被旧 closed-root binary 拒绝；operator 必须停服、备�
 manifest 配套发布，应用不会自动改写可能含 secret 的文件。
 
 `.atelia/galatea/delegates.json` 是独立于 Completion catalog 的 required、
-machine-local Codex 代行配置。V1 是 closed schema，并且当前只允许一条 exact、
+machine-local Codex 代行配置。V2 是 closed schema，并且当前只允许一条 exact、
 case-sensitive route：`recipient: "Codex"` / `kind: "codex-app-server"`。示意结构如下：
 
 ```json
 {
-  "v": 1,
+  "v": 2,
   "sidecar": {
     "nodeCommand": "/canonical/path/to/node",
     "entryPoint": "/canonical/path/to/galatea-sidecar.js",
@@ -105,7 +105,12 @@ case-sensitive route：`recipient: "Codex"` / `kind: "codex-app-server"`。示�
     "kind": "codex-app-server",
     "cwd": "/repos/focus/atelia",
     "mode": "work",
-    "network": false,
+    "localCommandNetwork": true,
+    "tools": {
+      "webSearch": "live",
+      "imageGeneration": true,
+      "viewImage": true
+    },
     "maximumQueuedMails": 128,
     "maximumTaskUtf8Bytes": 100000,
     "maximumReplyUtf8Bytes": 100000,
@@ -132,7 +137,7 @@ programmatic `GalateaConfig`也走同一套path/executable/range/frame/containme
 前保持零进程；每个`UserSessionHost`拥有独立的内存coordinator、ledger、ReplyInbox和一个
 fixed Codex thread binding，创建或登录session不会启动child。transport
 启动`nodeCommand entryPoint`并通过environment注入code-owned allowed roots、cwd、Codex
-command、mode、network及timeout/body/frame bounds，邮件正文只能进入JSONL `task`字段，
+command、mode、local command network、built-in tool policy及timeout/body/frame bounds，邮件正文只能进入JSONL `task`字段，
 不能覆盖任何route policy。V1 input是exact
 `{v,type:"dispatch",requestId,dispatchId,threadId?,task}`；成功accept后返回稳定
 `dispatchId/threadId/turnId`和一个terminal task，terminal只产生bounded exact final或
@@ -163,6 +168,15 @@ fixed thread的持久ownership只依赖app-server response ID exact、profile-sp
 `[galatea-codex-sidecar] <threadId>`、path-policy canonical cwd，以及Galatea route的expected-cwd
 exact校验。`threadSource`仍在`thread/start`中作为optional analytics hint发送，但它可能在持久化后
 变为`null`；`source`也只描述CLI/VSCode/app-server来源，二者都不是ownership或authorization。
+
+V2将本地命令出网与Codex内建工具解耦：`localCommandNetwork`只控制turn
+`sandboxPolicy.networkAccess`；`tools.webSearch`逐turn映射到Codex top-level
+`web_search`（`disabled|cached|indexed|live`），`imageGeneration`与`viewImage`分别映射到
+`features.image_generation`和`tools.view_image`。当前开发实例使用`true + live + true + true`，
+因此代行者可使用OpenAI hosted Web Search、Image Generation和本地图像查看，sandboxed shell命令也可按需访问外网。
+Codex app-server当前provider capability probe返回`webSearch=true`、`imageGeneration=true`、
+`namespaceTools=true`；Apps/MCP仍由`mcp_servers={}`与`features.apps=false`显式关闭，避免继承宿主个人工具。
+Browser/Computer Use依赖客户端/图形宿主，不属于本次headless sidecar承诺的工具集合。
 
 active exact同dispatch会在C# generation内coalesce；一旦frame可能写出，dispatchId就进入
 client-lifetime、最多4096项的fail-closed tombstone，正常terminal或outcome-unknown后即使换
@@ -229,11 +243,11 @@ dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore 
 界限；shutdown grace钉为code-owned 2秒，cleanup deadline仍覆盖完整graceful wait、kill/reap
 wait与固定margin。它不会读取`connections.json`，也不会调用Galatea main、normalizer或
 extractor LLM。实际route会被重建到mode=`research`（read-only sandbox、approval never）、
-`network=false`且`allowedRoots`/`cwd`都只指向一个随机临时空Git repository。创建前要求
+`localCommandNetwork=false`、全部可选内建工具关闭，且`allowedRoots`/`cwd`都只指向一个随机临时空Git repository。创建前要求
 `Path.GetTempPath()`的canonical existing ancestor chain完全无symlink/reparse，并与source
 worktree双向disjoint；candidate leaf必须尚不存在，创建后再验证exact child、no-follow与
 Unix mode exact 0700。任一precondition失败都发生在`git init`和sidecar启动之前。
-`network=false`限制的是Codex委派任务的sandbox能力，不会也不能关闭app-server连接
+`localCommandNetwork=false`限制的是Codex委派任务的sandbox能力，不会也不能关闭app-server连接
 provider/auth所需的网络通信，因此这个canary仍然需要可用网络与已登录账号。
 
 canary调用Git时会清除全部ambient `GIT_*`，再固定`GIT_CONFIG_NOSYSTEM=1`、
@@ -338,7 +352,7 @@ fail-closed证明。runtime只验证artifact结构与UTF-8 bounds、single-line 
 它有意不对Recipient、Subject、Body、reply ID或Evidence做raw Action substring、Markdown、whitespace、标点或
 其他机械source-grounding比较。actual send、actor ownership、recipient与正文语义由配置的extractor LLM
 承担；Evidence只保留extractor provenance，不是runtime authority。Subject、reply ID与evidence不进入Codex
-能力参数；sidecar task逐字等于结构验证后的`Body`，cwd/mode/network只来自code-owned exact route。
+能力参数；sidecar task逐字等于结构验证后的`Body`，cwd/mode/local command network/built-in tools只来自code-owned exact route。
 
 每个Action extraction batch由单一authoritative coordinator ledger全有或全无地capture，按terminal
 Action head保留fail-closed tombstone。stable dispatch ID是对length-prefixed
@@ -397,7 +411,7 @@ RecapGrid work 时延迟读取，保留 exact per-route `connectionId` 及调度
   derived stores。
 - Started：启动时 strict config/connections 已冻结；默认 Refuse 早于本次 current
   connection selection/client、route 与 derived owner。
-- 当前 root strict config language为V2；connections、profile、route各自仍保持owner-defined V1。当前Linux-only
+- 当前 root strict config language为V2；connections与profile保持owner-defined V1，delegate route为owner-defined V2。当前Linux-only
   file loader对这些文件与`systemPromptFile`都执行code-owned byte cap、existing-ancestor no-reparse与final-file
   no-follow regular-file 规则读取；bootstrap 也会在首次写前验证 parent chain。
 - ToolContinuation：先 bind frozen tool profile/operation，再 bind current completion，

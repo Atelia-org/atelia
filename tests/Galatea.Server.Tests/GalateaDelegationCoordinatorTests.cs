@@ -825,7 +825,12 @@ public sealed class GalateaDelegationCoordinatorTests {
             "codex-app-server",
             "/repo",
             GalateaDelegateMode.Work,
-            Network: false,
+            LocalCommandNetwork: false,
+            Tools: new GalateaDelegateToolConfig(
+                GalateaDelegateWebSearchMode.Live,
+                ImageGeneration: true,
+                ViewImage: true
+            ),
             maximumQueuedMails,
             maximumTaskUtf8Bytes,
             maximumReplyUtf8Bytes,

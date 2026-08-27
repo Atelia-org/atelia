@@ -59,7 +59,8 @@ test("backend completes, continues, returns bounded data, and interrupts", async
     task: "inspect",
     cwd: root,
     mode: "research",
-    network: false,
+    localCommandNetwork: false,
+    tools: { webSearch: "live", imageGeneration: true, viewImage: true },
     waitMs: 1_000,
   });
   assert.equal(first.status, "completed");
@@ -67,11 +68,24 @@ test("backend completes, continues, returns bounded data, and interrupts", async
   assert.match(first.result ?? "", /Fake task completed/);
   assert.doesNotMatch(first.result ?? "", /secret diff/);
   const researchRequest = await client.request<{
-    lastThreadStartParams: { serviceName: string; threadSource: string };
+    lastThreadStartParams: {
+      serviceName: string;
+      threadSource: string;
+      config: {
+        web_search: string;
+        features: { image_generation: boolean };
+        tools: { view_image: boolean };
+      };
+    };
     lastTurnParams: { approvalPolicy: string; approvalsReviewer: string; sandboxPolicy: { type: string; networkAccess: boolean }; outputSchema: unknown };
   }>("test/lastRequests", {});
   assert.equal(researchRequest.lastThreadStartParams.serviceName, "atelia_local_codex_mcp");
   assert.equal(researchRequest.lastThreadStartParams.threadSource, "atelia-local-codex-mcp");
+  assert.deepEqual(researchRequest.lastThreadStartParams.config, {
+    web_search: "live",
+    features: { image_generation: true },
+    tools: { view_image: true },
+  });
   assert.equal(typeof researchRequest.lastTurnParams.outputSchema, "object");
   assert.equal(researchRequest.lastTurnParams.approvalPolicy, "never");
   assert.equal(researchRequest.lastTurnParams.approvalsReviewer, "user");
@@ -108,17 +122,28 @@ test("backend completes, continues, returns bounded data, and interrupts", async
     threadId: first.threadId,
     task: "[LONG] keep working",
     mode: "work",
-    network: false,
+    localCommandNetwork: false,
+    tools: { webSearch: "disabled", imageGeneration: false, viewImage: false },
     waitMs: 5,
   });
   assert.equal(second.status, "running");
   const workRequest = await client.request<{
-    lastResumeParams: { approvalPolicy: string; sandbox: string; config: { web_search: string } };
+    lastResumeParams: {
+      approvalPolicy: string;
+      sandbox: string;
+      config: {
+        web_search: string;
+        features: { image_generation: boolean };
+        tools: { view_image: boolean };
+      };
+    };
     lastTurnParams: { sandboxPolicy: { type: string; writableRoots: string[]; networkAccess: boolean } };
   }>("test/lastRequests", {});
   assert.equal(workRequest.lastResumeParams.approvalPolicy, "never");
   assert.equal(workRequest.lastResumeParams.sandbox, "workspace-write");
   assert.equal(workRequest.lastResumeParams.config.web_search, "disabled");
+  assert.equal(workRequest.lastResumeParams.config.features.image_generation, false);
+  assert.equal(workRequest.lastResumeParams.config.tools.view_image, false);
   assert.equal(workRequest.lastTurnParams.sandboxPolicy.type, "workspaceWrite");
   assert.deepEqual(workRequest.lastTurnParams.sandboxPolicy.writableRoots, [root]);
   assert.equal(workRequest.lastTurnParams.sandboxPolicy.networkAccess, false);
@@ -131,7 +156,8 @@ test("backend completes, continues, returns bounded data, and interrupts", async
       threadId: first.threadId,
       task: "must reject a mismatched resume response",
       mode: "research",
-      network: false,
+      localCommandNetwork: false,
+      tools: { webSearch: "disabled", imageGeneration: true, viewImage: true },
       waitMs: 0,
     }),
     (error: unknown) =>
@@ -202,7 +228,8 @@ test("permanent stop gate prevents an operation paused at resolveCwd from restar
       task: "must not start",
       cwd: root,
       mode: "work",
-      network: false,
+      localCommandNetwork: false,
+      tools: { webSearch: "disabled", imageGeneration: true, viewImage: true },
       waitMs: 0,
     });
     await entered;

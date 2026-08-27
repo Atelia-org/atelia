@@ -7,7 +7,7 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaDelegateConfigTests {
     [Fact]
-    public void ValidClosedV1LoadsCanonicalExactCodexRoute() {
+    public void ValidClosedV2LoadsCanonicalExactCodexRouteAndToolPolicy() {
         using var fixture = new Fixture();
 
         GalateaDelegateConfig config = fixture.Load();
@@ -17,8 +17,26 @@ public sealed class GalateaDelegateConfigTests {
         Assert.Equal("codex-app-server", config.CodexRoute.Kind);
         Assert.Equal(fixture.Root, config.CodexRoute.Cwd);
         Assert.Equal(GalateaDelegateMode.Work, config.CodexRoute.Mode);
-        Assert.False(config.CodexRoute.Network);
+        Assert.False(config.CodexRoute.LocalCommandNetwork);
+        Assert.Equal(
+            GalateaDelegateWebSearchMode.Live,
+            config.CodexRoute.Tools.WebSearch
+        );
+        Assert.True(config.CodexRoute.Tools.ImageGeneration);
+        Assert.True(config.CodexRoute.Tools.ViewImage);
         Assert.Equal(1_048_576, config.Sidecar.MaximumFrameUtf8Bytes);
+    }
+
+    [Fact]
+    public void LegacyV1IsRejectedWithoutCompatibilityFallback() {
+        using var fixture = new Fixture();
+        string legacy = fixture.ValidJson.Replace(
+            "\"v\": 2,",
+            "\"v\": 1,",
+            StringComparison.Ordinal
+        );
+
+        Assert.Throws<InvalidDataException>(() => fixture.Load(legacy));
     }
 
     [Theory]
@@ -48,8 +66,8 @@ public sealed class GalateaDelegateConfigTests {
                 StringComparison.Ordinal
             ),
             "duplicate-case-variant" => json.Replace(
-                "\"v\": 1,",
-                "\"v\": 1,\n\"V\": 1,",
+                "\"v\": 2,",
+                "\"v\": 2,\n\"V\": 2,",
                 StringComparison.Ordinal
             ),
             _ => throw new ArgumentOutOfRangeException(nameof(mutation))
@@ -85,6 +103,19 @@ public sealed class GalateaDelegateConfigTests {
         JsonArray routes = multiple["routes"]!.AsArray();
         routes.Add(routes[0]!.DeepClone());
         Assert.Throws<InvalidDataException>(() => fixture.Load(multiple));
+    }
+
+    [Theory]
+    [InlineData("Disabled")]
+    [InlineData("unknown")]
+    [InlineData("")]
+    public void WebSearchModeIsClosedAndCaseSensitive(string mode) {
+        using var fixture = new Fixture();
+        JsonObject root = fixture.Parse();
+        root["routes"]!.AsArray()[0]!.AsObject()["tools"]!
+            .AsObject()["webSearch"] = mode;
+
+        Assert.Throws<InvalidDataException>(() => fixture.Load(root));
     }
 
     [Theory]
@@ -341,7 +372,7 @@ public sealed class GalateaDelegateConfigTests {
 
         private string BuildJson() => $$"""
         {
-          "v": 1,
+          "v": 2,
           "sidecar": {
             "nodeCommand": {{JsonSerializer.Serialize(Executable)}},
             "entryPoint": {{JsonSerializer.Serialize(EntryPoint)}},
@@ -358,7 +389,12 @@ public sealed class GalateaDelegateConfigTests {
               "kind": "codex-app-server",
               "cwd": {{JsonSerializer.Serialize(Root)}},
               "mode": "work",
-              "network": false,
+              "localCommandNetwork": false,
+              "tools": {
+                "webSearch": "live",
+                "imageGeneration": true,
+                "viewImage": true
+              },
               "maximumQueuedMails": 16,
               "maximumTaskUtf8Bytes": 100000,
               "maximumReplyUtf8Bytes": 100000,

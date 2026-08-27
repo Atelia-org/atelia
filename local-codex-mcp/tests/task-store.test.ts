@@ -103,6 +103,30 @@ test("bounded wait returns running and does not interrupt", async () => {
   assert.ok((snapshot.progress?.length ?? 0) <= 10);
 });
 
+test("generated image path is retained as a changed file", () => {
+  const store = new TaskStore(1_000, 100);
+  store.beginTurn("thread-1", "turn-1");
+  store.handleNotification({
+    method: "item/completed",
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      item: {
+        type: "imageGeneration",
+        id: "image-1",
+        status: "completed",
+        revisedPrompt: null,
+        result: "generated",
+        savedPath: "/workspace/generated.png",
+      },
+    },
+  });
+
+  assert.deepEqual(store.snapshot("thread-1").changedFiles, [
+    "/workspace/generated.png",
+  ]);
+});
+
 test("late item notifications from an older turn cannot overwrite the current final", () => {
   const store = new TaskStore(1_000, 100);
   store.beginTurn("thread-1", "turn-2");

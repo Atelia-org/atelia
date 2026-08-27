@@ -228,6 +228,10 @@ export class TaskStore {
       state.changedFiles = [
         ...new Set([...state.changedFiles, ...item.changes.map((change) => change.path)]),
       ].slice(0, 100);
+    } else if (item.type === "imageGeneration" && item.savedPath) {
+      state.changedFiles = [
+        ...new Set([...state.changedFiles, item.savedPath]),
+      ].slice(0, 100);
     } else if (item.type === "commandExecution" && item.status === "failed") {
       this.addWarning(
         state,
