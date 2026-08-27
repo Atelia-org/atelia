@@ -328,6 +328,8 @@ internal interface IOutboundMailExtractor {
 }
 
 internal sealed class OutboundMailExtractor : IOutboundMailExtractor {
+    internal const string ContractId =
+        "atelia.galatea.outbound-mail-extractor.v1";
     internal const string ToolName = "emit_send_mail_intent";
 
     private const string SystemPrompt = """
