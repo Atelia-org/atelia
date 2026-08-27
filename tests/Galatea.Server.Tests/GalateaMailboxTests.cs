@@ -169,38 +169,6 @@ public sealed class GalateaMailboxTests {
     }
 
     [Fact]
-    public void CandidateBuffer_IsolatedAtomicBoundedAndDeduplicatesBatches() {
-        var left = new InMemorySendMailIntentBuffer();
-        var right = new InMemorySendMailIntentBuffer();
-        EventAddress head = default;
-        SendMailIntent intent = Intent("Alice", "body", "body");
-
-        Assert.True(left.TryAddBatch("alice", "turn", head, [intent]));
-        Assert.False(left.TryAddBatch("alice", "turn-again", head, [intent]));
-        Assert.Single(left.Snapshot());
-        Assert.Empty(right.Snapshot());
-        Assert.True(right.TryAddBatch("bob", "empty", head, []));
-        Assert.Empty(right.Snapshot());
-
-        SendMailIntent huge = Intent(
-            "Alice",
-            new string('x', GalateaMailboxBounds.MaximumBodyUtf8Bytes),
-            "x"
-        );
-        Assert.Throws<InvalidOperationException>(() => left.TryAddBatch(
-            "alice",
-            "oversized-batch",
-            head,
-            Enumerable.Repeat(huge, 33).ToArray()
-        ));
-        Assert.Single(left.Snapshot());
-
-        left.Remove(head);
-        Assert.Empty(left.Snapshot());
-        Assert.True(left.TryAddBatch("alice", "turn-new", head, [intent]));
-    }
-
-    [Fact]
     public async Task InboundEndpoint_BypassesNormalizerPersistsTrustedMailAndCapturesCandidate() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractorConnection = Connection("mail-helper");
@@ -261,15 +229,18 @@ public sealed class GalateaMailboxTests {
         Assert.Equal("Galatea", mail.To);
         Assert.Equal("Please reply <carefully>.", mail.Body);
 
-        InMemorySendMailIntentCandidate candidate = Assert.Single(
-            session.SendMailIntentBuffer.Snapshot()
+        GalateaDelegateCandidateSnapshot candidate = Assert.Single(
+            session.DelegationCoordinator.Snapshot()
         );
-        Assert.Equal("alice", candidate.UserId);
         Assert.Equal(accepted.TurnId, candidate.TurnId);
         Assert.Equal(persisted.TerminalAction.Address,
             candidate.SourceActionHead);
-        Assert.Equal("Alice", candidate.Intent.Recipient);
-        Assert.Equal("hello Alice", candidate.Intent.Body);
+        Assert.Equal("Alice", candidate.Recipient);
+        Assert.Equal("hello Alice", candidate.TaskBody);
+        Assert.Equal(
+            GalateaDelegateCandidateState.Unrouted,
+            candidate.State
+        );
 
         RecentTurnsResponseDto recent = (await http.GetFromJsonAsync<
             RecentTurnsResponseDto>("/api/v1/recent-turns"))!;
@@ -317,12 +288,12 @@ public sealed class GalateaMailboxTests {
             .RunTask!.WaitAsync(Deadline);
         Assert.Equal("completed",
             service.FindTurn(session, failedExtraction.TurnId)!.Status);
-        Assert.Empty(session.SendMailIntentBuffer.Snapshot());
+        Assert.Empty(session.DelegationCoordinator.Snapshot());
 
         StartTurnResponseDto extracted = await PostPlayerTurn(http);
         await service.FindTurn(session, extracted.TurnId)!
             .RunTask!.WaitAsync(Deadline);
-        Assert.Single(session.SendMailIntentBuffer.Snapshot());
+        Assert.Single(session.DelegationCoordinator.Snapshot());
         RecentTurnsResponseDto recent = (await http.GetFromJsonAsync<
             RecentTurnsResponseDto>("/api/v1/recent-turns"))!;
         Assert.NotNull(recent.RewindLatestToken);
@@ -332,7 +303,13 @@ public sealed class GalateaMailboxTests {
             new { rewindLatestToken = recent.RewindLatestToken }
         );
         Assert.Equal(HttpStatusCode.OK, pop.StatusCode);
-        Assert.Empty(session.SendMailIntentBuffer.Snapshot());
+        GalateaDelegateCandidateSnapshot retracted = Assert.Single(
+            session.DelegationCoordinator.Snapshot()
+        );
+        Assert.Equal(
+            GalateaDelegateCandidateState.RetractedBeforeDispatch,
+            retracted.State
+        );
     }
 
     [Fact]
@@ -379,7 +356,7 @@ public sealed class GalateaMailboxTests {
             service.FindTurn(session, first.TurnId)!.Status);
         Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns);
-        Assert.Empty(session.SendMailIntentBuffer.Snapshot());
+        Assert.Empty(session.DelegationCoordinator.Snapshot());
         Assert.True(session.TurnLock.Wait(0));
         session.TurnLock.Release();
 

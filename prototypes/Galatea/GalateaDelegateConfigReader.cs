@@ -169,9 +169,12 @@ internal static class GalateaDelegateConfigReader {
             maximumFrameUtf8Bytes,
             "maximumReplyUtf8Bytes"
         );
-        if (maximumInboxBytes < maximumReplyUtf8Bytes) {
+        if (maximumInboxBytes < Math.Max(
+                maximumReplyUtf8Bytes,
+                GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes
+            )) {
             throw new InvalidDataException(
-                "maximumInboxUtf8Bytes must be at least maximumReplyUtf8Bytes."
+                "maximumInboxUtf8Bytes must hold one maximum reply or delivery failure."
             );
         }
 
@@ -307,9 +310,12 @@ internal static class GalateaDelegateConfigReader {
             sidecar.MaximumFrameUtf8Bytes,
             "maximumReplyUtf8Bytes"
         );
-        if (route.MaximumInboxUtf8Bytes < route.MaximumReplyUtf8Bytes) {
+        if (route.MaximumInboxUtf8Bytes < Math.Max(
+                route.MaximumReplyUtf8Bytes,
+                GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes
+            )) {
             throw new InvalidDataException(
-                "maximumInboxUtf8Bytes must be at least maximumReplyUtf8Bytes."
+                "maximumInboxUtf8Bytes must hold one maximum reply or delivery failure."
             );
         }
 

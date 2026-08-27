@@ -118,6 +118,14 @@ public sealed class GalateaDelegateConfigTests {
         inbox["routes"]!.AsArray()[0]!.AsObject()[
             "maximumInboxUtf8Bytes"] = 99_999;
         Assert.Throws<InvalidDataException>(() => fixture.Load(inbox));
+
+        JsonObject failure = fixture.Parse();
+        JsonObject failureRoute = failure["routes"]!.AsArray()[0]!
+            .AsObject();
+        failureRoute["maximumReplyUtf8Bytes"] = 1;
+        failureRoute["maximumInboxUtf8Bytes"] =
+            GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes - 1;
+        Assert.Throws<InvalidDataException>(() => fixture.Load(failure));
     }
 
     [Fact]

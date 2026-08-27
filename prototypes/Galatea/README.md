@@ -122,13 +122,15 @@ canonical resolved target，loader不会悄悄follow。`cwd`也必须canonical�
 `allowedRoots`内。unknown/missing/wrong-case/duplicate（包括case变体）、额外route、
 非法mode/range都会在startup fail closed。task/reply上限按strict UTF-8 bytes计数，且
 必须在JSON最坏六倍escaping加code-owned envelope reserve后仍装入
-`maximumFrameUtf8Bytes`；inbox总bytes不得小于单条reply上限。Bootstrap会同时生成一份
+`maximumFrameUtf8Bytes`；inbox总bytes必须至少容纳一条最大reply或4 KiB delivery failure。
+Bootstrap会同时生成一份
 带`REPLACE_WITH_...`的明显placeholder模板并停止，绝不猜测本机可执行文件或权限边界。
 programmatic `GalateaConfig`也走同一套path/executable/range/frame/containment校验；sidecar
 持有canonical immutable snapshot，caller之后修改原始list不会改变生效policy。
 
 `GalateaHostService`拥有一个host-wide、lazy `GalateaCodexSidecarClient`。首个真实dispatch
-前保持零进程；当前coordinator尚未接入，因此正常Galatea turn也不会启动sidecar。transport
+前保持零进程；每个`UserSessionHost`拥有独立的内存coordinator、ledger、ReplyInbox和一个
+fixed Codex thread binding，创建或登录session不会启动child。transport
 启动`nodeCommand entryPoint`并通过environment注入code-owned allowed roots、cwd、Codex
 command、mode、network及timeout/body/frame bounds，邮件正文只能进入JSONL `task`字段，
 不能覆盖任何route policy。V1 input是exact
@@ -196,9 +198,9 @@ recovery或dedupe语义。工具契约继续由`Completion.Tools/ArtifactToolWra
 provider tool name/call ID、tool/call数量、raw arguments与diagnostics均有
 code-owned bounds；caller cancellation与transport exception直接传播。
 
-## Mailbox 与 OutboundMailExtractor
+## Mailbox、OutboundMailExtractor 与 Codex coordinator
 
-Codex 固定代行者路由、异步回信与下一玩家回合 Observation 注入仍在施工；当前已决策边界和会逐步收缩的未完成工作见
+Codex 回信向下一玩家回合 Observation 的注入仍在施工；当前已决策边界和会逐步收缩的未完成工作见
 `docs/Galatea/codex-delegation-refactor-status.md`。
 
 所有新普通player turn（包括当前尚无ready reply的情况）都以runtime-owned composite Observation
@@ -213,8 +215,8 @@ reply正文上限256 KiB UTF-8，failure上限4 KiB，整份composite上限1 MiB
 composite parser只接受code-owned prefix、heading、info string、顺序与动态fence的canonical重渲染结果。
 recent view显示玩家文本及每条独立通知；普通Undo仍把它识别为player turn，但pop receipt只返回玩家文本。
 历史backtick player envelope继续只读兼容recent/Undo；inbound mail envelope仍不属于普通player Undo。
-input normalizer只接收玩家文本，绝不接收ready notices。当前尚未实现ReplyInbox，因此HTTP新建的普通
-player turn携带空notice集合；后续内存inbox只需在turn开始cutoff时填入已经冻结的notice值。
+input normalizer只接收玩家文本，绝不接收ready notices。ReplyInbox已经由per-session coordinator
+维护，但尚未接入fresh turn的durable lifecycle，因此当前HTTP新建的普通player turn仍携带空notice集合。
 
 `SessionJournal`公开的`AdaptiveMarkdownFenceRenderer.RenderBlock(infoString, exactBody)`要求1..64字符
 ASCII token作为code-owned info string。现有Recap contribution已复用它，并保持原`recap-block`输出逐字不变。
@@ -231,22 +233,46 @@ per-session `TurnLock`、recovery admission与main connection allowlist。
 再整体剥离inline think。常驻`OutboundMailExtractor`通过
 `emit_send_mail_intent`产出0..N个有序`SendMailIntent`，字段为故事内`Recipient`、可选`Subject`、
 完整`Body`、可选canonical `InReplyToMessageId`与exact `EvidenceQuote`。Recipient仍是未解析、未验证的
-故事文本；当前阶段没有recipient allowlist、投递或外部副作用。Actor ownership、actual send以及计划、
+故事文本；只有后续coordinator对case-sensitive exact `Codex`的匹配构成当前唯一recipient allowlist，
+其余recipient只保留为`Unrouted`候选且绝不调用sidecar。Actor ownership、actual send以及计划、
 草稿、他人邮件和来信引用等语义，只由extractor LLM依据code-owned prompt保守判断，并没有被runtime
 fail-closed证明。runtime只验证artifact结构与UTF-8 bounds、single-line Recipient/Subject、canonical reply ID，
-以及Recipient/非空Subject/Body/reply ID/Evidence均为source exact substring；通过校验的结果仍只是未验证候选，
-不是发送授权。未来durable outbox必须另行定义recipient validation、provenance、review与投递policy。
+以及Recipient/非空Subject/Body/reply ID/Evidence均为source exact substring。Subject、reply ID与evidence
+只保留extractor provenance，不进入Codex能力参数；sidecar task逐字等于`Body`，cwd/mode/network只来自
+code-owned exact route。
 
-候选只进入每个`UserSessionHost`自己的`InMemorySendMailIntentBuffer`。每批全有或全无地加入，
-按terminal Action head防止候选重复，并有code-owned count/byte上限；满载时拒绝新批次，不静默逐出
-尚未处理的旧候选。它不是durable outbox，不承诺provider-call dedupe、exactly-once、进程重启恢复或
-真实投递，session dispose后即丢失。Extraction有独立的code-owned 30秒elapsed deadline，并同时向
+每个Action extraction batch由单一authoritative coordinator ledger全有或全无地capture，按terminal
+Action head保留fail-closed tombstone。stable dispatch ID是对length-prefixed
+`(userId,"Codex",canonical Action head,artifact ordinal)`计算SHA-256后形成的
+`gd1-<64-lowerhex>`；候选、tombstone、queue和inbox都有code-owned count/byte上限，容量耗尽时拒绝整批，
+不evict旧项而冒险重复执行。route pump按capture顺序与artifact ordinal严格FIFO，同一时刻至多一个
+Starting/Running exchange。首封以`threadId=null`创建Codex thread，accepted后绑定authoritative thread ID；
+以后每封只能continue该thread。accepted或terminal identity mismatch会产生bounded delivery failure并
+quarantine本session route，绝不覆盖binding或继续产生副作用；`START_OUTCOME_UNKNOWN`和其他start/terminal
+failure都只形成one-shot failure notice，不透明重试。
+
+合法final必须是strict Unicode、nonblank，且同时满足route reply上限和composite单reply 256 KiB上限；
+非法或超限final转为code-owned failure，不truncate冒充回复。ReplyInbox按单调completion sequence保序，
+`BeginReadyReplyCutoff(playerText)`在同一gate冻结最早的、最多16条且能与该玩家文本精确渲染进1 MiB
+composite的FIFO前缀，其余保持Ready。一次只允许一个active lease；显式`Commit`永久变成`Consumed`，
+`Rollback`或未提交lease的`Dispose`恢复Ready。该lease可以跨fresh/recovery调用栈长期持有，供后续runtime
+在Observation真正durable后提交，而不是在方法返回时自动消费。
+
+普通player Undo只在SessionJournal exact rewind确实`Moved`后回调同一ledger gate：Unrouted/Queued变为
+`RetractedBeforeDispatch`并释放正文；与pump竞争失败而已经Starting/Running的exchange只标记
+`SourceRetracted`，不interrupt，完成结果仍可one-shot呈现；Ready/Leased/Consumed不撤回、不重新武装。
+已经建立的fixed Codex thread context也不随故事turn Undo而倒退。
+
+该状态仍不是durable outbox，不承诺provider-call exactly-once或进程重启恢复，session dispose后即丢失。
+Extraction有独立的code-owned 30秒elapsed deadline，并同时向
 provider传递linked shutdown/deadline cancellation；即使provider不合作，recent refresh、SSE `done`和
 `TurnLock`释放最多只额外等待该deadline。nonfatal failure/cancellation/timeout只写single-line bounded
 `Galatea.Mailbox`摘要log，不改判已经durable的主turn；deadline内观测到的fatal exception仍传播，
-超时后被放弃task的eventual fault仅被安全观察。普通player Undo成功后
-移除对应Action head的内存候选；mailbox Observation不产生普通player rewind token，commit前也再次
-防御其被player pop入口撤销。Completion call log仍可能包含完整tool arguments，debug摘要不重复正文。
+超时后被放弃task的eventual fault仅被安全观察。capture完成只唤醒后台pump，主Galatea turn不等待
+sidecar accepted或final；mailbox Observation不产生普通player rewind token，commit前也再次防御其被
+player pop入口撤销。session shutdown先停止capture并drain turn，再取消/监督coordinator pump；host随后
+关闭共享sidecar，最后关闭Completion/RecapGrid owner。Completion call log仍可能包含完整tool arguments，
+debug摘要不重复正文、subject或evidence。
 
 历史 Agent Control profiles 必须继续保留，供 Prepared/ToolContinuation 按 frozen
 identity 绑定；current profile 只用于新 request。Route manifest 仍在首次

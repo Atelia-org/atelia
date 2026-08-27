@@ -33,6 +33,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly GalateaRecapGridComposition _recapGrid;
     private readonly GalateaCompletionOwner? _completionOwner;
     private readonly IGalateaDelegateSidecar _delegateSidecar;
+    private readonly GalateaDelegateRouteConfig _delegateRoute;
     internal GalateaDisposeTestHooks? DisposeHooksForTest { get; set; }
     internal GalateaSessionProvisioningTestHooks?
         SessionProvisioningHooksForTest { get; set; }
@@ -105,6 +106,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
             _completionOwner = components.Owner;
             _delegateSidecar = components.DelegateSidecar;
+            _delegateRoute = GalateaDelegateConfigReader.Validate(
+                config.Delegates
+            ).CodexRoute;
             _recapGrid = components.Owner.RecapGrid;
             _inputPreprocessor = new GalateaInputPreprocessor(
                 components.Normalizer
@@ -148,7 +152,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(recapGrid);
         ArgumentNullException.ThrowIfNull(userMessageNormalizer);
-        GalateaDelegateConfigReader.Validate(config.Delegates);
+        GalateaDelegateConfig delegates =
+            GalateaDelegateConfigReader.Validate(config.Delegates);
         GalateaConfigValidation.RequireDistinctSessionDirectories(
             config.Users
         );
@@ -168,8 +173,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _recapGrid = recapGrid;
         _completionOwner = null;
         _delegateSidecar = new GalateaCodexSidecarClient(
-            config.Delegates!
+            delegates
         );
+        _delegateRoute = delegates.CodexRoute;
         _inputPreprocessor = new GalateaInputPreprocessor(
             userMessageNormalizer
         );
@@ -809,7 +815,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (committed is not SessionTurnRetractionResult.Moved) {
             return null;
         }
-        host.SendMailIntentBuffer.Remove(
+        host.DelegationCoordinator.RetractSourceAction(
             ready.Value.ExpectedHead
         );
         host.SetRecentTurns(preparedStaleSnapshot);
@@ -1017,8 +1023,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 );
                 return;
             }
-            bool added = host.SendMailIntentBuffer.TryAddBatch(
-                host.User.UserId,
+            bool added = host.DelegationCoordinator.TryCaptureBatch(
                 liveTurn.TurnId,
                 actionHead,
                 intents
@@ -1496,7 +1501,16 @@ public sealed class GalateaHostService : IAsyncDisposable {
             RecentTurnsResponseDto recent = BuildRecentTurnsResponse(engine)
                 .Response;
             return Task.FromResult(
-                new UserSessionHost(user, engine, recent)
+                new UserSessionHost(
+                    user,
+                    engine,
+                    recent,
+                    new GalateaDelegationCoordinator(
+                        user.UserId,
+                        _delegateRoute,
+                        _delegateSidecar
+                    )
+                )
             );
         }
         catch (Exception exception) when (
@@ -1759,14 +1773,20 @@ public sealed class UserSessionHost : IAsyncDisposable {
     private GalateaLiveTurn? _lastTurn;
     private RecentTurnsResponseDto _recentTurns;
 
-    public UserSessionHost(
+    internal UserSessionHost(
         GalateaUserConfig user,
         SessionJournalEngine engine,
-        RecentTurnsResponseDto recentTurns
+        RecentTurnsResponseDto recentTurns,
+        GalateaDelegationCoordinator delegationCoordinator
     ) {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(recentTurns);
+        ArgumentNullException.ThrowIfNull(delegationCoordinator);
         User = user;
         Engine = engine;
         _recentTurns = recentTurns;
+        DelegationCoordinator = delegationCoordinator;
     }
 
     public GalateaUserConfig User { get; }
@@ -1775,8 +1795,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
 
-    internal InMemorySendMailIntentBuffer SendMailIntentBuffer { get; } =
-        new();
+    internal GalateaDelegationCoordinator DelegationCoordinator { get; }
 
     internal GalateaLiveTurn StartTurn(
         GalateaFreshInput freshInput,
@@ -1883,7 +1902,13 @@ public sealed class UserSessionHost : IAsyncDisposable {
     public async ValueTask DisposeAsync() {
         await TurnLock.WaitAsync().ConfigureAwait(false);
         try {
-            Engine.Dispose();
+            try {
+                await DelegationCoordinator.DisposeAsync()
+                    .ConfigureAwait(false);
+            }
+            finally {
+                Engine.Dispose();
+            }
         }
         finally {
             TurnLock.Release();

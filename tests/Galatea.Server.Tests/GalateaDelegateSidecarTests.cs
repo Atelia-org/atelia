@@ -600,8 +600,12 @@ public sealed class GalateaDelegateSidecarTests {
                     MaximumReplyUtf8Bytes: maximumBodyUtf8Bytes,
                     MaximumInboxReplies: 16,
                     MaximumInboxUtf8Bytes: Math.Max(
-                        maximumFrameUtf8Bytes,
-                        maximumBodyUtf8Bytes
+                        GalateaPlayerObservationEnvelope
+                            .MaximumFailureUtf8Bytes,
+                        Math.Max(
+                            maximumFrameUtf8Bytes,
+                            maximumBodyUtf8Bytes
+                        )
                     )
                 )]
             );

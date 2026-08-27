@@ -72,7 +72,8 @@
 
 - `TextExtractor`、typed artifact tool 与 `OutboundMailExtractor` 已实现。
 - terminal Action durable 后已执行 bounded outbound extraction。
-- `InMemorySendMailIntentBuffer` 已提供 Action-head batch dedupe 与容量边界，但仍是被动候选集合，没有 per-candidate dispatch lifecycle。
+- per-session `GalateaDelegationCoordinator` 已提供单一authoritative ledger、exact Codex route、
+  stable dispatch ID、fixed-thread FIFO、ReplyInbox lease、阶段化Undo与bounded lifecycle。
 - `cyber.md` 已定义 Galatea 可自然召唤的界外邮箱以及“收件人、完整正文、完成发送”的叙事契约。
 - inbound `MailboxMessage`、HTTP endpoint 与独立 Observation envelope 已实现并保留，但当前不接入代行者回执。
 - `local-codex-mcp` 已实现并测试 app-server initialize、thread start/resume、turn start、notification correlation、final capture、sandbox/path policy、fail-closed approval 与 child-process lifecycle。
@@ -81,21 +82,12 @@
 
 完成一项后，将其稳定语义移入相应 README/contract/test，并从本节删除，不在这里积累完成日志。
 
-### In-memory dispatch and reply state
-
-- 将被动 `InMemorySendMailIntentBuffer` 演进为 per-candidate lifecycle，或增加独立 coordinator，同时保留 Action-head + ordinal 去重。
-- 实现每个 `(user/session, route)` 的单 thread binding、FIFO、单 active turn、容量边界、shutdown cancellation 与 bounded logging。
-- 实现 per-user `ReplyInbox`、terminal completion sequence、ready cutoff、one-shot consume 与 delivery-failure。
-- 明确普通 player Undo 对尚未 dispatch、正在运行、已完成未注入和已注入 exchange 的阶段性内存语义；首阶段不承诺跨进程恢复或 exactly-once。
-
 ### Galatea runtime integration
 
-- 在成功捕获候选后 exact route 并非阻塞地交给 coordinator；未命中收件人不得产生 Codex side effect。
 - 更新 `cyber.md`，告诉 Galatea canonical recipient `Codex` 是固定外界代行者、回信可能在以后某个玩家回合到达，并保持自然叙事而非输出协议文本。
 
 ### Verification
 
-- fake sidecar/backend tests：首次创建、同 thread continue、FIFO、多封邮件、duplicate Action、unmatched recipient、failure/exit、late completion、one-shot reply injection 与 bounds。
 - Galatea vertical tests：Action -> extractor -> Codex dispatch accepted -> SSE done 不等待 final -> final 入内存 -> 下一次玩家 Observation 含兄弟 reply block。
 - gated live app-server canary：连续发送两封邮件，证明第二封复用第一封的 thread/context，并证明两次 final 分别只注入一次。
 
