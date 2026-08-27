@@ -494,30 +494,139 @@ public sealed class GalateaDurableDelegateTransportTests {
         }
     }
 
+    [Fact]
+    public async Task ColdInnerRestartDelayUsesFiveRpcStartBudget() {
+        using var fixture = new GalateaSidecarProcessFixture(
+            $$"""
+            printf '%s\n' '{"v":2,"type":"ready"}'
+            IFS= read -r line
+            printf '%s\n' "$line" > {{Q("INPUT")}}
+            request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
+            dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
+            thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+            # Model the five cold inner app-server RPC phases without spending
+            # the independent startup margin: initialize, account/read,
+            # thread/read, thread/resume, and turn/start.
+            sleep 3
+            sleep 3
+            sleep 3
+            sleep 3
+            sleep 3
+            printf '{"v":2,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-after-cold-restart"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            while IFS= read -r ignored; do :; done
+            """
+        );
+        await using GalateaCodexDurableSidecarClient client =
+            fixture.CreateV2Client(rpcTimeoutMs: 3_000);
+
+        GalateaDelegateTurnAccepted accepted = await client.StartTurnAsync(
+            new("dispatch-cold", "thread-fixed", "task"),
+            CancellationToken.None
+        );
+
+        Assert.Equal("turn-after-cold-restart", accepted.TurnId);
+        Assert.Single(File.ReadAllLines(fixture.InputPath));
+    }
+
     [Theory]
-    [InlineData(100, 5_300)]
-    [InlineData(300_000, 905_000)]
+    [InlineData(100, 5_500, 5_300)]
+    [InlineData(300_000, 1_505_000, 905_000)]
     public void NamedDeadlinesMatchNodeRpcComposition(
         int rpcTimeoutMs,
+        int fiveRpcMilliseconds,
         int threeRpcMilliseconds
     ) {
         Assert.Equal(
-            TimeSpan.FromMilliseconds(threeRpcMilliseconds),
+            TimeSpan.FromMilliseconds(fiveRpcMilliseconds),
             GalateaCodexDurableSidecarClient.ComputeBindingDeadline(
                 rpcTimeoutMs
             )
         );
         Assert.Equal(
-            TimeSpan.FromMilliseconds(threeRpcMilliseconds),
+            TimeSpan.FromMilliseconds(fiveRpcMilliseconds),
             GalateaCodexDurableSidecarClient.ComputeStartTurnDeadline(
                 rpcTimeoutMs
             )
         );
         Assert.Equal(
-            TimeSpan.FromMilliseconds((long)rpcTimeoutMs + 5_000),
+            TimeSpan.FromMilliseconds(threeRpcMilliseconds),
             GalateaCodexDurableSidecarClient.ComputeInspectionDeadline(
                 rpcTimeoutMs
             )
+        );
+    }
+
+    [Theory]
+    [InlineData(
+        "ensure-binding",
+        "BINDING_OUTCOME_UNKNOWN",
+        (int)GalateaDurableDelegateFailurePolicy.RetryableBinding
+    )]
+    [InlineData(
+        "start-turn",
+        "START_OUTCOME_UNKNOWN",
+        (int)GalateaDurableDelegateFailurePolicy.StartOutcomeUnknown
+    )]
+    [InlineData(
+        "inspect-dispatch",
+        "INSPECTION_UNAVAILABLE",
+        (int)GalateaDurableDelegateFailurePolicy.InspectionUnavailable
+    )]
+    [InlineData(
+        "protocol",
+        "DUPLICATE_DISPATCH_ID",
+        (int)GalateaDurableDelegateFailurePolicy.DeterministicConflict
+    )]
+    [InlineData(
+        "start-turn",
+        "CWD_MISMATCH",
+        (int)GalateaDurableDelegateFailurePolicy.DeterministicConflict
+    )]
+    [InlineData(
+        "ensure-binding",
+        "THREAD_NOT_FOUND",
+        (int)GalateaDurableDelegateFailurePolicy.DeterministicConflict
+    )]
+    [InlineData(
+        "protocol",
+        "SIDECAR_WRITE_GATE_TIMEOUT",
+        (int)GalateaDurableDelegateFailurePolicy.PreWriteRejected
+    )]
+    [InlineData(
+        "ensure-binding",
+        "SIDECAR_STOPPING",
+        (int)GalateaDurableDelegateFailurePolicy.Stopped
+    )]
+    [InlineData(
+        "protocol",
+        "SIDECAR_PROTOCOL_ERROR",
+        (int)GalateaDurableDelegateFailurePolicy.FatalTransport
+    )]
+    [InlineData(
+        "start-turn",
+        "BINDING_OUTCOME_UNKNOWN",
+        (int)GalateaDurableDelegateFailurePolicy.FatalTransport
+    )]
+    [InlineData(
+        "inspect-dispatch",
+        "START_OUTCOME_UNKNOWN",
+        (int)GalateaDurableDelegateFailurePolicy.FatalTransport
+    )]
+    public void FailurePolicyIsClosedAndKeepsStageAndCode(
+        string stage,
+        string code,
+        int expectedPolicy
+    ) {
+        var exception = new GalateaDurableDelegateTransportException(
+            stage,
+            code
+        );
+
+        Assert.Equal(stage, exception.Stage);
+        Assert.Equal(code, exception.Code);
+        Assert.Equal(
+            (GalateaDurableDelegateFailurePolicy)expectedPolicy,
+            exception.FailurePolicy
         );
     }
 

@@ -14,6 +14,9 @@ internal sealed class GalateaCodexDurableSidecarClient
     : GalateaSidecarProcessClientBase, IGalateaDurableDelegateTransport {
     private const int ProtocolVersion = 2;
     private const int OperationStartupMarginMs = 5_000;
+    private const int BindingRpcBudgetCount = 5;
+    private const int StartTurnRpcBudgetCount = 5;
+    private const int InspectionRpcBudgetCount = 3;
     private const int MaximumOperationTombstones = 4_096;
 
     private static readonly JsonSerializerOptions WireJson = new() {
@@ -179,13 +182,13 @@ internal sealed class GalateaCodexDurableSidecarClient
     }
 
     internal static TimeSpan ComputeBindingDeadline(int rpcTimeoutMs) =>
-        ComputeOperationDeadline(rpcTimeoutMs, rpcCount: 3);
+        ComputeOperationDeadline(rpcTimeoutMs, BindingRpcBudgetCount);
 
     internal static TimeSpan ComputeStartTurnDeadline(int rpcTimeoutMs) =>
-        ComputeOperationDeadline(rpcTimeoutMs, rpcCount: 3);
+        ComputeOperationDeadline(rpcTimeoutMs, StartTurnRpcBudgetCount);
 
     internal static TimeSpan ComputeInspectionDeadline(int rpcTimeoutMs) =>
-        ComputeOperationDeadline(rpcTimeoutMs, rpcCount: 1);
+        ComputeOperationDeadline(rpcTimeoutMs, InspectionRpcBudgetCount);
 
     protected override GalateaSidecarProcessGeneration CreateGeneration(
         int id,
