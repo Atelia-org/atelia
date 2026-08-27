@@ -8,39 +8,58 @@ internal sealed partial class GalateaDelegationSqliteStore {
         SqliteConnection connection,
         SqliteTransaction? transaction
     ) {
-        GalateaDelegationStoreIdentity identity;
+        GalateaDelegationStoreOwner owner;
+        GalateaDelegationStoreBaseline baseline;
         GalateaDelegationStoreLimits limits;
         long storeRevision;
         long nextCompletionSequence;
         using (SqliteCommand command = connection.CreateCommand()) {
             command.Transaction = transaction;
             command.CommandText = """
-                SELECT user_id, session_repository_id, capture_frontier,
+                SELECT user_id, session_repository_id,
+                       capture_frontier_segment_number,
+                       capture_frontier_tail_offset,
                        baseline_selected_head, route_policy_fingerprint,
-                       maximum_queued_mails, maximum_reply_utf8_bytes,
-                       maximum_inbox_replies, maximum_inbox_utf8_bytes,
-                       next_completion_sequence, revision
+                       maximum_queued_mails, maximum_task_utf8_bytes,
+                       maximum_reply_utf8_bytes, maximum_inbox_replies,
+                       maximum_inbox_utf8_bytes, next_completion_sequence,
+                       revision
                 FROM delegation_meta WHERE singleton = 1;
                 """;
             using SqliteDataReader reader = command.ExecuteReader();
             if (!reader.Read()) {
                 throw Corrupt("delegation_meta singleton is missing.");
             }
-            identity = new GalateaDelegationStoreIdentity(
+            owner = new GalateaDelegationStoreOwner(
                 reader.GetString(0),
                 reader.GetString(1),
-                reader.GetString(2),
-                ReadNullableString(reader, 3),
-                reader.GetString(4)
+                reader.GetString(5)
             );
+            try {
+                baseline = new GalateaDelegationStoreBaseline(
+                    new Atelia.EventJournal.EventJournalPhysicalAppendFrontier(
+                        checked((uint)reader.GetInt64(2)),
+                        reader.GetInt64(3)
+                    ),
+                    ReadNullableString(reader, 4)
+                );
+            }
+            catch (Exception exception) when (exception is
+                ArgumentOutOfRangeException or OverflowException) {
+                throw Corrupt(
+                    "delegation_meta physical frontier is invalid.",
+                    exception
+                );
+            }
             limits = new GalateaDelegationStoreLimits(
-                reader.GetInt32(5),
                 reader.GetInt32(6),
                 reader.GetInt32(7),
-                reader.GetInt32(8)
+                reader.GetInt32(8),
+                reader.GetInt32(9),
+                reader.GetInt32(10)
             );
-            nextCompletionSequence = reader.GetInt64(9);
-            storeRevision = reader.GetInt64(10);
+            nextCompletionSequence = reader.GetInt64(11);
+            storeRevision = reader.GetInt64(12);
             if (reader.Read()) {
                 throw Corrupt("delegation_meta has multiple rows.");
             }
@@ -69,7 +88,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
         RequireOnlyActiveLeaseRows(connection, transaction, activeLease);
 
         ValidateProjection(
-            identity,
+            owner,
+            baseline,
             limits,
             storeRevision,
             nextCompletionSequence,
@@ -80,7 +100,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
             activeLease
         );
         return new GalateaDelegationStateSnapshot(
-            identity,
+            owner,
+            baseline,
             limits,
             storeRevision,
             nextCompletionSequence,
@@ -101,7 +122,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.CommandText = """
             SELECT state, binding_operation_id, thread_id,
                    policy_fingerprint, active_dispatch_id,
-                   quarantine_code, revision
+                   quarantine_code, ensure_attempt_count,
+                   ensure_last_code, next_ensure_at_ms, revision
             FROM route_binding WHERE singleton = 1;
             """;
         using SqliteDataReader reader = command.ExecuteReader();
@@ -115,7 +137,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
             reader.GetString(3),
             ReadNullableString(reader, 4),
             ReadNullableString(reader, 5),
-            reader.GetInt64(6)
+            reader.GetInt32(6),
+            ReadNullableString(reader, 7),
+            reader.IsDBNull(8) ? null : reader.GetInt64(8),
+            reader.GetInt64(9)
         );
         if (reader.Read()) {
             throw Corrupt("route_binding has multiple rows.");
@@ -350,7 +375,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
         && Atelia.SessionJournal.EventAddressTextCodec.TryParse(value, out _);
 
     private static void ValidateProjection(
-        GalateaDelegationStoreIdentity identity,
+        GalateaDelegationStoreOwner owner,
+        GalateaDelegationStoreBaseline baseline,
         GalateaDelegationStoreLimits limits,
         long storeRevision,
         long nextCompletionSequence,
@@ -360,13 +386,22 @@ internal sealed partial class GalateaDelegationSqliteStore {
         IReadOnlyList<GalateaReplyNoticeSnapshot> notices,
         GalateaReplyLeaseSnapshot? activeLease
     ) {
-        ValidateIdentity(identity);
-        ValidateLimits(limits);
+        try {
+            ValidateOwner(owner);
+            ValidateBaseline(baseline);
+            ValidateLimits(limits);
+        }
+        catch (ArgumentException exception) {
+            throw Corrupt(
+                "Delegation metadata owner, baseline, or limits are invalid.",
+                exception
+            );
+        }
         if (storeRevision < 0 || nextCompletionSequence < 1
             || route.Revision < 0
             || !string.Equals(
                 route.RoutePolicyFingerprint,
-                identity.RoutePolicyFingerprint,
+                owner.RoutePolicyFingerprint,
                 StringComparison.Ordinal)) {
             throw Corrupt("Delegation metadata or route revision is invalid.");
         }
@@ -422,15 +457,15 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 }
                 var address = Atelia.SessionJournal.EventAddressTextCodec
                     .Parse(capture.SourceActionAddress);
-                string expectedDispatch = GalateaDelegationCoordinator
-                    .CreateDispatchId(identity.UserId, address, ordinal);
+                string expectedDispatch = GalateaDelegationDurableContract
+                    .CreateDispatchId(owner.UserId, address, ordinal);
                 if (!string.Equals(
                         mail.DispatchId,
                         expectedDispatch,
                         StringComparison.Ordinal)) {
                     throw Corrupt("A captured dispatch identity is invalid.");
                 }
-                ValidateMailShape(mail, identity.RoutePolicyFingerprint);
+                ValidateMailShape(mail, owner.RoutePolicyFingerprint);
             }
         }
         if (mails.Any(mail => !captures.Any(capture =>
@@ -532,18 +567,22 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 route.BindingOperationId is null
                 && route.ThreadId is null
                 && route.ActiveDispatchId is null
-                && route.QuarantineCode is null,
+                && route.QuarantineCode is null
+                && HasNoEnsureBackoff(route),
             GalateaDelegationRouteState.Binding =>
                 route.BindingOperationId is not null
                 && route.ThreadId is null
                 && route.ActiveDispatchId is null
-                && route.QuarantineCode is null,
+                && route.QuarantineCode is null
+                && HasValidEnsureBackoff(route),
             GalateaDelegationRouteState.Bound =>
                 route.BindingOperationId is not null
                 && route.ThreadId is not null
-                && route.QuarantineCode is null,
+                && route.QuarantineCode is null
+                && HasNoEnsureBackoff(route),
             GalateaDelegationRouteState.Quarantined =>
-                route.QuarantineCode is not null,
+                route.QuarantineCode is not null
+                && HasNoEnsureBackoff(route),
             _ => false
         };
         if (!valid) { throw Corrupt("route_binding shape is invalid."); }
@@ -557,6 +596,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
             if (route.QuarantineCode is not null) {
                 RequireFailureToken(route.QuarantineCode,
                     nameof(route.QuarantineCode));
+            }
+            if (route.EnsureLastCode is not null) {
+                RequireFailureToken(
+                    route.EnsureLastCode,
+                    nameof(route.EnsureLastCode)
+                );
             }
         }
         catch (Exception exception) when (exception is ArgumentException) {
@@ -579,6 +624,22 @@ internal sealed partial class GalateaDelegationSqliteStore {
             }
         }
     }
+
+    private static bool HasNoEnsureBackoff(
+        GalateaRouteBindingSnapshot route
+    ) => route.EnsureAttemptCount == 0
+        && route.EnsureLastCode is null
+        && route.NextEnsureAtUnixTimeMilliseconds is null;
+
+    private static bool HasValidEnsureBackoff(
+        GalateaRouteBindingSnapshot route
+    ) => route.EnsureAttemptCount switch {
+        0 => route.EnsureLastCode is null
+            && route.NextEnsureAtUnixTimeMilliseconds is null,
+        > 0 => route.EnsureLastCode is not null
+            && route.NextEnsureAtUnixTimeMilliseconds is >= 0,
+        _ => false
+    };
 
     private static void ValidateMailShape(
         GalateaOutboundMailSnapshot mail,
@@ -648,9 +709,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     mail.RequestedThreadId,
                     mail.AcceptedThreadId,
                     StringComparison.Ordinal)
-                && mail.ReconcileAttemptCount == 0
-                && mail.ReconcileLastCode is null
-                && mail.NextReconcileAtUnixTimeMilliseconds is null,
+                && HasValidReconcileBackoff(mail),
             GalateaDurableMailState.TerminalCompleted =>
                 mail.IsCodexRouted
                 && string.Equals(mail.FrozenRoutePolicyFingerprint,
@@ -670,23 +729,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 && mail.ReconcileLastCode is null
                 && mail.NextReconcileAtUnixTimeMilliseconds is null,
             GalateaDurableMailState.TerminalFailed =>
-                mail.IsCodexRouted
-                && string.Equals(mail.FrozenRoutePolicyFingerprint,
-                    routePolicyFingerprint, StringComparison.Ordinal)
-                && mail.OperationId is not null
-                && mail.RequestedThreadId is not null
-                && mail.AcceptedThreadId is not null
-                && mail.AcceptedTurnId is not null
-                && string.Equals(mail.RequestedThreadId,
-                    mail.AcceptedThreadId, StringComparison.Ordinal)
-                && mail.TerminalStage is not null
-                && mail.TerminalCode is not null
-                && mail.TerminalFinalSha256 is null
-                && mail.Body is null
-                && mail.EvidenceQuote is null
-                && mail.ReconcileAttemptCount == 0
-                && mail.ReconcileLastCode is null
-                && mail.NextReconcileAtUnixTimeMilliseconds is null,
+                IsDispatchedTerminalFailure(mail, routePolicyFingerprint)
+                || IsPreflightTaskFailure(mail),
             GalateaDurableMailState.Quarantined =>
                 mail.IsCodexRouted
                 && mail.Body is not null
@@ -748,6 +792,63 @@ internal sealed partial class GalateaDelegationSqliteStore {
             throw Corrupt("An outbound mail contains invalid bounded data.", exception);
         }
     }
+
+    private static bool IsDispatchedTerminalFailure(
+        GalateaOutboundMailSnapshot mail,
+        string routePolicyFingerprint
+    ) => mail.IsCodexRouted
+        && string.Equals(
+            mail.FrozenRoutePolicyFingerprint,
+            routePolicyFingerprint,
+            StringComparison.Ordinal)
+        && mail.OperationId is not null
+        && mail.RequestedThreadId is not null
+        && mail.AcceptedThreadId is not null
+        && mail.AcceptedTurnId is not null
+        && string.Equals(
+            mail.RequestedThreadId,
+            mail.AcceptedThreadId,
+            StringComparison.Ordinal)
+        && mail.TerminalStage is not null
+        && mail.TerminalCode is not null
+        && HasReleasedTerminalPayload(mail);
+
+    private static bool IsPreflightTaskFailure(
+        GalateaOutboundMailSnapshot mail
+    ) => mail.IsCodexRouted
+        && mail.FrozenRoutePolicyFingerprint is null
+        && mail.OperationId is null
+        && mail.RequestedThreadId is null
+        && mail.AcceptedThreadId is null
+        && mail.AcceptedTurnId is null
+        && string.Equals(
+            mail.TerminalStage,
+            GalateaDelegationDurableContract.TaskTooLargeStage,
+            StringComparison.Ordinal)
+        && string.Equals(
+            mail.TerminalCode,
+            GalateaDelegationDurableContract.TaskTooLargeCode,
+            StringComparison.Ordinal)
+        && HasReleasedTerminalPayload(mail);
+
+    private static bool HasReleasedTerminalPayload(
+        GalateaOutboundMailSnapshot mail
+    ) => mail.TerminalFinalSha256 is null
+        && mail.Body is null
+        && mail.EvidenceQuote is null
+        && mail.ReconcileAttemptCount == 0
+        && mail.ReconcileLastCode is null
+        && mail.NextReconcileAtUnixTimeMilliseconds is null;
+
+    private static bool HasValidReconcileBackoff(
+        GalateaOutboundMailSnapshot mail
+    ) => mail.ReconcileAttemptCount switch {
+        0 => mail.ReconcileLastCode is null
+            && mail.NextReconcileAtUnixTimeMilliseconds is null,
+        > 0 => mail.ReconcileLastCode is not null
+            && mail.NextReconcileAtUnixTimeMilliseconds is >= 0,
+        _ => false
+    };
 
     private static void ValidateNoticeShape(
         GalateaReplyNoticeSnapshot notice,

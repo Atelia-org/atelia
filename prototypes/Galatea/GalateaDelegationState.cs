@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Atelia.EventJournal;
 
 namespace Atelia.Galatea.Server;
 
@@ -6,9 +7,9 @@ internal static class GalateaDelegationStateBounds {
     internal const int MaximumCapturedArtifacts =
         TextExtractorBounds.MaximumToolCallCount;
     internal const int MaximumCandidateCount =
-        GalateaDelegationCoordinator.MaximumCandidateCount;
+        GalateaDelegationDurableContract.MaximumCandidateCount;
     internal const int MaximumCandidateUtf8Bytes =
-        GalateaDelegationCoordinator.MaximumCandidateUtf8Bytes;
+        GalateaDelegationDurableContract.MaximumCandidateUtf8Bytes;
     internal const int MaximumReplyNoticeCount =
         GalateaPlayerObservationEnvelope.MaximumNoticeCount;
     internal const int MaximumObservationUtf8Bytes =
@@ -16,6 +17,7 @@ internal static class GalateaDelegationStateBounds {
     internal const int MaximumIdentityUtf8Bytes = 1024;
     internal const int MaximumOperationIdUtf8Bytes = 512;
     internal const int MaximumFailureTokenUtf8Bytes = 128;
+    internal const int MaximumTaskUtf8Bytes = 1024 * 1024;
 }
 
 internal enum GalateaDelegationRouteState {
@@ -54,16 +56,20 @@ internal enum GalateaReplyLeaseState {
     Quarantined
 }
 
-internal sealed record GalateaDelegationStoreIdentity(
+internal sealed record GalateaDelegationStoreOwner(
     string UserId,
     string SessionRepositoryId,
-    string CaptureFromPhysicalFrontier,
-    string? BaselineSelectedHead,
     string RoutePolicyFingerprint
+);
+
+internal sealed record GalateaDelegationStoreBaseline(
+    EventJournalPhysicalAppendFrontier CaptureFromPhysicalFrontier,
+    string? SelectedHead
 );
 
 internal sealed record GalateaDelegationStoreLimits(
     int MaximumQueuedMails,
+    int MaximumTaskUtf8Bytes,
     int MaximumReplyUtf8Bytes,
     int MaximumInboxReplies,
     int MaximumInboxUtf8Bytes
@@ -130,6 +136,9 @@ internal sealed record GalateaRouteBindingSnapshot(
     string RoutePolicyFingerprint,
     string? ActiveDispatchId,
     string? QuarantineCode,
+    int EnsureAttemptCount,
+    string? EnsureLastCode,
+    long? NextEnsureAtUnixTimeMilliseconds,
     long Revision
 );
 
@@ -166,7 +175,8 @@ internal sealed record GalateaReplyLeaseSnapshot(
 );
 
 internal sealed record GalateaDelegationStateSnapshot(
-    GalateaDelegationStoreIdentity Identity,
+    GalateaDelegationStoreOwner Owner,
+    GalateaDelegationStoreBaseline Baseline,
     GalateaDelegationStoreLimits Limits,
     long StoreRevision,
     long NextCompletionSequence,
@@ -191,6 +201,35 @@ internal sealed class GalateaDelegationStoreConflictException
     : InvalidOperationException {
     internal GalateaDelegationStoreConflictException(string message)
         : base(message) { }
+}
+
+internal sealed class GalateaDelegationStoreReadOnlyException
+    : InvalidOperationException {
+    internal GalateaDelegationStoreReadOnlyException()
+        : base("The delegation store was opened read-only.") { }
+}
+
+internal sealed class GalateaDelegationInboxBackpressureException
+    : InvalidOperationException {
+    internal GalateaDelegationInboxBackpressureException(
+        long currentCount,
+        long currentUtf8Bytes,
+        int reservedCount,
+        int reservedUtf8Bytes,
+        GalateaDelegationStoreLimits limits
+    ) : base("The delegation inbox has no capacity for one durable notice.") {
+        CurrentCount = currentCount;
+        CurrentUtf8Bytes = currentUtf8Bytes;
+        ReservedCount = reservedCount;
+        ReservedUtf8Bytes = reservedUtf8Bytes;
+        Limits = limits;
+    }
+
+    internal long CurrentCount { get; }
+    internal long CurrentUtf8Bytes { get; }
+    internal int ReservedCount { get; }
+    internal int ReservedUtf8Bytes { get; }
+    internal GalateaDelegationStoreLimits Limits { get; }
 }
 
 internal sealed class GalateaDelegationCommitOutcomeException

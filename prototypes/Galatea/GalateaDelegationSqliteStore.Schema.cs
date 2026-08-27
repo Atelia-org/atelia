@@ -11,11 +11,18 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 schema_version INTEGER NOT NULL CHECK(schema_version = 1),
                 user_id TEXT NOT NULL,
                 session_repository_id TEXT NOT NULL,
-                capture_frontier TEXT NOT NULL,
+                capture_frontier_segment_number INTEGER NOT NULL
+                    CHECK(capture_frontier_segment_number
+                        BETWEEN 1 AND 4294967295),
+                capture_frontier_tail_offset INTEGER NOT NULL
+                    CHECK(capture_frontier_tail_offset >= 4
+                        AND capture_frontier_tail_offset % 4 = 0),
                 baseline_selected_head TEXT NULL,
                 route_policy_fingerprint TEXT NOT NULL,
                 maximum_queued_mails INTEGER NOT NULL
                     CHECK(maximum_queued_mails >= 1),
+                maximum_task_utf8_bytes INTEGER NOT NULL
+                    CHECK(maximum_task_utf8_bytes >= 1),
                 maximum_reply_utf8_bytes INTEGER NOT NULL
                     CHECK(maximum_reply_utf8_bytes >= 1),
                 maximum_inbox_replies INTEGER NOT NULL
@@ -95,6 +102,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 active_dispatch_id TEXT NULL
                     REFERENCES outbound_mail(dispatch_id) ON DELETE RESTRICT,
                 quarantine_code TEXT NULL,
+                ensure_attempt_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(ensure_attempt_count >= 0),
+                ensure_last_code TEXT NULL,
+                next_ensure_at_ms INTEGER NULL
+                    CHECK(next_ensure_at_ms IS NULL
+                        OR next_ensure_at_ms >= 0),
                 revision INTEGER NOT NULL CHECK(revision >= 0)
             ) STRICT;
 
@@ -159,7 +172,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
 
     private static void InsertInitialState(
         SqliteConnection connection,
-        GalateaDelegationStoreIdentity identity,
+        GalateaDelegationStoreOwner owner,
+        GalateaDelegationStoreBaseline baseline,
         GalateaDelegationStoreLimits limits
     ) {
         using SqliteTransaction transaction =
@@ -169,39 +183,51 @@ internal sealed partial class GalateaDelegationSqliteStore {
             meta.CommandText = """
                 INSERT INTO delegation_meta(
                     singleton, schema_version, user_id,
-                    session_repository_id, capture_frontier,
+                    session_repository_id,
+                    capture_frontier_segment_number,
+                    capture_frontier_tail_offset,
                     baseline_selected_head, route_policy_fingerprint,
-                    maximum_queued_mails, maximum_reply_utf8_bytes,
-                    maximum_inbox_replies, maximum_inbox_utf8_bytes,
-                    next_completion_sequence, revision
+                    maximum_queued_mails, maximum_task_utf8_bytes,
+                    maximum_reply_utf8_bytes, maximum_inbox_replies,
+                    maximum_inbox_utf8_bytes, next_completion_sequence,
+                    revision
                 ) VALUES (
-                    1, $schema, $user, $repository, $frontier,
-                    $baseline, $policy, $maximumQueued,
+                    1, $schema, $user, $repository,
+                    $frontierSegment, $frontierTail,
+                    $baseline, $policy, $maximumQueued, $maximumTaskBytes,
                     $maximumReplyBytes, $maximumInboxReplies,
                     $maximumInboxBytes, 1, 0
                 );
                 """;
             meta.Parameters.AddWithValue("$schema", SchemaVersion);
-            meta.Parameters.AddWithValue("$user", identity.UserId);
+            meta.Parameters.AddWithValue("$user", owner.UserId);
             meta.Parameters.AddWithValue(
                 "$repository",
-                identity.SessionRepositoryId
+                owner.SessionRepositoryId
             );
             meta.Parameters.AddWithValue(
-                "$frontier",
-                identity.CaptureFromPhysicalFrontier
+                "$frontierSegment",
+                baseline.CaptureFromPhysicalFrontier.SegmentNumber
+            );
+            meta.Parameters.AddWithValue(
+                "$frontierTail",
+                baseline.CaptureFromPhysicalFrontier.TailOffset
             );
             meta.Parameters.AddWithValue(
                 "$baseline",
-                (object?)identity.BaselineSelectedHead ?? DBNull.Value
+                (object?)baseline.SelectedHead ?? DBNull.Value
             );
             meta.Parameters.AddWithValue(
                 "$policy",
-                identity.RoutePolicyFingerprint
+                owner.RoutePolicyFingerprint
             );
             meta.Parameters.AddWithValue(
                 "$maximumQueued",
                 limits.MaximumQueuedMails
+            );
+            meta.Parameters.AddWithValue(
+                "$maximumTaskBytes",
+                limits.MaximumTaskUtf8Bytes
             );
             meta.Parameters.AddWithValue(
                 "$maximumReplyBytes",
@@ -223,12 +249,16 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 INSERT INTO route_binding(
                     singleton, state, binding_operation_id, thread_id,
                     policy_fingerprint, active_dispatch_id,
-                    quarantine_code, revision
-                ) VALUES (1, 'Unbound', NULL, NULL, $policy, NULL, NULL, 0);
+                    quarantine_code, ensure_attempt_count, ensure_last_code,
+                    next_ensure_at_ms, revision
+                ) VALUES (
+                    1, 'Unbound', NULL, NULL, $policy, NULL, NULL,
+                    0, NULL, NULL, 0
+                );
                 """;
             route.Parameters.AddWithValue(
                 "$policy",
-                identity.RoutePolicyFingerprint
+                owner.RoutePolicyFingerprint
             );
             route.ExecuteNonQuery();
         }

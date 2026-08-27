@@ -22,39 +22,48 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
 
     private readonly string _storeDirectory;
     private readonly string _databasePath;
-    private readonly GalateaDelegationStoreIdentity _identity;
+    private readonly GalateaDelegationStoreOwner _owner;
+    private readonly GalateaDelegationStoreBaseline _baseline;
     private readonly GalateaDelegationStoreLimits _limits;
     private readonly GalateaDelegationStoreTestHooks _hooks;
     private readonly FileStream _lifetimeLock;
+    private readonly bool _readOnly;
     private readonly object _gate = new();
     private bool _disposed;
 
     private GalateaDelegationSqliteStore(
         string storeDirectory,
-        GalateaDelegationStoreIdentity identity,
+        GalateaDelegationStoreOwner owner,
+        GalateaDelegationStoreBaseline baseline,
         GalateaDelegationStoreLimits limits,
         GalateaDelegationStoreTestHooks hooks,
-        FileStream lifetimeLock
+        FileStream lifetimeLock,
+        bool readOnly
     ) {
         _storeDirectory = storeDirectory;
         _databasePath = Path.Combine(storeDirectory, DatabaseFileName);
-        _identity = identity;
+        _owner = owner;
+        _baseline = baseline;
         _limits = limits;
         _hooks = hooks;
         _lifetimeLock = lifetimeLock;
+        _readOnly = readOnly;
     }
 
     internal string StoreDirectory => _storeDirectory;
+    internal GalateaDelegationStoreBaseline Baseline => _baseline;
 
     internal static GalateaDelegationSqliteStore CreateNew(
         string storeDirectory,
-        GalateaDelegationStoreIdentity identity,
+        GalateaDelegationStoreOwner owner,
+        GalateaDelegationStoreBaseline baseline,
         GalateaDelegationStoreLimits limits,
         GalateaDelegationStoreTestHooks? hooks = null
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(storeDirectory);
         GalateaDelegationDurableFiles.RequireLinux();
-        ValidateIdentity(identity);
+        ValidateOwner(owner);
+        ValidateBaseline(baseline);
         ValidateLimits(limits);
         string fullPath = Path.TrimEndingDirectorySeparator(
             Path.GetFullPath(storeDirectory)
@@ -84,15 +93,17 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             );
             ConfigureCreatedDatabase(connection);
             CreateSchema(connection);
-            InsertInitialState(connection, identity, limits);
-            ValidateOpenedDatabase(connection, identity, limits);
+            InsertInitialState(connection, owner, baseline, limits);
+            _ = ValidateOpenedDatabase(connection, owner, limits);
             GalateaDelegationDurableFiles.FlushDirectory(fullPath);
             return new GalateaDelegationSqliteStore(
                 fullPath,
-                identity,
+                owner,
+                baseline,
                 limits,
                 hooks ?? GalateaDelegationStoreTestHooks.None,
-                lifetimeLock
+                lifetimeLock,
+                readOnly: false
             );
         }
         catch {
@@ -106,13 +117,39 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
 
     internal static GalateaDelegationSqliteStore OpenExisting(
         string storeDirectory,
-        GalateaDelegationStoreIdentity identity,
+        GalateaDelegationStoreOwner owner,
         GalateaDelegationStoreLimits limits,
         GalateaDelegationStoreTestHooks? hooks = null
+    ) => OpenExistingCore(
+        storeDirectory,
+        owner,
+        limits,
+        readOnly: false,
+        hooks
+    );
+
+    internal static GalateaDelegationSqliteStore OpenExistingReadOnly(
+        string storeDirectory,
+        GalateaDelegationStoreOwner owner,
+        GalateaDelegationStoreLimits limits
+    ) => OpenExistingCore(
+        storeDirectory,
+        owner,
+        limits,
+        readOnly: true,
+        hooks: null
+    );
+
+    private static GalateaDelegationSqliteStore OpenExistingCore(
+        string storeDirectory,
+        GalateaDelegationStoreOwner owner,
+        GalateaDelegationStoreLimits limits,
+        bool readOnly,
+        GalateaDelegationStoreTestHooks? hooks
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(storeDirectory);
         GalateaDelegationDurableFiles.RequireLinux();
-        ValidateIdentity(identity);
+        ValidateOwner(owner);
         ValidateLimits(limits);
         string fullPath = Path.TrimEndingDirectorySeparator(
             Path.GetFullPath(storeDirectory)
@@ -138,16 +175,20 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             RejectReparsePoint(databasePath, "delegation database");
             using SqliteConnection connection = OpenConnection(
                 databasePath,
-                create: false
+                create: false,
+                readOnly
             );
-            ConfigureOpenedDatabase(connection);
-            ValidateOpenedDatabase(connection, identity, limits);
+            ConfigureOpenedDatabase(connection, readOnly);
+            GalateaDelegationStateSnapshot snapshot =
+                ValidateOpenedDatabase(connection, owner, limits);
             return new GalateaDelegationSqliteStore(
                 fullPath,
-                identity,
+                owner,
+                snapshot.Baseline,
                 limits,
                 hooks ?? GalateaDelegationStoreTestHooks.None,
-                lifetimeLock
+                lifetimeLock,
+                readOnly
             );
         }
         catch {
@@ -183,15 +224,16 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         RejectReparsePoint(_databasePath, "delegation database");
         SqliteConnection connection = OpenConnection(
             _databasePath,
-            create: false
+            create: false,
+            _readOnly
         );
         try {
-            ConfigureOpenedDatabase(connection);
+            ConfigureOpenedDatabase(connection, _readOnly);
             ValidateSchemaIdentity(connection);
-            RequireIdentity(
+            RequireOwner(
                 connection,
                 transaction: null,
-                _identity,
+                _owner,
                 _limits
             );
             return connection;
@@ -204,13 +246,16 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
 
     private static SqliteConnection OpenConnection(
         string databasePath,
-        bool create
+        bool create,
+        bool readOnly = false
     ) {
         var builder = new SqliteConnectionStringBuilder {
             DataSource = databasePath,
             Mode = create
                 ? SqliteOpenMode.ReadWriteCreate
-                : SqliteOpenMode.ReadWrite,
+                : readOnly
+                    ? SqliteOpenMode.ReadOnly
+                    : SqliteOpenMode.ReadWrite,
             Cache = SqliteCacheMode.Private,
             Pooling = false,
             DefaultTimeout = 1
@@ -224,7 +269,7 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         SqliteConnection connection
     ) {
         ExecutePragma(connection, "PRAGMA page_size = 4096;");
-        ConfigureOpenedDatabase(connection);
+        ConfigureOpenedDatabase(connection, readOnly: false);
         ExecutePragma(
             connection,
             $"PRAGMA application_id = {ApplicationId};"
@@ -236,20 +281,28 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
     }
 
     private static void ConfigureOpenedDatabase(
-        SqliteConnection connection
+        SqliteConnection connection,
+        bool readOnly
     ) {
         ExecutePragma(connection, "PRAGMA foreign_keys = ON;");
-        ExecutePragma(connection, "PRAGMA journal_mode = DELETE;");
-        ExecutePragma(connection, "PRAGMA synchronous = EXTRA;");
+        if (!readOnly) {
+            ExecutePragma(connection, "PRAGMA journal_mode = DELETE;");
+            ExecutePragma(connection, "PRAGMA synchronous = EXTRA;");
+        }
         ExecutePragma(
             connection,
             $"PRAGMA busy_timeout = {BusyTimeoutMilliseconds};"
         );
         ExecutePragma(connection, "PRAGMA temp_store = MEMORY;");
         ExecutePragma(connection, "PRAGMA trusted_schema = OFF;");
+        if (readOnly) {
+            ExecutePragma(connection, "PRAGMA query_only = ON;");
+        }
         RequirePragmaInteger(connection, "page_size", 4096);
         RequirePragmaText(connection, "journal_mode", "delete");
-        RequirePragmaInteger(connection, "synchronous", 3);
+        if (!readOnly) {
+            RequirePragmaInteger(connection, "synchronous", 3);
+        }
         RequirePragmaInteger(connection, "foreign_keys", 1);
         RequirePragmaInteger(
             connection,
@@ -258,11 +311,12 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         );
         RequirePragmaInteger(connection, "temp_store", 2);
         RequirePragmaInteger(connection, "trusted_schema", 0);
+        RequirePragmaInteger(connection, "query_only", readOnly ? 1 : 0);
     }
 
-    private static void ValidateOpenedDatabase(
+    private static GalateaDelegationStateSnapshot ValidateOpenedDatabase(
         SqliteConnection connection,
-        GalateaDelegationStoreIdentity identity,
+        GalateaDelegationStoreOwner owner,
         GalateaDelegationStoreLimits limits
     ) {
         ValidateSchemaIdentity(connection);
@@ -286,8 +340,8 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
                 );
             }
         }
-        RequireIdentity(connection, transaction: null, identity, limits);
-        _ = ReadSnapshotCore(connection, transaction: null);
+        RequireOwner(connection, transaction: null, owner, limits);
+        return ReadSnapshotCore(connection, transaction: null);
     }
 
     private static void ValidateSchemaIdentity(SqliteConnection connection) {
@@ -328,11 +382,13 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         }
         RequireExactColumns(connection, "delegation_meta", [
             "singleton", "schema_version", "user_id",
-            "session_repository_id", "capture_frontier",
+            "session_repository_id", "capture_frontier_segment_number",
+            "capture_frontier_tail_offset",
             "baseline_selected_head", "route_policy_fingerprint",
-            "maximum_queued_mails", "maximum_reply_utf8_bytes",
-            "maximum_inbox_replies", "maximum_inbox_utf8_bytes",
-            "next_completion_sequence", "revision"
+            "maximum_queued_mails", "maximum_task_utf8_bytes",
+            "maximum_reply_utf8_bytes", "maximum_inbox_replies",
+            "maximum_inbox_utf8_bytes", "next_completion_sequence",
+            "revision"
         ]);
         RequireExactColumns(connection, "action_capture", [
             "source_action_address", "capture_sequence",
@@ -353,7 +409,8 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         RequireExactColumns(connection, "route_binding", [
             "singleton", "state", "binding_operation_id", "thread_id",
             "policy_fingerprint", "active_dispatch_id",
-            "quarantine_code", "revision"
+            "quarantine_code", "ensure_attempt_count", "ensure_last_code",
+            "next_ensure_at_ms", "revision"
         ]);
         RequireExactColumns(connection, "reply_notice", [
             "notice_id", "dispatch_id", "kind", "body", "stage", "code",
@@ -499,20 +556,19 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         }
     }
 
-    private static void RequireIdentity(
+    private static void RequireOwner(
         SqliteConnection connection,
         SqliteTransaction? transaction,
-        GalateaDelegationStoreIdentity expected,
+        GalateaDelegationStoreOwner expected,
         GalateaDelegationStoreLimits expectedLimits
     ) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
             SELECT schema_version, user_id, session_repository_id,
-                   capture_frontier, baseline_selected_head,
                    route_policy_fingerprint, maximum_queued_mails,
-                   maximum_reply_utf8_bytes, maximum_inbox_replies,
-                   maximum_inbox_utf8_bytes
+                   maximum_task_utf8_bytes, maximum_reply_utf8_bytes,
+                   maximum_inbox_replies, maximum_inbox_utf8_bytes
             FROM delegation_meta
             WHERE singleton = 1;
             """;
@@ -524,34 +580,19 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             || !string.Equals(reader.GetString(2),
                 expected.SessionRepositoryId, StringComparison.Ordinal)
             || !string.Equals(reader.GetString(3),
-                expected.CaptureFromPhysicalFrontier,
-                StringComparison.Ordinal)
-            || !NullableTextEquals(reader, 4, expected.BaselineSelectedHead)
-            || !string.Equals(reader.GetString(5),
                 expected.RoutePolicyFingerprint,
                 StringComparison.Ordinal)
-            || reader.GetInt32(6) != expectedLimits.MaximumQueuedMails
-            || reader.GetInt32(7) != expectedLimits.MaximumReplyUtf8Bytes
-            || reader.GetInt32(8) != expectedLimits.MaximumInboxReplies
-            || reader.GetInt32(9) != expectedLimits.MaximumInboxUtf8Bytes
+            || reader.GetInt32(4) != expectedLimits.MaximumQueuedMails
+            || reader.GetInt32(5) != expectedLimits.MaximumTaskUtf8Bytes
+            || reader.GetInt32(6) != expectedLimits.MaximumReplyUtf8Bytes
+            || reader.GetInt32(7) != expectedLimits.MaximumInboxReplies
+            || reader.GetInt32(8) != expectedLimits.MaximumInboxUtf8Bytes
             || reader.Read()) {
             throw new InvalidDataException(
-                "Delegation store identity or baseline does not match."
+                "Delegation store owner identity or limits do not match."
             );
         }
     }
-
-    private static bool NullableTextEquals(
-        SqliteDataReader reader,
-        int ordinal,
-        string? expected
-    ) => reader.IsDBNull(ordinal)
-        ? expected is null
-        : string.Equals(
-            reader.GetString(ordinal),
-            expected,
-            StringComparison.Ordinal
-        );
 
     private static void ExecutePragma(
         SqliteConnection connection,
@@ -604,32 +645,60 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         FileOptions.WriteThrough
     );
 
-    private static void ValidateIdentity(
-        GalateaDelegationStoreIdentity identity
+    private static void ValidateOwner(
+        GalateaDelegationStoreOwner owner
     ) {
-        ArgumentNullException.ThrowIfNull(identity);
-        RequireBoundedText(identity.UserId, nameof(identity.UserId));
+        ArgumentNullException.ThrowIfNull(owner);
+        RequireBoundedText(owner.UserId, nameof(owner.UserId));
         RequireBoundedText(
-            identity.SessionRepositoryId,
-            nameof(identity.SessionRepositoryId)
+            owner.SessionRepositoryId,
+            nameof(owner.SessionRepositoryId)
         );
-        RequireEventAddress(
-            identity.CaptureFromPhysicalFrontier,
-            nameof(identity.CaptureFromPhysicalFrontier)
+        RequireRoutePolicyFingerprint(
+            owner.RoutePolicyFingerprint,
+            nameof(owner.RoutePolicyFingerprint)
         );
-        if (identity.BaselineSelectedHead is { } baseline) {
-            RequireEventAddress(baseline, nameof(identity.BaselineSelectedHead));
+    }
+
+    private static void ValidateBaseline(
+        GalateaDelegationStoreBaseline baseline
+    ) {
+        ArgumentNullException.ThrowIfNull(baseline);
+        Atelia.EventJournal.EventJournalPhysicalAppendFrontier frontier;
+        try {
+            frontier = new(
+                baseline.CaptureFromPhysicalFrontier.SegmentNumber,
+                baseline.CaptureFromPhysicalFrontier.TailOffset
+            );
         }
-        RequireBoundedText(
-            identity.RoutePolicyFingerprint,
-            nameof(identity.RoutePolicyFingerprint)
-        );
+        catch (ArgumentOutOfRangeException exception) {
+            throw new ArgumentException(
+                "CaptureFromPhysicalFrontier is invalid.",
+                nameof(baseline),
+                exception
+            );
+        }
+        if (baseline.SelectedHead is { } selectedHead) {
+            RequireEventAddress(selectedHead, nameof(baseline.SelectedHead));
+            Atelia.EventJournal.EventAddress address =
+                Atelia.SessionJournal.EventAddressTextCodec.Parse(
+                    selectedHead
+                );
+            if (!frontier.Contains(address)) {
+                throw new ArgumentException(
+                    "SelectedHead must be physically contained by the capture frontier.",
+                    nameof(baseline)
+                );
+            }
+        }
     }
 
     private static void ValidateLimits(GalateaDelegationStoreLimits limits) {
         ArgumentNullException.ThrowIfNull(limits);
         if (limits.MaximumQueuedMails is < 1
                 or > GalateaDelegationStateBounds.MaximumCandidateCount
+            || limits.MaximumTaskUtf8Bytes is < 1
+                or > GalateaDelegationStateBounds.MaximumTaskUtf8Bytes
             || limits.MaximumReplyUtf8Bytes is < 1
                 or > GalateaPlayerObservationEnvelope.MaximumReplyUtf8Bytes
             || limits.MaximumInboxReplies is < 1
@@ -679,6 +748,21 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         }
     }
 
+    private static void RequireRoutePolicyFingerprint(
+        string value,
+        string parameter
+    ) {
+        RequireBoundedText(value, parameter);
+        if (!value.StartsWith("gdrp1-", StringComparison.Ordinal)
+            || value.Length != 70
+            || !IsLowerHexSha256(value[6..])) {
+            throw new ArgumentException(
+                $"{parameter} must be a canonical route policy fingerprint.",
+                parameter
+            );
+        }
+    }
+
     private static string ComputeSha256(string text) =>
         Convert.ToHexString(SHA256.HashData(StrictUtf8.GetBytes(text)))
             .ToLowerInvariant();
@@ -709,4 +793,11 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
 
     private void ThrowIfDisposed() =>
         ObjectDisposedException.ThrowIf(_disposed, this);
+
+    private void ThrowIfNotWritable() {
+        ThrowIfDisposed();
+        if (_readOnly) {
+            throw new GalateaDelegationStoreReadOnlyException();
+        }
+    }
 }

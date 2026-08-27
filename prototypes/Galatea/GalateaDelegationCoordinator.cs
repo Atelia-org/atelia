@@ -1,5 +1,3 @@
-using System.Buffers.Binary;
-using System.Security.Cryptography;
 using System.Text;
 using Atelia.Diagnostics;
 using Atelia.EventJournal;
@@ -45,12 +43,14 @@ internal sealed class GalateaDelegationCoordinatorTestHooks {
 /// capture, dispatch, Undo and reply cutoffs have a single authority.
 /// </summary>
 internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
-    internal const int MaximumCandidateCount = 4_096;
-    internal const int MaximumCandidateUtf8Bytes = 64 * 1024 * 1024;
-    internal const int MaximumActionHeadTombstones = 4_096;
+    internal const int MaximumCandidateCount =
+        GalateaDelegationDurableContract.MaximumCandidateCount;
+    internal const int MaximumCandidateUtf8Bytes =
+        GalateaDelegationDurableContract.MaximumCandidateUtf8Bytes;
+    internal const int MaximumActionHeadTombstones =
+        GalateaDelegationDurableContract.MaximumActionHeadTombstones;
 
     private const string LogCategory = "Galatea.Delegation";
-    private const string DispatchPrefix = "gd1-";
     private const int MaximumWireIdentityUtf8Bytes = 512;
     private static readonly UTF8Encoding StrictUtf8 = new(
         encoderShouldEmitUTF8Identifier: false,
@@ -383,30 +383,11 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
         string userId,
         EventAddress sourceActionHead,
         int artifactOrdinal
-    ) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
-        ArgumentOutOfRangeException.ThrowIfNegative(artifactOrdinal);
-        using IncrementalHash hash = IncrementalHash.CreateHash(
-            HashAlgorithmName.SHA256
-        );
-        AppendLengthPrefixed(hash, userId);
-        AppendLengthPrefixed(
-            hash,
-            GalateaDelegateConfigReader.CanonicalRecipient
-        );
-        AppendLengthPrefixed(
-            hash,
-            EventAddressTextCodec.Format(sourceActionHead)
-        );
-        AppendLengthPrefixed(
-            hash,
-            artifactOrdinal.ToString(
-                System.Globalization.CultureInfo.InvariantCulture
-            )
-        );
-        return DispatchPrefix
-            + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
-    }
+    ) => GalateaDelegationDurableContract.CreateDispatchId(
+        userId,
+        sourceActionHead,
+        artifactOrdinal
+    );
 
     public ValueTask DisposeAsync() {
         lock (_gate) {
@@ -1053,17 +1034,6 @@ internal sealed class GalateaDelegationCoordinator : IAsyncDisposable {
                 exception
             );
         }
-    }
-
-    private static void AppendLengthPrefixed(
-        IncrementalHash hash,
-        string value
-    ) {
-        byte[] utf8 = StrictUtf8.GetBytes(value);
-        Span<byte> length = stackalloc byte[sizeof(int)];
-        BinaryPrimitives.WriteInt32BigEndian(length, utf8.Length);
-        hash.AppendData(length);
-        hash.AppendData(utf8);
     }
 
     private static bool IsWireIdentity(string? value) {

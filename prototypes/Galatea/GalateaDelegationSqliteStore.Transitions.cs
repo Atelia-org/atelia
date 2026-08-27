@@ -9,7 +9,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
     ) {
         ValidateCaptureRequest(request);
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             using (SqliteConnection connection = OpenVerifiedConnection()) {
                 GalateaDelegationCaptureResult? existing =
                     TryReadExistingCapture(connection, request);
@@ -21,8 +21,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     request.SourceActionAddress
                 );
             string[] dispatchIds = request.Intents
-                .Select((_, ordinal) => GalateaDelegationCoordinator
-                    .CreateDispatchId(_identity.UserId, sourceAddress, ordinal))
+                .Select((_, ordinal) => GalateaDelegationDurableContract
+                    .CreateDispatchId(_owner.UserId, sourceAddress, ordinal))
                 .ToArray();
             return ExecuteWrite(
                 "capture-action-batch",
@@ -115,7 +115,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
     ) {
         RequireOperationId(bindingOperationId);
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             return ExecuteWrite(
                 "begin-thread-binding",
                 (connection, transaction) => {
@@ -131,13 +131,27 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     using (SqliteCommand queued = connection.CreateCommand()) {
                         queued.Transaction = transaction;
                         queued.CommandText = """
-                            SELECT 1 FROM outbound_mail
-                            WHERE route_class = 'Codex' AND state = 'Queued'
+                            SELECT mail.body
+                            FROM outbound_mail AS mail
+                            JOIN action_capture AS capture
+                              ON capture.source_action_address
+                                = mail.source_action_address
+                            WHERE mail.route_class = 'Codex'
+                              AND mail.state = 'Queued'
+                            ORDER BY capture.capture_sequence,
+                                     mail.artifact_ordinal
                             LIMIT 1;
                             """;
-                        if (queued.ExecuteScalar() is null) {
+                        string? body = queued.ExecuteScalar() as string;
+                        if (body is null) {
                             throw Conflict(
                                 "Thread binding requires a queued Codex mail."
+                            );
+                        }
+                        if (StrictUtf8.GetByteCount(body)
+                                > _limits.MaximumTaskUtf8Bytes) {
+                            throw Conflict(
+                                "The FIFO head must settle its durable preflight failure before binding."
                             );
                         }
                     }
@@ -163,6 +177,90 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     return route with {
                         State = GalateaDelegationRouteState.Binding,
                         BindingOperationId = bindingOperationId,
+                        Revision = checked(route.Revision + 1)
+                    };
+                },
+                (snapshot, result) => snapshot.Route == result
+            );
+        }
+    }
+
+    internal GalateaRouteBindingSnapshot RecordThreadBindingEnsureMiss(
+        string bindingOperationId,
+        long expectedRouteRevision,
+        string code,
+        long nowUnixTimeMilliseconds
+    ) {
+        RequireOperationId(bindingOperationId);
+        RequireFailureToken(code, nameof(code));
+        ArgumentOutOfRangeException.ThrowIfNegative(nowUnixTimeMilliseconds);
+        lock (_gate) {
+            ThrowIfNotWritable();
+            return ExecuteWrite(
+                "record-thread-binding-ensure-miss",
+                (connection, transaction) => {
+                    GalateaRouteBindingSnapshot route = ReadRoute(
+                        connection,
+                        transaction
+                    );
+                    RequireRoute(
+                        route,
+                        GalateaDelegationRouteState.Binding,
+                        expectedRouteRevision
+                    );
+                    if (!string.Equals(
+                            route.BindingOperationId,
+                            bindingOperationId,
+                            StringComparison.Ordinal)) {
+                        throw Conflict(
+                            "Thread binding operation identity changed."
+                        );
+                    }
+                    if (nowUnixTimeMilliseconds > long.MaxValue - 300_000
+                        || (route.NextEnsureAtUnixTimeMilliseconds is { } due
+                            && nowUnixTimeMilliseconds < due)) {
+                        throw Conflict(
+                            "Thread binding ensure backoff is not due."
+                        );
+                    }
+                    int attempt = checked(route.EnsureAttemptCount + 1);
+                    long next = checked(
+                        nowUnixTimeMilliseconds
+                        + ComputeReconcileDelayMilliseconds(attempt)
+                    );
+                    _ = IncrementStoreRevision(connection, transaction);
+                    using SqliteCommand update = connection.CreateCommand();
+                    update.Transaction = transaction;
+                    update.CommandText = """
+                        UPDATE route_binding
+                        SET ensure_attempt_count = $attempt,
+                            ensure_last_code = $code,
+                            next_ensure_at_ms = $next,
+                            revision = revision + 1
+                        WHERE singleton = 1
+                          AND state = 'Binding'
+                          AND binding_operation_id = $operation
+                          AND revision = $revision;
+                        """;
+                    update.Parameters.AddWithValue("$attempt", attempt);
+                    update.Parameters.AddWithValue("$code", code);
+                    update.Parameters.AddWithValue("$next", next);
+                    update.Parameters.AddWithValue(
+                        "$operation",
+                        bindingOperationId
+                    );
+                    update.Parameters.AddWithValue(
+                        "$revision",
+                        expectedRouteRevision
+                    );
+                    RequireOne(
+                        update.ExecuteNonQuery(),
+                        "thread binding ensure miss"
+                    );
+                    return route with {
+                        EnsureAttemptCount = attempt,
+                        EnsureLastCode = code,
+                        NextEnsureAtUnixTimeMilliseconds = next,
                         Revision = checked(route.Revision + 1)
                     };
                 },
@@ -215,7 +313,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         RequireOperationId(bindingOperationId);
         RequireWireIdentity(threadId, nameof(threadId));
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             return ExecuteWrite(
                 "complete-thread-binding",
                 (connection, transaction) => {
@@ -240,6 +338,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     update.CommandText = """
                         UPDATE route_binding
                         SET state = 'Bound', thread_id = $thread,
+                            ensure_attempt_count = 0,
+                            ensure_last_code = NULL,
+                            next_ensure_at_ms = NULL,
                             revision = revision + 1
                         WHERE singleton = 1
                           AND state = 'Binding'
@@ -253,6 +354,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     return route with {
                         State = GalateaDelegationRouteState.Bound,
                         ThreadId = threadId,
+                        EnsureAttemptCount = 0,
+                        EnsureLastCode = null,
+                        NextEnsureAtUnixTimeMilliseconds = null,
                         Revision = checked(route.Revision + 1)
                     };
                 },
@@ -269,7 +373,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         RequireOperationId(bindingOperationId);
         RequireFailureToken(code, nameof(code));
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             return ExecuteWrite(
                 "quarantine-thread-binding",
                 (connection, transaction) => {
@@ -294,6 +398,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     update.CommandText = """
                         UPDATE route_binding
                         SET state = 'Quarantined', quarantine_code = $code,
+                            ensure_attempt_count = 0,
+                            ensure_last_code = NULL,
+                            next_ensure_at_ms = NULL,
                             revision = revision + 1
                         WHERE singleton = 1 AND state = 'Binding'
                           AND binding_operation_id = $operation
@@ -313,6 +420,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     return route with {
                         State = GalateaDelegationRouteState.Quarantined,
                         QuarantineCode = code,
+                        EnsureAttemptCount = 0,
+                        EnsureLastCode = null,
+                        NextEnsureAtUnixTimeMilliseconds = null,
                         Revision = checked(route.Revision + 1)
                     };
                 },
@@ -332,7 +442,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
     ) {
         RequireDispatchId(dispatchId);
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             return ExecuteWrite(
                 "start-queued-mail",
                 (connection, transaction) => {
@@ -359,6 +469,13 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         GalateaDurableMailState.Queued,
                         expectedMailRevision
                     );
+                    if (mail.Body is null
+                        || StrictUtf8.GetByteCount(mail.Body)
+                            > _limits.MaximumTaskUtf8Bytes) {
+                        throw Conflict(
+                            "Queued mail must settle its durable preflight failure before start."
+                        );
+                    }
                     RequireEarliestQueuedMail(
                         connection,
                         transaction,
@@ -426,6 +543,164 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
     }
 
+    internal GalateaReplyNoticeSnapshot FailQueuedMailPreflight(
+        string dispatchId,
+        long expectedMailRevision
+    ) {
+        RequireDispatchId(dispatchId);
+        lock (_gate) {
+            ThrowIfNotWritable();
+            return ExecuteWrite(
+                "fail-queued-mail-preflight",
+                (connection, transaction) => {
+                    GalateaRouteBindingSnapshot route = ReadRoute(
+                        connection,
+                        transaction
+                    );
+                    if (route.State == GalateaDelegationRouteState.Binding
+                        || route.ActiveDispatchId is not null) {
+                        throw Conflict(
+                            "Queued preflight cannot advance during binding or an active dispatch."
+                        );
+                    }
+                    GalateaOutboundMailSnapshot mail = ReadMailRequired(
+                        connection,
+                        transaction,
+                        dispatchId
+                    );
+                    RequireMail(
+                        mail,
+                        GalateaDurableMailState.Queued,
+                        expectedMailRevision
+                    );
+                    RequireEarliestAdmittedMail(
+                        connection,
+                        transaction,
+                        dispatchId
+                    );
+                    if (mail.Body is null
+                        || StrictUtf8.GetByteCount(mail.Body)
+                            <= _limits.MaximumTaskUtf8Bytes) {
+                        throw Conflict(
+                            "Queued mail does not violate the durable task bound."
+                        );
+                    }
+                    RequireInboxNoticeCapacity(
+                        connection,
+                        transaction,
+                        _limits,
+                        GalateaDelegationDurableContract.TaskTooLargeNotice
+                    );
+                    (long sequence, long storeRevision) =
+                        AllocateCompletionSequence(connection, transaction);
+                    using (SqliteCommand updateMail =
+                           connection.CreateCommand()) {
+                        updateMail.Transaction = transaction;
+                        updateMail.CommandText = """
+                            UPDATE outbound_mail
+                            SET state = 'TerminalFailed',
+                                body = NULL, evidence_quote = NULL,
+                                terminal_stage = $stage,
+                                terminal_code = $code,
+                                reconcile_attempt_count = 0,
+                                reconcile_last_code = NULL,
+                                next_reconcile_at_ms = NULL,
+                                revision = revision + 1
+                            WHERE dispatch_id = $dispatch
+                              AND state = 'Queued'
+                              AND revision = $revision;
+                            """;
+                        updateMail.Parameters.AddWithValue(
+                            "$stage",
+                            GalateaDelegationDurableContract.TaskTooLargeStage
+                        );
+                        updateMail.Parameters.AddWithValue(
+                            "$code",
+                            GalateaDelegationDurableContract.TaskTooLargeCode
+                        );
+                        updateMail.Parameters.AddWithValue(
+                            "$dispatch",
+                            dispatchId
+                        );
+                        updateMail.Parameters.AddWithValue(
+                            "$revision",
+                            expectedMailRevision
+                        );
+                        RequireOne(
+                            updateMail.ExecuteNonQuery(),
+                            "queued mail preflight failure"
+                        );
+                    }
+                    using (SqliteCommand insertNotice =
+                           connection.CreateCommand()) {
+                        insertNotice.Transaction = transaction;
+                        insertNotice.CommandText = """
+                            INSERT INTO reply_notice(
+                                notice_id, dispatch_id, kind, body, stage,
+                                code, completion_sequence, state, revision
+                            ) VALUES (
+                                $notice, $dispatch, 'DeliveryFailure', $body,
+                                $stage, $code, $sequence, 'Ready', 0
+                            );
+                            """;
+                        insertNotice.Parameters.AddWithValue(
+                            "$notice",
+                            dispatchId
+                        );
+                        insertNotice.Parameters.AddWithValue(
+                            "$dispatch",
+                            dispatchId
+                        );
+                        insertNotice.Parameters.AddWithValue(
+                            "$body",
+                            GalateaDelegationDurableContract.TaskTooLargeNotice
+                        );
+                        insertNotice.Parameters.AddWithValue(
+                            "$stage",
+                            GalateaDelegationDurableContract.TaskTooLargeStage
+                        );
+                        insertNotice.Parameters.AddWithValue(
+                            "$code",
+                            GalateaDelegationDurableContract.TaskTooLargeCode
+                        );
+                        insertNotice.Parameters.AddWithValue(
+                            "$sequence",
+                            sequence
+                        );
+                        insertNotice.ExecuteNonQuery();
+                    }
+                    _ = storeRevision;
+                    return new GalateaReplyNoticeSnapshot(
+                        dispatchId,
+                        dispatchId,
+                        GalateaReplyNoticeKind.DeliveryFailure,
+                        GalateaDelegationDurableContract.TaskTooLargeNotice,
+                        GalateaDelegationDurableContract.TaskTooLargeStage,
+                        GalateaDelegationDurableContract.TaskTooLargeCode,
+                        sequence,
+                        GalateaReplyNoticeState.Ready,
+                        ConsumedActionAddress: null,
+                        Revision: 0
+                    );
+                },
+                (snapshot, result) => snapshot.Notices.Contains(result)
+                    && snapshot.Mails.Any(value =>
+                        string.Equals(
+                            value.DispatchId,
+                            dispatchId,
+                            StringComparison.Ordinal)
+                        && value.State
+                            == GalateaDurableMailState.TerminalFailed
+                        && value.TerminalStage
+                            == GalateaDelegationDurableContract
+                                .TaskTooLargeStage
+                        && value.TerminalCode
+                            == GalateaDelegationDurableContract
+                                .TaskTooLargeCode)
+            );
+        }
+    }
+
     internal GalateaOutboundMailSnapshot MarkMailOutcomeUnknown(
         string dispatchId,
         long expectedMailRevision,
@@ -473,7 +748,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         );
     }
 
-    internal GalateaOutboundMailSnapshot RecordOutcomeUnknownReconcileMiss(
+    internal GalateaOutboundMailSnapshot RecordMailPollMiss(
         string dispatchId,
         long expectedMailRevision,
         string code,
@@ -483,17 +758,84 @@ internal sealed partial class GalateaDelegationSqliteStore {
         ArgumentOutOfRangeException.ThrowIfNegative(
             nowUnixTimeMilliseconds
         );
-        return TransitionActiveMail(
-            "record-outcome-unknown-reconcile-miss",
-            dispatchId,
-            expectedMailRevision,
-            [GalateaDurableMailState.OutcomeUnknown],
-            GalateaDurableMailState.OutcomeUnknown,
-            acceptedThreadId: null,
-            acceptedTurnId: null,
-            reconcileCode: code,
-            reconcileNowUnixTimeMilliseconds: nowUnixTimeMilliseconds
-        );
+        RequireDispatchId(dispatchId);
+        lock (_gate) {
+            ThrowIfNotWritable();
+            return ExecuteWrite(
+                "record-mail-poll-miss",
+                (connection, transaction) => {
+                    GalateaRouteBindingSnapshot route = ReadRoute(
+                        connection,
+                        transaction
+                    );
+                    GalateaOutboundMailSnapshot mail = ReadMailRequired(
+                        connection,
+                        transaction,
+                        dispatchId
+                    );
+                    if (route.State != GalateaDelegationRouteState.Bound
+                        || !string.Equals(
+                            route.ActiveDispatchId,
+                            dispatchId,
+                            StringComparison.Ordinal)
+                        || route.ThreadId is null
+                        || mail.State is not (
+                            GalateaDurableMailState.OutcomeUnknown
+                            or GalateaDurableMailState.Accepted)
+                        || mail.Revision != expectedMailRevision
+                        || !string.Equals(
+                            mail.RequestedThreadId,
+                            route.ThreadId,
+                            StringComparison.Ordinal)
+                        || nowUnixTimeMilliseconds > long.MaxValue - 300_000
+                        || (mail.NextReconcileAtUnixTimeMilliseconds
+                                is { } previous
+                            && nowUnixTimeMilliseconds < previous)) {
+                        throw Conflict(
+                            "Mail polling identity or backoff precondition failed."
+                        );
+                    }
+                    int attempt = checked(mail.ReconcileAttemptCount + 1);
+                    long next = checked(
+                        nowUnixTimeMilliseconds
+                        + ComputeReconcileDelayMilliseconds(attempt)
+                    );
+                    _ = IncrementStoreRevision(connection, transaction);
+                    using SqliteCommand update = connection.CreateCommand();
+                    update.Transaction = transaction;
+                    update.CommandText = """
+                        UPDATE outbound_mail
+                        SET reconcile_attempt_count = $attempt,
+                            reconcile_last_code = $code,
+                            next_reconcile_at_ms = $next,
+                            revision = revision + 1
+                        WHERE dispatch_id = $dispatch
+                          AND state IN ('OutcomeUnknown', 'Accepted')
+                          AND revision = $revision;
+                        """;
+                    update.Parameters.AddWithValue("$attempt", attempt);
+                    update.Parameters.AddWithValue("$code", code);
+                    update.Parameters.AddWithValue("$next", next);
+                    update.Parameters.AddWithValue("$dispatch", dispatchId);
+                    update.Parameters.AddWithValue(
+                        "$revision",
+                        expectedMailRevision
+                    );
+                    RequireOne(update.ExecuteNonQuery(), "mail poll miss");
+                    return mail with {
+                        ReconcileAttemptCount = attempt,
+                        ReconcileLastCode = code,
+                        NextReconcileAtUnixTimeMilliseconds = next,
+                        Revision = checked(mail.Revision + 1)
+                    };
+                },
+                (snapshot, result) => snapshot.Mails.Contains(result)
+                    && string.Equals(
+                        snapshot.Route.ActiveDispatchId,
+                        dispatchId,
+                        StringComparison.Ordinal)
+            );
+        }
     }
 
     internal GalateaReplyNoticeSnapshot RecordCompletedMail(
@@ -555,7 +897,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         RequireDispatchId(dispatchId);
         RequireFailureToken(code, nameof(code));
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             return ExecuteWrite(
                 "quarantine-active-mail",
                 (connection, transaction) => {
@@ -627,7 +969,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
     ) {
         RequireDispatchId(dispatchId);
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             return ExecuteWrite(
                 operation,
                 (connection, transaction) => {
@@ -739,7 +1081,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         RequireWireIdentity(threadId, nameof(threadId));
         RequireWireIdentity(turnId, nameof(turnId));
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             using (SqliteConnection currentConnection =
                    OpenVerifiedConnection()) {
                 GalateaDelegationStateSnapshot current = ReadSnapshotCore(
@@ -902,6 +1244,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         Func<SqliteConnection, SqliteTransaction, T> apply,
         Func<GalateaDelegationStateSnapshot, T, bool> isPublished
     ) {
+        ThrowIfNotWritable();
         T result;
         Exception? uncertain = null;
         using (SqliteConnection connection = OpenVerifiedConnection())
@@ -1094,6 +1437,33 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
     }
 
+    private static void RequireEarliestAdmittedMail(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string dispatchId
+    ) {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT mail.dispatch_id
+            FROM outbound_mail AS mail
+            JOIN action_capture AS capture
+              ON capture.source_action_address = mail.source_action_address
+            WHERE mail.route_class = 'Codex'
+              AND mail.state IN (
+                  'Queued', 'Started', 'OutcomeUnknown', 'Accepted'
+              )
+            ORDER BY capture.capture_sequence, mail.artifact_ordinal
+            LIMIT 1;
+            """;
+        string? earliest = command.ExecuteScalar() as string;
+        if (!string.Equals(earliest, dispatchId, StringComparison.Ordinal)) {
+            throw Conflict(
+                "Only the earliest admitted Codex mail may settle preflight."
+            );
+        }
+    }
+
     private static void RequireCaptureCapacity(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -1179,8 +1549,56 @@ internal sealed partial class GalateaDelegationSqliteStore {
         if (count >= limits.MaximumInboxReplies
             || bytes > limits.MaximumInboxUtf8Bytes
                 - reservationBytes) {
-            throw new InvalidOperationException(
-                "The durable reply inbox has no maximum-reply reservation."
+            throw new GalateaDelegationInboxBackpressureException(
+                count,
+                bytes,
+                reservedCount: 1,
+                reservationBytes,
+                limits
+            );
+        }
+    }
+
+    private static void RequireInboxNoticeCapacity(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        GalateaDelegationStoreLimits limits,
+        string noticeBody
+    ) {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT
+                COUNT(*),
+                COALESCE(SUM(length(CAST(body AS BLOB))), 0),
+                (SELECT COUNT(*) FROM route_binding
+                 WHERE active_dispatch_id IS NOT NULL)
+            FROM reply_notice WHERE state IN ('Ready', 'Leased');
+            """;
+        using SqliteDataReader reader = command.ExecuteReader();
+        if (!reader.Read()) {
+            throw Corrupt("Inbox notice capacity query failed.");
+        }
+        long count = reader.GetInt64(0);
+        long bytes = reader.GetInt64(1);
+        int activeReservations = reader.GetInt32(2);
+        int noticeBytes = StrictUtf8.GetByteCount(noticeBody);
+        int maximumReplyReservationBytes = Math.Max(
+            limits.MaximumReplyUtf8Bytes,
+            GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes
+        );
+        int reservedCount = checked(activeReservations + 1);
+        int reservedBytes = checked(
+            activeReservations * maximumReplyReservationBytes + noticeBytes
+        );
+        if (count > limits.MaximumInboxReplies - reservedCount
+            || bytes > limits.MaximumInboxUtf8Bytes - reservedBytes) {
+            throw new GalateaDelegationInboxBackpressureException(
+                count,
+                bytes,
+                reservedCount,
+                reservedBytes,
+                limits
             );
         }
     }

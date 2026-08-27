@@ -27,7 +27,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
 
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             return ExecuteWrite(
                 "begin-reply-lease-membership",
                 (connection, transaction) => {
@@ -154,7 +154,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         int bytes = StrictUtf8.GetByteCount(renderedObservation);
         string digest = ComputeSha256(renderedObservation);
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             return ExecuteWrite(
                 "bind-reply-lease-observation-base",
                 (connection, transaction) => {
@@ -226,7 +226,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         RequireWireIdentity(leaseId, nameof(leaseId));
         RequireEventAddress(observationAddress, nameof(observationAddress));
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             return ExecuteWrite(
                 "record-lease-observation-committed",
                 (connection, transaction) => {
@@ -279,7 +279,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             nameof(terminalActionAddress)
         );
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             ExecuteWrite(
                 "consume-reply-lease",
                 (connection, transaction) => {
@@ -319,7 +319,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
     ) {
         RequireWireIdentity(leaseId, nameof(leaseId));
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             ExecuteWrite(
                 "rollback-reply-lease",
                 (connection, transaction) => {
@@ -358,7 +358,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
     ) {
         RequireWireIdentity(leaseId, nameof(leaseId));
         lock (_gate) {
-            ThrowIfDisposed();
+            ThrowIfNotWritable();
             ExecuteWrite(
                 "quarantine-reply-lease",
                 (connection, transaction) => {

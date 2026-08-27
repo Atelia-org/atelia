@@ -1,7 +1,9 @@
 using Atelia.Galatea.Server;
+using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.Testing;
 using Microsoft.Data.Sqlite;
+using System.Security.Cryptography;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
@@ -10,15 +12,18 @@ public sealed class GalateaDelegationSqliteStoreTests {
     [Fact]
     public void CreateOpen_RequiresExactIdentityLimitsAndExclusiveOwner() {
         using var directory = new StoreDirectory();
-        GalateaDelegationStoreIdentity identity = Identity();
+        GalateaDelegationStoreOwner owner = Owner();
+        GalateaDelegationStoreBaseline baseline = Baseline();
         GalateaDelegationStoreLimits limits = Limits();
         using (GalateaDelegationSqliteStore store =
                GalateaDelegationSqliteStore.CreateNew(
                    directory.Path,
-                   identity,
+                   owner,
+                   baseline,
                    limits)) {
             GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
-            Assert.Equal(identity, snapshot.Identity);
+            Assert.Equal(owner, snapshot.Owner);
+            Assert.Equal(baseline, snapshot.Baseline);
             Assert.Equal(limits, snapshot.Limits);
             Assert.Empty(snapshot.Captures);
             Assert.Equal(GalateaDelegationRouteState.Unbound,
@@ -27,28 +32,168 @@ public sealed class GalateaDelegationSqliteStoreTests {
             Assert.ThrowsAny<IOException>(() =>
                 GalateaDelegationSqliteStore.OpenExisting(
                     directory.Path,
-                    identity,
+                    owner,
                     limits));
         }
 
         using GalateaDelegationSqliteStore reopened =
             GalateaDelegationSqliteStore.OpenExisting(
                 directory.Path,
-                identity,
+                owner,
                 limits);
-        Assert.Equal(identity, reopened.ReadSnapshot().Identity);
+        GalateaDelegationStateSnapshot reopenedSnapshot =
+            reopened.ReadSnapshot();
+        Assert.Equal(baseline, reopened.Baseline);
+        Assert.Equal(owner, reopenedSnapshot.Owner);
+        Assert.Equal(baseline, reopenedSnapshot.Baseline);
         reopened.Dispose();
 
         Assert.Throws<InvalidDataException>(() =>
             GalateaDelegationSqliteStore.OpenExisting(
                 directory.Path,
-                identity with { UserId = "another-user" },
+                owner with { UserId = "another-user" },
                 limits));
         Assert.Throws<InvalidDataException>(() =>
             GalateaDelegationSqliteStore.OpenExisting(
                 directory.Path,
-                identity,
+                owner with {
+                    RoutePolicyFingerprint =
+                        GalateaDelegationDurableContract
+                            .CreateRoutePolicyFingerprint(
+                                Route() with { Mode = GalateaDelegateMode.Research }
+                            )
+                },
+                limits));
+        Assert.Throws<InvalidDataException>(() =>
+            GalateaDelegationSqliteStore.OpenExisting(
+                directory.Path,
+                owner,
                 limits with { MaximumInboxReplies = 15 }));
+        Assert.Throws<InvalidDataException>(() =>
+            GalateaDelegationSqliteStore.OpenExisting(
+                directory.Path,
+                owner,
+                limits with {
+                    MaximumTaskUtf8Bytes =
+                        limits.MaximumTaskUtf8Bytes - 1
+                }));
+
+        ExecuteSql(
+            System.IO.Path.Combine(
+                directory.Path,
+                GalateaDelegationSqliteStore.DatabaseFileName
+            ),
+            "UPDATE delegation_meta SET baseline_selected_head = '"
+                + Address(2, segmentNumber: 2)
+                + "' WHERE singleton = 1;"
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            GalateaDelegationSqliteStore.OpenExisting(
+                directory.Path,
+                owner,
+                limits));
+    }
+
+    [Fact]
+    public void OpenExistingReadOnly_IsStrictLockedAndBytePreserving() {
+        using var directory = new StoreDirectory();
+        GalateaDelegationStoreOwner owner = Owner();
+        GalateaDelegationStoreBaseline baseline = Baseline();
+        GalateaDelegationStoreLimits limits = Limits();
+        GalateaDelegationCaptureRequest capture = Capture(
+            Address(9),
+            [Mail("Codex", "body")]
+        );
+        using (GalateaDelegationSqliteStore writable =
+               GalateaDelegationSqliteStore.CreateNew(
+                   directory.Path,
+                   owner,
+                   baseline,
+                   limits)) {
+            _ = writable.CaptureActionBatch(capture);
+        }
+        string databasePath = System.IO.Path.Combine(
+            directory.Path,
+            GalateaDelegationSqliteStore.DatabaseFileName
+        );
+        byte[] before = SHA256.HashData(File.ReadAllBytes(databasePath));
+
+        using (GalateaDelegationSqliteStore readOnly =
+               GalateaDelegationSqliteStore.OpenExistingReadOnly(
+                   directory.Path,
+                   owner,
+                   limits)) {
+            GalateaDelegationStateSnapshot snapshot = readOnly.ReadSnapshot();
+            Assert.Equal(owner, snapshot.Owner);
+            Assert.Equal(baseline, snapshot.Baseline);
+            Assert.Single(snapshot.Mails);
+            Assert.Throws<GalateaDelegationStoreReadOnlyException>(() =>
+                readOnly.CaptureActionBatch(capture));
+            Assert.Throws<GalateaDelegationStoreReadOnlyException>(() =>
+                readOnly.BeginThreadBinding(
+                    "bind-read-only",
+                    snapshot.Route.Revision
+                ));
+            Assert.ThrowsAny<IOException>(() =>
+                GalateaDelegationSqliteStore.OpenExisting(
+                    directory.Path,
+                    owner,
+                    limits));
+        }
+
+        Assert.Equal(before, SHA256.HashData(File.ReadAllBytes(databasePath)));
+        Assert.False(File.Exists(databasePath + "-journal"));
+        using GalateaDelegationSqliteStore reopened =
+            GalateaDelegationSqliteStore.OpenExisting(
+                directory.Path,
+                owner,
+                limits
+            );
+        Assert.Single(reopened.ReadSnapshot().Mails);
+    }
+
+    [Fact]
+    public void DurableIdentityHelpers_AreGoldenAndRoutePolicyIsExact() {
+        string dispatch = GalateaDelegationDurableContract.CreateDispatchId(
+            "user",
+            EventAddressTextCodec.Parse(Address(1)),
+            artifactOrdinal: 0
+        );
+        Assert.Equal(
+            "gd1-71025e8de66efde57f5cd47da74a3f3b"
+                + "d5e711cf45c1995162d3c2c4a43a1692",
+            dispatch
+        );
+
+        GalateaDelegateRouteConfig route = Route();
+        string fingerprint = GalateaDelegationDurableContract
+            .CreateRoutePolicyFingerprint(route);
+        Assert.StartsWith("gdrp1-", fingerprint, StringComparison.Ordinal);
+        Assert.Equal(70, fingerprint.Length);
+        GalateaDelegateRouteConfig[] drifts = [
+            route with { Recipient = "Other" },
+            route with { Kind = "other-kind" },
+            route with { Cwd = route.Cwd + "/other" },
+            route with { Mode = GalateaDelegateMode.Research },
+            route with { LocalCommandNetwork = !route.LocalCommandNetwork },
+            route with { Tools = route.Tools with {
+                WebSearch = GalateaDelegateWebSearchMode.Cached } },
+            route with { Tools = route.Tools with {
+                ImageGeneration = !route.Tools.ImageGeneration } },
+            route with { Tools = route.Tools with {
+                ViewImage = !route.Tools.ViewImage } },
+            route with { MaximumQueuedMails = route.MaximumQueuedMails + 1 },
+            route with { MaximumTaskUtf8Bytes = route.MaximumTaskUtf8Bytes + 1 },
+            route with { MaximumReplyUtf8Bytes = route.MaximumReplyUtf8Bytes + 1 },
+            route with { MaximumInboxReplies = route.MaximumInboxReplies + 1 },
+            route with {
+                MaximumInboxUtf8Bytes = route.MaximumInboxUtf8Bytes + 1 }
+        ];
+        Assert.All(drifts, drift => Assert.NotEqual(
+            fingerprint,
+            GalateaDelegationDurableContract
+                .CreateRoutePolicyFingerprint(drift)
+        ));
     }
 
     [Fact]
@@ -68,7 +213,8 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Throws<IOException>(() =>
             GalateaDelegationSqliteStore.CreateNew(
                 directory.Path,
-                Identity(),
+                Owner(),
+                Baseline(),
                 Limits()));
 
         Assert.True(File.Exists(lockPath));
@@ -81,11 +227,11 @@ public sealed class GalateaDelegationSqliteStoreTests {
     [Fact]
     public void OpenExisting_RejectsSymlinkLifetimeLockWithoutFollowingIt() {
         using var directory = new StoreDirectory();
-        GalateaDelegationStoreIdentity identity = Identity();
+        GalateaDelegationStoreOwner owner = Owner();
         GalateaDelegationStoreLimits limits = Limits();
         using (GalateaDelegationSqliteStore store =
                GalateaDelegationSqliteStore.CreateNew(
-                   directory.Path, identity, limits)) { }
+                   directory.Path, owner, Baseline(), limits)) { }
         string lockPath = System.IO.Path.Combine(
             directory.Path,
             GalateaDelegationSqliteStore.LockFileName
@@ -102,7 +248,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             Assert.Throws<InvalidDataException>(() =>
                 GalateaDelegationSqliteStore.OpenExisting(
                     directory.Path,
-                    identity,
+                    owner,
                     limits));
             Assert.True(File.Exists(target));
         }
@@ -115,11 +261,12 @@ public sealed class GalateaDelegationSqliteStoreTests {
     [Fact]
     public void Capture_EmptyTombstoneAndDuplicate_AreDurableAndZeroWrite() {
         using var directory = new StoreDirectory();
-        GalateaDelegationStoreIdentity identity = Identity();
+        GalateaDelegationStoreOwner owner = Owner();
         GalateaDelegationStoreLimits limits = Limits();
         using var store = GalateaDelegationSqliteStore.CreateNew(
             directory.Path,
-            identity,
+            owner,
+            Baseline(),
             limits
         );
         GalateaDelegationCaptureRequest empty = Capture(
@@ -161,10 +308,10 @@ public sealed class GalateaDelegationSqliteStoreTests {
                 }
             }
         );
-        GalateaDelegationStoreIdentity identity = Identity();
+        GalateaDelegationStoreOwner owner = Owner();
         GalateaDelegationStoreLimits limits = Limits();
         using (var store = GalateaDelegationSqliteStore.CreateNew(
-                   directory.Path, identity, limits, hooks)) {
+                   directory.Path, owner, Baseline(), limits, hooks)) {
             GalateaDelegationCaptureRequest request = Capture(
                 Address(11),
                 [
@@ -199,7 +346,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             GalateaDelegationSqliteStore.DatabaseFileName
         ), "VACUUM;");
         using var reopened = GalateaDelegationSqliteStore.OpenExisting(
-            directory.Path, identity, limits);
+            directory.Path, owner, limits);
         Assert.Equal([0, 1], reopened.ReadSnapshot().Mails
             .Select(static mail => mail.ArtifactOrdinal));
     }
@@ -207,11 +354,11 @@ public sealed class GalateaDelegationSqliteStoreTests {
     [Fact]
     public void EmptyCaptureTombstones_FailClosedAtExactLifetimeCapacity() {
         using var directory = new StoreDirectory();
-        GalateaDelegationStoreIdentity identity = Identity();
+        GalateaDelegationStoreOwner owner = Owner();
         GalateaDelegationStoreLimits limits = Limits();
         using (GalateaDelegationSqliteStore store =
                GalateaDelegationSqliteStore.CreateNew(
-                   directory.Path, identity, limits)) { }
+                   directory.Path, owner, Baseline(), limits)) { }
         string database = System.IO.Path.Combine(
             directory.Path,
             GalateaDelegationSqliteStore.DatabaseFileName
@@ -236,7 +383,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             """);
 
         using var reopened = GalateaDelegationSqliteStore.OpenExisting(
-            directory.Path, identity, limits);
+            directory.Path, owner, limits);
         _ = reopened.CaptureActionBatch(Capture(Address(5000), []));
         Assert.Equal(4096, reopened.ReadSnapshot().Captures.Count);
         Assert.Throws<InvalidOperationException>(() =>
@@ -258,7 +405,8 @@ public sealed class GalateaDelegationSqliteStoreTests {
         );
         using var store = GalateaDelegationSqliteStore.CreateNew(
             directory.Path,
-            Identity(),
+            Owner(),
+            Baseline(),
             Limits(),
             hooks
         );
@@ -364,13 +512,13 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Equal(2000,
             unknown.NextReconcileAtUnixTimeMilliseconds);
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
-            fixture.Store.RecordOutcomeUnknownReconcileMiss(
+            fixture.Store.RecordMailPollMiss(
                 mail.DispatchId,
                 unknown.Revision,
                 "NOT_FOUND",
                 nowUnixTimeMilliseconds: 1999
             ));
-        unknown = fixture.Store.RecordOutcomeUnknownReconcileMiss(
+        unknown = fixture.Store.RecordMailPollMiss(
             mail.DispatchId,
             unknown.Revision,
             "NOT_FOUND",
@@ -393,6 +541,22 @@ public sealed class GalateaDelegationSqliteStoreTests {
             "thread-1",
             "turn-1"
         );
+        accepted = fixture.Store.RecordMailPollMiss(
+            mail.DispatchId,
+            accepted.Revision,
+            "POLL_UNAVAILABLE",
+            nowUnixTimeMilliseconds: 10_000
+        );
+        Assert.Equal(GalateaDurableMailState.Accepted, accepted.State);
+        Assert.Equal("thread-1", accepted.AcceptedThreadId);
+        Assert.Equal("turn-1", accepted.AcceptedTurnId);
+        Assert.Equal(1, accepted.ReconcileAttemptCount);
+        fixture.Reopen();
+        accepted = fixture.Store.ReadSnapshot().Mails[0];
+        Assert.Equal(GalateaDurableMailState.Accepted, accepted.State);
+        Assert.Equal("thread-1", accepted.AcceptedThreadId);
+        Assert.Equal("turn-1", accepted.AcceptedTurnId);
+        Assert.Equal("POLL_UNAVAILABLE", accepted.ReconcileLastCode);
         GalateaReplyNoticeSnapshot notice = fixture.Store.RecordCompletedMail(
             mail.DispatchId,
             accepted.Revision,
@@ -436,6 +600,12 @@ public sealed class GalateaDelegationSqliteStoreTests {
         using var fixture = new RoutedStore();
         GalateaRouteBindingSnapshot route = fixture.Store.ReadSnapshot().Route;
         route = fixture.Store.BeginThreadBinding("bind", route.Revision);
+        route = fixture.Store.RecordThreadBindingEnsureMiss(
+            "bind",
+            route.Revision,
+            "ENSURE_OUTCOME_UNKNOWN",
+            nowUnixTimeMilliseconds: 1_000
+        );
 
         GalateaRouteBindingSnapshot quarantined =
             fixture.Store.QuarantineThreadBinding(
@@ -447,10 +617,192 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Equal(GalateaDelegationRouteState.Quarantined,
             quarantined.State);
         Assert.Null(quarantined.ThreadId);
+        Assert.Equal(0, quarantined.EnsureAttemptCount);
+        Assert.Null(quarantined.EnsureLastCode);
+        Assert.Null(quarantined.NextEnsureAtUnixTimeMilliseconds);
         Assert.All(fixture.Store.ReadSnapshot().Mails,
             static mail => Assert.Equal(
                 GalateaDurableMailState.Queued,
                 mail.State));
+    }
+
+    [Fact]
+    public void BindingEnsureBackoff_IsDurableAndKeepsOneOperationIdentity() {
+        using var fixture = new RoutedStore();
+        GalateaRouteBindingSnapshot route = fixture.Store.ReadSnapshot().Route;
+        route = fixture.Store.BeginThreadBinding("bind-op", route.Revision);
+        route = fixture.Store.RecordThreadBindingEnsureMiss(
+            "bind-op",
+            route.Revision,
+            "SIDECAR_UNAVAILABLE",
+            nowUnixTimeMilliseconds: 1_000
+        );
+        Assert.Equal(1, route.EnsureAttemptCount);
+        Assert.Equal(2_000, route.NextEnsureAtUnixTimeMilliseconds);
+
+        fixture.Reopen();
+        route = fixture.Store.ReadSnapshot().Route;
+        Assert.Equal("bind-op", route.BindingOperationId);
+        Assert.Equal("SIDECAR_UNAVAILABLE", route.EnsureLastCode);
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            fixture.Store.RecordThreadBindingEnsureMiss(
+                "bind-op",
+                route.Revision,
+                "SIDECAR_UNAVAILABLE",
+                nowUnixTimeMilliseconds: 1_999
+            ));
+        route = fixture.Store.RecordThreadBindingEnsureMiss(
+            "bind-op",
+            route.Revision,
+            "SIDECAR_UNAVAILABLE",
+            nowUnixTimeMilliseconds: 2_000
+        );
+        Assert.Equal(2, route.EnsureAttemptCount);
+        Assert.Equal(4_000, route.NextEnsureAtUnixTimeMilliseconds);
+
+        route = fixture.Store.CompleteThreadBinding(
+            "bind-op",
+            "thread-fixed",
+            route.Revision
+        );
+        Assert.Equal(GalateaDelegationRouteState.Bound, route.State);
+        Assert.Equal("thread-fixed", route.ThreadId);
+        Assert.Equal(0, route.EnsureAttemptCount);
+        Assert.Null(route.EnsureLastCode);
+        Assert.Null(route.NextEnsureAtUnixTimeMilliseconds);
+    }
+
+    [Fact]
+    public void QueuedPreflightFailure_IsFifoTerminalAndCapacityBounded() {
+        using var directory = new StoreDirectory();
+        GalateaDelegationStoreLimits limits = Limits(
+            maximumTaskUtf8Bytes: 3,
+            maximumInboxReplies: 1,
+            maximumInboxUtf8Bytes: 4 * 1024
+        );
+        bool injectUncertain = true;
+        using var store = GalateaDelegationSqliteStore.CreateNew(
+            directory.Path,
+            Owner(limits),
+            Baseline(),
+            limits,
+            new GalateaDelegationStoreTestHooks(
+                AfterCommitBeforeReturn: operation => {
+                    if (injectUncertain
+                        && operation == "fail-queued-mail-preflight") {
+                        injectUncertain = false;
+                        throw new IOException("injected after preflight");
+                    }
+                }
+            )
+        );
+        _ = store.CaptureActionBatch(Capture(
+            Address(91),
+            [Mail("Codex", "first"), Mail("Codex", "second")]
+        ));
+        GalateaDelegationStateSnapshot initial = store.ReadSnapshot();
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            store.BeginThreadBinding(
+                "bind-before-preflight",
+                initial.Route.Revision
+            ));
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            store.FailQueuedMailPreflight(
+                initial.Mails[1].DispatchId,
+                initial.Mails[1].Revision
+            ));
+
+        GalateaReplyNoticeSnapshot notice = store.FailQueuedMailPreflight(
+            initial.Mails[0].DispatchId,
+            initial.Mails[0].Revision
+        );
+        Assert.False(injectUncertain);
+        Assert.Equal(GalateaReplyNoticeKind.DeliveryFailure, notice.Kind);
+        Assert.Equal("preflight", notice.Stage);
+        Assert.Equal("TASK_INVALID_OR_TOO_LARGE", notice.Code);
+        GalateaDelegationStateSnapshot failed = store.ReadSnapshot();
+        GalateaOutboundMailSnapshot failedMail = failed.Mails[0];
+        Assert.Equal(GalateaDurableMailState.TerminalFailed, failedMail.State);
+        Assert.Null(failedMail.OperationId);
+        Assert.Null(failedMail.RequestedThreadId);
+        Assert.Null(failedMail.AcceptedThreadId);
+        Assert.Null(failedMail.AcceptedTurnId);
+        Assert.Null(failedMail.Body);
+        Assert.Equal(GalateaDelegationRouteState.Unbound, failed.Route.State);
+
+        Assert.Throws<GalateaDelegationInboxBackpressureException>(() =>
+            store.FailQueuedMailPreflight(
+                failed.Mails[1].DispatchId,
+                failed.Mails[1].Revision
+            ));
+    }
+
+    [Fact]
+    public void QueuedPreflightFailure_RejectsBodyWithinDurableTaskLimit() {
+        using var directory = new StoreDirectory();
+        GalateaDelegationStoreLimits limits = Limits(
+            maximumTaskUtf8Bytes: 16
+        );
+        using var store = GalateaDelegationSqliteStore.CreateNew(
+            directory.Path,
+            Owner(limits),
+            Baseline(),
+            limits
+        );
+        _ = store.CaptureActionBatch(Capture(
+            Address(92),
+            [Mail("Codex", "short")]
+        ));
+        GalateaOutboundMailSnapshot mail = store.ReadSnapshot().Mails.Single();
+
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            store.FailQueuedMailPreflight(mail.DispatchId, mail.Revision));
+        Assert.Empty(store.ReadSnapshot().Notices);
+    }
+
+    [Fact]
+    public void QueuedPreflightFailure_CannotPassAnActiveFifoHead() {
+        using var directory = new StoreDirectory();
+        GalateaDelegationStoreLimits limits = Limits(
+            maximumTaskUtf8Bytes: 3
+        );
+        using var store = GalateaDelegationSqliteStore.CreateNew(
+            directory.Path,
+            Owner(limits),
+            Baseline(),
+            limits
+        );
+        _ = store.CaptureActionBatch(Capture(
+            Address(93),
+            [Mail("Codex", "ok"), Mail("Codex", "oversized")]
+        ));
+        GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
+        GalateaRouteBindingSnapshot binding = store.BeginThreadBinding(
+            "bind",
+            snapshot.Route.Revision
+        );
+        GalateaRouteBindingSnapshot bound = store.CompleteThreadBinding(
+            "bind",
+            "thread",
+            binding.Revision
+        );
+        _ = store.StartQueuedMail(
+            snapshot.Mails[0].DispatchId,
+            snapshot.Mails[0].Revision,
+            bound.Revision
+        );
+        snapshot = store.ReadSnapshot();
+
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            store.FailQueuedMailPreflight(
+                snapshot.Mails[1].DispatchId,
+                snapshot.Mails[1].Revision
+            ));
+        Assert.Empty(store.ReadSnapshot().Notices);
+        Assert.Equal(
+            GalateaDurableMailState.Queued,
+            store.ReadSnapshot().Mails[1].State
+        );
     }
 
     [Fact]
@@ -479,12 +831,15 @@ public sealed class GalateaDelegationSqliteStoreTests {
         );
         snapshot = fixture.Store.ReadSnapshot();
         GalateaOutboundMailSnapshot second = snapshot.Mails[1];
-        Assert.Throws<InvalidOperationException>(() =>
+        GalateaDelegationInboxBackpressureException backpressure =
+            Assert.Throws<GalateaDelegationInboxBackpressureException>(() =>
             fixture.Store.StartQueuedMail(
                 second.DispatchId,
                 second.Revision,
                 snapshot.Route.Revision
             ));
+        Assert.Equal(1, backpressure.CurrentCount);
+        Assert.Equal(1, backpressure.ReservedCount);
 
         GalateaReplyLeaseSnapshot lease =
             fixture.Store.BeginReplyLeaseMembership(
@@ -629,10 +984,10 @@ public sealed class GalateaDelegationSqliteStoreTests {
     [Fact]
     public void StrictOpen_RejectsUnknownSchemaAndCorruptCurrentState() {
         using var directory = new StoreDirectory();
-        GalateaDelegationStoreIdentity identity = Identity();
+        GalateaDelegationStoreOwner owner = Owner();
         GalateaDelegationStoreLimits limits = Limits();
         using (var store = GalateaDelegationSqliteStore.CreateNew(
-                   directory.Path, identity, limits)) {
+                   directory.Path, owner, Baseline(), limits)) {
             _ = store.CaptureActionBatch(
                 Capture(Address(50), [Mail("Codex", "body")])
             );
@@ -644,7 +999,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         ExecuteSql(database, "CREATE TABLE unexpected(value TEXT) STRICT;");
         Assert.Throws<InvalidDataException>(() =>
             GalateaDelegationSqliteStore.OpenExisting(
-                directory.Path, identity, limits));
+                directory.Path, owner, limits));
         ExecuteSql(database, "DROP TABLE unexpected;");
         ExecuteSql(database, """
             DROP INDEX ux_outbound_source_ordinal;
@@ -653,7 +1008,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             """);
         Assert.Throws<InvalidDataException>(() =>
             GalateaDelegationSqliteStore.OpenExisting(
-                directory.Path, identity, limits));
+                directory.Path, owner, limits));
         ExecuteSql(database, """
             DROP INDEX ux_outbound_source_ordinal;
             CREATE UNIQUE INDEX ux_outbound_source_ordinal
@@ -662,7 +1017,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         ExecuteSql(database, "UPDATE outbound_mail SET body = NULL;");
         Assert.Throws<InvalidDataException>(() =>
             GalateaDelegationSqliteStore.OpenExisting(
-                directory.Path, identity, limits));
+                directory.Path, owner, limits));
         ExecuteSql(database, "UPDATE outbound_mail SET body = 'body';");
         ExecuteSql(database, """
             UPDATE outbound_mail
@@ -671,23 +1026,65 @@ public sealed class GalateaDelegationSqliteStoreTests {
             """);
         Assert.Throws<InvalidDataException>(() =>
             GalateaDelegationSqliteStore.OpenExisting(
-                directory.Path, identity, limits));
+                directory.Path, owner, limits));
     }
 
-    private static GalateaDelegationStoreIdentity Identity() => new(
-        "user",
-        "repository-id",
-        Address(1),
-        Address(2),
-        "route-policy-v1"
-    );
+    private static GalateaDelegationStoreOwner Owner(
+        GalateaDelegationStoreLimits? limits = null
+    ) {
+        limits ??= Limits();
+        return new(
+            "user",
+            "repository-id",
+            GalateaDelegationDurableContract.CreateRoutePolicyFingerprint(
+                Route(limits)
+            )
+        );
+    }
+
+    private static GalateaDelegationStoreBaseline Baseline() {
+        string selectedHead = Address(2);
+        EventAddress address = EventAddressTextCodec.Parse(selectedHead);
+        return new(
+            new EventJournalPhysicalAppendFrontier(
+                address.SegmentNumber,
+                address.Ticket.EndOffsetExclusive
+            ),
+            selectedHead
+        );
+    }
+
+    private static GalateaDelegateRouteConfig Route(
+        GalateaDelegationStoreLimits? limits = null
+    ) {
+        limits ??= Limits();
+        return new(
+        Recipient: GalateaDelegateConfigReader.CanonicalRecipient,
+        Kind: GalateaDelegateConfigReader.CodexAppServerKind,
+        Cwd: "/repos/focus/atelia",
+        Mode: GalateaDelegateMode.Work,
+        LocalCommandNetwork: true,
+        Tools: new GalateaDelegateToolConfig(
+            GalateaDelegateWebSearchMode.Live,
+            ImageGeneration: true,
+            ViewImage: true
+        ),
+        MaximumQueuedMails: limits.MaximumQueuedMails,
+        MaximumTaskUtf8Bytes: limits.MaximumTaskUtf8Bytes,
+        MaximumReplyUtf8Bytes: limits.MaximumReplyUtf8Bytes,
+        MaximumInboxReplies: limits.MaximumInboxReplies,
+        MaximumInboxUtf8Bytes: limits.MaximumInboxUtf8Bytes
+        );
+    }
 
     private static GalateaDelegationStoreLimits Limits(
+        int maximumTaskUtf8Bytes = 100_000,
         int maximumInboxReplies = 16,
         int maximumInboxUtf8Bytes = 16 * 1024,
         int maximumReplyUtf8Bytes = 1024
     ) => new(
         MaximumQueuedMails: 32,
+        maximumTaskUtf8Bytes,
         maximumReplyUtf8Bytes,
         maximumInboxReplies,
         maximumInboxUtf8Bytes
@@ -712,8 +1109,10 @@ public sealed class GalateaDelegationSqliteStoreTests {
         EvidenceQuote: "sent it"
     );
 
-    private static string Address(int value) =>
-        $"ej1:{value:x16}0000000100000000";
+    private static string Address(
+        int value,
+        uint segmentNumber = 1
+    ) => $"ej1:{value:x16}{segmentNumber:x8}00000000";
 
     private static string Sha(char value) => new(value, 64);
 
@@ -772,7 +1171,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
 
     private sealed class RoutedStore : IDisposable {
         private readonly StoreDirectory _directory = new();
-        private readonly GalateaDelegationStoreIdentity _identity = Identity();
+        private readonly GalateaDelegationStoreOwner _owner;
         private readonly GalateaDelegationStoreLimits _limits;
 
         internal RoutedStore(
@@ -782,13 +1181,15 @@ public sealed class GalateaDelegationSqliteStoreTests {
             GalateaDelegationStoreTestHooks? hooks = null
         ) {
             _limits = Limits(
-                maximumInboxReplies,
-                maximumInboxUtf8Bytes,
-                maximumReplyUtf8Bytes
+                maximumInboxReplies: maximumInboxReplies,
+                maximumInboxUtf8Bytes: maximumInboxUtf8Bytes,
+                maximumReplyUtf8Bytes: maximumReplyUtf8Bytes
             );
+            _owner = Owner(_limits);
             Store = GalateaDelegationSqliteStore.CreateNew(
                 _directory.Path,
-                _identity,
+                _owner,
+                Baseline(),
                 _limits,
                 hooks
             );
@@ -808,7 +1209,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             Store.Dispose();
             Store = GalateaDelegationSqliteStore.OpenExisting(
                 _directory.Path,
-                _identity,
+                _owner,
                 _limits
             );
         }
