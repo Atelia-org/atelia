@@ -42,6 +42,17 @@ public sealed class SessionJournalReadView {
         return _owner.ReadCurrentHead();
     }
 
+    /// <summary>
+    /// Captures the end-exclusive physical tail frontier of the underlying
+    /// EventJournal. This is not the selected branch head: it includes
+    /// selected and orphan EventFrames already present in the events store.
+    /// </summary>
+    public EventJournalPhysicalAppendFrontier
+        ReadPhysicalAppendFrontier() {
+        EnsureOwnerAlive();
+        return _owner.ReadPhysicalAppendFrontierForReadView();
+    }
+
     public SessionExecutionBoundaryInspection InspectExecutionBoundary(
         CancellationToken cancellationToken = default
     ) {
@@ -254,4 +265,12 @@ public sealed class SessionJournalReadView {
 
     private void EnsureOwnerAlive()
         => _owner.EnsureNotDisposedForReadView();
+}
+
+public sealed partial class SessionJournalEngine {
+    internal EventJournalPhysicalAppendFrontier
+        ReadPhysicalAppendFrontierForReadView() {
+        ThrowIfDisposed();
+        return _journal.ReadPhysicalAppendFrontier();
+    }
 }

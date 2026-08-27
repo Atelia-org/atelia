@@ -138,6 +138,10 @@ public sealed class SessionJournalReadViewTests : IDisposable {
                 Required<int>(),
                 Optional<CancellationToken>()
             ),
+            Method<EventJournalPhysicalAppendFrontier>(
+                nameof(SessionJournalReadView
+                    .ReadPhysicalAppendFrontier)
+            ),
             Method<SessionCreatedPlanningSeedReadResult>(
                 nameof(SessionJournalReadView.ReadSessionCreatedPlanningSeedAtBounded),
                 Required<EventAddress>(),
@@ -253,6 +257,9 @@ public sealed class SessionJournalReadViewTests : IDisposable {
         engine.Dispose();
 
         Assert.Throws<ObjectDisposedException>(() => view.ReadCurrentHead());
+        Assert.Throws<ObjectDisposedException>(
+            () => view.ReadPhysicalAppendFrontier()
+        );
         Assert.Throws<ObjectDisposedException>(() => _ = view.Path);
         Assert.Throws<ObjectDisposedException>(() => _ = engine.ReadView);
     }
@@ -274,6 +281,9 @@ public sealed class SessionJournalReadViewTests : IDisposable {
         SessionJournalReadView view
     ) {
         EventAddress head = view.ReadCurrentHead()!.Value;
+        EventJournalPhysicalAppendFrontier physicalFrontier =
+            view.ReadPhysicalAppendFrontier();
+        Assert.True(physicalFrontier.Contains(head));
         var initial = Assert.IsType<
             SessionCreatedPlanningSeedReadResult.Available
         >(view.ReadSessionCreatedPlanningSeedAtBounded(head, 3));
@@ -311,6 +321,7 @@ public sealed class SessionJournalReadViewTests : IDisposable {
 
         return new ReadAuthorityEvidence(
             head,
+            physicalFrontier,
             materialized.Setups,
             resolved.RuntimeConfigSetupAddress,
             resolved.SystemPromptSetupAddress,
@@ -372,6 +383,7 @@ public sealed class SessionJournalReadViewTests : IDisposable {
 
     private sealed record ReadAuthorityEvidence(
         EventAddress Head,
+        EventJournalPhysicalAppendFrontier PhysicalAppendFrontier,
         SessionContextAnchorSetupReferences Setups,
         EventAddress RuntimeSetupAddress,
         EventAddress PromptSetupAddress,
