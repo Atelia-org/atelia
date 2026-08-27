@@ -4,7 +4,9 @@ using System.Security;
 using System.Text;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.OpenAI;
 using Atelia.Completion.Tools;
+using Atelia.Diagnostics;
 
 namespace Atelia.Galatea.Server;
 
@@ -30,6 +32,27 @@ internal static class TextExtractorUtf8 {
     internal static int GetByteCount(string value) =>
         Strict.GetByteCount(value);
 }
+
+internal static class TextExtractorRetryPolicy {
+    internal const int MaximumAttempts = 5;
+
+    internal static bool ShouldRetry(Exception exception) =>
+        exception is OpenAICodexResponsesException {
+            Reason: OpenAICodexResponsesFailureReason.TransportOutcomeUnknown
+        };
+
+    internal static TimeSpan GetDelayBeforeAttempt(int attempt) {
+        if (attempt is < 2 or > MaximumAttempts) {
+            throw new ArgumentOutOfRangeException(nameof(attempt));
+        }
+        return TimeSpan.FromSeconds(1 << (attempt - 2));
+    }
+}
+
+internal delegate ValueTask TextExtractorRetryDelay(
+    TimeSpan delay,
+    CancellationToken cancellationToken
+);
 
 internal enum TextExtractionFailureKind {
     InvocationMismatch,
@@ -257,12 +280,14 @@ internal sealed class TextExtractor {
     private readonly string _systemPrompt;
     private readonly TextExtractorToolSet _toolSet;
     private readonly CompletionOutputContract _outputContract;
+    private readonly TextExtractorRetryDelay _retryDelay;
 
     internal TextExtractor(
         string systemPrompt,
         TextExtractorToolSet toolSet,
         CompletionConnectionConfig connection,
-        Func<ICompletionClient> getClient
+        Func<ICompletionClient> getClient,
+        TextExtractorRetryDelay? retryDelay = null
     ) {
         string configuredSystemPrompt = RequireBoundedText(
             systemPrompt,
@@ -304,6 +329,7 @@ internal sealed class TextExtractor {
         }
         _getClient = getClient
             ?? throw new ArgumentNullException(nameof(getClient));
+        _retryDelay = retryDelay ?? DelayAsync;
         _outputContract = new CompletionOutputContract(
             _toolSet.Definitions,
             CompletionToolChoice.Auto,
@@ -351,12 +377,11 @@ internal sealed class TextExtractor {
                 TextExtractionFailureKind.ClientUnavailable,
                 "Text extractor completion client is unavailable."
             );
-        CompletionResult result = await client.StreamCompletionAsync(
-                request,
-                observer: null,
-                cancellationToken
-            )
-            .ConfigureAwait(false);
+        CompletionResult result = await CompleteWithRetryAsync(
+            client,
+            request,
+            cancellationToken
+        ).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         if (result is null) {
             throw Failure(
@@ -450,6 +475,44 @@ internal sealed class TextExtractor {
             string.IsNullOrEmpty(diagnosticText) ? null : diagnosticText
         );
     }
+
+    private async ValueTask<CompletionResult> CompleteWithRetryAsync(
+        ICompletionClient client,
+        CompletionRequest request,
+        CancellationToken cancellationToken
+    ) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return await client.StreamCompletionAsync(
+                        request,
+                        observer: null,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (
+                attempt < TextExtractorRetryPolicy.MaximumAttempts
+                && TextExtractorRetryPolicy.ShouldRetry(exception)) {
+                int nextAttempt = attempt + 1;
+                TimeSpan delay = TextExtractorRetryPolicy
+                    .GetDelayBeforeAttempt(nextAttempt);
+                DebugUtil.Info(
+                    "Galatea.TextExtractor",
+                    "Transient pre-response transport failure; retrying "
+                        + $"attempt={nextAttempt}/"
+                        + $"{TextExtractorRetryPolicy.MaximumAttempts}, "
+                        + $"delayMs={(long)delay.TotalMilliseconds}"
+                );
+                await _retryDelay(delay, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static ValueTask DelayAsync(
+        TimeSpan delay,
+        CancellationToken cancellationToken
+    ) => new(Task.Delay(delay, cancellationToken));
 
     private static void PreflightCalls(
         TextExtractorToolSet toolSet,

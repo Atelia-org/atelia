@@ -18,3 +18,7 @@ composite Observation、strict sidecar transport、coordinator FIFO、recovery l
 
 本阶段仍有意只提供 process-local 状态：没有 durable outbox、跨重启 exactly-once、multi-thread/
 rollover/selection，也没有自动 scheduler 或回信到达时主动唤醒 Galatea；这些不是本重构的未完成项。
+
+2026-08-27 的闭环实测后加固已完成：`TextExtractor`只对pre-response
+`TransportOutcomeUnknown`执行最多5次总尝试，使用1s/2s/4s/8s指数退避；独立30秒extraction deadline已移除，
+当前完成优先语义只保留caller cancellation。

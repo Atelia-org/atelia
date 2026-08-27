@@ -24,9 +24,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal const int MaximumRecentResponseUtf8Bytes = 4 * 1024 * 1024;
     internal const int MaximumPoppedUserTextUtf8Bytes = 256 * 1024;
     internal const int MaximumPopReceiptUtf8Bytes = 2 * 1024 * 1024;
-    internal static readonly TimeSpan
-        DefaultOutboundMailExtractionDeadline = TimeSpan.FromSeconds(30);
-
     private readonly GalateaInputPreprocessor _inputPreprocessor;
     private readonly IOutboundMailExtractor? _outboundMailExtractor;
     private readonly bool _maintenanceMode;
@@ -45,20 +42,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _selectableConnections;
     private readonly string _defaultConnectionId;
     private readonly RecapGridControlAdmission? _sessionBootstrapAdmission;
-    private TimeSpan _outboundMailExtractionDeadline =
-        DefaultOutboundMailExtractionDeadline;
-
-    internal TimeSpan OutboundMailExtractionDeadlineForTest {
-        get => _outboundMailExtractionDeadline;
-        set {
-            if (value <= TimeSpan.Zero
-                || value > TimeSpan.FromMinutes(5)) {
-                throw new ArgumentOutOfRangeException(nameof(value));
-            }
-            _outboundMailExtractionDeadline = value;
-        }
-    }
-
     public GalateaHostService(
         GalateaConfig config,
         ICompletionClientFactory completionClientFactory,
@@ -1095,54 +1078,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     + $"visibleActionUtf8Bytes={TextExtractorUtf8.GetByteCount(target)}",
                 eventKind: DebugEventKind.Start
             );
-            using var deadlineCts = new CancellationTokenSource(
-                _outboundMailExtractionDeadline
-            );
-            using var linkedCts = CancellationTokenSource
-                .CreateLinkedTokenSource(
-                    cancellationToken,
-                    deadlineCts.Token
-                );
-            Task<IReadOnlyList<SendMailIntent>> extractionTask =
-                _outboundMailExtractor.ExtractAsync(
+            IReadOnlyList<SendMailIntent> intents =
+                await _outboundMailExtractor.ExtractAsync(
                         target,
-                        linkedCts.Token
-                    )
-                    .AsTask();
-            IReadOnlyList<SendMailIntent> intents;
-            try {
-                intents = await extractionTask.WaitAsync(
-                        _outboundMailExtractionDeadline,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
-            }
-            catch (TimeoutException) {
-                deadlineCts.Cancel();
-                ObserveAbandonedExtraction(extractionTask);
-                DebugUtil.Warning(
-                    "Galatea.Mailbox",
-                    "Outbound extraction deadline elapsed after durable "
-                    + "Action: user="
-                    + GalateaMailboxText.SummarizeForLog(host.User.UserId)
-                    + ", "
-                    + $"turnId={liveTurn.TurnId}, actionHead={actionHead}"
-                );
-                return;
-            }
-            catch (OperationCanceledException) {
-                linkedCts.Cancel();
-                ObserveAbandonedExtraction(extractionTask);
-                DebugUtil.Warning(
-                    "Galatea.Mailbox",
-                    "Outbound extraction cancelled after durable Action: "
-                    + "user="
-                    + GalateaMailboxText.SummarizeForLog(host.User.UserId)
-                    + ", "
-                    + $"turnId={liveTurn.TurnId}, actionHead={actionHead}"
-                );
-                return;
-            }
             DebugUtil.Info(
                 "Galatea.Mailbox",
                 "Outbound mail extraction finished: "
@@ -1218,21 +1159,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 + extractionDetail
             );
         }
-    }
-
-    private static void ObserveAbandonedExtraction(Task task) {
-        if (task.IsFaulted) {
-            _ = task.Exception;
-            return;
-        }
-        if (task.IsCompleted) { return; }
-        _ = task.ContinueWith(
-            static completed => _ = completed.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted
-                | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default
-        );
     }
 
     private async Task<GalateaCompletedOperation> RunFreshSendAsync(

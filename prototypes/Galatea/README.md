@@ -182,14 +182,15 @@ tree）-> Completion/RecapGrid owner，且Dispose不等待无界child task。
 
 ### Development Codex delegation observability
 
-开发期可在repo root用Debug build启动，并显式打开三类server-side进度日志：
+开发期可在repo root用Debug build启动，并显式打开四类server-side进度日志：
 
 ```bash
-ATELIA_DEBUG_CATEGORIES='Galatea.Mailbox,Galatea.Delegation,Galatea.DelegateSidecar' \
+ATELIA_DEBUG_CATEGORIES='Galatea.Mailbox,Galatea.TextExtractor,Galatea.Delegation,Galatea.DelegateSidecar' \
 dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 ```
 
-`Galatea.Mailbox`显示Action可见文本进入extractor及其intent数量；`Galatea.Delegation`显示batch
+`Galatea.Mailbox`显示Action可见文本进入extractor及其intent数量；`Galatea.TextExtractor`显示
+pre-response transient transport failure的attempt与退避时间；`Galatea.Delegation`显示batch
 capture、FIFO dispatch、accepted、ReplyInbox ready、下一普通player turn的cutoff lease与durable
 Action后的one-shot commit/rollback；`Galatea.DelegateSidecar`显示Node child启动、Codex app-server
 初始化、accepted/final或stable failure。`Info`调用在Release被编译掉；Debug下无论console category是否
@@ -371,11 +372,14 @@ Observation identity分类，不仅凭raw head猜测。普通player Undo不会�
 已经建立的fixed Codex thread context也不随故事turn Undo而倒退。
 
 该状态仍不是durable outbox，不承诺provider-call exactly-once或进程重启恢复，session dispose后即丢失。
-Extraction有独立的code-owned 30秒elapsed deadline，并同时向
-provider传递linked shutdown/deadline cancellation；即使provider不合作，recent refresh、SSE `done`和
-`TurnLock`释放最多只额外等待该deadline。nonfatal failure/cancellation/timeout只写single-line bounded
-`Galatea.Mailbox`摘要log，不改判已经durable的主turn；deadline内观测到的fatal exception仍传播，
-超时后被放弃task的eventual fault仅被安全观察。capture完成只唤醒后台pump，主Galatea turn不等待
+TextExtractor只对`OpenAICodexResponsesException`的exact
+`TransportOutcomeUnknown`做最多5次总尝试，重试前依次等待1s、2s、4s、8s；HTTP status failure、
+SSE/protocol failure与普通异常不重试。每个logical extraction复用同一request/client，artifact tool只在
+最终成功响应后执行；因为pre-response outcome仍可能已经消耗provider算力，重试可能产生重复计费，但不会
+重复本地artifact副作用。Extraction不再设置code-owned elapsed deadline，只服从caller cancellation；若
+provider持续不结束且caller不取消，当前turn、recent refresh、SSE `done`与`TurnLock`会继续等待，这是当前
+有意选择的完成优先语义。nonfatal failure/cancellation只写single-line bounded`Galatea.Mailbox`摘要log，
+不改判已经durable的主turn。capture完成只唤醒后台pump，主Galatea turn不等待
 sidecar accepted或final；即使sidecar的acceptance或terminal长期悬挂，主turn仍可发布SSE `done`并释放
 `TurnLock`。mailbox Observation不产生普通player rewind token，commit前也再次防御其被
 player pop入口撤销。session shutdown先停止capture并drain turn，再取消/监督coordinator pump；host随后

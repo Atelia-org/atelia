@@ -333,17 +333,23 @@ public sealed class GalateaMailboxTests {
     }
 
     [Fact]
-    public async Task ExtractionDeadline_CompletesDurableTurnAndReleasesLockWhenProviderNeverReturns() {
+    public async Task ExtractionHasNoElapsedDeadlineAndWaitsForProviderCompletion() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractorConnection =
             Connection("mail-helper");
         const string Action =
             "[Galatea] sent body text to Alice and completed sending.";
         var mainClient = new QueueClient(
-            _ => Message(new ActionBlock.Text(Action)),
             _ => Message(new ActionBlock.Text(Action))
         );
-        var extractorClient = new NeverCompletingClient();
+        var extractorClient = new GatedClient(Message(Tool(
+            "mail-gated",
+            "Alice",
+            null,
+            "body text",
+            null,
+            "completed sending"
+        )));
         var factory = new RoutingFactory(new Dictionary<
             string,
             ICompletionClient
@@ -362,33 +368,28 @@ public sealed class GalateaMailboxTests {
         await Login(http);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        service.OutboundMailExtractionDeadlineForTest =
-            TimeSpan.FromMilliseconds(60);
         UserSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
 
-        StartTurnResponseDto first = await PostPlayerTurn(http);
-        await service.FindTurn(session, first.TurnId)!
-            .RunTask!.WaitAsync(Deadline);
+        StartTurnResponseDto turn = await PostPlayerTurn(http);
+        GalateaLiveTurn liveTurn = service.FindTurn(session, turn.TurnId)!;
+        await extractorClient.Entered.Task.WaitAsync(Deadline);
+        Assert.False(liveTurn.RunTask!.IsCompleted);
+        Assert.False(session.TurnLock.Wait(0));
+
+        extractorClient.Release();
+        await liveTurn.RunTask.WaitAsync(Deadline);
         Assert.Equal("completed",
-            service.FindTurn(session, first.TurnId)!.Status);
+            service.FindTurn(session, turn.TurnId)!.Status);
         Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns);
-        Assert.Empty(session.DelegationCoordinator.Snapshot());
+        Assert.Single(session.DelegationCoordinator.Snapshot());
+        Assert.Equal(1, extractorClient.DispatchCount);
+        Assert.Equal(0, extractorClient.CancellationCount);
         Assert.True(session.TurnLock.Wait(0));
         session.TurnLock.Release();
-
-        StartTurnResponseDto second = await PostPlayerTurn(http);
-        await service.FindTurn(session, second.TurnId)!
-            .RunTask!.WaitAsync(Deadline);
-        Assert.Equal("completed",
-            service.FindTurn(session, second.TurnId)!.Status);
-        Assert.Equal(2, extractorClient.DispatchCount);
-        Assert.Equal(2, extractorClient.CancellationCount);
-        Assert.Equal(2, session.Engine.ReadRecentCompletedTurns(2)
-            .RequireSnapshot().Turns.Count);
     }
 
     [Fact]
@@ -560,33 +561,45 @@ public sealed class GalateaMailboxTests {
         }
     }
 
-    private sealed class NeverCompletingClient : ICompletionClient {
+    private sealed class GatedClient(ActionMessage message)
+        : ICompletionClient {
         private int _dispatchCount;
         private int _cancellationCount;
+        private readonly TaskCompletionSource _release = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
 
-        public string Name => "galatea-mailbox-never-completes";
+        public string Name => "galatea-mailbox-gated";
         public string ApiSpecId => "test-v1";
         internal int DispatchCount => Volatile.Read(ref _dispatchCount);
         internal int CancellationCount => Volatile.Read(
             ref _cancellationCount
         );
+        internal TaskCompletionSource Entered { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
 
-        public Task<CompletionResult> StreamCompletionAsync(
+        internal void Release() => _release.TrySetResult();
+
+        public async Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
             CompletionStreamObserver? observer,
             CancellationToken cancellationToken = default
         ) {
-            _ = request;
             _ = observer;
             _ = Interlocked.Increment(ref _dispatchCount);
-            _ = cancellationToken.Register(
+            using CancellationTokenRegistration registration =
+                cancellationToken.Register(
                 () => _ = Interlocked.Increment(
                     ref _cancellationCount
                 )
             );
-            return new TaskCompletionSource<CompletionResult>(
-                TaskCreationOptions.RunContinuationsAsynchronously
-            ).Task;
+            Entered.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken);
+            return new CompletionResult(
+                message,
+                CompletionDescriptor.From(this, request)
+            );
         }
     }
 

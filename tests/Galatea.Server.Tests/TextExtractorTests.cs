@@ -1,9 +1,11 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Net;
+using System.Reflection;
 using System.Text.Json.Serialization;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.OpenAI;
 using Atelia.Completion.Tools;
 using Xunit;
 
@@ -449,6 +451,162 @@ public sealed class TextExtractorTests {
     }
 
     [Fact]
+    public async Task TransientCodexTransportFailure_RetriesFiveAttemptsWithExponentialBackoff() {
+        var delays = new List<TimeSpan>();
+        var client = new ScriptedClient((self, request, _) =>
+            self.CallCount < TextExtractorRetryPolicy.MaximumAttempts
+                ? Task.FromException<CompletionResult>(CodexFailure(
+                    OpenAICodexResponsesFailureReason
+                        .TransportOutcomeUnknown
+                ))
+                : Task.FromResult(self.Completed(
+                    request,
+                    new ActionMessage([])
+                ))
+        );
+        var extractor = new TextExtractor(
+            "system fixture",
+            PersonTools(),
+            Connection(kind: "openai-codex-responses"),
+            () => client,
+            (delay, cancellationToken) => {
+                cancellationToken.ThrowIfCancellationRequested();
+                delays.Add(delay);
+                return ValueTask.CompletedTask;
+            }
+        );
+
+        TextExtractionResult result = await extractor.ExtractAsync(
+            "target",
+            "extract",
+            CancellationToken.None
+        );
+
+        Assert.Empty(result.Artifacts);
+        Assert.Equal(5, client.CallCount);
+        Assert.Equal([
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(4),
+            TimeSpan.FromSeconds(8),
+        ], delays);
+    }
+
+    [Fact]
+    public async Task TransientCodexTransportFailure_ExhaustionRethrowsFifthFailure() {
+        OpenAICodexResponsesException[] failures = Enumerable.Range(0, 5)
+            .Select(_ => CodexFailure(
+                OpenAICodexResponsesFailureReason.TransportOutcomeUnknown
+            ))
+            .ToArray();
+        var delays = new List<TimeSpan>();
+        var client = new ScriptedClient((self, _, _) =>
+            Task.FromException<CompletionResult>(
+                failures[self.CallCount - 1]
+            )
+        );
+        var extractor = new TextExtractor(
+            "system fixture",
+            PersonTools(),
+            Connection(kind: "openai-codex-responses"),
+            () => client,
+            (delay, _) => {
+                delays.Add(delay);
+                return ValueTask.CompletedTask;
+            }
+        );
+
+        OpenAICodexResponsesException observed =
+            await Assert.ThrowsAsync<OpenAICodexResponsesException>(() =>
+                extractor.ExtractAsync(
+                    "target",
+                    "extract",
+                    CancellationToken.None
+                ).AsTask()
+            );
+
+        Assert.Same(failures[^1], observed);
+        Assert.Equal(5, client.CallCount);
+        Assert.Equal(4, delays.Count);
+    }
+
+    [Fact]
+    public async Task NonTransportCodexFailure_IsNotRetried() {
+        OpenAICodexResponsesException failure = CodexFailure(
+            OpenAICodexResponsesFailureReason.BackendFailure
+        );
+        int delayCalls = 0;
+        var client = new ScriptedClient((_, _, _) =>
+            Task.FromException<CompletionResult>(failure)
+        );
+        var extractor = new TextExtractor(
+            "system fixture",
+            PersonTools(),
+            Connection(kind: "openai-codex-responses"),
+            () => client,
+            (_, _) => {
+                delayCalls++;
+                return ValueTask.CompletedTask;
+            }
+        );
+
+        OpenAICodexResponsesException observed =
+            await Assert.ThrowsAsync<OpenAICodexResponsesException>(() =>
+                extractor.ExtractAsync(
+                    "target",
+                    "extract",
+                    CancellationToken.None
+                ).AsTask()
+            );
+
+        Assert.Same(failure, observed);
+        Assert.Equal(1, client.CallCount);
+        Assert.Equal(0, delayCalls);
+    }
+
+    [Fact]
+    public async Task CallerCancellationDuringRetryBackoffStopsBeforeSecondAttempt() {
+        var delayEntered = new TaskCompletionSource<TimeSpan>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var client = new ScriptedClient((_, _, _) =>
+            Task.FromException<CompletionResult>(CodexFailure(
+                OpenAICodexResponsesFailureReason.TransportOutcomeUnknown
+            ))
+        );
+        var extractor = new TextExtractor(
+            "system fixture",
+            PersonTools(),
+            Connection(kind: "openai-codex-responses"),
+            () => client,
+            (delay, cancellationToken) => {
+                delayEntered.TrySetResult(delay);
+                return new ValueTask(Task.Delay(
+                    Timeout.InfiniteTimeSpan,
+                    cancellationToken
+                ));
+            }
+        );
+        using var cancellation = new CancellationTokenSource();
+
+        Task<TextExtractionResult> pending = extractor.ExtractAsync(
+            "target",
+            "extract",
+            cancellation.Token
+        ).AsTask();
+        Assert.Equal(
+            TimeSpan.FromSeconds(1),
+            await delayEntered.Task.WaitAsync(TimeSpan.FromSeconds(5))
+        );
+        cancellation.Cancel();
+
+        OperationCanceledException observed = await Assert.ThrowsAnyAsync<
+            OperationCanceledException>(() => pending);
+        Assert.Equal(cancellation.Token, observed.CancellationToken);
+        Assert.Equal(1, client.CallCount);
+    }
+
+    [Fact]
     public async Task SameExtractor_ConcurrentCallsKeepCollectorsIsolated() {
         var client = new ConcurrentScriptedClient();
         var extractor = new TextExtractor(
@@ -685,6 +843,28 @@ public sealed class TextExtractorTests {
             ).ToArray())
         )));
 
+    private static OpenAICodexResponsesException CodexFailure(
+        OpenAICodexResponsesFailureReason reason
+    ) {
+        ConstructorInfo constructor = Assert.Single(
+            typeof(OpenAICodexResponsesException).GetConstructors(
+                BindingFlags.Instance | BindingFlags.NonPublic
+            )
+        );
+        return Assert.IsType<OpenAICodexResponsesException>(
+            constructor.Invoke([
+                reason,
+                "code-owned fixture failure",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+            ])
+        );
+    }
+
     [Description("A person extracted from text.")]
     private sealed record PersonArtifact {
         [Description("Person name.")]
@@ -718,6 +898,8 @@ public sealed class TextExtractorTests {
 
         internal CompletionRequest? LastRequest { get; private set; }
 
+        internal int CallCount { get; private set; }
+
         internal TaskCompletionSource Entered { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
@@ -729,6 +911,7 @@ public sealed class TextExtractorTests {
         ) {
             _ = observer;
             LastRequest = request;
+            CallCount++;
             Entered.TrySetResult();
             return handler(this, request, cancellationToken);
         }
