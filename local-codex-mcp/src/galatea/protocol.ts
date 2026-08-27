@@ -195,7 +195,7 @@ export function encodedOutputFrameBytes(frame: GalateaOutputFrame): number {
   return Buffer.byteLength(encodeOutputFrame(frame), "utf8");
 }
 
-export class JsonlFrameWriter {
+export class JsonlFrameWriter<TFrame = GalateaOutputFrame> {
   private tail = Promise.resolve();
   private firstFailure?: Error;
 
@@ -203,6 +203,8 @@ export class JsonlFrameWriter {
     private readonly output: Writable,
     private readonly maximumBytes = DEFAULT_MAX_OUTPUT_FRAME_BYTES,
     private readonly writeTimeoutMs = DEFAULT_OUTPUT_WRITE_TIMEOUT_MS,
+    private readonly encode: (frame: TFrame) => string =
+      encodeOutputFrame as unknown as (frame: TFrame) => string,
   ) {
     // Writable implementations may invoke the write callback and emit `error`
     // for the same EPIPE. Keep a lifetime listener so the latter can never
@@ -212,8 +214,8 @@ export class JsonlFrameWriter {
     });
   }
 
-  write(frame: GalateaOutputFrame): Promise<void> {
-    const encoded = encodeOutputFrame(frame);
+  write(frame: TFrame): Promise<void> {
+    const encoded = this.encode(frame);
     if (Buffer.byteLength(encoded, "utf8") > this.maximumBytes) {
       this.firstFailure ??= new Error("Sidecar output frame exceeds its configured byte limit.");
       return Promise.reject(this.firstFailure);

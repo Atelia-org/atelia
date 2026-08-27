@@ -14,6 +14,7 @@
     "test:integration": "npm run build && CODEX_BRIDGE_RUN_LIVE=1 node --test dist/tests/live-integration.test.js",
     "start": "node dist/src/index.js",
     "start:galatea": "node dist/src/galatea-sidecar.js",
+    "start:galatea-durable": "node dist/src/galatea-durable-sidecar.js",
     "start:http": "CODEX_BRIDGE_TRANSPORT=http node dist/src/index.js",
     "schemas:generate": "codex app-server generate-ts --out ./schemas",
     "inspect": "npx --package=@modelcontextprotocol/inspector@2.1.0 mcp-inspector"
