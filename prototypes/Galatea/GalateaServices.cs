@@ -342,8 +342,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(users);
         return users.ToDictionary(
             static pair => pair.Key,
-            static pair => GalateaRecapGridTargetExpectation.ForCharacterName(
-                pair.Value.CharacterName
+            static pair => GalateaRecapGridTargetExpectation.ForNames(
+                pair.Value.CharacterName,
+                pair.Value.PlayerName
             ),
             StringComparer.Ordinal
         );
@@ -2232,23 +2233,7 @@ internal static class GalateaConfigLoader {
             ?? throw new InvalidOperationException($"Cannot determine config directory for: {resolvedPath}");
         string connectionsPath = Path.Combine(configDir, ConnectionsFileName);
         string delegatesPath = Path.Combine(configDir, DelegatesFileName);
-        byte[] usersBytes = GalateaStrictConfigReader.ReadUsersAndValidate(
-            resolvedPath
-        );
-        GalateaUsersFileConfig? usersFile;
-        try {
-            usersFile = JsonSerializer.Deserialize(
-                usersBytes,
-                GalateaJsonContext.Default.GalateaUsersFileConfig
-            );
-        }
-        catch (JsonException exception) {
-            throw new InvalidDataException(
-                "Galatea config JSON could not be materialized.",
-                exception
-            );
-        }
-        if (usersFile is null) { throw new InvalidOperationException($"Failed to deserialize Galatea config: {resolvedPath}"); }
+        GalateaUsersFileConfig usersFile = ReadUsersFile(resolvedPath);
 
         if (!File.Exists(connectionsPath)) {
             throw new FileNotFoundException(
@@ -2301,6 +2286,30 @@ internal static class GalateaConfigLoader {
 
         Validate(config);
         return config;
+    }
+
+    internal static GalateaUsersFileConfig ReadUsersFile(
+        string resolvedPath
+    ) {
+        byte[] usersBytes = GalateaStrictConfigReader.ReadUsersAndValidate(
+            resolvedPath
+        );
+        GalateaUsersFileConfig? usersFile;
+        try {
+            usersFile = JsonSerializer.Deserialize(
+                usersBytes,
+                GalateaJsonContext.Default.GalateaUsersFileConfig
+            );
+        }
+        catch (JsonException exception) {
+            throw new InvalidDataException(
+                "Galatea config JSON could not be materialized.",
+                exception
+            );
+        }
+        return usersFile ?? throw new InvalidOperationException(
+            $"Failed to deserialize Galatea config: {resolvedPath}"
+        );
     }
 
     private static GalateaRecapGridRuntimeConfig LoadRecapGridConfig(
@@ -2444,6 +2453,17 @@ internal static class GalateaConfigLoader {
                     exception
                 );
             }
+            GalateaPlayerName playerName;
+            try {
+                playerName = new GalateaPlayerName(user.PlayerName);
+            }
+            catch (ArgumentException exception) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' has an invalid "
+                    + "playerName.",
+                    exception
+                );
+            }
             if (string.IsNullOrWhiteSpace(user.SessionDir)) {
                 throw new InvalidOperationException(
                     $"Galatea config user '{user.UserId}' must have a "
@@ -2475,6 +2495,7 @@ internal static class GalateaConfigLoader {
                 systemPrompt = GalateaPromptTemplate.Render(
                     systemPromptTemplate,
                     characterName,
+                    playerName,
                     GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
                 );
             }
@@ -2489,6 +2510,7 @@ internal static class GalateaConfigLoader {
                 user.UserId,
                 user.Password,
                 characterName,
+                playerName,
                 Path.TrimEndingDirectorySeparator(
                     Path.GetFullPath(user.SessionDir, configDirectory)
                 ),
@@ -2688,12 +2710,9 @@ internal static class GalateaConfigBootstrapper {
         bool configExists = File.Exists(resolvedPath);
         bool connectionsExists = File.Exists(connectionsPath);
         bool delegatesExists = File.Exists(delegatesPath);
-        if (configExists && connectionsExists && delegatesExists) { return; }
-        if (configExists) {
-            _ = GalateaStrictConfigReader.ReadUsersAndValidate(
-                resolvedPath
-            );
-        }
+        GalateaUsersFileConfig usersFile = configExists
+            ? GalateaConfigLoader.ReadUsersFile(resolvedPath)
+            : GalateaConfigTemplateFactory.CreateUsersFile();
 
         Directory.CreateDirectory(parentDir);
 
@@ -2705,7 +2724,7 @@ internal static class GalateaConfigBootstrapper {
         var generated = new List<string>();
         if (!configExists) {
             byte[] document = JsonSerializer.SerializeToUtf8Bytes(
-                GalateaConfigTemplateFactory.CreateUsersFile(),
+                usersFile,
                 jsonOptions
             );
             byte[] terminated = GC.AllocateUninitializedArray<byte>(
@@ -2716,6 +2735,12 @@ internal static class GalateaConfigBootstrapper {
             File.WriteAllBytes(resolvedPath, terminated);
             generated.Add(resolvedPath);
         }
+
+        CreateMissingSystemPromptTemplates(
+            usersFile.Users,
+            parentDir,
+            generated
+        );
 
         if (!connectionsExists) {
             File.WriteAllBytes(
@@ -2733,22 +2758,83 @@ internal static class GalateaConfigBootstrapper {
             generated.Add(delegatesPath);
         }
 
+        if (generated.Count == 0) { return; }
+
         throw new InvalidOperationException(
             "Galatea config templates have been generated at "
             + string.Join(" and ", generated)
-            + ". Please replace every delegate path placeholder, update "
-            + "listenUrls, the connections' modelId / baseAddress / apiKey, "
-            + "and the default account passwords before restarting the server."
+            + ". Review every generated system prompt template and, where "
+            + "applicable, replace delegate path placeholders, update "
+            + "listenUrls, connection settings, and default account "
+            + "passwords before restarting the server."
         );
+    }
+
+    private static void CreateMissingSystemPromptTemplates(
+        IReadOnlyList<GalateaUserFileConfig> users,
+        string configDirectory,
+        List<string> generated
+    ) {
+        foreach (GalateaUserFileConfig user in users) {
+            if (string.IsNullOrWhiteSpace(user.SystemPromptTemplateFile)) {
+                continue;
+            }
+            string resolved = Path.GetFullPath(
+                user.SystemPromptTemplateFile,
+                configDirectory
+            );
+            if (File.Exists(resolved)
+                || !IsWithinDirectory(resolved, configDirectory)) {
+                continue;
+            }
+            GalateaStrictConfigReader.RequireExistingAncestorsNoReparse(
+                resolved,
+                "Galatea system prompt template bootstrap"
+            );
+            string? directory = Path.GetDirectoryName(resolved);
+            if (string.IsNullOrWhiteSpace(directory)) {
+                throw new InvalidOperationException(
+                    "Cannot determine the system prompt template directory."
+                );
+            }
+            Directory.CreateDirectory(directory);
+            GalateaStrictConfigReader.RequireExistingAncestorsNoReparse(
+                resolved,
+                "Galatea system prompt template bootstrap"
+            );
+            using var stream = new FileStream(
+                resolved,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None
+            );
+            stream.Write(GalateaBuiltInSystemPromptTemplate.Utf8.Span);
+            stream.Flush(flushToDisk: true);
+            generated.Add(resolved);
+        }
+    }
+
+    private static bool IsWithinDirectory(
+        string path,
+        string directory
+    ) {
+        string relative = Path.GetRelativePath(directory, path);
+        return !Path.IsPathRooted(relative)
+            && !string.Equals(relative, "..", StringComparison.Ordinal)
+            && !relative.StartsWith(
+                ".." + Path.DirectorySeparatorChar,
+                StringComparison.Ordinal
+            )
+            && !relative.StartsWith(
+                ".." + Path.AltDirectorySeparatorChar,
+                StringComparison.Ordinal
+            );
     }
 }
 
 internal static class GalateaDefaults {
-    public const string SystemPromptTemplate =
-        "你是${characterName}，一位家庭局域网里的私人助手。"
-        + "优先用简洁、直接、可信的中文回答。"
-        + "不确定时明确说明不确定，不编造细节。";
-
+    public const string SystemPromptTemplateFile =
+        "prompts/trpg-host-standard-zh-cn.md";
 }
 
 internal static class GalateaConfigTemplateFactory {
@@ -2763,12 +2849,14 @@ internal static class GalateaConfigTemplateFactory {
                     "alice",
                     "alice123",
                     "Alice",
+                    "Alex",
                     "sessions/alice"
                 ),
                 CreateUser(
                     "bob",
                     "bob123",
                     "Bob",
+                    "Blair",
                     "sessions/bob"
                 ),
             ],
@@ -2835,17 +2923,21 @@ internal static class GalateaConfigTemplateFactory {
         string userId,
         string password,
         string characterName,
+        string playerName,
         string sessionDir
     ) {
         return new GalateaUserFileConfig(
             UserId: userId,
             Password: password,
             CharacterName: characterName,
+            PlayerName: playerName,
             SessionDir: sessionDir,
             DelegationStateDir: $"delegation-state/{userId}",
             SessionProvisioning:
                 GalateaSessionProvisioning.CreateIfMissing,
-            SystemPromptTemplate: GalateaDefaults.SystemPromptTemplate
+            SystemPromptTemplate: "",
+            SystemPromptTemplateFile:
+                GalateaDefaults.SystemPromptTemplateFile
         );
     }
 }

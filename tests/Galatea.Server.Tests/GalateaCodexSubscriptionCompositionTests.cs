@@ -197,6 +197,7 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
         id,
         "pw",
         new GalateaCharacterName("Galatea"),
+        new GalateaPlayerName("Player"),
         Path.Combine(Path.GetTempPath(), "galatea-codex", id),
         Path.Combine(
             Path.GetTempPath(),

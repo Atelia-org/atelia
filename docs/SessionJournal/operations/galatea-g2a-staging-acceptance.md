@@ -224,6 +224,7 @@ max_rendered=1048576
 bootstrap_row_cap=1
 projected_call_cap=2
 character_name="Galatea"
+player_name="刘世超"
 admission="$operator_dir/recap-grid-admission.json"
 profile="$operator_dir/recap-grid-agent-control-profile.json"
 route_manifest="$operator_dir/recap-grid-routes.json"
@@ -280,6 +281,7 @@ scaffold_report="$(dotnet run --project prototypes/SessionJournal.Cli -- \
   recap-grid scaffold \
   --asset galatea-rolling-rewrite-zh-cn-v6 \
   --character-name "$character_name" \
+  --player-name "$player_name" \
   --profile-id galatea-rolling-v6 \
   --connection-id "$recap_connection_id" \
   --permission create --permission register-family \
@@ -339,7 +341,8 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   --input "$staging_repo" --branch main --confirm-ref "$ref_id" \
   --admission "$admission" \
   --asset galatea-rolling-rewrite-zh-cn-v6 \
-  --character-name "$character_name"
+  --character-name "$character_name" \
+  --player-name "$player_name"
 
 compose_report="$(dotnet run --project prototypes/SessionJournal.Cli -- \
   recap-grid control compose-full-recipe \

@@ -17,11 +17,12 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
       "userId": "alice",
       "password": "REPLACE_WITH_A_PRIVATE_PASSWORD",
       "characterName": "Alice",
+      "playerName": "Alex",
       "sessionDir": "sessions/alice",
       "delegationStateDir": "delegation-state/alice",
       "sessionProvisioning": "create-if-missing",
-      "systemPromptTemplate": "你是${characterName}，一位家庭局域网里的私人助手。",
-      "systemPromptTemplateFile": null
+      "systemPromptTemplate": "",
+      "systemPromptTemplateFile": "prompts/trpg-host-standard-zh-cn.md"
     }
   ],
   "listenUrls": ["http://0.0.0.0:3510"],
@@ -37,16 +38,26 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
 
 writer固定把`v`放在首字段，reader不要求property order。missing version、future version、`null`、string、
 `4.0`或`4e0`都拒绝；V1/V2/V3、versionless与future config都没有compatibility reader或自动迁移。升级V3时必须在
-停服、备份并确认实际`Galatea:ConfigPath`后，为每个user显式配置`characterName`，把prompt source改成只含exact
-`${characterName}`变量的template，并改为`"v": 4`；应用不会重写其中的password或其他operator配置。
+停服、备份并确认实际`Galatea:ConfigPath`后，为每个user显式配置`characterName`与
+`playerName`，把prompt source改成使用exact `${characterName}` / `${playerName}`变量的template，
+并改为`"v": 4`；应用不会重写其中的password或其他operator配置。本轮仍保持V4：
+项目未发布，且player-name delta与character-name delta属于同一批未运行的开发迁移。
 
-`characterName` 是required、already-trimmed Unicode NFC label，按strict UTF-8限制为1..128 bytes；拒绝控制/
+`characterName`与`playerName`都是required、already-trimmed Unicode NFC label，按strict UTF-8限制为
+1..128 bytes；它们分别表示GM扮演的主要NPC与故事内玩家角色，都不从login `userId`推导。两者拒绝控制/
 换行字符及除U+200D ZWJ外的Unicode Format，且必须至少含一个non-Format rune。`[`/`]`/`$`/`{`/`}`与reserved
 marker `旁白`/`状态摘要`/`角色名`也拒绝；ZWJ emoji仍合法。Template language只有
-case-sensitive `${characterName}`；source至少出现一次，其他或残缺`${...}`拒绝，replacement使用ordinal、one-pass、
-non-recursive语义。Inline `systemPromptTemplate`保持exact空白；有效`systemPromptTemplateFile`仍以config directory为
-base、覆盖inline，并在strict UTF-8 decode后先`Trim()`再render。Runtime只保留validated character name与finalized
-`SystemPrompt`，不会在每个turn重读template file。
+case-sensitive `${characterName}`与`${playerName}`；source至少出现一次character token，player token可选，
+其他或残缺`${...}`拒绝，replacement使用ordinal、one-pass、non-recursive语义。两个name都不承担
+代词、别名或persona生成。Inline `systemPromptTemplate`保持exact空白；有效
+`systemPromptTemplateFile`仍以config directory为base、覆盖inline，并在strict UTF-8 decode后先
+`Trim()`再render。Runtime保留两个validated name与finalized `SystemPrompt`，不会在每个turn重读template file。
+
+[`docs/Galatea/prompt/trpg-host.md`](../../docs/Galatea/prompt/trpg-host.md)是embedded、code-owned的标准TRPG
+source template，只预设`${characterName}`与`${playerName}`的名字/好友关系，不包含特定Player
+的年龄、性别、职业、家庭、历史或昵称。Bootstrap在`systemPromptTemplateFile`指向
+config directory内的missing path时，会创建缺失parent并以create-new写入该exact resource，然后
+fail-stop要求operator检查后重启。Existing file永不覆盖；config root外的missing target也不自动创建。
 
 相对`sessionDir`与`delegationStateDir`都以`config.json`所在目录为base，loader向runtime只交付canonical absolute
 path；absolute值保持同一target。`delegationStateDir`没有fallback，也不会从`sessionDir`推导；所有user的
@@ -492,7 +503,8 @@ coherent request recipe实际放在raw tail之前的首条Observation与Action�
 展示模型看到的Recap正文及各标题声明的语义范围。raw-only、未provision或当前candidate不可用时仍返回同一object shape，但对应字符串为空。
 stale cache保留上一稳定边界的header，并由同一response中的`recapGridReadiness.freshness=stale`标识；它不冒充当前raw head。
 每个derived block都由后端统一渲染为`## {SemanticHeading}`加空行，再接动态长度的`recap-block`围栏；
-当前parameterized V6 asset按per-user角色名为World Understanding与Autobiography分别声明中文语义标题，
+当前parameterized V6 asset按per-user角色名与玩家名物化两份member prompt，并按角色名为
+World Understanding与Autobiography分别声明中文语义标题，
 browser不根据`BlockKey`自行拼接标题。参数为`Galatea`时，标题及其canonical Definition identity与历史V5 exact相同。
 
 ## SSE V1 stable protocol
@@ -538,11 +550,12 @@ Galatea只在上述unpublished missing-session candidate中自动创建first-tur
 repository补写，也不自动创建Store、provision asset、compose recipe或activate。需要完整RecapGrid时，operator 应先使用
 SessionJournal.Cli 的
 `recap-grid scaffold`生成strict admission/profile/route files，再用`recap-grid init`、
-`recap-grid control provision-asset --asset galatea-rolling-rewrite-zh-cn-v6 --character-name <角色名>`、
+`recap-grid control provision-asset --asset galatea-rolling-rewrite-zh-cn-v6 --character-name <角色名> --player-name <玩家名>`、
 Control compose/put-recipe/activate 与 build 命令完成显式配置。该asset提供一个shared Family下的
 `world-understanding`与`autobiography`两列；实际connection/model只来自route/connections配置，不进入durable semantic identity。
-`--character-name`必须与目标user的validated character name完全相同；它在canonical bundle构造前展开两个member prompt、
-topic与semantic heading。角色不等于 provider Assistant；两列使用 Observation/Action 只是为了选择 provider carrier。
+`--character-name`与`--player-name`必须分别与目标user的validated names完全相同；它们在
+canonical bundle构造前展开两个member prompt，角色名另外进入topic与semantic heading。角色不等于
+provider Assistant；两列使用 Observation/Action 只是为了选择 provider carrier。
 主流程中的 provider Action 是 TRPG GM 的复合回复，可能含 `[<角色名>]`、`[旁白]` 与 `[状态摘要]`，只有显式
 `[<角色名>]` 第一人称内容是角色自身体验的直接证据。
 当前两条target的carrier与`BlockKey`固定，heading分别为
@@ -550,16 +563,18 @@ topic与semantic heading。角色不等于 provider Assistant；两列使用 Obs
 `Action / galatea.first-person-autobiography / galatea.first-person-autobiography <角色名>积累的第一人称自传：`。
 两列Definition将provider-facing `SemanticHeading`与carrier/`BlockKey`成套定义；heading进入Definition v2 digest，但不参与
 context contribution的routing identity/order，且不进入冻结的maintainer input `atelia.recap.input.v1`。
-`Galatea`参数会精确复现旧V5的Family、两个Definition与registration command digest；异名保持Family与上述routing keys，
-但会产生新的Definition/command identity。scaffold与provision必须使用同名；existing-session rename不由该命令承诺。
-Host composition会为每个user从validated `characterName`构造一次V6 bundle，并只缓存其ordered
+`Galatea` + `刘世超`参数会精确复现旧V5的Family、两个Definition与registration command digest；
+任一name变化都保持Family与routing keys，但会产生新的Definition/command identity。scaffold与provision
+必须使用同一对names；existing-session character/player rename都不由该命令承诺。
+Host composition会为每个user从validated `characterName` + `playerName`构造一次V6 bundle，并只缓存其ordered
 `BuildTargetDigest` expectation。fresh admission、后台fresh send与`OpenFreshAsync`都在任何current
 Recap/main completion或SessionJournal setup write前，用Galatea-owned typed inspector核对active recipe target；
 Control/Timeline absent及no-active继续允许raw-only，wrong-name、mixed、reordered或缺列target统一fail closed为
-`character-asset-mismatch`。NewRequest走同一current gate；FrozenCompletionRequired完全按frozen identity恢复；
+`character-asset-mismatch`。该稳定code现在表示角色名或玩家名与active asset不一致。NewRequest走同一
+current gate；FrozenCompletionRequired完全按frozen identity恢复；
 ToolContinuationRequired先把frozen tool结算到durable ToolResult boundary，再核对current target且仅在通过后打开Online。
 recent/readiness复用同一inspector，并在mismatch时返回exact `state=invalid`、
-`code=character-asset-mismatch`与空`contextHeader`。首个release不支持existing-session rename；operator必须停服后
+`code=character-asset-mismatch`与空`contextHeader`。首个release不支持existing-session character/player rename；operator必须停服后
 显式迁移/重建并切换active recipe，不能只改config。
 scaffold不会构造provider、
 Timeline、Control或Store；Galatea仍只消费其strict canonical outputs。

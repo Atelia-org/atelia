@@ -1,5 +1,6 @@
 using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 
 namespace Atelia.Galatea.Server;
@@ -189,6 +190,16 @@ internal static class GalateaStrictConfigReader {
                 exception
             );
         }
+        catch (InvalidOperationException exception) when (
+            exception.InnerException is DecoderFallbackException) {
+            throw new InvalidDataException(
+                "Galatea config JSON is not strict valid UTF-8 JSON.",
+                new JsonException(
+                    "Galatea config JSON contains invalid UTF-8 text.",
+                    exception
+                )
+            );
+        }
     }
 
     private static void ValidateUsersObject(ref Utf8JsonReader reader) {
@@ -254,6 +265,7 @@ internal static class GalateaStrictConfigReader {
                 case "userId":
                 case "password":
                 case "characterName":
+                case "playerName":
                 case "sessionDir":
                 case "delegationStateDir":
                 case "systemPromptTemplate":
@@ -277,6 +289,11 @@ internal static class GalateaStrictConfigReader {
         if (!seen.Contains("characterName")) {
             throw new InvalidDataException(
                 "user requires string field 'characterName'."
+            );
+        }
+        if (!seen.Contains("playerName")) {
+            throw new InvalidDataException(
+                "user requires string field 'playerName'."
             );
         }
     }

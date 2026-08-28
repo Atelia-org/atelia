@@ -56,6 +56,7 @@ internal sealed record GalateaUserFileConfig(
     string UserId,
     string Password,
     string CharacterName,
+    string PlayerName,
     string SessionDir,
     string DelegationStateDir,
     GalateaSessionProvisioning SessionProvisioning,
@@ -67,6 +68,7 @@ public sealed record GalateaUserConfig(
     string UserId,
     string Password,
     GalateaCharacterName CharacterName,
+    GalateaPlayerName PlayerName,
     string SessionDir,
     string DelegationStateDir,
     GalateaSessionProvisioning SessionProvisioning,
@@ -112,6 +114,12 @@ internal static class GalateaConfigValidation {
                 throw new InvalidOperationException(
                     $"Galatea config user '{user.UserId}' must have a "
                     + "validated characterName."
+                );
+            }
+            if (user.PlayerName is null) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' must have a "
+                    + "validated playerName."
                 );
             }
             if (string.IsNullOrWhiteSpace(user.SystemPrompt)) {

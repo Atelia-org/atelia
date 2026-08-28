@@ -64,7 +64,11 @@ public sealed class GalateaCharacterNameTests {
     [Fact]
     public void PublicSurfaceIsExact() {
         Assert.Equal(
-            [typeof(GalateaCharacterName), typeof(GalateaPromptTemplate)],
+            [
+                typeof(GalateaCharacterName),
+                typeof(GalateaPlayerName),
+                typeof(GalateaPromptTemplate)
+            ],
             typeof(GalateaCharacterName).Assembly.GetExportedTypes()
                 .OrderBy(static value => value.Name)
         );

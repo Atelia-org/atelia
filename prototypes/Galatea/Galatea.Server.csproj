@@ -28,4 +28,11 @@
     </AssemblyAttribute>
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="../../docs/Galatea/prompt/trpg-host.md">
+      <Link>PromptTemplates/trpg-host-standard-zh-cn.md</Link>
+      <LogicalName>Atelia.Galatea.Server.PromptTemplates.TrpgHost.Standard.zh-CN.md</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>

@@ -17,6 +17,29 @@ public sealed class GalateaPromptTemplateTests {
         Assert.DoesNotContain("${", rendered, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CharacterAndPlayerTokensRenderTogether() {
+        string rendered = GalateaPromptTemplate.Render(
+            "${playerName} visits [${characterName}].",
+            new GalateaCharacterName("Alice"),
+            new GalateaPlayerName("老刘"),
+            maximumUtf8Bytes: 1024
+        );
+
+        Assert.Equal("老刘 visits [Alice].", rendered);
+        Assert.DoesNotContain("${", rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PlayerTokenRequiresThePlayerAwareOverload() {
+        Assert.Throws<ArgumentException>(() =>
+            GalateaPromptTemplate.Render(
+                "${characterName} meets ${playerName}.",
+                new GalateaCharacterName("Galatea"),
+                maximumUtf8Bytes: 1024
+            ));
+    }
+
     [Theory]
     [InlineData("${Alice}")]
     [InlineData("Alice${other}")]
@@ -66,6 +89,29 @@ public sealed class GalateaPromptTemplateTests {
                 Source,
                 name,
                 maximumUtf8Bytes: name.Utf8ByteCount
+            )
+        );
+    }
+
+    [Fact]
+    public void PlayerRenderedUtf8BoundIsIncluded() {
+        var player = new GalateaPlayerName(new string('p', 128));
+        const string Source = "${characterName}${playerName}";
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            GalateaPromptTemplate.Render(
+                Source,
+                new GalateaCharacterName("G"),
+                player,
+                maximumUtf8Bytes: 128
+            ));
+        Assert.Equal(
+            "G" + player.Value,
+            GalateaPromptTemplate.Render(
+                Source,
+                new GalateaCharacterName("G"),
+                player,
+                maximumUtf8Bytes: 129
             )
         );
     }

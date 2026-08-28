@@ -8,8 +8,9 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaRecapGridReadinessTests : IDisposable {
     private static GalateaRecapGridTargetExpectation TargetExpectation =>
-        GalateaRecapGridTargetExpectation.ForCharacterName(
-            new GalateaCharacterName("Galatea")
+        GalateaRecapGridTargetExpectation.ForNames(
+            new GalateaCharacterName("Galatea"),
+            new GalateaPlayerName("刘世超")
         );
     private readonly string _root = Path.Combine(
         Directory.Exists("/dev/shm") ? "/dev/shm" : Path.GetTempPath(),

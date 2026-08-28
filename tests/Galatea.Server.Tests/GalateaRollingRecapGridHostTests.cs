@@ -555,7 +555,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName("Galatea")
+                new GalateaCharacterName("Galatea"),
+                new GalateaPlayerName("刘世超")
             ),
             out RecapGridControlRegistrationBundle? created
         ));
@@ -943,6 +944,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             "alice",
             "pw",
             new GalateaCharacterName("Galatea"),
+            new GalateaPlayerName("刘世超"),
             path,
             path + "-delegation-state",
             GalateaSessionProvisioning.ExistingOnly,

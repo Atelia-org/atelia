@@ -15,17 +15,22 @@ public sealed class GalateaTrackedPromptTemplateTests {
         ));
 
         Assert.DoesNotContain("Galatea", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("刘世超", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("老刘", source, StringComparison.Ordinal);
         Assert.DoesNotContain("[角色名]", source, StringComparison.Ordinal);
         Assert.DoesNotContain("加拉泰亚", source, StringComparison.Ordinal);
         Assert.Equal(5, CountOccurrences(source, "{{}}"));
+        Assert.Equal(source, GalateaBuiltInSystemPromptTemplate.Source);
 
         string rendered = GalateaPromptTemplate.Render(
             source,
             new GalateaCharacterName("Alice"),
+            new GalateaPlayerName("Alex"),
             maximumUtf8Bytes: 1024 * 1024
         );
 
         Assert.Contains("**[Alice]**", rendered, StringComparison.Ordinal);
+        Assert.Contains("**Alex**", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("${", rendered, StringComparison.Ordinal);
         Assert.Equal(5, CountOccurrences(rendered, "{{}}"));
     }

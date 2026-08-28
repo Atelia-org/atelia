@@ -618,6 +618,7 @@ public sealed class GalateaDelegationSupervisorTests {
         userId,
         "pw",
         new GalateaCharacterName("Galatea"),
+        new GalateaPlayerName("Player"),
         sessionPath,
         statePath,
         provisioning,

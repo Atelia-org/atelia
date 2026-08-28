@@ -1,17 +1,17 @@
 namespace Atelia.Galatea.Prompts;
 
 /// <summary>
-/// A canonical, single-line character label that is safe to place inside
-/// Galatea's exact voice-marker grammar.
+/// A canonical, single-line player-character label for Galatea prompt
+/// attribution. It is independent from the authenticated user id.
 /// </summary>
-public sealed record GalateaCharacterName {
+public sealed record GalateaPlayerName {
     public const int MaximumUtf8Bytes =
         GalateaPromptNameValidation.MaximumUtf8Bytes;
 
-    public GalateaCharacterName(string value) {
+    public GalateaPlayerName(string value) {
         int utf8ByteCount = GalateaPromptNameValidation.Validate(
             value,
-            "Character"
+            "Player"
         );
         Value = value;
         Utf8ByteCount = utf8ByteCount;

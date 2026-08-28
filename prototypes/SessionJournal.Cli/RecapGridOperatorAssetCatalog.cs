@@ -22,13 +22,15 @@ internal static class RecapGridOperatorAssetCatalog {
     internal static bool TryCreateRegistrationBundle(
         string assetId,
         string? characterName,
+        string? playerName,
         out RecapGridControlRegistrationBundle? bundle
     ) {
         switch (assetId) {
             case RecapGridAgentControlBuiltIns.MysteryInvestigationV4:
-                if (characterName is not null) {
+                if (characterName is not null || playerName is not null) {
                     throw new ArgumentException(
-                        "--character-name is not accepted by this operator asset."
+                        "--character-name and --player-name are not accepted "
+                        + "by this operator asset."
                     );
                 }
                 return RecapGridAgentControlBuiltIns
@@ -39,11 +41,17 @@ internal static class RecapGridOperatorAssetCatalog {
                         "--character-name is required by this operator asset."
                     );
                 }
+                if (playerName is null) {
+                    throw new ArgumentException(
+                        "--player-name is required by this operator asset."
+                    );
+                }
                 return GalateaRecapGridAssets
                     .TryCreateRegistrationBundle(
                         assetId,
                         new GalateaRecapGridAssetParameters(
-                            new GalateaCharacterName(characterName)
+                            new GalateaCharacterName(characterName),
+                            new GalateaPlayerName(playerName)
                         ),
                         out bundle
                     );

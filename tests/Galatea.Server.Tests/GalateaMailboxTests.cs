@@ -676,6 +676,7 @@ public sealed class GalateaMailboxTests {
         userId,
         "password",
         new GalateaCharacterName(characterName),
+        new GalateaPlayerName("Player"),
         "/tmp/session-" + userId,
         "/tmp/delegation-" + userId,
         GalateaSessionProvisioning.ExistingOnly,

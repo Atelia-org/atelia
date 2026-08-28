@@ -68,9 +68,17 @@ public sealed class GalateaConfigValidationTests {
             ["Alice", "Bob"],
             decoded.Users.Select(static user => user.CharacterName)
         );
+        Assert.Equal(
+            ["Alex", "Blair"],
+            decoded.Users.Select(static user => user.PlayerName)
+        );
         Assert.All(decoded.Users, static user => Assert.Equal(
-            GalateaDefaults.SystemPromptTemplate,
+            string.Empty,
             user.SystemPromptTemplate
+        ));
+        Assert.All(decoded.Users, static user => Assert.Equal(
+            GalateaDefaults.SystemPromptTemplateFile,
+            user.SystemPromptTemplateFile
         ));
         Assert.All(
             decoded.Users,
@@ -125,6 +133,19 @@ public sealed class GalateaConfigValidationTests {
                     user.CharacterName.Value)
             );
             Assert.Equal(
+                ["Alex", "Blair"],
+                loaded.Users.Select(static user =>
+                    user.PlayerName.Value)
+            );
+            string generatedPrompt = Path.Combine(
+                root,
+                GalateaDefaults.SystemPromptTemplateFile
+            );
+            Assert.Equal(
+                GalateaBuiltInSystemPromptTemplate.Utf8.ToArray(),
+                File.ReadAllBytes(generatedPrompt)
+            );
+            Assert.Equal(
                 GalateaConfigTemplateFactory.DefaultConnectionId,
                 loaded.DefaultConnectionId
             );
@@ -146,6 +167,117 @@ public sealed class GalateaConfigValidationTests {
         }
         finally {
             Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ExistingConfigBootstrapCreatesMissingInRootPromptOnce() {
+        string root = NewRoot();
+        try {
+            string promptRelative = Path.Combine(
+                "prompts",
+                "custom.md"
+            );
+            string promptPath = Path.Combine(root, promptRelative);
+            string configPath = WriteFileConfig(
+                root,
+                [new GalateaUserFileConfig(
+                    "alice",
+                    "pw",
+                    "Galatea",
+                    "刘世超",
+                    Path.Combine(root, "session"),
+                    Path.Combine(root, "delegation-state"),
+                    GalateaSessionProvisioning.ExistingOnly,
+                    SystemPromptTemplate: "",
+                    SystemPromptTemplateFile: promptRelative
+                )]
+            );
+            Assert.False(File.Exists(promptPath));
+
+            InvalidOperationException generated = Assert.Throws<
+                InvalidOperationException
+            >(() => GalateaConfigBootstrapper.EnsureExistsOrBootstrap(
+                configPath
+            ));
+
+            Assert.Contains(promptPath, generated.Message,
+                StringComparison.Ordinal);
+            Assert.Equal(
+                GalateaBuiltInSystemPromptTemplate.Utf8.ToArray(),
+                File.ReadAllBytes(promptPath)
+            );
+            GalateaConfigBootstrapper.EnsureExistsOrBootstrap(configPath);
+            GalateaUserConfig user = Assert.Single(
+                GalateaConfigLoader.Load(configPath).Users
+            );
+            Assert.Contains("Galatea", user.SystemPrompt,
+                StringComparison.Ordinal);
+            Assert.Contains("刘世超", user.SystemPrompt,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("${", user.SystemPrompt,
+                StringComparison.Ordinal);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void BootstrapNeverOverwritesOrCreatesOutsideConfigRoot() {
+        string root = NewRoot();
+        string external = NewRoot();
+        try {
+            string existingPrompt = Path.Combine(root, "existing.md");
+            byte[] existing =
+                "${characterName} meets ${playerName}"u8.ToArray();
+            File.WriteAllBytes(existingPrompt, existing);
+            string configPath = WriteFileConfig(
+                root,
+                [new GalateaUserFileConfig(
+                    "alice",
+                    "pw",
+                    "Galatea",
+                    "刘世超",
+                    Path.Combine(root, "session"),
+                    Path.Combine(root, "delegation-state"),
+                    GalateaSessionProvisioning.ExistingOnly,
+                    SystemPromptTemplate: "",
+                    SystemPromptTemplateFile: existingPrompt
+                )]
+            );
+
+            GalateaConfigBootstrapper.EnsureExistsOrBootstrap(configPath);
+            Assert.Equal(existing, File.ReadAllBytes(existingPrompt));
+
+            string outsidePrompt = Path.Combine(external, "missing.md");
+            File.WriteAllText(
+                configPath,
+                JsonSerializer.Serialize(
+                    GalateaConfigTemplateFactory.CreateUsersFile() with {
+                        Users = [new GalateaUserFileConfig(
+                            "alice",
+                            "pw",
+                            "Galatea",
+                            "刘世超",
+                            Path.Combine(root, "session"),
+                            Path.Combine(root, "delegation-state"),
+                            GalateaSessionProvisioning.ExistingOnly,
+                            SystemPromptTemplate: "",
+                            SystemPromptTemplateFile: outsidePrompt
+                        )]
+                    },
+                    GalateaJson.Options
+                )
+            );
+            GalateaConfigBootstrapper.EnsureExistsOrBootstrap(configPath);
+            Assert.False(File.Exists(outsidePrompt));
+            Assert.Throws<FileNotFoundException>(() =>
+                GalateaConfigLoader.Load(configPath));
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(external, recursive: true);
         }
     }
 
@@ -570,12 +702,21 @@ public sealed class GalateaConfigValidationTests {
             File.WriteAllBytes(configPath, versionless);
             byte[] connectionsBefore = File.ReadAllBytes(connectionsPath);
 
-            GalateaConfigBootstrapper.EnsureExistsOrBootstrap(configPath);
+            InvalidDataException bootstrapFailure = Assert.Throws<
+                InvalidDataException
+            >(() => GalateaConfigBootstrapper.EnsureExistsOrBootstrap(
+                configPath
+            ));
 
             Assert.Equal(versionless, File.ReadAllBytes(configPath));
             Assert.Equal(
                 connectionsBefore,
                 File.ReadAllBytes(connectionsPath)
+            );
+            Assert.Contains(
+                "migrate",
+                bootstrapFailure.Message,
+                StringComparison.OrdinalIgnoreCase
             );
             InvalidDataException failure = Assert.Throws<
                 InvalidDataException
@@ -1099,6 +1240,7 @@ public sealed class GalateaConfigValidationTests {
                     "alice",
                     "pw",
                     "Galatea",
+                    "刘世超",
                     Path.Combine(root, "session"),
                     Path.Combine(root, "delegation-state"),
                     GalateaSessionProvisioning.ExistingOnly,
@@ -1375,6 +1517,7 @@ public sealed class GalateaConfigValidationTests {
         user.UserId,
         user.Password,
         user.CharacterName.Value,
+        user.PlayerName.Value,
         user.SessionDir,
         user.DelegationStateDir,
         user.SessionProvisioning,
@@ -1419,6 +1562,7 @@ public sealed class GalateaConfigValidationTests {
         userId,
         "pw",
         new GalateaCharacterName("Galatea"),
+        new GalateaPlayerName("刘世超"),
         sessionDirectory,
         delegationStateDirectory
             ?? sessionDirectory + "-delegation-state-" + userId,

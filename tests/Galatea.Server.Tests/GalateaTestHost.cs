@@ -466,6 +466,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     TestUserId,
                     TestPassword,
                     "Galatea",
+                    "刘世超",
                     absoluteSessionDirectory,
                     Path.Combine(
                         configurationDirectory,

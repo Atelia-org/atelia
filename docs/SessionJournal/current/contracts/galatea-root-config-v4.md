@@ -7,7 +7,7 @@ Prior historical contracts：[Galatea root config V3](galatea-root-config-v3.md)
 [V2](galatea-root-config-v2.md)、[V1 approved contract](galatea-root-config-v1.md)
 
 本文定义Galatea `config.json` current V4的exact field language、path semantics、per-user
-character prompt materialization、SessionJournal provisioning policy与durable delegation storage boundary。
+character/player prompt materialization、SessionJournal provisioning policy与durable delegation storage boundary。
 V4只改变Galatea-owned root config与启动期prompt materialization；Completion `connections.json`、RecapGrid
 Route manifest、AgentControl profile、HTTP、SSE与durable SessionJournal wire继续服从各自owner的现有版本。
 
@@ -19,10 +19,12 @@ interpretation、automatic migration或existing-file rewrite。
 Reader与runtime materialization由`GalateaStrictConfigReader`、`GalateaConfigLoader`及
 `GalateaConfigValidation`拥有；bootstrap writer由`GalateaConfigBootstrapper`与
 `GalateaConfigTemplateFactory`拥有。共享的character-name与template contract由零依赖
-`Atelia.Galatea.Prompts` assembly拥有。
+`Atelia.Galatea.Prompts` assembly拥有。Code-owned标准TRPG source template由
+`Galatea.Server` embedded resource拥有，source为`docs/Galatea/prompt/trpg-host.md`。
 
 `GalateaUserFileConfig`只表示operator file shape；它保存source template及optional file path。
-`GalateaUserConfig`只表示resolved runtime shape；它保存validated `GalateaCharacterName`与finalized
+`GalateaUserConfig`只表示resolved runtime shape；它保存validated `GalateaCharacterName`、
+`GalateaPlayerName`与finalized
 `SystemPrompt`，不保留source template或template path。所有user在host composition前完成一次materialization；
 provider request与每个turn都不会重读或重新渲染文件。
 
@@ -39,7 +41,8 @@ Root file必须是Linux no-follow regular file，长度为1 byte..1 MiB，JSON m
 - 每层unknown或wrong-case property拒绝；duplicate按decoded name的`OrdinalIgnoreCase`比较拒绝；
 - `v`可位于任意property位置，但必须存在且raw token为exact integer `4`；V1/V2/V3、versionless、future、
   `null`、string、fraction或exponent form全部拒绝；
-- source-generated materialization只发生在strict reader通过之后；`sessionProvisioning`与`characterName`的
+- source-generated materialization只发生在strict reader通过之后；`sessionProvisioning`、`characterName`与
+  `playerName`的
   required/type acceptance由strict reader本身决定，不能依赖enum或record default。
 
 ## 3. Exact field language
@@ -62,26 +65,28 @@ Root file必须是Linux no-follow regular file，长度为1 byte..1 MiB，JSON m
 | `userId` | required string | nonblank；所有user中exact ordinal unique |
 | `password` | required string | nonblank；用于Galatea login validation |
 | `characterName` | required string | 服从§3.3；没有root/global default，不从`userId`、文件名、history或旧prompt推断；不同user可以相同 |
+| `playerName` | required string | 服从§3.3；表示故事内玩家角色，不是login `userId`；无default/推断；不同user可以相同 |
 | `sessionDir` | required string | nonblank；relative以config directory为base；absolute保持同一target；runtime只接收absolute path |
 | `delegationStateDir` | required string | nonblank；relative以config directory为base；runtime只接收canonical absolute path；没有fallback或从`sessionDir`推导 |
 | `sessionProvisioning` | required string | closed exact token：`existing-only`或`create-if-missing`；无root/default fallback |
-| `systemPromptTemplate` | string；可missing | 没有有效`systemPromptTemplateFile`时必须提供合法character-dependent source；inline text除template validation外保持exact |
-| `systemPromptTemplateFile` | optional string-or-null | missing/`null`/empty/whitespace视为absent；nonblank path必须读取成功并覆盖inline source |
+| `systemPromptTemplate` | string；可missing | 没有有效`systemPromptTemplateFile`时必须提供合法name-dependent source；inline text除template validation外保持exact |
+| `systemPromptTemplateFile` | optional string-or-null | missing/`null`/empty/whitespace视为absent；nonblank path在load时必须读取成功并覆盖inline source；missing in-root path可由§4的bootstrap以标准template创建 |
 
 `systemPromptTemplateFile` relative path以config directory为base。文件必须是1 byte..1 MiB no-follow regular
 file与strict UTF-8；decode后执行`Trim()`，再进入同一个renderer。有效file允许inline source missing或blank，但
 explicit `systemPromptTemplate:null`仍因wrong JSON type拒绝。Inline source不由renderer或loader `Trim()`。
 
-Materialization顺序为：validate character name → resolve storage paths → select/read source → render → construct
-runtime user。两个user可以引用同一template file；每个user使用自己的exact character name独立渲染。
+Materialization顺序为：validate character/player names → resolve storage paths → select/read source → render →
+construct runtime user。两个user可以引用同一template file；每个user使用自己的exact names独立渲染。
 Source与rendered prompt分别不得超过1 MiB strict UTF-8。
 
 V3 `systemPrompt`与`systemPromptFile`在V4中是unknown fields。V4没有兼容字段、constructor default或literal
 `Galatea` fallback。
 
-### 3.3 Character name与template language
+### 3.3 Character/player names与template language
 
-`characterName`是进入voice marker和prompt prose的canonical单行label：
+`characterName`是进入voice marker和prompt prose的canonical单行label；`playerName`是进入
+prompt source-attribution/prose的canonical单行label。两者服从同一语法：
 
 - 必须是strict UTF-16、already Unicode NFC且already trimmed；不自动修正；
 - strict UTF-8长度为1..128 bytes；
@@ -90,9 +95,14 @@ V3 `systemPrompt`与`systemPromptFile`在V4中是unknown fields。V4没有兼容
 - 拒绝`[`、`]`、`$`、`{`、`}`，防止破坏voice marker或在rendered prompt中留下`${...}` opener；
 - exact拒绝reserved output marker `旁白`、`状态摘要`与`角色名`；不同user无需unique。
 
-Template language只有一个exact、case-sensitive token：`${characterName}`。Renderer要求source至少出现一次，
-遇到任何其他或残缺`${...}`即拒绝；它使用ordinal、one-pass、non-recursive replacement。Replacement中的字符永不
-再次解释。Renderer不trim、不normalize、不改换行或其他字符，并在分配final output前验证rendered strict UTF-8 cap。
+Template language只有两个exact、case-sensitive token：`${characterName}`与`${playerName}`。Renderer
+要求任何source至少出现一次character token；player-aware overload另外允许任意次player token，
+而character-only mail/extractor caller遇到player token会fail closed。任何其他或残缺`${...}`都拒绝。
+Replacement使用ordinal、one-pass、non-recursive语义；不trim、不normalize、不改换行或其他字符，
+并在分配final output前验证rendered strict UTF-8 cap。
+
+`playerName`不是玩家账号、现实姓名必须项或persona profile；`characterName`也不生成代词。
+两个field都不承担别名、代词、年龄、性别、关系史或其他人物设定。
 
 ### 3.4 Session provisioning与storage
 
@@ -134,28 +144,38 @@ session、不启动pulse scheduler或sidecar effect。没有process-local fallba
 | `agentControlProfileFiles` | required array，1..256 strings | item nonblank；relative以config directory为base；resolved path按platform comparer unique；file必须存在并eager strict decode |
 | `currentAgentControlProfileId` | required nonblank string | exact匹配一个已加载profile ID；仅作为missing-session bootstrap admission authority，不注入fresh/NewRequest completion |
 
-Route manifest仍延迟到首次RecapGrid work读取，没有wildcard/default route fallback。V4不改变Route/profile owner language，
-也不参数化Galatea RecapGrid asset；后者属于独立工作包。
+Route manifest仍延迟到首次RecapGrid work读取，没有wildcard/default route fallback。V4不改变Route/profile owner language。
+Galatea RecapGrid V6使用同一对validated character/player names展开member prompts；两者任一变化都旋转
+Definition/BuildTarget identity，但不进入route/provider identity。
 
 Sibling `connections.json` 继续使用Completion-owned numeric V1。Galatea仍要求nonempty exact
 `selectableConnectionIds`包含default connection，并要求`bindings` exact只含
 `galatea.input-normalizer`与`galatea.outbound-mail-extractor`，每个值为exact existing connection ID或explicit
-`null`。Missing、wrong-case、extra、blank或unknown全部fail closed，不fallback default。Character name/template不进入
+`null`。Missing、wrong-case、extra、blank或unknown全部fail closed，不fallback default。Character/player names与template不进入
 connection catalog、route或provider secret locator。
 
 ## 4. Bootstrap与migration
 
 Current bootstrap写exact numeric `v:4`，为`alice`/`bob`分别显式写`characterName:"Alice"|"Bob"`、
-character-dependent inline template、`sessionProvisioning:"create-if-missing"`、`sessions/alice|bob`与
-`delegation-state/alice|bob`。Bootstrap只生成缺失root与required sibling templates；不创建SessionJournal、
-不验证provider，也不provision sidecar/RecapGrid asset。
+`playerName:"Alex"|"Blair"`、shared `systemPromptTemplateFile:"prompts/trpg-host-standard-zh-cn.md"`、
+`sessionProvisioning:"create-if-missing"`、`sessions/alice|bob`与`delegation-state/alice|bob`。该标准template是
+embedded、BOM-less、LF-only、bounded strict UTF-8 resource，不包含特定Player的个人信息、昵称或交互历史。
 
-Existing root file不会被添加field、升级version、改password或按template重写。V3 operator必须停服、备份、确认actual
-`Galatea:ConfigPath`，为每个user显式配置validated `characterName`，把旧prompt source改成
-`${characterName}` template，删除V3 prompt fields并改为`v:4`。应用不自动迁移，ignored machine-local config/prompt也不
-属于tracked bootstrap authority。
+Bootstrap生成缺失root、required sibling templates，以及existing/new root中`systemPromptTemplateFile`
+所指向的missing in-root template：只对resolved path仍在config directory内的target创建missing parent，
+然后以`FileMode.CreateNew`写入标准resource并执行`Flush(true)`。多user共享同一path只会创建一次。
+Existing file永不覆盖；missing outside-root target不创建，后续load继续`FileNotFoundException`。任何生成都
+fail-stop并列出paths，operator必须检查后重启。Bootstrap不创建SessionJournal、不验证provider，也不
+provision sidecar/RecapGrid asset。
 
-V4 root migration不授权existing session原地角色rename，也不改变active RecapGrid Definition、mail/extractor semantic
+Existing root file不会被添加field、升级version、改password或按template重写；唯一允许的旁路创建
+是上述operator已显式指向的missing in-root prompt file。V3 operator必须停服、备份、确认actual
+`Galatea:ConfigPath`，为每个user显式配置validated `characterName`与`playerName`，把旧prompt source改成
+`${characterName}` / `${playerName}` template，删除V3 prompt fields并改为`v:4`。应用不自动迁移config，
+ignored machine-local config/prompt也不属于tracked bootstrap authority。本未发布checkout在character-name delta尚未
+运行时继续把player-name delta并入V4，不新建valueless version。
+
+V4 root migration不授权existing session原地character/player rename，也不改变mail/extractor semantic
 contract或frozen recovery；这些是独立migration gate。Finalized prompt与current governing prompt不exact相同时，现有fresh
 Idle desired-setup reconciliation会按SessionJournal owner合同append新的`SystemPromptSetup`，不会改写旧setup。
 
@@ -163,11 +183,11 @@ Idle desired-setup reconciliation会按SessionJournal owner合同append新的`Sy
 
 V4保留root 1 MiB、users 1..256、`listenUrls` 0..256、profile paths 1..256、prompt source/rendered 1 MiB、
 profile 128 KiB与deferred Route 1 MiB bounds。Syntax/type/version/unknown/duplicate、invalid root/file UTF-8及invalid
-`sessionProvisioning` field language归类为`InvalidDataException`；character/template、blank、duplicate identity/path与
+`sessionProvisioning` field language归类为`InvalidDataException`；character/player/template、blank、duplicate identity/path与
 dependency mismatch等semantic failure归类为`InvalidOperationException`，其inner exception可保留shared contract detail。
 Underlying IO/path/permission与owner-local dependency exception可以传播；diagnostic逐字文本不是machine contract。
 
 本合同不承诺password encryption、secret-store integration、bootstrap file permissions、Kestrel deployment、provider
-readiness、automatic config rewrite/migration、hot reload、session repair/move、existing-repository角色rename、RecapGrid
-V6、mail/extractor参数化、derived migration、full RecapGrid activation或path confinement。Connections、Route、profile、
+readiness、automatic config rewrite/migration、hot reload、session repair/move、existing-repository character/player rename、
+pronoun/alias/persona profile、derived migration、full RecapGrid activation或普遍path confinement。Connections、Route、profile、
 HTTP/SSE及SessionJournal durable wire不会因root version升到V4而同步改版。

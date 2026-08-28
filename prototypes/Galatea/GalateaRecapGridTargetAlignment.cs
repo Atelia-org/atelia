@@ -21,13 +21,18 @@ internal sealed class GalateaRecapGridTargetExpectation {
 
     internal BuildTargetDigest TargetDigest { get; }
 
-    internal static GalateaRecapGridTargetExpectation ForCharacterName(
-        GalateaCharacterName characterName
+    internal static GalateaRecapGridTargetExpectation ForNames(
+        GalateaCharacterName characterName,
+        GalateaPlayerName playerName
     ) {
         ArgumentNullException.ThrowIfNull(characterName);
+        ArgumentNullException.ThrowIfNull(playerName);
         if (!GalateaRecapGridAssets.TryCreateRegistrationBundle(
                 GalateaRecapGridAssets.RollingRewriteZhCnV6,
-                new GalateaRecapGridAssetParameters(characterName),
+                new GalateaRecapGridAssetParameters(
+                    characterName,
+                    playerName
+                ),
                 out RecapGridControlRegistrationBundle? bundle)
             || bundle is null) {
             throw new InvalidDataException(
@@ -181,7 +186,7 @@ internal static class GalateaRecapGridTargetInspector {
                 return;
             case GalateaRecapGridTargetAlignment.Mismatch:
                 throw new GalateaTurnException(
-                    "当前角色名与active RecapGrid recipe不一致。",
+                    "当前角色名或玩家名与active RecapGrid recipe不一致。",
                     "character-asset-mismatch"
                 );
             case GalateaRecapGridTargetAlignment.Busy value:

@@ -9,7 +9,8 @@ namespace Atelia.Galatea.RecapGrid.Tests;
 
 public sealed class GalateaRecapGridAssetsTests {
     private static GalateaRecapGridAssetParameters GalateaParameters => new(
-        new GalateaCharacterName("Galatea")
+        new GalateaCharacterName("Galatea"),
+        new GalateaPlayerName("刘世超")
     );
 
     [Fact]
@@ -29,6 +30,16 @@ public sealed class GalateaRecapGridAssetsTests {
                 GalateaRecapGridAssets.RollingRewriteZhCnV6,
                 null!,
                 out _
+            ));
+        Assert.Throws<ArgumentNullException>(() =>
+            new GalateaRecapGridAssetParameters(
+                null!,
+                new GalateaPlayerName("刘世超")
+            ));
+        Assert.Throws<ArgumentNullException>(() =>
+            new GalateaRecapGridAssetParameters(
+                new GalateaCharacterName("Galatea"),
+                null!
             ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
@@ -112,11 +123,11 @@ public sealed class GalateaRecapGridAssetsTests {
             ResourceSha256(PromptResourceLoader.FamilySystemResourceName)
         );
         Assert.Equal(
-            "f83ef2dcdca185ad662b4ad31620bef8ef61d6817d2a3befde7b2b9bb37e0dd3",
+            "6d853eb9315ee4f64c11c71b0d68ff4b5bf14a6b783ae6b893ccbd4ac430ca99",
             ResourceSha256(PromptResourceLoader.WorldUnderstandingResourceName)
         );
         Assert.Equal(
-            "9f78f6987b284c47c012937ccbf0031110a58d98b08a38b2511e5fa16e34df50",
+            "03cc0c1014747d9102c957feb5233b95382b3a7200802c3076f96d874b5a7df8",
             ResourceSha256(PromptResourceLoader.AutobiographyResourceName)
         );
         Assert.Equal(first.Families[0].SystemPrompt,
@@ -131,6 +142,7 @@ public sealed class GalateaRecapGridAssetsTests {
                     RecapGridLimits.MaximumUserPromptUtf8Bytes
                 ),
                 GalateaParameters.CharacterName,
+                GalateaParameters.PlayerName,
                 RecapGridLimits.MaximumUserPromptUtf8Bytes
             ));
         Assert.Equal(first.Definitions[1].DeclarativeSpec.UserPromptTemplate,
@@ -140,6 +152,7 @@ public sealed class GalateaRecapGridAssetsTests {
                     RecapGridLimits.MaximumUserPromptUtf8Bytes
                 ),
                 GalateaParameters.CharacterName,
+                GalateaParameters.PlayerName,
                 RecapGridLimits.MaximumUserPromptUtf8Bytes
             ));
         string worldSource = PromptResourceLoader.ReadText(
@@ -152,8 +165,15 @@ public sealed class GalateaRecapGridAssetsTests {
         );
         Assert.Contains(GalateaPromptTemplate.CharacterNameToken, worldSource,
             StringComparison.Ordinal);
+        Assert.Contains(GalateaPromptTemplate.PlayerNameToken, worldSource,
+            StringComparison.Ordinal);
         Assert.Contains(GalateaPromptTemplate.CharacterNameToken,
             autobiographySource, StringComparison.Ordinal);
+        Assert.Contains(
+            GalateaPromptTemplate.PlayerNameToken,
+            autobiographySource,
+            StringComparison.Ordinal
+        );
         Assert.DoesNotContain("Galatea", worldSource,
             StringComparison.Ordinal);
         Assert.DoesNotContain("Galatea", autobiographySource,
@@ -188,6 +208,11 @@ public sealed class GalateaRecapGridAssetsTests {
             definition.DeclarativeSpec.UserPromptTemplate,
             StringComparison.Ordinal
         ));
+        Assert.All(first.Definitions, definition => Assert.DoesNotContain(
+            GalateaPromptTemplate.PlayerNameToken,
+            definition.DeclarativeSpec.UserPromptTemplate,
+            StringComparison.Ordinal
+        ));
     }
 
     [Fact]
@@ -200,7 +225,8 @@ public sealed class GalateaRecapGridAssetsTests {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName("阿特丽娅")
+                new GalateaCharacterName("阿特丽娅"),
+                GalateaParameters.PlayerName
             ),
             out RecapGridControlRegistrationBundle? renamed
         ));
@@ -246,6 +272,49 @@ public sealed class GalateaRecapGridAssetsTests {
                 value.DeclarativeSpec.Topic)
         );
         Assert.All(renamed.Definitions.Zip(galatea.Definitions), pair =>
+            Assert.NotEqual(pair.Second.Digest, pair.First.Digest));
+    }
+
+    [Fact]
+    public void DifferentPlayerNameChangesMemberDefinitionsOnly() {
+        Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            GalateaParameters,
+            out RecapGridControlRegistrationBundle? original
+        ));
+        Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            new GalateaRecapGridAssetParameters(
+                GalateaParameters.CharacterName,
+                new GalateaPlayerName("Alex")
+            ),
+            out RecapGridControlRegistrationBundle? changed
+        ));
+
+        Assert.Equal(original!.Families[0].Digest, changed!.Families[0].Digest);
+        Assert.NotEqual(
+            original.CanonicalCommandDigest,
+            changed.CanonicalCommandDigest
+        );
+        Assert.Equal(
+            original.Definitions.Select(static definition =>
+                (definition.LogicalColumnId, definition.Target)),
+            changed.Definitions.Select(static definition =>
+                (definition.LogicalColumnId, definition.Target))
+        );
+        Assert.All(changed.Definitions, definition => {
+            Assert.Contains(
+                "Alex",
+                definition.DeclarativeSpec.UserPromptTemplate,
+                StringComparison.Ordinal
+            );
+            Assert.DoesNotContain(
+                "刘世超",
+                definition.DeclarativeSpec.UserPromptTemplate,
+                StringComparison.Ordinal
+            );
+        });
+        Assert.All(changed.Definitions.Zip(original.Definitions), pair =>
             Assert.NotEqual(pair.Second.Digest, pair.First.Digest));
     }
 

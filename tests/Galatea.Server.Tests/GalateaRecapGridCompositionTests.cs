@@ -34,8 +34,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
     private readonly List<string> _paths = [];
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator = new();
     private static GalateaRecapGridTargetExpectation DefaultExpectation =>
-        GalateaRecapGridTargetExpectation.ForCharacterName(
-            new GalateaCharacterName("Galatea")
+        GalateaRecapGridTargetExpectation.ForNames(
+            new GalateaCharacterName("Galatea"),
+            new GalateaPlayerName("刘世超")
         );
 
     [Fact]
@@ -129,8 +130,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             )
         );
         GalateaRecapGridTargetExpectation expected =
-            GalateaRecapGridTargetExpectation.ForCharacterName(
-                new GalateaCharacterName("Galatea")
+            GalateaRecapGridTargetExpectation.ForNames(
+                new GalateaCharacterName("Galatea"),
+                new GalateaPlayerName("刘世超")
             );
         GalateaRecapGridTargetAlignment.Unprovisioned timelineAbsent =
             Assert.IsType<GalateaRecapGridTargetAlignment.Unprovisioned>(
@@ -1692,6 +1694,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         "alice",
                         "pw",
                         new GalateaCharacterName("Galatea"),
+                        new GalateaPlayerName("刘世超"),
                         first,
                         first + "-delegation-state",
                         GalateaSessionProvisioning.ExistingOnly,
@@ -1700,6 +1703,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         "bob",
                         "pw",
                         new GalateaCharacterName("Galatea"),
+                        new GalateaPlayerName("刘世超"),
                         second,
                         second + "-delegation-state",
                         GalateaSessionProvisioning.ExistingOnly,
@@ -1920,7 +1924,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName(characterName)
+                new GalateaCharacterName(characterName),
+                new GalateaPlayerName("刘世超")
             ),
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -2400,6 +2405,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             "alice",
             "pw",
             new GalateaCharacterName("Galatea"),
+            new GalateaPlayerName("刘世超"),
             path,
             path + "-delegation-state",
             GalateaSessionProvisioning.ExistingOnly,

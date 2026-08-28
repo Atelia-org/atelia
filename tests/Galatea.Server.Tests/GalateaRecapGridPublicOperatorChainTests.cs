@@ -48,6 +48,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             "scaffold",
             "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
             "--character-name", "Galatea",
+            "--player-name", "刘世超",
             "--profile-id", ProfileId,
             "--connection-id", RecapConnectionId,
             "--permission", "create",
@@ -101,12 +102,14 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             "--confirm-ref", refText,
             "--admission", admission,
             "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea"
+            "--character-name", "Galatea",
+            "--player-name", "刘世超"
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName("Galatea")
+                new GalateaCharacterName("Galatea"),
+                new GalateaPlayerName("刘世超")
             ),
             out RecapGridControlRegistrationBundle? created
         ));
@@ -217,6 +220,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                         "alice",
                         "pw",
                         "Galatea",
+                        "刘世超",
                         repository,
                         repository + "-delegation-state",
                         GalateaSessionProvisioning.ExistingOnly,

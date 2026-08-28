@@ -11,24 +11,28 @@
 本设计已实施。下文保留实施前的问题分析和决策理由；若与本节或current
 contracts冲突，以本节和current contracts为准。最终产品形状是：
 
-- root config hard-cut到V4，每个user必须显式配置`characterName`；file DTO与runtime DTO分离，
+- root config hard-cut到V4，每个user必须显式配置`characterName`与`playerName`；file DTO与runtime DTO分离，
   `systemPromptTemplate` / `systemPromptTemplateFile`在host load时渲染为finalized `SystemPrompt`。
-- 新建窄小的`Galatea.Prompts` assembly，只提供`GalateaCharacterName`与单变量、
-  non-recursive、bounded的`${characterName}` renderer；不引入通用模板引擎。
+- 新建窄小的`Galatea.Prompts` assembly，只提供两个name value objects与closed、
+  non-recursive、bounded的`${characterName}` / `${playerName}` renderer；不引入通用模板引擎。
 - RecapGrid hard-cut到`galatea-rolling-rewrite-zh-cn-v6`；`scaffold`与`provision-asset`必须提供
-  `--character-name`。`Galatea`参数保持V5 canonical bundle四个digest exact不变。
+  `--character-name`与`--player-name`。`Galatea` + `刘世超`参数保持V5 canonical bundle四个digest exact不变。
 - 每个user在composition阶段获得immutable outbound extractor，共享底层lazy Completion client；
   extractor V2 `ContractId`指纹包含渲染后语义合同，但不包含provider/model/connection路由。
 - inbound mail保持原XML schema，消息自身冻结validated `To`。Player observation保持原prefix和
   delegation store schema V1；新writer使用角色中立heading，reader exact支持新旧两种闭集dialect。
 - fresh/current路径只比较active recipe的typed `BuildTargetDigest`与当前user的V6 expectation；
   mismatch fail closed为`character-asset-mismatch`并隐藏Context header。Frozen recovery完全使用已冻结身份。
-- 首版只支持“不同user从各自session起点使用不同名字”，不支持existing-session hot rename；
+- 首版只支持“不同user从各自session起点使用不同character/player names”，不支持existing-session hot rename；
   不增加alias/transition coordinator、`asset describe`、receipt identity新版、mail/player envelope V2或SQLite schema列。
 
 这些删减来自实施期间的独立复杂度审计：它们不是当前“每个user可以从起点配置角色名”
 所必需的边界。若未来真正需要已有session改名，再以独立设计处理historical marker aliases与derived
 state migration，不在本轮预留半套兼容机制。
+
+2026-08-28 follow-up在同一未运行的V4 delta中补齐`playerName`与missing-template bootstrap；
+细节见[playerName 与内建template设计](player-name-and-default-template-design.md)。下文的“单变量”、
+“只有character name参数”表述是该follow-up之前的实施历史，不是current contract。
 
 ## 1. 结论
 
@@ -170,6 +174,7 @@ template 段。`characterName` 本身只承担 primary exact marker，不自动�
       "userId": "cyber",
       "password": "REPLACE_WITH_A_PRIVATE_PASSWORD",
       "characterName": "Galatea",
+      "playerName": "刘世超",
       "sessionDir": "sessions/cyber",
       "delegationStateDir": "delegation-state/cyber",
       "sessionProvisioning": "existing-only",
@@ -180,6 +185,7 @@ template 段。`characterName` 本身只承担 primary exact marker，不自动�
       "userId": "gpt",
       "password": "REPLACE_WITH_A_PRIVATE_PASSWORD",
       "characterName": "Alice",
+      "playerName": "Alex",
       "sessionDir": "sessions/gpt",
       "delegationStateDir": "delegation-state/gpt",
       "sessionProvisioning": "create-if-missing",
@@ -307,8 +313,8 @@ session 不应被迫重建 Cells。只有角色名实际不同，Definitions/Rec
 
 ### 6.1 Operator CLI
 
-`recap-grid scaffold` 与 `recap-grid control provision-asset` 应对 V6 都要求 exact
-`--character-name`。不能 scaffold 一个名字、provision 时再隐式使用 `Galatea`。
+`recap-grid scaffold` 与 `recap-grid control provision-asset` 对 V6 都要求 exact
+`--character-name`与`--player-name`。不能 scaffold 一对名字、provision 时再隐式使用其他值。
 
 实施后保持现有 provision operation/runtime identity与receipt合同，不把角色名或
 `CanonicalCommandDigest`加入第二套identity。同一Control instance中用不同名字再次provision会复用现有V6
@@ -323,13 +329,16 @@ canonical command digest；Control inspect/export则提供已激活状态的auth
 ```bash
 character_name="$(jq -er --arg user "$user_id" \
   '.users[] | select(.userId == $user) | .characterName' "$galatea_config")"
+player_name="$(jq -er --arg user "$user_id" \
+  '.users[] | select(.userId == $user) | .playerName' "$galatea_config")"
 
 dotnet run --project prototypes/SessionJournal.Cli -- \
   recap-grid control provision-asset \
   --input "$session_repo" --branch main --confirm-ref "$ref_id" \
   --admission "$admission" \
   --asset galatea-rolling-rewrite-zh-cn-v6 \
-  --character-name "$character_name"
+  --character-name "$character_name" \
+  --player-name "$player_name"
 ```
 
 CLI 与 config 仍是两个 operator 入口，因此仅靠 runbook 无法消灭 copy drift。Galatea fresh/current
@@ -520,7 +529,8 @@ read-only canary已验证两个user能加载，cyber active recipe仍exact命中
 ### WP-C：RecapGrid V6 asset + parameterized CLI
 
 - member resource、topic、heading 参数化；Family、block keys保持角色无关/稳定；
-- asset catalog/CLI 强制 `--character-name`，保持原receipt/runtime identity；不增加describe-only surface；
+- asset catalog/CLI 强制 `--character-name` + `--player-name`，保持原receipt/runtime identity；
+  不增加describe-only surface；
 - golden tests 锁定 `Galatea` 对 V5 byte-identical、异名 shared Family/split Definitions、resource
   exactness、无未展开 token、无角色意义上的 literal `Galatea`。
 

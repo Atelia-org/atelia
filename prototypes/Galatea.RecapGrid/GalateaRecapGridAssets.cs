@@ -37,6 +37,7 @@ public static class GalateaRecapGridAssets {
                 RecapGridLimits.MaximumUserPromptUtf8Bytes
             ),
             parameters.CharacterName,
+            parameters.PlayerName,
             RecapGridLimits.MaximumUserPromptUtf8Bytes
         );
         string autobiographyPrompt = GalateaPromptTemplate.Render(
@@ -45,6 +46,7 @@ public static class GalateaRecapGridAssets {
                 RecapGridLimits.MaximumUserPromptUtf8Bytes
             ),
             parameters.CharacterName,
+            parameters.PlayerName,
             RecapGridLimits.MaximumUserPromptUtf8Bytes
         );
         string characterName = parameters.CharacterName.Value;
@@ -105,11 +107,15 @@ public static class GalateaRecapGridAssets {
 
 public sealed record GalateaRecapGridAssetParameters {
     public GalateaRecapGridAssetParameters(
-        GalateaCharacterName characterName
+        GalateaCharacterName characterName,
+        GalateaPlayerName playerName
     ) {
         CharacterName = characterName
             ?? throw new ArgumentNullException(nameof(characterName));
+        PlayerName = playerName
+            ?? throw new ArgumentNullException(nameof(playerName));
     }
 
     public GalateaCharacterName CharacterName { get; }
+    public GalateaPlayerName PlayerName { get; }
 }

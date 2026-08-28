@@ -5,7 +5,7 @@ closure均GO（P0=0，P1=0）；C2A/C2B/C2C source complete且两路independent 
 C2D real-provider/actual activation与C5 complete；C4 retention/rollover仍未完成。
 
 2026-08-28 operator selector已hard-cut到parameterized
-`galatea-rolling-rewrite-zh-cn-v6`；传入`Galatea`时canonical bundle digests与下文历史V5
+`galatea-rolling-rewrite-zh-cn-v6`；传入`Galatea` + `刘世超`时canonical bundle digests与下文历史V5
 canary完全相同，因而既有V5 durable Definitions继续可读。异名V6会旋转两个Definition与
 registration command，但保持Family、logical columns、carrier和`BlockKey`。下文V5、
 `[Galatea]`及real-provider数字是已完成canary的历史证据，不表示current selector仍可创建V5。
@@ -69,7 +69,7 @@ Observation/Action 是 provider carrier，不是角色身份。Galatea 是会话
 
 目标实现形状：
 
-- 一个 code-owned、要求typed character name的`galatea-rolling-rewrite-zh-cn-v6` operator asset；
+- 一个 code-owned、要求typed character/player names的`galatea-rolling-rewrite-zh-cn-v6` operator asset；
 - 两个 ordered Maintainer Definitions和一个 Full recipe；两列共用现有
   [`recap-maintainer-family/system-zh-cn.md`](../../../Galatea/prompt/recap-maintainer-family/system-zh-cn.md)
   形成一个shared Family，专业差异来自各自的zh-CN user prompt；

@@ -14,6 +14,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     private const string MinimalV4 =
         "{\"v\":4,\"users\":[{\"userId\":\"alice\",\"password\":\"pw\","
         + "\"characterName\":\"Galatea\","
+        + "\"playerName\":\"刘世超\","
         + "\"sessionDir\":\"sessions/alice\","
         + "\"delegationStateDir\":\"delegation-state/alice\","
         + "\"sessionProvisioning\":\"create-if-missing\","
@@ -31,7 +32,8 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         + "\"listenUrls\":[\"opaque-listener\",\"opaque-listener\"],"
         + "\"\\u0075sers\":[{\"systemPromptTemplateFile\":null,"
         + "\"systemPromptTemplate\":\"inline ${characterName}\","
-        + "\"characterName\":\"Galatea\",\"sessionDir\":\"sessions/alice\","
+        + "\"characterName\":\"Galatea\",\"playerName\":\"刘世超\","
+        + "\"sessionDir\":\"sessions/alice\","
         + "\"delegationStateDir\":\"delegation-state/alice\","
         + "\"sessionProvisioning\":\"existing-only\","
         + "\"password\":\"pw\",\"\\u0075serId\":\"alice\"}],\"\\u0076\":4}";
@@ -49,6 +51,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             user.SessionProvisioning
         );
         Assert.Equal("Galatea", user.CharacterName.Value);
+        Assert.Equal("刘世超", user.PlayerName.Value);
         Assert.Equal("inline Galatea", user.SystemPrompt);
         Assert.Equal(
             Path.Combine(fixture.Root, "delegation-state", "alice"),
@@ -80,6 +83,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             ("user", "userId"),
             ("user", "password"),
             ("user", "characterName"),
+            ("user", "playerName"),
             ("user", "sessionDir"),
             ("user", "delegationStateDir"),
             ("recap", "routeManifestPath"),
@@ -95,7 +99,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                     RequiredMutation.Remove
                 ))
             );
-            if (field == "characterName") {
+            if (field is "characterName" or "playerName") {
                 Assert.IsType<InvalidDataException>(missing);
             }
             else {
@@ -277,6 +281,51 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             );
             Assert.Equal(valid, user.CharacterName.Value);
             Assert.Equal($"inline {valid}", user.SystemPrompt);
+        }
+    }
+
+    [Fact]
+    public void PlayerNameLanguageIsCanonicalAndBounded() {
+        using var fixture = new RootConfigFixture();
+
+        foreach (string invalid in new[] {
+                     string.Empty,
+                     " Player",
+                     "Player ",
+                     "e\u0301",
+                     "Play\u0001er",
+                     "Play\u2028er",
+                     "Play\u202Eer",
+                     "\u200D",
+                     "[Player]",
+                     "Play$er",
+                     "Play{er",
+                     "Play}er",
+                     "旁白",
+                     "状态摘要",
+                     "角色名",
+                     new string('a', 129)
+                 }) {
+            JsonObject root = ParseRoot(MinimalV4);
+            UserObject(root)["playerName"] = invalid;
+            Assert.Throws<InvalidOperationException>(() => fixture.Load(
+                root.ToJsonString()
+            ));
+        }
+
+        foreach (string valid in new[] {
+                     "🧑‍🚀",
+                     new string('a', 128)
+                 }) {
+            JsonObject root = ParseRoot(MinimalV4);
+            UserObject(root)["playerName"] = valid;
+            UserObject(root)["systemPromptTemplate"] =
+                "${characterName} meets ${playerName}";
+            GalateaUserConfig user = Assert.Single(
+                fixture.Load(root.ToJsonString()).Users
+            );
+            Assert.Equal(valid, user.PlayerName.Value);
+            Assert.Equal($"Galatea meets {valid}", user.SystemPrompt);
         }
     }
 
@@ -567,25 +616,27 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     }
 
     [Fact]
-    public void SharedTemplateFileRendersOncePerUserCharacter() {
+    public void SharedTemplateFileRendersOncePerUserNames() {
         using var fixture = new RootConfigFixture();
         fixture.WriteBytes(
             "shared.md",
-            "Hello ${characterName}."u8.ToArray()
+            "Hello ${playerName}, meet ${characterName}."u8.ToArray()
         );
         JsonObject root = ParseRoot(MinimalV4);
         JsonObject alice = UserNode("alice", "sessions/alice");
         alice["characterName"] = "Alice";
+        alice["playerName"] = "Alex";
         alice["systemPromptTemplateFile"] = "shared.md";
         JsonObject bob = UserNode("bob", "sessions/bob");
         bob["characterName"] = "鲍勃";
+        bob["playerName"] = "小白";
         bob["systemPromptTemplateFile"] = "shared.md";
         root["users"] = new JsonArray(alice, bob);
 
         GalateaConfig loaded = fixture.Load(root.ToJsonString());
 
         Assert.Equal(
-            ["Hello Alice.", "Hello 鲍勃."],
+            ["Hello Alex, meet Alice.", "Hello 小白, meet 鲍勃."],
             loaded.Users.Select(static user => user.SystemPrompt)
         );
     }
@@ -731,6 +782,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         ["delegationStateDir"] = $"delegation-state/{id}",
         ["sessionProvisioning"] = "existing-only",
         ["characterName"] = "Galatea",
+        ["playerName"] = "刘世超",
         ["systemPromptTemplate"] = "inline ${characterName}"
     };
 

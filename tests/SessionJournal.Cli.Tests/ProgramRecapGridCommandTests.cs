@@ -22,7 +22,8 @@ namespace Atelia.SessionJournal.Cli.Tests;
 [Collection(ConsoleSerialCollection.Name)]
 public sealed class ProgramRecapGridCommandTests : IDisposable {
     private static GalateaRecapGridAssetParameters GalateaParameters => new(
-        new GalateaCharacterName("Galatea")
+        new GalateaCharacterName("Galatea"),
+        new GalateaPlayerName("刘世超")
     );
 
     private readonly List<string> _externalPaths = [];
@@ -565,7 +566,17 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
             "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "[invalid]"
+            "--character-name", "[invalid]",
+            "--player-name", "刘世超"
+        ));
+        Assert.Equal(1, Run(
+            "control", "provision-asset",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", createOnly,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--character-name", "Galatea",
+            "--player-name", "[invalid]"
         ));
         Assert.Equal(1, Run(
             "control", "provision-asset",
@@ -584,7 +595,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--admission", createOnly,
             "--asset",
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea"
+            "--character-name", "Galatea",
+            "--player-name", "刘世超"
         );
         Assert.Equal(2, unauthorizedCode);
         Assert.Equal(
@@ -612,7 +624,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--admission", admitted,
             "--asset",
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea"
+            "--character-name", "Galatea",
+            "--player-name", "刘世超"
         );
         Assert.Equal(0, appliedCode);
         Assert.Equal("applied", applied.GetProperty("status").GetString());
@@ -647,7 +660,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--admission", admitted,
             "--asset",
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea"
+            "--character-name", "Galatea",
+            "--player-name", "刘世超"
         );
         Assert.Equal(0, replayCode);
         Assert.Equal("replayed", replay.GetProperty("status").GetString());
@@ -660,7 +674,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--admission", admitted,
             "--asset",
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "阿特丽娅"
+            "--character-name", "阿特丽娅",
+            "--player-name", "刘世超"
         );
         Assert.Equal(2, renameCode);
         Assert.Equal("operation-conflict",
@@ -704,7 +719,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--admission", admitted,
             "--asset",
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea"
+            "--character-name", "Galatea",
+            "--player-name", "刘世超"
         );
         Assert.Equal(0, reappliedCode);
         Assert.Equal("applied", reapplied.GetProperty("status").GetString());
@@ -720,7 +736,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--admission", admitted,
             "--asset",
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea"
+            "--character-name", "Galatea",
+            "--player-name", "刘世超"
         );
         Assert.Equal(0, retryCode);
         Assert.Equal("replayed", retry.GetProperty("status").GetString());
@@ -773,7 +790,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            "--character-name", "Galatea"
+            "--character-name", "Galatea",
+            "--player-name", "刘世超"
         ));
         string output = _root + "-full-recipe.json";
         _externalPaths.Add(output);

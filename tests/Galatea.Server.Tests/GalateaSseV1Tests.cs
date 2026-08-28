@@ -413,6 +413,7 @@ public sealed class GalateaSseV1Tests {
                 "alice",
                 "password",
                 new GalateaCharacterName("Galatea"),
+                new GalateaPlayerName("刘世超"),
                 "/session",
                 "/delegation-state",
                 GalateaSessionProvisioning.ExistingOnly,

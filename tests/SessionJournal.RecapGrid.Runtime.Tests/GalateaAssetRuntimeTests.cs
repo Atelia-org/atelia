@@ -14,7 +14,8 @@ public sealed class GalateaAssetRuntimeTests {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName("Galatea")
+                new GalateaCharacterName("Galatea"),
+                new GalateaPlayerName("刘世超")
             ),
             out RecapGridControlRegistrationBundle? bundle
         ));

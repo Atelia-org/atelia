@@ -94,7 +94,8 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
             .ReplaceOption("logical-column-prefix", "world-understanding")
             .AppendOptions(
                 "--logical-column-prefix", "autobiography",
-                "--character-name", CharacterName
+                "--character-name", CharacterName,
+                "--player-name", "刘世超"
             );
 
         (int exitCode, JsonElement report) = RunCaptured(arguments);
@@ -105,7 +106,8 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
             new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName(CharacterName)
+                new GalateaCharacterName(CharacterName),
+                new GalateaPlayerName("刘世超")
             ),
             out RecapGridControlRegistrationBundle? bundle
         ));
@@ -210,9 +212,29 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
                              "asset",
                              GalateaRecapGridAssets.RollingRewriteZhCnV6
                          )
-                         .AppendOptions("--character-name", "[invalid]"),
+                         .AppendOptions(
+                             "--character-name", "[invalid]",
+                             "--player-name", "刘世超"
+                         ),
+                     ScaffoldArguments(Paths("galatea-missing-player"))
+                         .ReplaceOption(
+                             "asset",
+                             GalateaRecapGridAssets.RollingRewriteZhCnV6
+                         )
+                         .AppendOptions("--character-name", "Galatea"),
+                     ScaffoldArguments(Paths("galatea-invalid-player"))
+                         .ReplaceOption(
+                             "asset",
+                             GalateaRecapGridAssets.RollingRewriteZhCnV6
+                         )
+                         .AppendOptions(
+                             "--character-name", "Galatea",
+                             "--player-name", "[invalid]"
+                         ),
                      ScaffoldArguments(Paths("non-parameterized-name"))
                          .AppendOptions("--character-name", "Galatea"),
+                     ScaffoldArguments(Paths("non-parameterized-player"))
+                         .AppendOptions("--player-name", "Player"),
                      [.. ScaffoldArguments(Paths("duplicate")),
                          "--permission", "create"],
                      ScaffoldArguments(Paths("malformed"))
