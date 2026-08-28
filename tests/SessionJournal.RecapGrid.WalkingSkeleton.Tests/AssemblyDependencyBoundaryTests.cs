@@ -86,7 +86,10 @@ public sealed class AssemblyDependencyBoundaryTests {
             DirectProjectReferences(cadenceProject)
         );
         Assert.Equal(
-            ["../SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj"],
+            [
+                "../Galatea.Prompts/Galatea.Prompts.csproj",
+                "../SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj"
+            ],
             DirectProjectReferences(galateaAssetProject)
         );
         Assert.Equal(
@@ -408,8 +411,12 @@ public sealed class AssemblyDependencyBoundaryTests {
             "Galatea",
             "GalateaRecapGridComposition.cs"
         );
-        string host = File.ReadAllText(Path.Combine(
-            root, "prototypes", "Galatea", "GalateaServices.cs"));
+        string owner = File.ReadAllText(Path.Combine(
+            root,
+            "prototypes",
+            "Galatea",
+            "GalateaCompletionOwner.cs"
+        ));
         string composition = File.ReadAllText(compositionPath);
 
         Assert.Contains(
@@ -418,7 +425,7 @@ public sealed class AssemblyDependencyBoundaryTests {
             StringComparison.Ordinal);
         Assert.Contains(
             "new GalateaRecapGridComposition",
-            host,
+            owner,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
             "Environment.GetEnvironmentVariable",
