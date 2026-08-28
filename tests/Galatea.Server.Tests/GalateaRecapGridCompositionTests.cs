@@ -26,6 +26,10 @@ namespace Atelia.Galatea.Server.Tests;
 public sealed class GalateaRecapGridCompositionTests : IDisposable {
     private static readonly TimeSpan HttpCompletionDeadline =
         TimeSpan.FromSeconds(10);
+    private const string FrozenRecoverySystemPrompt =
+        "frozen old prompt";
+    private const string CurrentFinalizedSystemPrompt =
+        "current Galatea prompt";
     private readonly List<string> _paths = [];
     private readonly O200kBaseHistoryUnitLoadEstimator _estimator = new();
 
@@ -511,11 +515,17 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             RecapGridOnlineLimits.Production,
             _estimator);
         await using var service = new GalateaHostService(
-            Config(path, connection),
+            Config(path, connection, CurrentFinalizedSystemPrompt),
             DisabledGalateaUserMessageNormalizer.Instance,
             candidate);
         UserSessionHost session = await service.GetSessionAsync(
             "alice", CancellationToken.None);
+        Assert.Equal(
+            FrozenRecoverySystemPrompt,
+            session.Engine.ResolveGoverningSetup(recoveryHead).SystemPrompt);
+        int setupCountBeforeRecovery = CountSystemPromptSetups(
+            session.Engine);
+        Assert.Equal(1, setupCountBeforeRecovery);
         GalateaLiveTurn turn = service.StartRecovery(
             session,
             new GalateaTurnOptions(
@@ -529,6 +539,11 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             Assert.Equal("completed", turn.Status);
             Assert.Equal(1, candidateFactory.CreateCallCount);
             Assert.Equal(1, candidateFactory.Client.DispatchCallCount);
+            CompletionRequest request = Assert.Single(
+                candidateFactory.Client.AgentRequests);
+            Assert.Equal(
+                FrozenRecoverySystemPrompt,
+                request.PromptPrefix.SystemPrompt);
             Assert.Equal(
                 SessionExecutionPhase.Idle,
                 session.Engine.InspectExecutionBoundary().Phase);
@@ -542,11 +557,20 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 exception.FailureReason);
             Assert.Equal(0, candidateFactory.CreateCallCount);
             Assert.Equal(0, candidateFactory.Client.DispatchCallCount);
+            Assert.Empty(candidateFactory.Client.AgentRequests);
             Assert.Equal(
                 SessionExecutionPhase.AwaitingCompletion,
                 session.Engine.InspectExecutionBoundary().Phase);
         }
 
+        Assert.Equal(
+            setupCountBeforeRecovery,
+            CountSystemPromptSetups(session.Engine));
+        EventAddress currentHead = Assert.IsType<EventAddress>(
+            session.Engine.ReadCurrentHead());
+        Assert.Equal(
+            FrozenRecoverySystemPrompt,
+            session.Engine.ResolveGoverningSetup(currentHead).SystemPrompt);
         Assert.Equal(0, routeLoads);
         Assert.Equal(before, File.ReadAllBytes(sentinel));
     }
@@ -1231,7 +1255,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 path,
                 new SessionCreateOptions(
                     "model-a",
-                    "test system prompt",
+                    FrozenRecoverySystemPrompt,
                     "openai-chat/strict"),
                 runtime,
                 new SessionJournalTestHooks(Failpoint: failpoint));
@@ -1726,7 +1750,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
 
     private static GalateaConfig Config(
         string path,
-        CompletionConnectionConfig connection
+        CompletionConnectionConfig connection,
+        string systemPrompt = "test system prompt"
     ) => new(
         [new GalateaUserConfig(
             "alice",
@@ -1735,12 +1760,18 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             path,
             path + "-delegation-state",
             GalateaSessionProvisioning.ExistingOnly,
-            "test system prompt")],
+            systemPrompt)],
         [connection],
         connection.Id,
         [connection.Id],
         InputNormalizerConnectionId: null,
         Delegates: GalateaDelegateTestConfiguration.Create());
+
+    private static int CountSystemPromptSetups(
+        SessionJournalEngine engine
+    ) => engine.ReadCurrentLineageHeaders().HeadToRoot.Count(
+        static entry => entry.Kind == SessionEventKind.SystemPromptSetup
+    );
 
     private string NewPath() {
         string path = Path.Combine(
