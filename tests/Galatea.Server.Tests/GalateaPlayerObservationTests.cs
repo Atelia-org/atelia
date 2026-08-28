@@ -1,6 +1,7 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -35,7 +36,7 @@ public sealed class GalateaPlayerObservationTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "## 外界代行者 Codex 给 Galatea 的回信\n\n"
+            "## 来自外界代行者 Codex 的回信\n\n"
                 + "~~~~~delegate-reply\n"
                 + Reply + "\n~~~~~",
             rendered,
@@ -70,6 +71,49 @@ public sealed class GalateaPlayerObservationTests {
         Assert.Contains(Reply, display, StringComparison.Ordinal);
         Assert.DoesNotContain("delegate-reply", display,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CompositeEnvelope_AcceptsExactLegacyDialectAndRejectsMixing() {
+        var source = new GalateaPlayerObservation(
+            "continue",
+            [
+                new GalateaReadyNotice.Reply("reply"),
+                new GalateaReadyNotice.DeliveryFailure("failure")
+            ]
+        );
+        string current = GalateaPlayerObservationEnvelope.Wrap(source);
+        string legacy = current
+            .Replace(
+                GalateaPlayerObservationEnvelope.ReplyHeading,
+                "外界代行者 Codex 给 Galatea 的回信",
+                StringComparison.Ordinal
+            )
+            .Replace(
+                GalateaPlayerObservationEnvelope.FailureHeading,
+                "Galatea 发给外界代行者 Codex 的信未能送达",
+                StringComparison.Ordinal
+            );
+
+        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+            legacy,
+            out GalateaPlayerObservation parsed
+        ));
+        Assert.Equal(source.PlayerText, parsed.PlayerText);
+        Assert.Equal(
+            source.ReadyNotices.Select(static value => value.Body),
+            parsed.ReadyNotices.Select(static value => value.Body)
+        );
+
+        string mixed = legacy.Replace(
+            "外界代行者 Codex 给 Galatea 的回信",
+            GalateaPlayerObservationEnvelope.ReplyHeading,
+            StringComparison.Ordinal
+        );
+        Assert.False(GalateaPlayerObservationEnvelope.TryUnwrap(
+            mixed,
+            out _
+        ));
     }
 
     [Fact]
@@ -271,7 +315,12 @@ public sealed class GalateaPlayerObservationTests {
 
         _ = session.Engine.AppendObservation(
             GalateaMailboxObservationEnvelope.Wrap(
-                MailboxMessage.CreateInbound("Alice", null, "mail")
+                MailboxMessage.CreateInbound(
+                    new GalateaCharacterName("Galatea"),
+                    "Alice",
+                    null,
+                    "mail"
+                )
             )
         );
         _ = session.Engine.AppendImportedAgentAction(

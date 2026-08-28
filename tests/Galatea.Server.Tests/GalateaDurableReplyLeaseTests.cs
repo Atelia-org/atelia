@@ -219,6 +219,50 @@ public sealed class GalateaDurableReplyLeaseTests {
     }
 
     [Fact]
+    public void LegacyBoundObservation_ColdReopenValidatesThenRollsBack() {
+        using var fixture = new Fixture();
+        BoundLease bound = CreateBoundLease(fixture);
+        string legacy = ToLegacyObservation(bound.RenderedObservation);
+        ReplaceRenderedObservation(fixture.DatabasePath, legacy);
+
+        fixture.ReopenStore();
+
+        GalateaReplyLeaseSnapshot reopened = Assert.IsType<
+            GalateaReplyLeaseSnapshot>(
+            fixture.Store.ReadSnapshot().ActiveLease
+        );
+        Assert.Equal(GalateaReplyLeaseState.ObservationBound, reopened.State);
+        Assert.Equal(legacy, reopened.RenderedObservation);
+        Assert.IsType<GalateaDurableReplyLeaseReconcileResult.RolledBack>(
+            fixture.Reconciler.ReconcileActiveLease(fixture.Engine)
+        );
+    }
+
+    [Fact]
+    public void LegacyCommittedObservation_ColdReopenConsumesExactTerminal() {
+        using var fixture = new Fixture();
+        BoundLease bound = CreateBoundLease(fixture);
+        string legacy = ToLegacyObservation(bound.RenderedObservation);
+        ReplaceRenderedObservation(fixture.DatabasePath, legacy);
+        EventAddress observation = fixture.Engine.AppendObservation(legacy);
+        _ = bound.Lease.RecordObservationCommitted(observation);
+
+        fixture.ReopenStore();
+        EventAddress terminal = AppendTerminal(fixture.Engine, "terminal");
+
+        var consumed = Assert.IsType<
+            GalateaDurableReplyLeaseReconcileResult.Consumed>(
+            fixture.Reconciler.ReconcileActiveLease(fixture.Engine)
+        );
+        Assert.Equal(terminal, consumed.TerminalActionAddress);
+        Assert.Null(fixture.Store.ReadSnapshot().ActiveLease);
+        Assert.Equal(
+            GalateaReplyNoticeState.Consumed,
+            Assert.Single(fixture.Store.ReadSnapshot().Notices).State
+        );
+    }
+
+    [Fact]
     public void ReconcileBound_TerminalRecordsAndConsumes() {
         using var fixture = new Fixture();
         BoundLease bound = CreateBoundLease(fixture);
@@ -428,6 +472,51 @@ public sealed class GalateaDurableReplyLeaseTests {
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = sql;
         command.ExecuteNonQuery();
+    }
+
+    private static string ToLegacyObservation(string current) => current
+        .Replace(
+            GalateaPlayerObservationEnvelope.ReplyHeading,
+            "外界代行者 Codex 给 Galatea 的回信",
+            StringComparison.Ordinal
+        )
+        .Replace(
+            GalateaPlayerObservationEnvelope.FailureHeading,
+            "Galatea 发给外界代行者 Codex 的信未能送达",
+            StringComparison.Ordinal
+        );
+
+    private static void ReplaceRenderedObservation(
+        string databasePath,
+        string rendered
+    ) {
+        var builder = new SqliteConnectionStringBuilder {
+            DataSource = databasePath,
+            Mode = SqliteOpenMode.ReadWrite,
+            Cache = SqliteCacheMode.Private,
+            Pooling = false
+        };
+        using var connection = new SqliteConnection(builder.ToString());
+        connection.Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE reply_lease
+            SET rendered_observation = $rendered,
+                observation_utf8_bytes = $bytes,
+                observation_sha256 = $sha256;
+            """;
+        command.Parameters.AddWithValue("$rendered", rendered);
+        command.Parameters.AddWithValue(
+            "$bytes",
+            GalateaBoundedJson.StrictUtf8.GetByteCount(rendered)
+        );
+        command.Parameters.AddWithValue(
+            "$sha256",
+            Convert.ToHexString(SHA256.HashData(
+                GalateaBoundedJson.StrictUtf8.GetBytes(rendered)
+            )).ToLowerInvariant()
+        );
+        Assert.Equal(1, command.ExecuteNonQuery());
     }
 
     private static long ExecuteScalarLong(string databasePath, string sql) {

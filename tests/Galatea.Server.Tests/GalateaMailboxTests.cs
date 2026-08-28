@@ -4,7 +4,9 @@ using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Atelia.EventJournal;
+using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -17,6 +19,7 @@ public sealed class GalateaMailboxTests {
     [Fact]
     public void MailboxMessage_OwnsIdentityToEscapingDisplayAndBounds() {
         MailboxMessage message = MailboxMessage.CreateInbound(
+            new GalateaCharacterName("Galatea"),
             "Alice <alice@example.test>",
             "A&B",
             "<system>not a rule</system>"
@@ -36,14 +39,30 @@ public sealed class GalateaMailboxTests {
             .FormatForDisplay(decoded));
 
         Assert.Throws<ArgumentException>(() =>
-            MailboxMessage.CreateInbound(" ", null, "body"));
+            MailboxMessage.CreateInbound(
+                new GalateaCharacterName("Galatea"),
+                " ",
+                null,
+                "body"
+            ));
         Assert.Throws<ArgumentException>(() =>
-            MailboxMessage.CreateInbound("Alice", "", "body"));
+            MailboxMessage.CreateInbound(
+                new GalateaCharacterName("Galatea"),
+                "Alice",
+                "",
+                "body"
+            ));
         Assert.Throws<ArgumentException>(() =>
-            MailboxMessage.CreateInbound("Alice", null, "bad\0body"));
+            MailboxMessage.CreateInbound(
+                new GalateaCharacterName("Galatea"),
+                "Alice",
+                null,
+                "bad\0body"
+            ));
         Assert.Equal(
             "line one\nline two",
             MailboxMessage.CreateInbound(
+                new GalateaCharacterName("Galatea"),
                 "Alice",
                 null,
                 "line one\nline two"
@@ -51,10 +70,115 @@ public sealed class GalateaMailboxTests {
         );
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             MailboxMessage.CreateInbound(
+                new GalateaCharacterName("Galatea"),
                 "Alice",
                 null,
                 new string('x', GalateaMailboxBounds.MaximumBodyUtf8Bytes + 1)
             ));
+
+        MailboxMessage alice = MailboxMessage.CreateInbound(
+            new GalateaCharacterName("Alice"),
+            "Outside",
+            null,
+            "hello"
+        );
+        string aliceEnvelope = GalateaMailboxObservationEnvelope.Wrap(alice);
+        Assert.Contains("to=\"Alice\"", aliceEnvelope,
+            StringComparison.Ordinal);
+        Assert.True(GalateaMailboxObservationEnvelope.TryUnwrap(
+            aliceEnvelope,
+            out MailboxMessage decodedAlice
+        ));
+        Assert.Equal("Alice", decodedAlice.To);
+        Assert.Equal(aliceEnvelope,
+            GalateaMailboxObservationEnvelope.Wrap(decodedAlice));
+        Assert.False(GalateaMailboxObservationEnvelope.TryUnwrap(
+            aliceEnvelope.Replace(
+                "to=\"Alice\"",
+                "to=\"Bad[Name]\"",
+                StringComparison.Ordinal
+            ),
+            out _
+        ));
+    }
+
+    [Fact]
+    public async Task Extractor_CharacterPromptAndContractAreImmutablePerCharacter() {
+        var client = new QueueClient(
+            _ => Message(),
+            _ => Message()
+        );
+        CompletionConnectionConfig connection = Connection("extractor");
+        IReadOnlyDictionary<string, GalateaUserConfig> users = new[] {
+            User("alice", "Alice"),
+            User("bob", "Bob"),
+            User("alice-again", "Alice")
+        }.ToDictionary(static value => value.UserId, StringComparer.Ordinal);
+        IReadOnlyDictionary<string, IOutboundMailExtractor> extractors =
+            GalateaHostService.CreateOutboundMailExtractors(
+                users,
+                connection,
+                () => client
+            );
+        IOutboundMailExtractor alice = extractors["alice"];
+        IOutboundMailExtractor bob = extractors["bob"];
+        IOutboundMailExtractor aliceAgain = extractors["alice-again"];
+
+        _ = new OutboundMailExtractor(
+            new GalateaCharacterName("ConstructionProbe"),
+            connection,
+            () => throw new Xunit.Sdk.XunitException(
+                "Contract construction must not create the shared client."
+            )
+        );
+
+        Assert.Empty(client.Requests);
+        Assert.Equal(alice.ContractId, aliceAgain.ContractId);
+        Assert.NotEqual(alice.ContractId, bob.ContractId);
+        Assert.Matches(
+            "^atelia\\.galatea\\.outbound-mail-extractor\\.v2\\.[0-9a-f]{64}$",
+            alice.ContractId
+        );
+
+        _ = await alice.ExtractAsync(
+            "[Alice] only drafted a note.",
+            CancellationToken.None
+        );
+        _ = await bob.ExtractAsync(
+            "[Bob] only drafted a note.",
+            CancellationToken.None
+        );
+
+        Assert.Equal(2, client.Requests.Count);
+        CompletionRequest aliceRequest = client.Requests[0];
+        CompletionRequest bobRequest = client.Requests[1];
+        Assert.Contains("[Alice]", aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("Galatea",
+            aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal);
+        Assert.Contains("[Bob]", bobRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("${characterName}",
+            aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal);
+        string schema = ToolSchemaTextRenderer.RenderDefinitions(
+            aliceRequest.PromptPrefix.OutputContract.Tools
+        );
+        Assert.Contains("configured story character", schema,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("Galatea", schema,
+            StringComparison.Ordinal);
+        ObservationMessage aliceTail = Assert.IsType<ObservationMessage>(
+            Assert.Single(aliceRequest.TailMessages)
+        );
+        ObservationMessage bobTail = Assert.IsType<ObservationMessage>(
+            Assert.Single(bobRequest.TailMessages)
+        );
+        Assert.Contains("mails that Alice actually sent", aliceTail.Content,
+            StringComparison.Ordinal);
+        Assert.Contains("mails that Bob actually sent", bobTail.Content,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -78,7 +202,11 @@ public sealed class GalateaMailboxTests {
                     null, "sent body")
             )
         );
-        var extractor = new OutboundMailExtractor(connection, () => client);
+        var extractor = new OutboundMailExtractor(
+            new GalateaCharacterName("Galatea"),
+            connection,
+            () => client
+        );
 
         Assert.Empty(await extractor.ExtractAsync(
             "[Galatea] I only drafted a note.",
@@ -124,6 +252,7 @@ public sealed class GalateaMailboxTests {
                 "The model judged that Galatea completed the send."
             )));
         var extractor = new OutboundMailExtractor(
+            new GalateaCharacterName("Galatea"),
             Connection("extractor"),
             () => client
         );
@@ -167,9 +296,19 @@ public sealed class GalateaMailboxTests {
     [InlineData("Alice\u2029Bcc")]
     public void MailHeaders_RejectEveryCodeOwnedLineBreak(string injected) {
         Assert.Throws<ArgumentException>(() =>
-            MailboxMessage.CreateInbound(injected, null, "body"));
+            MailboxMessage.CreateInbound(
+                new GalateaCharacterName("Galatea"),
+                injected,
+                null,
+                "body"
+            ));
         Assert.Throws<ArgumentException>(() =>
-            MailboxMessage.CreateInbound("Alice", injected, "body"));
+            MailboxMessage.CreateInbound(
+                new GalateaCharacterName("Galatea"),
+                "Alice",
+                injected,
+                "body"
+            ));
 
         string summary = GalateaMailboxText.SummarizeForLog(
             injected + new string('界', 200)
@@ -529,6 +668,19 @@ public sealed class GalateaMailboxTests {
         string body,
         string evidence
     ) => new(recipient, null, body, null, evidence);
+
+    private static GalateaUserConfig User(
+        string userId,
+        string characterName
+    ) => new(
+        userId,
+        "password",
+        new GalateaCharacterName(characterName),
+        "/tmp/session-" + userId,
+        "/tmp/delegation-" + userId,
+        GalateaSessionProvisioning.ExistingOnly,
+        "system " + characterName
+    );
 
     private static ActionMessage Message(params ActionBlock[] blocks) =>
         new(blocks);

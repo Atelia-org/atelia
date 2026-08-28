@@ -281,7 +281,9 @@ history已删除。完整durable real-provider vertical仍可作为独立future 
 lock与cold reopen，不证明Codex dispatch/reply链。
 
 `GalateaCompletionOwner` 唯一拥有 host-wide `CompletionConnectionRegistry`；main Agent、
-input normalizer、outbound mail extractor 与 RecapGrid exact routes 共用其惰性 clients。Host先按上文顺序
+input normalizer、per-user outbound mail extractors 与 RecapGrid exact routes 共用其惰性 clients。每个
+user 的 extractor 在 supervisor 启动前以该 user 的 exact `characterName` eager 构造，但不会因此创建
+独立 connection registry/provider client。Host先按上文顺序
 drain sessions与delegation supervisor，再由Completion owner drain borrowed RecapGrid runtime并清理distinct
 Completion clients。`callLogDir` 由统一 Completion factory decorator 服务上述所有调用；启用
 normalizer 时，清洗前输入、prompt 与 provider output 也会进入该本地调用日志。
@@ -329,15 +331,17 @@ Codex delegation现已hard-cut到SQLite-backed durable owner；本节及对应�
 所有新普通player turn（包括当前尚无ready reply的情况）都以runtime-owned composite Observation
 持久化。首个兄弟块固定为`## 玩家角色试图采取的行动`/`player-action`，随后可按顺序携带0..16个
 `Reply`或`DeliveryFailure`兄弟块；canonical `Codex`成功heading为
-`外界代行者 Codex 给 Galatea 的回信`，失败heading为
-`Galatea 发给外界代行者 Codex 的信未能送达`。每个块独立使用
+`来自外界代行者 Codex 的回信`，失败heading为
+`发往外界代行者 Codex 的信未能送达`。只读 parser 还严格接受旧
+`外界代行者 Codex 给 Galatea 的回信` / `Galatea 发给外界代行者 Codex 的信未能送达`
+dialect；同一 envelope 不得混用新旧 headings，无 notice 的共同形状保持不变。每个块独立使用
 `AdaptiveMarkdownFenceRenderer`：tilde fence至少4字符且长于正文内最长连续tilde，正文不trim、
 normalize或escape，因此嵌套backtick fence、Markdown、HTML/XML与Unicode可原样呈现给LLM。
 reply正文上限256 KiB UTF-8，failure上限4 KiB，整份composite上限1 MiB；越界全部拒绝而不截断。
 
 composite parser只接受code-owned prefix、heading、info string、顺序与动态fence的canonical重渲染结果。
 recent view显示玩家文本及每条独立通知；普通Undo仍把它识别为player turn，但pop receipt只返回玩家文本。
-历史backtick player envelope继续只读兼容recent/Undo；inbound mail envelope仍不属于普通player Undo。
+历史Galatea heading与backtick player envelope继续只读兼容recent/Undo；inbound mail envelope仍不属于普通player Undo。
 input normalizer只接收玩家文本，绝不接收ready notices。普通player入口持有per-session `TurnLock`，先结算
 既有durable reply lease和latest post-baseline extraction gap，再验证recovery boundary与main connection；
 随后在HTTP 202之前完成normalization。Caller cancellation、fatal、显式`GalateaTurnException`或input-limit
@@ -352,7 +356,9 @@ ASCII token作为code-owned info string。现有Recap contribution已复用它�
 
 `POST /api/v1/mailbox/inbound` 接受authenticated strict JSON
 `{from,body,subject?,connectionId?}`。runtime生成canonical 32-lowerhex `messageId`并固定
-`To=Galatea`，以202返回`{turnId,messageId}`，随后沿用普通turn/SSE执行主线模型。Inbound mail
+`To=session.User.CharacterName`，以202返回`{turnId,messageId}`，随后沿用普通turn/SSE执行主线模型。HTTP caller
+不能自报`to`；`MailboxMessage`自身冻结validated To，parser从XML读取并用同一writer exact round-trip，
+所以既有`to="Galatea"`与其他合法角色名都不依赖current config即可读取。Inbound mail
 使用code-owned escaped Observation envelope，不经过input normalizer；recent view则显示自然的
 发件人、主题与正文。来信正文在prompt中明确只是故事数据，不获得指令权限。该入口共享maintenance、
 per-session `TurnLock`、recovery admission与main connection allowlist。
@@ -360,7 +366,7 @@ per-session `TurnLock`、recovery admission与main connection allowlist。
 主线terminal Action durable并回到`Idle`后，host先用SessionJournal exact raw evidence结算当前reply lease，
 再在recent refresh与SSE `done`之前使用
 `GalateaVisibleActionTextRenderer`提取可见文本：按顺序连接Text blocks，排除reasoning/tool block，
-再整体剥离inline think。常驻`OutboundMailExtractor`通过
+再整体剥离inline think。每个user的immutable `OutboundMailExtractor`通过
 `emit_send_mail_intent`产出0..N个有序`SendMailIntent`，字段为故事内`Recipient`、可选`Subject`、
 完整`Body`、可选canonical `InReplyToMessageId`与exact `EvidenceQuote`。Recipient仍是未解析、未验证的
 故事文本；只有durable capture对case-sensitive exact `Codex`的匹配构成当前唯一recipient allowlist，
@@ -371,6 +377,12 @@ fail-closed证明。runtime只验证artifact结构与UTF-8 bounds、single-line 
 其他机械source-grounding比较。actual send、actor ownership、recipient与正文语义由配置的extractor LLM
 承担；Evidence只保留extractor provenance，不是runtime authority。Subject、reply ID与evidence不进入Codex
 能力参数；sidecar task逐字等于结构验证后的`Body`，cwd/mode/local command network/built-in tools只来自code-owned exact route。
+
+Extractor system/user source prompt使用shared `${characterName}` renderer并锁定exact
+`[${characterName}]` voice marker；tool schema wording保持角色中立。实例`ContractId`为
+`atelia.galatea.outbound-mail-extractor.v2.<64-lowerhex>`，fingerprint覆盖code-owned semantic/visible-renderer/
+tool contract版本与exact rendered system/user prompts，不包含provider/model/connection。相同名字与contract
+产生相同ID，不同名字分离；底层Completion client仍由host registry按connection惰性共享。
 
 每个Action extraction batch由`GalateaDelegationSqliteStore`单事务全有或全无地capture；成功的0-intent
 extraction也写`action_capture` tombstone，extractor failure绝不能冒充空结果。stable dispatch ID是对length-prefixed
@@ -396,6 +408,11 @@ exact selected head和canonical rendered Observation执行`BindObservationBase`�
 但上层尚未返回时，恢复只用selected raw lineage中的exact base、Observation bytes/digest和terminal Action
 分类：无effect证据才rollback到Ready，terminal Action exact成立才consume，并把同一receiving Action address
 写入每条notice。证据分叉则durable quarantine，不能靠函数返回值或exception文本猜测。
+
+Delegation SQLite schema仍为V1且没有新增renderer/version列。`CutoffFrozen`没有rendered Observation，重启时
+按既有合同rollback；`ObservationBound|ObservationCommitted`已经冻结exact Observation bytes/byte count/SHA-256。
+Store reopen先用closed current/legacy dialect parser验证stored bytes，再逐项核对player text与notice
+kind/order/body，不用current writer把历史heading重渲染成新heading。
 
 每个user至多一个active lease。recovery只继承已持久lease，不claim后来Ready的notice；inbound turn也不claim。
 lease settlement发生在outbound extraction之前，因此已经接收回信的terminal Action即使后处理失败也不会重新

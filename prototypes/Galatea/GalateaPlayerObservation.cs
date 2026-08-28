@@ -95,8 +95,13 @@ internal static class GalateaPlayerObservationEnvelope {
     internal const string PlayerHeading =
         "玩家角色试图采取的行动";
     internal const string ReplyHeading =
-        "外界代行者 Codex 给 Galatea 的回信";
+        "来自外界代行者 Codex 的回信";
     internal const string FailureHeading =
+        "发往外界代行者 Codex 的信未能送达";
+
+    private const string LegacyReplyHeading =
+        "外界代行者 Codex 给 Galatea 的回信";
+    private const string LegacyFailureHeading =
         "Galatea 发给外界代行者 Codex 的信未能送达";
 
     private const string Prefix =
@@ -118,6 +123,18 @@ internal static class GalateaPlayerObservationEnvelope {
 
     internal static string Wrap(GalateaPlayerObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
+        return Render(
+            observation,
+            ReplyHeading,
+            FailureHeading
+        );
+    }
+
+    private static string Render(
+        GalateaPlayerObservation observation,
+        string replyHeading,
+        string failureHeading
+    ) {
         var builder = new StringBuilder(Prefix);
         AppendSection(
             builder,
@@ -132,7 +149,7 @@ internal static class GalateaPlayerObservationEnvelope {
                 case GalateaReadyNotice.Reply:
                     AppendSection(
                         builder,
-                        ReplyHeading,
+                        replyHeading,
                         ReplyInfoString,
                         notice.Body
                     );
@@ -140,7 +157,7 @@ internal static class GalateaPlayerObservationEnvelope {
                 case GalateaReadyNotice.DeliveryFailure:
                     AppendSection(
                         builder,
-                        FailureHeading,
+                        failureHeading,
                         FailureInfoString,
                         notice.Body
                     );
@@ -172,68 +189,89 @@ internal static class GalateaPlayerObservationEnvelope {
         }
         try {
             RequireRenderedFits(stored);
-            int position = Prefix.Length;
-            if (!TryReadSection(
+            return TryUnwrapDialect(
                     stored,
-                    ref position,
-                    PlayerHeading,
-                    PlayerInfoString,
-                    out string playerText)) {
-                return false;
-            }
-
-            var notices = new List<GalateaReadyNotice>();
-            while (position < stored.Length) {
-                if (stored.AsSpan(position).StartsWith(
-                        "## " + ReplyHeading + "\n\n",
-                        StringComparison.Ordinal)) {
-                    if (!TryReadSection(
-                            stored,
-                            ref position,
-                            ReplyHeading,
-                            ReplyInfoString,
-                            out string body)) {
-                        return false;
-                    }
-                    notices.Add(new GalateaReadyNotice.Reply(body));
-                }
-                else if (stored.AsSpan(position).StartsWith(
-                             "## " + FailureHeading + "\n\n",
-                             StringComparison.Ordinal)) {
-                    if (!TryReadSection(
-                            stored,
-                            ref position,
-                            FailureHeading,
-                            FailureInfoString,
-                            out string body)) {
-                        return false;
-                    }
-                    notices.Add(
-                        new GalateaReadyNotice.DeliveryFailure(body)
-                    );
-                }
-                else {
-                    return false;
-                }
-            }
-
-            var parsed = new GalateaPlayerObservation(
-                playerText,
-                notices
-            );
-            if (!string.Equals(
+                    ReplyHeading,
+                    FailureHeading,
+                    out observation
+                )
+                || TryUnwrapDialect(
                     stored,
-                    Wrap(parsed),
-                    StringComparison.Ordinal)) {
-                return false;
-            }
-            observation = parsed;
-            return true;
+                    LegacyReplyHeading,
+                    LegacyFailureHeading,
+                    out observation
+                );
         }
         catch (Exception exception) when (exception is
             ArgumentException or EncoderFallbackException) {
             return false;
         }
+    }
+
+    private static bool TryUnwrapDialect(
+        string stored,
+        string replyHeading,
+        string failureHeading,
+        out GalateaPlayerObservation observation
+    ) {
+        observation = null!;
+        int position = Prefix.Length;
+        if (!TryReadSection(
+                stored,
+                ref position,
+                PlayerHeading,
+                PlayerInfoString,
+                out string playerText)) {
+            return false;
+        }
+
+        var notices = new List<GalateaReadyNotice>();
+        while (position < stored.Length) {
+            if (stored.AsSpan(position).StartsWith(
+                    "## " + replyHeading + "\n\n",
+                    StringComparison.Ordinal)) {
+                if (!TryReadSection(
+                        stored,
+                        ref position,
+                        replyHeading,
+                        ReplyInfoString,
+                        out string body)) {
+                    return false;
+                }
+                notices.Add(new GalateaReadyNotice.Reply(body));
+            }
+            else if (stored.AsSpan(position).StartsWith(
+                         "## " + failureHeading + "\n\n",
+                         StringComparison.Ordinal)) {
+                if (!TryReadSection(
+                        stored,
+                        ref position,
+                        failureHeading,
+                        FailureInfoString,
+                        out string body)) {
+                    return false;
+                }
+                notices.Add(
+                    new GalateaReadyNotice.DeliveryFailure(body)
+                );
+            }
+            else {
+                return false;
+            }
+        }
+
+        var parsed = new GalateaPlayerObservation(
+            playerText,
+            notices
+        );
+        if (!string.Equals(
+                stored,
+                Render(parsed, replyHeading, failureHeading),
+                StringComparison.Ordinal)) {
+            return false;
+        }
+        observation = parsed;
+        return true;
     }
 
     /// <summary>

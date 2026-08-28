@@ -211,6 +211,12 @@ visible Action SHA-256/byte count、extractor contract identity、`artifactCount
 `artifactCount=0` 是一等 tombstone。此表不保存“正在 extraction”的长任务；在
 capture commit 之前崩溃可以重算无 side-effect extractor。
 
+当前 extractor 是per-user immutable实例：以该user的validated `characterName`在host composition阶段
+展开code-owned system/user templates，但复用host-wide borrowed Completion client。实例ContractId采用
+`atelia.galatea.outbound-mail-extractor.v2.<SHA-256>`，覆盖code-owned semantic/visible-renderer/tool
+contract版本及exact rendered prompts，不包含provider/model/connection。既有capture即使保存historical
+ContractId也仍是first-committed authority，不按current实例重做。
+
 #### `outbound_mail`
 
 每个 captured artifact 一行。主键是现行 stable `gd1-* dispatchId`，并对
@@ -266,6 +272,12 @@ SessionJournal head 或 exact composite Observation。
 canonical bytes/byte count/SHA-256，并将 state 改为 `ObservationBound`。之后可选写入
 durable Observation/terminal Action addresses。
 
+SQLite schema保持V1且不增加renderer/version列。当前writer使用角色中立reply/failure headings；strict
+reader同时接受current neutral dialect与旧Galatea-heading dialect，但同一envelope禁止混用。对于
+`ObservationBound|ObservationCommitted|Quarantined`中已有rendered Observation，open/reopen按stored
+dialect做exact canonical parse，再逐项核对player text和notice kind/order/body；不得用current writer重渲染
+历史bytes。`CutoffFrozen`没有rendered Observation，跨重启仍按§8.2直接rollback，因此不需要冻结renderer列。
+
 `reply_lease_item` 以 `(leaseId, ordinal)` 保留 exact ordered membership，并对 notice ID 建
 unique constraint。建立 lease 的同一事务将所有选中 notice 从 Ready 变为 Leased；
 consume/rollback 也必须先在同一事务中结算所有 notices，再删除该
@@ -286,7 +298,7 @@ authority。可以写 bounded debug log 或非权威 telemetry，但它们不参
 ### 6.1 正常 terminal Action
 
 1. SessionJournal 先 durable terminal Action，并回到 `Idle`。
-2. host 在同一 per-session admission/turn serialization 边界内运行 extractor。
+2. host 在同一 per-session admission/turn serialization 边界内运行该user的exact extractor。
 3. capture 前重新验证 exact Action 仍位于 current selected lineage。
 4. 单事务写 `action_capture + 0..N outbound_mail`。
 5. commit 后发 signal；返回 SSE `done` 不等待 Codex accepted/final。
@@ -503,7 +515,9 @@ non-overlap gate，不允许 signal 和 timer 同时对同一 user 执行 effect
 ## 11. Production hard cut（已完成）
 
 `GalateaHostService` production composition现在只构造durable owner：Completion/RecapGrid、normalizer、
-extractor等fallible preflight全部成功后，最后构造host-wide `GalateaDelegationSupervisor`。这是因为
+每个user的rendered extractor等fallible preflight全部成功后，最后构造host-wide
+`GalateaDelegationSupervisor`。所有extractor共享Completion owner的lazy borrowed client，但各自冻结角色prompt
+与ContractId。这是因为
 existing writable store可能立即被pulse；composition不能在此后再保留会使host半构造失败的preflight。
 
 Supervisor拥有一个shared lazy V2 transport及每user store/driver。Existing state目录只在matching session
@@ -555,6 +569,10 @@ Galatea host/SQLite vertical。同日ignored `cyber` production smoke独立验�
   在下次 admission 前结算；跨 baseline rewind 后新 append Action 仍被处理。
 - stable dispatch ID、FIFO、completion sequence、lease membership/rendered Observation 具有重启前后
   byte-exact golden。
+- 不同user角色的extractor prompt/ContractId分离而共享lazy Completion client；historical capture保持zero-call。
+- inbound envelope冻结validated To；player composite current neutral与legacy Galatea dialect都能exact读取，
+  mixed dialect拒绝。legacy `ObservationBound|ObservationCommitted` lease可cold reopen并按raw evidence结算；
+  schema仍为V1且没有migration/renderer列。
 
 ### 13.2 Effect/recovery gates
 

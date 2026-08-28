@@ -26,7 +26,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal const int MaximumPoppedUserTextUtf8Bytes = 256 * 1024;
     internal const int MaximumPopReceiptUtf8Bytes = 2 * 1024 * 1024;
     private readonly GalateaInputPreprocessor _inputPreprocessor;
-    private readonly IOutboundMailExtractor _outboundMailExtractor;
+    private readonly IReadOnlyDictionary<string, IOutboundMailExtractor>
+        _outboundMailExtractors;
     private readonly bool _maintenanceMode;
     private readonly GalateaRecapGridComposition _recapGrid;
     private readonly GalateaCompletionOwner? _completionOwner;
@@ -96,7 +97,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _delegationSupervisor = components.DelegationSupervisor;
         _recapGrid = components.RecapGrid;
         _inputPreprocessor = components.InputPreprocessor;
-        _outboundMailExtractor = components.OutboundMailExtractor;
+        _outboundMailExtractors = components.OutboundMailExtractors;
         _maintenanceMode = components.MaintenanceMode;
         _users = components.Users;
         _connectionCatalog = components.ConnectionCatalog;
@@ -133,10 +134,15 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _inputPreprocessor = new GalateaInputPreprocessor(
             userMessageNormalizer
         );
-        _outboundMailExtractor = DisabledOutboundMailExtractor.Instance;
         _maintenanceMode = config.MaintenanceMode;
         _users = config.Users.ToDictionary(
             static value => value.UserId,
+            StringComparer.Ordinal
+        );
+        _outboundMailExtractors = _users.Keys.ToDictionary(
+            static userId => userId,
+            static _ => (IOutboundMailExtractor)
+                DisabledOutboundMailExtractor.Instance,
             StringComparer.Ordinal
         );
         IReadOnlyDictionary<string, CompletionConnectionConfig> fullCatalog =
@@ -193,14 +199,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ) ?? throw new InvalidOperationException(
                     "Galatea input normalizer factory returned null."
                 );
-            IOutboundMailExtractor outboundMailExtractor =
-                owner.OutboundMailExtractorConnection is { } connection
-                    ? new OutboundMailExtractor(
-                        connection,
-                        owner.GetOutboundMailExtractorClient
-                    )
-                    : DisabledOutboundMailExtractor.Instance;
-
             GalateaRecapGridRuntimeConfig recapGridConfig = config.RecapGrid
                 ?? throw new InvalidOperationException(
                     "Galatea requires strict RecapGrid runtime configuration."
@@ -212,6 +210,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 config.Users.ToDictionary(
                     static value => value.UserId,
                     StringComparer.Ordinal
+                );
+            IReadOnlyDictionary<string, IOutboundMailExtractor>
+                outboundMailExtractors = CreateOutboundMailExtractors(
+                    users,
+                    owner.OutboundMailExtractorConnection,
+                    owner.GetOutboundMailExtractorClient
                 );
             IReadOnlyDictionary<string, CompletionConnectionConfig>
                 fullCatalog = owner.Connections.ToDictionary(
@@ -242,7 +246,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 owner,
                 owner.RecapGrid,
                 inputPreprocessor,
-                outboundMailExtractor,
+                outboundMailExtractors,
                 delegationSupervisor,
                 sessionBootstrapAdmission,
                 config.MaintenanceMode,
@@ -285,7 +289,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaCompletionOwner Owner,
         GalateaRecapGridComposition RecapGrid,
         GalateaInputPreprocessor InputPreprocessor,
-        IOutboundMailExtractor OutboundMailExtractor,
+        IReadOnlyDictionary<string, IOutboundMailExtractor>
+            OutboundMailExtractors,
         GalateaDelegationSupervisor DelegationSupervisor,
         RecapGridControlAdmission SessionBootstrapAdmission,
         bool MaintenanceMode,
@@ -295,6 +300,28 @@ public sealed class GalateaHostService : IAsyncDisposable {
         IReadOnlyList<GalateaConnectionInfoDto> SelectableConnections,
         string DefaultConnectionId
     );
+
+    internal static IReadOnlyDictionary<string, IOutboundMailExtractor>
+        CreateOutboundMailExtractors(
+        IReadOnlyDictionary<string, GalateaUserConfig> users,
+        CompletionConnectionConfig? connection,
+        Func<ICompletionClient> getClient
+    ) {
+        ArgumentNullException.ThrowIfNull(users);
+        ArgumentNullException.ThrowIfNull(getClient);
+        return users.ToDictionary(
+            static pair => pair.Key,
+            pair => connection is null
+                ? (IOutboundMailExtractor)
+                    DisabledOutboundMailExtractor.Instance
+                : new OutboundMailExtractor(
+                    pair.Value.CharacterName,
+                    connection,
+                    getClient
+                ),
+            StringComparer.Ordinal
+        );
+    }
 
     private sealed class FixedGalateaUserMessageNormalizerFactory(
         IGalateaUserMessageNormalizer normalizer
@@ -1559,7 +1586,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 engine,
                 recent,
                 delegationHandle,
-                _outboundMailExtractor
+                _outboundMailExtractors.TryGetValue(
+                    user.UserId,
+                    out IOutboundMailExtractor? outboundMailExtractor
+                )
+                    ? outboundMailExtractor
+                    : throw new InvalidDataException(
+                        $"Galatea user '{user.UserId}' has no outbound mail extractor binding."
+                    )
             );
             if (!_maintenanceMode) {
                 await host.TurnLock.WaitAsync(ct).ConfigureAwait(false);

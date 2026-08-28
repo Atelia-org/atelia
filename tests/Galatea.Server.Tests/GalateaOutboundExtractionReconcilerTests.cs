@@ -84,7 +84,7 @@ public sealed class GalateaOutboundExtractionReconcilerTests {
         Assert.Equal(Sha256(Target), durable.VisibleActionSha256);
         Assert.Equal(Encoding.UTF8.GetByteCount(Target),
             durable.VisibleActionUtf8Bytes);
-        Assert.Equal(OutboundMailExtractor.ContractId,
+        Assert.Equal(extractor.ContractId,
             durable.ExtractorContractId);
         GalateaOutboundMailSnapshot mail = Assert.Single(snapshot.Mails);
         Assert.Equal(intent, new SendMailIntent(
@@ -234,7 +234,7 @@ public sealed class GalateaOutboundExtractionReconcilerTests {
             EventAddressTextCodec.Format(action),
             Sha256("different Action"),
             Encoding.UTF8.GetByteCount("different Action"),
-            OutboundMailExtractor.ContractId,
+            "atelia.galatea.outbound-mail-extractor.fixture.v1",
             []
         ));
         var extractor = new RecordingExtractor(_ =>
@@ -440,7 +440,7 @@ public sealed class GalateaOutboundExtractionReconcilerTests {
             EventAddressTextCodec.Format(occupied),
             Sha256("occupied"),
             Encoding.UTF8.GetByteCount("occupied"),
-            OutboundMailExtractor.ContractId,
+            "atelia.galatea.outbound-mail-extractor.fixture.v1",
             [Mail("Codex", "occupied")]
         ));
         EventAddress action = AppendAction(engine, "second mail");
@@ -597,6 +597,9 @@ public sealed class GalateaOutboundExtractionReconcilerTests {
     private sealed class RecordingExtractor(
         Func<string, IReadOnlyList<SendMailIntent>> handler
     ) : IOutboundMailExtractor {
+        public string ContractId =>
+            "atelia.galatea.outbound-mail-extractor.fixture.v1";
+
         private readonly List<string> _targets = [];
 
         internal int CallCount => _targets.Count;

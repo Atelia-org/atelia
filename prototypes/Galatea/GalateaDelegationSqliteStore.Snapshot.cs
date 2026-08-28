@@ -973,7 +973,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     StringComparison.Ordinal)) {
                 throw Corrupt("Reply lease Observation identity is invalid.");
             }
-            GalateaReadyNotice[] ready = lease.NoticeIds.Select(
+            GalateaReadyNotice[] expectedNotices = lease.NoticeIds.Select(
                 noticeId => {
                     GalateaReplyNoticeSnapshot notice = notices.Single(
                         value => string.Equals(
@@ -995,13 +995,24 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     };
                 }
             ).ToArray();
-            string canonical = GalateaPlayerObservationEnvelope.Wrap(
-                new GalateaPlayerObservation(lease.PlayerText, ready)
-            );
-            if (!string.Equals(
-                    canonical,
+            if (!GalateaPlayerObservationEnvelope.TryUnwrap(
                     lease.RenderedObservation,
-                    StringComparison.Ordinal)) {
+                    out GalateaPlayerObservation parsed)
+                || !string.Equals(
+                    parsed.PlayerText,
+                    lease.PlayerText,
+                    StringComparison.Ordinal)
+                || parsed.ReadyNotices.Count != expectedNotices.Length
+                || !parsed.ReadyNotices.Zip(
+                    expectedNotices,
+                    static (actual, expected) =>
+                        actual.GetType() == expected.GetType()
+                        && string.Equals(
+                            actual.Body,
+                            expected.Body,
+                            StringComparison.Ordinal
+                        )
+                ).All(static matches => matches)) {
                 throw Corrupt(
                     "Reply lease Observation is not its canonical cutoff."
                 );

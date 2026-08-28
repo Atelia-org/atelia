@@ -1,10 +1,13 @@
+using System.Buffers.Binary;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Xml.Linq;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Galatea.Prompts;
 
 namespace Atelia.Galatea.Server;
 
@@ -48,11 +51,10 @@ internal static class GalateaMailboxText {
 }
 
 internal sealed record MailboxMessage {
-    internal const string GalateaMailboxName = "Galatea";
-
     private MailboxMessage(
         string messageId,
         string from,
+        string to,
         string? subject,
         string body
     ) {
@@ -63,6 +65,7 @@ internal sealed record MailboxMessage {
             nameof(from),
             allowLineBreaks: false
         );
+        To = new GalateaCharacterName(to).Value;
         Subject = RequireOptionalText(
             subject,
             GalateaMailboxBounds.MaximumSubjectUtf8Bytes,
@@ -79,27 +82,33 @@ internal sealed record MailboxMessage {
 
     internal string MessageId { get; }
     internal string From { get; }
-    internal string To => GalateaMailboxName;
+    internal string To { get; }
     internal string? Subject { get; }
     internal string Body { get; }
 
     internal static MailboxMessage CreateInbound(
+        GalateaCharacterName to,
         string from,
         string? subject,
         string body
-    ) => new MailboxMessage(
-        Guid.NewGuid().ToString("N"),
-        from,
-        subject,
-        body
-    );
+    ) {
+        ArgumentNullException.ThrowIfNull(to);
+        return new MailboxMessage(
+            Guid.NewGuid().ToString("N"),
+            from,
+            to.Value,
+            subject,
+            body
+        );
+    }
 
     internal static MailboxMessage FromCanonicalEnvelope(
         string messageId,
         string from,
+        string to,
         string? subject,
         string body
-    ) => new(messageId, from, subject, body);
+    ) => new(messageId, from, to, subject, body);
 
     private static string RequireCanonicalMessageId(string value) =>
         GalateaHttpV1.IsCanonicalTurnId(value)
@@ -245,16 +254,13 @@ internal static class GalateaMailboxObservationEnvelope {
             string? to = (string?)element.Attribute("to");
             if (!GalateaHttpV1.IsCanonicalTurnId(messageId)
                 || string.IsNullOrWhiteSpace(from)
-                || !string.Equals(
-                    to,
-                    MailboxMessage.GalateaMailboxName,
-                    StringComparison.Ordinal
-                )) {
+                || to is null) {
                 return false;
             }
             message = MailboxMessage.FromCanonicalEnvelope(
                 messageId!,
                 from!,
+                to,
                 element.Element("subject")?.Value,
                 element.Element("body")!.Value
             );
@@ -295,7 +301,7 @@ internal static class GalateaVisibleActionTextRenderer {
 }
 
 [Description(
-    "One mail that Galatea actually sent, with a complete explicit recipient and body."
+    "One mail that the configured story character actually sent, with a complete explicit recipient and body."
 )]
 internal sealed record SendMailIntent(
     [property: Required, Description(
@@ -307,7 +313,7 @@ internal sealed record SendMailIntent(
     ), JsonPropertyName("subject")]
     string? Subject,
     [property: Required, Description(
-        "The complete mail body explicitly authored by Galatea. Never invent or complete it."
+        "The complete mail body explicitly authored by the configured story character. Never invent or complete it."
     ), JsonPropertyName("body")]
     string Body,
     [property: Description(
@@ -315,13 +321,13 @@ internal sealed record SendMailIntent(
     ), JsonPropertyName("inReplyToMessageId")]
     string? InReplyToMessageId,
     [property: Required, Description(
-        "An exact quote from the target proving that Galatea actually sent this mail."
+        "An exact quote from the target proving that the configured story character actually sent this mail."
     ), JsonPropertyName("evidenceQuote")]
     string EvidenceQuote
 );
 
 internal interface IOutboundMailExtractor {
-    string ContractId => OutboundMailExtractor.ContractId;
+    string ContractId { get; }
 
     ValueTask<IReadOnlyList<SendMailIntent>> ExtractAsync(
         string visibleActionText,
@@ -353,43 +359,70 @@ internal sealed class DisabledOutboundMailExtractor
 }
 
 internal sealed class OutboundMailExtractor : IOutboundMailExtractor {
-    internal const string ContractId =
-        "atelia.galatea.outbound-mail-extractor.v1";
+    private static readonly UTF8Encoding StrictUtf8 = new(
+        encoderShouldEmitUTF8Identifier: false,
+        throwOnInvalidBytes: true
+    );
+
+    private const string ContractIdPrefix =
+        "atelia.galatea.outbound-mail-extractor.v2.";
+    private const string SemanticContractVersion =
+        "atelia.galatea.outbound-mail-extractor.semantic.v2";
+    private const string ToolContractVersion =
+        "emit-send-mail-intent.v1";
+    private const string VisibleActionRendererVersion =
+        "atelia.galatea.visible-action-text-renderer.v1";
     internal const string ToolName = "emit_send_mail_intent";
 
-    private const string SystemPrompt = """
+    private const string SystemPromptTemplate = """
 You extract mail-send intents from a narrative Action produced by a role-playing model.
 
-The provider Action is a composite GM carrier, not automatically Galatea's own voice.
-- A [Galatea] passage can establish Galatea's first-person intent and action.
-- A [旁白] passage can establish only an observable act actually performed by Galatea.
-- Never attribute another character's acts, quoted mail, or inbound mail to Galatea.
+The provider Action is a composite GM carrier, not automatically ${characterName}'s own voice.
+- A [${characterName}] passage can establish ${characterName}'s first-person intent and action.
+- A [旁白] passage can establish only an observable act actually performed by ${characterName}.
+- Never attribute another character's acts, quoted mail, or inbound mail to ${characterName}.
 
-Emit one tool call per mail, in narrative order, only when Galatea actually sends it or explicitly completes the send action. Plans, wishes, suggestions, drafts, composing, opening an interface, and unsent outbox content are not sends.
+Emit one tool call per mail, in narrative order, only when ${characterName} actually sends it or explicitly completes the send action. Plans, wishes, suggestions, drafts, composing, opening an interface, and unsent outbox content are not sends.
 
 Every emitted mail must state one recipient and its complete body in the Action. Do not invent, rewrite, complete, summarize, or polish either. A subject is optional and must be omitted when absent. inReplyToMessageId is optional and must be omitted unless the Action explicitly identifies the source message id. evidenceQuote must be an exact quote proving actual sending. If recipient, complete body, actor ownership, or completed-send evidence is missing or ambiguous, emit nothing for that candidate.
 
 Ordinary response text is diagnostic only. Use emit_send_mail_intent for artifacts.
 """;
 
-    private const string UserPrompt = """
-Extract zero or more mails that Galatea actually sent in this Action. Preserve their narrative order. Be conservative: incomplete or merely planned/drafted mail produces no artifact.
+    private const string UserPromptTemplate = """
+Extract zero or more mails that ${characterName} actually sent in this Action. Preserve their narrative order. Be conservative: incomplete or merely planned/drafted mail produces no artifact.
 """;
 
     private readonly TextExtractor _inner;
+    private readonly string _userPrompt;
 
     internal OutboundMailExtractor(
+        GalateaCharacterName characterName,
         CompletionConnectionConfig connection,
         Func<ICompletionClient> getClient
     ) {
+        ArgumentNullException.ThrowIfNull(characterName);
+        string systemPrompt = GalateaPromptTemplate.Render(
+            SystemPromptTemplate,
+            characterName,
+            TextExtractorBounds.MaximumSystemPromptUtf8Bytes
+        );
+        _userPrompt = GalateaPromptTemplate.Render(
+            UserPromptTemplate,
+            characterName,
+            TextExtractorBounds.MaximumUserPromptUtf8Bytes
+        );
+        ContractId = CreateContractId(systemPrompt, _userPrompt);
         var tool = TextExtractorArtifactTool.Create<SendMailIntent>(ToolName);
         _inner = new TextExtractor(
-            SystemPrompt,
+            systemPrompt,
             TextExtractorToolSet.Create(tool),
             connection,
             getClient
         );
     }
+
+    public string ContractId { get; }
 
     public async ValueTask<IReadOnlyList<SendMailIntent>> ExtractAsync(
         string visibleActionText,
@@ -397,7 +430,7 @@ Extract zero or more mails that Galatea actually sent in this Action. Preserve t
     ) {
         TextExtractionResult result = await _inner.ExtractAsync(
                 visibleActionText,
-                UserPrompt,
+                _userPrompt,
                 cancellationToken
             )
             .ConfigureAwait(false);
@@ -413,6 +446,35 @@ Extract zero or more mails that Galatea actually sent in this Action. Preserve t
             intents.Add(typed.Value);
         }
         return Array.AsReadOnly(intents.ToArray());
+    }
+
+    private static string CreateContractId(
+        string systemPrompt,
+        string userPrompt
+    ) {
+        using IncrementalHash hash = IncrementalHash.CreateHash(
+            HashAlgorithmName.SHA256
+        );
+        AppendContractPart(hash, SemanticContractVersion);
+        AppendContractPart(hash, VisibleActionRendererVersion);
+        AppendContractPart(hash, ToolContractVersion);
+        AppendContractPart(hash, ToolName);
+        AppendContractPart(hash, systemPrompt);
+        AppendContractPart(hash, userPrompt);
+        return ContractIdPrefix
+            + Convert.ToHexString(hash.GetHashAndReset())
+                .ToLowerInvariant();
+    }
+
+    private static void AppendContractPart(
+        IncrementalHash hash,
+        string value
+    ) {
+        byte[] utf8 = StrictUtf8.GetBytes(value);
+        Span<byte> length = stackalloc byte[sizeof(int)];
+        BinaryPrimitives.WriteInt32BigEndian(length, utf8.Length);
+        hash.AppendData(length);
+        hash.AppendData(utf8);
     }
 
     private static void Validate(SendMailIntent intent) {

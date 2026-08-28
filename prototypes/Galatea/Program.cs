@@ -698,6 +698,7 @@ api.MapPost(
                 ));
             }
             MailboxMessage message = MailboxMessage.CreateInbound(
+                session.User.CharacterName,
                 request.From,
                 request.Subject,
                 request.Body
