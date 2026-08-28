@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Text.Json;
 using Atelia.Completion;
+using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
@@ -18,6 +19,13 @@ namespace Atelia.Galatea.Server.Tests;
 internal sealed class GalateaTestHost : IAsyncDisposable {
     private const string TestUserId = "alice";
     private const string TestPassword = "pw1";
+    private static readonly string DefaultFinalizedSystemPrompt =
+        GalateaSystemPromptComposer.Compose(
+            "test ${characterName} system prompt",
+            new GalateaCharacterName("Galatea"),
+            new GalateaPlayerName("刘世超"),
+            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
+        );
 
     private readonly string _tempRoot;
     private readonly bool _deleteFilesOnDispose;
@@ -95,7 +103,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                    sessionDirectory,
                    new SessionCreateOptions(
                        "model-a",
-                       "test Galatea system prompt",
+                       DefaultFinalizedSystemPrompt,
                        "openai-chat/strict"
                    ))) {
             if (provisionRawOnly) {
@@ -151,7 +159,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             GalateaSessionProvisioning.CreateIfMissing,
         IReadOnlyList<CompletionConnectionConfig>? connections = null,
         string defaultConnectionId = "test",
-        string systemPromptTemplate =
+        string characterContextTemplate =
             "test ${characterName} system prompt",
         bool maintenanceMode = false,
         bool deleteFilesOnDispose = true,
@@ -160,7 +168,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizer);
         ArgumentException.ThrowIfNullOrWhiteSpace(defaultConnectionId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(systemPromptTemplate);
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            characterContextTemplate
+        );
 
         string tempRoot = Path.Combine(
             Path.GetTempPath(),
@@ -192,7 +202,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 Path.GetFullPath(sessionDirectory),
                 configuredConnections,
                 defaultConnectionId,
-                systemPromptTemplate,
+                characterContextTemplate,
                 callLogDirectory: null,
                 maintenanceMode,
                 agentControlProfile,
@@ -226,7 +236,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string defaultConnectionId,
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer normalizer,
-        string systemPromptTemplate =
+        string characterContextTemplate =
             "test ${characterName} system prompt",
         string? callLogDirectory = null,
         bool maintenanceMode = false,
@@ -242,7 +252,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         defaultConnectionId,
         completionClientFactory,
         normalizer,
-        systemPromptTemplate,
+        characterContextTemplate,
         callLogDirectory,
         maintenanceMode,
         agentControlProfile,
@@ -263,7 +273,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string defaultConnectionId,
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer normalizer,
-        string systemPromptTemplate,
+        string characterContextTemplate,
         GalateaSessionProvisioning sessionProvisioning,
         IReadOnlyList<string>? selectableConnectionIds = null,
         string? inputNormalizerConnectionId = null,
@@ -274,7 +284,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         defaultConnectionId,
         completionClientFactory,
         normalizer,
-        systemPromptTemplate,
+        characterContextTemplate,
         callLogDirectory: null,
         maintenanceMode: false,
         agentControlProfile: null,
@@ -291,7 +301,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string defaultConnectionId,
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer normalizer,
-        string systemPromptTemplate,
+        string characterContextTemplate,
         string? callLogDirectory,
         bool maintenanceMode,
         RecapGridAgentControlProfile? agentControlProfile,
@@ -306,7 +316,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         ArgumentException.ThrowIfNullOrWhiteSpace(defaultConnectionId);
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizer);
-        ArgumentException.ThrowIfNullOrWhiteSpace(systemPromptTemplate);
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            characterContextTemplate
+        );
 
         string absoluteSessionDirectory =
             Path.TrimEndingDirectorySeparator(
@@ -331,7 +343,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 absoluteSessionDirectory,
                 connections,
                 defaultConnectionId,
-                systemPromptTemplate,
+                characterContextTemplate,
                 callLogDirectory,
                 maintenanceMode,
                 agentControlProfile,
@@ -439,7 +451,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string absoluteSessionDirectory,
         IReadOnlyList<CompletionConnectionConfig> connections,
         string defaultConnectionId,
-        string systemPromptTemplate,
+        string characterContextTemplate,
         string? callLogDirectory,
         bool maintenanceMode,
         RecapGridAgentControlProfile? agentControlProfile,
@@ -474,7 +486,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                         TestUserId
                     ),
                     sessionProvisioning,
-                    SystemPromptTemplate: systemPromptTemplate
+                    CharacterContextTemplate: characterContextTemplate
                 )
             ],
             CallLogDir: callLogDirectory,

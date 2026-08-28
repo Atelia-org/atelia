@@ -2600,14 +2600,14 @@ internal static class GalateaConfigLoader {
                 delegationStateDirectory,
                 $"delegationStateDir for user '{user.UserId}'"
             );
-            string systemPromptTemplate = ResolveSystemPromptTemplate(
+            string characterContextTemplate = ResolveCharacterContextTemplate(
                 user,
                 configDirectory
             );
             string systemPrompt;
             try {
-                systemPrompt = GalateaPromptTemplate.Render(
-                    systemPromptTemplate,
+                systemPrompt = GalateaSystemPromptComposer.Compose(
+                    characterContextTemplate,
                     characterName,
                     playerName,
                     GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
@@ -2616,7 +2616,7 @@ internal static class GalateaConfigLoader {
             catch (ArgumentException exception) {
                 throw new InvalidOperationException(
                     $"Galatea config user '{user.UserId}' has an invalid "
-                    + "system prompt template.",
+                    + "character context template.",
                     exception
                 );
             }
@@ -2636,21 +2636,21 @@ internal static class GalateaConfigLoader {
         return resolvedUsers;
     }
 
-    private static string ResolveSystemPromptTemplate(
+    private static string ResolveCharacterContextTemplate(
         GalateaUserFileConfig user,
         string configDirectory
     ) {
-        if (string.IsNullOrWhiteSpace(user.SystemPromptTemplateFile)) {
-            return user.SystemPromptTemplate;
+        if (string.IsNullOrWhiteSpace(user.CharacterContextTemplateFile)) {
+            return user.CharacterContextTemplate;
         }
         string promptPath = Path.GetFullPath(
-            user.SystemPromptTemplateFile,
+            user.CharacterContextTemplateFile,
             configDirectory
         );
         byte[] promptBytes = GalateaStrictConfigReader.ReadBoundedRegularFile(
             promptPath,
             GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
-            $"systemPromptTemplateFile for user '{user.UserId}'"
+            $"characterContextTemplateFile for user '{user.UserId}'"
         );
         try {
             return new UTF8Encoding(
@@ -2660,7 +2660,7 @@ internal static class GalateaConfigLoader {
         }
         catch (DecoderFallbackException exception) {
             throw new InvalidDataException(
-                $"Galatea user '{user.UserId}' systemPromptTemplateFile "
+                $"Galatea user '{user.UserId}' characterContextTemplateFile "
                 + "is not strict UTF-8.",
                 exception
             );
@@ -2850,7 +2850,7 @@ internal static class GalateaConfigBootstrapper {
             generated.Add(resolvedPath);
         }
 
-        CreateMissingSystemPromptTemplates(
+        CreateMissingCharacterContextTemplates(
             usersFile.Users,
             parentDir,
             generated
@@ -2877,24 +2877,25 @@ internal static class GalateaConfigBootstrapper {
         throw new InvalidOperationException(
             "Galatea config templates have been generated at "
             + string.Join(" and ", generated)
-            + ". Review every generated system prompt template and, where "
+            + ". Review every generated character context template and, where "
             + "applicable, replace delegate path placeholders, update "
             + "listenUrls, connection settings, and default account "
             + "passwords before restarting the server."
         );
     }
 
-    private static void CreateMissingSystemPromptTemplates(
+    private static void CreateMissingCharacterContextTemplates(
         IReadOnlyList<GalateaUserFileConfig> users,
         string configDirectory,
         List<string> generated
     ) {
         foreach (GalateaUserFileConfig user in users) {
-            if (string.IsNullOrWhiteSpace(user.SystemPromptTemplateFile)) {
+            if (string.IsNullOrWhiteSpace(
+                    user.CharacterContextTemplateFile)) {
                 continue;
             }
             string resolved = Path.GetFullPath(
-                user.SystemPromptTemplateFile,
+                user.CharacterContextTemplateFile,
                 configDirectory
             );
             if (File.Exists(resolved)
@@ -2903,18 +2904,18 @@ internal static class GalateaConfigBootstrapper {
             }
             GalateaStrictConfigReader.RequireExistingAncestorsNoReparse(
                 resolved,
-                "Galatea system prompt template bootstrap"
+                "Galatea character context template bootstrap"
             );
             string? directory = Path.GetDirectoryName(resolved);
             if (string.IsNullOrWhiteSpace(directory)) {
                 throw new InvalidOperationException(
-                    "Cannot determine the system prompt template directory."
+                    "Cannot determine the character context template directory."
                 );
             }
             Directory.CreateDirectory(directory);
             GalateaStrictConfigReader.RequireExistingAncestorsNoReparse(
                 resolved,
-                "Galatea system prompt template bootstrap"
+                "Galatea character context template bootstrap"
             );
             using var stream = new FileStream(
                 resolved,
@@ -2922,7 +2923,9 @@ internal static class GalateaConfigBootstrapper {
                 FileAccess.Write,
                 FileShare.None
             );
-            stream.Write(GalateaBuiltInSystemPromptTemplate.Utf8.Span);
+            stream.Write(
+                GalateaBuiltInCharacterContextTemplate.Utf8.Span
+            );
             stream.Flush(flushToDisk: true);
             generated.Add(resolved);
         }
@@ -2947,8 +2950,8 @@ internal static class GalateaConfigBootstrapper {
 }
 
 internal static class GalateaDefaults {
-    public const string SystemPromptTemplateFile =
-        "prompts/trpg-host-standard-zh-cn.md";
+    public const string CharacterContextTemplateFile =
+        "prompts/character-context-standard-zh-cn.md";
 }
 
 internal static class GalateaConfigTemplateFactory {
@@ -3049,9 +3052,9 @@ internal static class GalateaConfigTemplateFactory {
             DelegationStateDir: $"delegation-state/{userId}",
             SessionProvisioning:
                 GalateaSessionProvisioning.CreateIfMissing,
-            SystemPromptTemplate: "",
-            SystemPromptTemplateFile:
-                GalateaDefaults.SystemPromptTemplateFile
+            CharacterContextTemplate: "",
+            CharacterContextTemplateFile:
+                GalateaDefaults.CharacterContextTemplateFile
         );
     }
 }

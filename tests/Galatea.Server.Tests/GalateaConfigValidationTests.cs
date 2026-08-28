@@ -33,7 +33,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigTemplateStartsWithExactV4AndRoundTrips() {
+    public void RootConfigTemplateStartsWithExactV5AndRoundTrips() {
         byte[] template = JsonSerializer.SerializeToUtf8Bytes(
             GalateaConfigTemplateFactory.CreateUsersFile(),
             GalateaJson.Options
@@ -45,7 +45,7 @@ public sealed class GalateaConfigValidationTests {
             .EnumerateObject()
             .First();
         Assert.Equal("v", first.Name);
-        Assert.Equal("4", first.Value.GetRawText());
+        Assert.Equal("5", first.Value.GetRawText());
 
         GalateaUsersFileConfig? decoded = JsonSerializer.Deserialize(
             template,
@@ -74,11 +74,11 @@ public sealed class GalateaConfigValidationTests {
         );
         Assert.All(decoded.Users, static user => Assert.Equal(
             string.Empty,
-            user.SystemPromptTemplate
+            user.CharacterContextTemplate
         ));
         Assert.All(decoded.Users, static user => Assert.Equal(
-            GalateaDefaults.SystemPromptTemplateFile,
-            user.SystemPromptTemplateFile
+            GalateaDefaults.CharacterContextTemplateFile,
+            user.CharacterContextTemplateFile
         ));
         Assert.All(
             decoded.Users,
@@ -139,10 +139,10 @@ public sealed class GalateaConfigValidationTests {
             );
             string generatedPrompt = Path.Combine(
                 root,
-                GalateaDefaults.SystemPromptTemplateFile
+                GalateaDefaults.CharacterContextTemplateFile
             );
             Assert.Equal(
-                GalateaBuiltInSystemPromptTemplate.Utf8.ToArray(),
+                GalateaBuiltInCharacterContextTemplate.Utf8.ToArray(),
                 File.ReadAllBytes(generatedPrompt)
             );
             Assert.Equal(
@@ -189,8 +189,8 @@ public sealed class GalateaConfigValidationTests {
                     Path.Combine(root, "session"),
                     Path.Combine(root, "delegation-state"),
                     GalateaSessionProvisioning.ExistingOnly,
-                    SystemPromptTemplate: "",
-                    SystemPromptTemplateFile: promptRelative
+                    CharacterContextTemplate: "",
+                    CharacterContextTemplateFile: promptRelative
                 )]
             );
             Assert.False(File.Exists(promptPath));
@@ -204,8 +204,13 @@ public sealed class GalateaConfigValidationTests {
             Assert.Contains(promptPath, generated.Message,
                 StringComparison.Ordinal);
             Assert.Equal(
-                GalateaBuiltInSystemPromptTemplate.Utf8.ToArray(),
+                GalateaBuiltInCharacterContextTemplate.Utf8.ToArray(),
                 File.ReadAllBytes(promptPath)
+            );
+            Assert.DoesNotContain(
+                "GM carrier",
+                File.ReadAllText(promptPath),
+                StringComparison.Ordinal
             );
             GalateaConfigBootstrapper.EnsureExistsOrBootstrap(configPath);
             GalateaUserConfig user = Assert.Single(
@@ -214,6 +219,10 @@ public sealed class GalateaConfigValidationTests {
             Assert.Contains("Galatea", user.SystemPrompt,
                 StringComparison.Ordinal);
             Assert.Contains("刘世超", user.SystemPrompt,
+                StringComparison.Ordinal);
+            Assert.Contains("GM carrier", user.SystemPrompt,
+                StringComparison.Ordinal);
+            Assert.Contains("## 界外邮箱机制", user.SystemPrompt,
                 StringComparison.Ordinal);
             Assert.DoesNotContain("${", user.SystemPrompt,
                 StringComparison.Ordinal);
@@ -242,8 +251,8 @@ public sealed class GalateaConfigValidationTests {
                     Path.Combine(root, "session"),
                     Path.Combine(root, "delegation-state"),
                     GalateaSessionProvisioning.ExistingOnly,
-                    SystemPromptTemplate: "",
-                    SystemPromptTemplateFile: existingPrompt
+                    CharacterContextTemplate: "",
+                    CharacterContextTemplateFile: existingPrompt
                 )]
             );
 
@@ -263,8 +272,8 @@ public sealed class GalateaConfigValidationTests {
                             Path.Combine(root, "session"),
                             Path.Combine(root, "delegation-state"),
                             GalateaSessionProvisioning.ExistingOnly,
-                            SystemPromptTemplate: "",
-                            SystemPromptTemplateFile: outsidePrompt
+                            CharacterContextTemplate: "",
+                            CharacterContextTemplateFile: outsidePrompt
                         )]
                     },
                     GalateaJson.Options
@@ -545,7 +554,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigAcceptsExactV4OutsideFirstProperty() {
+    public void RootConfigAcceptsExactV5OutsideFirstProperty() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -553,11 +562,11 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string LeadingVersion = "{\"v\":4,";
+            const string LeadingVersion = "{\"v\":5,";
             Assert.StartsWith(LeadingVersion, original);
             string reordered = "{"
                 + original[LeadingVersion.Length..^1]
-                + ",\"v\":4}";
+                + ",\"v\":5}";
             File.WriteAllText(configPath, reordered);
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
@@ -569,7 +578,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigRequiresExactIntegerV4AndRejectsOtherVersions() {
+    public void RootConfigRequiresExactIntegerV5AndRejectsOtherVersions() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -577,7 +586,7 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string Version = "\"v\":4";
+            const string Version = "\"v\":5";
             Assert.Contains(Version, original, StringComparison.Ordinal);
 
             string[] invalid = [
@@ -588,7 +597,7 @@ public sealed class GalateaConfigValidationTests {
                 ),
                 original.Replace(Version, "\"v\":null",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":\"4\"",
+                original.Replace(Version, "\"v\":\"5\"",
                     StringComparison.Ordinal),
                 original.Replace(Version, "\"v\":0",
                     StringComparison.Ordinal),
@@ -598,13 +607,15 @@ public sealed class GalateaConfigValidationTests {
                     StringComparison.Ordinal),
                 original.Replace(Version, "\"v\":3",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":5",
+                original.Replace(Version, "\"v\":4",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":4.0",
+                original.Replace(Version, "\"v\":6",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":4e0",
+                original.Replace(Version, "\"v\":5.0",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"V\":4",
+                original.Replace(Version, "\"v\":5e0",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"V\":5",
                     StringComparison.Ordinal),
                 original.Replace(
                     Version + ",",
@@ -634,7 +645,7 @@ public sealed class GalateaConfigValidationTests {
             File.WriteAllText(
                 configPath,
                 """
-                {"v":5,"users":[{"userId":"alice","password":"pw","sessionDir":"session","delegationStateDir":"delegation-state","sessionProvisioning":"existing-only","systemPrompt":"","systemPromptFile":"missing-prompt.txt"}],"recapGrid":{"routeManifestPath":"missing-routes.json","agentControlProfileFiles":["missing-profile.json"],"currentAgentControlProfileId":"missing"}}
+                {"v":4,"users":[{"userId":"alice","password":"pw","sessionDir":"session","delegationStateDir":"delegation-state","sessionProvisioning":"existing-only","systemPrompt":"","systemPromptFile":"missing-prompt.txt"}],"recapGrid":{"routeManifestPath":"missing-routes.json","agentControlProfileFiles":["missing-profile.json"],"currentAgentControlProfileId":"missing"}}
                 """
             );
 
@@ -694,7 +705,7 @@ public sealed class GalateaConfigValidationTests {
             byte[] versionless = File.ReadAllBytes(configPath);
             versionless = System.Text.Encoding.UTF8.GetBytes(
                 System.Text.Encoding.UTF8.GetString(versionless).Replace(
-                    "\"v\":4,",
+                    "\"v\":5,",
                     string.Empty,
                     StringComparison.Ordinal
                 )
@@ -903,8 +914,8 @@ public sealed class GalateaConfigValidationTests {
 
             string[] invalidConfigs = [
                 originalConfig.Replace(
-                    "{\"v\":4,\"users\"",
-                    "{\"v\":4,\"unknown\":1,\"users\"",
+                    "{\"v\":5,\"users\"",
+                    "{\"v\":5,\"unknown\":1,\"users\"",
                     StringComparison.Ordinal
                 ),
                 originalConfig.Replace(
@@ -1244,8 +1255,8 @@ public sealed class GalateaConfigValidationTests {
                     Path.Combine(root, "session"),
                     Path.Combine(root, "delegation-state"),
                     GalateaSessionProvisioning.ExistingOnly,
-                    SystemPromptTemplate: "",
-                    SystemPromptTemplateFile: "prompt.txt"
+                    CharacterContextTemplate: "",
+                    CharacterContextTemplateFile: "prompt.txt"
                 )]
             );
             PadToExactBytes(
@@ -1280,7 +1291,7 @@ public sealed class GalateaConfigValidationTests {
                          "connections",
                          "Agent Control profile",
                          "RecapGrid route manifest",
-                         "systemPromptTemplateFile"
+                         "characterContextTemplateFile"
                      }) {
                 Assert.Throws<InvalidDataException>(() =>
                     GalateaStrictConfigReader.ReadBoundedRegularFile(
@@ -1521,7 +1532,7 @@ public sealed class GalateaConfigValidationTests {
         user.SessionDir,
         user.DelegationStateDir,
         user.SessionProvisioning,
-        SystemPromptTemplate: "prompt ${characterName}"
+        CharacterContextTemplate: "prompt ${characterName}"
     );
 
     private static RecapGridAgentControlProfile CreateProfile(

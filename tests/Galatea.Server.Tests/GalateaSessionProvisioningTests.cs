@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
@@ -76,7 +77,7 @@ public sealed class GalateaSessionProvisioningTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [decoy, selected],
             defaultConnectionId: selected.Id,
-            systemPromptTemplate: "resolved ${characterName} prompt"
+            characterContextTemplate: "resolved ${characterName} prompt"
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
@@ -115,7 +116,10 @@ public sealed class GalateaSessionProvisioningTests {
             selected.CompletionSurfaceId,
             governing.RuntimeConfig.CompletionSurfaceId
         );
-        Assert.Equal("resolved Galatea prompt", governing.SystemPrompt);
+        Assert.Equal(
+            ExpectedSystemPrompt("resolved ${characterName} prompt"),
+            governing.SystemPrompt
+        );
 
         SessionCurrentLineageSnapshot lineage =
             session.Engine.ReadCurrentLineageHeaders();
@@ -263,7 +267,7 @@ public sealed class GalateaSessionProvisioningTests {
                 "current-model",
                 "current-surface"
             )],
-            systemPromptTemplate: "current ${characterName} prompt",
+            characterContextTemplate: "current ${characterName} prompt",
             agentControlProfile: CreateNoControlCreateProfile()
         );
         Atelia.EventJournal.EventAddress originalHead;
@@ -425,7 +429,7 @@ public sealed class GalateaSessionProvisioningTests {
             factoryA,
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [connectionA],
-            systemPromptTemplate: "prompt-a ${characterName}"
+            characterContextTemplate: "prompt-a ${characterName}"
         );
         await using var hostB = GalateaTestHost.PointAtSession(
             hostA.SessionDirectory,
@@ -524,8 +528,16 @@ public sealed class GalateaSessionProvisioningTests {
             winningSession.Engine.ResolveGoverningSetup(winnerHead);
         bool winnerIsA = ReferenceEquals(winner, attempts[0]);
         var expectedWinnerSetup = winnerIsA
-            ? ("model-a", "surface-a", "prompt-a Galatea")
-            : ("model-b", "surface-b", "prompt-b Galatea");
+            ? (
+                "model-a",
+                "surface-a",
+                ExpectedSystemPrompt("prompt-a ${characterName}")
+            )
+            : (
+                "model-b",
+                "surface-b",
+                ExpectedSystemPrompt("prompt-b ${characterName}")
+            );
         Assert.Equal(
             expectedWinnerSetup,
             (
@@ -795,7 +807,7 @@ public sealed class GalateaSessionProvisioningTests {
         await using var host = GalateaTestHost.CreateMissingSession(
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
-            systemPromptTemplate: "current ${characterName} prompt"
+            characterContextTemplate: "current ${characterName} prompt"
         );
         GalateaConfig config = GalateaConfigLoader.Load(host.ConfigPath);
         Assert.True(config.RecapGrid!.AgentControlProfiles.TryGet(
@@ -848,14 +860,17 @@ public sealed class GalateaSessionProvisioningTests {
         }
 
         Assert.Equal(
-            ["current Galatea prompt", "current Galatea prompt"],
+            [
+                ExpectedSystemPrompt("current ${characterName} prompt"),
+                ExpectedSystemPrompt("current ${characterName} prompt")
+            ],
             factory.Client.MainSystemPrompts
         );
         var finalHead = Assert.IsType<Atelia.EventJournal.EventAddress>(
             session.Engine.ReadCurrentHead()
         );
         Assert.Equal(
-            "current Galatea prompt",
+            ExpectedSystemPrompt("current ${characterName} prompt"),
             session.Engine.ResolveGoverningSetup(finalHead).SystemPrompt
         );
     }
@@ -1015,6 +1030,15 @@ public sealed class GalateaSessionProvisioningTests {
         SessionJournalEngine engine
     ) => engine.ReadCurrentLineageHeaders().HeadToRoot.Count(
         static entry => entry.Kind == SessionEventKind.SystemPromptSetup
+    );
+
+    private static string ExpectedSystemPrompt(
+        string characterContextTemplate
+    ) => GalateaSystemPromptComposer.Compose(
+        characterContextTemplate,
+        new GalateaCharacterName("Galatea"),
+        new GalateaPlayerName("刘世超"),
+        GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
     );
 
     private sealed class CountingCompletionClientFactory

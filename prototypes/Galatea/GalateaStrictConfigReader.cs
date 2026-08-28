@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 4;
+    internal const int CurrentConfigVersion = 5;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumUserCount = 256;
@@ -247,13 +247,13 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("4"u8)) {
+            || !reader.ValueSpan.SequenceEqual("5"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 4; "
+        "Galatea config requires exact integer version 'v': 5; "
         + "migrate the config before retrying."
     );
 
@@ -268,13 +268,13 @@ internal static class GalateaStrictConfigReader {
                 case "playerName":
                 case "sessionDir":
                 case "delegationStateDir":
-                case "systemPromptTemplate":
+                case "characterContextTemplate":
                     RequireToken(reader.TokenType, JsonTokenType.String, property);
                     break;
                 case "sessionProvisioning":
                     RequireExactSessionProvisioning(ref reader);
                     break;
-                case "systemPromptTemplateFile":
+                case "characterContextTemplateFile":
                     RequireStringOrNull(reader.TokenType, property);
                     break;
                 default:

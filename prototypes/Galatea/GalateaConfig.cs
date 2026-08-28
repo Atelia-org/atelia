@@ -49,8 +49,8 @@ internal sealed record GalateaUsersFileConfig(
 );
 
 /// <summary>
-/// Exact per-user shape read from config.json before paths and prompt
-/// templates are materialized.
+/// Exact per-user shape read from config.json before paths are resolved and
+/// character-context templates are materialized.
 /// </summary>
 internal sealed record GalateaUserFileConfig(
     string UserId,
@@ -60,8 +60,8 @@ internal sealed record GalateaUserFileConfig(
     string SessionDir,
     string DelegationStateDir,
     GalateaSessionProvisioning SessionProvisioning,
-    string SystemPromptTemplate = "",
-    string? SystemPromptTemplateFile = null
+    string CharacterContextTemplate = "",
+    string? CharacterContextTemplateFile = null
 );
 
 public sealed record GalateaUserConfig(

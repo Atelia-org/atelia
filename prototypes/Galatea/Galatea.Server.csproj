@@ -29,9 +29,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="../../docs/Galatea/prompt/trpg-host.md">
-      <Link>PromptTemplates/trpg-host-standard-zh-cn.md</Link>
-      <LogicalName>Atelia.Galatea.Server.PromptTemplates.TrpgHost.Standard.zh-CN.md</LogicalName>
+    <EmbeddedResource Include="../../docs/Galatea/prompt/trpg-protocol-prefix-zh-cn.md">
+      <Link>PromptTemplates/trpg-protocol-prefix-zh-cn.md</Link>
+      <LogicalName>Atelia.Galatea.Server.PromptTemplates.TrpgHost.ProtocolPrefix.zh-CN.md</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="../../docs/Galatea/prompt/character-context-standard-zh-cn.md">
+      <Link>PromptTemplates/character-context-standard-zh-cn.md</Link>
+      <LogicalName>Atelia.Galatea.Server.PromptTemplates.CharacterContext.Standard.zh-CN.md</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="../../docs/Galatea/prompt/trpg-mailbox-protocol-suffix-zh-cn.md">
+      <Link>PromptTemplates/trpg-mailbox-protocol-suffix-zh-cn.md</Link>
+      <LogicalName>Atelia.Galatea.Server.PromptTemplates.TrpgHost.MailboxProtocolSuffix.zh-CN.md</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
 
