@@ -5,7 +5,7 @@ namespace Atelia.Galatea.Prompts.Tests;
 public sealed class GalateaPromptTemplateTests {
     [Fact]
     public void ExactTokenRendersEveryOccurrenceWithoutRecursion() {
-        var name = new GalateaCharacterName("${Alice}");
+        var name = new GalateaCharacterName("Alice");
 
         string rendered = GalateaPromptTemplate.Render(
             "[${characterName}] meets ${characterName}.",
@@ -13,7 +13,19 @@ public sealed class GalateaPromptTemplateTests {
             maximumUtf8Bytes: 1024
         );
 
-        Assert.Equal("[${Alice}] meets ${Alice}.", rendered);
+        Assert.Equal("[Alice] meets Alice.", rendered);
+        Assert.DoesNotContain("${", rendered, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("${Alice}")]
+    [InlineData("Alice${other}")]
+    [InlineData("Alice{")]
+    public void CharacterNamesCannotLeaveResidualTemplateSyntax(
+        string value
+    ) {
+        Assert.Throws<ArgumentException>(() =>
+            new GalateaCharacterName(value));
     }
 
     [Theory]

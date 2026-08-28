@@ -85,9 +85,10 @@ V3 `systemPrompt`与`systemPromptFile`在V4中是unknown fields。V4没有兼容
 
 - 必须是strict UTF-16、already Unicode NFC且already trimmed；不自动修正；
 - strict UTF-8长度为1..128 bytes；
-- 拒绝Unicode Control、LineSeparator、ParagraphSeparator及`[`/`]`；
-- exact拒绝reserved output marker `旁白`与`状态摘要`；
-- 允许Unicode Format（包括ZWJ），也允许`$`、`{`、`}`；不同user无需unique。
+- 拒绝Unicode Control、LineSeparator、ParagraphSeparator；Unicode Format默认拒绝，只精确允许U+200D ZWJ；
+- 整个名字必须至少包含一个non-Format rune，纯ZWJ等不可见label拒绝；
+- 拒绝`[`、`]`、`$`、`{`、`}`，防止破坏voice marker或在rendered prompt中留下`${...}` opener；
+- exact拒绝reserved output marker `旁白`、`状态摘要`与`角色名`；不同user无需unique。
 
 Template language只有一个exact、case-sensitive token：`${characterName}`。Renderer要求source至少出现一次，
 遇到任何其他或残缺`${...}`即拒绝；它使用ordinal、one-pass、non-recursive replacement。Replacement中的字符永不

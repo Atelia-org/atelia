@@ -8,7 +8,6 @@ public sealed class GalateaCharacterNameTests {
     [InlineData("Galatea")]
     [InlineData("爱丽丝")]
     [InlineData("👩‍🚀")]
-    [InlineData("${Alice}")]
     public void CanonicalNamesPreserveExactValue(string value) {
         var name = new GalateaCharacterName(value);
 
@@ -37,9 +36,18 @@ public sealed class GalateaCharacterNameTests {
     [InlineData("Galatea ")]
     [InlineData("Gala\ntea")]
     [InlineData("Gala\u2028tea")]
+    [InlineData("Gala\u202Etea")]
+    [InlineData("Gala\u2066tea")]
+    [InlineData("Gala\u2069tea")]
+    [InlineData("\u200D")]
     [InlineData("[Galatea]")]
+    [InlineData("Gala$tea")]
+    [InlineData("Gala{tea")]
+    [InlineData("Gala}tea")]
+    [InlineData("Galatea${other}")]
     [InlineData("旁白")]
     [InlineData("状态摘要")]
+    [InlineData("角色名")]
     public void InvalidLabelsAreRejected(string value) {
         Assert.ThrowsAny<ArgumentException>(() =>
             new GalateaCharacterName(value));

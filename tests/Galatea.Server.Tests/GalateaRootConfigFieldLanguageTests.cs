@@ -246,9 +246,17 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                      "e\u0301",
                      "Gala\u0001tea",
                      "Gala\u2028tea",
+                     "Gala\u202Etea",
+                     "Gala\u2066tea",
+                     "Gala\u2069tea",
+                     "\u200D",
                      "[Galatea]",
+                     "Gala$tea",
+                     "Gala{tea",
+                     "Gala}tea",
                      "旁白",
                      "状态摘要",
+                     "角色名",
                      new string('a', 129)
                  }) {
             JsonObject root = ParseRoot(MinimalV4);
@@ -260,7 +268,6 @@ public sealed class GalateaRootConfigFieldLanguageTests {
 
         foreach (string valid in new[] {
                      "👩‍🚀",
-                     "${Alice}",
                      new string('a', 128)
                  }) {
             JsonObject root = ParseRoot(MinimalV4);

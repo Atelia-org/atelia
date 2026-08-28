@@ -41,7 +41,8 @@ writer固定把`v`放在首字段，reader不要求property order。missing vers
 `${characterName}`变量的template，并改为`"v": 4`；应用不会重写其中的password或其他operator配置。
 
 `characterName` 是required、already-trimmed Unicode NFC label，按strict UTF-8限制为1..128 bytes；拒绝控制/
-换行字符、`[`/`]`与reserved marker `旁白`/`状态摘要`，但允许ZWJ emoji及`$`/`{`/`}`。Template language只有
+换行字符及除U+200D ZWJ外的Unicode Format，且必须至少含一个non-Format rune。`[`/`]`/`$`/`{`/`}`与reserved
+marker `旁白`/`状态摘要`/`角色名`也拒绝；ZWJ emoji仍合法。Template language只有
 case-sensitive `${characterName}`；source至少出现一次，其他或残缺`${...}`拒绝，replacement使用ordinal、one-pass、
 non-recursive语义。Inline `systemPromptTemplate`保持exact空白；有效`systemPromptTemplateFile`仍以config directory为
 base、覆盖inline，并在strict UTF-8 decode后先`Trim()`再render。Runtime只保留validated character name与finalized

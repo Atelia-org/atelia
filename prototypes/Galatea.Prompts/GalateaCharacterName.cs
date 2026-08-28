@@ -46,20 +46,31 @@ public sealed record GalateaCharacterName {
                 nameof(value)
             );
         }
+        bool containsVisibleRune = false;
         foreach (Rune rune in value.EnumerateRunes()) {
             UnicodeCategory category = Rune.GetUnicodeCategory(rune);
             if (category is UnicodeCategory.Control
                     or UnicodeCategory.LineSeparator
                     or UnicodeCategory.ParagraphSeparator
-                || rune.Value is '[' or ']') {
+                || (category == UnicodeCategory.Format
+                    && rune.Value != 0x200D)
+                || rune.Value is '[' or ']' or '$' or '{' or '}') {
                 throw new ArgumentException(
-                    "Character name must be a single-line label without control characters or voice-marker delimiters.",
+                    "Character name must be a visible single-line label without unsupported format characters or prompt/voice-marker delimiters.",
                     nameof(value)
                 );
             }
+            containsVisibleRune |= category != UnicodeCategory.Format;
+        }
+        if (!containsVisibleRune) {
+            throw new ArgumentException(
+                "Character name must contain at least one non-format character.",
+                nameof(value)
+            );
         }
         if (string.Equals(value, "旁白", StringComparison.Ordinal)
-            || string.Equals(value, "状态摘要", StringComparison.Ordinal)) {
+            || string.Equals(value, "状态摘要", StringComparison.Ordinal)
+            || string.Equals(value, "角色名", StringComparison.Ordinal)) {
             throw new ArgumentException(
                 "Character name conflicts with a reserved Galatea output marker.",
                 nameof(value)
