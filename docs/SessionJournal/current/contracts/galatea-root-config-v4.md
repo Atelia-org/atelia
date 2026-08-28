@@ -1,17 +1,17 @@
-# Galatea root config V4 current contract
+# Galatea root config V4 historical contract
 
-状态：**Current product contract；hard cut from V3**  
+状态：**Archived historical predecessor；current contract is [V5](galatea-root-config-v5.md)**  
 Authority：current Galatea code、`GalateaRootConfigFieldLanguageTests`、
 `GalateaConfigValidationTests`与`GalateaSessionProvisioningTests`  
 Prior historical contracts：[Galatea root config V3](galatea-root-config-v3.md)、
 [V2](galatea-root-config-v2.md)、[V1 approved contract](galatea-root-config-v1.md)
 
-本文定义Galatea `config.json` current V4的exact field language、path semantics、per-user
-character/player prompt materialization、SessionJournal provisioning policy与durable delegation storage boundary。
-V4只改变Galatea-owned root config与启动期prompt materialization；Completion `connections.json`、RecapGrid
+本文保留Galatea `config.json` V4当时的exact field language、path semantics、per-user character/player prompt
+materialization、SessionJournal provisioning policy与durable delegation storage boundary。
+V4当时只改变Galatea-owned root config与启动期prompt materialization；Completion `connections.json`、RecapGrid
 Route manifest、AgentControl profile、HTTP、SSE与durable SessionJournal wire继续服从各自owner的现有版本。
 
-V1/V2/V3文档保留各自当时的历史事实，但不认证V4 delta。Current reader没有旧版本fallback、dual
+V1/V2/V3文档保留各自当时的历史事实，但不认证V4 delta。V4 reader没有旧版本fallback、dual
 interpretation、automatic migration或existing-file rewrite。
 
 ## 1. Authority、文件与materialization边界
@@ -19,8 +19,9 @@ interpretation、automatic migration或existing-file rewrite。
 Reader与runtime materialization由`GalateaStrictConfigReader`、`GalateaConfigLoader`及
 `GalateaConfigValidation`拥有；bootstrap writer由`GalateaConfigBootstrapper`与
 `GalateaConfigTemplateFactory`拥有。共享的character-name与template contract由零依赖
-`Atelia.Galatea.Prompts` assembly拥有。Code-owned标准TRPG source template由
-`Galatea.Server` embedded resource拥有，source为`docs/Galatea/prompt/trpg-host.md`。
+`Atelia.Galatea.Prompts` assembly拥有。Code-owned标准TRPG source template当时由
+`Galatea.Server`以单个embedded resource拥有；该单文件source后来在V5拆分，current三段source及ownership见
+[Galatea prompt router](../../../Galatea/prompt/README.md)。
 
 `GalateaUserFileConfig`只表示operator file shape；它保存source template及optional file path。
 `GalateaUserConfig`只表示resolved runtime shape；它保存validated `GalateaCharacterName`、

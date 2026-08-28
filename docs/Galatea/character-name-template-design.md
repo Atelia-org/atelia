@@ -6,6 +6,14 @@
 `prototypes/Galatea.RecapGrid` code-owned rolling recap asset，以及它们与 per-user
 `config.json` 的一致性。
 
+> **2026-08-29 V5 follow-up：** current root contract已hard-cut到
+> [V5](../SessionJournal/current/contracts/galatea-root-config-v5.md)。V4的完整
+> `systemPromptTemplate*`被`characterContextTemplate*`取代，主prompt改由code-owned protocol prefix、
+> operator context与code-owned mailbox suffix固定合成；见
+> [system prompt protocol/context设计](system-prompt-protocol-context-design.md)。本文关于character/player
+> name、RecapGrid V6、mail/extractor、envelope与alignment gate的实施结论仍有效；下文V4/full-template叙述保留
+> 其历史时态，不是current field language。
+
 ## 0. 实施结果与设计收口
 
 本设计已实施。下文保留实施前的问题分析和决策理由；若与本节或current
@@ -128,8 +136,9 @@ host-wide extractor，再把它交给所有 per-user `GalateaOutboundExtractionR
   authority。当前 inspected config exact 引用 `cyber.md` 与 `gpt.md`；同目录 `cyber_template.md` 存在但
   未被 config 引用，不能算 active runtime input。
 - 上表三份 zh-CN 文件是当前 RecapGrid binary 的 code-owned runtime resources。
-- [`docs/Galatea/prompt/trpg-host.md`](prompt/trpg-host.md) 是 tracked prompt 文档，但当前没有
+- 当时的单文件tracked host template是prompt文档，但当时没有
   runtime loader 引用；它适合作为 source template 示例，不能被描述成当前 host 的自动真源。
+  该路径后来由V5三段source取代；current导航见[prompt router](prompt/README.md)。
 - 同目录旧的 English recording/rewrite/compression prompt 目前没有被
   `Galatea.RecapGrid.csproj` embed。实施时应明确标为 historical/superseded，或在确认仍有用途后
   一并迁为模板；不能因文件位于 `prompt/` 下就声称它们已经进入 current request。
@@ -225,7 +234,7 @@ V3 合同应在实现 V4 时变为 archived predecessor，并新增
 ${characterName}
 ```
 
-选择 `${...}` 而不是 `{{...}}`，是为了不与现有 `trpg-host.md` 中用于 memory slots 的 `{{}}`
+选择 `${...}` 而不是 `{{...}}`，是为了不与当时单文件host template中用于memory slots的`{{}}`
 占位文本混成同一种语言。
 
 示例 source template：
@@ -522,7 +531,7 @@ read-only canary已验证两个user能加载，cyber active recipe仍exact命中
 ### WP-B：主会话 source templates 与 durable setup
 
 - 把 active machine-local prompt 迁为 `${characterName}`，并保留带SHA-256核对的V3备份；
-- 把 tracked `trpg-host.md` 改成明确的 template example，并处理旧 English prompt 的 current/archive 状态；
+- 把当时tracked host template改成明确的template example，并处理旧English prompt的current/archive状态；
 - 测 brand-new bootstrap 保存 rendered prompt、existing Idle 只在最终文本变化时追加 setup；
 - 测 Prepared/frozen recovery 仍使用旧 exact setup，不受 current template/config 重渲染。
 

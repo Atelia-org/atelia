@@ -5,6 +5,12 @@
 范围：Galatea root config V4、主 system prompt、RecapGrid V6 member prompts，以及缺失
 `systemPromptTemplateFile` 的安全 bootstrap。
 
+> **2026-08-29 V5 follow-up：** current root contract已hard-cut到
+> [V5](../SessionJournal/current/contracts/galatea-root-config-v5.md)。`playerName` grammar、RecapGrid golden与
+> create-new/no-overwrite bootstrap原则保持有效；V4的完整`systemPromptTemplate*`及“内建完整template”ownership
+> 已由[code-owned protocol + operator context设计](system-prompt-protocol-context-design.md)取代。下文保留当时
+> V4决策与验证事实，不应改读为current field language。
+
 ## 1. 结论
 
 `playerName` 模板化合理且可行，但它不是 `userId` 的别名，也不是通用 persona profile。它表示故事世界内由
@@ -60,9 +66,10 @@ name 都会旋转 member Definition/BuildTarget identity；首版不支持 exist
 
 ## 4. 内建标准 template 与缺失文件 bootstrap
 
-[`prompt/trpg-host.md`](prompt/trpg-host.md) 是 Galatea.Server embedded、code-owned 的标准 zh-CN TRPG
-template。它保留通用 GM 协议、赛博空间设定与五个空 memory slots，但删除具体 Player 的个人信息、昵称和
-交互历史，并以 `${playerName}` 表达唯一玩家角色及临时 memory editor。
+当时的单文件host template是Galatea.Server embedded、code-owned的标准zh-CN TRPG source。它保留通用
+GM协议、赛博空间设定与五个空memory slots，但删除具体Player的个人信息、昵称和交互历史，并以
+`${playerName}`表达唯一玩家角色及临时memory editor。该路径后来由V5三段source取代；current导航见
+[prompt router](prompt/README.md)。
 
 启动 bootstrap 对配置中 nonblank `systemPromptTemplateFile` 执行以下 closed policy：
 

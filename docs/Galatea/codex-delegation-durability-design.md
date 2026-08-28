@@ -610,7 +610,7 @@ Galatea host/SQLite vertical。同日ignored `cyber` production smoke独立验�
   V1 C#/Node business protocol与live dual-write/fallback为零。
 - Existing store在matching session存在时eager strict-open，`SESSION_MISSING`preempt store open；missing store在第一次writable session attach自动创建baseline。Baseline
   failure、store mismatch与writer-lock conflict都fail closed，没有operator abandon或旧owner fallback。
-- `prototypes/Galatea/README.md`、root config V4 current contract与本设计必须同步current schema/path/
+- `prototypes/Galatea/README.md`、root config V5 current contract与本设计必须同步current schema/path/
   runbook/failure semantics。
 - Focused store/state-machine/Galatea tests、full Galatea tests、solution build、Node suite、docs checker与
   `git diff --check`是后续修改必须重跑的常规gate；repository durability tests使用真实稳定存储，不用tmpfs

@@ -6,12 +6,12 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
 
 ## 配置
 
-`config.json` 使用单一 strict V4 language，必须包含exact integer `"v": 4`、至少一个user与strict
+`config.json` 使用单一 strict V5 language，必须包含exact integer `"v": 5`、至少一个user与strict
 `recapGrid`：
 
 ```json
 {
-  "v": 4,
+  "v": 5,
   "users": [
     {
       "userId": "alice",
@@ -21,8 +21,8 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
       "sessionDir": "sessions/alice",
       "delegationStateDir": "delegation-state/alice",
       "sessionProvisioning": "create-if-missing",
-      "systemPromptTemplate": "",
-      "systemPromptTemplateFile": "prompts/trpg-host-standard-zh-cn.md"
+      "characterContextTemplate": "",
+      "characterContextTemplateFile": "prompts/character-context-standard-zh-cn.md"
     }
   ],
   "listenUrls": ["http://0.0.0.0:3510"],
@@ -37,11 +37,11 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
 ```
 
 writer固定把`v`放在首字段，reader不要求property order。missing version、future version、`null`、string、
-`4.0`或`4e0`都拒绝；V1/V2/V3、versionless与future config都没有compatibility reader或自动迁移。升级V3时必须在
-停服、备份并确认实际`Galatea:ConfigPath`后，为每个user显式配置`characterName`与
-`playerName`，把prompt source改成使用exact `${characterName}` / `${playerName}`变量的template，
-并改为`"v": 4`；应用不会重写其中的password或其他operator配置。本轮仍保持V4：
-项目未发布，且player-name delta与character-name delta属于同一批未运行的开发迁移。
+`5.0`或`5e0`都拒绝；V1/V2/V3/V4、versionless与future config都没有compatibility reader或自动迁移。
+V5把V4的operator-authored完整system prompt hard-cut为operator只拥有的character context；升级时必须停服、
+备份并确认实际`Galatea:ConfigPath`，把完整prompt中的世界观、人物设定与长期记忆提取为
+`characterContextTemplate`或`characterContextTemplateFile`，删除旧`systemPromptTemplate*`字段并改为`"v": 5`。
+应用不会猜测或剥离旧prompt协议，也不会重写password或其他operator配置。
 
 `characterName`与`playerName`都是required、already-trimmed Unicode NFC label，按strict UTF-8限制为
 1..128 bytes；它们分别表示GM扮演的主要NPC与故事内玩家角色，都不从login `userId`推导。两者拒绝控制/
@@ -49,15 +49,24 @@ writer固定把`v`放在首字段，reader不要求property order。missing vers
 marker `旁白`/`状态摘要`/`角色名`也拒绝；ZWJ emoji仍合法。Template language只有
 case-sensitive `${characterName}`与`${playerName}`；source至少出现一次character token，player token可选，
 其他或残缺`${...}`拒绝，replacement使用ordinal、one-pass、non-recursive语义。两个name都不承担
-代词、别名或persona生成。Inline `systemPromptTemplate`保持exact空白；有效
-`systemPromptTemplateFile`仍以config directory为base、覆盖inline，并在strict UTF-8 decode后先
-`Trim()`再render。Runtime保留两个validated name与finalized `SystemPrompt`，不会在每个turn重读template file。
+代词、别名或persona生成。Inline `characterContextTemplate`保持exact空白；有效
+`characterContextTemplateFile`以config directory为base、覆盖inline，并在strict UTF-8 decode后先
+`Trim()`。Context必须nonblank且至少包含一次exact `${characterName}`；它不承载GM、voice、output或mail
+协议，也不是security boundary，runtime不会解析其中的Markdown H2来决定权限或行为。
 
-[`docs/Galatea/prompt/trpg-host.md`](../../docs/Galatea/prompt/trpg-host.md)是embedded、code-owned的标准TRPG
-source template，只预设`${characterName}`与`${playerName}`的名字/好友关系，不包含特定Player
-的年龄、性别、职业、家庭、历史或昵称。Bootstrap在`systemPromptTemplateFile`指向
-config directory内的missing path时，会创建缺失parent并以create-new写入该exact resource，然后
-fail-stop要求operator检查后重启。Existing file永不覆盖；config root外的missing target也不自动创建。
+最终system prompt由code-owned
+[`TRPG protocol prefix`](../../docs/Galatea/prompt/trpg-protocol-prefix-zh-cn.md)、operator character context与
+[`mailbox protocol suffix`](../../docs/Galatea/prompt/trpg-mailbox-protocol-suffix-zh-cn.md)按exact
+`prefix + "\n\n---\n\n" + context + "\n\n---\n\n" + suffix`一次拼接，再用同一个closed renderer展开名字。
+每个external/resource source有1 MiB读取上限，拼接后的composite source与final rendered prompt也分别受
+1 MiB上限；runtime只保留两个validated names与finalized
+`SystemPrompt`，不会在每个turn重读template file。三份tracked source的ownership见
+[`prompt/README.md`](../../docs/Galatea/prompt/README.md)。
+
+Bootstrap在`characterContextTemplateFile`指向config directory内的missing path时，只以create-new写入
+[`standard character context`](../../docs/Galatea/prompt/character-context-standard-zh-cn.md)，然后fail-stop要求
+operator检查后重启。Code-owned prefix/suffix不会复制到operator目录。Existing file永不覆盖；config root外的
+missing target也不自动创建。
 
 相对`sessionDir`与`delegationStateDir`都以`config.json`所在目录为base，loader向runtime只交付canonical absolute
 path；absolute值保持同一target。`delegationStateDir`没有fallback，也不会从`sessionDir`推导；所有user的
@@ -89,11 +98,12 @@ repository move；`..`与
 absolute path仍是合法的lexical path，这项规则不承诺把session限制在config目录内，也不声称提供额外的no-follow
 filesystem边界。
 
-Current product contract见[root config V4](../../docs/SessionJournal/current/contracts/galatea-root-config-v4.md)。
+Current product contract见[root config V5](../../docs/SessionJournal/current/contracts/galatea-root-config-v5.md)。
+[Root config V4](../../docs/SessionJournal/current/contracts/galatea-root-config-v4.md)、
 [Root config V3](../../docs/SessionJournal/current/contracts/galatea-root-config-v3.md)、
 [Root config V2](../../docs/SessionJournal/current/contracts/galatea-root-config-v2.md)与
 [Root config V1 appendix](../../docs/SessionJournal/current/contracts/galatea-root-config-v1.md)仍保留其当时获批准并由
-`session-journal-contract-r2-approved-surfaces-v2`锚定的历史事实；该旧tag不认证V2/V3/V4 delta。
+`session-journal-contract-r2-approved-surfaces-v2`锚定的历史事实；该旧tag不认证V2/V3/V4/V5 delta。
 
 `connections.json` 是唯一 Completion endpoint catalog，同时携带 host-level selection
 metadata。根必须包含 integer token `"v": 1`、非空 `connections`、exact
@@ -478,8 +488,8 @@ RecapGrid work 时延迟读取，保留 exact per-route `connectionId` 及调度
   derived stores。
 - Started：启动时 strict config/connections 已冻结；默认 Refuse 早于本次 current
   connection selection/client、route 与 derived owner。
-- 当前 root strict config language为V4；connections与profile保持owner-defined V1，delegate route为owner-defined V2。当前Linux-only
-  file loader对这些文件与`systemPromptTemplateFile`都执行code-owned byte cap、existing-ancestor no-reparse与final-file
+- 当前 root strict config language为V5；connections与profile保持owner-defined V1，delegate route为owner-defined V2。当前Linux-only
+  file loader对这些文件与`characterContextTemplateFile`都执行code-owned byte cap、existing-ancestor no-reparse与final-file
   no-follow regular-file 规则读取；bootstrap 也会在首次写前验证 parent chain。
 - ToolContinuation：先 bind frozen tool profile/operation，再以无工具的 current completion
   继续，最后打开 Online readiness。
