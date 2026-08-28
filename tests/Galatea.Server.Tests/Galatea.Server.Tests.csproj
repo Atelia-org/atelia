@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../prototypes/Galatea/Galatea.Server.csproj" />
+    <ProjectReference Include="../../prototypes/Galatea.Prompts/Galatea.Prompts.csproj" />
     <ProjectReference Include="../../prototypes/Galatea.RecapGrid/Galatea.RecapGrid.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj" />

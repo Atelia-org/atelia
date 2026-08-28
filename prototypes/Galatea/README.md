@@ -6,21 +6,22 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
 
 ## 配置
 
-`config.json` 使用单一 strict V3 language，必须包含exact integer `"v": 3`、至少一个user与strict
+`config.json` 使用单一 strict V4 language，必须包含exact integer `"v": 4`、至少一个user与strict
 `recapGrid`：
 
 ```json
 {
-  "v": 3,
+  "v": 4,
   "users": [
     {
       "userId": "alice",
       "password": "REPLACE_WITH_A_PRIVATE_PASSWORD",
+      "characterName": "Alice",
       "sessionDir": "sessions/alice",
       "delegationStateDir": "delegation-state/alice",
       "sessionProvisioning": "create-if-missing",
-      "systemPrompt": "你是家庭局域网里的私人助手。",
-      "systemPromptFile": null
+      "systemPromptTemplate": "你是${characterName}，一位家庭局域网里的私人助手。",
+      "systemPromptTemplateFile": null
     }
   ],
   "listenUrls": ["http://0.0.0.0:3510"],
@@ -35,9 +36,16 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
 ```
 
 writer固定把`v`放在首字段，reader不要求property order。missing version、future version、`null`、string、
-`3.0`或`3e0`都拒绝；V1/V2、versionless与future config都没有compatibility reader或自动迁移。升级V2时必须在停服、
-备份并确认实际`Galatea:ConfigPath`后，为每个user显式配置`delegationStateDir`并改为`"v": 3`；应用不会重写
-其中的password或其他operator配置。
+`4.0`或`4e0`都拒绝；V1/V2/V3、versionless与future config都没有compatibility reader或自动迁移。升级V3时必须在
+停服、备份并确认实际`Galatea:ConfigPath`后，为每个user显式配置`characterName`，把prompt source改成只含exact
+`${characterName}`变量的template，并改为`"v": 4`；应用不会重写其中的password或其他operator配置。
+
+`characterName` 是required、already-trimmed Unicode NFC label，按strict UTF-8限制为1..128 bytes；拒绝控制/
+换行字符、`[`/`]`与reserved marker `旁白`/`状态摘要`，但允许ZWJ emoji及`$`/`{`/`}`。Template language只有
+case-sensitive `${characterName}`；source至少出现一次，其他或残缺`${...}`拒绝，replacement使用ordinal、one-pass、
+non-recursive语义。Inline `systemPromptTemplate`保持exact空白；有效`systemPromptTemplateFile`仍以config directory为
+base、覆盖inline，并在strict UTF-8 decode后先`Trim()`再render。Runtime只保留validated character name与finalized
+`SystemPrompt`，不会在每个turn重读template file。
 
 相对`sessionDir`与`delegationStateDir`都以`config.json`所在目录为base，loader向runtime只交付canonical absolute
 path；absolute值保持同一target。`delegationStateDir`没有fallback，也不会从`sessionDir`推导；所有user的
@@ -69,10 +77,11 @@ repository move；`..`与
 absolute path仍是合法的lexical path，这项规则不承诺把session限制在config目录内，也不声称提供额外的no-follow
 filesystem边界。
 
-Current product contract见[root config V3](../../docs/SessionJournal/current/contracts/galatea-root-config-v3.md)。
+Current product contract见[root config V4](../../docs/SessionJournal/current/contracts/galatea-root-config-v4.md)。
+[Root config V3](../../docs/SessionJournal/current/contracts/galatea-root-config-v3.md)、
 [Root config V2](../../docs/SessionJournal/current/contracts/galatea-root-config-v2.md)与
 [Root config V1 appendix](../../docs/SessionJournal/current/contracts/galatea-root-config-v1.md)仍保留其当时获批准并由
-`session-journal-contract-r2-approved-surfaces-v2`锚定的历史事实；该旧tag不认证current V3 delta。
+`session-journal-contract-r2-approved-surfaces-v2`锚定的历史事实；该旧tag不认证V2/V3/V4 delta。
 
 `connections.json` 是唯一 Completion endpoint catalog，同时携带 host-level selection
 metadata。根必须包含 integer token `"v": 1`、非空 `connections`、exact
@@ -419,8 +428,8 @@ RecapGrid work 时延迟读取，保留 exact per-route `connectionId` 及调度
   derived stores。
 - Started：启动时 strict config/connections 已冻结；默认 Refuse 早于本次 current
   connection selection/client、route 与 derived owner。
-- 当前 root strict config language为V3；connections与profile保持owner-defined V1，delegate route为owner-defined V2。当前Linux-only
-  file loader对这些文件与`systemPromptFile`都执行code-owned byte cap、existing-ancestor no-reparse与final-file
+- 当前 root strict config language为V4；connections与profile保持owner-defined V1，delegate route为owner-defined V2。当前Linux-only
+  file loader对这些文件与`systemPromptTemplateFile`都执行code-owned byte cap、existing-ancestor no-reparse与final-file
   no-follow regular-file 规则读取；bootstrap 也会在首次写前验证 parent chain。
 - ToolContinuation：先 bind frozen tool profile/operation，再以无工具的 current completion
   继续，最后打开 Online readiness。

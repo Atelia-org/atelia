@@ -11,6 +11,7 @@ using Atelia.Completion;
 using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
@@ -2174,7 +2175,7 @@ internal static class GalateaConfigLoader {
             GalateaDelegateConfigReader.Read(delegatesPath);
         if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("Galatea config must contain at least one user."); }
         IReadOnlyList<GalateaUserConfig> users =
-            ResolveUserDirectories(usersFile.Users, configDir);
+            ResolveUsers(usersFile.Users, configDir);
 
         var config = new GalateaConfig(
             Users: users,
@@ -2198,7 +2199,6 @@ internal static class GalateaConfigLoader {
             RecapGrid: LoadRecapGridConfig(usersFile.RecapGrid, configDir)
         );
 
-        config = ResolveSystemPromptFiles(config, resolvedPath);
         Validate(config);
         return config;
     }
@@ -2318,56 +2318,32 @@ internal static class GalateaConfigLoader {
         "RecapGrid route manifest"
     ));
 
-    private static GalateaConfig ResolveSystemPromptFiles(GalateaConfig config, string configPath) {
-        string configDir = Path.GetDirectoryName(configPath)
-            ?? throw new InvalidOperationException($"Cannot determine config directory for: {configPath}");
-
-        var resolvedUsers = new List<GalateaUserConfig>(config.Users.Count);
-        foreach (var user in config.Users) {
-            if (string.IsNullOrWhiteSpace(user.SystemPromptFile)) {
-                resolvedUsers.Add(user);
-                continue;
-            }
-
-            string promptPath = Path.GetFullPath(user.SystemPromptFile, configDir);
-            byte[] promptBytes = GalateaStrictConfigReader
-                .ReadBoundedRegularFile(
-                    promptPath,
-                    GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
-                    $"systemPromptFile for user '{user.UserId}'"
-                );
-            string promptText;
-            try {
-                promptText = new UTF8Encoding(
-                    encoderShouldEmitUTF8Identifier: false,
-                    throwOnInvalidBytes: true
-                ).GetString(promptBytes).Trim();
-            }
-            catch (DecoderFallbackException exception) {
-                throw new InvalidDataException(
-                    $"Galatea user '{user.UserId}' systemPromptFile is not strict UTF-8.",
-                    exception
-                );
-            }
-            resolvedUsers.Add(user with { SystemPrompt = promptText });
-        }
-
-        return config with { Users = resolvedUsers };
-    }
-
     private static IReadOnlyList<GalateaUserConfig>
-        ResolveUserDirectories(
-            IReadOnlyList<GalateaUserConfig> configuredUsers,
+        ResolveUsers(
+            IReadOnlyList<GalateaUserFileConfig> configuredUsers,
             string configDirectory
         ) {
         var resolvedUsers = new List<GalateaUserConfig>(
             configuredUsers.Count
         );
         for (int index = 0; index < configuredUsers.Count; index++) {
-            GalateaUserConfig user = configuredUsers[index]
+            GalateaUserFileConfig user = configuredUsers[index]
                 ?? throw new InvalidOperationException(
                     $"Galatea config user[{index}] must not be null."
                 );
+            GalateaCharacterName characterName;
+            try {
+                characterName = new GalateaCharacterName(
+                    user.CharacterName
+                );
+            }
+            catch (ArgumentException exception) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' has an invalid "
+                    + "characterName.",
+                    exception
+                );
+            }
             if (string.IsNullOrWhiteSpace(user.SessionDir)) {
                 throw new InvalidOperationException(
                     $"Galatea config user '{user.UserId}' must have a "
@@ -2390,14 +2366,69 @@ internal static class GalateaConfigLoader {
                 delegationStateDirectory,
                 $"delegationStateDir for user '{user.UserId}'"
             );
-            resolvedUsers.Add(user with {
-                SessionDir = Path.TrimEndingDirectorySeparator(
+            string systemPromptTemplate = ResolveSystemPromptTemplate(
+                user,
+                configDirectory
+            );
+            string systemPrompt;
+            try {
+                systemPrompt = GalateaPromptTemplate.Render(
+                    systemPromptTemplate,
+                    characterName,
+                    GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
+                );
+            }
+            catch (ArgumentException exception) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' has an invalid "
+                    + "system prompt template.",
+                    exception
+                );
+            }
+            resolvedUsers.Add(new GalateaUserConfig(
+                user.UserId,
+                user.Password,
+                characterName,
+                Path.TrimEndingDirectorySeparator(
                     Path.GetFullPath(user.SessionDir, configDirectory)
                 ),
-                DelegationStateDir = delegationStateDirectory
-            });
+                delegationStateDirectory,
+                user.SessionProvisioning,
+                systemPrompt
+            ));
         }
         return resolvedUsers;
+    }
+
+    private static string ResolveSystemPromptTemplate(
+        GalateaUserFileConfig user,
+        string configDirectory
+    ) {
+        if (string.IsNullOrWhiteSpace(user.SystemPromptTemplateFile)) {
+            return user.SystemPromptTemplate;
+        }
+        string promptPath = Path.GetFullPath(
+            user.SystemPromptTemplateFile,
+            configDirectory
+        );
+        byte[] promptBytes = GalateaStrictConfigReader.ReadBoundedRegularFile(
+            promptPath,
+            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
+            $"systemPromptTemplateFile for user '{user.UserId}'"
+        );
+        try {
+            return new UTF8Encoding(
+                encoderShouldEmitUTF8Identifier: false,
+                throwOnInvalidBytes: true
+            ).GetString(promptBytes).Trim();
+        }
+        catch (DecoderFallbackException exception) {
+            throw new InvalidDataException(
+                $"Galatea user '{user.UserId}' systemPromptTemplateFile "
+                + "is not strict UTF-8.",
+                exception
+            );
+        }
     }
 
     private static string? ResolveCallLogDirectory(
@@ -2441,8 +2472,8 @@ internal static class GalateaConfigLoader {
 
             if (string.IsNullOrWhiteSpace(user.SystemPrompt)) {
                 throw new InvalidOperationException(
-                    $"Galatea config user '{user.UserId}' must provide a non-empty systemPrompt "
-                    + "(either inline via 'systemPrompt' or by pointing 'systemPromptFile' at a non-empty file)."
+                    $"Galatea config user '{user.UserId}' must have a "
+                    + "non-empty finalized system prompt."
                 );
             }
 
@@ -2613,8 +2644,9 @@ internal static class GalateaConfigBootstrapper {
 }
 
 internal static class GalateaDefaults {
-    public const string SystemPrompt =
-        "你是家庭局域网里的私人助手。优先用简洁、直接、可信的中文回答。"
+    public const string SystemPromptTemplate =
+        "你是${characterName}，一位家庭局域网里的私人助手。"
+        + "优先用简洁、直接、可信的中文回答。"
         + "不确定时明确说明不确定，不编造细节。";
 
 }
@@ -2627,8 +2659,18 @@ internal static class GalateaConfigTemplateFactory {
         return new GalateaUsersFileConfig(
             Version: GalateaStrictConfigReader.CurrentConfigVersion,
             Users: [
-                CreateUser("alice", "alice123", "sessions/alice"),
-                CreateUser("bob", "bob123", "sessions/bob"),
+                CreateUser(
+                    "alice",
+                    "alice123",
+                    "Alice",
+                    "sessions/alice"
+                ),
+                CreateUser(
+                    "bob",
+                    "bob123",
+                    "Bob",
+                    "sessions/bob"
+                ),
             ],
             ListenUrls: ["http://0.0.0.0:3510"],
             RecapGrid: new GalateaRecapGridFileConfig(
@@ -2689,15 +2731,21 @@ internal static class GalateaConfigTemplateFactory {
         return terminated;
     }
 
-    private static GalateaUserConfig CreateUser(string userId, string password, string sessionDir) {
-        return new GalateaUserConfig(
+    private static GalateaUserFileConfig CreateUser(
+        string userId,
+        string password,
+        string characterName,
+        string sessionDir
+    ) {
+        return new GalateaUserFileConfig(
             UserId: userId,
             Password: password,
+            CharacterName: characterName,
             SessionDir: sessionDir,
             DelegationStateDir: $"delegation-state/{userId}",
             SessionProvisioning:
                 GalateaSessionProvisioning.CreateIfMissing,
-            SystemPrompt: GalateaDefaults.SystemPrompt
+            SystemPromptTemplate: GalateaDefaults.SystemPromptTemplate
         );
     }
 }
@@ -2891,7 +2939,7 @@ internal static class GalateaJson {
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(GalateaUsersFileConfig))]
-[JsonSerializable(typeof(GalateaUserConfig))]
+[JsonSerializable(typeof(GalateaUserFileConfig))]
 [JsonSerializable(typeof(GalateaSessionProvisioning))]
 [JsonSerializable(typeof(GalateaRecapGridFileConfig))]
 internal sealed partial class GalateaJsonContext : JsonSerializerContext;

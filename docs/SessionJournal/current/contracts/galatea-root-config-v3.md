@@ -1,17 +1,17 @@
-# Galatea root config V3 current contract
+# Galatea root config V3 historical contract
 
-状态：**Current product contract；hard cut from V2**  
+状态：**Archived historical predecessor；current contract is [V4](galatea-root-config-v4.md)**  
 Authority：current Galatea code、`GalateaRootConfigFieldLanguageTests`、`GalateaConfigValidationTests`与
 `GalateaSessionProvisioningTests`  
 Prior historical contracts：[Galatea root config V2](galatea-root-config-v2.md)、
 [Galatea root config V1 approved contract](galatea-root-config-v1.md)
 
-本文定义Galatea `config.json` current V3的exact field language、path semantics、per-user SessionJournal
+本文保留Galatea `config.json` V3当时的exact field language、path semantics、per-user SessionJournal
 provisioning policy与required durable delegation storage boundary。V3只改变Galatea-owned root config；Completion
 `connections.json`、RecapGrid Route manifest、AgentControl profile、HTTP、SSE与durable SessionJournal wire仍服从
 各自owner的现有版本。
 
-V1/V2文档保留各自当时的历史事实，但不认证本文的V3 delta。Current reader没有V1/V2 fallback、
+V1/V2文档保留各自当时的历史事实，但不认证本文的V3 delta。当时的reader没有V1/V2 fallback、
 dual interpretation、automatic migration或existing-file rewrite。
 
 ## 1. Authority与文件边界

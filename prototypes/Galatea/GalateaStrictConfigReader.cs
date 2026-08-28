@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 3;
+    internal const int CurrentConfigVersion = 4;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumUserCount = 256;
@@ -236,13 +236,13 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("3"u8)) {
+            || !reader.ValueSpan.SequenceEqual("4"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 3; "
+        "Galatea config requires exact integer version 'v': 4; "
         + "migrate the config before retrying."
     );
 
@@ -253,15 +253,16 @@ internal static class GalateaStrictConfigReader {
             switch (property) {
                 case "userId":
                 case "password":
+                case "characterName":
                 case "sessionDir":
                 case "delegationStateDir":
-                case "systemPrompt":
+                case "systemPromptTemplate":
                     RequireToken(reader.TokenType, JsonTokenType.String, property);
                     break;
                 case "sessionProvisioning":
                     RequireExactSessionProvisioning(ref reader);
                     break;
-                case "systemPromptFile":
+                case "systemPromptTemplateFile":
                     RequireStringOrNull(reader.TokenType, property);
                     break;
                 default:
@@ -271,6 +272,11 @@ internal static class GalateaStrictConfigReader {
         if (!seen.Contains("sessionProvisioning")) {
             throw new InvalidDataException(
                 "user requires string field 'sessionProvisioning'."
+            );
+        }
+        if (!seen.Contains("characterName")) {
+            throw new InvalidDataException(
+                "user requires string field 'characterName'."
             );
         }
     }

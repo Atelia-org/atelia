@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Atelia.Completion;
+using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
 
 namespace Atelia.Galatea.Server;
@@ -40,24 +41,36 @@ internal sealed record GalateaRecapGridFileConfig(
 /// <summary>Shape of config.json: user accounts + server settings, with no LLM binding.</summary>
 internal sealed record GalateaUsersFileConfig(
     [property: JsonPropertyName("v")] int Version,
-    IReadOnlyList<GalateaUserConfig> Users,
+    IReadOnlyList<GalateaUserFileConfig> Users,
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
     bool MaintenanceMode = false,
     GalateaRecapGridFileConfig? RecapGrid = null
 );
 
-public sealed record GalateaUserConfig(
+/// <summary>
+/// Exact per-user shape read from config.json before paths and prompt
+/// templates are materialized.
+/// </summary>
+internal sealed record GalateaUserFileConfig(
     string UserId,
     string Password,
+    string CharacterName,
     string SessionDir,
     string DelegationStateDir,
     GalateaSessionProvisioning SessionProvisioning,
-    string SystemPrompt = "",
-    // Optional path to a markdown (or plain text) file whose content overrides the
-    // inline SystemPrompt. Resolved relative to the config file's directory when not
-    // absolute. Convenient for authoring long system prompts.
-    string? SystemPromptFile = null
+    string SystemPromptTemplate = "",
+    string? SystemPromptTemplateFile = null
+);
+
+public sealed record GalateaUserConfig(
+    string UserId,
+    string Password,
+    GalateaCharacterName CharacterName,
+    string SessionDir,
+    string DelegationStateDir,
+    GalateaSessionProvisioning SessionProvisioning,
+    string SystemPrompt
 );
 
 [JsonConverter(typeof(JsonStringEnumConverter<GalateaSessionProvisioning>))]
@@ -95,6 +108,18 @@ internal static class GalateaConfigValidation {
                 ?? throw new InvalidOperationException(
                     $"Galatea config user[{index}] must not be null."
                 );
+            if (user.CharacterName is null) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' must have a "
+                    + "validated characterName."
+                );
+            }
+            if (string.IsNullOrWhiteSpace(user.SystemPrompt)) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' must have a "
+                    + "non-empty finalized system prompt."
+                );
+            }
             if (user.SessionProvisioning is not (
                     GalateaSessionProvisioning.ExistingOnly
                     or GalateaSessionProvisioning.CreateIfMissing)) {

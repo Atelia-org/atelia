@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
@@ -1182,6 +1183,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                     new GalateaUserConfig(
                         "alice",
                         "pw",
+                        new GalateaCharacterName("Galatea"),
                         first,
                         first + "-delegation-state",
                         GalateaSessionProvisioning.ExistingOnly,
@@ -1189,6 +1191,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                     new GalateaUserConfig(
                         "bob",
                         "pw",
+                        new GalateaCharacterName("Galatea"),
                         second,
                         second + "-delegation-state",
                         GalateaSessionProvisioning.ExistingOnly,
@@ -1728,6 +1731,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         [new GalateaUserConfig(
             "alice",
             "pw",
+            new GalateaCharacterName("Galatea"),
             path,
             path + "-delegation-state",
             GalateaSessionProvisioning.ExistingOnly,

@@ -1,6 +1,6 @@
 # Galatea root config V2 historical contract
 
-状态：**Archived historical predecessor；current contract is [V3](galatea-root-config-v3.md)**  
+状态：**Archived historical predecessor；current contract is [V4](galatea-root-config-v4.md)**  
 Authority：current Galatea code、`GalateaRootConfigFieldLanguageTests`、`GalateaConfigValidationTests`与
 `GalateaSessionProvisioningTests`  
 Prior historical contract：[Galatea root config V1 approved contract](galatea-root-config-v1.md)

@@ -71,7 +71,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             repository,
             new SessionCreateOptions(
                 "agent-model",
-                "operator-chain system prompt",
+                "operator-chain Galatea system prompt",
                 "openai-chat/strict"
             )
         )) {
@@ -206,13 +206,14 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             JsonSerializer.Serialize(
                 new GalateaUsersFileConfig(
                     Version: GalateaStrictConfigReader.CurrentConfigVersion,
-                    Users: [new GalateaUserConfig(
+                    Users: [new GalateaUserFileConfig(
                         "alice",
                         "pw",
+                        "Galatea",
                         repository,
                         repository + "-delegation-state",
                         GalateaSessionProvisioning.ExistingOnly,
-                        "operator-chain system prompt"
+                        "operator-chain ${characterName} system prompt"
                     )],
                     RecapGrid: new GalateaRecapGridFileConfig(
                         Path.GetRelativePath(_root, routes),

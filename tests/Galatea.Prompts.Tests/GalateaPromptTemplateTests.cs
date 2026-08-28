@@ -1,0 +1,76 @@
+using Xunit;
+
+namespace Atelia.Galatea.Prompts.Tests;
+
+public sealed class GalateaPromptTemplateTests {
+    [Fact]
+    public void ExactTokenRendersEveryOccurrenceWithoutRecursion() {
+        var name = new GalateaCharacterName("${Alice}");
+
+        string rendered = GalateaPromptTemplate.Render(
+            "[${characterName}] meets ${characterName}.",
+            name,
+            maximumUtf8Bytes: 1024
+        );
+
+        Assert.Equal("[${Alice}] meets ${Alice}.", rendered);
+    }
+
+    [Theory]
+    [InlineData("plain text")]
+    [InlineData("${CharacterName}")]
+    [InlineData("${other}")]
+    [InlineData("${")]
+    [InlineData("${characterName} then ${other}")]
+    public void MissingUnknownAndMalformedTokensAreRejected(string source) {
+        Assert.Throws<ArgumentException>(() =>
+            GalateaPromptTemplate.Render(
+                source,
+                new GalateaCharacterName("Galatea"),
+                maximumUtf8Bytes: 1024
+            ));
+    }
+
+    [Fact]
+    public void SourceAndRenderedUtf8BoundsAreIndependent() {
+        var name = new GalateaCharacterName(new string('a', 128));
+        const string Source = "${characterName}";
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            GalateaPromptTemplate.Render(
+                Source,
+                name,
+                maximumUtf8Bytes: Source.Length - 1
+            ));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            GalateaPromptTemplate.Render(
+                Source,
+                name,
+                maximumUtf8Bytes: name.Utf8ByteCount - 1
+            ));
+        Assert.Equal(
+            name.Value,
+            GalateaPromptTemplate.Render(
+                Source,
+                name,
+                maximumUtf8Bytes: name.Utf8ByteCount
+            )
+        );
+    }
+
+    [Fact]
+    public void InvalidArgumentsAreRejectedBeforeRendering() {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            GalateaPromptTemplate.Render(
+                GalateaPromptTemplate.CharacterNameToken,
+                new GalateaCharacterName("Galatea"),
+                maximumUtf8Bytes: 0
+            ));
+        Assert.Throws<ArgumentException>(() =>
+            GalateaPromptTemplate.Render(
+                "${characterName}\uD800",
+                new GalateaCharacterName("Galatea"),
+                maximumUtf8Bytes: 1024
+            ));
+    }
+}

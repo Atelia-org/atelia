@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Atelia.Galatea.Prompts;
 using Atelia.Galatea.Server;
 using Atelia.SessionJournal;
 using Atelia.Testing;
@@ -616,6 +617,7 @@ public sealed class GalateaDelegationSupervisorTests {
     ) => new(
         userId,
         "pw",
+        new GalateaCharacterName("Galatea"),
         sessionPath,
         statePath,
         provisioning,

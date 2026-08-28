@@ -3,6 +3,7 @@ using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using Atelia.Galatea.Prompts;
 using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.Cli;
@@ -938,6 +939,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         [new GalateaUserConfig(
             "alice",
             "pw",
+            new GalateaCharacterName("Galatea"),
             path,
             path + "-delegation-state",
             GalateaSessionProvisioning.ExistingOnly,

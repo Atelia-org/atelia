@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
+using Atelia.Galatea.Prompts;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
@@ -411,9 +412,11 @@ public sealed class GalateaSseV1Tests {
             new GalateaUserConfig(
                 "alice",
                 "password",
+                new GalateaCharacterName("Galatea"),
                 "/session",
                 "/delegation-state",
-                GalateaSessionProvisioning.ExistingOnly
+                GalateaSessionProvisioning.ExistingOnly,
+                "prompt"
             ),
             [new GalateaConnectionInfoDto("test", "model")],
             "test",

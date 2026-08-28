@@ -76,7 +76,7 @@ public sealed class GalateaSessionProvisioningTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [decoy, selected],
             defaultConnectionId: selected.Id,
-            systemPrompt: "resolved prompt"
+            systemPromptTemplate: "resolved ${characterName} prompt"
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
@@ -115,7 +115,7 @@ public sealed class GalateaSessionProvisioningTests {
             selected.CompletionSurfaceId,
             governing.RuntimeConfig.CompletionSurfaceId
         );
-        Assert.Equal("resolved prompt", governing.SystemPrompt);
+        Assert.Equal("resolved Galatea prompt", governing.SystemPrompt);
 
         SessionCurrentLineageSnapshot lineage =
             session.Engine.ReadCurrentLineageHeaders();
@@ -263,7 +263,7 @@ public sealed class GalateaSessionProvisioningTests {
                 "current-model",
                 "current-surface"
             )],
-            systemPrompt: "current prompt",
+            systemPromptTemplate: "current ${characterName} prompt",
             agentControlProfile: CreateNoControlCreateProfile()
         );
         Atelia.EventJournal.EventAddress originalHead;
@@ -425,7 +425,7 @@ public sealed class GalateaSessionProvisioningTests {
             factoryA,
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [connectionA],
-            systemPrompt: "prompt-a"
+            systemPromptTemplate: "prompt-a ${characterName}"
         );
         await using var hostB = GalateaTestHost.PointAtSession(
             hostA.SessionDirectory,
@@ -433,7 +433,7 @@ public sealed class GalateaSessionProvisioningTests {
             connectionB.Id,
             factoryB,
             DisabledGalateaUserMessageNormalizer.Instance,
-            "prompt-b",
+            "prompt-b ${characterName}",
             GalateaSessionProvisioning.CreateIfMissing
         );
         GalateaHostService serviceA = hostA.Factory.Services
@@ -524,8 +524,8 @@ public sealed class GalateaSessionProvisioningTests {
             winningSession.Engine.ResolveGoverningSetup(winnerHead);
         bool winnerIsA = ReferenceEquals(winner, attempts[0]);
         var expectedWinnerSetup = winnerIsA
-            ? ("model-a", "surface-a", "prompt-a")
-            : ("model-b", "surface-b", "prompt-b");
+            ? ("model-a", "surface-a", "prompt-a Galatea")
+            : ("model-b", "surface-b", "prompt-b Galatea");
         Assert.Equal(
             expectedWinnerSetup,
             (

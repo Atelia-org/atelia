@@ -2,6 +2,7 @@ using System.Net;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
+using Atelia.Galatea.Prompts;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Configuration;
@@ -195,6 +196,7 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
     private static GalateaUserConfig User(string id) => new(
         id,
         "pw",
+        new GalateaCharacterName("Galatea"),
         Path.Combine(Path.GetTempPath(), "galatea-codex", id),
         Path.Combine(
             Path.GetTempPath(),

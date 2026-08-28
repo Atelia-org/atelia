@@ -13,6 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="../Completion/Completion.csproj" />
     <ProjectReference Include="../Completion.Tools/Completion.Tools.csproj" />
+    <ProjectReference Include="../Galatea.Prompts/Galatea.Prompts.csproj" />
     <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
     <ProjectReference Include="../SessionJournal.HistoryTimeline.O200k/SessionJournal.HistoryTimeline.O200k.csproj" />
