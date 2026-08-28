@@ -11,6 +11,36 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaHostSmokeTests {
     [Fact]
+    public async Task RecapCadenceProgressEndpoint_FirstGetUsesExistingCreateIfMissingPolicy() {
+        var completionFactory = new TrackingCompletionClientFactory();
+        await using var host = GalateaTestHost.CreateMissingSession(
+            completionFactory,
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        Assert.False(Directory.Exists(host.SessionDirectory));
+        using HttpClient client = host.CreateClient();
+        _ = await GalateaTestHost.LoginAsync(client);
+        Assert.False(Directory.Exists(host.SessionDirectory));
+
+        RecapCadenceProgressSnapshotDto? progress = await client
+            .GetFromJsonAsync<RecapCadenceProgressSnapshotDto>(
+                "/api/v1/recap-cadence-progress"
+            );
+
+        Assert.NotNull(progress);
+        Assert.True(Directory.Exists(host.SessionDirectory));
+        Assert.Equal("exact", progress!.Freshness);
+        Assert.Equal("below-target", progress.State);
+        Assert.NotNull(progress.ObservedRawHead);
+        Assert.NotNull(progress.CadenceBaseline);
+        Assert.NotNull(progress.RecentHistoryLoad);
+        Assert.NotNull(progress.RecapIntervalHistoryLoad);
+        Assert.NotNull(progress.MinimumRecentHistoryLoad);
+        Assert.Equal(0, completionFactory.CreateCallCount);
+        Assert.Equal(0, completionFactory.Client.DispatchCallCount);
+    }
+
+    [Fact]
     public async Task RecapCadenceProgressEndpoint_ReturnsExactClosedTelemetryWithoutProviderWork() {
         var completionFactory = new TrackingCompletionClientFactory();
         await using var host = GalateaTestHost.Create(

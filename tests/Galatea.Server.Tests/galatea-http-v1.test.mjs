@@ -159,6 +159,28 @@ assert.deepEqual(
     detail: "Cadence progress and RecapGrid readiness observed different raw heads.",
   },
 );
+const staleCadenceProgress =
+  production.markRecapCadenceProgressSnapshotStale(
+    exactCadenceProgress,
+    "turn-accepted",
+  );
+assert.notEqual(staleCadenceProgress, exactCadenceProgress);
+assert.equal(exactCadenceProgress.freshness, "exact");
+assert.equal(staleCadenceProgress.freshness, "stale");
+assert.equal(staleCadenceProgress.state, exactCadenceProgress.state);
+assert.equal(
+  staleCadenceProgress.recentHistoryLoad,
+  exactCadenceProgress.recentHistoryLoad,
+);
+assert.equal(staleCadenceProgress.code, "turn-accepted");
+assert.match(staleCadenceProgress.detail, /上一稳定边界/);
+assert.throws(
+  () => production.markRecapCadenceProgressSnapshotStale(
+    exactCadenceProgress,
+    " ",
+  ),
+  /must not be blank/,
+);
 
 const renderedContext = production.renderContextHeader(
   valid.contextHeader,
@@ -277,6 +299,61 @@ assert.ok(
 assert.match(
   initializeFunction,
   /currentTurn\?\.status === "running"[\s\S]*await attachToTurn\(/,
+);
+
+const freshSubmitFunction = source.slice(
+  source.indexOf('form.addEventListener("submit"'),
+  source.indexOf('undoLastButton?.addEventListener("click"'),
+);
+const freshOkConfirmed = freshSubmitFunction.indexOf("if (!response.ok)");
+const freshMarkedStale = freshSubmitFunction.indexOf(
+  'markRecapCadenceProgressStale("turn-accepted")',
+);
+const freshAcceptedBody = freshSubmitFunction.indexOf(
+  "await readJsonResponse(response, requireAcceptedTurn)",
+);
+const freshRejectedReturn = freshSubmitFunction.lastIndexOf(
+  "return;",
+  freshMarkedStale,
+);
+assert.ok(freshOkConfirmed >= 0);
+assert.ok(freshRejectedReturn > freshOkConfirmed);
+assert.ok(freshMarkedStale > freshOkConfirmed);
+assert.ok(freshMarkedStale > freshRejectedReturn);
+assert.ok(freshAcceptedBody > freshMarkedStale);
+
+const resumeOkConfirmed = initializeFunction.indexOf("if (response.ok)");
+const resumeMarkedStale = initializeFunction.indexOf(
+  'markRecapCadenceProgressStale("turn-accepted")',
+  resumeOkConfirmed,
+);
+const resumeAcceptedBody = initializeFunction.indexOf(
+  "await readJsonResponse(response, requireAcceptedTurn)",
+  resumeOkConfirmed,
+);
+assert.ok(resumeOkConfirmed >= 0);
+assert.ok(resumeMarkedStale > resumeOkConfirmed);
+assert.ok(resumeAcceptedBody > resumeMarkedStale);
+
+for (const entryFunction of [freshSubmitFunction, initializeFunction]) {
+  const busyBranch = entryFunction.indexOf(
+    'if (error.code === "turn-busy")',
+  );
+  const busyMarkedStale = entryFunction.indexOf(
+    'markRecapCadenceProgressStale("active-turn")',
+    busyBranch,
+  );
+  const busyTurnId = entryFunction.indexOf(
+    "if (error.turnId)",
+    busyBranch,
+  );
+  assert.ok(busyBranch >= 0);
+  assert.ok(busyMarkedStale > busyBranch);
+  assert.ok(busyTurnId > busyMarkedStale);
+}
+assert.doesNotMatch(
+  source,
+  /error\.code === "turn-busy" && error\.turnId/,
 );
 
 assert.match(source, /\/api\/v1\/recent-turns/);

@@ -314,6 +314,20 @@ export function alignRecapCadenceProgressWithReadiness(
   return progress;
 }
 
+export function markRecapCadenceProgressSnapshotStale(
+  snapshotValue,
+  code,
+) {
+  const snapshot = requireRecapCadenceProgressSnapshot(snapshotValue);
+  requireNonblankString(code, "recap cadence stale code");
+  return {
+    ...snapshot,
+    freshness: "stale",
+    code,
+    detail: "显示上一稳定边界；当前 cadence progress 尚未重新确认。",
+  };
+}
+
 export function requireStreamLimits(value) {
   const limits = requireExactKeys(value, [
     "maximumConnectionBytes", "maximumFrameBytes",
@@ -1077,12 +1091,11 @@ function startGalateaApp() {
     if (!state.recapCadenceProgress) {
       return;
     }
-    state.recapCadenceProgress = {
-      ...state.recapCadenceProgress,
-      freshness: "stale",
-      code,
-      detail: "显示上一稳定边界；当前 cadence progress 尚未重新确认。",
-    };
+    state.recapCadenceProgress =
+      markRecapCadenceProgressSnapshotStale(
+        state.recapCadenceProgress,
+        code,
+      );
     renderRecapCadenceProgress();
   }
 
@@ -1419,10 +1432,13 @@ function startGalateaApp() {
       state.pendingPoppedDraftText =
         composerBeforePop.pendingPoppedDraftText;
       state.recapGridReadiness = composerBeforePop.recapGridReadiness;
-      if (error.code === "turn-busy" && error.turnId) {
-        refreshComposerMode();
-        await attachToTurn(error.turnId, error.error);
-        return null;
+      if (error.code === "turn-busy") {
+        markRecapCadenceProgressStale("active-turn");
+        if (error.turnId) {
+          refreshComposerMode();
+          await attachToTurn(error.turnId, error.error);
+          return null;
+        }
       }
       state.rewindLatestToken = provisional.submittedToken;
       await loadRecentTurns().catch(() => {});
@@ -1670,15 +1686,19 @@ function startGalateaApp() {
     if (!response.ok) {
       const error = await readJsonResponse(response, (value) =>
         value?.code === "turn-busy" ? requireBusyError(value) : requireApiError(value));
-      if (error.code === "turn-busy" && error.turnId) {
-        await attachToTurn(error.turnId, error.error);
-        return;
+      if (error.code === "turn-busy") {
+        markRecapCadenceProgressStale("active-turn");
+        if (error.turnId) {
+          await attachToTurn(error.turnId, error.error);
+          return;
+        }
       }
 
       setStreaming(false, error.error);
       return;
     }
 
+    markRecapCadenceProgressStale("turn-accepted");
     const payload = await readJsonResponse(response, requireAcceptedTurn);
     if (replacingPoppedTurn) {
       await attachToTurn(payload.turnId, "正在重新生成…");
@@ -1770,15 +1790,19 @@ function startGalateaApp() {
         }),
       });
       if (response.ok) {
+        markRecapCadenceProgressStale("turn-accepted");
         const payload = await readJsonResponse(response, requireAcceptedTurn);
         await attachToTurn(payload.turnId, "正在恢复生成…");
         return;
       }
       const error = await readJsonResponse(response, (value) =>
         value?.code === "turn-busy" ? requireBusyError(value) : requireApiError(value));
-      if (error.code === "turn-busy" && error.turnId) {
-        await attachToTurn(error.turnId, error.error);
-        return;
+      if (error.code === "turn-busy") {
+        markRecapCadenceProgressStale("active-turn");
+        if (error.turnId) {
+          await attachToTurn(error.turnId, error.error);
+          return;
+        }
       }
       resetLive();
       refreshComposerMode();

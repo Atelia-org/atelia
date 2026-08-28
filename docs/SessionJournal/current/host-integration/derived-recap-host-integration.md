@@ -57,17 +57,20 @@ enumerator/lease，不销毁共享snapshot。任何raw head变化均返回typed 
   `create-if-missing`只在unpublished same-parent session candidate中，
   以`GalateaFirstTurnBootstrapPolicy`创建并验证Cadence、empty Timeline与empty Control，使首轮进入formal raw-only；existing
   repository与maintenance path均不补写。
-- Galatea提供两条彼此独立的纯读观察链：`RecentTurnsResponseV1.recapGridReadiness`来自Getter Resolve，
+- Galatea在session attach之后提供两条彼此独立的纯读观察链：`RecentTurnsResponseV1.recapGridReadiness`来自Getter Resolve，
   仅Unfulfilled时调用Manager InspectProgress；`GET /api/v1/recap-cadence-progress`则从exact Cadence policy、
   selected Timeline head row与同一captured raw head测量recent suffix的PlanningUnit/HistoryLoad进度。
-  后者不进入recent/SSE grammar，也不创建Completion client、Online、Manager或Store；两条链的
-  provider/build/write均为零。
+  后者不进入recent/SSE grammar；两条service inspection区段的provider/build/write均为零。
 
-Cadence telemetry在per-session `TurnLock`内读取；busy在任何Engine/Timeline/Cadence read前返回typed 503。
+HTTP cadence route先复用既有`GetSessionAsync`。`create-if-missing`用户第一次直接GET missing repository时，
+该session attach会先执行既有structural SessionJournal/Cadence/Timeline/Control bootstrap；因此整个route不承诺
+zero-write。attach/bootstrap完成后，cadence service inspector才在per-session `TurnLock`内纯读，且不创建
+Completion client、Online、Manager或Store；busy在任何Engine/Timeline/Cadence read前返回typed 503。
 DTO把HistoryLoad编码为canonical decimal string，显式给出B（recap interval）、R（minimum recent reserve）、
 threshold和remaining。未选first replay-safe boundary时`B+R`只是ideal threshold；选中boundary后，
 `measured boundary load + R`才是包含overshoot的effective threshold。tracked browser在初始recent、terminal
-current确认与Undo/reconciliation之后best-effort刷新；active turn保留上一稳定边界并标stale，且仅在
+current确认与Undo/reconciliation之后best-effort刷新；fresh/resume 202在accepted body读取前、turn-busy、
+active turn与rewind pending都会保留上一稳定边界并标stale，且仅在
 progress与exact RecapGrid readiness观察到相同raw head时显示exact。HistoryLoad不是provider token数或完整
 context-window load。
 

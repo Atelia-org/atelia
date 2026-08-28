@@ -477,7 +477,7 @@ route。当前versioned endpoints是：
 |:--|:--|:--|
 | GET | `/api/v1/me` | `{userId,maintenanceMode}` |
 | GET | `/api/v1/recent-turns` | latest 6 completed turns、同head Context header、rewind token与RecapGrid readiness |
-| GET | `/api/v1/recap-cadence-progress` | 独立只读的Timeline/Cadence HistoryLoad progress telemetry |
+| GET | `/api/v1/recap-cadence-progress` | 独立Timeline/Cadence HistoryLoad telemetry；session attach后inspector纯读 |
 | POST | `/api/v1/chat/turns` | 202 `{turnId}` |
 | POST | `/api/v1/chat/turns/resume` | 202 `{turnId}` |
 | POST | `/api/v1/mailbox/inbound` | 202 `{turnId,messageId}` |
@@ -554,13 +554,16 @@ recipe/row authority 与 bounded metrics。`ready`时同一Getter handle还会�
 `derivedContext.nthPrevious`只读resolve/materialize `contextHeader`，并在最终raw-head fence后与readiness一起发布；
 该读取不dispatch provider、不build、不写。
 
-独立的`GET /api/v1/recap-cadence-progress`先以non-blocking方式取得同一session的`TurnLock`；
-writer占用时立即返回503 `{code:"recap-cadence-progress-busy",error}`，并且在busy分支不读
+`GET /api/v1/recap-cadence-progress`整条route先复用既有`GetSessionAsync`取得`UserSessionHost`。
+因此对`create-if-missing`用户的missing repository，第一次直接GET会先执行同一份first-turn structural
+SessionJournal/Cadence/Timeline/Control bootstrap；这一步是既有session attach policy，不属于telemetry
+inspector的纯读承诺。session attach/bootstrap完成后，service method才以non-blocking方式取得该session的
+`TurnLock`；writer占用时立即返回503 `{code:"recap-cadence-progress-busy",error}`，并且在busy分支不读
 Engine、Timeline或Cadence。取得gate后，它捕获current raw head，使用
 `O200kBaseHistoryUnitLoadEstimator`纯读Cadence snapshot与selected Timeline head row，再从该row end
 （empty Timeline则从SessionCreated seed）测量到captured head的recent raw suffix。raw head不存在时返回
-exact `unprovisioned/raw-head-absent`。该链不创建Completion client、Online、Manager或Store，不capture
-Timeline、不dispatch provider，也不写repository/sidecar。
+exact `unprovisioned/raw-head-absent`。从TurnLock gate开始的service inspector区段不创建Completion client、
+Online、Manager或Store，不capture Timeline、不dispatch provider，也不写repository/sidecar。
 
 response始终是exact closed object：
 
@@ -583,8 +586,9 @@ unavailable|unprovisioned|stale`，freshness独立为`exact|stale`。`recapInter
 `remainingHistoryLoad`只表示距对应cadence threshold的差，不承诺Recap build已经开始。
 
 tracked browser在初始recent成功后、terminal current确认完成后以及Undo/reconciliation的recent刷新后，
-独立best-effort刷新该endpoint；turn accepted/attach与rewind pending会把上一份progress本地标为stale，
-busy或其他progress失败保留上一稳定边界。若新exact progress的`observedRawHead`与当前exact
+独立best-effort刷新该endpoint；fresh/resume的202一经确认就在首次读取accepted response body前把上一份
+progress标为stale，`turn-busy`也无条件标stale，有turnId才继续attach。turn attach与rewind pending保持同一
+规则，busy或其他progress失败保留上一稳定边界。若新exact progress的`observedRawHead`与当前exact
 `recapGridReadiness.observedRawHead`不同，browser会降为`stale/browser-head-mismatch`，绝不显示为exact。
 进度条只接收由BigInt缩放得到的0..1展示比例，权威load、threshold与remaining不转换为JavaScript Number。
 HistoryLoad是estimator-scoped的Timeline cadence内部度量，不是provider/model token数，也不是完整prompt或
