@@ -29,8 +29,16 @@ internal static class GalateaRecapCadenceProgress {
         cancellationToken.ThrowIfCancellationRequested();
 
         try {
-            if (selectedRef.ReadCurrentHead() != capturedRawHead) {
-                return Stale(capturedRawHead);
+            RawHeadFenceResult initialRawFence = ObserveRawHead(
+                selectedRef,
+                capturedRawHead);
+            if (initialRawFence is not RawHeadFenceResult.Exact) {
+                return MapRawHeadFence(
+                    capturedRawHead,
+                    initialRawFence,
+                    Unavailable(
+                        capturedRawHead,
+                        "raw-head-unavailable"));
             }
 
             RecapGridCadenceReaderOpenResult cadenceOpened =
@@ -151,6 +159,7 @@ internal static class GalateaRecapCadenceProgress {
                 capturedRawHead,
                 timeline,
                 timelineHead,
+                cadencePolicy.MaxRawEvents,
                 cancellationToken);
             if (seedRead is not BaselineSeedResult.Available seedAvailable) {
                 return FinishWithAllFences(
@@ -168,7 +177,7 @@ internal static class GalateaRecapCadenceProgress {
                 selectedRef.ReadHistoryPlanningWindowAtBounded(
                     capturedRawHead,
                     seed,
-                    HistoryRecentReserveOperationLimits.MaximumRawEvents,
+                    cadencePolicy.MaxRawEvents,
                     cancellationToken);
             if (windowRead is not SessionHistoryPlanningWindowReadResult
                     .Available windowAvailable) {
@@ -324,14 +333,15 @@ internal static class GalateaRecapCadenceProgress {
         EventAddress capturedRawHead,
         HistoryTimelineBuildReadSession timeline,
         TimelineHeadRef timelineHead,
+        int maximumRawEvents,
         CancellationToken cancellationToken
     ) {
         if (timelineHead.HeadRowId is null) {
             SessionCreatedPlanningSeedReadResult result =
                 selectedRef.ReadSessionCreatedPlanningSeedAtBounded(
-                capturedRawHead,
-                HistoryRecentReserveOperationLimits.MaximumRawEvents,
-                cancellationToken);
+                    capturedRawHead,
+                    maximumRawEvents,
+                    cancellationToken);
             return result switch {
                 SessionCreatedPlanningSeedReadResult.Available available
                     => new BaselineSeedResult.Available(available.Seed),
@@ -397,8 +407,14 @@ internal static class GalateaRecapCadenceProgress {
         RecapCadenceProgressSnapshotDto result
     ) {
         BeforeFinalAuthorityFenceForTest.Value?.Invoke();
-        if (selectedRef.ReadCurrentHead() != capturedRawHead) {
-            return Stale(capturedRawHead);
+        RawHeadFenceResult rawFence = ObserveRawHead(
+            selectedRef,
+            capturedRawHead);
+        if (rawFence is not RawHeadFenceResult.Exact) {
+            return MapRawHeadFence(
+                capturedRawHead,
+                rawFence,
+                result);
         }
         if (expectedTimelineHead is not null) {
             HistoryTimelineSnapshotResult timelineAfter =
@@ -427,8 +443,14 @@ internal static class GalateaRecapCadenceProgress {
         RecapCadenceProgressSnapshotDto result
     ) {
         BeforeFinalAuthorityFenceForTest.Value?.Invoke();
-        if (selectedRef.ReadCurrentHead() != capturedRawHead) {
-            return Stale(capturedRawHead);
+        RawHeadFenceResult rawFence = ObserveRawHead(
+            selectedRef,
+            capturedRawHead);
+        if (rawFence is not RawHeadFenceResult.Exact) {
+            return MapRawHeadFence(
+                capturedRawHead,
+                rawFence,
+                result);
         }
         return RequireCadenceFence(
             capturedRawHead,
@@ -457,9 +479,10 @@ internal static class GalateaRecapCadenceProgress {
         RecapCadenceProgressSnapshotDto result
     ) {
         BeforeFinalAuthorityFenceForTest.Value?.Invoke();
-        return selectedRef.ReadCurrentHead() == capturedRawHead
-            ? result
-            : Stale(capturedRawHead);
+        return MapRawHeadFence(
+            capturedRawHead,
+            ObserveRawHead(selectedRef, capturedRawHead),
+            result);
     }
 
     private static RecapCadenceProgressSnapshotDto
@@ -484,9 +507,10 @@ internal static class GalateaRecapCadenceProgress {
                 ? measurement.Code
                 : "inspection-failed",
             exception.Message);
-        return selectedRef.ReadCurrentHead() == capturedRawHead
-            ? failure
-            : Stale(capturedRawHead);
+        return MapRawHeadFence(
+            capturedRawHead,
+            ObserveRawHead(selectedRef, capturedRawHead),
+            failure);
     }
 
     private static RecapCadenceProgressSnapshotDto MapCadenceOpen(
@@ -739,6 +763,48 @@ internal static class GalateaRecapCadenceProgress {
         null,
         code);
 
+    private static RawHeadFenceResult ObserveRawHead(
+        SessionJournalReadView selectedRef,
+        EventAddress capturedRawHead
+    ) {
+        try {
+            EventAddress? observed = selectedRef.ReadCurrentHead();
+            return observed == capturedRawHead
+                ? new RawHeadFenceResult.Exact()
+                : new RawHeadFenceResult.Changed(observed);
+        }
+        catch (OperationCanceledException) {
+            throw;
+        }
+        catch (Exception exception) when (!IsFatal(exception)) {
+            return new RawHeadFenceResult.Unavailable(
+                exception.GetType().Name,
+                exception.Message);
+        }
+    }
+
+    private static RecapCadenceProgressSnapshotDto MapRawHeadFence(
+        EventAddress capturedRawHead,
+        RawHeadFenceResult fence,
+        RecapCadenceProgressSnapshotDto exactResult
+    ) => fence switch {
+        RawHeadFenceResult.Exact => exactResult,
+        RawHeadFenceResult.Changed
+            => Stale(capturedRawHead),
+        RawHeadFenceResult.Unavailable unavailable
+            => exactResult with {
+                Freshness = StaleFreshness,
+                State = "unavailable",
+                Code = "raw-head-observation-failed",
+                Detail = $"{unavailable.Code}: {unavailable.Detail}"
+            },
+        _ => exactResult with {
+            Freshness = StaleFreshness,
+            State = "unavailable",
+            Code = "raw-head-observation-outcome-unknown"
+        }
+    };
+
     private static long Remaining(long threshold, long current)
         => current >= threshold ? 0 : checked(threshold - current);
 
@@ -768,5 +834,17 @@ internal static class GalateaRecapCadenceProgress {
 
         internal sealed record Failure(string Code, string? Detail = null)
             : BaselineSeedResult;
+    }
+
+    private abstract record RawHeadFenceResult {
+        private RawHeadFenceResult() { }
+
+        internal sealed record Exact : RawHeadFenceResult;
+
+        internal sealed record Changed(EventAddress? Observed)
+            : RawHeadFenceResult;
+
+        internal sealed record Unavailable(string Code, string Detail)
+            : RawHeadFenceResult;
     }
 }

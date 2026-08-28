@@ -169,12 +169,111 @@ public sealed class GalateaRecapCadenceProgressTests : IDisposable {
         }
     }
 
+    [Fact]
+    public void PolicyRawBoundWinsEvenWhenAnEarlyBoundaryCouldBeSelected() {
+        using SessionJournalEngine engine = CreateFixture(
+            "policy-raw-bound",
+            target: 1,
+            minimumRecent: 1,
+            turns: 1,
+            maxRawEvents: 2);
+        HistorySegmentDescriptor committed = CommitOneTimelineRow(engine);
+        _ = engine.AppendObservation("tail-observation");
+        _ = engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("tail-answer")
+            ]),
+            new CompletionDescriptor("import", "v1", "model"));
+        EventAddress capturedHead = Assert.IsType<EventAddress>(
+            engine.ReadCurrentHead());
+
+        RecapCadenceProgressSnapshotDto result =
+            GalateaRecapCadenceProgress.Inspect(
+                engine.ReadView,
+                capturedHead,
+                _estimator,
+                CancellationToken.None);
+
+        Assert.Equal("exact", result.Freshness);
+        Assert.Equal("limited", result.State);
+        Assert.Equal(Address(committed.EndInclusive), result.CadenceBaseline);
+        Assert.Equal("recent-history-beyond-prefix", result.Code);
+        Assert.Null(result.RecentHistoryLoad);
+        Assert.Null(result.BuildThresholdHistoryLoad);
+        Assert.Null(result.RemainingHistoryLoad);
+    }
+
+    [Fact]
+    public void DisposedReadViewAtFinalFenceDoesNotLeakOrClaimExact() {
+        using SessionJournalEngine engine = CreateFixture(
+            "disposed-final-fence",
+            target: 2,
+            minimumRecent: 1,
+            turns: 0);
+        EventAddress capturedHead = Assert.IsType<EventAddress>(
+            engine.ReadCurrentHead());
+        GalateaRecapCadenceProgress.BeforeFinalAuthorityFenceForTest.Value =
+            engine.Dispose;
+        try {
+            RecapCadenceProgressSnapshotDto? result = null;
+            Exception? exception = Record.Exception(() =>
+                result = GalateaRecapCadenceProgress.Inspect(
+                    engine.ReadView,
+                    capturedHead,
+                    _estimator,
+                    CancellationToken.None));
+
+            Assert.Null(exception);
+            Assert.NotNull(result);
+            Assert.Equal("stale", result.Freshness);
+            Assert.Equal("unavailable", result.State);
+            Assert.Equal("raw-head-observation-failed", result.Code);
+            Assert.Contains("ObjectDisposedException", result.Detail);
+        }
+        finally {
+            GalateaRecapCadenceProgress
+                .BeforeFinalAuthorityFenceForTest.Value = null;
+        }
+    }
+
+    [Fact]
+    public void ReplaySafeOvershootRaisesTheEffectiveBuildThreshold() {
+        var estimator = new FixedPerUnitEstimator(
+            "test.galatea.recap-cadence-progress.two-per-unit.v1",
+            load: 2);
+        using SessionJournalEngine engine = CreateFixture(
+            "overshoot",
+            target: 3,
+            minimumRecent: 1,
+            turns: 2,
+            estimator: estimator);
+        EventAddress capturedHead = Assert.IsType<EventAddress>(
+            engine.ReadCurrentHead());
+
+        RecapCadenceProgressSnapshotDto result =
+            GalateaRecapCadenceProgress.Inspect(
+                engine.ReadView,
+                capturedHead,
+                estimator,
+                CancellationToken.None);
+
+        Assert.Equal("cadence-ready", result.State);
+        Assert.Equal("8", result.RecentHistoryLoad);
+        Assert.Equal("3", result.RecapIntervalHistoryLoad);
+        Assert.Equal("1", result.MinimumRecentHistoryLoad);
+        Assert.Equal("5", result.BuildThresholdHistoryLoad);
+        Assert.Equal("0", result.RemainingHistoryLoad);
+    }
+
     private SessionJournalEngine CreateFixture(
         string suffix,
         long target,
         long minimumRecent,
-        int turns
+        int turns,
+        int maxRawEvents = 64,
+        IHistoryUnitLoadEstimator? estimator = null
     ) {
+        estimator ??= _estimator;
         string path = Path.Combine(_root, suffix);
         var engine = SessionJournalEngine.Create(
             path,
@@ -188,11 +287,11 @@ public sealed class GalateaRecapCadenceProgressTests : IDisposable {
                 new HistoryTimelineInitialPolicySpec(
                     HistoryPartitionAlgorithms
                         .FirstReplaySafeBoundaryAtTargetV1,
-                    EstimatorId,
+                    estimator.Id,
                     new HistoryLoadUnit(target),
-                    maxRawEvents: 64,
+                    maxRawEvents,
                     maxRenderedBytes: 1024 * 1024),
-                _estimator));
+                estimator));
         Assert.IsType<RecapGridCadenceCreateResult.Created>(
             RecapGridCadenceFactory.Create(
                 engine,
@@ -200,9 +299,9 @@ public sealed class GalateaRecapCadenceProgressTests : IDisposable {
                     minimumRecent,
                     HistoryPartitionAlgorithms
                         .FirstReplaySafeBoundaryAtTargetV1,
-                    EstimatorId,
+                    estimator.Id,
                     target,
-                    maxRawEvents: 64,
+                    maxRawEvents,
                     maxRenderedBytes: 1024 * 1024)));
         for (int index = 0; index < turns; index++) {
             _ = engine.AppendObservation($"observation-{index}");
@@ -281,5 +380,15 @@ public sealed class GalateaRecapCadenceProgressTests : IDisposable {
             SessionHistoryPlanningUnit unit,
             int maxRenderedUtf8Bytes
         ) => new(new HistoryLoadUnit(1), 1);
+    }
+
+    private sealed class FixedPerUnitEstimator(string id, long load)
+        : IHistoryUnitLoadEstimator {
+        public string Id { get; } = id;
+
+        public HistoryUnitLoadMeasurement Measure(
+            SessionHistoryPlanningUnit unit,
+            int maxRenderedUtf8Bytes
+        ) => new(new HistoryLoadUnit(load), 1);
     }
 }
