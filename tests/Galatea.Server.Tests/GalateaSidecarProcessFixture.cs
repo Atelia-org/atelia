@@ -47,17 +47,6 @@ internal sealed class GalateaSidecarProcessFixture : IDisposable {
         File.WriteAllText(ScriptPath, script);
     }
 
-    internal GalateaCodexSidecarClient CreateV1Client(
-        int rpcTimeoutMs = 2_000,
-        int maximumFrameUtf8Bytes = 65_536,
-        int maximumBodyUtf8Bytes = 8_000,
-        GalateaSidecarProcessTestHooks? processHooks = null
-    ) => new(CreateConfig(
-        rpcTimeoutMs,
-        maximumFrameUtf8Bytes,
-        maximumBodyUtf8Bytes
-    ), processHooks);
-
     internal GalateaCodexDurableSidecarClient CreateV2Client(
         int rpcTimeoutMs = 2_000,
         int maximumFrameUtf8Bytes = 65_536,

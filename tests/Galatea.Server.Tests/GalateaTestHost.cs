@@ -21,6 +21,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
 
     private readonly string _tempRoot;
     private readonly bool _deleteFilesOnDispose;
+    private bool _disposeCompleted;
+    private bool _restartCreated;
 
     private GalateaTestHost(
         string tempRoot,
@@ -28,7 +30,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string configPath,
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer? normalizer,
-        IGalateaDelegateSidecar? delegateSidecar,
+        IGalateaDurableDelegateTransport? delegateTransport,
         bool deleteFilesOnDispose
     ) {
         _tempRoot = tempRoot;
@@ -39,7 +41,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             configPath,
             completionClientFactory,
             normalizer,
-            delegateSidecar
+            delegateTransport
         );
     }
 
@@ -72,7 +74,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IReadOnlyList<string>? selectableConnectionIds = null,
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
-        IGalateaDelegateSidecar? delegateSidecar = null
+        IGalateaDurableDelegateTransport? delegateTransport = null
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
 
@@ -132,7 +134,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             configPath,
             completionClientFactory,
             normalizer,
-            delegateSidecar,
+            delegateTransport,
             deleteFilesOnDispose
         );
     }
@@ -201,7 +203,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 configPath,
                 completionClientFactory,
                 normalizer,
-                delegateSidecar: null,
+                delegateTransport: null,
                 deleteFilesOnDispose
             );
         }
@@ -342,7 +344,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 configPath,
                 completionClientFactory,
                 normalizer,
-                delegateSidecar: null,
+                delegateTransport: null,
                 deleteFilesOnDispose: true
             );
         }
@@ -358,6 +360,56 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             HandleCookies = true
         }
     );
+
+    /// <summary>
+    /// Reopens this host's exact configuration and durable directories after
+    /// the previous web host has released their process-lifetime locks. The
+    /// previous host must have been created as a non-owner with
+    /// <c>deleteFilesOnDispose: false</c>; the final restarted host normally
+    /// becomes the single owner responsible for deleting the shared root.
+    /// </summary>
+    internal GalateaTestHost CreateRestarted(
+        ICompletionClientFactory completionClientFactory,
+        IGalateaUserMessageNormalizer? normalizer,
+        IGalateaDurableDelegateTransport delegateTransport,
+        bool deleteFilesOnDispose = true
+    ) {
+        ArgumentNullException.ThrowIfNull(completionClientFactory);
+        ArgumentNullException.ThrowIfNull(delegateTransport);
+        if (!_disposeCompleted) {
+            throw new InvalidOperationException(
+                "The previous Galatea test host must be disposed before restart."
+            );
+        }
+        if (_deleteFilesOnDispose) {
+            throw new InvalidOperationException(
+                "A Galatea test host that owned root deletion cannot be restarted."
+            );
+        }
+        if (_restartCreated) {
+            throw new InvalidOperationException(
+                "This Galatea test host already created its restart successor."
+            );
+        }
+        if (!File.Exists(ConfigPath)) {
+            throw new FileNotFoundException(
+                "The Galatea test configuration is unavailable for restart.",
+                ConfigPath
+            );
+        }
+
+        var restarted = new GalateaTestHost(
+            _tempRoot,
+            SessionDirectory,
+            ConfigPath,
+            completionClientFactory,
+            normalizer,
+            delegateTransport,
+            deleteFilesOnDispose
+        );
+        _restartCreated = true;
+        return restarted;
+    }
 
     public static Task<HttpResponseMessage> LoginAsync(
         HttpClient client
@@ -377,6 +429,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         if (_deleteFilesOnDispose && Directory.Exists(_tempRoot)) {
             Directory.Delete(_tempRoot, recursive: true);
         }
+        _disposeCompleted = true;
     }
 
     private static string WriteConfiguration(
@@ -685,7 +738,7 @@ internal sealed class GalateaWebApplicationFactory(
     string configPath,
     ICompletionClientFactory completionClientFactory,
     IGalateaUserMessageNormalizer? normalizer,
-    IGalateaDelegateSidecar? delegateSidecar
+    IGalateaDurableDelegateTransport? delegateTransport
 ) : WebApplicationFactory<Program> {
     protected override void ConfigureWebHost(IWebHostBuilder builder) {
         builder.UseEnvironment("Testing");
@@ -699,7 +752,7 @@ internal sealed class GalateaWebApplicationFactory(
                     new FixedNormalizerFactory(normalizer)
                 );
             }
-            if (delegateSidecar is not null) {
+            if (delegateTransport is not null) {
                 services.RemoveAll<GalateaHostService>();
                 services.AddSingleton(provider =>
                     new GalateaHostService(
@@ -708,7 +761,7 @@ internal sealed class GalateaWebApplicationFactory(
                             ICompletionClientFactory>(),
                         provider.GetRequiredService<
                             IGalateaUserMessageNormalizerFactory>(),
-                        delegateSidecar
+                        delegateTransport
                     ));
             }
         });
