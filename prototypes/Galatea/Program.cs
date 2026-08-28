@@ -930,11 +930,11 @@ static IResult StartAcceptedTurn(
     );
     var runTask = Task.Run(
         async () => {
-            DebugUtil.Info(
-                "Galatea.Api",
-                $"StartAcceptedTurn background start: user={session.User.UserId}, turnId={liveTurn.TurnId}, head={session.Engine.ReadCurrentHead()}"
-            );
             try {
+                DebugUtil.Info(
+                    "Galatea.Api",
+                    $"StartAcceptedTurn background start: user={session.User.UserId}, turnId={liveTurn.TurnId}, head={session.Engine.ReadCurrentHead()}"
+                );
                 await hostService.RunTurnAsync(session, liveTurn, applicationLifetime.ApplicationStopping);
             }
             catch (OperationCanceledException) when (applicationLifetime.ApplicationStopping.IsCancellationRequested) {
