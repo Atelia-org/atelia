@@ -155,6 +155,60 @@ test("startBoundTurn uses the known binding and inspectDispatch reads exact pers
   assert.equal(Object.hasOwn(requests.allTurnParams[0] ?? {}, "outputSchema"), false);
 });
 
+test("startBoundTurn accepts an exact resume response that omits its optional name", async (t) => {
+  const value = await harness(t, {
+    fixtureArgs: ["--drop-name-on-resume"],
+  });
+  const binding = await value.backend.ensureBinding({
+    cwd: value.root,
+    mode: "work",
+    tools,
+  });
+
+  const beforeStart = await value.backend.inspectDispatch({
+    threadId: binding.threadId,
+    expectedCwd: value.root,
+    dispatchId: "empty-thread-mail",
+    task: "exact task",
+    maximumFinalUtf8Bytes: 20_000,
+  });
+  assert.deepEqual(beforeStart, {
+    kind: "not-found",
+    threadId: binding.threadId,
+  });
+
+  await value.client.request("test/setResumeResponseThreadId", {
+    threadId: "different-thread",
+  });
+  await assert.rejects(
+    value.backend.startBoundTurn({
+      threadId: binding.threadId,
+      expectedCwd: value.root,
+      dispatchId: "wrong-resume",
+      task: "must reject a mismatched resume response",
+      mode: "work",
+      localCommandNetwork: false,
+      tools,
+    }),
+    (error: unknown) => typeof error === "object"
+      && error !== null
+      && "code" in error
+      && error.code === "THREAD_NOT_FOUND",
+  );
+
+  const accepted = await value.backend.startBoundTurn({
+    threadId: binding.threadId,
+    expectedCwd: value.root,
+    dispatchId: "empty-thread-mail",
+    task: "exact task",
+    mode: "work",
+    localCommandNetwork: false,
+    tools,
+  });
+  assert.equal(accepted.threadId, binding.threadId);
+  assert.match(accepted.turnId, /^turn-/);
+});
+
 test("inspectDispatch reconciles a persisted turn after turn/start response timeout without retry", async (t) => {
   const value = await harness(t, { requestTimeoutMs: 300 });
   const binding = await value.backend.ensureBinding({

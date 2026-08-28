@@ -334,6 +334,9 @@ lines.on("line", (line) => {
           returned.id = resumeResponseThreadIdOverride;
           resumeResponseThreadIdOverride = undefined;
         }
+        if (process.argv.includes("--drop-name-on-resume")) {
+          returned.name = null;
+        }
         send({ id: message.id, result: responseForThread(returned) });
       }
       break;

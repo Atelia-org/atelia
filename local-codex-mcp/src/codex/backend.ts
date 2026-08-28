@@ -215,7 +215,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         developerInstructions: this.profile.developerInstructions,
       });
       this.throwIfStopped();
-      await this.validatePersistedThread(resumed.thread, input.threadId, expectedCwd);
+      await this.validateBoundGalateaThread(resumed.thread, input.threadId, expectedCwd);
       this.throwIfStopped();
       return await this.startTurnAccepted(
         input.threadId,
@@ -588,6 +588,20 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
       thread.name !== this.ownershipName(expectedThreadId)
     ) {
       throw new BridgeError("THREAD_NOT_FOUND", "The requested thread is not owned by this bridge.");
+    }
+    await this.validateThreadCwd(thread, expectedCwd);
+  }
+
+  private async validateBoundGalateaThread(
+    thread: Thread,
+    expectedThreadId: string,
+    expectedCwd: string,
+  ): Promise<void> {
+    // A resume response may omit the persisted user-facing name. The binding's
+    // ownership marker was verified by the immediately preceding thread/read;
+    // this response only establishes that Codex resumed that exact thread/cwd.
+    if (thread.id !== expectedThreadId) {
+      throw new BridgeError("THREAD_NOT_FOUND", "The requested Galatea binding was not found.");
     }
     await this.validateThreadCwd(thread, expectedCwd);
   }
