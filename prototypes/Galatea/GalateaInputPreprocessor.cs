@@ -19,17 +19,13 @@ internal sealed class GalateaInputPreprocessor {
     }
 
     internal async ValueTask<string> ProcessAsync(
-        GalateaLiveTurn liveTurn,
+        string userMessage,
         CancellationToken cancellationToken
     ) {
-        ArgumentNullException.ThrowIfNull(liveTurn);
+        ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
         cancellationToken.ThrowIfCancellationRequested();
 
-        string original = (liveTurn.FreshInput
-            as GalateaFreshInput.PlayerAction)?.Text
-            ?? throw new InvalidOperationException(
-                "Input preprocessing requires a typed fresh input."
-            );
+        string original = userMessage;
         RequireMessageFits(original, "original");
         bool shouldNormalize;
         try {
@@ -42,17 +38,13 @@ internal sealed class GalateaInputPreprocessor {
         }
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
-            LogFallback(liveTurn, original, exception);
+            LogFallback(original, exception);
             return original;
         }
         cancellationToken.ThrowIfCancellationRequested();
         if (!shouldNormalize) {
             return original;
         }
-
-        liveTurn.PublishStatus(
-            GalateaSseStatusCode.NormalizingInput
-        );
 
         try {
             string effective = await _normalizer
@@ -63,15 +55,6 @@ internal sealed class GalateaInputPreprocessor {
                 effective = original;
             }
             RequireMessageFits(effective, "normalized");
-            bool changed = !string.Equals(
-                original,
-                effective,
-                StringComparison.Ordinal
-            );
-            liveTurn.PublishStatus(
-                GalateaSseStatusCode.InputNormalizationFinished,
-                changed
-            );
             return effective;
         }
         catch (OperationCanceledException) when (
@@ -84,23 +67,18 @@ internal sealed class GalateaInputPreprocessor {
         }
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
-            LogFallback(liveTurn, original, exception);
-            liveTurn.PublishStatus(
-                GalateaSseStatusCode.InputNormalizationFinished,
-                changed: false
-            );
+            LogFallback(original, exception);
             return original;
         }
     }
 
     private static void LogFallback(
-        GalateaLiveTurn liveTurn,
         string original,
         Exception exception
     ) => DebugUtil.Warning(
         DebugCategory,
-        "Input preprocessing fallback to original: "
-        + $"turnId={liveTurn.TurnId}, input={Preview(original)}, "
+        "Admission input preprocessing fallback to original: "
+        + $"input={Preview(original)}, "
         + $"error={exception.Message}"
     );
 

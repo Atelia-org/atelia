@@ -428,6 +428,10 @@ internal static class GalateaSseErrorClassifier {
             || reason?.StartsWith(
                 "tool-runtime-",
                 StringComparison.Ordinal
+            ) == true
+            || reason?.StartsWith(
+                "delegation-",
+                StringComparison.Ordinal
             ) == true) {
             return GalateaSseErrorCode.TurnUnavailable;
         }

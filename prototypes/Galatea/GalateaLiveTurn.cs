@@ -1,6 +1,5 @@
 using System.Threading.Channels;
 using Atelia.Completion.Abstractions;
-using Atelia.EventJournal;
 
 namespace Atelia.Galatea.Server;
 
@@ -29,12 +28,12 @@ internal sealed class GalateaLiveTurn {
     public GalateaLiveTurn(
         GalateaFreshInput? freshInput,
         GalateaTurnOptions options,
-        GalateaPendingReplyLease? pendingReplyLease = null
+        GalateaDurableReplyLease? durableReplyLease = null
     ) {
         TurnId = Guid.NewGuid().ToString("N");
         FreshInput = freshInput;
         Options = options ?? throw new ArgumentNullException(nameof(options));
-        PendingReplyLease = pendingReplyLease;
+        DurableReplyLease = durableReplyLease;
         StopController = new GalateaTurnStopController();
     }
 
@@ -42,7 +41,7 @@ internal sealed class GalateaLiveTurn {
 
     internal GalateaFreshInput? FreshInput { get; }
 
-    internal GalateaPendingReplyLease? PendingReplyLease { get; }
+    internal GalateaDurableReplyLease? DurableReplyLease { get; }
 
     public string? UserMessage => FreshInput?.DisplayText;
 
@@ -328,89 +327,6 @@ internal sealed class GalateaLiveTurn {
     }
 }
 
-/// <summary>
-/// Carries one ready-reply cutoff across the fresh turn and any recovery
-/// attempts for the same durable Observation. Settlement is explicit and
-/// idempotent; ordinary live-turn disposal never decides its outcome.
-/// </summary>
-internal sealed class GalateaPendingReplyLease {
-    private readonly object _gate = new();
-    private GalateaDelegationCoordinator.GalateaReadyReplyLease? _lease;
-    private EventAddress? _freshBaseHead;
-    private string? _durableObservation;
-
-    internal GalateaPendingReplyLease(
-        GalateaDelegationCoordinator.GalateaReadyReplyLease lease
-    ) {
-        _lease = lease ?? throw new ArgumentNullException(nameof(lease));
-        Notices = lease.Notices;
-    }
-
-    internal IReadOnlyList<GalateaReadyNotice> Notices { get; }
-
-    internal void RecordDurableObservation(
-        EventAddress freshBaseHead,
-        string durableObservation
-    ) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(durableObservation);
-        lock (_gate) {
-            if (_lease is null) {
-                throw new InvalidOperationException(
-                    "A settled ready-reply lease cannot record an Observation."
-                );
-            }
-            if (_durableObservation is not null
-                && (_freshBaseHead != freshBaseHead
-                    || !string.Equals(
-                        _durableObservation,
-                        durableObservation,
-                        StringComparison.Ordinal))) {
-                throw new InvalidOperationException(
-                    "A ready-reply lease already belongs to another Observation."
-                );
-            }
-            _freshBaseHead = freshBaseHead;
-            _durableObservation = durableObservation;
-        }
-    }
-
-    internal bool TryGetDurableObservation(
-        out EventAddress freshBaseHead,
-        out string durableObservation
-    ) {
-        lock (_gate) {
-            if (_freshBaseHead is not { } head
-                || _durableObservation is null) {
-                freshBaseHead = default;
-                durableObservation = string.Empty;
-                return false;
-            }
-            freshBaseHead = head;
-            durableObservation = _durableObservation;
-            return true;
-        }
-    }
-
-    internal void Commit() => Complete(commit: true);
-
-    internal void Rollback() => Complete(commit: false);
-
-    private void Complete(bool commit) {
-        GalateaDelegationCoordinator.GalateaReadyReplyLease? lease;
-        lock (_gate) {
-            lease = _lease;
-            _lease = null;
-        }
-        if (lease is null) { return; }
-        if (commit) {
-            lease.Commit();
-        }
-        else {
-            lease.Rollback();
-        }
-    }
-}
-
 internal sealed class GalateaTurnSubscription : IDisposable {
     private readonly GalateaLiveTurn _owner;
     private readonly long _subscriberId;
@@ -442,8 +358,11 @@ internal sealed class GalateaTurnSubscription : IDisposable {
 }
 
 internal sealed class GalateaTurnException : Exception {
-    public GalateaTurnException(string message, string? failureReason = null)
-        : base(message) {
+    public GalateaTurnException(
+        string message,
+        string? failureReason = null,
+        Exception? innerException = null
+    ) : base(message, innerException) {
         FailureReason = failureReason;
     }
 

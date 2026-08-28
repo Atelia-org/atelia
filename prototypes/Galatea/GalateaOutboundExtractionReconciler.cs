@@ -197,7 +197,7 @@ internal sealed class GalateaOutboundExtractionReconciler {
             sourceAction,
             identity.Sha256,
             identity.Utf8Bytes,
-            OutboundMailExtractor.ContractId,
+            _extractor.ContractId,
             intents
         );
         GalateaDelegationCaptureResult capture =

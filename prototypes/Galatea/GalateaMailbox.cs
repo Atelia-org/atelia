@@ -321,10 +321,35 @@ internal sealed record SendMailIntent(
 );
 
 internal interface IOutboundMailExtractor {
+    string ContractId => OutboundMailExtractor.ContractId;
+
     ValueTask<IReadOnlyList<SendMailIntent>> ExtractAsync(
         string visibleActionText,
         CancellationToken cancellationToken
     );
+}
+
+internal sealed class DisabledOutboundMailExtractor
+    : IOutboundMailExtractor {
+    internal const string DisabledContractId =
+        "atelia.galatea.outbound-mail-extractor.disabled.v1";
+
+    internal static DisabledOutboundMailExtractor Instance { get; } = new();
+
+    private DisabledOutboundMailExtractor() { }
+
+    public string ContractId => DisabledContractId;
+
+    public ValueTask<IReadOnlyList<SendMailIntent>> ExtractAsync(
+        string visibleActionText,
+        CancellationToken cancellationToken
+    ) {
+        ArgumentNullException.ThrowIfNull(visibleActionText);
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult<IReadOnlyList<SendMailIntent>>(
+            Array.Empty<SendMailIntent>()
+        );
+    }
 }
 
 internal sealed class OutboundMailExtractor : IOutboundMailExtractor {

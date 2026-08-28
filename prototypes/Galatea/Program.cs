@@ -70,6 +70,9 @@ builder.Services.AddAuthentication(CookieScheme)
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
+GalateaHostService eagerHost = app.Services
+    .GetRequiredService<GalateaHostService>();
+app.Lifetime.ApplicationStopping.Register(eagerHost.BeginShutdown);
 
 app.UseRouting();
 app.Use(async (context, next) => {
@@ -318,6 +321,10 @@ api.MapPost(
         GalateaLiveTurn? liveTurn = null;
         bool writerOwnershipTransferred = false;
         try {
+            await hostService.ReconcileDurableAdmissionAsync(
+                session,
+                httpContext.RequestAborted
+            );
             SessionRuntimeRecoveryRequirements recovery =
                 session.Engine.InspectRuntimeRecoveryRequirements(
                     httpContext.RequestAborted
@@ -364,14 +371,19 @@ api.MapPost(
                     $"Unknown completion connection '{request.ConnectionId}'."
                 ));
             }
-            hostService.PrepareFreshTurnAdmission(
+            await hostService.PrepareFreshTurnAdmissionAsync(
                 session,
                 recovery,
                 httpContext.RequestAborted
             );
+            string effectiveMessage = await hostService
+                .NormalizeUserMessageAtAdmissionAsync(
+                    request.Message,
+                    httpContext.RequestAborted
+                );
             liveTurn = hostService.StartTurn(
                 session,
-                request.Message,
+                effectiveMessage,
                 new GalateaTurnOptions(connection.Id)
             );
             DebugUtil.Info("Galatea.Api", $"POST /api/v1/chat/turns user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}");
@@ -451,6 +463,10 @@ api.MapPost(
         GalateaLiveTurn? liveTurn = null;
         bool writerOwnershipTransferred = false;
         try {
+            await hostService.ReconcileDurableAdmissionAsync(
+                session,
+                httpContext.RequestAborted
+            );
             SessionRuntimeRecoveryRequirements recovery =
                 session.Engine.InspectRuntimeRecoveryRequirements(
                     httpContext.RequestAborted
@@ -616,6 +632,10 @@ api.MapPost(
         GalateaLiveTurn? liveTurn = null;
         bool writerOwnershipTransferred = false;
         try {
+            await hostService.ReconcileDurableAdmissionAsync(
+                session,
+                httpContext.RequestAborted
+            );
             SessionRuntimeRecoveryRequirements recovery =
                 session.Engine.InspectRuntimeRecoveryRequirements(
                     httpContext.RequestAborted
@@ -647,7 +667,7 @@ api.MapPost(
                     $"Unknown completion connection '{request.ConnectionId}'."
                 ));
             }
-            hostService.PrepareFreshTurnAdmission(
+            await hostService.PrepareFreshTurnAdmissionAsync(
                 session,
                 recovery,
                 httpContext.RequestAborted
@@ -724,6 +744,10 @@ api.MapPost(
 
         if (!session.TurnLock.Wait(0)) { return BuildTurnBusyConflict(hostService, session); }
         try {
+            await hostService.ReconcileDurableAdmissionAsync(
+                session,
+                httpContext.RequestAborted
+            );
             GalateaPreparedPopLatestTurn? prepared = hostService
                 .PrepareAndCommitPopLatestTurn(
                     session,
@@ -980,6 +1004,30 @@ static (int StatusCode, ApiErrorDto Error) MapApiException(
     GalateaSessionUnavailableException unavailable => (
         StatusCodes.Status503ServiceUnavailable,
         new ApiErrorDto(unavailable.Code, unavailable.Message)
+    ),
+    GalateaDelegationUserUnavailableException => (
+        StatusCodes.Status503ServiceUnavailable,
+        new ApiErrorDto(
+            "delegation-unavailable",
+            "Durable delegation is unavailable for this user."
+        )
+    ),
+    GalateaTurnException turn when turn.FailureReason is { } reason
+        && reason.StartsWith("delegation-", StringComparison.Ordinal) => (
+        string.Equals(
+            reason,
+            "delegation-state-changed",
+            StringComparison.Ordinal
+        )
+            ? StatusCodes.Status409Conflict
+            : string.Equals(
+                reason,
+                "delegation-state-invalid",
+                StringComparison.Ordinal
+            )
+                ? StatusCodes.Status500InternalServerError
+                : StatusCodes.Status503ServiceUnavailable,
+        new ApiErrorDto(reason, turn.Message)
     ),
     GalateaRecentProjectionException projection when
         string.Equals(

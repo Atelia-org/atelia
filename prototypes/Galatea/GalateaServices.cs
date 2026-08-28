@@ -25,12 +25,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal const int MaximumPoppedUserTextUtf8Bytes = 256 * 1024;
     internal const int MaximumPopReceiptUtf8Bytes = 2 * 1024 * 1024;
     private readonly GalateaInputPreprocessor _inputPreprocessor;
-    private readonly IOutboundMailExtractor? _outboundMailExtractor;
+    private readonly IOutboundMailExtractor _outboundMailExtractor;
     private readonly bool _maintenanceMode;
     private readonly GalateaRecapGridComposition _recapGrid;
     private readonly GalateaCompletionOwner? _completionOwner;
-    private readonly IGalateaDelegateSidecar _delegateSidecar;
-    private readonly GalateaDelegateRouteConfig _delegateRoute;
+    private readonly GalateaDelegationSupervisor _delegationSupervisor;
     internal GalateaDisposeTestHooks? DisposeHooksForTest { get; set; }
     internal GalateaSessionProvisioningTestHooks?
         SessionProvisioningHooksForTest { get; set; }
@@ -74,14 +73,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaConfig config,
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizerFactory userMessageNormalizerFactory,
-        IGalateaDelegateSidecar delegateSidecar
+        IGalateaDurableDelegateTransport delegateTransport
     ) : this(
         config,
         CreateProductionComponents(
             config,
             completionClientFactory,
             userMessageNormalizerFactory,
-            delegateSidecar
+            delegateTransport
         )
     ) { }
 
@@ -91,56 +90,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(components);
-        try {
-            GalateaConfigValidation.RequireDistinctUserStorageDirectories(
-                config.Users
-            );
-            GalateaRecapGridRuntimeConfig recapGrid = config.RecapGrid
-                ?? throw new InvalidOperationException(
-                    "Galatea requires strict RecapGrid runtime configuration."
-                );
-            _sessionBootstrapAdmission = ResolveSessionBootstrapAdmission(
-                recapGrid
-            );
-            _completionOwner = components.Owner;
-            _delegateSidecar = components.DelegateSidecar;
-            _delegateRoute = GalateaDelegateConfigReader.Validate(
-                config.Delegates
-            ).CodexRoute;
-            _recapGrid = components.Owner.RecapGrid;
-            _inputPreprocessor = new GalateaInputPreprocessor(
-                components.Normalizer
-            );
-            _outboundMailExtractor = components.OutboundMailExtractor;
-            _maintenanceMode = config.MaintenanceMode;
-            _users = config.Users.ToDictionary(
-                static value => value.UserId,
-                StringComparer.Ordinal
-            );
-            IReadOnlyDictionary<string, CompletionConnectionConfig>
-                fullCatalog = components.Owner.Connections.ToDictionary(
-                    static value => value.Id,
-                    StringComparer.Ordinal
-                );
-            CompletionConnectionConfig[] selectable = components.Owner
-                .SelectableConnectionIds
-                .Select(id => fullCatalog[id])
-                .ToArray();
-            _connectionCatalog = selectable.ToDictionary(
-                static value => value.Id,
-                StringComparer.Ordinal
-            );
-            _selectableConnections = Array.AsReadOnly(
-                selectable.Select(static value =>
-                    new GalateaConnectionInfoDto(value.Id, value.ModelId)
-                ).ToArray()
-            );
-            _defaultConnectionId = components.Owner.DefaultConnectionId;
-        }
-        catch (Exception exception) {
-            DisposeProductionAfterConstructionFailure(components, exception);
-            throw;
-        }
+        _sessionBootstrapAdmission = components.SessionBootstrapAdmission;
+        _completionOwner = components.Owner;
+        _delegationSupervisor = components.DelegationSupervisor;
+        _recapGrid = components.RecapGrid;
+        _inputPreprocessor = components.InputPreprocessor;
+        _outboundMailExtractor = components.OutboundMailExtractor;
+        _maintenanceMode = components.MaintenanceMode;
+        _users = components.Users;
+        _connectionCatalog = components.ConnectionCatalog;
+        _selectableConnections = components.SelectableConnections;
+        _defaultConnectionId = components.DefaultConnectionId;
     }
 
     internal GalateaHostService(
@@ -150,8 +110,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(recapGrid);
         ArgumentNullException.ThrowIfNull(userMessageNormalizer);
-        GalateaDelegateConfig delegates =
-            GalateaDelegateConfigReader.Validate(config.Delegates);
+        _ = GalateaDelegateConfigReader.Validate(config.Delegates);
         GalateaConfigValidation.RequireDistinctUserStorageDirectories(
             config.Users
         );
@@ -170,14 +129,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaCompletionOwner.ValidateGalateaRouting(normalized);
         _recapGrid = recapGrid;
         _completionOwner = null;
-        _delegateSidecar = new GalateaCodexSidecarClient(
-            delegates
-        );
-        _delegateRoute = delegates.CodexRoute;
         _inputPreprocessor = new GalateaInputPreprocessor(
             userMessageNormalizer
         );
-        _outboundMailExtractor = null;
+        _outboundMailExtractor = DisabledOutboundMailExtractor.Instance;
         _maintenanceMode = config.MaintenanceMode;
         _users = config.Users.ToDictionary(
             static value => value.UserId,
@@ -206,13 +161,16 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _sessionBootstrapAdmission = config.RecapGrid is { } configured
             ? ResolveSessionBootstrapAdmission(configured)
             : null;
+        // The supervisor may immediately pulse an existing durable outbox,
+        // so every other fallible composition step must precede it.
+        _delegationSupervisor = new GalateaDelegationSupervisor(config);
     }
 
     private static GalateaProductionComponents CreateProductionComponents(
         GalateaConfig config,
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizerFactory normalizerFactory,
-        IGalateaDelegateSidecar? delegateSidecarOverride = null
+        IGalateaDurableDelegateTransport? delegateTransportOverride = null
     ) {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(completionClientFactory);
@@ -234,26 +192,63 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ) ?? throw new InvalidOperationException(
                     "Galatea input normalizer factory returned null."
                 );
-            IOutboundMailExtractor? outboundMailExtractor =
+            IOutboundMailExtractor outboundMailExtractor =
                 owner.OutboundMailExtractorConnection is { } connection
                     ? new OutboundMailExtractor(
                         connection,
                         owner.GetOutboundMailExtractorClient
                     )
-                    : null;
-            IGalateaDelegateSidecar delegateSidecar =
-                delegateSidecarOverride
-                ?? new GalateaCodexSidecarClient(
-                    config.Delegates
-                        ?? throw new InvalidOperationException(
-                            "Galatea requires strict delegate configuration."
-                        )
+                    : DisabledOutboundMailExtractor.Instance;
+
+            GalateaRecapGridRuntimeConfig recapGridConfig = config.RecapGrid
+                ?? throw new InvalidOperationException(
+                    "Galatea requires strict RecapGrid runtime configuration."
                 );
+            RecapGridControlAdmission sessionBootstrapAdmission =
+                ResolveSessionBootstrapAdmission(recapGridConfig);
+            var inputPreprocessor = new GalateaInputPreprocessor(normalizer);
+            IReadOnlyDictionary<string, GalateaUserConfig> users =
+                config.Users.ToDictionary(
+                    static value => value.UserId,
+                    StringComparer.Ordinal
+                );
+            IReadOnlyDictionary<string, CompletionConnectionConfig>
+                fullCatalog = owner.Connections.ToDictionary(
+                    static value => value.Id,
+                    StringComparer.Ordinal
+                );
+            CompletionConnectionConfig[] selectable = owner
+                .SelectableConnectionIds
+                .Select(id => fullCatalog[id])
+                .ToArray();
+            IReadOnlyDictionary<string, CompletionConnectionConfig>
+                connectionCatalog = selectable.ToDictionary(
+                    static value => value.Id,
+                    StringComparer.Ordinal
+                );
+            IReadOnlyList<GalateaConnectionInfoDto> selectableConnections =
+                Array.AsReadOnly(selectable.Select(static value =>
+                    new GalateaConnectionInfoDto(value.Id, value.ModelId)
+                ).ToArray());
+
+            // No fallible host preflight may remain after this point: an
+            // existing durable outbox can be pulsed by construction.
+            var delegationSupervisor = new GalateaDelegationSupervisor(
+                config,
+                delegateTransportOverride
+            );
             return new GalateaProductionComponents(
                 owner,
-                normalizer,
+                owner.RecapGrid,
+                inputPreprocessor,
                 outboundMailExtractor,
-                delegateSidecar
+                delegationSupervisor,
+                sessionBootstrapAdmission,
+                config.MaintenanceMode,
+                users,
+                connectionCatalog,
+                selectableConnections,
+                owner.DefaultConnectionId
             );
         }
         catch (Exception exception) {
@@ -285,46 +280,19 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ExceptionDispatchInfo.Capture(original).Throw();
     }
 
-    private static void DisposeProductionAfterConstructionFailure(
-        GalateaProductionComponents components,
-        Exception original
-    ) {
-        Exception? cleanupFailure = null;
-        try {
-            components.DelegateSidecar.DisposeAsync().AsTask()
-                .GetAwaiter().GetResult();
-        }
-        catch (Exception cleanup) when (
-            GalateaExceptionClassifier.IsNonFatal(cleanup)) {
-            cleanupFailure = cleanup;
-        }
-        try {
-            components.Owner.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        }
-        catch (Exception cleanup) when (
-            GalateaExceptionClassifier.IsNonFatal(cleanup)) {
-            cleanupFailure = cleanupFailure is null
-                ? cleanup
-                : new AggregateException(cleanupFailure, cleanup);
-        }
-        if (cleanupFailure is not null) {
-            if (!GalateaExceptionClassifier.IsNonFatal(original)) {
-                ExceptionDispatchInfo.Capture(original).Throw();
-            }
-            throw new AggregateException(
-                "Galatea construction and cleanup both failed.",
-                original,
-                cleanupFailure
-            );
-        }
-        ExceptionDispatchInfo.Capture(original).Throw();
-    }
-
     private sealed record GalateaProductionComponents(
         GalateaCompletionOwner Owner,
-        IGalateaUserMessageNormalizer Normalizer,
-        IOutboundMailExtractor? OutboundMailExtractor,
-        IGalateaDelegateSidecar DelegateSidecar
+        GalateaRecapGridComposition RecapGrid,
+        GalateaInputPreprocessor InputPreprocessor,
+        IOutboundMailExtractor OutboundMailExtractor,
+        GalateaDelegationSupervisor DelegationSupervisor,
+        RecapGridControlAdmission SessionBootstrapAdmission,
+        bool MaintenanceMode,
+        IReadOnlyDictionary<string, GalateaUserConfig> Users,
+        IReadOnlyDictionary<string, CompletionConnectionConfig>
+            ConnectionCatalog,
+        IReadOnlyList<GalateaConnectionInfoDto> SelectableConnections,
+        string DefaultConnectionId
     );
 
     private sealed class FixedGalateaUserMessageNormalizerFactory(
@@ -351,7 +319,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
     public string DefaultConnectionId => _defaultConnectionId;
 
-    internal IGalateaDelegateSidecar DelegateSidecar => _delegateSidecar;
+    internal GalateaDelegationSupervisor DelegationSupervisor =>
+        _delegationSupervisor;
 
     public bool TryGetConnection(
         string? requestedConnectionId,
@@ -702,6 +671,32 @@ public sealed class GalateaHostService : IAsyncDisposable {
     /// main connection. Keeping the cutoff here makes the HTTP acceptance
     /// instant, rather than the later background task, authoritative.
     /// </summary>
+    internal async ValueTask ReconcileDurableAdmissionAsync(
+        UserSessionHost host,
+        CancellationToken cancellationToken
+    ) {
+        ArgumentNullException.ThrowIfNull(host);
+        GalateaDurableReplyLeaseReconcileResult reply =
+            ReconcileDurableReplyLease(host, cancellationToken);
+        if (reply is GalateaDurableReplyLeaseReconcileResult.RolledBack
+                or GalateaDurableReplyLeaseReconcileResult.Consumed) {
+            _ = host.DelegationHandle?.Signal();
+        }
+        _ = await ReconcileOutboundExtractionAsync(
+                host,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    internal ValueTask<string> NormalizeUserMessageAtAdmissionAsync(
+        string userMessage,
+        CancellationToken cancellationToken
+    ) => _inputPreprocessor.ProcessAsync(
+        userMessage,
+        cancellationToken
+    );
+
     internal GalateaLiveTurn StartTurn(
         UserSessionHost host,
         string userMessage,
@@ -714,23 +709,47 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (messageError is not null) {
             throw new ArgumentException(messageError, nameof(userMessage));
         }
-        GalateaDelegationCoordinator.GalateaReadyReplyLease ready =
-            host.DelegationCoordinator.BeginReadyReplyCutoff(userMessage);
-        var pending = new GalateaPendingReplyLease(ready);
-        try {
+        GalateaDurableReplyLeaseBeginResult cutoff =
+            host.ReplyLeaseReconciler.BeginCutoff(userMessage);
+        if (cutoff is GalateaDurableReplyLeaseBeginResult.Empty) {
             return host.StartTurn(
-                new GalateaFreshInput.PlayerAction(
-                    userMessage,
-                    pending.Notices
-                ),
-                options,
-                pending
+                new GalateaFreshInput.PlayerAction(userMessage),
+                options
             );
         }
-        catch {
-            pending.Rollback();
-            throw;
+        if (cutoff is GalateaDurableReplyLeaseBeginResult.Created created) {
+            try {
+                return host.StartTurn(
+                    new GalateaFreshInput.PlayerAction(
+                        userMessage,
+                        created.Lease.ReadNotices()
+                    ),
+                    options,
+                    created.Lease
+                );
+            }
+            catch (Exception original) {
+                try {
+                    created.Lease.RollbackBeforeEffect();
+                }
+                catch (Exception cleanup) when (
+                    GalateaExceptionClassifier.IsNonFatal(cleanup)) {
+                    if (!GalateaExceptionClassifier.IsNonFatal(original)) {
+                        ExceptionDispatchInfo.Capture(original).Throw();
+                    }
+                    throw new AggregateException(
+                        "Fresh-turn admission and durable cutoff rollback both failed.",
+                        original,
+                        cleanup
+                    );
+                }
+                ExceptionDispatchInfo.Capture(original).Throw();
+                throw;
+            }
         }
+        throw new InvalidDataException(
+            "Unknown durable reply cutoff result."
+        );
     }
 
     /// <summary>
@@ -739,7 +758,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     /// exact head here so any lease belonging to that failed Observation can
     /// be rolled back before an ordinary player cutoff is formed.
     /// </summary>
-    internal void PrepareFreshTurnAdmission(
+    internal async ValueTask PrepareFreshTurnAdmissionAsync(
         UserSessionHost host,
         SessionRuntimeRecoveryRequirements admitted,
         CancellationToken cancellationToken
@@ -766,18 +785,16 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 when current is SessionRuntimeRecoveryRequirements
                     .FailedTurnMustBeAbandoned currentFailed
                 && currentFailed.FailedHead == admittedFailed.FailedHead:
-                SessionTurnRetractionResult abandoned =
-                    host.Engine.AbandonFailedTurn(
-                        admittedFailed.FailedHead,
+                AbandonFailedTurnAndReconcile(
+                    host,
+                    admittedFailed.FailedHead,
+                    cancellationToken
+                );
+                await ReconcileDurableAdmissionAsync(
+                        host,
                         cancellationToken
-                    );
-                if (abandoned is not SessionTurnRetractionResult.Moved) {
-                    throw new GalateaTurnException(
-                        "上一轮失败状态未能安全放弃，请刷新后重试。",
-                        "failed-turn-abandon-race"
-                    );
-                }
-                host.RollbackPendingReplyLeaseAfterFailedTurnAbandoned();
+                    )
+                    .ConfigureAwait(false);
                 return;
             default:
                 throw new GalateaTurnException(
@@ -894,9 +911,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (committed is not SessionTurnRetractionResult.Moved) {
             return null;
         }
-        host.DelegationCoordinator.RetractSourceAction(
-            ready.Value.ExpectedHead
-        );
         host.SetRecentTurns(preparedStaleSnapshot);
         return preparedReceipt;
     }
@@ -989,7 +1003,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             && liveTurn.StopRequested
         ) {
             if (liveTurn.Options.Mode == GalateaTurnMode.FreshSend) {
-                host.RollbackPendingReplyLease(liveTurn);
+                ReconcileDurableReplyLeaseBestEffort(host, liveTurn);
             }
             throw liveTurn.Options.Mode == GalateaTurnMode.FreshSend
                 ? PreDispatchStopped()
@@ -1001,46 +1015,40 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 $"RunTurnAsync completion aborted: user={host.User.UserId}, turnId={liveTurn.TurnId}, termination={ex.Termination.Kind}, providerReason={ex.Termination.ProviderReason ?? "<none>"}, detail={ex.Termination.Detail ?? "<none>"}"
             );
             if (liveTurn.StopRequested && WasStoppedByObserver(ex.Termination)) {
-                RequireFailedTurnAbandoned(host.Engine);
-                host.RollbackPendingReplyLease(liveTurn);
+                AbandonCurrentFailedTurnAndReconcile(host);
                 throw new GalateaTurnException(
                     "已停止生成，本轮结果未写入历史。你可以调整开关或修改输入后重试。",
                     "stopped-by-user"
                 );
             }
-            RequireFailedTurnAbandoned(host.Engine);
-            host.RollbackPendingReplyLease(liveTurn);
+            AbandonCurrentFailedTurnAndReconcile(host);
             throw new GalateaTurnException(
                 "模型本次输出未正常结束，本轮结果已放弃写入历史。请刷新页面后重试。",
                 ex.Termination.ProviderReason ?? ex.Termination.Kind.ToString()
             );
         }
         catch {
-            SettlePendingReplyLeaseAfterExceptionalReturn(
-                host,
-                liveTurn
-            );
+            ReconcileDurableReplyLeaseBestEffort(host, liveTurn);
             throw;
         }
         SessionExecutionBoundaryInspection completedBoundary =
             host.Engine.InspectExecutionBoundary();
         if (completedBoundary.Phase != SessionExecutionPhase.Idle) {
-            SettlePendingReplyLeaseAfterExceptionalReturn(
-                host,
-                liveTurn
-            );
+            ReconcileDurableReplyLeaseBestEffort(host, liveTurn);
             throw new InvalidDataException(
                 "A completed Galatea operation must leave an Idle durable boundary."
             );
         }
-        host.CommitPendingReplyLease(liveTurn);
-        await ExtractOutboundMailBestEffortAsync(
-                host,
-                liveTurn,
-                completed.Message,
-                host.Engine.ReadCurrentHead(),
-                ct
-            )
+        GalateaDurableReplyLeaseReconcileResult leaseSettlement =
+            ReconcileDurableReplyLease(host, ct);
+        if (leaseSettlement is GalateaDurableReplyLeaseReconcileResult
+                .Retained) {
+            throw new GalateaTurnException(
+                "Durable reply settlement still requires recovery.",
+                "delegation-reply-lease-retained"
+            );
+        }
+        await ReconcileOutboundExtractionAsync(host, ct)
             .ConfigureAwait(false);
         RecentTurnsResponseDto? snapshot =
             await RefreshRecentTurnsForCompletedStreamAsync(
@@ -1055,108 +1063,81 @@ public sealed class GalateaHostService : IAsyncDisposable {
         liveTurn.PublishDone(snapshot);
     }
 
-    private async ValueTask ExtractOutboundMailBestEffortAsync(
+    private static async ValueTask<
+        GalateaOutboundExtractionReconcileResult>
+        ReconcileOutboundExtractionAsync(
         UserSessionHost host,
-        GalateaLiveTurn liveTurn,
-        ActionMessage action,
-        EventAddress? sourceActionHead,
         CancellationToken cancellationToken
     ) {
-        if (_outboundMailExtractor is null
-            || sourceActionHead is not { } actionHead) {
-            return;
-        }
-        string target = GalateaVisibleActionTextRenderer.Render(action);
-        if (string.IsNullOrWhiteSpace(target)) { return; }
         try {
-            DebugUtil.Info(
-                "Galatea.Mailbox",
-                "Outbound mail extraction started after durable Action: "
-                    + "user="
-                    + GalateaMailboxText.SummarizeForLog(host.User.UserId)
-                    + $", turnId={liveTurn.TurnId}, actionHead={actionHead}, "
-                    + $"visibleActionUtf8Bytes={TextExtractorUtf8.GetByteCount(target)}",
-                eventKind: DebugEventKind.Start
-            );
-            IReadOnlyList<SendMailIntent> intents =
-                await _outboundMailExtractor.ExtractAsync(
-                        target,
+            GalateaOutboundExtractionReconcileResult result =
+                await host.OutboundExtractionReconciler.ReconcileAsync(
+                        host.Engine,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
-            DebugUtil.Info(
-                "Galatea.Mailbox",
-                "Outbound mail extraction finished: "
-                    + "user="
-                    + GalateaMailboxText.SummarizeForLog(host.User.UserId)
-                    + $", turnId={liveTurn.TurnId}, actionHead={actionHead}, "
-                    + $"intents={intents.Count}",
-                eventKind: DebugEventKind.Success
-            );
-            if (intents.Count == 0) {
-                return;
-            }
-            bool added = host.DelegationCoordinator.TryCaptureBatch(
-                liveTurn.TurnId,
-                actionHead,
-                intents
-            );
-            if (!added) {
-                DebugUtil.Warning(
-                    "Galatea.Mailbox",
-                    "Outbound candidate batch deduplicated in memory: user="
-                    + GalateaMailboxText.SummarizeForLog(host.User.UserId)
-                    + $", turnId={liveTurn.TurnId}, actionHead={actionHead}"
-                );
-                return;
-            }
-            foreach ((SendMailIntent intent, int ordinal) in intents
-                         .Select((value, index) => (value, index))) {
-                DebugUtil.Info(
-                    "Galatea.Mailbox",
-                    "Captured outbound mail candidate: "
-                    + "user="
-                    + GalateaMailboxText.SummarizeForLog(host.User.UserId)
-                    + $", turnId={liveTurn.TurnId}, actionHead={actionHead}, ordinal={ordinal}, "
-                    + $"recipient={GalateaMailboxText.SummarizeForLog(intent.Recipient)}, hasSubject={intent.Subject is not null}, bodyUtf8Bytes={TextExtractorUtf8.GetByteCount(intent.Body)}, hasReplyId={intent.InReplyToMessageId is not null}"
+            if (result is GalateaOutboundExtractionReconcileResult
+                    .SelectedHeadChanged) {
+                throw new GalateaTurnException(
+                    "Durable extraction head changed; retry admission.",
+                    "delegation-state-changed"
                 );
             }
+            if (result is GalateaOutboundExtractionReconcileResult.Captured) {
+                _ = host.DelegationHandle?.Signal();
+            }
+            return result;
         }
-        catch (OperationCanceledException) {
-            DebugUtil.Warning(
-                "Galatea.Mailbox",
-                "Outbound extraction cancelled after durable Action: "
-                + "user="
-                + GalateaMailboxText.SummarizeForLog(host.User.UserId)
-                + ", "
-                + $"turnId={liveTurn.TurnId}, actionHead={actionHead}"
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested) {
+            throw;
+        }
+        catch (GalateaTurnException) {
+            throw;
+        }
+        catch (GalateaOutboundExtractionReadException exception) {
+            throw exception.Kind switch {
+                GalateaOutboundExtractionReadFailureKind.LimitExceeded =>
+                    new GalateaTurnException(
+                        "Durable extraction exceeded its read bound.",
+                        "delegation-proof-limit-exceeded"
+                    ),
+                GalateaOutboundExtractionReadFailureKind.UnsupportedSchema =>
+                    new GalateaTurnException(
+                        "Durable extraction uses an unsupported schema.",
+                        "delegation-session-schema-unsupported"
+                    ),
+                GalateaOutboundExtractionReadFailureKind.Corruption =>
+                    new GalateaTurnException(
+                        "Durable extraction evidence is invalid.",
+                        "delegation-state-invalid"
+                    ),
+                _ => new GalateaTurnException(
+                    "Durable extraction is unavailable.",
+                    "delegation-extraction-unavailable"
+                )
+            };
+        }
+        catch (GalateaDelegationStoreConflictException exception) {
+            throw new GalateaTurnException(
+                "Durable delegation state changed; retry admission.",
+                "delegation-state-changed",
+                exception
             );
         }
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
-            string extractionDetail = exception is
-                    TextExtractionException extraction
-                ? ", extractionKind=" + extraction.Kind
-                    + ", extractionMessage="
-                    + GalateaMailboxText.SummarizeForLog(
-                        extraction.Message
-                    )
-                    + ", toolName="
-                    + GalateaMailboxText.SummarizeForLog(
-                        extraction.ToolName
-                    )
-                    + ", termination="
-                    + (extraction.Termination?.Kind.ToString() ?? "<none>")
-                : string.Empty;
-            DebugUtil.Warning(
-                "Galatea.Mailbox",
-                "Outbound extraction skipped after durable Action: "
-                + "user="
-                + GalateaMailboxText.SummarizeForLog(host.User.UserId)
-                + ", "
-                + $"turnId={liveTurn.TurnId}, actionHead={actionHead}, "
-                + $"error={GalateaMailboxText.SummarizeForLog(exception.GetType().Name)}"
-                + extractionDetail
+            string reason = exception is
+                    GalateaOutboundExtractionCaptureMismatchException
+                    or InvalidDataException
+                ? "delegation-state-invalid"
+                : "delegation-extraction-unavailable";
+            throw new GalateaTurnException(
+                reason == "delegation-state-invalid"
+                    ? "Durable extraction evidence is invalid."
+                    : "Durable outbound extraction is temporarily unavailable.",
+                reason,
+                exception
             );
         }
     }
@@ -1174,24 +1155,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
             host.Engine.InspectRuntimeRecoveryRequirements(
                 cancellationToken
             );
-        if (requirement is SessionRuntimeRecoveryRequirements
-                .FailedTurnMustBeAbandoned failed) {
-            SessionTurnRetractionResult abandoned =
-                host.Engine.AbandonFailedTurn(
-                    failed.FailedHead,
-                    cancellationToken
-                );
-            if (abandoned is not SessionTurnRetractionResult.Moved) {
-                throw new GalateaTurnException(
-                    "上一轮失败状态未能安全放弃，请刷新后重试。",
-                    "failed-turn-abandon-race"
-                );
-            }
-            requirement = host.Engine
-                .InspectRuntimeRecoveryRequirements(
-                    cancellationToken
-                );
-        }
         if (requirement is not SessionRuntimeRecoveryRequirements
                 .NoRuntimeRequired
             || requirement.Phase != SessionExecutionPhase.Idle
@@ -1240,6 +1203,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     }
 
     public async ValueTask DisposeAsync() {
+        BeginShutdown();
         List<Exception>? failures = null;
         int sessionIndex = 0;
         foreach (var entry in _sessions.Values) {
@@ -1258,8 +1222,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
             sessionIndex++;
         }
         try {
-            await _delegateSidecar.DisposeAsync().ConfigureAwait(false);
-            DisposeHooksForTest?.AfterDelegateSidecarDisposed?.Invoke();
+            await _delegationSupervisor.DisposeAsync()
+                .ConfigureAwait(false);
+            DisposeHooksForTest?.AfterDelegationSupervisorDisposed?.Invoke();
         }
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
@@ -1289,8 +1254,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal sealed record GalateaDisposeTestHooks(
         Action<int>? AfterSessionDisposed = null,
         Action? AfterRecapGridDisposed = null,
-        Action? AfterDelegateSidecarDisposed = null
+        Action? AfterDelegationSupervisorDisposed = null
     );
+
+    internal void BeginShutdown() =>
+        _delegationSupervisor.BeginShutdown();
 
     private async Task<GalateaCompletedOperation>
         RunRecapGridFreshSendAsync(
@@ -1318,14 +1286,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "recap-grid-desired-setup-unavailable");
         }
         string prompted = liveTurn.FreshInput switch {
+            GalateaFreshInput.PlayerAction
+                when liveTurn.DurableReplyLease is { } lease =>
+                lease.RenderObservation(),
             GalateaFreshInput.PlayerAction player =>
                 GalateaPlayerObservationEnvelope.Wrap(
                     new GalateaPlayerObservation(
-                        await _inputPreprocessor.ProcessAsync(
-                                liveTurn,
-                                cancellationToken
-                            )
-                            .ConfigureAwait(false),
+                        player.Text,
                         player.ReadyNotices
                     )
                 ),
@@ -1335,10 +1302,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "Fresh send requires a typed fresh input."
             )
         };
-        liveTurn.PendingReplyLease?.RecordDurableObservation(
-            capturedHead,
-            prompted
-        );
         await using GalateaRecapGridTurn turn =
             await recapGrid.OpenFreshAsync(
                 host.Engine,
@@ -1356,6 +1319,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
             online.CandidateSource,
             lifecycle,
             SessionUncertainCompletionRecoveryPolicy.Refuse));
+        _ = liveTurn.DurableReplyLease?.BindObservationBase(
+            host.Engine,
+            ready.GoverningSetup.Head,
+            prompted
+        );
         TurnResult result = await host.Engine.SendAsync(
             ready.GoverningSetup.Head,
             prompted,
@@ -1513,7 +1481,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ContextCandidateSource: candidates,
         ContextLifecycle: lifecycle);
 
-    private Task<UserSessionHost> CreateSessionAsync(
+    private async Task<UserSessionHost> CreateSessionAsync(
         GalateaUserConfig user,
         CancellationToken ct
     ) {
@@ -1526,6 +1494,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 == GalateaSessionProvisioning.CreateIfMissing;
 
         SessionJournalEngine? engine = null;
+        GalateaDelegationSessionHandle? delegationHandle = null;
+        UserSessionHost? host = null;
         try {
             if (!directoryExists && !fileExists && createIfMissing) {
                 RecapGridControlAdmission admission =
@@ -1577,24 +1547,42 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
             RecentTurnsResponseDto recent = BuildRecentTurnsResponse(engine)
                 .Response;
-            return Task.FromResult(
-                new UserSessionHost(
-                    user,
-                    engine,
-                    recent,
-                    new GalateaDelegationCoordinator(
-                        user.UserId,
-                        _delegateRoute,
-                        _delegateSidecar
-                    )
-                )
+            delegationHandle = _maintenanceMode
+                ? null
+                : _delegationSupervisor.AttachWritableSession(
+                    user.UserId,
+                    engine
+                );
+            host = new UserSessionHost(
+                user,
+                engine,
+                recent,
+                delegationHandle,
+                _outboundMailExtractor
             );
+            if (!_maintenanceMode) {
+                await host.TurnLock.WaitAsync(ct).ConfigureAwait(false);
+                try {
+                    await ReconcileDurableAdmissionAsync(host, ct)
+                        .ConfigureAwait(false);
+                }
+                finally {
+                    host.TurnLock.Release();
+                }
+            }
+            return host;
         }
         catch (Exception exception) when (
             exception is DirectoryNotFoundException
                 or FileNotFoundException
         ) {
-            engine?.Dispose();
+            if (host is not null) {
+                await host.DisposeAsync().ConfigureAwait(false);
+            }
+            else {
+                delegationHandle?.Dispose();
+                engine?.Dispose();
+            }
             throw new GalateaSessionUnavailableException(
                 "session-unprovisioned",
                 "Galatea SessionJournal repository is incomplete.",
@@ -1602,7 +1590,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
         }
         catch {
-            engine?.Dispose();
+            if (host is not null) {
+                await host.DisposeAsync().ConfigureAwait(false);
+            }
+            else {
+                delegationHandle?.Dispose();
+                engine?.Dispose();
+            }
             throw;
         }
     }
@@ -1645,11 +1639,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
     }
 
-    private static void RequireFailedTurnAbandoned(
-        SessionJournalEngine engine
+    private static void AbandonCurrentFailedTurnAndReconcile(
+        UserSessionHost host
     ) {
         SessionExecutionBoundaryInspection boundary =
-            engine.InspectExecutionBoundary();
+            host.Engine.InspectExecutionBoundary();
         if (boundary.Phase != SessionExecutionPhase.TurnFailed
             || boundary.Head is not { } failedHead) {
             throw new GalateaTurnException(
@@ -1657,89 +1651,113 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "failed-turn-recovery-required"
             );
         }
+        AbandonFailedTurnAndReconcile(
+            host,
+            failedHead,
+            CancellationToken.None
+        );
+    }
+
+    private static void AbandonFailedTurnAndReconcile(
+        UserSessionHost host,
+        EventAddress failedHead,
+        CancellationToken cancellationToken
+    ) {
+        _ = ReconcileDurableReplyLease(
+            host,
+            CancellationToken.None
+        );
         SessionTurnRetractionResult result =
-            engine.AbandonFailedTurn(failedHead);
+            host.Engine.AbandonFailedTurn(
+                failedHead,
+                cancellationToken
+            );
         if (result is not SessionTurnRetractionResult.Moved) {
             throw new GalateaTurnException(
                 "失败轮次未能在精确边界安全放弃，请刷新后处理。",
                 "failed-turn-recovery-required"
             );
         }
+        GalateaDurableReplyLeaseReconcileResult settled =
+            ReconcileDurableReplyLease(
+                host,
+                CancellationToken.None
+            );
+        if (settled is GalateaDurableReplyLeaseReconcileResult.Retained) {
+            throw new GalateaTurnException(
+                "Abandoned durable reply evidence was not rolled back.",
+                "delegation-reply-abandon-incomplete"
+            );
+        }
+        if (settled is GalateaDurableReplyLeaseReconcileResult.RolledBack) {
+            _ = host.DelegationHandle?.Signal();
+        }
     }
 
-    private static void SettlePendingReplyLeaseAfterExceptionalReturn(
+    private static GalateaDurableReplyLeaseReconcileResult
+        ReconcileDurableReplyLease(
+        UserSessionHost host,
+        CancellationToken cancellationToken
+    ) {
+        GalateaDurableReplyLeaseReconcileResult result = host
+            .ReplyLeaseReconciler.ReconcileActiveLease(
+                host.Engine,
+                cancellationToken
+            );
+        return result switch {
+            GalateaDurableReplyLeaseReconcileResult.None
+                or GalateaDurableReplyLeaseReconcileResult.RolledBack
+                or GalateaDurableReplyLeaseReconcileResult.Retained
+                or GalateaDurableReplyLeaseReconcileResult.Consumed => result,
+            GalateaDurableReplyLeaseReconcileResult.Quarantined =>
+                throw new GalateaTurnException(
+                    "Durable reply evidence is quarantined.",
+                    "delegation-reply-lease-quarantined"
+                ),
+            GalateaDurableReplyLeaseReconcileResult.Retryable =>
+                throw new GalateaTurnException(
+                    "Durable reply evidence changed; retry admission.",
+                    "delegation-state-changed"
+                ),
+            GalateaDurableReplyLeaseReconcileResult.LimitExceeded =>
+                throw new GalateaTurnException(
+                    "Durable reply evidence exceeded its read bound.",
+                    "delegation-proof-limit-exceeded"
+                ),
+            GalateaDurableReplyLeaseReconcileResult.UnsupportedSchema =>
+                throw new GalateaTurnException(
+                    "Durable reply evidence uses an unsupported schema.",
+                    "delegation-session-schema-unsupported"
+                ),
+            GalateaDurableReplyLeaseReconcileResult.Corruption =>
+                throw new GalateaTurnException(
+                    "Durable reply evidence is invalid.",
+                    "delegation-state-invalid"
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown durable reply reconciliation result."
+            )
+        };
+    }
+
+    private static void ReconcileDurableReplyLeaseBestEffort(
         UserSessionHost host,
         GalateaLiveTurn liveTurn
     ) {
-        if (liveTurn.PendingReplyLease is null) { return; }
-        SessionExecutionBoundaryInspection boundary;
         try {
-            boundary = host.Engine.InspectExecutionBoundary();
+            _ = ReconcileDurableReplyLease(
+                host,
+                CancellationToken.None
+            );
         }
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
             DebugUtil.Warning(
                 "Galatea.Delegation",
-                "Could not classify a pending reply lease after a turn "
-                    + $"failure; retaining it for recovery: turnId={liveTurn.TurnId}, error={exception.GetType().Name}"
+                "Durable reply settlement deferred to recovery: "
+                    + $"turnId={liveTurn.TurnId}, "
+                    + $"error={exception.GetType().Name}."
             );
-            return;
-        }
-
-        if (boundary.Phase == SessionExecutionPhase.Idle
-            && IsExactReceivingTurnDurable(
-                host.Engine,
-                liveTurn.PendingReplyLease,
-                boundary.Head)) {
-            host.CommitPendingReplyLease(liveTurn);
-            return;
-        }
-
-        if (boundary.Phase is SessionExecutionPhase.Idle
-                or SessionExecutionPhase.Empty) {
-            host.RollbackPendingReplyLease(liveTurn);
-        }
-        // AwaitingAgentAction, AwaitingCompletionDispatch,
-        // AwaitingCompletion, AwaitingToolExecution and TurnFailed retain the
-        // lease. A recovery attempt inherits it; an explicit failed-turn
-        // abandonment settles it through the typed catch above.
-    }
-
-    private static bool IsExactReceivingTurnDurable(
-        SessionJournalEngine engine,
-        GalateaPendingReplyLease pending,
-        EventAddress? boundaryHead
-    ) {
-        if (boundaryHead is not { } head
-            || !pending.TryGetDurableObservation(
-                out EventAddress freshBaseHead,
-                out string durableObservation)
-            || head == freshBaseHead) {
-            return false;
-        }
-        try {
-            SessionCompletedTurnsReadResult read =
-                engine.ReadRecentCompletedTurnsAt(head, 1);
-            return read is SessionCompletedTurnsReadResult.Snapshot {
-                    Value.Turns.Count: 1
-                } snapshot
-                && snapshot.Value.Turns[0].ObservationAddress
-                    != freshBaseHead
-                && snapshot.Value.Turns[0].TerminalAction.Address == head
-                && string.Equals(
-                    snapshot.Value.Turns[0].ObservationContent,
-                    durableObservation,
-                    StringComparison.Ordinal
-                );
-        }
-        catch (Exception exception) when (
-            GalateaExceptionClassifier.IsNonFatal(exception)) {
-            DebugUtil.Warning(
-                "Galatea.Delegation",
-                "Exact completed-turn classification failed; retaining "
-                    + $"the reply lease: error={exception.GetType().Name}"
-            );
-            return false;
         }
     }
 
@@ -1924,23 +1942,34 @@ public sealed class UserSessionHost : IAsyncDisposable {
     private readonly object _turnStateGate = new();
     private GalateaLiveTurn? _currentTurn;
     private GalateaLiveTurn? _lastTurn;
-    private GalateaPendingReplyLease? _pendingReplyLease;
     private RecentTurnsResponseDto _recentTurns;
 
     internal UserSessionHost(
         GalateaUserConfig user,
         SessionJournalEngine engine,
         RecentTurnsResponseDto recentTurns,
-        GalateaDelegationCoordinator delegationCoordinator
+        GalateaDelegationSessionHandle? delegationHandle,
+        IOutboundMailExtractor outboundMailExtractor
     ) {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(recentTurns);
-        ArgumentNullException.ThrowIfNull(delegationCoordinator);
+        ArgumentNullException.ThrowIfNull(outboundMailExtractor);
         User = user;
         Engine = engine;
         _recentTurns = recentTurns;
-        DelegationCoordinator = delegationCoordinator;
+        DelegationHandle = delegationHandle;
+        if (delegationHandle is not null) {
+            ReplyLeaseReconciler =
+                new GalateaDurableReplyLeaseReconciler(
+                    delegationHandle.Store
+                );
+            OutboundExtractionReconciler =
+                new GalateaOutboundExtractionReconciler(
+                    delegationHandle.Store,
+                    outboundMailExtractor
+                );
+        }
     }
 
     public GalateaUserConfig User { get; }
@@ -1949,26 +1978,27 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
 
-    internal GalateaDelegationCoordinator DelegationCoordinator { get; }
+    internal GalateaDelegationSessionHandle? DelegationHandle { get; }
+
+    internal GalateaDurableReplyLeaseReconciler ReplyLeaseReconciler {
+        get;
+    } = null!;
+
+    internal GalateaOutboundExtractionReconciler
+        OutboundExtractionReconciler { get; } = null!;
 
     internal GalateaLiveTurn StartTurn(
         GalateaFreshInput freshInput,
         GalateaTurnOptions options,
-        GalateaPendingReplyLease? pendingReplyLease = null
+        GalateaDurableReplyLease? durableReplyLease = null
     ) {
         ArgumentNullException.ThrowIfNull(freshInput);
         var liveTurn = new GalateaLiveTurn(
             freshInput,
             options,
-            pendingReplyLease
+            durableReplyLease
         );
         lock (_turnStateGate) {
-            if (_pendingReplyLease is not null) {
-                throw new InvalidOperationException(
-                    "A session already owns an unresolved ready-reply lease."
-                );
-            }
-            _pendingReplyLease = pendingReplyLease;
             _lastTurn = null;
             _currentTurn = liveTurn;
             _recentTurns = MarkStale(_recentTurns);
@@ -1983,8 +2013,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(options);
         var liveTurn = new GalateaLiveTurn(
             freshInput: null,
-            options,
-            PendingReplyLeaseForRecovery()
+            options
         );
         lock (_turnStateGate) {
             _lastTurn = null;
@@ -1992,48 +2021,6 @@ public sealed class UserSessionHost : IAsyncDisposable {
             _recentTurns = MarkStale(_recentTurns);
         }
         return liveTurn;
-    }
-
-    private GalateaPendingReplyLease? PendingReplyLeaseForRecovery() {
-        lock (_turnStateGate) {
-            return _pendingReplyLease;
-        }
-    }
-
-    internal void CommitPendingReplyLease(GalateaLiveTurn turn) =>
-        SettlePendingReplyLease(turn, commit: true);
-
-    internal void RollbackPendingReplyLease(GalateaLiveTurn turn) =>
-        SettlePendingReplyLease(turn, commit: false);
-
-    internal void RollbackPendingReplyLeaseAfterFailedTurnAbandoned() {
-        GalateaPendingReplyLease? pending;
-        lock (_turnStateGate) {
-            pending = _pendingReplyLease;
-            _pendingReplyLease = null;
-        }
-        pending?.Rollback();
-    }
-
-    private void SettlePendingReplyLease(
-        GalateaLiveTurn turn,
-        bool commit
-    ) {
-        ArgumentNullException.ThrowIfNull(turn);
-        GalateaPendingReplyLease? pending = turn.PendingReplyLease;
-        if (pending is null) { return; }
-        lock (_turnStateGate) {
-            if (!ReferenceEquals(_pendingReplyLease, pending)) {
-                return;
-            }
-            _pendingReplyLease = null;
-        }
-        if (commit) {
-            pending.Commit();
-        }
-        else {
-            pending.Rollback();
-        }
     }
 
     internal RecentTurnsResponseDto GetRecentTurns() {
@@ -2110,15 +2097,8 @@ public sealed class UserSessionHost : IAsyncDisposable {
     public async ValueTask DisposeAsync() {
         await TurnLock.WaitAsync().ConfigureAwait(false);
         try {
-            GalateaPendingReplyLease? pending;
-            lock (_turnStateGate) {
-                pending = _pendingReplyLease;
-                _pendingReplyLease = null;
-            }
-            pending?.Rollback();
             try {
-                await DelegationCoordinator.DisposeAsync()
-                    .ConfigureAwait(false);
+                DelegationHandle?.Dispose();
             }
             finally {
                 Engine.Dispose();
