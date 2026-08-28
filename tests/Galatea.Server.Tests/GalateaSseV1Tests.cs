@@ -440,6 +440,21 @@ public sealed class GalateaSseV1Tests {
             html,
             StringComparison.Ordinal
         );
+        Assert.Contains(
+            "<input id=\"mail-loop-enabled\" type=\"checkbox\">",
+            html,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "页面打开时，收到 Codex 回信后自动继续",
+            html,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "id=\"mail-loop-enabled\" type=\"checkbox\" checked",
+            html,
+            StringComparison.Ordinal
+        );
     }
 
     [Fact]

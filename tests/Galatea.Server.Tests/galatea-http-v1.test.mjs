@@ -273,6 +273,15 @@ assert.equal(initialState, runningCurrent);
 assert.equal(currentReads, 2);
 assert.equal(recentReads, 1);
 
+assert.equal(production.shouldClearDraftForTurnOrigin("manual"), true);
+for (const origin of ["mail-loop", "observed", "recovery"]) {
+  assert.equal(production.shouldClearDraftForTurnOrigin(origin), false);
+}
+assert.throws(
+  () => production.shouldClearDraftForTurnOrigin("unknown"),
+  /turn origin is unknown/,
+);
+
 const popFunction = source.slice(
   source.indexOf("async function popLatestTurn"),
   source.indexOf("async function attachToTurn"),
@@ -289,7 +298,7 @@ assert.match(
 
 const initializeFunction = source.slice(
   source.indexOf("async function initializeApp"),
-  source.indexOf("initializeApp().catch"),
+  source.indexOf("\n  initializeApp()\n", source.indexOf("async function initializeApp") + 1),
 );
 assert.match(initializeFunction, /await loadInitialSessionState\(/);
 assert.ok(
@@ -298,8 +307,50 @@ assert.ok(
 );
 assert.match(
   initializeFunction,
-  /currentTurn\?\.status === "running"[\s\S]*await attachToTurn\(/,
+  /currentTurn\?\.status === "running"[\s\S]*await attachToTurn\([\s\S]*"observed"/,
 );
+
+const mailLoopPulseFunction = source.slice(
+  source.indexOf("async function runMailLoopPulse"),
+  source.indexOf('mailLoopEnabled?.addEventListener("change"'),
+);
+assert.match(mailLoopPulseFunction, /\/api\/v1\/mailbox\/ready-turn/);
+assert.match(mailLoopPulseFunction, /method: "POST"/);
+assert.match(
+  mailLoopPulseFunction,
+  /body: JSON\.stringify\(\{\s+connectionId: state\.selectedConnectionId,\s+\}\)/,
+);
+assert.doesNotMatch(mailLoopPulseFunction, /input\.value/);
+assert.match(mailLoopPulseFunction, /response\.status === 204/);
+assert.match(mailLoopPulseFunction, /emptyBody !== ""/);
+assert.match(mailLoopPulseFunction, /response\.status === 202/);
+assert.match(
+  mailLoopPulseFunction,
+  /accepted\.turnId,[\s\S]*"mail-loop"/,
+);
+assert.match(
+  mailLoopPulseFunction,
+  /error\.turnId, error\.error, "observed"/,
+);
+
+const mailLoopScheduler = source.slice(
+  source.indexOf("function scheduleMailLoopPulse"),
+  source.indexOf("async function loadObservedCurrentTurn"),
+);
+assert.match(mailLoopScheduler, /state\.mailLoopTimerId !== null/);
+assert.match(mailLoopScheduler, /state\.mailLoopInFlight/);
+assert.match(mailLoopScheduler, /window\.setTimeout/);
+assert.doesNotMatch(source, /setInterval\(/);
+
+const streamEventHandler = source.slice(
+  source.indexOf("function handleEvent"),
+  source.indexOf("async function popLatestTurn"),
+);
+assert.match(
+  streamEventHandler,
+  /shouldClearDraftForTurnOrigin\(state\.activeTurnOrigin\)/,
+);
+assert.match(streamEventHandler, /input\.value = ""/);
 
 const freshSubmitFunction = source.slice(
   source.indexOf('form.addEventListener("submit"'),
@@ -321,6 +372,10 @@ assert.ok(freshRejectedReturn > freshOkConfirmed);
 assert.ok(freshMarkedStale > freshOkConfirmed);
 assert.ok(freshMarkedStale > freshRejectedReturn);
 assert.ok(freshAcceptedBody > freshMarkedStale);
+assert.match(
+  freshSubmitFunction,
+  /payload\.turnId, "正在(?:重新)?生成…", "manual"/,
+);
 
 const resumeOkConfirmed = initializeFunction.indexOf("if (response.ok)");
 const resumeMarkedStale = initializeFunction.indexOf(

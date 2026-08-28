@@ -384,6 +384,14 @@ input normalizer，textarea等browser草稿不进入Observation。busy、failed 
 409；尤其不会自动abandon failed turn、resume/restart recovery或claim对应Ready notice。多tab竞争由
 `TurnLock`与SQLite lease共同串行化；server endpoint自身不形成后台无限循环，browser opt-in仍是调度开关。
 
+First-party browser在composer中提供默认关闭且不持久化的“页面打开时，收到 Codex 回信后自动继续”开关。
+勾选后使用single timer递归执行1秒heartbeat；前一次HTTP admission或其accepted SSE turn未结束时不会重叠
+发起下一次。204只续约下一次heartbeat；202沿用现有turn stream；busy只跟随已发布turn。recovery、
+unprovisioned、非预期协议以及无法由current/recent只读视图确认的response-loss都会fail closed并取消勾选，
+不会自动重发mutation或授权resume。自动turn从不读取、提交或清空textarea；只有本tab手动提交且亲自收到
+202的turn在`done`时清空草稿。Checkbox由每个tab各自拥有，关闭/休眠页面会暂停调度，browser timer throttling
+也意味着1秒只是best-effort间隔；唯一消费仍由server `TurnLock`与durable lease保证。
+
 主线terminal Action durable并回到`Idle`后，host先用SessionJournal exact raw evidence结算当前reply lease，
 再在recent refresh与SSE `done`之前使用
 `GalateaVisibleActionTextRenderer`提取可见文本：按顺序连接Text blocks，排除reasoning/tool block，

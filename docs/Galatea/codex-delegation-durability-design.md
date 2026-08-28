@@ -50,6 +50,8 @@ evidence；调度器每次从盘上状态决定下一个有界步骤，不把一
   narrative persistence拥有。
 - 不新增 browser UI 通知、operator UI 或人工解除 quarantine 流程。开发时可观测性
   继续使用 bounded `DebugUtil.Info/Warning/Error`。
+  这条只界定本durable state-machine阶段的交付范围；该阶段完成后，first-party browser已用独立增量增加
+  默认关闭的conditional ready-turn heartbeat，未改变本设计的durable authority或recovery边界。
 - 不让 delegation state 随 SessionJournal fork/rewind/rollback 分叉，不尝试“撤销”
   已发生的 Codex side effect。
 - 不引入 effect-event journal、event-sourced projection 或一份与 current-state tables

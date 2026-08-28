@@ -3155,6 +3155,10 @@ internal static class GalateaHtml {
           <div class="recap-planning-note">HistoryLoad 不是模型 token 数，也不是完整 context window 占用</div>
         </section>
         <textarea id="message-input" rows="3" placeholder="说点什么……" required{{maintenanceDisabled}}></textarea>
+        <label class="composer-option">
+          <input id="mail-loop-enabled" type="checkbox"{{maintenanceDisabled}}>
+          <span>页面打开时，收到 Codex 回信后自动继续</span>
+        </label>
         <div class="composer-actions">
           <div class="composer-status">
             <span id="composer-mode-hint" class="eyebrow hidden"></span>

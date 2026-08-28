@@ -148,6 +148,10 @@ public sealed class GalateaMaintenanceModeTests {
         Assert.Contains("HistoryLoad 不是模型 token 数", page);
         Assert.Contains("required disabled", page);
         Assert.Contains("id=\"send-button\" type=\"submit\" disabled", page);
+        Assert.Contains(
+            "id=\"mail-loop-enabled\" type=\"checkbox\" disabled",
+            page
+        );
 
         GalateaHostService hostService = host.Factory.Services
             .GetRequiredService<GalateaHostService>();

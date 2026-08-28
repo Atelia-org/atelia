@@ -21,6 +21,9 @@ crash matrix 与非目标见
   start attempt，OutcomeUnknown只做read-only reconciliation，不宣称app-server/provider exactly-once。
 - Normalizer在HTTP 202前完成；reply lease以SessionJournal exact raw evidence one-shot结算；capture后的普通
   Undo不撤回outbox或重新武装Consumed notice。Maintenance与shutdown边界已接入production composition。
+- 后续独立browser增量已增加默认关闭的1秒mail-loop heartbeat：它只调用server conditional
+  `POST /api/v1/mailbox/ready-turn`，不读取inbox正文或textarea，自动turn也不清空玩家草稿；response-loss只做
+  current/recent只读对账，recovery与非预期协议fail closed。
 - C#/Node V1 owner、process-local coordinator/ledger/ReplyInbox及fallback path均已删除；current binary没有回旧
   owner或operator abandon durable candidate的产品路径。
 
@@ -43,5 +46,4 @@ SQLite `quick_check=ok`与cold reopen；该smoke未启动sidecar或调用LLM。
 - Ignored唯一开发实例已指向durable entry，live baseline/cold-reopen smoke与real V2 transport canary均已通过。
   Future full-host provider vertical仍可覆盖accepted后C# host restart、双信FIFO与durable reply lease；不能把
   现有两项窄验收或旧V1 canary扩张成这些证据。
-- Browser回信到达通知/轮询UI。
 - C#直接stdio驱动`codex app-server`、multi-thread/rollover及真实email/IM transport。

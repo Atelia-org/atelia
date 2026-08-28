@@ -764,6 +764,19 @@ export function decideGalateaStreamContinuation(value) {
   return "refresh-stop";
 }
 
+export function shouldClearDraftForTurnOrigin(origin) {
+  switch (origin) {
+    case "manual":
+      return true;
+    case "mail-loop":
+    case "observed":
+    case "recovery":
+      return false;
+    default:
+      throw new Error("turn origin is unknown");
+  }
+}
+
 async function readJsonResponse(response, validator) {
   const contentType = response.headers.get("content-type") ?? "";
   if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType)) {
@@ -795,7 +808,11 @@ function startGalateaApp() {
     streaming: false,
     stopRequested: false,
     activeTurnId: null,
+    activeTurnOrigin: null,
     streamGeneration: 0,
+    mailLoopInFlight: false,
+    mailLoopTimerId: null,
+    mailLoopInitialized: false,
     selectedConnectionId: null,
     contextHeader: { observation: "", action: "" },
     recapGridReadiness: null,
@@ -825,6 +842,7 @@ function startGalateaApp() {
   const sendButton = document.getElementById("send-button");
   const undoLastButton = document.getElementById("undo-last-button");
   const stopButton = document.getElementById("stop-button");
+  const mailLoopEnabled = document.getElementById("mail-loop-enabled");
   const connectionPicker = document.getElementById("connection-picker");
   const composerModeHint = document.getElementById("composer-mode-hint");
   const statusText = document.getElementById("status-text");
@@ -888,19 +906,33 @@ function startGalateaApp() {
     `;
   }
 
-  function setStreaming(streaming, status) {
-    state.streaming = streaming;
-    sendButton.disabled = maintenanceMode || streaming;
-    input.disabled = maintenanceMode || streaming;
+  function refreshInteractionControls() {
+    const admissionBusy = state.streaming || state.mailLoopInFlight;
+    sendButton.disabled = maintenanceMode || admissionBusy;
+    input.disabled = maintenanceMode || state.streaming;
     if (stopButton) {
-      stopButton.disabled = maintenanceMode || !streaming;
+      stopButton.disabled = maintenanceMode || !state.streaming;
+    }
+    if (mailLoopEnabled) {
+      mailLoopEnabled.disabled = maintenanceMode;
     }
     if (connectionPicker) {
       connectionPicker.querySelectorAll('input[name="connection"]').forEach((radio) => {
-        radio.disabled = maintenanceMode || streaming;
+        radio.disabled = maintenanceMode || admissionBusy;
       });
     }
+  }
+
+  function setStreaming(streaming, status) {
+    state.streaming = streaming;
+    refreshInteractionControls();
     statusText.textContent = status || "";
+    refreshComposerMode();
+  }
+
+  function setMailLoopInFlight(inFlight) {
+    state.mailLoopInFlight = inFlight;
+    refreshInteractionControls();
     refreshComposerMode();
   }
 
@@ -916,7 +948,10 @@ function startGalateaApp() {
     }
 
     if (undoLastButton) {
-      undoLastButton.disabled = maintenanceMode || state.streaming || !hasUndoableTurn();
+      undoLastButton.disabled = maintenanceMode
+        || state.streaming
+        || state.mailLoopInFlight
+        || !hasUndoableTurn();
     }
   }
 
@@ -961,6 +996,7 @@ function startGalateaApp() {
 
   function clearActiveTurn() {
     state.activeTurnId = null;
+    state.activeTurnOrigin = null;
     state.stopRequested = false;
     state.streamGeneration += 1;
   }
@@ -997,7 +1033,7 @@ function startGalateaApp() {
     connectionPicker.innerHTML = legend + options;
 
     connectionPicker.querySelectorAll('input[name="connection"]').forEach((radio) => {
-      radio.disabled = maintenanceMode || state.streaming;
+      radio.disabled = maintenanceMode || state.streaming || state.mailLoopInFlight;
       radio.addEventListener("change", () => {
         if (radio.checked) {
           selectConnection(radio.value, { persist: true });
@@ -1357,7 +1393,9 @@ function startGalateaApp() {
         }
         resetLive();
         setStreaming(true, "正在收尾…");
-        input.value = "";
+        if (shouldClearDraftForTurnOrigin(state.activeTurnOrigin)) {
+          input.value = "";
+        }
         return;
       case "error":
         resetLive();
@@ -1436,7 +1474,7 @@ function startGalateaApp() {
         markRecapCadenceProgressStale("active-turn");
         if (error.turnId) {
           refreshComposerMode();
-          await attachToTurn(error.turnId, error.error);
+          await attachToTurn(error.turnId, error.error, "observed");
           return null;
         }
       }
@@ -1505,14 +1543,16 @@ function startGalateaApp() {
     }
   }
 
-  async function attachToTurn(turnId, status) {
+  async function attachToTurn(turnId, status, origin) {
     const normalizedTurnId = turnId ?? "";
     if (!normalizedTurnId) {
       return;
     }
+    shouldClearDraftForTurnOrigin(origin);
 
     markRecapCadenceProgressStale("active-turn");
     state.activeTurnId = normalizedTurnId;
+    state.activeTurnOrigin = origin;
     const generation = ++state.streamGeneration;
     let reconciliationFailures = 0;
 
@@ -1656,9 +1696,184 @@ function startGalateaApp() {
     }
   }
 
+  function clearMailLoopTimer() {
+    if (state.mailLoopTimerId !== null) {
+      window.clearTimeout(state.mailLoopTimerId);
+      state.mailLoopTimerId = null;
+    }
+  }
+
+  function disableMailLoop(message) {
+    clearMailLoopTimer();
+    if (mailLoopEnabled) {
+      mailLoopEnabled.checked = false;
+    }
+    if (message) {
+      statusText.textContent = message;
+    }
+  }
+
+  function scheduleMailLoopPulse(delayMs = 1000) {
+    if (
+      maintenanceMode
+      || !mailLoopEnabled?.checked
+      || state.mailLoopTimerId !== null
+      || state.mailLoopInFlight
+    ) {
+      return;
+    }
+
+    state.mailLoopTimerId = window.setTimeout(() => {
+      state.mailLoopTimerId = null;
+      void runMailLoopPulse();
+    }, delayMs);
+  }
+
+  async function loadObservedCurrentTurn(status) {
+    let currentTurn = await loadCurrentTurn();
+    currentTurn = await waitForPublishedCurrentTurn(currentTurn);
+    if (currentTurn?.status === "running" && currentTurn.turnId) {
+      await attachToTurn(currentTurn.turnId, status, "observed");
+      return true;
+    }
+    if (currentTurn?.status === "recovery-required") {
+      disableMailLoop(currentTurn.restartRequired
+        ? "自动收信已关闭：上次模型调用结果不确定，需要明确授权后才能恢复。"
+        : "自动收信已关闭：当前会话存在待恢复轮次。");
+      return true;
+    }
+    if (currentTurn?.status === "unprovisioned") {
+      disableMailLoop("自动收信已关闭：会话仓库尚未完成初始化。");
+      return true;
+    }
+    return false;
+  }
+
+  async function reconcileAmbiguousMailLoopAdmission(cause) {
+    try {
+      if (await loadObservedCurrentTurn("自动收信响应不完整，正在跟随当前轮次…")) {
+        return;
+      }
+      await loadRecentTurns().catch(() => {});
+      disableMailLoop(
+        "自动收信请求结果不确定；已停止且未自动重发。请确认会话状态后重新勾选。",
+      );
+    } catch {
+      disableMailLoop(
+        cause?.message
+          ? `自动收信请求结果不确定；未自动重发。${cause.message}`
+          : "自动收信请求结果不确定；未自动重发。请刷新页面确认。",
+      );
+    }
+  }
+
+  async function runMailLoopPulse() {
+    if (
+      maintenanceMode
+      || !mailLoopEnabled?.checked
+      || !state.mailLoopInitialized
+      || state.streaming
+      || state.mailLoopInFlight
+    ) {
+      scheduleMailLoopPulse();
+      return;
+    }
+
+    setMailLoopInFlight(true);
+    try {
+      let response;
+      try {
+        response = await fetch("/api/v1/mailbox/ready-turn", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            connectionId: state.selectedConnectionId,
+          }),
+        });
+      } catch (error) {
+        await reconcileAmbiguousMailLoopAdmission(error);
+        return;
+      }
+
+      if (response.status === 204) {
+        let emptyBody;
+        try {
+          emptyBody = await response.text();
+        } catch {
+          disableMailLoop("自动收信响应协议无效，已关闭自动收信。");
+          return;
+        }
+        if (emptyBody !== "") {
+          disableMailLoop("自动收信的 204 响应必须为空，已关闭自动收信。");
+        }
+        return;
+      }
+
+      if (response.status === 202) {
+        let accepted;
+        try {
+          accepted = await readJsonResponse(response, requireAcceptedTurn);
+        } catch (error) {
+          await reconcileAmbiguousMailLoopAdmission(error);
+          return;
+        }
+        markRecapCadenceProgressStale("turn-accepted");
+        await attachToTurn(
+          accepted.turnId,
+          "收到 Codex 回信，正在继续…",
+          "mail-loop",
+        );
+        return;
+      }
+
+      let error;
+      try {
+        error = await readJsonResponse(response, (value) =>
+          value?.code === "turn-busy"
+            ? requireBusyError(value)
+            : requireApiError(value));
+      } catch {
+        disableMailLoop("自动收信响应协议无效，已关闭自动收信。");
+        return;
+      }
+
+      if (response.status === 409 && error.code === "turn-busy") {
+        markRecapCadenceProgressStale("active-turn");
+        if (error.turnId) {
+          await attachToTurn(error.turnId, error.error, "observed");
+          return;
+        }
+        await loadObservedCurrentTurn(error.error);
+        return;
+      }
+
+      disableMailLoop(`自动收信已关闭：${error.error}`);
+    } catch (error) {
+      disableMailLoop(
+        error?.message
+          ? `自动收信已关闭：${error.message}`
+          : "自动收信发生未知错误，已关闭。",
+      );
+    } finally {
+      setMailLoopInFlight(false);
+      scheduleMailLoopPulse();
+    }
+  }
+
+  mailLoopEnabled?.addEventListener("change", () => {
+    if (mailLoopEnabled.checked) {
+      scheduleMailLoopPulse();
+    } else {
+      clearMailLoopTimer();
+    }
+  });
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (maintenanceMode || state.streaming) {
+    if (maintenanceMode || state.streaming || state.mailLoopInFlight) {
       return;
     }
 
@@ -1689,7 +1904,7 @@ function startGalateaApp() {
       if (error.code === "turn-busy") {
         markRecapCadenceProgressStale("active-turn");
         if (error.turnId) {
-          await attachToTurn(error.turnId, error.error);
+          await attachToTurn(error.turnId, error.error, "observed");
           return;
         }
       }
@@ -1701,15 +1916,20 @@ function startGalateaApp() {
     markRecapCadenceProgressStale("turn-accepted");
     const payload = await readJsonResponse(response, requireAcceptedTurn);
     if (replacingPoppedTurn) {
-      await attachToTurn(payload.turnId, "正在重新生成…");
+      await attachToTurn(payload.turnId, "正在重新生成…", "manual");
       return;
     }
 
-    await attachToTurn(payload.turnId, "正在生成…");
+    await attachToTurn(payload.turnId, "正在生成…", "manual");
   });
 
   undoLastButton?.addEventListener("click", async () => {
-    if (maintenanceMode || state.streaming || !hasUndoableTurn()) {
+    if (
+      maintenanceMode
+      || state.streaming
+      || state.mailLoopInFlight
+      || !hasUndoableTurn()
+    ) {
       return;
     }
 
@@ -1762,7 +1982,7 @@ function startGalateaApp() {
       if (currentTurn.connectionId) {
         selectConnection(currentTurn.connectionId, { updateRadio: true });
       }
-      await attachToTurn(currentTurn.turnId, "正在恢复生成…");
+      await attachToTurn(currentTurn.turnId, "正在恢复生成…", "observed");
       return;
     }
     if (currentTurn?.status === "recovery-required") {
@@ -1792,7 +2012,7 @@ function startGalateaApp() {
       if (response.ok) {
         markRecapCadenceProgressStale("turn-accepted");
         const payload = await readJsonResponse(response, requireAcceptedTurn);
-        await attachToTurn(payload.turnId, "正在恢复生成…");
+        await attachToTurn(payload.turnId, "正在恢复生成…", "recovery");
         return;
       }
       const error = await readJsonResponse(response, (value) =>
@@ -1800,7 +2020,7 @@ function startGalateaApp() {
       if (error.code === "turn-busy") {
         markRecapCadenceProgressStale("active-turn");
         if (error.turnId) {
-          await attachToTurn(error.turnId, error.error);
+          await attachToTurn(error.turnId, error.error, "observed");
           return;
         }
       }
@@ -1815,11 +2035,17 @@ function startGalateaApp() {
     setStreaming(false, "");
   }
 
-  initializeApp().catch((error) => {
-    clearActiveTurn();
-    resetLive();
-    setStreaming(false, error.message || "加载失败");
-  });
+  initializeApp()
+    .then(() => {
+      state.mailLoopInitialized = true;
+      scheduleMailLoopPulse();
+    })
+    .catch((error) => {
+      disableMailLoop();
+      clearActiveTurn();
+      resetLive();
+      setStreaming(false, error.message || "加载失败");
+    });
 }
 
 if (typeof window !== "undefined" && typeof document !== "undefined") {
