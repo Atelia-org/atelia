@@ -1,10 +1,34 @@
 # Galatea per-user 角色名模板化设计
 
-状态：**Accepted design baseline；已获准实施，current product contract 仍以代码与版本化合同为准**
+状态：**Implemented；current product contract 以代码、版本化合同与本文“实施结果”为准**
 日期：2026-08-28
 范围：`prototypes/Galatea` 主会话 system prompt、mail/extractor generated prompts、
 `prototypes/Galatea.RecapGrid` code-owned rolling recap asset，以及它们与 per-user
 `config.json` 的一致性。
+
+## 0. 实施结果与设计收口
+
+本设计已实施。下文保留实施前的问题分析和决策理由；若与本节或current
+contracts冲突，以本节和current contracts为准。最终产品形状是：
+
+- root config hard-cut到V4，每个user必须显式配置`characterName`；file DTO与runtime DTO分离，
+  `systemPromptTemplate` / `systemPromptTemplateFile`在host load时渲染为finalized `SystemPrompt`。
+- 新建窄小的`Galatea.Prompts` assembly，只提供`GalateaCharacterName`与单变量、
+  non-recursive、bounded的`${characterName}` renderer；不引入通用模板引擎。
+- RecapGrid hard-cut到`galatea-rolling-rewrite-zh-cn-v6`；`scaffold`与`provision-asset`必须提供
+  `--character-name`。`Galatea`参数保持V5 canonical bundle四个digest exact不变。
+- 每个user在composition阶段获得immutable outbound extractor，共享底层lazy Completion client；
+  extractor V2 `ContractId`指纹包含渲染后语义合同，但不包含provider/model/connection路由。
+- inbound mail保持原XML schema，消息自身冻结validated `To`。Player observation保持原prefix和
+  delegation store schema V1；新writer使用角色中立heading，reader exact支持新旧两种闭集dialect。
+- fresh/current路径只比较active recipe的typed `BuildTargetDigest`与当前user的V6 expectation；
+  mismatch fail closed为`character-asset-mismatch`并隐藏Context header。Frozen recovery完全使用已冻结身份。
+- 首版只支持“不同user从各自session起点使用不同名字”，不支持existing-session hot rename；
+  不增加alias/transition coordinator、`asset describe`、receipt identity新版、mail/player envelope V2或SQLite schema列。
+
+这些删减来自实施期间的独立复杂度审计：它们不是当前“每个user可以从起点配置角色名”
+所必需的边界。若未来真正需要已有session改名，再以独立设计处理historical marker aliases与derived
+state migration，不在本轮预留半套兼容机制。
 
 ## 1. 结论
 
@@ -41,7 +65,7 @@ replay determinism。
 建议实施时 hard-cut root config 到 V4：missing `characterName` 直接拒绝，绝不回退到
 `"Galatea"`。角色改名应被视为一次显式语义迁移，而不是热更新显示字段。
 
-## 2. 已验证的现状与边界
+## 2. 实施前已验证的现状与边界（历史快照）
 
 ### 2.1 主会话 prompt 链
 
@@ -226,8 +250,9 @@ prompt fragment。建议 exact 规则为：
 - strict UTF-16/Rune sequence，NFC；输入若不是 NFC 就拒绝，不静默 normalize；
 - UTF-8 长度 1..128 bytes，且前后没有 whitespace；
 - 不做 ASCII-only 或自然语言内容白名单；中文、重音字符、符号/emoji 都可以是 operator 选择的名字；
-- 拒绝 control/format/line/paragraph separator，以及会破坏 voice/template grammar 的
-  `[`、`]`、`$`、`{`、`}`；
+- 拒绝 control/line/paragraph separator；format rune只允许emoji grapheme需要的U+200D ZWJ，
+  且名字必须至少包含一个non-format rune；
+- 拒绝会破坏 voice/template grammar 的`[`、`]`、`$`、`{`、`}`；
 - exact 拒绝保留字 `旁白`、`状态摘要`、`角色名`，避免与现有 output marker 冲突；
 - 不要求不同 user 的角色名 unique，因为每个 user/session 是隔离 authority。
 
@@ -285,14 +310,13 @@ session 不应被迫重建 Cells。只有角色名实际不同，Definitions/Rec
 `recap-grid scaffold` 与 `recap-grid control provision-asset` 应对 V6 都要求 exact
 `--character-name`。不能 scaffold 一个名字、provision 时再隐式使用 `Galatea`。
 
-当前 provision receipt identity 只包含 `controlInstanceId + assetId`。参数化后必须加入 bundle 的
-`CanonicalCommandDigest`，并把 operation/runtime identity 升版；否则同一 V6 asset 用不同名字再次
-provision 会命中同一个 operation key 并形成 conflict。复用 Control-owned command digest 比另造一套
-parameter codec 更直接，也不会把任意 Unicode 名字拼进 operation ID。
+实施后保持现有 provision operation/runtime identity与receipt合同，不把角色名或
+`CanonicalCommandDigest`加入第二套identity。同一Control instance中用不同名字再次provision会复用现有V6
+operation key并fail closed为`operation-conflict`；这与“首版不支持existing-session rename”的边界一致。
 
-还应补一个 provider-free `asset describe`（或等价的 scaffold describe-only 形状），输出该参数下的
-ordered Definition digests、targets 与 canonical command digest。这样多 user 共用一份 host-level
-route/profile 时，不必为每个 user 重复创建相同 scaffold 文件，只为取得各自 Definition digests。
+没有新增`asset describe`。现有provider-free `scaffold`输出已报告ordered Definition digests、targets与
+canonical command digest；Control inspect/export则提供已激活状态的authority。为一个非必需便捷入口增加
+第二套catalog surface与维护路径，不值得。
 
 运行手册从 root config exact 读取名字并显式传给 CLI，例如：
 
@@ -309,8 +333,10 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 ```
 
 CLI 与 config 仍是两个 operator 入口，因此仅靠 runbook 无法消灭 copy drift。Galatea fresh/current
-admission 应在 `ReconcileDesiredSetup`、任何 SessionJournal write 及 maintainer/provider effect **之前**，用该
-user 的 `characterName` 重新计算 expected V6 ordered Definition digests，并只读核对 active recipe：
+admission 使用该user的`characterName`重新计算expected V6 ordered Definition digests，并只读核对active
+recipe。它在mandatory reply/extraction settlement之后、normalization/cutoff之前先做preflight；背景pre-setup与
+`OpenFreshAsync`再次检查，在current Recap/main provider effect或SessionJournal setup write前fail closed。
+failed-turn cleanup完成后，`PrepareFreshTurnAdmissionAsync`于真正cutoff前复检：
 
 - no-active/raw-only 状态继续合法；
 - active V6 必须 exact 是 expected world + autobiography Definitions；
@@ -357,43 +383,37 @@ tool 的 JSON property names/schema 保持稳定，Descriptions 改为角色中�
 `GalateaDelegationSupervisor` 构造前完成。Supervisor 构造成功后 existing durable outbox 已可能立即 pulse，
 其后不能再留下会失败的 composition preflight。
 
-V2 extractor `ContractId` 必须包含 code-owned contract version 和 rendered semantic fingerprint，例如对
-canonical character name、exact system/user prompt、tool/schema contract version 与 visible-action renderer
+V2 extractor `ContractId` 必须包含 code-owned contract version 和 rendered semantic fingerprint，具体对
+exact system/user prompt、tool/schema contract version 与 visible-action renderer
 version 做 canonical SHA-256。角色名已经进入 rendered prompt，因此不同角色自然得到不同 ContractId；
 connection/model 仍是执行路由，不必冒充 semantic contract。`IOutboundMailExtractor.ContractId` 应成为
 required instance member，不再默认指向 production v1 constant。
 
-已有 Action capture 是 settled durable fact，不因 current `characterName` 改变而重新提取。反过来，角色
-rename 前必须证明所有已完成 terminal Actions 都已经 capture，且不存在正在结算的 extraction gap；否则
-crash 后尚未 capture 的旧 Action 会被 current extractor 解释。V4 migration runbook 应把这一项和
-Prepared/OutcomeUnknown 检查列为同级 No-Go gate。Existing capture 的 first committed batch 继续为 authority；
-即使它记录的是 historical ContractId，也只核对 frozen visible Action identity并 zero-call 返回，不按 current
-name重算。
+已有 Action capture 是 settled durable fact，不因 current `characterName` 改变而重新提取。Existing capture 的
+first committed batch继续为authority；即使它记录historical ContractId，也只核对frozen visible Action
+identity并zero-call返回，不按current name重算。首版直接不支持existing-session rename，因此不为
+想象中的rename gap引入额外coordinator或No-Go scanner；未来若真正开放改名，再把这一durable
+boundary纳入独立迁移设计。
 
 ### 7.2 Inbound mail 与 reply notice envelope
 
 Inbound 收件人与 reply notice 的生命周期不同，应分别处理：
 
-- `MailboxMessage.To` 从当前计算属性改为消息自身冻结的 validated character name。Authenticated inbound
-  endpoint从 `session.User.CharacterName` 传入，HTTP caller仍不能自报 `to`；new v2 envelope 写 exact
-  `v="2"` 与 `to="<characterName>"`。
-- Inbound `TryUnwrap` 不读取 current config：v1 继续 exact round-trip既有 `to="Galatea"`，v2 从 envelope
-  读取、校验并冻结 `To` 后再 exact round-trip。这样历史 raw mail不会在改配置后变成 opaque，也不需要改写。
+- `MailboxMessage.To`改为消息自身冻结的validated character name。Authenticated inbound endpoint从
+  `session.User.CharacterName`传入，HTTP caller仍不能自报`to`。保持原XML envelope shape，不增加无必要的
+  `v="2"`。
+- Inbound `TryUnwrap`不读取current config；它从已存XML读取并校验`to`，然后使用同一writer
+  exact round-trip。这同时接受historical `to="Galatea"`和其他validated character name，无需版本分支。
 - Codex reply 与 delivery-failure 的新 headings 改为不依赖姓名的“来自外界代行者 Codex 的回信”与
   “发往外界代行者 Codex 的信未能送达”。Main system prompt 已经定义当前角色是谁，无需在每个 runtime
   envelope 复制名字。
-- Ready composite V2 必须使用新的 exact prefix/version marker（例如固定
-  `schema=atelia.galatea.player-observation.v2`），不能只靠“标题文字刚好不同”猜版本。V1 branch锁定当前
-  prefix + Galatea headings，V2 branch锁定新 prefix + neutral headings + 既有 info-string grammar。
-- 新 writer 只写 v2。Recent display/audit reader 必须继续 exact 识别已经持久化的 v1 Galatea envelopes
-  和新 v2；这是 immutable raw history 的 versioned reader，不是 current write compatibility fallback。
-  两个 reader branch 都要 closed/exact：v1 只接受无版本 + `to="Galatea"` 的旧 shape，v2 只接受
-  `v="2"` + validated frozen character name，不能放宽成“任意 to/heading 都可信”。
-- reply lease 当前会重新计算 canonical rendered Observation；renderer contract/version必须在 lease
-  membership冻结进入 `CutoffFrozen` 时就 durable确定，并贯穿 `ObservationBound` / `ObservationCommitted`
-  reopen validation。也可在停服迁移时证明没有 active/leased notice后 hard-cut store schema；不能让新
-  静态 heading把旧 lease误报为 corruption，或让尚未 bind Observation 的旧 cutoff被新 renderer重写。
-- Frozen Prepared request 已保存 exact Observation；恢复时不重新 wrap 成 v2。
+- Player observation保持原prefix、info-string grammar和delegation store schema V1。新writer写中立headings；
+  reader只接受“当前中立headings”或“historical Galatea headings”这两种完整closed dialect，拒绝混用。
+  不为同一字节grammar增加虚构的envelope V2/prefix。
+- `ObservationBound` / `ObservationCommitted`的lease已持久化exact rendered bytes、UTF-8 length与SHA-256；
+  cold reopen解析stored dialect并核对字段，不用current writer重算historical bytes。`CutoffFrozen`尚未
+  冻结rendered Observation，因此沿用已有rollback/retry语义，无需renderer-version列或schema migration。
+- Frozen Prepared request 已保存 exact Observation；恢复时不重新 wrap 成current dialect。
 
 这样 mailbox transport 的 machine contract 与角色显示名解耦，只有真正需要识别 Action voice marker 的
 extractor 才按 per-user 名称参数化。
@@ -447,7 +467,7 @@ digest 或 SQLite。迁移分两类：
 
 V6 以 `characterName:"Galatea"` 渲染后必须与 V5 canonical bundle exact 相同。Operator 停服并检查
 process/file lock、raw execution boundary、outbound capture/reply lease、Control/Timeline/Store health，
-备份 V3 config 与 ignored source prompt 后，执行 provider-free V6 describe：
+备份 V3 config 与 ignored source prompt 后，在provider-free bundle构造与Control inspect/export中核对：
 
 - Family、两个 Definitions、registration command 与 active Recipe target digests全部 exact 命中；
 - Recap source prompt token渲染回 V5 当前文字；root V4 main prompt则预期因 exact `[Galatea]` marker
@@ -455,13 +475,12 @@ process/file lock、raw execution boundary、outbound capture/reply lease、Cont
 - route/admission/profile不变，zero provider call、zero derived write。
 
 满足这些 gate 后只需迁 V4 config/source files并启动新 binary；不创建 Recap candidate、不重建 Cells、
-不 promote。第一次 fresh turn允许 exact 一次 main `SystemPromptSetup` durable write；这不等于 Recap asset
-重建，也不能被误报成 zero-write root migration。
-可以补一条 V6 parameterized provision receipt作 operator audit，但它不能成为“语义已经迁移”的替代证据。
+不 promote，也不为已是exact target的Control制造新provision receipt。第一次 fresh turn允许 exact 一次
+main `SystemPromptSetup` durable write；这不等于 Recap asset重建，也不能被误报成zero-write root migration。
 
 ### 9.2 新 session 从一开始使用其他名字
 
-用目标名字 scaffold/describe/provision V6，再按现有正式流程创建 Full recipe、bounded build、zero-call proof
+用目标名字 scaffold/provision V6，再按现有正式流程创建 Full recipe、bounded build、zero-call proof
 与 activation。因为它是新的 per-user repository，不存在旧 `[Galatea]` history 或 V5 content 继承问题。
 
 existing session 的真正 rename 不在首版承诺内；若未来批准 transitional alias 方案，再以独立 candidate
@@ -473,10 +492,14 @@ derived SQLite。Rollback 使用备份的 V3 config + prior binary/commit + reta
 中留下默认 Galatea 的兼容分支。若 raw history 已经写入新 marker，简单回滚旧 prompt/recipe会漏读角色
 证据，只能 forward-fix或使用明确的 transitional asset。
 
-本设计不授权当前研究轮次修改 ignored live config、prompt 或 live RecapGrid repository；真实迁移应是
-独立的 operator 工作包。
+本轮已在停服、Idle边界下迁移ignored development instance：`cyber`与`gpt`均显式配置
+`characterName:"Galatea"`，三份machine-local prompt改为`${characterName}` template并删除固定中文别名。
+备份保留在`.atelia/galatea/migrations/2026-08-28-character-name-v4/`。迁移后的loopback、authenticated、
+read-only canary已验证两个user能加载，cyber active recipe仍exact命中原target，gpt仍为raw-only；
+未发送turn、未调用provider、未改写raw SessionJournal或Recap derived state。首次可写session attach只为gpt
+创建了空delegation baseline，无capture/mail/notice/lease。
 
-## 10. 推荐实施工作包与验证矩阵
+## 10. 已完成的实施工作包与验证矩阵
 
 ### WP-A：共享角色名/模板合同 + root config V4
 
@@ -489,7 +512,7 @@ derived SQLite。Rollback 使用备份的 V3 config + prior binary/commit + reta
 
 ### WP-B：主会话 source templates 与 durable setup
 
-- 把 active machine-local prompt 迁为 `${characterName}`（真实 ignored instance 另行授权/执行）；
+- 把 active machine-local prompt 迁为 `${characterName}`，并保留带SHA-256核对的V3备份；
 - 把 tracked `trpg-host.md` 改成明确的 template example，并处理旧 English prompt 的 current/archive 状态；
 - 测 brand-new bootstrap 保存 rendered prompt、existing Idle 只在最终文本变化时追加 setup；
 - 测 Prepared/frozen recovery 仍使用旧 exact setup，不受 current template/config 重渲染。
@@ -497,31 +520,33 @@ derived SQLite。Rollback 使用备份的 V3 config + prior binary/commit + reta
 ### WP-C：RecapGrid V6 asset + parameterized CLI
 
 - member resource、topic、heading 参数化；Family、block keys保持角色无关/稳定；
-- asset catalog/CLI 强制 `--character-name`，receipt 加 canonical command digest；
-- 增加 describe-only operator surface；
+- asset catalog/CLI 强制 `--character-name`，保持原receipt/runtime identity；不增加describe-only surface；
 - golden tests 锁定 `Galatea` 对 V5 byte-identical、异名 shared Family/split Definitions、resource
   exactness、无未展开 token、无角色意义上的 literal `Galatea`。
 
 ### WP-D：Mailbox/extractor identity 收口
 
 - per-user extractor factory/rendered prompt/semantic ContractId；共享 underlying Completion client；
-- outbound capture 测同 user deterministic、不同名字分离、已有 capture 不重做、rename 前 gap No-Go；
-- inbound v2 冻结 exact `To`；reply observation v2 使用角色中立 headings；二者保留 exact v1 historical reader；
-- 覆盖 reply lease renderer version在 `CutoffFrozen`、`ObservationBound`、`ObservationCommitted` 三阶段的
-  cold reopen、frozen exact Observation、recent display 与 Undo/reconciliation。
+- outbound capture 测同user deterministic、不同名字分离、已有capture不重做；rename留在首版边界外；
+- inbound保持原XML shape并冻结exact `To`；reply observation在同prefix下使用角色中立headings；
+  reader exact支持current/legacy两种dialect并拒绝混用；
+- 覆盖`CutoffFrozen`回滚语义、bound/committed exact stored Observation的cold reopen、recent display与
+  Undo/reconciliation；不增加renderer version或store schema列。
 
 ### WP-E：Galatea fresh/current compatibility gate
 
 - typed 比较 current user 期望的 ordered V6 Definition digests 与 active recipe；
-- 覆盖 raw-only、V5-as-Galatea exact match、wrong-name、mixed definitions、busy/stale/unsupported 与稳定错误分类；
+- 覆盖 raw-only、V5-as-Galatea exact match、wrong-name、mixed definitions、raw-head stale、unsupported outcome
+  与mismatch稳定错误分类；不为不稳定的file-busy情景增加脆弱fixture；
 - 独立覆盖 `FrozenCompletionRequired` 全程 bypass、`NewRequestRequired` current gate，以及
   `ToolContinuationRequired` 的“冻结 tool 前半段 + current Recap 后半段 gate”。
 
 ### WP-F：operator migration
 
-- 先用隔离 fixture/clone 演练 candidate build + atomic promotion + rollback；
-- 再经用户明确授权迁移 ignored development instance；
-- 记录 exact commit、raw head、old/new recipe、call cap、zero-call proof、final health 与进程/lock cleanup。
+- 停服并核对Idle raw heads、active recipe、delegation gap/lease、进程与file holders；
+- 备份V3 config/source prompt，迁移ignored development instance为V4/Galatea exact rendering；
+- 用authenticated read-only loopback canary验证加载、readiness、active/raw-only状态与zero provider call；
+- 迁移不触发candidate build、promotion或derived SQLite修改，因为Galatea V6 target与原V5 exact相同。
 
 ## 11. 不采用的方案
 
@@ -538,9 +563,9 @@ derived SQLite。Rollback 使用备份的 V3 config + prior binary/commit + reta
 - **引入通用模板引擎**：当前只有一个可信 operator variable，表达式、include、条件、escape 模式只会增加
   prompt supply-chain 与 determinism 风险。
 
-## 12. 实施前最终闸门
+## 12. 实施后不可回退的合同闸门
 
-进入代码实施前，应把以下主张视为同一个闭环，不能只完成其中一半：
+后续修改应把以下主张视为同一个闭环，不能只保留其中一半：
 
 - V4 config 的 `characterName` 是唯一 current authority；
 - 主 system prompt 和 V6 Definitions 都由同一 validator/renderer 物化；
@@ -552,5 +577,5 @@ derived SQLite。Rollback 使用备份的 V3 config + prior binary/commit + reta
 - frozen recovery 与旧 immutable derived artifacts不被 current config 重写；
 - README、root current contract、operator runbook、prompt resources 与 tests 同步更新。
 
-如果实现阶段发现 active recipe 的 typed inspection 无法在不扩张 RecapGrid public surface 的前提下完成，
-应先补一个最小 read-only descriptor/view，而不是退回解析 prompt/heading 文本或取消 mismatch gate。
+实施已通过正式Control reader/snapshot完成typed target inspection，没有解析prompt/heading文本，
+也没有为此扩张RecapGrid public surface。后续不得把mismatch gate降级为文本推断或错误消息解析。
