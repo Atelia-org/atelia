@@ -79,10 +79,10 @@ internal abstract record GalateaOutboundExtractionReconcileResult {
 }
 
 /// <summary>
-/// Dormant, single-gap reconciler for one durable outbound extraction store.
-/// The caller must hold the corresponding per-session TurnLock for the whole
-/// call. This type deliberately reads only the latest completed turn at one
-/// exact selected head and never scans complete history.
+/// Single-gap reconciler for one durable outbound extraction store. The caller
+/// must hold the corresponding per-session TurnLock for the whole call. This
+/// type deliberately reads only the latest completed turn at one exact
+/// selected head and never scans complete history.
 /// </summary>
 internal sealed class GalateaOutboundExtractionReconciler {
     private static readonly UTF8Encoding StrictUtf8 = new(

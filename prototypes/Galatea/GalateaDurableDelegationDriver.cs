@@ -30,9 +30,8 @@ internal sealed record GalateaDurableDelegationPulseResult(
 );
 
 /// <summary>
-/// Dormant per-user durable delegation driver. One pulse performs at most one
-/// external call. Scheduling, SessionJournal admission, and reply injection
-/// belong to later composition work.
+/// Per-user durable delegation driver. One pulse performs at most one external
+/// call; the host-wide supervisor owns scheduling.
 /// </summary>
 internal sealed class GalateaDurableDelegationDriver {
     private const string LogCategory = "Galatea.Delegation";

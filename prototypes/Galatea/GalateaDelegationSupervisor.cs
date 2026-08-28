@@ -92,10 +92,8 @@ internal sealed class GalateaDelegationSessionHandle : IDisposable {
 }
 
 /// <summary>
-/// Dormant host-wide owner for durable delegation stores, the single V2
-/// transport, and bounded pulse scheduling. Production Galatea composition
-/// intentionally does not construct this type until the later hard cut. A
-/// future production caller must finish every other fallible composition
+/// Host-wide owner for durable delegation stores, the single V2 transport,
+/// and bounded pulse scheduling. Composition must finish every other fallible
 /// preflight before construction: writable existing slots are scheduled as
 /// soon as this constructor succeeds.
 /// </summary>

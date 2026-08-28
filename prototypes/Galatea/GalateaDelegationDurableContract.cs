@@ -8,8 +8,8 @@ using Atelia.SessionJournal;
 namespace Atelia.Galatea.Server;
 
 /// <summary>
-/// Code-owned durable identities and bounds shared by the current-state store
-/// and the legacy in-memory coordinator during the hard-cut transition.
+/// Code-owned durable identities and bounds for the delegation current-state
+/// store and V2 transport.
 /// </summary>
 internal static class GalateaDelegationDurableContract {
     internal const int MaximumCandidateCount = 4_096;

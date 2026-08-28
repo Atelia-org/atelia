@@ -255,8 +255,8 @@ internal sealed class GalateaDurableReplyLease {
 }
 
 /// <summary>
-/// Dormant durable cutoff/reconciliation layer. SessionJournal raw evidence
-/// decides settlement; method returns and exception text never do.
+/// Durable cutoff/reconciliation layer. SessionJournal raw evidence decides
+/// settlement; method returns and exception text never do.
 /// </summary>
 internal sealed class GalateaDurableReplyLeaseReconciler {
     private const string LeaseIdPrefix = "galatea-reply-lease-";

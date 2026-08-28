@@ -5,8 +5,7 @@ using Microsoft.Data.Sqlite;
 namespace Atelia.Galatea.Server;
 
 /// <summary>
-/// Dormant, explicitly constructed durable delegation authority. Production
-/// composition intentionally has no reference to this type until hard cut.
+/// Explicitly constructed durable delegation current-state authority.
 /// </summary>
 internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
     internal const int SchemaVersion = 1;
