@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Galatea.Server;
 using Xunit;
@@ -7,51 +6,38 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaInputPreprocessorTests {
     [Fact]
-    public async Task ProcessAsync_SkipReturnsOriginalWithoutSsePhase() {
+    public async Task ProcessAsync_SkipReturnsOriginalWithoutNormalization() {
         var normalizer = new StubNormalizer {
             ShouldNormalizeHandler = static _ => false
         };
-        GalateaLiveTurn turn = Turn("original");
         var preprocessor = new GalateaInputPreprocessor(normalizer);
 
         string result = await preprocessor.ProcessAsync(
-            turn,
+            "original",
             CancellationToken.None
         );
 
         Assert.Equal("original", result);
         Assert.Equal(1, normalizer.ShouldNormalizeCallCount);
         Assert.Equal(0, normalizer.NormalizeCallCount);
-        Assert.Null(turn.Phase);
-        Assert.Empty(Replay(turn));
     }
 
     [Fact]
-    public async Task ProcessAsync_SuccessPublishesStartAndFinish() {
+    public async Task ProcessAsync_SuccessReturnsEffectiveText() {
         var normalizer = new StubNormalizer {
             NormalizeHandler = static (_, _) =>
                 ValueTask.FromResult("normalized")
         };
-        GalateaLiveTurn turn = Turn("original");
         var preprocessor = new GalateaInputPreprocessor(normalizer);
 
         string result = await preprocessor.ProcessAsync(
-            turn,
+            "original",
             CancellationToken.None
         );
 
         Assert.Equal("normalized", result);
-        Assert.Equal("input-normalization-finished", turn.Phase);
-        AssertSseStatuses(
-            Replay(turn),
-            "normalizing-input",
-            "input-normalization-finished"
-        );
-        Assert.Contains(
-            "\"changed\":true",
-            FrameText(Replay(turn)[1]),
-            StringComparison.Ordinal
-        );
+        Assert.Equal(1, normalizer.ShouldNormalizeCallCount);
+        Assert.Equal(1, normalizer.NormalizeCallCount);
     }
 
     [Fact]
@@ -60,68 +46,34 @@ public sealed class GalateaInputPreprocessorTests {
             NormalizeHandler = static (_, _) =>
                 ValueTask.FromResult("   ")
         };
-        GalateaLiveTurn turn = Turn("original");
         var preprocessor = new GalateaInputPreprocessor(normalizer);
 
         string result = await preprocessor.ProcessAsync(
-            turn,
+            "original",
             CancellationToken.None
         );
 
         Assert.Equal("original", result);
-        IReadOnlyList<GalateaSseFrame> events = Replay(turn);
-        AssertSseStatuses(
-            events,
-            "normalizing-input",
-            "input-normalization-finished"
-        );
-        string payload = FrameText(events[1]);
-        Assert.Contains(
-            "\"changed\":false",
-            payload,
-            StringComparison.Ordinal
-        );
-        Assert.DoesNotContain(
-            "fallback",
-            payload,
-            StringComparison.Ordinal
-        );
+        Assert.Equal(1, normalizer.NormalizeCallCount);
     }
 
     [Fact]
-    public async Task ProcessAsync_NormalizeExceptionFallsBackWithoutWireDetail() {
+    public async Task ProcessAsync_NormalizeExceptionFallsBackToOriginal() {
         var normalizer = new StubNormalizer {
             NormalizeHandler = static (_, _) =>
                 ValueTask.FromException<string>(
                     new InvalidOperationException("normalizer failed")
                 )
         };
-        GalateaLiveTurn turn = Turn("original");
         var preprocessor = new GalateaInputPreprocessor(normalizer);
 
         string result = await preprocessor.ProcessAsync(
-            turn,
+            "original",
             CancellationToken.None
         );
 
         Assert.Equal("original", result);
-        IReadOnlyList<GalateaSseFrame> events = Replay(turn);
-        AssertSseStatuses(
-            events,
-            "normalizing-input",
-            "input-normalization-finished"
-        );
-        string payload = FrameText(events[1]);
-        Assert.Contains(
-            "\"changed\":false",
-            payload,
-            StringComparison.Ordinal
-        );
-        Assert.DoesNotContain(
-            "fallback",
-            payload,
-            StringComparison.Ordinal
-        );
+        Assert.Equal(1, normalizer.NormalizeCallCount);
     }
 
     [Fact]
@@ -134,39 +86,34 @@ public sealed class GalateaInputPreprocessorTests {
                 )
             )
         };
-        GalateaLiveTurn turn = Turn("original");
         var preprocessor = new GalateaInputPreprocessor(normalizer);
 
         GalateaTurnException exception = await Assert.ThrowsAsync<
             GalateaTurnException
         >(() => preprocessor.ProcessAsync(
-            turn,
+            "original",
             CancellationToken.None
         ).AsTask());
 
         Assert.Equal("input-limit-exceeded", exception.FailureReason);
-        AssertSseStatuses(Replay(turn), "normalizing-input");
     }
 
     [Fact]
-    public async Task ProcessAsync_ShouldNormalizeExceptionFallsBackWithoutSse() {
+    public async Task ProcessAsync_ShouldNormalizeExceptionFallsBackWithoutNormalization() {
         var normalizer = new StubNormalizer {
             ShouldNormalizeHandler = static _ => throw new(
                 "policy failed"
             )
         };
-        GalateaLiveTurn turn = Turn("original");
         var preprocessor = new GalateaInputPreprocessor(normalizer);
 
         string result = await preprocessor.ProcessAsync(
-            turn,
+            "original",
             CancellationToken.None
         );
 
         Assert.Equal("original", result);
         Assert.Equal(0, normalizer.NormalizeCallCount);
-        Assert.Null(turn.Phase);
-        Assert.Empty(Replay(turn));
     }
 
     [Fact]
@@ -175,18 +122,16 @@ public sealed class GalateaInputPreprocessorTests {
         var normalizer = new StubNormalizer {
             ShouldNormalizeHandler = _ => throw failure
         };
-        GalateaLiveTurn turn = Turn("original");
         var preprocessor = new GalateaInputPreprocessor(normalizer);
 
         OutOfMemoryException observed = await Assert.ThrowsAsync<
             OutOfMemoryException>(() => preprocessor.ProcessAsync(
-                turn,
+                "original",
                 CancellationToken.None
             ).AsTask());
 
         Assert.Same(failure, observed);
         Assert.Equal(0, normalizer.NormalizeCallCount);
-        Assert.Empty(Replay(turn));
     }
 
     [Fact]
@@ -214,7 +159,7 @@ public sealed class GalateaInputPreprocessorTests {
     }
 
     [Fact]
-    public async Task ProcessAsync_CallerCancellationPropagatesAndKeepsStartPhase() {
+    public async Task ProcessAsync_CallerCancellationPropagates() {
         var entered = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
@@ -228,12 +173,11 @@ public sealed class GalateaInputPreprocessorTests {
                 return "unreachable";
             }
         };
-        GalateaLiveTurn turn = Turn("original");
         var preprocessor = new GalateaInputPreprocessor(normalizer);
         using var cancellation = new CancellationTokenSource();
 
         Task<string> processing = preprocessor
-            .ProcessAsync(turn, cancellation.Token)
+            .ProcessAsync("original", cancellation.Token)
             .AsTask();
         await entered.Task;
         cancellation.Cancel();
@@ -241,51 +185,6 @@ public sealed class GalateaInputPreprocessorTests {
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => processing
         );
-        Assert.Equal("normalizing-input", turn.Phase);
-        AssertSseStatuses(
-            Replay(turn),
-            "normalizing-input"
-        );
-    }
-
-    private static GalateaLiveTurn Turn(string message) => new(
-        message,
-        new GalateaTurnOptions("test")
-    );
-
-    private static IReadOnlyList<GalateaSseFrame> Replay(
-        GalateaLiveTurn turn
-    ) {
-        using GalateaTurnSubscription subscription = turn.Subscribe();
-        return subscription.ReplayFrames;
-    }
-
-    private static void AssertSseStatuses(
-        IReadOnlyList<GalateaSseFrame> events,
-        params string[] expected
-    ) {
-        Assert.Equal(expected.Length, events.Count);
-        Assert.All(
-            events,
-            static item => Assert.Equal("status", item.EventName)
-        );
-        Assert.Equal(
-            expected,
-            events.Select(static item =>
-                FramePayload(item).GetProperty("code").GetString()
-            ).ToArray()
-        );
-    }
-
-    private static string FrameText(GalateaSseFrame frame) =>
-        System.Text.Encoding.UTF8.GetString(frame.Utf8.Span);
-
-    private static JsonElement FramePayload(GalateaSseFrame frame) {
-        string dataLine = FrameText(frame).Split('\n')[1];
-        using JsonDocument document = JsonDocument.Parse(
-            dataLine["data: ".Length..]
-        );
-        return document.RootElement.Clone();
     }
 
     private sealed class StubNormalizer

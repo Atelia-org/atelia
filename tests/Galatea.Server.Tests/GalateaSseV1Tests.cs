@@ -13,13 +13,6 @@ public sealed class GalateaSseV1Tests {
             "event: status\ndata: {\"code\":\"generating\"}\n\n"
         );
         AssertFrame(
-            GalateaSseFrames.Status(
-                GalateaSseStatusCode.InputNormalizationFinished,
-                changed: true
-            ),
-            "event: status\ndata: {\"code\":\"input-normalization-finished\",\"changed\":true}\n\n"
-        );
-        AssertFrame(
             GalateaSseFrames.ReasoningDelta("reason"),
             "event: reasoning-delta\ndata: {\"delta\":\"reason\"}\n\n"
         );
@@ -42,11 +35,6 @@ public sealed class GalateaSseV1Tests {
             GalateaSseFrames.Status(
                 GalateaSseStatusCode.Generating,
                 changed: false
-            )
-        );
-        Assert.Throws<ArgumentNullException>(() =>
-            GalateaSseFrames.Status(
-                GalateaSseStatusCode.InputNormalizationFinished
             )
         );
         Assert.Throws<ArgumentException>(() =>

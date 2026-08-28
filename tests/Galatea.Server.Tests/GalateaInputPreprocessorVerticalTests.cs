@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
-using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -206,12 +205,29 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             session,
             started.TurnId
         );
+
+        // HTTP 202 is emitted only after admission normalization has frozen
+        // the exact effective text into the live turn.
+        Assert.Equal("normalized input", liveTurn.UserMessage);
+        Assert.Equal("original input", normalizer.ReceivedMessage);
+        Assert.Equal(1, normalizer.NormalizeCallCount);
+
         await RequireRunTask(liveTurn).WaitAsync(CompletionDeadline);
 
         Assert.Equal("completed", liveTurn.Status);
         Assert.Equal("original input", normalizer.ReceivedMessage);
+        // RunFresh consumes the frozen live-turn text and must not invoke the
+        // admission normalizer a second time.
         Assert.Equal(1, normalizer.NormalizeCallCount);
         Assert.Equal(1, completion.DispatchCallCount);
+        using (GalateaTurnSubscription replay = liveTurn.Subscribe()) {
+            Assert.DoesNotContain(
+                replay.ReplayFrames,
+                static frame => Encoding.UTF8
+                    .GetString(frame.Utf8.Span)
+                    .Contains("normalization", StringComparison.Ordinal)
+            );
+        }
 
         string wrapped = GalateaHostService.WrapUserMessageForEngine(
             "normalized input"
@@ -241,7 +257,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
     }
 
     [Fact]
-    public async Task StopDuringNormalization_CancelsBeforeDispatchAndPersistsNothing() {
+    public async Task AdmissionCancellationDuringNormalization_CreatesNoTurnOrDurableObservation() {
         var completion = new ScriptedCompletionClient("must not dispatch");
         var normalizer = new BlockingNormalizer();
         await using var host = GalateaTestHost.Create(
@@ -259,31 +275,28 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         );
         var initialHead = session.Engine.ReadCurrentHead();
 
-        StartTurnResponseDto started = await StartTurnAsync(
-            client,
-            "blocked input"
+        using var cancellation = new CancellationTokenSource();
+        Task<HttpResponseMessage> admission = client.PostAsJsonAsync(
+            "/api/v1/chat/turns",
+            new ChatStreamRequest(
+                "blocked input",
+                ConnectionId: "test"
+            ),
+            cancellation.Token
         );
-        GalateaLiveTurn liveTurn = RequireTurn(
-            hostService,
-            session,
-            started.TurnId
-        );
-        Task runTask = RequireRunTask(liveTurn);
         await normalizer.Entered.Task.WaitAsync(CompletionDeadline);
-
-        using HttpResponseMessage stop = await client.PostAsync(
-                $"/api/v1/chat/turns/{started.TurnId}/stop",
-                content: null
-            )
-            .WaitAsync(CompletionDeadline);
-        Assert.Equal(HttpStatusCode.NoContent, stop.StatusCode);
+        Assert.Null(session.GetCurrentTurn());
+        cancellation.Cancel();
 
         await normalizer.CancellationObserved.Task
             .WaitAsync(CompletionDeadline);
-        await runTask.WaitAsync(CompletionDeadline);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => admission.WaitAsync(CompletionDeadline)
+        );
 
         Assert.True(normalizer.CapturedToken.IsCancellationRequested);
         Assert.Equal(0, completion.DispatchCallCount);
+        Assert.Null(session.GetCurrentTurn());
         Assert.Equal(initialHead, session.Engine.ReadCurrentHead());
         Assert.Empty(
             session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns
@@ -293,27 +306,6 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         Assert.Empty(recent.Turns);
         CurrentTurnDto current = await GetCurrentTurnAsync(client);
         Assert.Equal("idle", current.Status);
-
-        Assert.Equal("failed", liveTurn.Status);
-        using GalateaTurnSubscription subscription = liveTurn.Subscribe();
-        GalateaSseFrame error = Assert.Single(
-            subscription.ReplayFrames,
-            static item => item.EventName == "error"
-        );
-        using JsonDocument payload = JsonDocument.Parse(
-            Encoding.UTF8.GetString(error.Utf8.Span)
-                .Split('\n')[1]["data: ".Length..]
-        );
-        Assert.Equal(
-            "operator-stop",
-            payload.RootElement
-                .GetProperty("code")
-                .GetString()
-        );
-        Assert.False(payload.RootElement.TryGetProperty(
-            "failureReason",
-            out _
-        ));
     }
 
     private static async Task LoginAsync(HttpClient client) {
