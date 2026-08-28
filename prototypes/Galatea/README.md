@@ -52,20 +52,28 @@ case-sensitive `${characterName}`与`${playerName}`；source至少出现一次ch
 代词、别名或persona生成。Inline `characterContextTemplate`保持exact空白；有效
 `characterContextTemplateFile`以config directory为base、覆盖inline，并在strict UTF-8 decode后先
 `Trim()`。Context必须nonblank且至少包含一次exact `${characterName}`；它不承载GM、voice、output或mail
-协议，也不是security boundary，runtime不会解析其中的Markdown H2来决定权限或行为。
+协议，也不是security boundary，runtime不会解析其中的Markdown H2来决定权限或行为。Character-context fields
+不能移除、替换或重排validated binding所选择的code-owned protocol bytes；但context与protocol处在同一
+trusted system message中，operator prose仍可在语义上与协议冲突，这一ownership边界不承诺prompt-level安全隔离。
 
 最终system prompt由code-owned
 [`TRPG protocol prefix`](../../docs/Galatea/prompt/trpg-protocol-prefix-zh-cn.md)、operator character context与
-[`mailbox protocol suffix`](../../docs/Galatea/prompt/trpg-mailbox-protocol-suffix-zh-cn.md)按exact
-`prefix + "\n\n---\n\n" + context + "\n\n---\n\n" + suffix`一次拼接，再用同一个closed renderer展开名字。
+universal code-owned
+[`mailbox protocol base`](../../docs/Galatea/prompt/trpg-mailbox-protocol-base-zh-cn.md)按exact
+`prefix + "\n\n---\n\n" + context + "\n\n---\n\n" + mailboxBase`拼接；仅当validated
+`galatea.outbound-mail-extractor` binding非`null`时，再以`"\n\n"`追加code-owned
+[`Codex outbound appendix`](../../docs/Galatea/prompt/trpg-outbound-mail-protocol-appendix-zh-cn.md)。完成组合后才用
+同一个closed renderer展开名字。
 每个external/resource source有1 MiB读取上限，拼接后的composite source与final rendered prompt也分别受
 1 MiB上限；runtime只保留两个validated names与finalized
-`SystemPrompt`，不会在每个turn重读template file。三份tracked source的ownership见
+`SystemPrompt`，不会在每个turn重读template file。四份tracked resource的ownership见
 [`prompt/README.md`](../../docs/Galatea/prompt/README.md)。
 
 Bootstrap在`characterContextTemplateFile`指向config directory内的missing path时，只以create-new写入
 [`standard character context`](../../docs/Galatea/prompt/character-context-standard-zh-cn.md)，然后fail-stop要求
-operator检查后重启。Code-owned prefix/suffix不会复制到operator目录。Existing file永不覆盖；config root外的
+operator检查后重启。该starter明确说明较早History由RecapGrid派生为带来源的world-understanding与
+first-person-autobiography context、冲突时newer raw History优先；下方自主记忆是独立人工长期记录，未来可由
+动态外部记忆接管。Code-owned protocol resources不会复制到operator目录。Existing file永不覆盖；config root外的
 missing target也不自动创建。
 
 相对`sessionDir`与`delegationStateDir`都以`config.json`所在目录为base，loader向runtime只交付canonical absolute
@@ -120,7 +128,9 @@ unknown ID 或多余 binding
 都会在 startup fail closed，绝不 fallback 到 `defaultConnectionId`。Normalizer 的
 model/provider/surface/endpoint/secret locator 全部来自该 connection，client 只在首次真正
 需要清洗时惰性创建；OutboundMailExtractor 同样使用hidden、lazy、borrowed client，且不进入
-Agent/UI selectable allowlist。
+Agent/UI selectable allowlist。Bootstrap connections template把该binding写为`null`，因此starter prompt只承诺
+通用收件匣，不承诺主动发送；停服修改binding并重启后，`null`与non-`null`之间的切换会改变finalized prompt，
+并在下一次fresh turn自然触发existing exact desired-setup rotation，不引入新的operator prompt module field。
 
 每个 connection 必须显式提供 `completionSurfaceId`，并在 `baseAddress` /
 `baseAddressEnv` 中恰好选择一个，在 `apiKey` / `apiKeyEnv` 中至多选择一个。

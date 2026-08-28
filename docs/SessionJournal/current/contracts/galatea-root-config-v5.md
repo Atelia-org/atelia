@@ -23,13 +23,15 @@ Reader与runtime materialization由`GalateaStrictConfigReader`、`GalateaConfigL
 `GalateaConfigBootstrapper`与`GalateaConfigTemplateFactory`拥有。共享name与closed renderer contract由
 `Atelia.Galatea.Prompts` assembly拥有。
 
-主system prompt的三份source及ownership为：
+主system prompt的composition inputs与tracked source authority为：
 
 1. [TRPG protocol prefix](../../../Galatea/prompt/trpg-protocol-prefix-zh-cn.md)：Galatea.Server embedded、
    code-owned，定义TRPG GM、voice/output grammar与GM carrier来源边界；
 2. operator `characterContextTemplate`或`characterContextTemplateFile`：世界观、人物设定与长期记忆；
-3. [mailbox protocol suffix](../../../Galatea/prompt/trpg-mailbox-protocol-suffix-zh-cn.md)：Galatea.Server
-   embedded、code-owned，定义界外邮箱叙事协议。
+3. [mailbox protocol base](../../../Galatea/prompt/trpg-mailbox-protocol-base-zh-cn.md)：Galatea.Server
+   embedded、code-owned，始终定义接收界外来信的收件匣；
+4. [Codex outbound appendix](../../../Galatea/prompt/trpg-outbound-mail-protocol-appendix-zh-cn.md)：
+   Galatea.Server embedded、code-owned，仅在validated `galatea.outbound-mail-extractor` binding非`null`时追加。
 
 `GalateaUserFileConfig`只表示operator file shape；它保存character context source及optional file path。
 `GalateaUserConfig`只表示resolved runtime shape；它保存validated `GalateaCharacterName`、
@@ -37,7 +39,9 @@ Reader与runtime materialization由`GalateaStrictConfigReader`、`GalateaConfigL
 composition前完成一次materialization；provider request与每个turn都不会重读或重新渲染文件。
 
 Operator context是provider-visible prose，不是权限、feature或安全边界。Runtime不解析Markdown H2、列表、
-注释或其他自然语言结构来启用/禁用协议；code-owned prefix/suffix也不能由context覆盖。
+注释或其他自然语言结构来启用/禁用协议。Character-context fields不能移除、替换或重排validated binding所选的
+code-owned bytes；但context与protocol位于同一trusted system message，operator prose仍可能在语义上与协议
+冲突，本合同不承诺prompt-level安全隔离。
 
 `config.json`不是完整runtime配置：loader仍要求同目录Completion-owned `connections.json`与Galatea-owned
 `delegates.json`，并加载required RecapGrid profile metadata。这些routing fields不进入raw SessionJournal或
@@ -107,22 +111,29 @@ Replacement使用ordinal、one-pass、non-recursive语义；不normalize或修�
 
 ### 3.4 Fixed composition与bounds
 
-Materialization顺序为：validate names → resolve storage paths → select/read operator context → exact拼接三段 →
-执行一次closed renderer → construct runtime user。Exact composite source为：
+Materialization顺序为：decode/validate sibling connections与bindings → validate names → resolve storage paths →
+select/read operator context → exact组合protocol/context → 执行一次closed renderer → construct runtime user。
+Exact mandatory composite source为：
 
 ```text
 protocolPrefix + "\n\n---\n\n"
     + characterContext
-    + "\n\n---\n\n" + mailboxProtocolSuffix
+    + "\n\n---\n\n" + mailboxProtocolBase
 ```
 
-Prefix/suffix embedded source均为nonblank、BOM-less、LF-only、bounded strict UTF-8，并在使用前通过同一template
-grammar验证。External context file、每份embedded resource的读取上限为1 MiB；拼接后的composite source与final
-rendered prompt也分别不得超过1 MiB。这里没有per-section digest、runtime module list、include、condition、
-priority、H2 parser或第四份完整prompt。
+若validated outbound binding非`null`，再追加：
+
+```text
+"\n\n" + outboundMailProtocolAppendix
+```
+
+三份code-owned protocol source均为nonblank、BOM-less、LF-only、bounded strict UTF-8，并在使用前通过同一
+template grammar验证。External context file、每份embedded resource的读取上限为1 MiB；组合后的composite
+source与final rendered prompt也分别不得超过1 MiB。这里没有per-section digest、runtime module list、include、
+operator condition/priority、H2 parser或第四份完整composed prompt。
 
 两个user可以引用同一context file；每个user使用自己的exact names独立物化。Runtime及durable owner只接收最终
-`SystemPrompt`，不感知三段来源。
+`SystemPrompt`，不感知source分段。
 
 ### 3.5 Session provisioning、RecapGrid与Completion sibling
 
@@ -165,19 +176,25 @@ BuildTarget、route或active recipe。Sibling `connections.json`继续使用Comp
 nonempty exact `selectableConnectionIds`包含default connection，并要求`bindings` exact只含
 `galatea.input-normalizer`与`galatea.outbound-mail-extractor`，每个值为exact existing connection ID或explicit
 `null`。Missing、wrong-case、extra、blank或unknown全部fail closed，不fallback default。Provider/model/endpoint/
-secret不进入主prompt分段identity。
+secret不进入主prompt分段identity。Outbound binding为`null`时final prompt仍包含universal mailbox base但不包含
+主动发送承诺；非`null`时追加Codex outbound appendix。这个fixed feature branch来自validated sibling binding，
+不是新的root/operator prompt module field。
 
 ## 4. Bootstrap与V4 migration
 
 Current bootstrap写exact numeric `v:5`，为`alice`/`bob`显式写character/player names、
 `characterContextTemplateFile:"prompts/character-context-standard-zh-cn.md"`、`create-if-missing`与各自storage path。
 [Standard context](../../../Galatea/prompt/character-context-standard-zh-cn.md)是embedded、BOM-less、LF-only、
-bounded strict UTF-8 starter，包含通用世界观、人物设定与空memory slots，不是code-owned runtime protocol。
+bounded strict UTF-8 starter。它说明较早History由RecapGrid派生为带来源的world-understanding与
+first-person-autobiography context、冲突时newer raw History优先；下方自主记忆是独立人工长期记录，未来可由
+动态外部记忆接管。它不是code-owned runtime protocol。
 
 Bootstrap只为existing/new V5 root中nonblank `characterContextTemplateFile`指向的missing in-root target创建
 missing parent，以`FileMode.CreateNew`写入standard context并`Flush(true)`。多user共享同一路径只创建一次；
 existing file永不覆盖；missing outside-root target不创建。任何生成都fail-stop并列出paths，operator检查后重启。
-Prefix/suffix只从binary embedded resources读取，绝不复制到operator目录。Bootstrap不创建SessionJournal、
+Code-owned protocol resources只从binary embedded resources读取，绝不复制到operator目录。Bootstrap生成的
+`connections.json`把outbound binding写为`null`，所以starter composition只有mailbox base、不含outbound appendix。
+Bootstrap不创建SessionJournal、
 RecapGrid state、delegation state或provider effect。
 
 V4 operator必须停服、备份并确认actual `Galatea:ConfigPath`，将每个完整prompt拆出operator-owned context，
@@ -189,10 +206,12 @@ heading猜测并修复它。
 
 V5不改写任何existing raw setup。Existing Idle session在下一次fresh turn由现有`ReconcileDesiredSetup` exact比较
 finalized prompt：bytes不变则复用governing setup，变化则append一个新的`SystemPromptSetup`。这是正常setup
-rotation，不是SessionJournal schema migration。
+rotation，不是SessionJournal schema migration。停服修改sibling config并重启后，把validated outbound binding从
+`null`切到connection ID或反向切换会自然改变finalized prompt，并在下一次fresh触发同一exact rotation。
 
 Prepared/Frozen recovery继续按historical governing setup与frozen request identity恢复，不用current prefix/context/
-suffix重组历史请求。V5不增加protocol/context durable columns、renderer version、receipt或migration event。
+mail protocol resources重组历史请求。V5不增加protocol/context durable columns、renderer version、receipt或
+migration event。
 
 ## 6. Bounds、classification与non-promises
 

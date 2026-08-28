@@ -9,7 +9,8 @@
 > **2026-08-29 V5 follow-up：** current root contract已hard-cut到
 > [V5](../SessionJournal/current/contracts/galatea-root-config-v5.md)。V4的完整
 > `systemPromptTemplate*`被`characterContextTemplate*`取代，主prompt改由code-owned protocol prefix、
-> operator context与code-owned mailbox suffix固定合成；见
+> operator context与universal code-owned mailbox base固定合成；validated outbound binding非`null`时再追加
+> code-owned Codex outbound appendix。见
 > [system prompt protocol/context设计](system-prompt-protocol-context-design.md)。本文关于character/player
 > name、RecapGrid V6、mail/extractor、envelope与alignment gate的实施结论仍有效；下文V4/full-template叙述保留
 > 其历史时态，不是current field language。
@@ -19,8 +20,9 @@
 本设计已实施。下文保留实施前的问题分析和决策理由；若与本节或current
 contracts冲突，以本节和current contracts为准。最终产品形状是：
 
-- root config hard-cut到V4，每个user必须显式配置`characterName`与`playerName`；file DTO与runtime DTO分离，
-  `systemPromptTemplate` / `systemPromptTemplateFile`在host load时渲染为finalized `SystemPrompt`。
+- root config current已hard-cut到V5，每个user必须显式配置`characterName`与`playerName`；file DTO只保存
+  `characterContextTemplate*`，runtime DTO只保存finalized `SystemPrompt`。Host load固定组合code-owned prefix、
+  operator context与universal mailbox base；validated outbound binding非`null`时追加code-owned Codex appendix。
 - 新建窄小的`Galatea.Prompts` assembly，只提供两个name value objects与closed、
   non-recursive、bounded的`${characterName}` / `${playerName}` renderer；不引入通用模板引擎。
 - RecapGrid hard-cut到`galatea-rolling-rewrite-zh-cn-v6`；`scaffold`与`provision-asset`必须提供
@@ -138,7 +140,7 @@ host-wide extractor，再把它交给所有 per-user `GalateaOutboundExtractionR
 - 上表三份 zh-CN 文件是当前 RecapGrid binary 的 code-owned runtime resources。
 - 当时的单文件tracked host template是prompt文档，但当时没有
   runtime loader 引用；它适合作为 source template 示例，不能被描述成当前 host 的自动真源。
-  该路径后来由V5三段source取代；current导航见[prompt router](prompt/README.md)。
+  该路径后来由V5 fixed protocol/context composition取代；current导航见[prompt router](prompt/README.md)。
 - 同目录旧的 English recording/rewrite/compression prompt 目前没有被
   `Galatea.RecapGrid.csproj` embed。实施时应明确标为 historical/superseded，或在确认仍有用途后
   一并迁为模板；不能因文件位于 `prompt/` 下就声称它们已经进入 current request。
