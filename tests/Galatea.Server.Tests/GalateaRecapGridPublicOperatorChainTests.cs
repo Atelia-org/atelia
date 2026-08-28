@@ -3,6 +3,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.RecapGrid;
+using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.Cli;
 using Atelia.SessionJournal.HistoryTimeline;
@@ -45,7 +46,8 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
 
         Assert.Equal(0, Run(provider,
             "scaffold",
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV5,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--character-name", "Galatea",
             "--profile-id", ProfileId,
             "--connection-id", RecapConnectionId,
             "--permission", "create",
@@ -98,10 +100,14 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             "--input", repository,
             "--confirm-ref", refText,
             "--admission", admission,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV5
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--character-name", "Galatea"
         ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV5,
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            new GalateaRecapGridAssetParameters(
+                new GalateaCharacterName("Galatea")
+            ),
             out RecapGridControlRegistrationBundle? created
         ));
         RecapGridControlRegistrationBundle bundle = created!;

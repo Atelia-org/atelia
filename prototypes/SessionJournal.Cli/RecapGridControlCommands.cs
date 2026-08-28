@@ -317,11 +317,14 @@ internal static partial class RecapGridCommands {
 
     private static int ControlProvisionAsset(CliOptions options) {
         options.EnsureOnly(
-            "input", "branch", "confirm-ref", "admission", "asset"
+            "input", "branch", "confirm-ref", "admission", "asset",
+            "character-name"
         );
         string assetId = options.RequireSingle("asset");
+        string? characterName = options.GetOptionalSingle("character-name");
         if (!RecapGridOperatorAssetCatalog.TryCreateRegistrationBundle(
                 assetId,
+                characterName,
                 out RecapGridControlRegistrationBundle? bundle)
             || bundle is null) {
             return Print(

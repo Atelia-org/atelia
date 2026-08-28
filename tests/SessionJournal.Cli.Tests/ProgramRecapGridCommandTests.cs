@@ -3,6 +3,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
+using Atelia.Galatea.Prompts;
 using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
@@ -20,6 +21,10 @@ namespace Atelia.SessionJournal.Cli.Tests;
 
 [Collection(ConsoleSerialCollection.Name)]
 public sealed class ProgramRecapGridCommandTests : IDisposable {
+    private static GalateaRecapGridAssetParameters GalateaParameters => new(
+        new GalateaCharacterName("Galatea")
+    );
+
     private readonly List<string> _externalPaths = [];
     private readonly string _root = Path.Combine(
         Directory.Exists("/dev/shm") ? "/dev/shm" : Path.GetTempPath(),
@@ -468,12 +473,22 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
     public void OperatorProvisionAssetOperationIdentityIsExact() {
         RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
             .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV5,
+                GalateaRecapGridAssets.RollingRewriteZhCnV6,
                 new ControlInstanceId(
                     "0123456789abcdef0123456789abcdef")
             );
+        Assert.Empty(GalateaRecapGridAssets.AssetIds.Intersect(
+            RecapGridAgentControlBuiltIns.AssetIds,
+            StringComparer.Ordinal
+        ));
+        Assert.Throws<ArgumentException>(() => RecapGridOperatorAssetCatalog
+            .CreateProvisionOperation(
+                "unknown",
+                new ControlInstanceId(
+                    "0123456789abcdef0123456789abcdef")
+            ));
         Assert.Equal(
-            "81f684f7cb55513e635e9a58688784667e4c290b489583e64fba6179b60413ae",
+            "3101237f27faa78836a7b10feee7e9cf3c074fa59396bcf09ac8fb64cd657017",
             operation.OperationKey
         );
         Assert.Equal(1, operation.ExecutionSequence);
@@ -520,7 +535,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         CreateJournal();
         Assert.True(GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV5,
+                GalateaRecapGridAssets.RollingRewriteZhCnV6,
+                GalateaParameters,
                 out RecapGridControlRegistrationBundle? bundle
             ));
         string createOnly = WriteAdmission(["create"]);
@@ -536,13 +552,39 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         ));
         ControlHeadRef initial = ReadControlHead(refId.ToHexString());
 
+        Assert.Equal(1, Run(
+            "control", "provision-asset",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", createOnly,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6
+        ));
+        Assert.Equal(1, Run(
+            "control", "provision-asset",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", createOnly,
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--character-name", "[invalid]"
+        ));
+        Assert.Equal(1, Run(
+            "control", "provision-asset",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", createOnly,
+            "--asset", RecapGridAgentControlBuiltIns.MysteryInvestigationV4,
+            "--character-name", "Galatea"
+        ));
+        Assert.Equal(initial, ReadControlHead(refId.ToHexString()));
+
         (int unauthorizedCode, JsonElement unauthorized) = RunCaptured(
             "control", "provision-asset",
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", createOnly,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV5
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--character-name", "Galatea"
         );
         Assert.Equal(2, unauthorizedCode);
         Assert.Equal(
@@ -569,7 +611,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV5
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--character-name", "Galatea"
         );
         Assert.Equal(0, appliedCode);
         Assert.Equal("applied", applied.GetProperty("status").GetString());
@@ -603,10 +646,25 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV5
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--character-name", "Galatea"
         );
         Assert.Equal(0, replayCode);
         Assert.Equal("replayed", replay.GetProperty("status").GetString());
+        Assert.Equal(provisioned, ReadControlHead(refId.ToHexString()));
+
+        (int renameCode, JsonElement rename) = RunCaptured(
+            "control", "provision-asset",
+            "--input", _root,
+            "--confirm-ref", refId.ToHexString(),
+            "--admission", admitted,
+            "--asset",
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--character-name", "阿特丽娅"
+        );
+        Assert.Equal(2, renameCode);
+        Assert.Equal("operation-conflict",
+            rename.GetProperty("status").GetString());
         Assert.Equal(provisioned, ReadControlHead(refId.ToHexString()));
 
         Assert.Equal(1, Run(
@@ -645,7 +703,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV5
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--character-name", "Galatea"
         );
         Assert.Equal(0, reappliedCode);
         Assert.Equal("applied", reapplied.GetProperty("status").GetString());
@@ -660,7 +719,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
             "--asset",
-            GalateaRecapGridAssets.RollingRewriteZhCnV5
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--character-name", "Galatea"
         );
         Assert.Equal(0, retryCode);
         Assert.Equal("replayed", retry.GetProperty("status").GetString());
@@ -681,7 +741,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         CreateJournal();
         Assert.True(GalateaRecapGridAssets
             .TryCreateRegistrationBundle(
-                GalateaRecapGridAssets.RollingRewriteZhCnV5,
+                GalateaRecapGridAssets.RollingRewriteZhCnV6,
+                GalateaParameters,
                 out RecapGridControlRegistrationBundle? bundle
             ));
         RefId refId;
@@ -711,7 +772,8 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             "--input", _root,
             "--confirm-ref", refId.ToHexString(),
             "--admission", admitted,
-            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV5
+            "--asset", GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            "--character-name", "Galatea"
         ));
         string output = _root + "-full-recipe.json";
         _externalPaths.Add(output);

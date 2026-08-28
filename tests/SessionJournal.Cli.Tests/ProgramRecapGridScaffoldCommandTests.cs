@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Galatea.Prompts;
 using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid;
@@ -81,17 +82,19 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
     }
 
     [Fact]
-    public void GalateaOperatorAssetScaffoldIsCanonicalSingleNullRouteAndProviderFree() {
+    public void GalateaOperatorAssetScaffoldUsesExactCharacterNameAndIsProviderFree() {
         Directory.CreateDirectory(_root);
         ScaffoldPaths paths = Paths("galatea");
+        const string CharacterName = "阿特丽娅";
         string[] arguments = ScaffoldArguments(paths)
             .ReplaceOption(
                 "asset",
-                GalateaRecapGridAssets.RollingRewriteZhCnV5
+                GalateaRecapGridAssets.RollingRewriteZhCnV6
             )
             .ReplaceOption("logical-column-prefix", "world-understanding")
             .AppendOptions(
-                "--logical-column-prefix", "autobiography"
+                "--logical-column-prefix", "autobiography",
+                "--character-name", CharacterName
             );
 
         (int exitCode, JsonElement report) = RunCaptured(arguments);
@@ -100,7 +103,10 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         Assert.Equal("created", report.GetProperty("status").GetString());
         Assert.Equal(0, _factory.CreateCallCount);
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV5,
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            new GalateaRecapGridAssetParameters(
+                new GalateaCharacterName(CharacterName)
+            ),
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
@@ -166,8 +172,8 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         );
         Assert.Equal(
             [
-                "galatea.world-understanding Galatea积累的世界理解：",
-                "galatea.first-person-autobiography Galatea积累的第一人称自传："
+                "galatea.world-understanding 阿特丽娅积累的世界理解：",
+                "galatea.first-person-autobiography 阿特丽娅积累的第一人称自传："
             ],
             definitions.Select(static value =>
                 value.GetProperty("semanticHeading").GetString())
@@ -194,6 +200,19 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         foreach (string[] invalid in new[] {
                      ScaffoldArguments(Paths("unknown"))
                          .ReplaceOption("asset", "unknown-asset"),
+                     ScaffoldArguments(Paths("galatea-missing-name"))
+                         .ReplaceOption(
+                             "asset",
+                             GalateaRecapGridAssets.RollingRewriteZhCnV6
+                         ),
+                     ScaffoldArguments(Paths("galatea-invalid-name"))
+                         .ReplaceOption(
+                             "asset",
+                             GalateaRecapGridAssets.RollingRewriteZhCnV6
+                         )
+                         .AppendOptions("--character-name", "[invalid]"),
+                     ScaffoldArguments(Paths("non-parameterized-name"))
+                         .AppendOptions("--character-name", "Galatea"),
                      [.. ScaffoldArguments(Paths("duplicate")),
                          "--permission", "create"],
                      ScaffoldArguments(Paths("malformed"))

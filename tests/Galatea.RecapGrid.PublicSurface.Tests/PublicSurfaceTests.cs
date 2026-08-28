@@ -1,3 +1,4 @@
+using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Xunit;
 
@@ -7,12 +8,18 @@ public sealed class PublicSurfaceTests {
     [Fact]
     public void ExternalOperatorCanResolveOnlyTheNarrowAssetCatalog() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV5,
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            new GalateaRecapGridAssetParameters(
+                new GalateaCharacterName("Galatea")
+            ),
             out RecapGridControlRegistrationBundle? bundle
         ));
         Assert.NotNull(bundle);
         Assert.Equal(
-            [typeof(GalateaRecapGridAssets)],
+            [
+                typeof(GalateaRecapGridAssets),
+                typeof(GalateaRecapGridAssetParameters)
+            ],
             typeof(GalateaRecapGridAssets).Assembly.GetExportedTypes()
         );
         Assert.Single(bundle.Families);

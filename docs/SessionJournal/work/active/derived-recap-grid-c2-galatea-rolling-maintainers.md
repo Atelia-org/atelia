@@ -3,6 +3,13 @@
 状态：C2A/C2B/C2C source implementation complete；RecapRewriter V3 source hard cut complete；
 C2D real-provider canary与本机actual cyber activation complete（2026-08-15）
 
+2026-08-28 current operator cutover：selector已hard-cut到
+`galatea-rolling-rewrite-zh-cn-v6`。V6要求typed `GalateaCharacterName`参数，并在bundle
+构造前展开两个member prompt、topic与semantic heading；Family、logical columns、carrier和
+`BlockKey`保持稳定。传入`Galatea`时Family/Definition/registration四个digest与历史V5
+逐字节相同；异名只旋转两个Definition及command identity。下文未明确标为V6的`Galatea`
+角色措辞与V5 selector均是首次canary的历史记录，不是新的固定角色名合同。
+
 总体设计：[`derived-recap-grid-target-design.md`](derived-recap-grid-target-design.md)  
 Cadence/capacity/activation 总审计：[`derived-recap-grid-cadence-capacity-and-activation-audit.md`](derived-recap-grid-cadence-capacity-and-activation-audit.md)
 
@@ -132,6 +139,7 @@ namespace Atelia.Galatea.RecapGrid
 
 它只引用：
 
+- `Galatea.Prompts`：复用validated character name与exact template renderer；
 - `SessionJournal.RecapGrid.Abstractions`：创建Family/Definitions；
 - `SessionJournal.RecapGrid.Control`：输出canonical registration bundle。
 
@@ -139,9 +147,11 @@ namespace Atelia.Galatea.RecapGrid
 
 ```text
 GalateaRecapGridAssets
-  AssetId = "galatea-rolling-rewrite-zh-cn-v5"
-  TryCreateRegistrationBundle(assetId, out bundle)
-  Describe(assetId) -> ordered definition digests/targets/resource digests
+  AssetId = "galatea-rolling-rewrite-zh-cn-v6"
+  TryCreateRegistrationBundle(assetId, GalateaRecapGridAssetParameters, out bundle)
+
+GalateaRecapGridAssetParameters
+  CharacterName: GalateaCharacterName
 ```
 
 该程序集只拥有Galatea-specific canonical definitions与prompt resources，不拥有repo-bound Recipe、route、connection、admission、active state或
@@ -154,7 +164,10 @@ AgentControl built-in集合。
 
 `SessionJournal.Cli`作为operator composition root可以同时引用通用AgentControl built-ins和`Galatea.RecapGrid` asset catalog。实现使用
 compile-time closed、exact-ID resolver；禁止反射扫描、DI/plugin discovery或目录发现，并以测试锁定asset ID无重复。CLI继续通过
-`recap-grid control provision-asset --asset ...`暴露一个明确命令；旧CLI名`provision-built-in`已删除且不保留兼容分支。
+`recap-grid control provision-asset --asset ... --character-name ...`暴露一个明确命令；V6的character name在打开repo前完成
+typed validation，非参数化asset携带该选项会被拒绝。scaffold使用同一个参数化resolver，因此生成的admission/route与随后provision
+必须来自同名bundle。同一Control/V6 selector更换参数会以existing operation key得到command-digest conflict；C2不承诺
+existing-session rename，也不扩张operation receipt/runtime identity。旧CLI名`provision-built-in`已删除且不保留兼容分支。
 Agent-facing JSON action仍由AgentControl独立拥有`provision-built-in`，不进入operator asset catalog。
 
 ## 5. 为未来三类refiner保留的边界

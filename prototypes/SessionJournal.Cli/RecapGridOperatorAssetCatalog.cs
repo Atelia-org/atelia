@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Atelia.Galatea.Prompts;
 using Atelia.Galatea.RecapGrid;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
@@ -20,15 +21,32 @@ internal static class RecapGridOperatorAssetCatalog {
 
     internal static bool TryCreateRegistrationBundle(
         string assetId,
+        string? characterName,
         out RecapGridControlRegistrationBundle? bundle
     ) {
         switch (assetId) {
             case RecapGridAgentControlBuiltIns.MysteryInvestigationV4:
+                if (characterName is not null) {
+                    throw new ArgumentException(
+                        "--character-name is not accepted by this operator asset."
+                    );
+                }
                 return RecapGridAgentControlBuiltIns
                     .TryCreateRegistrationBundle(assetId, out bundle);
-            case GalateaRecapGridAssets.RollingRewriteZhCnV5:
+            case GalateaRecapGridAssets.RollingRewriteZhCnV6:
+                if (characterName is null) {
+                    throw new ArgumentException(
+                        "--character-name is required by this operator asset."
+                    );
+                }
                 return GalateaRecapGridAssets
-                    .TryCreateRegistrationBundle(assetId, out bundle);
+                    .TryCreateRegistrationBundle(
+                        assetId,
+                        new GalateaRecapGridAssetParameters(
+                            new GalateaCharacterName(characterName)
+                        ),
+                        out bundle
+                    );
             default:
                 bundle = null;
                 return false;
@@ -43,7 +61,12 @@ internal static class RecapGridOperatorAssetCatalog {
         string assetId,
         ControlInstanceId controlInstanceId
     ) {
-        if (!TryCreateRegistrationBundle(assetId, out _)) {
+        if (!RecapGridAgentControlBuiltIns.AssetIds.Contains(
+                assetId,
+                StringComparer.Ordinal)
+            && !GalateaRecapGridAssets.AssetIds.Contains(
+                assetId,
+                StringComparer.Ordinal)) {
             throw new ArgumentException(
                 "The code-owned operator asset id is unknown.",
                 nameof(assetId)

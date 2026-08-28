@@ -13,6 +13,7 @@ internal static partial class RecapGridCommands {
     private static int Scaffold(CliOptions options) {
         options.EnsureOnly(
             "asset",
+            "character-name",
             "profile-id",
             "connection-id",
             "semantic-model-id",
@@ -28,8 +29,10 @@ internal static partial class RecapGridCommands {
             "route-output"
         );
         string assetId = options.RequireSingle("asset");
+        string? characterName = options.GetOptionalSingle("character-name");
         if (!RecapGridOperatorAssetCatalog.TryCreateRegistrationBundle(
                 assetId,
+                characterName,
                 out RecapGridControlRegistrationBundle? bundle)
             || bundle is null) {
             return Print(

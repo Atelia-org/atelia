@@ -41,6 +41,16 @@ asset ID；Galatea operator asset不会进入AgentControl built-in catalog或其
 fingerprint。Control admission 是独立 strict
 canonical 文件，不能从 payload 自授权。
 
+当前Galatea selector已hard-cut为`galatea-rolling-rewrite-zh-cn-v6`。它在`scaffold`与
+`control provision-asset`都要求exactly-one `--character-name <name>`；该参数先经共享
+`GalateaCharacterName`验证，再在Family/Definition bundle构造前展开member prompt、topic与
+semantic heading。其他operator asset携带该选项会被拒绝；unknown、missing或invalid输入均在
+打开repo、写output或构造provider之前fail closed。Family、logical columns、carrier与
+`BlockKey`不随名字改变；使用`Galatea`时四个canonical bundle digests与旧V5完全相同。
+scaffold与provision必须使用同一个名字。同一Control instance中再次用不同名字provision会复用
+现有V6 operation key并得到`operation-conflict`；现阶段不承诺existing-session rename，也不把
+character name或command digest加入receipt/runtime identity。
+
 `recap-grid scaffold` 是 provider-free、create-only 的operator bootstrap：对一个
 code-owned operator asset，把operator显式给出的permissions、logical-column prefixes、
 Control budgets和route execution limits组合成三份strict canonical文件——Control admission、

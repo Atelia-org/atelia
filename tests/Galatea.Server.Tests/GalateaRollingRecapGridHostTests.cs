@@ -553,7 +553,10 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
     private RollingRepository CreateRollingRepository() {
         string path = NewPath();
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV5,
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            new GalateaRecapGridAssetParameters(
+                new GalateaCharacterName("Galatea")
+            ),
             out RecapGridControlRegistrationBundle? created
         ));
         RecapGridControlRegistrationBundle bundle = created!;
@@ -636,7 +639,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         >(control.Reader.ReadSnapshot()).Snapshot.Head;
         RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
             .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV5,
+                GalateaRecapGridAssets.RollingRewriteZhCnV6,
                 initial.InstanceId
             );
         ControlHeadRef registered = Assert.IsType<

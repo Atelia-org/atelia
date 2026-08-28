@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Atelia.Completion.Abstractions;
 using Atelia.Galatea.RecapGrid;
+using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Xunit;
@@ -11,7 +12,10 @@ public sealed class GalateaAssetRuntimeTests {
     [Fact]
     public async Task SharedFamily_UsesOnePrefixAndIndependentMemberTails() {
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV5,
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
+            new GalateaRecapGridAssetParameters(
+                new GalateaCharacterName("Galatea")
+            ),
             out RecapGridControlRegistrationBundle? bundle
         ));
         FrozenRowBatch batch = RuntimeTestFixture.Batch(

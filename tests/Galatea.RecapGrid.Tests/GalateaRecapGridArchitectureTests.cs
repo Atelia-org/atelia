@@ -15,7 +15,10 @@ public sealed class GalateaRecapGridArchitectureTests {
         );
         XDocument xml = XDocument.Load(project);
         Assert.Equal(
-            ["../SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj"],
+            [
+                "../Galatea.Prompts/Galatea.Prompts.csproj",
+                "../SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj"
+            ],
             xml.Descendants("ProjectReference")
                 .Select(static value => value.Attribute("Include")!.Value)
         );
@@ -40,6 +43,11 @@ public sealed class GalateaRecapGridArchitectureTests {
             .Select(static value => value.Name!)
             .ToArray();
         Assert.Contains(
+            "Atelia.Galatea.Prompts",
+            references,
+            StringComparer.Ordinal
+        );
+        Assert.Contains(
             "Atelia.SessionJournal.RecapGrid",
             references,
             StringComparer.Ordinal
@@ -57,7 +65,7 @@ public sealed class GalateaRecapGridArchitectureTests {
             "AgentControlContracts.cs"
         ));
         Assert.DoesNotContain(
-            GalateaRecapGridAssets.RollingRewriteZhCnV5,
+            GalateaRecapGridAssets.RollingRewriteZhCnV6,
             agentControl,
             StringComparison.Ordinal
         );

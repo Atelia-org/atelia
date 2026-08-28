@@ -4,6 +4,12 @@
 closure均GO（P0=0，P1=0）；C2A/C2B/C2C source complete且两路independent closure均GO（P0=0，P1=0）；
 C2D real-provider/actual activation与C5 complete；C4 retention/rollover仍未完成。
 
+2026-08-28 operator selector已hard-cut到parameterized
+`galatea-rolling-rewrite-zh-cn-v6`；传入`Galatea`时canonical bundle digests与下文历史V5
+canary完全相同，因而既有V5 durable Definitions继续可读。异名V6会旋转两个Definition与
+registration command，但保持Family、logical columns、carrier和`BlockKey`。下文V5、
+`[Galatea]`及real-provider数字是已完成canary的历史证据，不表示current selector仍可创建V5。
+
 核对基线：cutover `6f9ea7db`；cadence owner `0af28eea`、authority/durability fixes `397f2ab8`/`b0bce3b3`、
 reserve-aware seal `1e8ea927`、reserve-aware selection `bac31986`。事实优先级仍是 current code、tests、canonical codecs，以及 raw events + selected
 `RefId` Parent lineage。本文不会把计划或成本模型升级成 durable authority。
@@ -63,7 +69,7 @@ Observation/Action 是 provider carrier，不是角色身份。Galatea 是会话
 
 目标实现形状：
 
-- 一个 code-owned `galatea-rolling-rewrite-zh-cn-v5` operator asset；
+- 一个 code-owned、要求typed character name的`galatea-rolling-rewrite-zh-cn-v6` operator asset；
 - 两个 ordered Maintainer Definitions和一个 Full recipe；两列共用现有
   [`recap-maintainer-family/system-zh-cn.md`](../../../Galatea/prompt/recap-maintainer-family/system-zh-cn.md)
   形成一个shared Family，专业差异来自各自的zh-CN user prompt；
@@ -442,7 +448,7 @@ A3增加provider-free `recap-grid cadence inspect|set-reserve` operator surface�
 ### C2：Galatea rolling operator asset and route（complete）
 
 - C2A-C2C source已由commits `bf4beff0`、`eb3743dd`、`62b93f9a`及其closure tail实现，两路independent review均GO；
-- `galatea-rolling-rewrite-zh-cn-v5` operator asset提供一个shared Family、两Definition和provider-free Full recipe composition；
+- 历史`galatea-rolling-rewrite-zh-cn-v5` canary（current V6传入`Galatea`时保持其exact bundle digests）提供一个shared Family、两Definition和provider-free Full recipe composition；
 - 固定ordered targets、strict canonical bytes/goldens与runtime identity；
 - 两列capability显式`SemanticModelId=null`；runtime route/config默认选择Opus 4.6但允许以后切换model，无fallback、
   provider/client保持lazy，actual provider/model/connection只进入operation evidence；

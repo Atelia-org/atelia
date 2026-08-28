@@ -520,16 +520,19 @@ Galatea只在上述unpublished missing-session candidate中自动创建first-tur
 repository补写，也不自动创建Store、provision asset、compose recipe或activate。需要完整RecapGrid时，operator 应先使用
 SessionJournal.Cli 的
 `recap-grid scaffold`生成strict admission/profile/route files，再用`recap-grid init`、
-`recap-grid control provision-asset --asset galatea-rolling-rewrite-zh-cn-v5`、
+`recap-grid control provision-asset --asset galatea-rolling-rewrite-zh-cn-v6 --character-name <角色名>`、
 Control compose/put-recipe/activate 与 build 命令完成显式配置。该asset提供一个shared Family下的
 `world-understanding`与`autobiography`两列；实际connection/model只来自route/connections配置，不进入durable semantic identity。
-Galatea 是会话内角色，不等于 provider Assistant；两列使用 Observation/Action 只是为了选择 provider carrier。
-主流程中的 provider Action 是 TRPG GM 的复合回复，可能含 `[Galatea]`、`[旁白]` 与 `[状态摘要]`，只有显式
-`[Galatea]` 第一人称内容是 Galatea 自身体验的直接证据。
-当前两条exact target分别是
-`Observation / galatea.world-understanding / galatea.world-understanding Galatea积累的世界理解：`与
-`Action / galatea.first-person-autobiography / galatea.first-person-autobiography Galatea积累的第一人称自传：`。
+`--character-name`必须与目标user的validated character name完全相同；它在canonical bundle构造前展开两个member prompt、
+topic与semantic heading。角色不等于 provider Assistant；两列使用 Observation/Action 只是为了选择 provider carrier。
+主流程中的 provider Action 是 TRPG GM 的复合回复，可能含 `[<角色名>]`、`[旁白]` 与 `[状态摘要]`，只有显式
+`[<角色名>]` 第一人称内容是角色自身体验的直接证据。
+当前两条target的carrier与`BlockKey`固定，heading分别为
+`Observation / galatea.world-understanding / galatea.world-understanding <角色名>积累的世界理解：`与
+`Action / galatea.first-person-autobiography / galatea.first-person-autobiography <角色名>积累的第一人称自传：`。
 两列Definition将provider-facing `SemanticHeading`与carrier/`BlockKey`成套定义；heading进入Definition v2 digest，但不参与
 context contribution的routing identity/order，且不进入冻结的maintainer input `atelia.recap.input.v1`。
+`Galatea`参数会精确复现旧V5的Family、两个Definition与registration command digest；异名保持Family与上述routing keys，
+但会产生新的Definition/command identity。scaffold与provision必须使用同名；existing-session rename不由该命令承诺。
 scaffold不会构造provider、
 Timeline、Control或Store；Galatea仍只消费其strict canonical outputs。
