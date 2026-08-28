@@ -552,5 +552,14 @@ topic与semantic heading。角色不等于 provider Assistant；两列使用 Obs
 context contribution的routing identity/order，且不进入冻结的maintainer input `atelia.recap.input.v1`。
 `Galatea`参数会精确复现旧V5的Family、两个Definition与registration command digest；异名保持Family与上述routing keys，
 但会产生新的Definition/command identity。scaffold与provision必须使用同名；existing-session rename不由该命令承诺。
+Host composition会为每个user从validated `characterName`构造一次V6 bundle，并只缓存其ordered
+`BuildTargetDigest` expectation。fresh admission、后台fresh send与`OpenFreshAsync`都在任何current
+Recap/main completion或SessionJournal setup write前，用Galatea-owned typed inspector核对active recipe target；
+Control/Timeline absent及no-active继续允许raw-only，wrong-name、mixed、reordered或缺列target统一fail closed为
+`character-asset-mismatch`。NewRequest走同一current gate；FrozenCompletionRequired完全按frozen identity恢复；
+ToolContinuationRequired先把frozen tool结算到durable ToolResult boundary，再核对current target且仅在通过后打开Online。
+recent/readiness复用同一inspector，并在mismatch时返回exact `state=invalid`、
+`code=character-asset-mismatch`与空`contextHeader`。首个release不支持existing-session rename；operator必须停服后
+显式迁移/重建并切换active recipe，不能只改config。
 scaffold不会构造provider、
 Timeline、Control或Store；Galatea仍只消费其strict canonical outputs。

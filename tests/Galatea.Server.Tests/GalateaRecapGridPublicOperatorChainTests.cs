@@ -191,6 +191,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             GalateaRecapGridReadiness.Inspect(
                 session.Engine.ReadView,
                 rawHead,
+                session.TargetExpectation,
                 CancellationToken.None
             );
         Assert.Equal("exact", readiness.Freshness);

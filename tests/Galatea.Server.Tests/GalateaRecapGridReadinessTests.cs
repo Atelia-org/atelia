@@ -1,4 +1,5 @@
 using Atelia.EventJournal;
+using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal;
 using System.Text.Json;
 using Xunit;
@@ -6,6 +7,10 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaRecapGridReadinessTests : IDisposable {
+    private static GalateaRecapGridTargetExpectation TargetExpectation =>
+        GalateaRecapGridTargetExpectation.ForCharacterName(
+            new GalateaCharacterName("Galatea")
+        );
     private readonly string _root = Path.Combine(
         Directory.Exists("/dev/shm") ? "/dev/shm" : Path.GetTempPath(),
         "atelia-galatea-recap-grid-readiness-tests",
@@ -26,6 +31,7 @@ public sealed class GalateaRecapGridReadinessTests : IDisposable {
             GalateaRecapGridReadiness.Inspect(
                 engine.ReadView,
                 head,
+                TargetExpectation,
                 CancellationToken.None
             );
 
@@ -57,6 +63,7 @@ public sealed class GalateaRecapGridReadinessTests : IDisposable {
                 GalateaRecapGridReadiness.Inspect(
                     engine.ReadView,
                     head,
+                    TargetExpectation,
                     CancellationToken.None
                 );
             Assert.Equal("stale", result.Freshness);

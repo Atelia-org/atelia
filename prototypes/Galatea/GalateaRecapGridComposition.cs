@@ -59,8 +59,13 @@ internal sealed class GalateaRecapGridComposition
         SessionJournalEngine engine,
         string connectionId,
         string? pendingObservation,
+        GalateaRecapGridTargetExpectation targetExpectation,
         CancellationToken cancellationToken
     ) {
+        GalateaRecapGridTargetInspector.RequireCurrent(
+            engine.ReadView,
+            targetExpectation
+        );
         RecapGridAgentConnectionLookupResult lookup =
             _completion.InspectAgentExact(connectionId);
         if (lookup is not RecapGridAgentConnectionLookupResult.Found found) {
@@ -159,6 +164,7 @@ internal sealed class GalateaRecapGridComposition
         string connectionId,
         Func<string, bool> isCurrentConnectionSelectable,
         SessionRuntimeRecoveryRequirements.ToolContinuationRequired frozen,
+        GalateaRecapGridTargetExpectation targetExpectation,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(isCurrentConnectionSelectable);
@@ -171,12 +177,6 @@ internal sealed class GalateaRecapGridComposition
                 "冻结工具runtime缺少Agent Control profile。",
                 "tool-runtime-profile-absent"
             );
-        if (!isCurrentConnectionSelectable(connectionId)) {
-            throw new GalateaTurnException(
-                "当前模型连接不在Galatea可选连接集合中。",
-                "recap-grid-connection-absent"
-            );
-        }
         EventAddress toolHead = frozen.CapturedHead
             ?? throw new InvalidDataException(
                 "Tool continuation has no captured raw head."
@@ -201,6 +201,16 @@ internal sealed class GalateaRecapGridComposition
                 break;
             }
         }
+        if (!isCurrentConnectionSelectable(connectionId)) {
+            throw new GalateaTurnException(
+                "当前模型连接不在Galatea可选连接集合中。",
+                "recap-grid-connection-absent"
+            );
+        }
+        GalateaRecapGridTargetInspector.RequireCurrent(
+            engine.ReadView,
+            targetExpectation
+        );
         RecapGridOnlineOpenResult onlineOpened = RecapGridOnlineFactory.Open(
             engine,
             _completion.Executor,

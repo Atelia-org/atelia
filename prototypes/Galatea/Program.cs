@@ -372,16 +372,16 @@ api.MapPost(
                     $"Unknown completion connection '{request.ConnectionId}'."
                 ));
             }
-            string effectiveMessage = await hostService
-                .NormalizeUserMessageAtAdmissionAsync(
-                    request.Message,
-                    httpContext.RequestAborted
-                );
             await hostService.PrepareFreshTurnAdmissionAsync(
                 session,
                 recovery,
                 httpContext.RequestAborted
             );
+            string effectiveMessage = await hostService
+                .NormalizeUserMessageAtAdmissionAsync(
+                    request.Message,
+                    httpContext.RequestAborted
+                );
             liveTurn = hostService.StartTurn(
                 session,
                 effectiveMessage,

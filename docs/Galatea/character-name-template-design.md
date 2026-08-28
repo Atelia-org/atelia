@@ -321,6 +321,14 @@ user 的 `characterName` 重新计算 expected V6 ordered Definition digests，�
   invalid/migration-required readiness，并把 Context header留空，不能继续展示旧名字的 recap；
 - 该检查不能通过解析 prompt 文本、heading 或错误消息完成，只比较 typed/canonical identities。
 
+实现收口：Galatea composition按user在`GalateaDelegationSupervisor`构造前从V6 bundle派生一次
+`GalateaRecapGridTargetExpectation`，session只缓存`BuildTargetDigest`；
+`GalateaRecapGridTargetInspector`直接使用正式Control reader/snapshot比较
+`ActiveRecipe.Recipe.Target.Digest`。fresh admission、后台pre-setup、`OpenFreshAsync`与NewRequest均fail closed；
+FrozenCompletionRequired不检查current target；ToolContinuationRequired在frozen tools全部settle后、current Online前检查。
+readiness mismatch的exact分类为`state=invalid`、`code=character-asset-mismatch`且Context header为空。
+首个release不支持existing-session rename，也不引入alias/transition asset或第二套prompt/heading descriptor。
+
 这会要求 `Galatea.Server` 在 product composition 层引用 `Galatea.RecapGrid`，但不会反转后者当前的窄
 依赖边界。检查属于 fresh/current policy；frozen 例外见 §8.3。
 

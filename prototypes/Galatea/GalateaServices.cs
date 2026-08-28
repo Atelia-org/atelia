@@ -28,6 +28,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly GalateaInputPreprocessor _inputPreprocessor;
     private readonly IReadOnlyDictionary<string, IOutboundMailExtractor>
         _outboundMailExtractors;
+    private readonly IReadOnlyDictionary<string,
+        GalateaRecapGridTargetExpectation> _targetExpectations;
     private readonly bool _maintenanceMode;
     private readonly GalateaRecapGridComposition _recapGrid;
     private readonly GalateaCompletionOwner? _completionOwner;
@@ -98,6 +100,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _recapGrid = components.RecapGrid;
         _inputPreprocessor = components.InputPreprocessor;
         _outboundMailExtractors = components.OutboundMailExtractors;
+        _targetExpectations = components.TargetExpectations;
         _maintenanceMode = components.MaintenanceMode;
         _users = components.Users;
         _connectionCatalog = components.ConnectionCatalog;
@@ -108,7 +111,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal GalateaHostService(
         GalateaConfig config,
         IGalateaUserMessageNormalizer userMessageNormalizer,
-        GalateaRecapGridComposition recapGrid
+        GalateaRecapGridComposition recapGrid,
+        IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>?
+            targetExpectations = null
     ) {
         ArgumentNullException.ThrowIfNull(recapGrid);
         ArgumentNullException.ThrowIfNull(userMessageNormalizer);
@@ -145,6 +150,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 DisabledOutboundMailExtractor.Instance,
             StringComparer.Ordinal
         );
+        _targetExpectations = targetExpectations
+            ?? CreateTargetExpectations(_users);
         IReadOnlyDictionary<string, CompletionConnectionConfig> fullCatalog =
             normalized.Connections.ToDictionary(
                 static value => value.Id,
@@ -217,6 +224,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     owner.OutboundMailExtractorConnection,
                     owner.GetOutboundMailExtractorClient
                 );
+            IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>
+                targetExpectations = CreateTargetExpectations(users);
             IReadOnlyDictionary<string, CompletionConnectionConfig>
                 fullCatalog = owner.Connections.ToDictionary(
                     static value => value.Id,
@@ -247,6 +256,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 owner.RecapGrid,
                 inputPreprocessor,
                 outboundMailExtractors,
+                targetExpectations,
                 delegationSupervisor,
                 sessionBootstrapAdmission,
                 config.MaintenanceMode,
@@ -291,6 +301,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaInputPreprocessor InputPreprocessor,
         IReadOnlyDictionary<string, IOutboundMailExtractor>
             OutboundMailExtractors,
+        IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>
+            TargetExpectations,
         GalateaDelegationSupervisor DelegationSupervisor,
         RecapGridControlAdmission SessionBootstrapAdmission,
         bool MaintenanceMode,
@@ -319,6 +331,20 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     connection,
                     getClient
                 ),
+            StringComparer.Ordinal
+        );
+    }
+
+    internal static IReadOnlyDictionary<string,
+        GalateaRecapGridTargetExpectation> CreateTargetExpectations(
+        IReadOnlyDictionary<string, GalateaUserConfig> users
+    ) {
+        ArgumentNullException.ThrowIfNull(users);
+        return users.ToDictionary(
+            static pair => pair.Key,
+            static pair => GalateaRecapGridTargetExpectation.ForCharacterName(
+                pair.Value.CharacterName
+            ),
             StringComparer.Ordinal
         );
     }
@@ -617,6 +643,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ? GalateaRecapGridReadiness.InspectRecentContext(
                     host.Engine.ReadView,
                     capturedHead,
+                    host.TargetExpectation,
                     projection.DerivedContextNthPrevious
                         ?? throw new InvalidDataException(
                             "Recent projection has no governing derived-context ordinal."
@@ -807,7 +834,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         CapturedHead: { } currentHead
                     }
                 && currentHead == admittedHead:
-                return;
+                break;
             case SessionRuntimeRecoveryRequirements
                     .FailedTurnMustBeAbandoned admittedFailed
                 when current is SessionRuntimeRecoveryRequirements
@@ -823,13 +850,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         cancellationToken
                     )
                     .ConfigureAwait(false);
-                return;
+                break;
             default:
                 throw new GalateaTurnException(
                     "会话边界已变化，请刷新后重试。",
                     "stale-session-head"
                 );
         }
+        GalateaRecapGridTargetInspector.RequireCurrent(
+            host.Engine.ReadView,
+            host.TargetExpectation
+        );
     }
 
     internal GalateaLiveTurn StartInboundMailTurn(
@@ -1297,6 +1328,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CancellationToken cancellationToken
     ) {
         GalateaRecapGridComposition recapGrid = _recapGrid;
+        GalateaRecapGridTargetInspector.RequireCurrent(
+            host.Engine.ReadView,
+            host.TargetExpectation
+        );
         CompletionConnectionConfig inspected =
             recapGrid.InspectConnectionExact(liveTurn.Options.ConnectionId);
         SessionDesiredSetupReconciliationResult reconciled =
@@ -1335,6 +1370,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 host.Engine,
                 liveTurn.Options.ConnectionId,
                 prompted,
+                host.TargetExpectation,
                 cancellationToken).ConfigureAwait(false);
         RecapGridOnlineContextHandle online = turn.Online
             ?? throw new InvalidDataException(
@@ -1391,6 +1427,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     host.Engine,
                     liveTurn.Options.ConnectionId,
                     pendingObservation: null,
+                    targetExpectation: host.TargetExpectation,
                     cancellationToken).ConfigureAwait(false);
                 RecapGridOnlineContextHandle online = turn.Online
                     ?? throw new InvalidDataException(
@@ -1437,6 +1474,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     liveTurn.Options.ConnectionId,
                     id => _connectionCatalog.ContainsKey(id),
                     toolContinuation,
+                    host.TargetExpectation,
                     cancellationToken
                 ).ConfigureAwait(false);
                 RecapGridOnlineContextHandle online = turn.Online
@@ -1575,6 +1613,15 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
             RecentTurnsResponseDto recent = BuildRecentTurnsResponse(engine)
                 .Response;
+            GalateaRecapGridTargetExpectation targetExpectation =
+                _targetExpectations.TryGetValue(
+                    user.UserId,
+                    out GalateaRecapGridTargetExpectation? configuredTarget
+                )
+                    ? configuredTarget
+                    : throw new InvalidDataException(
+                        $"Galatea user '{user.UserId}' has no RecapGrid target expectation."
+                    );
             delegationHandle = _maintenanceMode
                 ? null
                 : _delegationSupervisor.AttachWritableSession(
@@ -1585,6 +1632,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 user,
                 engine,
                 recent,
+                targetExpectation,
                 delegationHandle,
                 _outboundMailExtractors.TryGetValue(
                     user.UserId,
@@ -1983,16 +2031,19 @@ public sealed class UserSessionHost : IAsyncDisposable {
         GalateaUserConfig user,
         SessionJournalEngine engine,
         RecentTurnsResponseDto recentTurns,
+        GalateaRecapGridTargetExpectation targetExpectation,
         GalateaDelegationSessionHandle? delegationHandle,
         IOutboundMailExtractor outboundMailExtractor
     ) {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(recentTurns);
+        ArgumentNullException.ThrowIfNull(targetExpectation);
         ArgumentNullException.ThrowIfNull(outboundMailExtractor);
         User = user;
         Engine = engine;
         _recentTurns = recentTurns;
+        TargetExpectation = targetExpectation;
         DelegationHandle = delegationHandle;
         if (delegationHandle is not null) {
             ReplyLeaseReconciler =
@@ -2010,6 +2061,8 @@ public sealed class UserSessionHost : IAsyncDisposable {
     public GalateaUserConfig User { get; }
 
     public SessionJournalEngine Engine { get; }
+
+    internal GalateaRecapGridTargetExpectation TargetExpectation { get; }
 
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
 
