@@ -5,9 +5,8 @@ using System.Text.RegularExpressions;
 namespace Atelia.Galatea.Server;
 
 /// <summary>
-/// Protocol-neutral strict JSON helpers shared by the exact V1 and V2
-/// Galatea sidecar clients. Version and business-frame languages remain
-/// owned by each protocol client.
+/// Strict JSON helpers shared by the durable sidecar transport operations.
+/// Version and business-frame languages remain owned by the protocol client.
 /// </summary>
 internal static partial class GalateaSidecarWire {
     internal const int MaximumIdentifierUtf8Bytes = 200;

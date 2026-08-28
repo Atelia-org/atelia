@@ -574,7 +574,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public async Task StrictRecapGridConfigDefersRouteReadAndClientCreation() {
+    public async Task StrictRecapGridConfigDefersRouteReadAndCompletionClientCreation() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -593,9 +593,6 @@ public sealed class GalateaConfigValidationTests {
             Assert.Equal("test", service.DefaultConnectionId);
             Assert.Single(service.Connections);
             Assert.False(File.Exists(Path.Combine(root, "routes.json")));
-            Assert.False(Assert.IsType<GalateaCodexSidecarClient>(
-                service.DelegateSidecar
-            ).HasStartedProcessForTest);
         }
         finally {
             Directory.Delete(root, recursive: true);

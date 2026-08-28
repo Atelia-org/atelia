@@ -25,8 +25,8 @@ internal sealed record GalateaSidecarProcessTestHooks(
 
 /// <summary>
 /// Owns only the lazy child-process generation, bounded JSONL transport and
-/// restart/reap lifecycle shared by the exact V1 and V2 clients. Business
-/// correlation and state machines remain in the protocol-specific clients.
+/// restart/reap lifecycle used by the exact durable transport. Business
+/// correlation and state machines remain outside the process transport.
 /// </summary>
 internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
     private const int ReadyStartupMarginMs = 5_000;

@@ -7,8 +7,9 @@ using Atelia.Diagnostics;
 namespace Atelia.Galatea.Server;
 
 /// <summary>
-/// Dormant exact V2 transport. Production composition continues to use the
-/// V1 <see cref="GalateaCodexSidecarClient"/> until a later hard cut.
+/// Production exact V2 transport for durable Codex delegation. The durable
+/// store and driver own business correlation and recovery state; this client
+/// owns only the exact sidecar protocol and process transport.
 /// </summary>
 internal sealed class GalateaCodexDurableSidecarClient
     : GalateaSidecarProcessClientBase, IGalateaDurableDelegateTransport {
@@ -67,6 +68,7 @@ internal sealed class GalateaCodexDurableSidecarClient
 
     internal bool HasStartedProcessForTest => HasStartedProcess;
     internal int GenerationCountForTest => GenerationCount;
+    internal ProcessStartInfo CreateStartInfoForTest() => CreateStartInfo();
 
     public async Task<GalateaDelegateBindingEstablished> EnsureBindingAsync(
         GalateaEnsureDelegateBindingRequest request,

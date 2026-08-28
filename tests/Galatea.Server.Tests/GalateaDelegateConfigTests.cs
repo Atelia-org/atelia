@@ -224,12 +224,12 @@ public sealed class GalateaDelegateConfigTests {
             Sidecar = valid.Sidecar with { RpcTimeoutMs = 99 }
         };
         Assert.Throws<InvalidDataException>(() =>
-            new GalateaCodexSidecarClient(invalid));
+            new GalateaCodexDurableSidecarClient(invalid));
 
         string link = Path.Combine(fixture.Root, "programmatic-node-link");
         File.CreateSymbolicLink(link, fixture.Executable);
         Assert.Throws<InvalidDataException>(() =>
-            new GalateaCodexSidecarClient(valid with {
+            new GalateaCodexDurableSidecarClient(valid with {
                 Sidecar = valid.Sidecar with { NodeCommand = link }
             }));
 
@@ -240,12 +240,12 @@ public sealed class GalateaDelegateConfigTests {
             UnixFileMode.UserRead | UnixFileMode.UserWrite
         );
         Assert.Throws<InvalidDataException>(() =>
-            new GalateaCodexSidecarClient(valid with {
+            new GalateaCodexDurableSidecarClient(valid with {
                 Sidecar = valid.Sidecar with { CodexCommand = plain }
             }));
 
         Assert.Throws<InvalidDataException>(() =>
-            new GalateaCodexSidecarClient(valid with {
+            new GalateaCodexDurableSidecarClient(valid with {
                 Routes = [valid.CodexRoute with {
                     MaximumTaskUtf8Bytes = 174_600
                 }]
@@ -258,7 +258,7 @@ public sealed class GalateaDelegateConfigTests {
         Directory.CreateDirectory(outside);
         try {
             Assert.Throws<InvalidDataException>(() =>
-                new GalateaCodexSidecarClient(valid with {
+                new GalateaCodexDurableSidecarClient(valid with {
                     Routes = [valid.CodexRoute with { Cwd = outside }]
                 }));
         }
@@ -268,10 +268,12 @@ public sealed class GalateaDelegateConfigTests {
 
         var mutableRoots = valid.AllowedRoots.ToList();
         var mutableRoutes = valid.Routes.ToList();
-        await using var client = new GalateaCodexSidecarClient(valid with {
-            AllowedRoots = mutableRoots,
-            Routes = mutableRoutes
-        });
+        await using var client = new GalateaCodexDurableSidecarClient(
+            valid with {
+                AllowedRoots = mutableRoots,
+                Routes = mutableRoutes
+            }
+        );
         mutableRoots.Clear();
         mutableRoutes.Clear();
 
