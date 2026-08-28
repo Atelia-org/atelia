@@ -16,6 +16,61 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         TimeSpan.FromSeconds(5);
 
     [Fact]
+    public async Task ReadyReplyTurn_WhenTurnFailed_DoesNotClaimOrAbandon() {
+        var completionFactory = new TrackingCompletionClientFactory();
+        var normalizer = new TrackingNormalizer();
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            normalizer
+        );
+        CompletionConnectionConfig connection = GetConnection(host);
+        EventAddress failedHead = await CreateFailedBoundaryAsync(
+            host.SessionDirectory,
+            connection
+        );
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        SeedReadyReply(
+            session.DelegationHandle!.Store,
+            "reply must remain ready"
+        );
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/v1/mailbox/ready-turn",
+            new ReadyReplyTurnRequest(connection.Id)
+        );
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        using JsonDocument body = await ReadJsonAsync(response);
+        Assert.Equal(
+            "recovery-required",
+            body.RootElement.GetProperty("code").GetString()
+        );
+        SessionRuntimeRecoveryRequirements.FailedTurnMustBeAbandoned after =
+            Assert.IsType<SessionRuntimeRecoveryRequirements
+                .FailedTurnMustBeAbandoned>(
+                    session.Engine.InspectRuntimeRecoveryRequirements()
+                );
+        Assert.Equal(failedHead, after.FailedHead);
+        GalateaDelegationStateSnapshot delegation = session.DelegationHandle
+            .Store.ReadSnapshot();
+        Assert.Null(delegation.ActiveLease);
+        Assert.Equal(
+            GalateaReplyNoticeState.Ready,
+            Assert.Single(delegation.Notices).State
+        );
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+        Assert.Equal(0, completionFactory.CreateCallCount);
+        Assert.Equal(0, completionFactory.Client.DispatchCallCount);
+    }
+
+    [Fact]
     public async Task NewMessage_WhenObservationAwaitsAction_ReturnsRecoveryConflictWithoutCalls() {
         var completionFactory = new TrackingCompletionClientFactory();
         var normalizer = new TrackingNormalizer();
@@ -809,6 +864,57 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         "http://localhost:8000/",
         ApiKey: "test-key"
     );
+
+    private static void SeedReadyReply(
+        GalateaDelegationSqliteStore store,
+        string reply
+    ) {
+        GalateaDelegationCaptureResult captured = store.CaptureActionBatch(
+            new GalateaDelegationCaptureRequest(
+                "ej1:00000000000010010000000100000000",
+                new string('a', 64),
+                VisibleActionUtf8Bytes: 6,
+                "extractor-contract-v1",
+                [new SendMailIntent(
+                    GalateaDelegateConfigReader.CanonicalRecipient,
+                    Subject: null,
+                    Body: "seed task",
+                    InReplyToMessageId: null,
+                    EvidenceQuote: "seeded"
+                )]
+            )
+        );
+        GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
+        GalateaRouteBindingSnapshot binding = store.BeginThreadBinding(
+            "seed-binding",
+            snapshot.Route.Revision
+        );
+        _ = store.CompleteThreadBinding(
+            binding.BindingOperationId!,
+            "seed-thread",
+            binding.Revision
+        );
+        snapshot = store.ReadSnapshot();
+        GalateaOutboundMailSnapshot mail = snapshot.Mails.Single(value =>
+            string.Equals(
+                value.DispatchId,
+                Assert.Single(captured.DispatchIds),
+                StringComparison.Ordinal
+            )
+        );
+        GalateaOutboundMailSnapshot started = store.StartQueuedMail(
+            mail.DispatchId,
+            mail.Revision,
+            snapshot.Route.Revision
+        );
+        _ = store.RecordCompletedMail(
+            started.DispatchId,
+            started.Revision,
+            "seed-thread",
+            "seed-turn",
+            reply
+        );
+    }
 
     private static EventAddress AppendPendingObservation(
         string sessionPath

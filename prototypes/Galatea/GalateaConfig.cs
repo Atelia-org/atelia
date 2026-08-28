@@ -389,6 +389,11 @@ internal sealed record InboundMailboxRequest(
     [property: JsonPropertyName("connectionId")] string? ConnectionId = null
 );
 
+internal sealed record ReadyReplyTurnRequest(
+    [property: JsonPropertyName("connectionId")]
+    string? ConnectionId = null
+);
+
 internal sealed record InboundMailboxAcceptedDto(
     string TurnId,
     string MessageId

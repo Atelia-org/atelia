@@ -642,6 +642,155 @@ api.MapPost(
 );
 
 api.MapPost(
+    "/mailbox/ready-turn",
+    async (
+        HttpContext httpContext,
+        ClaimsPrincipal user,
+        GalateaHostService hostService,
+        IHostApplicationLifetime applicationLifetime
+    ) => {
+        ReadyReplyTurnRequest request = await GalateaHttpV1
+            .ReadJsonBodyAsync<ReadyReplyTurnRequest>(httpContext);
+        string? connectionError = GalateaHttpV1.ValidateConnectionId(
+            request.ConnectionId
+        );
+        if (connectionError is not null) {
+            return Results.BadRequest(new ApiErrorDto(
+                "invalid-connection-id",
+                connectionError
+            ));
+        }
+
+        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
+            ?? throw new InvalidOperationException(
+                "Authenticated principal is missing user id."
+            );
+        UserSessionHost session = await hostService.GetSessionAsync(
+            userId,
+            httpContext.RequestAborted
+        );
+        if (!session.TurnLock.Wait(0)) {
+            return BuildTurnBusyConflict(hostService, session);
+        }
+
+        GalateaLiveTurn? liveTurn = null;
+        bool writerOwnershipTransferred = false;
+        try {
+            await hostService.ReconcileDurableAdmissionAsync(
+                session,
+                httpContext.RequestAborted
+            );
+            SessionRuntimeRecoveryRequirements recovery = session.Engine
+                .InspectRuntimeRecoveryRequirements(
+                    httpContext.RequestAborted
+                );
+            if (recovery is not SessionRuntimeRecoveryRequirements
+                    .NoRuntimeRequired {
+                        Phase: SessionExecutionPhase.Idle
+                    }) {
+                return RecoveryConflict(
+                    recovery,
+                    recovery.Phase == SessionExecutionPhase.Empty
+                        ? "session-unprovisioned"
+                        : "recovery-required",
+                    recovery.Phase == SessionExecutionPhase.Empty
+                        ? "会话仓库尚未完成初始化。"
+                        : "当前会话存在待恢复的持久化轮次；自动回信轮次未启动。"
+                );
+            }
+            if (!hostService.TryGetConnection(
+                    request.ConnectionId,
+                    out CompletionConnectionConfig connection)) {
+                return Results.BadRequest(new ApiErrorDto(
+                    "unknown-connection",
+                    $"Unknown completion connection '{request.ConnectionId}'."
+                ));
+            }
+            await hostService.PrepareFreshTurnAdmissionAsync(
+                session,
+                recovery,
+                httpContext.RequestAborted
+            );
+            GalateaReadyReplyTurnStartResult started = hostService
+                .StartReadyReplyTurn(
+                    session,
+                    new GalateaTurnOptions(connection.Id)
+                );
+            if (started is GalateaReadyReplyTurnStartResult.Empty) {
+                DebugUtil.Trace(
+                    "Galatea.Api",
+                    $"POST /api/v1/mailbox/ready-turn user={userId}, ready=false"
+                );
+                return Results.NoContent();
+            }
+            liveTurn = ((GalateaReadyReplyTurnStartResult.Started)started)
+                .Turn;
+            DebugUtil.Info(
+                "Galatea.Api",
+                $"POST /api/v1/mailbox/ready-turn user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}"
+            );
+            IResult result = StartAcceptedTurn(
+                session,
+                liveTurn,
+                hostService,
+                applicationLifetime
+            );
+            writerOwnershipTransferred = true;
+            return result;
+        }
+        catch (Exception original) when (
+            liveTurn is not null && !writerOwnershipTransferred) {
+            try {
+                await hostService.ReconcileDurableAdmissionAsync(
+                    session,
+                    CancellationToken.None
+                );
+            }
+            catch (Exception cleanup) when (
+                GalateaExceptionClassifier.IsNonFatal(cleanup)) {
+                if (!GalateaExceptionClassifier.IsNonFatal(original)) {
+                    ExceptionDispatchInfo.Capture(original).Throw();
+                }
+                throw new AggregateException(
+                    "Ready-reply turn acceptance and durable cutoff cleanup both failed.",
+                    original,
+                    cleanup
+                );
+            }
+            throw;
+        }
+        finally {
+            if (!writerOwnershipTransferred) {
+                try {
+                    if (liveTurn is not null) {
+                        hostService.FinishTurn(session, liveTurn);
+                        if (string.Equals(
+                                liveTurn.Status,
+                                "running",
+                                StringComparison.Ordinal)) {
+                            liveTurn.PublishError(
+                                GalateaSseErrorCode.InternalFailure
+                            );
+                        }
+                        liveTurn.Complete();
+                        await hostService.RefreshRecentTurnsBestEffortAsync(
+                            session,
+                            applicationLifetime.ApplicationStopping
+                        );
+                    }
+                }
+                finally {
+                    session.TurnLock.Release();
+                }
+            }
+        }
+    }
+).WithMetadata(
+    GalateaHttpV1.JsonBody,
+    GalateaHttpV1.MaintenanceWrite
+);
+
+api.MapPost(
     "/mailbox/inbound",
     async (
         HttpContext httpContext,

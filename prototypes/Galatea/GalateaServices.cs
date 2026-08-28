@@ -21,6 +21,15 @@ using Atelia.SessionJournal.RecapGrid.Online;
 
 namespace Atelia.Galatea.Server;
 
+internal abstract record GalateaReadyReplyTurnStartResult {
+    private GalateaReadyReplyTurnStartResult() { }
+
+    internal sealed record Empty : GalateaReadyReplyTurnStartResult;
+
+    internal sealed record Started(GalateaLiveTurn Turn)
+        : GalateaReadyReplyTurnStartResult;
+}
+
 public sealed class GalateaHostService : IAsyncDisposable {
     internal const int RecentTurnLimit = 6;
     internal const int MaximumRecentResponseUtf8Bytes = 4 * 1024 * 1024;
@@ -28,6 +37,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         16 * 1024;
     internal const int MaximumPoppedUserTextUtf8Bytes = 256 * 1024;
     internal const int MaximumPopReceiptUtf8Bytes = 2 * 1024 * 1024;
+    internal const string ReadyReplyTurnPlayerText =
+        "玩家本轮未提交新的动作；本轮仅由外界回信到达触发。";
     private readonly GalateaInputPreprocessor _inputPreprocessor;
     private readonly IReadOnlyDictionary<string, IOutboundMailExtractor>
         _outboundMailExtractors;
@@ -844,38 +855,84 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
         }
         if (cutoff is GalateaDurableReplyLeaseBeginResult.Created created) {
-            try {
-                return host.StartTurn(
-                    new GalateaFreshInput.PlayerAction(
-                        userMessage,
-                        created.Lease.ReadNotices()
-                    ),
-                    options,
-                    created.Lease
-                );
-            }
-            catch (Exception original) {
-                try {
-                    created.Lease.RollbackBeforeEffect();
-                }
-                catch (Exception cleanup) when (
-                    GalateaExceptionClassifier.IsNonFatal(cleanup)) {
-                    if (!GalateaExceptionClassifier.IsNonFatal(original)) {
-                        ExceptionDispatchInfo.Capture(original).Throw();
-                    }
-                    throw new AggregateException(
-                        "Fresh-turn admission and durable cutoff rollback both failed.",
-                        original,
-                        cleanup
-                    );
-                }
-                ExceptionDispatchInfo.Capture(original).Throw();
-                throw;
-            }
+            return StartPlayerTurnWithCreatedCutoff(
+                host,
+                userMessage,
+                options,
+                created
+            );
         }
         throw new InvalidDataException(
             "Unknown durable reply cutoff result."
         );
+    }
+
+    /// <summary>
+    /// Conditionally starts a fresh turn from the durable Ready reply prefix.
+    /// The caller must own <see cref="UserSessionHost.TurnLock"/> and must
+    /// already have admitted an exact Idle session boundary and connection.
+    /// Empty is side-effect free with respect to the reply lease and live turn.
+    /// </summary>
+    internal GalateaReadyReplyTurnStartResult StartReadyReplyTurn(
+        UserSessionHost host,
+        GalateaTurnOptions options
+    ) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentNullException.ThrowIfNull(options);
+        GalateaDurableReplyLeaseBeginResult cutoff = host
+            .ReplyLeaseReconciler.BeginCutoff(ReadyReplyTurnPlayerText);
+        return cutoff switch {
+            GalateaDurableReplyLeaseBeginResult.Empty =>
+                new GalateaReadyReplyTurnStartResult.Empty(),
+            GalateaDurableReplyLeaseBeginResult.Created created =>
+                new GalateaReadyReplyTurnStartResult.Started(
+                    StartPlayerTurnWithCreatedCutoff(
+                        host,
+                        ReadyReplyTurnPlayerText,
+                        options,
+                        created
+                    )
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown durable reply cutoff result."
+            )
+        };
+    }
+
+    private static GalateaLiveTurn StartPlayerTurnWithCreatedCutoff(
+        UserSessionHost host,
+        string playerText,
+        GalateaTurnOptions options,
+        GalateaDurableReplyLeaseBeginResult.Created created
+    ) {
+        try {
+            return host.StartTurn(
+                new GalateaFreshInput.PlayerAction(
+                    playerText,
+                    created.Lease.ReadNotices()
+                ),
+                options,
+                created.Lease
+            );
+        }
+        catch (Exception original) {
+            try {
+                created.Lease.RollbackBeforeEffect();
+            }
+            catch (Exception cleanup) when (
+                GalateaExceptionClassifier.IsNonFatal(cleanup)) {
+                if (!GalateaExceptionClassifier.IsNonFatal(original)) {
+                    ExceptionDispatchInfo.Capture(original).Throw();
+                }
+                throw new AggregateException(
+                    "Fresh-turn admission and durable cutoff rollback both failed.",
+                    original,
+                    cleanup
+                );
+            }
+            ExceptionDispatchInfo.Capture(original).Throw();
+            throw;
+        }
     }
 
     /// <summary>

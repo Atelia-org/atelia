@@ -52,6 +52,12 @@ public sealed class GalateaMaintenanceModeTests {
         );
         await AssertMaintenanceConflictAsync(
             await client.PostAsJsonAsync(
+                "/api/v1/mailbox/ready-turn",
+                new ReadyReplyTurnRequest("test")
+            )
+        );
+        await AssertMaintenanceConflictAsync(
+            await client.PostAsJsonAsync(
                 "/api/v1/chat/turns/pop-latest",
                 new PopLatestTurnRequestDto(
                     EventAddressTextCodec.Format(initialHead)

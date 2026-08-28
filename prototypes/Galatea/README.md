@@ -374,6 +374,16 @@ ASCII token作为code-owned info string。现有Recap contribution已复用它�
 发件人、主题与正文。来信正文在prompt中明确只是故事数据，不获得指令权限。该入口共享maintenance、
 per-session `TurnLock`、recovery admission与main connection allowlist。
 
+`POST /api/v1/mailbox/ready-turn` 是供first-party browser心跳使用的conditional mutation，接受strict JSON
+`{connectionId?}`。它不向browser暴露`reply_notice`正文，也不接受player text：server在per-session
+`TurnLock`内先结算既有lease与latest extraction gap，只允许exact `Idle` boundary，再验证main connection与
+fresh admission。随后用code-owned固定文本`玩家本轮未提交新的动作；本轮仅由外界回信到达触发。`执行
+`BeginCutoff`。没有`Ready` notice时返回204 empty，且不创建live turn、provider call或active lease；有notice时
+才原子冻结bounded FIFO prefix，并以202 `{turnId}`启动现有player-composite/SSE fresh turn。该固定文本不经过
+input normalizer，textarea等browser草稿不进入Observation。busy、failed turn及其他recovery boundary返回typed
+409；尤其不会自动abandon failed turn、resume/restart recovery或claim对应Ready notice。多tab竞争由
+`TurnLock`与SQLite lease共同串行化；server endpoint自身不形成后台无限循环，browser opt-in仍是调度开关。
+
 主线terminal Action durable并回到`Idle`后，host先用SessionJournal exact raw evidence结算当前reply lease，
 再在recent refresh与SSE `done`之前使用
 `GalateaVisibleActionTextRenderer`提取可见文本：按顺序连接Text blocks，排除reasoning/tool block，
@@ -481,6 +491,7 @@ route。当前versioned endpoints是：
 | POST | `/api/v1/chat/turns` | 202 `{turnId}` |
 | POST | `/api/v1/chat/turns/resume` | 202 `{turnId}` |
 | POST | `/api/v1/mailbox/inbound` | 202 `{turnId,messageId}` |
+| POST | `/api/v1/mailbox/ready-turn` | 无Ready为204 empty；已原子启动为202 `{turnId}` |
 | POST | `/api/v1/chat/turns/pop-latest` | `{poppedUserText}` |
 | GET | `/api/v1/chat/turns/current` | `status,turnId,connectionId,restartRequired,recoveryHead` |
 | POST | `/api/v1/chat/turns/{turnId}/stop` | 204 empty |

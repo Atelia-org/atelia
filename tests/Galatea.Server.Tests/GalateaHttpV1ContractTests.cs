@@ -20,20 +20,25 @@ public sealed class GalateaHttpV1ContractTests {
         _ = await client.GetAsync("/api/v1/me");
         EndpointDataSource dataSource = host.Factory.Services
             .GetRequiredService<EndpointDataSource>();
-        RouteEndpoint endpoint = Assert.Single(
-            dataSource.Endpoints.OfType<RouteEndpoint>(),
-            static endpoint => string.Equals(
-                endpoint.RoutePattern.RawText,
-                "/api/v1/chat/turns",
-                StringComparison.Ordinal
-            )
-        );
-        Assert.NotNull(endpoint.Metadata
-            .GetMetadata<GalateaHttpV1.JsonBodyEndpointMetadata>());
-        Assert.NotNull(endpoint.Metadata
-            .GetMetadata<GalateaHttpV1.MaintenanceWriteEndpointMetadata>());
-        Assert.Null(endpoint.Metadata
-            .GetMetadata<IRequestSizeLimitMetadata>());
+        foreach (string route in new[] {
+            "/api/v1/chat/turns",
+            "/api/v1/mailbox/ready-turn",
+        }) {
+            RouteEndpoint endpoint = Assert.Single(
+                dataSource.Endpoints.OfType<RouteEndpoint>(),
+                endpoint => string.Equals(
+                    endpoint.RoutePattern.RawText,
+                    route,
+                    StringComparison.Ordinal
+                )
+            );
+            Assert.NotNull(endpoint.Metadata
+                .GetMetadata<GalateaHttpV1.JsonBodyEndpointMetadata>());
+            Assert.NotNull(endpoint.Metadata.GetMetadata<
+                GalateaHttpV1.MaintenanceWriteEndpointMetadata>());
+            Assert.Null(endpoint.Metadata
+                .GetMetadata<IRequestSizeLimitMetadata>());
+        }
     }
 
     [Fact]
@@ -149,6 +154,32 @@ public sealed class GalateaHttpV1ContractTests {
             client,
             json,
             "application/json"
+        );
+
+        await AssertApiErrorAsync(
+            response,
+            HttpStatusCode.BadRequest,
+            "invalid-request"
+        );
+    }
+
+    [Theory]
+    [InlineData("{\"connectionId\":\"test\",\"connectionId\":\"other\"}")]
+    [InlineData("{\"ConnectionId\":\"test\"}")]
+    [InlineData("{\"connectionId\":1}")]
+    [InlineData("{\"extra\":1}")]
+    public async Task ReadyReplyTurn_StrictJsonRejectsShapeMutations(
+        string json
+    ) {
+        await using var host = CreateHost();
+        using HttpClient client = host.CreateClient();
+        _ = await GalateaTestHost.LoginAsync(client);
+
+        using HttpResponseMessage response = await PostRawAsync(
+            client,
+            json,
+            "application/json",
+            "/api/v1/mailbox/ready-turn"
         );
 
         await AssertApiErrorAsync(

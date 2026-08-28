@@ -14,6 +14,185 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
     [Fact]
+    public async Task ReadyReplyTurn_IsConditionalAtomicAndBypassesNormalizer() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig extractor = Connection("mail-helper");
+        const string Reply = "reply delivered by the durable delegate";
+        using var automaticCompletionStarted = new ManualResetEventSlim();
+        using var releaseAutomaticCompletion = new ManualResetEventSlim();
+        var mainClient = new QueueClient(
+            _ => Completed(main, "[Galatea] sent one letter."),
+            _ => {
+                automaticCompletionStarted.Set();
+                Assert.True(releaseAutomaticCompletion.Wait(Deadline));
+                return Completed(main, "received the automatic reply");
+            }
+        );
+        var extractorClient = new QueueClient(
+            _ => CompletedWithTools(
+                extractor,
+                MailTool("mail-ready-turn", "automatic task")
+            ),
+            _ => Completed(extractor, "no mail")
+        );
+        var normalizer = new CountingNormalizer();
+        var factory = new RoutingFactory(new Dictionary<
+            string,
+            ICompletionClient
+        >(StringComparer.Ordinal) {
+            [main.Id] = mainClient,
+            [extractor.Id] = extractorClient,
+        });
+        var backend = new DurableBackend();
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            factory,
+            normalizer,
+            connections: [main, extractor],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: extractor.Id,
+            delegateTransport: new DurableTransport(backend)
+        );
+        using HttpClient http = host.CreateClient();
+        await LoginAsync(http);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        Atelia.EventJournal.EventAddress? initialHead = session.Engine
+            .ReadCurrentHead();
+
+        using (HttpResponseMessage empty = await http.PostAsJsonAsync(
+                   "/api/v1/mailbox/ready-turn",
+                   new ReadyReplyTurnRequest(main.Id))) {
+            Assert.Equal(HttpStatusCode.NoContent, empty.StatusCode);
+            Assert.Empty(await empty.Content.ReadAsByteArrayAsync());
+        }
+        Assert.Equal(initialHead, session.Engine.ReadCurrentHead());
+        Assert.Null(session.GetCurrentTurn());
+        Assert.Null(session.DelegationHandle!.Store.ReadSnapshot().ActiveLease);
+        Assert.Equal(0, mainClient.CallCount);
+        Assert.Equal(0, extractorClient.CallCount);
+        Assert.Equal(0, normalizer.ShouldNormalizeCallCount);
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+
+        GalateaLiveTurn sent = await StartAndWaitAsync(
+            http,
+            service,
+            session,
+            "send one"
+        );
+        Assert.Equal("completed", sent.Status);
+        await WaitUntilAsync(() => backend.StartCallCount == 1);
+        backend.Complete(0, Reply);
+        _ = session.DelegationHandle.Signal();
+        await WaitUntilAsync(() => session.DelegationHandle.Store
+            .ReadSnapshot().Notices.SingleOrDefault()?.State
+                == GalateaReplyNoticeState.Ready);
+        int shouldNormalizeBeforeReady = normalizer.ShouldNormalizeCallCount;
+        int normalizeBeforeReady = normalizer.NormalizeCallCount;
+
+        using (HttpResponseMessage unknown = await http.PostAsJsonAsync(
+                   "/api/v1/mailbox/ready-turn",
+                   new ReadyReplyTurnRequest("unknown"))) {
+            Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
+        }
+        GalateaDelegationStateSnapshot afterUnknown = session.DelegationHandle
+            .Store.ReadSnapshot();
+        Assert.Null(afterUnknown.ActiveLease);
+        Assert.Equal(
+            GalateaReplyNoticeState.Ready,
+            Assert.Single(afterUnknown.Notices).State
+        );
+
+        StartTurnResponseDto accepted;
+        using (HttpResponseMessage response = await http.PostAsJsonAsync(
+                   "/api/v1/mailbox/ready-turn",
+                   new ReadyReplyTurnRequest(main.Id))) {
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            accepted = Assert.IsType<StartTurnResponseDto>(
+                await response.Content.ReadFromJsonAsync<
+                    StartTurnResponseDto>()
+            );
+        }
+        GalateaLiveTurn received = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(session, accepted.TurnId)
+        );
+        Assert.True(automaticCompletionStarted.Wait(Deadline));
+        GalateaDelegationStateSnapshot leased = session.DelegationHandle
+            .Store.ReadSnapshot();
+        Assert.NotNull(leased.ActiveLease);
+        Assert.Equal(
+            GalateaReplyNoticeState.Leased,
+            Assert.Single(leased.Notices).State
+        );
+        try {
+            using HttpResponseMessage busy = await http.PostAsJsonAsync(
+                "/api/v1/mailbox/ready-turn",
+                new ReadyReplyTurnRequest(main.Id)
+            );
+            Assert.Equal(HttpStatusCode.Conflict, busy.StatusCode);
+            using JsonDocument body = JsonDocument.Parse(
+                await busy.Content.ReadAsStringAsync()
+            );
+            Assert.Equal(
+                "turn-busy",
+                body.RootElement.GetProperty("code").GetString()
+            );
+        }
+        finally {
+            releaseAutomaticCompletion.Set();
+        }
+        await Assert.IsAssignableFrom<Task>(received.RunTask)
+            .WaitAsync(Deadline);
+        Assert.Equal("completed", received.Status);
+        Assert.Equal(2, mainClient.CallCount);
+        Assert.Equal(
+            shouldNormalizeBeforeReady,
+            normalizer.ShouldNormalizeCallCount
+        );
+        Assert.Equal(normalizeBeforeReady, normalizer.NormalizeCallCount);
+
+        SessionCompletedTurnProjection completed = session.Engine
+            .ReadRecentCompletedTurns(1)
+            .RequireSnapshot().Turns.Single();
+        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+            completed.ObservationContent,
+            out GalateaPlayerObservation observation
+        ));
+        Assert.Equal(
+            GalateaHostService.ReadyReplyTurnPlayerText,
+            observation.PlayerText
+        );
+        Assert.Equal(
+            [Reply],
+            observation.ReadyNotices.Select(static notice => notice.Body)
+                .ToArray()
+        );
+        GalateaDelegationStateSnapshot consumed = session.DelegationHandle
+            .Store.ReadSnapshot();
+        Assert.Null(consumed.ActiveLease);
+        Assert.Equal(
+            GalateaReplyNoticeState.Consumed,
+            Assert.Single(consumed.Notices).State
+        );
+        Atelia.EventJournal.EventAddress? completedHead = session.Engine
+            .ReadCurrentHead();
+        int extractorCallsAfterCompleted = extractorClient.CallCount;
+
+        using (HttpResponseMessage empty = await http.PostAsJsonAsync(
+                   "/api/v1/mailbox/ready-turn",
+                   new ReadyReplyTurnRequest(main.Id))) {
+            Assert.Equal(HttpStatusCode.NoContent, empty.StatusCode);
+        }
+        Assert.Equal(completedHead, session.Engine.ReadCurrentHead());
+        Assert.Equal(2, mainClient.CallCount);
+        Assert.Equal(extractorCallsAfterCompleted, extractorClient.CallCount);
+        Assert.Null(session.DelegationHandle.Store.ReadSnapshot().ActiveLease);
+    }
+
+    [Fact]
     public async Task DurableRoundTrip_UsesOneFixedThreadAndUndoDoesNotRearm() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractor = Connection("mail-helper");
@@ -367,9 +546,11 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     ) : ICompletionClient {
         private readonly Queue<Func<CompletionRequest, CompletionResult>>
             _scripts = new(scripts);
+        private int _callCount;
 
         public string Name => "delegation-runtime-test";
         public string ApiSpecId => "test-v1";
+        internal int CallCount => Volatile.Read(ref _callCount);
 
         public Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
@@ -377,12 +558,39 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             CancellationToken cancellationToken = default
         ) {
             cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _callCount);
             CompletionResult result = _scripts.Dequeue()(request);
             foreach (ActionBlock.Text text in result.Message.Blocks
                          .OfType<ActionBlock.Text>()) {
                 observer?.OnTextDelta(text.Content);
             }
             return Task.FromResult(result);
+        }
+    }
+
+    private sealed class CountingNormalizer : IGalateaUserMessageNormalizer {
+        private int _shouldNormalizeCallCount;
+        private int _normalizeCallCount;
+
+        internal int ShouldNormalizeCallCount => Volatile.Read(
+            ref _shouldNormalizeCallCount
+        );
+        internal int NormalizeCallCount => Volatile.Read(
+            ref _normalizeCallCount
+        );
+
+        public bool ShouldNormalize(string userMessage) {
+            Interlocked.Increment(ref _shouldNormalizeCallCount);
+            return true;
+        }
+
+        public ValueTask<string> NormalizeAsync(
+            string userMessage,
+            CancellationToken ct
+        ) {
+            ct.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _normalizeCallCount);
+            return ValueTask.FromResult("normalized: " + userMessage);
         }
     }
 
