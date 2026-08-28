@@ -606,10 +606,9 @@ public sealed class GalateaEndpointLockTopologyTests {
 
         string script = await reader.ReadToEndAsync();
 
-        Assert.Contains(
-            "undoLastButton.disabled = maintenanceMode || state.streaming || !hasUndoableTurn();",
-            script,
-            StringComparison.Ordinal
+        Assert.Matches(
+            @"undoLastButton\.disabled\s*=\s*maintenanceMode\s*\|\|\s*state\.streaming\s*\|\|\s*state\.mailLoopInFlight\s*\|\|\s*!hasUndoableTurn\(\)\s*;",
+            script
         );
         Assert.Contains(
             "function confirmPendingPoppedTurnReplacement()",
