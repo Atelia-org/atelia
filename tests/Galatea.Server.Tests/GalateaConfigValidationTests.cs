@@ -224,6 +224,8 @@ public sealed class GalateaConfigValidationTests {
                 StringComparison.Ordinal);
             Assert.Contains("## 界外邮箱机制", user.SystemPrompt,
                 StringComparison.Ordinal);
+            Assert.DoesNotContain("## Codex 界外投递", user.SystemPrompt,
+                StringComparison.Ordinal);
             Assert.DoesNotContain("${", user.SystemPrompt,
                 StringComparison.Ordinal);
         }
@@ -1055,6 +1057,34 @@ public sealed class GalateaConfigValidationTests {
             JsonObject original = JsonNode.Parse(
                 File.ReadAllText(path)
             )!.AsObject();
+
+            GalateaConfig outboundDisabled = Load(original);
+            string disabledPrompt = Assert.Single(
+                outboundDisabled.Users
+            ).SystemPrompt;
+            Assert.Null(outboundDisabled.OutboundMailExtractorConnectionId);
+            Assert.Contains("## 界外邮箱机制", disabledPrompt,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("## Codex 界外投递", disabledPrompt,
+                StringComparison.Ordinal);
+
+            JsonObject enabled = original.DeepClone().AsObject();
+            enabled["bindings"]!.AsObject()[
+                GalateaCompletionOwner.OutboundMailExtractorBindingKey
+            ] = "test";
+            GalateaConfig outboundEnabled = Load(enabled);
+            string enabledPrompt = Assert.Single(
+                outboundEnabled.Users
+            ).SystemPrompt;
+            Assert.Equal(
+                "test",
+                outboundEnabled.OutboundMailExtractorConnectionId
+            );
+            Assert.Contains("## 界外邮箱机制", enabledPrompt,
+                StringComparison.Ordinal);
+            Assert.Contains("## Codex 界外投递", enabledPrompt,
+                StringComparison.Ordinal);
+            Assert.NotEqual(disabledPrompt, enabledPrompt);
 
             AssertRejected(original, "selectableConnectionIds");
             AssertRejected(original, "bindings");

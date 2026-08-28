@@ -5,15 +5,18 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaTrackedPromptTemplateTests {
     [Fact]
-    public void TrackedResourcesComposeInExactCodeOwnedOrder() {
+    public void TrackedResourcesComposeEnabledAndDisabledInExactOrder() {
         string prefix = ReadTracked(
             "trpg-protocol-prefix-zh-cn.md"
         ).Trim();
         string context = ReadTracked(
             "character-context-standard-zh-cn.md"
         ).Trim();
-        string suffix = ReadTracked(
-            "trpg-mailbox-protocol-suffix-zh-cn.md"
+        string mailboxBase = ReadTracked(
+            "trpg-mailbox-protocol-base-zh-cn.md"
+        ).Trim();
+        string outboundAppendix = ReadTracked(
+            "trpg-outbound-mail-protocol-appendix-zh-cn.md"
         ).Trim();
 
         Assert.Equal(prefix, GalateaSystemPromptComposer.ProtocolPrefixSource);
@@ -22,46 +25,68 @@ public sealed class GalateaTrackedPromptTemplateTests {
             GalateaBuiltInCharacterContextTemplate.Source
         );
         Assert.Equal(
-            suffix,
-            GalateaSystemPromptComposer.MailboxProtocolSuffixSource
+            mailboxBase,
+            GalateaSystemPromptComposer.MailboxProtocolBaseSource
+        );
+        Assert.Equal(
+            outboundAppendix,
+            GalateaSystemPromptComposer.OutboundMailProtocolAppendixSource
         );
 
-        string compositeSource = string.Concat(
+        string baseCompositeSource = string.Concat(
             prefix,
             GalateaSystemPromptComposer.SectionSeparator,
             context,
             GalateaSystemPromptComposer.SectionSeparator,
-            suffix
+            mailboxBase
         );
-        string expected = compositeSource
-            .Replace("${characterName}", "Alice", StringComparison.Ordinal)
-            .Replace("${playerName}", "Alex", StringComparison.Ordinal);
-        string rendered = GalateaSystemPromptComposer.Compose(
-            context,
-            new GalateaCharacterName("Alice"),
-            new GalateaPlayerName("Alex"),
-            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
-        );
+        string disabledExpected = RenderNames(baseCompositeSource);
+        string enabledExpected = RenderNames(string.Concat(
+            baseCompositeSource,
+            GalateaSystemPromptComposer.OutboundAppendixSeparator,
+            outboundAppendix
+        ));
+        string disabled = Compose(context, outboundMailEnabled: false);
+        string enabled = Compose(context, outboundMailEnabled: true);
 
-        Assert.Equal(expected, rendered);
-        Assert.DoesNotContain("${", rendered, StringComparison.Ordinal);
+        Assert.Equal(disabledExpected, disabled);
+        Assert.Equal(enabledExpected, enabled);
+        Assert.DoesNotContain("${", disabled, StringComparison.Ordinal);
+        Assert.DoesNotContain("${", enabled, StringComparison.Ordinal);
+        Assert.DoesNotContain("Codex 界外投递", disabled,
+            StringComparison.Ordinal);
+        Assert.Contains("## Codex 界外投递", enabled,
+            StringComparison.Ordinal);
         Assert.True(
-            rendered.IndexOf("## 输出结构", StringComparison.Ordinal)
-            < rendered.IndexOf(
-                "## 世界观与人物设定",
+            enabled.IndexOf("## 界外邮箱机制", StringComparison.Ordinal)
+            < enabled.IndexOf(
+                "## Codex 界外投递",
                 StringComparison.Ordinal
             )
         );
         Assert.True(
-            rendered.IndexOf(
+            enabled.IndexOf("## 输出结构", StringComparison.Ordinal)
+            < enabled.IndexOf(
                 "## 世界观与人物设定",
-                StringComparison.Ordinal
-            ) < rendered.IndexOf(
-                "## 界外邮箱机制",
                 StringComparison.Ordinal
             )
         );
     }
+
+    private static string RenderNames(string source) => source
+        .Replace("${characterName}", "Alice", StringComparison.Ordinal)
+        .Replace("${playerName}", "Alex", StringComparison.Ordinal);
+
+    private static string Compose(
+        string context,
+        bool outboundMailEnabled
+    ) => GalateaSystemPromptComposer.Compose(
+        context,
+        new GalateaCharacterName("Alice"),
+        new GalateaPlayerName("Alex"),
+        outboundMailEnabled,
+        GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
+    );
 
     [Fact]
     public void StandardContextKeepsRecommendedTwoModulesAndMemorySlots() {
@@ -70,6 +95,16 @@ public sealed class GalateaTrackedPromptTemplateTests {
         Assert.DoesNotContain("Galatea", context, StringComparison.Ordinal);
         Assert.DoesNotContain("刘世超", context, StringComparison.Ordinal);
         Assert.DoesNotContain("老刘", context, StringComparison.Ordinal);
+        Assert.DoesNotContain("最旧的一半", context,
+            StringComparison.Ordinal);
+        Assert.Contains("由RecapGrid派生为带来源的世界理解", context,
+            StringComparison.Ordinal);
+        Assert.Contains("以更新的raw History为准", context,
+            StringComparison.Ordinal);
+        Assert.Contains("独立的人工长期记录", context,
+            StringComparison.Ordinal);
+        Assert.Contains("动态外部记忆机制接管", context,
+            StringComparison.Ordinal);
         Assert.Equal(5, CountOccurrences(context, "{{}}"));
         Assert.Equal(
             [
@@ -86,8 +121,10 @@ public sealed class GalateaTrackedPromptTemplateTests {
     [Fact]
     public void ProtocolLocksVoiceSourceAndMailboxBoundaries() {
         string prefix = GalateaSystemPromptComposer.ProtocolPrefixSource;
-        string suffix =
-            GalateaSystemPromptComposer.MailboxProtocolSuffixSource;
+        string mailboxBase =
+            GalateaSystemPromptComposer.MailboxProtocolBaseSource;
+        string outboundAppendix =
+            GalateaSystemPromptComposer.OutboundMailProtocolAppendixSource;
 
         Assert.Contains("GM carrier", prefix, StringComparison.Ordinal);
         Assert.Contains("[${characterName}]", prefix,
@@ -97,11 +134,24 @@ public sealed class GalateaTrackedPromptTemplateTests {
         Assert.Contains("普通User消息", prefix, StringComparison.Ordinal);
         Assert.Contains("邮件、recap和历史摘要", prefix,
             StringComparison.Ordinal);
-        Assert.Contains("`Codex`", suffix, StringComparison.Ordinal);
-        Assert.Contains("收件人和完整正文", suffix,
+        Assert.Contains("阅读、忽略或保存", mailboxBase,
             StringComparison.Ordinal);
-        Assert.Contains("已经完成发送", suffix, StringComparison.Ordinal);
-        Assert.Contains("回信会立刻出现", suffix, StringComparison.Ordinal);
+        Assert.DoesNotContain("Codex", mailboxBase,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("完成发送", mailboxBase,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("回复", mailboxBase,
+            StringComparison.Ordinal);
+        Assert.Contains("当前唯一可投递的界外收件人是`Codex`",
+            outboundAppendix, StringComparison.Ordinal);
+        Assert.DoesNotContain("在所有界外收件人中", outboundAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("收件人和完整正文", outboundAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("已经完成发送", outboundAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("回信会立刻出现", outboundAppendix,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -121,6 +171,7 @@ public sealed class GalateaTrackedPromptTemplateTests {
             Context,
             new GalateaCharacterName("Alice"),
             new GalateaPlayerName("Alex"),
+            false,
             GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
         );
 
@@ -130,8 +181,12 @@ public sealed class GalateaTrackedPromptTemplateTests {
             StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void AggregateCompositeSourceUsesTheSingleSystemPromptCap() {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AggregateCompositeSourceUsesTheSingleSystemPromptCap(
+        bool outboundMailEnabled
+    ) {
         string context = GalateaPromptTemplate.CharacterNameToken
             + new string(
                 'x',
@@ -144,6 +199,7 @@ public sealed class GalateaTrackedPromptTemplateTests {
                 context,
                 new GalateaCharacterName("A"),
                 new GalateaPlayerName("P"),
+                outboundMailEnabled,
                 GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
             ));
     }

@@ -19,13 +19,15 @@ namespace Atelia.Galatea.Server.Tests;
 internal sealed class GalateaTestHost : IAsyncDisposable {
     private const string TestUserId = "alice";
     private const string TestPassword = "pw1";
-    private static readonly string DefaultFinalizedSystemPrompt =
-        GalateaSystemPromptComposer.Compose(
-            "test ${characterName} system prompt",
-            new GalateaCharacterName("Galatea"),
-            new GalateaPlayerName("刘世超"),
-            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
-        );
+    private static string ComposeDefaultFinalizedSystemPrompt(
+        bool outboundMailEnabled
+    ) => GalateaSystemPromptComposer.Compose(
+        "test ${characterName} system prompt",
+        new GalateaCharacterName("Galatea"),
+        new GalateaPlayerName("刘世超"),
+        outboundMailEnabled,
+        GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
+    );
 
     private readonly string _tempRoot;
     private readonly bool _deleteFilesOnDispose;
@@ -103,7 +105,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                    sessionDirectory,
                    new SessionCreateOptions(
                        "model-a",
-                       DefaultFinalizedSystemPrompt,
+                       ComposeDefaultFinalizedSystemPrompt(
+                           outboundMailExtractorConnectionId is not null
+                       ),
                        "openai-chat/strict"
                    ))) {
             if (provisionRawOnly) {

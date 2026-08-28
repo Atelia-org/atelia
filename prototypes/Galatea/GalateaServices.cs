@@ -2364,6 +2364,10 @@ internal static class GalateaConfigLoader {
         CompletionConnectionsFileConfig connectionsFile =
             CompletionConnectionConfigLoader.Decode(connectionsJson);
         GalateaCompletionOwner.ValidateGalateaRouting(connectionsFile);
+        string? outboundMailExtractorConnectionId =
+            connectionsFile.Bindings![
+                GalateaCompletionOwner.OutboundMailExtractorBindingKey
+            ];
         if (!File.Exists(delegatesPath)) {
             throw new FileNotFoundException(
                 $"Galatea delegates file was not found: {delegatesPath}",
@@ -2374,7 +2378,11 @@ internal static class GalateaConfigLoader {
             GalateaDelegateConfigReader.Read(delegatesPath);
         if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("Galatea config must contain at least one user."); }
         IReadOnlyList<GalateaUserConfig> users =
-            ResolveUsers(usersFile.Users, configDir);
+            ResolveUsers(
+                usersFile.Users,
+                configDir,
+                outboundMailExtractorConnectionId is not null
+            );
 
         var config = new GalateaConfig(
             Users: users,
@@ -2385,9 +2393,8 @@ internal static class GalateaConfigLoader {
             InputNormalizerConnectionId: connectionsFile.Bindings![
                 GalateaCompletionOwner.InputNormalizerBindingKey
             ],
-            OutboundMailExtractorConnectionId: connectionsFile.Bindings[
-                GalateaCompletionOwner.OutboundMailExtractorBindingKey
-            ],
+            OutboundMailExtractorConnectionId:
+                outboundMailExtractorConnectionId,
             Delegates: delegates,
             ListenUrls: usersFile.ListenUrls,
             CallLogDir: ResolveCallLogDirectory(
@@ -2544,7 +2551,8 @@ internal static class GalateaConfigLoader {
     private static IReadOnlyList<GalateaUserConfig>
         ResolveUsers(
             IReadOnlyList<GalateaUserFileConfig> configuredUsers,
-            string configDirectory
+            string configDirectory,
+            bool outboundMailEnabled
         ) {
         var resolvedUsers = new List<GalateaUserConfig>(
             configuredUsers.Count
@@ -2610,6 +2618,7 @@ internal static class GalateaConfigLoader {
                     characterContextTemplate,
                     characterName,
                     playerName,
+                    outboundMailEnabled,
                     GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
                 );
             }
