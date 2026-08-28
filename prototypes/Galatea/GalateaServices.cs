@@ -13,6 +13,7 @@ using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.Prompts;
 using Atelia.SessionJournal;
+using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
 using Atelia.SessionJournal.RecapGrid.Control;
 using Atelia.SessionJournal.RecapGrid.Hosting;
@@ -23,6 +24,8 @@ namespace Atelia.Galatea.Server;
 public sealed class GalateaHostService : IAsyncDisposable {
     internal const int RecentTurnLimit = 6;
     internal const int MaximumRecentResponseUtf8Bytes = 4 * 1024 * 1024;
+    internal const int MaximumRecapCadenceProgressResponseUtf8Bytes =
+        16 * 1024;
     internal const int MaximumPoppedUserTextUtf8Bytes = 256 * 1024;
     internal const int MaximumPopReceiptUtf8Bytes = 2 * 1024 * 1024;
     private readonly GalateaInputPreprocessor _inputPreprocessor;
@@ -500,6 +503,60 @@ public sealed class GalateaHostService : IAsyncDisposable {
         try {
             return await RefreshRecentTurnsAsync(host, ct)
                 .ConfigureAwait(false);
+        }
+        finally {
+            host.TurnLock.Release();
+        }
+    }
+
+    public Task<RecapCadenceProgressSnapshotDto>
+        GetRecapCadenceProgressAsync(
+        UserSessionHost host,
+        CancellationToken ct
+    ) {
+        ArgumentNullException.ThrowIfNull(host);
+
+        if (!host.TurnLock.Wait(0)) {
+            throw new GalateaRecentProjectionException(
+                "recap-cadence-progress-busy",
+                "Recap cadence progress is temporarily unavailable while "
+                    + "a turn writer owns the session."
+            );
+        }
+        try {
+            ct.ThrowIfCancellationRequested();
+            EventAddress? capturedRawHead =
+                host.Engine.ReadCurrentHead();
+            RecapCadenceProgressSnapshotDto result =
+                capturedRawHead is { } availableHead
+                    ? GalateaRecapCadenceProgress.Inspect(
+                        host.Engine.ReadView,
+                        availableHead,
+                        new O200kBaseHistoryUnitLoadEstimator(),
+                        ct
+                    )
+                    : new RecapCadenceProgressSnapshotDto(
+                        GalateaRecapCadenceProgress.ExactFreshness,
+                        "unprovisioned",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "raw-head-absent"
+                    );
+            ct.ThrowIfCancellationRequested();
+            GalateaBoundedJson.RequireFits(
+                result,
+                MaximumRecapCadenceProgressResponseUtf8Bytes,
+                "recap-cadence-progress-limit-exceeded"
+            );
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult(result);
         }
         finally {
             host.TurnLock.Release();
@@ -3030,11 +3087,15 @@ internal static class GalateaHtml {
         <fieldset id="connection-picker" class="connection-picker" aria-label="模型连接">
           <legend>模型连接</legend>
         </fieldset>
-        <section id="recap-planning-status" class="recap-planning-status hidden" aria-live="polite" title="HistoryLoad 是 Timeline cadence 的内部度量，不是模型 token 数。">
-          <div id="recap-planning-summary" class="recap-planning-summary"></div>
+        <section id="recap-planning-status" class="recap-planning-status hidden" aria-live="polite" title="HistoryLoad 是 Timeline cadence 的内部度量，不是模型 token 数或完整 context window 占用。">
+          <div id="recap-cadence-summary" class="recap-planning-summary"></div>
           <progress id="recap-planning-progress" class="recap-planning-progress hidden" max="1" value="0"></progress>
-          <div id="recap-planning-detail" class="recap-planning-detail"></div>
-          <div class="recap-planning-note">HistoryLoad 不是模型 token 数</div>
+          <div id="recap-cadence-detail" class="recap-planning-detail"></div>
+          <div class="recap-grid-readiness">
+            <div id="recap-planning-summary" class="recap-planning-summary"></div>
+            <div id="recap-planning-detail" class="recap-planning-detail"></div>
+          </div>
+          <div class="recap-planning-note">HistoryLoad 不是模型 token 数，也不是完整 context window 占用</div>
         </section>
         <textarea id="message-input" rows="3" placeholder="说点什么……" required{{maintenanceDisabled}}></textarea>
         <div class="composer-actions">

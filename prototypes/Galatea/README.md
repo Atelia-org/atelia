@@ -477,6 +477,7 @@ route。当前versioned endpoints是：
 |:--|:--|:--|
 | GET | `/api/v1/me` | `{userId,maintenanceMode}` |
 | GET | `/api/v1/recent-turns` | latest 6 completed turns、同head Context header、rewind token与RecapGrid readiness |
+| GET | `/api/v1/recap-cadence-progress` | 独立只读的Timeline/Cadence HistoryLoad progress telemetry |
 | POST | `/api/v1/chat/turns` | 202 `{turnId}` |
 | POST | `/api/v1/chat/turns/resume` | 202 `{turnId}` |
 | POST | `/api/v1/mailbox/inbound` | 202 `{turnId,messageId}` |
@@ -531,12 +532,19 @@ nonterminal preview最多4 MiB / 16,383 events，terminal reserve为5 MiB / 1 ev
 fatal transport EOF可能没有terminal，browser必须查询current并有限重试，绝不能当success。durable completion后的
 view不可用表达为`done {recent:null}`，typed原因由独立HTTP recent读取。
 
+Cadence progress没有嵌入`RecentTurnsResponseV1`或SSE `done.recent`；新增的
+`GET /api/v1/recap-cadence-progress`是first-party browser独立best-effort读取的closed telemetry。
+因此现有recent与SSE stable grammar保持逐字段不变，progress暂时失败也不会压掉已经成功读取的turns、
+Context header或rewind token。
+
 这些HTTP/SSE grammar、bounds、terminal/reconciliation语义，以及tracked first-party browser对它们的消费行为，
 已由`session-journal-contract-r2-approved-surfaces-v1`批准为Stable V1。该批准不包含deployment/provider readiness、
 diagnostic逐字文本、login HTML、bootstrap、cache token、cookie实现或ignored operator state。没有真实需求前不增加pagination、cursor、
 Last-Event-ID、ack或dual grammar；breaking change必须形成新candidate/version。
+该旧tag不认证后来新增的独立cadence telemetry endpoint；它的current closed contract由本节、代码与测试共同定义，
+且不改变获批的`RecentTurnsResponseV1`或SSE frame grammar。
 
-## Readiness
+## Readiness 与 cadence telemetry
 
 `GET /api/v1/recent-turns` 返回 `recapGridReadiness`。它绑定同一 read view 与 recent raw
 head：先用 Getter resolve；仅 nonempty active 且 unfulfilled 时调用 Manager 的只读
@@ -545,6 +553,42 @@ head：先用 Getter resolve；仅 nonempty active 且 unfulfilled 时调用 Man
 recipe/row authority 与 bounded metrics。`ready`时同一Getter handle还会按该raw head的governing
 `derivedContext.nthPrevious`只读resolve/materialize `contextHeader`，并在最终raw-head fence后与readiness一起发布；
 该读取不dispatch provider、不build、不写。
+
+独立的`GET /api/v1/recap-cadence-progress`先以non-blocking方式取得同一session的`TurnLock`；
+writer占用时立即返回503 `{code:"recap-cadence-progress-busy",error}`，并且在busy分支不读
+Engine、Timeline或Cadence。取得gate后，它捕获current raw head，使用
+`O200kBaseHistoryUnitLoadEstimator`纯读Cadence snapshot与selected Timeline head row，再从该row end
+（empty Timeline则从SessionCreated seed）测量到captured head的recent raw suffix。raw head不存在时返回
+exact `unprovisioned/raw-head-absent`。该链不创建Completion client、Online、Manager或Store，不capture
+Timeline、不dispatch provider，也不写repository/sidecar。
+
+response始终是exact closed object：
+
+```text
+{
+  freshness, state, observedRawHead, cadenceBaseline,
+  recentHistoryPlanningUnitCount, recentHistoryLoad,
+  recapIntervalHistoryLoad, minimumRecentHistoryLoad,
+  buildThresholdHistoryLoad, remainingHistoryLoad,
+  historyLoadEstimatorId, code, detail
+}
+```
+
+所有HistoryLoad字段都是nullable canonical nonnegative decimal string（`0`或无前导零的十进制），
+browser用`BigInt`比较和格式化；`recentHistoryPlanningUnitCount`是nullable nonnegative safe integer。
+closed state为`below-target|awaiting-replay-safe-boundary|awaiting-recent-reserve|cadence-ready|limited|
+unavailable|unprovisioned|stale`，freshness独立为`exact|stale`。`recapIntervalHistoryLoad`是B，
+`minimumRecentHistoryLoad`是R：尚未选出first replay-safe boundary时，threshold为ideal `B+R`；
+选出boundary后，threshold为`boundary measured load + R`，已经包含overshoot，是effective threshold。
+`remainingHistoryLoad`只表示距对应cadence threshold的差，不承诺Recap build已经开始。
+
+tracked browser在初始recent成功后、terminal current确认完成后以及Undo/reconciliation的recent刷新后，
+独立best-effort刷新该endpoint；turn accepted/attach与rewind pending会把上一份progress本地标为stale，
+busy或其他progress失败保留上一稳定边界。若新exact progress的`observedRawHead`与当前exact
+`recapGridReadiness.observedRawHead`不同，browser会降为`stale/browser-head-mismatch`，绝不显示为exact。
+进度条只接收由BigInt缩放得到的0..1展示比例，权威load、threshold与remaining不转换为JavaScript Number。
+HistoryLoad是estimator-scoped的Timeline cadence内部度量，不是provider/model token数，也不是完整prompt或
+context-window占用；这里也不尝试重建Getter实际选中的context load。
 
 Galatea只在上述unpublished missing-session candidate中自动创建first-turn structural Cadence/Timeline/Control；不为existing
 repository补写，也不自动创建Store、provision asset、compose recipe或activate。需要完整RecapGrid时，operator 应先使用

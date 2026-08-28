@@ -34,6 +34,20 @@ function requireNullableString(value, label) {
   return value === null ? null : requireString(value, label);
 }
 
+function requireCanonicalHistoryLoadDecimal(value, label) {
+  const text = requireString(value, label);
+  if (!/^(?:0|[1-9][0-9]*)$/.test(text)) {
+    throw new Error(`${label} must be a canonical nonnegative decimal string`);
+  }
+  return text;
+}
+
+function requireNullableHistoryLoadDecimal(value, label) {
+  return value === null
+    ? null
+    : requireCanonicalHistoryLoadDecimal(value, label);
+}
+
 function requireBoolean(value, label) {
   if (typeof value !== "boolean") {
     throw new Error(`${label} must be a boolean`);
@@ -197,6 +211,107 @@ export function requireRecentTurnsResponse(value) {
     "recent turns response.recapGridReadiness",
   );
   return recent;
+}
+
+export function requireRecapCadenceProgressSnapshot(value) {
+  const progress = requireExactKeys(value, [
+    "freshness", "state", "observedRawHead", "cadenceBaseline",
+    "recentHistoryPlanningUnitCount", "recentHistoryLoad",
+    "recapIntervalHistoryLoad", "minimumRecentHistoryLoad",
+    "buildThresholdHistoryLoad", "remainingHistoryLoad",
+    "historyLoadEstimatorId", "code", "detail",
+  ], "recap cadence progress");
+  if (!["exact", "stale"].includes(progress.freshness)) {
+    throw new Error("recap cadence progress.freshness is unknown");
+  }
+  const states = [
+    "below-target", "awaiting-replay-safe-boundary",
+    "awaiting-recent-reserve", "cadence-ready", "limited",
+    "unavailable", "unprovisioned", "stale",
+  ];
+  if (!states.includes(progress.state)) {
+    throw new Error("recap cadence progress.state is unknown");
+  }
+  requireNullableString(
+    progress.observedRawHead,
+    "recap cadence progress.observedRawHead",
+  );
+  requireNullableString(
+    progress.cadenceBaseline,
+    "recap cadence progress.cadenceBaseline",
+  );
+  if (progress.recentHistoryPlanningUnitCount !== null) {
+    requireNonnegativeInteger(
+      progress.recentHistoryPlanningUnitCount,
+      "recap cadence progress.recentHistoryPlanningUnitCount",
+    );
+  }
+  for (const key of [
+    "recentHistoryLoad", "recapIntervalHistoryLoad",
+    "minimumRecentHistoryLoad", "buildThresholdHistoryLoad",
+    "remainingHistoryLoad",
+  ]) {
+    requireNullableHistoryLoadDecimal(
+      progress[key],
+      `recap cadence progress.${key}`,
+    );
+  }
+  requireNullableString(
+    progress.historyLoadEstimatorId,
+    "recap cadence progress.historyLoadEstimatorId",
+  );
+  requireNullableString(progress.code, "recap cadence progress.code");
+  requireNullableString(progress.detail, "recap cadence progress.detail");
+  return progress;
+}
+
+const historyLoadFormatter = new Intl.NumberFormat("zh-CN");
+
+export function formatHistoryLoadDecimal(value) {
+  return historyLoadFormatter.format(BigInt(
+    requireCanonicalHistoryLoadDecimal(value, "HistoryLoad"),
+  ));
+}
+
+export function recapCadenceProgressRatio(currentValue, thresholdValue) {
+  const current = BigInt(requireCanonicalHistoryLoadDecimal(
+    currentValue,
+    "current HistoryLoad",
+  ));
+  const threshold = BigInt(requireCanonicalHistoryLoadDecimal(
+    thresholdValue,
+    "threshold HistoryLoad",
+  ));
+  if (threshold === 0n || current >= threshold) {
+    return 1;
+  }
+
+  // Only this bounded display ratio becomes Number. Comparisons, remaining
+  // load, thresholds and labels retain exact BigInt/decimal-string authority.
+  const displayScale = 1_000_000n;
+  return Number((current * displayScale) / threshold) / 1_000_000;
+}
+
+export function alignRecapCadenceProgressWithReadiness(
+  progressValue,
+  readinessValue,
+) {
+  const progress = requireRecapCadenceProgressSnapshot(progressValue);
+  const readiness = readinessValue === null
+    ? null
+    : requireReadiness(readinessValue, "recapGridReadiness");
+  if (progress.freshness === "exact"
+      && readiness?.freshness === "exact"
+      && progress.observedRawHead !== readiness.observedRawHead) {
+    return {
+      ...progress,
+      freshness: "stale",
+      state: "stale",
+      code: "browser-head-mismatch",
+      detail: "Cadence progress and RecapGrid readiness observed different raw heads.",
+    };
+  }
+  return progress;
 }
 
 export function requireStreamLimits(value) {
@@ -670,6 +785,7 @@ function startGalateaApp() {
     selectedConnectionId: null,
     contextHeader: { observation: "", action: "" },
     recapGridReadiness: null,
+    recapCadenceProgress: null,
   };
 
   function resolveConnectionId(candidate) {
@@ -699,8 +815,10 @@ function startGalateaApp() {
   const composerModeHint = document.getElementById("composer-mode-hint");
   const statusText = document.getElementById("status-text");
   const recapPlanningStatus = document.getElementById("recap-planning-status");
+  const recapCadenceSummary = document.getElementById("recap-cadence-summary");
   const recapPlanningSummary = document.getElementById("recap-planning-summary");
   const recapPlanningProgress = document.getElementById("recap-planning-progress");
+  const recapCadenceDetail = document.getElementById("recap-cadence-detail");
   const recapPlanningDetail = document.getElementById("recap-planning-detail");
   const liveTurn = document.getElementById("live-turn");
   const liveText = document.getElementById("live-text");
@@ -898,7 +1016,35 @@ function startGalateaApp() {
     );
     applyRecentTurnsPayload(recent);
     renderTurns();
+    await loadRecapCadenceProgressBestEffort();
     return recent;
+  }
+
+  async function loadRecapCadenceProgress() {
+    const progress = await fetchJson(
+      "/api/v1/recap-cadence-progress",
+      requireRecapCadenceProgressSnapshot,
+    );
+    state.recapCadenceProgress =
+      alignRecapCadenceProgressWithReadiness(
+        progress,
+        state.recapGridReadiness,
+      );
+    renderRecapCadenceProgress();
+    return state.recapCadenceProgress;
+  }
+
+  async function loadRecapCadenceProgressBestEffort() {
+    try {
+      return await loadRecapCadenceProgress();
+    } catch (error) {
+      markRecapCadenceProgressStale(
+        error?.code === "recap-cadence-progress-busy"
+          ? "active-turn"
+          : "progress-refresh-failed",
+      );
+      return null;
+    }
   }
 
   function applyRecentTurnsPayload(payload) {
@@ -907,10 +1053,137 @@ function startGalateaApp() {
     state.rewindLatestToken = recent.rewindLatestToken;
     state.contextHeader = recent.contextHeader;
     state.recapGridReadiness = recent.recapGridReadiness;
+    if (state.recapCadenceProgress) {
+      state.recapCadenceProgress =
+        alignRecapCadenceProgressWithReadiness(
+          state.recapCadenceProgress,
+          state.recapGridReadiness,
+        );
+    }
     renderRecapGridReadiness();
+    renderRecapCadenceProgress();
   }
 
   const recapGridCountFormatter = new Intl.NumberFormat("zh-CN");
+
+  function updateRecapPlanningVisibility() {
+    recapPlanningStatus?.classList.toggle(
+      "hidden",
+      !state.recapGridReadiness && !state.recapCadenceProgress,
+    );
+  }
+
+  function markRecapCadenceProgressStale(code) {
+    if (!state.recapCadenceProgress) {
+      return;
+    }
+    state.recapCadenceProgress = {
+      ...state.recapCadenceProgress,
+      freshness: "stale",
+      code,
+      detail: "显示上一稳定边界；当前 cadence progress 尚未重新确认。",
+    };
+    renderRecapCadenceProgress();
+  }
+
+  function renderRecapCadenceProgress() {
+    if (!recapCadenceSummary || !recapCadenceDetail) {
+      return;
+    }
+
+    const snapshot = state.recapCadenceProgress;
+    recapCadenceSummary.textContent = "";
+    recapCadenceDetail.textContent = "";
+    recapPlanningProgress?.classList.add("hidden");
+    if (!snapshot) {
+      updateRecapPlanningVisibility();
+      return;
+    }
+
+    const formatLoad = (value) => value === null
+      ? null
+      : formatHistoryLoadDecimal(value);
+    const current = formatLoad(snapshot.recentHistoryLoad);
+    const threshold = formatLoad(snapshot.buildThresholdHistoryLoad);
+    const unitCount = snapshot.recentHistoryPlanningUnitCount === null
+      ? "—"
+      : recapGridCountFormatter.format(
+        snapshot.recentHistoryPlanningUnitCount,
+      );
+    const stalePrefix = snapshot.freshness === "stale"
+      ? "上一稳定边界 · "
+      : "";
+    recapCadenceSummary.textContent = current === null
+      ? `${stalePrefix}Recap cadence progress：${snapshot.state}`
+      : `${stalePrefix}近期 raw history：${unitCount} PlanningUnits · HistoryLoad ${current}${threshold === null ? "" : ` / ${threshold}`}`;
+
+    if (snapshot.recentHistoryLoad !== null
+        && snapshot.buildThresholdHistoryLoad !== null
+        && recapPlanningProgress) {
+      recapPlanningProgress.value = recapCadenceProgressRatio(
+        snapshot.recentHistoryLoad,
+        snapshot.buildThresholdHistoryLoad,
+      );
+      recapPlanningProgress.classList.remove("hidden");
+    }
+
+    let stateDetail;
+    switch (snapshot.state) {
+      case "below-target":
+        stateDetail = "尚未累计到 recap interval (B)；当前 B + R 是 ideal cadence threshold。";
+        break;
+      case "awaiting-replay-safe-boundary":
+        stateDetail = "已达到 B，正在等待 first replay-safe boundary；B + R 仍是 ideal，实际 boundary 可能 overshoot。";
+        break;
+      case "awaiting-recent-reserve":
+        stateDetail = "已选 replay-safe boundary；继续累计 mini keep history (R)。当前 threshold 已包含 overshoot。";
+        break;
+      case "cadence-ready":
+        stateDetail = "已达到 effective cadence threshold；下一次 lifecycle 可以推进 Recap，但不表示 build 已开始。";
+        break;
+      case "limited":
+        stateDetail = "本次有界检查不足以给出 cadence threshold。";
+        break;
+      case "unprovisioned":
+        stateDetail = "Cadence 或 Timeline 尚未 provision。";
+        break;
+      case "unavailable":
+        stateDetail = "Cadence progress 暂时不可用。";
+        break;
+      case "stale":
+        stateDetail = "Cadence progress 与当前 RecapGrid readiness 尚未对齐。";
+        break;
+      default:
+        stateDetail = "Cadence progress 状态未知。";
+        break;
+    }
+
+    const settings = [];
+    const interval = formatLoad(snapshot.recapIntervalHistoryLoad);
+    const minimum = formatLoad(snapshot.minimumRecentHistoryLoad);
+    const remaining = formatLoad(snapshot.remainingHistoryLoad);
+    if (interval !== null) {
+      settings.push(`recap interval (B) ${interval}`);
+    }
+    if (minimum !== null) {
+      settings.push(`mini keep history (R) ${minimum}`);
+    }
+    if (remaining !== null) {
+      const thresholdKind = [
+        "awaiting-recent-reserve", "cadence-ready",
+      ].includes(snapshot.state) ? "effective" : "ideal";
+      settings.push(`距 ${thresholdKind} cadence threshold ${remaining}`);
+    }
+    recapCadenceDetail.textContent = [
+      stateDetail,
+      settings.join(" · "),
+      snapshot.code ? `code=${snapshot.code}` : "",
+      snapshot.freshness === "stale" && snapshot.state !== "stale"
+        ? "显示上一稳定边界；当前进度尚未重新确认。"
+        : "",
+    ].filter(Boolean).join(" ");
+    updateRecapPlanningVisibility();
+  }
 
   function renderRecapGridReadiness() {
     if (!recapPlanningStatus || !recapPlanningSummary || !recapPlanningDetail) {
@@ -919,14 +1192,14 @@ function startGalateaApp() {
 
     const snapshot = state.recapGridReadiness;
     if (!snapshot) {
-      recapPlanningStatus.classList.add("hidden");
+      recapPlanningSummary.textContent = "";
+      recapPlanningDetail.textContent = "";
+      updateRecapPlanningVisibility();
       return;
     }
 
-    recapPlanningStatus.classList.remove("hidden");
     recapPlanningSummary.textContent = "";
     recapPlanningDetail.textContent = "";
-    recapPlanningProgress?.classList.add("hidden");
 
     const metrics = snapshot.metrics;
     if (metrics) {
@@ -995,6 +1268,7 @@ function startGalateaApp() {
     if (snapshot.freshness === "stale" && snapshot.state !== "stale") {
       recapPlanningDetail.textContent += " 当前authority尚未重新确认。";
     }
+    updateRecapPlanningVisibility();
   }
 
   async function loadCurrentTurn() {
@@ -1101,6 +1375,7 @@ function startGalateaApp() {
     // invalidated now so no response-loss path can submit it again.
     state.rewindLatestToken = stagedPop.rewindLatestToken;
     state.recapGridReadiness = null;
+    markRecapCadenceProgressStale("rewind-pending");
     input.value = stagedPop.inputValue;
     state.pendingPoppedDraftText = stagedPop.pendingPoppedDraftText;
     refreshComposerMode();
@@ -1220,6 +1495,7 @@ function startGalateaApp() {
       return;
     }
 
+    markRecapCadenceProgressStale("active-turn");
     state.activeTurnId = normalizedTurnId;
     const generation = ++state.streamGeneration;
     let reconciliationFailures = 0;
@@ -1272,6 +1548,7 @@ function startGalateaApp() {
             recentUnavailable = true;
           }
         }
+        await loadRecapCadenceProgressBestEffort();
         if (currentTurn?.status === "recovery-required") {
           setStreaming(false, currentTurn.restartRequired
             ? "上次模型调用结果不确定；需要明确授权后才能恢复。"

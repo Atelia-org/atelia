@@ -337,6 +337,15 @@ public sealed class GalateaEndpointLockTopologyTests {
             "v1",
             "grid.sqlite"
         )));
+        RecapCadenceProgressSnapshotDto? idleCadence = await client
+            .GetFromJsonAsync<RecapCadenceProgressSnapshotDto>(
+                "/api/v1/recap-cadence-progress"
+            );
+        Assert.NotNull(idleCadence);
+        Assert.Equal("exact", idleCadence!.Freshness);
+        Assert.NotNull(idleCadence.ObservedRawHead);
+        Assert.Equal("1", idleCadence.RecapIntervalHistoryLoad);
+        Assert.Equal("1", idleCadence.MinimumRecentHistoryLoad);
 
         GalateaLiveTurn? liveTurn = null;
         bool lockHeld = false;
@@ -375,6 +384,20 @@ public sealed class GalateaEndpointLockTopologyTests {
             Assert.Equal(
                 "recent-view-busy",
                 Assert.IsType<ApiErrorDto>(recentBusy).Code
+            );
+
+            using HttpResponseMessage activeCadence = await client
+                .GetAsync("/api/v1/recap-cadence-progress")
+                .WaitAsync(EndpointDeadline);
+            Assert.Equal(
+                HttpStatusCode.ServiceUnavailable,
+                activeCadence.StatusCode
+            );
+            ApiErrorDto? cadenceBusy = await activeCadence.Content
+                .ReadFromJsonAsync<ApiErrorDto>();
+            Assert.Equal(
+                "recap-cadence-progress-busy",
+                Assert.IsType<ApiErrorDto>(cadenceBusy).Code
             );
 
             using HttpResponseMessage busy = await client
@@ -530,6 +553,37 @@ public sealed class GalateaEndpointLockTopologyTests {
         );
         Assert.DoesNotContain(
             "snapshot.recapBuildIntervalHistoryLoad",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "/api/v1/recap-cadence-progress",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "state.recapCadenceProgress",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains("BigInt(", script, StringComparison.Ordinal);
+        Assert.Contains(
+            "recap interval (B)",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "mini keep history (R)",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "browser-head-mismatch",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "markRecapCadenceProgressStale(\"active-turn\")",
             script,
             StringComparison.Ordinal
         );

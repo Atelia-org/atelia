@@ -286,6 +286,35 @@ api.MapGet(
     }
 );
 
+api.MapGet(
+    "/recap-cadence-progress",
+    async (
+        ClaimsPrincipal user,
+        GalateaHostService hostService,
+        CancellationToken ct
+    ) => {
+        string userId = user.FindFirstValue(
+            GalateaClaimTypes.UserId
+        ) ?? throw new InvalidOperationException(
+            "Authenticated principal is missing user id."
+        );
+        UserSessionHost session = await hostService.GetSessionAsync(
+            userId,
+            ct
+        );
+        RecapCadenceProgressSnapshotDto response = await hostService
+            .GetRecapCadenceProgressAsync(session, ct);
+        DebugUtil.Info(
+            "Galatea.Api",
+            "GET /api/v1/recap-cadence-progress "
+                + $"user={userId}, freshness={response.Freshness}, "
+                + $"state={response.State}, "
+                + $"head={response.ObservedRawHead ?? "<none>"}"
+        );
+        return Results.Ok(response);
+    }
+);
+
 api.MapPost(
     "/chat/turns",
     async (

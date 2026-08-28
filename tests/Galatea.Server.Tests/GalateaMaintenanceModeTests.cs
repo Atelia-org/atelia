@@ -106,6 +106,23 @@ public sealed class GalateaMaintenanceModeTests {
             recap.ObservedRawHead
         );
 
+        RecapCadenceProgressSnapshotDto? cadence = await client
+            .GetFromJsonAsync<RecapCadenceProgressSnapshotDto>(
+                "/api/v1/recap-cadence-progress"
+            );
+        Assert.NotNull(cadence);
+        Assert.Equal("exact", cadence!.Freshness);
+        Assert.Equal("unprovisioned", cadence.State);
+        Assert.Equal(
+            EventAddressTextCodec.Format(initialHead),
+            cadence.ObservedRawHead
+        );
+        Assert.Null(cadence.RecentHistoryLoad);
+        Assert.Null(cadence.RecapIntervalHistoryLoad);
+        Assert.Null(cadence.MinimumRecentHistoryLoad);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.Client.DispatchCallCount);
+
         CurrentTurnDto? current = await client
             .GetFromJsonAsync<CurrentTurnDto>(
                 "/api/v1/chat/turns/current"

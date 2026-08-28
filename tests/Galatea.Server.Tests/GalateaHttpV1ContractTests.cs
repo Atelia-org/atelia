@@ -70,6 +70,7 @@ public sealed class GalateaHttpV1ContractTests {
         HttpRequestMessage[] retiredRequests = [
             new(HttpMethod.Get, "/api/me"),
             new(HttpMethod.Get, "/api/recent-turns"),
+            new(HttpMethod.Get, "/api/recap-cadence-progress"),
             new(HttpMethod.Get, "/api/chat/turns/current"),
             new(HttpMethod.Get,
                 $"/api/chat/turns/{canonicalTurnId}/events"),

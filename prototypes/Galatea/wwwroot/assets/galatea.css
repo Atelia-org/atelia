@@ -144,6 +144,12 @@ body {
   font-size: 0.72rem;
 }
 
+.recap-grid-readiness {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(31, 79, 70, 0.12);
+}
+
 .login-form {
   display: grid;
   gap: 12px;

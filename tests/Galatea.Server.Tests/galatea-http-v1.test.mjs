@@ -56,6 +56,109 @@ assert.throws(
   }),
   /state is unknown/,
 );
+assert.throws(
+  () => production.requireRecentTurnsResponse({
+    ...valid,
+    recapCadenceProgress: null,
+  }),
+  /unexpected fields/,
+);
+
+const exactCadenceProgress = {
+  freshness: "exact",
+  state: "awaiting-recent-reserve",
+  observedRawHead: "0000000000000001:0000000000000002",
+  cadenceBaseline: "0000000000000001:0000000000000001",
+  recentHistoryPlanningUnitCount: 3,
+  recentHistoryLoad: "9007199254740993",
+  recapIntervalHistoryLoad: "60000",
+  minimumRecentHistoryLoad: "24000",
+  buildThresholdHistoryLoad: "9007199254741993",
+  remainingHistoryLoad: "1000",
+  historyLoadEstimatorId: "atelia.history-load.o200k-base.history-unit-v1",
+  code: null,
+  detail: null,
+};
+assert.equal(
+  production.requireRecapCadenceProgressSnapshot(exactCadenceProgress),
+  exactCadenceProgress,
+);
+for (const invalidDecimal of ["01", "-1", "+1", "1.0", " 1", 1]) {
+  assert.throws(
+    () => production.requireRecapCadenceProgressSnapshot({
+      ...exactCadenceProgress,
+      recentHistoryLoad: invalidDecimal,
+    }),
+    /canonical nonnegative decimal string|must be a string/,
+  );
+}
+assert.throws(
+  () => production.requireRecapCadenceProgressSnapshot({
+    ...exactCadenceProgress,
+    recentHistoryPlanningUnitCount: Number.MAX_SAFE_INTEGER + 1,
+  }),
+  /nonnegative safe integer/,
+);
+assert.throws(
+  () => production.requireRecapCadenceProgressSnapshot({
+    ...exactCadenceProgress,
+    state: "future-state",
+  }),
+  /state is unknown/,
+);
+assert.throws(
+  () => production.requireRecapCadenceProgressSnapshot({
+    ...exactCadenceProgress,
+    extra: null,
+  }),
+  /unexpected fields/,
+);
+assert.equal(
+  production.formatHistoryLoadDecimal("9007199254740993"),
+  "9,007,199,254,740,993",
+);
+assert.equal(
+  production.recapCadenceProgressRatio(
+    "9007199254740993",
+    "18014398509481986",
+  ),
+  0.5,
+);
+assert.equal(
+  production.recapCadenceProgressRatio("2", "1"),
+  1,
+);
+const matchingReadiness = {
+  freshness: "exact",
+  state: "raw-only",
+  observedRawHead: exactCadenceProgress.observedRawHead,
+  authority: null,
+  metrics: null,
+  orderedMissing: null,
+  code: null,
+  detail: null,
+  reserveBootstrap: null,
+};
+assert.equal(
+  production.alignRecapCadenceProgressWithReadiness(
+    exactCadenceProgress,
+    matchingReadiness,
+  ),
+  exactCadenceProgress,
+);
+assert.deepEqual(
+  production.alignRecapCadenceProgressWithReadiness(
+    exactCadenceProgress,
+    { ...matchingReadiness, observedRawHead: "different-head" },
+  ),
+  {
+    ...exactCadenceProgress,
+    freshness: "stale",
+    state: "stale",
+    code: "browser-head-mismatch",
+    detail: "Cadence progress and RecapGrid readiness observed different raw heads.",
+  },
+);
 
 const renderedContext = production.renderContextHeader(
   valid.contextHeader,
@@ -177,5 +280,16 @@ assert.match(
 );
 
 assert.match(source, /\/api\/v1\/recent-turns/);
+assert.match(source, /\/api\/v1\/recap-cadence-progress/);
+assert.match(source, /BigInt\(/);
+assert.match(source, /markRecapCadenceProgressStale\("active-turn"\)/);
+assert.match(
+  source,
+  /waitForCurrentTurnTerminal\(\)[\s\S]*loadRecapCadenceProgressBestEffort\(\)/,
+);
+assert.match(
+  source,
+  /async function loadRecentTurns\(\)[\s\S]*loadRecapCadenceProgressBestEffort\(\)/,
+);
 assert.doesNotMatch(source, /["'`]\/api\/(?!v1\/)/);
 assert.doesNotMatch(source, /pendingPoppedTurn/);
