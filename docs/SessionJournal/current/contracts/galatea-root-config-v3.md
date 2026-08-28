@@ -104,9 +104,14 @@ resolve到同一normalized lexical session path时，在session/client/log side 
 所有resolved `delegationStateDir`按platform comparer exact unique并双向non-nested；每一个还必须与所有user的
 resolved `sessionDir`及optional `callLogDir`双向non-nested。existing delegation path components不得包含
 symlink/reparse point。Absolute path与`..`只做platform lexical normalization，不要求位于config directory内。
-当前V3 hard cut只发布、解析并验证这个Galatea-owned storage boundary；durable delegation supervisor尚未接入
-production composition，因此normal host暂不创建、打开或调度该目录，也不会因为目录存在与否改变SessionJournal lazy
-provisioning语义。
+当前production composition已经接入host-wide durable delegation supervisor。Host启动时eager classify每个user；
+只有existing `delegationStateDir`及matching `sessionDir`都存在时才strict-open store并取得process-lifetime
+exclusive OS writer lock。State存在但session缺失时以`SESSION_MISSING`在SQLite/lock open前fail closed；missing
+state path保持`Uninitialized`，直到对应user第一次writable SessionJournal成功open/provision并attach时，才在该exact path
+自动创建physical-frontier baseline。该attach发生在SessionJournal lazy provisioning/open成功之后，不改变
+`sessionProvisioning`的create/open语义。Maintenance mode只read-only打开existing delegation store，不创建
+baseline、不attach writable session、不启动pulse scheduler或sidecar/app-server effect。Baseline/store失败使该
+user fail closed；current binary没有process-local fallback、automatic reset/migration或operator abandon后回旧owner路径。
 
 ### 3.3 `recapGrid` object与owned dependencies
 

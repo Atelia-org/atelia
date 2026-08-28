@@ -1,14 +1,16 @@
 # Galatea Codex delegation durable state machine
 
-> 状态：In Progress（implementation contract）
+> 状态：Implemented；production hard cut active
 >
 > 启动日期：2026-08-28
 >
-> 现行产品契约仍为 [`prototypes/Galatea/README.md`](../../prototypes/Galatea/README.md)；
-> 本文只在 durable hard cut 完成后才升格为产品现状。
+> 完成日期：2026-08-28
+>
+> 现行产品用法与runbook见 [`prototypes/Galatea/README.md`](../../prototypes/Galatea/README.md)；
+> 本文保留durable authority、state machine与failure-model设计真源。
 
-本文是 Galatea Codex delegation durable 子阶段的设计与实施真源。它将已经跑通的
-process-local 闭环收口为一个 Galatea-owned、per-user、SQLite-backed current-state
+本文是 Galatea Codex delegation durable state machine的设计与实施真源。现行binary已经将旧
+process-local闭环hard-cut为一个 Galatea-owned、per-user、SQLite-backed current-state
 machine，使进程崩溃、sidecar 断线和普通重启不再直接丢失 outbox、fixed
 thread binding、reply inbox 或 one-shot lease。
 
@@ -29,8 +31,8 @@ evidence；调度器每次从盘上状态决定下一个有界步骤，不把一
    reply/failure 和路由 quarantine。
 4. 将 reply ready/lease/consume 收口为 durable one-shot 协议，并使恢复只依赖
    SQLite current state 与 SessionJournal exact raw evidence。
-5. 使调度不依赖内存 signal 可靠到达：任何 signal 只是降低延迟的提示，1 秒
-   fallback pulse 必须最终发现所有可推进的盘上状态。
+5. 使outbox/external调度不依赖内存signal可靠到达：任何signal只是降低延迟的提示，1秒
+   fallback pulse必须最终发现所有可由driver推进的SQLite状态。
 6. 在不让主线角色 LLM 看到 delegation tools、不改变 SessionJournal provider
    tool-result continuation 语义的前提下完成上述目标。
 7. 以 per-user database lifetime exclusive OS writer lock 保证任一时刻至多一个
@@ -39,18 +41,20 @@ evidence；调度器每次从盘上状态决定下一个有界步骤，不把一
 ### 1.2 明确非目标
 
 - **不承诺 provider-call exactly-once。** 我们承诺稳定 operation identity、先写
-  Started state、不透明重发 outcome-unknown effect，以及能够证明时的 exact
-  reconciliation。Codex app-server 或下游 provider 没有提供的 exactly-once 语义，
-  Galatea 不伪称已经拥有。
+  Started state、同一dispatch at-most-one `start-turn` attempt、绝不重发outcome-unknown
+  effect，以及能够证明时的exact reconciliation。Codex app-server可持久读取owned
+  thread/turn history，但它或下游provider没有提供的transactional exactly-once语义，
+  Galatea不伪称已经拥有。
 - 不做 multi-thread、thread rollover、thread selection 或长 thread 性能治理。
-- 不将 inbound mailbox 入口或 inbound mail 持久化纳入本工作包。
+- 不把 inbound mailbox delivery queue纳入delegation SQLite；inbound turn继续由SessionJournal
+  narrative persistence拥有。
 - 不新增 browser UI 通知、operator UI 或人工解除 quarantine 流程。开发时可观测性
   继续使用 bounded `DebugUtil.Info/Warning/Error`。
 - 不让 delegation state 随 SessionJournal fork/rewind/rollback 分叉，不尝试“撤销”
   已发生的 Codex side effect。
 - 不引入 effect-event journal、event-sourced projection 或一份与 current-state tables
   并行的持久事件真源。
-- 不在 hard cut 前迁移、删除或同时驱动现行 process-local owner。
+- 不保留旧process-local owner、live dual-write、compatibility fallback或operator切回旧owner路径。
 
 ## 2. 三个 authority
 
@@ -83,9 +87,9 @@ side effect 能被 raw ref move 撤销。
 
 ### 2.3 External effect authority：Codex app-server persistent state
 
-Codex app-server 持久的 owned thread/turn 唯一决定外部 thread 是否已建立、turn 是否
-已接受或 terminal，以及 exact final 是什么。Node sidecar 和 C# transport 只是
-协议适配器，不是 durable ownership authority。
+Codex app-server提供可持久读取的owned thread/turn history；该外部状态唯一决定thread是否已建立、
+turn是否已接受或terminal，以及exact final是什么。Node sidecar和C# transport只是协议适配器，
+不是durable ownership authority；history可读也不构成provider exactly-once承诺。
 
 reconciliation 必须用 code-owned thread ownership marker、canonical cwd、stable `dispatchId` /
 `clientUserMessageId` 以及已知 `threadId`/`turnId` 的 exact 组合证据证明同一个外部
@@ -131,15 +135,18 @@ capture transaction 之前的 Action 仍必须在 current selected lineage 上�
 
 ## 4. Explicit baseline
 
-durable hard cut 不能把现有会话中所有历史 Action 当成新邮件重放。每个新 database
-必须在停服 cutover 中显式建立一次 `captureFromPhysicalFrontier`：
+durable hard cut不能把现有会话中所有历史Action当成新邮件重放。Production supervisor对每个user
+建立slot：existing `delegationStateDir`只有在matching `sessionDir`也存在时才在host composition strict-open；
+state存在而session缺失先分类为`SESSION_MISSING`，不会打开SQLite/lock。Missing store保持
+`Uninitialized`，直到该user第一次成功打开或provision writable SessionJournal并执行
+`AttachWritableSession`，才在同一per-user serialization边界自动建立一次
+`captureFromPhysicalFrontier`：
 
 - 记录 repository 当时已知的 **physical append frontier**，以及当时 selected
   raw head 作为诊断/evidence；
 - normal clean repository 中 current head 通常就是 physical frontier；
-- 如果可能存在 orphan tail，现有 public API 又不能证明 exact physical frontier，
-  实施阶段只补一个 bounded、read-only frontier seam，不扩张成新的 full-lineage
-  projector；
+- `ReadPhysicalAppendFrontier`是bounded、O(1)、read-only seam，覆盖capture前selected与orphan
+  physical frames；它不扫描payload/history，也没有扩张成full-lineage projector；
 - frontier 之前的 Action 永不进入 durable extraction/capture；
 - frontier 之后 append 的新 branch Action 依然应被 capture，即使 branch 的 Parent
   穿过 baseline head；不得使用 EventAddress 字符串顺序或 baseline ancestry 猜测
@@ -158,10 +165,10 @@ baseline 只在初次 hard cut 建立，不随 process restart、SessionJournal 
 变化自动前移。缺失、重复或与当前 repository identity 不匹配时 fail closed，不静默
 重建 baseline。
 
-baseline 创建是 hard cut 的 no-return publication point，不是可试运行的 preflight。所有可回退
-precondition（exclusive lock、path/schema 创建能力、旧 ledger drain、无 live turn/exchange、
-composition candidate 可构造、必要测试）必须在任何 production baseline 写入之前完成。
-baseline 一旦建立，不得保留 candidate database 而直接恢复 process-local owner。
+baseline创建失败或existing store的schema/owner/route policy/limits/integrity/lock不匹配时，该user
+fail closed/unavailable；runtime不adopt、reset、迁移、删除数据库或换用内存路径。当前binary没有旧owner，
+因此baseline写入前后都不存在“删掉candidate后继续process-local运行”的产品或operator分支。修复
+filesystem/config后必须重启并继续使用同一durable composition。
 
 ## 5. SQLite current-state schema
 
@@ -169,15 +176,15 @@ baseline 一旦建立，不得保留 candidate database 而直接恢复 process-
 
 - database 归 Galatea user/session 所有，路径与 SessionJournal repository 共用同一
   user lifecycle，但不放进 raw EventJournal 或 RecapGrid derived roots。
-- 每个 user database 必须在 SQLite open、baseline/candidate 创建或任何恢复之前，取得一把
+- 每个 user database 必须在 SQLite open、baseline 创建或任何恢复之前，取得一把
   跨进程的 **lifetime exclusive OS writer lock**。lock 从 user durable owner 构造前一直持有到
   pulse/sidecar 已停止、database 已 dispose 之后；process crash 由 OS 释放锁。取锁失败时
   该 user fail closed/unavailable，不打开第二 writer。
 - 本阶段不设 writer epoch、lease epoch、fencing token 或多 writer last-write-wins。SQLite
   row revision 只防止同一 writer 内的 stale transition，不替代 OS lock。lock 文件/路径的
   no-follow、canonical containment 与 filesystem lock semantics 必须由 focused test 验证。
-- 只允许一个 schema version、strict open 和 code-owned migrations。本阶段没有可兼容的已发布
-  durable schema；若 schema 尚未 hard cut，优先直接重写而非保留兼容层。
+- 当前binary只允许一个exact schema version并strict-open；没有compatibility reader、automatic migration
+  或reset-on-mismatch路径。
 - open 必须启用 `foreign_keys=ON`、bounded busy policy 和经验证的 durable SQLite
   journal/synchronous 组合。事务提交失败后 dispose/reopen，由盘上 current state 分类；
   不继续使用可能过期的连接缓存。
@@ -364,14 +371,16 @@ turn，mail 改为 Accepted 但 active dispatch 保留到 terminal settlement，
 
 ### 7.4 Accepted 与 terminal polling
 
-accepted `threadId/turnId` 持久后，内存 terminal Task 只是低延迟通知。它丢失时，
-pulse 以 exact IDs 读取 app-server persistent state。对同一 accepted turn 的重复 terminal
-observation 必须幂等：同一 terminal 零修改，不同 final/status 冲突进 quarantine。
+accepted `threadId/turnId`持久后，staged V2没有V1式terminal Task；host-local signal只提示
+supervisor尽快pulse，pulse以exact IDs调用read-only `inspect-dispatch`读取app-server persistent state。
+任一signal或单次inspection attempt丢失都不影响后续1秒fallback。对同一accepted turn的重复terminal
+observation必须幂等：同一terminal零修改，不同final/status冲突进quarantine。
 
 写入 `TerminalCompleted|TerminalFailed`、分配 `completionSequence`、创建 exact-one
 `reply_notice` 和清除 route `activeDispatchId`（仍保持 `Bound(threadId)`）必须在同一
 SQLite transaction。完成后发
-signal，但 signal 丢失不影响 1 秒 pulse 最终发现 ready notice 或下一封 queued mail。
+signal；signal丢失不影响1秒pulse推进下一封queued mail。Ready notice本身不由pulse注入，只有后续普通
+player cutoff会读取、claim并呈现它。
 
 ## 8. Durable reply lease
 
@@ -443,22 +452,25 @@ SessionJournal selected raw lineage 上的 exact evidence：
 
 ## 9. Pulse 模型
 
-调度器是对盘上状态的反复有界求值，而不是一个需要保存 continuation 的长工作流。
-每次 pulse 最多对每个 user 拥有一个 in-flight driver，并执行有限数量的：
+Supervisor driver是对SQLite盘上外部operation状态的反复有界求值，而不是一个需要保存continuation的
+长工作流。每次pulse最多对每个user拥有一个in-flight driver，并执行有限数量的：
 
-- settle pending reply lease from exact raw evidence；
-- settle latest post-baseline Action capture gap；
 - ensure an unbound fixed thread without starting any mail turn；
 - `Queued -> Started` 的一个 safe dispatch；
 - reconcile 一个 OutcomeUnknown；
 - poll 一个 accepted turn；
 - publish 一个 terminal notice/release next FIFO item。
 
+需要SessionJournal exact raw evidence的reply lease settlement与latest post-baseline Action extraction gap
+不由periodic driver猜测；它们在第一次writable session attach、每次player/inbound admission以及terminal
+turn收尾时持有per-session `TurnLock`结算。这样supervisor可以在session尚未attach时推进existing outbox，
+但不能绕过SessionJournal serialization修改lease/capture。
+
 业务 transition 每次先读取 exact state/revision，在单事务中 claim，事务外执行必要的
 provider I/O，然后以 exact claim/identity 结算。任何进程内 Task 只是当前尝试，不是
 下次启动所需的恢复数据。
 
-每次 durable commit 后发送 host-local signal 以尽快再 pulse。无论 signal 是否丢失、合并或发生在
+相关durable transition commit后发送host-local signal以尽快再pulse。无论signal是否丢失、合并或发生在
 consumer 准备之前，一个 1 秒 periodic fallback 都必须再读 SQLite。两者共用同一个
 non-overlap gate，不允许 signal 和 timer 同时对同一 user 执行 effect。
 
@@ -477,9 +489,9 @@ non-overlap gate，不允许 signal 和 timer 同时对同一 user 执行 effect
 | `Queued -> Started` commit，`start-turn` write 前或中 | known bound thread + active dispatch durable；effect 是否发生不可由重启证明 | mail 改 OutcomeUnknown，在该 thread 上 read-only reconcile | 回 Queued 或重发 `turn/start` |
 | OutcomeUnknown lookup unavailable/not-found | mail 及 route active dispatch 仍 durable，无确定性冲突 | 持久 backoff，到期后 read-only retry | quarantine、DeliveryFailure 或重发 |
 | app-server accepted，SQLite 未记录 | SQLite 已有 bound thread，app-server 可能有 exact client message/turn | 在已 bound thread 上 read-only reconcile，exact 证明后记录 Accepted | 创建新 thread 或重发 body |
-| `Accepted` durable，terminal Task 丢失 | SQLite 有 exact thread/turn | pulse 读 app-server persistent turn | 重发 task body |
+| `Accepted` durable，signal/inspection attempt丢失 | SQLite 有exact thread/turn | fallback pulse以`inspect-dispatch`读app-server persistent turn | 重发task body或等待不存在的V1 terminal Task |
 | app-server terminal，SQLite 未记录 | external terminal authority 存在 | 以 exact IDs 读取并幂等写 terminal+notice | 根据 log 猜 final |
-| notice Ready，signal 前 | `reply_notice=Ready` | 后续 player cutoff 或 1 秒 pulse 可见 | 丢弃 notice |
+| notice Ready，signal 前 | `reply_notice=Ready` | 后续普通player cutoff直接从SQLite claim/inject；无需signal replay | 丢弃notice或由pulse擅自建立lease |
 | cutoff frozen，desired setup reconciliation 前/后但 bind 前 | lease 只有 membership/player text，无 SJ base | 同事务 notices -> Ready 并删除 lease/items | 保留 RolledBack lease 或从 current head 猜测 bind |
 | `ObservationBound` commit，Observation 未 commit | lease 有 exact fresh base + Observation bytes | current head 仍为 base 时，同事务 notices -> Ready 并删除 lease/items | 保留 rendered Observation 或盲目 consume |
 | Observation durable，lease 仍 `ObservationBound` | raw selected lineage 有 exact base/Observation bytes | 记录 Observation address，继承 recovery | 重新 cutoff 或重复注入 |
@@ -488,61 +500,46 @@ non-overlap gate，不允许 signal 和 timer 同时对同一 user 执行 effect
 | capture 后 SessionJournal Undo | SQLite batch 仍是 delegation authority | 不修改 outbox/reply state | retract queued mail 或重新武装 consumed reply |
 | route/lease identity 冲突 | current row 与 external/raw evidence 不能同时成立 | 持久 quarantine，停止该 route/lease | last-write-wins 或自动修复 |
 
-## 11. Hard-cut 策略
+## 11. Production hard cut（已完成）
 
-### 11.1 Dormant-before-cut
+`GalateaHostService` production composition现在只构造durable owner：Completion/RecapGrid、normalizer、
+extractor等fallible preflight全部成功后，最后构造host-wide `GalateaDelegationSupervisor`。这是因为
+existing writable store可能立即被pulse；composition不能在此后再保留会使host半构造失败的preflight。
 
-hard cut 之前，新 store、state machine、pulse 和 reconciliation 实现可以被单元/集成测试
-直接构造，但不得被 production `GalateaHostService`/`UserSessionHost` 活路径构造或调用。
-现行 process-local coordinator 在此期间仍是唯一 live owner。
+Supervisor拥有一个shared lazy V2 transport及每user store/driver。Existing state目录只在matching session
+目录也存在时于host启动strict-open并取得lifetime writer lock；`SESSION_MISSING`在store open前fail closed。
+Missing state目录只在第一次writable SessionJournal attach时按§4创建
+baseline。Maintenance只read-only open existing store，不attach writable session、不启动scheduler，也不
+执行transport call。
 
-禁止 live dual-write：
-
-- 不允许同一 extraction batch 同时写内存 ledger 和 SQLite；
-- 不允许两个 pump 竞争同一 dispatch；
-- 不允许内存 ReplyInbox 和 durable notices 同时为 cutoff authority；
-- 不用隐藏 feature flag 在同一 live 进程中切换 owner。
-
-### 11.2 Atomic hard cut
-
-hard cut 是一个可审查的单次产品切换：
-
-1. **baseline 前的可回退 preflight：**停服，确认无 live Galatea turn、无 active
-   sidecar exchange，现行 process-local queue/inbox/lease 已 drain；验证 exclusive OS
-   locks、database path/schema candidate、physical-frontier read seam、new composition 构造与全部
-   cutover tests。任一失败都在无 baseline 时取消，可继续旧 owner。
-2. **no-return publication：**为每个 user 创建/strict-open candidate database，记录
-   explicit `captureFromPhysicalFrontier` 和 current selected head。从第一个 production baseline
-   commit 开始，不得直接恢复旧 owner。
-3. 在 composition root 中一次性将 capture、pump、thread binding、reply cutoff 全部切换到
-   durable owner。
-4. 删除或断开现行 process-local ledger 的 production call sites；不保留 fallback branch。
-5. 运行完整 restart/crash/E2E/canary gates，然后更新
-   `prototypes/Galatea/README.md` 与阶段状态。
-
-如果 baseline publication 之后、live durable owner 启动之前发生失败，系统保持停服。只有一个
-显式、停服下的 `AbandonDurableCandidate` 流程完整删除/废弃所有 candidate databases，
-并验证不再存在任何 published baseline 后，才可恢复旧 owner。下次 cutover 必须重新
-执行全部 preflight 并创建全新 baseline；不复用 abandoned database/frontier。
+Production source已删除旧C# coordinator/ledger/ReplyInbox/V1 client以及Node V1 entry/adapter/protocol。
+同一extraction batch没有dual-write，reply cutoff没有双authority，`npm run start:galatea`只指向durable V2。
+这里没有hidden feature flag、fallback branch、`AbandonDurableCandidate`或任何恢复旧owner的operator路径；
+store/baseline失败只会使该user fail closed，不能靠删除durable evidence继续运行。
 
 ## 12. 工作包
 
-| WP | 状态 | 边界 | 必须交付 |
-|---|---|---|---|
-| WP0 | Complete | 设计收口 | 本文、status 分阶段、authority/非目标/crash matrix 锁定 |
-| WP1 | Complete (`b95134e7`) | dormant store/kernel | lifetime exclusive OS writer lock、strict SQLite current-state tables、bounds、transactions/reopen、baseline、capture/outbox/route/reply lease kernel；未接 production composition |
-| WP2 | Pending | dormant capture | latest-terminal-Action gap settlement、all-batch/empty tombstone、first-commit-wins、capture-after-Undo 契约测试 |
-| WP3 | In Progress | staged sidecar/outbox | Node V2 staged backend/protocol/adapter seam已于 `8ec6c19a` 完成；C# V2 transport、pulse/driver 与 live entry 仍 Pending |
-| WP4 | Pending | dormant inbox/lease | `CutoffFrozen -> BindObservationBase -> ObservationCommitted`、durable Ready/Leased/Consumed、exact Observation/Action evidence、restart one-shot matrix |
-| WP5 | Pending | dormant host orchestration | signal + 1s fallback、per-user non-overlap gate、startup/admission recovery，仍不接 live owner |
-| WP6 | Pending | hard cut | baseline-before/after no-return gates、candidate abandon 流程、atomic composition switch、旧 production call sites清理、README 升格 |
-| WP7 | Pending | closure | full/focused tests、fake-sidecar crash matrix、real app-server restart canary、independent review、status Complete |
+| WP | 状态与主要 commits | 已交付 |
+|---|---|---|
+| WP0 | Complete — `6aab3310` | authority、非目标、crash matrix与hard-cut方向锁定 |
+| WP1 | Complete — `b95134e7`, `10310b2d` | exclusive writer lock、strict SQLite current state、bounds、reopen与transition seams |
+| WP2 | Complete — `a09ef6f5`, `3f96280a` | physical frontier与latest post-baseline Action extraction settlement |
+| WP3 | Complete — `8ec6c19a`, `0c82339e`, `7f26aa02`, `30b9f2a5`, `6ba7b4cc` | Node/C# staged V2 transport、fixed-thread driver、OutcomeUnknown recovery |
+| WP4 | Complete — `e3c68d23`, `5ac58d59`, `fd9e36d9` | exact Observation proof与durable reply lease/restart settlement |
+| WP5 | Complete — `37a53bb6` | host-wide supervisor、per-user non-overlap、signal + 1秒fallback、shutdown drain |
+| WP6 | Complete — `eaf5692a`, `0dcab030`, `ff9467ef`, `c35cdd9c`, `5c957f48`, `03d20259`, `b99ab11a`, `76e0f566` | Root V3、production hard cut、legacy C# owner删除、normalizer/admission/cleanup尾修与vertical gates |
+| WP7 | Complete — `47f0efbe`, `10198814`, `bfdfdbc7`, `9cd3596d`, `fcb2c2f6` + tracked docs closure | Node V1/env hard cut、单一durable start入口、shared lifecycle tests、real V2 canary与current docs升格 |
 
-后续 WP 可在不改变本文契约的前提下继续细分，但不得跳过 dormant store/
-state-machine 验证直接 live cutover。任何要引入 provider retry、capture-after-Undo 撤回、
-dual-write、branch-following inbox 或新 operator 能力的改变，都需要重新设计决策，不是实施细节。
+任何要引入provider retry、capture-after-Undo撤回、dual-write、branch-following inbox、multi-thread或新operator
+能力的改变，都需要重新设计决策，不是当前实现的机械延伸。
 
-## 13. 验收门禁
+## 13. Regression contract 与 operational evidence
+
+以下条目是current implementation必须持续满足的回归契约。Deterministic tests已经覆盖store、driver、lease、
+supervisor、hard-cut composition与host restart vertical；2026-08-28的real V2 transport canary另验证了
+empty binding、pre-start NotFound、exact一次start、duplicate local tombstone与inspect Completed，但没有构造
+Galatea host/SQLite vertical。同日ignored `cyber` production smoke独立验证第一次writable attach自动baseline、
+停服释放lock、SQLite quick check与cold reopen，但没有启动sidecar或调用provider。
 
 ### 13.1 Deterministic/store gates
 
@@ -561,20 +558,20 @@ dual-write、branch-following inbox 或新 operator 能力的改变，都需要�
 
 ### 13.2 Effect/recovery gates
 
-- crash matrix 每一行都有 deterministic fake-sidecar/failpoint test；测试必须断言 provider
-  start count，不只断言最终 state。
+- crash/restart tests必须同时断言transport start count与最终state，不能只看最终state而遗漏重复effect。
 - `Started/OutcomeUnknown` 恢复路径对 `turn/start` 是零调用，只允许 read-only
   reconciliation；unavailable/not-found 持久 backoff 并继续 OutcomeUnknown，只有确定性
   ownership/cwd/multiple/identity 冲突 durable quarantine；此路径必须始终带 known
   bound thread ID。
-- `ensure-binding` 的 fake/live protocol 证明它只执行 thread start/name/verify，对
+- `ensure-binding` 的deterministic protocol/backend tests证明它只执行thread start/name/verify，对
   `turn/start` 零调用。在 thread 建立与 `Bound` commit 之间崩溃可重新 ensure，但
   所有遗留候选都是没有 mail turn 的 empty orphan。
 - 任何 mail（包括首封）只能在 `Bound(threadId)` durable 后 Started；所有
   信件只使用该 exact bound thread，不存在 accepted mail 反向建立 binding 的路径。
 - mail 没有 `Prepared` state 或 Started-to-Prepared 退回；`Queued -> Started` 与冻结
   thread/policy、设置 route active dispatch 是一个 transaction，provider I/O 只发生在其后。
-- accepted terminal Task 丢失后使用 persisted thread/turn 读取 final，不重发 body。
+- accepted后signal或inspection attempt丢失时，使用persisted thread/turn继续read-only inspect final，不重发body；
+  staged V2没有可等待的terminal Task。
 - capture 后 Undo 不减少 outbox，不 interrupt active turn，不清除 Ready notice。
 - reply lease 覆盖 cutoff 后 bind 前、`BindObservationBase` 后 Observation 前、Observation 后、
   terminal Action 后四个崩溃窗口；bind 前无 SessionJournal head/body，在 desired setup
@@ -587,24 +584,20 @@ dual-write、branch-following inbox 或新 operator 能力的改变，都需要�
 - signal 全部丢失时，只依赖 1 秒 fallback 仍能把每个可推进状态推进；
   signal/timer 并发不产生重复 effect。
 
-### 13.3 Cutover/closure gates
+### 13.3 Hard-cut 与 operational evidence
 
-- hard cut 前 production composition 对新 store/state machine 零构造、零读写、零调度；
-  测试只经显式 harness 构造 dormant components。
-- 所有可回退 hard-cut preconditions 在第一个 production baseline 前验证。failpoint 证明
-  baseline 后失败会保持停服，不直接运行旧 owner；只有显式 abandon/delete
-  所有 candidate DB 并证明 baseline 消失后才可回旧 owner，下次 cut 产生全新 baseline。
-- hard cut commit 不存在 live dual-write/fallback；source scan 能证明旧 process-local owner
-  production call sites 为零。
-- `prototypes/Galatea/README.md` 只在 hard cut 后修改，并同步记录 schema/path/
-  operator runbook 与 failure semantics。
-- focused store/state-machine/Galatea tests、full Galatea tests、solution build、`git diff --check`
-  全部通过；与 repository I/O 相关的测试使用真实稳定存储，不用 tmpfs
-  伪装 durability。
-- real app-server canary 至少覆盖：`ensure-binding` 先建立不含 mail turn 的
-  fixed thread、首封只在 `Bound` durable 后启动、C# 在 accepted 与 final 之间重启、
-  原 thread/turn 恢复 final、第二封续用同 thread、两封 reply 均
-  one-shot consume。canary 通过只证明该 exact build/environment，不升格为 provider
-  exactly-once 承诺。
-- independent reviewer 确认 authority、crash matrix、no-dual-write 和非目标没有被实现
-  侵蚀，才能将状态改为 Complete。
+- Production composition只构造durable supervisor/store/driver/lease；source scan保持旧process-local owner、
+  V1 C#/Node business protocol与live dual-write/fallback为零。
+- Existing store在matching session存在时eager strict-open，`SESSION_MISSING`preempt store open；missing store在第一次writable session attach自动创建baseline。Baseline
+  failure、store mismatch与writer-lock conflict都fail closed，没有operator abandon或旧owner fallback。
+- `prototypes/Galatea/README.md`、root config V3 current contract与本设计必须同步current schema/path/
+  runbook/failure semantics。
+- Focused store/state-machine/Galatea tests、full Galatea tests、solution build、Node suite、docs checker与
+  `git diff --check`是后续修改必须重跑的常规gate；repository durability tests使用真实稳定存储，不用tmpfs
+  伪装durability。
+- 已通过的current real app-server V2 transport canary证明`ensure-binding`建立empty fixed thread、pre-start
+  inspection为NotFound、exact一次`start-turn`、duplicate在本地tombstone拒绝且最终inspect Completed。它不证明
+  production supervisor创建baseline、accepted与final之间C# host restart、第二封续用同thread或reply lease
+  one-shot consume；其中baseline/lock/cold reopen已由独立无provider的ignored开发实例smoke验证，其余可由future
+  full-host provider vertical另行验证。任何canary/smoke都只证明该exact
+  build/environment，不升格为app-server/provider exactly-once承诺。

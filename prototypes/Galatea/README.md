@@ -43,7 +43,16 @@ writer固定把`v`放在首字段，reader不要求property order。missing vers
 path；absolute值保持同一target。`delegationStateDir`没有fallback，也不会从`sessionDir`推导；所有user的
 delegation state paths必须exact unique、互不嵌套，并与所有session paths及optional `callLogDir`双向non-nested。
 existing delegation path components不得是symlink/reparse point。当前hard-cut只建立并验证这个Galatea-owned
-storage boundary；durable supervisor尚未接入production composition，因此normal host暂不创建或打开该目录。
+storage boundary。durable supervisor现已接入production composition：host启动时先eager classify每个user；只有
+`delegationStateDir`与对应`sessionDir`都存在时才strict-open store并取得process-lifetime exclusive OS lock。
+state存在但session缺失时以`SESSION_MISSING` fail closed，不打开SQLite/lock；state路径不存在时先保持
+`Uninitialized`，直到对应writable SessionJournal首次成功打开或provision后，才在该exact target创建baseline。目录内的权威文件是
+`delegation-state.sqlite3`与`delegation-state.lock`。baseline固定记录当时的physical append frontier、selected
+raw head、exact user/session identity、route policy fingerprint与容量上限；frontier之前的历史Action永不补做
+extraction。existing store的schema、owner、route policy、limits、integrity或lock任一不匹配都会使该user fail
+closed，不会adopt、reset、迁移或换用内存路径。baseline创建失败留下的目录也保留供检查；修复后必须重启。
+当前binary已经删除旧process-local owner，因此baseline写入前后都没有回退到旧owner或删除candidate后继续运行的
+产品分支。
 每个user必须选择closed exact policy：`existing-only`只打开已provision的repository；`create-if-missing`允许普通
 writable host在首次需要该user session时，仅对完全不存在的`sessionDir`创建first-turn structural raw-only repository。
 Galatea在final path同一parent下的unique staging中创建raw SessionJournal、Cadence、empty Timeline与empty Control；
@@ -98,7 +107,7 @@ case-sensitive route：`recipient: "Codex"` / `kind: "codex-app-server"`。示�
   "v": 2,
   "sidecar": {
     "nodeCommand": "/canonical/path/to/node",
-    "entryPoint": "/canonical/path/to/galatea-sidecar.js",
+    "entryPoint": "/canonical/path/to/local-codex-mcp/dist/src/galatea-durable-sidecar.js",
     "codexCommand": "/canonical/path/to/codex.js",
     "rpcTimeoutMs": 30000,
     "turnTimeoutMs": 1200000,
@@ -139,41 +148,34 @@ Bootstrap会同时生成一份
 programmatic `GalateaConfig`也走同一套path/executable/range/frame/containment校验；sidecar
 持有canonical immutable snapshot，caller之后修改原始list不会改变生效policy。
 
-`GalateaHostService`拥有一个host-wide、lazy `GalateaCodexSidecarClient`。首个真实dispatch
-前保持零进程；每个`UserSessionHost`拥有独立的内存coordinator、ledger、ReplyInbox和一个
-fixed Codex thread binding，创建或登录session不会启动child。transport
-启动`nodeCommand entryPoint`并通过environment注入code-owned allowed roots、cwd、Codex
-command、mode、local command network、built-in tool policy及timeout/body/frame bounds，邮件正文只能进入JSONL `task`字段，
-不能覆盖任何route policy。V1 input是exact
-`{v,type:"dispatch",requestId,dispatchId,threadId?,task}`；成功accept后返回稳定
-`dispatchId/threadId/turnId`和一个terminal task，terminal只产生bounded exact final或
-stable stage/code failure。child继承环境中的全部`CODEX_BRIDGE_*`与`GALATEA_CODEX_*`先被
-清除，再由host显式钉死；其中`CODEX_BRIDGE_CODEX_ARGS`固定为app-server stdio并关闭继承的
-MCP/apps。host还会在Node启动前精确清除`CODEX_SESSION_ID`、`CODEX_THREAD_ID`、
-`CODEX_INTERNAL_ORIGINATOR_OVERRIDE`、`CODEX_PERMISSION_PROFILE`、`CODEX_CI`，Node在启动
-app-server时再次清除同一组父Codex context；`HOME`、`PATH`、`CODEX_HOME`、Codex安装标记、
-auth/provider/proxy环境保持不变，不使用宽泛allowlist。ambient process environment不能改写
-route capability或把代行thread附着到父Codex session。C# write gate、单个完整
-frame write与flush各受1×`rpcTimeoutMs`约束：write开始前取消可安全放弃；从frame
-可能写入pipe开始，timeout/cancel/IO都映射stable outcome-unknown、fail当前generation且绝不
-自动retry。owner写出后的accepted使用`5 * rpcTimeoutMs + 5000ms` aggregate deadline；
-inner app-server仍存活时，首次业务链是`thread/start + thread/name/set + turn/start`，continue
-是`thread/read + thread/resume + turn/start`；若inner child刚退出，则在这3个业务RPC前还会
-串行重做`initialize + account/read`，因此最坏共5个response RPC。min/default/max为
-5500/155000/1505000ms。
-attached duplicate waiter仍只等待自身1×`rpcTimeoutMs`并返回`SIDECAR_ATTACHED_WAIT_TIMEOUT`，
-其取消或等待超时不会伤害原owner exchange。
-Node sidecar自身向C# stdout写frame使用独立、code-owned 10000ms deadline；它不继承最长可到
-300000ms的JSON-RPC `rpcTimeoutMs`，并始终落在Node wire允许的100..60000ms范围内。
-首次lazy启动的`ready`另使用aggregate deadline：`2 * rpcTimeoutMs + 5000ms`。这是因为Node
-在`ready`前会串行完成initialize与`account/read`两次各自受`rpcTimeoutMs`约束的RPC，再加
-bounded cold-process margin；min/default/max分别为5200/65000/605000ms。该aggregate只用于
-generation ready；每次Node JSON-RPC仍保持原`rpcTimeoutMs`。
+`GalateaHostService`拥有一个host-wide `GalateaDelegationSupervisor`、一个共享且lazy的
+`GalateaCodexDurableSidecarClient`以及每个user独立的SQLite store/driver。所有其他fallible composition
+preflight都先完成，最后才构造supervisor，因为existing writable outbox可能从构造成功后立即被pulse。
+首个真实`ensure-binding`、`start-turn`或`inspect-dispatch`之前仍保持零Node/Codex child；登录或只打开
+session不会凭内存状态重新建立队列。signal只是低延迟提示，bounded capacity-1 channel会合并它们；每秒
+fallback pulse总会重读SQLite。每个user至多一个pulse在途，每次pulse至多一个external call，不同user可
+并行；进程内task、signal和cache都不是恢复authority。maintenance host只read-only打开existing store，
+不attach writable SessionJournal、不启动scheduler，也不执行任何durable transport call；missing state目录
+保持`Uninitialized`，maintenance不会创建baseline。
 
-fixed thread的持久ownership只依赖app-server response ID exact、profile-specific exact name marker
-`[galatea-codex-sidecar] <threadId>`、path-policy canonical cwd，以及Galatea route的expected-cwd
-exact校验。`threadSource`仍在`thread/start`中作为optional analytics hint发送，但它可能在持久化后
-变为`null`；`source`也只描述CLI/VSCode/app-server来源，二者都不是ownership或authorization。
+transport启动`nodeCommand entryPoint`并通过environment注入code-owned allowed roots、cwd、Codex
+command、mode、local command network、built-in tool policy及timeout/body/frame bounds。邮件正文只能进入
+JSONL `task`字段，不能覆盖route policy。现行wire是strict bounded JSONL V2，三个input分别为
+`ensure-binding`、`start-turn`与`inspect-dispatch`；对应结果为`binding-established`、`turn-accepted`与
+`dispatch-inspected(not-found|running|completed|failed|ambiguous)`。`turn-accepted`只持久化稳定
+`dispatchId/threadId/turnId`，不等待final；之后只用read-only inspect读取app-server persistent state。
+`ensure-binding`只允许`thread/start + thread/name/set + ownership/cwd verify`，绝不携带邮件正文或执行
+`turn/start`。只有`Bound(threadId)`已经durable后，第一封和后续邮件才能`Queued -> Started`并调用
+`start-turn`。
+
+child继承环境中的全部`CODEX_BRIDGE_*`与`GALATEA_CODEX_*`先被清除，再由host显式钉死；其中
+`CODEX_BRIDGE_CODEX_ARGS`固定为app-server stdio并关闭继承的MCP/apps。host在Node启动前精确清除
+`CODEX_SESSION_ID`、`CODEX_THREAD_ID`、`CODEX_INTERNAL_ORIGINATOR_OVERRIDE`、
+`CODEX_PERMISSION_PROFILE`、`CODEX_CI`，Node启动app-server时再次清除同一组父Codex context；
+`HOME`、`PATH`、`CODEX_HOME`以及auth/provider/proxy环境保持不变。ambient environment不能改写route
+capability或把代行thread附着到父Codex session。fixed thread ownership只依赖response ID、
+profile-specific exact name marker、canonical cwd/path policy与Galatea持久route identity；
+`threadSource`/`source`都只是analytics，不参与authorization。
 
 V2将本地命令出网与Codex内建工具解耦：`localCommandNetwork`只控制turn
 `sandboxPolicy.networkAccess`；`tools.webSearch`逐turn映射到Codex top-level
@@ -184,52 +186,61 @@ Codex app-server当前provider capability probe返回`webSearch=true`、`imageGe
 `namespaceTools=true`；Apps/MCP仍由`mcp_servers={}`与`features.apps=false`显式关闭，避免继承宿主个人工具。
 Browser/Computer Use依赖客户端/图形宿主，不属于本次headless sidecar承诺的工具集合。
 
-active exact同dispatch会在C# generation内coalesce；一旦frame可能写出，dispatchId就进入
-client-lifetime、最多4096项的fail-closed tombstone，正常terminal或outcome-unknown后即使换
-generation也不得重发。同ID携带不同thread/task直接拒绝；容量耗尽后拒绝所有新ID而不evict
-旧tombstone。sidecar的同值4096项tombstone上限也由host显式注入。request-level protocol
-rejection只结束对应尚未accepted的request，不会终结另一个已accepted business exchange。
+`Queued -> Started`与冻结operation/thread/policy、占用route active dispatch在一个SQLite transaction
+完成，commit后才允许`start-turn`。从此任何timeout、cancel、EOF、process death或protocol loss都进入
+durable `OutcomeUnknown`；host crash后遗留`Started`也先零external-call转为`OutcomeUnknown`。这两种状态
+都不得回到Queued或重发task，只能按持久1/2/4/...秒bounded backoff执行`inspect-dispatch`。not-found或
+暂时unavailable继续等待；exact running持久Accepted；exact terminal在同一事务写Reply/DeliveryFailure
+notice并释放route active dispatch；ownership/cwd/body/multiple/identity冲突使route/mail durable
+Quarantined。binding outcome unknown可以使用同一binding operation重试，因为该阶段保证没有邮件turn。
 
-stdout只有一个bounded strict-UTF8 reader；malformed、oversize、unknown、重复字段、错误
-correlation或process exit会protocol-fatal当前generation，并把所有未决exchange映射为失败，
-不会自动retry outcome-unknown操作。stderr被持续drain但内容不进入普通日志。下一请求只可在
-旧process完成bounded kill/reap后lazy创建新generation，旧generation事件不能污染新状态。
-kill-tree后的bounded wait若仍不能确认exit/reap，cleanup与restart barrier会稳定fault为
-`shutdown/SIDECAR_REAP_UNCONFIRMED`：process handle不会被Dispose成“成功”，当前client
-永久fail closed，后续dispatch不得创建新child，Dispose也诚实传播同一failure。
-shutdown严格为sessions -> sidecar（close stdin，bounded wait，必要时kill entire process
-tree）-> Completion/RecapGrid owner，且Dispose不等待无界child task。
+C# client只在`start-turn` frame可能写出时登记最多4096个client-lifetime dispatch tombstones；相同ID
+不因换generation重发，容量耗尽fail closed。stdout由一个bounded strict-UTF8 reader拥有；malformed、
+oversize、unknown、duplicate property、错误correlation或process exit会使当前generation失败，绝不把
+outcome unknown透明重试。stderr持续drain但不进入普通业务日志。下一操作只可在旧process完成bounded
+kill/reap后lazy创建新generation；若无法确认reap，client稳定fault为
+`shutdown/SIDECAR_REAP_UNCONFIRMED`并禁止重启child。
+
+ApplicationStopping先通知supervisor停止新pulse/signal；host disposal逐个drain/dispose session，再等待
+timer/consumer/in-flight pulse，随后dispose共享sidecar transport、关闭每个SQLite store并释放lifetime lock，
+最后关闭Completion/RecapGrid owner。任何阶段的nonfatal cleanup failure都会被保留并在最终以single或
+aggregate exception诚实返回，不把未确认的child或lock cleanup报告成成功。
 
 ### Development Codex delegation observability
 
-开发期可在repo root用Debug build启动，并显式打开四类server-side进度日志：
+开发期可在repo root用Debug build启动，并显式打开server-side进度日志：
 
 ```bash
-ATELIA_DEBUG_CATEGORIES='Galatea.Mailbox,Galatea.TextExtractor,Galatea.Delegation,Galatea.DelegateSidecar' \
+ATELIA_DEBUG_CATEGORIES='Galatea.Mailbox,Galatea.TextExtractor,Galatea.Delegation,Galatea.Delegation.Supervisor,Galatea.DelegateSidecar' \
 dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 ```
 
 `Galatea.Mailbox`显示Action可见文本进入extractor及其intent数量；`Galatea.TextExtractor`显示
-pre-response transient transport failure的attempt与退避时间；`Galatea.Delegation`显示batch
-capture、FIFO dispatch、accepted、ReplyInbox ready、下一普通player turn的cutoff lease与durable
-Action后的one-shot commit/rollback；`Galatea.DelegateSidecar`显示Node child启动、Codex app-server
-初始化、accepted/final或stable failure。`Info`调用在Release被编译掉；Debug下无论console category是否
+pre-response transient transport failure的attempt与退避时间；`Galatea.Delegation`显示durable
+binding、dispatch、reconciliation、terminal与backoff；`Galatea.Delegation.Supervisor`显示store availability、
+pulse fail-closed与shutdown；`Galatea.DelegateSidecar`显示Node child启动、ready与stable transport failure。
+`Info`调用在Release被编译掉；Debug下无论console category是否
 打开，仍按`DebugUtil`规则写入`.atelia/debug-logs/galatea.mailbox.log`、
-`galatea.delegation.log`与`galatea.delegatesidecar.log`（若该目录不可写则使用既有fallback）。这些
+`galatea.delegation.log`、`galatea.delegation.supervisor.log`与`galatea.delegatesidecar.log`
+（若该目录不可写则使用既有fallback）。这些
 progress log只包含bounded identifier/recipient summary、count、byte size、boolean、stage/code和
 process id，不重复邮件正文、subject、evidence、Codex final或sidecar stderr。
 
 当前Node hop是实现边界而不是产品语义要求。未来可以让C# host直接spawn并通过stdio驱动Codex
 app-server，从而移除一层process/protocol；这项简化需要等价接管strict framing与bounds、RPC
 correlation/notification projection、fixed-thread ownership、environment scrubbing、outcome-unknown
-fencing以及bounded kill/reap。现有coordinator与`ReplyInbox`契约不应因此改变，本阶段无需迁移。
+fencing以及bounded kill/reap。SQLite store/driver与durable reply lease的产品契约不应因此改变。
 
-### Gated real Codex delegation canary
+### Gated real Codex V2 transport canary
 
-`GalateaCodexDelegationLiveTests` 是唯一显式 opt-in 的 real app-server canary；普通
-test run 会用 xUnit discovery-time skip 在读取配置或启动 sidecar 之前退出。运行前先从 repo
-root 构建 Node sidecar，并用 ignored machine-local config 中 exact `codexCommand` 检查
-当前 Codex 登录状态：
+2026-08-27通过的real app-server canary验证的是已经删除的process-local/V1 owner，只保留为历史
+证据，不能证明当前SQLite/V2产品链。Hard cut已删除旧V1 canary实现/runbook、C# V1
+coordinator/sidecar以及Node V1 entry；任何current V2 live test都必须重新建立自己的exact契约与证据，
+不能复用旧结论。
+
+当前`GalateaCodexDelegationLiveTests.DurableV2_EnsureStartInspectCompletesInCleanRepo`是显式opt-in的
+real app-server V2 transport canary；默认test discovery在读取配置、创建临时目录或启动sidecar之前skip。
+运行前构建Node sidecar并确认ignored machine-local config中的exact Codex executable已登录：
 
 ```bash
 npm --prefix local-codex-mcp run build
@@ -237,44 +248,32 @@ export ATELIA_GALATEA_CODEX_DELEGATES_CONFIG="$(realpath prototypes/Galatea/.ate
 codex_command="$(jq -r '.sidecar.codexCommand' "$ATELIA_GALATEA_CODEX_DELEGATES_CONFIG")"
 "$codex_command" login status
 export ATELIA_RUN_GALATEA_CODEX_DELEGATION_LIVE=1
-dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'FullyQualifiedName=Atelia.Galatea.Server.Tests.GalateaCodexDelegationLiveTests.TwoMails_ReuseOneRealCodexThread_AndRepliesAreOneShot'
+dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'FullyQualifiedName=Atelia.Galatea.Server.Tests.GalateaCodexDelegationLiveTests.DurableV2_EnsureStartInspectCompletesInCleanRepo'
 ```
 
-本阶段验收已于2026-08-27按上述runbook真实通过（1/1，16s）：fresh thread的第二封邮件未携带
-第一封随机token但仍准确利用同一thread/context；两次ReplyInbox lease分别Commit后，后续cutoff
-均为空，证明one-shot消费；隔离临时repository保持clean并被安全删除，sidecar没有残留；全程没有
-读取`connections.json`或调用Galatea main、normalizer、extractor Completion connection。
+2026-08-28当前build按该gate真实PASS 1/1，业务段约9秒：`ensure-binding`先建立empty owned thread，
+pre-start `inspect-dispatch`返回NotFound，随后exact一次unique `start-turn`；同dispatch重发被C#本地
+tombstone以`DUPLICATE_DISPATCH_ID`拒绝而未写第二个frame，最终只经inspect读到Completed且final exact
+匹配随机token。隔离临时repository保持clean、顶层仅`.git`后删除，sidecar/app-server无测试残留进程。
+Canary把route重建为research、local command network=false、全部hosted tools disabled，并把唯一allowed root/cwd
+钉在随机临时Git repository；它仍需要app-server连接provider/auth的网络。
 
-测试只复用该config中已经strict校验的Node/Codex executable、RPC/turn/frame与route容量
-界限；shutdown grace钉为code-owned 2秒，cleanup deadline仍覆盖完整graceful wait、kill/reap
-wait与固定margin。它不会读取`connections.json`，也不会调用Galatea main、normalizer或
-extractor LLM。实际route会被重建到mode=`research`（read-only sandbox、approval never）、
-`localCommandNetwork=false`、全部可选内建工具关闭，且`allowedRoots`/`cwd`都只指向一个随机临时空Git repository。创建前要求
-`Path.GetTempPath()`的canonical existing ancestor chain完全无symlink/reparse，并与source
-worktree双向disjoint；candidate leaf必须尚不存在，创建后再验证exact child、no-follow与
-Unix mode exact 0700。任一precondition失败都发生在`git init`和sidecar启动之前。
-`localCommandNetwork=false`限制的是Codex委派任务的sandbox能力，不会也不能关闭app-server连接
-provider/auth所需的网络通信，因此这个canary仍然需要可用网络与已登录账号。
+该canary只证明当前C#/Node V2 transport、fixed-thread ownership、一次start fencing与real app-server
+ensure/start/inspect链；它不构造Galatea host/SQLite baseline，不验证accepted后C# host restart、双信FIFO或
+durable reply lease。Codex保存的thread/turn及随机token是外部持久状态；测试不把本地临时目录清理冒充外部
+history已删除。完整durable real-provider vertical仍可作为独立future operational verification，即使通过也不
+构成app-server/provider exactly-once承诺。
 
-canary调用Git时会清除全部ambient `GIT_*`，再固定`GIT_CONFIG_NOSYSTEM=1`、
-`GIT_CONFIG_GLOBAL=/dev/null`、`core.fsmonitor=false`与`core.hooksPath=/dev/null`；不会覆盖
-`HOME`。每个Git command都有bounded output/deadline，timeout后必须kill process tree并完成
-bounded reap才会返回。
-
-canary连续发送两封邮件：第二封不携带第一封的随机token，验收同一Codex thread的上下文
-连续性；每次final都经过ReplyInbox lease验证只消费一次。退出时先关闭coordinator与
-sidecar；只有两者都被conclusive dispose/reap后，才确认临时repository的
-`git status --porcelain`为空、顶层只有`.git`并做no-follow删除。若child reaping不确定、
-repository发生变化或安全验证失败，测试会以stable cleanup code和`tempRetained=true`
-失败，并保留`Path.GetTempPath()`下`atelia-galatea-codex-live-*` residue，operator必须先确认
-没有对应child再人工处理。主测试与cleanup同时失败时两项failure都会保留。Codex保存的
-thread是外部持久状态，其中会留下这枚随机token；当前没有thread-delete契约，所以测试
-不会伪装成已清除此历史。
+同日唯一ignored开发实例的`cyber` session另完成了不调用provider的production smoke：第一次writable attach
+自动发布SQLite baseline；HTTP login为302，recent为200/6 turns；停服后writer lock释放且SQLite
+`quick_check=ok`；冷重启strict-open existing store后recent仍为200/6。全过程没有启动sidecar/app-server child、
+没有发LLM请求，也没有留下认证临时文件或测试进程。该smoke证明当前machine-local path/config上的baseline、
+lock与cold reopen，不证明Codex dispatch/reply链。
 
 `GalateaCompletionOwner` 唯一拥有 host-wide `CompletionConnectionRegistry`；main Agent、
-input normalizer、outbound mail extractor 与 RecapGrid exact routes 共用其惰性 clients。Completion侧的Shutdown顺序为：drain
-sessions/per-turn operation与delegate sidecar，再 drain borrowed RecapGrid runtime，最后清理 distinct Completion
-clients。`callLogDir` 由统一 Completion factory decorator 服务上述所有调用；启用
+input normalizer、outbound mail extractor 与 RecapGrid exact routes 共用其惰性 clients。Host先按上文顺序
+drain sessions与delegation supervisor，再由Completion owner drain borrowed RecapGrid runtime并清理distinct
+Completion clients。`callLogDir` 由统一 Completion factory decorator 服务上述所有调用；启用
 normalizer 时，清洗前输入、prompt 与 provider output 也会进入该本地调用日志。
 
 ## Internal TextExtractor
@@ -311,10 +310,10 @@ recovery或dedupe语义。工具契约继续由`Completion.Tools/ArtifactToolWra
 provider tool name/call ID、tool/call数量、raw arguments与diagnostics均有
 code-owned bounds；caller cancellation与transport exception直接传播。
 
-## Mailbox、OutboundMailExtractor 与 Codex coordinator
+## Mailbox、OutboundMailExtractor 与 durable Codex delegation
 
-Codex delegation已经形成经过真实app-server canary验收的进程内自动闭环；本节及其对应代码、
-测试是长期产品契约。阶段完成声明仅归档于
+Codex delegation现已hard-cut到SQLite-backed durable owner；本节及对应代码/测试是现行产品契约。
+阶段实现记录与real-provider证据边界见
 [`docs/Galatea/codex-delegation-refactor-status.md`](../../docs/Galatea/codex-delegation-refactor-status.md)。
 
 所有新普通player turn（包括当前尚无ready reply的情况）都以runtime-owned composite Observation
@@ -329,12 +328,14 @@ reply正文上限256 KiB UTF-8，failure上限4 KiB，整份composite上限1 MiB
 composite parser只接受code-owned prefix、heading、info string、顺序与动态fence的canonical重渲染结果。
 recent view显示玩家文本及每条独立通知；普通Undo仍把它识别为player turn，但pop receipt只返回玩家文本。
 历史backtick player envelope继续只读兼容recent/Undo；inbound mail envelope仍不属于普通player Undo。
-input normalizer只接收玩家文本，绝不接收ready notices。普通player入口在仍持有per-session `TurnLock`、
-完成recovery admission与main connection检查之后形成ready-reply cutoff；cutoff之前已经terminal的bounded
-FIFO前缀冻结进本轮typed fresh input，之后才terminal的结果留给下一次普通player turn。选择前缀时为任意
-合法64 KiB normalized player text的最坏adaptive-fence渲染预留空间，避免normalizer扩张令同一批reply反复
-越界；未选中的ready项保持原FIFO次序。inbound入口和
-recovery入口都不形成新cutoff。
+input normalizer只接收玩家文本，绝不接收ready notices。普通player入口持有per-session `TurnLock`，先结算
+既有durable reply lease和latest post-baseline extraction gap，再验证recovery boundary与main connection；
+随后在HTTP 202之前完成normalization。Caller cancellation、fatal、显式`GalateaTurnException`或input-limit
+failure会阻止放弃旧failed turn、创建cutoff和接受新turn；普通nonfatal normalizer exception则fail-open使用
+原始玩家文本并继续admission。取得exact effective text后才revalidate/abandon允许放弃的旧failed turn，并以SQLite transaction建立
+`CutoffFrozen` lease。cutoff之前已经Ready的bounded FIFO前缀冻结进本轮typed fresh input，之后才ready的
+结果留给下一次普通player turn；未选项保持原FIFO次序。选择前缀时为任意合法64 KiB normalized player text
+的最坏adaptive-fence渲染预留空间。inbound与recovery入口都不开始新cutoff。
 
 `SessionJournal`公开的`AdaptiveMarkdownFenceRenderer.RenderBlock(infoString, exactBody)`要求1..64字符
 ASCII token作为code-owned info string。现有Recap contribution已复用它，并保持原`recap-block`输出逐字不变。
@@ -346,13 +347,14 @@ ASCII token作为code-owned info string。现有Recap contribution已复用它�
 发件人、主题与正文。来信正文在prompt中明确只是故事数据，不获得指令权限。该入口共享maintenance、
 per-session `TurnLock`、recovery admission与main connection allowlist。
 
-主线terminal Action durable后，host在recent refresh与SSE `done`之前使用
+主线terminal Action durable并回到`Idle`后，host先用SessionJournal exact raw evidence结算当前reply lease，
+再在recent refresh与SSE `done`之前使用
 `GalateaVisibleActionTextRenderer`提取可见文本：按顺序连接Text blocks，排除reasoning/tool block，
 再整体剥离inline think。常驻`OutboundMailExtractor`通过
 `emit_send_mail_intent`产出0..N个有序`SendMailIntent`，字段为故事内`Recipient`、可选`Subject`、
 完整`Body`、可选canonical `InReplyToMessageId`与exact `EvidenceQuote`。Recipient仍是未解析、未验证的
-故事文本；只有后续coordinator对case-sensitive exact `Codex`的匹配构成当前唯一recipient allowlist，
-其余recipient只保留为`Unrouted`候选且绝不调用sidecar。Actor ownership、actual send以及计划、
+故事文本；只有durable capture对case-sensitive exact `Codex`的匹配构成当前唯一recipient allowlist，
+其余recipient持久为terminal `Unrouted`且绝不调用sidecar。Actor ownership、actual send以及计划、
 草稿、他人邮件和来信引用等语义，只由extractor LLM依据code-owned prompt保守判断，并没有被runtime
 fail-closed证明。runtime只验证artifact结构与UTF-8 bounds、single-line Recipient/Subject、canonical reply ID；
 它有意不对Recipient、Subject、Body、reply ID或Evidence做raw Action substring、Markdown、whitespace、标点或
@@ -360,51 +362,49 @@ fail-closed证明。runtime只验证artifact结构与UTF-8 bounds、single-line 
 承担；Evidence只保留extractor provenance，不是runtime authority。Subject、reply ID与evidence不进入Codex
 能力参数；sidecar task逐字等于结构验证后的`Body`，cwd/mode/local command network/built-in tools只来自code-owned exact route。
 
-每个Action extraction batch由单一authoritative coordinator ledger全有或全无地capture，按terminal
-Action head保留fail-closed tombstone。stable dispatch ID是对length-prefixed
+每个Action extraction batch由`GalateaDelegationSqliteStore`单事务全有或全无地capture；成功的0-intent
+extraction也写`action_capture` tombstone，extractor failure绝不能冒充空结果。stable dispatch ID是对length-prefixed
 `(userId,"Codex",canonical Action head,artifact ordinal)`计算SHA-256后形成的
-`gd1-<64-lowerhex>`；候选、tombstone、queue和inbox都有code-owned count/byte上限，容量耗尽时拒绝整批，
-不evict旧项而冒险重复执行。route pump按capture顺序与artifact ordinal严格FIFO，同一时刻至多一个
-Starting/Running exchange。首封以`threadId=null`创建Codex thread，accepted后绑定authoritative thread ID；
-以后每封只能continue该thread。accepted或terminal identity mismatch会产生bounded delivery failure并
-quarantine本session route，绝不覆盖binding或继续产生副作用；`START_OUTCOME_UNKNOWN`和其他start/terminal
-failure都只形成one-shot failure notice，不透明重试。
+`gd1-<64-lowerhex>`；candidate/outbox/inbox都有code-owned count/byte上限，容量耗尽时拒绝整批，不evict
+旧项而冒险重复执行。capture前必须重新确认exact terminal Action仍是current selected head；capture commit后
+SessionJournal Undo不删除、不retract、不重新武装该batch。正常串行admission下崩溃gap至多一个，下一次
+player/inbound admission或session attach会在允许新turn前结算latest post-baseline terminal Action；baseline
+frontier之前的历史和rewind留下的orphan均不补做。重复结算以first durable capture为authority，只验证原Action
+bytes/digest，不因后来升级extractor contract而改写历史产物。
+
+durable driver按capture顺序与artifact ordinal严格FIFO，同一route至多一个active dispatch。它先以独立
+`ensure-binding`建立并持久一个empty owned thread；所有邮件（包括首封）都只能在exact `Bound(threadId)`后
+`Queued -> Started`。每个dispatch最多调用一次`start-turn`；一旦Started，任何不确定结果都只进入
+`OutcomeUnknown`并read-only inspect，不回Queued、不重发task。Codex app-server提供可持久读取的owned
+thread/turn history，Galatea用它做保守reconciliation；这不等于app-server/provider承诺exactly-once。
 
 合法final必须是strict Unicode、nonblank，且同时满足route reply上限和composite单reply 256 KiB上限；
-非法或超限final转为code-owned failure，不truncate冒充回复。ReplyInbox按单调completion sequence保序，
-`BeginReadyReplyCutoff(playerText)`在同一gate冻结最早的、最多16条，并为任意合法64 KiB player text
-预留最坏render预算的保守FIFO前缀；其余保持Ready。一次只允许一个active lease；显式`Commit`永久变成`Consumed`，
-`Rollback`或未提交lease的`Dispose`恢复Ready。该lease可以跨fresh/recovery调用栈长期持有，供后续runtime
-在terminal Action durable且execution boundary回到`Idle`后提交，而不是在方法返回时自动消费。
+非法或超限final转为code-owned failure，不truncate冒充回复。SQLite `reply_notice`按单调
+`completionSequence`保序并持久`Ready|Leased|Consumed`。普通player cutoff在一个事务中冻结最多16条及
+player text，此时`CutoffFrozen`还没有SessionJournal base/body；desired setup完成后、紧邻`SendAsync`前才以
+exact selected head和canonical rendered Observation执行`BindObservationBase`。Observation/Action可能已经durable
+但上层尚未返回时，恢复只用selected raw lineage中的exact base、Observation bytes/digest和terminal Action
+分类：无effect证据才rollback到Ready，terminal Action exact成立才consume，并把同一receiving Action address
+写入每条notice。证据分叉则durable quarantine，不能靠函数返回值或exception文本猜测。
 
-每个session至多持有一个unresolved reply lease。fresh Observation在completion/tool等recoverable boundary
-停住时，lease与其exact durable Observation identity一起保留；`StartRecovery`只继承这份lease，绝不顺手
-claim后来ready的结果。`SendAsync`/`ResumeAsync`成功产生terminal Action且execution boundary回到`Idle`后，
-host在outbound extraction、recent refresh与SSE `done`之前显式`Commit`，所以已经durable的Action不会因后处理
-失败而重新投递同一回信。Observation前失败、preflight失败、明确放弃的known failed turn与pre-dispatch stop
-显式`Rollback`；罕见的“Action durable但调用返回前抛出”使用exact completed-turn projection与本lease记录的
-Observation identity分类，不仅凭raw head猜测。普通player Undo不会重新武装已`Consumed`回信；inbound turn即使
-存在ready reply也不claim，后续普通player turn仍可取得。
+每个user至多一个active lease。recovery只继承已持久lease，不claim后来Ready的notice；inbound turn也不claim。
+lease settlement发生在outbound extraction之前，因此已经接收回信的terminal Action即使后处理失败也不会重新
+投递同一notice。普通player Undo只移动SessionJournal selected lineage：已capture的outbox继续推进，active
+Codex turn不interrupt，Ready保持Ready，Consumed永不重新武装，fixed Codex thread context也不倒退。这里没有
+旧`RetractedBeforeDispatch`/`SourceRetracted`内存状态。
 
-普通player Undo只在SessionJournal exact rewind确实`Moved`后回调同一ledger gate：Unrouted/Queued变为
-`RetractedBeforeDispatch`并释放正文；与pump竞争失败而已经Starting/Running的exchange只标记
-`SourceRetracted`，不interrupt，完成结果仍可one-shot呈现；Ready/Leased/Consumed不撤回、不重新武装。
-已经建立的fixed Codex thread context也不随故事turn Undo而倒退。
-
-该状态仍不是durable outbox，不承诺provider-call exactly-once或进程重启恢复，session dispose后即丢失。
+该SQLite current-state machine可跨Galatea/sidecar重启恢复，但只承诺同一dispatch **at-most-one
+`start-turn` attempt** 与`OutcomeUnknown`保守只读reconciliation；不承诺provider-call exactly-once。
 TextExtractor只对`OpenAICodexResponsesException`的exact
 `TransportOutcomeUnknown`做最多5次总尝试，重试前依次等待1s、2s、4s、8s；HTTP status failure、
 SSE/protocol failure与普通异常不重试。每个logical extraction复用同一request/client，artifact tool只在
 最终成功响应后执行；因为pre-response outcome仍可能已经消耗provider算力，重试可能产生重复计费，但不会
 重复本地artifact副作用。Extraction不再设置code-owned elapsed deadline，只服从caller cancellation；若
 provider持续不结束且caller不取消，当前turn、recent refresh、SSE `done`与`TurnLock`会继续等待，这是当前
-有意选择的完成优先语义。nonfatal failure/cancellation只写single-line bounded`Galatea.Mailbox`摘要log，
-不改判已经durable的主turn。capture完成只唤醒后台pump，主Galatea turn不等待
-sidecar accepted或final；即使sidecar的acceptance或terminal长期悬挂，主turn仍可发布SSE `done`并释放
-`TurnLock`。mailbox Observation不产生普通player rewind token，commit前也再次防御其被
-player pop入口撤销。session shutdown先停止capture并drain turn，再取消/监督coordinator pump；host随后
-关闭共享sidecar，最后关闭Completion/RecapGrid owner。Completion call log仍可能包含完整tool arguments，
-debug摘要不重复正文、subject或evidence。
+有意选择的完成优先语义。failure/cancellation不写empty tombstone；主Action仍已durable，当前SSE以错误结束，
+下一次admission会在接受新turn前重试该exact extraction gap。capture commit只signal supervisor，主Galatea turn
+不等待sidecar accepted或final。Completion call log仍可能包含完整tool arguments，debug摘要不重复正文、
+subject或evidence。
 
 历史 Agent Control profiles 必须继续保留，供 Prepared/ToolContinuation 按 frozen
 identity 绑定；fresh/NewRequest 不再绑定 current profile，也不向新的模型请求注入

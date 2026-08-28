@@ -1,65 +1,47 @@
 # Galatea Codex 代行闭环重构状态
 
-> 总体状态：In Progress
+> 状态：**Complete**
 >
-> process-local 闭环子阶段：Complete（2026-08-27）
->
-> durable delegation 子阶段：In Progress（2026-08-28 启动）
+> 完成日期：2026-08-28
 
-Galatea 叙事 Action 现在可以经 `OutboundMailExtractor`、exact `Codex` route 和
-进程内 fixed-thread FIFO 委派给 Codex app-server；bounded final 或退信进入
-`ReplyInbox`，并在后续普通玩家回合中以独立兄弟信息块 one-shot 呈现。
+现行产品契约、配置与开发 runbook 见
+[`prototypes/Galatea/README.md`](../../prototypes/Galatea/README.md)；durable authority、failure model、
+crash matrix 与非目标见
+[`codex-delegation-durability-design.md`](codex-delegation-durability-design.md)。本文只作为阶段完成 tombstone，
+不再复制产品说明。
 
-长期产品契约、配置、failure semantics 与可重复的 operator runbook 以
-[`prototypes/Galatea/README.md`](../../prototypes/Galatea/README.md) 为权威。相关自动化测试覆盖
-composite Observation、strict sidecar transport、coordinator FIFO、recovery lease、Undo 与 cleanup；
-真实 app-server canary 已于 2026-08-27 按
-[gated runbook](../../prototypes/Galatea/README.md#gated-real-codex-delegation-canary)
-通过（1/1，16s），确认同一 thread/context、两次回信 one-shot 消费、隔离临时 repository clean
-以及没有 Galatea Completion connection 调用。
+完成结果：
 
-上述结果现在被明确定义为已完成的 **process-local 闭环子阶段**。它的
-coordinator ledger、fixed-thread binding、ReplyInbox 和 reply lease 均只在进程内存中；
-进程退出后丢失是该子阶段已知且被接受的边界，不是其验收缺口。
+- Root config已hard-cut strict V3；existing state只有在matching session存在时才strict-open并持有lifetime
+  writer lock，`SESSION_MISSING`在SQLite open前fail closed；missing store在第一次writable SessionJournal
+  attach自动建立physical-frontier baseline。
+- SQLite current-state machine已成为capture/outbox/fixed-thread/reply lease唯一durable owner；signal + 1秒
+  fallback pulse可跨进程恢复。
+- Staged V2 sidecar只提供`ensure-binding`、`start-turn`、`inspect-dispatch`；同一dispatch at-most-one
+  start attempt，OutcomeUnknown只做read-only reconciliation，不宣称app-server/provider exactly-once。
+- Normalizer在HTTP 202前完成；reply lease以SessionJournal exact raw evidence one-shot结算；capture后的普通
+  Undo不撤回outbox或重新武装Consumed notice。Maintenance与shutdown边界已接入production composition。
+- C#/Node V1 owner、process-local coordinator/ledger/ReplyInbox及fallback path均已删除；current binary没有回旧
+  owner或operator abandon durable candidate的产品路径。
 
-新的 **durable delegation 子阶段** 以
-[`codex-delegation-durability-design.md`](codex-delegation-durability-design.md)
-为当前实施真源。目标是将 capture、outbox dispatch、fixed-thread binding、reply inbox
-与 one-shot reply lease 收口为 Galatea-owned SQLite current-state machine，并通过
-signal 加 1 秒 fallback pulse 跨进程恢复。该阶段明确不承诺 provider-call
-exactly-once，也不将外部 side effect 伪装成可随 SessionJournal Undo 撤销。
-每个 user database 必须由 process-lifetime exclusive OS writer lock 保护，不用
-epoch/fencing 容忍多 writer；reply lease 以 cutoff 与紧邻 `SendAsync` 前的
-`BindObservationBase` 两阶段持久。
+关键提交：`6aab3310`, `b95134e7`, `a09ef6f5`, `8ec6c19a`, `0c82339e`, `6ba7b4cc`,
+`e3c68d23`, `fd9e36d9`, `37a53bb6`, `eaf5692a`, `0dcab030`, `c35cdd9c`, `03d20259`,
+`47f0efbe`, `b99ab11a`, `76e0f566`, `10198814`, `bfdfdbc7`, `9cd3596d`, `fcb2c2f6`。
 
-在最终 hard cut 之前，所有新 durable 代码必须保持 dormant：现行产品路径继续
-由已验收的 process-local owner 唯一运行，不做 live dual-write。hard cut 时才会
-同步更新 `prototypes/Galatea/README.md` 中的现行产品契约；本文档包不预写
-尚未激活的产品事实。所有可回退 preflight 必须在 explicit baseline 前完成；
-baseline 建立后不得直接恢复旧 owner。
+收口验证：hard-cut focused 54/54、runtime vertical 3/3、supervisor + external provision 9/9、完整
+Galatea non-live set 384 pass、production build 0 warnings/0 errors；current real-canary Fact在普通run中另有
+1 explicit live skip。Current Node suite为52 pass、1 independent live skip、0 fail。2026-08-28 targeted real
+V2 transport canary另以1/1 PASS验证empty binding、pre-start NotFound、
+exact一次start、本地duplicate tombstone及inspect Completed；该canary不构造SQLite/host vertical。
+同日ignored `cyber` production smoke验证首次writable attach自动baseline、HTTP login/recent、停服释放lock、
+SQLite `quick_check=ok`与cold reopen；该smoke未启动sidecar或调用LLM。
 
-durable 实施已完成两个 **dormant** 增量，不改变上述现行产品路径：
+未完成清单：**无**。
 
-- `8ec6c19a` 新增 Node sidecar V2 staged backend/protocol/adapter seam，将
-  `ensure-binding`、`start-turn` 和 read-only `inspect-dispatch` 分离。C# V2 transport、
-  durable pulse/driver 与 live sidecar entry 仍未接入。当前 checkout 重跑
-  `local-codex-mcp` `npm test`：66 passed、1 environment-gated skipped、0 failed。
-- `b95134e7` 新增 dormant Galatea SQLite state kernel，包括 per-user lifetime exclusive
-  writer lock、strict current-state schema、baseline/capture/outbox/route 与两阶段 reply lease
-  transitions。focused `GalateaDelegationSqliteStoreTests`：14 passed、0 skipped、0 failed。
+以下是独立future work，不重新打开本阶段：
 
-这两个 commit 没有将 durable store 或 V2 protocol 构造进 production
-`GalateaHostService`/`UserSessionHost`，不表示 hard cut、C# transport、scheduler 或 E2E
-恢复已完成。
-
-2026-08-27 的闭环实测后加固已完成：`TextExtractor`只对pre-response
-`TransportOutcomeUnknown`执行最多5次总尝试，使用1s/2s/4s/8s指数退避；独立30秒extraction deadline已移除，
-当前完成优先语义只保留caller cancellation。
-
-2026-08-27 的内建工具配置增强已完成：delegate config升级为strict V2，
-`localCommandNetwork`与`tools.{webSearch,imageGeneration,viewImage}`显式解耦。唯一开发实例采用
-本地命令出网、live Web Search、Image Generation与View Image均开启；Apps/MCP继续关闭。
-真实ephemeral canary在`networkAccess=false`下完成，并在app-server事件流中观察到exact一个
-`webSearch` item；provider capability同时回报Web Search与Image Generation可用。
-第二个临时workspace canary又观察到exact一个`imageGeneration`和一个`imageView` item，
-完成后已删除生成文件与临时目录。
+- Ignored唯一开发实例已指向durable entry，live baseline/cold-reopen smoke与real V2 transport canary均已通过。
+  Future full-host provider vertical仍可覆盖accepted后C# host restart、双信FIFO与durable reply lease；不能把
+  现有两项窄验收或旧V1 canary扩张成这些证据。
+- Browser回信到达通知/轮询UI。
+- C#直接stdio驱动`codex app-server`、multi-thread/rollover及真实email/IM transport。
