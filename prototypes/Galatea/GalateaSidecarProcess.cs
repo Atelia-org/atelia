@@ -30,9 +30,7 @@ internal sealed record GalateaSidecarProcessTestHooks(
 /// </summary>
 internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
     private const int ReadyStartupMarginMs = 5_000;
-    private const int DefaultInterruptGraceMs = 2_000;
     private const int SidecarOutputWriteTimeoutMs = 10_000;
-    private const int MaximumDispatchTombstones = 4_096;
     internal const string LogCategory = "Galatea.DelegateSidecar";
 
     private static readonly HashSet<string> ParentCodexContextKeys = new(
@@ -266,14 +264,6 @@ internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
             Route.Tools.ImageGeneration ? "true" : "false";
         environment["GALATEA_CODEX_VIEW_IMAGE"] =
             Route.Tools.ViewImage ? "true" : "false";
-        environment["GALATEA_CODEX_TURN_DEADLINE_MS"] =
-            sidecar.TurnTimeoutMs.ToString(
-                System.Globalization.CultureInfo.InvariantCulture
-            );
-        environment["GALATEA_CODEX_INTERRUPT_GRACE_MS"] =
-            DefaultInterruptGraceMs.ToString(
-                System.Globalization.CultureInfo.InvariantCulture
-            );
         environment["GALATEA_CODEX_MAX_INPUT_FRAME_BYTES"] =
             sidecar.MaximumFrameUtf8Bytes.ToString(
                 System.Globalization.CultureInfo.InvariantCulture
@@ -288,10 +278,6 @@ internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
             );
         environment["GALATEA_CODEX_MAX_FINAL_BYTES"] =
             Route.MaximumReplyUtf8Bytes.ToString(
-                System.Globalization.CultureInfo.InvariantCulture
-            );
-        environment["GALATEA_CODEX_MAX_DISPATCH_TOMBSTONES"] =
-            MaximumDispatchTombstones.ToString(
                 System.Globalization.CultureInfo.InvariantCulture
             );
         environment["GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS"] =
