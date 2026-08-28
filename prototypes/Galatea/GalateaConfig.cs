@@ -343,6 +343,28 @@ public sealed record RecapGridReadinessSnapshotDto(
     RecapGridReserveBootstrapEvidenceDto? ReserveBootstrap = null
 );
 
+/// <summary>
+/// Read-only progress toward the next Recap cadence boundary. HistoryLoad
+/// values are canonical non-negative decimal strings because they may exceed
+/// JavaScript's exact integer range. HistoryLoad is estimator-scoped and is
+/// not a provider token count.
+/// </summary>
+public sealed record RecapCadenceProgressSnapshotDto(
+    string Freshness,
+    string State,
+    string? ObservedRawHead,
+    string? CadenceBaseline,
+    int? RecentHistoryPlanningUnitCount,
+    string? RecentHistoryLoad,
+    string? RecapIntervalHistoryLoad,
+    string? MinimumRecentHistoryLoad,
+    string? BuildThresholdHistoryLoad,
+    string? RemainingHistoryLoad,
+    string? HistoryLoadEstimatorId,
+    string? Code = null,
+    string? Detail = null
+);
+
 public sealed record RecentTurnsResponseDto(
     IReadOnlyList<RecentTurnDto> Turns,
     string? RewindLatestToken,
