@@ -125,6 +125,33 @@ public sealed class GalateaOutboundExtractionReconcilerTests {
     }
 
     [Fact]
+    public async Task DisabledExtractor_CapturesDistinctProvenance() {
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        using GalateaDelegationSqliteStore store = CreateStore(
+            paths.StorePath,
+            engine
+        );
+        EventAddress action = AppendAction(engine, "disabled extraction");
+        var reconciler = new GalateaOutboundExtractionReconciler(
+            store,
+            DisabledOutboundMailExtractor.Instance
+        );
+
+        var captured = Assert.IsType<
+            GalateaOutboundExtractionReconcileResult.Captured
+        >(await reconciler.ReconcileAsync(engine));
+
+        Assert.Equal(action, captured.SourceAction);
+        Assert.Equal(0, captured.ArtifactCount);
+        Assert.Equal(
+            DisabledOutboundMailExtractor.DisabledContractId,
+            Assert.Single(store.ReadSnapshot().Captures)
+                .ExtractorContractId
+        );
+    }
+
+    [Fact]
     public async Task BlankVisibleAction_SkipsLlmAndCapturesTombstone() {
         using var paths = new FixturePaths();
         using SessionJournalEngine engine = CreateEngine(paths.SessionPath);

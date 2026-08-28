@@ -1,12 +1,9 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
-using System.Text;
 using System.Text.Json;
-using System.Threading.Channels;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -17,30 +14,24 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
     [Fact]
-    public async Task OutboundDispatch_DoesNotAwaitCodex_AndReplyIsOneShotCompositeThroughUndo() {
+    public async Task DurableRoundTrip_UsesOneFixedThreadAndUndoDoesNotRearm() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractor = Connection("mail-helper");
-        const string SentAction =
-            "[Galatea] I sent task alpha to Codex and completed sending.";
-        const string Reply =
-            "result ```inside``` <tag attr=\"&\">值</tag>\n~~~~~\n终";
+        const string ReplyOne = "first reply ```nested```";
+        const string ReplyTwo = "second reply <tag>值</tag>";
         var mainClient = new QueueClient(
-            _ => Completed(mainClient: null, main, SentAction),
-            _ => Completed(mainClient: null, main, "received reply"),
-            _ => Completed(mainClient: null, main, "after undo")
+            _ => Completed(main, "[Galatea] sent two letters."),
+            _ => Completed(main, "received both replies"),
+            _ => Completed(main, "after undo")
         );
         var extractorClient = new QueueClient(
-            _ => CompletedWithTool(
+            _ => CompletedWithTools(
                 extractor,
-                MailTool(
-                    "mail-1",
-                    "Codex",
-                    "task alpha",
-                    "completed sending"
-                )
+                MailTool("mail-1", "first task"),
+                MailTool("mail-2", "second task")
             ),
-            _ => Completed(mainClient: null, extractor, "no mail"),
-            _ => Completed(mainClient: null, extractor, "no mail")
+            _ => Completed(extractor, "no mail"),
+            _ => Completed(extractor, "no mail")
         );
         var factory = new RoutingFactory(new Dictionary<
             string,
@@ -49,15 +40,14 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             [main.Id] = mainClient,
             [extractor.Id] = extractorClient,
         });
-        var normalizer = new RecordingNormalizer();
-        var sidecar = new GateSidecar();
+        var backend = new DurableBackend();
         await using GalateaTestHost host = GalateaTestHost.Create(
             factory,
-            normalizer,
+            DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, extractor],
             selectableConnectionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
-            delegateSidecar: sidecar
+            delegateTransport: new DurableTransport(backend)
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -72,73 +62,65 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             http,
             service,
             session,
-            "send it"
+            "send them"
         );
         Assert.Equal("completed", sent.Status);
-        Assert.True(session.TurnLock.Wait(0));
-        session.TurnLock.Release();
+        await WaitUntilAsync(() => backend.StartCallCount == 1);
+        backend.Complete(0, ReplyOne);
+        _ = session.DelegationHandle!.Signal();
+        await WaitUntilAsync(() => backend.StartCallCount == 2);
+        backend.Complete(1, ReplyTwo);
+        _ = session.DelegationHandle.Signal();
+        await WaitUntilAsync(() => session.DelegationHandle.Store
+            .ReadSnapshot().Notices.Count == 2);
 
-        GateCall call = await sidecar.NextCallAsync();
-        Assert.Null(call.Request.ThreadId);
-        Assert.Equal("task alpha", call.Request.Body);
-        Assert.False(call.Accepted.Task.IsCompleted);
-        using (GalateaTurnSubscription sentReplay = sent.Subscribe()) {
-            Assert.Contains(
-                sentReplay.ReplayFrames,
-                static frame => frame.EventName == "done"
-            );
-        }
-
-        call.Accept("thread-fixed", "codex-turn-1");
-        call.Complete(Reply);
-        await session.DelegationCoordinator.PumpTaskForTest
-            .WaitAsync(Deadline);
+        Assert.Equal(1, backend.EnsureCallCount);
+        Assert.Equal(
+            ["thread-fixed", "thread-fixed"],
+            backend.StartRequests.Select(static request => request.ThreadId)
+                .ToArray()
+        );
 
         GalateaLiveTurn received = await StartAndWaitAsync(
             http,
             service,
             session,
-            "玩家正文"
+            "player text"
         );
-        SessionCompletedTurnProjection receivingTurn = session.Engine
+        Assert.Equal("completed", received.Status);
+        SessionCompletedTurnProjection receiving = session.Engine
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
         Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
-            receivingTurn.ObservationContent,
+            receiving.ObservationContent,
             out GalateaPlayerObservation composite
         ));
-        Assert.Equal("玩家正文", composite.PlayerText);
-        Assert.Equal(Reply, Assert.Single(composite.ReadyNotices).Body);
-        Assert.Equal(["send it", "玩家正文"], normalizer.Received);
-
-        CompletionRequest receivingRequest = mainClient.Requests[1];
-        ObservationMessage observation = Assert.Single(
-            receivingRequest.PromptPrefix.SharedContextMessages
-                .OfType<ObservationMessage>(),
-            message => string.Equals(
-                message.Content,
-                receivingTurn.ObservationContent,
-                StringComparison.Ordinal)
+        Assert.Equal("player text", composite.PlayerText);
+        Assert.Equal(
+            [ReplyOne, ReplyTwo],
+            composite.ReadyNotices.Select(static notice => notice.Body)
+                .ToArray()
         );
-        Assert.Equal(receivingTurn.ObservationContent, observation.Content);
+        GalateaDelegationStateSnapshot consumed = session.DelegationHandle
+            .Store.ReadSnapshot();
+        Assert.All(consumed.Notices, static notice => {
+            Assert.Equal(GalateaReplyNoticeState.Consumed, notice.State);
+            Assert.NotNull(notice.ConsumedActionAddress);
+        });
 
         RecentTurnsResponseDto recent = (await http.GetFromJsonAsync<
             RecentTurnsResponseDto>("/api/v1/recent-turns"))!;
-        Assert.Contains(Reply, recent.Turns[0].UserText,
-            StringComparison.Ordinal);
-        RecentTurnsResponseDto sseRecent = ReadDoneRecent(received);
-        Assert.Contains(Reply, sseRecent.Turns[0].UserText,
-            StringComparison.Ordinal);
-        Assert.NotNull(recent.RewindLatestToken);
-
         using HttpResponseMessage undo = await http.PostAsJsonAsync(
             "/api/v1/chat/turns/pop-latest",
             new { rewindLatestToken = recent.RewindLatestToken }
         );
         Assert.Equal(HttpStatusCode.OK, undo.StatusCode);
-        Assert.Equal(
-            GalateaDelegateCandidateState.Consumed,
-            Assert.Single(session.DelegationCoordinator.Snapshot()).State
+        Assert.All(
+            session.DelegationHandle.Store.ReadSnapshot().Notices,
+            static notice => Assert.Equal(
+                GalateaReplyNoticeState.Consumed,
+                notice.State
+            )
         );
 
         _ = await StartAndWaitAsync(
@@ -155,396 +137,134 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             out GalateaPlayerObservation afterUndoComposite
         ));
         Assert.Empty(afterUndoComposite.ReadyNotices);
+        Assert.Equal(2, backend.StartCallCount);
     }
 
     [Fact]
-    public async Task CutoffExcludesLaterTerminalUntilFollowingPlayerTurn() {
+    public async Task AcceptedMail_RestartInspectsWithoutSecondStart() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig extractor = Connection("mail-helper");
         var mainClient = new QueueClient(
-            request => Completed(mainClient: null, Connection("test"), "one"),
-            request => Completed(mainClient: null, Connection("test"), "two")
+            _ => Completed(main, "[Galatea] sent one letter."),
+            _ => Completed(main, "received restart reply")
         );
-        var sidecar = new GateSidecar();
-        await using GalateaTestHost host = GalateaTestHost.Create(
-            new RoutingFactory(new Dictionary<string, ICompletionClient> {
-                ["test"] = mainClient,
-            }),
+        var extractorClient = new QueueClient(
+            _ => CompletedWithTools(
+                extractor,
+                MailTool("mail-restart", "restart task")
+            ),
+            _ => Completed(extractor, "no mail")
+        );
+        var factory = new RoutingFactory(new Dictionary<
+            string,
+            ICompletionClient
+        >(StringComparer.Ordinal) {
+            [main.Id] = mainClient,
+            [extractor.Id] = extractorClient,
+        });
+        var backend = new DurableBackend();
+        var first = GalateaTestHost.Create(
+            factory,
             DisabledGalateaUserMessageNormalizer.Instance,
-            connections: [Connection("test")],
-            delegateSidecar: sidecar
+            deleteFilesOnDispose: false,
+            connections: [main, extractor],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: extractor.Id,
+            delegateTransport: new DurableTransport(backend)
         );
-        using HttpClient http = host.CreateClient();
-        await LoginAsync(http);
-        GalateaHostService service = host.Factory.Services
-            .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        session.DelegationCoordinator.TryCaptureBatch(
-            "source",
-            Head(100),
-            [Mail("task")]
-        );
-        GateCall call = await sidecar.NextCallAsync();
+        GalateaTestHost? restarted = null;
+        try {
+            using (HttpClient http = first.CreateClient()) {
+                await LoginAsync(http);
+                GalateaHostService service = first.Factory.Services
+                    .GetRequiredService<GalateaHostService>();
+                UserSessionHost session = await service.GetSessionAsync(
+                    "alice",
+                    CancellationToken.None
+                );
+                _ = await StartAndWaitAsync(
+                    http,
+                    service,
+                    session,
+                    "send before restart"
+                );
+                await WaitUntilAsync(() => session.DelegationHandle!.Store
+                    .ReadSnapshot().Mails.Single().State
+                    == GalateaDurableMailState.Accepted);
+            }
+            Assert.Equal(1, backend.StartCallCount);
+            await first.DisposeAsync();
+            backend.Complete(0, "reply recovered after restart");
 
-        StartTurnResponseDto started = await StartAsync(http, "cutoff now");
-        call.Accept("thread-fixed", "codex-turn");
-        call.Complete("later reply");
-        await session.DelegationCoordinator.PumpTaskForTest
-            .WaitAsync(Deadline);
-        GalateaLiveTurn current = RequireTurn(service, session, started);
-        await current.RunTask!.WaitAsync(Deadline);
+            restarted = first.CreateRestarted(
+                factory,
+                DisabledGalateaUserMessageNormalizer.Instance,
+                new DurableTransport(backend)
+            );
+            using HttpClient restartedHttp = restarted.CreateClient();
+            await LoginAsync(restartedHttp);
+            GalateaHostService restartedService = restarted.Factory.Services
+                .GetRequiredService<GalateaHostService>();
+            UserSessionHost restartedSession =
+                await restartedService.GetSessionAsync(
+                "alice",
+                CancellationToken.None
+            );
+            await WaitUntilAsync(() => restartedSession.DelegationHandle!.Store
+                .ReadSnapshot().Notices.SingleOrDefault()?.State
+                == GalateaReplyNoticeState.Ready);
 
-        SessionCompletedTurnProjection first = session.Engine
-            .ReadRecentCompletedTurns(1).RequireSnapshot().Turns.Single();
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
-            first.ObservationContent,
-            out GalateaPlayerObservation firstComposite
-        ));
-        Assert.Empty(firstComposite.ReadyNotices);
-
-        _ = await StartAndWaitAsync(
-            http,
-            service,
-            session,
-            "following turn"
-        );
-        SessionCompletedTurnProjection second = session.Engine
-            .ReadRecentCompletedTurns(1).RequireSnapshot().Turns.Single();
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
-            second.ObservationContent,
-            out GalateaPlayerObservation secondComposite
-        ));
-        Assert.Equal(
-            "later reply",
-            Assert.Single(secondComposite.ReadyNotices).Body
-        );
-    }
-
-    [Fact]
-    public async Task PreObservationFailureRollsBackReadyLease() {
-        var mainClient = new QueueClient(
-            _ => Completed(mainClient: null, Connection("test"), "ok")
-        );
-        var normalizer = new SequencedNormalizer(
-            new string('x', GalateaHttpV1.MaximumMessageUtf8Bytes + 1),
-            "accepted"
-        );
-        var sidecar = new GateSidecar();
-        await using GalateaTestHost host = GalateaTestHost.Create(
-            new RoutingFactory(new Dictionary<string, ICompletionClient> {
-                ["test"] = mainClient,
-            }),
-            normalizer,
-            connections: [Connection("test")],
-            delegateSidecar: sidecar
-        );
-        using HttpClient http = host.CreateClient();
-        await LoginAsync(http);
-        GalateaHostService service = host.Factory.Services
-            .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        await MakeReadyAsync(session, sidecar, 1, "retry me");
-
-        GalateaLiveTurn failed = await StartAndWaitAsync(
-            http,
-            service,
-            session,
-            "first"
-        );
-        Assert.Equal("failed", failed.Status);
-        Assert.Equal(
-            GalateaDelegateCandidateState.ReplyReady,
-            Assert.Single(session.DelegationCoordinator.Snapshot()).State
-        );
-        Assert.Empty(session.Engine.ReadRecentCompletedTurns()
-            .RequireSnapshot().Turns);
-
-        _ = await StartAndWaitAsync(
-            http,
-            service,
-            session,
-            "second"
-        );
-        SessionCompletedTurnProjection persisted = session.Engine
-            .ReadRecentCompletedTurns(1).RequireSnapshot().Turns.Single();
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
-            persisted.ObservationContent,
-            out GalateaPlayerObservation composite
-        ));
-        Assert.Equal("retry me", Assert.Single(composite.ReadyNotices).Body);
-    }
-
-    [Fact]
-    public async Task NormalizerWorstCaseStillPersistsSafeFifoPrefixWithoutRetryLivelock() {
-        const int ReplyBytes = 95_000;
-        string worstNormalized = new(
-            '~',
-            GalateaHttpV1.MaximumMessageUtf8Bytes
-        );
-        var mainClient = new QueueClient(
-            _ => Completed(mainClient: null, Connection("test"), "first")
-        );
-        var normalizer = new SequencedNormalizer(worstNormalized);
-        var sidecar = new GateSidecar();
-        await using GalateaTestHost host = GalateaTestHost.Create(
-            new RoutingFactory(new Dictionary<string, ICompletionClient> {
-                ["test"] = mainClient,
-            }),
-            normalizer,
-            connections: [Connection("test")],
-            delegateSidecar: sidecar
-        );
-        using HttpClient http = host.CreateClient();
-        await LoginAsync(http);
-        GalateaHostService service = host.Factory.Services
-            .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        string[] replies = Enumerable.Range(0, 9)
-            .Select(index => index.ToString(
-                    System.Globalization.CultureInfo.InvariantCulture
-                ) + ":" + new string('r', ReplyBytes - 2))
-            .ToArray();
-        for (int index = 0; index < replies.Length; index++) {
-            await MakeReadyAsync(
-                session,
-                sidecar,
-                checked((uint)index + 20),
-                replies[index]
+            _ = await StartAndWaitAsync(
+                restartedHttp,
+                restartedService,
+                restartedSession,
+                "receive after restart"
+            );
+            Assert.Equal(1, backend.StartCallCount);
+            Assert.True(backend.InspectCallCount > 0);
+            SessionCompletedTurnProjection receiving = restartedSession.Engine
+                .ReadRecentCompletedTurns(1)
+                .RequireSnapshot().Turns.Single();
+            Assert.Contains(
+                "reply recovered after restart",
+                receiving.ObservationContent,
+                StringComparison.Ordinal
             );
         }
-
-        _ = await StartAndWaitAsync(
-            http,
-            service,
-            session,
-            "x"
-        );
-        SessionCompletedTurnProjection first = session.Engine
-            .ReadRecentCompletedTurns(1).RequireSnapshot().Turns.Single();
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
-            first.ObservationContent,
-            out GalateaPlayerObservation firstComposite
-        ));
-        Assert.InRange(firstComposite.ReadyNotices.Count, 1, 8);
-        Assert.Equal(
-            replies.Take(firstComposite.ReadyNotices.Count),
-            firstComposite.ReadyNotices.Select(static notice => notice.Body)
-        );
-        Assert.InRange(
-            Encoding.UTF8.GetByteCount(first.ObservationContent),
-            1,
-            GalateaPlayerObservationEnvelope.MaximumRenderedUtf8Bytes
-        );
-
-        using GalateaDelegationCoordinator.GalateaReadyReplyLease next =
-            session.DelegationCoordinator.BeginReadyReplyCutoff("y");
-        Assert.Equal(
-            replies.Skip(firstComposite.ReadyNotices.Count),
-            next.Notices.Select(static notice => notice.Body)
-        );
-        next.Commit();
-        Assert.All(
-            session.DelegationCoordinator.Snapshot(),
-            static candidate => Assert.Equal(
-                GalateaDelegateCandidateState.Consumed,
-                candidate.State
-            )
-        );
+        finally {
+            if (restarted is not null) {
+                await restarted.DisposeAsync();
+            }
+            else {
+                await first.DisposeAsync();
+            }
+        }
     }
 
     [Fact]
-    public async Task RecoverableFreshFailureKeepsOldLease_AndRecoveryDoesNotClaimNewReady() {
-        CompletionConnectionConfig connection = Connection("test");
-        var mainClient = new QueueClient(
-            _ => throw new HttpRequestException(
-                "uncertain",
-                inner: null,
-                HttpStatusCode.InternalServerError
-            ),
-            _ => Completed(mainClient: null, connection, "recovered"),
-            _ => Completed(mainClient: null, connection, "next")
-        );
-        var sidecar = new GateSidecar();
+    public async Task MaintenanceHost_PerformsNoDurableTransportCall() {
+        CompletionConnectionConfig main = Connection("test");
+        var backend = new DurableBackend();
         await using GalateaTestHost host = GalateaTestHost.Create(
             new RoutingFactory(new Dictionary<string, ICompletionClient> {
-                [connection.Id] = mainClient,
+                [main.Id] = new QueueClient(
+                    _ => Completed(main, "unused")
+                )
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
-            connections: [connection],
-            delegateSidecar: sidecar
+            maintenanceMode: true,
+            connections: [main],
+            delegateTransport: new DurableTransport(backend)
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
-        GalateaHostService service = host.Factory.Services
-            .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        await MakeReadyAsync(session, sidecar, 1, "old reply");
 
-        GalateaLiveTurn failed = await StartAndWaitAsync(
-            http,
-            service,
-            session,
-            "recoverable"
-        );
-        Assert.Equal("failed", failed.Status);
-        Assert.Equal(
-            SessionExecutionPhase.AwaitingCompletion,
-            session.Engine.InspectExecutionBoundary().Phase
-        );
-        Assert.Equal(
-            GalateaDelegateCandidateState.Leased,
-            session.DelegationCoordinator.Snapshot()[0].State
+        using HttpResponseMessage response = await http.GetAsync(
+            "/api/v1/recent-turns"
         );
 
-        await MakeReadyAsync(session, sidecar, 2, "new reply");
-        EventAddress recoveryHead = session.Engine.ReadCurrentHead()!.Value;
-        using HttpResponseMessage response = await http.PostAsJsonAsync(
-            "/api/v1/chat/turns/resume",
-            new ResumeTurnRequest(
-                EventAddressTextCodec.Format(recoveryHead),
-                ConnectionId: null,
-                RestartUncertainCompletion: true
-            )
-        );
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-        StartTurnResponseDto recoveryStarted = (await response.Content
-            .ReadFromJsonAsync<StartTurnResponseDto>())!;
-        GalateaLiveTurn recovered = RequireTurn(
-            service,
-            session,
-            recoveryStarted
-        );
-        await recovered.RunTask!.WaitAsync(Deadline);
-        Assert.Equal("completed", recovered.Status);
-
-        SessionCompletedTurnProjection recoveredTurn = session.Engine
-            .ReadRecentCompletedTurns(1).RequireSnapshot().Turns.Single();
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
-            recoveredTurn.ObservationContent,
-            out GalateaPlayerObservation recoveredComposite
-        ));
-        Assert.Equal(
-            "old reply",
-            Assert.Single(recoveredComposite.ReadyNotices).Body
-        );
-        Assert.Equal(
-            [
-                GalateaDelegateCandidateState.Consumed,
-                GalateaDelegateCandidateState.ReplyReady,
-            ],
-            session.DelegationCoordinator.Snapshot()
-                .Select(static value => value.State)
-        );
-
-        _ = await StartAndWaitAsync(
-            http,
-            service,
-            session,
-            "after recovery"
-        );
-        SessionCompletedTurnProjection next = session.Engine
-            .ReadRecentCompletedTurns(1).RequireSnapshot().Turns.Single();
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
-            next.ObservationContent,
-            out GalateaPlayerObservation nextComposite
-        ));
-        Assert.Equal(
-            "new reply",
-            Assert.Single(nextComposite.ReadyNotices).Body
-        );
-    }
-
-    [Fact]
-    public async Task InboundTurnNeverClaimsReadyReply() {
-        var mainClient = new QueueClient(
-            _ => Completed(mainClient: null, Connection("test"), "mail"),
-            _ => Completed(mainClient: null, Connection("test"), "player")
-        );
-        var sidecar = new GateSidecar();
-        await using GalateaTestHost host = GalateaTestHost.Create(
-            new RoutingFactory(new Dictionary<string, ICompletionClient> {
-                ["test"] = mainClient,
-            }),
-            DisabledGalateaUserMessageNormalizer.Instance,
-            connections: [Connection("test")],
-            delegateSidecar: sidecar
-        );
-        using HttpClient http = host.CreateClient();
-        await LoginAsync(http);
-        GalateaHostService service = host.Factory.Services
-            .GetRequiredService<GalateaHostService>();
-        UserSessionHost session = await service.GetSessionAsync(
-            "alice",
-            CancellationToken.None
-        );
-        await MakeReadyAsync(session, sidecar, 1, "held for player");
-
-        using HttpResponseMessage inbound = await http.PostAsJsonAsync(
-            "/api/v1/mailbox/inbound",
-            new { from = "Alice", body = "hello", connectionId = "test" }
-        );
-        Assert.Equal(HttpStatusCode.Accepted, inbound.StatusCode);
-        InboundMailboxAcceptedDto accepted = (await inbound.Content
-            .ReadFromJsonAsync<InboundMailboxAcceptedDto>())!;
-        GalateaLiveTurn inboundTurn = service.FindTurn(
-            session,
-            accepted.TurnId
-        )!;
-        await inboundTurn.RunTask!.WaitAsync(Deadline);
-        Assert.Equal(
-            GalateaDelegateCandidateState.ReplyReady,
-            Assert.Single(session.DelegationCoordinator.Snapshot()).State
-        );
-        Assert.True(GalateaMailboxObservationEnvelope.TryUnwrap(
-            session.Engine.ReadRecentCompletedTurns(1)
-                .RequireSnapshot().Turns.Single().ObservationContent,
-            out _
-        ));
-
-        _ = await StartAndWaitAsync(
-            http,
-            service,
-            session,
-            "ordinary"
-        );
-        SessionCompletedTurnProjection ordinary = session.Engine
-            .ReadRecentCompletedTurns(1).RequireSnapshot().Turns.Single();
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
-            ordinary.ObservationContent,
-            out GalateaPlayerObservation composite
-        ));
-        Assert.Equal(
-            "held for player",
-            Assert.Single(composite.ReadyNotices).Body
-        );
-    }
-
-    private static async Task MakeReadyAsync(
-        UserSessionHost session,
-        GateSidecar sidecar,
-        uint ordinal,
-        string reply
-    ) {
-        Assert.True(session.DelegationCoordinator.TryCaptureBatch(
-            $"source-{ordinal}",
-            Head(ordinal),
-            [Mail($"task-{ordinal}")]
-        ));
-        GateCall call = await sidecar.NextCallAsync();
-        call.Accept("thread-fixed", $"codex-turn-{ordinal}");
-        call.Complete(reply);
-        await session.DelegationCoordinator.PumpTaskForTest
-            .WaitAsync(Deadline);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(0, backend.TotalCallCount);
     }
 
     private static async Task<GalateaLiveTurn> StartAndWaitAsync(
@@ -553,52 +273,30 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         UserSessionHost session,
         string message
     ) {
-        StartTurnResponseDto started = await StartAsync(http, message);
-        GalateaLiveTurn turn = RequireTurn(service, session, started);
-        await turn.RunTask!.WaitAsync(Deadline);
+        using HttpResponseMessage response = await http.PostAsJsonAsync(
+            "/api/v1/chat/turns",
+            new ChatStreamRequest(message, "test")
+        );
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        StartTurnResponseDto started = Assert.IsType<StartTurnResponseDto>(
+            await response.Content.ReadFromJsonAsync<StartTurnResponseDto>()
+        );
+        GalateaLiveTurn turn = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(session, started.TurnId)
+        );
+        await Assert.IsAssignableFrom<Task>(turn.RunTask)
+            .WaitAsync(Deadline);
         return turn;
     }
 
-    private static async Task<StartTurnResponseDto> StartAsync(
-        HttpClient http,
-        string message
-    ) {
-        using HttpResponseMessage response = await http.PostAsJsonAsync(
-            "/api/v1/chat/turns",
-            new ChatStreamRequest(message, ConnectionId: "test")
-        );
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-        return (await response.Content.ReadFromJsonAsync<
-            StartTurnResponseDto>())!;
-    }
-
-    private static GalateaLiveTurn RequireTurn(
-        GalateaHostService service,
-        UserSessionHost session,
-        StartTurnResponseDto started
-    ) => Assert.IsType<GalateaLiveTurn>(
-        service.FindTurn(session, started.TurnId)
-    );
-
-    private static RecentTurnsResponseDto ReadDoneRecent(
-        GalateaLiveTurn turn
-    ) {
-        using GalateaTurnSubscription subscription = turn.Subscribe();
-        GalateaSseFrame done = Assert.Single(
-            subscription.ReplayFrames,
-            static frame => frame.EventName == "done"
-        );
-        string wire = Encoding.UTF8.GetString(done.Utf8.Span);
-        string data = wire.Split('\n', StringSplitOptions.None)
-            .Single(static line => line.StartsWith(
-                "data: ",
-                StringComparison.Ordinal
-            ))["data: ".Length..];
-        using JsonDocument document = JsonDocument.Parse(data);
-        RecentTurnsResponseDto? recent = document.RootElement
-            .GetProperty("recent")
-            .Deserialize<RecentTurnsResponseDto>(GalateaJson.Options);
-        return Assert.IsType<RecentTurnsResponseDto>(recent);
+    private static async Task WaitUntilAsync(Func<bool> predicate) {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + Deadline;
+        while (!predicate()) {
+            if (DateTimeOffset.UtcNow >= deadline) {
+                throw new TimeoutException("Durable vertical condition timed out.");
+            }
+            await Task.Delay(25);
+        }
     }
 
     private static async Task LoginAsync(HttpClient http) {
@@ -617,26 +315,10 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     );
 
     private static CompletionResult Completed(
-        ICompletionClient? mainClient,
         CompletionConnectionConfig connection,
         string text
-    ) {
-        _ = mainClient;
-        return new CompletionResult(
-            new ActionMessage([new ActionBlock.Text(text)]),
-            new CompletionDescriptor(
-                "delegation-runtime-test",
-                "test-v1",
-                connection.ModelId
-            )
-        );
-    }
-
-    private static CompletionResult CompletedWithTool(
-        CompletionConnectionConfig connection,
-        ActionBlock.ToolCall tool
     ) => new(
-        new ActionMessage([tool]),
+        new ActionMessage([new ActionBlock.Text(text)]),
         new CompletionDescriptor(
             "delegation-runtime-test",
             "test-v1",
@@ -644,68 +326,33 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         )
     );
 
-    private static ActionBlock.ToolCall MailTool(
-        string id,
-        string recipient,
-        string body,
-        string evidence
-    ) => new(new RawToolCall(
-        OutboundMailExtractor.ToolName,
-        id,
-        JsonSerializer.Serialize(new {
-            recipient,
-            subject = (string?)null,
-            body,
-            inReplyToMessageId = (string?)null,
-            evidenceQuote = evidence,
-        }, new JsonSerializerOptions {
-            DefaultIgnoreCondition = System.Text.Json.Serialization
-                .JsonIgnoreCondition.WhenWritingNull,
-        })
-    ));
-
-    private static SendMailIntent Mail(string task) => new(
-        "Codex",
-        Subject: null,
-        task,
-        InReplyToMessageId: null,
-        EvidenceQuote: "sent"
+    private static CompletionResult CompletedWithTools(
+        CompletionConnectionConfig connection,
+        params ActionBlock.ToolCall[] tools
+    ) => new(
+        new ActionMessage(tools),
+        new CompletionDescriptor(
+            "delegation-runtime-test",
+            "test-v1",
+            connection.ModelId
+        )
     );
 
-    private static EventAddress Head(uint value) =>
-        EventAddressTextCodec.Parse(
-            $"ej1:{value:x16}{value:x8}{value:x8}"
-        );
-
-    private sealed class RecordingNormalizer
-        : IGalateaUserMessageNormalizer {
-        internal List<string> Received { get; } = [];
-
-        public bool ShouldNormalize(string userMessage) {
-            Received.Add(userMessage);
-            return false;
-        }
-
-        public ValueTask<string> NormalizeAsync(
-            string userMessage,
-            CancellationToken cancellationToken
-        ) => throw new InvalidOperationException();
-    }
-
-    private sealed class SequencedNormalizer(params string[] results)
-        : IGalateaUserMessageNormalizer {
-        private readonly Queue<string> _results = new(results);
-
-        public bool ShouldNormalize(string userMessage) => true;
-
-        public ValueTask<string> NormalizeAsync(
-            string userMessage,
-            CancellationToken cancellationToken
-        ) {
-            cancellationToken.ThrowIfCancellationRequested();
-            return ValueTask.FromResult(_results.Dequeue());
-        }
-    }
+    private static ActionBlock.ToolCall MailTool(string id, string body) =>
+        new(new RawToolCall(
+            OutboundMailExtractor.ToolName,
+            id,
+            JsonSerializer.Serialize(new {
+                recipient = "Codex",
+                subject = (string?)null,
+                body,
+                inReplyToMessageId = (string?)null,
+                evidenceQuote = "sent",
+            }, new JsonSerializerOptions {
+                DefaultIgnoreCondition = System.Text.Json.Serialization
+                    .JsonIgnoreCondition.WhenWritingNull
+            })
+        ));
 
     private sealed class RoutingFactory(
         IReadOnlyDictionary<string, ICompletionClient> clients
@@ -723,7 +370,6 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
         public string Name => "delegation-runtime-test";
         public string ApiSpecId => "test-v1";
-        internal List<CompletionRequest> Requests { get; } = [];
 
         public Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
@@ -731,7 +377,6 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             CancellationToken cancellationToken = default
         ) {
             cancellationToken.ThrowIfCancellationRequested();
-            Requests.Add(request);
             CompletionResult result = _scripts.Dequeue()(request);
             foreach (ActionBlock.Text text in result.Message.Blocks
                          .OfType<ActionBlock.Text>()) {
@@ -741,60 +386,106 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         }
     }
 
-    private sealed class GateSidecar : IGalateaDelegateSidecar {
-        private readonly Channel<GateCall> _calls =
-            Channel.CreateUnbounded<GateCall>();
-        private readonly ConcurrentQueue<GalateaDelegateDispatchRequest>
-            _requests = [];
+    private sealed class DurableBackend {
+        private readonly ConcurrentDictionary<string, DurableCall> _calls =
+            new(StringComparer.Ordinal);
+        private readonly List<GalateaStartDelegateTurnRequest> _starts = [];
+        private int _ensureCallCount;
+        private int _inspectCallCount;
 
-        public Task<GalateaDelegateAcceptedHandle> StartAsync(
-            GalateaDelegateDispatchRequest request,
-            CancellationToken ct
-        ) {
-            _requests.Enqueue(request);
-            var call = new GateCall(request);
-            Assert.True(_calls.Writer.TryWrite(call));
-            return call.Accepted.Task.WaitAsync(ct);
+        internal int EnsureCallCount => Volatile.Read(ref _ensureCallCount);
+        internal int InspectCallCount => Volatile.Read(ref _inspectCallCount);
+        internal int StartCallCount {
+            get { lock (_starts) { return _starts.Count; } }
+        }
+        internal int TotalCallCount =>
+            EnsureCallCount + StartCallCount + InspectCallCount;
+        internal GalateaStartDelegateTurnRequest[] StartRequests {
+            get { lock (_starts) { return [.. _starts]; } }
         }
 
-        internal Task<GateCall> NextCallAsync() => _calls.Reader
-            .ReadAsync().AsTask().WaitAsync(Deadline);
+        internal GalateaDelegateBindingEstablished Ensure(
+            GalateaEnsureDelegateBindingRequest request
+        ) {
+            Interlocked.Increment(ref _ensureCallCount);
+            return new(request.BindingOperationId, "thread-fixed");
+        }
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        internal GalateaDelegateTurnAccepted Start(
+            GalateaStartDelegateTurnRequest request
+        ) {
+            int ordinal;
+            lock (_starts) {
+                ordinal = _starts.Count;
+                _starts.Add(request);
+            }
+            string turnId = "turn-" + ordinal;
+            if (!_calls.TryAdd(
+                    request.DispatchId,
+                    new DurableCall(turnId))) {
+                throw new InvalidOperationException("duplicate start");
+            }
+            return new(request.DispatchId, request.ThreadId, turnId);
+        }
+
+        internal GalateaDelegateDispatchInspection Inspect(
+            GalateaInspectDelegateDispatchRequest request
+        ) {
+            Interlocked.Increment(ref _inspectCallCount);
+            DurableCall call = _calls[request.DispatchId];
+            string? final = Volatile.Read(ref call.Final);
+            return final is null
+                ? new GalateaDelegateDispatchInspection.Running(
+                    request.DispatchId,
+                    request.ThreadId,
+                    call.TurnId
+                )
+                : new GalateaDelegateDispatchInspection.Completed(
+                    request.DispatchId,
+                    request.ThreadId,
+                    call.TurnId,
+                    final
+                );
+        }
+
+        internal void Complete(int ordinal, string final) {
+            GalateaStartDelegateTurnRequest request;
+            lock (_starts) { request = _starts[ordinal]; }
+            Volatile.Write(ref _calls[request.DispatchId].Final, final);
+        }
     }
 
-    private sealed class GateCall(
-        GalateaDelegateDispatchRequest request
-    ) {
-        internal GalateaDelegateDispatchRequest Request { get; } = request;
-        internal TaskCompletionSource<GalateaDelegateAcceptedHandle>
-            Accepted { get; } = new(
-                TaskCreationOptions.RunContinuationsAsynchronously
-            );
-        internal TaskCompletionSource<GalateaDelegateTerminal> Completion {
-            get;
-        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private sealed class DurableCall(string turnId) {
+        internal string TurnId { get; } = turnId;
+        internal string? Final;
+    }
 
-        internal void Accept(string threadId, string turnId) =>
-            Assert.True(Accepted.TrySetResult(
-                new GalateaDelegateAcceptedHandle(
-                    Request.DispatchId,
-                    threadId,
-                    turnId,
-                    Completion.Task
-                )
-            ));
-
-        internal void Complete(string final) {
-            GalateaDelegateAcceptedHandle accepted = Accepted.Task.Result;
-            Assert.True(Completion.TrySetResult(
-                new GalateaDelegateTerminal.Completed(
-                    Request.DispatchId,
-                    accepted.ThreadId,
-                    accepted.TurnId,
-                    final
-                )
-            ));
+    private sealed class DurableTransport(DurableBackend backend)
+        : IGalateaDurableDelegateTransport {
+        public Task<GalateaDelegateBindingEstablished> EnsureBindingAsync(
+            GalateaEnsureDelegateBindingRequest request,
+            CancellationToken ct
+        ) {
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult(backend.Ensure(request));
         }
+
+        public Task<GalateaDelegateTurnAccepted> StartTurnAsync(
+            GalateaStartDelegateTurnRequest request,
+            CancellationToken ct
+        ) {
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult(backend.Start(request));
+        }
+
+        public Task<GalateaDelegateDispatchInspection> InspectDispatchAsync(
+            GalateaInspectDelegateDispatchRequest request,
+            CancellationToken ct
+        ) {
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult(backend.Inspect(request));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

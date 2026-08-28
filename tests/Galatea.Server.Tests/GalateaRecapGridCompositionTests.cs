@@ -1109,7 +1109,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 throw new InvalidOperationException(
                     "candidate cleanup failed");
             },
-            AfterDelegateSidecarDisposed: () =>
+            AfterDelegationSupervisorDisposed: () =>
                 disposalOrder.Add("sidecar"));
         try {
             AggregateException failure = await Assert.ThrowsAsync<

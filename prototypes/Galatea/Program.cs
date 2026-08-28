@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
@@ -371,16 +372,16 @@ api.MapPost(
                     $"Unknown completion connection '{request.ConnectionId}'."
                 ));
             }
-            await hostService.PrepareFreshTurnAdmissionAsync(
-                session,
-                recovery,
-                httpContext.RequestAborted
-            );
             string effectiveMessage = await hostService
                 .NormalizeUserMessageAtAdmissionAsync(
                     request.Message,
                     httpContext.RequestAborted
                 );
+            await hostService.PrepareFreshTurnAdmissionAsync(
+                session,
+                recovery,
+                httpContext.RequestAborted
+            );
             liveTurn = hostService.StartTurn(
                 session,
                 effectiveMessage,
@@ -396,11 +397,40 @@ api.MapPost(
             writerOwnershipTransferred = true;
             return result;
         }
+        catch (Exception original) when (
+            liveTurn is not null && !writerOwnershipTransferred) {
+            try {
+                await hostService.ReconcileDurableAdmissionAsync(
+                    session,
+                    CancellationToken.None
+                );
+            }
+            catch (Exception cleanup) when (
+                GalateaExceptionClassifier.IsNonFatal(cleanup)) {
+                if (!GalateaExceptionClassifier.IsNonFatal(original)) {
+                    ExceptionDispatchInfo.Capture(original).Throw();
+                }
+                throw new AggregateException(
+                    "Fresh-turn acceptance and durable cutoff cleanup both failed.",
+                    original,
+                    cleanup
+                );
+            }
+            throw;
+        }
         finally {
             if (!writerOwnershipTransferred) {
                 try {
                     if (liveTurn is not null) {
                         hostService.FinishTurn(session, liveTurn);
+                        if (string.Equals(
+                                liveTurn.Status,
+                                "running",
+                                StringComparison.Ordinal)) {
+                            liveTurn.PublishError(
+                                GalateaSseErrorCode.InternalFailure
+                            );
+                        }
                         liveTurn.Complete();
                     }
                     await hostService.RefreshRecentTurnsBestEffortAsync(
@@ -667,15 +697,15 @@ api.MapPost(
                     $"Unknown completion connection '{request.ConnectionId}'."
                 ));
             }
-            await hostService.PrepareFreshTurnAdmissionAsync(
-                session,
-                recovery,
-                httpContext.RequestAborted
-            );
             MailboxMessage message = MailboxMessage.CreateInbound(
                 request.From,
                 request.Subject,
                 request.Body
+            );
+            await hostService.PrepareFreshTurnAdmissionAsync(
+                session,
+                recovery,
+                httpContext.RequestAborted
             );
             liveTurn = hostService.StartInboundMailTurn(
                 session,
@@ -894,6 +924,10 @@ static IResult StartAcceptedTurn(
     GalateaHostService hostService,
     IHostApplicationLifetime applicationLifetime
 ) {
+    IResult acceptedResult = Results.Json(
+        new StartTurnResponseDto(liveTurn.TurnId),
+        statusCode: StatusCodes.Status202Accepted
+    );
     var runTask = Task.Run(
         async () => {
             DebugUtil.Info(
@@ -957,11 +991,7 @@ static IResult StartAcceptedTurn(
         CancellationToken.None
     );
     liveTurn.RunTask = runTask;
-
-    return Results.Json(
-        new StartTurnResponseDto(liveTurn.TurnId),
-        statusCode: StatusCodes.Status202Accepted
-    );
+    return acceptedResult;
 }
 
 static IResult RecoveryConflict(

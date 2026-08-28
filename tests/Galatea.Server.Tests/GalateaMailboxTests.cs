@@ -249,16 +249,17 @@ public sealed class GalateaMailboxTests {
         Assert.Equal("Galatea", mail.To);
         Assert.Equal("Please reply <carefully>.", mail.Body);
 
-        GalateaDelegateCandidateSnapshot candidate = Assert.Single(
-            session.DelegationCoordinator.Snapshot()
+        GalateaOutboundMailSnapshot candidate = Assert.Single(
+            session.DelegationHandle!.Store.ReadSnapshot().Mails
         );
-        Assert.Equal(accepted.TurnId, candidate.TurnId);
-        Assert.Equal(persisted.TerminalAction.Address,
-            candidate.SourceActionHead);
-        Assert.Equal("Alice", candidate.Recipient);
-        Assert.Equal("hello Alice", candidate.TaskBody);
         Assert.Equal(
-            GalateaDelegateCandidateState.Unrouted,
+            EventAddressTextCodec.Format(persisted.TerminalAction.Address),
+            candidate.SourceActionAddress
+        );
+        Assert.Equal("Alice", candidate.Recipient);
+        Assert.Equal("hello Alice", candidate.Body);
+        Assert.Equal(
+            GalateaDurableMailState.Unrouted,
             candidate.State
         );
 
@@ -270,7 +271,7 @@ public sealed class GalateaMailboxTests {
     }
 
     [Fact]
-    public async Task ExtractorFailure_IsNonFatalAndPlayerUndoRemovesCandidates() {
+    public async Task ExtractorGap_RetriesBeforeAdmissionAndUndoKeepsCapture() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig extractorConnection = Connection("mail-helper");
         const string Action = "[Galatea] sent body text to Alice and completed sending.";
@@ -283,7 +284,8 @@ public sealed class GalateaMailboxTests {
             _ => Message(Tool(
                 "mail-2", "Alice", null, "body text", null,
                 "completed sending"
-            ))
+            )),
+            _ => Message()
         );
         var factory = new RoutingFactory(new Dictionary<string, ICompletionClient>(StringComparer.Ordinal) {
             [main.Id] = mainClient,
@@ -306,14 +308,14 @@ public sealed class GalateaMailboxTests {
             "alice", CancellationToken.None);
         await service.FindTurn(session, failedExtraction.TurnId)!
             .RunTask!.WaitAsync(Deadline);
-        Assert.Equal("completed",
+        Assert.Equal("failed",
             service.FindTurn(session, failedExtraction.TurnId)!.Status);
-        Assert.Empty(session.DelegationCoordinator.Snapshot());
+        Assert.Empty(session.DelegationHandle!.Store.ReadSnapshot().Captures);
 
         StartTurnResponseDto extracted = await PostPlayerTurn(http);
         await service.FindTurn(session, extracted.TurnId)!
             .RunTask!.WaitAsync(Deadline);
-        Assert.Single(session.DelegationCoordinator.Snapshot());
+        Assert.Single(session.DelegationHandle.Store.ReadSnapshot().Mails);
         RecentTurnsResponseDto recent = (await http.GetFromJsonAsync<
             RecentTurnsResponseDto>("/api/v1/recent-turns"))!;
         Assert.NotNull(recent.RewindLatestToken);
@@ -323,12 +325,11 @@ public sealed class GalateaMailboxTests {
             new { rewindLatestToken = recent.RewindLatestToken }
         );
         Assert.Equal(HttpStatusCode.OK, pop.StatusCode);
-        GalateaDelegateCandidateSnapshot retracted = Assert.Single(
-            session.DelegationCoordinator.Snapshot()
-        );
         Assert.Equal(
-            GalateaDelegateCandidateState.RetractedBeforeDispatch,
-            retracted.State
+            GalateaDurableMailState.Unrouted,
+            Assert.Single(
+                session.DelegationHandle.Store.ReadSnapshot().Mails
+            ).State
         );
     }
 
@@ -385,7 +386,9 @@ public sealed class GalateaMailboxTests {
             service.FindTurn(session, turn.TurnId)!.Status);
         Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns);
-        Assert.Single(session.DelegationCoordinator.Snapshot());
+        Assert.Single(
+            session.DelegationHandle!.Store.ReadSnapshot().Mails
+        );
         Assert.Equal(1, extractorClient.DispatchCount);
         Assert.Equal(0, extractorClient.CancellationCount);
         Assert.True(session.TurnLock.Wait(0));
