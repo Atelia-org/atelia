@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
+using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -179,6 +181,64 @@ public sealed class GalateaInputPreprocessorVerticalTests {
     }
 
     [Fact]
+    public async Task TargetMismatchFailsBeforeAdmissionNormalizerOrMutation() {
+        var completion = new ScriptedCompletionClient("must not dispatch");
+        var normalizer = new ReturningNormalizer("must not normalize");
+        await using var host = GalateaTestHost.Create(
+            new SingleClientFactory(completion),
+            normalizer
+        );
+        using (SessionJournalEngine provisioner = SessionJournalEngine.Open(
+                   host.SessionDirectory)) {
+            GalateaRecapGridCompositionTests
+                .ProvisionMismatchedTargetForTest(provisioner);
+        }
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        EventAddress? rawHead = session.Engine.ReadCurrentHead();
+        int setupCount = session.Engine.ReadCurrentLineageHeaders()
+            .HeadToRoot.Count(static entry =>
+                entry.Kind == SessionEventKind.SystemPromptSetup
+            );
+        GalateaDelegationStateSnapshot delegation = session
+            .DelegationHandle!.Store.ReadSnapshot();
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/v1/chat/turns",
+            new ChatStreamRequest(
+                "must fail before normalization",
+                ConnectionId: "test"
+            )
+        );
+
+        Assert.Equal(
+            HttpStatusCode.InternalServerError,
+            response.StatusCode
+        );
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+        Assert.Equal(0, completion.DispatchCallCount);
+        Assert.Null(session.GetCurrentTurn());
+        Assert.Equal(rawHead, session.Engine.ReadCurrentHead());
+        Assert.Equal(
+            setupCount,
+            session.Engine.ReadCurrentLineageHeaders().HeadToRoot.Count(
+                static entry =>
+                    entry.Kind == SessionEventKind.SystemPromptSetup
+            )
+        );
+        GalateaDelegationStateSnapshot after = session
+            .DelegationHandle.Store.ReadSnapshot();
+        Assert.Equal(delegation.StoreRevision, after.StoreRevision);
+        Assert.Equal(delegation.ActiveLease, after.ActiveLease);
+    }
+
+    [Fact]
     public async Task NormalizedInput_ReachesRequestPersistenceAndRecentDisplay() {
         var completion = new ScriptedCompletionClient("assistant reply");
         var normalizer = new ReturningNormalizer("normalized input");
@@ -264,6 +324,11 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             new SingleClientFactory(completion),
             normalizer
         );
+        EventAddress failedHead = await GalateaDurableRecoveryVerticalTests
+            .CreateFailedBoundaryAsync(
+                host.SessionDirectory,
+                Connection("test", "model-a")
+            );
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
 
@@ -273,7 +338,15 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             "alice",
             CancellationToken.None
         );
-        var initialHead = session.Engine.ReadCurrentHead();
+        SessionExecutionBoundaryInspection initialBoundary = session.Engine
+            .InspectExecutionBoundary();
+        GalateaDelegationStateSnapshot initialDelegation = session
+            .DelegationHandle!.Store.ReadSnapshot();
+        Assert.Equal(failedHead, session.Engine.ReadCurrentHead());
+        Assert.IsType<SessionRuntimeRecoveryRequirements
+            .FailedTurnMustBeAbandoned>(
+                session.Engine.InspectRuntimeRecoveryRequirements()
+            );
 
         using var cancellation = new CancellationTokenSource();
         Task<HttpResponseMessage> admission = client.PostAsJsonAsync(
@@ -297,7 +370,21 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         Assert.True(normalizer.CapturedToken.IsCancellationRequested);
         Assert.Equal(0, completion.DispatchCallCount);
         Assert.Null(session.GetCurrentTurn());
-        Assert.Equal(initialHead, session.Engine.ReadCurrentHead());
+        Assert.Equal(failedHead, session.Engine.ReadCurrentHead());
+        Assert.Equal(initialBoundary, session.Engine.InspectExecutionBoundary());
+        SessionRuntimeRecoveryRequirements.FailedTurnMustBeAbandoned after =
+            Assert.IsType<SessionRuntimeRecoveryRequirements
+                .FailedTurnMustBeAbandoned>(
+                    session.Engine.InspectRuntimeRecoveryRequirements()
+                );
+        Assert.Equal(failedHead, after.FailedHead);
+        GalateaDelegationStateSnapshot afterDelegation = session
+            .DelegationHandle.Store.ReadSnapshot();
+        Assert.Equal(
+            initialDelegation.StoreRevision,
+            afterDelegation.StoreRevision
+        );
+        Assert.Equal(initialDelegation.ActiveLease, afterDelegation.ActiveLease);
         Assert.Empty(
             session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns
         );

@@ -552,7 +552,7 @@ public sealed class AssemblyDependencyBoundaryTests {
             "Galatea",
             "Galatea.Server.csproj"
         );
-        Assert.DoesNotContain(
+        Assert.Contains(
             "../Galatea.RecapGrid/Galatea.RecapGrid.csproj",
             DirectProjectReferences(galateaServerProject),
             StringComparer.Ordinal

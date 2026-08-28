@@ -889,7 +889,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         return boundary.Head!.Value;
     }
 
-    private static async Task<EventAddress> CreateFailedBoundaryAsync(
+    internal static async Task<EventAddress> CreateFailedBoundaryAsync(
         string sessionPath,
         CompletionConnectionConfig connection
     ) {

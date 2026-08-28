@@ -752,6 +752,19 @@ public sealed class GalateaHostService : IAsyncDisposable {
         cancellationToken
     );
 
+    /// <summary>
+    /// Pure-read preflight used before admission normalization. It prevents a
+    /// mismatched current Recap target from spending a normalization call but
+    /// never abandons or otherwise reconciles a failed durable turn.
+    /// </summary>
+    internal void RequireFreshTurnTargetAligned(UserSessionHost host) {
+        ArgumentNullException.ThrowIfNull(host);
+        GalateaRecapGridTargetInspector.RequireCurrent(
+            host.Engine.ReadView,
+            host.TargetExpectation
+        );
+    }
+
     internal GalateaLiveTurn StartTurn(
         UserSessionHost host,
         string userMessage,
