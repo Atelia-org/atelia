@@ -474,8 +474,9 @@ recent operation共享最多4,096次physical header preview visit与16 MiB cumul
 coherent request recipe实际放在raw tail之前的首条Observation与Action内容（包括`recap-block` fence）；因此browser可直接
 展示模型看到的Recap正文及各标题声明的语义范围。raw-only、未provision或当前candidate不可用时仍返回同一object shape，但对应字符串为空。
 stale cache保留上一稳定边界的header，并由同一response中的`recapGridReadiness.freshness=stale`标识；它不冒充当前raw head。
-每个derived block都由后端统一渲染为`## {SemanticHeading}`加空行，再接动态长度的`recap-block`围栏；Galatea V5 asset为
-World Understanding与Autobiography分别声明稳定的中文语义标题，browser不根据`BlockKey`自行拼接标题。
+每个derived block都由后端统一渲染为`## {SemanticHeading}`加空行，再接动态长度的`recap-block`围栏；
+当前parameterized V6 asset按per-user角色名为World Understanding与Autobiography分别声明中文语义标题，
+browser不根据`BlockKey`自行拼接标题。参数为`Galatea`时，标题及其canonical Definition identity与历史V5 exact相同。
 
 ## SSE V1 stable protocol
 

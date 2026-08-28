@@ -24,6 +24,12 @@ public sealed class GalateaRecapGridAssetsTests {
             out RecapGridControlRegistrationBundle? unknown
         ));
         Assert.Null(unknown);
+        Assert.Throws<ArgumentNullException>(() => GalateaRecapGridAssets
+            .TryCreateRegistrationBundle(
+                GalateaRecapGridAssets.RollingRewriteZhCnV6,
+                null!,
+                out _
+            ));
         Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
             GalateaRecapGridAssets.RollingRewriteZhCnV6,
             GalateaParameters,
