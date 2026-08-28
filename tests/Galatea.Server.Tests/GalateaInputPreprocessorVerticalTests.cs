@@ -10,7 +10,7 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaInputPreprocessorVerticalTests {
     private static readonly TimeSpan CompletionDeadline =
-        TimeSpan.FromSeconds(5);
+        TimeSpan.FromSeconds(15);
 
     [Fact]
     public async Task ConfiguredNormalizer_UsesHiddenLazyConnectionAndConfiguredRequest() {

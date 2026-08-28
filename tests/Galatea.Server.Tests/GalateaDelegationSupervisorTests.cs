@@ -371,10 +371,9 @@ public sealed class GalateaDelegationSupervisorTests {
             "state-without-session",
             "SESSION_MISSING"
         );
-        AssertUnavailable(
-            supervisor,
-            "unprovisioned",
-            "SESSION_UNPROVISIONED"
+        Assert.Equal(
+            GalateaDelegationUserAvailability.Uninitialized,
+            supervisor.ReadStatus("unprovisioned").Availability
         );
         Assert.Throws<GalateaDelegationUserUnavailableException>(() =>
             supervisor.AttachWritableSession("locked", lockedEngine));

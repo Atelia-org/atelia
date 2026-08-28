@@ -362,18 +362,6 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         bool maintenanceMode
     ) {
         if (!Path.Exists(stateDirectory)) {
-            if (user.SessionProvisioning
-                    == GalateaSessionProvisioning.ExistingOnly
-                && !Directory.Exists(sessionDirectory)) {
-                return UserSlot.Unavailable(
-                    user,
-                    sessionDirectory,
-                    stateDirectory,
-                    owner,
-                    limits,
-                    "SESSION_UNPROVISIONED"
-                );
-            }
             return UserSlot.Uninitialized(
                 user,
                 sessionDirectory,
