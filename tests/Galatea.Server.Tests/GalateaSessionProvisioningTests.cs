@@ -789,6 +789,78 @@ public sealed class GalateaSessionProvisioningTests {
     }
 
     [Fact]
+    public async Task ExistingRawOnly_FirstFreshReconcilesRenderedPromptOnceAndProviderUsesIt() {
+        if (!OperatingSystem.IsLinux()) { return; }
+        var factory = new TwoTurnCompletionFactory();
+        await using var host = GalateaTestHost.CreateMissingSession(
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            systemPromptTemplate: "current ${characterName} prompt"
+        );
+        GalateaConfig config = GalateaConfigLoader.Load(host.ConfigPath);
+        Assert.True(config.RecapGrid!.AgentControlProfiles.TryGet(
+            config.RecapGrid.CurrentAgentControlProfileId,
+            out RecapGridAgentControlProfile profile
+        ));
+        Atelia.EventJournal.EventAddress originalHead;
+        using (SessionJournalEngine created =
+               GalateaSessionRepositoryProvisioner.CreateAndPublish(
+                   host.SessionDirectory,
+                   new SessionCreateOptions(
+                       "model-a",
+                       "old prompt",
+                       "openai-chat/strict"
+                   ),
+                   profile.Admission
+               )) {
+            originalHead = Assert.IsType<Atelia.EventJournal.EventAddress>(
+                created.ReadCurrentHead()
+            );
+        }
+
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        Assert.Equal(originalHead, session.Engine.ReadCurrentHead());
+        Assert.Equal(
+            "old prompt",
+            session.Engine.ResolveGoverningSetup(originalHead).SystemPrompt
+        );
+        Assert.Equal(1, CountSystemPromptSetups(session.Engine));
+
+        for (int index = 1; index <= 2; index++) {
+            GalateaLiveTurn turn = service.StartTurn(
+                session,
+                $"ordinary turn {index}",
+                new GalateaTurnOptions("test")
+            );
+            await service.RunTurnAsync(
+                session,
+                turn,
+                CancellationToken.None
+            );
+            service.FinishTurn(session, turn);
+            Assert.Equal("completed", turn.Status);
+            Assert.Equal(2, CountSystemPromptSetups(session.Engine));
+        }
+
+        Assert.Equal(
+            ["current Galatea prompt", "current Galatea prompt"],
+            factory.Client.MainSystemPrompts
+        );
+        var finalHead = Assert.IsType<Atelia.EventJournal.EventAddress>(
+            session.Engine.ReadCurrentHead()
+        );
+        Assert.Equal(
+            "current Galatea prompt",
+            session.Engine.ResolveGoverningSetup(finalHead).SystemPrompt
+        );
+    }
+
+    [Fact]
     public async Task HttpRecentTurns_FirstAuthenticatedSessionUseCreatesFirstTurnReadyRepository() {
         var factory = new CountingCompletionClientFactory();
         await using var host = GalateaTestHost.CreateMissingSession(
@@ -939,6 +1011,12 @@ public sealed class GalateaSessionProvisioningTests {
         );
     }
 
+    private static int CountSystemPromptSetups(
+        SessionJournalEngine engine
+    ) => engine.ReadCurrentLineageHeaders().HeadToRoot.Count(
+        static entry => entry.Kind == SessionEventKind.SystemPromptSetup
+    );
+
     private sealed class CountingCompletionClientFactory
         : ICompletionClientFactory {
         private int _createCallCount;
@@ -988,6 +1066,8 @@ public sealed class GalateaSessionProvisioningTests {
         internal int RecapDispatchCallCount => Volatile.Read(
             ref _recapDispatchCallCount
         );
+        internal System.Collections.Concurrent.ConcurrentQueue<string>
+            MainSystemPrompts { get; } = new();
 
         public Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
@@ -1010,6 +1090,7 @@ public sealed class GalateaSessionProvisioningTests {
             int call = Interlocked.Increment(
                 ref _mainDispatchCallCount
             );
+            MainSystemPrompts.Enqueue(request.PromptPrefix.SystemPrompt);
             string response = $"answer {call}";
             observer?.OnTextDelta(response);
             return Task.FromResult(new CompletionResult(
