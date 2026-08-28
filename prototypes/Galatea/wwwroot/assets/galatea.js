@@ -777,6 +777,14 @@ export function shouldClearDraftForTurnOrigin(origin) {
   }
 }
 
+export function shouldDisableMailLoopAfterTerminal(terminalType, checked) {
+  if (terminalType !== "done" && terminalType !== "error") {
+    throw new Error("terminal type is unknown");
+  }
+  requireBoolean(checked, "mail loop checked");
+  return terminalType === "error" && checked;
+}
+
 async function readJsonResponse(response, validator) {
   const contentType = response.headers.get("content-type") ?? "";
   if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType)) {
@@ -809,6 +817,7 @@ function startGalateaApp() {
     stopRequested: false,
     activeTurnId: null,
     activeTurnOrigin: null,
+    terminalErrorDisabledMailLoop: false,
     streamGeneration: 0,
     mailLoopInFlight: false,
     mailLoopTimerId: null,
@@ -997,6 +1006,7 @@ function startGalateaApp() {
   function clearActiveTurn() {
     state.activeTurnId = null;
     state.activeTurnOrigin = null;
+    state.terminalErrorDisabledMailLoop = false;
     state.stopRequested = false;
     state.streamGeneration += 1;
   }
@@ -1398,8 +1408,21 @@ function startGalateaApp() {
         }
         return;
       case "error":
+        const disableAutomaticMail = shouldDisableMailLoopAfterTerminal(
+          "error",
+          Boolean(mailLoopEnabled?.checked),
+        );
+        if (disableAutomaticMail) {
+          state.terminalErrorDisabledMailLoop = true;
+          disableMailLoop();
+        }
         resetLive();
-        setStreaming(false, streamEvent.message);
+        setStreaming(
+          false,
+          disableAutomaticMail
+            ? `${streamEvent.message} 本轮失败，自动收信已关闭。`
+            : streamEvent.message,
+        );
         return;
     }
   }
@@ -1553,6 +1576,7 @@ function startGalateaApp() {
     markRecapCadenceProgressStale("active-turn");
     state.activeTurnId = normalizedTurnId;
     state.activeTurnOrigin = origin;
+    state.terminalErrorDisabledMailLoop = false;
     const generation = ++state.streamGeneration;
     let reconciliationFailures = 0;
 
@@ -1594,6 +1618,8 @@ function startGalateaApp() {
         if (terminalDecision !== "refresh-stop") {
           throw new Error("terminal stream continuation is invalid");
         }
+        const terminalErrorDisabledMailLoop =
+          state.terminalErrorDisabledMailLoop;
         clearActiveTurn();
         resetLive();
         let recentUnavailable = false;
@@ -1605,19 +1631,24 @@ function startGalateaApp() {
           }
         }
         await loadRecapCadenceProgressBestEffort();
+        let terminalStatus;
         if (currentTurn?.status === "recovery-required") {
-          setStreaming(false, currentTurn.restartRequired
+          terminalStatus = currentTurn.restartRequired
             ? "上次模型调用结果不确定；需要明确授权后才能恢复。"
-            : "本轮保留在可恢复状态；刷新页面可继续恢复。");
+            : "本轮保留在可恢复状态；刷新页面可继续恢复。";
         } else if (currentTurn?.status === "unprovisioned") {
-          setStreaming(false, "会话仓库尚未完成初始化。");
+          terminalStatus = "会话仓库尚未完成初始化。";
         } else if (terminalEvent.type === "error") {
-          setStreaming(false, terminalEvent.message);
+          terminalStatus = terminalEvent.message;
         } else if (recentUnavailable) {
-          setStreaming(false, "生成已完成；recent view 暂不可用，请稍后刷新。");
+          terminalStatus = "生成已完成；recent view 暂不可用，请稍后刷新。";
         } else {
-          setStreaming(false, "");
+          terminalStatus = "";
         }
+        if (terminalErrorDisabledMailLoop) {
+          terminalStatus += " 本轮失败，自动收信已关闭。";
+        }
+        setStreaming(false, terminalStatus);
         return;
       } catch (error) {
         if (state.activeTurnId !== normalizedTurnId || generation !== state.streamGeneration) {

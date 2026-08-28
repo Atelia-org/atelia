@@ -378,15 +378,18 @@ per-session `TurnLock`、recovery admission与main connection allowlist。
 `{connectionId?}`。它不向browser暴露`reply_notice`正文，也不接受player text：server在per-session
 `TurnLock`内先结算既有lease与latest extraction gap，只允许exact `Idle` boundary，再验证main connection与
 fresh admission。随后用code-owned固定文本`玩家本轮未提交新的动作；本轮仅由外界回信到达触发。`执行
-`BeginCutoff`。没有`Ready` notice时返回204 empty，且不创建live turn、provider call或active lease；有notice时
-才原子冻结bounded FIFO prefix，并以202 `{turnId}`启动现有player-composite/SSE fresh turn。该固定文本不经过
-input normalizer，textarea等browser草稿不进入Observation。busy、failed turn及其他recovery boundary返回typed
+`BeginCutoff`。没有`Ready` notice时返回204 empty，且不创建新live turn、main-Agent provider call或active reply
+lease；但admission仍可能结算既有reply lease/extraction gap，必要时会调用outbound extractor并持久化
+capture/tombstone。有notice时才原子冻结bounded FIFO prefix，并以202 `{turnId}`启动现有
+player-composite/SSE fresh turn。该固定文本不经过input normalizer，textarea等browser草稿不进入Observation。
+busy、failed turn及其他recovery boundary返回typed
 409；尤其不会自动abandon failed turn、resume/restart recovery或claim对应Ready notice。多tab竞争由
 `TurnLock`与SQLite lease共同串行化；server endpoint自身不形成后台无限循环，browser opt-in仍是调度开关。
 
 First-party browser在composer中提供默认关闭且不持久化的“页面打开时，收到 Codex 回信后自动继续”开关。
 勾选后使用single timer递归执行1秒heartbeat；前一次HTTP admission或其accepted SSE turn未结束时不会重叠
-发起下一次。204只续约下一次heartbeat；202沿用现有turn stream；busy只跟随已发布turn。recovery、
+发起下一次。204只续约下一次heartbeat；202沿用现有turn stream；busy只跟随已发布turn。任意terminal SSE
+error都会取消勾选，避免rollback为Ready的notice被自动重试。recovery、
 unprovisioned、非预期协议以及无法由current/recent只读视图确认的response-loss都会fail closed并取消勾选，
 不会自动重发mutation或授权resume。自动turn从不读取、提交或清空textarea；只有本tab手动提交且亲自收到
 202的turn在`done`时清空草稿。Checkbox由每个tab各自拥有，关闭/休眠页面会暂停调度，browser timer throttling

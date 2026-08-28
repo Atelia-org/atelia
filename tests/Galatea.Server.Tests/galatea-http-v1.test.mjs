@@ -281,6 +281,22 @@ assert.throws(
   () => production.shouldClearDraftForTurnOrigin("unknown"),
   /turn origin is unknown/,
 );
+assert.equal(
+  production.shouldDisableMailLoopAfterTerminal("error", true),
+  true,
+);
+assert.equal(
+  production.shouldDisableMailLoopAfterTerminal("done", true),
+  false,
+);
+assert.equal(
+  production.shouldDisableMailLoopAfterTerminal("error", false),
+  false,
+);
+assert.throws(
+  () => production.shouldDisableMailLoopAfterTerminal("status", true),
+  /terminal type is unknown/,
+);
 
 const popFunction = source.slice(
   source.indexOf("async function popLatestTurn"),
@@ -351,6 +367,30 @@ assert.match(
   /shouldClearDraftForTurnOrigin\(state\.activeTurnOrigin\)/,
 );
 assert.match(streamEventHandler, /input\.value = ""/);
+assert.match(
+  streamEventHandler,
+  /shouldDisableMailLoopAfterTerminal\([\s\S]*"error"[\s\S]*mailLoopEnabled\?\.checked/,
+);
+assert.match(streamEventHandler, /disableMailLoop\(\)/);
+assert.match(streamEventHandler, /本轮失败，自动收信已关闭/);
+const doneEventBranch = streamEventHandler.slice(
+  streamEventHandler.indexOf('case "done"'),
+  streamEventHandler.indexOf('case "error"'),
+);
+assert.doesNotMatch(doneEventBranch, /disableMailLoop/);
+
+const attachFunction = source.slice(
+  source.indexOf("async function attachToTurn"),
+  source.indexOf("function clearMailLoopTimer"),
+);
+assert.match(
+  attachFunction,
+  /const terminalErrorDisabledMailLoop =\s+state\.terminalErrorDisabledMailLoop;\s+clearActiveTurn\(\)/,
+);
+assert.match(
+  attachFunction,
+  /terminalErrorDisabledMailLoop[\s\S]*本轮失败，自动收信已关闭/,
+);
 
 const freshSubmitFunction = source.slice(
   source.indexOf('form.addEventListener("submit"'),
