@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { PassThrough } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -15,10 +15,47 @@ import {
   encodeGalateaDurableOutputFrame,
   type GalateaDurableOutputFrame,
 } from "../src/galatea/durable-protocol.js";
-import { JsonlFrameWriter } from "../src/galatea/protocol.js";
+import { JsonlFrameWriter } from "../src/galatea/jsonl.js";
+import { createGalateaCodexChildEnvironment } from "../src/galatea/sidecar-config.js";
 import { NullLogger } from "../src/logger.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-app-server.js", import.meta.url));
+
+test("Galatea app-server environment removes only confirmed parent Codex context", () => {
+  const sanitized = createGalateaCodexChildEnvironment({
+    PATH: "/safe/path",
+    HOME: "/safe/home",
+    CODEX_HOME: "/safe/codex-home",
+    CODEX_MANAGED_BY_NPM: "1",
+    CODEX_MANAGED_PACKAGE_ROOT: "/safe/package-root",
+    OPENAI_API_KEY: "test-auth-sentinel",
+    OPENAI_BASE_URL: "https://provider.invalid/v1",
+    HTTPS_PROXY: "https://proxy.invalid",
+    CODEX_SESSION_ID: "ambient-session",
+    CODEX_THREAD_ID: "ambient-thread",
+    CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "ambient-origin",
+    CODEX_PERMISSION_PROFILE: "ambient-permission",
+    CODEX_CI: "1",
+  });
+
+  for (const key of [
+    "CODEX_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+    "CODEX_PERMISSION_PROFILE",
+    "CODEX_CI",
+  ]) {
+    assert.equal(sanitized[key], undefined);
+  }
+  assert.equal(sanitized.PATH, "/safe/path");
+  assert.equal(sanitized.HOME, "/safe/home");
+  assert.equal(sanitized.CODEX_HOME, "/safe/codex-home");
+  assert.equal(sanitized.CODEX_MANAGED_BY_NPM, "1");
+  assert.equal(sanitized.CODEX_MANAGED_PACKAGE_ROOT, "/safe/package-root");
+  assert.equal(sanitized.OPENAI_API_KEY, "test-auth-sentinel");
+  assert.equal(sanitized.OPENAI_BASE_URL, "https://provider.invalid/v1");
+  assert.equal(sanitized.HTTPS_PROXY, "https://proxy.invalid");
+});
 
 class FrameCollector {
   readonly frames: GalateaDurableOutputFrame[] = [];
@@ -228,4 +265,145 @@ test("durable JSONL server emits V2 protocol failures, stops on EOF, and flushes
       [2, "protocol", "INVALID_FRAME"],
     ],
   );
+});
+
+test("terminal stdout EPIPE is fatal, stops input, and remains observable through flush", async () => {
+  const input = new PassThrough();
+  const output = new class extends Writable {
+    override _write(
+      _chunk: Buffer,
+      _encoding: BufferEncoding,
+      callback: (error?: Error | null) => void,
+    ): void {
+      callback(Object.assign(new Error("broken stdout"), { code: "EPIPE" }));
+    }
+  }();
+  const writer = new JsonlFrameWriter<GalateaDurableOutputFrame>(
+    output,
+    10_000,
+    1_000,
+    encodeGalateaDurableOutputFrame,
+  );
+  let stopped = false;
+  const adapter: GalateaDurableJsonlAdapter = {
+    async handle(frame) {
+      await writer.write({
+        v: 2,
+        type: "binding-established",
+        requestId: frame.requestId,
+        bindingOperationId: "binding-epipe",
+        threadId: "thread-epipe",
+      });
+    },
+    async stop() { stopped = true; },
+  };
+  const serving = serveGalateaDurableJsonl(
+    input,
+    adapter,
+    writer,
+    { maxInputFrameBytes: 1_000, maxTaskBytes: 100 },
+    new NullLogger(),
+  );
+  input.write(`${JSON.stringify({
+    v: 2,
+    type: "ensure-binding",
+    requestId: "request-epipe",
+    bindingOperationId: "binding-epipe",
+  })}\n`);
+
+  await assert.rejects(serving, (error: unknown) =>
+    typeof error === "object" && error !== null && "code" in error && error.code === "EPIPE");
+  assert.equal(stopped, true);
+  assert.equal(input.destroyed, true);
+  await assert.rejects(writer.flush(), (error: unknown) =>
+    typeof error === "object" && error !== null && "code" in error && error.code === "EPIPE");
+});
+
+test("stalled stdout backpressure hits a bounded deadline and stops the sidecar", { timeout: 1_000 }, async () => {
+  const input = new PassThrough();
+  const output = new class extends Writable {
+    override _write(
+      _chunk: Buffer,
+      _encoding: BufferEncoding,
+      _callback: (error?: Error | null) => void,
+    ): void {
+      // Deliberately never acknowledge the write.
+    }
+  }();
+  const writer = new JsonlFrameWriter<GalateaDurableOutputFrame>(
+    output,
+    10_000,
+    20,
+    encodeGalateaDurableOutputFrame,
+  );
+  let stopped = false;
+  const adapter: GalateaDurableJsonlAdapter = {
+    async handle(frame) {
+      await writer.write({
+        v: 2,
+        type: "binding-established",
+        requestId: frame.requestId,
+        bindingOperationId: "binding-stall",
+        threadId: "thread-stall",
+      });
+    },
+    async stop() { stopped = true; },
+  };
+  const serving = serveGalateaDurableJsonl(
+    input,
+    adapter,
+    writer,
+    { maxInputFrameBytes: 1_000, maxTaskBytes: 100 },
+    new NullLogger(),
+  );
+  input.write(`${JSON.stringify({
+    v: 2,
+    type: "ensure-binding",
+    requestId: "request-stall",
+    bindingOperationId: "binding-stall",
+  })}\n`);
+
+  await assert.rejects(serving, (error: unknown) =>
+    typeof error === "object"
+      && error !== null
+      && "code" in error
+      && error.code === "OUTPUT_WRITE_TIMEOUT");
+  assert.equal(stopped, true);
+  assert.equal(input.destroyed, true);
+  assert.equal(output.destroyed, true);
+});
+
+test("immediate EOF during durable operation cannot restart or leak app-server", { timeout: 5_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "galatea-durable-eof-race-"));
+  const lifecycleFile = path.join(root, "lifecycle.log");
+  const input = new PassThrough();
+  const output = new PassThrough();
+  output.resume();
+  try {
+    const running = runGalateaDurableSidecar(input, output, {
+      CODEX_BRIDGE_ALLOWED_ROOTS: JSON.stringify([root]),
+      CODEX_BRIDGE_DEFAULT_CWD: root,
+      CODEX_BRIDGE_CODEX_COMMAND: process.execPath,
+      CODEX_BRIDGE_CODEX_ARGS: JSON.stringify([fixture, `--lifecycle-file=${lifecycleFile}`]),
+      CODEX_BRIDGE_RPC_TIMEOUT_MS: "1000",
+    });
+    input.end(`${JSON.stringify({
+      v: 2,
+      type: "ensure-binding",
+      requestId: "request-eof",
+      bindingOperationId: "binding-eof",
+    })}\n`);
+    await running;
+
+    const lifecycle = (await readFile(lifecycleFile, "utf8")).trimEnd().split("\n");
+    const starts = lifecycle.filter((line) => line.startsWith("start:"));
+    assert.equal(starts.length, 1);
+    const pid = Number(starts[0]?.slice("start:".length));
+    assert.throws(() => process.kill(pid, 0), (error: unknown) =>
+      typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH");
+  } finally {
+    input.destroy();
+    output.destroy();
+    await rm(root, { recursive: true });
+  }
 });

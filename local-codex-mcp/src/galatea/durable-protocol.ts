@@ -2,9 +2,10 @@ import type {
   GalateaDispatchAmbiguityCode,
   GalateaDispatchFailureCode,
 } from "../backend/galatea-staged-backend.js";
+import { DEFAULT_MAX_TASK_BYTES } from "./limits.js";
 
 export const GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION = 2 as const;
-export const DEFAULT_DURABLE_MAX_TASK_BYTES = 100 * 1024;
+export { DEFAULT_MAX_TASK_BYTES as DEFAULT_DURABLE_MAX_TASK_BYTES } from "./limits.js";
 
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const maximumIdentifierBytes = 200;
@@ -190,7 +191,7 @@ function parseTaskFrame(
 
 export function parseGalateaDurableFrame(
   text: string,
-  maximumTaskBytes = DEFAULT_DURABLE_MAX_TASK_BYTES,
+  maximumTaskBytes = DEFAULT_MAX_TASK_BYTES,
 ): GalateaDurableParseResult {
   let value: unknown;
   try {

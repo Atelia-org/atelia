@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { CodexBackend } from "../src/codex/backend.js";
 import { CodexAppServerClient } from "../src/codex/client.js";
 import { TaskStore } from "../src/codex/task-store.js";
-import { galateaCodexBackendProfile } from "../src/galatea/adapter.js";
+import { galateaCodexBackendProfile } from "../src/galatea/backend-profile.js";
 import { NullLogger } from "../src/logger.js";
 import { PathPolicy } from "../src/security/paths.js";
 
@@ -17,13 +17,24 @@ const tools = { webSearch: "live", imageGeneration: true, viewImage: true } as c
 
 async function harness(
   t: TestContext,
-  requestTimeoutMs = 1_000,
+  options: {
+    requestTimeoutMs?: number;
+    fixtureArgs?: string[];
+    persistentFixture?: boolean;
+  } = {},
 ) {
   const root = await mkdtemp(path.join(os.tmpdir(), "galatea-staged-backend-"));
+  const lifecycleFile = options.persistentFixture ? path.join(root, "lifecycle.log") : undefined;
+  const stateFile = options.persistentFixture ? path.join(root, "state.json") : undefined;
   const client = new CodexAppServerClient({
     command: process.execPath,
-    args: [fixture],
-    requestTimeoutMs,
+    args: [
+      fixture,
+      ...(options.fixtureArgs ?? []),
+      ...(lifecycleFile ? [`--lifecycle-file=${lifecycleFile}`] : []),
+      ...(stateFile ? [`--state-file=${stateFile}`] : []),
+    ],
+    requestTimeoutMs: options.requestTimeoutMs ?? 1_000,
     logger: new NullLogger(),
   });
   const backend = new CodexBackend({
@@ -37,7 +48,7 @@ async function harness(
     await backend.stop();
     await rm(root, { recursive: true });
   });
-  return { root, client, backend };
+  return { root, client, backend, ...(lifecycleFile ? { lifecycleFile } : {}) };
 }
 
 test("ensureBinding establishes and verifies an empty owned thread without starting a turn", async (t) => {
@@ -119,21 +130,33 @@ test("startBoundTurn uses the known binding and inspectDispatch reads exact pers
     threadStartCount: number;
     threadResumeCount: number;
     turnStartCount: number;
+    lastThreadStartParams: Record<string, unknown>;
+    lastResumeParams: Record<string, unknown>;
     lastTurnParams: { clientUserMessageId: string; input: unknown };
+    allTurnParams: Record<string, unknown>[];
   }>("test/lastRequests", {});
   assert.equal(requests.threadStartCount, 1);
   assert.equal(requests.threadResumeCount, 1);
   assert.equal(requests.turnStartCount, 1);
+  assert.equal(requests.lastThreadStartParams.serviceName, "atelia_galatea_codex_sidecar");
+  assert.equal(requests.lastThreadStartParams.threadSource, "atelia-galatea-codex-sidecar");
+  assert.deepEqual(requests.lastThreadStartParams.config, {
+    web_search: "live",
+    features: { image_generation: true },
+    tools: { view_image: true },
+  });
+  assert.match(String(requests.lastResumeParams.developerInstructions), /Galatea's persistent delegate/);
   assert.equal(requests.lastTurnParams.clientUserMessageId, "mail-1");
   assert.deepEqual(requests.lastTurnParams.input, [{
     type: "text",
     text: "[NATURAL] exact task",
     text_elements: [],
   }]);
+  assert.equal(Object.hasOwn(requests.allTurnParams[0] ?? {}, "outputSchema"), false);
 });
 
 test("inspectDispatch reconciles a persisted turn after turn/start response timeout without retry", async (t) => {
-  const value = await harness(t, 300);
+  const value = await harness(t, { requestTimeoutMs: 300 });
   const binding = await value.backend.ensureBinding({
     cwd: value.root,
     mode: "work",
@@ -162,4 +185,61 @@ test("inspectDispatch reconciles a persisted turn after turn/start response time
     {},
   );
   assert.equal(counts.turnStartCount, 1);
+});
+
+test("app-server restart reauthenticates and continues the exact persisted Galatea thread", async (t) => {
+  const value = await harness(t, {
+    fixtureArgs: ["--drop-persisted-thread-source"],
+    persistentFixture: true,
+  });
+  const binding = await value.backend.ensureBinding({
+    cwd: value.root,
+    mode: "work",
+    tools,
+  });
+  await value.backend.startBoundTurn({
+    threadId: binding.threadId,
+    expectedCwd: value.root,
+    dispatchId: "restart-mail-1",
+    task: "[NATURAL] first",
+    mode: "work",
+    localCommandNetwork: false,
+    tools,
+  });
+
+  await assert.rejects(value.client.request("test/crash", {}));
+
+  const second = await value.backend.startBoundTurn({
+    threadId: binding.threadId,
+    expectedCwd: value.root,
+    dispatchId: "restart-mail-2",
+    task: "[NATURAL] second",
+    mode: "work",
+    localCommandNetwork: false,
+    tools,
+  });
+  assert.equal(second.threadId, binding.threadId);
+
+  const persisted = await value.client.request<{
+    thread: { id: string; name: string | null; status: { type: string } };
+  }>("thread/read", { threadId: binding.threadId, includeTurns: false });
+  assert.equal(persisted.thread.id, binding.threadId);
+  assert.equal(persisted.thread.name, `[galatea-codex-sidecar] ${binding.threadId}`);
+  assert.equal(persisted.thread.status.type, "notLoaded");
+
+  assert.ok(value.lifecycleFile);
+  const lifecycle = await readFile(value.lifecycleFile, "utf8");
+  const lines = lifecycle.split("\n");
+  const starts = lines.filter((line) => line.startsWith("start:"));
+  assert.equal(starts.length, 2);
+  assert.equal(lines.filter((line) => line.startsWith("exit:")).length, 1);
+  const restartedPid = starts[1]?.slice("start:".length);
+  assert.ok(restartedPid);
+  assert.deepEqual(
+    lines
+      .filter((line) => line.startsWith(`rpc:${restartedPid}:`))
+      .map((line) => line.slice(`rpc:${restartedPid}:`.length))
+      .slice(0, 5),
+    ["initialize", "account/read", "thread/read", "thread/resume", "turn/start"],
+  );
 });

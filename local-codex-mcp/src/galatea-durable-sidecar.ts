@@ -8,7 +8,7 @@ import {
   createGalateaCodexChildEnvironment,
   loadGalateaSidecarConfig,
   type GalateaSidecarConfig,
-} from "./galatea-sidecar.js";
+} from "./galatea/sidecar-config.js";
 import {
   GalateaDurableAdapter,
 } from "./galatea/durable-adapter.js";
@@ -21,11 +21,11 @@ import {
 } from "./galatea/durable-protocol.js";
 import {
   galateaCodexBackendProfile,
-} from "./galatea/adapter.js";
+} from "./galatea/backend-profile.js";
 import {
   JsonlFrameWriter,
   readBoundedJsonLines,
-} from "./galatea/protocol.js";
+} from "./galatea/jsonl.js";
 import { JsonStderrLogger, type BridgeLogger } from "./logger.js";
 import { PathPolicy } from "./security/paths.js";
 

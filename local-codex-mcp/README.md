@@ -84,12 +84,12 @@ npm start
 
 stdio 的 stdout 专用于 MCP JSON-RPC，结构化日志只写 stderr。
 
-### Galatea fixed-thread sidecar
+### Galatea durable sidecar
 
 同一 backend 另有一个不暴露 MCP 的 Galatea adapter。它把工作目录、sandbox mode、本地命令
-出网权限与内建工具 policy 固定在启动环境中，逐封接收由 Galatea runtime 已经路由好的任务；第一封创建 Codex thread，
-后续请求带回该 `threadId`，便继续同一个 thread。Codex 的自然 Markdown final 原样返回，不使用
-`AgentReport` output schema。
+出网权限与内建工具 policy 固定在启动环境中，并提供三个可恢复的阶段式操作：建立持久 thread binding、
+启动一个 turn、按 exact `{threadId, dispatchId, task}` 检查结果。Codex 的自然 Markdown final 原样返回，
+不使用 `AgentReport` output schema。
 
 ```bash
 export CODEX_BRIDGE_ALLOWED_ROOTS='["/repos/focus/atelia"]'
@@ -103,29 +103,30 @@ npm run build
 npm run start:galatea
 ```
 
-stdin/stdout 是 strict bounded JSONL V1，stdout 只有协议 frame，日志只写 stderr：
+stdin/stdout 是 strict bounded JSONL V2，stdout 只有协议 frame，日志只写 stderr。默认命令只启动这一版协议：
 
 ```json
-{"v":1,"type":"ready"}
-{"v":1,"type":"dispatch","requestId":"r1","dispatchId":"d1","threadId":null,"task":"请调查并回复"}
-{"v":1,"type":"accepted","requestId":"r1","dispatchId":"d1","threadId":"thread-id","turnId":"turn-id"}
-{"v":1,"type":"completed","dispatchId":"d1","threadId":"thread-id","turnId":"turn-id","final":"自然 Markdown 回信"}
+{"v":2,"type":"ready"}
+{"v":2,"type":"ensure-binding","requestId":"r1","bindingOperationId":"binding-1"}
+{"v":2,"type":"binding-established","requestId":"r1","bindingOperationId":"binding-1","threadId":"thread-id"}
+{"v":2,"type":"start-turn","requestId":"r2","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复"}
+{"v":2,"type":"turn-accepted","requestId":"r2","dispatchId":"d1","threadId":"thread-id","turnId":"turn-id"}
+{"v":2,"type":"inspect-dispatch","requestId":"r3","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复"}
+{"v":2,"type":"dispatch-inspected","requestId":"r3","dispatchId":"d1","threadId":"thread-id","outcome":"completed","turnId":"turn-id","final":"自然 Markdown 回信"}
 ```
 
-失败以 `failed` frame 返回稳定的 `stage`/`code`。`accepted` 只在 `turn/start` 返回稳定 handle 后
-发出；`thread/start`、`thread/name/set`、`thread/resume` 或 `turn/start` RPC timeout 会返回
-`START_OUTCOME_UNKNOWN`，并由同一 `dispatchId` tombstone 阻止进程内重试。terminal deadline 到期会 best-effort interrupt，
+失败以 `failed` frame 返回稳定的 `stage`/`code`。`turn-accepted` 只表示 `turn/start` 已返回稳定 handle；
+sidecar 不同步等待 final。runtime 应持续发送 `inspect-dispatch`，并处理 `not-found`、`running`、`completed`、
+`failed` 或 `ambiguous`。`START_OUTCOME_UNKNOWN` 之后必须先 inspect，不能盲目重发 `start-turn`。
 缺失、截断或超过上限的 final 均不会伪装成完整回信。EOF、SIGINT 与 SIGTERM 会回收 app-server child。
 每封 frame 不接受 `cwd`、`mode`、本地命令出网或内建工具字段；相关 capability 只能由启动环境决定。
 
-可选边界配置：`GALATEA_CODEX_TURN_DEADLINE_MS`、`GALATEA_CODEX_INTERRUPT_GRACE_MS`、
-`GALATEA_CODEX_MAX_INPUT_FRAME_BYTES`、`GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES`、
+可选边界配置：`GALATEA_CODEX_MAX_INPUT_FRAME_BYTES`、`GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES`、
 `GALATEA_CODEX_MAX_TASK_BYTES`、`GALATEA_CODEX_MAX_FINAL_BYTES`、
-`GALATEA_CODEX_MAX_DISPATCH_TOMBSTONES`、`GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS`。同一进程内，`dispatchId` 在启动前写入 bounded
-tombstone；达到容量后 fail closed，不会淘汰旧 ID 后重新执行。
-并发 active duplicate 静默依附原 dispatch 的 `accepted`/terminal business frames，避免先发冲突的
-terminal failure；已完成 duplicate 与容量拒绝只返回不带 `dispatchId` 的 request-level failure。
-continuation 还会要求 persisted thread cwd 与启动时配置的 code-owned cwd 完全一致，即使漂移后的
+`GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS`。同一进程内并发的相同 `dispatchId` 会被
+`DISPATCH_ALREADY_ACTIVE` fail closed；跨进程恢复与去重由调用方的 durable outbox/inbox 状态机负责，
+并使用 `inspect-dispatch` 对已落到 app-server 的 exact turn 做 reconciliation。
+continuation 会要求 persisted thread cwd 与启动时配置的 code-owned cwd 完全一致，即使漂移后的
 目录仍位于 allowed roots 内也会拒绝。
 持久thread ownership只认response ID、profile-specific exact name marker和canonical/path-policy
 cwd；`threadSource`只是`thread/start`的optional analytics hint，持久化后为`null`也不影响
