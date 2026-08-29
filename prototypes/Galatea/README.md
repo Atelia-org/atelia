@@ -370,8 +370,9 @@ Codex delegation现已hard-cut到SQLite-backed durable owner；本节及对应�
 `来自外界代行者 Codex 的回信`，失败heading为
 `发往外界代行者 Codex 的信未能送达`。只读 parser 还严格接受旧
 `外界代行者 Codex 给 Galatea 的回信` / `Galatea 发给外界代行者 Codex 的信未能送达`
-dialect以及既有无timestamp的current/legacy历史；同一 envelope 不得混用新旧 headings。新写入只接受
-带offset、无小数秒的exact timestamp文本；`Z`、fractional seconds与其他非canonical变体均拒绝。每个块独立使用
+dialect以及既有无timestamp的current/legacy历史；带timestamp的shape只允许current headings，同一 envelope
+不得混用新旧 headings。新写入只接受带offset、无小数秒的exact timestamp文本；`Z`、fractional seconds与
+其他非canonical变体均拒绝。每个块独立使用
 `AdaptiveMarkdownFenceRenderer`：tilde fence至少4字符且长于正文内最长连续tilde，正文不trim、
 normalize或escape，因此嵌套backtick fence、Markdown、HTML/XML与Unicode可原样呈现给LLM。
 reply正文上限256 KiB UTF-8，failure上限4 KiB，整份composite上限1 MiB；越界全部拒绝而不截断。

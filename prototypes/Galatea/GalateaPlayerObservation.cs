@@ -251,12 +251,14 @@ internal static class GalateaPlayerObservationEnvelope {
                     stored,
                     ReplyHeading,
                     FailureHeading,
+                    allowTimestamp: true,
                     out observation
                 )
                 || TryUnwrapDialect(
                     stored,
                     LegacyReplyHeading,
                     LegacyFailureHeading,
+                    allowTimestamp: false,
                     out observation
                 );
         }
@@ -270,6 +272,7 @@ internal static class GalateaPlayerObservationEnvelope {
         string stored,
         string replyHeading,
         string failureHeading,
+        bool allowTimestamp,
         out GalateaPlayerObservation observation
     ) {
         observation = null!;
@@ -304,6 +307,7 @@ internal static class GalateaPlayerObservationEnvelope {
             }
             externalLocalTimestamp = parsedTimestamp;
             position = lineEnd + SectionSeparator.Length;
+            if (!allowTimestamp) { return false; }
         }
         if (!TryReadSection(
                 stored,

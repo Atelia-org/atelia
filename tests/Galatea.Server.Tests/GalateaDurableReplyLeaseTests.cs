@@ -264,6 +264,21 @@ public sealed class GalateaDurableReplyLeaseTests {
     }
 
     [Fact]
+    public void TimestampedLegacyDialect_ColdReopenIsCorruption() {
+        using var fixture = new Fixture();
+        BoundLease bound = CreateBoundLease(fixture);
+        string timestampedLegacy = ToLegacyHeadings(
+            bound.RenderedObservation
+        );
+        ReplaceRenderedObservation(
+            fixture.DatabasePath,
+            timestampedLegacy
+        );
+
+        Assert.Throws<InvalidDataException>(() => fixture.ReopenStore());
+    }
+
+    [Fact]
     public void HistoricalCurrentObservation_ColdReopenConsumesExactTerminal() {
         using var fixture = new Fixture();
         BoundLease bound = CreateBoundLease(fixture);
@@ -523,8 +538,12 @@ public sealed class GalateaDurableReplyLeaseTests {
             timestampStart,
             timestampEnd + 2 - timestampStart
         );
-        if (!useLegacyHeadings) { return historical; }
-        return historical.Replace(
+        return useLegacyHeadings
+            ? ToLegacyHeadings(historical)
+            : historical;
+    }
+
+    private static string ToLegacyHeadings(string current) => current.Replace(
             GalateaPlayerObservationEnvelope.ReplyHeading,
             "外界代行者 Codex 给 Galatea 的回信",
             StringComparison.Ordinal
@@ -534,7 +553,6 @@ public sealed class GalateaDurableReplyLeaseTests {
             "Galatea 发给外界代行者 Codex 的信未能送达",
             StringComparison.Ordinal
         );
-    }
 
     private static void ReplaceRenderedObservation(
         string databasePath,

@@ -145,6 +145,26 @@ public sealed class GalateaPlayerObservationTests {
             mixed,
             out _
         ));
+
+        string timestampedLegacy = GalateaPlayerObservationEnvelope.Wrap(
+            new GalateaPlayerObservation(
+                "continue",
+                ObservationTimestamp,
+                source.ReadyNotices
+            )
+        ).Replace(
+            GalateaPlayerObservationEnvelope.ReplyHeading,
+            "外界代行者 Codex 给 Galatea 的回信",
+            StringComparison.Ordinal
+        ).Replace(
+            GalateaPlayerObservationEnvelope.FailureHeading,
+            "Galatea 发给外界代行者 Codex 的信未能送达",
+            StringComparison.Ordinal
+        );
+        Assert.False(GalateaPlayerObservationEnvelope.TryUnwrap(
+            timestampedLegacy,
+            out _
+        ));
     }
 
     [Fact]
