@@ -96,6 +96,207 @@ public sealed class PlayerTurnObservationTests {
     }
 
     [Fact]
+    public void CompositeEnvelope_RoundTripsMemoRecallBlocks() {
+        const string GistBody = "标题：蓝门\n印象：门后有风声。\n~~~~ inner";
+        const string SummaryBody = "标题：蓝门\n摘要：这扇门反复出现在地下设施入口。";
+        const string ExactBody = "标题：蓝门\n原文：我记下蓝门后的冷风和金属味。";
+        var source = new PlayerTurnObservation(
+            "检查地下入口",
+            ObservationTimestamp,
+            [new PlayerTurnNotice.Reply("外界回信")],
+            [
+                new PlayerTurnRecall(
+                    new RecallEntry(
+                        RecallType.MemoGist,
+                        "memo-pod:galatea#memo-0001"
+                    ),
+                    GistBody
+                ),
+                new PlayerTurnRecall(
+                    new RecallEntry(
+                        RecallType.MemoSummary,
+                        "memo-pod:galatea#memo-0001"
+                    ),
+                    SummaryBody
+                ),
+                new PlayerTurnRecall(
+                    new RecallEntry(
+                        RecallType.MemoExactText,
+                        "memo-pod:galatea#memo-0002"
+                    ),
+                    ExactBody
+                )
+            ]
+        );
+
+        string rendered = PlayerTurnObservationEnvelope.Wrap(source);
+
+        Assert.True(rendered.IndexOf(
+                PlayerTurnObservationEnvelope.PlayerHeading,
+                StringComparison.Ordinal
+            )
+            < rendered.IndexOf(
+                PlayerTurnObservationEnvelope.RecallGistHeading,
+                StringComparison.Ordinal
+            ));
+        Assert.True(rendered.IndexOf(
+                PlayerTurnObservationEnvelope.RecallExactTextHeading,
+                StringComparison.Ordinal
+            )
+            < rendered.IndexOf(
+                PlayerTurnObservationEnvelope.ReplyHeading,
+                StringComparison.Ordinal
+            ));
+        Assert.Contains(
+            "SourceId: memo-pod:galatea#memo-0001\n\n"
+                + "~~~~~memo-gist-recall\n"
+                + GistBody + "\n~~~~~",
+            rendered,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "~~~~memo-summary-recall\n" + SummaryBody + "\n~~~~",
+            rendered,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "~~~~memo-exact-text-recall\n" + ExactBody + "\n~~~~",
+            rendered,
+            StringComparison.Ordinal
+        );
+
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
+            rendered,
+            out PlayerTurnObservation parsed
+        ));
+        Assert.Equal("检查地下入口", parsed.PlayerText);
+        Assert.Collection(
+            parsed.Recalls,
+            recall => {
+                Assert.Equal(RecallType.MemoGist,
+                    recall.Entry.RecallType);
+                Assert.Equal("memo-pod:galatea#memo-0001",
+                    recall.Entry.SourceId);
+                Assert.Equal(GistBody, recall.Body);
+            },
+            recall => {
+                Assert.Equal(RecallType.MemoSummary,
+                    recall.Entry.RecallType);
+                Assert.Equal("memo-pod:galatea#memo-0001",
+                    recall.Entry.SourceId);
+                Assert.Equal(SummaryBody, recall.Body);
+            },
+            recall => {
+                Assert.Equal(RecallType.MemoExactText,
+                    recall.Entry.RecallType);
+                Assert.Equal("memo-pod:galatea#memo-0002",
+                    recall.Entry.SourceId);
+                Assert.Equal(ExactBody, recall.Body);
+            }
+        );
+        Assert.Single(parsed.Notices);
+        Assert.Equal(rendered,
+            PlayerTurnObservationEnvelope.Wrap(parsed));
+
+        string display = PlayerTurnObservationEnvelope
+            .FormatForDisplay(parsed);
+        Assert.Contains(
+            PlayerTurnObservationEnvelope.RecallGistHeading,
+            display,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(GistBody, display, StringComparison.Ordinal);
+        Assert.DoesNotContain("memo-gist-recall", display,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("SourceId:", display,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RecallBarrier_AggregatesCanonicalObservationRecallAnchors() {
+        string first = PlayerTurnObservationEnvelope.Wrap(
+            new PlayerTurnObservation(
+                "first",
+                recalls: [
+                    new PlayerTurnRecall(
+                        new RecallEntry(
+                            RecallType.MemoGist,
+                            "memo-pod:galatea#memo-0001"
+                        ),
+                        "标题：蓝门\n印象：门后有风声。"
+                    )
+                ]
+            )
+        );
+        string second = PlayerTurnObservationEnvelope.Wrap(
+            new PlayerTurnObservation(
+                "second",
+                recalls: [
+                    new PlayerTurnRecall(
+                        new RecallEntry(
+                            RecallType.MemoGist,
+                            "memo-pod:galatea#memo-0001"
+                        ),
+                        "标题：蓝门\n印象：重复可见。"
+                    ),
+                    new PlayerTurnRecall(
+                        new RecallEntry(
+                            RecallType.MemoSummary,
+                            "memo-pod:galatea#memo-0002"
+                        ),
+                        "标题：银匙\n摘要：钥匙属于东侧机房。"
+                    )
+                ]
+            )
+        );
+        string inboundMail = GalateaMailboxObservationEnvelope.Wrap(
+            MailboxMessage.CreateInbound(
+                new GalateaCharacterName("Galatea"),
+                "Alice",
+                null,
+                "mail"
+            )
+        );
+
+        RecallBarrier barrier =
+            GalateaRecallBarrierBuilder.BuildFromProviderVisibleObservations([
+                GalateaUserMessageEnvelope.Wrap("legacy"),
+                first.Replace("SourceId:", "Source:", StringComparison.Ordinal),
+                first,
+                inboundMail,
+                null,
+                second
+            ]);
+
+        Assert.Equal(2, barrier.Entries.Count);
+        Assert.True(barrier.Contains(
+            RecallType.MemoGist,
+            "memo-pod:galatea#memo-0001"
+        ));
+        Assert.True(barrier.Contains(
+            RecallType.MemoSummary,
+            "memo-pod:galatea#memo-0002"
+        ));
+        Assert.False(barrier.Contains(
+            RecallType.MemoExactText,
+            "memo-pod:galatea#memo-0001"
+        ));
+        Assert.Equal(
+            [
+                new RecallEntry(
+                    RecallType.MemoGist,
+                    "memo-pod:galatea#memo-0001"
+                ),
+                new RecallEntry(
+                    RecallType.MemoSummary,
+                    "memo-pod:galatea#memo-0002"
+                )
+            ],
+            barrier.Entries
+        );
+    }
+
+    [Fact]
     public void CompositeEnvelope_AcceptsHistoricalDialectsWithoutTimestamp() {
         var source = new PlayerTurnObservation(
             "continue",
@@ -164,6 +365,64 @@ public sealed class PlayerTurnObservationTests {
         );
         Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
             timestampedLegacy,
+            out _
+        ));
+
+        string currentRecallWithLegacyNotice =
+            PlayerTurnObservationEnvelope.Wrap(
+                new PlayerTurnObservation(
+                    "continue",
+                    notices: [new PlayerTurnNotice.Reply("reply")],
+                    recalls: [
+                        new PlayerTurnRecall(
+                            new RecallEntry(
+                                RecallType.MemoGist,
+                                "memo-pod:galatea#memo-0001"
+                            ),
+                            "标题：蓝门\n印象：门后有风声。"
+                        )
+                    ]
+                )
+            ).Replace(
+                PlayerTurnObservationEnvelope.ReplyHeading,
+                "外界代行者 Codex 给 Galatea 的回信",
+                StringComparison.Ordinal
+            );
+        Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
+            currentRecallWithLegacyNotice,
+            out _
+        ));
+
+        string recallAfterNotice = PlayerTurnObservationEnvelope.Wrap(
+            new PlayerTurnObservation(
+                "continue",
+                notices: [new PlayerTurnNotice.Reply("reply")],
+                recalls: [
+                    new PlayerTurnRecall(
+                        new RecallEntry(
+                            RecallType.MemoGist,
+                            "memo-pod:galatea#memo-0001"
+                        ),
+                        "标题：蓝门\n印象：门后有风声。"
+                    )
+                ]
+            )
+        );
+        int recallStart = recallAfterNotice.IndexOf(
+            "## " + PlayerTurnObservationEnvelope.RecallGistHeading,
+            StringComparison.Ordinal
+        );
+        int noticeStart = recallAfterNotice.IndexOf(
+            "## " + PlayerTurnObservationEnvelope.ReplyHeading,
+            StringComparison.Ordinal
+        );
+        string invalidOrder = recallAfterNotice[..recallStart]
+            + recallAfterNotice[noticeStart..]
+            + "\n\n"
+            + recallAfterNotice[
+                recallStart..(noticeStart - "\n\n".Length)];
+        Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
+            invalidOrder,
             out _
         ));
     }
@@ -302,6 +561,89 @@ public sealed class PlayerTurnObservationTests {
                     PlayerTurnObservationEnvelope.MaximumNoticeCount + 1
                 ).Select(static _ =>
                     (PlayerTurnNotice)new PlayerTurnNotice.Reply("ok"))
+            ));
+        var recall = new PlayerTurnRecall(
+            new RecallEntry(
+                RecallType.MemoGist,
+                "memo-pod:galatea#memo-0001"
+            ),
+            "标题：蓝门\n印象：门后有风声。"
+        );
+        Assert.Throws<ArgumentException>(() =>
+            new PlayerTurnObservation(
+                "act",
+                recalls: [
+                    recall,
+                    new PlayerTurnRecall(
+                        new RecallEntry(
+                            RecallType.MemoGist,
+                            "memo-pod:galatea#memo-0001"
+                        ),
+                        "标题：蓝门\n印象：重复。"
+                    )
+                ]
+            ));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new PlayerTurnObservation(
+                "act",
+                recalls: Enumerable.Range(
+                    0,
+                    PlayerTurnObservationEnvelope.MaximumRecallCount + 1
+                ).Select(static index => new PlayerTurnRecall(
+                    new RecallEntry(
+                        RecallType.MemoGist,
+                        $"memo-pod:galatea#memo-{index:0000}"
+                    ),
+                    "标题：蓝门\n印象：门后有风声。"
+                ))
+            ));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new RecallEntry(
+                (RecallType)42,
+                "memo-pod:galatea#memo-invalid"
+            ));
+        foreach (string invalidSourceId in new[] {
+            "",
+            " memo-pod:galatea#memo-0001",
+            "memo-pod:galatea#memo-0001 ",
+            "memo-pod:galatea\nmemo-0001",
+            "memo-pod:galatea\0memo-0001",
+            "bad\ud800"
+        }) {
+            Assert.ThrowsAny<ArgumentException>(() =>
+                new RecallEntry(
+                    RecallType.MemoGist,
+                    invalidSourceId
+                ));
+        }
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new RecallEntry(
+                RecallType.MemoGist,
+                new string(
+                    'x',
+                    PlayerTurnObservationEnvelope
+                        .MaximumRecallSourceIdUtf8Bytes + 1
+                )
+            ));
+        Assert.Throws<ArgumentException>(() =>
+            new PlayerTurnRecall(
+                new RecallEntry(
+                    RecallType.MemoGist,
+                    "memo-pod:galatea#memo-0003"
+                ),
+                "bad\ud800"
+            ));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new PlayerTurnRecall(
+                new RecallEntry(
+                    RecallType.MemoGist,
+                    "memo-pod:galatea#memo-0004"
+                ),
+                new string(
+                    'x',
+                    PlayerTurnObservationEnvelope.MaximumRecallBodyUtf8Bytes
+                        + 1
+                )
             ));
 
         PlayerTurnNotice[] tooLarge = Enumerable.Range(0, 4)

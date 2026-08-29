@@ -324,6 +324,254 @@ public sealed class GalateaInputPreprocessorVerticalTests {
     }
 
     [Fact]
+    public async Task PlayerTurnRecallProvider_InjectsFixedRecallPayload() {
+        var completion = new ScriptedCompletionClient("assistant reply");
+        var normalizer = new ReturningNormalizer("normalized input");
+        var recall = new PlayerTurnRecall(
+            new RecallEntry(
+                RecallType.MemoGist,
+                "memo-pod:galatea#memo-0001"
+            ),
+            "标题：蓝门\n印象：门后有风声。"
+        );
+        var recallProvider = new FixedPlayerTurnRecallProvider([recall]);
+        await using var host = GalateaTestHost.Create(
+            new SingleClientFactory(completion),
+            normalizer,
+            playerTurnRecallProvider: recallProvider
+        );
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+
+        var hostService = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        var session = await hostService.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+
+        StartTurnResponseDto started = await StartTurnAsync(
+            client,
+            "original input"
+        );
+        GalateaLiveTurn liveTurn = RequireTurn(
+            hostService,
+            session,
+            started.TurnId
+        );
+        await RequireRunTask(liveTurn).WaitAsync(CompletionDeadline);
+
+        GalateaPlayerTurnRecallRequest recallRequest =
+            Assert.Single(recallProvider.Requests);
+        Assert.Same(session.User, recallRequest.User);
+        Assert.Equal("normalized input", recallRequest.PlayerText);
+        Assert.Empty(recallRequest.Notices);
+        Assert.Empty(recallRequest.Barrier.Entries);
+        Assert.NotEqual(default, recallRequest.CompletionBoundary);
+
+        CompletionRequest request = Assert.IsType<CompletionRequest>(
+            completion.LastRequest
+        );
+        ObservationMessage requestedObservation = Assert.Single(
+            request.PromptPrefix.SharedContextMessages.OfType<ObservationMessage>()
+        );
+        string wrapped = Assert.IsType<string>(
+            requestedObservation.Content
+        );
+        Assert.Contains(
+            PlayerTurnObservationEnvelope.RecallGistHeading,
+            wrapped,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "SourceId: memo-pod:galatea#memo-0001",
+            wrapped,
+            StringComparison.Ordinal
+        );
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
+            wrapped,
+            out PlayerTurnObservation observation
+        ));
+        PlayerTurnRecall parsedRecall = Assert.Single(observation.Recalls);
+        Assert.Equal(RecallType.MemoGist,
+            parsedRecall.Entry.RecallType);
+        Assert.Equal("memo-pod:galatea#memo-0001",
+            parsedRecall.Entry.SourceId);
+        Assert.Equal(recall.Body, parsedRecall.Body);
+
+        var persisted = session.Engine.ReadRecentCompletedTurns(1)
+            .RequireSnapshot();
+        Assert.Equal(
+            wrapped,
+            Assert.Single(persisted.Turns).ObservationContent
+        );
+
+        RecentTurnsResponseDto recent = await GetRecentTurnsAsync(client);
+        RecentTurnDto recentTurn = Assert.Single(recent.Turns);
+        Assert.Contains(
+            PlayerTurnObservationEnvelope.RecallGistHeading,
+            recentTurn.UserText,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(recall.Body, recentTurn.UserText,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("SourceId:", recentTurn.UserText,
+            StringComparison.Ordinal);
+        Assert.Equal("assistant reply", recentTurn.Assistant.Text);
+    }
+
+    [Fact]
+    public async Task PlayerTurnRecallProvider_ReceivesVisibleRecallBarrier() {
+        var completion = new ScriptedCompletionClient("assistant reply");
+        var recall = new PlayerTurnRecall(
+            new RecallEntry(
+                RecallType.MemoGist,
+                "memo-pod:galatea#memo-0001"
+            ),
+            "标题：蓝门\n印象：门后有风声。"
+        );
+        var recallProvider = new BarrierAwareRecallProvider(recall);
+        await using var host = GalateaTestHost.Create(
+            new SingleClientFactory(completion),
+            new ReturningNormalizer("normalized input"),
+            playerTurnRecallProvider: recallProvider
+        );
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+
+        var hostService = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await hostService.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+
+        StartTurnResponseDto first = await StartTurnAsync(
+            client,
+            "first input"
+        );
+        await RequireRunTask(RequireTurn(
+            hostService,
+            session,
+            first.TurnId
+        )).WaitAsync(CompletionDeadline);
+        StartTurnResponseDto second = await StartTurnAsync(
+            client,
+            "second input"
+        );
+        await RequireRunTask(RequireTurn(
+            hostService,
+            session,
+            second.TurnId
+        )).WaitAsync(CompletionDeadline);
+
+        Assert.Equal(2, recallProvider.Requests.Count);
+        Assert.Empty(recallProvider.Requests[0].Barrier.Entries);
+        Assert.True(recallProvider.Requests[1].Barrier.Contains(
+            RecallType.MemoGist,
+            "memo-pod:galatea#memo-0001"
+        ));
+        Assert.Equal([1, 0], recallProvider.ReturnedCounts);
+        var turns = session.Engine
+            .ReadRecentCompletedTurns(2)
+            .RequireSnapshot()
+            .Turns;
+        Assert.Equal(2, turns.Count);
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
+            turns[0].ObservationContent,
+            out PlayerTurnObservation secondObservation
+        ));
+        Assert.Empty(secondObservation.Recalls);
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
+            turns[1].ObservationContent,
+            out PlayerTurnObservation firstObservation
+        ));
+        Assert.Single(firstObservation.Recalls);
+    }
+
+    [Fact]
+    public async Task PersistedRecallPayload_ReopensThroughRecentDisplay() {
+        var recall = new PlayerTurnRecall(
+            new RecallEntry(
+                RecallType.MemoGist,
+                "memo-pod:galatea#memo-0001"
+            ),
+            "标题：蓝门\n印象：门后有风声。"
+        );
+        GalateaTestHost? first = null;
+        string? root = null;
+        bool firstDisposed = false;
+        try {
+            first = GalateaTestHost.Create(
+                new SingleClientFactory(
+                    new ScriptedCompletionClient("assistant reply")
+                ),
+                new ReturningNormalizer("normalized input"),
+                deleteFilesOnDispose: false,
+                playerTurnRecallProvider:
+                    new FixedPlayerTurnRecallProvider([recall])
+            );
+            root = first.RootDirectory;
+            using (HttpClient client = first.CreateClient()) {
+                await LoginAsync(client);
+                GalateaHostService service = first.Factory.Services
+                    .GetRequiredService<GalateaHostService>();
+                UserSessionHost session = await service.GetSessionAsync(
+                    "alice",
+                    CancellationToken.None
+                );
+                StartTurnResponseDto started = await StartTurnAsync(
+                    client,
+                    "original input"
+                );
+                await RequireRunTask(RequireTurn(
+                    service,
+                    session,
+                    started.TurnId
+                )).WaitAsync(CompletionDeadline);
+            }
+
+            string sessionDirectory = first.SessionDirectory;
+            await first.DisposeAsync();
+            firstDisposed = true;
+
+            await using GalateaTestHost reopened =
+                GalateaTestHost.OpenExisting(
+                    sessionDirectory,
+                    [Connection("test", "model-a")],
+                    "test",
+                    new SingleClientFactory(
+                        new ScriptedCompletionClient("must not dispatch")
+                    ),
+                    DisabledGalateaUserMessageNormalizer.Instance
+                );
+            using HttpClient reopenedClient = reopened.CreateClient();
+            await LoginAsync(reopenedClient);
+
+            RecentTurnsResponseDto recent =
+                await GetRecentTurnsAsync(reopenedClient);
+            RecentTurnDto recentTurn = Assert.Single(recent.Turns);
+            Assert.Contains(
+                PlayerTurnObservationEnvelope.RecallGistHeading,
+                recentTurn.UserText,
+                StringComparison.Ordinal
+            );
+            Assert.Contains(recall.Body, recentTurn.UserText,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("SourceId:", recentTurn.UserText,
+                StringComparison.Ordinal);
+        }
+        finally {
+            if (first is not null && !firstDisposed) {
+                await first.DisposeAsync();
+            }
+            if (root is not null && Directory.Exists(root)) {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task AdmissionCancellationDuringNormalization_CreatesNoTurnOrDurableObservation() {
         var completion = new ScriptedCompletionClient("must not dispatch");
         var normalizer = new BlockingNormalizer();
@@ -567,6 +815,43 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         ) {
             ArgumentNullException.ThrowIfNull(connection);
             return client;
+        }
+    }
+
+    private sealed class FixedPlayerTurnRecallProvider(
+        IReadOnlyList<PlayerTurnRecall> recalls
+    ) : IGalateaPlayerTurnRecallProvider {
+        internal List<GalateaPlayerTurnRecallRequest> Requests { get; } = [];
+
+        public ValueTask<IReadOnlyList<PlayerTurnRecall>> SelectRecallsAsync(
+            GalateaPlayerTurnRecallRequest request,
+            CancellationToken cancellationToken
+        ) {
+            ArgumentNullException.ThrowIfNull(request);
+            cancellationToken.ThrowIfCancellationRequested();
+            Requests.Add(request);
+            return ValueTask.FromResult(recalls);
+        }
+    }
+
+    private sealed class BarrierAwareRecallProvider(PlayerTurnRecall recall)
+        : IGalateaPlayerTurnRecallProvider {
+        internal List<GalateaPlayerTurnRecallRequest> Requests { get; } = [];
+        internal List<int> ReturnedCounts { get; } = [];
+
+        public ValueTask<IReadOnlyList<PlayerTurnRecall>> SelectRecallsAsync(
+            GalateaPlayerTurnRecallRequest request,
+            CancellationToken cancellationToken
+        ) {
+            ArgumentNullException.ThrowIfNull(request);
+            cancellationToken.ThrowIfCancellationRequested();
+            Requests.Add(request);
+            IReadOnlyList<PlayerTurnRecall> recalls =
+                request.Barrier.Contains(recall.Entry)
+                    ? []
+                    : [recall];
+            ReturnedCounts.Add(recalls.Count);
+            return ValueTask.FromResult(recalls);
         }
     }
 

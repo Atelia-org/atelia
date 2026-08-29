@@ -49,6 +49,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly GalateaRecapGridComposition _recapGrid;
     private readonly GalateaCompletionOwner? _completionOwner;
     private readonly GalateaDelegationSupervisor _delegationSupervisor;
+    private readonly IGalateaPlayerTurnRecallProvider
+        _playerTurnRecallProvider;
     private readonly TimeProvider _timeProvider;
     internal GalateaDisposeTestHooks? DisposeHooksForTest { get; set; }
     internal GalateaSessionProvisioningTestHooks?
@@ -93,14 +95,16 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaConfig config,
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizerFactory userMessageNormalizerFactory,
-        IGalateaDurableDelegateTransport delegateTransport
+        IGalateaDurableDelegateTransport? delegateTransport,
+        IGalateaPlayerTurnRecallProvider? playerTurnRecallProvider
     ) : this(
         config,
         CreateProductionComponents(
             config,
             completionClientFactory,
             userMessageNormalizerFactory,
-            delegateTransport
+            delegateTransport,
+            playerTurnRecallProvider
         )
     ) { }
 
@@ -113,6 +117,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _sessionBootstrapAdmission = components.SessionBootstrapAdmission;
         _completionOwner = components.Owner;
         _delegationSupervisor = components.DelegationSupervisor;
+        _playerTurnRecallProvider = components.PlayerTurnRecallProvider;
         _timeProvider = TimeProvider.System;
         _recapGrid = components.RecapGrid;
         _inputPreprocessor = components.InputPreprocessor;
@@ -131,7 +136,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaRecapGridComposition recapGrid,
         IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>?
             targetExpectations = null,
-        TimeProvider? timeProvider = null
+        TimeProvider? timeProvider = null,
+        IGalateaPlayerTurnRecallProvider? playerTurnRecallProvider = null
     ) {
         ArgumentNullException.ThrowIfNull(recapGrid);
         ArgumentNullException.ThrowIfNull(userMessageNormalizer);
@@ -154,6 +160,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaCompletionOwner.ValidateGalateaRouting(normalized);
         _recapGrid = recapGrid;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _playerTurnRecallProvider = playerTurnRecallProvider
+            ?? DisabledGalateaPlayerTurnRecallProvider.Instance;
         _completionOwner = null;
         _inputPreprocessor = new GalateaInputPreprocessor(
             userMessageNormalizer
@@ -203,7 +211,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaConfig config,
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizerFactory normalizerFactory,
-        IGalateaDurableDelegateTransport? delegateTransportOverride = null
+        IGalateaDurableDelegateTransport? delegateTransportOverride = null,
+        IGalateaPlayerTurnRecallProvider? playerTurnRecallProvider = null
     ) {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(completionClientFactory);
@@ -277,6 +286,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 outboundMailExtractors,
                 targetExpectations,
                 delegationSupervisor,
+                playerTurnRecallProvider
+                    ?? DisabledGalateaPlayerTurnRecallProvider.Instance,
                 sessionBootstrapAdmission,
                 config.MaintenanceMode,
                 users,
@@ -323,6 +334,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>
             TargetExpectations,
         GalateaDelegationSupervisor DelegationSupervisor,
+        IGalateaPlayerTurnRecallProvider PlayerTurnRecallProvider,
         RecapGridControlAdmission SessionBootstrapAdmission,
         bool MaintenanceMode,
         IReadOnlyDictionary<string, GalateaUserConfig> Users,
@@ -1482,17 +1494,20 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "recap-grid-desired-setup-unavailable");
         }
         string prompted;
+        GalateaFreshInput.PlayerAction? playerAction = null;
+        DateTimeOffset playerTimestamp = default;
         if (liveTurn.FreshInput is GalateaFreshInput.PlayerAction player) {
-            DateTimeOffset externalLocalTimestamp =
+            playerAction = player;
+            playerTimestamp =
                 PlayerTurnObservationEnvelope.TruncateToSecond(
                     _timeProvider.GetLocalNow()
                 );
             prompted = liveTurn.DurableReplyLease is { } lease
-                ? lease.RenderObservation(externalLocalTimestamp)
+                ? lease.RenderObservation(playerTimestamp)
                 : PlayerTurnObservationEnvelope.Wrap(
                     new PlayerTurnObservation(
                         player.Text,
-                        externalLocalTimestamp,
+                        playerTimestamp,
                         player.Notices
                     )
                 );
@@ -1523,6 +1538,34 @@ public sealed class GalateaHostService : IAsyncDisposable {
             online.CandidateSource,
             lifecycle,
             SessionUncertainCompletionRecoveryPolicy.Refuse));
+        if (playerAction is not null
+            && liveTurn.DurableReplyLease is null) {
+            RecallBarrier barrier = await BuildCurrentRecallBarrierAsync(
+                host,
+                online.CandidateSource,
+                ready.GoverningSetup,
+                turn.RawHistoryAuthorized,
+                cancellationToken
+            ).ConfigureAwait(false);
+            IReadOnlyList<PlayerTurnRecall> recalls =
+                await SelectPlayerTurnRecallsAsync(
+                    host,
+                    ready.GoverningSetup.Head,
+                    playerAction,
+                    barrier,
+                    cancellationToken
+                ).ConfigureAwait(false);
+            if (recalls.Count > 0) {
+                prompted = PlayerTurnObservationEnvelope.Wrap(
+                    new PlayerTurnObservation(
+                        playerAction.Text,
+                        playerTimestamp,
+                        playerAction.Notices,
+                        recalls
+                    )
+                );
+            }
+        }
         _ = liveTurn.DurableReplyLease?.BindObservationBase(
             host.Engine,
             ready.GoverningSetup.Head,
@@ -1537,6 +1580,168 @@ public sealed class GalateaHostService : IAsyncDisposable {
             result.Message,
             result.Invocation,
             result.Errors);
+    }
+
+    private async ValueTask<IReadOnlyList<PlayerTurnRecall>>
+        SelectPlayerTurnRecallsAsync(
+        UserSessionHost host,
+        EventAddress completionBoundary,
+        GalateaFreshInput.PlayerAction player,
+        RecallBarrier barrier,
+        CancellationToken cancellationToken
+    ) {
+        GalateaPlayerTurnRecallRequest request = new(
+            host.User,
+            completionBoundary,
+            player.Text,
+            player.Notices,
+            barrier
+        );
+        IReadOnlyList<PlayerTurnRecall> selected =
+            await _playerTurnRecallProvider
+                .SelectRecallsAsync(request, cancellationToken)
+                .ConfigureAwait(false)
+            ?? throw new InvalidOperationException(
+                "Galatea player-turn recall provider returned null."
+            );
+        return Array.AsReadOnly(selected.Select(static recall =>
+            recall ?? throw new InvalidOperationException(
+                "Galatea player-turn recall provider returned a null recall."
+            )
+        ).ToArray());
+    }
+
+    private async ValueTask<RecallBarrier> BuildCurrentRecallBarrierAsync(
+        UserSessionHost host,
+        ICoherentContextCandidateSource candidates,
+        SessionGoverningSetup governingSetup,
+        bool allowMatureRawHistory,
+        CancellationToken cancellationToken
+    ) {
+        var request = new SessionContextSelectionRequest(
+            governingSetup.Head,
+            governingSetup.RuntimeConfig.DerivedContext.NthPrevious
+        );
+        request.ValidateShape();
+        SessionContextCandidateSelection selection = await candidates
+            .SelectAsync(request, cancellationToken)
+            .ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(selection);
+        selection.ValidateShape();
+        SessionHistoryPlanningWindow window = selection.Status switch {
+            SessionContextCandidateSelectionStatus.EmptyLineage =>
+                host.Engine.ReadHistoryPlanningWindowAt(
+                    governingSetup.Head,
+                    startExclusive: null,
+                    cancellationToken
+                ),
+            SessionContextCandidateSelectionStatus.RawHistoryAuthorized =>
+                allowMatureRawHistory
+                    ? host.Engine.ReadHistoryPlanningWindowAt(
+                        governingSetup.Head,
+                        startExclusive: null,
+                        cancellationToken
+                    )
+                    : throw new GalateaTurnException(
+                        "RecallBarrier需要的成熟raw history缺少同轮授权。",
+                        "recall-barrier-raw-history-unauthorized"
+                    ),
+            SessionContextCandidateSelectionStatus.Selected =>
+                await MaterializeRecallBarrierWindowAsync(
+                    host,
+                    candidates,
+                    governingSetup.Head,
+                    selection.Candidate
+                        ?? throw new InvalidDataException(
+                            "Selected context candidate has no descriptor."
+                        ),
+                    cancellationToken
+                ).ConfigureAwait(false),
+            SessionContextCandidateSelectionStatus.OrdinalUnavailable =>
+                throw new GalateaTurnException(
+                    "RecallBarrier需要的上下文候选序号不可用。",
+                    "recall-barrier-context-unavailable"
+                ),
+            SessionContextCandidateSelectionStatus.ExactPublishedSetInvalid =>
+                throw new GalateaTurnException(
+                    selection.Detail
+                    ?? "RecallBarrier需要的RecapGrid发布集合无效。",
+                    "recall-barrier-context-invalid"
+                ),
+            SessionContextCandidateSelectionStatus.StoreUnavailable =>
+                throw new GalateaTurnException(
+                    selection.Detail
+                    ?? "RecallBarrier需要的RecapGrid store不可用。",
+                    "recall-barrier-context-store-unavailable"
+                ),
+            SessionContextCandidateSelectionStatus.BeyondPrefix =>
+                throw new GalateaTurnException(
+                    selection.Detail
+                    ?? "RecallBarrier需要的上下文锚点超出有界lineage前缀。",
+                    "recall-barrier-context-unavailable"
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown context candidate selection status."
+            )
+        };
+        return GalateaRecallBarrierBuilder.BuildFromProviderVisibleMessages(
+            window.Units.Select(static unit => unit.Message)
+        );
+    }
+
+    private static async ValueTask<SessionHistoryPlanningWindow>
+        MaterializeRecallBarrierWindowAsync(
+        UserSessionHost host,
+        ICoherentContextCandidateSource candidates,
+        EventAddress completionBoundary,
+        SessionContextCandidateDescriptor descriptor,
+        CancellationToken cancellationToken
+    ) {
+        SessionContextCandidateMaterializationResult materialization =
+            await candidates
+                .MaterializeAsync(descriptor, cancellationToken)
+                .ConfigureAwait(false);
+        _ = materialization switch {
+            SessionContextCandidateMaterializationResult.Materialized value
+                when value.Candidate is not null => value.Candidate,
+            SessionContextCandidateMaterializationResult.Stale stale
+                => throw new GalateaTurnException(
+                    RequireContextMaterializationDetail(stale.Detail),
+                    "recall-barrier-context-unavailable"
+                ),
+            SessionContextCandidateMaterializationResult.Busy busy
+                => throw new GalateaTurnException(
+                    RequireContextMaterializationDetail(busy.Detail),
+                    "recall-barrier-context-store-unavailable"
+                ),
+            SessionContextCandidateMaterializationResult.Disposed disposed
+                => throw new GalateaTurnException(
+                    RequireContextMaterializationDetail(disposed.Detail),
+                    "recall-barrier-context-store-unavailable"
+                ),
+            SessionContextCandidateMaterializationResult.Invalid invalid
+                => throw new GalateaTurnException(
+                    RequireContextMaterializationDetail(invalid.Detail),
+                    "recall-barrier-context-invalid"
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown context candidate materialization result."
+            )
+        };
+        return host.Engine.ReadHistoryPlanningWindowAt(
+            completionBoundary,
+            descriptor.SetAdmissionAnchor,
+            cancellationToken
+        );
+    }
+
+    private static string RequireContextMaterializationDetail(string detail) {
+        if (string.IsNullOrWhiteSpace(detail)) {
+            throw new InvalidDataException(
+                "A non-materialized context result requires detail."
+            );
+        }
+        return detail;
     }
 
     private async Task<GalateaCompletedOperation>

@@ -370,20 +370,25 @@ runtime在canonical Observation materialization时通过宿主`TimeProvider`只�
 `Observation 形成时的外界本地时间（不自动等同于故事世界时间）：yyyy-MM-dd'T'HH:mm:sszzz`；
 例如`2026-08-29T14:23:05+08:00`，UTC也固定写`+00:00`而不是`Z`。这只是Observation形成时的
 外界粗粒度时间，不是故事世界时间，也不参与turn排序、identity或settlement。首个兄弟块固定为
-`## 玩家角色试图采取的行动`/`player-action`，随后可按顺序携带0..16个
-`Reply`或`DeliveryFailure`兄弟块；canonical `Codex`成功heading为
+`## 玩家角色试图采取的行动`/`player-action`，随后可按顺序携带0..32个
+角色笔记recall兄弟块，再携带0..16个`Reply`或`DeliveryFailure`兄弟块。recall block使用
+`SourceId: ...`单行metadata作为anchor，`RecallType+SourceId`构成exact去重key，当前三种info string为
+`memo-gist-recall`、`memo-summary-recall`、`memo-exact-text-recall`；对应heading分别是
+`召回的角色笔记（一句话印象）`、`召回的角色笔记（摘要）`、`召回的角色笔记（原文）`。
+canonical `Codex`成功heading为
 `来自外界代行者 Codex 的回信`，失败heading为
 `发往外界代行者 Codex 的信未能送达`。只读 parser 还严格接受旧
 `外界代行者 Codex 给 Galatea 的回信` / `Galatea 发给外界代行者 Codex 的信未能送达`
 dialect以及既有无timestamp的current/legacy历史；带timestamp的shape只允许current headings，同一 envelope
-不得混用新旧 headings。新写入只接受带offset、无小数秒的exact timestamp文本；`Z`、fractional seconds与
+不得混用新旧 headings；recall block只属于current dialect，不能混入legacy headings。新写入只接受带offset、无小数秒的exact timestamp文本；`Z`、fractional seconds与
 其他非canonical变体均拒绝。每个块独立使用
 `AdaptiveMarkdownFenceRenderer`：tilde fence至少4字符且长于正文内最长连续tilde，正文不trim、
 normalize或escape，因此嵌套backtick fence、Markdown、HTML/XML与Unicode可原样呈现给LLM。
-reply正文上限256 KiB UTF-8，failure上限4 KiB，整份composite上限1 MiB；越界全部拒绝而不截断。
+recall `SourceId`上限512 bytes UTF-8，recall正文上限256 KiB，reply正文上限256 KiB，
+failure上限4 KiB，整份composite上限1 MiB；越界全部拒绝而不截断。
 
 `PlayerTurnObservationEnvelope` parser只接受code-owned prefix、heading、info string、顺序与动态fence的canonical重渲染结果。
-recent view显示玩家文本及每条独立通知；普通Undo仍把它识别为player turn，但pop receipt只返回玩家文本。
+recent view显示玩家文本、recall正文及每条独立通知，但隐藏recall anchor metadata；普通Undo仍把它识别为player turn，但pop receipt只返回玩家文本。
 历史Galatea heading与backtick player envelope继续只读兼容recent/Undo；inbound mail envelope仍不属于普通player Undo。
 input normalizer只接收玩家文本，绝不接收ready notices。普通player入口持有per-session `TurnLock`，先结算
 既有durable reply lease和latest post-baseline extraction gap，再验证recovery boundary与main connection；
@@ -394,6 +399,14 @@ failure会阻止放弃旧failed turn、创建cutoff和接受新turn；普通nonf
 结果留给下一次普通player turn；未选项保持原FIFO次序。选择前缀时为任意合法64 KiB normalized player text
 以及固定timestamp metadata的最坏adaptive-fence渲染预留空间。inbound与recovery入口都不开始新cutoff；
 `GalateaMailboxObservationEnvelope`也不因此增加timestamp。
+
+Galatea侧已有internal `IGalateaPlayerTurnRecallProvider`注入seam，生产默认实现为空，不接MemoPod、不查询索引。
+当前V0只在没有active durable reply lease的普通player turn调用provider；有reply lease时暂不注入recall，
+避免在未设计lease schema与restart settlement前破坏exact rendered Observation recovery。provider request携带
+`RecallBarrier`，由同一轮RecapGrid online candidate source选出的provider-visible raw Observation后缀经
+`PlayerTurnObservationEnvelope` parser聚合而来；selected candidate会先确认可materialize，derived context
+contribution与browser recent display文本都不参与barrier构造。当前barrier只做parser-based exact-key去重，
+尚不表达`MemoExactText`覆盖`MemoSummary`/`MemoGist`的dominance语义。
 
 `SessionJournal`公开的`AdaptiveMarkdownFenceRenderer.RenderBlock(infoString, exactBody)`要求1..64字符
 ASCII token作为code-owned info string。现有Recap contribution已复用它，并保持原`recap-block`输出逐字不变。

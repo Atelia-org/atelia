@@ -41,6 +41,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer? normalizer,
         IGalateaDurableDelegateTransport? delegateTransport,
+        IGalateaPlayerTurnRecallProvider? playerTurnRecallProvider,
         bool deleteFilesOnDispose
     ) {
         _tempRoot = tempRoot;
@@ -51,7 +52,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             configPath,
             completionClientFactory,
             normalizer,
-            delegateTransport
+            delegateTransport,
+            playerTurnRecallProvider
         );
     }
 
@@ -84,7 +86,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IReadOnlyList<string>? selectableConnectionIds = null,
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
-        IGalateaDurableDelegateTransport? delegateTransport = null
+        IGalateaDurableDelegateTransport? delegateTransport = null,
+        IGalateaPlayerTurnRecallProvider? playerTurnRecallProvider = null
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
 
@@ -147,6 +150,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             completionClientFactory,
             normalizer,
             delegateTransport,
+            playerTurnRecallProvider,
             deleteFilesOnDispose
         );
     }
@@ -219,6 +223,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 completionClientFactory,
                 normalizer,
                 delegateTransport: null,
+                playerTurnRecallProvider: null,
                 deleteFilesOnDispose
             );
         }
@@ -360,11 +365,12 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 configurationRoot,
                 absoluteSessionDirectory,
                 configPath,
-                completionClientFactory,
-                normalizer,
-                delegateTransport: null,
-                deleteFilesOnDispose: true
-            );
+            completionClientFactory,
+            normalizer,
+            delegateTransport: null,
+            playerTurnRecallProvider: null,
+            deleteFilesOnDispose: true
+        );
         }
         catch {
             Directory.Delete(configurationRoot, recursive: true);
@@ -423,6 +429,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             completionClientFactory,
             normalizer,
             delegateTransport,
+            playerTurnRecallProvider: null,
             deleteFilesOnDispose
         );
         _restartCreated = true;
@@ -758,7 +765,8 @@ internal sealed class GalateaWebApplicationFactory(
     string configPath,
     ICompletionClientFactory completionClientFactory,
     IGalateaUserMessageNormalizer? normalizer,
-    IGalateaDurableDelegateTransport? delegateTransport
+    IGalateaDurableDelegateTransport? delegateTransport,
+    IGalateaPlayerTurnRecallProvider? playerTurnRecallProvider
 ) : WebApplicationFactory<Program> {
     protected override void ConfigureWebHost(IWebHostBuilder builder) {
         builder.UseEnvironment("Testing");
@@ -772,7 +780,8 @@ internal sealed class GalateaWebApplicationFactory(
                     new FixedNormalizerFactory(normalizer)
                 );
             }
-            if (delegateTransport is not null) {
+            if (delegateTransport is not null
+                || playerTurnRecallProvider is not null) {
                 services.RemoveAll<GalateaHostService>();
                 services.AddSingleton(provider =>
                     new GalateaHostService(
@@ -781,7 +790,8 @@ internal sealed class GalateaWebApplicationFactory(
                             ICompletionClientFactory>(),
                         provider.GetRequiredService<
                             IGalateaUserMessageNormalizerFactory>(),
-                        delegateTransport
+                        delegateTransport,
+                        playerTurnRecallProvider
                     ));
             }
         });

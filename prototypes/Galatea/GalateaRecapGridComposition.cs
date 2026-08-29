@@ -113,6 +113,9 @@ internal sealed class GalateaRecapGridComposition
                 bound.Identity,
                 ownedOnline,
                 agentControl: null,
+                rawHistoryAuthorized:
+                    caughtUp is RecapGridOnlinePassResult
+                        .RawHistoryAuthorized,
                 maintenanceEvidence: ExtractEvidence(caughtUp));
             ownedOnline = null;
             return turn;
@@ -245,6 +248,9 @@ internal sealed class GalateaRecapGridComposition
                 ownedOnline,
                 agentControl: null,
                 toolHead,
+                rawHistoryAuthorized:
+                    caughtUp is RecapGridOnlinePassResult
+                        .RawHistoryAuthorized,
                 ExtractEvidence(caughtUp));
             ownedOnline = null;
             return turn;
@@ -391,6 +397,7 @@ internal sealed class GalateaRecapGridTurn : IAsyncDisposable {
         RecapGridOnlineContextHandle? online,
         RecapGridAgentControlHandle? agentControl,
         EventAddress? resumeHead = null,
+        bool rawHistoryAuthorized = false,
         RecapGridOnlineMaintenanceEvidence? maintenanceEvidence = null
     ) {
         Connection = connection;
@@ -399,6 +406,7 @@ internal sealed class GalateaRecapGridTurn : IAsyncDisposable {
         Online = online;
         AgentControl = agentControl;
         ResumeHead = resumeHead;
+        RawHistoryAuthorized = rawHistoryAuthorized;
         MaintenanceEvidence = maintenanceEvidence;
     }
 
@@ -408,6 +416,7 @@ internal sealed class GalateaRecapGridTurn : IAsyncDisposable {
     internal RecapGridOnlineContextHandle? Online { get; }
     internal RecapGridAgentControlHandle? AgentControl { get; }
     internal EventAddress? ResumeHead { get; }
+    internal bool RawHistoryAuthorized { get; }
     internal RecapGridOnlineMaintenanceEvidence? MaintenanceEvidence {
         get;
     }
