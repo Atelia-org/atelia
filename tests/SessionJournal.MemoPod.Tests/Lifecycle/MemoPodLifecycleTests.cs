@@ -50,7 +50,12 @@ public sealed class MemoPodLifecycleTests : IDisposable {
     [Fact]
     public async Task FreezeAndOpenRoundTripCompleteFrozenState() {
         MemoPod pod = MemoPod.Create(_root, PodId, "customer details");
-        MemoId first = pod.Append("order 17 ships Friday");
+        MemoId first = pod.Append(
+            "order 17 ships Friday",
+            title: "Order 17",
+            gist: "Ships Friday",
+            summary: "The customer expects order 17 to ship on Friday."
+        );
         MemoId second = pod.Append("prefers email");
 
         await pod.FreezeAsync();
@@ -73,6 +78,13 @@ public sealed class MemoPodLifecycleTests : IDisposable {
         Assert.Equal(MemoPodPhase.Frozen, reopened.Phase);
         Assert.Equal(pod.Topic, reopened.Topic);
         Assert.Equal(pod.List().ToArray(), reopened.List().ToArray());
+        Memo reopenedFirst = reopened.Get(first);
+        Assert.Equal("Order 17", reopenedFirst.Title);
+        Assert.Equal("Ships Friday", reopenedFirst.Gist);
+        Assert.Equal(
+            "The customer expects order 17 to ship on Friday.",
+            reopenedFirst.Summary
+        );
         Assert.Equal(
             pod.FrozenPrompt.Sha256,
             reopened.FrozenPrompt.Sha256

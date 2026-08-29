@@ -226,7 +226,9 @@ internal static class Program {
             .ToArray();
 
         MemoPodAggregate pod = MemoPodAggregate.Create(root, podId, topic);
-        MemoId[] committedIds = exactTexts.Select(pod.Append).ToArray();
+        MemoId[] committedIds = exactTexts
+            .Select(exactText => pod.Append(exactText))
+            .ToArray();
         await pod.FreezeAsync(cancellationToken).ConfigureAwait(false);
         await WriteMutationReportAsync(
             output,
@@ -265,7 +267,9 @@ internal static class Program {
         foreach (MemoId removal in removals) {
             pod.Remove(removal);
         }
-        MemoId[] committedIds = exactTexts.Select(pod.Append).ToArray();
+        MemoId[] committedIds = exactTexts
+            .Select(exactText => pod.Append(exactText))
+            .ToArray();
         await pod.FreezeAsync(cancellationToken).ConfigureAwait(false);
         await WriteMutationReportAsync(
             output,

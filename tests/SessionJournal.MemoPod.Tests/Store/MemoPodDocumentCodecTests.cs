@@ -9,13 +9,19 @@ public sealed class MemoPodDocumentCodecTests {
     );
 
     [Fact]
-    public void EncodeProducesExactCanonicalV1GoldenWithoutTrailingLf() {
+    public void EncodeProducesExactCanonicalV2GoldenWithoutTrailingLf() {
         var document = new MemoPodDocument(
             PodId,
             "customer details",
             4,
             [
-                new Memo(MemoId.FromOrdinal(1), "line\n\"quoted\""),
+                new Memo(
+                    MemoId.FromOrdinal(1),
+                    "line\n\"quoted\"",
+                    title: "Order 17",
+                    gist: "Quoted line",
+                    summary: "Line item stays quoted."
+                ),
                 new Memo(MemoId.FromOrdinal(3), "\0tail")
             ]
         );
@@ -23,7 +29,7 @@ public sealed class MemoPodDocumentCodecTests {
         byte[] first = MemoPodDocumentCodec.Encode(document);
         byte[] second = MemoPodDocumentCodec.Encode(document);
 
-        const string expected = "{\"schema\":\"atelia.memo-pod.document.v1\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"customer details\",\"nextMemoId\":4,\"memos\":[{\"id\":\"m1:00000001\",\"exactText\":\"line\\n\\\"quoted\\\"\"},{\"id\":\"m1:00000003\",\"exactText\":\"\\u0000tail\"}]}";
+        const string expected = "{\"schema\":\"atelia.memo-pod.document.v2\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"customer details\",\"nextMemoId\":4,\"memos\":[{\"id\":\"m1:00000001\",\"title\":\"Order 17\",\"gist\":\"Quoted line\",\"summary\":\"Line item stays quoted.\",\"exactText\":\"line\\n\\\"quoted\\\"\"},{\"id\":\"m1:00000003\",\"title\":null,\"gist\":null,\"summary\":null,\"exactText\":\"\\u0000tail\"}]}";
         Assert.Equal(expected, Encoding.UTF8.GetString(first));
         Assert.Equal(first, second);
         Assert.NotEqual((byte)'\n', first[^1]);
@@ -133,16 +139,18 @@ public sealed class MemoPodDocumentCodecTests {
             " " + canonical,
             canonical + "{}",
             canonical[..^1] + ",\"unknown\":0}",
-            "{\"podId\":\"44444444444444444444444444444444\",\"schema\":\"atelia.memo-pod.document.v1\",\"topic\":\"topic\",\"nextMemoId\":1,\"memos\":[]}",
-            "{\"schema\":\"atelia.memo-pod.document.v1\",\"schema\":\"atelia.memo-pod.document.v1\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":1,\"memos\":[]}",
-            "{\"schema\":\"atelia.memo-pod.document.v2\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":1,\"memos\":[]}",
-            "{\"schema\":\"atelia.memo-pod.document.v1\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":1.0,\"memos\":[]}",
-            "{\"schema\":\"atelia.memo-pod.document.v1\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":0,\"memos\":[]}",
-            "{\"schema\":\"atelia.memo-pod.document.v1\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":4294967297,\"memos\":[]}",
-            "{\"schema\":\"atelia.memo-pod.document.v1\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":2,\"memos\":[{\"id\":\"m1:00000001\",\"exactText\":\"x\",\"extra\":true}]}",
-            "{\"schema\":\"atelia.memo-pod.document.v1\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":2,\"memos\":[{\"exactText\":\"x\",\"id\":\"m1:00000001\"}]}",
-            "{\"schema\":\"atelia.memo-pod.document.v1\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":3,\"memos\":[{\"id\":\"m1:00000002\",\"exactText\":\"two\"},{\"id\":\"m1:00000001\",\"exactText\":\"one\"}]}",
-            "{\"schema\":\"atelia.memo-pod.document.v1\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":1,\"memos\":[{\"id\":\"m1:00000001\",\"exactText\":\"uncommitted\"}]}",
+            "{\"podId\":\"44444444444444444444444444444444\",\"schema\":\"atelia.memo-pod.document.v2\",\"topic\":\"topic\",\"nextMemoId\":1,\"memos\":[]}",
+            "{\"schema\":\"atelia.memo-pod.document.v2\",\"schema\":\"atelia.memo-pod.document.v2\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":1,\"memos\":[]}",
+            "{\"schema\":\"atelia.memo-pod.document.v3\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":1,\"memos\":[]}",
+            "{\"schema\":\"atelia.memo-pod.document.v2\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":1.0,\"memos\":[]}",
+            "{\"schema\":\"atelia.memo-pod.document.v2\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":0,\"memos\":[]}",
+            "{\"schema\":\"atelia.memo-pod.document.v2\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":4294967297,\"memos\":[]}",
+            "{\"schema\":\"atelia.memo-pod.document.v2\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":2,\"memos\":[{\"id\":\"m1:00000001\",\"title\":null,\"gist\":null,\"summary\":null,\"exactText\":\"x\",\"extra\":true}]}",
+            "{\"schema\":\"atelia.memo-pod.document.v2\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":2,\"memos\":[{\"exactText\":\"x\",\"id\":\"m1:00000001\"}]}",
+            "{\"schema\":\"atelia.memo-pod.document.v2\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":2,\"memos\":[{\"id\":\"m1:00000001\",\"exactText\":\"x\"}]}",
+            "{\"schema\":\"atelia.memo-pod.document.v2\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":2,\"memos\":[{\"id\":\"m1:00000001\",\"title\":\"\",\"gist\":null,\"summary\":null,\"exactText\":\"x\"}]}",
+            "{\"schema\":\"atelia.memo-pod.document.v2\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":3,\"memos\":[{\"id\":\"m1:00000002\",\"title\":null,\"gist\":null,\"summary\":null,\"exactText\":\"two\"},{\"id\":\"m1:00000001\",\"title\":null,\"gist\":null,\"summary\":null,\"exactText\":\"one\"}]}",
+            "{\"schema\":\"atelia.memo-pod.document.v2\",\"podId\":\"44444444444444444444444444444444\",\"topic\":\"topic\",\"nextMemoId\":1,\"memos\":[{\"id\":\"m1:00000001\",\"title\":null,\"gist\":null,\"summary\":null,\"exactText\":\"uncommitted\"}]}",
             "{",
             "[]",
             "null"

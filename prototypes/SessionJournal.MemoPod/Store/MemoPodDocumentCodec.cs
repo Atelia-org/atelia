@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace Atelia.SessionJournal.MemoPod;
 
 internal static class MemoPodDocumentCodec {
-    internal const string Schema = "atelia.memo-pod.document.v1";
+    internal const string Schema = "atelia.memo-pod.document.v2";
 
     private static readonly JsonWriterOptions WriterOptions = new() {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
@@ -27,6 +27,9 @@ internal static class MemoPodDocumentCodec {
             foreach (Memo memo in document.Memos) {
                 writer.WriteStartObject();
                 writer.WriteString("id", memo.Id.Value);
+                WriteNullableString(writer, "title", memo.Title);
+                WriteNullableString(writer, "gist", memo.Gist);
+                WriteNullableString(writer, "summary", memo.Summary);
                 writer.WriteString("exactText", memo.ExactText);
                 writer.WriteEndObject();
             }
@@ -68,7 +71,7 @@ internal static class MemoPodDocumentCodec {
             byte[] canonical = Encode(document);
             if (!utf8.SequenceEqual(canonical)) {
                 throw new MemoPodDocumentFormatException(
-                    "MemoPod document is valid JSON but is not the exact canonical V1 encoding."
+                    "MemoPod document is valid JSON but is not the exact canonical V2 encoding."
                 );
             }
             return document;
@@ -84,7 +87,7 @@ internal static class MemoPodDocumentCodec {
             or ArgumentException
             or OverflowException) {
             throw new MemoPodDocumentFormatException(
-                "MemoPod document is malformed or violates the V1 domain contract.",
+                "MemoPod document is malformed or violates the V2 domain contract.",
                 exception
             );
         }
@@ -139,12 +142,24 @@ internal static class MemoPodDocumentCodec {
             MemoId memoId = MemoId.Parse(
                 ReadRequiredStringProperty(ref reader, "id")
             );
+            string? title = ReadRequiredNullableStringProperty(
+                ref reader,
+                "title"
+            );
+            string? gist = ReadRequiredNullableStringProperty(
+                ref reader,
+                "gist"
+            );
+            string? summary = ReadRequiredNullableStringProperty(
+                ref reader,
+                "summary"
+            );
             string exactText = ReadRequiredStringProperty(
                 ref reader,
                 "exactText"
             );
             RequireToken(ref reader, JsonTokenType.EndObject, "memo end");
-            memos.Add(new Memo(memoId, exactText));
+            memos.Add(new Memo(memoId, exactText, title, gist, summary));
         }
 
         RequireToken(ref reader, JsonTokenType.EndObject, "root end");
@@ -172,6 +187,24 @@ internal static class MemoPodDocumentCodec {
             ?? throw new MemoPodDocumentFormatException(
                 $"MemoPod document property '{propertyName}' must not be null."
             );
+    }
+
+    private static string? ReadRequiredNullableStringProperty(
+        ref Utf8JsonReader reader,
+        string propertyName
+    ) {
+        RequireProperty(ref reader, propertyName);
+        JsonTokenType tokenType = ReadNext(ref reader, propertyName);
+        return tokenType switch {
+            JsonTokenType.Null => null,
+            JsonTokenType.String => reader.GetString()
+                ?? throw new MemoPodDocumentFormatException(
+                    $"MemoPod document property '{propertyName}' must be a string or null."
+                ),
+            _ => throw new MemoPodDocumentFormatException(
+                $"MemoPod document property '{propertyName}' must be a string or null."
+            )
+        };
     }
 
     private static ulong ReadRequiredUInt64Property(
@@ -223,6 +256,19 @@ internal static class MemoPodDocumentCodec {
             );
         }
         return reader.TokenType;
+    }
+
+    private static void WriteNullableString(
+        Utf8JsonWriter writer,
+        string propertyName,
+        string? value
+    ) {
+        if (value is null) {
+            writer.WriteNull(propertyName);
+        }
+        else {
+            writer.WriteString(propertyName, value);
+        }
     }
 }
 

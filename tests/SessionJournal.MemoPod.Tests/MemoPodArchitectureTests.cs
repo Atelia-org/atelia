@@ -39,7 +39,7 @@ public sealed class MemoPodArchitectureTests {
             BindingFlags.Public | BindingFlags.Instance
         ));
         Assert.Equal(
-            ["ExactText", "Id"],
+            ["ExactText", "Gist", "Id", "Summary", "Title"],
             typeof(Memo).GetProperties(
                     BindingFlags.Public
                     | BindingFlags.Instance

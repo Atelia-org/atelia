@@ -106,6 +106,41 @@ public sealed class MemoPodPublicSurfaceTests {
     }
 
     [Fact]
+    public void MemoExposesImmutableIdentityTextAndNullableMetadata() {
+        Type type = typeof(Memo);
+
+        Assert.True(type.IsSealed);
+        Assert.Empty(type.GetConstructors(
+            BindingFlags.Public | BindingFlags.Instance
+        ));
+        Assert.Equal(
+            ["ExactText", "Gist", "Id", "Summary", "Title"],
+            type.GetProperties(
+                    BindingFlags.Public
+                    | BindingFlags.Instance
+                    | BindingFlags.DeclaredOnly)
+                .Select(static property => property.Name)
+                .Order(StringComparer.Ordinal)
+                .ToArray()
+        );
+        Assert.All(
+            type.GetProperties(
+                BindingFlags.Public
+                | BindingFlags.Instance
+                | BindingFlags.DeclaredOnly),
+            static property => Assert.False(property.CanWrite)
+        );
+        Assert.Equal(typeof(string), type.GetProperty(nameof(Memo.ExactText))!
+            .PropertyType);
+        Assert.Equal(typeof(string), type.GetProperty(nameof(Memo.Title))!
+            .PropertyType);
+        Assert.Equal(typeof(string), type.GetProperty(nameof(Memo.Gist))!
+            .PropertyType);
+        Assert.Equal(typeof(string), type.GetProperty(nameof(Memo.Summary))!
+            .PropertyType);
+    }
+
+    [Fact]
     public void SignaturesUseOnlyPublicImmutableValuesAndStandardTask() {
         Type type = typeof(MemoPod);
 
@@ -130,6 +165,22 @@ public sealed class MemoPodPublicSurfaceTests {
         Assert.Equal(
             typeof(MemoId),
             type.GetMethod(nameof(MemoPod.Append))!.ReturnType
+        );
+        MethodInfo append = type.GetMethod(nameof(MemoPod.Append))!;
+        Assert.Equal(
+            [
+                typeof(string),
+                typeof(string),
+                typeof(string),
+                typeof(string),
+            ],
+            append.GetParameters()
+                .Select(static parameter => parameter.ParameterType)
+                .ToArray()
+        );
+        Assert.All(
+            append.GetParameters().Skip(1),
+            static parameter => Assert.Null(parameter.DefaultValue)
         );
         Assert.Equal(
             typeof(ImmutableArray<Memo>),

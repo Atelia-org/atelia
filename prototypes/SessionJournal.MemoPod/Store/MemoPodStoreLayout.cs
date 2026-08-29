@@ -158,7 +158,7 @@ internal static class MemoPodStoreLayout {
     internal static void RequireLinux() {
         if (!OperatingSystem.IsLinux()) {
             throw new PlatformNotSupportedException(
-                "MemoPod V1 durable publication is supported only on Linux."
+                "MemoPod durable publication is supported only on Linux."
             );
         }
     }

@@ -146,6 +146,33 @@ public sealed class MemoPodDocumentTests {
     }
 
     [Fact]
+    public void DocumentRejectsExcessiveActiveMetadataBytes() {
+        string maximumTitle = new(
+            'x',
+            MemoPodLimits.MaximumMemoTitleUtf8Bytes
+        );
+        int memoCount =
+            (MemoPodLimits.MaximumActiveMemoMetadataUtf8Bytes
+                / MemoPodLimits.MaximumMemoTitleUtf8Bytes)
+            + 1;
+        Memo[] overByteLimit = Enumerable.Range(1, memoCount)
+            .Select(ordinal => new Memo(
+                MemoId.FromOrdinal((uint)ordinal),
+                "x",
+                title: maximumTitle
+            ))
+            .ToArray();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new MemoPodDocument(
+                PodId,
+                "topic",
+                (ulong)memoCount + 1,
+                overByteLimit
+            ));
+    }
+
+    [Fact]
     public void MemoRejectsDefaultId() {
         Assert.Throws<ArgumentException>(() => new Memo(default, "text"));
     }

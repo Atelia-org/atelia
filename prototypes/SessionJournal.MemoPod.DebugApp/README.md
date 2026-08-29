@@ -149,7 +149,7 @@ arguments and live arguments are mutually exclusive.
 
 Each attempted provider call writes one content-free JSONL evidence record.
 It contains route identifiers, Pod/active counts, the fixed
-`frozenPromptFormatId=atelia.memo-pod.prompt.v1`, prompt hash/bytes, query bytes,
+`frozenPromptFormatId=atelia.memo-pod.prompt.v2`, prompt hash/bytes, query bytes,
 bounds, delay, elapsed time, outcome, normalized cache status/token fields, and
 selected Memo IDs. It never contains Topic, Memo/query text, system
 prompt, raw request/response, command arguments, diagnostics, exception text,

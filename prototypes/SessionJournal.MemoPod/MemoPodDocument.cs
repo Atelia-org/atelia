@@ -20,6 +20,7 @@ internal sealed record MemoPodDocument {
 
         var builder = ImmutableArray.CreateBuilder<Memo>();
         long activeExactTextUtf8Bytes = 0;
+        long activeMemoMetadataUtf8Bytes = 0;
         uint previousOrdinal = 0;
         foreach (Memo? memo in memos) {
             if (memo is null) {
@@ -51,11 +52,19 @@ internal sealed record MemoPodDocument {
             }
 
             activeExactTextUtf8Bytes += memo.ExactTextUtf8ByteCount;
+            activeMemoMetadataUtf8Bytes += memo.MetadataUtf8ByteCount;
             if (activeExactTextUtf8Bytes
                 > MemoPodLimits.MaximumActiveExactTextUtf8Bytes) {
                 throw new ArgumentOutOfRangeException(
                     nameof(memos),
                     $"Active memo exact text exceeds {MemoPodLimits.MaximumActiveExactTextUtf8Bytes} UTF-8 bytes."
+                );
+            }
+            if (activeMemoMetadataUtf8Bytes
+                > MemoPodLimits.MaximumActiveMemoMetadataUtf8Bytes) {
+                throw new ArgumentOutOfRangeException(
+                    nameof(memos),
+                    $"Active memo metadata exceeds {MemoPodLimits.MaximumActiveMemoMetadataUtf8Bytes} UTF-8 bytes."
                 );
             }
 
@@ -66,6 +75,9 @@ internal sealed record MemoPodDocument {
         NextMemoOrdinal = nextMemoOrdinal;
         Memos = builder.ToImmutable();
         ActiveExactTextUtf8Bytes = checked((int)activeExactTextUtf8Bytes);
+        ActiveMemoMetadataUtf8Bytes = checked(
+            (int)activeMemoMetadataUtf8Bytes
+        );
     }
 
     internal MemoPodId PodId { get; }
@@ -73,4 +85,5 @@ internal sealed record MemoPodDocument {
     internal ulong NextMemoOrdinal { get; }
     internal ImmutableArray<Memo> Memos { get; }
     internal int ActiveExactTextUtf8Bytes { get; }
+    internal int ActiveMemoMetadataUtf8Bytes { get; }
 }

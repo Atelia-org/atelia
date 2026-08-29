@@ -76,9 +76,9 @@ RecapGrid承诺事务明细完整性。这里描述的是Galatea对两种产品�
 - 不实现 embedding、ANN、全文索引、BM25 或混合召回。
 - 不实现 `MemoPodSnapshot`、MVCC、revision CAS、并发 reader/writer 或多进程共享 writer。
 - 不提供Memo原位Update/Replace或caller-supplied upsert；纠错由同一Editable阶段内Remove旧ID并Append新ID完成。
-- V1 Topic在`Create(root, podId, topic)`后Pod-lifetime immutable；改主题或重分类属于未来跨Pod操作。
+- Topic在`Create(root, podId, topic)`后Pod-lifetime immutable；改主题或重分类属于未来跨Pod操作。
 - 不承诺一次mutation立即durable；首版以“写阶段在 Freeze 时整体提交”为transaction boundary。
-- 首版不实现tombstone、delta overlay或compaction；V1 Remove仍物理移出下一份committed active集合。
+- 首版不实现tombstone、delta overlay或compaction；V2 Remove仍物理移出下一份committed active集合。
 - 不让 MemoPod 依赖 RecapGrid、HistoryTimeline 或具体 provider client。
 - 不在 SessionJournal core 中新增 MemoPod storage/query owner。
 - 不在首版定义跨 SessionJournal repository、跨用户或跨 Agent 的共享/授权模型。
@@ -94,7 +94,7 @@ RecapGrid承诺事务明细完整性。这里描述的是Galatea对两种产品�
 ```text
 MemoPod
   PodId
-  Topic                   // V1 Pod-lifetime immutable
+  Topic                   // Pod-lifetime immutable
   HandleValidity = Active | Invalidated
   Phase = Editable | Frozen
   OrderedMap<MemoId, Memo>
@@ -105,6 +105,9 @@ MemoPod
 
 Memo
   MemoId
+  Title?
+  Gist?
+  Summary?
   ExactText
 
 MemoRecallResult
@@ -117,11 +120,12 @@ MemoRecallResult
 `CommitIndeterminate`把handle正交地置为Invalidated，之后所有API均拒绝；首版没有long-lived backend handle或
 Close语义，调用方只能丢弃该对象并重新`Open`。这不是可查询、可编辑或可恢复的第三业务phase。
 
-`Memo`是immutable value。一个committed active `MemoId`在其整个可见生命周期内只对应一份`ExactText`；
-不能以相同ID替换正文。正文中的日期、人物、来源说明、置信信息或自然语言标题首版都留在`ExactText`中，
-不提前扩张字段模型。
+`Memo`是immutable value。一个committed active `MemoId`在其整个可见生命周期内只对应一份`ExactText`
+与一组可空metadata；不能以相同ID替换正文或metadata。`Title`、`Gist`、`Summary`是为后续渐进式召回、
+索引与叙事化目录预留的非唯一字段；`null`表示尚未生成或未知，非`null`时必须是单行、已trim、非空、
+strict UTF-8 bounded字符串。身份与引用稳定性仍只由`MemoId`承担。
 
-Memo entry surface收窄为`Append(exactText) -> MemoId`、`Remove(existingId)`与`Get/TryGet/List`。
+Memo entry surface收窄为`Append(exactText, title?, gist?, summary?) -> MemoId`、`Remove(existingId)`与`Get/TryGet/List`。
 不提供原位Update/Replace、caller-supplied insert/upsert或removed-ID revival。纠正文案时，caller在同一个Editable
 阶段执行`Remove(oldId)`再`Append(correctedText)`；下一次successful Freeze把两步整体提交，因此reader只会观察
 旧committed状态或“旧ID消失、新ID出现”的新committed状态。
@@ -229,16 +233,19 @@ LLM context 与产品配置上限约束，可以在打开时全量读入内存�
 建议 logical document：
 
 ```text
-schema = atelia.memo-pod.document.v1
+schema = atelia.memo-pod.document.v2
 podId
 topic
 nextMemoId
 ordered memos[]:
   id
+  title
+  gist
+  summary
   exactText
 ```
 
-V1 document是当前active Memo集合的materialization，不是operation history：Remove后该ID从下一份`memos[]`
+V2 document是当前active Memo集合的materialization，不是operation history：Remove后该ID从下一份`memos[]`
 省略，document不写tombstone或旧正文；`nextMemoId`仍保留allocator high-water，因此reader必须接受由Remove或
 “provisional Append后同epoch Remove”形成的ID gap，并拒绝任何existing ID大于等于`nextMemoId`的文档。
 
@@ -294,6 +301,7 @@ IDs按allocation ordinal递增且唯一、允许gap、所有现存ID小于`NextM
 
 - `PodId`、`MemoId` 和 Topic 长度；
 - 单条 Memo UTF-8 bytes；
+- 单条 Memo metadata UTF-8 bytes 与 active metadata 总 bytes；
 - Memo count；
 - 整个 Pod storage bytes 与 rendered prompt bytes；
 - 单次返回 ID 数和 hydrated Memo 总 bytes。
@@ -306,12 +314,12 @@ IDs按allocation ordinal递增且唯一、允许gap、所有现存ID小于`NextM
 使一个既有committed Pod无法Open、ResumeEditing或修复。route/model cap只在`RecallAsync` provider call之前
 preflight；超限抛出typed local limit failure并保持Pod Frozen，不得误报为provider failure。
 
-同一storage schema version的logical/storage/render hard bounds必须相容：任何可由`FreezeAsync`成功提交的V1
-document都必须能被V1 `Open`重新生成prompt。renderer升级不得用更小hard bound把既有合法document变成孤儿；
+同一storage schema version的logical/storage/render hard bounds必须相容：任何可由`FreezeAsync`成功提交的V2
+document都必须能被V2 `Open`重新生成prompt。renderer升级不得用更小hard bound把既有合法document变成孤儿；
 确需收紧时必须升schema/renderer contract并另立migration设计。
 
-Remove只承诺从下一次successfully committed active Pod state移除该ID。V1 storage document只保存active memos，
-因此首版Freeze会把removed Memo物理移出下一份document；这是V1 representation，不是public API对未来backend的
+Remove只承诺从下一次successfully committed active Pod state移除该ID。V2 storage document只保存active memos，
+因此首版Freeze会把removed Memo物理移出下一份document；这是V2 representation，不是public API对未来backend的
 承诺。Remove不承诺擦除历史Prepared request、provider
 cache/log、backup、temporary/remnant blocks或底层介质。Galatea激活前必须另行关闭数据分类、日志正文、backup、
 retention与secure-erasure non-promise。
@@ -363,9 +371,9 @@ renderer 同时满足两个不同合同：
 - Topic和 retrieval instructions可位于稳定前缀；
 - revision、count、timestamp、整体 hash、trace id等易变信息不得放在 Memo corpus之前；
 - query、`maxResults`、请求时间和调用追踪一律放在 tail；
-- V1 Remove物理移出active entry，会从被删条目处破坏后续cache prefix；首版明确接受；
-- V1 Topic在Create后immutable，不存在改写稳定header的metadata update；
-- 纠错采用同一Freeze内`Remove(oldId) + Append(newText)`，因此V1的cache破坏范围仍从old entry开始；删除
+- V2 Remove物理移出active entry，会从被删条目处破坏后续cache prefix；首版明确接受；
+- Topic在Create后immutable；Memo metadata update仍通过Remove+Append获得新ID，不原位改写稳定entry；
+- 纠错采用同一Freeze内`Remove(oldId) + Append(newText)`，因此V2的cache破坏范围仍从old entry开始；删除
   Replace的首版收益是ID/text不变量与API简化，不虚构额外cache收益；
 - `ResumeEditing` 使 cached prompt失效；下一次 Freeze重新生成。
 
@@ -614,7 +622,7 @@ WP-01不得交付“已经Frozen但尚无durable document或frozen prompt”的�
 
 **In scope**
 
-- storage schema V1、strict reader/writer、canonical golden；
+- storage schema V2、strict reader/writer、canonical golden；
 - caller-supplied root、strict path-safe PodId mapping与document identity验证；
 - same-directory temporary、flush/close、no-clobber first create与atomic replacement；
 - 明确的`Published`、`NotPublished`、`CommitIndeterminate` settlement结果；
@@ -641,7 +649,7 @@ WP-01不得交付“已经Frozen但尚无durable document或frozen prompt”的�
 - subprocess crash harness至少证明strict reopen只接受完整旧文档或完整新文档，不接受torn/mixed document；
 - first-create crash/indeterminate覆盖“absent或完整new”，replace覆盖“完整old或完整new”；
 - path、symlink/reparse、temporary file残留与cleanup合同按平台能力有明确tests。
-- 最大合法durable V1 document可以成功decode；跨storage/render/Open的bound关系由WP-04集成测试负责。
+- 最大合法durable V2 document可以成功decode；跨storage/render/Open的bound关系由WP-04集成测试负责。
 
 **Done when**
 
@@ -655,7 +663,7 @@ WP-01不得交付“已经Frozen但尚无durable document或frozen prompt”的�
 
 **In scope**
 
-- renderer schema V1、exact UTF-8 bytes/hash；
+- renderer schema V2、exact UTF-8 bytes/hash；
 - Memo ordering/escaping/delimiters；
 - `ObservationMessage` projection；
 - prompt byte bound与可替换token estimator seam。
@@ -674,7 +682,7 @@ WP-01不得交付“已经Frozen但尚无durable document或frozen prompt”的�
 - exact golden、Unicode/newline/delimiter adversarial corpus；
 - equivalent state exact bytes/hash；
 - append-only新增不改变旧 corpus之前的prefix；
-- V1 physical Remove及`Remove + Append`纠错的预期longest-common-prefix破坏范围被golden明确记录；
+- V2 physical Remove及`Remove + Append`纠错的预期longest-common-prefix破坏范围被golden明确记录；
 - 易变metadata和query不出现在shared prefix。
 
 **Done when**
@@ -710,7 +718,7 @@ WP-02与WP-03在WP-01之后可以并行；两者均只接受immutable value，�
 **Validation**
 
 - `Create`首次Freeze no-clobber；`Open`从strict committed document进入Frozen；
-- 最大合法durable V1 document可成功Open/render；renderer hard bound覆盖storage语言允许状态的最坏canonical
+- 最大合法durable V2 document可成功Open/render；renderer hard bound覆盖storage语言允许状态的最坏canonical
   projection，route token cap仍只在Recall preflight生效；
 - Dirty false的Editable refreeze不重写authority，但会重建prompt并进入Frozen；
 - mutation×Frozen和Freeze/Resume非法转换完整negative matrix；
@@ -923,12 +931,12 @@ fresh Candidate、fresh code/test scope与fresh user gates；旧WP-07A/B text、
 | Boundary | 文档和依赖测试证明MemoPod不进入RecapGrid publish path，SessionJournal core不反向依赖它 |
 | Phase safety | mutation×Frozen、`RecallAsync`×Editable、非法转换及invalidated handle的完整negative matrix |
 | Entry surface | production只有Append/Remove/read；无Replace/Update/upsert/SetTopic；纠错必须获得新ID |
-| ID lifecycle | pre-Freeze ID明确provisional；successful Freeze后committed；同ID ExactText immutable；Remove/reopen后不复用或revive；overflow原子失败 |
+| ID lifecycle | pre-Freeze ID明确provisional；successful Freeze后committed；同ID ExactText/metadata immutable；Remove/reopen后不复用或revive；overflow原子失败 |
 | Alias safety | caller无法通过返回collection或Memo实例绕过phase gate修改Pod |
-| Persistence | canonical V1 goldens、strict rejects、first-create no-clobber、old-or-new crash result、reopen Frozen |
+| Persistence | canonical V2 goldens、strict rejects、first-create no-clobber、old-or-new crash result、reopen Frozen |
 | Settlement | pre-publish failure保持Editable/Dirty；Published后取消或cleanup失败仍进入Frozen；indeterminate使handle fail-closed并要求reopen |
 | Determinism | same logical state → exact prompt bytes/hash |
-| Prefix stability | Append保持旧corpus prefix；V1 physical Remove与Remove+Append纠错的破坏范围有golden proof |
+| Prefix stability | Append保持旧corpus prefix；V2 physical Remove与Remove+Append纠错的破坏范围有golden proof |
 | Recall protocol | exactly-one required tool、strict IDs、empty≠failure、same-Frozen-Pod hydrate；production无detached prompt/resolve |
 | Safety | untrusted Memo无写权限/其他工具；logs/reports默认不泄漏正文 |
 | Cache evidence | Track C2：real DeepSeek cold/warm telemetry；无权威字段则记录unavailable且不宣称命中 |

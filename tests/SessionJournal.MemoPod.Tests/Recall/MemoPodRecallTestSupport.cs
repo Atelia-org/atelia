@@ -95,7 +95,7 @@ internal sealed class MemoPodRecallFixture : IDisposable {
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     );
 
-    private MemoPodRecallFixture(
+    internal MemoPodRecallFixture(
         string root,
         MemoPod pod,
         MemoId[] ids
@@ -120,7 +120,9 @@ internal sealed class MemoPodRecallFixture : IDisposable {
         );
         Directory.CreateDirectory(root);
         MemoPod pod = MemoPod.Create(root, PodId, topic);
-        MemoId[] ids = exactTexts.Select(pod.Append).ToArray();
+        MemoId[] ids = exactTexts
+            .Select(exactText => pod.Append(exactText))
+            .ToArray();
         await pod.FreezeAsync();
         return new MemoPodRecallFixture(root, pod, ids);
     }

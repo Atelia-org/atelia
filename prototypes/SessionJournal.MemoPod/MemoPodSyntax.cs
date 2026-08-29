@@ -58,6 +58,26 @@ internal static class MemoPodSyntax {
         );
     }
 
+    internal static int RequireOptionalMemoMetadata(
+        string? value,
+        string displayName,
+        int maximumUtf8Bytes,
+        string parameterName
+    ) {
+        if (value is null) {
+            return 0;
+        }
+        if (string.IsNullOrWhiteSpace(value)
+            || !string.Equals(value, value.Trim(), StringComparison.Ordinal)
+            || value.Any(char.IsControl)) {
+            throw new ArgumentException(
+                $"Memo {displayName} must be null or non-empty, already trimmed, and contain no control characters.",
+                parameterName
+            );
+        }
+        return RequireUtf8Length(value, maximumUtf8Bytes, parameterName);
+    }
+
     internal static MemoPodId RequirePodId(
         MemoPodId value,
         string parameterName

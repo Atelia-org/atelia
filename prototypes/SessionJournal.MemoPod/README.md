@@ -9,9 +9,12 @@ The object is a single-owner, sequential orchestration unit and is not
 thread-safe.
 
 The entry contract intentionally contains only `Append`, `Remove`, `Get`,
-`TryGet`, and snapshot-valued `List`. There is no in-place update/upsert or
-mutable Topic. IDs returned by Append are provisional until a successful
-Freeze commits the aggregate; committed and removed IDs are never reused.
+`TryGet`, and snapshot-valued `List`. `Append` accepts exact text plus optional
+nullable `Title`, `Gist`, and `Summary` metadata. Metadata is not unique and
+does not participate in identity; `MemoId` remains the sole stable address.
+There is no in-place update/upsert or mutable Topic/Memo. IDs returned by
+Append are provisional until a successful Freeze commits the aggregate;
+committed and removed IDs are never reused.
 
 Frozen Pods cache an internal deterministic provider-neutral prompt. The cache
 is invalidated by `ResumeEditing` and rebuilt by every Freeze, including a

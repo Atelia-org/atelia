@@ -66,11 +66,16 @@ public sealed partial class MemoPod {
     public static MemoPod Open(string rootPath, MemoPodId podId)
         => OpenCore(rootPath, podId, MemoPodLifecycleTestHooks.None);
 
-    public MemoId Append(string exactText) {
+    public MemoId Append(
+        string exactText,
+        string? title = null,
+        string? gist = null,
+        string? summary = null
+    ) {
         ThrowIfInvalidated();
         RequirePhase(MemoPodPhase.Editable, nameof(Append));
 
-        MemoId id = _working.Append(exactText);
+        MemoId id = _working.Append(exactText, title, gist, summary);
         _dirty = true;
         return id;
     }

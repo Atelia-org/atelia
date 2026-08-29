@@ -103,10 +103,22 @@ public sealed class MemoPodRecallResultTests {
 
     [Fact]
     public async Task ResultRemainsSelfContainedAfterResumeAndRemoval() {
+        string root = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-memo-pod-recall-result-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(root);
+        MemoPod pod = MemoPod.Create(root, MemoPodRecallFixture.PodId, "topic");
+        MemoId id = pod.Append(
+            "remember me",
+            title: "Durable detail",
+            gist: "Remember this",
+            summary: "The result must keep this metadata after removal."
+        );
+        await pod.FreezeAsync();
         using MemoPodRecallFixture fixture =
-            await MemoPodRecallFixture.CreateAsync(
-                exactTexts: ["remember me"]
-            );
+            new(root, pod, [id]);
         string arguments =
             $"{{\"memoIds\":[\"{fixture.Ids[0].Value}\"]}}";
         var client = new FakeMemoRecallCompletionClient {
@@ -126,6 +138,12 @@ public sealed class MemoPodRecallResultTests {
 
         Memo recalled = Assert.Single(result.Memos);
         Assert.Equal(fixture.Ids[0], recalled.Id);
+        Assert.Equal("Durable detail", recalled.Title);
+        Assert.Equal("Remember this", recalled.Gist);
+        Assert.Equal(
+            "The result must keep this metadata after removal.",
+            recalled.Summary
+        );
         Assert.Equal("remember me", recalled.ExactText);
         Assert.Empty(fixture.Pod.List());
     }
