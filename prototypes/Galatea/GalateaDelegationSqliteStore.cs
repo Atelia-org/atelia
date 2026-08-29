@@ -699,13 +699,13 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             || limits.MaximumTaskUtf8Bytes is < 1
                 or > GalateaDelegationStateBounds.MaximumTaskUtf8Bytes
             || limits.MaximumReplyUtf8Bytes is < 1
-                or > GalateaPlayerObservationEnvelope.MaximumReplyUtf8Bytes
+                or > PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes
             || limits.MaximumInboxReplies is < 1
                 or > GalateaDelegationStateBounds.MaximumCandidateCount
             || limits.MaximumInboxUtf8Bytes
                 < Math.Max(
                     limits.MaximumReplyUtf8Bytes,
-                    GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes
+                    PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes
                 )) {
             throw new ArgumentOutOfRangeException(
                 nameof(limits),

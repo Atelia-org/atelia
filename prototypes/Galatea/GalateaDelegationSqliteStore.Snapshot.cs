@@ -549,7 +549,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
         int reservationBytes = Math.Max(
             limits.MaximumReplyUtf8Bytes,
-            GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes
+            PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes
         );
         if (actualCount + reservations > limits.MaximumInboxReplies
             || actualBytes + (long)reservations * reservationBytes
@@ -915,7 +915,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
         try {
             RequireWireIdentity(lease.LeaseId, nameof(lease.LeaseId));
-            _ = new GalateaPlayerObservation(lease.PlayerText);
+            _ = new PlayerTurnObservation(lease.PlayerText);
         }
         catch (ArgumentException exception) {
             throw Corrupt("Reply lease player text is invalid.", exception);
@@ -973,7 +973,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     StringComparison.Ordinal)) {
                 throw Corrupt("Reply lease Observation identity is invalid.");
             }
-            GalateaReadyNotice[] expectedNotices = lease.NoticeIds.Select(
+            PlayerTurnNotice[] expectedNotices = lease.NoticeIds.Select(
                 noticeId => {
                     GalateaReplyNoticeSnapshot notice = notices.Single(
                         value => string.Equals(
@@ -984,26 +984,26 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     );
                     return notice.Kind switch {
                         GalateaReplyNoticeKind.Reply =>
-                            (GalateaReadyNotice)new GalateaReadyNotice.Reply(
+                            (PlayerTurnNotice)new PlayerTurnNotice.Reply(
                                 notice.Body
                             ),
                         GalateaReplyNoticeKind.DeliveryFailure =>
-                            new GalateaReadyNotice.DeliveryFailure(
+                            new PlayerTurnNotice.DeliveryFailure(
                                 notice.Body
                             ),
                         _ => throw Corrupt("Reply notice kind is unknown.")
                     };
                 }
             ).ToArray();
-            if (!GalateaPlayerObservationEnvelope.TryUnwrap(
+            if (!PlayerTurnObservationEnvelope.TryUnwrap(
                     lease.RenderedObservation,
-                    out GalateaPlayerObservation parsed)
+                    out PlayerTurnObservation parsed)
                 || !string.Equals(
                     parsed.PlayerText,
                     lease.PlayerText,
                     StringComparison.Ordinal)
-                || parsed.ReadyNotices.Count != expectedNotices.Length
-                || !parsed.ReadyNotices.Zip(
+                || parsed.Notices.Count != expectedNotices.Length
+                || !parsed.Notices.Zip(
                     expectedNotices,
                     static (actual, expected) =>
                         actual.GetType() == expected.GetType()

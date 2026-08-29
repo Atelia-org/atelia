@@ -4,15 +4,15 @@ using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
 
-internal abstract class GalateaReadyNotice {
-    private protected GalateaReadyNotice(
+internal abstract class PlayerTurnNotice {
+    private protected PlayerTurnNotice(
         string body,
         int maximumUtf8Bytes,
         string parameterName
     ) {
         if (string.IsNullOrWhiteSpace(body)) {
             throw new ArgumentException(
-                "Ready notice body must not be blank.",
+                "Player-turn notice body must not be blank.",
                 parameterName
             );
         }
@@ -21,13 +21,13 @@ internal abstract class GalateaReadyNotice {
                     > maximumUtf8Bytes) {
                 throw new ArgumentOutOfRangeException(
                     parameterName,
-                    "Ready notice body exceeds its UTF-8 byte limit."
+                    "Player-turn notice body exceeds its UTF-8 byte limit."
                 );
             }
         }
         catch (EncoderFallbackException exception) {
             throw new ArgumentException(
-                "Ready notice body must contain valid Unicode.",
+                "Player-turn notice body must contain valid Unicode.",
                 parameterName,
                 exception
             );
@@ -37,47 +37,47 @@ internal abstract class GalateaReadyNotice {
 
     internal string Body { get; }
 
-    internal sealed class Reply : GalateaReadyNotice {
+    internal sealed class Reply : PlayerTurnNotice {
         internal Reply(string body) : base(
             body,
-            GalateaPlayerObservationEnvelope.MaximumReplyUtf8Bytes,
+            PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes,
             nameof(body)
         ) { }
     }
 
-    internal sealed class DeliveryFailure : GalateaReadyNotice {
+    internal sealed class DeliveryFailure : PlayerTurnNotice {
         internal DeliveryFailure(string body) : base(
             body,
-            GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes,
+            PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes,
             nameof(body)
         ) { }
     }
 }
 
-internal sealed class GalateaPlayerObservation {
-    internal GalateaPlayerObservation(
+internal sealed class PlayerTurnObservation {
+    internal PlayerTurnObservation(
         string playerText,
-        IEnumerable<GalateaReadyNotice>? readyNotices = null
+        IEnumerable<PlayerTurnNotice>? notices = null
     ) : this(
         playerText,
         externalLocalTimestamp: null,
-        readyNotices
+        notices
     ) { }
 
-    internal GalateaPlayerObservation(
+    internal PlayerTurnObservation(
         string playerText,
         DateTimeOffset externalLocalTimestamp,
-        IEnumerable<GalateaReadyNotice>? readyNotices = null
+        IEnumerable<PlayerTurnNotice>? notices = null
     ) : this(
         playerText,
         (DateTimeOffset?)externalLocalTimestamp,
-        readyNotices
+        notices
     ) { }
 
-    private GalateaPlayerObservation(
+    private PlayerTurnObservation(
         string playerText,
         DateTimeOffset? externalLocalTimestamp,
-        IEnumerable<GalateaReadyNotice>? readyNotices
+        IEnumerable<PlayerTurnNotice>? notices
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(playerText);
         string? messageError = GalateaHttpV1.ValidateMessage(playerText);
@@ -85,17 +85,17 @@ internal sealed class GalateaPlayerObservation {
             throw new ArgumentException(messageError, nameof(playerText));
         }
 
-        GalateaReadyNotice[] frozen = readyNotices?.Select(
+        PlayerTurnNotice[] frozen = notices?.Select(
             static notice => notice ?? throw new ArgumentException(
-                "Ready notice collections must not contain null items.",
-                nameof(readyNotices)
+                "Player-turn notice collections must not contain null items.",
+                nameof(notices)
             )
         ).ToArray() ?? [];
         if (frozen.Length
-                > GalateaPlayerObservationEnvelope.MaximumNoticeCount) {
+                > PlayerTurnObservationEnvelope.MaximumNoticeCount) {
             throw new ArgumentOutOfRangeException(
-                nameof(readyNotices),
-                "A player observation contains too many ready notices."
+                nameof(notices),
+                "A player-turn Observation contains too many notices."
             );
         }
         if (externalLocalTimestamp is { } timestamp
@@ -108,15 +108,15 @@ internal sealed class GalateaPlayerObservation {
 
         PlayerText = playerText;
         ExternalLocalTimestamp = externalLocalTimestamp;
-        ReadyNotices = Array.AsReadOnly(frozen);
+        Notices = Array.AsReadOnly(frozen);
     }
 
     internal string PlayerText { get; }
     internal DateTimeOffset? ExternalLocalTimestamp { get; }
-    internal IReadOnlyList<GalateaReadyNotice> ReadyNotices { get; }
+    internal IReadOnlyList<PlayerTurnNotice> Notices { get; }
 }
 
-internal static class GalateaPlayerObservationEnvelope {
+internal static class PlayerTurnObservationEnvelope {
     internal const int MaximumReplyUtf8Bytes = 256 * 1024;
     internal const int MaximumFailureUtf8Bytes = 4 * 1024;
     internal const int MaximumNoticeCount = 16;
@@ -171,7 +171,7 @@ internal static class GalateaPlayerObservationEnvelope {
         timestamp.Offset
     );
 
-    internal static string Wrap(GalateaPlayerObservation observation) {
+    internal static string Wrap(PlayerTurnObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
         return Render(
             observation,
@@ -181,7 +181,7 @@ internal static class GalateaPlayerObservationEnvelope {
     }
 
     private static string Render(
-        GalateaPlayerObservation observation,
+        PlayerTurnObservation observation,
         string replyHeading,
         string failureHeading
     ) {
@@ -201,10 +201,10 @@ internal static class GalateaPlayerObservationEnvelope {
             observation.PlayerText
         );
         string previousBody = observation.PlayerText;
-        foreach (GalateaReadyNotice notice in observation.ReadyNotices) {
+        foreach (PlayerTurnNotice notice in observation.Notices) {
             AppendSectionSeparator(builder, previousBody);
             switch (notice) {
-                case GalateaReadyNotice.Reply:
+                case PlayerTurnNotice.Reply:
                     AppendSection(
                         builder,
                         replyHeading,
@@ -212,7 +212,7 @@ internal static class GalateaPlayerObservationEnvelope {
                         notice.Body
                     );
                     break;
-                case GalateaReadyNotice.DeliveryFailure:
+                case PlayerTurnNotice.DeliveryFailure:
                     AppendSection(
                         builder,
                         failureHeading,
@@ -222,7 +222,7 @@ internal static class GalateaPlayerObservationEnvelope {
                     break;
                 default:
                     throw new ArgumentException(
-                        "Unsupported ready notice kind.",
+                        "Unsupported player-turn notice kind.",
                         nameof(observation)
                     );
             }
@@ -238,7 +238,7 @@ internal static class GalateaPlayerObservationEnvelope {
 
     internal static bool TryUnwrap(
         string? stored,
-        out GalateaPlayerObservation observation
+        out PlayerTurnObservation observation
     ) {
         observation = null!;
         if (stored is null
@@ -273,7 +273,7 @@ internal static class GalateaPlayerObservationEnvelope {
         string replyHeading,
         string failureHeading,
         bool allowTimestamp,
-        out GalateaPlayerObservation observation
+        out PlayerTurnObservation observation
     ) {
         observation = null!;
         int position = Prefix.Length;
@@ -318,7 +318,7 @@ internal static class GalateaPlayerObservationEnvelope {
             return false;
         }
 
-        var notices = new List<GalateaReadyNotice>();
+        var notices = new List<PlayerTurnNotice>();
         while (position < stored.Length) {
             if (stored.AsSpan(position).StartsWith(
                     "## " + replyHeading + "\n\n",
@@ -331,7 +331,7 @@ internal static class GalateaPlayerObservationEnvelope {
                         out string body)) {
                     return false;
                 }
-                notices.Add(new GalateaReadyNotice.Reply(body));
+                notices.Add(new PlayerTurnNotice.Reply(body));
             }
             else if (stored.AsSpan(position).StartsWith(
                          "## " + failureHeading + "\n\n",
@@ -345,7 +345,7 @@ internal static class GalateaPlayerObservationEnvelope {
                     return false;
                 }
                 notices.Add(
-                    new GalateaReadyNotice.DeliveryFailure(body)
+                    new PlayerTurnNotice.DeliveryFailure(body)
                 );
             }
             else {
@@ -354,12 +354,12 @@ internal static class GalateaPlayerObservationEnvelope {
         }
 
         var parsed = externalLocalTimestamp is { } timestamp
-            ? new GalateaPlayerObservation(
+            ? new PlayerTurnObservation(
                 playerText,
                 timestamp,
                 notices
             )
-            : new GalateaPlayerObservation(playerText, notices);
+            : new PlayerTurnObservation(playerText, notices);
         if (!string.Equals(
                 stored,
                 Render(parsed, replyHeading, failureHeading),
@@ -379,11 +379,11 @@ internal static class GalateaPlayerObservationEnvelope {
     /// player section. Therefore this concrete render is the byte worst case.
     /// </summary>
     internal static bool FitsEveryValidPlayerText(
-        IReadOnlyList<GalateaReadyNotice> notices
+        IReadOnlyList<PlayerTurnNotice> notices
     ) {
         ArgumentNullException.ThrowIfNull(notices);
         try {
-            _ = Wrap(new GalateaPlayerObservation(
+            _ = Wrap(new PlayerTurnObservation(
                 MaximumRenderedPlayerText,
                 MaximumBudgetTimestamp,
                 notices
@@ -396,16 +396,16 @@ internal static class GalateaPlayerObservationEnvelope {
     }
 
     internal static string FormatForDisplay(
-        GalateaPlayerObservation observation
+        PlayerTurnObservation observation
     ) {
         ArgumentNullException.ThrowIfNull(observation);
         var builder = new StringBuilder(observation.PlayerText);
-        foreach (GalateaReadyNotice notice in observation.ReadyNotices) {
+        foreach (PlayerTurnNotice notice in observation.Notices) {
             string heading = notice switch {
-                GalateaReadyNotice.Reply => ReplyHeading,
-                GalateaReadyNotice.DeliveryFailure => FailureHeading,
+                PlayerTurnNotice.Reply => ReplyHeading,
+                PlayerTurnNotice.DeliveryFailure => FailureHeading,
                 _ => throw new ArgumentException(
-                    "Unsupported ready notice kind.",
+                    "Unsupported player-turn notice kind.",
                     nameof(observation)
                 )
             };
@@ -515,23 +515,23 @@ internal static class GalateaPlayerObservationEnvelope {
         if (utf8Bytes > MaximumRenderedUtf8Bytes) {
             throw new ArgumentOutOfRangeException(
                 nameof(rendered),
-                "Composite player observation exceeds its UTF-8 byte limit."
+                "Player-turn Observation exceeds its UTF-8 byte limit."
             );
         }
     }
 }
 
-internal static class GalateaPlayerObservationClassifier {
+internal static class PlayerTurnObservationClassifier {
     internal static bool TryProject(
         string? stored,
         out string playerText,
         out string displayText
     ) {
-        if (GalateaPlayerObservationEnvelope.TryUnwrap(
+        if (PlayerTurnObservationEnvelope.TryUnwrap(
                 stored,
-                out GalateaPlayerObservation composite)) {
+                out PlayerTurnObservation composite)) {
             playerText = composite.PlayerText;
-            displayText = GalateaPlayerObservationEnvelope
+            displayText = PlayerTurnObservationEnvelope
                 .FormatForDisplay(composite);
             return true;
         }

@@ -180,18 +180,18 @@ internal abstract record GalateaFreshInput {
     internal sealed record PlayerAction : GalateaFreshInput {
         internal PlayerAction(
             string text,
-            IEnumerable<GalateaReadyNotice>? readyNotices = null
+            IEnumerable<PlayerTurnNotice>? notices = null
         ) {
-            var observation = new GalateaPlayerObservation(
+            var observation = new PlayerTurnObservation(
                 text,
-                readyNotices
+                notices
             );
             Text = observation.PlayerText;
-            ReadyNotices = observation.ReadyNotices;
+            Notices = observation.Notices;
         }
 
         internal string Text { get; }
-        internal IReadOnlyList<GalateaReadyNotice> ReadyNotices { get; }
+        internal IReadOnlyList<PlayerTurnNotice> Notices { get; }
         internal override string DisplayText => Text;
     }
 

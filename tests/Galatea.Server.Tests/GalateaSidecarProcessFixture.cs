@@ -95,7 +95,7 @@ internal sealed class GalateaSidecarProcessFixture : IDisposable {
             MaximumReplyUtf8Bytes: maximumBodyUtf8Bytes,
             MaximumInboxReplies: 16,
             MaximumInboxUtf8Bytes: Math.Max(
-                GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes,
+                PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes,
                 Math.Max(
                     maximumFrameUtf8Bytes,
                     maximumBodyUtf8Bytes

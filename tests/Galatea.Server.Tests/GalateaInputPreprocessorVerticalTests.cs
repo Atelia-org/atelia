@@ -71,10 +71,10 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             static value => value.Id
         ));
         Assert.False(service.TryGetConnection(helper.Id, out _));
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
             Assert.Single(session.Engine.ReadRecentCompletedTurns()
                 .RequireSnapshot().Turns).ObservationContent,
-            out GalateaPlayerObservation observation
+            out PlayerTurnObservation observation
         ));
         Assert.Equal("normalized input", observation.PlayerText);
         Assert.NotNull(observation.ExternalLocalTimestamp);
@@ -300,9 +300,9 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         string wrapped = Assert.IsType<string>(
             requestedObservation.Content
         );
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
             wrapped,
-            out GalateaPlayerObservation observation
+            out PlayerTurnObservation observation
         ));
         Assert.Equal("normalized input", observation.PlayerText);
         Assert.NotNull(observation.ExternalLocalTimestamp);

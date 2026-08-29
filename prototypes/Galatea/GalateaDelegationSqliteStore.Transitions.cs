@@ -1544,7 +1544,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         long bytes = reader.GetInt64(1);
         int reservationBytes = Math.Max(
             limits.MaximumReplyUtf8Bytes,
-            GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes
+            PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes
         );
         if (count >= limits.MaximumInboxReplies
             || bytes > limits.MaximumInboxUtf8Bytes
@@ -1585,7 +1585,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         int noticeBytes = StrictUtf8.GetByteCount(noticeBody);
         int maximumReplyReservationBytes = Math.Max(
             limits.MaximumReplyUtf8Bytes,
-            GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes
+            PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes
         );
         int reservedCount = checked(activeReservations + 1);
         int reservedBytes = checked(
@@ -1703,11 +1703,11 @@ internal sealed partial class GalateaDelegationSqliteStore {
     }
 
     private static void RequireReplyBody(string value, string parameter) =>
-        RequireText(value, GalateaPlayerObservationEnvelope.MaximumReplyUtf8Bytes,
+        RequireText(value, PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes,
             parameter, allowLineBreaks: true);
 
     private static void RequireFailureNoticeBody(string value, string parameter) =>
-        RequireText(value, GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes,
+        RequireText(value, PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes,
             parameter, allowLineBreaks: true);
 
     private static void RequireRoute(

@@ -169,7 +169,7 @@ internal static class GalateaDelegateConfigReader {
             1,
             Math.Min(
                 MaximumBodyUtf8Bytes,
-                GalateaPlayerObservationEnvelope.MaximumReplyUtf8Bytes
+                PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes
             )
         );
         int maximumInboxReplies = ReadBoundedInteger(
@@ -196,7 +196,7 @@ internal static class GalateaDelegateConfigReader {
         );
         if (maximumInboxBytes < Math.Max(
                 maximumReplyUtf8Bytes,
-                GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes
+                PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes
             )) {
             throw new InvalidDataException(
                 "maximumInboxUtf8Bytes must hold one maximum reply or delivery failure."
@@ -335,7 +335,7 @@ internal static class GalateaDelegateConfigReader {
             1,
             Math.Min(
                 MaximumBodyUtf8Bytes,
-                GalateaPlayerObservationEnvelope.MaximumReplyUtf8Bytes
+                PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes
             ));
         RequireBoundedInteger(route.MaximumInboxReplies,
             "maximumInboxReplies", 1, MaximumInboxCount);
@@ -353,7 +353,7 @@ internal static class GalateaDelegateConfigReader {
         );
         if (route.MaximumInboxUtf8Bytes < Math.Max(
                 route.MaximumReplyUtf8Bytes,
-                GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes
+                PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes
             )) {
             throw new InvalidDataException(
                 "maximumInboxUtf8Bytes must hold one maximum reply or delivery failure."

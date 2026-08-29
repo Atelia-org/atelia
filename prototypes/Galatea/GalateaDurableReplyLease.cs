@@ -90,7 +90,7 @@ internal sealed class GalateaDurableReplyLease {
     internal string LeaseId { get; }
     internal long Revision => Interlocked.Read(ref _revision);
 
-    internal IReadOnlyList<GalateaReadyNotice> ReadNotices() {
+    internal IReadOnlyList<PlayerTurnNotice> ReadNotices() {
         GalateaDelegationStateSnapshot storeSnapshot = _store.ReadSnapshot();
         GalateaReplyLeaseSnapshot lease = RequireCurrent(storeSnapshot);
         return ProjectNotices(lease, storeSnapshot.Notices);
@@ -101,8 +101,8 @@ internal sealed class GalateaDurableReplyLease {
     ) {
         GalateaDelegationStateSnapshot storeSnapshot = _store.ReadSnapshot();
         GalateaReplyLeaseSnapshot lease = RequireCurrent(storeSnapshot);
-        return GalateaPlayerObservationEnvelope.Wrap(
-            new GalateaPlayerObservation(
+        return PlayerTurnObservationEnvelope.Wrap(
+            new PlayerTurnObservation(
                 lease.PlayerText,
                 externalLocalTimestamp,
                 ProjectNotices(lease, storeSnapshot.Notices)
@@ -232,7 +232,7 @@ internal sealed class GalateaDurableReplyLease {
         return current;
     }
 
-    internal static IReadOnlyList<GalateaReadyNotice> ProjectNotices(
+    internal static IReadOnlyList<PlayerTurnNotice> ProjectNotices(
         GalateaReplyLeaseSnapshot lease,
         IReadOnlyList<GalateaReplyNoticeSnapshot> notices
     ) => Array.AsReadOnly(lease.NoticeIds.Select(noticeId => {
@@ -245,11 +245,11 @@ internal sealed class GalateaDurableReplyLease {
         );
         return notice.Kind switch {
             GalateaReplyNoticeKind.Reply =>
-                (GalateaReadyNotice)new GalateaReadyNotice.Reply(
+                (PlayerTurnNotice)new PlayerTurnNotice.Reply(
                     notice.Body
                 ),
             GalateaReplyNoticeKind.DeliveryFailure =>
-                new GalateaReadyNotice.DeliveryFailure(notice.Body),
+                new PlayerTurnNotice.DeliveryFailure(notice.Body),
             _ => throw new InvalidDataException(
                 "The durable reply notice kind is invalid."
             )
@@ -275,7 +275,7 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
     internal GalateaDurableReplyLeaseBeginResult BeginCutoff(
         string playerText
     ) {
-        _ = new GalateaPlayerObservation(playerText);
+        _ = new PlayerTurnObservation(playerText);
         GalateaDelegationStateSnapshot snapshot = _store.ReadSnapshot();
         if (snapshot.ActiveLease is not null) {
             throw new GalateaDelegationStoreConflictException(
@@ -293,18 +293,18 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
 
         var selected = new List<GalateaReplyNoticeSnapshot>(Math.Min(
             available.Length,
-            GalateaPlayerObservationEnvelope.MaximumNoticeCount
+            PlayerTurnObservationEnvelope.MaximumNoticeCount
         ));
         foreach (GalateaReplyNoticeSnapshot notice in available) {
             if (selected.Count
-                == GalateaPlayerObservationEnvelope.MaximumNoticeCount) {
+                == PlayerTurnObservationEnvelope.MaximumNoticeCount) {
                 break;
             }
-            GalateaReadyNotice[] proposed = [
+            PlayerTurnNotice[] proposed = [
                 .. selected.Select(ProjectReadyNotice),
                 ProjectReadyNotice(notice)
             ];
-            if (!GalateaPlayerObservationEnvelope
+            if (!PlayerTurnObservationEnvelope
                     .FitsEveryValidPlayerText(proposed)) {
                 break;
             }
@@ -312,7 +312,7 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
         }
         if (selected.Count == 0) {
             throw new InvalidDataException(
-                "The earliest Ready notice cannot fit a durable player Observation."
+                "The earliest Ready notice cannot fit a durable player-turn Observation."
             );
         }
 
@@ -546,13 +546,13 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
         );
     }
 
-    private static GalateaReadyNotice ProjectReadyNotice(
+    private static PlayerTurnNotice ProjectReadyNotice(
         GalateaReplyNoticeSnapshot notice
     ) => notice.Kind switch {
         GalateaReplyNoticeKind.Reply =>
-            new GalateaReadyNotice.Reply(notice.Body),
+            new PlayerTurnNotice.Reply(notice.Body),
         GalateaReplyNoticeKind.DeliveryFailure =>
-            new GalateaReadyNotice.DeliveryFailure(notice.Body),
+            new PlayerTurnNotice.DeliveryFailure(notice.Body),
         _ => throw new InvalidDataException(
             "The durable reply notice kind is invalid."
         )

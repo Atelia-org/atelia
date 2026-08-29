@@ -11,9 +11,9 @@ internal static class GalateaDelegationStateBounds {
     internal const int MaximumCandidateUtf8Bytes =
         GalateaDelegationDurableContract.MaximumCandidateUtf8Bytes;
     internal const int MaximumReplyNoticeCount =
-        GalateaPlayerObservationEnvelope.MaximumNoticeCount;
+        PlayerTurnObservationEnvelope.MaximumNoticeCount;
     internal const int MaximumObservationUtf8Bytes =
-        GalateaPlayerObservationEnvelope.MaximumRenderedUtf8Bytes;
+        PlayerTurnObservationEnvelope.MaximumRenderedUtf8Bytes;
     internal const int MaximumIdentityUtf8Bytes = 1024;
     internal const int MaximumOperationIdUtf8Bytes = 512;
     internal const int MaximumFailureTokenUtf8Bytes = 128;

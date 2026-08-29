@@ -155,7 +155,7 @@ public sealed class GalateaDelegateConfigTests {
             .AsObject();
         failureRoute["maximumReplyUtf8Bytes"] = 1;
         failureRoute["maximumInboxUtf8Bytes"] =
-            GalateaPlayerObservationEnvelope.MaximumFailureUtf8Bytes - 1;
+            PlayerTurnObservationEnvelope.MaximumFailureUtf8Bytes - 1;
         Assert.Throws<InvalidDataException>(() => fixture.Load(failure));
     }
 

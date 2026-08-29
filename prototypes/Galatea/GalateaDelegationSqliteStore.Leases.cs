@@ -9,7 +9,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         IReadOnlyList<GalateaReplyLeaseMember> members
     ) {
         RequireWireIdentity(leaseId, nameof(leaseId));
-        _ = new GalateaPlayerObservation(playerText);
+        _ = new PlayerTurnObservation(playerText);
         ArgumentNullException.ThrowIfNull(members);
         if (members.Count is < 1
                 or > GalateaDelegationStateBounds.MaximumReplyNoticeCount
@@ -165,9 +165,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         GalateaReplyLeaseState.CutoffFrozen,
                         expectedLeaseRevision
                     );
-                    if (!GalateaPlayerObservationEnvelope.TryUnwrap(
+                    if (!PlayerTurnObservationEnvelope.TryUnwrap(
                             renderedObservation,
-                            out GalateaPlayerObservation parsed)
+                            out PlayerTurnObservation parsed)
                         || parsed.ExternalLocalTimestamp is not { }
                             externalLocalTimestamp) {
                         throw Conflict(
@@ -650,18 +650,18 @@ internal sealed partial class GalateaDelegationSqliteStore {
     private static void RequireRenderableLease(
         IReadOnlyList<GalateaReplyNoticeSnapshot> notices
     ) {
-        GalateaReadyNotice[] ready = notices.Select(static notice =>
+        PlayerTurnNotice[] ready = notices.Select(static notice =>
             notice.Kind switch {
                 GalateaReplyNoticeKind.Reply =>
-                    (GalateaReadyNotice)new GalateaReadyNotice.Reply(
+                    (PlayerTurnNotice)new PlayerTurnNotice.Reply(
                         notice.Body
                     ),
                 GalateaReplyNoticeKind.DeliveryFailure =>
-                    new GalateaReadyNotice.DeliveryFailure(notice.Body),
+                    new PlayerTurnNotice.DeliveryFailure(notice.Body),
                 _ => throw Corrupt("Reply notice kind is unknown.")
             }
         ).ToArray();
-        if (!GalateaPlayerObservationEnvelope.FitsEveryValidPlayerText(ready)) {
+        if (!PlayerTurnObservationEnvelope.FitsEveryValidPlayerText(ready)) {
             throw new InvalidOperationException(
                 "The reply lease prefix cannot fit every valid player text."
             );
@@ -678,7 +678,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             connection,
             transaction
         );
-        GalateaReadyNotice[] ready = lease.NoticeIds.Select(noticeId => {
+        PlayerTurnNotice[] ready = lease.NoticeIds.Select(noticeId => {
             GalateaReplyNoticeSnapshot notice = notices.Single(value =>
                 string.Equals(
                     value.NoticeId,
@@ -687,16 +687,16 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 ));
             return notice.Kind switch {
                 GalateaReplyNoticeKind.Reply =>
-                    (GalateaReadyNotice)new GalateaReadyNotice.Reply(
+                    (PlayerTurnNotice)new PlayerTurnNotice.Reply(
                         notice.Body
                     ),
                 GalateaReplyNoticeKind.DeliveryFailure =>
-                    new GalateaReadyNotice.DeliveryFailure(notice.Body),
+                    new PlayerTurnNotice.DeliveryFailure(notice.Body),
                 _ => throw Corrupt("Reply notice kind is unknown.")
             };
         }).ToArray();
-        return GalateaPlayerObservationEnvelope.Wrap(
-            new GalateaPlayerObservation(
+        return PlayerTurnObservationEnvelope.Wrap(
+            new PlayerTurnObservation(
                 lease.PlayerText,
                 externalLocalTimestamp,
                 ready

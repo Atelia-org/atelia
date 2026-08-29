@@ -29,7 +29,7 @@ contracts冲突，以本节和current contracts为准。最终产品形状是：
   `--character-name`与`--player-name`。`Galatea` + `刘世超`参数保持V5 canonical bundle四个digest exact不变。
 - 每个user在composition阶段获得immutable outbound extractor，共享底层lazy Completion client；
   extractor V2 `ContractId`指纹包含渲染后语义合同，但不包含provider/model/connection路由。
-- inbound mail保持原XML schema，消息自身冻结validated `To`。Player observation保持原prefix和
+- inbound mail保持原XML schema，消息自身冻结validated `To`。Player-turn Observation保持原prefix和
   delegation store schema V1；新writer使用角色中立heading，reader exact支持新旧两种闭集dialect。
 - fresh/current路径只比较active recipe的typed `BuildTargetDigest`与当前user的V6 expectation；
   mismatch fail closed为`character-asset-mismatch`并隐藏Context header。Frozen recovery完全使用已冻结身份。
@@ -427,7 +427,7 @@ Inbound 收件人与 reply notice 的生命周期不同，应分别处理：
 - Codex reply 与 delivery-failure 的新 headings 改为不依赖姓名的“来自外界代行者 Codex 的回信”与
   “发往外界代行者 Codex 的信未能送达”。Main system prompt 已经定义当前角色是谁，无需在每个 runtime
   envelope 复制名字。
-- Player observation保持原prefix、info-string grammar和delegation store schema V1。新writer写中立headings；
+- Player-turn Observation保持原prefix、info-string grammar和delegation store schema V1。新writer写中立headings；
   reader只接受“当前中立headings”或“historical Galatea headings”这两种完整closed dialect，拒绝混用。
   不为同一字节grammar增加虚构的envelope V2/prefix。
 - `ObservationBound` / `ObservationCommitted`的lease已持久化exact rendered bytes、UTF-8 length与SHA-256；

@@ -481,7 +481,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string? rewindLatestToken = snapshot.CapturedHead is { } head
             && snapshot.Turns.FirstOrDefault()?.TerminalAction.Address
                 == head
-            && GalateaPlayerObservationClassifier.TryProject(
+            && PlayerTurnObservationClassifier.TryProject(
                 snapshot.Turns.First().ObservationContent,
                 out _,
                 out _
@@ -1052,7 +1052,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             };
         }
 
-        if (!GalateaPlayerObservationClassifier.TryProject(
+        if (!PlayerTurnObservationClassifier.TryProject(
                 ready.Value.ObservationContent,
                 out string poppedUserText,
                 out _)) {
@@ -1483,16 +1483,16 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string prompted;
         if (liveTurn.FreshInput is GalateaFreshInput.PlayerAction player) {
             DateTimeOffset externalLocalTimestamp =
-                GalateaPlayerObservationEnvelope.TruncateToSecond(
+                PlayerTurnObservationEnvelope.TruncateToSecond(
                     _timeProvider.GetLocalNow()
                 );
             prompted = liveTurn.DurableReplyLease is { } lease
                 ? lease.RenderObservation(externalLocalTimestamp)
-                : GalateaPlayerObservationEnvelope.Wrap(
-                    new GalateaPlayerObservation(
+                : PlayerTurnObservationEnvelope.Wrap(
+                    new PlayerTurnObservation(
                         player.Text,
                         externalLocalTimestamp,
-                        player.ReadyNotices
+                        player.Notices
                     )
                 );
         }
@@ -2002,8 +2002,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string userMessage,
         DateTimeOffset externalLocalTimestamp
     ) {
-        return GalateaPlayerObservationEnvelope.Wrap(
-            new GalateaPlayerObservation(
+        return PlayerTurnObservationEnvelope.Wrap(
+            new PlayerTurnObservation(
                 userMessage,
                 externalLocalTimestamp
             )
@@ -2011,7 +2011,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     }
 
     internal static string NormalizeUserMessageForDisplay(string? storedUserMessage) {
-        return GalateaPlayerObservationClassifier.TryProject(
+        return PlayerTurnObservationClassifier.TryProject(
             storedUserMessage,
             out _,
             out string display

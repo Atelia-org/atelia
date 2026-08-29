@@ -57,16 +57,16 @@ public sealed class GalateaDurableReplyLeaseTests {
             "^galatea-reply-lease-[0-9a-f]{32}$",
             lease.LeaseId
         );
-        IReadOnlyList<GalateaReadyNotice> frozen = lease.ReadNotices();
+        IReadOnlyList<PlayerTurnNotice> frozen = lease.ReadNotices();
         Assert.Collection(
             frozen,
             value => Assert.Equal(
                 "reply-1",
-                Assert.IsType<GalateaReadyNotice.Reply>(value).Body
+                Assert.IsType<PlayerTurnNotice.Reply>(value).Body
             ),
             value => Assert.Equal(
                 "failure-2",
-                Assert.IsType<GalateaReadyNotice.DeliveryFailure>(value).Body
+                Assert.IsType<PlayerTurnNotice.DeliveryFailure>(value).Body
             )
         );
 
@@ -85,23 +85,23 @@ public sealed class GalateaDurableReplyLeaseTests {
         Assert.Equal(2, snapshot.ActiveLease!.NoticeIds.Count);
 
         string rendered = lease.RenderObservation(ObservationTimestamp);
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
             rendered,
-            out GalateaPlayerObservation observation
+            out PlayerTurnObservation observation
         ));
         Assert.Equal("player", observation.PlayerText);
         Assert.Equal(
             ObservationTimestamp,
             observation.ExternalLocalTimestamp
         );
-        Assert.Equal(2, observation.ReadyNotices.Count);
+        Assert.Equal(2, observation.Notices.Count);
     }
 
     [Fact]
     public void BeginCutoff_CapsTheEarliestFifoPrefixAtCodeOwnedLimit() {
         using var fixture = new Fixture(maximumInboxReplies: 24);
         for (int index = 0;
-             index < GalateaPlayerObservationEnvelope.MaximumNoticeCount + 1;
+             index < PlayerTurnObservationEnvelope.MaximumNoticeCount + 1;
              index++) {
             fixture.ProduceReadyReply("reply-" + index);
         }
@@ -113,11 +113,11 @@ public sealed class GalateaDurableReplyLeaseTests {
         GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
 
         Assert.Equal(
-            GalateaPlayerObservationEnvelope.MaximumNoticeCount,
+            PlayerTurnObservationEnvelope.MaximumNoticeCount,
             lease.ReadNotices().Count
         );
         Assert.Equal(
-            GalateaPlayerObservationEnvelope.MaximumNoticeCount,
+            PlayerTurnObservationEnvelope.MaximumNoticeCount,
             snapshot.Notices.Count(static notice =>
                 notice.State == GalateaReplyNoticeState.Leased)
         );
@@ -524,7 +524,7 @@ public sealed class GalateaDurableReplyLeaseTests {
         bool useLegacyHeadings
     ) {
         int timestampStart = current.IndexOf(
-            GalateaPlayerObservationEnvelope.ExternalLocalTimestampPrefix,
+            PlayerTurnObservationEnvelope.ExternalLocalTimestampPrefix,
             StringComparison.Ordinal
         );
         Assert.True(timestampStart >= 0);
@@ -544,12 +544,12 @@ public sealed class GalateaDurableReplyLeaseTests {
     }
 
     private static string ToLegacyHeadings(string current) => current.Replace(
-            GalateaPlayerObservationEnvelope.ReplyHeading,
+            PlayerTurnObservationEnvelope.ReplyHeading,
             "外界代行者 Codex 给 Galatea 的回信",
             StringComparison.Ordinal
         )
         .Replace(
-            GalateaPlayerObservationEnvelope.FailureHeading,
+            PlayerTurnObservationEnvelope.FailureHeading,
             "Galatea 发给外界代行者 Codex 的信未能送达",
             StringComparison.Ordinal
         );
@@ -640,7 +640,7 @@ public sealed class GalateaDurableReplyLeaseTests {
                 MaximumQueuedMails: 32,
                 MaximumTaskUtf8Bytes: 100_000,
                 MaximumReplyUtf8Bytes:
-                    GalateaPlayerObservationEnvelope.MaximumReplyUtf8Bytes,
+                    PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes,
                 maximumInboxReplies,
                 MaximumInboxUtf8Bytes: 8 * 1024 * 1024
             );

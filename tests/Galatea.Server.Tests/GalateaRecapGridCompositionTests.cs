@@ -114,9 +114,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             session.Engine.ReadRecentCompletedTurns()
                 .RequireSnapshot().Turns
         );
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
             completed.ObservationContent,
-            out GalateaPlayerObservation observation
+            out PlayerTurnObservation observation
         ));
         Assert.Equal(
             new DateTimeOffset(
@@ -913,12 +913,12 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(
             "same next clue",
             cliTail.Content);
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
             galateaTail.Content,
-            out GalateaPlayerObservation galateaObservation
+            out PlayerTurnObservation playerTurnObservation
         ));
-        Assert.Equal("same next clue", galateaObservation.PlayerText);
-        Assert.NotNull(galateaObservation.ExternalLocalTimestamp);
+        Assert.Equal("same next clue", playerTurnObservation.PlayerText);
+        Assert.NotNull(playerTurnObservation.ExternalLocalTimestamp);
     }
 
     [Theory]

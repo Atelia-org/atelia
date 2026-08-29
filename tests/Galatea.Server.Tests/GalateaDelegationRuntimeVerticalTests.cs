@@ -157,9 +157,9 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         SessionCompletedTurnProjection completed = session.Engine
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
             completed.ObservationContent,
-            out GalateaPlayerObservation observation
+            out PlayerTurnObservation observation
         ));
         Assert.Equal(
             GalateaHostService.ReadyReplyTurnPlayerText,
@@ -168,7 +168,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.NotNull(observation.ExternalLocalTimestamp);
         Assert.Equal(
             [Reply],
-            observation.ReadyNotices.Select(static notice => notice.Body)
+            observation.Notices.Select(static notice => notice.Body)
                 .ToArray()
         );
         GalateaDelegationStateSnapshot consumed = session.DelegationHandle
@@ -271,15 +271,15 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         SessionCompletedTurnProjection receiving = session.Engine
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
             receiving.ObservationContent,
-            out GalateaPlayerObservation composite
+            out PlayerTurnObservation composite
         ));
         Assert.Equal("player text", composite.PlayerText);
         Assert.NotNull(composite.ExternalLocalTimestamp);
         Assert.Equal(
             [ReplyOne, ReplyTwo],
-            composite.ReadyNotices.Select(static notice => notice.Body)
+            composite.Notices.Select(static notice => notice.Body)
                 .ToArray()
         );
         GalateaDelegationStateSnapshot consumed = session.DelegationHandle
@@ -313,11 +313,11 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         SessionCompletedTurnProjection afterUndo = session.Engine
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
-        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
             afterUndo.ObservationContent,
-            out GalateaPlayerObservation afterUndoComposite
+            out PlayerTurnObservation afterUndoComposite
         ));
-        Assert.Empty(afterUndoComposite.ReadyNotices);
+        Assert.Empty(afterUndoComposite.Notices);
         Assert.NotNull(afterUndoComposite.ExternalLocalTimestamp);
         Assert.Equal(2, backend.StartCallCount);
     }

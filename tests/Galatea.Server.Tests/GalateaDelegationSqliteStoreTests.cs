@@ -1298,7 +1298,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
     private static string Sha(char value) => new(value, 64);
 
     private static string Observation(string playerText, string reply) =>
-        GalateaPlayerObservationEnvelope.Wrap(new GalateaPlayerObservation(
+        PlayerTurnObservationEnvelope.Wrap(new PlayerTurnObservation(
             playerText,
             new DateTimeOffset(
                 2026,
@@ -1309,7 +1309,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
                 5,
                 TimeSpan.FromHours(8)
             ),
-            [new GalateaReadyNotice.Reply(reply)]
+            [new PlayerTurnNotice.Reply(reply)]
         ));
 
     private static GalateaReplyLeaseSnapshot BeginBoundCommittedLease(

@@ -359,8 +359,9 @@ Codex delegation现已hard-cut到SQLite-backed durable owner；本节及对应�
 阶段实现记录与real-provider证据边界见
 [`docs/Galatea/codex-delegation-refactor-status.md`](../../docs/Galatea/codex-delegation-refactor-status.md)。
 
-所有新普通player turn（包括当前尚无ready reply的情况）都以runtime-owned composite Observation
-持久化。runtime在canonical Observation materialization时通过宿主`TimeProvider`只采样一次本地时间，
+所有新普通player turn（包括当前尚无ready reply的情况）都构造成runtime-owned
+`PlayerTurnObservation`，再由`PlayerTurnObservationEnvelope`包装成composite Observation持久化。
+runtime在canonical Observation materialization时通过宿主`TimeProvider`只采样一次本地时间，
 向下截断到整秒，并在原有prefix之后、player块之前写入code-owned metadata行
 `Observation 形成时的外界本地时间（不自动等同于故事世界时间）：yyyy-MM-dd'T'HH:mm:sszzz`；
 例如`2026-08-29T14:23:05+08:00`，UTC也固定写`+00:00`而不是`Z`。这只是Observation形成时的
@@ -377,7 +378,7 @@ dialect以及既有无timestamp的current/legacy历史；带timestamp的shape只
 normalize或escape，因此嵌套backtick fence、Markdown、HTML/XML与Unicode可原样呈现给LLM。
 reply正文上限256 KiB UTF-8，failure上限4 KiB，整份composite上限1 MiB；越界全部拒绝而不截断。
 
-composite parser只接受code-owned prefix、heading、info string、顺序与动态fence的canonical重渲染结果。
+`PlayerTurnObservationEnvelope` parser只接受code-owned prefix、heading、info string、顺序与动态fence的canonical重渲染结果。
 recent view显示玩家文本及每条独立通知；普通Undo仍把它识别为player turn，但pop receipt只返回玩家文本。
 历史Galatea heading与backtick player envelope继续只读兼容recent/Undo；inbound mail envelope仍不属于普通player Undo。
 input normalizer只接收玩家文本，绝不接收ready notices。普通player入口持有per-session `TurnLock`，先结算
