@@ -71,10 +71,29 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             completion,
             RecapGridOnlineLimits.Production,
             _estimator);
+        var clock = new CountingTimeProvider(
+            new DateTimeOffset(
+                2026,
+                8,
+                29,
+                6,
+                23,
+                5,
+                987,
+                TimeSpan.Zero
+            ),
+            TimeZoneInfo.CreateCustomTimeZone(
+                "galatea-test-utc-plus-8",
+                TimeSpan.FromHours(8),
+                "galatea-test-utc-plus-8",
+                "galatea-test-utc-plus-8"
+            )
+        );
         await using var service = new GalateaHostService(
             Config(path, connection),
             DisabledGalateaUserMessageNormalizer.Instance,
-            candidate);
+            candidate,
+            timeProvider: clock);
         UserSessionHost session = await service.GetSessionAsync(
             "alice", CancellationToken.None);
 
@@ -91,11 +110,32 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(0, routeLoads);
         Assert.False(File.Exists(Path.Combine(
             path, "derived", "recap-grid", "v1", "grid.sqlite")));
-        Assert.Single(session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns);
+        var completed = Assert.Single(
+            session.Engine.ReadRecentCompletedTurns()
+                .RequireSnapshot().Turns
+        );
+        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+            completed.ObservationContent,
+            out GalateaPlayerObservation observation
+        ));
+        Assert.Equal(
+            new DateTimeOffset(
+                2026,
+                8,
+                29,
+                14,
+                23,
+                5,
+                TimeSpan.FromHours(8)
+            ),
+            observation.ExternalLocalTimestamp
+        );
+        Assert.Equal(1, clock.GetUtcNowCallCount);
 
         EventAddress observationHead = session.Engine.AppendObservation(
             GalateaHostService.WrapUserMessageForEngine(
-                "observation accepted candidate"));
+                "observation accepted candidate",
+                DateTimeOffset.UnixEpoch));
         GalateaLiveTurn recovery = service.StartRecovery(
             session,
             new GalateaTurnOptions(
@@ -114,6 +154,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             SessionExecutionPhase.Idle,
             session.Engine.InspectExecutionBoundary().Phase);
         Assert.Equal(2, session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns.Count);
+        Assert.Equal(1, clock.GetUtcNowCallCount);
         Assert.Equal(refId, session.Engine.BranchRefId);
         Assert.Equal(oldV8Before, File.ReadAllBytes(oldV8));
     }
@@ -447,7 +488,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             _ = ProvisionActiveEmptyRecipe(provisioner);
             observationHead = provisioner.AppendObservation(
                 GalateaHostService.WrapUserMessageForEngine(
-                    "accepted observation"
+                    "accepted observation",
+                    DateTimeOffset.UnixEpoch
                 )
             );
         }
@@ -871,9 +913,12 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Assert.Equal(
             "same next clue",
             cliTail.Content);
-        Assert.Equal(
-            GalateaHostService.WrapUserMessageForEngine("same next clue"),
-            galateaTail.Content);
+        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+            galateaTail.Content,
+            out GalateaPlayerObservation galateaObservation
+        ));
+        Assert.Equal("same next clue", galateaObservation.PlayerText);
+        Assert.NotNull(galateaObservation.ExternalLocalTimestamp);
     }
 
     [Theory]
@@ -1752,7 +1797,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 () => engine.SendAsync(
                     engine.ReadCurrentHead()!.Value,
                     GalateaHostService.WrapUserMessageForEngine(
-                        "frozen fixture")));
+                        "frozen fixture",
+                        DateTimeOffset.UnixEpoch)));
         Assert.Equal(failpoint, exception.Failpoint);
         return engine.ReadCurrentHead()!.Value;
     }
@@ -2484,6 +2530,23 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         public ICompletionClient Create(CompletionConnectionConfig connection) {
             Interlocked.Increment(ref _createCallCount);
             return Client;
+        }
+    }
+
+    private sealed class CountingTimeProvider(
+        DateTimeOffset utcNow,
+        TimeZoneInfo localTimeZone
+    ) : TimeProvider {
+        private int _getUtcNowCallCount;
+        internal int GetUtcNowCallCount => Volatile.Read(
+            ref _getUtcNowCallCount
+        );
+        public override TimeZoneInfo LocalTimeZone { get; } =
+            localTimeZone;
+
+        public override DateTimeOffset GetUtcNow() {
+            Interlocked.Increment(ref _getUtcNowCallCount);
+            return utcNow;
         }
     }
 

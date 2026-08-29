@@ -1300,6 +1300,15 @@ public sealed class GalateaDelegationSqliteStoreTests {
     private static string Observation(string playerText, string reply) =>
         GalateaPlayerObservationEnvelope.Wrap(new GalateaPlayerObservation(
             playerText,
+            new DateTimeOffset(
+                2026,
+                8,
+                29,
+                14,
+                23,
+                5,
+                TimeSpan.FromHours(8)
+            ),
             [new GalateaReadyNotice.Reply(reply)]
         ));
 

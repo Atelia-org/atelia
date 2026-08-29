@@ -1,4 +1,5 @@
 using System.Text;
+using System.Globalization;
 using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
@@ -57,6 +58,26 @@ internal sealed class GalateaPlayerObservation {
     internal GalateaPlayerObservation(
         string playerText,
         IEnumerable<GalateaReadyNotice>? readyNotices = null
+    ) : this(
+        playerText,
+        externalLocalTimestamp: null,
+        readyNotices
+    ) { }
+
+    internal GalateaPlayerObservation(
+        string playerText,
+        DateTimeOffset externalLocalTimestamp,
+        IEnumerable<GalateaReadyNotice>? readyNotices = null
+    ) : this(
+        playerText,
+        (DateTimeOffset?)externalLocalTimestamp,
+        readyNotices
+    ) { }
+
+    private GalateaPlayerObservation(
+        string playerText,
+        DateTimeOffset? externalLocalTimestamp,
+        IEnumerable<GalateaReadyNotice>? readyNotices
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(playerText);
         string? messageError = GalateaHttpV1.ValidateMessage(playerText);
@@ -77,12 +98,21 @@ internal sealed class GalateaPlayerObservation {
                 "A player observation contains too many ready notices."
             );
         }
+        if (externalLocalTimestamp is { } timestamp
+            && timestamp.Ticks % TimeSpan.TicksPerSecond != 0) {
+            throw new ArgumentException(
+                "External local timestamp must be truncated to whole seconds.",
+                nameof(externalLocalTimestamp)
+            );
+        }
 
         PlayerText = playerText;
+        ExternalLocalTimestamp = externalLocalTimestamp;
         ReadyNotices = Array.AsReadOnly(frozen);
     }
 
     internal string PlayerText { get; }
+    internal DateTimeOffset? ExternalLocalTimestamp { get; }
     internal IReadOnlyList<GalateaReadyNotice> ReadyNotices { get; }
 }
 
@@ -98,6 +128,8 @@ internal static class GalateaPlayerObservationEnvelope {
         "来自外界代行者 Codex 的回信";
     internal const string FailureHeading =
         "发往外界代行者 Codex 的信未能送达";
+    internal const string ExternalLocalTimestampPrefix =
+        "Observation 形成时的外界本地时间（不自动等同于故事世界时间）：";
 
     private const string LegacyReplyHeading =
         "外界代行者 Codex 给 Galatea 的回信";
@@ -109,6 +141,7 @@ internal static class GalateaPlayerObservationEnvelope {
     private const string PlayerInfoString = "player-action";
     private const string ReplyInfoString = "delegate-reply";
     private const string FailureInfoString = "delivery-failure";
+    private const string TimestampFormat = "yyyy-MM-dd'T'HH:mm:sszzz";
     private const string SectionSeparator = "\n\n";
     // RenderBlock necessarily places its closing fence on a new line, so a
     // body with and without one terminal newline would otherwise serialize
@@ -119,6 +152,23 @@ internal static class GalateaPlayerObservationEnvelope {
     private static readonly string MaximumRenderedPlayerText = new(
         '~',
         GalateaHttpV1.MaximumMessageUtf8Bytes
+    );
+    private static readonly DateTimeOffset MaximumBudgetTimestamp = new(
+        9999,
+        12,
+        31,
+        23,
+        59,
+        59,
+        TimeSpan.FromHours(14)
+    );
+
+    internal static DateTimeOffset TruncateToSecond(
+        DateTimeOffset timestamp
+    ) => new(
+        timestamp.Ticks
+            - timestamp.Ticks % TimeSpan.TicksPerSecond,
+        timestamp.Offset
     );
 
     internal static string Wrap(GalateaPlayerObservation observation) {
@@ -136,6 +186,14 @@ internal static class GalateaPlayerObservationEnvelope {
         string failureHeading
     ) {
         var builder = new StringBuilder(Prefix);
+        if (observation.ExternalLocalTimestamp is { } timestamp) {
+            _ = builder.Append(ExternalLocalTimestampPrefix)
+                .Append(timestamp.ToString(
+                    TimestampFormat,
+                    CultureInfo.InvariantCulture
+                ))
+                .Append(SectionSeparator);
+        }
         AppendSection(
             builder,
             PlayerHeading,
@@ -216,6 +274,37 @@ internal static class GalateaPlayerObservationEnvelope {
     ) {
         observation = null!;
         int position = Prefix.Length;
+        DateTimeOffset? externalLocalTimestamp = null;
+        if (stored.AsSpan(position).StartsWith(
+                ExternalLocalTimestampPrefix,
+                StringComparison.Ordinal)) {
+            position += ExternalLocalTimestampPrefix.Length;
+            int lineEnd = stored.IndexOf('\n', position);
+            if (lineEnd < position
+                || !stored.AsSpan(lineEnd).StartsWith(
+                    SectionSeparator,
+                    StringComparison.Ordinal)) {
+                return false;
+            }
+            string timestampText = stored[position..lineEnd];
+            if (!DateTimeOffset.TryParseExact(
+                    timestampText,
+                    TimestampFormat,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out DateTimeOffset parsedTimestamp)
+                || !string.Equals(
+                    timestampText,
+                    parsedTimestamp.ToString(
+                        TimestampFormat,
+                        CultureInfo.InvariantCulture
+                    ),
+                    StringComparison.Ordinal)) {
+                return false;
+            }
+            externalLocalTimestamp = parsedTimestamp;
+            position = lineEnd + SectionSeparator.Length;
+        }
         if (!TryReadSection(
                 stored,
                 ref position,
@@ -260,10 +349,13 @@ internal static class GalateaPlayerObservationEnvelope {
             }
         }
 
-        var parsed = new GalateaPlayerObservation(
-            playerText,
-            notices
-        );
+        var parsed = externalLocalTimestamp is { } timestamp
+            ? new GalateaPlayerObservation(
+                playerText,
+                timestamp,
+                notices
+            )
+            : new GalateaPlayerObservation(playerText, notices);
         if (!string.Equals(
                 stored,
                 Render(parsed, replyHeading, failureHeading),
@@ -289,6 +381,7 @@ internal static class GalateaPlayerObservationEnvelope {
         try {
             _ = Wrap(new GalateaPlayerObservation(
                 MaximumRenderedPlayerText,
+                MaximumBudgetTimestamp,
                 notices
             ));
             return true;

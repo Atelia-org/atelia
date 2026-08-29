@@ -165,10 +165,20 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         GalateaReplyLeaseState.CutoffFrozen,
                         expectedLeaseRevision
                     );
+                    if (!GalateaPlayerObservationEnvelope.TryUnwrap(
+                            renderedObservation,
+                            out GalateaPlayerObservation parsed)
+                        || parsed.ExternalLocalTimestamp is not { }
+                            externalLocalTimestamp) {
+                        throw Conflict(
+                            "Rendered Observation must use the timestamped canonical shape."
+                        );
+                    }
                     string canonical = RenderLeaseObservation(
                         connection,
                         transaction,
-                        lease
+                        lease,
+                        externalLocalTimestamp
                     );
                     if (!string.Equals(
                             renderedObservation,
@@ -661,7 +671,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
     private static string RenderLeaseObservation(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        GalateaReplyLeaseSnapshot lease
+        GalateaReplyLeaseSnapshot lease,
+        DateTimeOffset externalLocalTimestamp
     ) {
         IReadOnlyList<GalateaReplyNoticeSnapshot> notices = ReadNotices(
             connection,
@@ -685,7 +696,11 @@ internal sealed partial class GalateaDelegationSqliteStore {
             };
         }).ToArray();
         return GalateaPlayerObservationEnvelope.Wrap(
-            new GalateaPlayerObservation(lease.PlayerText, ready)
+            new GalateaPlayerObservation(
+                lease.PlayerText,
+                externalLocalTimestamp,
+                ready
+            )
         );
     }
 

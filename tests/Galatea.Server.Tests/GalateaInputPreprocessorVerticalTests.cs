@@ -71,11 +71,13 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             static value => value.Id
         ));
         Assert.False(service.TryGetConnection(helper.Id, out _));
-        Assert.Equal(
-            GalateaHostService.WrapUserMessageForEngine("normalized input"),
+        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
             Assert.Single(session.Engine.ReadRecentCompletedTurns()
-                .RequireSnapshot().Turns).ObservationContent
-        );
+                .RequireSnapshot().Turns).ObservationContent,
+            out GalateaPlayerObservation observation
+        ));
+        Assert.Equal("normalized input", observation.PlayerText);
+        Assert.NotNull(observation.ExternalLocalTimestamp);
     }
 
     [Fact]
@@ -289,16 +291,21 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             );
         }
 
-        string wrapped = GalateaHostService.WrapUserMessageForEngine(
-            "normalized input"
-        );
         CompletionRequest request = Assert.IsType<CompletionRequest>(
             completion.LastRequest
         );
         ObservationMessage requestedObservation = Assert.Single(
             request.PromptPrefix.SharedContextMessages.OfType<ObservationMessage>()
         );
-        Assert.Equal(wrapped, requestedObservation.Content);
+        string wrapped = Assert.IsType<string>(
+            requestedObservation.Content
+        );
+        Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
+            wrapped,
+            out GalateaPlayerObservation observation
+        ));
+        Assert.Equal("normalized input", observation.PlayerText);
+        Assert.NotNull(observation.ExternalLocalTimestamp);
 
         var persisted = session.Engine.ReadRecentCompletedTurns(1)
             .RequireSnapshot();

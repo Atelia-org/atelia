@@ -844,7 +844,8 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             SessionJournalFailpointException>(() => engine.SendAsync(
                 engine.ReadCurrentHead()!.Value,
                 GalateaHostService.WrapUserMessageForEngine(
-                    "frozen active-recipe fixture"
+                    "frozen active-recipe fixture",
+                    DateTimeOffset.UnixEpoch
                 )
             ));
         Assert.Equal(failpoint, exception.Failpoint);

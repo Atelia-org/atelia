@@ -165,6 +165,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             GalateaHostService.ReadyReplyTurnPlayerText,
             observation.PlayerText
         );
+        Assert.NotNull(observation.ExternalLocalTimestamp);
         Assert.Equal(
             [Reply],
             observation.ReadyNotices.Select(static notice => notice.Body)
@@ -275,6 +276,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             out GalateaPlayerObservation composite
         ));
         Assert.Equal("player text", composite.PlayerText);
+        Assert.NotNull(composite.ExternalLocalTimestamp);
         Assert.Equal(
             [ReplyOne, ReplyTwo],
             composite.ReadyNotices.Select(static notice => notice.Body)
@@ -316,6 +318,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             out GalateaPlayerObservation afterUndoComposite
         ));
         Assert.Empty(afterUndoComposite.ReadyNotices);
+        Assert.NotNull(afterUndoComposite.ExternalLocalTimestamp);
         Assert.Equal(2, backend.StartCallCount);
     }
 

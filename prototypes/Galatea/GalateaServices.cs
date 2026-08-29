@@ -48,6 +48,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly GalateaRecapGridComposition _recapGrid;
     private readonly GalateaCompletionOwner? _completionOwner;
     private readonly GalateaDelegationSupervisor _delegationSupervisor;
+    private readonly TimeProvider _timeProvider;
     internal GalateaDisposeTestHooks? DisposeHooksForTest { get; set; }
     internal GalateaSessionProvisioningTestHooks?
         SessionProvisioningHooksForTest { get; set; }
@@ -111,6 +112,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _sessionBootstrapAdmission = components.SessionBootstrapAdmission;
         _completionOwner = components.Owner;
         _delegationSupervisor = components.DelegationSupervisor;
+        _timeProvider = TimeProvider.System;
         _recapGrid = components.RecapGrid;
         _inputPreprocessor = components.InputPreprocessor;
         _outboundMailExtractors = components.OutboundMailExtractors;
@@ -127,7 +129,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         IGalateaUserMessageNormalizer userMessageNormalizer,
         GalateaRecapGridComposition recapGrid,
         IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>?
-            targetExpectations = null
+            targetExpectations = null,
+        TimeProvider? timeProvider = null
     ) {
         ArgumentNullException.ThrowIfNull(recapGrid);
         ArgumentNullException.ThrowIfNull(userMessageNormalizer);
@@ -149,6 +152,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             ));
         GalateaCompletionOwner.ValidateGalateaRouting(normalized);
         _recapGrid = recapGrid;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _completionOwner = null;
         _inputPreprocessor = new GalateaInputPreprocessor(
             userMessageNormalizer
@@ -1476,23 +1480,30 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "RecapGrid会话设置无法在当前边界安全更新。",
                 "recap-grid-desired-setup-unavailable");
         }
-        string prompted = liveTurn.FreshInput switch {
-            GalateaFreshInput.PlayerAction
-                when liveTurn.DurableReplyLease is { } lease =>
-                lease.RenderObservation(),
-            GalateaFreshInput.PlayerAction player =>
-                GalateaPlayerObservationEnvelope.Wrap(
+        string prompted;
+        if (liveTurn.FreshInput is GalateaFreshInput.PlayerAction player) {
+            DateTimeOffset externalLocalTimestamp =
+                GalateaPlayerObservationEnvelope.TruncateToSecond(
+                    _timeProvider.GetLocalNow()
+                );
+            prompted = liveTurn.DurableReplyLease is { } lease
+                ? lease.RenderObservation(externalLocalTimestamp)
+                : GalateaPlayerObservationEnvelope.Wrap(
                     new GalateaPlayerObservation(
                         player.Text,
+                        externalLocalTimestamp,
                         player.ReadyNotices
                     )
-                ),
-            GalateaFreshInput.InboundMail mail =>
-                mail.DurableObservation,
-            _ => throw new InvalidOperationException(
+                );
+        }
+        else if (liveTurn.FreshInput is GalateaFreshInput.InboundMail mail) {
+            prompted = mail.DurableObservation;
+        }
+        else {
+            throw new InvalidOperationException(
                 "Fresh send requires a typed fresh input."
-            )
-        };
+            );
+        }
         await using GalateaRecapGridTurn turn =
             await recapGrid.OpenFreshAsync(
                 host.Engine,
@@ -1987,9 +1998,15 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return termination.Detail?.Contains("Streaming observer stopped", StringComparison.Ordinal) == true;
     }
 
-    internal static string WrapUserMessageForEngine(string userMessage) {
+    internal static string WrapUserMessageForEngine(
+        string userMessage,
+        DateTimeOffset externalLocalTimestamp
+    ) {
         return GalateaPlayerObservationEnvelope.Wrap(
-            new GalateaPlayerObservation(userMessage)
+            new GalateaPlayerObservation(
+                userMessage,
+                externalLocalTimestamp
+            )
         );
     }
 

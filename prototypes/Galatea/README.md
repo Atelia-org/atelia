@@ -360,12 +360,18 @@ Codex delegation现已hard-cut到SQLite-backed durable owner；本节及对应�
 [`docs/Galatea/codex-delegation-refactor-status.md`](../../docs/Galatea/codex-delegation-refactor-status.md)。
 
 所有新普通player turn（包括当前尚无ready reply的情况）都以runtime-owned composite Observation
-持久化。首个兄弟块固定为`## 玩家角色试图采取的行动`/`player-action`，随后可按顺序携带0..16个
+持久化。runtime在canonical Observation materialization时通过宿主`TimeProvider`只采样一次本地时间，
+向下截断到整秒，并在原有prefix之后、player块之前写入code-owned metadata行
+`Observation 形成时的外界本地时间（不自动等同于故事世界时间）：yyyy-MM-dd'T'HH:mm:sszzz`；
+例如`2026-08-29T14:23:05+08:00`，UTC也固定写`+00:00`而不是`Z`。这只是Observation形成时的
+外界粗粒度时间，不是故事世界时间，也不参与turn排序、identity或settlement。首个兄弟块固定为
+`## 玩家角色试图采取的行动`/`player-action`，随后可按顺序携带0..16个
 `Reply`或`DeliveryFailure`兄弟块；canonical `Codex`成功heading为
 `来自外界代行者 Codex 的回信`，失败heading为
 `发往外界代行者 Codex 的信未能送达`。只读 parser 还严格接受旧
 `外界代行者 Codex 给 Galatea 的回信` / `Galatea 发给外界代行者 Codex 的信未能送达`
-dialect；同一 envelope 不得混用新旧 headings，无 notice 的共同形状保持不变。每个块独立使用
+dialect以及既有无timestamp的current/legacy历史；同一 envelope 不得混用新旧 headings。新写入只接受
+带offset、无小数秒的exact timestamp文本；`Z`、fractional seconds与其他非canonical变体均拒绝。每个块独立使用
 `AdaptiveMarkdownFenceRenderer`：tilde fence至少4字符且长于正文内最长连续tilde，正文不trim、
 normalize或escape，因此嵌套backtick fence、Markdown、HTML/XML与Unicode可原样呈现给LLM。
 reply正文上限256 KiB UTF-8，failure上限4 KiB，整份composite上限1 MiB；越界全部拒绝而不截断。
@@ -380,7 +386,8 @@ failure会阻止放弃旧failed turn、创建cutoff和接受新turn；普通nonf
 原始玩家文本并继续admission。取得exact effective text后才revalidate/abandon允许放弃的旧failed turn，并以SQLite transaction建立
 `CutoffFrozen` lease。cutoff之前已经Ready的bounded FIFO前缀冻结进本轮typed fresh input，之后才ready的
 结果留给下一次普通player turn；未选项保持原FIFO次序。选择前缀时为任意合法64 KiB normalized player text
-的最坏adaptive-fence渲染预留空间。inbound与recovery入口都不开始新cutoff。
+以及固定timestamp metadata的最坏adaptive-fence渲染预留空间。inbound与recovery入口都不开始新cutoff；
+`GalateaMailboxObservationEnvelope`也不因此增加timestamp。
 
 `SessionJournal`公开的`AdaptiveMarkdownFenceRenderer.RenderBlock(infoString, exactBody)`要求1..64字符
 ASCII token作为code-owned info string。现有Recap contribution已复用它，并保持原`recap-block`输出逐字不变。
@@ -463,8 +470,10 @@ exact selected head和canonical rendered Observation执行`BindObservationBase`�
 
 Delegation SQLite schema仍为V1且没有新增renderer/version列。`CutoffFrozen`没有rendered Observation，重启时
 按既有合同rollback；`ObservationBound|ObservationCommitted`已经冻结exact Observation bytes/byte count/SHA-256。
-Store reopen先用closed current/legacy dialect parser验证stored bytes，再逐项核对player text与notice
-kind/order/body，不用current writer把历史heading重渲染成新heading。
+current bind要求带timestamp的新canonical shape，且prompt、SQLite rendered Observation/digest与SessionJournal raw
+Observation共用同一份已采样字符串。Store reopen仍用closed parser验证带timestamp的新shape以及既有无timestamp的
+current/legacy历史bytes，再逐项核对player text与notice kind/order/body，不用current writer把历史heading或timestamp
+重渲染成新值。
 
 每个user至多一个active lease。recovery只继承已持久lease，不claim后来Ready的notice；inbound turn也不claim。
 lease settlement发生在outbound extraction之前，因此已经接收回信的terminal Action即使后处理失败也不会重新

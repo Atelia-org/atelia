@@ -96,12 +96,15 @@ internal sealed class GalateaDurableReplyLease {
         return ProjectNotices(lease, storeSnapshot.Notices);
     }
 
-    internal string RenderObservation() {
+    internal string RenderObservation(
+        DateTimeOffset externalLocalTimestamp
+    ) {
         GalateaDelegationStateSnapshot storeSnapshot = _store.ReadSnapshot();
         GalateaReplyLeaseSnapshot lease = RequireCurrent(storeSnapshot);
         return GalateaPlayerObservationEnvelope.Wrap(
             new GalateaPlayerObservation(
                 lease.PlayerText,
+                externalLocalTimestamp,
                 ProjectNotices(lease, storeSnapshot.Notices)
             )
         );

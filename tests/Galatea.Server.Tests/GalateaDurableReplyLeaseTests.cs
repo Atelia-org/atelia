@@ -10,6 +10,15 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaDurableReplyLeaseTests {
+    private static readonly DateTimeOffset ObservationTimestamp = new(
+        2026,
+        8,
+        29,
+        14,
+        23,
+        5,
+        TimeSpan.FromHours(8)
+    );
     private static readonly CompletionDescriptor ImportedInvocation = new(
         "import",
         "legacy-import-v1",
@@ -75,12 +84,16 @@ public sealed class GalateaDurableReplyLeaseTests {
         );
         Assert.Equal(2, snapshot.ActiveLease!.NoticeIds.Count);
 
-        string rendered = lease.RenderObservation();
+        string rendered = lease.RenderObservation(ObservationTimestamp);
         Assert.True(GalateaPlayerObservationEnvelope.TryUnwrap(
             rendered,
             out GalateaPlayerObservation observation
         ));
         Assert.Equal("player", observation.PlayerText);
+        Assert.Equal(
+            ObservationTimestamp,
+            observation.ExternalLocalTimestamp
+        );
         Assert.Equal(2, observation.ReadyNotices.Count);
     }
 
@@ -124,7 +137,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             "player"
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
-        string rendered = lease.RenderObservation();
+        string rendered = lease.RenderObservation(ObservationTimestamp);
 
         GalateaDurableReplyLeaseHeadMismatchException mismatch =
             Assert.Throws<GalateaDurableReplyLeaseHeadMismatchException>(() =>
@@ -140,6 +153,15 @@ public sealed class GalateaDurableReplyLeaseTests {
                 fixture.Engine,
                 baseHead,
                 rendered + " changed"
+            ));
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            lease.BindObservationBase(
+                fixture.Engine,
+                baseHead,
+                ToHistoricalObservation(
+                    rendered,
+                    useLegacyHeadings: false
+                )
             ));
         Assert.Equal(
             GalateaReplyLeaseState.CutoffFrozen,
@@ -222,7 +244,10 @@ public sealed class GalateaDurableReplyLeaseTests {
     public void LegacyBoundObservation_ColdReopenValidatesThenRollsBack() {
         using var fixture = new Fixture();
         BoundLease bound = CreateBoundLease(fixture);
-        string legacy = ToLegacyObservation(bound.RenderedObservation);
+        string legacy = ToHistoricalObservation(
+            bound.RenderedObservation,
+            useLegacyHeadings: true
+        );
         ReplaceRenderedObservation(fixture.DatabasePath, legacy);
 
         fixture.ReopenStore();
@@ -239,12 +264,17 @@ public sealed class GalateaDurableReplyLeaseTests {
     }
 
     [Fact]
-    public void LegacyCommittedObservation_ColdReopenConsumesExactTerminal() {
+    public void HistoricalCurrentObservation_ColdReopenConsumesExactTerminal() {
         using var fixture = new Fixture();
         BoundLease bound = CreateBoundLease(fixture);
-        string legacy = ToLegacyObservation(bound.RenderedObservation);
-        ReplaceRenderedObservation(fixture.DatabasePath, legacy);
-        EventAddress observation = fixture.Engine.AppendObservation(legacy);
+        string historical = ToHistoricalObservation(
+            bound.RenderedObservation,
+            useLegacyHeadings: false
+        );
+        ReplaceRenderedObservation(fixture.DatabasePath, historical);
+        EventAddress observation = fixture.Engine.AppendObservation(
+            historical
+        );
         _ = bound.Lease.RecordObservationCommitted(observation);
 
         fixture.ReopenStore();
@@ -430,7 +460,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             "player"
         );
         EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
-        string rendered = lease.RenderObservation();
+        string rendered = lease.RenderObservation(ObservationTimestamp);
         _ = lease.BindObservationBase(
             fixture.Engine,
             baseHead,
@@ -474,8 +504,27 @@ public sealed class GalateaDurableReplyLeaseTests {
         command.ExecuteNonQuery();
     }
 
-    private static string ToLegacyObservation(string current) => current
-        .Replace(
+    private static string ToHistoricalObservation(
+        string current,
+        bool useLegacyHeadings
+    ) {
+        int timestampStart = current.IndexOf(
+            GalateaPlayerObservationEnvelope.ExternalLocalTimestampPrefix,
+            StringComparison.Ordinal
+        );
+        Assert.True(timestampStart >= 0);
+        int timestampEnd = current.IndexOf(
+            "\n\n",
+            timestampStart,
+            StringComparison.Ordinal
+        );
+        Assert.True(timestampEnd >= timestampStart);
+        string historical = current.Remove(
+            timestampStart,
+            timestampEnd + 2 - timestampStart
+        );
+        if (!useLegacyHeadings) { return historical; }
+        return historical.Replace(
             GalateaPlayerObservationEnvelope.ReplyHeading,
             "外界代行者 Codex 给 Galatea 的回信",
             StringComparison.Ordinal
@@ -485,6 +534,7 @@ public sealed class GalateaDurableReplyLeaseTests {
             "Galatea 发给外界代行者 Codex 的信未能送达",
             StringComparison.Ordinal
         );
+    }
 
     private static void ReplaceRenderedObservation(
         string databasePath,
