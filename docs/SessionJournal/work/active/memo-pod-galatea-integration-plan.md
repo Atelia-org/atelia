@@ -15,7 +15,7 @@ WP-07A/B的历史输入，不是active decision、accepted shape、implementatio
 ## 0. Active design-reopen authority
 
 current事实：MemoPod core、fake-first operator、provider-neutral recall与provider-free Track C2均不因SessionJournal rollback
-而撤回；但MemoPod目前没有product upper consumer。`SessionJournal.MemoPod.csproj`的production显式依赖仅有
+而撤回；但MemoPod目前没有product upper consumer。`MemoPod.csproj`的production显式依赖仅有
 `Completion.Abstractions`，没有SessionJournal、Galatea或RecapGrid dependency。
 
 重新讨论上层结合前，必须分别形成可审阅decision并关闭以下设计闸：
@@ -306,7 +306,7 @@ SessionJournal core拥有以下validation：
 
 Galatea adapter拥有MemoPod-specific工作：打开configured Frozen Pod、调用`RecallAsync`、验证其closed result、按result中
 preserved relevance order读取self-contained immutable Memo values，并render provider carrier。SessionJournal core不依赖
-`SessionJournal.MemoPod` assembly。
+`MemoPod` assembly。
 
 ### 7.3 Closed outcomes and Host policy
 
@@ -838,13 +838,13 @@ test-only expansion及abstract record→closed class hardening已登记在candid
 允许的新dependency只有：
 
 ```text
-Galatea.Server -> SessionJournal.MemoPod
-Galatea.Server.Tests -> SessionJournal.MemoPod (test construction only)
+Galatea.Server -> MemoPod
+Galatea.Server.Tests -> MemoPod (test construction only)
 ```
 
 禁止：
 
-- `SessionJournal -> SessionJournal.MemoPod`；
+- `SessionJournal -> MemoPod`；
 - MemoPod product反向引用SessionJournal core、RecapGrid、Galatea或concrete provider；
 - Completion.Abstractions因该vertical新增Memo-specific contract；
 - 修改RecapGrid projects/schema；

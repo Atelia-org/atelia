@@ -153,15 +153,15 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.HistoryTimel
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.RecapGrid", "prototypes\SessionJournal.RecapGrid\SessionJournal.RecapGrid.csproj", "{D829239D-DFC2-409F-A390-AB7DB2C2FECA}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.MemoPod", "prototypes\SessionJournal.MemoPod\SessionJournal.MemoPod.csproj", "{C2A10031-89C7-4F5C-A16C-1DC2AB001031}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MemoPod", "prototypes\MemoPod\MemoPod.csproj", "{C2A10031-89C7-4F5C-A16C-1DC2AB001031}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.MemoPod.Tests", "tests\SessionJournal.MemoPod.Tests\SessionJournal.MemoPod.Tests.csproj", "{C2A10032-89C7-4F5C-A16C-1DC2AB001032}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MemoPod.Tests", "tests\MemoPod.Tests\MemoPod.Tests.csproj", "{C2A10032-89C7-4F5C-A16C-1DC2AB001032}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.MemoPod.CrashHarness", "tests\SessionJournal.MemoPod.CrashHarness\SessionJournal.MemoPod.CrashHarness.csproj", "{35754AE1-19E5-423B-A7E4-998E1FAED5FC}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MemoPod.CrashHarness", "tests\MemoPod.CrashHarness\MemoPod.CrashHarness.csproj", "{35754AE1-19E5-423B-A7E4-998E1FAED5FC}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.MemoPod.PublicSurface.Tests", "tests\SessionJournal.MemoPod.PublicSurface.Tests\SessionJournal.MemoPod.PublicSurface.Tests.csproj", "{C2A10033-89C7-4F5C-A16C-1DC2AB001033}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MemoPod.PublicSurface.Tests", "tests\MemoPod.PublicSurface.Tests\MemoPod.PublicSurface.Tests.csproj", "{C2A10033-89C7-4F5C-A16C-1DC2AB001033}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.MemoPod.DebugApp", "prototypes\SessionJournal.MemoPod.DebugApp\SessionJournal.MemoPod.DebugApp.csproj", "{33D4DE6B-4C69-41F8-9E49-812DC7CFD4DC}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MemoPod.DebugApp", "prototypes\MemoPod.DebugApp\MemoPod.DebugApp.csproj", "{33D4DE6B-4C69-41F8-9E49-812DC7CFD4DC}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

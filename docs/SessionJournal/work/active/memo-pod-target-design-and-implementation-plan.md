@@ -484,8 +484,8 @@ wrapper只捕获并分类已知transport/protocol/provider失败；caller cancel
 首版建议建立一个 sibling product assembly：
 
 ```text
-prototypes/SessionJournal.MemoPod/
-namespace Atelia.SessionJournal.MemoPod
+prototypes/MemoPod/
+namespace Atelia.MemoPod
 ```
 
 它初期可以同时拥有 domain、file store、renderer和recall service，以减少空抽象；内部按 source module分区，
@@ -591,11 +591,11 @@ WP-01不得交付“已经Frozen但尚无durable document或frozen prompt”的�
 
 **Tentative write scope**
 
-- `prototypes/SessionJournal.MemoPod/SessionJournal.MemoPod.csproj`
-- `prototypes/SessionJournal.MemoPod/Domain/`
-- `prototypes/SessionJournal.MemoPod/README.md`
-- `tests/SessionJournal.MemoPod.Tests/SessionJournal.MemoPod.Tests.csproj`
-- `tests/SessionJournal.MemoPod.Tests/Domain/`
+- `prototypes/MemoPod/MemoPod.csproj`
+- `prototypes/MemoPod/Domain/`
+- `prototypes/MemoPod/README.md`
+- `tests/MemoPod.Tests/MemoPod.Tests.csproj`
+- `tests/MemoPod.Tests/Domain/`
 - `Atelia.sln`
 
 **Validation**
@@ -635,9 +635,9 @@ WP-01不得交付“已经Frozen但尚无durable document或frozen prompt”的�
 
 **Tentative write scope**
 
-- `prototypes/SessionJournal.MemoPod/Store/`
-- `tests/SessionJournal.MemoPod.Tests/Store/`
-- `tests/SessionJournal.MemoPod.CrashHarness/SessionJournal.MemoPod.CrashHarness.csproj`及其source，
+- `prototypes/MemoPod/Store/`
+- `tests/MemoPod.Tests/Store/`
+- `tests/MemoPod.CrashHarness/MemoPod.CrashHarness.csproj`及其source，
   并登记到solution。
 
 **Validation**
@@ -674,8 +674,8 @@ WP-01不得交付“已经Frozen但尚无durable document或frozen prompt”的�
 
 **Tentative write scope**
 
-- `prototypes/SessionJournal.MemoPod/Prompt/`
-- `tests/SessionJournal.MemoPod.Tests/Prompt/`
+- `prototypes/MemoPod/Prompt/`
+- `tests/MemoPod.Tests/Prompt/`
 
 **Validation**
 
@@ -711,9 +711,9 @@ WP-02与WP-03在WP-01之后可以并行；两者均只接受immutable value，�
 
 **Tentative write scope**
 
-- `prototypes/SessionJournal.MemoPod/MemoPod.cs`
-- `prototypes/SessionJournal.MemoPod/Lifecycle/`
-- `tests/SessionJournal.MemoPod.Tests/Lifecycle/`
+- `prototypes/MemoPod/MemoPod.cs`
+- `prototypes/MemoPod/Lifecycle/`
+- `tests/MemoPod.Tests/Lifecycle/`
 
 **Validation**
 
@@ -759,8 +759,8 @@ WP-02与WP-03在WP-01之后可以并行；两者均只接受immutable value，�
 
 **Tentative write scope**
 
-- `prototypes/SessionJournal.MemoPod/Recall/`
-- `tests/SessionJournal.MemoPod.Tests/Recall/`
+- `prototypes/MemoPod/Recall/`
+- `tests/MemoPod.Tests/Recall/`
 
 **Validation**
 
@@ -795,9 +795,9 @@ WP-02与WP-03在WP-01之后可以并行；两者均只接受immutable value，�
 
 **Tentative write scope**
 
-- `prototypes/SessionJournal.MemoPod.DebugApp/SessionJournal.MemoPod.DebugApp.csproj`
-- `prototypes/SessionJournal.MemoPod.DebugApp/Program.cs`与`README.md`
-- solution registration与`tests/SessionJournal.MemoPod.Tests/Operator/`。
+- `prototypes/MemoPod.DebugApp/MemoPod.DebugApp.csproj`
+- `prototypes/MemoPod.DebugApp/Program.cs`与`README.md`
+- solution registration与`tests/MemoPod.Tests/Operator/`。
 
 **Validation**
 
@@ -882,8 +882,8 @@ Galatea integration design。
 
 **Write scope**
 
-- `prototypes/SessionJournal.MemoPod.DebugApp/`
-- `tests/SessionJournal.MemoPod.Tests/Live/`中的provider-free live-mode/config tests；
+- `prototypes/MemoPod.DebugApp/`
+- `tests/MemoPod.Tests/Live/`中的provider-free live-mode/config tests；
 - `docs/SessionJournal/evidence/memo-pod-deepseek-v4-flash-candidate.md`。
 
 **Validation**
