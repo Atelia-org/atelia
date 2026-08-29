@@ -1,24 +1,25 @@
 using System.Security.Cryptography;
 using System.Text;
 using Atelia.EventJournal;
+using Atelia.Galatea.Server;
 using Atelia.SessionJournal;
 
-namespace Atelia.Galatea.Server;
+namespace Atelia.Galatea.Server.Mailbox;
 
-internal enum GalateaOutboundExtractionReadFailureKind {
+internal enum GalateaOutboundMailExtractionReadFailureKind {
     LimitExceeded,
     UnsupportedSchema,
     Corruption
 }
 
-internal sealed class GalateaOutboundExtractionReadException
+internal sealed class GalateaOutboundMailExtractionReadException
     : InvalidOperationException {
-    internal GalateaOutboundExtractionReadException(
-        GalateaOutboundExtractionReadFailureKind kind,
+    internal GalateaOutboundMailExtractionReadException(
+        GalateaOutboundMailExtractionReadFailureKind kind,
         EventAddress selectedHead,
         string detail
     ) : base(
-        $"Outbound extraction could not read the latest completed turn at "
+        $"Outbound mail extraction could not read the latest completed turn at "
             + $"'{EventAddressTextCodec.Format(selectedHead)}': {detail}"
     ) {
         Kind = kind;
@@ -26,17 +27,17 @@ internal sealed class GalateaOutboundExtractionReadException
         Detail = detail;
     }
 
-    internal GalateaOutboundExtractionReadFailureKind Kind { get; }
+    internal GalateaOutboundMailExtractionReadFailureKind Kind { get; }
     internal EventAddress SelectedHead { get; }
     internal string Detail { get; }
 }
 
-internal sealed class GalateaOutboundExtractionCaptureMismatchException
+internal sealed class GalateaOutboundMailExtractionCaptureMismatchException
     : InvalidOperationException {
-    internal GalateaOutboundExtractionCaptureMismatchException(
+    internal GalateaOutboundMailExtractionCaptureMismatchException(
         EventAddress sourceAction
     ) : base(
-        "The durable outbound extraction capture does not match the exact "
+        "The durable outbound mail extraction capture does not match the exact "
             + $"Action identity '{EventAddressTextCodec.Format(sourceAction)}'."
     ) {
         SourceAction = sourceAction;
@@ -45,46 +46,46 @@ internal sealed class GalateaOutboundExtractionCaptureMismatchException
     internal EventAddress SourceAction { get; }
 }
 
-internal abstract record GalateaOutboundExtractionReconcileResult {
-    private GalateaOutboundExtractionReconcileResult() { }
+internal abstract record GalateaOutboundMailExtractionReconcileResult {
+    private GalateaOutboundMailExtractionReconcileResult() { }
 
     internal sealed record NoSelectedHead
-        : GalateaOutboundExtractionReconcileResult;
+        : GalateaOutboundMailExtractionReconcileResult;
 
     internal sealed record BaselineCovered(EventAddress SelectedHead)
-        : GalateaOutboundExtractionReconcileResult;
+        : GalateaOutboundMailExtractionReconcileResult;
 
     internal sealed record NoTerminalActionAtHead(
         EventAddress SelectedHead,
         EventAddress? LatestTerminalAction
-    ) : GalateaOutboundExtractionReconcileResult;
+    ) : GalateaOutboundMailExtractionReconcileResult;
 
     internal sealed record AlreadyCaptured(
         EventAddress SourceAction,
         int ArtifactCount,
         long StoreRevision
-    ) : GalateaOutboundExtractionReconcileResult;
+    ) : GalateaOutboundMailExtractionReconcileResult;
 
     internal sealed record Captured(
         EventAddress SourceAction,
         int ArtifactCount,
         long StoreRevision,
         IReadOnlyList<string> DispatchIds
-    ) : GalateaOutboundExtractionReconcileResult;
+    ) : GalateaOutboundMailExtractionReconcileResult;
 
     internal sealed record SelectedHeadChanged(
         EventAddress ExpectedHead,
         EventAddress? ObservedHead
-    ) : GalateaOutboundExtractionReconcileResult;
+    ) : GalateaOutboundMailExtractionReconcileResult;
 }
 
 /// <summary>
-/// Single-gap reconciler for one durable outbound extraction store. The caller
+/// Single-gap reconciler for one durable outbound mail extraction store. The caller
 /// must hold the corresponding per-session TurnLock for the whole call. This
 /// type deliberately reads only the latest completed turn at one exact
 /// selected head and never scans complete history.
 /// </summary>
-internal sealed class GalateaOutboundExtractionReconciler {
+internal sealed class GalateaOutboundMailExtractionReconciler {
     private static readonly UTF8Encoding StrictUtf8 = new(
         encoderShouldEmitUTF8Identifier: false,
         throwOnInvalidBytes: true
@@ -93,7 +94,7 @@ internal sealed class GalateaOutboundExtractionReconciler {
     private readonly GalateaDelegationSqliteStore _store;
     private readonly IOutboundMailExtractor _extractor;
 
-    internal GalateaOutboundExtractionReconciler(
+    internal GalateaOutboundMailExtractionReconciler(
         GalateaDelegationSqliteStore store,
         IOutboundMailExtractor extractor
     ) {
@@ -102,7 +103,7 @@ internal sealed class GalateaOutboundExtractionReconciler {
             ?? throw new ArgumentNullException(nameof(extractor));
     }
 
-    internal async ValueTask<GalateaOutboundExtractionReconcileResult>
+    internal async ValueTask<GalateaOutboundMailExtractionReconcileResult>
         ReconcileAsync(
         SessionJournalEngine engine,
         CancellationToken cancellationToken = default
@@ -110,19 +111,19 @@ internal sealed class GalateaOutboundExtractionReconciler {
         ArgumentNullException.ThrowIfNull(engine);
         if (engine.IsReadOnly) {
             throw new ArgumentException(
-                "Outbound extraction reconciliation requires a writable SessionJournalEngine.",
+                "Outbound mail extraction reconciliation requires a writable SessionJournalEngine.",
                 nameof(engine)
             );
         }
         cancellationToken.ThrowIfCancellationRequested();
 
         if (engine.ReadCurrentHead() is not { } selectedHead) {
-            return new GalateaOutboundExtractionReconcileResult
+            return new GalateaOutboundMailExtractionReconcileResult
                 .NoSelectedHead();
         }
         if (_store.Baseline.CaptureFromPhysicalFrontier.Contains(
                 selectedHead)) {
-            return new GalateaOutboundExtractionReconcileResult
+            return new GalateaOutboundMailExtractionReconcileResult
                 .BaselineCovered(selectedHead);
         }
 
@@ -143,7 +144,7 @@ internal sealed class GalateaOutboundExtractionReconciler {
             .SingleOrDefault();
         if (latest is null
             || latest.TerminalAction.Address != selectedHead) {
-            return new GalateaOutboundExtractionReconcileResult
+            return new GalateaOutboundMailExtractionReconcileResult
                 .NoTerminalActionAtHead(
                     selectedHead,
                     latest?.TerminalAction.Address
@@ -164,7 +165,7 @@ internal sealed class GalateaOutboundExtractionReconciler {
             ));
         if (existing is not null) {
             ValidateExistingCapture(existing, identity, selectedHead);
-            return new GalateaOutboundExtractionReconcileResult
+            return new GalateaOutboundMailExtractionReconcileResult
                 .AlreadyCaptured(
                     selectedHead,
                     existing.ArtifactCount,
@@ -189,7 +190,7 @@ internal sealed class GalateaOutboundExtractionReconciler {
         cancellationToken.ThrowIfCancellationRequested();
         EventAddress? observedHead = engine.ReadCurrentHead();
         if (observedHead != selectedHead) {
-            return new GalateaOutboundExtractionReconcileResult
+            return new GalateaOutboundMailExtractionReconcileResult
                 .SelectedHeadChanged(selectedHead, observedHead);
         }
 
@@ -204,7 +205,7 @@ internal sealed class GalateaOutboundExtractionReconciler {
             _store.CaptureActionBatch(request);
         if (capture.Disposition
                 == GalateaDelegationCaptureDisposition.Captured) {
-            return new GalateaOutboundExtractionReconcileResult.Captured(
+            return new GalateaOutboundMailExtractionReconcileResult.Captured(
                 selectedHead,
                 intents.Count,
                 capture.StoreRevision,
@@ -217,7 +218,7 @@ internal sealed class GalateaOutboundExtractionReconciler {
             selectedHead,
             identity
         );
-        return new GalateaOutboundExtractionReconcileResult.AlreadyCaptured(
+        return new GalateaOutboundMailExtractionReconcileResult.AlreadyCaptured(
             selectedHead,
             settled.ArtifactCount,
             capture.StoreRevision
@@ -253,7 +254,7 @@ internal sealed class GalateaOutboundExtractionReconciler {
                 identity.Sha256,
                 StringComparison.Ordinal)
             || existing.VisibleActionUtf8Bytes != identity.Utf8Bytes) {
-            throw new GalateaOutboundExtractionCaptureMismatchException(
+            throw new GalateaOutboundMailExtractionCaptureMismatchException(
                 sourceAction
             );
         }
@@ -273,20 +274,20 @@ internal sealed class GalateaOutboundExtractionReconciler {
     ) => result switch {
         SessionCompletedTurnsReadResult.Snapshot snapshot => snapshot.Value,
         SessionCompletedTurnsReadResult.LimitExceeded limit =>
-            throw new GalateaOutboundExtractionReadException(
-                GalateaOutboundExtractionReadFailureKind.LimitExceeded,
+            throw new GalateaOutboundMailExtractionReadException(
+                GalateaOutboundMailExtractionReadFailureKind.LimitExceeded,
                 selectedHead,
                 limit.Limit.ToString()
             ),
         SessionCompletedTurnsReadResult.UnsupportedSchema unsupported =>
-            throw new GalateaOutboundExtractionReadException(
-                GalateaOutboundExtractionReadFailureKind.UnsupportedSchema,
+            throw new GalateaOutboundMailExtractionReadException(
+                GalateaOutboundMailExtractionReadFailureKind.UnsupportedSchema,
                 selectedHead,
                 unsupported.Detail
             ),
         SessionCompletedTurnsReadResult.Corruption corruption =>
-            throw new GalateaOutboundExtractionReadException(
-                GalateaOutboundExtractionReadFailureKind.Corruption,
+            throw new GalateaOutboundMailExtractionReadException(
+                GalateaOutboundMailExtractionReadFailureKind.Corruption,
                 selectedHead,
                 corruption.Detail
             ),

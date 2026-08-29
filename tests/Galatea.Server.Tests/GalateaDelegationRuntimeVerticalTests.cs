@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;

@@ -5,6 +5,7 @@ using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Diagnostics;
 using Atelia.Galatea.Server;
+using Atelia.Galatea.Server.Mailbox;
 using Microsoft.AspNetCore.Authentication;
 using Atelia.SessionJournal;
 

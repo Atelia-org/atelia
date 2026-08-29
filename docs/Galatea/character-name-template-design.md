@@ -118,10 +118,12 @@ Definition/EvaluationKey 宣称的语义身份分叉。
 
 ### 2.3 邮箱还有第三条角色 prompt 链
 
-[`OutboundMailExtractor`](../../prototypes/Galatea/GalateaMailbox.cs) 的 code-owned system/user prompt
-和 tool field descriptions 也写死了 `Galatea` / `[Galatea]`。当前 production composition 只构造一个
-host-wide extractor，再把它交给所有 per-user `GalateaOutboundExtractionReconciler`；角色名可配置后，
-这会把不同 user 的 Action 都按同一个角色 marker 解释。
+历史上，[`OutboundMailExtractor`](../../prototypes/Galatea/Mailbox/GalateaMailbox.cs) 的 code-owned
+system/user prompt 和 tool field descriptions 也写死了 `Galatea` / `[Galatea]`，且 production
+composition 只构造一个 host-wide extractor。当前实现已经收口为 per-user immutable extractor：
+`GalateaHostService.CreateOutboundMailExtractors` 按每个 user 的 `CharacterName` 构造
+`OutboundMailExtractor`，再交给对应 `GalateaOutboundMailExtractionReconciler`；不同 user 的
+Action 不再共享同一个角色 marker。
 
 这条链还有 durable 约束：`IOutboundMailExtractor.ContractId` 被写入
 `action_capture.extractor_contract_id`，已完成 capture 不能在重启后换一套未标识的新 prompt 语义。
@@ -382,7 +384,7 @@ readiness mismatch的exact分类为`state=invalid`、`code=character-asset-misma
 
 ### 7.1 Per-user OutboundMailExtractor
 
-推荐把 production composition 从 host-wide `IOutboundMailExtractor` 实例改成 host-wide factory +
+production composition 已从 host-wide `IOutboundMailExtractor` 实例收口为 host-wide factory +
 per-user immutable extractor：
 
 ```text
@@ -395,15 +397,15 @@ shared Completion connection/client owner
 UserSessionHost A/B 各自持有对应 extractor/reconciler；底层 borrowed Completion client仍可共享。
 ```
 
-tool 的 JSON property names/schema 保持稳定，Descriptions 改为角色中立措辞；system/user source prompt
-使用同一个 `${characterName}` renderer，明确 exact `[${characterName}]` marker。不要为每个 user
-创建独立 connection registry 或 provider client owner。
+tool 的 JSON property names/schema 保持稳定，Descriptions 使用角色中立措辞；system/user source
+prompt 使用同一个 `${characterName}` renderer，明确 exact `[${characterName}]` marker。每个 user
+拥有自己的 extractor/reconciler，但不创建独立 connection registry 或 provider client owner。
 
-所有 user 的 name validation、prompt render、`TextExtractor` construction 与 ContractId 计算都必须在
+所有 user 的 name validation、prompt render、`TextExtractor` construction 与 ContractId 计算都已经在
 `GalateaDelegationSupervisor` 构造前完成。Supervisor 构造成功后 existing durable outbox 已可能立即 pulse，
 其后不能再留下会失败的 composition preflight。
 
-V2 extractor `ContractId` 必须包含 code-owned contract version 和 rendered semantic fingerprint，具体对
+V2 extractor `ContractId` 包含 code-owned contract version 和 rendered semantic fingerprint，具体对
 exact system/user prompt、tool/schema contract version 与 visible-action renderer
 version 做 canonical SHA-256。角色名已经进入 rendered prompt，因此不同角色自然得到不同 ContractId；
 connection/model 仍是执行路由，不必冒充 semantic contract。`IOutboundMailExtractor.ContractId` 应成为

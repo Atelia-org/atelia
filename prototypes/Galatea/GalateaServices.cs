@@ -12,6 +12,7 @@ using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.Prompts;
+using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.AgentControl;
@@ -810,7 +811,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 or GalateaDurableReplyLeaseReconcileResult.Consumed) {
             _ = host.DelegationHandle?.Signal();
         }
-        _ = await ReconcileOutboundExtractionAsync(
+        _ = await ReconcileOutboundMailExtractionAsync(
                 host,
                 cancellationToken
             )
@@ -1239,7 +1240,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "delegation-reply-lease-retained"
             );
         }
-        await ReconcileOutboundExtractionAsync(host, ct)
+        await ReconcileOutboundMailExtractionAsync(host, ct)
             .ConfigureAwait(false);
         RecentTurnsResponseDto? snapshot =
             await RefreshRecentTurnsForCompletedStreamAsync(
@@ -1255,26 +1256,26 @@ public sealed class GalateaHostService : IAsyncDisposable {
     }
 
     private static async ValueTask<
-        GalateaOutboundExtractionReconcileResult>
-        ReconcileOutboundExtractionAsync(
+        GalateaOutboundMailExtractionReconcileResult>
+        ReconcileOutboundMailExtractionAsync(
         UserSessionHost host,
         CancellationToken cancellationToken
     ) {
         try {
-            GalateaOutboundExtractionReconcileResult result =
-                await host.OutboundExtractionReconciler.ReconcileAsync(
+            GalateaOutboundMailExtractionReconcileResult result =
+                await host.OutboundMailExtractionReconciler.ReconcileAsync(
                         host.Engine,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
-            if (result is GalateaOutboundExtractionReconcileResult
+            if (result is GalateaOutboundMailExtractionReconcileResult
                     .SelectedHeadChanged) {
                 throw new GalateaTurnException(
                     "Durable extraction head changed; retry admission.",
                     "delegation-state-changed"
                 );
             }
-            if (result is GalateaOutboundExtractionReconcileResult.Captured) {
+            if (result is GalateaOutboundMailExtractionReconcileResult.Captured) {
                 _ = host.DelegationHandle?.Signal();
             }
             return result;
@@ -1286,19 +1287,19 @@ public sealed class GalateaHostService : IAsyncDisposable {
         catch (GalateaTurnException) {
             throw;
         }
-        catch (GalateaOutboundExtractionReadException exception) {
+        catch (GalateaOutboundMailExtractionReadException exception) {
             throw exception.Kind switch {
-                GalateaOutboundExtractionReadFailureKind.LimitExceeded =>
+                GalateaOutboundMailExtractionReadFailureKind.LimitExceeded =>
                     new GalateaTurnException(
                         "Durable extraction exceeded its read bound.",
                         "delegation-proof-limit-exceeded"
                     ),
-                GalateaOutboundExtractionReadFailureKind.UnsupportedSchema =>
+                GalateaOutboundMailExtractionReadFailureKind.UnsupportedSchema =>
                     new GalateaTurnException(
                         "Durable extraction uses an unsupported schema.",
                         "delegation-session-schema-unsupported"
                     ),
-                GalateaOutboundExtractionReadFailureKind.Corruption =>
+                GalateaOutboundMailExtractionReadFailureKind.Corruption =>
                     new GalateaTurnException(
                         "Durable extraction evidence is invalid.",
                         "delegation-state-invalid"
@@ -1319,14 +1320,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
             string reason = exception is
-                    GalateaOutboundExtractionCaptureMismatchException
+                    GalateaOutboundMailExtractionCaptureMismatchException
                     or InvalidDataException
                 ? "delegation-state-invalid"
                 : "delegation-extraction-unavailable";
             throw new GalateaTurnException(
                 reason == "delegation-state-invalid"
                     ? "Durable extraction evidence is invalid."
-                    : "Durable outbound extraction is temporarily unavailable.",
+                    : "Durable outbound mail extraction is temporarily unavailable.",
                 reason,
                 exception
             );
@@ -2195,8 +2196,8 @@ public sealed class UserSessionHost : IAsyncDisposable {
                 new GalateaDurableReplyLeaseReconciler(
                     delegationHandle.Store
                 );
-            OutboundExtractionReconciler =
-                new GalateaOutboundExtractionReconciler(
+            OutboundMailExtractionReconciler =
+                new GalateaOutboundMailExtractionReconciler(
                     delegationHandle.Store,
                     outboundMailExtractor
                 );
@@ -2217,8 +2218,8 @@ public sealed class UserSessionHost : IAsyncDisposable {
         get;
     } = null!;
 
-    internal GalateaOutboundExtractionReconciler
-        OutboundExtractionReconciler { get; } = null!;
+    internal GalateaOutboundMailExtractionReconciler
+        OutboundMailExtractionReconciler { get; } = null!;
 
     internal GalateaLiveTurn StartTurn(
         GalateaFreshInput freshInput,

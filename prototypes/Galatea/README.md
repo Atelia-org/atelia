@@ -353,6 +353,10 @@ recovery或dedupe语义。工具契约继续由`Completion.Tools/ArtifactToolWra
 provider tool name/call ID、tool/call数量、raw arguments与diagnostics均有
 code-owned bounds；caller cancellation与transport exception直接传播。
 
+`TextExtractor` 与 composite Observation 共同形成的异步双向通讯模式，作为后续 note/recall
+类功能的复用入口，见
+[`TextExtractor / Observation Bridge`](../../docs/Galatea/text-extractor-observation-bridge.md)。
+
 ## Mailbox、OutboundMailExtractor 与 durable Codex delegation
 
 Codex delegation现已hard-cut到SQLite-backed durable owner；本节及对应代码/测试是现行产品契约。
@@ -478,7 +482,7 @@ current/legacy历史bytes，再逐项核对player text与notice kind/order/body�
 重渲染成新值。
 
 每个user至多一个active lease。recovery只继承已持久lease，不claim后来Ready的notice；inbound turn也不claim。
-lease settlement发生在outbound extraction之前，因此已经接收回信的terminal Action即使后处理失败也不会重新
+lease settlement发生在outbound mail extraction之前，因此已经接收回信的terminal Action即使后处理失败也不会重新
 投递同一notice。普通player Undo只移动SessionJournal selected lineage：已capture的outbox继续推进，active
 Codex turn不interrupt，Ready保持Ready，Consumed永不重新武装，fixed Codex thread context也不倒退。这里没有
 旧`RetractedBeforeDispatch`/`SourceRetracted`内存状态。

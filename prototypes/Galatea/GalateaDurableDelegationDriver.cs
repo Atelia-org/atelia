@@ -1,4 +1,5 @@
 using Atelia.Diagnostics;
+using Atelia.Galatea.Server.Mailbox;
 using System.Text;
 
 namespace Atelia.Galatea.Server;

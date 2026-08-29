@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using Atelia.EventJournal;
+using Atelia.Galatea.Server.Mailbox;
 
 namespace Atelia.Galatea.Server;
 

@@ -1,4 +1,5 @@
 using System.Text;
+using Atelia.Galatea.Server.Mailbox;
 using Microsoft.Data.Sqlite;
 
 namespace Atelia.Galatea.Server;

@@ -1,5 +1,6 @@
 using Atelia.EventJournal;
 using Atelia.Galatea.Server;
+using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 using Atelia.Testing;
 using System.Collections.Concurrent;

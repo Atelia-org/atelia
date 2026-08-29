@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;

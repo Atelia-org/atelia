@@ -1,5 +1,6 @@
 using System.Text;
 using Atelia.Completion.Abstractions;
+using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;

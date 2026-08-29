@@ -2,6 +2,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.Prompts;
+using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;

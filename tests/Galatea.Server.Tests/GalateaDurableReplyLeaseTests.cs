@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.Server;
+using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 using Atelia.Testing;
 using Microsoft.Data.Sqlite;

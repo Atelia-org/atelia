@@ -127,7 +127,7 @@ Codex outbound appendix。旧`cyber.md`已有等价邮箱段，正确切分可�
 是与实际enabled feature对齐的预期变化，不需要per-user module开关。若binding改为`null`，两者仍保留universal
 inbox base，但prompt不再承诺主动发送或Codex投递。未被config引用的`cyber_template.md`不阻塞迁移。
 
-迁移不provision/rebuild/promote RecapGrid，不运行outbound extraction，不改delegation store或raw SessionJournal。
+迁移不provision/rebuild/promote RecapGrid，不运行outbound mail extraction，不改delegation store或raw SessionJournal。
 Read-only canary应验证load、final composition与现有readiness；真正的setup rotation只发生在之后的普通fresh turn。
 
 ## 8. 验证矩阵
