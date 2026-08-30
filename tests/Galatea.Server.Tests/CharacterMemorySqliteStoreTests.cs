@@ -1,3 +1,4 @@
+using Atelia.Data;
 using Atelia.EventJournal;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.SessionJournal;
@@ -443,7 +444,11 @@ public sealed class CharacterMemorySqliteStoreTests {
     private static string Address(
         int value,
         uint segmentNumber = 1
-    ) => $"ej1:{value:x16}{segmentNumber:x8}00000000";
+    ) => EventAddressTextCodec.Format(new EventAddress(
+        SizedPtr.Create(checked(value * 4L), 4),
+        segmentNumber,
+        AddressHint.None
+    ));
 
     private static string Sha(char value) => new(value, 64);
 
