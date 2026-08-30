@@ -100,6 +100,11 @@ internal sealed record CharacterMemoryStatusSnapshot(
     CharacterMemoryCaptureSnapshot? ActiveCapture
 );
 
+internal sealed record CharacterMemoryCaptureBatchSnapshot(
+    CharacterMemoryStatusSnapshot Status,
+    IReadOnlyList<CharacterMemoryCaptureSnapshot> Captures
+);
+
 internal enum CharacterMemoryCaptureDisposition {
     BaselineCovered,
     ZeroCaptured,

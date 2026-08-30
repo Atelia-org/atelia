@@ -8,7 +8,8 @@ namespace Atelia.Galatea.Server.CharacterMemory;
 /// Owns one per-user Character Memory store and reconciles its single V1
 /// Default MemoPod. Callers still serialize SessionJournal work with TurnLock.
 /// </summary>
-internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
+internal sealed class CharacterNoteDefaultPodReconciler
+    : ICharacterNoteOriginReader, IDisposable {
     private readonly CharacterMemorySqliteStore _store;
     private readonly ICharacterNoteExtractor _extractor;
     private readonly ICharacterNoteDefaultPodAccess _pods;
@@ -81,6 +82,95 @@ internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
     internal CharacterMemoryStatusSnapshot ReadStatusSnapshot() {
         ThrowIfDisposed();
         return _store.ReadStatusSnapshot();
+    }
+
+    public CharacterNoteOriginBarrier ReadOriginBarrier(
+        IReadOnlyList<CharacterNoteVisibleActionIdentity> visibleActions
+    ) {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(visibleActions);
+
+        var originsBySource = new Dictionary<string,
+            CharacterNoteVisibleActionIdentity>(StringComparer.Ordinal);
+        foreach (CharacterNoteVisibleActionIdentity origin
+                 in visibleActions) {
+            ArgumentNullException.ThrowIfNull(origin);
+            string source = EventAddressTextCodec.Format(
+                origin.SourceAction
+            );
+            if (originsBySource.TryGetValue(source, out var existing)) {
+                if (existing.Fingerprint != origin.Fingerprint) {
+                    throw new InvalidDataException(
+                        "One provider-visible Action address has conflicting visible fingerprints."
+                    );
+                }
+                continue;
+            }
+            originsBySource.Add(source, origin);
+        }
+
+        CharacterMemoryCaptureBatchSnapshot batch =
+            _store.ReadCaptureBatchExact(originsBySource.Keys);
+        CharacterMemoryStatusSnapshot status = batch.Status;
+        if (status.StoreState is CharacterMemoryStoreState.Quarantined) {
+            throw new CharacterMemoryStoreQuarantinedException(
+                status.QuarantineCode!
+            );
+        }
+        if (status.StoreState is not CharacterMemoryStoreState.Ready) {
+            throw new InvalidDataException(
+                "An attached Character Memory store must be Ready."
+            );
+        }
+        if (status.ActiveCapture is not null) {
+            throw new InvalidDataException(
+                "Character Note origin lookup observed an unsettled capture."
+            );
+        }
+
+        var entries = new List<CharacterNoteOriginBarrierEntry>();
+        foreach (CharacterMemoryCaptureSnapshot capture in batch.Captures) {
+            CharacterNoteVisibleActionIdentity origin =
+                originsBySource[capture.SourceActionAddress];
+            if (!string.Equals(
+                    capture.VisibleActionSha256,
+                    origin.Fingerprint.Sha256,
+                    StringComparison.Ordinal)
+                || capture.VisibleActionUtf8Bytes
+                    != origin.Fingerprint.Utf8Bytes) {
+                throw new InvalidDataException(
+                    "A provider-visible Action does not match its durable Character Note provenance."
+                );
+            }
+
+            switch (capture.State) {
+                case CharacterMemoryCaptureState.Applied:
+                    entries.AddRange(capture.Notes.Select(note =>
+                        new CharacterNoteOriginBarrierEntry(
+                            CharacterNoteDefaultPodV1.PodId,
+                            MemoId.Parse(note.MemoId
+                                ?? throw new InvalidDataException(
+                                    "An applied Character Note has no Memo ID."
+                                )),
+                            origin
+                        )
+                    ));
+                    break;
+                case CharacterMemoryCaptureState.ZeroCaptured:
+                case CharacterMemoryCaptureState.Rejected:
+                    break;
+                case CharacterMemoryCaptureState.Captured:
+                case CharacterMemoryCaptureState.Planned:
+                    throw new InvalidDataException(
+                        "Character Note origin lookup observed a nonterminal capture."
+                    );
+                default:
+                    throw new InvalidDataException(
+                        "Unknown Character Memory capture state."
+                    );
+            }
+        }
+        return new CharacterNoteOriginBarrier(entries);
     }
 
     internal async ValueTask<CharacterNotePendingReconcileResult>

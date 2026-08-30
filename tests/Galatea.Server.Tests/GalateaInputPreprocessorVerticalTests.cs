@@ -366,7 +366,8 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         Assert.Same(session.User, recallRequest.User);
         Assert.Equal("normalized input", recallRequest.PlayerText);
         Assert.Empty(recallRequest.Notices);
-        Assert.Empty(recallRequest.Barrier.Entries);
+        Assert.Empty(recallRequest.RecallBarrier.Entries);
+        Assert.Empty(recallRequest.CharacterNoteOriginBarrier.Entries);
         Assert.NotEqual(default, recallRequest.CompletionBoundary);
 
         CompletionRequest request = Assert.IsType<CompletionRequest>(
@@ -466,8 +467,8 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         )).WaitAsync(CompletionDeadline);
 
         Assert.Equal(2, recallProvider.Requests.Count);
-        Assert.Empty(recallProvider.Requests[0].Barrier.Entries);
-        Assert.True(recallProvider.Requests[1].Barrier.Contains(
+        Assert.Empty(recallProvider.Requests[0].RecallBarrier.Entries);
+        Assert.True(recallProvider.Requests[1].RecallBarrier.Contains(
             RecallType.MemoGist,
             "memo-pod:galatea#memo-0001"
         ));
@@ -847,7 +848,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             cancellationToken.ThrowIfCancellationRequested();
             Requests.Add(request);
             IReadOnlyList<PlayerTurnRecall> recalls =
-                request.Barrier.Contains(recall.Entry)
+                request.RecallBarrier.Contains(recall.Entry)
                     ? []
                     : [recall];
             ReturnedCounts.Add(recalls.Count);

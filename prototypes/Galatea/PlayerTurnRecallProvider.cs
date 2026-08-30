@@ -1,6 +1,12 @@
 using Atelia.EventJournal;
+using Atelia.Galatea.Server.CharacterMemory;
 
 namespace Atelia.Galatea.Server;
+
+internal sealed record GalateaPlayerTurnRecallBarriers(
+    RecallBarrier RecallBarrier,
+    CharacterNoteOriginBarrier CharacterNoteOriginBarrier
+);
 
 internal sealed record GalateaPlayerTurnRecallRequest {
     internal GalateaPlayerTurnRecallRequest(
@@ -8,11 +14,13 @@ internal sealed record GalateaPlayerTurnRecallRequest {
         EventAddress completionBoundary,
         string playerText,
         IReadOnlyList<PlayerTurnNotice> notices,
-        RecallBarrier barrier
+        RecallBarrier recallBarrier,
+        CharacterNoteOriginBarrier characterNoteOriginBarrier
     ) {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(notices);
-        ArgumentNullException.ThrowIfNull(barrier);
+        ArgumentNullException.ThrowIfNull(recallBarrier);
+        ArgumentNullException.ThrowIfNull(characterNoteOriginBarrier);
         if (completionBoundary == default) {
             throw new ArgumentException(
                 "Completion boundary cannot be the default EventAddress.",
@@ -25,14 +33,18 @@ internal sealed record GalateaPlayerTurnRecallRequest {
         CompletionBoundary = completionBoundary;
         PlayerText = observation.PlayerText;
         Notices = observation.Notices;
-        Barrier = barrier;
+        RecallBarrier = recallBarrier;
+        CharacterNoteOriginBarrier = characterNoteOriginBarrier;
     }
 
     internal GalateaUserConfig User { get; }
     internal EventAddress CompletionBoundary { get; }
     internal string PlayerText { get; }
     internal IReadOnlyList<PlayerTurnNotice> Notices { get; }
-    internal RecallBarrier Barrier { get; }
+    internal RecallBarrier RecallBarrier { get; }
+    internal CharacterNoteOriginBarrier CharacterNoteOriginBarrier {
+        get;
+    }
 }
 
 internal interface IGalateaPlayerTurnRecallProvider {

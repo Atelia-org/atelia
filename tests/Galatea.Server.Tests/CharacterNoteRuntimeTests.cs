@@ -132,6 +132,95 @@ public sealed class CharacterNoteRuntimeTests {
     }
 
     [Fact]
+    public async Task SecondTurnOriginBarrierBlocksJustSavedMemoRecall() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig note = Connection("note");
+        var recallProvider = new NewlySavedMemoRecallProvider();
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient>(
+                StringComparer.Ordinal
+            ) {
+                [main.Id] = new QueueClient(
+                    Message(new ActionBlock.Text(Action)),
+                    Message(new ActionBlock.Text("second reply"))
+                ),
+                [note.Id] = new QueueClient(
+                    Message(NoteTool()),
+                    Message()
+                ),
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, note],
+            selectableConnectionIds: [main.Id],
+            characterNoteExtractorConnectionId: note.Id,
+            playerTurnRecallProvider: recallProvider
+        );
+        (GalateaHostService service, UserSessionHost session) =
+            await GetRuntimeAsync(host);
+
+        await session.TurnLock.WaitAsync();
+        try {
+            GalateaLiveTurn first = service.StartTurn(
+                session,
+                "first",
+                new GalateaTurnOptions(main.Id)
+            );
+            await service.RunTurnAsync(
+                    session,
+                    first,
+                    CancellationToken.None
+                )
+                .WaitAsync(Deadline);
+            service.FinishTurn(session, first);
+            Assert.Equal(NoteText, Assert.Single(
+                global::Atelia.MemoPod.MemoPod.Open(
+                    session.User.CharacterMemoryStateDir,
+                    CharacterNoteDefaultPodV1.PodId
+                ).List()
+            ).ExactText);
+
+            GalateaLiveTurn second = service.StartTurn(
+                session,
+                "second",
+                new GalateaTurnOptions(main.Id)
+            );
+            await service.RunTurnAsync(
+                    session,
+                    second,
+                    CancellationToken.None
+                )
+                .WaitAsync(Deadline);
+            service.FinishTurn(session, second);
+
+            Assert.Equal(2, recallProvider.Requests.Count);
+            Assert.False(recallProvider.Requests[0]
+                .CharacterNoteOriginBarrier.Contains(
+                    CharacterNoteDefaultPodV1.PodId,
+                    MemoId.Parse("m1:00000001")
+                ));
+            Assert.True(recallProvider.Requests[1]
+                .CharacterNoteOriginBarrier.Contains(
+                    CharacterNoteDefaultPodV1.PodId,
+                    MemoId.Parse("m1:00000001")
+                ));
+            Assert.Equal([0, 0], recallProvider.ReturnedCounts);
+            SessionCompletedTurnProjection latest = session.Engine
+                .ReadRecentCompletedTurns(1)
+                .RequireSnapshot()
+                .Turns
+                .Single();
+            Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
+                latest.ObservationContent,
+                out PlayerTurnObservation observation
+            ));
+            Assert.Empty(observation.Recalls);
+        }
+        finally {
+            session.TurnLock.Release();
+        }
+    }
+
+    [Fact]
     public async Task DiagnosticSinkCapturesSingleLineJsonWithinContentBoundary() {
         const string ExactText = "remember blue\nsecond line";
         const string Evidence =
@@ -1991,6 +2080,40 @@ public sealed class CharacterNoteRuntimeTests {
                 message,
                 CompletionDescriptor.From(this, request)
             ));
+        }
+    }
+
+    private sealed class NewlySavedMemoRecallProvider
+        : IGalateaPlayerTurnRecallProvider {
+        private static readonly MemoId CandidateMemoId =
+            MemoId.Parse("m1:00000001");
+        private static readonly PlayerTurnRecall Candidate = new(
+            new RecallEntry(
+                RecallType.MemoExactText,
+                "character-note-test-candidate"
+            ),
+            NoteText
+        );
+
+        internal List<GalateaPlayerTurnRecallRequest> Requests { get; } = [];
+        internal List<int> ReturnedCounts { get; } = [];
+
+        public ValueTask<IReadOnlyList<PlayerTurnRecall>> SelectRecallsAsync(
+            GalateaPlayerTurnRecallRequest request,
+            CancellationToken cancellationToken
+        ) {
+            ArgumentNullException.ThrowIfNull(request);
+            cancellationToken.ThrowIfCancellationRequested();
+            Requests.Add(request);
+            bool candidateAvailable = Requests.Count > 1;
+            bool blocked = request.CharacterNoteOriginBarrier.Contains(
+                CharacterNoteDefaultPodV1.PodId,
+                CandidateMemoId
+            );
+            IReadOnlyList<PlayerTurnRecall> returned =
+                candidateAvailable && !blocked ? [Candidate] : [];
+            ReturnedCounts.Add(returned.Count);
+            return ValueTask.FromResult(returned);
         }
     }
 

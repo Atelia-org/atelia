@@ -2488,7 +2488,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             SessionUncertainCompletionRecoveryPolicy.Refuse));
         if (playerAction is not null
             && liveTurn.DurableReplyLease is null) {
-            RecallBarrier barrier = await BuildCurrentRecallBarrierAsync(
+            GalateaPlayerTurnRecallBarriers barriers =
+                await BuildCurrentRecallBarriersAsync(
                 host,
                 online.CandidateSource,
                 ready.GoverningSetup,
@@ -2500,7 +2501,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     host,
                     ready.GoverningSetup.Head,
                     playerAction,
-                    barrier,
+                    barriers,
                     cancellationToken
                 ).ConfigureAwait(false);
             if (recalls.Count > 0) {
@@ -2535,7 +2536,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         UserSessionHost host,
         EventAddress completionBoundary,
         GalateaFreshInput.PlayerAction player,
-        RecallBarrier barrier,
+        GalateaPlayerTurnRecallBarriers barriers,
         CancellationToken cancellationToken
     ) {
         GalateaPlayerTurnRecallRequest request = new(
@@ -2543,7 +2544,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             completionBoundary,
             player.Text,
             player.Notices,
-            barrier
+            barriers.RecallBarrier,
+            barriers.CharacterNoteOriginBarrier
         );
         IReadOnlyList<PlayerTurnRecall> selected =
             await _playerTurnRecallProvider
@@ -2559,7 +2561,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ).ToArray());
     }
 
-    private async ValueTask<RecallBarrier> BuildCurrentRecallBarrierAsync(
+    private async ValueTask<GalateaPlayerTurnRecallBarriers>
+        BuildCurrentRecallBarriersAsync(
         UserSessionHost host,
         ICoherentContextCandidateSource candidates,
         SessionGoverningSetup governingSetup,
@@ -2595,7 +2598,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         "recall-barrier-raw-history-unauthorized"
                     ),
             SessionContextCandidateSelectionStatus.Selected =>
-                await MaterializeRecallBarrierWindowAsync(
+                await MaterializeRecallBarriersWindowAsync(
                     host,
                     candidates,
                     governingSetup.Head,
@@ -2632,13 +2635,20 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "Unknown context candidate selection status."
             )
         };
-        return GalateaRecallBarrierBuilder.BuildFromProviderVisibleMessages(
-            window.Units.Select(static unit => unit.Message)
+        return new GalateaPlayerTurnRecallBarriers(
+            GalateaRecallBarrierBuilder.BuildFromProviderVisibleMessages(
+                window.Units.Select(static unit => unit.Message)
+            ),
+            GalateaCharacterNoteOriginBarrierBuilder
+                .BuildFromProviderVisibleRawUnits(
+                    window.Units,
+                    host.CharacterMemoryReconciler
+                )
         );
     }
 
     private static async ValueTask<SessionHistoryPlanningWindow>
-        MaterializeRecallBarrierWindowAsync(
+        MaterializeRecallBarriersWindowAsync(
         UserSessionHost host,
         ICoherentContextCandidateSource candidates,
         EventAddress completionBoundary,

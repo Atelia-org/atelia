@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Atelia.Completion.Abstractions;
+using Atelia.Data;
 using Atelia.EventJournal;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.MemoPod;
@@ -251,6 +252,234 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
             second
         );
         Assert.Equal(1, fixture.Extractor.CallCount);
+    }
+
+    [Fact]
+    public async Task OriginBarrierMapsExactAppliedMultiMemoCapture() {
+        using var fixture = await RuntimeFixture.CreateAsync(_ => [
+            new CharacterNoteIntent("first note", "first submitted"),
+            new CharacterNoteIntent("second note", "second submitted"),
+        ]);
+        (EventAddress action, GalateaTerminalActionExtractionTarget target) =
+            fixture.AppendTarget("two submitted notes");
+
+        var applied = Assert.IsType<
+            CharacterNoteDefaultPodReconcileResult.AppliedNow
+        >(await fixture.Reconciler.ReconcileTargetAsync(
+            fixture.Engine,
+            target
+        ));
+        CharacterNoteOriginBarrier barrier =
+            fixture.Reconciler.ReadOriginBarrier([
+                new CharacterNoteVisibleActionIdentity(
+                    action,
+                    GalateaVisibleActionFingerprint.Derive(
+                        target.VisibleText
+                    )
+                ),
+            ]);
+
+        Assert.Equal(2, barrier.Entries.Count);
+        Assert.All(applied.Memos, memo => Assert.True(barrier.Contains(
+            memo.PodId,
+            memo.MemoId
+        )));
+        Assert.Equal(
+            applied.Memos.Select(static memo => memo.MemoId),
+            barrier.Entries.Select(static key => key.MemoId)
+        );
+    }
+
+    [Fact]
+    public async Task OriginBarrierIgnoresAbsentZeroAndRejectedCaptures() {
+        using (var zero = await RuntimeFixture.CreateAsync(_ => [])) {
+            CharacterNoteOriginBarrier absent =
+                zero.Reconciler.ReadOriginBarrier([
+                    new CharacterNoteVisibleActionIdentity(
+                        new EventAddress(
+                            SizedPtr.Create(400, 4),
+                            1,
+                            AddressHint.None
+                        ),
+                        GalateaVisibleActionFingerprint.Derive("absent")
+                    ),
+                ]);
+            Assert.Empty(absent.Entries);
+
+            (EventAddress action,
+                GalateaTerminalActionExtractionTarget target) =
+                zero.AppendTarget("no note request");
+            Assert.IsType<
+                CharacterNoteDefaultPodReconcileResult.ZeroCaptured
+            >(await zero.Reconciler.ReconcileTargetAsync(
+                zero.Engine,
+                target
+            ));
+            Assert.Empty(zero.Reconciler.ReadOriginBarrier([
+                new CharacterNoteVisibleActionIdentity(
+                    action,
+                    GalateaVisibleActionFingerprint.Derive(
+                        target.VisibleText
+                    )
+                ),
+            ]).Entries);
+        }
+
+        var access = FakePodAccess.ReadyEmpty();
+        access.ActiveMemoCount = MemoPodLimits.MaximumActiveMemoCount;
+        using var rejected = await RuntimeFixture.CreateWithAccessAsync(
+            _ => [new CharacterNoteIntent("exact", "submitted")],
+            access
+        );
+        (EventAddress rejectedAction,
+            GalateaTerminalActionExtractionTarget rejectedTarget) =
+            rejected.AppendTarget("exact submitted");
+        Assert.IsType<CharacterNoteDefaultPodReconcileResult.Rejected>(
+            await rejected.Reconciler.ReconcileTargetAsync(
+                rejected.Engine,
+                rejectedTarget
+            )
+        );
+        Assert.Empty(rejected.Reconciler.ReadOriginBarrier([
+            new CharacterNoteVisibleActionIdentity(
+                rejectedAction,
+                GalateaVisibleActionFingerprint.Derive(
+                    rejectedTarget.VisibleText
+                )
+            ),
+        ]).Entries);
+    }
+
+    [Fact]
+    public async Task OriginBarrierRejectsFingerprintMismatch() {
+        using var fixture = await RuntimeFixture.CreateAsync(_ => [
+            new CharacterNoteIntent("exact", "submitted"),
+        ]);
+        (EventAddress action, GalateaTerminalActionExtractionTarget target) =
+            fixture.AppendTarget("exact submitted");
+        Assert.IsType<CharacterNoteDefaultPodReconcileResult.AppliedNow>(
+            await fixture.Reconciler.ReconcileTargetAsync(
+                fixture.Engine,
+                target
+            )
+        );
+
+        Assert.Throws<InvalidDataException>(() =>
+            fixture.Reconciler.ReadOriginBarrier([
+                new CharacterNoteVisibleActionIdentity(
+                    action,
+                    GalateaVisibleActionFingerprint.Derive(
+                        "changed visible Action"
+                    )
+                ),
+            ])
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            fixture.Reconciler.ReadOriginBarrier([
+                new CharacterNoteVisibleActionIdentity(
+                    action,
+                    new GalateaVisibleActionFingerprint(
+                        target.VisibleTextSha256,
+                        target.VisibleTextUtf8Bytes + 1
+                    )
+                ),
+            ])
+        );
+    }
+
+    [Fact]
+    public async Task OriginBarrierRejectsCapturedPlannedAndQuarantinedStore() {
+        using (var capturedPaths = new FixturePaths())
+        using (SessionJournalEngine capturedEngine = CreateEngine(
+                   capturedPaths.SessionPath
+               )) {
+            CharacterMemorySqliteStore store = ReadyStore(
+                capturedPaths.StatePath,
+                capturedEngine
+            );
+            EventAddress action = AppendAction(
+                capturedEngine,
+                "captured pending"
+            );
+            GalateaVisibleActionFingerprint fingerprint =
+                GalateaVisibleActionFingerprint.Derive(
+                    "captured pending"
+                );
+            _ = store.CaptureNew(new CharacterMemoryCaptureRequest(
+                EventAddressTextCodec.Format(action),
+                fingerprint.Sha256,
+                fingerprint.Utf8Bytes,
+                "test-contract",
+                ["pending note"]
+            ));
+            using CharacterNoteDefaultPodReconciler reconciler =
+                await CharacterNoteDefaultPodReconciler.AttachAsync(
+                    store,
+                    new RecordingExtractor(_ => []),
+                    FakePodAccess.ReadyEmpty()
+                );
+            Assert.Throws<InvalidDataException>(() =>
+                reconciler.ReadOriginBarrier([
+                    new CharacterNoteVisibleActionIdentity(
+                        action,
+                        fingerprint
+                    ),
+                ])
+            );
+        }
+
+        var plannedAccess = FakePodAccess.ReadyEmpty();
+        plannedAccess.NextFreeze = FakeFreeze.LeaveBaseThenThrow;
+        using (var planned = await RuntimeFixture.CreateWithAccessAsync(
+                   _ => [new CharacterNoteIntent("exact", "submitted")],
+                   plannedAccess
+               )) {
+            (EventAddress action,
+                GalateaTerminalActionExtractionTarget target) =
+                planned.AppendTarget("exact submitted");
+            Assert.IsType<
+                CharacterNoteDefaultPodReconcileResult.DeferredAfterCapture
+            >(await planned.Reconciler.ReconcileTargetAsync(
+                planned.Engine,
+                target
+            ));
+            Assert.Throws<InvalidDataException>(() =>
+                planned.Reconciler.ReadOriginBarrier([
+                    new CharacterNoteVisibleActionIdentity(
+                        action,
+                        GalateaVisibleActionFingerprint.Derive(
+                            target.VisibleText
+                        )
+                    ),
+                ])
+            );
+        }
+
+        using var quarantinedPaths = new FixturePaths();
+        using SessionJournalEngine quarantinedEngine = CreateEngine(
+            quarantinedPaths.SessionPath
+        );
+        CharacterMemorySqliteStore quarantinedStore = ReadyStore(
+            quarantinedPaths.StatePath,
+            quarantinedEngine
+        );
+        CharacterMemoryStatusSnapshot status =
+            quarantinedStore.ReadStatusSnapshot();
+        _ = quarantinedStore.Quarantine(
+            new CharacterMemoryQuarantineRequest(
+                status.StoreRevision,
+                "TEST_QUARANTINE"
+            )
+        );
+        using CharacterNoteDefaultPodReconciler quarantined =
+            await CharacterNoteDefaultPodReconciler.AttachAsync(
+                quarantinedStore,
+                new RecordingExtractor(_ => []),
+                FakePodAccess.ReadyEmpty()
+            );
+        Assert.Throws<CharacterMemoryStoreQuarantinedException>(() =>
+            quarantined.ReadOriginBarrier([])
+        );
     }
 
     [Fact]

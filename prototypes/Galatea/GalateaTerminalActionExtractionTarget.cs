@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
 
@@ -36,11 +34,6 @@ internal abstract record GalateaTerminalActionExtractionReadResult {
 /// the supplied text so callers cannot provide mismatched hash metadata.
 /// </summary>
 internal sealed record GalateaTerminalActionExtractionTarget {
-    private static readonly UTF8Encoding StrictUtf8 = new(
-        encoderShouldEmitUTF8Identifier: false,
-        throwOnInvalidBytes: true
-    );
-
     internal GalateaTerminalActionExtractionTarget(
         EventAddress sourceAction,
         string visibleText
@@ -53,13 +46,12 @@ internal sealed record GalateaTerminalActionExtractionTarget {
         }
         ArgumentNullException.ThrowIfNull(visibleText);
 
-        byte[] utf8 = StrictUtf8.GetBytes(visibleText);
+        GalateaVisibleActionFingerprint fingerprint =
+            GalateaVisibleActionFingerprint.Derive(visibleText);
         SourceAction = sourceAction;
         VisibleText = visibleText;
-        VisibleTextSha256 = Convert.ToHexString(
-            SHA256.HashData(utf8)
-        ).ToLowerInvariant();
-        VisibleTextUtf8Bytes = utf8.Length;
+        VisibleTextSha256 = fingerprint.Sha256;
+        VisibleTextUtf8Bytes = fingerprint.Utf8Bytes;
     }
 
     internal EventAddress SourceAction { get; }

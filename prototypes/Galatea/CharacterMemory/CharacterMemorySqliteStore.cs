@@ -194,6 +194,44 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         }
     }
 
+    internal CharacterMemoryCaptureBatchSnapshot ReadCaptureBatchExact(
+        IEnumerable<string> sourceActionAddresses
+    ) {
+        ArgumentNullException.ThrowIfNull(sourceActionAddresses);
+        var unique = new HashSet<string>(StringComparer.Ordinal);
+        var sources = new List<string>();
+        foreach (string source in sourceActionAddresses) {
+            RequireEventAddress(source, nameof(sourceActionAddresses));
+            if (unique.Add(source)) {
+                sources.Add(source);
+            }
+        }
+
+        lock (_gate) {
+            ThrowIfDisposed();
+            using SqliteConnection connection = OpenVerifiedConnection();
+            CharacterMemoryStatusSnapshot status = ReadStatusCore(
+                connection,
+                transaction: null
+            );
+            var captures = new List<CharacterMemoryCaptureSnapshot>();
+            foreach (string source in sources) {
+                CharacterMemoryCaptureSnapshot? capture = ReadCaptureCore(
+                    connection,
+                    transaction: null,
+                    source
+                );
+                if (capture is not null) {
+                    captures.Add(capture);
+                }
+            }
+            return new CharacterMemoryCaptureBatchSnapshot(
+                status,
+                Array.AsReadOnly(captures.ToArray())
+            );
+        }
+    }
+
     public void Dispose() {
         lock (_gate) {
             if (_disposed) { return; }
