@@ -171,10 +171,56 @@ public sealed class CharacterNoteExtractorTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
+            "Emit at most 16 tool calls",
+            aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "earliest qualifying candidates first",
+            aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "Never truncate or rewrite a candidate",
+            aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "64 KiB of UTF-8 text",
+            aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "8 KiB of UTF-8 text",
+            aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "combined emitted exactText exceed 256 KiB",
+            aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "Runtime validation is authoritative",
+            aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "need not perform exact UTF-8 byte arithmetic",
+            aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal
+        );
+        ObservationMessage aliceTail = Assert.IsType<ObservationMessage>(
+            Assert.Single(aliceRequest.TailMessages)
+        );
+        Assert.Contains(
             "quoted or existing Notes",
-            Assert.IsType<ObservationMessage>(
-                Assert.Single(aliceRequest.TailMessages)
-            ).Content,
+            aliceTail.Content,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "up to 16 earliest qualifying long-term Notes",
+            aliceTail.Content,
             StringComparison.Ordinal
         );
         string schema = ToolSchemaTextRenderer.RenderDefinitions(
@@ -182,6 +228,8 @@ public sealed class CharacterNoteExtractorTests {
         );
         Assert.Contains("exactText", schema, StringComparison.Ordinal);
         Assert.Contains("evidenceQuote", schema, StringComparison.Ordinal);
+        Assert.Contains("64 KiB", schema, StringComparison.Ordinal);
+        Assert.Contains("8 KiB", schema, StringComparison.Ordinal);
         Assert.DoesNotContain(
             "title",
             schema,

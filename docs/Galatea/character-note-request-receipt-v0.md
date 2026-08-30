@@ -107,6 +107,8 @@ runtime 另行绑定 `SourceAction`、visible text SHA-256、UTF-8 byte count �
 - 每个 Action 最多 16 条 Note；
 - 单批 `ExactText` 总计最大 256 KiB。
 
+extractor prompt 按叙事顺序只选择最早的最多 16 个 qualifying candidates；达到数量上限后停止，不截断或改写候选。单条 `ExactText` / `EvidenceQuote` 明显超过各自上限时不输出该候选；加入下一候选会使 `ExactText` 总量明显超过 256 KiB 时，在该候选前停止且不再输出更晚候选。runtime validation 始终是 authoritative boundary；模型无需精确计算 UTF-8 bytes，但不得故意输出已知超限值。该 selection judgment 由 `semantic.v2` 标识，tool fields 与 `ToolContractVersion` 不变。
+
 `ExactText` 与 `EvidenceQuote` 必须能以 ordinal substring 在本次 visible Action text 中找到。该约束有意比 Mailbox 更严格，用于避免 V0 在没有 durable apply/review 阶段时悄悄改写角色原文。
 
 ### 保守提取定义
@@ -322,7 +324,7 @@ V0 不实现：
 |---|---|---|---|
 | D0 | 建立本方案、目标/非目标、failure matrix | Complete | 本文档 |
 | A0 | `ICompletionClient` 并发合同 audit；terminal Action 单一 target；Mail target overload | Complete | `GalateaOutboundMailExtractionReconcilerTests` 19/19 |
-| A1 | `CharacterNoteIntent`、prompt、extractor、ContractId、bounds/source-grounding | Complete | `CharacterNoteExtractorTests` 10/10 |
+| A1 | `CharacterNoteIntent`、prompt、extractor、ContractId、bounds/source-grounding | Complete | `CharacterNoteExtractorTests` 12/12；semantic.v2 prompt/bounds 对齐 |
 | A2 | exact config binding、lazy per-user composition | Complete | focused config/composition tests 42/42 |
 | A3 | post-completion 并行 coordinator、timeout/failure matrix、diagnostics | Complete | `CharacterNoteRuntimeTests` 12/12中的shared-client overlap与failure matrix |
 | A4a | code-owned receipt、bounded FIFO、`PlayerTurnObservation` canonical grammar | Complete | focused receipt/Observation tests 16/16；Galatea build 0 warnings/errors |

@@ -22,11 +22,11 @@ internal static class CharacterNoteBounds {
 )]
 internal sealed record CharacterNoteIntent(
     [property: Required, Description(
-        "The complete note text copied exactly from the target Action. Never invent, complete, rewrite, summarize, or polish it."
+        "The complete note text copied exactly from the target Action, up to 64 KiB of UTF-8 text. Never invent, complete, rewrite, summarize, polish, or truncate it."
     ), JsonPropertyName("exactText")]
     string ExactText,
     [property: Required, Description(
-        "An exact quote from the target Action proving that the configured story character completed recording this note in their own long-term memory."
+        "An exact quote from the target Action, up to 8 KiB of UTF-8 text, proving that the configured story character completed recording this note in their own long-term memory."
     ), JsonPropertyName("evidenceQuote")]
     string EvidenceQuote
 );
@@ -72,7 +72,7 @@ internal sealed class CharacterNoteExtractor : ICharacterNoteExtractor {
     private const string ContractIdPrefix =
         "atelia.galatea.character-note-extractor.v1.";
     private const string SemanticContractVersion =
-        "atelia.galatea.character-note-extractor.semantic.v1";
+        "atelia.galatea.character-note-extractor.semantic.v2";
     private const string ToolContractVersion =
         "emit-character-note-intent.v1";
     private const string VisibleActionRendererVersion =
@@ -90,6 +90,10 @@ The provider Action is a composite GM carrier, not automatically ${characterName
 
 Emit one tool call per note, in narrative order, only when ${characterName} actually finishes recording it as their own long-term Note, Memo, or autonomous memory and the complete note text appears in this Action.
 
+Emit at most 16 tool calls. Consider qualifying candidates in narrative order and emit the earliest qualifying candidates first. Stop once 16 have been emitted. Never truncate or rewrite a candidate to fit a limit.
+
+Do not emit a candidate whose exactText is clearly over 64 KiB of UTF-8 text or whose evidenceQuote is clearly over 8 KiB of UTF-8 text. If adding a candidate's exactText would clearly make the combined emitted exactText exceed 256 KiB, stop before that candidate and emit no later candidates. Runtime validation is authoritative. You need not perform exact UTF-8 byte arithmetic, but do not knowingly exceed these limits.
+
 Ordinary thoughts, discoveries, conclusions, dialogue, wishes or decisions to remember, plans, suggestions, drafts, composing, opening an interface, preparing to save, and incomplete writes are not completed note records. Ordinary diaries, sticky notes, graffiti, mail, and other story-world writing are not long-term Notes unless the Action explicitly says so. Reading, quoting, or recalling an existing Note is not a new record. A reference such as "remember the content above" is insufficient when the complete note text is absent from this Action.
 
 Copy exactText and evidenceQuote verbatim from the Action. Never invent, complete, rewrite, summarize, or polish them. evidenceQuote must prove both actor ownership and completed recording. If the long-term-memory target, complete text, actor ownership, or completed action is missing or ambiguous, emit nothing for that candidate.
@@ -98,7 +102,7 @@ Ordinary response text is diagnostic only. Use emit_character_note_intent for ar
 """;
 
     private const string UserPromptTemplate = """
-Extract zero or more long-term Notes that ${characterName} actually finished recording in this Action. Preserve narrative order. Be conservative: thoughts, plans, drafts, ordinary writing, quoted or existing Notes, and incomplete records produce no artifact.
+Extract up to 16 earliest qualifying long-term Notes that ${characterName} actually finished recording in this Action. Preserve narrative order. Be conservative: thoughts, plans, drafts, ordinary writing, quoted or existing Notes, and incomplete records produce no artifact.
 """;
 
     private readonly TextExtractor _inner;
