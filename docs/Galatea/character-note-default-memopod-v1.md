@@ -3,7 +3,7 @@
 ## 状态
 
 - 方案日期：2026-08-30
-- 当前状态：Implemented；D0与A0-A4完成，等待R0 integrated review
+- 当前状态：Implemented and reviewed；D0-R0完成
 - 前置版本：[`Character Note Request Receipt V0`](character-note-request-receipt-v0.md)
 - 本轮目标：把已识别的Character Note保存请求幂等地写入每个角色唯一的Default MemoPod，并只在durable apply已经证明成功后生成诚实回执
 - 本轮不包含：静态分类、PodCatalog、动态聚类、多Pod routing、Memo内容整理、主线程recall注入
@@ -462,6 +462,8 @@ Status：Complete；runtime/save receipt/Observation/admission focused tests覆�
 ### R0 — integrated review and validation
 
 Intent：独立review authority、crash/cancellation、prompt/runtime/doc一致性，收尾后串行跑focused与full Galatea suite。
+
+Status：Complete；最终独立复审无must-fix。Character Note runtime/classifier focused tests 24/24、Release Galatea.Server build 0 warning / 0 error、docs checker 21 files / 0 diagnostics、`git diff --check`均通过。最终Debug suite排除下述独立test-harness residual后为537 passed / 1 live skipped；未过滤运行仅剩`NormalizerAndMainAgent_ShareOneRegistryClientAndOwnerDisposesOnce`失败，该测试在`WebApplicationFactory`已启动异步shutdown但尚未完成Completion client disposal时立即断言`DisposeCount`，可单独稳定复现，未修改Character Note scope来掩盖此旁支时序问题。
 
 ## 12. Acceptance summary
 
