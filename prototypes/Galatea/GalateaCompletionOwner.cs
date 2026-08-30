@@ -15,6 +15,8 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         "galatea.input-normalizer";
     internal const string OutboundMailExtractorBindingKey =
         "galatea.outbound-mail-extractor";
+    internal const string CharacterNoteExtractorBindingKey =
+        "galatea.character-note-extractor";
 
     private readonly CompletionConnectionRegistry _registry;
     private readonly object _disposeGate = new();
@@ -41,6 +43,8 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                         config.InputNormalizerConnectionId,
                     [OutboundMailExtractorBindingKey] =
                         config.OutboundMailExtractorConnectionId,
+                    [CharacterNoteExtractorBindingKey] =
+                        config.CharacterNoteExtractorConnectionId,
                 }
             ));
         ValidateGalateaRouting(normalized);
@@ -87,6 +91,9 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         OutboundMailExtractorConnectionId = normalized.Bindings[
             OutboundMailExtractorBindingKey
         ];
+        CharacterNoteExtractorConnectionId = normalized.Bindings[
+            CharacterNoteExtractorBindingKey
+        ];
     }
 
     internal GalateaRecapGridComposition RecapGrid { get; }
@@ -127,6 +134,20 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             )
             : _registry.GetClient(OutboundMailExtractorConnectionId);
 
+    internal string? CharacterNoteExtractorConnectionId { get; }
+
+    internal CompletionConnectionConfig? CharacterNoteExtractorConnection =>
+        CharacterNoteExtractorConnectionId is null
+            ? null
+            : TryGetConnectionExact(CharacterNoteExtractorConnectionId);
+
+    internal ICompletionClient GetCharacterNoteExtractorClient() =>
+        CharacterNoteExtractorConnectionId is null
+            ? throw new InvalidOperationException(
+                "Galatea character note extraction is disabled."
+            )
+            : _registry.GetClient(CharacterNoteExtractorConnectionId);
+
     private CompletionConnectionConfig TryGetConnectionExact(string id) =>
         _registry.TryGet(id, out CompletionConnectionConfig connection)
             ? connection
@@ -144,15 +165,19 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             );
         }
         if (config.Bindings is null
-            || config.Bindings.Count != 2
+            || config.Bindings.Count != 3
             || !config.Bindings.ContainsKey(InputNormalizerBindingKey)
             || !config.Bindings.ContainsKey(
                 OutboundMailExtractorBindingKey
+            )
+            || !config.Bindings.ContainsKey(
+                CharacterNoteExtractorBindingKey
             )) {
             throw new InvalidDataException(
                 "Galatea connections require exactly the "
                 + $"'{InputNormalizerBindingKey}' and "
-                + $"'{OutboundMailExtractorBindingKey}' bindings."
+                + $"'{OutboundMailExtractorBindingKey}' and "
+                + $"'{CharacterNoteExtractorBindingKey}' bindings."
             );
         }
     }

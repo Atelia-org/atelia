@@ -4,11 +4,87 @@ using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.Galatea.Prompts;
 using Atelia.Galatea.Server.CharacterMemory;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class CharacterNoteExtractorTests {
+    [Fact]
+    public async Task CompositionFactoryUsesDisabledSingletonOrLazyPerCharacterExtractors() {
+        IReadOnlyDictionary<string, GalateaUserConfig> users = new[] {
+            User("alice", "Alice"),
+            User("bob", "Bob"),
+            User("alice-again", "Alice"),
+        }.ToDictionary(static user => user.UserId, StringComparer.Ordinal);
+        int getClientCallCount = 0;
+        ICompletionClient GetClient() {
+            Interlocked.Increment(ref getClientCallCount);
+            return new QueueClient(_ => Message());
+        }
+
+        IReadOnlyDictionary<string, ICharacterNoteExtractor> disabled =
+            GalateaHostService.CreateCharacterNoteExtractors(
+                users,
+                connection: null,
+                GetClient
+            );
+
+        Assert.All(disabled.Values, extractor => Assert.Same(
+            DisabledCharacterNoteExtractor.Instance,
+            extractor
+        ));
+        Assert.Empty(await disabled["alice"].ExtractAsync(
+            "visible action",
+            CancellationToken.None
+        ));
+
+        IReadOnlyDictionary<string, ICharacterNoteExtractor> enabled =
+            GalateaHostService.CreateCharacterNoteExtractors(
+                users,
+                Connection(),
+                GetClient
+            );
+
+        Assert.All(enabled.Values, static extractor =>
+            Assert.IsType<CharacterNoteExtractor>(extractor));
+        Assert.Equal(
+            enabled["alice"].ContractId,
+            enabled["alice-again"].ContractId
+        );
+        Assert.NotEqual(
+            enabled["alice"].ContractId,
+            enabled["bob"].ContractId
+        );
+        Assert.Equal(0, Volatile.Read(ref getClientCallCount));
+    }
+
+    [Fact]
+    public async Task ProductionSessionReceivesEnabledExtractorLazily() {
+        var factory = new RejectingFactory();
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            characterNoteExtractorConnectionId: "test"
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+
+        Assert.IsType<CharacterNoteExtractor>(
+            session.CharacterNoteExtractor
+        );
+        Assert.Matches(
+            "^atelia\\.galatea\\.character-note-extractor\\.v1\\.[0-9a-f]{64}$",
+            session.CharacterNoteExtractor.ContractId
+        );
+        Assert.Equal(0, factory.CreateCallCount);
+    }
+
     [Fact]
     public async Task ContractPromptAndSchemaArePerCharacterAndLazy() {
         var client = new QueueClient(
@@ -300,6 +376,24 @@ public sealed class CharacterNoteExtractorTests {
         ApiKey: "test-key"
     );
 
+    private static GalateaUserConfig User(
+        string userId,
+        string characterName
+    ) => new(
+        userId,
+        "pw",
+        new GalateaCharacterName(characterName),
+        new GalateaPlayerName("Player"),
+        Path.Combine(Path.GetTempPath(), "character-note", userId),
+        Path.Combine(
+            Path.GetTempPath(),
+            "character-note-delegation",
+            userId
+        ),
+        GalateaSessionProvisioning.ExistingOnly,
+        "system prompt"
+    );
+
     private static ActionBlock.ToolCall Tool(
         string callId,
         string exactText,
@@ -347,6 +441,24 @@ public sealed class CharacterNoteExtractorTests {
                 message,
                 CompletionDescriptor.From(this, request)
             ));
+        }
+    }
+
+    private sealed class RejectingFactory : ICompletionClientFactory {
+        private int _createCallCount;
+
+        internal int CreateCallCount => Volatile.Read(
+            ref _createCallCount
+        );
+
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) {
+            ArgumentNullException.ThrowIfNull(connection);
+            Interlocked.Increment(ref _createCallCount);
+            throw new Xunit.Sdk.XunitException(
+                "Character Note composition must remain lazy."
+            );
         }
     }
 }

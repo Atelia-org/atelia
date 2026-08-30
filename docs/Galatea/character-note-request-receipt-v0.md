@@ -3,7 +3,7 @@
 ## 状态
 
 - 方案日期：2026-08-30
-- 当前阶段：A1 extractor contract 已完成；其余 implementation packages 尚未开始
+- 当前阶段：A0 shared target、A1 extractor contract与A2 config/composition已完成；A3/A4尚未开始
 - 目标版本：V0 development vertical slice
 - 对外承诺：只确认 runtime 识别到角色的 Note 请求，不承诺 Memo 已保存
 
@@ -241,6 +241,11 @@ renderer 使用 adaptive fence，parser 只接受 canonical round-trip。recent 
 - client 保持 lazy/borrowed；
 - 可以与 outbound mail 指向同一 connection，前提是并发合同已验证。
 
+A2 production composition在`null`时为每个user提供同一个
+`DisabledCharacterNoteExtractor` singleton；非`null`时按exact `CharacterName`构造per-user extractor，
+但只在首次真正提取时才从host-owned registry取得client。该binding不进入`selectableConnectionIds`、
+extractor `ContractId`或主system prompt。
+
 V0 不修改主系统提示词来宣称“角色拥有可保存、可召回的自主记忆”。只有真实 durable memory sink 落地后，才 capability-gated 地增加这项产品承诺。
 
 ## Development diagnostics
@@ -297,7 +302,7 @@ V0 不实现：
 | D0 | 建立本方案、目标/非目标、failure matrix | Complete | 本文档 |
 | A0 | `ICompletionClient` 并发合同 audit；terminal Action 单一 target；Mail target overload | Complete | `GalateaOutboundMailExtractionReconcilerTests` 19/19 |
 | A1 | `CharacterNoteIntent`、prompt、extractor、ContractId、bounds/source-grounding | Complete | `CharacterNoteExtractorTests` 10/10 |
-| A2 | exact config binding、lazy per-user composition | Pending | config/composition tests |
+| A2 | exact config binding、lazy per-user composition | Complete | focused config/composition tests 42/42 |
 | A3 | post-completion 并行 coordinator、timeout/failure matrix、diagnostics | Pending | lifecycle/concurrency tests |
 | A4 | 进程内 receipt queue/reservation；`PlayerTurnObservation` canonical 注入 | Pending | render/parse/recovery/requeue tests |
 | R0 | 独立 code review、尾修、完整串行验证、状态回写 | Pending | review findings + final commands |

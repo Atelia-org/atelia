@@ -12,6 +12,7 @@ using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.Prompts;
+using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
@@ -43,6 +44,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly GalateaInputPreprocessor _inputPreprocessor;
     private readonly IReadOnlyDictionary<string, IOutboundMailExtractor>
         _outboundMailExtractors;
+    private readonly IReadOnlyDictionary<string, ICharacterNoteExtractor>
+        _characterNoteExtractors;
     private readonly IReadOnlyDictionary<string,
         GalateaRecapGridTargetExpectation> _targetExpectations;
     private readonly bool _maintenanceMode;
@@ -122,6 +125,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _recapGrid = components.RecapGrid;
         _inputPreprocessor = components.InputPreprocessor;
         _outboundMailExtractors = components.OutboundMailExtractors;
+        _characterNoteExtractors = components.CharacterNoteExtractors;
         _targetExpectations = components.TargetExpectations;
         _maintenanceMode = components.MaintenanceMode;
         _users = components.Users;
@@ -155,6 +159,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         config.InputNormalizerConnectionId,
                     [GalateaCompletionOwner.OutboundMailExtractorBindingKey] =
                         config.OutboundMailExtractorConnectionId,
+                    [GalateaCompletionOwner.CharacterNoteExtractorBindingKey] =
+                        config.CharacterNoteExtractorConnectionId,
                 }
             ));
         GalateaCompletionOwner.ValidateGalateaRouting(normalized);
@@ -175,6 +181,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
             static userId => userId,
             static _ => (IOutboundMailExtractor)
                 DisabledOutboundMailExtractor.Instance,
+            StringComparer.Ordinal
+        );
+        _characterNoteExtractors = _users.Keys.ToDictionary(
+            static userId => userId,
+            static _ => (ICharacterNoteExtractor)
+                DisabledCharacterNoteExtractor.Instance,
             StringComparer.Ordinal
         );
         _targetExpectations = targetExpectations
@@ -252,6 +264,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     owner.OutboundMailExtractorConnection,
                     owner.GetOutboundMailExtractorClient
                 );
+            IReadOnlyDictionary<string, ICharacterNoteExtractor>
+                characterNoteExtractors = CreateCharacterNoteExtractors(
+                    users,
+                    owner.CharacterNoteExtractorConnection,
+                    owner.GetCharacterNoteExtractorClient
+                );
             IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>
                 targetExpectations = CreateTargetExpectations(users);
             IReadOnlyDictionary<string, CompletionConnectionConfig>
@@ -284,6 +302,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 owner.RecapGrid,
                 inputPreprocessor,
                 outboundMailExtractors,
+                characterNoteExtractors,
                 targetExpectations,
                 delegationSupervisor,
                 playerTurnRecallProvider
@@ -331,6 +350,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaInputPreprocessor InputPreprocessor,
         IReadOnlyDictionary<string, IOutboundMailExtractor>
             OutboundMailExtractors,
+        IReadOnlyDictionary<string, ICharacterNoteExtractor>
+            CharacterNoteExtractors,
         IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>
             TargetExpectations,
         GalateaDelegationSupervisor DelegationSupervisor,
@@ -358,6 +379,28 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ? (IOutboundMailExtractor)
                     DisabledOutboundMailExtractor.Instance
                 : new OutboundMailExtractor(
+                    pair.Value.CharacterName,
+                    connection,
+                    getClient
+                ),
+            StringComparer.Ordinal
+        );
+    }
+
+    internal static IReadOnlyDictionary<string, ICharacterNoteExtractor>
+        CreateCharacterNoteExtractors(
+        IReadOnlyDictionary<string, GalateaUserConfig> users,
+        CompletionConnectionConfig? connection,
+        Func<ICompletionClient> getClient
+    ) {
+        ArgumentNullException.ThrowIfNull(users);
+        ArgumentNullException.ThrowIfNull(getClient);
+        return users.ToDictionary(
+            static pair => pair.Key,
+            pair => connection is null
+                ? (ICharacterNoteExtractor)
+                    DisabledCharacterNoteExtractor.Instance
+                : new CharacterNoteExtractor(
                     pair.Value.CharacterName,
                     connection,
                     getClient
@@ -1986,6 +2029,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     ? outboundMailExtractor
                     : throw new InvalidDataException(
                         $"Galatea user '{user.UserId}' has no outbound mail extractor binding."
+                    ),
+                _characterNoteExtractors.TryGetValue(
+                    user.UserId,
+                    out ICharacterNoteExtractor? characterNoteExtractor
+                )
+                    ? characterNoteExtractor
+                    : throw new InvalidDataException(
+                        $"Galatea user '{user.UserId}' has no character note extractor binding."
                     )
             );
             if (!_maintenanceMode) {
@@ -2384,18 +2435,21 @@ public sealed class UserSessionHost : IAsyncDisposable {
         RecentTurnsResponseDto recentTurns,
         GalateaRecapGridTargetExpectation targetExpectation,
         GalateaDelegationSessionHandle? delegationHandle,
-        IOutboundMailExtractor outboundMailExtractor
+        IOutboundMailExtractor outboundMailExtractor,
+        ICharacterNoteExtractor characterNoteExtractor
     ) {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(recentTurns);
         ArgumentNullException.ThrowIfNull(targetExpectation);
         ArgumentNullException.ThrowIfNull(outboundMailExtractor);
+        ArgumentNullException.ThrowIfNull(characterNoteExtractor);
         User = user;
         Engine = engine;
         _recentTurns = recentTurns;
         TargetExpectation = targetExpectation;
         DelegationHandle = delegationHandle;
+        CharacterNoteExtractor = characterNoteExtractor;
         if (delegationHandle is not null) {
             ReplyLeaseReconciler =
                 new GalateaDurableReplyLeaseReconciler(
@@ -2414,6 +2468,8 @@ public sealed class UserSessionHost : IAsyncDisposable {
     public SessionJournalEngine Engine { get; }
 
     internal GalateaRecapGridTargetExpectation TargetExpectation { get; }
+
+    internal ICharacterNoteExtractor CharacterNoteExtractor { get; }
 
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
 
@@ -2591,6 +2647,10 @@ internal static class GalateaConfigLoader {
             connectionsFile.Bindings![
                 GalateaCompletionOwner.OutboundMailExtractorBindingKey
             ];
+        string? characterNoteExtractorConnectionId =
+            connectionsFile.Bindings[
+                GalateaCompletionOwner.CharacterNoteExtractorBindingKey
+            ];
         if (!File.Exists(delegatesPath)) {
             throw new FileNotFoundException(
                 $"Galatea delegates file was not found: {delegatesPath}",
@@ -2618,6 +2678,8 @@ internal static class GalateaConfigLoader {
             ],
             OutboundMailExtractorConnectionId:
                 outboundMailExtractorConnectionId,
+            CharacterNoteExtractorConnectionId:
+                characterNoteExtractorConnectionId,
             Delegates: delegates,
             ListenUrls: usersFile.ListenUrls,
             CallLogDir: ResolveCallLogDirectory(
@@ -3254,6 +3316,9 @@ internal static class GalateaConfigTemplateFactory {
             );
             writer.WriteNull(
                 GalateaCompletionOwner.OutboundMailExtractorBindingKey
+            );
+            writer.WriteNull(
+                GalateaCompletionOwner.CharacterNoteExtractorBindingKey
             );
             writer.WriteEndObject();
             writer.WriteEndObject();

@@ -19,6 +19,7 @@ public sealed record GalateaConfig(
     string? InputNormalizerConnectionId,
     GalateaDelegateConfig Delegates,
     string? OutboundMailExtractorConnectionId = null,
+    string? CharacterNoteExtractorConnectionId = null,
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
     bool MaintenanceMode = false,

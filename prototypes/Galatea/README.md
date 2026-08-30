@@ -123,16 +123,20 @@ metadata。根必须包含 integer token `"v": 1`、非空 `connections`、exact
 connection 仍可被内部 exact binding、RecapGrid route 或 frozen recovery 使用，但不会
 显示在 browser 中，也不能作为 fresh/current Agent connection 提交。
 
-Galatea 当前要求 `bindings` exact 包含两个兄弟 key：
-`"galatea.input-normalizer"` 与 `"galatea.outbound-mail-extractor"`。每个值为
+Galatea 当前要求 `bindings` exact 包含三个兄弟 key：
+`"galatea.input-normalizer"`、`"galatea.outbound-mail-extractor"` 与
+`"galatea.character-note-extractor"`。每个值为
 connection ID 时启用对应feature，为 `null` 时显式禁用；不存在、blank、wrong-case、
 unknown ID 或多余 binding
 都会在 startup fail closed，绝不 fallback 到 `defaultConnectionId`。Normalizer 的
 model/provider/surface/endpoint/secret locator 全部来自该 connection，client 只在首次真正
 需要清洗时惰性创建；OutboundMailExtractor 同样使用hidden、lazy、borrowed client，且不进入
-Agent/UI selectable allowlist。Bootstrap connections template把该binding写为`null`，因此starter prompt只承诺
-通用收件匣，不承诺主动发送；停服修改binding并重启后，`null`与non-`null`之间的切换会改变finalized prompt，
-并在下一次fresh turn自然触发existing exact desired-setup rotation，不引入新的operator prompt module field。
+Agent/UI selectable allowlist。CharacterNoteExtractor也按每个user的exact `CharacterName`构造，借用同一
+registry并保持client lazy；其V0只提供runtime extraction supply，不承诺Note已保存或可召回，也不改变主
+system prompt。Bootstrap connections template把outbound与Character Note两个extractor binding都写为`null`。
+Outbound binding从`null`切换到non-`null`会改变finalized prompt并在下一次fresh turn自然触发existing exact
+desired-setup rotation；Character Note binding切换则保持finalized prompt byte-exact，不引入operator prompt
+module field。
 
 每个 connection 必须显式提供 `completionSurfaceId`，并在 `baseAddress` /
 `baseAddressEnv` 中恰好选择一个，在 `apiKey` / `apiKeyEnv` 中至多选择一个。

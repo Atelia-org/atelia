@@ -40,6 +40,29 @@ internal interface ICharacterNoteExtractor {
     );
 }
 
+internal sealed class DisabledCharacterNoteExtractor
+    : ICharacterNoteExtractor {
+    internal const string DisabledContractId =
+        "atelia.galatea.character-note-extractor.disabled.v1";
+
+    internal static DisabledCharacterNoteExtractor Instance { get; } = new();
+
+    private DisabledCharacterNoteExtractor() { }
+
+    public string ContractId => DisabledContractId;
+
+    public ValueTask<IReadOnlyList<CharacterNoteIntent>> ExtractAsync(
+        string visibleActionText,
+        CancellationToken cancellationToken
+    ) {
+        ArgumentNullException.ThrowIfNull(visibleActionText);
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult<IReadOnlyList<CharacterNoteIntent>>(
+            Array.Empty<CharacterNoteIntent>()
+        );
+    }
+}
+
 internal sealed class CharacterNoteExtractor : ICharacterNoteExtractor {
     private static readonly UTF8Encoding StrictUtf8 = new(
         encoderShouldEmitUTF8Identifier: false,

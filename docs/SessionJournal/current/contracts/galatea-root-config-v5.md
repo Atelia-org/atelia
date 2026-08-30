@@ -178,11 +178,13 @@ Route仍延迟到首次RecapGrid work读取，没有wildcard/default fallback。
 Galatea RecapGrid V6继续使用validated character/player names展开member prompts；V5不改变asset、Definition、
 BuildTarget、route或active recipe。Sibling `connections.json`继续使用Completion-owned numeric V1；Galatea仍要求
 nonempty exact `selectableConnectionIds`包含default connection，并要求`bindings` exact只含
-`galatea.input-normalizer`与`galatea.outbound-mail-extractor`，每个值为exact existing connection ID或explicit
+`galatea.input-normalizer`、`galatea.outbound-mail-extractor`与`galatea.character-note-extractor`，每个值为
+exact existing connection ID或explicit
 `null`。Missing、wrong-case、extra、blank或unknown全部fail closed，不fallback default。Provider/model/endpoint/
 secret不进入主prompt分段identity。Outbound binding为`null`时final prompt仍包含universal mailbox base但不包含
 主动发送承诺；非`null`时追加Codex outbound appendix。这个fixed feature branch来自validated sibling binding，
-不是新的root/operator prompt module field。
+不是新的root/operator prompt module field。Character Note binding只提供hidden、lazy、borrowed的per-user
+extractor runtime supply；它在V0不表示Note已保存或可召回，且无论`null`或non-`null`都不改变final prompt。
 
 ## 4. Bootstrap与V4 migration
 
@@ -197,7 +199,8 @@ Bootstrap只为existing/new V5 root中nonblank `characterContextTemplateFile`指
 missing parent，以`FileMode.CreateNew`写入standard context并`Flush(true)`。多user共享同一路径只创建一次；
 existing file永不覆盖；missing outside-root target不创建。任何生成都fail-stop并列出paths，operator检查后重启。
 Code-owned protocol resources只从binary embedded resources读取，绝不复制到operator目录。Bootstrap生成的
-`connections.json`把outbound binding写为`null`，所以starter composition只有mailbox base、不含outbound appendix。
+`connections.json`把outbound与Character Note extractor bindings都写为`null`，所以starter composition只有
+mailbox base、不含outbound appendix，也不启用Character Note extraction supply。
 Bootstrap不创建SessionJournal、
 RecapGrid state、delegation state或provider effect。
 
@@ -212,6 +215,7 @@ V5不改写任何existing raw setup。Existing Idle session在下一次fresh tur
 finalized prompt：bytes不变则复用governing setup，变化则append一个新的`SystemPromptSetup`。这是正常setup
 rotation，不是SessionJournal schema migration。停服修改sibling config并重启后，把validated outbound binding从
 `null`切到connection ID或反向切换会自然改变finalized prompt，并在下一次fresh触发同一exact rotation。
+Character Note binding切换保持finalized prompt byte-exact，不触发该rotation。
 
 Prepared/Frozen recovery继续按historical governing setup与frozen request identity恢复，不用current prefix/context/
 mail protocol resources重组历史请求。V5不增加protocol/context durable columns、renderer version、receipt或
