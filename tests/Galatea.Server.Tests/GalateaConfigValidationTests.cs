@@ -33,7 +33,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigTemplateStartsWithExactV5AndRoundTrips() {
+    public void RootConfigTemplateStartsWithExactV6AndRoundTrips() {
         byte[] template = JsonSerializer.SerializeToUtf8Bytes(
             GalateaConfigTemplateFactory.CreateUsersFile(),
             GalateaJson.Options
@@ -45,7 +45,7 @@ public sealed class GalateaConfigValidationTests {
             .EnumerateObject()
             .First();
         Assert.Equal("v", first.Name);
-        Assert.Equal("5", first.Value.GetRawText());
+        Assert.Equal("6", first.Value.GetRawText());
 
         GalateaUsersFileConfig? decoded = JsonSerializer.Deserialize(
             template,
@@ -63,6 +63,11 @@ public sealed class GalateaConfigValidationTests {
         Assert.Equal(
             ["delegation-state/alice", "delegation-state/bob"],
             decoded.Users.Select(static user => user.DelegationStateDir)
+        );
+        Assert.Equal(
+            ["character-memory/alice", "character-memory/bob"],
+            decoded.Users.Select(static user =>
+                user.CharacterMemoryStateDir)
         );
         Assert.Equal(
             ["Alice", "Bob"],
@@ -164,6 +169,18 @@ public sealed class GalateaConfigValidationTests {
                 loaded.Users.Select(static user =>
                     user.DelegationStateDir)
             );
+            Assert.Equal(
+                [
+                    Path.Combine(root, "character-memory", "alice"),
+                    Path.Combine(root, "character-memory", "bob")
+                ],
+                loaded.Users.Select(static user =>
+                    user.CharacterMemoryStateDir)
+            );
+            Assert.False(Directory.Exists(Path.Combine(
+                root,
+                "character-memory"
+            )));
         }
         finally {
             Directory.Delete(root, recursive: true);
@@ -188,6 +205,7 @@ public sealed class GalateaConfigValidationTests {
                     "刘世超",
                     Path.Combine(root, "session"),
                     Path.Combine(root, "delegation-state"),
+                    Path.Combine(root, "character-memory-state"),
                     GalateaSessionProvisioning.ExistingOnly,
                     CharacterContextTemplate: "",
                     CharacterContextTemplateFile: promptRelative
@@ -257,6 +275,7 @@ public sealed class GalateaConfigValidationTests {
                     "刘世超",
                     Path.Combine(root, "session"),
                     Path.Combine(root, "delegation-state"),
+                    Path.Combine(root, "character-memory-state"),
                     GalateaSessionProvisioning.ExistingOnly,
                     CharacterContextTemplate: "",
                     CharacterContextTemplateFile: existingPrompt
@@ -278,6 +297,7 @@ public sealed class GalateaConfigValidationTests {
                             "刘世超",
                             Path.Combine(root, "session"),
                             Path.Combine(root, "delegation-state"),
+                            Path.Combine(root, "character-memory-state"),
                             GalateaSessionProvisioning.ExistingOnly,
                             CharacterContextTemplate: "",
                             CharacterContextTemplateFile: outsidePrompt
@@ -312,6 +332,11 @@ public sealed class GalateaConfigValidationTests {
             "delegation-state",
             "alice"
         );
+        string expectedCharacterMemoryStateDirectory = Path.Combine(
+            configDirectory,
+            "character-memory-state",
+            "alice"
+        );
         try {
             Assert.NotEqual(
                 Path.GetFullPath(Path.Combine("sessions", "alice")),
@@ -333,7 +358,8 @@ public sealed class GalateaConfigValidationTests {
                 [User(
                     "alice",
                     "sessions/alice",
-                    "delegation-state/alice"
+                    "delegation-state/alice",
+                    "character-memory-state/alice"
                 )]
             );
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
@@ -342,6 +368,10 @@ public sealed class GalateaConfigValidationTests {
             Assert.Equal(
                 expectedDelegationStateDirectory,
                 loadedUser.DelegationStateDir
+            );
+            Assert.Equal(
+                expectedCharacterMemoryStateDirectory,
+                loadedUser.CharacterMemoryStateDir
             );
 
             var factory = new TrackingFactory();
@@ -522,6 +552,129 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
+    public void CharacterMemoryStatePathsResolveExactlyAndRemainDisjoint() {
+        string root = NewRoot();
+        string external = NewRoot();
+        try {
+            string absolute = Path.Combine(external, "character-memory");
+            string configPath = WriteConfig(
+                root,
+                [User(
+                    "alice",
+                    "sessions/alice",
+                    characterMemoryStateDirectory: absolute
+                )],
+                characterNoteExtractorConnectionId: "test"
+            );
+            GalateaUserConfig loaded = Assert.Single(
+                GalateaConfigLoader.Load(configPath).Users
+            );
+            Assert.Equal(absolute, loaded.CharacterMemoryStateDir);
+            Assert.False(Directory.Exists(absolute));
+
+            GalateaUserConfig[] duplicate = [
+                User(
+                    "alice",
+                    "sessions/alice",
+                    characterMemoryStateDirectory: "character/shared"
+                ),
+                User(
+                    "bob",
+                    "sessions/bob",
+                    characterMemoryStateDirectory: "./character/shared"
+                )
+            ];
+            Assert.Throws<InvalidOperationException>(() =>
+                GalateaConfigLoader.Load(WriteConfig(root, duplicate)));
+
+            GalateaUserConfig[] nested = [
+                User(
+                    "alice",
+                    "sessions/alice",
+                    characterMemoryStateDirectory: "character/alice"
+                ),
+                User(
+                    "bob",
+                    "sessions/bob",
+                    characterMemoryStateDirectory: "character/alice/bob"
+                )
+            ];
+            Assert.Throws<InvalidOperationException>(() =>
+                GalateaConfigLoader.Load(WriteConfig(root, nested)));
+
+            GalateaUserConfig[] crossUserNesting = [
+                User(
+                    "alice",
+                    "sessions/alice",
+                    characterMemoryStateDirectory:
+                        "sessions/bob/character-memory"
+                ),
+                User("bob", "sessions/bob")
+            ];
+            Assert.Throws<InvalidOperationException>(() =>
+                GalateaConfigLoader.Load(WriteConfig(
+                    root,
+                    crossUserNesting
+                )));
+
+            foreach (string characterMemoryPath in new[] {
+                         "delegation-state/alice",
+                         "delegation-state/alice/character-memory",
+                         "delegation-state"
+                     }) {
+                Assert.Throws<InvalidOperationException>(() =>
+                    GalateaConfigLoader.Load(WriteConfig(
+                        root,
+                        [User(
+                            "alice",
+                            "sessions/alice",
+                            "delegation-state/alice",
+                            characterMemoryPath
+                        )]
+                    )));
+            }
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(external, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CharacterMemoryStatePathRejectsExistingAncestorSymlink() {
+        if (!OperatingSystem.IsLinux()) { return; }
+        string root = NewRoot();
+        string external = NewRoot();
+        try {
+            string link = Path.Combine(root, "character-memory-link");
+            Directory.CreateSymbolicLink(link, external);
+            string configPath = WriteConfig(
+                root,
+                [User(
+                    "alice",
+                    "sessions/alice",
+                    characterMemoryStateDirectory:
+                        "character-memory-link/alice"
+                )]
+            );
+
+            InvalidOperationException failure = Assert.Throws<
+                InvalidOperationException>(() =>
+                    GalateaConfigLoader.Load(configPath));
+            Assert.Contains(
+                "characterMemoryStateDir",
+                failure.Message,
+                StringComparison.Ordinal
+            );
+            Assert.Contains("symlink", failure.Message);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(external, recursive: true);
+        }
+    }
+
+    [Fact]
     public void ResolvedRelativeSessionAndCallLogNestingIsRejected() {
         string root = NewRoot();
         string expectedSessionDirectory = Path.Combine(
@@ -554,6 +707,24 @@ public sealed class GalateaConfigValidationTests {
             );
             Assert.Throws<InvalidOperationException>(() =>
                 GalateaConfigLoader.Load(configPath));
+
+            foreach (string callLogPath in new[] {
+                         "character-memory",
+                         "character-memory/alice/call-logs"
+                     }) {
+                configPath = WriteConfig(
+                    root,
+                    [User(
+                        "alice",
+                        "sessions/alice",
+                        characterMemoryStateDirectory:
+                            "character-memory/alice"
+                    )],
+                    callLogDirectory: callLogPath
+                );
+                Assert.Throws<InvalidOperationException>(() =>
+                    GalateaConfigLoader.Load(configPath));
+            }
         }
         finally {
             Directory.Delete(root, recursive: true);
@@ -561,7 +732,70 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigAcceptsExactV5OutsideFirstProperty() {
+    public void DirectConfigConstructionUsesTotalStorageTopology() {
+        string root = NewRoot();
+        try {
+            string sharedCharacterMemory = Path.Combine(
+                root,
+                "character-memory",
+                "shared"
+            );
+            GalateaUserConfig[] duplicateCharacterMemory = [
+                User(
+                    "alice",
+                    Path.Combine(root, "sessions", "alice"),
+                    characterMemoryStateDirectory: sharedCharacterMemory
+                ),
+                User(
+                    "bob",
+                    Path.Combine(root, "sessions", "bob"),
+                    characterMemoryStateDirectory: sharedCharacterMemory
+                )
+            ];
+            var duplicateConfig = new GalateaConfig(
+                duplicateCharacterMemory,
+                Connections,
+                "test",
+                ["test"],
+                InputNormalizerConnectionId: null,
+                Delegates: GalateaDelegateTestConfiguration.Create(root)
+            );
+            var factory = new TrackingFactory();
+            Assert.Throws<InvalidOperationException>(() =>
+                new GalateaHostService(
+                    duplicateConfig,
+                    factory,
+                    DisabledGalateaUserMessageNormalizer.Instance
+                ));
+
+            GalateaUserConfig user = User(
+                "alice",
+                Path.Combine(root, "sessions", "alice"),
+                characterMemoryStateDirectory: Path.Combine(
+                    root,
+                    "character-memory",
+                    "alice"
+                )
+            );
+            GalateaConfig callLogConfig = duplicateConfig with {
+                Users = [user],
+                CallLogDir = Path.Combine(root, "character-memory")
+            };
+            Assert.Throws<InvalidOperationException>(() =>
+                new GalateaHostService(
+                    callLogConfig,
+                    factory,
+                    DisabledGalateaUserMessageNormalizer.Instance
+                ));
+            Assert.Equal(0, factory.CreateCallCount);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void RootConfigAcceptsExactV6OutsideFirstProperty() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -569,11 +803,11 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string LeadingVersion = "{\"v\":5,";
+            const string LeadingVersion = "{\"v\":6,";
             Assert.StartsWith(LeadingVersion, original);
             string reordered = "{"
                 + original[LeadingVersion.Length..^1]
-                + ",\"v\":5}";
+                + ",\"v\":6}";
             File.WriteAllText(configPath, reordered);
 
             GalateaConfig loaded = GalateaConfigLoader.Load(configPath);
@@ -585,7 +819,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void RootConfigRequiresExactIntegerV5AndRejectsOtherVersions() {
+    public void RootConfigRequiresExactIntegerV6AndRejectsOtherVersions() {
         string root = NewRoot();
         try {
             string configPath = WriteConfig(
@@ -593,7 +827,7 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", Path.Combine(root, "session"))]
             );
             string original = File.ReadAllText(configPath);
-            const string Version = "\"v\":5";
+            const string Version = "\"v\":6";
             Assert.Contains(Version, original, StringComparison.Ordinal);
 
             string[] invalid = [
@@ -604,7 +838,7 @@ public sealed class GalateaConfigValidationTests {
                 ),
                 original.Replace(Version, "\"v\":null",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":\"5\"",
+                original.Replace(Version, "\"v\":\"6\"",
                     StringComparison.Ordinal),
                 original.Replace(Version, "\"v\":0",
                     StringComparison.Ordinal),
@@ -616,13 +850,15 @@ public sealed class GalateaConfigValidationTests {
                     StringComparison.Ordinal),
                 original.Replace(Version, "\"v\":4",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":6",
+                original.Replace(Version, "\"v\":5",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":5.0",
+                original.Replace(Version, "\"v\":7",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"v\":5e0",
+                original.Replace(Version, "\"v\":6.0",
                     StringComparison.Ordinal),
-                original.Replace(Version, "\"V\":5",
+                original.Replace(Version, "\"v\":6e0",
+                    StringComparison.Ordinal),
+                original.Replace(Version, "\"V\":6",
                     StringComparison.Ordinal),
                 original.Replace(
                     Version + ",",
@@ -1362,6 +1598,7 @@ public sealed class GalateaConfigValidationTests {
                     "刘世超",
                     Path.Combine(root, "session"),
                     Path.Combine(root, "delegation-state"),
+                    Path.Combine(root, "character-memory-state"),
                     GalateaSessionProvisioning.ExistingOnly,
                     CharacterContextTemplate: "",
                     CharacterContextTemplateFile: "prompt.txt"
@@ -1562,7 +1799,8 @@ public sealed class GalateaConfigValidationTests {
         IReadOnlyList<CompletionConnectionConfig>? connections = null,
         string defaultConnectionId = "test",
         IReadOnlyList<string>? selectableConnectionIds = null,
-        string? inputNormalizerConnectionId = null
+        string? inputNormalizerConnectionId = null,
+        string? characterNoteExtractorConnectionId = null
     ) {
         string configPath = Path.Combine(root, "config.json");
         File.WriteAllText(
@@ -1591,7 +1829,9 @@ public sealed class GalateaConfigValidationTests {
             connections ?? Connections,
             defaultConnectionId,
             selectableConnectionIds,
-            inputNormalizerConnectionId
+            inputNormalizerConnectionId,
+            characterNoteExtractorConnectionId:
+                characterNoteExtractorConnectionId
         );
         GalateaTestHost.WriteDelegatesFile(root);
         return configPath;
@@ -1639,6 +1879,7 @@ public sealed class GalateaConfigValidationTests {
         user.PlayerName.Value,
         user.SessionDir,
         user.DelegationStateDir,
+        user.CharacterMemoryStateDir,
         user.SessionProvisioning,
         CharacterContextTemplate: "prompt ${characterName}"
     );
@@ -1676,7 +1917,8 @@ public sealed class GalateaConfigValidationTests {
     private static GalateaUserConfig User(
         string userId,
         string sessionDirectory,
-        string? delegationStateDirectory = null
+        string? delegationStateDirectory = null,
+        string? characterMemoryStateDirectory = null
     ) => new(
         userId,
         "pw",
@@ -1685,6 +1927,8 @@ public sealed class GalateaConfigValidationTests {
         sessionDirectory,
         delegationStateDirectory
             ?? sessionDirectory + "-delegation-state-" + userId,
+        characterMemoryStateDirectory
+            ?? sessionDirectory + "-character-memory-state-" + userId,
         GalateaSessionProvisioning.ExistingOnly,
         SystemPrompt: "prompt Galatea"
     );

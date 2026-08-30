@@ -6,8 +6,9 @@
 `prototypes/Galatea.RecapGrid` code-owned rolling recap asset，以及它们与 per-user
 `config.json` 的一致性。
 
-> **2026-08-29 V5 follow-up：** current root contract已hard-cut到
-> [V5](../SessionJournal/current/contracts/galatea-root-config-v5.md)。V4的完整
+> **2026-08-30 V6 follow-up：** current root contract已hard-cut到
+> [V6](../SessionJournal/current/contracts/galatea-root-config-v6.md)。V6新增required
+> `characterMemoryStateDir`但保持V5 prompt ownership；V4的完整
 > `systemPromptTemplate*`被`characterContextTemplate*`取代，主prompt改由code-owned protocol prefix、
 > operator context与universal code-owned mailbox base固定合成；validated outbound binding非`null`时再追加
 > code-owned Codex outbound appendix。见

@@ -5,8 +5,9 @@
 范围：Galatea root config V4、主 system prompt、RecapGrid V6 member prompts，以及缺失
 `systemPromptTemplateFile` 的安全 bootstrap。
 
-> **2026-08-29 V5 follow-up：** current root contract已hard-cut到
-> [V5](../SessionJournal/current/contracts/galatea-root-config-v5.md)。`playerName` grammar、RecapGrid golden与
+> **2026-08-30 V6 follow-up：** current root contract已hard-cut到
+> [V6](../SessionJournal/current/contracts/galatea-root-config-v6.md)。V6新增required
+> `characterMemoryStateDir`但保持V5 prompt ownership；`playerName` grammar、RecapGrid golden与
 > create-new/no-overwrite bootstrap原则保持有效；V4的完整`systemPromptTemplate*`及“内建完整template”ownership
 > 已由code-owned prefix + operator context + universal mailbox base取代；validated outbound binding非`null`时
 > 另追加code-owned Codex appendix。见

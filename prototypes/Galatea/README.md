@@ -6,12 +6,12 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
 
 ## 配置
 
-`config.json` 使用单一 strict V5 language，必须包含exact integer `"v": 5`、至少一个user与strict
+`config.json` 使用单一 strict V6 language，必须包含exact integer `"v": 6`、至少一个user与strict
 `recapGrid`：
 
 ```json
 {
-  "v": 5,
+  "v": 6,
   "users": [
     {
       "userId": "alice",
@@ -20,6 +20,7 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
       "playerName": "Alex",
       "sessionDir": "sessions/alice",
       "delegationStateDir": "delegation-state/alice",
+      "characterMemoryStateDir": "character-memory/alice",
       "sessionProvisioning": "create-if-missing",
       "characterContextTemplate": "",
       "characterContextTemplateFile": "prompts/character-context-standard-zh-cn.md"
@@ -37,11 +38,10 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
 ```
 
 writer固定把`v`放在首字段，reader不要求property order。missing version、future version、`null`、string、
-`5.0`或`5e0`都拒绝；V1/V2/V3/V4、versionless与future config都没有compatibility reader或自动迁移。
-V5把V4的operator-authored完整system prompt hard-cut为operator只拥有的character context；升级时必须停服、
-备份并确认实际`Galatea:ConfigPath`，把完整prompt中的世界观、人物设定与长期记忆提取为
-`characterContextTemplate`或`characterContextTemplateFile`，删除旧`systemPromptTemplate*`字段并改为`"v": 5`。
-应用不会猜测或剥离旧prompt协议，也不会重写password或其他operator配置。
+`6.0`或`6e0`都拒绝；V1–V5、versionless与future config都没有compatibility reader或自动迁移。
+V6保留V5的code-owned prompt composition，并新增required `characterMemoryStateDir`。V5升级时必须停服、备份并
+确认实际`Galatea:ConfigPath`，将version改为`6`并为每个user选择独立、互不嵌套的character-memory path。
+应用不会自动迁移或重写password及其他operator配置；V4及更早完整prompt的拆分要求见历史合同。
 
 `characterName`与`playerName`都是required、already-trimmed Unicode NFC label，按strict UTF-8限制为
 1..128 bytes；它们分别表示GM扮演的主要NPC与故事内玩家角色，都不从login `userId`推导。两者拒绝控制/
@@ -80,11 +80,13 @@ first-person-autobiography context、冲突时newer raw History优先；下方�
 动态外部记忆接管。Code-owned protocol resources不会复制到operator目录。Existing file永不覆盖；config root外的
 missing target也不自动创建。
 
-相对`sessionDir`与`delegationStateDir`都以`config.json`所在目录为base，loader向runtime只交付canonical absolute
-path；absolute值保持同一target。`delegationStateDir`没有fallback，也不会从`sessionDir`推导；所有user的
-delegation state paths必须exact unique、互不嵌套，并与所有session paths及optional `callLogDir`双向non-nested。
-existing delegation path components不得是symlink/reparse point。当前hard-cut只建立并验证这个Galatea-owned
-storage boundary。durable supervisor现已接入production composition：host启动时先eager classify每个user；只有
+相对`sessionDir`、`delegationStateDir`与`characterMemoryStateDir`都以`config.json`所在目录为base，loader向
+runtime只交付canonical absolute path；absolute值保持同一target。Delegation与Character Memory path都没有fallback
+或derived-path规则。所有character-memory paths必须exact unique、互不嵌套，并与所有session/delegation paths及
+optional `callLogDir`双向non-nested；total topology validator也由直接构造runtime config的consumer共用。Existing
+character-memory path components不得是symlink/reparse point。当前V6配置包只解析和验证
+`characterMemoryStateDir`，不open/create/lock/store-validate该目录，也不接入MemoPod；binding非`null`仍不表示Note
+已经保存。Durable delegation supervisor继续在production composition中由host启动时eager classify每个user；只有
 `delegationStateDir`与对应`sessionDir`都存在时才strict-open store并取得process-lifetime exclusive OS lock。
 state存在但session缺失时以`SESSION_MISSING` fail closed，不打开SQLite/lock；state路径不存在时先保持
 `Uninitialized`，直到对应writable SessionJournal首次成功打开或provision后，才在该exact target创建baseline。目录内的权威文件是
@@ -110,12 +112,13 @@ repository move；`..`与
 absolute path仍是合法的lexical path，这项规则不承诺把session限制在config目录内，也不声称提供额外的no-follow
 filesystem边界。
 
-Current product contract见[root config V5](../../docs/SessionJournal/current/contracts/galatea-root-config-v5.md)。
+Current product contract见[root config V6](../../docs/SessionJournal/current/contracts/galatea-root-config-v6.md)。
+[Root config V5](../../docs/SessionJournal/current/contracts/galatea-root-config-v5.md)、
 [Root config V4](../../docs/SessionJournal/current/contracts/galatea-root-config-v4.md)、
 [Root config V3](../../docs/SessionJournal/current/contracts/galatea-root-config-v3.md)、
 [Root config V2](../../docs/SessionJournal/current/contracts/galatea-root-config-v2.md)与
 [Root config V1 appendix](../../docs/SessionJournal/current/contracts/galatea-root-config-v1.md)仍保留其当时获批准并由
-`session-journal-contract-r2-approved-surfaces-v2`锚定的历史事实；该旧tag不认证V2/V3/V4/V5 delta。
+`session-journal-contract-r2-approved-surfaces-v2`锚定的历史事实；该旧tag不认证V2–V6 delta。
 
 `connections.json` 是唯一 Completion endpoint catalog，同时携带 host-level selection
 metadata。根必须包含 integer token `"v": 1`、非空 `connections`、exact

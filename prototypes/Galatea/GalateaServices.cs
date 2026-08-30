@@ -151,8 +151,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(recapGrid);
         ArgumentNullException.ThrowIfNull(userMessageNormalizer);
         _ = GalateaDelegateConfigReader.Validate(config.Delegates);
-        GalateaConfigValidation.RequireDistinctUserStorageDirectories(
-            config.Users
+        GalateaConfigValidation.RequireValidStorageTopology(
+            config.Users,
+            config.CallLogDir
         );
         CompletionConnectionsFileConfig normalized =
             CompletionConnectionConfigLoader.NormalizeAndValidate(new(
@@ -234,8 +235,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizerFactory);
-        GalateaConfigValidation.RequireDistinctUserStorageDirectories(
-            config.Users
+        GalateaConfigValidation.RequireValidStorageTopology(
+            config.Users,
+            config.CallLogDir
         );
 
         GalateaCompletionOwner? owner = null;
@@ -3380,6 +3382,12 @@ internal static class GalateaConfigLoader {
                     + "non-empty delegationStateDir."
                 );
             }
+            if (string.IsNullOrWhiteSpace(user.CharacterMemoryStateDir)) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' must have a "
+                    + "non-empty characterMemoryStateDir."
+                );
+            }
             string delegationStateDirectory = Path.TrimEndingDirectorySeparator(
                 Path.GetFullPath(
                     user.DelegationStateDir,
@@ -3389,6 +3397,17 @@ internal static class GalateaConfigLoader {
             RejectReparsePointsOnExistingPath(
                 delegationStateDirectory,
                 $"delegationStateDir for user '{user.UserId}'"
+            );
+            string characterMemoryStateDirectory =
+                Path.TrimEndingDirectorySeparator(
+                    Path.GetFullPath(
+                        user.CharacterMemoryStateDir,
+                        configDirectory
+                    )
+                );
+            RejectReparsePointsOnExistingPath(
+                characterMemoryStateDirectory,
+                $"characterMemoryStateDir for user '{user.UserId}'"
             );
             string characterContextTemplate = ResolveCharacterContextTemplate(
                 user,
@@ -3421,6 +3440,7 @@ internal static class GalateaConfigLoader {
                     Path.GetFullPath(user.SessionDir, configDirectory)
                 ),
                 delegationStateDirectory,
+                characterMemoryStateDirectory,
                 user.SessionProvisioning,
                 systemPrompt
             ));
@@ -3475,8 +3495,9 @@ internal static class GalateaConfigLoader {
     }
 
     private static void Validate(GalateaConfig config) {
-        GalateaConfigValidation.RequireDistinctUserStorageDirectories(
-            config.Users
+        GalateaConfigValidation.RequireValidStorageTopology(
+            config.Users,
+            config.CallLogDir
         );
         GalateaDelegateConfigReader.Validate(config.Delegates);
         if (config.CallLogDir is not null) {
@@ -3494,38 +3515,12 @@ internal static class GalateaConfigLoader {
 
             if (string.IsNullOrWhiteSpace(user.Password)) { throw new InvalidOperationException($"Galatea config user '{user.UserId}' must have a non-empty password."); }
 
-            if (string.IsNullOrWhiteSpace(user.SessionDir)) { throw new InvalidOperationException($"Galatea config user '{user.UserId}' must have a non-empty sessionDir."); }
-
-            if (string.IsNullOrWhiteSpace(user.DelegationStateDir)) { throw new InvalidOperationException($"Galatea config user '{user.UserId}' must have a non-empty delegationStateDir."); }
-
             if (string.IsNullOrWhiteSpace(user.SystemPrompt)) {
                 throw new InvalidOperationException(
                     $"Galatea config user '{user.UserId}' must have a "
                     + "non-empty finalized system prompt."
                 );
             }
-
-            if (config.CallLogDir is not null) {
-                string sessionDirectory =
-                    Path.GetFullPath(user.SessionDir);
-                RejectReparsePointsOnExistingPath(
-                    sessionDirectory,
-                    $"sessionDir for user '{user.UserId}'"
-                );
-                EnsurePathsDoNotNest(
-                    config.CallLogDir,
-                    sessionDirectory,
-                    "sessionDir",
-                    user.UserId
-                );
-                EnsurePathsDoNotNest(
-                    config.CallLogDir,
-                    Path.GetFullPath(user.DelegationStateDir),
-                    "delegationStateDir",
-                    user.UserId
-                );
-            }
-
         }
 
         if (config.ListenUrls is not null) {
@@ -3533,30 +3528,6 @@ internal static class GalateaConfigLoader {
                 if (string.IsNullOrWhiteSpace(config.ListenUrls[i])) { throw new InvalidOperationException($"Galatea config listenUrls[{i}] must not be blank."); }
             }
         }
-    }
-
-    private static void EnsurePathsDoNotNest(
-        string callLogDirectory,
-        string userStorageDirectory,
-        string storageField,
-        string userId
-    ) {
-        string callLogs = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(callLogDirectory)
-        );
-        string storage = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(userStorageDirectory)
-        );
-        StringComparison comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        GalateaConfigValidation.RequireDisjoint(
-            callLogs,
-            "callLogDir",
-            storage,
-            $"{storageField} for user '{userId}'",
-            comparison
-        );
     }
 
     private static void RejectReparsePointsOnExistingPath(
@@ -3845,6 +3816,7 @@ internal static class GalateaConfigTemplateFactory {
             PlayerName: playerName,
             SessionDir: sessionDir,
             DelegationStateDir: $"delegation-state/{userId}",
+            CharacterMemoryStateDir: $"character-memory/{userId}",
             SessionProvisioning:
                 GalateaSessionProvisioning.CreateIfMissing,
             CharacterContextTemplate: "",

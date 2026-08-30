@@ -223,6 +223,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                         "刘世超",
                         repository,
                         repository + "-delegation-state",
+                        repository + "-character-memory-state",
                         GalateaSessionProvisioning.ExistingOnly,
                         "operator-chain ${characterName} system prompt"
                     )],

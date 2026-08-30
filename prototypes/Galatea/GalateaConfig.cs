@@ -60,6 +60,7 @@ internal sealed record GalateaUserFileConfig(
     string PlayerName,
     string SessionDir,
     string DelegationStateDir,
+    string CharacterMemoryStateDir,
     GalateaSessionProvisioning SessionProvisioning,
     string CharacterContextTemplate = "",
     string? CharacterContextTemplateFile = null
@@ -72,6 +73,7 @@ public sealed record GalateaUserConfig(
     GalateaPlayerName PlayerName,
     string SessionDir,
     string DelegationStateDir,
+    string CharacterMemoryStateDir,
     GalateaSessionProvisioning SessionProvisioning,
     string SystemPrompt
 );
@@ -85,8 +87,9 @@ public enum GalateaSessionProvisioning {
 }
 
 internal static class GalateaConfigValidation {
-    internal static void RequireDistinctUserStorageDirectories(
-        IReadOnlyList<GalateaUserConfig> users
+    internal static void RequireValidStorageTopology(
+        IReadOnlyList<GalateaUserConfig> users,
+        string? callLogDirectory
     ) {
         ArgumentNullException.ThrowIfNull(users);
         StringComparer comparer = OperatingSystem.IsWindows()
@@ -100,10 +103,15 @@ internal static class GalateaConfigValidation {
             string,
             (string UserId, string ConfiguredPath)
         >(comparer);
+        var characterMemoryOwners = new Dictionary<
+            string,
+            (string UserId, string ConfiguredPath)
+        >(comparer);
         var normalizedUsers = new List<(
             string UserId,
             string SessionDirectory,
-            string DelegationStateDirectory
+            string DelegationStateDirectory,
+            string CharacterMemoryStateDirectory
         )>(users.Count);
 
         for (int index = 0; index < users.Count; index++) {
@@ -149,12 +157,22 @@ internal static class GalateaConfigValidation {
                     + "non-empty delegationStateDir."
                 );
             }
+            if (string.IsNullOrWhiteSpace(user.CharacterMemoryStateDir)) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' must have a "
+                    + "non-empty characterMemoryStateDir."
+                );
+            }
             string normalizedSession = Path.TrimEndingDirectorySeparator(
                 Path.GetFullPath(user.SessionDir)
             );
             string normalizedDelegation = Path.TrimEndingDirectorySeparator(
                 Path.GetFullPath(user.DelegationStateDir)
             );
+            string normalizedCharacterMemory =
+                Path.TrimEndingDirectorySeparator(
+                    Path.GetFullPath(user.CharacterMemoryStateDir)
+                );
             if (sessionOwners.TryGetValue(
                     normalizedSession,
                     out var existingSession)) {
@@ -187,10 +205,29 @@ internal static class GalateaConfigValidation {
                 normalizedDelegation,
                 (user.UserId, user.DelegationStateDir)
             );
+            if (characterMemoryOwners.TryGetValue(
+                    normalizedCharacterMemory,
+                    out var existingCharacterMemory)) {
+                throw new InvalidOperationException(
+                    "Galatea config users "
+                    + $"'{existingCharacterMemory.UserId}' "
+                    + "(characterMemoryStateDir "
+                    + $"'{existingCharacterMemory.ConfiguredPath}') and "
+                    + $"'{user.UserId}' (characterMemoryStateDir "
+                    + $"'{user.CharacterMemoryStateDir}') resolve to the "
+                    + "same lexical character memory state path "
+                    + $"'{normalizedCharacterMemory}'."
+                );
+            }
+            characterMemoryOwners.Add(
+                normalizedCharacterMemory,
+                (user.UserId, user.CharacterMemoryStateDir)
+            );
             normalizedUsers.Add((
                 user.UserId,
                 normalizedSession,
-                normalizedDelegation
+                normalizedDelegation,
+                normalizedCharacterMemory
             ));
         }
 
@@ -222,6 +259,75 @@ internal static class GalateaConfigValidation {
                     comparison
                 );
             }
+        }
+
+        for (int characterMemoryIndex = 0;
+             characterMemoryIndex < normalizedUsers.Count;
+             characterMemoryIndex++) {
+            var characterMemory = normalizedUsers[characterMemoryIndex];
+            foreach (var session in normalizedUsers) {
+                RequireDisjoint(
+                    characterMemory.CharacterMemoryStateDirectory,
+                    $"characterMemoryStateDir for user '{characterMemory.UserId}'",
+                    session.SessionDirectory,
+                    $"sessionDir for user '{session.UserId}'",
+                    comparison
+                );
+            }
+            foreach (var delegation in normalizedUsers) {
+                RequireDisjoint(
+                    characterMemory.CharacterMemoryStateDirectory,
+                    $"characterMemoryStateDir for user '{characterMemory.UserId}'",
+                    delegation.DelegationStateDirectory,
+                    $"delegationStateDir for user '{delegation.UserId}'",
+                    comparison
+                );
+            }
+            for (int otherIndex = characterMemoryIndex + 1;
+                 otherIndex < normalizedUsers.Count;
+                 otherIndex++) {
+                var other = normalizedUsers[otherIndex];
+                RequireDisjoint(
+                    characterMemory.CharacterMemoryStateDirectory,
+                    $"characterMemoryStateDir for user '{characterMemory.UserId}'",
+                    other.CharacterMemoryStateDirectory,
+                    $"characterMemoryStateDir for user '{other.UserId}'",
+                    comparison
+                );
+            }
+        }
+
+        if (callLogDirectory is null) { return; }
+        if (string.IsNullOrWhiteSpace(callLogDirectory)) {
+            throw new InvalidOperationException(
+                "Galatea callLogDir must not be blank."
+            );
+        }
+        string normalizedCallLogs = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(callLogDirectory)
+        );
+        foreach (var user in normalizedUsers) {
+            RequireDisjoint(
+                normalizedCallLogs,
+                "callLogDir",
+                user.SessionDirectory,
+                $"sessionDir for user '{user.UserId}'",
+                comparison
+            );
+            RequireDisjoint(
+                normalizedCallLogs,
+                "callLogDir",
+                user.DelegationStateDirectory,
+                $"delegationStateDir for user '{user.UserId}'",
+                comparison
+            );
+            RequireDisjoint(
+                normalizedCallLogs,
+                "callLogDir",
+                user.CharacterMemoryStateDirectory,
+                $"characterMemoryStateDir for user '{user.UserId}'",
+                comparison
+            );
         }
     }
 

@@ -74,6 +74,15 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         TestUserId
     );
 
+    internal string CharacterMemoryStateDirectory => Path.Combine(
+        Path.GetDirectoryName(ConfigPath)
+            ?? throw new InvalidOperationException(
+                "The test config path has no parent directory."
+            ),
+        "character-memory",
+        TestUserId
+    );
+
     internal string ConfigPath { get; }
 
     public static GalateaTestHost Create(
@@ -507,6 +516,11 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     Path.Combine(
                         configurationDirectory,
                         "delegation-state",
+                        TestUserId
+                    ),
+                    Path.Combine(
+                        configurationDirectory,
+                        "character-memory",
                         TestUserId
                     ),
                     sessionProvisioning,

@@ -136,8 +136,9 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             );
         }
         GalateaDelegationDurableFiles.RequireLinux();
-        GalateaConfigValidation.RequireDistinctUserStorageDirectories(
-            config.Users
+        GalateaConfigValidation.RequireValidStorageTopology(
+            config.Users,
+            config.CallLogDir
         );
         GalateaDelegateConfig delegates =
             GalateaDelegateConfigReader.Validate(config.Delegates);

@@ -1,7 +1,7 @@
 # Galatea 主 system prompt source 导航
 
 状态：**Current source ownership router**  
-Current contract：[Galatea root config V5](../../SessionJournal/current/contracts/galatea-root-config-v5.md)
+Current contract：[Galatea root config V6](../../SessionJournal/current/contracts/galatea-root-config-v6.md)
 
 Galatea 主system prompt不是一份可由operator整体替换的文件。Current ownership涉及五份tracked resource：
 

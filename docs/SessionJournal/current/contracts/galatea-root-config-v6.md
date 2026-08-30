@@ -1,19 +1,19 @@
-# Galatea root config V5 historical contract
+# Galatea root config V6 current contract
 
-状态：**Archived historical predecessor；current contract is [V6](galatea-root-config-v6.md)**  
-Authority：historical Galatea code、`GalateaRootConfigFieldLanguageTests`、
+状态：**Current product contract；hard cut from V5**  
+Authority：current Galatea code、`GalateaRootConfigFieldLanguageTests`、
 `GalateaConfigValidationTests`、`GalateaSessionProvisioningTests`与
 `GalateaTrackedPromptTemplateTests`  
-Prior historical contracts：[V4](galatea-root-config-v4.md)、[V3](galatea-root-config-v3.md)、
+Prior historical contracts：[V5](galatea-root-config-v5.md)、[V4](galatea-root-config-v4.md)、[V3](galatea-root-config-v3.md)、
 [V2](galatea-root-config-v2.md)、[V1 approved contract](galatea-root-config-v1.md)
 
-本文保留Galatea `config.json` V5当时的exact field language、path semantics、per-user
-character context materialization、SessionJournal provisioning policy与durable delegation storage boundary。
-V5只改变Galatea-owned root config与启动期主system prompt ownership：TRPG/output/mail协议由binary拥有，
-operator只拥有世界观、人物设定与长期记忆context。Completion `connections.json`、RecapGrid、HTTP/SSE、
-mail/delegation与SessionJournal durable wire继续服从各自owner的现有版本。
+本文定义Galatea `config.json` current V6的exact field language、path semantics、per-user
+character context materialization、SessionJournal provisioning policy与storage topology boundary。
+V6只改变Galatea-owned root config：每个user显式增加`characterMemoryStateDir`，并把session、delegation、
+character-memory与optional call-log路径关系收进一个total topology contract。V5建立的system prompt ownership、
+Completion `connections.json`、RecapGrid、HTTP/SSE、mail/delegation与SessionJournal durable wire保持不变。
 
-V1–V4文档保留各自当时的历史事实，但不认证V5 delta。V5 reader没有旧版本fallback、dual fields、
+V1–V5文档保留各自当时的历史事实，但不认证V6 delta。Current reader没有旧版本fallback、dual fields、
 automatic migration、旧完整prompt识别或existing-file rewrite。
 
 ## 1. Authority、文件与materialization边界
@@ -61,7 +61,7 @@ Root file必须是Linux no-follow regular file，长度为1 byte..1 MiB，JSON m
 - exact一个JSON object；strict UTF-8，无BOM、comment、trailing comma或trailing data；
 - property order与whitespace不固定；合法escaped property name decode后按exact name处理；
 - 每层unknown或wrong-case property拒绝；duplicate按decoded name的`OrdinalIgnoreCase`比较拒绝；
-- `v`可位于任意property位置，但必须存在且raw token为exact integer `5`；V1–V4、versionless、future、
+- `v`可位于任意property位置，但必须存在且raw token为exact integer `6`；V1–V5、versionless、future、
   `null`、string、fraction或exponent form全部拒绝；
 - source-generated materialization只发生在strict reader通过之后；`sessionProvisioning`、`characterName`与
   `playerName`的required/type acceptance由strict reader本身决定，不能依赖record或enum default。
@@ -72,10 +72,10 @@ Root file必须是Linux no-follow regular file，长度为1 byte..1 MiB，JSON m
 
 | Field | Required shape | Semantic rule |
 |:--|:--|:--|
-| `v` | required number token | raw token exact `5` |
-| `users` | required array，1..256 items | 每项服从§3.2；`userId`、resolved session path与resolved delegation state path分别unique |
+| `v` | required number token | raw token exact `6` |
+| `users` | required array，1..256 items | 每项服从§3.2；`userId`、resolved session/delegation/character-memory path分别unique |
 | `listenUrls` | optional；missing/`null`为runtime `null`；否则array 0..256 | item为nonblank string；duplicate与order保留；loader视为opaque string |
-| `callLogDir` | optional；missing/`null`为disabled；否则string | nonblank；relative以config directory为base；runtime为absolute；existing components不得是symlink/reparse point；与每个resolved `sessionDir`及`delegationStateDir`双向non-nested |
+| `callLogDir` | optional；missing/`null`为disabled；否则string | nonblank；relative以config directory为base；runtime为absolute；existing components不得是symlink/reparse point；与每个resolved `sessionDir`、`delegationStateDir`及`characterMemoryStateDir`双向non-nested |
 | `maintenanceMode` | optional boolean | missing为`false`；`null`或非boolean拒绝 |
 | `recapGrid` | required object | 服从§3.5；没有`null`或default fallback |
 
@@ -89,6 +89,7 @@ Root file必须是Linux no-follow regular file，长度为1 byte..1 MiB，JSON m
 | `playerName` | required string | 服从§3.3；故事内玩家角色，不是login `userId`；无default/推断；不同user可以相同 |
 | `sessionDir` | required string | nonblank；relative以config directory为base；absolute保持同一target；runtime只接收absolute path |
 | `delegationStateDir` | required string | nonblank；relative以config directory为base；runtime只接收canonical absolute path；没有fallback或从`sessionDir`推导 |
+| `characterMemoryStateDir` | required string | nonblank；relative以config directory为base；runtime只接收canonical absolute path；没有fallback或从其他storage path推导；当前V6配置包不open/create该目录 |
 | `sessionProvisioning` | required string | closed exact token：`existing-only`或`create-if-missing` |
 | `characterContextTemplate` | string；可missing | 没有有效file时必须提供合法context source；inline text除validation外保持exact |
 | `characterContextTemplateFile` | optional string-or-null | missing/`null`/empty/whitespace视为absent；nonblank path在load时必须读取成功并覆盖inline；missing in-root path可由§4 bootstrap创建 |
@@ -97,7 +98,7 @@ Root file必须是Linux no-follow regular file，长度为1 byte..1 MiB，JSON m
 regular file与strict UTF-8；decode后执行`Trim()`。有效file允许inline missing或blank，但explicit
 `characterContextTemplate:null`仍因wrong JSON type拒绝。Inline source不由loader或renderer `Trim()`。
 
-V4 `systemPromptTemplate`与`systemPromptTemplateFile`在V5中是unknown fields；V5没有兼容字段、constructor
+V4 `systemPromptTemplate`与`systemPromptTemplateFile`在V6中是unknown fields；V6没有兼容字段、constructor
 fallback、旧完整prompt自动剥离或literal name default。
 
 ### 3.3 Character/player names与template language
@@ -118,7 +119,7 @@ Replacement使用ordinal、one-pass、non-recursive语义；不normalize或修�
 
 ### 3.4 Fixed composition与bounds
 
-Materialization顺序为：decode/validate sibling connections与bindings → validate names → resolve storage paths →
+Materialization顺序为：decode/validate sibling connections与bindings → validate names → resolve三类per-user storage paths →
 select/read operator context → exact组合protocol/context → 执行一次closed renderer → construct runtime user。
 Exact mandatory composite source为：
 
@@ -150,7 +151,7 @@ operator condition/priority、H2 parser或第四份完整composed prompt。
 
 ### 3.5 Session provisioning、RecapGrid与Completion sibling
 
-两种provisioning policy保持V4行为：
+两种provisioning policy保持V5行为：
 
 - `existing-only`只打开已provision的raw SessionJournal repository；missing、empty或incomplete path映射为
   `session-unprovisioned`。Writable `Open`保留SessionJournal owner定义的crash-tail recovery；maintenance mode只
@@ -170,8 +171,15 @@ operator condition/priority、H2 parser或第四份完整composed prompt。
 
 `sessionDir`没有process-CWD或existence-based fallback、repository move或config-directory confinement承诺。
 Resolved session paths按platform comparer exact unique。所有resolved `delegationStateDir`也exact unique、彼此双向
-non-nested，并与所有session paths及optional `callLogDir`双向non-nested；existing path components不得含
-symlink/reparse point。
+non-nested，并与所有session paths双向non-nested。所有resolved `characterMemoryStateDir` exact unique、彼此双向
+non-nested，并与所有session/delegation paths双向non-nested。Optional `callLogDir`与上述全部per-user storage paths
+双向non-nested。Loader对character-memory与delegation path执行existing-ancestor symlink/reparse preflight；所有这些
+lexical关系由loader与直接构造runtime config共同调用的同一total topology validator拥有。
+
+本次V6配置包只建立Character Memory path authority，不接入Character Memory runtime lifecycle。无论validated
+Character Note binding是`null`还是非`null`，current runtime都不创建目录、不open/validate store、不取得锁，也不创建
+MemoPod；因此该字段存在不表示Note已经保存。后续Default MemoPod实现必须另行接入writable session attach，不能从
+路径存在性自动adopt state。
 
 Durable delegation supervisor继续在host启动时eager classify每个user。Existing state与matching session才
 strict-open并取得process-lifetime writer lock；state存在但session missing时在SQLite/lock open前fail closed；
@@ -184,7 +192,7 @@ components；`agentControlProfileFiles`为1..256个nonblank、canonical-path uni
 files；`currentAgentControlProfileId`必须exact命中loaded registry且只提供missing-session bootstrap admission。
 Route仍延迟到首次RecapGrid work读取，没有wildcard/default fallback。
 
-Galatea RecapGrid V6继续使用validated character/player names展开member prompts；V5不改变asset、Definition、
+Galatea RecapGrid V6继续使用validated character/player names展开member prompts；V6不改变asset、Definition、
 BuildTarget、route或active recipe。Sibling `connections.json`继续使用Completion-owned numeric V1；Galatea仍要求
 nonempty exact `selectableConnectionIds`包含default connection，并要求`bindings` exact只含
 `galatea.input-normalizer`、`galatea.outbound-mail-extractor`与`galatea.character-note-extractor`，每个值为
@@ -196,44 +204,43 @@ secret不进入主prompt分段identity。Outbound binding为`null`时final promp
 extractor runtime supply；为`null`时final prompt不出现Note请求能力，非`null`时追加诚实的development request
 appendix。该appendix只教角色完成提交请求并明确不表示Note已保存、索引或可召回。
 
-## 4. Bootstrap与V4 migration
+## 4. Bootstrap与V5 migration
 
-Current bootstrap写exact numeric `v:5`，为`alice`/`bob`显式写character/player names、
-`characterContextTemplateFile:"prompts/character-context-standard-zh-cn.md"`、`create-if-missing`与各自storage path。
+Current bootstrap写exact numeric `v:6`，为`alice`/`bob`显式写character/player names、
+`characterContextTemplateFile:"prompts/character-context-standard-zh-cn.md"`、`create-if-missing`与各自session、
+delegation及`character-memory/{userId}` path。
 [Standard context](../../../Galatea/prompt/character-context-standard-zh-cn.md)是embedded、BOM-less、LF-only、
 bounded strict UTF-8 starter。它说明较早History由RecapGrid派生为带来源的world-understanding与
 first-person-autobiography context、冲突时newer raw History优先；下方自主记忆是独立人工长期记录，未来可由
 动态外部记忆接管。它不是code-owned runtime protocol。
 
-Bootstrap只为existing/new V5 root中nonblank `characterContextTemplateFile`指向的missing in-root target创建
+Bootstrap只为existing/new V6 root中nonblank `characterContextTemplateFile`指向的missing in-root target创建
 missing parent，以`FileMode.CreateNew`写入standard context并`Flush(true)`。多user共享同一路径只创建一次；
 existing file永不覆盖；missing outside-root target不创建。任何生成都fail-stop并列出paths，operator检查后重启。
 Code-owned protocol resources只从binary embedded resources读取，绝不复制到operator目录。Bootstrap生成的
 `connections.json`把outbound与Character Note extractor bindings都写为`null`，所以starter composition只有
 mailbox base、不含两个appendix，也不启用Character Note extraction supply。
-Bootstrap不创建SessionJournal、
-RecapGrid state、delegation state或provider effect。
+Bootstrap不创建SessionJournal、RecapGrid state、delegation state、character-memory state、MemoPod或provider effect。
 
-V4 operator必须停服、备份并确认actual `Galatea:ConfigPath`，将每个完整prompt拆出operator-owned context，
-删除V4 prompt fields并改为V5 fields/version。应用不自动迁移config或ignored machine-local files。把旧完整prompt
-直接作为V5 context会重复code-owned protocol，属于operator migration错误；runtime不通过自然语言或Markdown
-heading猜测并修复它。
+V5 operator必须停服、备份并确认actual `Galatea:ConfigPath`，把exact version改为`6`，并为每个user增加互不冲突的
+required `characterMemoryStateDir`。`characterContextTemplate*`与finalized prompt composition不需改变。应用不自动迁移
+config或ignored machine-local files；bootstrap读取existing V5时会先被strict version gate拒绝，绝不重写该文件。
 
 ## 5. Existing durable sessions与recovery
 
-V5不改写任何existing raw setup。Existing Idle session在下一次fresh turn由现有`ReconcileDesiredSetup` exact比较
-finalized prompt：bytes不变则复用governing setup，变化则append一个新的`SystemPromptSetup`。这是正常setup
+V6不改写任何existing raw setup，也不改变finalized prompt bytes。Existing Idle session在下一次fresh turn由现有
+`ReconcileDesiredSetup` exact比较finalized prompt：bytes不变则复用governing setup，变化则append一个新的`SystemPromptSetup`。这是正常setup
 rotation，不是SessionJournal schema migration。停服修改sibling config并重启后，把validated outbound或Character
 Note binding从`null`切到connection ID或反向切换都会自然改变对应appendix presence，并在下一次fresh触发同一
 exact rotation。
 
 Prepared/Frozen recovery继续按historical governing setup与frozen request identity恢复，不用current prefix/context/
-mail protocol resources重组历史请求。V5不增加protocol/context durable columns、renderer version、receipt或
+mail protocol resources重组历史请求。V6不增加protocol/context durable columns、renderer version、receipt或
 migration event。
 
 ## 6. Bounds、classification与non-promises
 
-V5保留root 1 MiB、users 1..256、`listenUrls` 0..256、profile paths 1..256、external context/composite
+V6保留root 1 MiB、users 1..256、`listenUrls` 0..256、profile paths 1..256、external context/composite
 source/final prompt各1 MiB、profile 128 KiB与deferred Route 1 MiB bounds。Syntax/type/version/unknown/duplicate、
 invalid root/file UTF-8及invalid `sessionProvisioning`归类为`InvalidDataException`；name/context、blank、duplicate identity/path与dependency
 mismatch等semantic failure归类为`InvalidOperationException`，inner exception可保留shared contract detail。
@@ -241,5 +248,6 @@ Underlying IO/path/permission与owner-local dependency exception可以传播；d
 
 本合同不承诺password encryption、hot reload、automatic config migration、existing-session character/player rename、
 pronoun/persona profile、arbitrary prompt modules、独立world/memory files、operator protocol override、Markdown security
-policy或普遍path confinement。V5不改版RecapGrid、mail extractor/ContractId、mail/player envelope、delegation SQLite、
-SessionJournal、Completion、HTTP或SSE durable/schema contract。
+policy或普遍path confinement。当前V6配置包也不承诺Character Memory store、MemoPod、Note durable apply或save receipt。
+V6不改版RecapGrid、mail extractor/ContractId、mail/player envelope、delegation SQLite、SessionJournal、Completion、HTTP
+或SSE durable/schema contract。

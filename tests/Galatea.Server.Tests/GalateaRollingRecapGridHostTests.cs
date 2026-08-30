@@ -948,6 +948,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             new GalateaPlayerName("刘世超"),
             path,
             path + "-delegation-state",
+            path + "-character-memory-state",
             GalateaSessionProvisioning.ExistingOnly,
             "test system prompt")],
         connections,

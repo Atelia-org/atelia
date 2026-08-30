@@ -416,6 +416,7 @@ public sealed class GalateaSseV1Tests {
                 new GalateaPlayerName("刘世超"),
                 "/session",
                 "/delegation-state",
+                "/character-memory-state",
                 GalateaSessionProvisioning.ExistingOnly,
                 "prompt"
             ),

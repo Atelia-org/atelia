@@ -1,9 +1,9 @@
 # Galatea code-owned protocol 与 operator character context 设计
 
-状态：**Implemented；current root contract is V5**  
+状态：**Implemented；current root contract is V6**  
 日期：2026-08-29  
 实现基线：`b0760310`  
-Current contract：[Galatea root config V5](../SessionJournal/current/contracts/galatea-root-config-v5.md)
+Current contract：[Galatea root config V6](../SessionJournal/current/contracts/galatea-root-config-v6.md)
 
 ## 1. 结论
 
@@ -153,7 +153,7 @@ Read-only canary应验证load、final composition与现有readiness；真正的s
 
 | 维度 | 必须证明 |
 |:--|:--|
-| Strict root | exact `v:5`；V4、旧字段、unknown/wrong-case/duplicate/type mismatch拒绝 |
+| Strict root | exact `v:6`；V1–V5、旧字段、unknown/wrong-case/duplicate/type mismatch拒绝；required `characterMemoryStateDir`只建立path authority |
 | Context precedence | valid file覆盖inline；inline exact；file decode后`Trim()`；missing/outside-root按contract失败 |
 | Context grammar | nonblank、required character token、optional player token；unknown/malformed token拒绝 |
 | Composition | exact prefix/separator/context/separator/mailbox base；两个non-null binding独立追加outbound/note appendix，both时顺序固定；只render一次 |
@@ -162,4 +162,4 @@ Read-only canary应验证load、final composition与现有readiness；真正的s
 | Bootstrap | missing in-root context create-only、shared path一次、existing no-overwrite、protocol不落operator目录；default outbound/note bindings为null |
 | Durable setup | new repository保存final prompt；Idle及binding toggle只按exact变化rotate；Frozen使用historical setup |
 | Cross-subsystem | Recap/mail/delegation/SessionJournal/Completion/HTTP durable identities与schema不变 |
-| Governance | README、V5 contract、prompt router current；V4及更早合同保持准确历史 |
+| Governance | README、V6 contract、prompt router current；V5及更早合同保持准确历史 |
