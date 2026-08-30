@@ -49,6 +49,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _outboundMailExtractors;
     private readonly IReadOnlyDictionary<string, ICharacterNoteExtractor>
         _characterNoteExtractors;
+    private readonly bool _characterNoteBindingEnabled;
     private readonly IReadOnlyDictionary<string,
         GalateaRecapGridTargetExpectation> _targetExpectations;
     private readonly bool _maintenanceMode;
@@ -131,6 +132,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _inputPreprocessor = components.InputPreprocessor;
         _outboundMailExtractors = components.OutboundMailExtractors;
         _characterNoteExtractors = components.CharacterNoteExtractors;
+        _characterNoteBindingEnabled =
+            components.CharacterNoteBindingEnabled;
         _targetExpectations = components.TargetExpectations;
         _maintenanceMode = components.MaintenanceMode;
         _users = components.Users;
@@ -179,6 +182,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             userMessageNormalizer
         );
         _maintenanceMode = config.MaintenanceMode;
+        _characterNoteBindingEnabled =
+            config.CharacterNoteExtractorConnectionId is not null;
         _users = config.Users.ToDictionary(
             static value => value.UserId,
             StringComparer.Ordinal
@@ -310,6 +315,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 inputPreprocessor,
                 outboundMailExtractors,
                 characterNoteExtractors,
+                owner.CharacterNoteExtractorConnection is not null,
                 targetExpectations,
                 delegationSupervisor,
                 playerTurnRecallProvider
@@ -359,6 +365,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             OutboundMailExtractors,
         IReadOnlyDictionary<string, ICharacterNoteExtractor>
             CharacterNoteExtractors,
+        bool CharacterNoteBindingEnabled,
         IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>
             TargetExpectations,
         GalateaDelegationSupervisor DelegationSupervisor,
@@ -2442,6 +2449,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 == GalateaSessionProvisioning.CreateIfMissing;
 
         SessionJournalEngine? engine = null;
+        CharacterNoteDefaultPodReconciler? characterMemory = null;
         GalateaDelegationSessionHandle? delegationHandle = null;
         UserSessionHost? host = null;
         try {
@@ -2504,6 +2512,35 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     : throw new InvalidDataException(
                         $"Galatea user '{user.UserId}' has no RecapGrid target expectation."
                     );
+            IOutboundMailExtractor outboundMailExtractor =
+                _outboundMailExtractors.TryGetValue(
+                    user.UserId,
+                    out IOutboundMailExtractor? configuredMailExtractor
+                )
+                    ? configuredMailExtractor
+                    : throw new InvalidDataException(
+                        $"Galatea user '{user.UserId}' has no outbound mail extractor binding."
+                    );
+            ICharacterNoteExtractor characterNoteExtractor =
+                _characterNoteExtractors.TryGetValue(
+                    user.UserId,
+                    out ICharacterNoteExtractor? configuredNoteExtractor
+                )
+                    ? configuredNoteExtractor
+                    : throw new InvalidDataException(
+                        $"Galatea user '{user.UserId}' has no character note extractor binding."
+                    );
+            if (!_maintenanceMode && _characterNoteBindingEnabled) {
+                ct.ThrowIfCancellationRequested();
+                characterMemory = await CharacterMemorySessionComposition
+                    .AttachWritableSessionAsync(
+                        user,
+                        engine,
+                        characterNoteExtractor
+                    )
+                    .ConfigureAwait(false);
+            }
+            ct.ThrowIfCancellationRequested();
             delegationHandle = _maintenanceMode
                 ? null
                 : _delegationSupervisor.AttachWritableSession(
@@ -2515,24 +2552,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 engine,
                 recent,
                 targetExpectation,
+                characterMemory,
                 delegationHandle,
-                _outboundMailExtractors.TryGetValue(
-                    user.UserId,
-                    out IOutboundMailExtractor? outboundMailExtractor
-                )
-                    ? outboundMailExtractor
-                    : throw new InvalidDataException(
-                        $"Galatea user '{user.UserId}' has no outbound mail extractor binding."
-                    ),
-                _characterNoteExtractors.TryGetValue(
-                    user.UserId,
-                    out ICharacterNoteExtractor? characterNoteExtractor
-                )
-                    ? characterNoteExtractor
-                    : throw new InvalidDataException(
-                        $"Galatea user '{user.UserId}' has no character note extractor binding."
-                    )
+                outboundMailExtractor,
+                characterNoteExtractor
             );
+            characterMemory = null;
+            delegationHandle = null;
+            engine = null;
             if (!_maintenanceMode) {
                 await host.TurnLock.WaitAsync(ct).ConfigureAwait(false);
                 try {
@@ -2553,8 +2580,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 await host.DisposeAsync().ConfigureAwait(false);
             }
             else {
-                delegationHandle?.Dispose();
-                engine?.Dispose();
+                try {
+                    characterMemory?.Dispose();
+                }
+                finally {
+                    try {
+                        delegationHandle?.Dispose();
+                    }
+                    finally {
+                        engine?.Dispose();
+                    }
+                }
             }
             throw new GalateaSessionUnavailableException(
                 "session-unprovisioned",
@@ -2567,8 +2603,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 await host.DisposeAsync().ConfigureAwait(false);
             }
             else {
-                delegationHandle?.Dispose();
-                engine?.Dispose();
+                try {
+                    characterMemory?.Dispose();
+                }
+                finally {
+                    try {
+                        delegationHandle?.Dispose();
+                    }
+                    finally {
+                        engine?.Dispose();
+                    }
+                }
             }
             throw;
         }
@@ -2928,6 +2973,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
         SessionJournalEngine engine,
         RecentTurnsResponseDto recentTurns,
         GalateaRecapGridTargetExpectation targetExpectation,
+        CharacterNoteDefaultPodReconciler? characterMemoryReconciler,
         GalateaDelegationSessionHandle? delegationHandle,
         IOutboundMailExtractor outboundMailExtractor,
         ICharacterNoteExtractor characterNoteExtractor
@@ -2942,6 +2988,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
         Engine = engine;
         _recentTurns = recentTurns;
         TargetExpectation = targetExpectation;
+        CharacterMemoryReconciler = characterMemoryReconciler;
         DelegationHandle = delegationHandle;
         CharacterNoteExtractor = characterNoteExtractor;
         if (delegationHandle is not null) {
@@ -2964,6 +3011,9 @@ public sealed class UserSessionHost : IAsyncDisposable {
     internal GalateaRecapGridTargetExpectation TargetExpectation { get; }
 
     internal ICharacterNoteExtractor CharacterNoteExtractor { get; }
+
+    internal CharacterNoteDefaultPodReconciler?
+        CharacterMemoryReconciler { get; }
 
     internal CharacterNoteRequestReceiptQueue NoteRequestReceipts { get; } =
         new();
@@ -3090,10 +3140,15 @@ public sealed class UserSessionHost : IAsyncDisposable {
         await TurnLock.WaitAsync().ConfigureAwait(false);
         try {
             try {
-                DelegationHandle?.Dispose();
+                CharacterMemoryReconciler?.Dispose();
             }
             finally {
-                Engine.Dispose();
+                try {
+                    DelegationHandle?.Dispose();
+                }
+                finally {
+                    Engine.Dispose();
+                }
             }
         }
         finally {
