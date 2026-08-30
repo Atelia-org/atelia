@@ -3,7 +3,7 @@
 ## 状态
 
 - 方案日期：2026-08-30
-- 当前状态：Design Locked；D0与A0/A1/A2完成，A3/A4尚未开始
+- 当前状态：Implemented；D0与A0-A4完成，等待R0 integrated review
 - 前置版本：[`Character Note Request Receipt V0`](character-note-request-receipt-v0.md)
 - 本轮目标：把已识别的Character Note保存请求幂等地写入每个角色唯一的Default MemoPod，并只在durable apply已经证明成功后生成诚实回执
 - 本轮不包含：静态分类、PodCatalog、动态聚类、多Pod routing、Memo内容整理、主线程recall注入
@@ -443,6 +443,8 @@ Write scope：config reader/DTO/bootstrap/current contract、session composition
 
 Done when：total path disjointness、null binding no store touch、enabled create/open、maintenance no-open/no-create、invalid existing fail closed通过。
 
+Status：Complete；V6 path/config、per-session attach/dispose与disabled/maintenance零touch均有focused lifecycle覆盖。
+
 ### A4 — runtime, prompt and save receipt hard cut
 
 Intent：接入post-completion并行协调，只有AppliedNow创建诚实save receipt；删除development-only用户可见语义。
@@ -450,6 +452,8 @@ Intent：接入post-completion并行协调，只有AppliedNow创建诚实save re
 Write scope：GalateaServices、prompt resource/composer、receipt/Observation、docs与runtime tests。
 
 Done when：Mail/Note并发drain、best-effort pre-capture failure、durable post-capture recovery、save receipt canonical grammar与四种prompt组合一致。
+
+Status：Complete；runtime/save receipt/Observation/admission focused tests覆盖真实MemoPod apply、并发2、failure matrix、rewind pending恢复、Mail独立性与旧V0 grammar拒绝。
 
 ### R0 — integrated review and validation
 

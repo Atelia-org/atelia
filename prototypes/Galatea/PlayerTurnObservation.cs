@@ -148,11 +148,11 @@ internal abstract class PlayerTurnNotice {
         ) { }
     }
 
-    internal sealed class NoteRequestReceipt : PlayerTurnNotice {
-        internal NoteRequestReceipt(string body) : base(
+    internal sealed class NoteSaveReceipt : PlayerTurnNotice {
+        internal NoteSaveReceipt(string body) : base(
             body,
             PlayerTurnObservationEnvelope
-                .MaximumNoteRequestReceiptUtf8Bytes,
+                .MaximumNoteSaveReceiptUtf8Bytes,
             nameof(body)
         ) { }
     }
@@ -207,17 +207,17 @@ internal sealed class PlayerTurnObservation {
                 "A player-turn Observation contains too many notices."
             );
         }
-        int noteReceiptCount = 0;
+        int noteSaveReceiptCount = 0;
         for (int index = 0; index < frozen.Length; index++) {
             if (frozen[index]
-                    is not PlayerTurnNotice.NoteRequestReceipt) {
+                    is not PlayerTurnNotice.NoteSaveReceipt) {
                 continue;
             }
-            noteReceiptCount++;
-            if (noteReceiptCount > 1 || index != frozen.Length - 1) {
+            noteSaveReceiptCount++;
+            if (noteSaveReceiptCount > 1 || index != frozen.Length - 1) {
                 throw new ArgumentException(
                     "A player-turn Observation may contain at most one "
-                        + "Note request receipt, and it must be the final "
+                        + "Note save receipt, and it must be the final "
                         + "notice.",
                     nameof(notices)
                 );
@@ -271,7 +271,7 @@ internal static class PlayerTurnObservationEnvelope {
     internal const int MaximumRecallCount = 32;
     internal const int MaximumReplyUtf8Bytes = 256 * 1024;
     internal const int MaximumFailureUtf8Bytes = 4 * 1024;
-    internal const int MaximumNoteRequestReceiptUtf8Bytes = 512 * 1024;
+    internal const int MaximumNoteSaveReceiptUtf8Bytes = 512 * 1024;
     internal const int MaximumNoticeCount = 16;
     internal const int MaximumRenderedUtf8Bytes = 1024 * 1024;
 
@@ -281,8 +281,8 @@ internal static class PlayerTurnObservationEnvelope {
         "来自外界代行者 Codex 的回信";
     internal const string FailureHeading =
         "发往外界代行者 Codex 的信未能送达";
-    internal const string NoteRequestReceiptHeading =
-        "Note 请求回执";
+    internal const string NoteSaveReceiptHeading =
+        "Note 保存回执";
     internal const string RecallGistHeading =
         "召回的角色笔记（一句话印象）";
     internal const string RecallSummaryHeading =
@@ -307,8 +307,8 @@ internal static class PlayerTurnObservationEnvelope {
     private const string RecallSourceIdPrefix = "SourceId: ";
     private const string ReplyInfoString = "delegate-reply";
     private const string FailureInfoString = "delivery-failure";
-    private const string NoteRequestReceiptInfoString =
-        "character-note-request-receipt";
+    private const string NoteSaveReceiptInfoString =
+        "character-note-save-receipt";
     private const string TimestampFormat = "yyyy-MM-dd'T'HH:mm:sszzz";
     private const string SectionSeparator = "\n\n";
     // RenderBlock necessarily places its closing fence on a new line, so a
@@ -393,11 +393,11 @@ internal static class PlayerTurnObservationEnvelope {
                         notice.Body
                     );
                     break;
-                case PlayerTurnNotice.NoteRequestReceipt:
+                case PlayerTurnNotice.NoteSaveReceipt:
                     AppendSection(
                         builder,
-                        NoteRequestReceiptHeading,
-                        NoteRequestReceiptInfoString,
+                        NoteSaveReceiptHeading,
+                        NoteSaveReceiptInfoString,
                         notice.Body
                     );
                     break;
@@ -434,7 +434,7 @@ internal static class PlayerTurnObservationEnvelope {
                     FailureHeading,
                     allowTimestamp: true,
                     allowRecalls: true,
-                    allowNoteRequestReceipt: true,
+                    allowNoteSaveReceipt: true,
                     out observation
                 )
                 || TryUnwrapDialect(
@@ -443,7 +443,7 @@ internal static class PlayerTurnObservationEnvelope {
                     LegacyFailureHeading,
                     allowTimestamp: false,
                     allowRecalls: false,
-                    allowNoteRequestReceipt: false,
+                    allowNoteSaveReceipt: false,
                     out observation
                 );
         }
@@ -459,7 +459,7 @@ internal static class PlayerTurnObservationEnvelope {
         string failureHeading,
         bool allowTimestamp,
         bool allowRecalls,
-        bool allowNoteRequestReceipt,
+        bool allowNoteSaveReceipt,
         out PlayerTurnObservation observation
     ) {
         observation = null!;
@@ -508,9 +508,9 @@ internal static class PlayerTurnObservationEnvelope {
         var recalls = new List<PlayerTurnRecall>();
         var notices = new List<PlayerTurnNotice>();
         bool noticesStarted = false;
-        bool noteRequestReceiptRead = false;
+        bool noteSaveReceiptRead = false;
         while (position < stored.Length) {
-            if (noteRequestReceiptRead) { return false; }
+            if (noteSaveReceiptRead) { return false; }
             if (allowRecalls
                 && !noticesStarted
                 && TryReadRecallSection(
@@ -549,22 +549,22 @@ internal static class PlayerTurnObservationEnvelope {
                     new PlayerTurnNotice.DeliveryFailure(body)
                 );
             }
-            else if (allowNoteRequestReceipt
+            else if (allowNoteSaveReceipt
                 && stored.AsSpan(position).StartsWith(
-                    "## " + NoteRequestReceiptHeading + "\n\n",
+                    "## " + NoteSaveReceiptHeading + "\n\n",
                     StringComparison.Ordinal)) {
                 if (!TryReadSection(
                         stored,
                         ref position,
-                        NoteRequestReceiptHeading,
-                        NoteRequestReceiptInfoString,
+                        NoteSaveReceiptHeading,
+                        NoteSaveReceiptInfoString,
                         out string body)) {
                     return false;
                 }
                 noticesStarted = true;
-                noteRequestReceiptRead = true;
+                noteSaveReceiptRead = true;
                 notices.Add(
-                    new PlayerTurnNotice.NoteRequestReceipt(body)
+                    new PlayerTurnNotice.NoteSaveReceipt(body)
                 );
             }
             else {
@@ -632,8 +632,8 @@ internal static class PlayerTurnObservationEnvelope {
             string heading = notice switch {
                 PlayerTurnNotice.Reply => ReplyHeading,
                 PlayerTurnNotice.DeliveryFailure => FailureHeading,
-                PlayerTurnNotice.NoteRequestReceipt =>
-                    NoteRequestReceiptHeading,
+                PlayerTurnNotice.NoteSaveReceipt =>
+                    NoteSaveReceiptHeading,
                 _ => throw new ArgumentException(
                     "Unsupported player-turn notice kind.",
                     nameof(observation)

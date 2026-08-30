@@ -137,9 +137,10 @@ unknown ID 或多余 binding
 model/provider/surface/endpoint/secret locator 全部来自该 connection，client 只在首次真正
 需要清洗时惰性创建；OutboundMailExtractor 同样使用hidden、lazy、borrowed client，且不进入
 Agent/UI selectable allowlist。CharacterNoteExtractor也按每个user的exact `CharacterName`构造，借用同一
-registry并保持client lazy。其V0在successful fresh/recovery完成边界提取请求，并把development-only回执排入
-下一次eligible普通player turn；不承诺Note已保存、索引、可召回或跨restart保留。Binding非`null`时主system
-prompt追加诚实的development request Quick Start，`null`时完全不出现该能力。
+registry并保持client lazy。V1在successful fresh/recovery完成边界把提取结果交给Character Memory reconciler；
+0结果也写durable tombstone，非0结果幂等保存到每个角色的默认MemoPod。只有当前
+post-completion返回`AppliedNow`且final head仍一致时才queue保存回执；admission/restart恢复不补回执。Binding非
+`null`时主system prompt追加Character Note保存Quick Start，`null`时完全不出现该能力。
 Bootstrap connections template把outbound与Character Note两个extractor binding都写为`null`。
 Outbound或Character Note binding从`null`切换到non-`null`或反向切换都会改变对应appendix presence，并在下一次
 fresh turn自然触发existing exact desired-setup rotation；不引入operator prompt module field。
@@ -272,8 +273,8 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 pre-response transient transport failure的attempt与退避时间；`Galatea.Delegation`显示durable
 binding、dispatch、reconciliation、terminal与backoff；`Galatea.Delegation.Supervisor`显示store availability、
 pulse fail-closed与shutdown；`Galatea.DelegateSidecar`显示Node child启动、ready与stable transport failure。
-`Galatea.CharacterMemory`是development-only例外：每批输出identity/hash、Mail/Note outcome、artifact/queue count与
-latency的single-line JSON，并逐条输出JSON-escaped `exactText`/`evidenceQuote`，用来人工检查V0提取质量。
+`Galatea.CharacterMemory`每批输出identity/hash、Mail/Note outcome、durable memo/queue count与latency的single-line
+JSON；只有durable `AppliedNow`结果逐条输出JSON-escaped `PodId`、`MemoId`与`ExactText`，不输出`EvidenceQuote`。
 `Info`调用在Release被编译掉；Debug下无论console category是否
 打开，仍按`DebugUtil`规则写入`.atelia/debug-logs/galatea.mailbox.log`、
 `galatea.charactermemory.log`、`galatea.delegation.log`、`galatea.delegation.supervisor.log`与
@@ -370,8 +371,8 @@ recovery或dedupe语义。工具契约继续由`Completion.Tools/ArtifactToolWra
 provider tool name/call ID、tool/call数量、raw arguments与diagnostics均有
 code-owned bounds；caller cancellation与transport exception直接传播。
 
-`TextExtractor` 与 composite Observation 共同形成的异步双向通讯模式；Mailbox与development-only Character
-Note request receipt已复用这条路径，后续recall仍可沿同一边界设计，见
+`TextExtractor` 与 composite Observation 共同形成的异步双向通讯模式；Mailbox与durable Character Note保存/
+save receipt已复用这条路径，后续recall仍可沿同一边界设计，见
 [`TextExtractor / Observation Bridge`](../../docs/Galatea/text-extractor-observation-bridge.md)。
 
 ## Mailbox、OutboundMailExtractor 与 durable Codex delegation
@@ -389,7 +390,8 @@ runtime在canonical Observation materialization时通过宿主`TimeProvider`只�
 外界粗粒度时间，不是故事世界时间，也不参与turn排序、identity或settlement。首个兄弟块固定为
 `## 玩家角色试图采取的行动`/`player-action`，随后可按顺序携带0..32个
 角色笔记recall兄弟块，再携带合计0..16个notice：`Reply` / `DeliveryFailure`，以及至多1个且必须位于最后的
-`NoteRequestReceipt`（它计入16个总上限）。recall block使用
+`NoteSaveReceipt`（它计入16个总上限且必须最后）。canonical heading/info string为`Note 保存回执` /
+`character-note-save-receipt`；旧V0 `Note 请求回执` / `character-note-request-receipt`明确拒绝。recall block使用
 `SourceId: ...`单行metadata作为anchor，`RecallType+SourceId`构成exact去重key，当前三种info string为
 `memo-gist-recall`、`memo-summary-recall`、`memo-exact-text-recall`；对应heading分别是
 `召回的角色笔记（一句话印象）`、`召回的角色笔记（摘要）`、`召回的角色笔记（原文）`。
@@ -481,21 +483,23 @@ tool contract版本与exact rendered system/user prompts，不包含provider/mod
 产生相同ID，不同名字分离；底层Completion client仍由host registry按connection惰性共享。
 
 successful fresh/recovery主Completion回到`Idle`并结算reply lease后，host只读取/render一份frozen terminal
-Action target，同时直接启动Mail `ReconcileTargetAsync`与enabled Character Note extraction；不使用`Task.Run`、
-`Task.WhenAll`或fire-and-forget。host先await Mail；Mail失败或final fence变化会取消并drain Note后保留既有Mail
-失败语义。Mail成功后再观察Note：caller/shutdown cancellation传播；Note provider/validation failure与code-owned
-30秒cooperative deadline只丢弃V0回执，不使已完成主回合失败。deadline通过cancellation token请求停止，不强杀
-忽略cancellation的provider；borrowed client释放前仍会drain实际调用。
+Action target，同时直接启动Mail与Character Memory `ReconcileTargetAsync`；两者始终drain。Note linked token只影响
+capture前；capture后settlement不观察deadline/Mail-abort token。post-completion只把明确的pre-capture cancellation/
+deadline、`TextExtractionException`与Pod availability当best-effort；`DeferredAfterCapture`保留pending且不回执，
+Quarantined/invariant fail closed。admission先恢复pending，再对latest exact target并行结算Mail/Note；任何admission
+pre-capture失败都会阻止新mutation。
 
 Note extractor只把`${characterName}`本人已明确完成提交的长期Note保存请求识别为artifact；想到、计划、
 草稿、普通世界内书写、引用旧Note或仅声称已经保存都不构成提交。`ExactText`与`EvidenceQuote`必须是visible Action
 的ordinal substring；semantic contract为`semantic.v4`，tool name与`exactText` / `evidenceQuote` schema保持不变。
 
-Note成功且final head仍等于target Action时，0 artifact不排队；1..N artifact由code-owned renderer冻结成一条
-`NoteRequestReceipt`，再放入每个`UserSessionHost`私有的bounded in-process FIFO。只有下一次普通player
+只有durable `AppliedNow`且final head仍等于target Action时，1..N条`CharacterNoteAppliedMemo`才由code-owned
+renderer冻结成一条`NoteSaveReceipt`，再放入每个`UserSessionHost`私有的bounded in-process FIFO。zero、Rejected、
+Deferred、AlreadyApplied、admission recovery、render failure或queue full都不伪造/补发。只有下一次普通player
 `StartTurn`的`BeginCutoff == Empty`分支会`TryDequeue`一条，作为sole/final notice执行at-most-once attach。
 Created reply cutoff、ready-turn、inbound与recovery不领取；领取后的pre-dispatch stop、失败、Undo、rewind或restart
-都不重新排队。该回执只说明请求已识别，绝不表示Memo已持久化或可召回。
+都不重新排队。该回执只证明列出的ExactText已保存到默认MemoPod，不承诺分类、metadata补全或召回。非fatal Mail
+失败不回滚已保存Memo：final fence仍成立时先queue真实回执，再原样传播Mail错误；fatal/caller cancel/head change不queue。
 
 每个outbound-mail Action extraction batch由`GalateaDelegationSqliteStore`单事务全有或全无地capture；成功的0-intent
 extraction也写`action_capture` tombstone，extractor failure绝不能冒充空结果。stable dispatch ID是对length-prefixed

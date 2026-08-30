@@ -9,6 +9,7 @@ using Atelia.Completion.Tools;
 using Atelia.EventJournal;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.Galatea.Server.Mailbox;
+using Atelia.MemoPod;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -17,13 +18,18 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class CharacterNoteRuntimeTests {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(8);
+    private static readonly CompletionDescriptor Invocation = new(
+        "runtime-test",
+        "runtime-test-v1",
+        "model-a"
+    );
     private const string Action = """
         [Galatea] I sent mail body to Alice and completed sending.
-        [Galatea] I submitted a development Note save request with exact text: remember blue, and completed the submission.
+        [Galatea] I submitted a long-term Note save request with exact text: remember blue, and completed the submission.
         """;
     private const string NoteText = "remember blue";
     private const string NoteEvidence =
-        "I submitted a development Note save request with exact text: remember blue, and completed the submission.";
+        "I submitted a long-term Note save request with exact text: remember blue, and completed the submission.";
 
     [Fact]
     public async Task SharedClientOverlapsMailAndNoteThenReceiptAttachesOnce() {
@@ -82,7 +88,20 @@ public sealed class CharacterNoteRuntimeTests {
                 .DelegationHandle!.Store.ReadSnapshot();
             Assert.Single(durable.Captures);
             Assert.Equal("Alice", Assert.Single(durable.Mails).Recipient);
-            Assert.Equal(1, session.NoteRequestReceipts.Count);
+            Assert.Equal(1, session.NoteSaveReceipts.Count);
+            global::Atelia.MemoPod.MemoPod saved =
+                global::Atelia.MemoPod.MemoPod.Open(
+                    session.User.CharacterMemoryStateDir,
+                    CharacterNoteDefaultPodV1.PodId
+                );
+            Assert.Equal(MemoPodPhase.Frozen, saved.Phase);
+            Assert.Equal(NoteText, Assert.Single(saved.List()).ExactText);
+            await service.ReconcileDurableAdmissionAsync(
+                session,
+                CancellationToken.None
+            );
+            Assert.Equal(2, helperClient.Requests.Count);
+            Assert.Equal(1, session.NoteSaveReceipts.Count);
 
             GalateaLiveTurn receiptTurn = service.StartTurn(
                 session,
@@ -91,10 +110,10 @@ public sealed class CharacterNoteRuntimeTests {
             );
             GalateaFreshInput.PlayerAction receiptInput = Assert.IsType<
                 GalateaFreshInput.PlayerAction>(receiptTurn.FreshInput);
-            Assert.IsType<PlayerTurnNotice.NoteRequestReceipt>(
+            Assert.IsType<PlayerTurnNotice.NoteSaveReceipt>(
                 Assert.Single(receiptInput.Notices)
             );
-            Assert.Equal(0, session.NoteRequestReceipts.Count);
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
             service.FinishTurn(session, receiptTurn);
 
             GalateaLiveTurn next = service.StartTurn(
@@ -116,7 +135,7 @@ public sealed class CharacterNoteRuntimeTests {
     public async Task DiagnosticSinkCapturesSingleLineJsonWithinContentBoundary() {
         const string ExactText = "remember blue\nsecond line";
         const string Evidence =
-            "I completed submitting a development Note save request:\nremember blue\nsecond line";
+            "I completed submitting a long-term Note save request:\nremember blue\nsecond line";
         const string ActionMarker = "FULL-ACTION-MUST-NOT-BE-LOGGED";
         string action = $"""
             [Galatea] {ActionMarker}; I sent a mail and completed sending.
@@ -169,7 +188,7 @@ public sealed class CharacterNoteRuntimeTests {
 
             string artifactJson = Assert.Single(DiagnosticEvents(
                 diagnostics,
-                "character-note-artifact"
+                "character-note-durable-memo"
             ));
             string batchJson = Assert.Single(DiagnosticEvents(
                 diagnostics,
@@ -186,10 +205,13 @@ public sealed class CharacterNoteRuntimeTests {
                     artifact.RootElement.GetProperty("exactText").GetString()
                 );
                 Assert.Equal(
-                    Evidence,
-                    artifact.RootElement.GetProperty("evidenceQuote")
-                        .GetString()
+                    CharacterNoteDefaultPodV1.PodId.Value,
+                    artifact.RootElement.GetProperty("podId").GetString()
                 );
+                Assert.False(artifact.RootElement.TryGetProperty(
+                    "evidenceQuote",
+                    out _
+                ));
             }
             using (JsonDocument batch = JsonDocument.Parse(batchJson)) {
                 Assert.Equal(
@@ -197,7 +219,7 @@ public sealed class CharacterNoteRuntimeTests {
                     batch.RootElement.GetProperty("mailOutcome").GetString()
                 );
                 Assert.Equal(
-                    "success",
+                    "applied-now",
                     batch.RootElement.GetProperty("noteOutcome").GetString()
                 );
                 Assert.Equal(
@@ -278,7 +300,43 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.Equal("completed", turn.Status);
             Assert.Single(session.DelegationHandle!.Store
                 .ReadSnapshot().Captures);
-            Assert.Equal(0, session.NoteRequestReceipts.Count);
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
+            if (outcome == NoteOutcome.Zero) {
+                int dispatches = noteClient.DispatchCount;
+                await service.ReconcileDurableAdmissionAsync(
+                    session,
+                    CancellationToken.None
+                );
+                Assert.Equal(dispatches, noteClient.DispatchCount);
+                Assert.Null(session.CharacterMemoryReconciler!
+                    .ReadStatusSnapshot().ActiveCapture);
+                Assert.Empty(global::Atelia.MemoPod.MemoPod.Open(
+                    session.User.CharacterMemoryStateDir,
+                    CharacterNoteDefaultPodV1.PodId
+                ).List());
+            }
+            else {
+                int dispatches = noteClient.DispatchCount;
+                GalateaTurnException blocked = await Assert.ThrowsAsync<
+                    GalateaTurnException>(async () =>
+                        await service.ReconcileDurableAdmissionAsync(
+                            session,
+                            CancellationToken.None
+                        )
+                    );
+                Assert.StartsWith(
+                    "character-memory-",
+                    blocked.FailureReason,
+                    StringComparison.Ordinal
+                );
+                Assert.Equal(dispatches + 1, noteClient.DispatchCount);
+                Assert.Null(session.CharacterMemoryReconciler!
+                    .ReadStatusSnapshot().ActiveCapture);
+                Assert.Empty(global::Atelia.MemoPod.MemoPod.Open(
+                    session.User.CharacterMemoryStateDir,
+                    CharacterNoteDefaultPodV1.PodId
+                ).List());
+            }
             if (outcome == NoteOutcome.Timeout) {
                 Assert.True(noteClient.CancellationObserved);
             }
@@ -347,10 +405,87 @@ public sealed class CharacterNoteRuntimeTests {
             service.FinishTurn(session, turn);
 
             Assert.Equal("completed", turn.Status);
-            Assert.Equal(1, session.NoteRequestReceipts.Count);
+            Assert.Equal(1, session.NoteSaveReceipts.Count);
         }
         finally {
             mailClient.Release();
+            session.TurnLock.Release();
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MailFailureAfterAppliedMemoPreservesMemoAndHonestReceiptPolicy(
+        bool fatal
+    ) {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig mail = Connection("mail");
+        CompletionConnectionConfig note = Connection("note");
+        var releaseMail = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        Exception expected = fatal
+            ? new OutOfMemoryException("fatal mail failure after Note apply")
+            : new GalateaTurnException(
+                "mail failed after Note apply",
+                "mail-test-failure"
+            );
+        var noteClient = new QueueClient(Message(NoteTool()));
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient>(
+                StringComparer.Ordinal
+            ) {
+                [main.Id] = new QueueClient(Message(
+                    new ActionBlock.Text(Action)
+                )),
+                [mail.Id] = new FailAfterSignalClient(
+                    releaseMail.Task,
+                    expected
+                ),
+                [note.Id] = noteClient,
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, mail, note],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: mail.Id,
+            characterNoteExtractorConnectionId: note.Id
+        );
+        (GalateaHostService service, UserSessionHost session) =
+            await GetRuntimeAsync(host);
+
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "mail fails after note apply",
+            new GalateaTurnOptions(main.Id)
+        );
+        try {
+            Task run = service.RunTurnAsync(
+                session,
+                turn,
+                CancellationToken.None
+            );
+            await WaitUntilAsync(() => global::Atelia.MemoPod.MemoPod.Open(
+                session.User.CharacterMemoryStateDir,
+                CharacterNoteDefaultPodV1.PodId
+            ).List().Length == 1);
+            releaseMail.TrySetResult();
+
+            Exception? observed = await Record.ExceptionAsync(() => run);
+            Assert.Same(expected, observed);
+            Assert.Equal(1, noteClient.DispatchCount);
+            Assert.Equal(fatal ? 0 : 1, session.NoteSaveReceipts.Count);
+            Assert.Equal(NoteText, Assert.Single(
+                global::Atelia.MemoPod.MemoPod.Open(
+                    session.User.CharacterMemoryStateDir,
+                    CharacterNoteDefaultPodV1.PodId
+                ).List()
+            ).ExactText);
+        }
+        finally {
+            releaseMail.TrySetResult();
+            service.FinishTurn(session, turn);
             session.TurnLock.Release();
         }
     }
@@ -404,7 +539,7 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.True(noteClient.CancellationObserved);
             Assert.Empty(session.DelegationHandle!.Store
                 .ReadSnapshot().Captures);
-            Assert.Equal(0, session.NoteRequestReceipts.Count);
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
             AssertNoArtifactDiagnostics(diagnostics);
             string batchJson = Assert.Single(DiagnosticEvents(
                 diagnostics,
@@ -469,7 +604,7 @@ public sealed class CharacterNoteRuntimeTests {
             await noteClient.Drained.Task.WaitAsync(Deadline);
             Assert.True(noteClient.CancellationObserved);
             Assert.Equal(0, noteClient.ActiveCalls);
-            Assert.Equal(0, session.NoteRequestReceipts.Count);
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
             Assert.Empty(diagnostics);
         }
         finally {
@@ -530,7 +665,7 @@ public sealed class CharacterNoteRuntimeTests {
             await noteClient.Drained.Task.WaitAsync(Deadline);
             Assert.Equal(0, mailClient.ActiveCalls);
             Assert.Equal(0, noteClient.ActiveCalls);
-            Assert.Equal(0, session.NoteRequestReceipts.Count);
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
             AssertNoArtifactDiagnostics(diagnostics);
         }
         finally {
@@ -597,7 +732,7 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.Equal("delegation-state-changed", failure.FailureReason);
             Assert.Single(session.DelegationHandle!.Store
                 .ReadSnapshot().Captures);
-            Assert.Equal(0, session.NoteRequestReceipts.Count);
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
             AssertNoArtifactDiagnostics(diagnostics);
             string batchJson = Assert.Single(DiagnosticEvents(
                 diagnostics,
@@ -617,6 +752,113 @@ public sealed class CharacterNoteRuntimeTests {
     }
 
     [Fact]
+    public async Task PendingCaptureSurvivesRewindAndAdmissionSettlesWithoutProviderOrReceipt() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig mail = Connection("mail");
+        CompletionConnectionConfig note = Connection("note");
+        var noteClient = new QueueClient();
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient>(
+                StringComparer.Ordinal
+            ) {
+                [main.Id] = new QueueClient(),
+                [mail.Id] = new QueueClient(),
+                [note.Id] = noteClient,
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, mail, note],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: mail.Id,
+            characterNoteExtractorConnectionId: note.Id
+        );
+        var owner = new CharacterMemoryStoreOwner(
+            "alice",
+            CharacterMemorySessionComposition.CreateSessionRepositoryId(
+                host.SessionDirectory
+            )
+        );
+        CharacterMemoryStoreBaseline baseline;
+        GalateaTerminalActionExtractionTarget target;
+        EventAddress action;
+        using (SessionJournalEngine engine = SessionJournalEngine.Open(
+                   host.SessionDirectory)) {
+            baseline = new CharacterMemoryStoreBaseline(
+                engine.ReadView.ReadPhysicalAppendFrontier(),
+                EventAddressTextCodec.FormatNullable(
+                    engine.ReadCurrentHead()
+                )
+            );
+            action = AppendAction(engine, Action);
+            target = Assert.IsType<
+                GalateaTerminalActionExtractionReadResult.Available
+            >(GalateaTerminalActionExtractionTargetReader.ReadAt(
+                engine,
+                action
+            )).Target;
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(
+            host.CharacterMemoryStateDirectory
+        )!);
+        using (CharacterNoteDefaultPodReconciler provisioned =
+            await CharacterNoteDefaultPodReconciler.CreateNewAsync(
+                host.CharacterMemoryStateDirectory,
+                owner,
+                baseline,
+                DisabledCharacterNoteExtractor.Instance
+            )) { }
+        using (CharacterMemorySqliteStore store =
+            CharacterMemorySqliteStore.OpenExisting(
+                host.CharacterMemoryStateDirectory,
+                owner
+            )) {
+            CharacterMemoryCaptureResult captured = store.CaptureNew(new(
+                EventAddressTextCodec.Format(action),
+                target.VisibleTextSha256,
+                target.VisibleTextUtf8Bytes,
+                "historical-character-note-contract",
+                [NoteText]
+            ));
+            Assert.Equal(
+                CharacterMemoryCaptureDisposition.Captured,
+                captured.Disposition
+            );
+        }
+        using (SessionJournalEngine engine = SessionJournalEngine.Open(
+                   host.SessionDirectory)) {
+            Assert.IsType<SessionTurnRetractionResult.Moved>(
+                engine.RewindLatestCompletedTurn(action)
+            );
+        }
+
+        (GalateaHostService service, UserSessionHost session) =
+            await GetRuntimeAsync(host);
+
+        Assert.Equal(0, noteClient.DispatchCount);
+        Assert.Equal(0, session.NoteSaveReceipts.Count);
+        Assert.Null(session.CharacterMemoryReconciler!
+            .ReadStatusSnapshot().ActiveCapture);
+        Assert.Equal(NoteText, Assert.Single(
+            global::Atelia.MemoPod.MemoPod.Open(
+                session.User.CharacterMemoryStateDir,
+                CharacterNoteDefaultPodV1.PodId
+            ).List()
+        ).ExactText);
+
+        await session.TurnLock.WaitAsync();
+        try {
+            await service.ReconcileDurableAdmissionAsync(
+                session,
+                CancellationToken.None
+            );
+            Assert.Equal(0, noteClient.DispatchCount);
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
+        }
+        finally {
+            session.TurnLock.Release();
+        }
+    }
+
+    [Fact]
     public async Task QueueIsClaimedOnlyByOrdinaryEmptyPlayerTurn() {
         CompletionConnectionConfig main = Connection("test");
         await using GalateaTestHost host = GalateaTestHost.Create(
@@ -630,8 +872,8 @@ public sealed class CharacterNoteRuntimeTests {
         );
         (GalateaHostService service, UserSessionHost session) =
             await GetRuntimeAsync(host);
-        CharacterNoteRequestReceipt receipt = CreateReceipt();
-        Assert.True(session.NoteRequestReceipts.TryEnqueue(receipt));
+        CharacterNoteSaveReceipt receipt = CreateReceipt();
+        Assert.True(session.NoteSaveReceipts.TryEnqueue(receipt));
 
         await session.TurnLock.WaitAsync();
         try {
@@ -641,7 +883,7 @@ public sealed class CharacterNoteRuntimeTests {
                     new GalateaTurnOptions(main.Id)
                 )
             );
-            Assert.Equal(1, session.NoteRequestReceipts.Count);
+            Assert.Equal(1, session.NoteSaveReceipts.Count);
 
             GalateaLiveTurn inbound = service.StartInboundMailTurn(
                 session,
@@ -653,7 +895,7 @@ public sealed class CharacterNoteRuntimeTests {
                 ),
                 new GalateaTurnOptions(main.Id)
             );
-            Assert.Equal(1, session.NoteRequestReceipts.Count);
+            Assert.Equal(1, session.NoteSaveReceipts.Count);
             service.FinishTurn(session, inbound);
 
             GalateaLiveTurn recovery = service.StartRecovery(
@@ -663,7 +905,7 @@ public sealed class CharacterNoteRuntimeTests {
                     GalateaTurnMode.Resume
                 )
             );
-            Assert.Equal(1, session.NoteRequestReceipts.Count);
+            Assert.Equal(1, session.NoteSaveReceipts.Count);
             service.FinishTurn(session, recovery);
 
             GalateaLiveTurn ordinary = service.StartTurn(
@@ -677,7 +919,7 @@ public sealed class CharacterNoteRuntimeTests {
                     ordinary.FreshInput
                 ).Notices)
             );
-            Assert.Equal(0, session.NoteRequestReceipts.Count);
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
             service.FinishTurn(session, ordinary);
         }
         finally {
@@ -700,8 +942,8 @@ public sealed class CharacterNoteRuntimeTests {
         (GalateaHostService service, UserSessionHost session) =
             await GetRuntimeAsync(host);
         ProduceReadyReply(session);
-        CharacterNoteRequestReceipt receipt = CreateReceipt();
-        Assert.True(session.NoteRequestReceipts.TryEnqueue(receipt));
+        CharacterNoteSaveReceipt receipt = CreateReceipt();
+        Assert.True(session.NoteSaveReceipts.TryEnqueue(receipt));
 
         await session.TurnLock.WaitAsync();
         try {
@@ -715,7 +957,7 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.IsType<PlayerTurnNotice.Reply>(
                 Assert.Single(input.Notices)
             );
-            Assert.Equal(1, session.NoteRequestReceipts.Count);
+            Assert.Equal(1, session.NoteSaveReceipts.Count);
             turn.DurableReplyLease!.RollbackBeforeEffect();
             service.FinishTurn(session, turn);
         }
@@ -725,7 +967,7 @@ public sealed class CharacterNoteRuntimeTests {
     }
 
     [Fact]
-    public async Task RecoveryCompletionRunsNoteButAdmissionDoesNot() {
+    public async Task RecoveryCompletionUsesCommonPostCompletionSavePath() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig mail = Connection("mail");
         CompletionConnectionConfig note = Connection("note");
@@ -775,7 +1017,13 @@ public sealed class CharacterNoteRuntimeTests {
             service.FinishTurn(session, recovery);
 
             Assert.Equal(1, noteClient.DispatchCount);
-            Assert.Equal(1, session.NoteRequestReceipts.Count);
+            Assert.Equal(1, session.NoteSaveReceipts.Count);
+            Assert.Equal(NoteText, Assert.Single(
+                global::Atelia.MemoPod.MemoPod.Open(
+                    session.User.CharacterMemoryStateDir,
+                    CharacterNoteDefaultPodV1.PodId
+                ).List()
+            ).ExactText);
         }
         finally {
             session.TurnLock.Release();
@@ -809,13 +1057,19 @@ public sealed class CharacterNoteRuntimeTests {
         IEnumerable<string> diagnostics
     ) => Assert.Empty(DiagnosticEvents(
         diagnostics,
-        "character-note-artifact"
+        "character-note-durable-memo"
     ));
 
-    private static CharacterNoteRequestReceipt CreateReceipt() {
-        Assert.True(CharacterNoteRequestReceipt.TryCreate(
-            [new CharacterNoteIntent("queued note", "completed")],
-            out CharacterNoteRequestReceipt? receipt
+    private static CharacterNoteSaveReceipt CreateReceipt() {
+        Assert.True(CharacterNoteSaveReceipt.TryCreate(
+            [new CharacterNoteAppliedMemo(
+                "0000000100000001",
+                0,
+                CharacterNoteDefaultPodV1.PodId,
+                MemoId.Parse("m1:00000001"),
+                "queued note"
+            )],
+            out CharacterNoteSaveReceipt? receipt
         ));
         return receipt;
     }
@@ -886,6 +1140,17 @@ public sealed class CharacterNoteRuntimeTests {
         }
     }
 
+    private static EventAddress AppendAction(
+        SessionJournalEngine engine,
+        string visibleText
+    ) {
+        _ = engine.AppendObservation("runtime pending fixture");
+        return engine.AppendImportedAgentAction(
+            new ActionMessage([new ActionBlock.Text(visibleText)]),
+            Invocation
+        );
+    }
+
     private static CompletionConnectionConfig Connection(string id) => new(
         id,
         "openai-chat",
@@ -938,11 +1203,13 @@ public sealed class CharacterNoteRuntimeTests {
     private sealed class OutcomeNoteClient(NoteOutcome outcome)
         : ICompletionClient {
         private int _cancellationObserved;
+        private int _dispatchCount;
 
         public string Name => "character-note-outcome";
         public string ApiSpecId => "test-v1";
         internal bool CancellationObserved =>
             Volatile.Read(ref _cancellationObserved) != 0;
+        internal int DispatchCount => Volatile.Read(ref _dispatchCount);
 
         public async Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
@@ -950,13 +1217,17 @@ public sealed class CharacterNoteRuntimeTests {
             CancellationToken cancellationToken = default
         ) {
             _ = observer;
+            Interlocked.Increment(ref _dispatchCount);
             ActionMessage message;
             switch (outcome) {
                 case NoteOutcome.Zero:
                     message = Message();
                     break;
                 case NoteOutcome.ProviderFailure:
-                    throw new IOException("note provider unavailable");
+                    throw new TextExtractionException(
+                        TextExtractionFailureKind.ClientUnavailable,
+                        "note provider unavailable"
+                    );
                 case NoteOutcome.Invalid:
                     message = Message(NoteTool("not grounded", NoteEvidence));
                     break;

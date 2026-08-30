@@ -214,15 +214,15 @@ public sealed class PlayerTurnObservationTests {
     }
 
     [Fact]
-    public void CompositeEnvelope_RoundTripsFinalNoteRequestReceipt() {
+    public void CompositeEnvelope_RoundTripsFinalNoteSaveReceipt() {
         const string ReceiptBody =
-            "runtime 已识别请求。\n~~~~ inner fence\n控制\0字符与末尾换行。\n";
+            "runtime 已保存Note。\n~~~~ inner fence\n控制\0字符与末尾换行。\n";
         var source = new PlayerTurnObservation(
             "继续观察",
             ObservationTimestamp,
             [
                 new PlayerTurnNotice.Reply("先到达的回信"),
-                new PlayerTurnNotice.NoteRequestReceipt(ReceiptBody)
+                new PlayerTurnNotice.NoteSaveReceipt(ReceiptBody)
             ],
             [
                 new PlayerTurnRecall(
@@ -245,14 +245,14 @@ public sealed class PlayerTurnObservationTests {
             StringComparison.Ordinal
         );
         int receipt = rendered.IndexOf(
-            PlayerTurnObservationEnvelope.NoteRequestReceiptHeading,
+            PlayerTurnObservationEnvelope.NoteSaveReceiptHeading,
             StringComparison.Ordinal
         );
         Assert.True(recall >= 0);
         Assert.True(reply > recall);
         Assert.True(receipt > reply);
         Assert.Contains(
-            "~~~~~character-note-request-receipt\n"
+            "~~~~~character-note-save-receipt\n"
                 + ReceiptBody + "~~~~~\n",
             rendered,
             StringComparison.Ordinal
@@ -266,7 +266,7 @@ public sealed class PlayerTurnObservationTests {
             parsed.Notices,
             notice => Assert.IsType<PlayerTurnNotice.Reply>(notice),
             notice => {
-                Assert.IsType<PlayerTurnNotice.NoteRequestReceipt>(notice);
+                Assert.IsType<PlayerTurnNotice.NoteSaveReceipt>(notice);
                 Assert.Equal(ReceiptBody, notice.Body);
             }
         );
@@ -278,13 +278,13 @@ public sealed class PlayerTurnObservationTests {
         string display = PlayerTurnObservationEnvelope
             .FormatForDisplay(parsed);
         Assert.Contains(
-            PlayerTurnObservationEnvelope.NoteRequestReceiptHeading,
+            PlayerTurnObservationEnvelope.NoteSaveReceiptHeading,
             display,
             StringComparison.Ordinal
         );
         Assert.Contains(ReceiptBody, display, StringComparison.Ordinal);
         Assert.DoesNotContain(
-            "character-note-request-receipt",
+            "character-note-save-receipt",
             display,
             StringComparison.Ordinal
         );
@@ -296,7 +296,7 @@ public sealed class PlayerTurnObservationTests {
             new PlayerTurnObservation(
                 "act",
                 [
-                    new PlayerTurnNotice.NoteRequestReceipt("receipt"),
+                    new PlayerTurnNotice.NoteSaveReceipt("receipt"),
                     new PlayerTurnNotice.Reply("reply")
                 ]
             ));
@@ -304,8 +304,8 @@ public sealed class PlayerTurnObservationTests {
             new PlayerTurnObservation(
                 "act",
                 [
-                    new PlayerTurnNotice.NoteRequestReceipt("first"),
-                    new PlayerTurnNotice.NoteRequestReceipt("second")
+                    new PlayerTurnNotice.NoteSaveReceipt("first"),
+                    new PlayerTurnNotice.NoteSaveReceipt("second")
                 ]
             ));
 
@@ -314,16 +314,31 @@ public sealed class PlayerTurnObservationTests {
                 "act",
                 [
                     new PlayerTurnNotice.Reply("reply"),
-                    new PlayerTurnNotice.NoteRequestReceipt("receipt")
+                    new PlayerTurnNotice.NoteSaveReceipt("receipt")
                 ]
             )
         );
         Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
             canonical.Replace(
-                "character-note-request-receipt",
+                "character-note-save-receipt",
                 "character_note_request_receipt",
                 StringComparison.Ordinal
             ),
+            out _
+        ));
+        string oldV0Receipt = canonical
+            .Replace(
+                PlayerTurnObservationEnvelope.NoteSaveReceiptHeading,
+                "Note 请求回执",
+                StringComparison.Ordinal
+            )
+            .Replace(
+                "character-note-save-receipt",
+                "character-note-request-receipt",
+                StringComparison.Ordinal
+            );
+        Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
+            oldV0Receipt,
             out _
         ));
 
@@ -336,13 +351,13 @@ public sealed class PlayerTurnObservationTests {
                 StringComparison.Ordinal
             )
             .Replace(
-                PlayerTurnObservationEnvelope.NoteRequestReceiptHeading,
+                PlayerTurnObservationEnvelope.NoteSaveReceiptHeading,
                 PlayerTurnObservationEnvelope.ReplyHeading,
                 StringComparison.Ordinal
             )
             .Replace(
                 HeadingSentinel,
-                PlayerTurnObservationEnvelope.NoteRequestReceiptHeading,
+                PlayerTurnObservationEnvelope.NoteSaveReceiptHeading,
                 StringComparison.Ordinal
             )
             .Replace(
@@ -351,13 +366,13 @@ public sealed class PlayerTurnObservationTests {
                 StringComparison.Ordinal
             )
             .Replace(
-                "character-note-request-receipt",
+                "character-note-save-receipt",
                 "delegate-reply",
                 StringComparison.Ordinal
             )
             .Replace(
                 InfoSentinel,
-                "character-note-request-receipt",
+                "character-note-save-receipt",
                 StringComparison.Ordinal
             );
         Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
@@ -375,11 +390,11 @@ public sealed class PlayerTurnObservationTests {
             )
         ).Replace(
             PlayerTurnObservationEnvelope.ReplyHeading,
-            PlayerTurnObservationEnvelope.NoteRequestReceiptHeading,
+            PlayerTurnObservationEnvelope.NoteSaveReceiptHeading,
             StringComparison.Ordinal
         ).Replace(
             "delegate-reply",
-            "character-note-request-receipt",
+            "character-note-save-receipt",
             StringComparison.Ordinal
         );
         Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
@@ -740,10 +755,10 @@ public sealed class PlayerTurnObservationTests {
         Assert.Throws<ArgumentException>(() =>
             new PlayerTurnNotice.Reply("bad\ud800"));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new PlayerTurnNotice.NoteRequestReceipt(new string(
+            new PlayerTurnNotice.NoteSaveReceipt(new string(
                 'x',
                 PlayerTurnObservationEnvelope
-                    .MaximumNoteRequestReceiptUtf8Bytes + 1
+                    .MaximumNoteSaveReceiptUtf8Bytes + 1
             )));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             new PlayerTurnObservation(

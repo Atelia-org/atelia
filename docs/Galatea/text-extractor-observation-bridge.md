@@ -6,8 +6,8 @@
 - runtime 到角色：runtime 把外部事件、回信、失败、时间等信息拼装进 composite `Observation`，在下一次主线 Completion 中交给角色。这个方向对位 tool-result。
 
 这不是单次 provider invocation 内部的 tool call / tool result loop。它是 runtime 在 turn 边界外侧实现的通讯桥：
-主线角色模型只继续书写故事；runtime在durable turn边界读取和提取，只有Mail等真实durable effect进入自身持久化/
-调度owner，development Character Note回执则只经过in-process queue，再把结果以Observation数据重新注入。
+主线角色模型只继续书写故事；runtime在durable turn边界读取和提取。Mail与Character Note分别进入自己的durable
+owner；只有已经durable apply到默认MemoPod的Note才可能生成in-process save receipt，再以Observation数据注入。
 
 ## 源码地图
 
@@ -31,11 +31,12 @@ Mailbox specialization：
 - [`GalateaDelegationSqliteStore`](../../prototypes/Galatea/GalateaDelegationSqliteStore.cs)：当前 outbound mail artifact 的 durable owner。
 - [`GalateaDurableDelegationDriver`](../../prototypes/Galatea/GalateaDurableDelegationDriver.cs)：把 routed outbound mail dispatch 到 Codex sidecar，并把 reply/failure 转成 ready notice。
 
-Character Memory V0 specialization：
+Character Memory V1 specialization：
 
-- [`CharacterNoteIntent` / `CharacterNoteExtractor`](../../prototypes/Galatea/CharacterMemory/CharacterNoteExtractor.cs)：保守提取角色本人已明确完成提交、且正文exact source-grounded的development Note保存请求；仅声称已经保存不构成提交。
-- [`CharacterNoteRequestReceipt`](../../prototypes/Galatea/CharacterMemory/CharacterNoteRequestReceipt.cs)：把一批validated intent渲染成honest development-only回执，并提供per-session bounded in-process FIFO。
-- `PlayerTurnNotice.NoteRequestReceipt`：普通player Observation中的独立strong type；canonical顺序中至多一条且必须为最后notice。
+- [`CharacterNoteIntent` / `CharacterNoteExtractor`](../../prototypes/Galatea/CharacterMemory/CharacterNoteExtractor.cs)：保守提取角色本人已明确完成提交、且正文exact source-grounded的长期Note保存请求；仅声称已经保存不构成提交。
+- [`CharacterNoteDefaultPodReconciler`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDefaultPodReconciler.cs)：durable capture/zero tombstone、Default MemoPod plan/apply与restart/admission恢复owner。
+- [`CharacterNoteSaveReceipt`](../../prototypes/Galatea/CharacterMemory/CharacterNoteSaveReceipt.cs)：只消费durable `AppliedNow` memos并渲染诚实保存回执，同时提供per-session bounded in-process FIFO。
+- `PlayerTurnNotice.NoteSaveReceipt`：普通player Observation中的独立strong type；canonical顺序中至多一条且必须为最后notice。
 
 入口与注入点：
 
@@ -58,16 +59,16 @@ Character Memory V0 specialization：
 5. runtime 验证每个 `SendMailIntent` 的结构、UTF-8 bound、single-line recipient/subject、canonical reply id 等。
 6. durable store 在一个 transaction 中 capture 整批 artifact；0 artifact 也是成功 tombstone，extractor failure 不能冒充空结果。
 
-successful fresh/recovery主Completion的现行post-completion路径只读取/render一次terminal Action target。Host直接
-启动Mail `ReconcileTargetAsync`与enabled Character Note extraction，再先await Mail、后await Note。Mail继续拥有
-durable/fail-closed语义；Note是best-effort：caller/shutdown cancellation传播，provider/validation failure与30秒
-cooperative deadline只丢弃回执。Mail失败会取消并drain Note；两条task都在`TurnLock`和borrowed client lifetime内
-结束，不使用`Task.Run`、`Task.WhenAll`或fire-and-forget。同一connection可收到两个overlapping调用，但client仍可
-自行限流。
+successful fresh/recovery主Completion只读取/render一次terminal Action target，并并行启动Mail与Character Note
+`ReconcileTargetAsync`。两条task都必须drain。Note token只作用于capture前；capture后由Character Memory reconciler
+完成或留下durable pending。明确的pre-capture timeout/TextExtraction/Pod availability在post-completion是best-effort，
+但Quarantined/invariant fail closed。`DeferredAfterCapture`不回执，并由下一次admission先恢复；admission自己的
+pre-capture失败也会阻止新mutation。
 
-Note成功时，host在final `current head == SourceAction` fence后把1..N条request intent冻结为一条请求回执；0 intent不排队。
-queue full或receipt因outer Observation bound无法render都只产生development diagnostic，不使主回合失败。V0没有
-Note durable tombstone，因此admission/restart gap reconciliation仍只运行Mail，不补跑Note。
+只有`AppliedNow`携带的durable memos在final `current head == SourceAction` fence后可生成`NoteSaveReceipt`。
+`AlreadyApplied`、admission recovery、zero、Rejected、Deferred、queue full或unrenderable都不伪造或补发回执。
+非fatal Mail失败不回滚已保存Memo：若Note已经`AppliedNow`且final fence仍成立，仍queue真实回执后原样传播Mail错误；
+fatal Mail、caller cancellation与head change不queue。
 
 这一路的语义 authority 是分层的：
 
@@ -81,15 +82,15 @@ runtime 也不把外部事件塞进角色的 hidden state。它把外部信息�
 
 现行有两种注入形状：
 
-- 普通 player turn composite Observation：`PlayerTurnObservationEnvelope` 写入玩家行动、Observation 形成时的外界本地时间、0..N 条 reply/failure notice，以及可选且必须位于最后的单条Note请求回执。
+- 普通 player turn composite Observation：`PlayerTurnObservationEnvelope` 写入玩家行动、Observation 形成时的外界本地时间、0..N 条 reply/failure notice，以及可选且必须位于最后的单条`NoteSaveReceipt`。
 - Inbound mail Observation：`GalateaMailboxObservationEnvelope` 把外部来信写成 escaped XML envelope，再作为 fresh input 启动一轮主线 Completion。
 
 普通 player turn 中的 notices 对位 tool-result：它们是上一次或更早 outbound artifact 的异步结果，但不在原 provider invocation 内返回。runtime 在 `BeginCutoff` 时冻结 bounded FIFO 前缀，把已经 Ready 的 notice 拼进本轮 Observation；之后才 Ready 的结果留给下一轮。
 
-Note receipt使用另一条in-process at-most-once attach规则：只有普通player `StartTurn`在
+Note save receipt使用另一条in-process at-most-once attach规则：只有普通player `StartTurn`在
 `BeginCutoff == Empty`时`TryDequeue`一条，作为sole/final notice冻结进本次`PlayerAction`。Created reply cutoff、
-ready-turn、inbound与recovery都不领取；领取后的pre-dispatch stop、失败、Undo、rewind或restart不重新排队。它只
-证明runtime识别到了请求，不证明Memo已经保存、索引或可召回。
+ready-turn、inbound与recovery都不领取；领取后的pre-dispatch stop、失败、Undo、rewind或restart不重新排队。它证明
+列出的ExactText已保存到默认MemoPod，但不承诺分类、metadata补全或召回。
 
 这一路的安全/耐久边界是：
 
@@ -102,9 +103,9 @@ ready-turn、inbound与recovery都不领取；领取后的pre-dispatch stop、�
 
 自主笔记和动态信息召回很像 Mailbox，但不应该复用 Mailbox 名字或 storage contract。
 
-已经落地的V0映射：
+已经落地的V1映射：
 
-- note request intent：仅当对应binding非`null`时，code-owned主prompt appendix才告诉角色如何在Action中明确完成提交development Note保存请求；runtime用`CharacterNoteIntent` artifact tool保守提取，并在未来eligible普通player turn返回honest请求回执。请求尚不保存、索引或召回。
+- note save intent：仅当对应binding非`null`时，code-owned主prompt appendix才告诉角色如何提交长期Note完整原文；runtime用`CharacterNoteIntent`保守提取，经durable capture/apply写入默认MemoPod，并只为本进程的`AppliedNow`结果返回honest保存回执。
 
 仍属后续候选的映射：
 
