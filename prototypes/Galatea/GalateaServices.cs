@@ -969,10 +969,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
         Exception? mailFailure = null;
         Exception? cancellationFailure = null;
+        bool noteCompletedBeforeMailAbort = false;
         try {
             _ = await mailTask.ConfigureAwait(false);
         }
         catch (Exception exception) {
+            noteCompletedBeforeMailAbort = noteTask.IsCompleted;
             mailFailure = exception;
             cancellationFailure = TryCancel(mailAbortCts);
         }
@@ -990,18 +992,20 @@ public sealed class GalateaHostService : IAsyncDisposable {
             mailFailure,
             noteFailure,
             cancellationFailure,
-            mailAbortCts.IsCancellationRequested
+            mailAbortCts.IsCancellationRequested,
+            noteCompletedBeforeMailAbort,
+            deadlineCts.IsCancellationRequested,
+            callerToken.IsCancellationRequested
         );
         failures.ThrowIfFatal();
         failures.ThrowIfCallerCanceled(callerToken);
         if (failures.EffectiveNoteFailure is { } effectiveNoteFailure) {
-            failures.ThrowStablePrimary(
+            failures.ThrowNotePrimary(
                 CreateCharacterNoteAdmissionFailure(
                     effectiveNoteFailure,
                     deadlineCts.IsCancellationRequested,
                     mailFailure is not null
-                ),
-                noteFailureIsPrimary: true
+                )
             );
         }
         if (noteResult is not null) {
@@ -1009,11 +1013,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 RequireCharacterNoteAdmissionSettled(noteResult);
             }
             catch (GalateaTurnException authority) {
-                failures.ThrowStablePrimary(authority);
+                failures.ThrowAuthorityPrimary(authority);
             }
             catch (Exception invariant) when (
                 GalateaExceptionClassifier.IsNonFatal(invariant)) {
-                failures.ThrowStablePrimary(new GalateaTurnException(
+                failures.ThrowAuthorityPrimary(new GalateaTurnException(
                     "Character Memory admission violated its durable boundary.",
                     "character-memory-state-invalid",
                     invariant
@@ -1021,7 +1025,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             }
         }
         else if (mailFailure is null) {
-            failures.ThrowStablePrimary(new GalateaTurnException(
+            failures.ThrowAuthorityPrimary(new GalateaTurnException(
                 "Character Note admission completed without a result.",
                 "character-memory-state-invalid"
             ));
@@ -1118,13 +1122,20 @@ public sealed class GalateaHostService : IAsyncDisposable {
             Exception? mailFailure,
             Exception? noteFailure,
             Exception? cancellationFailure,
-            bool mailAbortRequested
+            bool mailAbortRequested,
+            bool noteCompletedBeforeMailAbort,
+            bool deadlineExpired,
+            bool callerCanceled
         ) {
             MailFailure = mailFailure;
             NoteFailure = noteFailure;
+            CancellationFailure = cancellationFailure;
             NoteCancellationInducedByMailAbort = mailFailure is not null
                 && noteFailure is OperationCanceledException
-                && mailAbortRequested;
+                && mailAbortRequested
+                && !noteCompletedBeforeMailAbort
+                && !deadlineExpired
+                && !callerCanceled;
             var ordered = new List<Exception>(3);
             if (mailFailure is not null) {
                 ordered.Add(mailFailure);
@@ -1143,6 +1154,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
         private Exception? NoteFailure { get; }
 
+        private Exception? CancellationFailure { get; }
+
         internal bool NoteCancellationInducedByMailAbort { get; }
 
         internal Exception? EffectiveNoteFailure =>
@@ -1158,7 +1171,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         internal void ThrowIfCallerCanceled(CancellationToken callerToken) {
             if (!callerToken.IsCancellationRequested) { return; }
             if (_ordered.Length == 1
-                && _ordered[0] is OperationCanceledException canceled) {
+                && _ordered[0] is OperationCanceledException canceled
+                && canceled.CancellationToken == callerToken) {
                 ExceptionDispatchInfo.Capture(canceled).Throw();
             }
             if (_ordered.Length > 0) {
@@ -1199,18 +1213,29 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
 
         [DoesNotReturn]
-        internal void ThrowStablePrimary(
-            GalateaTurnException primary,
-            bool noteFailureIsPrimary = false
-        ) {
+        internal void ThrowNotePrimary(GalateaTurnException primary) {
             ArgumentNullException.ThrowIfNull(primary);
-            Exception[] secondary = noteFailureIsPrimary
-                ? _ordered.Where(failure => !ReferenceEquals(
-                    failure,
-                    EffectiveNoteFailure
-                )).ToArray()
-                : _ordered;
-            if (secondary.Length == 0) { throw primary; }
+            var secondary = new List<Exception>(2);
+            if (MailFailure is { } mail) { secondary.Add(mail); }
+            if (CancellationFailure is { } cancellation) {
+                secondary.Add(cancellation);
+            }
+            if (secondary.Count == 0) { throw primary; }
+            ThrowStablePrimary(primary, secondary.ToArray());
+        }
+
+        [DoesNotReturn]
+        internal void ThrowAuthorityPrimary(GalateaTurnException primary) {
+            ArgumentNullException.ThrowIfNull(primary);
+            if (_ordered.Length == 0) { throw primary; }
+            ThrowStablePrimary(primary, _ordered);
+        }
+
+        [DoesNotReturn]
+        private static void ThrowStablePrimary(
+            GalateaTurnException primary,
+            Exception[] secondary
+        ) {
             throw new GalateaTurnException(
                 primary.Message,
                 primary.FailureReason,
@@ -1842,10 +1867,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaOutboundMailExtractionReconcileResult? mailResult = null;
         Exception? mailFailure = null;
         Exception? cancellationFailure = null;
+        bool noteCompletedBeforeMailAbort = false;
         try {
             mailResult = await mailTask.ConfigureAwait(false);
         }
         catch (Exception exception) {
+            noteCompletedBeforeMailAbort = noteTask.IsCompleted;
             mailFailure = exception;
             cancellationFailure = TryCancel(mailAbortCts);
         }
@@ -1863,7 +1890,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
             mailFailure,
             noteFailure,
             cancellationFailure,
-            mailAbortCts.IsCancellationRequested
+            mailAbortCts.IsCancellationRequested,
+            noteCompletedBeforeMailAbort,
+            deadlineCts.IsCancellationRequested,
+            callerToken.IsCancellationRequested
         );
         failures.ThrowIfFatal();
         failures.ThrowIfCallerCanceled(callerToken);
@@ -1891,9 +1921,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     ElapsedMilliseconds(batchStarted),
                     eventKind: DebugEventKind.Failure
                 );
-                failures.ThrowStablePrimary(
-                    CreateCharacterNoteFailClosed(effectiveNoteFailure),
-                    noteFailureIsPrimary: true
+                failures.ThrowNotePrimary(
+                    CreateCharacterNoteFailClosed(effectiveNoteFailure)
                 );
             }
 
@@ -1933,7 +1962,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
 
         if (noteResult is null) {
-            failures.ThrowStablePrimary(new GalateaTurnException(
+            failures.ThrowAuthorityPrimary(new GalateaTurnException(
                 "Character Note reconciliation completed without a result.",
                 "character-memory-state-invalid"
             ));
@@ -1941,7 +1970,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CharacterNoteDefaultPodReconcileResult settled = noteResult;
         if (settled is CharacterNoteDefaultPodReconcileResult.Quarantined
                 quarantined) {
-            failures.ThrowStablePrimary(new GalateaTurnException(
+            failures.ThrowAuthorityPrimary(new GalateaTurnException(
                 "Character Memory authority is quarantined.",
                 "character-memory-quarantined",
                 new InvalidDataException(quarantined.Code)
@@ -1962,7 +1991,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ElapsedMilliseconds(batchStarted),
                 eventKind: DebugEventKind.Failure
             );
-            failures.ThrowStablePrimary(new GalateaTurnException(
+            failures.ThrowAuthorityPrimary(new GalateaTurnException(
                 "Durable extraction head changed; retry admission.",
                 "delegation-state-changed"
             ));
@@ -1971,7 +2000,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (settled is CharacterNoteDefaultPodReconcileResult.AppliedNow
                 applied) {
             if (applied.SourceAction != target.SourceAction) {
-                failures.ThrowStablePrimary(new GalateaTurnException(
+                failures.ThrowAuthorityPrimary(new GalateaTurnException(
                     "Character Note AppliedNow source does not match its target.",
                     "character-memory-state-invalid"
                 ));
@@ -1992,7 +2021,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     ElapsedMilliseconds(batchStarted),
                     eventKind: DebugEventKind.Failure
                 );
-                failures.ThrowStablePrimary(new GalateaTurnException(
+                failures.ThrowAuthorityPrimary(new GalateaTurnException(
                     "Durable extraction head changed; retry admission.",
                     "delegation-state-changed"
                 ));
@@ -2013,6 +2042,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                         ?? throw new InvalidDataException(
                             "A successful Character Note save receipt render returned null."
                         );
+                    failures.ThrowIfCallerCanceled(callerToken);
                     bool enqueued = host.NoteSaveReceipts.TryEnqueue(queued);
                     receiptOutcome = enqueued ? "queued" : "queue-full";
                     eventKind = enqueued
@@ -2021,17 +2051,32 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 }
             }
             catch (Exception receiptFailure) {
+                LogCharacterNoteBatch(
+                    host,
+                    target,
+                    mailOutcome,
+                    noteOutcome: "applied-now",
+                    durableMemo: true,
+                    memoCount: applied.Memos.Count,
+                    receiptOutcome: "receipt-failed",
+                    mailMilliseconds,
+                    noteMilliseconds,
+                    ElapsedMilliseconds(batchStarted),
+                    eventKind: DebugEventKind.Failure
+                );
                 var receiptFailures = new CharacterNoteFailureSet(
                     mailFailure,
                     receiptFailure,
                     cancellationFailure,
-                    mailAbortRequested: false
+                    mailAbortRequested: false,
+                    noteCompletedBeforeMailAbort: true,
+                    deadlineExpired: deadlineCts.IsCancellationRequested,
+                    callerCanceled: callerToken.IsCancellationRequested
                 );
                 receiptFailures.ThrowIfFatal();
                 receiptFailures.ThrowIfCallerCanceled(callerToken);
-                receiptFailures.ThrowStablePrimary(
-                    CreateCharacterNoteFailClosed(receiptFailure),
-                    noteFailureIsPrimary: true
+                receiptFailures.ThrowNotePrimary(
+                    CreateCharacterNoteFailClosed(receiptFailure)
                 );
             }
             LogCharacterNoteBatch(

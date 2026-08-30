@@ -556,6 +556,143 @@ public sealed class CharacterNoteRuntimeTests {
     }
 
     [Fact]
+    public async Task NoteDeadlineOceBeforeMailFailureRetainsBothSlots() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig mail = Connection("mail");
+        CompletionConnectionConfig note = Connection("note");
+        var releaseMail = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var noteClient = new OutcomeNoteClient(NoteOutcome.Timeout);
+        var expectedMail = new GalateaTurnException(
+            "mail after Note deadline",
+            "mail-after-note-deadline"
+        );
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient>(
+                StringComparer.Ordinal
+            ) {
+                [main.Id] = new QueueClient(Message(
+                    new ActionBlock.Text(Action)
+                )),
+                [mail.Id] = new FailAfterSignalClient(
+                    releaseMail.Task,
+                    expectedMail
+                ),
+                [note.Id] = noteClient,
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, mail, note],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: mail.Id,
+            characterNoteExtractorConnectionId: note.Id
+        );
+        (GalateaHostService service, UserSessionHost session) =
+            await GetRuntimeAsync(host);
+        service.CharacterNoteExtractionDeadlineForTest =
+            TimeSpan.FromMilliseconds(100);
+
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "deadline then mail failure",
+            new GalateaTurnOptions(main.Id)
+        );
+        try {
+            Task run = service.RunTurnAsync(
+                session,
+                turn,
+                CancellationToken.None
+            );
+            await WaitUntilAsync(() => noteClient.CancellationObserved);
+            releaseMail.TrySetResult();
+
+            GalateaTurnException observed = await Assert.ThrowsAsync<
+                GalateaTurnException>(() => run);
+            Assert.Equal("mail-after-note-deadline", observed.FailureReason);
+            AggregateException ordered = Assert.IsType<AggregateException>(
+                observed.InnerException
+            );
+            Assert.Collection(
+                ordered.InnerExceptions,
+                failure => Assert.Same(expectedMail, failure),
+                failure => Assert.IsAssignableFrom<
+                    OperationCanceledException>(failure)
+            );
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
+        }
+        finally {
+            releaseMail.TrySetResult();
+            service.FinishTurn(session, turn);
+            session.TurnLock.Release();
+        }
+    }
+
+    [Fact]
+    public async Task SameExceptionInstanceInMailAndNoteRetainsMailSlot() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig mail = Connection("mail");
+        CompletionConnectionConfig note = Connection("note");
+        var shared = new GalateaTurnException(
+            "shared failure instance",
+            "shared-slot-failure"
+        );
+        var noteClient = new ThrowingSignalClient(shared);
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient>(
+                StringComparer.Ordinal
+            ) {
+                [main.Id] = new QueueClient(Message(
+                    new ActionBlock.Text(Action)
+                )),
+                [mail.Id] = new FailAfterSignalClient(
+                    noteClient.Entered.Task,
+                    shared
+                ),
+                [note.Id] = noteClient,
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, mail, note],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: mail.Id,
+            characterNoteExtractorConnectionId: note.Id
+        );
+        (GalateaHostService service, UserSessionHost session) =
+            await GetRuntimeAsync(host);
+
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "same failure slots",
+            new GalateaTurnOptions(main.Id)
+        );
+        try {
+            GalateaTurnException observed = await Assert.ThrowsAsync<
+                GalateaTurnException>(() => service.RunTurnAsync(
+                    session,
+                    turn,
+                    CancellationToken.None
+                ));
+            Assert.Equal(
+                "character-memory-state-invalid",
+                observed.FailureReason
+            );
+            AggregateException ordered = Assert.IsType<AggregateException>(
+                observed.InnerException
+            );
+            GalateaTurnException notePrimary = Assert.IsType<
+                GalateaTurnException>(ordered.InnerExceptions[0]);
+            Assert.Same(shared, notePrimary.InnerException);
+            Assert.Same(shared, ordered.InnerExceptions[1]);
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
+        }
+        finally {
+            service.FinishTurn(session, turn);
+            session.TurnLock.Release();
+        }
+    }
+
+    [Fact]
     public async Task MailFailureCancelsAndDrainsBlockedNote() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig mail = Connection("mail");
@@ -1724,6 +1861,27 @@ public sealed class CharacterNoteRuntimeTests {
                     Drained.TrySetResult();
                 }
             }
+        }
+    }
+
+    private sealed class ThrowingSignalClient(Exception failure)
+        : ICompletionClient {
+        public string Name => "throwing-signal";
+        public string ApiSpecId => "test-v1";
+        internal TaskCompletionSource Entered { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            _ = request;
+            _ = observer;
+            cancellationToken.ThrowIfCancellationRequested();
+            Entered.TrySetResult();
+            return Task.FromException<CompletionResult>(failure);
         }
     }
 
