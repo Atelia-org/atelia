@@ -324,6 +324,43 @@ public sealed class GalateaInputPreprocessorVerticalTests {
     }
 
     [Fact]
+    public async Task DefaultDisabledRecallProviderIsBypassedForOrdinaryTurn() {
+        var completion = new ScriptedCompletionClient("assistant reply");
+        await using var host = GalateaTestHost.Create(
+            new SingleClientFactory(completion),
+            new ReturningNormalizer("normalized input")
+        );
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        StartTurnResponseDto started = await StartTurnAsync(
+            client,
+            "original input"
+        );
+        await RequireRunTask(RequireTurn(
+            service,
+            session,
+            started.TurnId
+        )).WaitAsync(CompletionDeadline);
+
+        SessionCompletedTurnProjection turn = Assert.Single(
+            session.Engine.ReadRecentCompletedTurns()
+                .RequireSnapshot().Turns
+        );
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
+            turn.ObservationContent,
+            out PlayerTurnObservation observation
+        ));
+        Assert.Empty(observation.Recalls);
+    }
+
+    [Fact]
     public async Task PlayerTurnRecallProvider_InjectsFixedRecallPayload() {
         var completion = new ScriptedCompletionClient("assistant reply");
         var normalizer = new ReturningNormalizer("normalized input");

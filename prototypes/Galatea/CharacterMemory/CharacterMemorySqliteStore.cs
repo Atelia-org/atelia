@@ -20,6 +20,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     internal const string LockFileName = "character-memory.lock";
 
     private const int BusyTimeoutMilliseconds = 1_000;
+    private const int RequestedSourceInsertBatchSize = 400;
     private const string CommitmentVersion =
         "atelia.galatea.character-memory.extraction-commitment.v1";
     private static readonly UTF8Encoding StrictUtf8 = new(
@@ -195,42 +196,257 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     }
 
     internal CharacterMemoryCaptureBatchSnapshot ReadCaptureBatchExact(
-        IEnumerable<string> sourceActionAddresses
+        IEnumerable<string> sourceActionAddresses,
+        CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(sourceActionAddresses);
+        cancellationToken.ThrowIfCancellationRequested();
         var unique = new HashSet<string>(StringComparer.Ordinal);
         var sources = new List<string>();
         foreach (string source in sourceActionAddresses) {
+            cancellationToken.ThrowIfCancellationRequested();
             RequireEventAddress(source, nameof(sourceActionAddresses));
-            if (unique.Add(source)) {
-                sources.Add(source);
+            if (!unique.Add(source)) {
+                continue;
             }
+            if (sources.Count
+                    >= CharacterMemoryStoreBounds
+                        .MaximumOriginLookupSourceCount) {
+                throw new ArgumentOutOfRangeException(
+                    nameof(sourceActionAddresses),
+                    $"Character Note origin lookup accepts at most {CharacterMemoryStoreBounds.MaximumOriginLookupSourceCount} distinct source Actions."
+                );
+            }
+            sources.Add(source);
         }
 
         lock (_gate) {
             ThrowIfDisposed();
+            cancellationToken.ThrowIfCancellationRequested();
             using SqliteConnection connection = OpenVerifiedConnection();
+            using SqliteTransaction transaction =
+                connection.BeginTransaction();
             CharacterMemoryStatusSnapshot status = ReadStatusCore(
                 connection,
-                transaction: null
+                transaction
             );
-            var captures = new List<CharacterMemoryCaptureSnapshot>();
-            foreach (string source in sources) {
-                CharacterMemoryCaptureSnapshot? capture = ReadCaptureCore(
-                    connection,
-                    transaction: null,
-                    source
+            cancellationToken.ThrowIfCancellationRequested();
+            if (sources.Count == 0) {
+                transaction.Commit();
+                return new CharacterMemoryCaptureBatchSnapshot(
+                    status,
+                    Array.Empty<CharacterMemoryCaptureSnapshot>()
                 );
-                if (capture is not null) {
-                    captures.Add(capture);
-                }
             }
+            CreateRequestedSourceTable(connection, transaction);
+            InsertRequestedSources(
+                connection,
+                transaction,
+                sources,
+                cancellationToken
+            );
+            IReadOnlyList<CharacterMemoryCaptureSnapshot> captures =
+                ReadRequestedCaptures(
+                    connection,
+                    transaction,
+                    cancellationToken
+                );
+            cancellationToken.ThrowIfCancellationRequested();
+            transaction.Commit();
             return new CharacterMemoryCaptureBatchSnapshot(
                 status,
-                Array.AsReadOnly(captures.ToArray())
+                captures
             );
         }
     }
+
+    private static void CreateRequestedSourceTable(
+        SqliteConnection connection,
+        SqliteTransaction transaction
+    ) {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            CREATE TEMP TABLE requested_character_note_source(
+                input_ordinal INTEGER PRIMARY KEY,
+                source_action_address TEXT NOT NULL UNIQUE
+            ) STRICT;
+            """;
+        _ = command.ExecuteNonQuery();
+    }
+
+    private static void InsertRequestedSources(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyList<string> sources,
+        CancellationToken cancellationToken
+    ) {
+        for (int start = 0; start < sources.Count;
+             start += RequestedSourceInsertBatchSize) {
+            cancellationToken.ThrowIfCancellationRequested();
+            int count = Math.Min(
+                RequestedSourceInsertBatchSize,
+                sources.Count - start
+            );
+            using SqliteCommand command = connection.CreateCommand();
+            command.Transaction = transaction;
+            var sql = new StringBuilder(
+                "INSERT INTO requested_character_note_source"
+                + "(input_ordinal, source_action_address) VALUES "
+            );
+            for (int offset = 0; offset < count; offset++) {
+                if (offset > 0) {
+                    _ = sql.Append(',');
+                }
+                string ordinalName = "$ordinal" + offset;
+                string sourceName = "$source" + offset;
+                _ = sql.Append('(')
+                    .Append(ordinalName)
+                    .Append(',')
+                    .Append(sourceName)
+                    .Append(')');
+                command.Parameters.AddWithValue(
+                    ordinalName,
+                    start + offset
+                );
+                command.Parameters.AddWithValue(
+                    sourceName,
+                    sources[start + offset]
+                );
+            }
+            command.CommandText = sql.ToString();
+            _ = command.ExecuteNonQuery();
+        }
+    }
+
+    private static IReadOnlyList<CharacterMemoryCaptureSnapshot>
+        ReadRequestedCaptures(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken
+    ) {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT requested.input_ordinal,
+                   capture.source_action_address,
+                   capture.visible_action_sha256,
+                   capture.visible_action_utf8_bytes,
+                   capture.extractor_contract_id,
+                   capture.extraction_commitment,
+                   capture.artifact_count,
+                   capture.state,
+                   capture.base_pod_state_identity,
+                   capture.target_pod_state_identity,
+                   capture.rejection_code,
+                   capture.state_revision,
+                   note.artifact_ordinal,
+                   note.exact_text,
+                   note.memo_id
+            FROM requested_character_note_source AS requested
+            JOIN note_action_capture AS capture
+              ON capture.source_action_address
+                   = requested.source_action_address
+            LEFT JOIN character_note AS note
+              ON note.source_action_address
+                   = capture.source_action_address
+            ORDER BY requested.input_ordinal, note.artifact_ordinal;
+            """;
+        cancellationToken.ThrowIfCancellationRequested();
+        using SqliteDataReader reader = command.ExecuteReader();
+        var captures = new List<CharacterMemoryCaptureSnapshot>();
+        RequestedCaptureHeader? current = null;
+        var notes = new List<CharacterMemoryNoteSnapshot>();
+        while (reader.Read()) {
+            cancellationToken.ThrowIfCancellationRequested();
+            int inputOrdinal = reader.GetInt32(0);
+            string source = reader.GetString(1);
+            if (current is null
+                || current.InputOrdinal != inputOrdinal) {
+                FreezeRequestedCapture(current, notes, captures);
+                current = new RequestedCaptureHeader(
+                    inputOrdinal,
+                    source,
+                    reader.GetString(2),
+                    reader.GetInt32(3),
+                    reader.GetString(4),
+                    reader.GetString(5),
+                    reader.GetInt32(6),
+                    ParseCaptureState(reader.GetString(7)),
+                    reader.IsDBNull(8) ? null : reader.GetString(8),
+                    reader.IsDBNull(9) ? null : reader.GetString(9),
+                    reader.IsDBNull(10) ? null : reader.GetString(10),
+                    reader.GetInt64(11)
+                );
+                notes = [];
+            }
+            else if (!string.Equals(
+                    current.SourceActionAddress,
+                    source,
+                    StringComparison.Ordinal)) {
+                throw Corrupt(
+                    "One requested source ordinal resolved to multiple captures."
+                );
+            }
+
+            if (!reader.IsDBNull(12)) {
+                int artifactOrdinal = reader.GetInt32(12);
+                if (artifactOrdinal != notes.Count) {
+                    throw Corrupt(
+                        "Character Note ordinals are not contiguous."
+                    );
+                }
+                notes.Add(new CharacterMemoryNoteSnapshot(
+                    artifactOrdinal,
+                    reader.GetString(13),
+                    reader.IsDBNull(14) ? null : reader.GetString(14)
+                ));
+            }
+        }
+        FreezeRequestedCapture(current, notes, captures);
+        return Array.AsReadOnly(captures.ToArray());
+    }
+
+    private static void FreezeRequestedCapture(
+        RequestedCaptureHeader? header,
+        IReadOnlyList<CharacterMemoryNoteSnapshot> notes,
+        List<CharacterMemoryCaptureSnapshot> captures
+    ) {
+        if (header is null) {
+            return;
+        }
+        var snapshot = new CharacterMemoryCaptureSnapshot(
+            header.SourceActionAddress,
+            header.VisibleActionSha256,
+            header.VisibleActionUtf8Bytes,
+            header.ExtractorContractId,
+            header.ExtractionCommitment,
+            header.ArtifactCount,
+            header.State,
+            header.BasePodStateIdentity,
+            header.TargetPodStateIdentity,
+            header.RejectionCode,
+            header.StateRevision,
+            Array.AsReadOnly(notes.ToArray())
+        );
+        ValidateCaptureSnapshot(snapshot);
+        captures.Add(snapshot);
+    }
+
+    private sealed record RequestedCaptureHeader(
+        int InputOrdinal,
+        string SourceActionAddress,
+        string VisibleActionSha256,
+        int VisibleActionUtf8Bytes,
+        string ExtractorContractId,
+        string ExtractionCommitment,
+        int ArtifactCount,
+        CharacterMemoryCaptureState State,
+        string? BasePodStateIdentity,
+        string? TargetPodStateIdentity,
+        string? RejectionCode,
+        long StateRevision
+    );
 
     public void Dispose() {
         lock (_gate) {

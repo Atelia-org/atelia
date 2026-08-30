@@ -85,15 +85,18 @@ internal sealed class CharacterNoteDefaultPodReconciler
     }
 
     public CharacterNoteOriginBarrier ReadOriginBarrier(
-        IReadOnlyList<CharacterNoteVisibleActionIdentity> visibleActions
+        IReadOnlyList<CharacterNoteVisibleActionIdentity> visibleActions,
+        CancellationToken cancellationToken = default
     ) {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(visibleActions);
+        cancellationToken.ThrowIfCancellationRequested();
 
         var originsBySource = new Dictionary<string,
             CharacterNoteVisibleActionIdentity>(StringComparer.Ordinal);
         foreach (CharacterNoteVisibleActionIdentity origin
                  in visibleActions) {
+            cancellationToken.ThrowIfCancellationRequested();
             ArgumentNullException.ThrowIfNull(origin);
             string source = EventAddressTextCodec.Format(
                 origin.SourceAction
@@ -110,7 +113,10 @@ internal sealed class CharacterNoteDefaultPodReconciler
         }
 
         CharacterMemoryCaptureBatchSnapshot batch =
-            _store.ReadCaptureBatchExact(originsBySource.Keys);
+            _store.ReadCaptureBatchExact(
+                originsBySource.Keys,
+                cancellationToken
+            );
         CharacterMemoryStatusSnapshot status = batch.Status;
         if (status.StoreState is CharacterMemoryStoreState.Quarantined) {
             throw new CharacterMemoryStoreQuarantinedException(
@@ -130,6 +136,7 @@ internal sealed class CharacterNoteDefaultPodReconciler
 
         var entries = new List<CharacterNoteOriginBarrierEntry>();
         foreach (CharacterMemoryCaptureSnapshot capture in batch.Captures) {
+            cancellationToken.ThrowIfCancellationRequested();
             CharacterNoteVisibleActionIdentity origin =
                 originsBySource[capture.SourceActionAddress];
             if (!string.Equals(
@@ -145,16 +152,18 @@ internal sealed class CharacterNoteDefaultPodReconciler
 
             switch (capture.State) {
                 case CharacterMemoryCaptureState.Applied:
-                    entries.AddRange(capture.Notes.Select(note =>
-                        new CharacterNoteOriginBarrierEntry(
+                    foreach (CharacterMemoryNoteSnapshot note
+                             in capture.Notes) {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        entries.Add(new CharacterNoteOriginBarrierEntry(
                             CharacterNoteDefaultPodV1.PodId,
                             MemoId.Parse(note.MemoId
                                 ?? throw new InvalidDataException(
                                     "An applied Character Note has no Memo ID."
                                 )),
                             origin
-                        )
-                    ));
+                        ));
+                    }
                     break;
                 case CharacterMemoryCaptureState.ZeroCaptured:
                 case CharacterMemoryCaptureState.Rejected:
@@ -170,7 +179,7 @@ internal sealed class CharacterNoteDefaultPodReconciler
                     );
             }
         }
-        return new CharacterNoteOriginBarrier(entries);
+        return new CharacterNoteOriginBarrier(entries, cancellationToken);
     }
 
     internal async ValueTask<CharacterNotePendingReconcileResult>

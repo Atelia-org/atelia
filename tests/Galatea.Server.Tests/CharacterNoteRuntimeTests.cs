@@ -132,7 +132,7 @@ public sealed class CharacterNoteRuntimeTests {
     }
 
     [Fact]
-    public async Task SecondTurnOriginBarrierBlocksJustSavedMemoRecall() {
+    public async Task SecondTurnOriginBarrierBlocksSavedMemoAndKeepsUnrelatedRecall() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig note = Connection("note");
         var recallProvider = new NewlySavedMemoRecallProvider();
@@ -203,7 +203,7 @@ public sealed class CharacterNoteRuntimeTests {
                     CharacterNoteDefaultPodV1.PodId,
                     MemoId.Parse("m1:00000001")
                 ));
-            Assert.Equal([0, 0], recallProvider.ReturnedCounts);
+            Assert.Equal([0, 1], recallProvider.ReturnedCounts);
             SessionCompletedTurnProjection latest = session.Engine
                 .ReadRecentCompletedTurns(1)
                 .RequireSnapshot()
@@ -213,7 +213,10 @@ public sealed class CharacterNoteRuntimeTests {
                 latest.ObservationContent,
                 out PlayerTurnObservation observation
             ));
-            Assert.Empty(observation.Recalls);
+            Assert.Equal(
+                NewlySavedMemoRecallProvider.UnrelatedCandidate,
+                Assert.Single(observation.Recalls)
+            );
         }
         finally {
             session.TurnLock.Release();
@@ -2087,12 +2090,21 @@ public sealed class CharacterNoteRuntimeTests {
         : IGalateaPlayerTurnRecallProvider {
         private static readonly MemoId CandidateMemoId =
             MemoId.Parse("m1:00000001");
-        private static readonly PlayerTurnRecall Candidate = new(
+        private static readonly MemoId UnrelatedMemoId =
+            MemoId.Parse("m1:00000099");
+        private static readonly PlayerTurnRecall SavedCandidate = new(
             new RecallEntry(
                 RecallType.MemoExactText,
                 "character-note-test-candidate"
             ),
             NoteText
+        );
+        internal static PlayerTurnRecall UnrelatedCandidate { get; } = new(
+            new RecallEntry(
+                RecallType.MemoSummary,
+                "unrelated-test-candidate"
+            ),
+            "unrelated summary"
         );
 
         internal List<GalateaPlayerTurnRecallRequest> Requests { get; } = [];
@@ -2110,8 +2122,20 @@ public sealed class CharacterNoteRuntimeTests {
                 CharacterNoteDefaultPodV1.PodId,
                 CandidateMemoId
             );
+            bool unrelatedBlocked = request.CharacterNoteOriginBarrier
+                .Contains(
+                    CharacterNoteDefaultPodV1.PodId,
+                    UnrelatedMemoId
+                );
+            var selected = new List<PlayerTurnRecall>();
+            if (candidateAvailable && !blocked) {
+                selected.Add(SavedCandidate);
+            }
+            if (candidateAvailable && !unrelatedBlocked) {
+                selected.Add(UnrelatedCandidate);
+            }
             IReadOnlyList<PlayerTurnRecall> returned =
-                candidateAvailable && !blocked ? [Candidate] : [];
+                Array.AsReadOnly(selected.ToArray());
             ReturnedCounts.Add(returned.Count);
             return ValueTask.FromResult(returned);
         }

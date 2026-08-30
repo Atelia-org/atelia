@@ -6,6 +6,7 @@ internal static class CharacterMemoryStoreBounds {
     internal const int MaximumIdentityUtf8Bytes = 1024;
     internal const int MaximumPodStateIdentityUtf8Bytes = 256;
     internal const int MaximumCodeUtf8Bytes = 128;
+    internal const int MaximumOriginLookupSourceCount = 65_536;
 }
 
 internal enum CharacterMemoryStoreState {

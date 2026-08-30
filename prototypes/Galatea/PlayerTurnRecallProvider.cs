@@ -65,11 +65,7 @@ internal sealed class DisabledGalateaPlayerTurnRecallProvider
     public ValueTask<IReadOnlyList<PlayerTurnRecall>> SelectRecallsAsync(
         GalateaPlayerTurnRecallRequest request,
         CancellationToken cancellationToken
-    ) {
-        ArgumentNullException.ThrowIfNull(request);
-        cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult<IReadOnlyList<PlayerTurnRecall>>(
-            Array.Empty<PlayerTurnRecall>()
-        );
-    }
+    ) => throw new InvalidOperationException(
+        "The disabled player-turn recall provider must be bypassed before recall context construction."
+    );
 }

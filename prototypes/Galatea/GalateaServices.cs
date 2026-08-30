@@ -2487,7 +2487,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
             lifecycle,
             SessionUncertainCompletionRecoveryPolicy.Refuse));
         if (playerAction is not null
-            && liveTurn.DurableReplyLease is null) {
+            && liveTurn.DurableReplyLease is null
+            && _playerTurnRecallProvider
+                is not DisabledGalateaPlayerTurnRecallProvider) {
             GalateaPlayerTurnRecallBarriers barriers =
                 await BuildCurrentRecallBarriersAsync(
                 host,
@@ -2642,7 +2644,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             GalateaCharacterNoteOriginBarrierBuilder
                 .BuildFromProviderVisibleRawUnits(
                     window.Units,
-                    host.CharacterMemoryReconciler
+                    host.CharacterMemoryReconciler,
+                    cancellationToken
                 )
         );
     }

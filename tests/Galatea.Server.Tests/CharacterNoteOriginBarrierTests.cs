@@ -1,3 +1,4 @@
+using System.Text;
 using Atelia.Completion.Abstractions;
 using Atelia.Data;
 using Atelia.EventJournal;
@@ -9,6 +10,22 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class CharacterNoteOriginBarrierTests {
+    [Fact]
+    public void FingerprintHasKnownUtf8VectorAndRejectsInvalidSurrogate() {
+        GalateaVisibleActionFingerprint fingerprint =
+            GalateaVisibleActionFingerprint.Derive("hello");
+
+        Assert.Equal(
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e"
+                + "1b161e5c1fa7425e73043362938b9824",
+            fingerprint.Sha256
+        );
+        Assert.Equal(5, fingerprint.Utf8Bytes);
+        Assert.Throws<EncoderFallbackException>(() =>
+            GalateaVisibleActionFingerprint.Derive("\ud800")
+        );
+    }
+
     [Fact]
     public void BuilderUsesOnlySingleSourceActionsAndSharedFingerprint() {
         EventAddress observation = Address(1);
@@ -86,6 +103,23 @@ public sealed class CharacterNoteOriginBarrierTests {
     }
 
     [Fact]
+    public void BuilderHonorsCancellationBeforeEnumeratingRawUnits() {
+        var reader = new RecordingOriginReader();
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() =>
+            GalateaCharacterNoteOriginBarrierBuilder
+                .BuildFromProviderVisibleRawUnits(
+                    Array.Empty<SessionHistoryPlanningUnit>(),
+                    reader,
+                    canceled.Token
+                )
+        );
+        Assert.Equal(0, reader.CallCount);
+    }
+
+    [Fact]
     public void TypedMemoKeysDeduplicateExactOriginsAndRejectConflicts() {
         MemoPodId podId = MemoPodId.Parse(
             "00000000000000000000000000000001"
@@ -133,12 +167,16 @@ public sealed class CharacterNoteOriginBarrierTests {
 
     private sealed class RecordingOriginReader : ICharacterNoteOriginReader {
         internal CharacterNoteOriginBarrier Returned { get; } = new([]);
+        internal int CallCount { get; private set; }
         internal IReadOnlyList<CharacterNoteVisibleActionIdentity>
             VisibleActions { get; private set; } = [];
 
         public CharacterNoteOriginBarrier ReadOriginBarrier(
-            IReadOnlyList<CharacterNoteVisibleActionIdentity> visibleActions
+            IReadOnlyList<CharacterNoteVisibleActionIdentity> visibleActions,
+            CancellationToken cancellationToken = default
         ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            CallCount++;
             VisibleActions = visibleActions;
             return Returned;
         }

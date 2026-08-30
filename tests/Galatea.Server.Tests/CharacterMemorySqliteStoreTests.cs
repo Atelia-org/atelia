@@ -224,6 +224,74 @@ public sealed class CharacterMemorySqliteStoreTests {
     }
 
     [Fact]
+    public void CaptureBatchReadIsSetBasedOrderedAndCancellable() {
+        using var fixture = new ReadyStore();
+        CharacterMemoryCaptureSnapshot first = fixture.Store.CaptureNew(
+            Capture(Address(22), ["first", "second"])
+        ).Capture!;
+        _ = fixture.Store.PlanApply(new CharacterMemoryPlanRequest(
+            Address(22),
+            first.ExtractionCommitment,
+            State('p'),
+            State('t'),
+            ["m1:00000001", "m1:00000002"]
+        ));
+        _ = fixture.Store.SettleApplied(new CharacterMemorySettleRequest(
+            Address(22),
+            first.ExtractionCommitment,
+            State('t')
+        ));
+        _ = fixture.Store.CaptureNew(Capture(Address(23), []));
+        CharacterMemoryCaptureSnapshot last = fixture.Store.CaptureNew(
+            Capture(Address(24), ["last"])
+        ).Capture!;
+        _ = fixture.Store.PlanApply(new CharacterMemoryPlanRequest(
+            Address(24),
+            last.ExtractionCommitment,
+            State('t'),
+            State('u'),
+            ["m1:00000003"]
+        ));
+        _ = fixture.Store.SettleApplied(new CharacterMemorySettleRequest(
+            Address(24),
+            last.ExtractionCommitment,
+            State('u')
+        ));
+
+        CharacterMemoryCaptureBatchSnapshot batch =
+            fixture.Store.ReadCaptureBatchExact([
+                Address(24),
+                Address(99),
+                Address(23),
+                Address(22),
+            ]);
+
+        Assert.Equal(
+            [Address(24), Address(23), Address(22)],
+            batch.Captures.Select(static capture =>
+                capture.SourceActionAddress)
+        );
+        Assert.Equal(
+            [
+                CharacterMemoryCaptureState.Applied,
+                CharacterMemoryCaptureState.ZeroCaptured,
+                CharacterMemoryCaptureState.Applied,
+            ],
+            batch.Captures.Select(static capture => capture.State)
+        );
+        Assert.Equal(
+            [1, 0, 2],
+            batch.Captures.Select(static capture => capture.Notes.Count)
+        );
+        Assert.Throws<OperationCanceledException>(() =>
+            fixture.Store.ReadCaptureBatchExact(
+                [Address(22)],
+                new CancellationToken(canceled: true)
+            )
+        );
+    }
+
+    [Fact]
     public void Reject_IsTerminalIdempotentAndReleasesActiveSlot() {
         using var fixture = new ReadyStore();
         CharacterMemoryCaptureSnapshot capture = fixture.Store.CaptureNew(

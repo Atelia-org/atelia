@@ -76,13 +76,16 @@ internal sealed class CharacterNoteOriginBarrier {
         CharacterNoteOriginBarrierEntry> _entriesByKey;
 
     internal CharacterNoteOriginBarrier(
-        IEnumerable<CharacterNoteOriginBarrierEntry> entries
+        IEnumerable<CharacterNoteOriginBarrierEntry> entries,
+        CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(entries);
+        cancellationToken.ThrowIfCancellationRequested();
         var byKey = new Dictionary<CharacterNoteMemoKey,
             CharacterNoteOriginBarrierEntry>();
         var frozen = new List<CharacterNoteMemoKey>();
         foreach (CharacterNoteOriginBarrierEntry entry in entries) {
+            cancellationToken.ThrowIfCancellationRequested();
             ArgumentNullException.ThrowIfNull(entry);
             if (byKey.TryGetValue(entry.Key, out var existing)) {
                 if (existing != entry) {
@@ -112,7 +115,8 @@ internal sealed class CharacterNoteOriginBarrier {
 
 internal interface ICharacterNoteOriginReader {
     CharacterNoteOriginBarrier ReadOriginBarrier(
-        IReadOnlyList<CharacterNoteVisibleActionIdentity> visibleActions
+        IReadOnlyList<CharacterNoteVisibleActionIdentity> visibleActions,
+        CancellationToken cancellationToken = default
     );
 }
 
@@ -120,15 +124,18 @@ internal static class GalateaCharacterNoteOriginBarrierBuilder {
     internal static CharacterNoteOriginBarrier
         BuildFromProviderVisibleRawUnits(
         IEnumerable<SessionHistoryPlanningUnit> units,
-        ICharacterNoteOriginReader? originReader
+        ICharacterNoteOriginReader? originReader,
+        CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(units);
+        cancellationToken.ThrowIfCancellationRequested();
         if (originReader is null) {
             return CharacterNoteOriginBarrier.Empty;
         }
 
         var visibleActions = new List<CharacterNoteVisibleActionIdentity>();
         foreach (SessionHistoryPlanningUnit unit in units) {
+            cancellationToken.ThrowIfCancellationRequested();
             ArgumentNullException.ThrowIfNull(unit);
             if (unit.Message is not ActionMessage action) {
                 continue;
@@ -148,7 +155,8 @@ internal static class GalateaCharacterNoteOriginBarrierBuilder {
             ));
         }
         return originReader.ReadOriginBarrier(
-            Array.AsReadOnly(visibleActions.ToArray())
+            Array.AsReadOnly(visibleActions.ToArray()),
+            cancellationToken
         );
     }
 }
