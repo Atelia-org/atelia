@@ -491,6 +491,71 @@ public sealed class CharacterNoteRuntimeTests {
     }
 
     [Fact]
+    public async Task IndependentMailAndPreCaptureNoteFailuresRetainOrderedSecondary() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig mail = Connection("mail");
+        CompletionConnectionConfig note = Connection("note");
+        var noteClient = new OutcomeNoteClient(
+            NoteOutcome.ProviderFailure
+        );
+        var expectedMail = new GalateaTurnException(
+            "mail primary",
+            "mail-double-failure"
+        );
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient>(
+                StringComparer.Ordinal
+            ) {
+                [main.Id] = new QueueClient(Message(
+                    new ActionBlock.Text(Action)
+                )),
+                [mail.Id] = new FailAfterSignalClient(
+                    noteClient.Entered.Task,
+                    expectedMail
+                ),
+                [note.Id] = noteClient,
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, mail, note],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: mail.Id,
+            characterNoteExtractorConnectionId: note.Id
+        );
+        (GalateaHostService service, UserSessionHost session) =
+            await GetRuntimeAsync(host);
+
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "double failure",
+            new GalateaTurnOptions(main.Id)
+        );
+        try {
+            GalateaTurnException observed = await Assert.ThrowsAsync<
+                GalateaTurnException>(() => service.RunTurnAsync(
+                    session,
+                    turn,
+                    CancellationToken.None
+                ));
+
+            Assert.Equal("mail-double-failure", observed.FailureReason);
+            AggregateException ordered = Assert.IsType<AggregateException>(
+                observed.InnerException
+            );
+            Assert.Collection(
+                ordered.InnerExceptions,
+                failure => Assert.Same(expectedMail, failure),
+                failure => Assert.IsType<TextExtractionException>(failure)
+            );
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
+        }
+        finally {
+            service.FinishTurn(session, turn);
+            session.TurnLock.Release();
+        }
+    }
+
+    [Fact]
     public async Task MailFailureCancelsAndDrainsBlockedNote() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig mail = Connection("mail");
@@ -547,6 +612,69 @@ public sealed class CharacterNoteRuntimeTests {
             ));
             Assert.DoesNotContain("mail extractor unavailable", batchJson,
                 StringComparison.Ordinal);
+        }
+        finally {
+            service.FinishTurn(session, turn);
+            session.TurnLock.Release();
+        }
+    }
+
+    [Fact]
+    public async Task MailAbortCallbackFatalIsNotHiddenByInducedNoteCancellation() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig mail = Connection("mail");
+        CompletionConnectionConfig note = Connection("note");
+        var fatal = new OutOfMemoryException(
+            "note cancellation callback fatal"
+        );
+        var noteClient = new CancellationCallbackFailureClient(fatal);
+        var expectedMail = new GalateaTurnException(
+            "mail failed",
+            "mail-callback-failure"
+        );
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient>(
+                StringComparer.Ordinal
+            ) {
+                [main.Id] = new QueueClient(Message(
+                    new ActionBlock.Text(Action)
+                )),
+                [mail.Id] = new FailAfterSignalClient(
+                    noteClient.Entered.Task,
+                    expectedMail
+                ),
+                [note.Id] = noteClient,
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, mail, note],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: mail.Id,
+            characterNoteExtractorConnectionId: note.Id
+        );
+        (GalateaHostService service, UserSessionHost session) =
+            await GetRuntimeAsync(host);
+
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "fatal cancellation callback",
+            new GalateaTurnOptions(main.Id)
+        );
+        try {
+            AggregateException observed = await Assert.ThrowsAsync<
+                AggregateException>(() => service.RunTurnAsync(
+                    session,
+                    turn,
+                    CancellationToken.None
+                ));
+
+            await noteClient.Drained.Task.WaitAsync(Deadline);
+            Assert.Equal(0, noteClient.ActiveCalls);
+            Assert.Same(expectedMail, observed.InnerExceptions[0]);
+            AggregateException cancellation = Assert.IsType<
+                AggregateException>(observed.InnerExceptions[1]);
+            Assert.Contains(fatal, cancellation.Flatten().InnerExceptions);
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
         }
         finally {
             service.FinishTurn(session, turn);
@@ -675,6 +803,71 @@ public sealed class CharacterNoteRuntimeTests {
     }
 
     [Fact]
+    public async Task FatalNoteFailureWinsCallerCancellationAfterBothDrain() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig mail = Connection("mail");
+        CompletionConnectionConfig note = Connection("note");
+        var mailClient = new BlockingClient();
+        var fatal = new OutOfMemoryException(
+            "fatal Note failure during caller cancellation"
+        );
+        var noteClient = new FatalOnCancellationClient(fatal);
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient>(
+                StringComparer.Ordinal
+            ) {
+                [main.Id] = new QueueClient(Message(
+                    new ActionBlock.Text(Action)
+                )),
+                [mail.Id] = mailClient,
+                [note.Id] = noteClient,
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, mail, note],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: mail.Id,
+            characterNoteExtractorConnectionId: note.Id
+        );
+        (GalateaHostService service, UserSessionHost session) =
+            await GetRuntimeAsync(host);
+
+        using var callerCts = new CancellationTokenSource();
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "caller cancel with fatal Note",
+            new GalateaTurnOptions(main.Id)
+        );
+        try {
+            Task run = service.RunTurnAsync(
+                session,
+                turn,
+                callerCts.Token
+            );
+            await Task.WhenAll(
+                mailClient.Entered.Task,
+                noteClient.Entered.Task
+            ).WaitAsync(Deadline);
+            callerCts.Cancel();
+
+            AggregateException observed = await Assert.ThrowsAsync<
+                AggregateException>(() => run);
+            await Task.WhenAll(
+                mailClient.Drained.Task,
+                noteClient.Drained.Task
+            ).WaitAsync(Deadline);
+            Assert.Contains(fatal, observed.Flatten().InnerExceptions);
+            Assert.Equal(0, mailClient.ActiveCalls);
+            Assert.Equal(0, noteClient.ActiveCalls);
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
+        }
+        finally {
+            service.FinishTurn(session, turn);
+            session.TurnLock.Release();
+        }
+    }
+
+    [Fact]
     public async Task HeadChangeAfterMailCaptureDropsSuccessfulNoteReceipt() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig mail = Connection("mail");
@@ -746,6 +939,87 @@ public sealed class CharacterNoteRuntimeTests {
         }
         finally {
             noteClient.Release();
+            service.FinishTurn(session, turn);
+            session.TurnLock.Release();
+        }
+    }
+
+    [Fact]
+    public async Task HeadChangeOutranksNonFatalMailAndRetainsItWithoutReceipt() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig mail = Connection("mail");
+        CompletionConnectionConfig note = Connection("note");
+        var releaseMail = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var expectedMail = new GalateaTurnException(
+            "mail failed after durable Note apply",
+            "mail-after-head-change"
+        );
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient>(
+                StringComparer.Ordinal
+            ) {
+                [main.Id] = new QueueClient(Message(
+                    new ActionBlock.Text(Action)
+                )),
+                [mail.Id] = new FailAfterSignalClient(
+                    releaseMail.Task,
+                    expectedMail
+                ),
+                [note.Id] = new QueueClient(Message(NoteTool())),
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, mail, note],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: mail.Id,
+            characterNoteExtractorConnectionId: note.Id
+        );
+        (GalateaHostService service, UserSessionHost session) =
+            await GetRuntimeAsync(host);
+
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "head authority",
+            new GalateaTurnOptions(main.Id)
+        );
+        try {
+            Task run = service.RunTurnAsync(
+                session,
+                turn,
+                CancellationToken.None
+            );
+            await WaitUntilAsync(() => global::Atelia.MemoPod.MemoPod.Open(
+                session.User.CharacterMemoryStateDir,
+                CharacterNoteDefaultPodV1.PodId
+            ).List().Length == 1);
+            EventAddress action = session.Engine.ReadCurrentHead()
+                ?? throw new Xunit.Sdk.XunitException(
+                    "The completed Action head is unavailable."
+                );
+            Assert.IsType<SessionTurnRetractionResult.Moved>(
+                session.Engine.RewindLatestCompletedTurn(action)
+            );
+            releaseMail.TrySetResult();
+
+            GalateaTurnException observed = await Assert.ThrowsAsync<
+                GalateaTurnException>(() => run);
+            Assert.Equal("delegation-state-changed", observed.FailureReason);
+            AggregateException retained = Assert.IsType<AggregateException>(
+                observed.InnerException
+            );
+            Assert.Equal(
+                "delegation-state-changed",
+                Assert.IsType<GalateaTurnException>(
+                    retained.InnerExceptions[0]
+                ).FailureReason
+            );
+            Assert.Same(expectedMail, retained.InnerExceptions[1]);
+            Assert.Equal(0, session.NoteSaveReceipts.Count);
+        }
+        finally {
+            releaseMail.TrySetResult();
             service.FinishTurn(session, turn);
             session.TurnLock.Release();
         }
@@ -1210,6 +1484,9 @@ public sealed class CharacterNoteRuntimeTests {
         internal bool CancellationObserved =>
             Volatile.Read(ref _cancellationObserved) != 0;
         internal int DispatchCount => Volatile.Read(ref _dispatchCount);
+        internal TaskCompletionSource Entered { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
 
         public async Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
@@ -1218,6 +1495,7 @@ public sealed class CharacterNoteRuntimeTests {
         ) {
             _ = observer;
             Interlocked.Increment(ref _dispatchCount);
+            Entered.TrySetResult();
             ActionMessage message;
             switch (outcome) {
                 case NoteOutcome.Zero:
@@ -1354,6 +1632,92 @@ public sealed class CharacterNoteRuntimeTests {
             catch (OperationCanceledException) {
                 Interlocked.Exchange(ref _cancellationObserved, 1);
                 throw;
+            }
+            finally {
+                if (Interlocked.Decrement(ref _activeCalls) == 0) {
+                    Drained.TrySetResult();
+                }
+            }
+        }
+    }
+
+    private sealed class CancellationCallbackFailureClient(
+        Exception callbackFailure
+    ) : ICompletionClient {
+        private int _activeCalls;
+
+        public string Name => "cancellation-callback-failure";
+        public string ApiSpecId => "test-v1";
+        internal int ActiveCalls => Volatile.Read(ref _activeCalls);
+        internal TaskCompletionSource Entered { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        internal TaskCompletionSource Drained { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        public async Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            _ = request;
+            _ = observer;
+            Interlocked.Increment(ref _activeCalls);
+            using CancellationTokenRegistration registration =
+                cancellationToken.Register(() => throw callbackFailure);
+            Entered.TrySetResult();
+            try {
+                await Task.Delay(
+                    Timeout.InfiniteTimeSpan,
+                    cancellationToken
+                );
+                throw new Xunit.Sdk.XunitException(
+                    "Infinite delay unexpectedly completed."
+                );
+            }
+            finally {
+                if (Interlocked.Decrement(ref _activeCalls) == 0) {
+                    Drained.TrySetResult();
+                }
+            }
+        }
+    }
+
+    private sealed class FatalOnCancellationClient(Exception fatal)
+        : ICompletionClient {
+        private int _activeCalls;
+
+        public string Name => "fatal-on-cancellation";
+        public string ApiSpecId => "test-v1";
+        internal int ActiveCalls => Volatile.Read(ref _activeCalls);
+        internal TaskCompletionSource Entered { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        internal TaskCompletionSource Drained { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        public async Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            _ = request;
+            _ = observer;
+            Interlocked.Increment(ref _activeCalls);
+            Entered.TrySetResult();
+            try {
+                await Task.Delay(
+                    Timeout.InfiniteTimeSpan,
+                    cancellationToken
+                );
+                throw new Xunit.Sdk.XunitException(
+                    "Infinite delay unexpectedly completed."
+                );
+            }
+            catch (OperationCanceledException) {
+                throw fatal;
             }
             finally {
                 if (Interlocked.Decrement(ref _activeCalls) == 0) {

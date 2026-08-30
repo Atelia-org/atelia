@@ -659,6 +659,25 @@ public sealed class GalateaEndpointLockTopologyTests {
         Assert.False(GalateaExceptionClassifier.IsNonFatal(
             new AccessViolationException()
         ));
+        Assert.True(GalateaExceptionClassifier.IsNonFatal(
+            new AggregateException(
+                new IOException("first"),
+                new AggregateException(new InvalidDataException("second"))
+            )
+        ));
+        Assert.False(GalateaExceptionClassifier.IsNonFatal(
+            new AggregateException(
+                new IOException("ordinary"),
+                new AggregateException(new OutOfMemoryException("nested"))
+            )
+        ));
+        Assert.False(GalateaExceptionClassifier.IsNonFatal(
+            new GalateaTurnException(
+                "wrapped",
+                "wrapped-fatal",
+                new AggregateException(new AccessViolationException())
+            )
+        ));
     }
 
     [Fact]

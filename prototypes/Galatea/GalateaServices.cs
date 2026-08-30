@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Runtime.ExceptionServices;
@@ -985,39 +986,48 @@ public sealed class GalateaHostService : IAsyncDisposable {
             noteFailure = exception;
         }
 
-        callerToken.ThrowIfCancellationRequested();
-        if (mailFailure is not null
-            && !GalateaExceptionClassifier.IsNonFatal(mailFailure)) {
-            ExceptionDispatchInfo.Capture(mailFailure).Throw();
-        }
-        if (cancellationFailure is not null
-            && !GalateaExceptionClassifier.IsNonFatal(
-                cancellationFailure
-            )) {
-            ExceptionDispatchInfo.Capture(cancellationFailure).Throw();
-        }
-        if (noteFailure is not null) {
-            bool inducedByMailFailure = mailFailure is not null
-                && noteFailure is OperationCanceledException
-                && mailAbortCts.IsCancellationRequested;
-            if (!inducedByMailFailure) {
-                ThrowCharacterNoteAdmissionFailure(
-                    noteFailure,
+        var failures = new CharacterNoteFailureSet(
+            mailFailure,
+            noteFailure,
+            cancellationFailure,
+            mailAbortCts.IsCancellationRequested
+        );
+        failures.ThrowIfFatal();
+        failures.ThrowIfCallerCanceled(callerToken);
+        if (failures.EffectiveNoteFailure is { } effectiveNoteFailure) {
+            failures.ThrowStablePrimary(
+                CreateCharacterNoteAdmissionFailure(
+                    effectiveNoteFailure,
                     deadlineCts.IsCancellationRequested,
                     mailFailure is not null
-                );
-            }
-        }
-        if (noteResult is not null) {
-            RequireCharacterNoteAdmissionSettled(noteResult);
-        }
-        else if (mailFailure is null) {
-            throw new InvalidDataException(
-                "Character Note admission completed without a result."
+                ),
+                noteFailureIsPrimary: true
             );
         }
+        if (noteResult is not null) {
+            try {
+                RequireCharacterNoteAdmissionSettled(noteResult);
+            }
+            catch (GalateaTurnException authority) {
+                failures.ThrowStablePrimary(authority);
+            }
+            catch (Exception invariant) when (
+                GalateaExceptionClassifier.IsNonFatal(invariant)) {
+                failures.ThrowStablePrimary(new GalateaTurnException(
+                    "Character Memory admission violated its durable boundary.",
+                    "character-memory-state-invalid",
+                    invariant
+                ));
+            }
+        }
+        else if (mailFailure is null) {
+            failures.ThrowStablePrimary(new GalateaTurnException(
+                "Character Note admission completed without a result.",
+                "character-memory-state-invalid"
+            ));
+        }
         if (mailFailure is not null) {
-            ExceptionDispatchInfo.Capture(mailFailure).Throw();
+            failures.ThrowMailPrimary();
         }
     }
 
@@ -1057,14 +1067,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
     }
 
-    private static void ThrowCharacterNoteAdmissionFailure(
+    private static GalateaTurnException CreateCharacterNoteAdmissionFailure(
         Exception failure,
         bool deadlineExpired,
         bool mailAborted
     ) {
-        if (!GalateaExceptionClassifier.IsNonFatal(failure)) {
-            ExceptionDispatchInfo.Capture(failure).Throw();
-        }
         string reason = failure switch {
             OperationCanceledException when deadlineExpired =>
                 "character-memory-extraction-timeout",
@@ -1076,7 +1083,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "character-memory-pod-unavailable",
             _ => "character-memory-state-invalid",
         };
-        throw new GalateaTurnException(
+        return new GalateaTurnException(
             "Character Memory reconciliation must settle before admission.",
             reason,
             failure
@@ -1101,6 +1108,125 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
         catch (Exception exception) {
             return exception;
+        }
+    }
+
+    private sealed class CharacterNoteFailureSet {
+        private readonly Exception[] _ordered;
+
+        internal CharacterNoteFailureSet(
+            Exception? mailFailure,
+            Exception? noteFailure,
+            Exception? cancellationFailure,
+            bool mailAbortRequested
+        ) {
+            MailFailure = mailFailure;
+            NoteFailure = noteFailure;
+            NoteCancellationInducedByMailAbort = mailFailure is not null
+                && noteFailure is OperationCanceledException
+                && mailAbortRequested;
+            var ordered = new List<Exception>(3);
+            if (mailFailure is not null) {
+                ordered.Add(mailFailure);
+            }
+            if (noteFailure is not null
+                && !NoteCancellationInducedByMailAbort) {
+                ordered.Add(noteFailure);
+            }
+            if (cancellationFailure is not null) {
+                ordered.Add(cancellationFailure);
+            }
+            _ordered = ordered.ToArray();
+        }
+
+        internal Exception? MailFailure { get; }
+
+        private Exception? NoteFailure { get; }
+
+        internal bool NoteCancellationInducedByMailAbort { get; }
+
+        internal Exception? EffectiveNoteFailure =>
+            NoteCancellationInducedByMailAbort ? null : NoteFailure;
+
+        internal void ThrowIfFatal() {
+            if (_ordered.All(GalateaExceptionClassifier.IsNonFatal)) {
+                return;
+            }
+            ThrowOrdered("Character Note coordination observed a fatal failure.");
+        }
+
+        internal void ThrowIfCallerCanceled(CancellationToken callerToken) {
+            if (!callerToken.IsCancellationRequested) { return; }
+            if (_ordered.Length == 1
+                && _ordered[0] is OperationCanceledException canceled) {
+                ExceptionDispatchInfo.Capture(canceled).Throw();
+            }
+            if (_ordered.Length > 0) {
+                throw new OperationCanceledException(
+                    "Character Note coordination was canceled after draining all operations.",
+                    new AggregateException(
+                        "Ordered Mail, Note, and cancellation-callback failures.",
+                        _ordered
+                    ),
+                    callerToken
+                );
+            }
+            callerToken.ThrowIfCancellationRequested();
+        }
+
+        [DoesNotReturn]
+        internal void ThrowMailPrimary() {
+            Exception mail = MailFailure
+                ?? throw new InvalidOperationException(
+                    "Mail-primary arbitration requires a Mail failure."
+                );
+            if (_ordered.Length == 1) {
+                ExceptionDispatchInfo.Capture(mail).Throw();
+            }
+            if (mail is GalateaTurnException turn) {
+                throw new GalateaTurnException(
+                    turn.Message,
+                    turn.FailureReason,
+                    new AggregateException(
+                        "Ordered Mail, Note, and cancellation-callback failures.",
+                        _ordered
+                    )
+                );
+            }
+            ThrowOrdered(
+                "Ordered Mail, Note, and cancellation-callback failures."
+            );
+        }
+
+        [DoesNotReturn]
+        internal void ThrowStablePrimary(
+            GalateaTurnException primary,
+            bool noteFailureIsPrimary = false
+        ) {
+            ArgumentNullException.ThrowIfNull(primary);
+            Exception[] secondary = noteFailureIsPrimary
+                ? _ordered.Where(failure => !ReferenceEquals(
+                    failure,
+                    EffectiveNoteFailure
+                )).ToArray()
+                : _ordered;
+            if (secondary.Length == 0) { throw primary; }
+            throw new GalateaTurnException(
+                primary.Message,
+                primary.FailureReason,
+                new AggregateException(
+                    "Authority failure followed by ordered Mail, Note, and cancellation-callback failures.",
+                    [primary, .. secondary]
+                )
+            );
+        }
+
+        [DoesNotReturn]
+        private void ThrowOrdered(string message) {
+            if (_ordered.Length == 1) {
+                ExceptionDispatchInfo.Capture(_ordered[0]).Throw();
+            }
+            throw new AggregateException(message, _ordered);
         }
     }
 
@@ -1733,41 +1859,49 @@ public sealed class GalateaHostService : IAsyncDisposable {
             noteFailure = exception;
         }
 
-        callerToken.ThrowIfCancellationRequested();
-        if (mailFailure is not null
-            && !GalateaExceptionClassifier.IsNonFatal(mailFailure)) {
-            ExceptionDispatchInfo.Capture(mailFailure).Throw();
-        }
-        if (cancellationFailure is not null
-            && !GalateaExceptionClassifier.IsNonFatal(
-                cancellationFailure
-            )) {
-            ExceptionDispatchInfo.Capture(cancellationFailure).Throw();
-        }
+        var failures = new CharacterNoteFailureSet(
+            mailFailure,
+            noteFailure,
+            cancellationFailure,
+            mailAbortCts.IsCancellationRequested
+        );
+        failures.ThrowIfFatal();
+        failures.ThrowIfCallerCanceled(callerToken);
 
         string mailOutcome = mailResult is null
             ? "failure-" + mailFailure!.GetType().Name
             : DescribeMailOutcome(mailResult);
-        if (noteFailure is not null) {
-            bool inducedByMailFailure = mailFailure is not null
-                && noteFailure is OperationCanceledException
-                && mailAbortCts.IsCancellationRequested;
-            if (!inducedByMailFailure
-                && !IsBestEffortPreCaptureFailure(
-                    noteFailure,
+        if (failures.EffectiveNoteFailure is { } effectiveNoteFailure) {
+            if (!IsBestEffortPreCaptureFailure(
+                    effectiveNoteFailure,
                     deadlineCts.IsCancellationRequested,
                     mailAbortCts.IsCancellationRequested
                 )) {
-                ThrowCharacterNoteFailClosed(noteFailure);
+                LogCharacterNoteBatch(
+                    host,
+                    target,
+                    mailOutcome,
+                    noteOutcome: "fail-closed-"
+                        + DescribeNoteFailure(effectiveNoteFailure),
+                    durableMemo: false,
+                    memoCount: 0,
+                    receiptOutcome: "none",
+                    mailMilliseconds,
+                    noteMilliseconds,
+                    ElapsedMilliseconds(batchStarted),
+                    eventKind: DebugEventKind.Failure
+                );
+                failures.ThrowStablePrimary(
+                    CreateCharacterNoteFailClosed(effectiveNoteFailure),
+                    noteFailureIsPrimary: true
+                );
             }
 
             LogCharacterNoteBatch(
                 host,
                 target,
                 mailOutcome,
-                noteOutcome: inducedByMailFailure
-                    ? "pre-capture-mail-abort"
-                    : DescribeNoteFailure(noteFailure),
+                noteOutcome: DescribeNoteFailure(effectiveNoteFailure),
                 durableMemo: false,
                 memoCount: 0,
                 receiptOutcome: "none",
@@ -1777,22 +1911,41 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 eventKind: DebugEventKind.Failure
             );
             if (mailFailure is not null) {
-                ExceptionDispatchInfo.Capture(mailFailure).Throw();
+                failures.ThrowMailPrimary();
             }
             return;
         }
-
-        CharacterNoteDefaultPodReconcileResult settled = noteResult
-            ?? throw new InvalidDataException(
-                "Character Note reconciliation completed without a result."
+        if (failures.NoteCancellationInducedByMailAbort) {
+            LogCharacterNoteBatch(
+                host,
+                target,
+                mailOutcome,
+                noteOutcome: "pre-capture-mail-abort",
+                durableMemo: false,
+                memoCount: 0,
+                receiptOutcome: "none",
+                mailMilliseconds,
+                noteMilliseconds,
+                ElapsedMilliseconds(batchStarted),
+                eventKind: DebugEventKind.Failure
             );
+            failures.ThrowMailPrimary();
+        }
+
+        if (noteResult is null) {
+            failures.ThrowStablePrimary(new GalateaTurnException(
+                "Character Note reconciliation completed without a result.",
+                "character-memory-state-invalid"
+            ));
+        }
+        CharacterNoteDefaultPodReconcileResult settled = noteResult;
         if (settled is CharacterNoteDefaultPodReconcileResult.Quarantined
                 quarantined) {
-            throw new GalateaTurnException(
+            failures.ThrowStablePrimary(new GalateaTurnException(
                 "Character Memory authority is quarantined.",
                 "character-memory-quarantined",
                 new InvalidDataException(quarantined.Code)
-            );
+            ));
         }
         if (settled is CharacterNoteDefaultPodReconcileResult
                 .SelectedHeadChanged) {
@@ -1809,21 +1962,19 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ElapsedMilliseconds(batchStarted),
                 eventKind: DebugEventKind.Failure
             );
-            if (mailFailure is not null) {
-                ExceptionDispatchInfo.Capture(mailFailure).Throw();
-            }
-            throw new GalateaTurnException(
+            failures.ThrowStablePrimary(new GalateaTurnException(
                 "Durable extraction head changed; retry admission.",
                 "delegation-state-changed"
-            );
+            ));
         }
 
         if (settled is CharacterNoteDefaultPodReconcileResult.AppliedNow
                 applied) {
             if (applied.SourceAction != target.SourceAction) {
-                throw new InvalidDataException(
-                    "Character Note AppliedNow source does not match its target."
-                );
+                failures.ThrowStablePrimary(new GalateaTurnException(
+                    "Character Note AppliedNow source does not match its target.",
+                    "character-memory-state-invalid"
+                ));
             }
             LogCharacterNoteMemos(host, target, applied.Memos);
             EventAddress? observedHead = host.Engine.ReadCurrentHead();
@@ -1841,34 +1992,47 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     ElapsedMilliseconds(batchStarted),
                     eventKind: DebugEventKind.Failure
                 );
-                if (mailFailure is not null) {
-                    ExceptionDispatchInfo.Capture(mailFailure).Throw();
-                }
-                throw new GalateaTurnException(
+                failures.ThrowStablePrimary(new GalateaTurnException(
                     "Durable extraction head changed; retry admission.",
                     "delegation-state-changed"
+                ));
+            }
+            string receiptOutcome = "receipt-failed";
+            DebugEventKind eventKind = DebugEventKind.Failure;
+            try {
+                bool created = CharacterNoteSaveReceipt.TryCreate(
+                    applied.Memos,
+                    out CharacterNoteSaveReceipt? receipt
                 );
+                if (!created) {
+                    receiptOutcome = "receipt-unrenderable";
+                    eventKind = DebugEventKind.Skip;
+                }
+                else {
+                    CharacterNoteSaveReceipt queued = receipt
+                        ?? throw new InvalidDataException(
+                            "A successful Character Note save receipt render returned null."
+                        );
+                    bool enqueued = host.NoteSaveReceipts.TryEnqueue(queued);
+                    receiptOutcome = enqueued ? "queued" : "queue-full";
+                    eventKind = enqueued
+                        ? DebugEventKind.Success
+                        : DebugEventKind.Skip;
+                }
             }
-            bool created = CharacterNoteSaveReceipt.TryCreate(
-                applied.Memos,
-                out CharacterNoteSaveReceipt? receipt
-            );
-            string receiptOutcome;
-            DebugEventKind eventKind;
-            if (!created) {
-                receiptOutcome = "receipt-unrenderable";
-                eventKind = DebugEventKind.Skip;
-            }
-            else {
-                CharacterNoteSaveReceipt queued = receipt
-                    ?? throw new InvalidDataException(
-                        "A successful Character Note save receipt render returned null."
-                    );
-                bool enqueued = host.NoteSaveReceipts.TryEnqueue(queued);
-                receiptOutcome = enqueued ? "queued" : "queue-full";
-                eventKind = enqueued
-                    ? DebugEventKind.Success
-                    : DebugEventKind.Skip;
+            catch (Exception receiptFailure) {
+                var receiptFailures = new CharacterNoteFailureSet(
+                    mailFailure,
+                    receiptFailure,
+                    cancellationFailure,
+                    mailAbortRequested: false
+                );
+                receiptFailures.ThrowIfFatal();
+                receiptFailures.ThrowIfCallerCanceled(callerToken);
+                receiptFailures.ThrowStablePrimary(
+                    CreateCharacterNoteFailClosed(receiptFailure),
+                    noteFailureIsPrimary: true
+                );
             }
             LogCharacterNoteBatch(
                 host,
@@ -1904,7 +2068,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
 
         if (mailFailure is not null) {
-            ExceptionDispatchInfo.Capture(mailFailure).Throw();
+            failures.ThrowMailPrimary();
         }
     }
 
@@ -1943,16 +2107,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _ => result.GetType().Name,
     };
 
-    private static void ThrowCharacterNoteFailClosed(Exception failure) {
-        if (!GalateaExceptionClassifier.IsNonFatal(failure)) {
-            ExceptionDispatchInfo.Capture(failure).Throw();
-        }
-        throw new GalateaTurnException(
+    private static GalateaTurnException CreateCharacterNoteFailClosed(
+        Exception failure
+    ) => new(
             "Character Memory reconciliation violated its durable boundary.",
             "character-memory-state-invalid",
             failure
         );
-    }
 
     private static async Task<T> MeasureAsync<T>(
         Func<ValueTask<T>> operation,
@@ -3063,11 +3224,16 @@ internal sealed class GalateaSessionUnavailableException
 internal static class GalateaExceptionClassifier {
     internal static bool IsNonFatal(Exception exception) {
         ArgumentNullException.ThrowIfNull(exception);
-        return exception is not (
-            OutOfMemoryException
+        if (exception is OutOfMemoryException
                 or StackOverflowException
-                or AccessViolationException
-        );
+                or AccessViolationException) {
+            return false;
+        }
+        if (exception is AggregateException aggregate) {
+            return aggregate.InnerExceptions.All(IsNonFatal);
+        }
+        return exception.InnerException is null
+            || IsNonFatal(exception.InnerException);
     }
 }
 
