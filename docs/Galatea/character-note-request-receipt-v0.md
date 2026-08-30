@@ -334,7 +334,7 @@ V0 不实现：
 | A3 | post-completion 并行 coordinator、timeout/failure matrix、diagnostics | Complete | `CharacterNoteRuntimeTests` 14/14中的shared-client overlap与failure matrix |
 | A4a | code-owned receipt、bounded FIFO、`PlayerTurnObservation` canonical grammar | Complete | focused receipt/Observation tests 16/16；Galatea build 0 warnings/errors |
 | A4b | `UserSessionHost` queue ownership与普通`StartTurn` at-most-once注入 | Complete | `CharacterNoteRuntimeTests` 14/14中的ordinary/ready/inbound/recovery入口矩阵 |
-| R0 | 独立 code review、语义尾修、串行验证、状态回写 | Complete | reviewer无must-fix；focused tests 97/97；Galatea build 0 warnings/errors；docs checker 0 diagnostics；`git diff --check`通过 |
+| R0 | 独立 code review、语义尾修、串行验证、状态回写 | Complete | reviewer无must-fix；完整Galatea suite 470 passed / 1 live skipped；Release build 0 warnings/errors；docs checker 21 files / 0 diagnostics；`git diff --check`通过 |
 
 ## 验收标准
 
