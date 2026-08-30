@@ -948,7 +948,7 @@ public sealed class GalateaConfigValidationTests {
             byte[] versionless = File.ReadAllBytes(configPath);
             versionless = System.Text.Encoding.UTF8.GetBytes(
                 System.Text.Encoding.UTF8.GetString(versionless).Replace(
-                    "\"v\":5,",
+                    "\"v\":6,",
                     string.Empty,
                     StringComparison.Ordinal
                 )
@@ -1157,8 +1157,8 @@ public sealed class GalateaConfigValidationTests {
 
             string[] invalidConfigs = [
                 originalConfig.Replace(
-                    "{\"v\":5,\"users\"",
-                    "{\"v\":5,\"unknown\":1,\"users\"",
+                    "{\"v\":6,\"users\"",
+                    "{\"v\":6,\"unknown\":1,\"users\"",
                     StringComparison.Ordinal
                 ),
                 originalConfig.Replace(
