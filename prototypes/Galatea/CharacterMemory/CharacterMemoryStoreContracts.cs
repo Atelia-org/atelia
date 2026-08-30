@@ -63,7 +63,6 @@ internal sealed record CharacterMemoryRejectRequest(
 internal sealed record CharacterMemoryQuarantineRequest(
     long ExpectedStoreRevision,
     string QuarantineCode,
-    string? SourceActionAddress = null,
     string? ObservedPodStateIdentity = null
 );
 

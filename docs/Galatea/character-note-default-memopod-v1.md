@@ -172,7 +172,7 @@ character_note
   PK(source_action_address, artifact_ordinal)
 ```
 
-初始上限沿用extractor apply合同：每个Action最多16条、每条ExactText 64 KiB、总ExactText 256 KiB。Store reopen会重新验证这些bounds、strict UTF-8、canonical IDs、row count、commitment与meta identity。历史capture不由每次status read全量materialize；production只提供meta/pending status与按`SourceAction`读取单批的bounded API。
+初始上限沿用extractor apply合同：每个Action最多16条、每条ExactText 64 KiB、总ExactText 256 KiB。Store reopen严格验证schema/index、meta、`0..1` active batch与全局SQL count invariant；历史capture的bounds、strict UTF-8、canonical IDs与commitment只在按`SourceAction`执行bounded exact read时验证，不在Open或每次status read中全量materialize。
 
 `settled_default_pod_state_identity`是store对当前committed Default Pod tip的commitment fence。它不承载正文查询，但每个新plan都必须证明observed base与该值exact相等，禁止静默收养旁路MemoPod修改。Applied settlement与meta tip推进必须在同一个SQLite transaction中完成；历史Applied row不要求自己的旧target永远等于当前Pod。
 

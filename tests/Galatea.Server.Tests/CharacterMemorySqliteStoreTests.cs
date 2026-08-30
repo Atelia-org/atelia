@@ -159,7 +159,7 @@ public sealed class CharacterMemorySqliteStoreTests {
             captured.ExtractionCommitment,
             State('p'),
             State('t'),
-            ["m1:00000001", "m1:00000002"]
+            ["m1:00000001", "m1:00000009"]
         );
 
         CharacterMemoryPlanResult planned = fixture.Store.PlanApply(
@@ -169,7 +169,7 @@ public sealed class CharacterMemorySqliteStoreTests {
             planned.Disposition);
         Assert.Equal(CharacterMemoryCaptureState.Planned,
             planned.Capture.State);
-        Assert.Equal(["m1:00000001", "m1:00000002"],
+        Assert.Equal(["m1:00000001", "m1:00000009"],
             planned.Capture.Notes.Select(static note => note.MemoId));
         Assert.Equal(CharacterMemoryPlanDisposition.AlreadyPlanned,
             fixture.Store.PlanApply(planRequest).Disposition);
@@ -259,7 +259,6 @@ public sealed class CharacterMemorySqliteStoreTests {
         var request = new CharacterMemoryQuarantineRequest(
             before.StoreRevision,
             "POD_STATE_MISMATCH",
-            Address(40),
             State('x')
         );
 
@@ -291,6 +290,9 @@ public sealed class CharacterMemorySqliteStoreTests {
     }
 
     [Theory]
+    [InlineData("create-initial-state")]
+    [InlineData("record-initial-default-pod")]
+    [InlineData("capture-note-action-zero")]
     [InlineData("capture-note-action")]
     [InlineData("plan-note-apply")]
     [InlineData("settle-note-apply")]
@@ -310,6 +312,17 @@ public sealed class CharacterMemorySqliteStoreTests {
             }
         );
         using var fixture = new ReadyStore(hooks);
+        if (targetOperation == "capture-note-action-zero") {
+            CharacterMemoryCaptureResult zero = fixture.Store.CaptureNew(
+                Capture(Address(49), [])
+            );
+            Assert.Equal(CharacterMemoryCaptureDisposition.ZeroCaptured,
+                zero.Disposition);
+            Assert.Equal(CharacterMemoryCaptureState.ZeroCaptured,
+                fixture.Store.ReadCaptureExact(Address(49))!.State);
+            Assert.Equal(1, fired);
+            return;
+        }
         CharacterMemoryCaptureSnapshot capture = fixture.Store.CaptureNew(
             Capture(Address(50), ["note"])
         ).Capture!;
@@ -350,7 +363,6 @@ public sealed class CharacterMemorySqliteStoreTests {
             _ = fixture.Store.Quarantine(new CharacterMemoryQuarantineRequest(
                 status.StoreRevision,
                 "MISMATCH",
-                Address(50),
                 State('x')
             ));
             Assert.Equal(CharacterMemoryStoreState.Quarantined,
@@ -393,9 +405,9 @@ public sealed class CharacterMemorySqliteStoreTests {
     }
 
     [Fact]
-    public void StrictReopenRejectsCommitmentCorruption() {
+    public void HistoricalCorruption_IsDeferredToBoundedExactRead() {
         using var fixture = new ReadyStore();
-        _ = fixture.Store.CaptureNew(Capture(Address(70), ["note"]));
+        _ = fixture.Store.CaptureNew(Capture(Address(70), []));
         string directory = fixture.DirectoryPath;
         CharacterMemoryStoreOwner owner = fixture.Owner;
         fixture.DisposeStore();
@@ -407,6 +419,79 @@ public sealed class CharacterMemorySqliteStoreTests {
             "UPDATE note_action_capture SET extraction_commitment = '"
                 + Sha('f') + "' WHERE source_action_address = '"
                 + Address(70) + "';"
+        );
+
+        using CharacterMemorySqliteStore reopened =
+            CharacterMemorySqliteStore.OpenExisting(directory, owner);
+        Assert.Throws<InvalidDataException>(() =>
+            reopened.ReadCaptureExact(Address(70)));
+    }
+
+    [Fact]
+    public void StrictReopenRejectsGlobalArtifactCountMismatch() {
+        using var fixture = new ReadyStore();
+        CharacterMemoryCaptureSnapshot capture = fixture.Store.CaptureNew(
+            Capture(Address(71), ["note"])
+        ).Capture!;
+        _ = fixture.Store.Reject(new CharacterMemoryRejectRequest(
+            Address(71),
+            capture.ExtractionCommitment,
+            "CAPACITY"
+        ));
+        string directory = fixture.DirectoryPath;
+        CharacterMemoryStoreOwner owner = fixture.Owner;
+        fixture.DisposeStore();
+        ExecuteSql(
+            System.IO.Path.Combine(
+                directory,
+                CharacterMemorySqliteStore.DatabaseFileName
+            ),
+            "DELETE FROM character_note WHERE source_action_address = '"
+                + Address(71) + "';"
+        );
+
+        Assert.Throws<InvalidDataException>(() =>
+            CharacterMemorySqliteStore.OpenExisting(directory, owner));
+    }
+
+    [Theory]
+    [InlineData("""
+        DROP INDEX ux_character_note_memo_id;
+        CREATE INDEX ux_character_note_memo_id
+        ON character_note(memo_id) WHERE memo_id IS NOT NULL;
+        """)]
+    [InlineData("""
+        DROP INDEX ux_character_note_memo_id;
+        CREATE UNIQUE INDEX ux_character_note_memo_id
+        ON character_note(memo_id);
+        """)]
+    [InlineData("""
+        DROP INDEX ux_character_note_memo_id;
+        CREATE UNIQUE INDEX ux_character_note_memo_id
+        ON character_note(exact_text) WHERE memo_id IS NOT NULL;
+        """)]
+    [InlineData("""
+        DROP INDEX ux_note_capture_single_active;
+        CREATE UNIQUE INDEX ux_note_capture_single_active
+        ON note_action_capture(source_action_address)
+        WHERE state IN ('Captured', 'Planned');
+        """)]
+    [InlineData("""
+        DROP INDEX ux_note_capture_single_active;
+        CREATE UNIQUE INDEX ux_note_capture_single_active
+        ON note_action_capture((1)) WHERE state = 'Captured';
+        """)]
+    public void StrictReopenRejectsWrongSameNameIndex(string replacementSql) {
+        using var fixture = new ReadyStore();
+        string directory = fixture.DirectoryPath;
+        CharacterMemoryStoreOwner owner = fixture.Owner;
+        fixture.DisposeStore();
+        ExecuteSql(
+            System.IO.Path.Combine(
+                directory,
+                CharacterMemorySqliteStore.DatabaseFileName
+            ),
+            replacementSql
         );
 
         Assert.Throws<InvalidDataException>(() =>

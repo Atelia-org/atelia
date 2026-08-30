@@ -385,49 +385,87 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         string provisionTargetPodStateIdentity,
         CharacterMemoryStoreTestHooks hooks
     ) {
-        using SqliteTransaction transaction =
-            connection.BeginTransaction(deferred: false);
-        using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            INSERT INTO character_memory_meta(
-                singleton, schema_version, user_id, session_repository_id,
-                capture_frontier_segment_number,
-                capture_frontier_tail_offset, baseline_selected_head,
-                store_state, provision_target_pod_state_identity,
-                settled_default_pod_state_identity, active_source_action,
-                quarantine_code, quarantine_observed_pod_state_identity,
-                store_revision
-            ) VALUES (
-                1, 1, $user, $repository, $segment, $tail, $head,
-                'Provisioning', $target, NULL, NULL, NULL, NULL, 0
+        const string operation = "create-initial-state";
+        Exception? uncertain = null;
+        using (SqliteTransaction transaction =
+               connection.BeginTransaction(deferred: false)) {
+            using SqliteCommand command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO character_memory_meta(
+                    singleton, schema_version, user_id, session_repository_id,
+                    capture_frontier_segment_number,
+                    capture_frontier_tail_offset, baseline_selected_head,
+                    store_state, provision_target_pod_state_identity,
+                    settled_default_pod_state_identity, active_source_action,
+                    quarantine_code, quarantine_observed_pod_state_identity,
+                    store_revision
+                ) VALUES (
+                    1, 1, $user, $repository, $segment, $tail, $head,
+                    'Provisioning', $target, NULL, NULL, NULL, NULL, 0
+                );
+                """;
+            command.Parameters.AddWithValue("$user", owner.UserId);
+            command.Parameters.AddWithValue(
+                "$repository",
+                owner.SessionRepositoryId
             );
-            """;
-        command.Parameters.AddWithValue("$user", owner.UserId);
-        command.Parameters.AddWithValue(
-            "$repository",
-            owner.SessionRepositoryId
+            command.Parameters.AddWithValue(
+                "$segment",
+                baseline.CaptureFromPhysicalFrontier.SegmentNumber
+            );
+            command.Parameters.AddWithValue(
+                "$tail",
+                baseline.CaptureFromPhysicalFrontier.TailOffset
+            );
+            command.Parameters.AddWithValue(
+                "$head",
+                (object?)baseline.SelectedHead ?? DBNull.Value
+            );
+            command.Parameters.AddWithValue(
+                "$target",
+                provisionTargetPodStateIdentity
+            );
+            _ = command.ExecuteNonQuery();
+            hooks.BeforeCommit?.Invoke(operation);
+            try {
+                transaction.Commit();
+                hooks.AfterCommitBeforeReturn?.Invoke(operation);
+            }
+            catch (Exception exception) when (
+                GalateaExceptionClassifier.IsNonFatal(exception)) {
+                uncertain = exception;
+            }
+        }
+        if (uncertain is null) { return; }
+        try {
+            CharacterMemoryStatusSnapshot status = ValidateOpenedDatabase(
+                connection,
+                owner
+            );
+            if (status.Baseline == baseline
+                && status.StoreState is CharacterMemoryStoreState.Provisioning
+                && string.Equals(
+                    status.ProvisionTargetPodStateIdentity,
+                    provisionTargetPodStateIdentity,
+                    StringComparison.Ordinal)
+                && status.SettledDefaultPodStateIdentity is null
+                && status.ActiveSourceAction is null
+                && status.StoreRevision == 0) {
+                return;
+            }
+        }
+        catch (Exception validationException) when (
+            GalateaExceptionClassifier.IsNonFatal(validationException)) {
+            throw new CharacterMemoryStoreCommitOutcomeException(
+                operation,
+                new AggregateException(uncertain, validationException)
+            );
+        }
+        throw new CharacterMemoryStoreCommitOutcomeException(
+            operation,
+            uncertain
         );
-        command.Parameters.AddWithValue(
-            "$segment",
-            baseline.CaptureFromPhysicalFrontier.SegmentNumber
-        );
-        command.Parameters.AddWithValue(
-            "$tail",
-            baseline.CaptureFromPhysicalFrontier.TailOffset
-        );
-        command.Parameters.AddWithValue(
-            "$head",
-            (object?)baseline.SelectedHead ?? DBNull.Value
-        );
-        command.Parameters.AddWithValue(
-            "$target",
-            provisionTargetPodStateIdentity
-        );
-        _ = command.ExecuteNonQuery();
-        hooks.BeforeCommit?.Invoke("create-initial-state");
-        transaction.Commit();
-        hooks.AfterCommitBeforeReturn?.Invoke("create-initial-state");
     }
 
     private static CharacterMemoryStatusSnapshot ValidateOpenedDatabase(
@@ -460,7 +498,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             connection,
             transaction: null
         );
-        ValidateAllCaptures(connection, status);
+        ValidateGlobalCountInvariants(connection, status);
         return status;
     }
 
@@ -517,6 +555,29 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         RequireExactForeignKeys(connection, "character_note", [
             "source_action_address->note_action_capture.source_action_address:RESTRICT"
         ]);
+        RequireExactIndex(
+            connection,
+            table: "character_note",
+            index: "ux_character_note_memo_id",
+            expectedKeyColumnId: 3,
+            expectedKeyColumnName: "memo_id",
+            expectedSql: """
+                CREATE UNIQUE INDEX ux_character_note_memo_id
+                ON character_note(memo_id) WHERE memo_id IS NOT NULL
+                """
+        );
+        RequireExactIndex(
+            connection,
+            table: "note_action_capture",
+            index: "ux_note_capture_single_active",
+            expectedKeyColumnId: -2,
+            expectedKeyColumnName: null,
+            expectedSql: """
+                CREATE UNIQUE INDEX ux_note_capture_single_active
+                ON note_action_capture((1))
+                WHERE state IN ('Captured', 'Planned')
+                """
+        );
     }
 
     private static CharacterMemoryStatusSnapshot ReadStatusCore(
@@ -681,39 +742,62 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         return snapshot;
     }
 
-    private static void ValidateAllCaptures(
+    private static void ValidateGlobalCountInvariants(
         SqliteConnection connection,
         CharacterMemoryStatusSnapshot status
     ) {
-        var sources = new List<string>();
-        using (SqliteCommand command = connection.CreateCommand()) {
-            command.CommandText = """
-                SELECT source_action_address FROM note_action_capture
-                ORDER BY source_action_address;
-                """;
-            using SqliteDataReader reader = command.ExecuteReader();
-            while (reader.Read()) { sources.Add(reader.GetString(0)); }
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                (SELECT COUNT(*) FROM note_action_capture
+                 WHERE state IN ('Captured', 'Planned')),
+                (SELECT MIN(source_action_address) FROM note_action_capture
+                 WHERE state IN ('Captured', 'Planned')),
+                (SELECT MAX(source_action_address) FROM note_action_capture
+                 WHERE state IN ('Captured', 'Planned')),
+                (SELECT COUNT(*)
+                 FROM note_action_capture AS capture
+                 LEFT JOIN (
+                     SELECT source_action_address,
+                            COUNT(*) AS child_count,
+                            MIN(artifact_ordinal) AS minimum_ordinal,
+                            MAX(artifact_ordinal) AS maximum_ordinal
+                     FROM character_note
+                     GROUP BY source_action_address
+                 ) AS children USING(source_action_address)
+                 WHERE capture.artifact_count
+                           != COALESCE(children.child_count, 0)
+                    OR (capture.artifact_count > 0
+                        AND (children.minimum_ordinal != 0
+                            OR children.maximum_ordinal
+                                != capture.artifact_count - 1)))
+            ;
+            """;
+        using SqliteDataReader reader = command.ExecuteReader();
+        if (!reader.Read()) {
+            throw Corrupt("Character Memory count invariant query was empty.");
         }
-        int activeCount = 0;
-        foreach (string source in sources) {
-            CharacterMemoryCaptureSnapshot capture = ReadCaptureCore(
-                connection,
-                transaction: null,
-                source
-            ) ?? throw Corrupt("Enumerated capture disappeared.");
-            if (capture.State is CharacterMemoryCaptureState.Captured
-                    or CharacterMemoryCaptureState.Planned) {
-                activeCount++;
-                if (!string.Equals(
-                        source,
-                        status.ActiveSourceAction,
-                        StringComparison.Ordinal)) {
-                    throw Corrupt("Active capture does not match meta.");
-                }
-            }
+        long activeCount = reader.GetInt64(0);
+        string? minimumActive = reader.IsDBNull(1)
+            ? null
+            : reader.GetString(1);
+        string? maximumActive = reader.IsDBNull(2)
+            ? null
+            : reader.GetString(2);
+        long artifactCountMismatch = reader.GetInt64(3);
+        if (reader.Read()) {
+            throw Corrupt("Character Memory count invariant query is not singleton.");
         }
-        if (activeCount != (status.ActiveSourceAction is null ? 0 : 1)) {
+        long expectedActiveCount = status.ActiveSourceAction is null ? 0 : 1;
+        if (activeCount != expectedActiveCount
+            || !string.Equals(minimumActive, status.ActiveSourceAction,
+                StringComparison.Ordinal)
+            || !string.Equals(maximumActive, status.ActiveSourceAction,
+                StringComparison.Ordinal)) {
             throw Corrupt("Character Memory active capture count is invalid.");
+        }
+        if (artifactCountMismatch != 0) {
+            throw Corrupt("Capture artifact row counts are invalid.");
         }
     }
 
@@ -1087,6 +1171,106 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         if (!actual.SetEquals(expected)) {
             throw Corrupt($"Table '{table}' foreign keys are not exact.");
         }
+    }
+
+    private static void RequireExactIndex(
+        SqliteConnection connection,
+        string table,
+        string index,
+        int expectedKeyColumnId,
+        string? expectedKeyColumnName,
+        string expectedSql
+    ) {
+        bool found = false;
+        using (SqliteCommand command = connection.CreateCommand()) {
+            command.CommandText = $"PRAGMA index_list('{table}');";
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read()) {
+                if (!string.Equals(reader.GetString(1), index,
+                        StringComparison.Ordinal)) {
+                    continue;
+                }
+                if (found
+                    || reader.GetInt32(2) != 1
+                    || !string.Equals(reader.GetString(3), "c",
+                        StringComparison.Ordinal)
+                    || reader.GetInt32(4) != 1) {
+                    throw Corrupt(
+                        $"Index '{index}' is not an exact unique partial index."
+                    );
+                }
+                found = true;
+            }
+        }
+        if (!found) {
+            throw Corrupt($"Index '{index}' is absent from '{table}'.");
+        }
+
+        int keyCount = 0;
+        using (SqliteCommand command = connection.CreateCommand()) {
+            command.CommandText = $"PRAGMA index_xinfo('{index}');";
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read()) {
+                if (reader.GetInt32(5) != 1) { continue; }
+                keyCount++;
+                string? columnName = reader.IsDBNull(2)
+                    ? null
+                    : reader.GetString(2);
+                if (reader.GetInt32(0) != 0
+                    || reader.GetInt32(1) != expectedKeyColumnId
+                    || !string.Equals(columnName, expectedKeyColumnName,
+                        StringComparison.Ordinal)
+                    || reader.GetInt32(3) != 0
+                    || !string.Equals(reader.GetString(4), "BINARY",
+                        StringComparison.Ordinal)) {
+                    throw Corrupt(
+                        $"Index '{index}' key column or expression is not exact."
+                    );
+                }
+            }
+        }
+        if (keyCount != 1) {
+            throw Corrupt($"Index '{index}' key count is not exact.");
+        }
+
+        using (SqliteCommand command = connection.CreateCommand()) {
+            command.CommandText = """
+                SELECT tbl_name, sql FROM sqlite_schema
+                WHERE type = 'index' AND name = $index;
+                """;
+            command.Parameters.AddWithValue("$index", index);
+            using SqliteDataReader reader = command.ExecuteReader();
+            if (!reader.Read()
+                || !string.Equals(reader.GetString(0), table,
+                    StringComparison.Ordinal)
+                || reader.IsDBNull(1)
+                || !string.Equals(
+                    NormalizeSchemaSql(reader.GetString(1)),
+                    NormalizeSchemaSql(expectedSql),
+                    StringComparison.Ordinal)
+                || reader.Read()) {
+                throw Corrupt(
+                    $"Index '{index}' expression or predicate is not exact."
+                );
+            }
+        }
+    }
+
+    private static string NormalizeSchemaSql(string sql) {
+        var result = new StringBuilder(sql.Length);
+        bool pendingSpace = false;
+        foreach (char character in sql) {
+            if (char.IsWhiteSpace(character)) {
+                pendingSpace = result.Length > 0;
+                continue;
+            }
+            if (pendingSpace) {
+                result.Append(' ');
+                pendingSpace = false;
+            }
+            result.Append(character);
+        }
+        return result.ToString().TrimEnd(';');
     }
 
     private static void ExecutePragma(SqliteConnection connection, string sql) {

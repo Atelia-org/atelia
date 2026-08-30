@@ -1,4 +1,3 @@
-using System.Globalization;
 using Atelia.SessionJournal;
 using Microsoft.Data.Sqlite;
 
@@ -508,13 +507,6 @@ internal sealed partial class CharacterMemorySqliteStore {
                             "Quarantine observer used a stale store revision."
                         );
                     }
-                    if (request.SourceActionAddress is not null
-                        && ReadCaptureCore(connection, transaction,
-                            request.SourceActionAddress) is null) {
-                        throw new CharacterMemoryStoreConflictException(
-                            "Quarantine source Action has no capture."
-                        );
-                    }
                     long revision = IncrementStoreRevision(connection, transaction);
                     using SqliteCommand update = connection.CreateCommand();
                     update.Transaction = transaction;
@@ -805,25 +797,12 @@ internal sealed partial class CharacterMemorySqliteStore {
             throw new ArgumentOutOfRangeException(nameof(request.MemoIds));
         }
         var unique = new HashSet<string>(StringComparer.Ordinal);
-        uint previousOrdinal = 0;
         foreach (string memoId in request.MemoIds) {
             RequireMemoId(memoId, nameof(request.MemoIds));
             if (!unique.Add(memoId)) {
                 throw new ArgumentException("Plan MemoIds must be unique.",
                     nameof(request.MemoIds));
             }
-            uint ordinal = uint.Parse(
-                memoId.AsSpan(3),
-                NumberStyles.AllowHexSpecifier,
-                CultureInfo.InvariantCulture
-            );
-            if (previousOrdinal != 0 && ordinal != previousOrdinal + 1) {
-                throw new ArgumentException(
-                    "Plan MemoIds must be contiguous in Append order.",
-                    nameof(request.MemoIds)
-                );
-            }
-            previousOrdinal = ordinal;
         }
     }
 
@@ -861,10 +840,6 @@ internal sealed partial class CharacterMemorySqliteStore {
         }
         RequireCode(request.QuarantineCode,
             nameof(request.QuarantineCode));
-        if (request.SourceActionAddress is not null) {
-            RequireEventAddress(request.SourceActionAddress,
-                nameof(request.SourceActionAddress));
-        }
         if (request.ObservedPodStateIdentity is not null) {
             RequirePodStateIdentity(request.ObservedPodStateIdentity,
                 nameof(request.ObservedPodStateIdentity));
