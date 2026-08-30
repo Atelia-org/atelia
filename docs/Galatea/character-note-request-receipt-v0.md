@@ -3,7 +3,7 @@
 ## 状态
 
 - 方案日期：2026-08-30
-- 当前阶段：A0 shared target、A1 extractor contract与A2 config/composition已完成；A3/A4尚未开始
+- 当前阶段：A0 shared target、A1 extractor contract、A2 config/composition与A4a receipt protocol/queue已完成；A3/A4b runtime接线尚未开始
 - 目标版本：V0 development vertical slice
 - 对外承诺：只确认 runtime 识别到角色的 Note 请求，不承诺 Memo 已保存
 
@@ -53,12 +53,12 @@ MemoPod routing、内容整理和 recall planner 不影响这三个判断。现�
 推荐的可见措辞是：
 
 ```text
-### Note 请求回执
+## Note 请求回执
 
 Galatea runtime 已识别到 1 条 Note 请求。
 
 当前仅完成请求提取与回传，Memo 持久化尚未实现；
-本回执不表示该 Note 已经保存。
+本回执不表示这些 Note 已经保存。
 
 识别到的 Note 原文如下：
 <由 canonical renderer 使用 adaptive fence 包裹原文>
@@ -198,24 +198,26 @@ provider/wrapper audit 未发现需要 runtime 修改的 shared mutable invocati
 
 ## 回执排队与注入
 
-V0 使用每个 `UserSessionHost` 私有的进程内 pending queue，不增加 SQLite schema，不复用 delegation store。
+V0 使用每个 `UserSessionHost` 私有的进程内 pending queue，不增加 SQLite schema，不复用 delegation store。queue 是 caller-serialized 的 bounded FIFO；`TurnLock` 保证领取路径不会并发。
 
-一条 queue item 至少包含：
+一条 queue item 只包含：
 
-- `SourceAction`；
-- extractor `ContractId`；
-- 按叙事顺序冻结的 intents；
-- code-owned rendered receipt body。
+- frozen `PlayerTurnNotice.NoteRequestReceipt`；
+- receipt body 的 UTF-8 byte count。
+
+queue 不同时保存 intents、contract或另一份可重新render的 DTO，避免形成双重 payload authority。固定上限为 16 项、合计 4 MiB；满时 drop newest并返回false，由caller记录development diagnostic，不改变已经完成的主回合。
+
+单条 receipt body 上限为512 KiB。已锁定的 Note batch 最多包含256 KiB `ExactText`；另一半预算留给code-owned措辞、序号和inner adaptive fences。receipt factory还会用实际frozen notice验证“与最大合法player text组合仍可落入1 MiB Observation”；极端长tilde run导致fence膨胀时不创建receipt，而不是放宽outer hard bound。
 
 投递规则：
 
 1. 只在下一次普通 player turn 注入；不自动启动额外主模型 Completion。
 2. 只在没有 active durable reply lease 的 player turn 注入；有 mail reply lease 时继续保留到后续普通回合。
 3. 每轮最多注入一条 Note receipt；多条 pending item 保持 FIFO。
-4. admission 时先 reserve，不立即删除；该 turn 成功完成后才从 queue consume。
-5. pre-dispatch stop、failed turn 或 aborted turn 把 reservation 恢复为 pending。
-6. 进程退出会丢失 pending/reserved item；这是 V0 明示限制。
-7. Undo/rewind 不重新武装已经 consume 的回执；这是 V0 明示限制。
+4. `BeginCutoff == Empty` 的普通 `StartTurn` 以 `TryDequeue` 领取queue head，并冻结进本次 `PlayerAction.Notices`；这就是at-most-once delivery attempt。
+5. pre-dispatch stop、failed/aborted turn或后续recovery不重新排队；V0只承诺注入下一次eligible turn attempt，不承诺注入下一次成功turn。
+6. 进程退出会丢失尚未领取的pending item；这是 V0 明示限制。
+7. recovery、Undo和rewind都不重新武装已经领取的回执。
 
 回执使用新的 `PlayerTurnNotice.NoteRequestReceipt` strong type 和独立 canonical heading/info string。它不伪装成：
 
@@ -226,6 +228,17 @@ V0 使用每个 `UserSessionHost` 私有的进程内 pending queue，不增加 S
 - `MemoSaved` 或 storage receipt。
 
 renderer 使用 adaptive fence，parser 只接受 canonical round-trip。recent display 显示自然回执正文；内部 source identity 不暴露给 browser 或模型。
+
+current dialect 的canonical顺序固定为：
+
+```text
+player action
+  -> 0..N recalls
+  -> 0..N Reply / DeliveryFailure
+  -> 0..1 NoteRequestReceipt（必须最后）
+```
+
+legacy dialect拒绝`NoteRequestReceipt`；receipt heading为`Note 请求回执`，info string为`character-note-request-receipt`。回执内每条`ExactText`按原顺序放进`character-note-exact-text` inner adaptive fence；`EvidenceQuote`、source address与extractor contract不进入可见body。0 intent不创建receipt。
 
 ## 配置与 capability
 
@@ -273,6 +286,7 @@ V0 不实现：
 - Note SQLite capture、0-result durable tombstone、apply receipt；
 - restart/admission compensation；
 - Undo/rewind re-arm；
+- receipt reservation、failure requeue或recovery transfer；
 - 分类、重要性、过期时间、标签、合并、分裂、冻结；
 - Summary / Gist 自动生成；
 - index maintenance；
@@ -304,7 +318,8 @@ V0 不实现：
 | A1 | `CharacterNoteIntent`、prompt、extractor、ContractId、bounds/source-grounding | Complete | `CharacterNoteExtractorTests` 10/10 |
 | A2 | exact config binding、lazy per-user composition | Complete | focused config/composition tests 42/42 |
 | A3 | post-completion 并行 coordinator、timeout/failure matrix、diagnostics | Pending | lifecycle/concurrency tests |
-| A4 | 进程内 receipt queue/reservation；`PlayerTurnObservation` canonical 注入 | Pending | render/parse/recovery/requeue tests |
+| A4a | code-owned receipt、bounded FIFO、`PlayerTurnObservation` canonical grammar | Complete | focused receipt/Observation tests 16/16；Galatea build 0 warnings/errors |
+| A4b | `UserSessionHost` queue ownership与普通`StartTurn` at-most-once注入 | Pending | runtime injection tests |
 | R0 | 独立 code review、尾修、完整串行验证、状态回写 | Pending | review findings + final commands |
 
 ## 验收标准
@@ -314,7 +329,7 @@ V0 不实现：
 - blocking fake clients 能证明两个 extractor 的最大并发数达到 2；同一 client instance 的并发 contract 有测试保护。
 - Mail success + Note failure 不影响主回合；Mail failure + Note success 不产生回执；task 不泄漏。
 - fresh 和 recovery 新完成的 terminal Action 都运行 Note；admission/restart reconciliation 不运行 Note。
-- Note receipt 只在后续无 reply lease 的普通 player turn 出现；失败回合不消费 reservation。
+- Note receipt 只在后续无 reply lease 的普通 player turn attempt出现；领取后不因失败、recovery或rewind重新排队。
 - receipt render/parse/re-render byte exact，正文包含任意 Markdown fence、换行和控制字符时仍 bounded、无注入歧义。
 - `null` binding 不创建 Note client；unknown/wrong-case/extra config fail closed。
 - 主系统提示词 byte-for-byte 不因 V0 改变。

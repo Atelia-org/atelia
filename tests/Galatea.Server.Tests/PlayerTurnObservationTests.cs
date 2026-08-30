@@ -2,6 +2,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.Prompts;
+using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
@@ -210,6 +211,191 @@ public sealed class PlayerTurnObservationTests {
             StringComparison.Ordinal);
         Assert.DoesNotContain("SourceId:", display,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CompositeEnvelope_RoundTripsFinalNoteRequestReceipt() {
+        const string ReceiptBody =
+            "runtime 已识别请求。\n~~~~ inner fence\n控制\0字符与末尾换行。\n";
+        var source = new PlayerTurnObservation(
+            "继续观察",
+            ObservationTimestamp,
+            [
+                new PlayerTurnNotice.Reply("先到达的回信"),
+                new PlayerTurnNotice.NoteRequestReceipt(ReceiptBody)
+            ],
+            [
+                new PlayerTurnRecall(
+                    new RecallEntry(
+                        RecallType.MemoGist,
+                        "memo-pod:galatea#memo-0001"
+                    ),
+                    "标题：蓝门\n印象：门后有风声。"
+                )
+            ]
+        );
+
+        string rendered = PlayerTurnObservationEnvelope.Wrap(source);
+        int recall = rendered.IndexOf(
+            PlayerTurnObservationEnvelope.RecallGistHeading,
+            StringComparison.Ordinal
+        );
+        int reply = rendered.IndexOf(
+            PlayerTurnObservationEnvelope.ReplyHeading,
+            StringComparison.Ordinal
+        );
+        int receipt = rendered.IndexOf(
+            PlayerTurnObservationEnvelope.NoteRequestReceiptHeading,
+            StringComparison.Ordinal
+        );
+        Assert.True(recall >= 0);
+        Assert.True(reply > recall);
+        Assert.True(receipt > reply);
+        Assert.Contains(
+            "~~~~~character-note-request-receipt\n"
+                + ReceiptBody + "~~~~~\n",
+            rendered,
+            StringComparison.Ordinal
+        );
+
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
+            rendered,
+            out PlayerTurnObservation parsed
+        ));
+        Assert.Collection(
+            parsed.Notices,
+            notice => Assert.IsType<PlayerTurnNotice.Reply>(notice),
+            notice => {
+                Assert.IsType<PlayerTurnNotice.NoteRequestReceipt>(notice);
+                Assert.Equal(ReceiptBody, notice.Body);
+            }
+        );
+        Assert.Equal(
+            rendered,
+            PlayerTurnObservationEnvelope.Wrap(parsed)
+        );
+
+        string display = PlayerTurnObservationEnvelope
+            .FormatForDisplay(parsed);
+        Assert.Contains(
+            PlayerTurnObservationEnvelope.NoteRequestReceiptHeading,
+            display,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(ReceiptBody, display, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "character-note-request-receipt",
+            display,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
+    public void CompositeEnvelope_RejectsMalformedReceiptPlacementAndDialect() {
+        Assert.Throws<ArgumentException>(() =>
+            new PlayerTurnObservation(
+                "act",
+                [
+                    new PlayerTurnNotice.NoteRequestReceipt("receipt"),
+                    new PlayerTurnNotice.Reply("reply")
+                ]
+            ));
+        Assert.Throws<ArgumentException>(() =>
+            new PlayerTurnObservation(
+                "act",
+                [
+                    new PlayerTurnNotice.NoteRequestReceipt("first"),
+                    new PlayerTurnNotice.NoteRequestReceipt("second")
+                ]
+            ));
+
+        string canonical = PlayerTurnObservationEnvelope.Wrap(
+            new PlayerTurnObservation(
+                "act",
+                [
+                    new PlayerTurnNotice.Reply("reply"),
+                    new PlayerTurnNotice.NoteRequestReceipt("receipt")
+                ]
+            )
+        );
+        Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
+            canonical.Replace(
+                "character-note-request-receipt",
+                "character_note_request_receipt",
+                StringComparison.Ordinal
+            ),
+            out _
+        ));
+
+        const string HeadingSentinel = "RECEIPT-HEADING-SENTINEL";
+        const string InfoSentinel = "receipt-info-sentinel";
+        string receiptBeforeReply = canonical
+            .Replace(
+                PlayerTurnObservationEnvelope.ReplyHeading,
+                HeadingSentinel,
+                StringComparison.Ordinal
+            )
+            .Replace(
+                PlayerTurnObservationEnvelope.NoteRequestReceiptHeading,
+                PlayerTurnObservationEnvelope.ReplyHeading,
+                StringComparison.Ordinal
+            )
+            .Replace(
+                HeadingSentinel,
+                PlayerTurnObservationEnvelope.NoteRequestReceiptHeading,
+                StringComparison.Ordinal
+            )
+            .Replace(
+                "delegate-reply",
+                InfoSentinel,
+                StringComparison.Ordinal
+            )
+            .Replace(
+                "character-note-request-receipt",
+                "delegate-reply",
+                StringComparison.Ordinal
+            )
+            .Replace(
+                InfoSentinel,
+                "character-note-request-receipt",
+                StringComparison.Ordinal
+            );
+        Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
+            receiptBeforeReply,
+            out _
+        ));
+
+        string duplicate = PlayerTurnObservationEnvelope.Wrap(
+            new PlayerTurnObservation(
+                "act",
+                [
+                    new PlayerTurnNotice.Reply("first"),
+                    new PlayerTurnNotice.Reply("second")
+                ]
+            )
+        ).Replace(
+            PlayerTurnObservationEnvelope.ReplyHeading,
+            PlayerTurnObservationEnvelope.NoteRequestReceiptHeading,
+            StringComparison.Ordinal
+        ).Replace(
+            "delegate-reply",
+            "character-note-request-receipt",
+            StringComparison.Ordinal
+        );
+        Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
+            duplicate,
+            out _
+        ));
+
+        string legacyWithReceipt = canonical.Replace(
+            PlayerTurnObservationEnvelope.ReplyHeading,
+            "外界代行者 Codex 给 Galatea 的回信",
+            StringComparison.Ordinal
+        );
+        Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
+            legacyWithReceipt,
+            out _
+        ));
     }
 
     [Fact]
@@ -553,6 +739,12 @@ public sealed class PlayerTurnObservationTests {
             )));
         Assert.Throws<ArgumentException>(() =>
             new PlayerTurnNotice.Reply("bad\ud800"));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new PlayerTurnNotice.NoteRequestReceipt(new string(
+                'x',
+                PlayerTurnObservationEnvelope
+                    .MaximumNoteRequestReceiptUtf8Bytes + 1
+            )));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             new PlayerTurnObservation(
                 "act",
