@@ -204,6 +204,11 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
             "galatea-codex-delegation-state",
             id
         ),
+        Path.Combine(
+            Path.GetTempPath(),
+            "galatea-codex-character-memory-state",
+            id
+        ),
         GalateaSessionProvisioning.ExistingOnly,
         SystemPrompt: "prompt"
     );

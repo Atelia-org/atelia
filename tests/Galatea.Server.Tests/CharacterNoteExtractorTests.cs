@@ -467,6 +467,11 @@ public sealed class CharacterNoteExtractorTests {
             "character-note-delegation",
             userId
         ),
+        Path.Combine(
+            Path.GetTempPath(),
+            "character-note-memory",
+            userId
+        ),
         GalateaSessionProvisioning.ExistingOnly,
         "system prompt"
     );

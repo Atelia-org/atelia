@@ -680,6 +680,7 @@ public sealed class GalateaMailboxTests {
         new GalateaPlayerName("Player"),
         "/tmp/session-" + userId,
         "/tmp/delegation-" + userId,
+        "/tmp/character-memory-" + userId,
         GalateaSessionProvisioning.ExistingOnly,
         "system " + characterName
     );

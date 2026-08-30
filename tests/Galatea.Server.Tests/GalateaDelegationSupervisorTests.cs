@@ -621,6 +621,7 @@ public sealed class GalateaDelegationSupervisorTests {
         new GalateaPlayerName("Player"),
         sessionPath,
         statePath,
+        statePath + "-character-memory",
         provisioning,
         SystemPrompt: "prompt"
     );
