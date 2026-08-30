@@ -112,6 +112,117 @@ public sealed class CharacterNoteRuntimeTests {
         }
     }
 
+    [Fact]
+    public async Task DiagnosticSinkCapturesSingleLineJsonWithinContentBoundary() {
+        const string ExactText = "remember blue\nsecond line";
+        const string Evidence =
+            "I completed recording my long-term Note:\nremember blue\nsecond line";
+        const string ActionMarker = "FULL-ACTION-MUST-NOT-BE-LOGGED";
+        string action = $"""
+            [Galatea] {ActionMarker}; I sent a mail and completed sending.
+            [Galatea] {Evidence}
+            """;
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig mail = Connection("mail");
+        CompletionConnectionConfig note = Connection("note") with {
+            BaseAddress = "https://sensitive-endpoint.invalid/",
+            ApiKey = "sensitive-secret",
+        };
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient>(
+                StringComparer.Ordinal
+            ) {
+                [main.Id] = new QueueClient(Message(
+                    new ActionBlock.Text(action)
+                )),
+                [mail.Id] = new QueueClient(Message()),
+                [note.Id] = new QueueClient(Message(NoteTool(
+                    ExactText,
+                    Evidence
+                ))),
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, mail, note],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: mail.Id,
+            characterNoteExtractorConnectionId: note.Id
+        );
+        (GalateaHostService service, UserSessionHost session) =
+            await GetRuntimeAsync(host);
+        var diagnostics = new List<string>();
+        service.CharacterNoteDiagnosticSinkForTest = diagnostics.Add;
+
+        await session.TurnLock.WaitAsync();
+        try {
+            GalateaLiveTurn turn = service.StartTurn(
+                session,
+                "diagnostics",
+                new GalateaTurnOptions(main.Id)
+            );
+            await service.RunTurnAsync(
+                    session,
+                    turn,
+                    CancellationToken.None
+                )
+                .WaitAsync(Deadline);
+            service.FinishTurn(session, turn);
+
+            string artifactJson = Assert.Single(DiagnosticEvents(
+                diagnostics,
+                "character-note-artifact"
+            ));
+            string batchJson = Assert.Single(DiagnosticEvents(
+                diagnostics,
+                "character-note-extraction-batch"
+            ));
+            Assert.All(diagnostics, static json => {
+                Assert.DoesNotContain('\r', json);
+                Assert.DoesNotContain('\n', json);
+            });
+            Assert.Contains("\\n", artifactJson, StringComparison.Ordinal);
+            using (JsonDocument artifact = JsonDocument.Parse(artifactJson)) {
+                Assert.Equal(
+                    ExactText,
+                    artifact.RootElement.GetProperty("exactText").GetString()
+                );
+                Assert.Equal(
+                    Evidence,
+                    artifact.RootElement.GetProperty("evidenceQuote")
+                        .GetString()
+                );
+            }
+            using (JsonDocument batch = JsonDocument.Parse(batchJson)) {
+                Assert.Equal(
+                    "captured",
+                    batch.RootElement.GetProperty("mailOutcome").GetString()
+                );
+                Assert.Equal(
+                    "success",
+                    batch.RootElement.GetProperty("noteOutcome").GetString()
+                );
+                Assert.Equal(
+                    "queued",
+                    batch.RootElement.GetProperty("receiptOutcome").GetString()
+                );
+                Assert.True(batch.RootElement.GetProperty("mailMs")
+                    .GetInt64() >= 0);
+                Assert.True(batch.RootElement.GetProperty("noteMs")
+                    .GetInt64() >= 0);
+            }
+            Assert.All(diagnostics, json => {
+                Assert.DoesNotContain(ActionMarker, json,
+                    StringComparison.Ordinal);
+                Assert.DoesNotContain("sensitive-endpoint", json,
+                    StringComparison.Ordinal);
+                Assert.DoesNotContain("sensitive-secret", json,
+                    StringComparison.Ordinal);
+            });
+        }
+        finally {
+            session.TurnLock.Release();
+        }
+    }
+
     [Theory]
     [InlineData(NoteOutcome.Zero)]
     [InlineData(NoteOutcome.ProviderFailure)]
@@ -142,6 +253,8 @@ public sealed class CharacterNoteRuntimeTests {
         );
         (GalateaHostService service, UserSessionHost session) =
             await GetRuntimeAsync(host);
+        var diagnostics = new List<string>();
+        service.CharacterNoteDiagnosticSinkForTest = diagnostics.Add;
         if (outcome == NoteOutcome.Timeout) {
             service.CharacterNoteExtractionDeadlineForTest =
                 TimeSpan.FromMilliseconds(100);
@@ -169,6 +282,17 @@ public sealed class CharacterNoteRuntimeTests {
             if (outcome == NoteOutcome.Timeout) {
                 Assert.True(noteClient.CancellationObserved);
             }
+            AssertNoArtifactDiagnostics(diagnostics);
+            string batchJson = Assert.Single(DiagnosticEvents(
+                diagnostics,
+                "character-note-extraction-batch"
+            ));
+            Assert.DoesNotContain("note provider unavailable", batchJson,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("http://localhost:8000", batchJson,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain("test-key", batchJson,
+                StringComparison.Ordinal);
         }
         finally {
             session.TurnLock.Release();
@@ -256,6 +380,8 @@ public sealed class CharacterNoteRuntimeTests {
         );
         (GalateaHostService service, UserSessionHost session) =
             await GetRuntimeAsync(host);
+        var diagnostics = new List<string>();
+        service.CharacterNoteDiagnosticSinkForTest = diagnostics.Add;
 
         await session.TurnLock.WaitAsync();
         GalateaLiveTurn turn = service.StartTurn(
@@ -279,6 +405,72 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.Empty(session.DelegationHandle!.Store
                 .ReadSnapshot().Captures);
             Assert.Equal(0, session.NoteRequestReceipts.Count);
+            AssertNoArtifactDiagnostics(diagnostics);
+            string batchJson = Assert.Single(DiagnosticEvents(
+                diagnostics,
+                "character-note-extraction-batch"
+            ));
+            Assert.DoesNotContain("mail extractor unavailable", batchJson,
+                StringComparison.Ordinal);
+        }
+        finally {
+            service.FinishTurn(session, turn);
+            session.TurnLock.Release();
+        }
+    }
+
+    [Fact]
+    public async Task FatalMailFailureStillCancelsAndDrainsBlockedNote() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig mail = Connection("mail");
+        CompletionConnectionConfig note = Connection("note");
+        var noteClient = new BlockingClient();
+        var fatal = new OutOfMemoryException("fatal mail failure");
+        var mailClient = new FailAfterSignalClient(
+            noteClient.Entered.Task,
+            fatal
+        );
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient>(
+                StringComparer.Ordinal
+            ) {
+                [main.Id] = new QueueClient(Message(
+                    new ActionBlock.Text(Action)
+                )),
+                [mail.Id] = mailClient,
+                [note.Id] = noteClient,
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, mail, note],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: mail.Id,
+            characterNoteExtractorConnectionId: note.Id
+        );
+        (GalateaHostService service, UserSessionHost session) =
+            await GetRuntimeAsync(host);
+        var diagnostics = new List<string>();
+        service.CharacterNoteDiagnosticSinkForTest = diagnostics.Add;
+
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "fatal mail failure",
+            new GalateaTurnOptions(main.Id)
+        );
+        try {
+            OutOfMemoryException observed = await Assert.ThrowsAsync<
+                OutOfMemoryException>(() => service.RunTurnAsync(
+                    session,
+                    turn,
+                    CancellationToken.None
+                ));
+
+            Assert.Same(fatal, observed);
+            await noteClient.Drained.Task.WaitAsync(Deadline);
+            Assert.True(noteClient.CancellationObserved);
+            Assert.Equal(0, noteClient.ActiveCalls);
+            Assert.Equal(0, session.NoteRequestReceipts.Count);
+            Assert.Empty(diagnostics);
         }
         finally {
             service.FinishTurn(session, turn);
@@ -311,6 +503,8 @@ public sealed class CharacterNoteRuntimeTests {
         );
         (GalateaHostService service, UserSessionHost session) =
             await GetRuntimeAsync(host);
+        var diagnostics = new List<string>();
+        service.CharacterNoteDiagnosticSinkForTest = diagnostics.Add;
         using var callerCts = new CancellationTokenSource();
 
         await session.TurnLock.WaitAsync();
@@ -337,6 +531,7 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.Equal(0, mailClient.ActiveCalls);
             Assert.Equal(0, noteClient.ActiveCalls);
             Assert.Equal(0, session.NoteRequestReceipts.Count);
+            AssertNoArtifactDiagnostics(diagnostics);
         }
         finally {
             service.FinishTurn(session, turn);
@@ -368,6 +563,8 @@ public sealed class CharacterNoteRuntimeTests {
         );
         (GalateaHostService service, UserSessionHost session) =
             await GetRuntimeAsync(host);
+        var diagnostics = new List<string>();
+        service.CharacterNoteDiagnosticSinkForTest = diagnostics.Add;
 
         await session.TurnLock.WaitAsync();
         GalateaLiveTurn turn = service.StartTurn(
@@ -401,6 +598,16 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.Single(session.DelegationHandle!.Store
                 .ReadSnapshot().Captures);
             Assert.Equal(0, session.NoteRequestReceipts.Count);
+            AssertNoArtifactDiagnostics(diagnostics);
+            string batchJson = Assert.Single(DiagnosticEvents(
+                diagnostics,
+                "character-note-extraction-batch"
+            ));
+            using JsonDocument batch = JsonDocument.Parse(batchJson);
+            Assert.Equal(
+                "head-changed",
+                batch.RootElement.GetProperty("receiptOutcome").GetString()
+            );
         }
         finally {
             noteClient.Release();
@@ -585,6 +792,25 @@ public sealed class CharacterNoteRuntimeTests {
         );
         return (service, session);
     }
+
+    private static IReadOnlyList<string> DiagnosticEvents(
+        IEnumerable<string> diagnostics,
+        string eventName
+    ) => diagnostics.Where(json => {
+        using JsonDocument document = JsonDocument.Parse(json);
+        return string.Equals(
+            document.RootElement.GetProperty("event").GetString(),
+            eventName,
+            StringComparison.Ordinal
+        );
+    }).ToArray();
+
+    private static void AssertNoArtifactDiagnostics(
+        IEnumerable<string> diagnostics
+    ) => Assert.Empty(DiagnosticEvents(
+        diagnostics,
+        "character-note-artifact"
+    ));
 
     private static CharacterNoteRequestReceipt CreateReceipt() {
         Assert.True(CharacterNoteRequestReceipt.TryCreate(
@@ -866,7 +1092,10 @@ public sealed class CharacterNoteRuntimeTests {
         }
     }
 
-    private sealed class FailAfterSignalClient(Task signal)
+    private sealed class FailAfterSignalClient(
+        Task signal,
+        Exception? failure = null
+    )
         : ICompletionClient {
         public string Name => "mail-failure";
         public string ApiSpecId => "test-v1";
@@ -879,7 +1108,7 @@ public sealed class CharacterNoteRuntimeTests {
             _ = request;
             _ = observer;
             await signal.WaitAsync(cancellationToken);
-            throw new IOException("mail extractor unavailable");
+            throw failure ?? new IOException("mail extractor unavailable");
         }
     }
 

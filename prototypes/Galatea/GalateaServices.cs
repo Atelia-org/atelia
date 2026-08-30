@@ -62,6 +62,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal GalateaSessionProvisioningTestHooks?
         SessionProvisioningHooksForTest { get; set; }
     internal TimeSpan? CharacterNoteExtractionDeadlineForTest { get; set; }
+    internal Action<string>? CharacterNoteDiagnosticSinkForTest { get; set; }
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
     private readonly IReadOnlyDictionary<string, CompletionConnectionConfig>
@@ -1492,21 +1493,53 @@ public sealed class GalateaHostService : IAsyncDisposable {
         try {
             mailResult = await mailTask.ConfigureAwait(false);
         }
-        catch (Exception original) when (
-            original is OperationCanceledException
-                || GalateaExceptionClassifier.IsNonFatal(original)) {
-            noteCts.Cancel();
-            (string noteOutcome, int artifactCount) =
-                await DrainCharacterNoteAfterMailFailureAsync(
+        catch (Exception original) {
+            Exception? cancellationFailure = null;
+            try {
+                noteCts.Cancel();
+            }
+            catch (Exception exception) {
+                cancellationFailure = exception;
+            }
+
+            (string Outcome, int ArtifactCount)? drained = null;
+            Exception? drainFailure = null;
+            try {
+                drained = await DrainCharacterNoteAfterMailFailureAsync(
                         noteTask
                     )
                     .ConfigureAwait(false);
+            }
+            catch (Exception exception) {
+                drainFailure = exception;
+            }
+
+            if (!GalateaExceptionClassifier.IsNonFatal(original)) {
+                ExceptionDispatchInfo.Capture(original).Throw();
+                throw;
+            }
+            if (cancellationFailure is not null
+                && !GalateaExceptionClassifier.IsNonFatal(
+                    cancellationFailure
+                )) {
+                ExceptionDispatchInfo.Capture(cancellationFailure).Throw();
+                throw;
+            }
+            if (drainFailure is not null) {
+                ExceptionDispatchInfo.Capture(drainFailure).Throw();
+                throw;
+            }
+            (string Outcome, int ArtifactCount) completedDrain = drained
+                ?? throw new InvalidDataException(
+                    "Character Note drain completed without an outcome."
+                );
+
             LogCharacterNoteBatch(
                 host,
                 target,
                 mailOutcome: "failure",
-                noteOutcome,
-                artifactCount,
+                completedDrain.Outcome,
+                completedDrain.ArtifactCount,
                 receiptOutcome: "discarded-after-mail-failure",
                 mailMilliseconds,
                 noteMilliseconds,
@@ -1773,15 +1806,15 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private static long ElapsedMilliseconds(long started) => checked((long)
         Stopwatch.GetElapsedTime(started).TotalMilliseconds);
 
-    private static void LogCharacterNoteArtifacts(
+    [Conditional("DEBUG")]
+    private void LogCharacterNoteArtifacts(
         UserSessionHost host,
         GalateaTerminalActionExtractionTarget target,
         IReadOnlyList<CharacterNoteIntent> intents
     ) {
         for (int index = 0; index < intents.Count; index++) {
             CharacterNoteIntent intent = intents[index];
-            DebugUtil.Info(
-                "Galatea.CharacterMemory",
+            WriteCharacterNoteDiagnostic(
                 JsonSerializer.Serialize(new {
                     @event = "character-note-artifact",
                     developmentOnly = true,
@@ -1795,12 +1828,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     exactText = intent.ExactText,
                     evidenceQuote = intent.EvidenceQuote,
                 }),
-                eventKind: DebugEventKind.Success
+                DebugEventKind.Success
             );
         }
     }
 
-    private static void LogCharacterNoteBatch(
+    [Conditional("DEBUG")]
+    private void LogCharacterNoteBatch(
         UserSessionHost host,
         GalateaTerminalActionExtractionTarget target,
         string mailOutcome,
@@ -1811,8 +1845,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         long noteMilliseconds,
         long batchMilliseconds,
         DebugEventKind eventKind
-    ) => DebugUtil.Info(
-        "Galatea.CharacterMemory",
+    ) => WriteCharacterNoteDiagnostic(
         JsonSerializer.Serialize(new {
             @event = "character-note-extraction-batch",
             developmentOnly = true,
@@ -1831,8 +1864,22 @@ public sealed class GalateaHostService : IAsyncDisposable {
             noteMs = noteMilliseconds,
             batchMs = batchMilliseconds,
         }),
-        eventKind: eventKind
+        eventKind
     );
+
+    [Conditional("DEBUG")]
+    private void WriteCharacterNoteDiagnostic(
+        string serializedJson,
+        DebugEventKind eventKind
+    ) {
+        ArgumentNullException.ThrowIfNull(serializedJson);
+        CharacterNoteDiagnosticSinkForTest?.Invoke(serializedJson);
+        DebugUtil.Info(
+            "Galatea.CharacterMemory",
+            serializedJson,
+            eventKind: eventKind
+        );
+    }
 
     private async Task<GalateaCompletedOperation> RunFreshSendAsync(
         UserSessionHost host,
