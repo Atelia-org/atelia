@@ -3,7 +3,7 @@
 ## 状态
 
 - 方案日期：2026-08-30
-- 当前状态：Design Locked；D0两轮独立review完成，代码工作包尚未开始
+- 当前状态：Design Locked；D0与A0/A1/A2完成，A3/A4尚未开始
 - 前置版本：[`Character Note Request Receipt V0`](character-note-request-receipt-v0.md)
 - 本轮目标：把已识别的Character Note保存请求幂等地写入每个角色唯一的Default MemoPod，并只在durable apply已经证明成功后生成诚实回执
 - 本轮不包含：静态分类、PodCatalog、动态聚类、多Pod routing、Memo内容整理、主线程recall注入
@@ -432,6 +432,8 @@ Intent：把captured batch通过plan-before-effect协议apply到Default MemoPod�
 Write scope：CharacterMemory domain/reconciler、Galatea↔MemoPod project reference、focused tests。
 
 Done when：zero、first provision、many-note batch、AlreadyApplied、capacity Rejected、crash windows、planned-ID mismatch、durability confirmation与single Freeze语义通过。
+
+Status：Complete；code-owned empty identity由真实MemoPod candidate锁定，focused A2 tests 11/11通过。
 
 ### A3 — V6 config and lifecycle composition
 
