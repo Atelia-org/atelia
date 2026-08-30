@@ -214,6 +214,7 @@ public sealed class MemoPodReconciliationTests : IDisposable {
             )
         );
         pod.Append("installed target");
+        string plannedTarget = pod.ComputeStateIdentity();
         await Assert.ThrowsAsync<MemoPodCommitIndeterminateException>(
             () => pod.FreezeAsync()
         );
@@ -226,10 +227,11 @@ public sealed class MemoPodReconciliationTests : IDisposable {
         );
 
         MemoPod reopened = MemoPod.Open(_root, PodId);
-        string identity = reopened.ComputeStateIdentity();
+        string actual = reopened.ComputeStateIdentity();
+        Assert.Equal(plannedTarget, actual);
         reopened.ConfirmCurrentDocumentDurability();
 
-        Assert.StartsWith(MemoPod.StateIdentityPrefix, identity);
+        Assert.StartsWith(MemoPod.StateIdentityPrefix, actual);
         Assert.Equal(
             "installed target",
             Assert.Single(reopened.List()).ExactText
