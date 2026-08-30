@@ -422,13 +422,19 @@ failure会阻止放弃旧failed turn、创建cutoff和接受新turn；普通nonf
 以及固定timestamp metadata的最坏adaptive-fence渲染预留空间。inbound与recovery入口都不开始新cutoff；
 `GalateaMailboxObservationEnvelope`也不因此增加timestamp。
 
-Galatea侧已有internal `IGalateaPlayerTurnRecallProvider`注入seam，生产默认实现为空，不接MemoPod、不查询索引。
+Galatea侧已有internal `IGalateaPlayerTurnRecallProvider`注入seam，生产默认实现为disabled singleton，不接MemoPod、
+不查询索引，并在context selection/barrier构建前直接绕过，因此默认路径没有额外CharacterMemory I/O。
 当前V0只在没有active durable reply lease的普通player turn调用provider；有reply lease时暂不注入recall，
-避免在未设计lease schema与restart settlement前破坏exact rendered Observation recovery。provider request携带
-`RecallBarrier`，由同一轮RecapGrid online candidate source选出的provider-visible raw Observation后缀经
-`PlayerTurnObservationEnvelope` parser聚合而来；selected candidate会先确认可materialize，derived context
-contribution与browser recent display文本都不参与barrier构造。当前barrier只做parser-based exact-key去重，
-尚不表达`MemoExactText`覆盖`MemoSummary`/`MemoGist`的dominance语义。
+避免在未设计lease schema与restart settlement前破坏exact rendered Observation recovery。provider request同时携带
+`RecallBarrier`与`CharacterNoteOriginBarrier`。前者由同一轮RecapGrid online candidate source选出的provider-visible
+raw Observation后缀经`PlayerTurnObservationEnvelope` parser聚合；后者在同一次materialization中读取带exact
+source address的raw Action units，以runtime-derived visible-text SHA-256/UTF-8 byte count与CharacterMemory
+durable provenance做exact join，只把来源Action仍可见的`Applied` `{DefaultPodId, MemoId}`作为typed blocker。
+origin join最多接受65,536个distinct Action source，按400条批量写入connection-local TEMP request table后以单条
+`capture LEFT JOIN character_note`查询读取，并贯穿turn cancellation；不会为每个Action分别执行capture/notes查询。
+selected candidate会先确认可materialize，derived context contribution与browser recent display文本都不参与构造。
+`RecallBarrier`当前只做parser-based exact-key去重，尚不表达`MemoExactText`覆盖`MemoSummary`/`MemoGist`的dominance；
+origin barrier则按Memo阻止全部召回粒度，不解析`SourceId`。
 
 `SessionJournal`公开的`AdaptiveMarkdownFenceRenderer.RenderBlock(infoString, exactBody)`要求1..64字符
 ASCII token作为code-owned info string。现有Recap contribution已复用它，并保持原`recap-block`输出逐字不变。
@@ -494,6 +500,9 @@ pre-capture失败都会阻止新mutation。
 Note extractor只把`${characterName}`本人已明确完成提交的长期Note保存请求识别为artifact；想到、计划、
 草稿、普通世界内书写、引用旧Note或仅声称已经保存都不构成提交。`ExactText`与`EvidenceQuote`必须是visible Action
 的ordinal substring；semantic contract为`semantic.v4`，tool name与`exactText` / `evidenceQuote` schema保持不变。
+Action address、visible-text SHA-256与UTF-8 byte count始终由runtime从同一canonical visible target派生并持久化，
+不进入`CharacterNoteIntent`或模型tool schema。它们也供`CharacterNoteOriginBarrier`判断新近Memo的来源正文是否仍在
+当前provider-visible raw context，避免零信息增量的重复召回。
 
 只有durable `AppliedNow`且final head仍等于target Action时，1..N条`CharacterNoteAppliedMemo`才由code-owned
 renderer冻结成一条`NoteSaveReceipt`，再放入每个`UserSessionHost`私有的bounded in-process FIFO。zero、Rejected、

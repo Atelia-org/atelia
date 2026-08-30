@@ -36,6 +36,7 @@ Character Memory V1 specialization：
 - [`CharacterNoteIntent` / `CharacterNoteExtractor`](../../prototypes/Galatea/CharacterMemory/CharacterNoteExtractor.cs)：保守提取角色本人已明确完成提交、且正文exact source-grounded的长期Note保存请求；仅声称已经保存不构成提交。
 - [`CharacterNoteDefaultPodReconciler`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDefaultPodReconciler.cs)：durable capture/zero tombstone、Default MemoPod plan/apply与restart/admission恢复owner。
 - [`CharacterNoteSaveReceipt`](../../prototypes/Galatea/CharacterMemory/CharacterNoteSaveReceipt.cs)：只消费durable `AppliedNow` memos并渲染诚实保存回执，同时提供per-session bounded in-process FIFO。
+- [`CharacterNoteOriginBarrier`](../../prototypes/Galatea/CharacterMemory/CharacterNoteOriginBarrier.cs)：把当前provider-visible raw Action与CharacterMemory durable provenance做bounded exact join，阻止来源正文仍直接可见的Memo被动态召回重复注入；production recall disabled时整条barrier路径在context selection前绕过。
 - `PlayerTurnNotice.NoteSaveReceipt`：普通player Observation中的独立strong type；canonical顺序中至多一条且必须为最后notice。
 
 入口与注入点：
@@ -106,11 +107,12 @@ ready-turn、inbound与recovery都不领取；领取后的pre-dispatch stop、�
 已经落地的V1映射：
 
 - note save intent：仅当对应binding非`null`时，code-owned主prompt appendix才告诉角色如何提交长期Note完整原文；runtime用`CharacterNoteIntent`保守提取，经durable capture/apply写入默认MemoPod，并只为本进程的`AppliedNow`结果返回honest保存回执。
+- note origin suppression：`CharacterNoteIntent` 不携带Action identity；runtime从canonical visible Action派生address/hash/byte count并持久化。后续普通player turn从同一provider-visible raw context重建`CharacterNoteOriginBarrier`，在来源Action仍可见时阻止对应typed Memo candidate重复注入。
 
 仍属后续候选的映射：
 
 - recall trigger：runtime 在 admission、turn completion 或显式事件边界判断是否需要召回。
-- recall result injection：runtime 把召回内容作为新的 `PlayerTurnNotice` kind，或作为独立 fresh input / Observation envelope 注入。
+- recall result planning：生产provider尚未查询MemoPod或索引；未来planner先同时应用canonical recall anchor barrier与Character Note origin barrier，再把选中的`PlayerTurnRecall`注入现有composite Observation。
 
 应该复用的东西：
 
@@ -141,13 +143,14 @@ ready-turn、inbound与recovery都不领取；领取后的pre-dispatch stop、�
 8. 注入文本的 authority 是谁？哪些字段来自 external caller，哪些必须由 runtime 生成？
 9. parser 是否要求 canonical round-trip？是否需要只读历史 dialect？
 10. recent view / Undo / recovery / maintenance mode 是否都知道这个新 Observation shape？
+11. 新产物是否会在其来源Action仍可见时被零增量重复注入？如果会，runtime-owned provenance由谁持久化，provider-visible barrier如何重建？
 
 ## 命名建议
 
 命名要暴露通讯方向和 domain：
 
 - 从角色叙事提取并保存Note：`CharacterNoteIntent`, `ICharacterNoteExtractor`, `CharacterNoteDefaultPodReconciler`。
-- 把 runtime 信息注入下一轮：`CharacterRecallNotice`, `CharacterRecallObservationEnvelope`。
+- 把 runtime 信息注入下一轮：`PlayerTurnRecall`, `RecallBarrier`, `CharacterNoteOriginBarrier`。
 - 通用 helper 保持 domain-neutral：`TextExtractor`, `GalateaVisibleActionTextRenderer`, `GalateaFreshInput`。
 
 避免使用裸 `ExtractionReconciler`、`IntentExtractor` 这类过宽名字。Mailbox 重构后已经把 outbound mail 相关类型收进

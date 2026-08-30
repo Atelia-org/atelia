@@ -1,9 +1,9 @@
 # Galatea Dynamic Memory Puzzle Map
 
 本文记录 Galatea 自主笔记与动态信息召回系统当前已经清晰的底层拼图。它是恢复思路用的工作笔记；其中
-`PlayerTurnObservation` recall block、`RecallEntry`、`PlayerTurnRecall`、`RecallBarrier`、Galatea-side provider seam，
-以及Character Note保存请求的durable capture、默认MemoPod apply与诚实保存回执已经落地为V1代码级契约。召回规划、
-分类/metadata补全与索引维护仍是后续设计。
+`PlayerTurnObservation` recall block、`RecallEntry`、`PlayerTurnRecall`、`RecallBarrier`、
+`CharacterNoteOriginBarrier`、Galatea-side provider seam，以及Character Note保存请求的durable capture、
+默认MemoPod apply与诚实保存回执已经落地为V1代码级契约。召回规划、分类/metadata补全与索引维护仍是后续设计。
 
 ## 当前判断
 
@@ -25,6 +25,8 @@ future Observation     -> visible recall result
 - `RecallEntry` 只表示 anchor；真正渲染进 Observation 的 payload 是 `PlayerTurnRecall`，携带 `RecallEntry` 加上本次注入的 visible text。
 - Barrier 的输入是本次 Completion provider-visible raw Observation 后缀，而不是 browser recent list，也不是整条 SessionJournal 历史。V0 已在 `GalateaServices` 内通过同一轮 RecapGrid online candidate source 构造。
 - V0 barrier 只做 exact-key de-dupe，不做 `MemoExactText covers MemoSummary covers MemoGist` 这种 dominance 推理。
+- `CharacterNoteIntent` 仍只表达模型从角色叙事中提取出的 `ExactText` / `EvidenceQuote`；Action address、visible-text SHA-256 与 UTF-8 byte count 必须由 runtime 派生并由 CharacterMemory 持久化，不能成为模型自报字段。
+- `CharacterNoteOriginBarrier` 是与 `RecallBarrier` 并列的第二道屏障：前者阻止来源 Action 仍直接可见的 Character Note Memo，后者阻止已经作为 canonical recall block 注入过的 exact recall anchor。
 
 ## 已有拼图
 
@@ -72,6 +74,7 @@ Mailbox 已经证明这个方向可行：`OutboundMailExtractor`从角色叙事A
 - [`PlayerTurnObservation`](../../prototypes/Galatea/PlayerTurnObservation.cs)
 - [`RecallBarrier`](../../prototypes/Galatea/RecallBarrier.cs)
 - [`PlayerTurnRecallProvider`](../../prototypes/Galatea/PlayerTurnRecallProvider.cs)
+- [`CharacterNoteOriginBarrier`](../../prototypes/Galatea/CharacterMemory/CharacterNoteOriginBarrier.cs)
 - [`GalateaFreshInput`](../../prototypes/Galatea/GalateaFreshInput.cs)
 - [`GalateaServices`](../../prototypes/Galatea/GalateaServices.cs)
 
@@ -86,7 +89,7 @@ Mailbox 已经证明这个方向可行：`OutboundMailExtractor`从角色叙事A
 
 Recall block 的 authority 仍然来自 runtime renderer，而不是外部 caller 自报。recent display 会显示 recall heading 与 body，但隐藏 `SourceId` anchor metadata；Undo / pop receipt 仍只把这条 Observation 当成普通 player turn，返回玩家行动正文。
 
-Galatea 侧已有 internal `IGalateaPlayerTurnRecallProvider` seam。生产默认 provider 为空；测试里可以喂固定 recall payload，已经覆盖 render、recovery 与 recent display。当前只在没有 active durable reply lease 的普通 player turn 调用 provider；reply lease 场景先保持无 recall 注入，等 lease schema / restart 语义设计清楚后再接。
+Galatea 侧已有 internal `IGalateaPlayerTurnRecallProvider` seam。生产默认 provider 为 disabled singleton，并在 context selection / barrier 构建之前直接绕过，因此未启用 recall 时没有额外的 provider-context 或 CharacterMemory I/O。测试里可以注入固定 provider，已经覆盖 render、recovery 与 recent display。enabled provider request 同时携带 `RecallBarrier` 与 `CharacterNoteOriginBarrier`。当前只在没有 active durable reply lease 的普通 player turn 调用 provider；reply lease 场景先保持无 recall 注入，等 lease schema / restart 语义设计清楚后再接。
 
 ### RecapGrid / Context Candidate
 
@@ -201,6 +204,33 @@ RecallBarrier
 
 coverage dominance 可以作为未来扩展，但现在不是 `RecallBarrier` 的职责。
 
+### CharacterNoteOriginBarrier
+
+`CharacterNoteOriginBarrier` 回答另一个问题：
+
+> 对于一个 typed Character Note Memo candidate，它的 exact source Action 是否仍在本次 provider-visible raw context 中？
+
+它在同一次 context materialization 中遍历带来源地址的 raw `ActionMessage` units，经
+`GalateaVisibleActionTextRenderer` 得到 visible text，再用 runtime-owned helper 派生 SHA-256 与 UTF-8 byte count。
+CharacterMemory 以 `{SourceAction, VisibleActionSha256, VisibleActionUtf8Bytes}` 做 exact provenance join；只有
+`Applied` capture 的 `{DefaultPodId, MemoId}` 才进入这份 ephemeral barrier。
+
+enabled provider路径的join有显式工作量边界：最多接受65,536个distinct source Action；source address按400条一批
+写入connection-local TEMP request table，再用一条`capture LEFT JOIN character_note`查询读取所有命中，保持输入顺序并
+复用完整capture snapshot校验。Cancellation从turn一路贯穿到Action枚举、批量装载、结果扫描和barrier冻结；不会退化为
+每个可见Action各执行一组SQLite查询。
+
+这条 join 有几项刻意的边界：
+
+- barrier 对 provider 暴露 typed `{MemoPodId, MemoId}`，不解析尚未定稿的 `RecallEntry.SourceId` codec；
+- 同一 Action 产生多条 Note 时，每条 applied Memo 都独立进入 barrier；一次命中会阻止该 Memo 的 Gist、Summary 与 ExactText 所有召回粒度；
+- capture absent、`ZeroCaptured`、`Rejected` 或没有 CharacterMemory binding 时自然不命中；手工创建且没有 Galatea provenance 的 Memo 也不会被猜测性屏蔽；
+- 同地址但 hash / byte count 不一致、`Captured` / `Planned` 尚未在 admission 结算、或 CharacterMemory 已 Quarantined，均属于 authority / lifecycle 不一致，在调用 recall provider 前 fail closed；
+- derived context contribution、browser display、off-lineage / rewound Action 不参与；当原始 Action 已离开 provider-visible raw tail 时，未来 planner 可以重新召回对应 Memo。
+
+它不是新的 durable owner。屏障每轮从 selected provider context 与 CharacterMemory durable provenance 重建，
+MemoPod 继续只负责 corpus，`CharacterNoteIntent` 继续只负责语义提取。
+
 ## Observation 注入现状
 
 `PlayerTurnObservation` 在现有 `Notices` 之外已有 recall 集合：
@@ -303,8 +333,9 @@ terminal Action
 new player action + exact completion boundary
   -> materialize provider-visible context
   -> RecallBarrierBuilder parses visible PlayerTurnObservation recalls
+  -> CharacterNoteOriginBarrierBuilder joins visible Actions to Applied memos
   -> recall planner queries MemoPod / indexes
-  -> drop entries blocked by RecallBarrier
+  -> drop entries blocked by RecallBarrier or CharacterNoteOriginBarrier
   -> render PlayerTurnObservation with PlayerTurnRecall blocks
   -> main Galatea Completion receives composite Observation
 ```
@@ -331,10 +362,11 @@ new player action + exact completion boundary
 2. 已实现 `RecallBarrier` 与 parser-based 聚合器，能从多条 canonical Observation 中聚合 exact keys，并跳过 invalid / legacy / inbound / null 输入。
 3. 已给 `GalateaServices` 预留 `IGalateaPlayerTurnRecallProvider` 注入 seam，测试中用固定 recall payload 验证了 render、recovery、recent display，也验证了第二轮能从 provider-visible context 聚合已可见 barrier。
 4. 已实现capability-gated的Character Note保存Quick Start、`CharacterNoteIntent` semantic.v4提取、durable capture/zero tombstone、Default MemoPod apply，以及只由`AppliedNow`生成的honest save receipt。
+5. 已实现 `CharacterNoteOriginBarrier`：复用同一 provider-visible context materialization，按 runtime-derived Action 指纹与 CharacterMemory `Applied` provenance 构造 typed Memo blockers，并与 `RecallBarrier` 一起交给 provider；这避免刚写下的 Note 在来源 Action 尚可见时被零增量重复召回。
 
 ### 下一批候选
 
-5. 设计 MemoPod recall planner 的最小边界，把 `MemoGist` 作为第一档上线；Summary / ExactText 作为后续升级路径。这里需要先决定 `SourceId` codec、Title/Gist 缺失时的显式展示策略，以及 planner 怎样消费 `RecallBarrier`。
-6. 在真实 recall 开始消耗 context budget 之后，再补 dominance、budget、active durable reply lease 与 provider failure/cancellation 的契约。
+6. 设计 MemoPod recall planner 的最小边界，把 `MemoGist` 作为第一档上线；Summary / ExactText 作为后续升级路径。这里需要先决定 `SourceId` codec、Title/Gist 缺失时的显式展示策略，以及 planner 怎样同时消费两道 barrier。
+7. 在真实 recall 开始消耗 context budget 之后，再补 dominance、budget、active durable reply lease 与 provider failure/cancellation 的契约。
 
 这个顺序保持authority前置：V1已经建立真实保存的独立durable owner；下一步从该authority出发接查询、召回与索引维护。
