@@ -98,6 +98,154 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
     }
 
     [Fact]
+    public void TargetReader_FreezesExactVisibleActionIdentity() {
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        const string VisibleText = "[Galatea] 记下雪原\n第二行。";
+        EventAddress action = AppendAction(engine, VisibleText);
+
+        GalateaTerminalActionExtractionTarget target = ReadTarget(
+            engine,
+            action
+        );
+
+        Assert.Equal(action, target.SourceAction);
+        Assert.Equal(VisibleText, target.VisibleText);
+        Assert.Equal(Sha256(VisibleText), target.VisibleTextSha256);
+        Assert.Equal(
+            Encoding.UTF8.GetByteCount(VisibleText),
+            target.VisibleTextUtf8Bytes
+        );
+    }
+
+    [Fact]
+    public void TargetReader_ReadsCallerSelectedImmutableHead() {
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        const string VisibleText = "orphan remains addressable";
+        EventAddress action = AppendAction(engine, VisibleText);
+        _ = Assert.IsType<SessionTurnRetractionResult.Moved>(
+            engine.RewindLatestCompletedTurn(action)
+        );
+        Assert.NotEqual(action, engine.ReadCurrentHead());
+
+        GalateaTerminalActionExtractionTarget target = ReadTarget(
+            engine,
+            action
+        );
+
+        Assert.Equal(action, target.SourceAction);
+        Assert.Equal(VisibleText, target.VisibleText);
+    }
+
+    [Fact]
+    public void Target_RejectsInvalidSourceOrVisibleText() {
+        Assert.Throws<ArgumentException>(() =>
+            new GalateaTerminalActionExtractionTarget(
+                default,
+                "visible"
+            )
+        );
+        EventAddress sourceAction = new(
+            SizedPtr.Create(4, 32),
+            1,
+            default
+        );
+        Assert.Throws<ArgumentNullException>(() =>
+            new GalateaTerminalActionExtractionTarget(
+                sourceAction,
+                null!
+            )
+        );
+        Assert.Throws<EncoderFallbackException>(() =>
+            new GalateaTerminalActionExtractionTarget(
+                sourceAction,
+                "\ud800"
+            )
+        );
+    }
+
+    [Fact]
+    public async Task TargetOverload_CapturesWithoutProjectingHistory() {
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        using GalateaDelegationSqliteStore store = CreateStore(
+            paths.StorePath,
+            engine
+        );
+        const string VisibleText = "[Galatea] I sent from one frozen target.";
+        EventAddress action = AppendAction(engine, VisibleText);
+        GalateaTerminalActionExtractionTarget target = ReadTarget(
+            engine,
+            action
+        );
+        SendMailIntent intent = Mail("Codex", "one frozen target");
+        var extractor = new RecordingExtractor(text => {
+            Assert.Equal(VisibleText, text);
+            return [intent];
+        });
+        var reconciler = new GalateaOutboundMailExtractionReconciler(
+            store,
+            extractor
+        );
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+
+        var captured = Assert.IsType<
+            GalateaOutboundMailExtractionReconcileResult.Captured
+        >(await reconciler.ReconcileTargetAsync(engine, target));
+
+        SessionJournalReadDiagnostics reads =
+            engine.CaptureReadDiagnostics() - before;
+        Assert.Equal(default, reads);
+        Assert.Equal(action, captured.SourceAction);
+        Assert.Equal(1, captured.ArtifactCount);
+        Assert.Equal(1, extractor.CallCount);
+        GalateaActionCaptureSnapshot durable = Assert.Single(
+            store.ReadSnapshot().Captures
+        );
+        Assert.Equal(target.VisibleTextSha256,
+            durable.VisibleActionSha256);
+        Assert.Equal(target.VisibleTextUtf8Bytes,
+            durable.VisibleActionUtf8Bytes);
+    }
+
+    [Fact]
+    public async Task TargetOverload_HeadChangeKeepsFinalFence() {
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        using GalateaDelegationSqliteStore store = CreateStore(
+            paths.StorePath,
+            engine
+        );
+        EventAddress action = AppendAction(engine, "send target then rewind");
+        GalateaTerminalActionExtractionTarget target = ReadTarget(
+            engine,
+            action
+        );
+        EventAddress? rewoundHead = null;
+        var extractor = new RecordingExtractor(_ => {
+            SessionTurnRetractionResult.Moved moved = Assert.IsType<
+                SessionTurnRetractionResult.Moved
+            >(engine.RewindLatestCompletedTurn(action));
+            rewoundHead = moved.NewHead;
+            return [Mail("Codex", "must be discarded")];
+        });
+
+        var stale = Assert.IsType<
+            GalateaOutboundMailExtractionReconcileResult.SelectedHeadChanged
+        >(await new GalateaOutboundMailExtractionReconciler(
+            store,
+            extractor
+        ).ReconcileTargetAsync(engine, target));
+
+        Assert.Equal(action, stale.ExpectedHead);
+        Assert.Equal(rewoundHead, stale.ObservedHead);
+        Assert.Equal(1, extractor.CallCount);
+        Assert.Empty(store.ReadSnapshot().Captures);
+    }
+
+    [Fact]
     public async Task NonblankZeroIntent_CapturesDurableTombstone() {
         using var paths = new FixturePaths();
         using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
@@ -492,6 +640,16 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
             Invocation
         );
     }
+
+    private static GalateaTerminalActionExtractionTarget ReadTarget(
+        SessionJournalEngine engine,
+        EventAddress selectedHead
+    ) => Assert.IsType<
+        GalateaTerminalActionExtractionReadResult.Available
+    >(GalateaTerminalActionExtractionTargetReader.ReadAt(
+        engine,
+        selectedHead
+    )).Target;
 
     private static GalateaDelegationSqliteStore CreateStore(
         string path,

@@ -136,15 +136,26 @@ runtime 另行绑定 `SourceAction`、visible text SHA-256、UTF-8 byte count �
 Mail 和 Note 不应分别读取 SessionJournal、分别选择 latest turn、分别 render visible text。V0 引入 domain-neutral immutable target：
 
 ```csharp
-internal sealed record GalateaTerminalActionExtractionTarget(
-    EventAddress SourceAction,
-    string VisibleText,
-    string VisibleTextSha256,
-    int VisibleTextUtf8Bytes
-);
+internal sealed record GalateaTerminalActionExtractionTarget {
+    internal GalateaTerminalActionExtractionTarget(
+        EventAddress sourceAction,
+        string visibleText
+    );
+
+    internal EventAddress SourceAction { get; }
+    internal string VisibleText { get; }
+    internal string VisibleTextSha256 { get; }
+    internal int VisibleTextUtf8Bytes { get; }
+}
 ```
 
-reader 在选定 head 上只读取 latest completed turn 一次，并要求 terminal Action address 等于 selected head；`GalateaVisibleActionTextRenderer` 也只运行一次。Mail durable reconciler 保留自己的 baseline/capture 判定，但 post-completion 路径允许它消费已经建立的 exact target。
+`GalateaTerminalActionExtractionTargetReader.ReadAt` 在调用方选定的 exact head
+上只读取 latest completed turn 一次，不自行读取 current head，并要求 terminal
+Action address 等于 selected head；`GalateaVisibleActionTextRenderer` 也只运行一次。
+target constructor 由 `sourceAction + visibleText` 计算并冻结 hash/byte count，调用方
+不能传入不匹配的 identity metadata。Mail durable reconciler 保留自己的 baseline/capture
+判定；新的 `ReconcileTargetAsync` 不重新投影 history，但仍保留 capture 前的 final
+head fence。
 
 Admission/restart 仍只执行 Mail 的 durable gap reconciliation。V0 Note 不建立 durable capture/tombstone，因此不能在 admission 时补偿性重跑。
 
@@ -178,7 +189,12 @@ fresh/recovery main Completion 完成
 
 理论延迟从串行的 `mailMs + noteMs` 收敛为约 `max(mailMs, noteMs)`；但 Note 仍可能把 `PublishDone` 最多推迟到自身 deadline。开发日志应记录 `mailMs`、`noteMs` 和 batch wall time，而不是假定并行自然有效。
 
-`ICompletionClient` 需要明确同一实例可以接收并发的 `StreamCompletionAsync` 调用。现有 `TextExtractor` collector/session 是 per-call 状态，但 registry 可能把两个 binding 解析为同一个 client；在完成 provider/wrapper audit 和并发测试前，不能把“使用不同 connection id”当作线程安全证明。
+`ICompletionClient` 已明确同一实例可以接收重叠的 `StreamCompletionAsync`
+调用：每次 invocation 的 request/observer/parser/result/cancellation 必须隔离，但
+client 可以内部限流或串行化，不承诺 provider 请求必然并行。现有
+provider/wrapper audit 未发现需要 runtime 修改的 shared mutable invocation state；
+`TextExtractor` collector/session、Completion call-log reservation 与 Codex client admission/reload 都已有
+并发测试保护。lifetime owner 仍必须在 active calls drain 之后才 dispose client。
 
 ## 回执排队与注入
 
@@ -279,7 +295,7 @@ V0 不实现：
 | 包 | 内容 | 状态 | 完成证据 |
 |---|---|---|---|
 | D0 | 建立本方案、目标/非目标、failure matrix | Complete | 本文档 |
-| A0 | `ICompletionClient` 并发合同 audit；terminal Action 单一 target；Mail target overload | Pending | focused tests + build |
+| A0 | `ICompletionClient` 并发合同 audit；terminal Action 单一 target；Mail target overload | Complete | `GalateaOutboundMailExtractionReconcilerTests` 19/19 |
 | A1 | `CharacterNoteIntent`、prompt、extractor、ContractId、bounds/source-grounding | Complete | `CharacterNoteExtractorTests` 10/10 |
 | A2 | exact config binding、lazy per-user composition | Pending | config/composition tests |
 | A3 | post-completion 并行 coordinator、timeout/failure matrix、diagnostics | Pending | lifecycle/concurrency tests |
