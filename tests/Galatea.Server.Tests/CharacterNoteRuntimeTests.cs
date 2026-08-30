@@ -19,11 +19,11 @@ public sealed class CharacterNoteRuntimeTests {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(8);
     private const string Action = """
         [Galatea] I sent mail body to Alice and completed sending.
-        [Galatea] I completed recording my long-term Note: remember blue.
+        [Galatea] I submitted a development Note save request with exact text: remember blue, and completed the submission.
         """;
     private const string NoteText = "remember blue";
     private const string NoteEvidence =
-        "I completed recording my long-term Note: remember blue.";
+        "I submitted a development Note save request with exact text: remember blue, and completed the submission.";
 
     [Fact]
     public async Task SharedClientOverlapsMailAndNoteThenReceiptAttachesOnce() {
@@ -116,7 +116,7 @@ public sealed class CharacterNoteRuntimeTests {
     public async Task DiagnosticSinkCapturesSingleLineJsonWithinContentBoundary() {
         const string ExactText = "remember blue\nsecond line";
         const string Evidence =
-            "I completed recording my long-term Note:\nremember blue\nsecond line";
+            "I completed submitting a development Note save request:\nremember blue\nsecond line";
         const string ActionMarker = "FULL-ACTION-MUST-NOT-BE-LOGGED";
         string action = $"""
             [Galatea] {ActionMarker}; I sent a mail and completed sending.

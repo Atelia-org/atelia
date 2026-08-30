@@ -45,6 +45,10 @@
       <Link>PromptTemplates/trpg-outbound-mail-protocol-appendix-zh-cn.md</Link>
       <LogicalName>Atelia.Galatea.Server.PromptTemplates.TrpgHost.OutboundMailProtocolAppendix.zh-CN.md</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="../../docs/Galatea/prompt/trpg-character-note-request-development-appendix-zh-cn.md">
+      <Link>PromptTemplates/trpg-character-note-request-development-appendix-zh-cn.md</Link>
+      <LogicalName>Atelia.Galatea.Server.PromptTemplates.TrpgHost.CharacterNoteRequestDevelopmentAppendix.zh-CN.md</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>

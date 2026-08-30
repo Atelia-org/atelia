@@ -8,7 +8,7 @@ public sealed class CharacterNoteRequestReceiptTests {
     [Fact]
     public void TryCreate_RendersOneHonestFrozenReceiptWithoutEvidence() {
         const string ExactText = "第一行\n~~~~\n最后一行\n";
-        const string Evidence = "她按下保存，完成长期 Note 记录。";
+        const string Evidence = "她完成提交development Note保存请求。";
 
         Assert.True(CharacterNoteRequestReceipt.TryCreate(
             [new CharacterNoteIntent(ExactText, Evidence)],
@@ -156,7 +156,7 @@ public sealed class CharacterNoteRequestReceiptTests {
 
     private static CharacterNoteRequestReceipt Create(string exactText) {
         Assert.True(CharacterNoteRequestReceipt.TryCreate(
-            [new CharacterNoteIntent(exactText, "completed recording")],
+            [new CharacterNoteIntent(exactText, "completed request submission")],
             out CharacterNoteRequestReceipt? receipt
         ));
         return receipt;

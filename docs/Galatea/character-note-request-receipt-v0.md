@@ -3,7 +3,7 @@
 ## 状态
 
 - 方案日期：2026-08-30
-- 当前阶段：A0 shared target、A1 extractor contract、A2 config/composition、A3 runtime coordinator与A4 receipt/queue/injection均已完成；等待R0独立review与完整验证
+- 当前阶段：A0 shared target、A1 semantic.v3 request extractor、A2 capability-gated composition、A3 runtime coordinator、A4 receipt/queue/injection与R0独立review均已完成
 - 目标版本：V0 development vertical slice
 - 对外承诺：只确认 runtime 识别到角色的 Note 请求，不承诺 Memo 已保存
 
@@ -26,7 +26,7 @@ Mailbox 已证明 Galatea 可以让主线角色继续书写叙事 Action，再�
 
 当前最有价值的最小切口是验证三件事：
 
-1. 保守 prompt 能否稳定区分“角色完成记录 Note”与普通想法、计划、复述；
+1. 保守 prompt 能否稳定区分“角色完成提交development Note保存请求”与普通想法、计划、复述；
 2. Mail 与 Note 两个提取器能否消费同一份 terminal Action snapshot 并真正并行；
 3. runtime-owned 反馈能否经过 canonical `PlayerTurnObservation` 在下一轮对角色可见。
 
@@ -95,8 +95,8 @@ internal sealed record CharacterNoteIntent(
 
 字段语义：
 
-- `ExactText`：角色明确完成记录的 Note 正文；不得总结、润色或补写。
-- `EvidenceQuote`：Action visible text 中能证明“谁完成了什么记录动作”的原文片段。
+- `ExactText`：角色明确完成提交的保存请求中逐字给出的完整 Note 正文；不得总结、润色或补写。
+- `EvidenceQuote`：Action visible text 中能证明“谁完成提交了什么请求”的原文片段。
 
 runtime 另行绑定 `SourceAction`、visible text SHA-256、UTF-8 byte count 和 extractor `ContractId`；这些不是模型自报字段。
 
@@ -107,7 +107,7 @@ runtime 另行绑定 `SourceAction`、visible text SHA-256、UTF-8 byte count �
 - 每个 Action 最多 16 条 Note；
 - 单批 `ExactText` 总计最大 256 KiB。
 
-extractor prompt 按叙事顺序只选择最早的最多 16 个 qualifying candidates；达到数量上限后停止，不截断或改写候选。单条 `ExactText` / `EvidenceQuote` 明显超过各自上限时不输出该候选；加入下一候选会使 `ExactText` 总量明显超过 256 KiB 时，在该候选前停止且不再输出更晚候选。runtime validation 始终是 authoritative boundary；模型无需精确计算 UTF-8 bytes，但不得故意输出已知超限值。该 selection judgment 由 `semantic.v2` 标识，tool fields 与 `ToolContractVersion` 不变。
+extractor prompt 按叙事顺序只选择最早的最多 16 个 qualifying candidates；达到数量上限后停止，不截断或改写候选。单条 `ExactText` / `EvidenceQuote` 明显超过各自上限时不输出该候选；加入下一候选会使 `ExactText` 总量明显超过 256 KiB 时，在该候选前停止且不再输出更晚候选。runtime validation 始终是 authoritative boundary；模型无需精确计算 UTF-8 bytes，但不得故意输出已知超限值。请求提交语义与selection judgment由`semantic.v3`标识，tool name/fields与`ToolContractVersion`不变。
 
 `ExactText` 与 `EvidenceQuote` 必须能以 ordinal substring 在本次 visible Action text 中找到。该约束有意比 Mailbox 更严格，用于避免 V0 在没有 durable apply/review 阶段时悄悄改写角色原文。
 
@@ -115,21 +115,22 @@ extractor prompt 按叙事顺序只选择最早的最多 16 个 qualifying candi
 
 只有同时满足以下条件才输出 artifact：
 
-- `${characterName}` 本人完成了记录动作；
-- 目标被明确表述为她自己的长期 Note / Memo / autonomous memory；
-- 完整正文出现在当前 Action；
-- `[characterName]` 直接建立该动作，或 `[旁白]` 客观建立她已完成该动作。
+- `${characterName}` 本人完成了向runtime提交development Note保存请求的动作；
+- 完整的requested Note原文出现在当前 Action；
+- `[characterName]`直接建立该动作，或`[旁白]`客观建立她已完成提交；
+- evidence同时证明actor ownership与completed request submission。
 
 以下情况输出零 artifact：
 
 - 普通想法、发现、结论或对话；
 - “应该记住”“以后要记”“我想记”之类计划；
-- 草稿、编辑中、打开界面、准备保存；
-- 普通日记、便签、墙面题字等世界内书写，除非明确声明为长期 Note；
+- 草稿、编辑中、打开界面、准备提交；
+- 普通日记、便签、墙面题字等世界内书写；
 - 邮件；
 - 玩家请求、其他角色的动作、状态摘要；
 - 阅读、引用或回忆既有 Memo；
-- “记住上面的内容”但本 Action 没有完整 Note 正文。
+- 仅声称Note已经记录、持久化或保存；
+- “记住上面的内容”但本 Action 没有完整requested Note原文。
 
 自然捕获率偏低是 V0 可接受结果。此阶段的目标是测量可靠性，不是通过放宽定义制造漂亮命中率。
 
@@ -239,8 +240,9 @@ current dialect 的canonical顺序固定为：
 ```text
 player action
   -> 0..N recalls
-  -> 0..N Reply / DeliveryFailure
-  -> 0..1 NoteRequestReceipt（必须最后）
+  -> total 0..16 notices:
+     0..N Reply / DeliveryFailure
+     0..1 NoteRequestReceipt（若有必须最后，并计入16）
 ```
 
 legacy dialect拒绝`NoteRequestReceipt`；receipt heading为`Note 请求回执`，info string为`character-note-request-receipt`。回执内每条`ExactText`按原顺序放进`character-note-exact-text` inner adaptive fence；`EvidenceQuote`、source address与extractor contract不进入可见body。0 intent不创建receipt。
@@ -262,9 +264,12 @@ legacy dialect拒绝`NoteRequestReceipt`；receipt heading为`Note 请求回执`
 A2 production composition在`null`时为每个user提供同一个
 `DisabledCharacterNoteExtractor` singleton；非`null`时按exact `CharacterName`构造per-user extractor，
 但只在首次真正提取时才从host-owned registry取得client。该binding不进入`selectableConnectionIds`、
-extractor `ContractId`或主system prompt。
+extractor `ContractId`；它只决定code-owned development Note request appendix是否进入主system prompt。
 
-V0 不修改主系统提示词来宣称“角色拥有可保存、可召回的自主记忆”。只有真实 durable memory sink 落地后，才 capability-gated 地增加这项产品承诺。
+`null`时主system prompt完全不出现该能力。非`null`时追加
+[`prompt/trpg-character-note-request-development-appendix-zh-cn.md`](prompt/trpg-character-note-request-development-appendix-zh-cn.md)：
+它只教角色如何明确完成提交保存请求，并明确当前只识别请求、在后续eligible普通回合回执，尚不保存、索引或召回。
+只有真实durable memory sink落地后，才可以另行增加“已经保存、可召回”的产品承诺。
 
 ## Development diagnostics
 
@@ -324,24 +329,23 @@ V0 不实现：
 |---|---|---|---|
 | D0 | 建立本方案、目标/非目标、failure matrix | Complete | 本文档 |
 | A0 | `ICompletionClient` 并发合同 audit；terminal Action 单一 target；Mail target overload | Complete | `GalateaOutboundMailExtractionReconcilerTests` 19/19 |
-| A1 | `CharacterNoteIntent`、prompt、extractor、ContractId、bounds/source-grounding | Complete | `CharacterNoteExtractorTests` 12/12；semantic.v2 prompt/bounds 对齐 |
-| A2 | exact config binding、lazy per-user composition | Complete | focused config/composition tests 42/42 |
-| A3 | post-completion 并行 coordinator、timeout/failure matrix、diagnostics | Complete | `CharacterNoteRuntimeTests` 12/12中的shared-client overlap与failure matrix |
+| A1 | `CharacterNoteIntent`、prompt、extractor、ContractId、bounds/source-grounding | Complete | semantic.v3 request-submission prompt/bounds 对齐 |
+| A2 | exact config binding、lazy per-user composition、capability-gated主prompt appendix | Complete | 四种binding组合与tracked resource exact测试 |
+| A3 | post-completion 并行 coordinator、timeout/failure matrix、diagnostics | Complete | `CharacterNoteRuntimeTests` 14/14中的shared-client overlap与failure matrix |
 | A4a | code-owned receipt、bounded FIFO、`PlayerTurnObservation` canonical grammar | Complete | focused receipt/Observation tests 16/16；Galatea build 0 warnings/errors |
-| A4b | `UserSessionHost` queue ownership与普通`StartTurn` at-most-once注入 | Complete | `CharacterNoteRuntimeTests` 12/12中的ordinary/ready/inbound/recovery入口矩阵 |
-| R0 | 独立 code review、尾修、完整串行验证、状态回写 | Pending | review findings + final commands |
+| A4b | `UserSessionHost` queue ownership与普通`StartTurn` at-most-once注入 | Complete | `CharacterNoteRuntimeTests` 14/14中的ordinary/ready/inbound/recovery入口矩阵 |
+| R0 | 独立 code review、语义尾修、串行验证、状态回写 | Complete | reviewer无must-fix；focused tests 97/97；Galatea build 0 warnings/errors；docs checker 0 diagnostics；`git diff --check`通过 |
 
 ## 验收标准
 
-- 普通思考、计划、草稿、邮件和既有 Memo 引用均提取为零；完成的单条/多条 Note 保留原文和顺序。
+- 普通思考、计划、草稿、邮件、既有 Memo 引用与仅声称已经保存均提取为零；完成提交的单条/多条Note请求保留原文和顺序。
 - 同一 terminal Action 只读取/render 一次，Mail 和 Note 收到相同 address/text/hash。
 - blocking fake clients 能证明两个 extractor 的最大并发数达到 2；同一 client instance 的并发 contract 有测试保护。
 - Mail success + Note failure 不影响主回合；Mail failure + Note success 不产生回执；task 不泄漏。
 - fresh 和 recovery 新完成的 terminal Action 都运行 Note；admission/restart reconciliation 不运行 Note。
 - Note receipt 只在后续无 reply lease 的普通 player turn attempt出现；领取后不因失败、recovery或rewind重新排队。
 - receipt render/parse/re-render byte exact，正文包含任意 Markdown fence、换行和控制字符时仍 bounded、无注入歧义。
-- `null` binding 不创建 Note client；unknown/wrong-case/extra config fail closed。
-- 主系统提示词 byte-for-byte 不因 V0 改变。
+- `null` binding不创建Note client且主prompt不含appendix；non-`null`时追加诚实request appendix；unknown/wrong-case/extra config fail closed。
 - focused Galatea tests、Galatea build、doc governance 和 `git diff --check` 通过。
 
 ## 后续 durable 阶段的入口

@@ -62,13 +62,15 @@ universal code-owned
 [`mailbox protocol base`](../../docs/Galatea/prompt/trpg-mailbox-protocol-base-zh-cn.md)按exact
 `prefix + "\n\n---\n\n" + context + "\n\n---\n\n" + mailboxBase`拼接；仅当validated
 `galatea.outbound-mail-extractor` binding非`null`时，再以`"\n\n"`追加code-owned
-[`Codex outbound appendix`](../../docs/Galatea/prompt/trpg-outbound-mail-protocol-appendix-zh-cn.md)。完成组合后才用
-同一个closed renderer展开名字。Mailbox base与appendix物理上保持两份resource以表达capability
-boundary；outbound启用时，它们以H2/H3向模型连续呈现为一份Quick Start。Heading只用于呈现，
-appendix gating只看validated binding。
+[`Codex outbound appendix`](../../docs/Galatea/prompt/trpg-outbound-mail-protocol-appendix-zh-cn.md)；仅当validated
+`galatea.character-note-extractor` binding非`null`时，再追加code-owned
+[`development Note request appendix`](../../docs/Galatea/prompt/trpg-character-note-request-development-appendix-zh-cn.md)。
+完成组合后才用同一个closed renderer展开名字。Mailbox base与两个appendix物理分离以表达capability boundary；
+启用对应binding时按base→outbound→Note顺序向模型呈现简短Quick Start。Heading只用于呈现，两个appendix各自只看
+对应validated binding。
 每个external/resource source有1 MiB读取上限，拼接后的composite source与final rendered prompt也分别受
 1 MiB上限；runtime只保留两个validated names与finalized
-`SystemPrompt`，不会在每个turn重读template file。四份tracked resource的ownership见
+`SystemPrompt`，不会在每个turn重读template file。五份tracked resource的ownership见
 [`prompt/README.md`](../../docs/Galatea/prompt/README.md)。
 
 Bootstrap在`characterContextTemplateFile`指向config directory内的missing path时，只以create-new写入
@@ -133,11 +135,11 @@ model/provider/surface/endpoint/secret locator 全部来自该 connection，clie
 需要清洗时惰性创建；OutboundMailExtractor 同样使用hidden、lazy、borrowed client，且不进入
 Agent/UI selectable allowlist。CharacterNoteExtractor也按每个user的exact `CharacterName`构造，借用同一
 registry并保持client lazy。其V0在successful fresh/recovery完成边界提取请求，并把development-only回执排入
-下一次eligible普通player turn；不承诺Note已保存、可召回或跨restart保留，也不改变主system prompt。
+下一次eligible普通player turn；不承诺Note已保存、索引、可召回或跨restart保留。Binding非`null`时主system
+prompt追加诚实的development request Quick Start，`null`时完全不出现该能力。
 Bootstrap connections template把outbound与Character Note两个extractor binding都写为`null`。
-Outbound binding从`null`切换到non-`null`会改变finalized prompt并在下一次fresh turn自然触发existing exact
-desired-setup rotation；Character Note binding切换则保持finalized prompt byte-exact，不引入operator prompt
-module field。
+Outbound或Character Note binding从`null`切换到non-`null`或反向切换都会改变对应appendix presence，并在下一次
+fresh turn自然触发existing exact desired-setup rotation；不引入operator prompt module field。
 
 每个 connection 必须显式提供 `completionSurfaceId`，并在 `baseAddress` /
 `baseAddressEnv` 中恰好选择一个，在 `apiKey` / `apiKeyEnv` 中至多选择一个。
@@ -383,7 +385,8 @@ runtime在canonical Observation materialization时通过宿主`TimeProvider`只�
 例如`2026-08-29T14:23:05+08:00`，UTC也固定写`+00:00`而不是`Z`。这只是Observation形成时的
 外界粗粒度时间，不是故事世界时间，也不参与turn排序、identity或settlement。首个兄弟块固定为
 `## 玩家角色试图采取的行动`/`player-action`，随后可按顺序携带0..32个
-角色笔记recall兄弟块，再携带0..16个`Reply`或`DeliveryFailure`兄弟块。recall block使用
+角色笔记recall兄弟块，再携带合计0..16个notice：`Reply` / `DeliveryFailure`，以及至多1个且必须位于最后的
+`NoteRequestReceipt`（它计入16个总上限）。recall block使用
 `SourceId: ...`单行metadata作为anchor，`RecallType+SourceId`构成exact去重key，当前三种info string为
 `memo-gist-recall`、`memo-summary-recall`、`memo-exact-text-recall`；对应heading分别是
 `召回的角色笔记（一句话印象）`、`召回的角色笔记（摘要）`、`召回的角色笔记（原文）`。
@@ -481,13 +484,17 @@ Action target，同时直接启动Mail `ReconcileTargetAsync`与enabled Characte
 30秒cooperative deadline只丢弃V0回执，不使已完成主回合失败。deadline通过cancellation token请求停止，不强杀
 忽略cancellation的provider；borrowed client释放前仍会drain实际调用。
 
+Note extractor只把`${characterName}`本人已明确完成提交的development Note保存请求识别为artifact；想到、计划、
+草稿、普通世界内书写、引用旧Note或仅声称已经保存都不构成提交。`ExactText`与`EvidenceQuote`必须是visible Action
+的ordinal substring；semantic contract为`semantic.v3`。
+
 Note成功且final head仍等于target Action时，0 artifact不排队；1..N artifact由code-owned renderer冻结成一条
 `NoteRequestReceipt`，再放入每个`UserSessionHost`私有的bounded in-process FIFO。只有下一次普通player
 `StartTurn`的`BeginCutoff == Empty`分支会`TryDequeue`一条，作为sole/final notice执行at-most-once attach。
 Created reply cutoff、ready-turn、inbound与recovery不领取；领取后的pre-dispatch stop、失败、Undo、rewind或restart
 都不重新排队。该回执只说明请求已识别，绝不表示Memo已持久化或可召回。
 
-每个Action extraction batch由`GalateaDelegationSqliteStore`单事务全有或全无地capture；成功的0-intent
+每个outbound-mail Action extraction batch由`GalateaDelegationSqliteStore`单事务全有或全无地capture；成功的0-intent
 extraction也写`action_capture` tombstone，extractor failure绝不能冒充空结果。stable dispatch ID是对length-prefixed
 `(userId,"Codex",canonical Action head,artifact ordinal)`计算SHA-256后形成的
 `gd1-<64-lowerhex>`；candidate/outbox/inbox都有code-owned count/byte上限，容量耗尽时拒绝整批，不evict

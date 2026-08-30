@@ -3159,7 +3159,8 @@ internal static class GalateaConfigLoader {
             ResolveUsers(
                 usersFile.Users,
                 configDir,
-                outboundMailExtractorConnectionId is not null
+                outboundMailExtractorConnectionId is not null,
+                characterNoteExtractorConnectionId is not null
             );
 
         var config = new GalateaConfig(
@@ -3332,7 +3333,8 @@ internal static class GalateaConfigLoader {
         ResolveUsers(
             IReadOnlyList<GalateaUserFileConfig> configuredUsers,
             string configDirectory,
-            bool outboundMailEnabled
+            bool outboundMailEnabled,
+            bool characterNoteRequestEnabled
         ) {
         var resolvedUsers = new List<GalateaUserConfig>(
             configuredUsers.Count
@@ -3399,6 +3401,7 @@ internal static class GalateaConfigLoader {
                     characterName,
                     playerName,
                     outboundMailEnabled,
+                    characterNoteRequestEnabled,
                     GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
                 );
             }

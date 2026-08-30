@@ -32,10 +32,13 @@ Reader与runtime materialization由`GalateaStrictConfigReader`、`GalateaConfigL
    embedded、code-owned，始终定义邮箱Quick Start的收件部分；
 4. [Codex outbound appendix](../../../Galatea/prompt/trpg-outbound-mail-protocol-appendix-zh-cn.md)：
    Galatea.Server embedded、code-owned，仅在validated `galatea.outbound-mail-extractor` binding非`null`时追加，
-   并继续同一份Quick Start的发件部分。
+   并继续同一份Quick Start的发件部分；
+5. [Character Note request development appendix](../../../Galatea/prompt/trpg-character-note-request-development-appendix-zh-cn.md)：
+   Galatea.Server embedded、code-owned，仅在validated `galatea.character-note-extractor` binding非`null`时追加，
+   只定义诚实的development保存请求与后续回执，不承诺保存、索引或召回。
 
-这两份resource的物理拆分保留capability boundary；outbound启用时，它们向模型连续呈现为一份
-Quick Start。其`##` / `###` heading只是呈现结构，appendix presence只由validated sibling binding决定。
+三份base/appendix resource的物理拆分保留capability boundary；启用对应binding时，它们向模型连续呈现为简短
+Quick Start。其`##` / `###` heading只是呈现结构，两个appendix presence各自只由validated sibling binding决定。
 
 `GalateaUserFileConfig`只表示operator file shape；它保存character context source及optional file path。
 `GalateaUserConfig`只表示resolved runtime shape；它保存validated `GalateaCharacterName`、
@@ -131,7 +134,13 @@ protocolPrefix + "\n\n---\n\n"
 "\n\n" + outboundMailProtocolAppendix
 ```
 
-三份code-owned protocol source均为nonblank、BOM-less、LF-only、bounded strict UTF-8，并在使用前通过同一
+若validated Character Note binding非`null`，在outbound appendix（若有）之后再追加：
+
+```text
+"\n\n" + characterNoteRequestDevelopmentAppendix
+```
+
+四份code-owned protocol source均为nonblank、BOM-less、LF-only、bounded strict UTF-8，并在使用前通过同一
 template grammar验证。External context file、每份embedded resource的读取上限为1 MiB；组合后的composite
 source与final rendered prompt也分别不得超过1 MiB。这里没有per-section digest、runtime module list、include、
 operator condition/priority、H2 parser或第四份完整composed prompt。
@@ -183,8 +192,9 @@ exact existing connection ID或explicit
 `null`。Missing、wrong-case、extra、blank或unknown全部fail closed，不fallback default。Provider/model/endpoint/
 secret不进入主prompt分段identity。Outbound binding为`null`时final prompt仍包含universal mailbox base但不包含
 主动发送承诺；非`null`时追加Codex outbound appendix。这个fixed feature branch来自validated sibling binding，
-不是新的root/operator prompt module field。Character Note binding只提供hidden、lazy、borrowed的per-user
-extractor runtime supply；它在V0不表示Note已保存或可召回，且无论`null`或non-`null`都不改变final prompt。
+不是新的root/operator prompt module field。Character Note binding同样提供hidden、lazy、borrowed的per-user
+extractor runtime supply；为`null`时final prompt不出现Note请求能力，非`null`时追加诚实的development request
+appendix。该appendix只教角色完成提交请求并明确不表示Note已保存、索引或可召回。
 
 ## 4. Bootstrap与V4 migration
 
@@ -200,7 +210,7 @@ missing parent，以`FileMode.CreateNew`写入standard context并`Flush(true)`�
 existing file永不覆盖；missing outside-root target不创建。任何生成都fail-stop并列出paths，operator检查后重启。
 Code-owned protocol resources只从binary embedded resources读取，绝不复制到operator目录。Bootstrap生成的
 `connections.json`把outbound与Character Note extractor bindings都写为`null`，所以starter composition只有
-mailbox base、不含outbound appendix，也不启用Character Note extraction supply。
+mailbox base、不含两个appendix，也不启用Character Note extraction supply。
 Bootstrap不创建SessionJournal、
 RecapGrid state、delegation state或provider effect。
 
@@ -213,9 +223,9 @@ heading猜测并修复它。
 
 V5不改写任何existing raw setup。Existing Idle session在下一次fresh turn由现有`ReconcileDesiredSetup` exact比较
 finalized prompt：bytes不变则复用governing setup，变化则append一个新的`SystemPromptSetup`。这是正常setup
-rotation，不是SessionJournal schema migration。停服修改sibling config并重启后，把validated outbound binding从
-`null`切到connection ID或反向切换会自然改变finalized prompt，并在下一次fresh触发同一exact rotation。
-Character Note binding切换保持finalized prompt byte-exact，不触发该rotation。
+rotation，不是SessionJournal schema migration。停服修改sibling config并重启后，把validated outbound或Character
+Note binding从`null`切到connection ID或反向切换都会自然改变对应appendix presence，并在下一次fresh触发同一
+exact rotation。
 
 Prepared/Frozen recovery继续按historical governing setup与frozen request identity恢复，不用current prefix/context/
 mail protocol resources重组历史请求。V5不增加protocol/context durable columns、renderer version、receipt或

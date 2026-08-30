@@ -1,6 +1,9 @@
 # Galatea Dynamic Memory Puzzle Map
 
-本文记录 Galatea 自主笔记与动态信息召回系统当前已经清晰的底层拼图。它是恢复思路用的工作笔记；其中 `PlayerTurnObservation` recall block、`RecallEntry`、`PlayerTurnRecall`、`RecallBarrier` 与 Galatea-side provider seam 已经落地为 V0 代码级契约，MemoPod 接入、真实召回规划、索引维护和角色主动记笔记仍是后续设计。
+本文记录 Galatea 自主笔记与动态信息召回系统当前已经清晰的底层拼图。它是恢复思路用的工作笔记；其中
+`PlayerTurnObservation` recall block、`RecallEntry`、`PlayerTurnRecall`、`RecallBarrier`、Galatea-side provider seam，
+以及development Note保存请求的提取/回执闭环已经落地为V0代码级契约。MemoPod接入、真实保存、召回规划、索引维护
+仍是后续设计。
 
 ## 当前判断
 
@@ -57,7 +60,9 @@ MemoPod 不负责：
 
 `TextExtractor` 解决的是“角色到 runtime”的方向：角色继续用叙事化 Action 行动，runtime 在 turn 边界外读取 visible Action text，提取 typed artifact。这个模式避免要求主线角色模型显式进入 Assistant / Agent / tool-call 行为模式，减少出戏风险。
 
-Mailbox 已经证明这个方向可行：`OutboundMailExtractor` 从角色叙事 Action 中提取 `SendMailIntent`。后续自主记笔记可以复用同一个模式，但应该定义自己的 contract，例如 `CharacterNoteIntent` / `CharacterNoteExtractor`，不要放进 Mailbox namespace。
+Mailbox 已经证明这个方向可行：`OutboundMailExtractor`从角色叙事Action中提取`SendMailIntent`。现行
+`CharacterNoteIntent` / `CharacterNoteExtractor`已复用该模式，但只提取角色明确完成提交的development Note保存请求；
+对应binding非`null`时主prompt才追加诚实Quick Start。它不在Mailbox namespace，也不表示Note已保存。
 
 ### PlayerTurnObservation
 
@@ -73,7 +78,7 @@ Mailbox 已经证明这个方向可行：`OutboundMailExtractor` 从角色叙事
 
 - 玩家行动正文；
 - runtime 采样的 external local timestamp；
-- 0..16 条 `PlayerTurnNotice`，目前是 Codex delegation 的 reply / delivery failure；
+- 合计0..16条`PlayerTurnNotice`：Codex delegation reply / delivery failure，以及至多1条且必须最后的development `NoteRequestReceipt`；
 - 0..32 条 `PlayerTurnRecall`，目前三档是 Memo Gist / Summary / ExactText；
 - strict canonical render / parse / round-trip；
 - adaptive Markdown fence，正文不 trim、不 normalize、不 escape。
@@ -215,6 +220,7 @@ external-local-timestamp
 player-action
 memo recall blocks
 delegate reply / failure notices
+optional NoteRequestReceipt (final notice)
 ```
 
 原因是 recall 通常由当前 player action 和当前 context 触发，放在 player action 后更容易让模型理解“这些是 runtime 为理解本轮行动补充的记忆”。Codex reply/failure notices 仍然作为异步外界事件保留在后面。
@@ -274,16 +280,27 @@ GalateaServices 当前会在 fresh player turn 中先构造无 recall 的 prelim
 
 ## 端到端拼装图
 
-后续目标可以分成两条流。
+现行V0 request/receipt与后续durable memory effect必须分开阅读。
 
-角色主动记笔记：
+现行development Note请求闭环：
 
 ```text
 terminal Action
   -> GalateaVisibleActionTextRenderer
   -> TextExtractor<CharacterNoteIntent>
-  -> durable note capture / validation
-  -> MemoPod.Append / freeze / publish
+  -> validate completed request submission + exact source grounding
+  -> best-effort in-process NoteRequestReceipt queue
+  -> next eligible ordinary PlayerTurnObservation
+```
+
+它不保存、索引或召回Note。未来真实保存另起durable owner链路：
+
+```text
+(SourceAction, VisibleTextHash, ContractId, ordered intents)
+  -> durable proposal capture / zero-result tombstone
+  -> owner-controlled Pod routing
+  -> MemoPod apply
+  -> durable apply receipt
 ```
 
 动态召回注入：
@@ -302,7 +319,7 @@ new player action + exact completion boundary
 
 这份笔记不设计完整方案，但当前缺口大致是：
 
-- `CharacterNoteIntent` contract、prompt、extractor、reconciler；
+- Character Note durable proposal capture / zero-result tombstone、reconciler、owner routing与MemoPod apply；
 - Memo 的归类、整理、合并、分裂、失效和二级索引维护；
 - recall trigger：按当前 player action、场景、实体、时间、未完成事项等决定何时查；
 - recall planner：在 Gist/Summary/ExactText 之间选择合适粒度；
@@ -320,11 +337,12 @@ new player action + exact completion boundary
 1. 已扩展 `PlayerTurnObservation` 的强类型模型和 canonical renderer/parser，加入 `RecallType`、`RecallEntry`、`PlayerTurnRecall`，并覆盖 render/parse/display/validation/legacy rejection 测试；尚未接 MemoPod。
 2. 已实现 `RecallBarrier` 与 parser-based 聚合器，能从多条 canonical Observation 中聚合 exact keys，并跳过 invalid / legacy / inbound / null 输入。
 3. 已给 `GalateaServices` 预留 `IGalateaPlayerTurnRecallProvider` 注入 seam，测试中用固定 recall payload 验证了 render、recovery、recent display，也验证了第二轮能从 provider-visible context 聚合已可见 barrier。
+4. 已实现capability-gated的development Note保存请求Quick Start、`CharacterNoteIntent` semantic.v3提取、shared terminal Action target，以及下一次eligible普通回合的honest best-effort回执；未接Memo sink。
 
 ### 下一批候选
 
-4. 设计 MemoPod recall planner 的最小边界，把 `MemoGist` 作为第一档上线；Summary / ExactText 作为后续升级路径。这里需要先决定 `SourceId` codec、Title/Gist 缺失时的显式展示策略，以及 planner 怎样消费 `RecallBarrier`。
-5. 设计角色主动 note writing 的 `TextExtractor` / reconciler，复用 Mailbox 的 durable capture 思路，但保持独立 namespace，例如 `Atelia.Galatea.Server.Memory` 或 `Atelia.Galatea.Server.CharacterMemory`。
-6. 在真实 recall 开始消耗 context budget 之后，再补 dominance、budget、active durable reply lease 与 provider failure/cancellation 的契约。
+5. 设计Character Note durable proposal owner：proposal/tombstone identity、reconciler、Pod routing、MemoPod apply与durable apply receipt；不把V0 SessionJournal回执或debug log反向当作apply authority。
+6. 设计 MemoPod recall planner 的最小边界，把 `MemoGist` 作为第一档上线；Summary / ExactText 作为后续升级路径。这里需要先决定 `SourceId` codec、Title/Gist 缺失时的显式展示策略，以及 planner 怎样消费 `RecallBarrier`。
+7. 在真实 recall 开始消耗 context budget 之后，再补 dominance、budget、active durable reply lease 与 provider failure/cancellation 的契约。
 
-这个顺序保持自底向上：先让 Observation 能稳定携带 recall anchor，再让 barrier 能证明“已经可见”，最后才把 MemoPod 查询、索引维护和角色主动记笔记接进来。
+这个顺序保持authority前置：V0只验证request submission与honest receipt；下一步先为真实保存建立独立durable owner，再把MemoPod apply、查询与索引维护接进来。

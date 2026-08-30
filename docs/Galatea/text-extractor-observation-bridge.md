@@ -5,7 +5,9 @@
 - 角色到 runtime：角色在叙事 `Action` 中表达意图，runtime 用 `TextExtractor` 把可见文本提取成 typed artifact。这个方向对位 LLM tool-call。
 - runtime 到角色：runtime 把外部事件、回信、失败、时间等信息拼装进 composite `Observation`，在下一次主线 Completion 中交给角色。这个方向对位 tool-result。
 
-这不是单次 provider invocation 内部的 tool call / tool result loop。它是 runtime 在 turn 边界外侧实现的通讯桥：主线角色模型只继续书写故事；runtime 在 durable 边界读取、提取、持久化、调度，再把结果以 Observation 数据重新注入。
+这不是单次 provider invocation 内部的 tool call / tool result loop。它是 runtime 在 turn 边界外侧实现的通讯桥：
+主线角色模型只继续书写故事；runtime在durable turn边界读取和提取，只有Mail等真实durable effect进入自身持久化/
+调度owner，development Character Note回执则只经过in-process queue，再把结果以Observation数据重新注入。
 
 ## 源码地图
 
@@ -31,7 +33,7 @@ Mailbox specialization：
 
 Character Memory V0 specialization：
 
-- [`CharacterNoteIntent` / `CharacterNoteExtractor`](../../prototypes/Galatea/CharacterMemory/CharacterNoteExtractor.cs)：保守提取角色本人已完成记录、且正文exact source-grounded的长期Note请求。
+- [`CharacterNoteIntent` / `CharacterNoteExtractor`](../../prototypes/Galatea/CharacterMemory/CharacterNoteExtractor.cs)：保守提取角色本人已明确完成提交、且正文exact source-grounded的development Note保存请求；仅声称已经保存不构成提交。
 - [`CharacterNoteRequestReceipt`](../../prototypes/Galatea/CharacterMemory/CharacterNoteRequestReceipt.cs)：把一批validated intent渲染成honest development-only回执，并提供per-session bounded in-process FIFO。
 - `PlayerTurnNotice.NoteRequestReceipt`：普通player Observation中的独立strong type；canonical顺序中至多一条且必须为最后notice。
 
@@ -63,7 +65,7 @@ cooperative deadline只丢弃回执。Mail失败会取消并drain Note；两条t
 结束，不使用`Task.Run`、`Task.WhenAll`或fire-and-forget。同一connection可收到两个overlapping调用，但client仍可
 自行限流。
 
-Note成功时，host在final `current head == SourceAction` fence后把1..N条intent冻结为一条请求回执；0 intent不排队。
+Note成功时，host在final `current head == SourceAction` fence后把1..N条request intent冻结为一条请求回执；0 intent不排队。
 queue full或receipt因outer Observation bound无法render都只产生development diagnostic，不使主回合失败。V0没有
 Note durable tombstone，因此admission/restart gap reconciliation仍只运行Mail，不补跑Note。
 
@@ -102,7 +104,7 @@ ready-turn、inbound与recovery都不领取；领取后的pre-dispatch stop、�
 
 已经落地的V0映射：
 
-- note write intent：角色在Action中明确完成记录自己的长期Note；runtime用`CharacterNoteIntent` artifact tool保守提取，并在未来eligible普通player turn返回honest请求回执。
+- note request intent：仅当对应binding非`null`时，code-owned主prompt appendix才告诉角色如何在Action中明确完成提交development Note保存请求；runtime用`CharacterNoteIntent` artifact tool保守提取，并在未来eligible普通player turn返回honest请求回执。请求尚不保存、索引或召回。
 
 仍属后续候选的映射：
 

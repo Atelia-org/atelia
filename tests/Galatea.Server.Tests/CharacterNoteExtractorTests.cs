@@ -82,6 +82,22 @@ public sealed class CharacterNoteExtractorTests {
             "^atelia\\.galatea\\.character-note-extractor\\.v1\\.[0-9a-f]{64}$",
             session.CharacterNoteExtractor.ContractId
         );
+        string finalizedPrompt = session.Engine.ResolveGoverningSetup(
+            session.Engine.ReadCurrentHead()
+                ?? throw new Xunit.Sdk.XunitException(
+                    "The test session has no governing head."
+                )
+        ).SystemPrompt;
+        Assert.Contains(
+            "### 提交 Note 请求（开发中）",
+            finalizedPrompt,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "### 发信给 Codex",
+            finalizedPrompt,
+            StringComparison.Ordinal
+        );
         Assert.Equal(0, factory.CreateCallCount);
     }
 
@@ -171,6 +187,16 @@ public sealed class CharacterNoteExtractorTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
+            "development Note save-request submissions",
+            aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "already recorded, stored, or saved is not a request submission",
+            aliceRequest.PromptPrefix.SystemPrompt,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
             "Emit at most 16 tool calls",
             aliceRequest.PromptPrefix.SystemPrompt,
             StringComparison.Ordinal
@@ -214,12 +240,12 @@ public sealed class CharacterNoteExtractorTests {
             Assert.Single(aliceRequest.TailMessages)
         );
         Assert.Contains(
-            "quoted or existing Notes",
+            "claims of prior saving",
             aliceTail.Content,
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "up to 16 earliest qualifying long-term Notes",
+            "up to 16 earliest qualifying development Note save requests",
             aliceTail.Content,
             StringComparison.Ordinal
         );
@@ -230,6 +256,9 @@ public sealed class CharacterNoteExtractorTests {
         Assert.Contains("evidenceQuote", schema, StringComparison.Ordinal);
         Assert.Contains("64 KiB", schema, StringComparison.Ordinal);
         Assert.Contains("8 KiB", schema, StringComparison.Ordinal);
+        Assert.Contains("save request", schema, StringComparison.Ordinal);
+        Assert.Contains("completed submitting", schema,
+            StringComparison.Ordinal);
         Assert.DoesNotContain(
             "title",
             schema,
@@ -240,8 +269,8 @@ public sealed class CharacterNoteExtractorTests {
     [Fact]
     public async Task ReturnsZeroAndPreservesOrderedGroundedIntents() {
         const string Target = """
-[Galatea] I recorded my first long-term Note as "first exact note" and saved it.
-[Galatea] I recorded my second long-term Note as "second exact note" and saved it.
+[Galatea] I submitted a development Note save request with exact text "first exact note" and completed the submission.
+[Galatea] I submitted a development Note save request with exact text "second exact note" and completed the submission.
 """;
         var client = new QueueClient(
             _ => Message(),
@@ -249,12 +278,12 @@ public sealed class CharacterNoteExtractorTests {
                 Tool(
                     "note-1",
                     "first exact note",
-                    "[Galatea] I recorded my first long-term Note"
+                    "[Galatea] I submitted a development Note save request"
                 ),
                 Tool(
                     "note-2",
                     "second exact note",
-                    "[Galatea] I recorded my second long-term Note"
+                    "[Galatea] I submitted a development Note save request"
                 )
             )
         );
@@ -273,8 +302,8 @@ public sealed class CharacterNoteExtractorTests {
         );
         Assert.Equal(
             [
-                "[Galatea] I recorded my first long-term Note",
-                "[Galatea] I recorded my second long-term Note",
+                "[Galatea] I submitted a development Note save request",
+                "[Galatea] I submitted a development Note save request",
             ],
             intents.Select(static intent => intent.EvidenceQuote)
         );
@@ -292,7 +321,7 @@ public sealed class CharacterNoteExtractorTests {
         InvalidIntentShape shape
     ) {
         const string ValidExactText = "grounded note";
-        const string ValidEvidence = "recorded and saved";
+        const string ValidEvidence = "completed submitting the Note request";
         string target = $"{ValidExactText}; {ValidEvidence}";
         ActionBlock.ToolCall call = shape switch {
             InvalidIntentShape.BlankExactText =>
@@ -324,7 +353,7 @@ public sealed class CharacterNoteExtractorTests {
                     CharacterNoteExtractor.ToolName,
                     "invalid",
                     "{\"exactText\":\"" + "\ud800"
-                        + "\",\"evidenceQuote\":\"recorded and saved\"}"
+                        + "\",\"evidenceQuote\":\"completed submitting the Note request\"}"
                 )
             ),
             _ => throw new ArgumentOutOfRangeException(nameof(shape)),
@@ -356,7 +385,7 @@ public sealed class CharacterNoteExtractorTests {
             'x',
             CharacterNoteBounds.MaximumExactTextUtf8Bytes
         );
-        const string Evidence = "recorded and saved";
+        const string Evidence = "completed submitting the Note request";
         var client = new QueueClient(
             _ => Message(Enumerable.Range(0, 17)
                 .Select(index => Tool(

@@ -20,12 +20,14 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
     private const string TestUserId = "alice";
     private const string TestPassword = "pw1";
     private static string ComposeDefaultFinalizedSystemPrompt(
-        bool outboundMailEnabled
+        bool outboundMailEnabled,
+        bool characterNoteRequestEnabled
     ) => GalateaSystemPromptComposer.Compose(
         "test ${characterName} system prompt",
         new GalateaCharacterName("Galatea"),
         new GalateaPlayerName("刘世超"),
         outboundMailEnabled,
+        characterNoteRequestEnabled,
         GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
     );
 
@@ -110,7 +112,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                    new SessionCreateOptions(
                        "model-a",
                        ComposeDefaultFinalizedSystemPrompt(
-                           outboundMailExtractorConnectionId is not null
+                           outboundMailExtractorConnectionId is not null,
+                           characterNoteExtractorConnectionId is not null
                        ),
                        "openai-chat/strict"
                    ))) {

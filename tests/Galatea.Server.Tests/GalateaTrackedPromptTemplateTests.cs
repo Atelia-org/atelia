@@ -5,7 +5,7 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaTrackedPromptTemplateTests {
     [Fact]
-    public void TrackedResourcesComposeEnabledAndDisabledInExactOrder() {
+    public void TrackedResourcesComposeFourCapabilityCombinationsInExactOrder() {
         string prefix = ReadTracked(
             "trpg-protocol-prefix-zh-cn.md"
         ).Trim();
@@ -17,6 +17,9 @@ public sealed class GalateaTrackedPromptTemplateTests {
         ).Trim();
         string outboundAppendix = ReadTracked(
             "trpg-outbound-mail-protocol-appendix-zh-cn.md"
+        ).Trim();
+        string noteAppendix = ReadTracked(
+            "trpg-character-note-request-development-appendix-zh-cn.md"
         ).Trim();
 
         Assert.Equal(prefix, GalateaSystemPromptComposer.ProtocolPrefixSource);
@@ -32,6 +35,11 @@ public sealed class GalateaTrackedPromptTemplateTests {
             outboundAppendix,
             GalateaSystemPromptComposer.OutboundMailProtocolAppendixSource
         );
+        Assert.Equal(
+            noteAppendix,
+            GalateaSystemPromptComposer
+                .CharacterNoteRequestDevelopmentAppendixSource
+        );
 
         string baseCompositeSource = string.Concat(
             prefix,
@@ -40,33 +48,86 @@ public sealed class GalateaTrackedPromptTemplateTests {
             GalateaSystemPromptComposer.SectionSeparator,
             mailboxBase
         );
-        string disabledExpected = RenderNames(baseCompositeSource);
-        string enabledExpected = RenderNames(string.Concat(
+        string neitherExpected = RenderNames(baseCompositeSource);
+        string outboundExpected = RenderNames(string.Concat(
             baseCompositeSource,
-            GalateaSystemPromptComposer.OutboundAppendixSeparator,
+            GalateaSystemPromptComposer.AppendixSeparator,
             outboundAppendix
         ));
-        string disabled = Compose(context, outboundMailEnabled: false);
-        string enabled = Compose(context, outboundMailEnabled: true);
+        string noteExpected = RenderNames(string.Concat(
+            baseCompositeSource,
+            GalateaSystemPromptComposer.AppendixSeparator,
+            noteAppendix
+        ));
+        string bothExpected = RenderNames(string.Concat(
+            baseCompositeSource,
+            GalateaSystemPromptComposer.AppendixSeparator,
+            outboundAppendix,
+            GalateaSystemPromptComposer.AppendixSeparator,
+            noteAppendix
+        ));
+        string neither = Compose(
+            context,
+            outboundMailEnabled: false,
+            characterNoteRequestEnabled: false
+        );
+        string outbound = Compose(
+            context,
+            outboundMailEnabled: true,
+            characterNoteRequestEnabled: false
+        );
+        string note = Compose(
+            context,
+            outboundMailEnabled: false,
+            characterNoteRequestEnabled: true
+        );
+        string both = Compose(
+            context,
+            outboundMailEnabled: true,
+            characterNoteRequestEnabled: true
+        );
 
-        Assert.Equal(disabledExpected, disabled);
-        Assert.Equal(enabledExpected, enabled);
-        Assert.DoesNotContain("${", disabled, StringComparison.Ordinal);
-        Assert.DoesNotContain("${", enabled, StringComparison.Ordinal);
-        Assert.DoesNotContain("### 发信给 Codex", disabled,
+        Assert.Equal(neitherExpected, neither);
+        Assert.Equal(outboundExpected, outbound);
+        Assert.Equal(noteExpected, note);
+        Assert.Equal(bothExpected, both);
+        Assert.DoesNotContain("${", neither, StringComparison.Ordinal);
+        Assert.DoesNotContain("${", outbound, StringComparison.Ordinal);
+        Assert.DoesNotContain("${", note, StringComparison.Ordinal);
+        Assert.DoesNotContain("${", both, StringComparison.Ordinal);
+        Assert.DoesNotContain("### 发信给 Codex", neither,
             StringComparison.Ordinal);
-        Assert.Contains("### 发信给 Codex", enabled,
+        Assert.DoesNotContain("### 提交 Note 请求（开发中）", neither,
+            StringComparison.Ordinal);
+        Assert.Contains("### 发信给 Codex", outbound,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("### 提交 Note 请求（开发中）", outbound,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("### 发信给 Codex", note,
+            StringComparison.Ordinal);
+        Assert.Contains("### 提交 Note 请求（开发中）", note,
+            StringComparison.Ordinal);
+        Assert.Contains("### 发信给 Codex", both,
+            StringComparison.Ordinal);
+        Assert.Contains("### 提交 Note 请求（开发中）", both,
             StringComparison.Ordinal);
         Assert.True(
-            enabled.IndexOf("## 界外邮箱", StringComparison.Ordinal)
-            < enabled.IndexOf(
+            both.IndexOf("## 界外邮箱", StringComparison.Ordinal)
+            < both.IndexOf(
                 "### 发信给 Codex",
                 StringComparison.Ordinal
             )
         );
         Assert.True(
-            enabled.IndexOf("## 输出结构", StringComparison.Ordinal)
-            < enabled.IndexOf(
+            both.IndexOf("### 发信给 Codex", StringComparison.Ordinal)
+            < both.IndexOf(
+                "### 提交 Note 请求（开发中）",
+                StringComparison.Ordinal
+            )
+        );
+        Assert.True(
+            both.IndexOf("## 输出结构", StringComparison.Ordinal)
+            < both.IndexOf(
                 "## 世界观与人物设定",
                 StringComparison.Ordinal
             )
@@ -79,12 +140,14 @@ public sealed class GalateaTrackedPromptTemplateTests {
 
     private static string Compose(
         string context,
-        bool outboundMailEnabled
+        bool outboundMailEnabled,
+        bool characterNoteRequestEnabled
     ) => GalateaSystemPromptComposer.Compose(
         context,
         new GalateaCharacterName("Alice"),
         new GalateaPlayerName("Alex"),
         outboundMailEnabled,
+        characterNoteRequestEnabled,
         GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
     );
 
@@ -119,12 +182,14 @@ public sealed class GalateaTrackedPromptTemplateTests {
     }
 
     [Fact]
-    public void ProtocolLocksVoiceSourceAndMailboxBoundaries() {
+    public void ProtocolLocksVoiceMailboxAndNoteRequestBoundaries() {
         string prefix = GalateaSystemPromptComposer.ProtocolPrefixSource;
         string mailboxBase =
             GalateaSystemPromptComposer.MailboxProtocolBaseSource;
         string outboundAppendix =
             GalateaSystemPromptComposer.OutboundMailProtocolAppendixSource;
+        string noteAppendix = GalateaSystemPromptComposer
+            .CharacterNoteRequestDevelopmentAppendixSource;
 
         Assert.Contains("GM carrier", prefix, StringComparison.Ordinal);
         Assert.Contains("[${characterName}]", prefix,
@@ -174,6 +239,26 @@ public sealed class GalateaTrackedPromptTemplateTests {
             StringComparison.Ordinal);
         Assert.DoesNotContain("[旁白]", outboundAppendix,
             StringComparison.Ordinal);
+        Assert.Contains("### 提交 Note 请求（开发中）", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("后续符合条件的普通回合返回回执", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("尚不保存、索引或召回Note", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("${characterName}本人", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("同一次回复", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("提交Note请求", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("完整原文", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("最多16条", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("无固定格式", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("仅声称已经保存", noteAppendix,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -194,6 +279,7 @@ public sealed class GalateaTrackedPromptTemplateTests {
             new GalateaCharacterName("Alice"),
             new GalateaPlayerName("Alex"),
             false,
+            false,
             GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
         );
 
@@ -204,10 +290,13 @@ public sealed class GalateaTrackedPromptTemplateTests {
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
     public void AggregateCompositeSourceUsesTheSingleSystemPromptCap(
-        bool outboundMailEnabled
+        bool outboundMailEnabled,
+        bool characterNoteRequestEnabled
     ) {
         string context = GalateaPromptTemplate.CharacterNameToken
             + new string(
@@ -222,6 +311,7 @@ public sealed class GalateaTrackedPromptTemplateTests {
                 new GalateaCharacterName("A"),
                 new GalateaPlayerName("P"),
                 outboundMailEnabled,
+                characterNoteRequestEnabled,
                 GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
             ));
     }

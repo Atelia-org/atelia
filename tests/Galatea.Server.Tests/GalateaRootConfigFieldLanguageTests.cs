@@ -835,6 +835,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         new GalateaCharacterName(characterName),
         new GalateaPlayerName(playerName),
         false,
+        false,
         GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
     );
 

@@ -17,14 +17,16 @@ operator-owned character context
 universal code-owned mailbox base
         + when validated outbound binding is non-null:
           "\n\n" + code-owned Codex outbound appendix
+        + when validated Character Note binding is non-null:
+          "\n\n" + code-owned development Note request appendix
         -> one closed name render
         -> finalized SystemPrompt
 ```
 
 Root config因此hard-cut到V5，并用`characterContextTemplate` /
 `characterContextTemplateFile`取代V4的`systemPromptTemplate*`。Runtime DTO与SessionJournal仍只接收finalized
-`SystemPrompt`，不引入分段durable identity或schema。Mailbox base与outbound appendix物理上是两份resource，
-启用outbound时则向模型连续呈现为一份Quick Start。
+`SystemPrompt`，不引入分段durable identity或schema。Mailbox base与两个capability-gated appendix物理上是独立
+resource，启用对应binding时向模型连续呈现为简短Quick Start。
 
 ## 2. 为什么需要拆分ownership
 
@@ -80,17 +82,28 @@ embedded resource拥有。它始终定义角色如何理解和接收界外来信
 
 这个布尔选择来自现有validated host binding，不是operator可排列的prompt module，也没有per-user开关。
 
+### 3.5 Conditional development Character Note request appendix
+
+[`prompt/trpg-character-note-request-development-appendix-zh-cn.md`](prompt/trpg-character-note-request-development-appendix-zh-cn.md)
+也是Galatea.Server embedded、code-owned。仅当exact `galatea.character-note-extractor` binding非`null`时，composer
+才在outbound appendix之后追加该段。它只教`${characterName}`如何明确完成提交development Note保存请求，并说明
+后续eligible普通回合只返回识别回执；它明确不承诺保存、索引或召回。
+
+Note appendix presence与outbound独立，两个binding形成四种exact composition。是否追加同样只来自validated sibling
+binding，不看operator prose或Markdown heading。
+
 ## 4. Fixed composition，而不是文档解析
 
 `GalateaSystemPromptComposer`先固定组合
 `prefix + "\n\n---\n\n" + context + "\n\n---\n\n" + mailboxBase`。Outbound binding非`null`
-时，再追加`"\n\n" + outboundAppendix`；随后调用已有`${characterName}` / `${playerName}` renderer一次。
+时先追加`"\n\n" + outboundAppendix`；Character Note binding非`null`时再追加
+`"\n\n" + noteRequestDevelopmentAppendix`；随后调用已有`${characterName}` / `${playerName}` renderer一次。
 External context与每份embedded resource有1 MiB读取cap，composite source与final rendered prompt也分别受1 MiB
 cap；embedded resources还要求BOM-less、LF-only、nonblank strict UTF-8。
 
 Markdown heading只帮助LLM与人阅读，不是machine discriminator。Runtime不会扫描`## 世界观`、`## 自主记忆`、
-`## 界外邮箱`或`### 发信给 Codex`来决定分段、权限、feature或安全性。是否追加outbound appendix只看
-validated sibling binding，不看operator prose。
+`## 界外邮箱`、`### 发信给 Codex`或`### 提交 Note 请求（开发中）`来决定分段、权限、feature或安全性。
+是否追加两个appendix分别只看对应validated sibling binding，不看operator prose。
 
 ## 5. 为什么不采用更通用的方案
 
@@ -98,7 +111,7 @@ validated sibling binding，不看operator prose。
   拼接协议，或迫使runtime猜测并剥离自然语言。
 - **不拆成独立world/memory文件。** 当前两类内容都是同一个operator、同一次load、同一final setup authority，
   没有独立writer、权限或提交生命周期。拆文件只会增加顺序、partial-missing、bootstrap和bounds矩阵。
-- **不做module/include engine。** 当前只有固定base composition和一个existing-binding-controlled appendix，不需要
+- **不做module/include engine。** 当前只有固定base composition和两个existing-binding-controlled appendix，不需要
   module ID、priority、operator optional list、include cycle、per-module digest或动态registry。
 - **不解析H2。** Heading可由operator重写且存在于自然语言中，不能成为安全或durable contract。
 - **不追求旧prompt bytes永远不变。** Finalized text真正变化时，由既有desired-setup reconciliation追加一次setup
@@ -112,11 +125,11 @@ validated sibling binding，不看operator prose。
 - New session provisioning用finalized prompt创建现有raw三个setup events。
 - Existing Idle session只在下一次fresh turn通过`ReconcileDesiredSetup` exact比较；变化时append
   `SystemPromptSetup`，不改写历史。
-- 停服修改sibling config并重启后的validated outbound binding切换会改变appendix presence，并自然走同一个
+- 停服修改sibling config并重启后的validated outbound或Character Note binding切换会改变对应appendix presence，并自然走同一个
   next-fresh exact setup rotation；不增加prompt config字段或durable event kind。
 - Prepared/Frozen recovery继续读取historical governing setup与frozen request，不用current composition resources重组。
 - RecapGrid V6仍由character/player names决定Definition/BuildTarget；主prompt拆分不旋转asset。
-- Outbound extractor继续使用自身code-owned prompt和ContractId；主prompt appendix不进入extractor identity。
+- Outbound与Character Note extractor继续各自使用code-owned prompt和ContractId；主prompt appendix不进入extractor identity。
 - Mail/player envelope、delegation SQLite、SessionJournal、Completion、HTTP/SSE均不改schema或version。
 
 ## 7. Machine-local migration语义
@@ -129,6 +142,10 @@ Codex outbound appendix。旧`cyber.md`已有等价邮箱段，正确切分可�
 是与实际enabled feature对齐的预期变化，不需要per-user module开关。若binding改为`null`，两者仍保留universal
 inbox base，但prompt不再承诺主动发送或Codex投递。未被config引用的`cyber_template.md`不阻塞迁移。
 
+Character Note key是同一strict `bindings` object的required sibling；旧ignored文件缺key时必须由operator停服、备份后
+显式补成`null`或exact connection ID，runtime不提供missing-key兼容。选择non-`null`会追加诚实的development request
+appendix，但仍不创建Memo sink。
+
 迁移不provision/rebuild/promote RecapGrid，不运行outbound mail extraction，不改delegation store或raw SessionJournal。
 Read-only canary应验证load、final composition与现有readiness；真正的setup rotation只发生在之后的普通fresh turn。
 
@@ -139,10 +156,10 @@ Read-only canary应验证load、final composition与现有readiness；真正的s
 | Strict root | exact `v:5`；V4、旧字段、unknown/wrong-case/duplicate/type mismatch拒绝 |
 | Context precedence | valid file覆盖inline；inline exact；file decode后`Trim()`；missing/outside-root按contract失败 |
 | Context grammar | nonblank、required character token、optional player token；unknown/malformed token拒绝 |
-| Composition | exact prefix/separator/context/separator/mailbox base；仅non-null binding追加double-newline + outbound appendix；只render一次 |
+| Composition | exact prefix/separator/context/separator/mailbox base；两个non-null binding独立追加outbound/note appendix，both时顺序固定；只render一次 |
 | Bounds/resources | external context、composite source与final output各1 MiB；embedded resource strict UTF-8、BOM-less、LF-only |
 | Runtime DTO | 每个user只保留validated names与finalized `SystemPrompt`；appendix choice来自validated sibling binding |
-| Bootstrap | missing in-root context create-only、shared path一次、existing no-overwrite、protocol不落operator目录；default outbound binding为null |
+| Bootstrap | missing in-root context create-only、shared path一次、existing no-overwrite、protocol不落operator目录；default outbound/note bindings为null |
 | Durable setup | new repository保存final prompt；Idle及binding toggle只按exact变化rotate；Frozen使用historical setup |
 | Cross-subsystem | Recap/mail/delegation/SessionJournal/Completion/HTTP durable identities与schema不变 |
 | Governance | README、V5 contract、prompt router current；V4及更早合同保持准确历史 |

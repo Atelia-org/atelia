@@ -226,6 +226,11 @@ public sealed class GalateaConfigValidationTests {
                 StringComparison.Ordinal);
             Assert.DoesNotContain("### 发信给 Codex", user.SystemPrompt,
                 StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                "### 提交 Note 请求（开发中）",
+                user.SystemPrompt,
+                StringComparison.Ordinal
+            );
             Assert.DoesNotContain("${", user.SystemPrompt,
                 StringComparison.Ordinal);
         }
@@ -1074,6 +1079,11 @@ public sealed class GalateaConfigValidationTests {
                 StringComparison.Ordinal);
             Assert.DoesNotContain("### 发信给 Codex", disabledPrompt,
                 StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                "### 提交 Note 请求（开发中）",
+                disabledPrompt,
+                StringComparison.Ordinal
+            );
 
             JsonObject enabled = original.DeepClone().AsObject();
             enabled["bindings"]!.AsObject()[
@@ -1091,6 +1101,11 @@ public sealed class GalateaConfigValidationTests {
                 StringComparison.Ordinal);
             Assert.Contains("### 发信给 Codex", enabledPrompt,
                 StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                "### 提交 Note 请求（开发中）",
+                enabledPrompt,
+                StringComparison.Ordinal
+            );
             Assert.NotEqual(disabledPrompt, enabledPrompt);
 
             JsonObject noteEnabledJson = original.DeepClone().AsObject();
@@ -1103,9 +1118,37 @@ public sealed class GalateaConfigValidationTests {
                 noteEnabled.CharacterNoteExtractorConnectionId
             );
             Assert.Null(noteEnabled.OutboundMailExtractorConnectionId);
-            Assert.Equal(
-                disabledPrompt,
-                Assert.Single(noteEnabled.Users).SystemPrompt
+            string noteEnabledPrompt = Assert.Single(
+                noteEnabled.Users
+            ).SystemPrompt;
+            Assert.DoesNotContain("### 发信给 Codex", noteEnabledPrompt,
+                StringComparison.Ordinal);
+            Assert.Contains(
+                "### 提交 Note 请求（开发中）",
+                noteEnabledPrompt,
+                StringComparison.Ordinal
+            );
+            Assert.Contains("尚不保存、索引或召回Note", noteEnabledPrompt,
+                StringComparison.Ordinal);
+            Assert.Contains("明确完成“提交Note请求”的动作", noteEnabledPrompt,
+                StringComparison.Ordinal);
+            Assert.NotEqual(disabledPrompt, noteEnabledPrompt);
+
+            JsonObject bothEnabledJson = enabled.DeepClone().AsObject();
+            bothEnabledJson["bindings"]!.AsObject()[
+                GalateaCompletionOwner.CharacterNoteExtractorBindingKey
+            ] = "test";
+            string bothEnabledPrompt = Assert.Single(
+                Load(bothEnabledJson).Users
+            ).SystemPrompt;
+            Assert.True(
+                bothEnabledPrompt.IndexOf(
+                    "### 发信给 Codex",
+                    StringComparison.Ordinal
+                ) < bothEnabledPrompt.IndexOf(
+                    "### 提交 Note 请求（开发中）",
+                    StringComparison.Ordinal
+                )
             );
 
             AssertRejected(original, "selectableConnectionIds");

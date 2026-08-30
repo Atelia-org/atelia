@@ -1039,6 +1039,7 @@ public sealed class GalateaSessionProvisioningTests {
         new GalateaCharacterName("Galatea"),
         new GalateaPlayerName("刘世超"),
         false,
+        false,
         GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
     );
 
