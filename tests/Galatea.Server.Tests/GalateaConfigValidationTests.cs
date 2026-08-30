@@ -794,6 +794,84 @@ public sealed class GalateaConfigValidationTests {
         }
     }
 
+    [Theory]
+    [InlineData("sessionDir")]
+    [InlineData("delegationStateDir")]
+    [InlineData("characterMemoryStateDir")]
+    public void DirectConfigConstructionRejectsNonCanonicalStoragePaths(
+        string storageField
+    ) {
+        string root = NewRoot();
+        try {
+            GalateaUserConfig baseline = User(
+                "alice",
+                Path.Combine(root, "sessions", "alice")
+            );
+            string canonical = storageField switch {
+                "sessionDir" => baseline.SessionDir,
+                "delegationStateDir" => baseline.DelegationStateDir,
+                "characterMemoryStateDir" =>
+                    baseline.CharacterMemoryStateDir,
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(storageField)
+                )
+            };
+            string[] invalidPaths = [
+                Path.Combine("relative", storageField),
+                Path.Combine(
+                    root,
+                    "aliases",
+                    storageField,
+                    "..",
+                    storageField
+                ),
+                canonical + Path.DirectorySeparatorChar
+            ];
+
+            foreach (string invalidPath in invalidPaths) {
+                GalateaUserConfig invalidUser = storageField switch {
+                    "sessionDir" => baseline with {
+                        SessionDir = invalidPath
+                    },
+                    "delegationStateDir" => baseline with {
+                        DelegationStateDir = invalidPath
+                    },
+                    "characterMemoryStateDir" => baseline with {
+                        CharacterMemoryStateDir = invalidPath
+                    },
+                    _ => throw new ArgumentOutOfRangeException(
+                        nameof(storageField)
+                    )
+                };
+                var config = new GalateaConfig(
+                    [invalidUser],
+                    Connections,
+                    "test",
+                    ["test"],
+                    InputNormalizerConnectionId: null,
+                    Delegates: GalateaDelegateTestConfiguration.Create(root)
+                );
+                var factory = new TrackingFactory();
+
+                InvalidOperationException failure = Assert.Throws<
+                    InvalidOperationException>(() => new GalateaHostService(
+                        config,
+                        factory,
+                        DisabledGalateaUserMessageNormalizer.Instance
+                    ));
+                Assert.Contains(
+                    storageField,
+                    failure.Message,
+                    StringComparison.Ordinal
+                );
+                Assert.Equal(0, factory.CreateCallCount);
+            }
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public void RootConfigAcceptsExactV6OutsideFirstProperty() {
         string root = NewRoot();

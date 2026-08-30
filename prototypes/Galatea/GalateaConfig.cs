@@ -95,6 +95,9 @@ internal static class GalateaConfigValidation {
         StringComparer comparer = OperatingSystem.IsWindows()
             ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
         var sessionOwners = new Dictionary<
             string,
             (string UserId, string ConfiguredPath)
@@ -163,15 +166,21 @@ internal static class GalateaConfigValidation {
                     + "non-empty characterMemoryStateDir."
                 );
             }
-            string normalizedSession = Path.TrimEndingDirectorySeparator(
-                Path.GetFullPath(user.SessionDir)
+            string normalizedSession = RequireCanonicalAbsoluteDirectory(
+                user.SessionDir,
+                $"sessionDir for user '{user.UserId}'",
+                comparison
             );
-            string normalizedDelegation = Path.TrimEndingDirectorySeparator(
-                Path.GetFullPath(user.DelegationStateDir)
+            string normalizedDelegation = RequireCanonicalAbsoluteDirectory(
+                user.DelegationStateDir,
+                $"delegationStateDir for user '{user.UserId}'",
+                comparison
             );
             string normalizedCharacterMemory =
-                Path.TrimEndingDirectorySeparator(
-                    Path.GetFullPath(user.CharacterMemoryStateDir)
+                RequireCanonicalAbsoluteDirectory(
+                    user.CharacterMemoryStateDir,
+                    $"characterMemoryStateDir for user '{user.UserId}'",
+                    comparison
                 );
             if (sessionOwners.TryGetValue(
                     normalizedSession,
@@ -231,9 +240,6 @@ internal static class GalateaConfigValidation {
             ));
         }
 
-        StringComparison comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
         for (int delegationIndex = 0;
              delegationIndex < normalizedUsers.Count;
              delegationIndex++) {
@@ -329,6 +335,27 @@ internal static class GalateaConfigValidation {
                 comparison
             );
         }
+    }
+
+    private static string RequireCanonicalAbsoluteDirectory(
+        string path,
+        string description,
+        StringComparison comparison
+    ) {
+        if (!Path.IsPathFullyQualified(path)) {
+            throw new InvalidOperationException(
+                $"Galatea {description} must be absolute."
+            );
+        }
+        string canonical = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(path)
+        );
+        if (!string.Equals(path, canonical, comparison)) {
+            throw new InvalidOperationException(
+                $"Galatea {description} must already be canonical."
+            );
+        }
+        return canonical;
     }
 
     internal static void RequireDisjoint(
