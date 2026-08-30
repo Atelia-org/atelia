@@ -37,8 +37,7 @@ public abstract record RecapGridConfiguredRouteInspectionResult {
         string ConnectionId,
         string ModelId,
         int MaximumConcurrency,
-        TimeSpan DispatchTimeout,
-        int? MaximumOutputTokens
+        TimeSpan DispatchTimeout
     ) : RecapGridConfiguredRouteInspectionResult;
 
     public sealed record ExactRouteAbsent
@@ -307,8 +306,7 @@ public sealed class RecapGridRuntimeHost : IDisposable, IAsyncDisposable {
                         invoker,
                         RecapCompletionResourceOwnership.Owned,
                         route.MaximumConcurrency,
-                        route.DispatchTimeout,
-                        route.MaximumOutputTokens
+                        route.DispatchTimeout
                     )
                 );
             }
@@ -700,8 +698,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
                         invoker,
                         RecapCompletionResourceOwnership.Owned,
                         route.MaximumConcurrency,
-                        route.DispatchTimeout,
-                        route.MaximumOutputTokens));
+                        route.DispatchTimeout));
             }
             catch (Exception exception) when (IsNonFatal(exception)) {
                 return new RecapCompletionRouteResolution.Invalid(
@@ -742,8 +739,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
                 route.ConnectionId,
                 connection.ModelId,
                 route.MaximumConcurrency,
-                route.DispatchTimeout,
-                route.MaximumOutputTokens
+                route.DispatchTimeout
             );
         }
     }

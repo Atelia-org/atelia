@@ -62,7 +62,6 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
             "--max-projected-calls", "1024",
             "--max-concurrency", "2",
             "--dispatch-timeout-ms", "30000",
-            "--max-output-tokens", "2048",
             "--admission-output", admission,
             "--profile-output", profile,
             "--route-output", routes

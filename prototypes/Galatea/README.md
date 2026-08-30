@@ -558,7 +558,8 @@ subject或evidence。
 identity 绑定；fresh/NewRequest 不再绑定 current profile，也不向新的模型请求注入
 `recap_grid_control`。配置中的 current profile 仅提供 missing-session structural bootstrap
 所需的 admission authority。Route manifest 仍在首次
-RecapGrid work 时延迟读取，保留 exact per-route `connectionId` 及调度 policy，
+RecapGrid work 时延迟读取；current canonical V2只保留 exact per-route `connectionId` 及并发/timeout调度
+policy。Recap request不设置`MaxTokens`，provider/client output setting由selected connection拥有，
 没有 wildcard/default fallback。
 
 ## 恢复顺序

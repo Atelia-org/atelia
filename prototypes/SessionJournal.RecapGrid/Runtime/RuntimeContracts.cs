@@ -126,8 +126,7 @@ public sealed class RecapCompletionRoute {
         IRecapCompletionInvoker invoker,
         RecapCompletionResourceOwnership invokerOwnership,
         int maximumConcurrency,
-        TimeSpan dispatchTimeout,
-        int? maximumOutputTokens
+        TimeSpan dispatchTimeout
     ) {
         if (string.IsNullOrWhiteSpace(connectionId)) {
             throw new ArgumentException(
@@ -149,9 +148,6 @@ public sealed class RecapCompletionRoute {
             || dispatchTimeout > TimeSpan.FromDays(1)) {
             throw new ArgumentOutOfRangeException(nameof(dispatchTimeout));
         }
-        if (maximumOutputTokens is <= 0) {
-            throw new ArgumentOutOfRangeException(nameof(maximumOutputTokens));
-        }
         Key = key;
         ConnectionId = connectionId;
         ModelId = modelId;
@@ -159,7 +155,6 @@ public sealed class RecapCompletionRoute {
         InvokerOwnership = invokerOwnership;
         MaximumConcurrency = maximumConcurrency;
         DispatchTimeout = dispatchTimeout;
-        MaximumOutputTokens = maximumOutputTokens;
     }
 
     public RecapCompletionRouteKey Key { get; }
@@ -173,7 +168,6 @@ public sealed class RecapCompletionRoute {
     public RecapCompletionResourceOwnership InvokerOwnership { get; }
     public int MaximumConcurrency { get; }
     public TimeSpan DispatchTimeout { get; }
-    public int? MaximumOutputTokens { get; }
 
     public static RecapCompletionRoute Create(
         RecapCompletionRouteKey key,
@@ -182,8 +176,7 @@ public sealed class RecapCompletionRoute {
         IRecapCompletionInvoker invoker,
         RecapCompletionResourceOwnership invokerOwnership,
         int maximumConcurrency,
-        TimeSpan dispatchTimeout,
-        int? maximumOutputTokens = null
+        TimeSpan dispatchTimeout
     ) => new(
         key,
         connectionId,
@@ -191,8 +184,7 @@ public sealed class RecapCompletionRoute {
         invoker,
         invokerOwnership,
         maximumConcurrency,
-        dispatchTimeout,
-        maximumOutputTokens
+        dispatchTimeout
     );
 }
 

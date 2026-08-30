@@ -567,8 +567,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                             null),
                         connection.Id,
                         maximumConcurrency: 1,
-                        dispatchTimeout: TimeSpan.FromSeconds(30),
-                        maximumOutputTokens: 1_024)
+                        dispatchTimeout: TimeSpan.FromSeconds(30))
                 ]);
             },
             Connections(connection),
@@ -802,8 +801,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         null),
                     connection.Id,
                     maximumConcurrency: 1,
-                    dispatchTimeout: TimeSpan.FromSeconds(30),
-                    maximumOutputTokens: 1_024)
+                    dispatchTimeout: TimeSpan.FromSeconds(30))
             ]).ToCanonicalBytes());
         RecapGridAgentControlProfile agentProfile = AgentProfile();
         string refId;

@@ -43,8 +43,7 @@ public sealed class PublicSurfaceTests {
                 key,
                 "main",
                 1,
-                TimeSpan.FromSeconds(30),
-                null
+                TimeSpan.FromSeconds(30)
             )
         ]);
         var factory = new ThrowingFactory();
@@ -87,8 +86,7 @@ public sealed class PublicSurfaceTests {
                         key,
                         "main",
                         1,
-                        TimeSpan.FromSeconds(30),
-                        1024
+                        TimeSpan.FromSeconds(30)
                     )
                 ]),
                 connections,
@@ -141,8 +139,7 @@ public sealed class PublicSurfaceTests {
                         key,
                         "main",
                         1,
-                        TimeSpan.FromSeconds(30),
-                        1024
+                        TimeSpan.FromSeconds(30)
                     )
                 ]),
                 registry

@@ -24,13 +24,12 @@ public sealed class HostingTests {
         string text = Encoding.UTF8.GetString(manifest.ToCanonicalBytes());
 
         Assert.Equal(
-            "{\"v\":1,\"routes\":[{\"familyDigest\":\""
+            "{\"v\":2,\"routes\":[{\"familyDigest\":\""
             + new string('a', 64)
             + "\",\"runtimeProtocolId\":\"text-runtime-v3\","
             + "\"semanticModelId\":null,\"connectionId\":\"main\","
             + "\"maximumConcurrency\":2,"
-            + "\"dispatchTimeoutMilliseconds\":30000,"
-            + "\"maximumOutputTokens\":1024}]}",
+            + "\"dispatchTimeoutMilliseconds\":30000}]}",
             text
         );
         RecapGridRouteManifest decoded =
@@ -63,6 +62,8 @@ public sealed class HostingTests {
     [InlineData("missing-semantic")]
     [InlineData("missing-version")]
     [InlineData("future-version")]
+    [InlineData("prior-version")]
+    [InlineData("legacy-max-output")]
     [InlineData("fractional-version")]
     [InlineData("unknown")]
     [InlineData("duplicate")]
@@ -81,18 +82,29 @@ public sealed class HostingTests {
                 StringComparison.Ordinal
             ),
             "missing-version" => canonical.Replace(
-                "\"v\":1,",
+                "\"v\":2,",
                 "",
                 StringComparison.Ordinal
             ),
             "future-version" => canonical.Replace(
-                "\"v\":1",
                 "\"v\":2",
+                "\"v\":3",
+                StringComparison.Ordinal
+            ),
+            "prior-version" => canonical.Replace(
+                "\"v\":2",
+                "\"v\":1",
+                StringComparison.Ordinal
+            ),
+            "legacy-max-output" => canonical.Replace(
+                "\"dispatchTimeoutMilliseconds\":30000",
+                "\"dispatchTimeoutMilliseconds\":30000,"
+                    + "\"maximumOutputTokens\":1024",
                 StringComparison.Ordinal
             ),
             "fractional-version" => canonical.Replace(
-                "\"v\":1",
-                "\"v\":1.0",
+                "\"v\":2",
+                "\"v\":2.0",
                 StringComparison.Ordinal
             ),
             "unknown" => canonical.Replace(
@@ -106,17 +118,17 @@ public sealed class HostingTests {
                 StringComparison.Ordinal
             ),
             "duplicate-version" => canonical.Replace(
-                "{\"v\":1,",
-                "{\"v\":1,\"v\":1,",
+                "{\"v\":2,",
+                "{\"v\":2,\"v\":2,",
                 StringComparison.Ordinal
             ),
             "root-order" => canonical.Replace(
-                "{\"v\":1,\"routes\":[",
+                "{\"v\":2,\"routes\":[",
                 "{\"routes\":[",
                 StringComparison.Ordinal
             ).Replace(
                 "]}",
-                "],\"v\":1}",
+                "],\"v\":2}",
                 StringComparison.Ordinal
             ),
             "entry-order" => canonical.Replace(
@@ -161,15 +173,13 @@ public sealed class HostingTests {
             key,
             maximumIdentifier,
             maximumConcurrency: 1,
-            dispatchTimeout: TimeSpan.FromMilliseconds(1),
-            maximumOutputTokens: null
+            dispatchTimeout: TimeSpan.FromMilliseconds(1)
         );
         RecapGridRouteManifestEntry maximum = new(
             key,
             maximumIdentifier,
             maximumConcurrency: 1_024,
-            dispatchTimeout: TimeSpan.FromDays(1),
-            maximumOutputTokens: int.MaxValue
+            dispatchTimeout: TimeSpan.FromDays(1)
         );
 
         Assert.Equal(MaximumIdentifierBytes,
@@ -180,8 +190,7 @@ public sealed class HostingTests {
                 key,
                 maximumNonAsciiIdentifier,
                 1,
-                TimeSpan.FromMilliseconds(1),
-                1
+                TimeSpan.FromMilliseconds(1)
             ).ConnectionId)
         );
         RecapGridRouteManifest highEscaping =
@@ -190,8 +199,7 @@ public sealed class HostingTests {
                     key,
                     maximumEscapingIdentifier,
                     1,
-                    TimeSpan.FromMilliseconds(1),
-                    1
+                    TimeSpan.FromMilliseconds(1)
                 )
             ]);
         Assert.Contains(
@@ -205,8 +213,7 @@ public sealed class HostingTests {
                     key,
                     "route\nline",
                     1,
-                    TimeSpan.FromMilliseconds(1),
-                    1
+                    TimeSpan.FromMilliseconds(1)
                 )
             ]);
         RecapGridRouteManifest controlRoundtrip =
@@ -219,24 +226,20 @@ public sealed class HostingTests {
         );
         Assert.Equal(1, minimum.MaximumConcurrency);
         Assert.Equal(TimeSpan.FromMilliseconds(1), minimum.DispatchTimeout);
-        Assert.Null(minimum.MaximumOutputTokens);
         Assert.Equal(1_024, maximum.MaximumConcurrency);
         Assert.Equal(TimeSpan.FromDays(1), maximum.DispatchTimeout);
-        Assert.Equal(int.MaxValue, maximum.MaximumOutputTokens);
 
         Assert.Throws<ArgumentException>(() => new RecapGridRouteManifestEntry(
             key,
             maximumIdentifier + "x",
             1,
-            TimeSpan.FromMilliseconds(1),
-            1
+            TimeSpan.FromMilliseconds(1)
         ));
         Assert.Throws<ArgumentException>(() => new RecapGridRouteManifestEntry(
             key,
             maximumNonAsciiIdentifier + "x",
             1,
-            TimeSpan.FromMilliseconds(1),
-            1
+            TimeSpan.FromMilliseconds(1)
         ));
         foreach (string invalidIdentifier in new[] {
                      " ",
@@ -247,8 +250,7 @@ public sealed class HostingTests {
                     key,
                     invalidIdentifier,
                     1,
-                    TimeSpan.FromMilliseconds(1),
-                    1
+                    TimeSpan.FromMilliseconds(1)
                 ));
         }
         foreach (int invalidConcurrency in new[] { 0, 1_025 }) {
@@ -257,8 +259,7 @@ public sealed class HostingTests {
                     key,
                     "connection",
                     invalidConcurrency,
-                    TimeSpan.FromMilliseconds(1),
-                    1
+                    TimeSpan.FromMilliseconds(1)
                 ));
         }
         foreach (TimeSpan invalidTimeout in new[] {
@@ -271,18 +272,7 @@ public sealed class HostingTests {
                     key,
                     "connection",
                     1,
-                    invalidTimeout,
-                    1
-                ));
-        }
-        foreach (int invalidOutputTokens in new[] { 0, -1 }) {
-            Assert.Throws<ArgumentOutOfRangeException>(() =>
-                new RecapGridRouteManifestEntry(
-                    key,
-                    "connection",
-                    1,
-                    TimeSpan.FromMilliseconds(1),
-                    invalidOutputTokens
+                    invalidTimeout
                 ));
         }
     }
@@ -301,8 +291,7 @@ public sealed class HostingTests {
                 ),
                 "c",
                 1,
-                TimeSpan.FromMilliseconds(1),
-                maximumOutputTokens: null
+                TimeSpan.FromMilliseconds(1)
             ))
             .ToArray();
 
@@ -333,8 +322,7 @@ public sealed class HostingTests {
                     route.Key,
                     maximumEscapingIdentifier,
                     route.MaximumConcurrency,
-                    route.DispatchTimeout,
-                    route.MaximumOutputTokens
+                    route.DispatchTimeout
                 ))));
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
@@ -348,8 +336,7 @@ public sealed class HostingTests {
                     ),
                     "c",
                     1,
-                    TimeSpan.FromMilliseconds(1),
-                    maximumOutputTokens: null
+                    TimeSpan.FromMilliseconds(1)
                 )
             ]));
     }
@@ -420,8 +407,7 @@ public sealed class HostingTests {
                                 null),
                             "main",
                             2,
-                            TimeSpan.FromSeconds(30),
-                            1024)
+                            TimeSpan.FromSeconds(30))
                     ]);
                 },
                 Connections(),
@@ -442,7 +428,6 @@ public sealed class HostingTests {
         Assert.Equal("model-main", configured.ModelId);
         Assert.Equal(2, configured.MaximumConcurrency);
         Assert.Equal(TimeSpan.FromSeconds(30), configured.DispatchTimeout);
-        Assert.Equal(1024, configured.MaximumOutputTokens);
         Assert.Equal(1, manifestLoads);
         Assert.Equal(0, factory.CreateCount);
         Assert.IsType<RecapGridConfiguredRouteInspectionResult.ExactRouteAbsent>(
@@ -504,8 +489,7 @@ public sealed class HostingTests {
                             ),
                             "main",
                             1,
-                            TimeSpan.FromSeconds(30),
-                            1024
+                            TimeSpan.FromSeconds(30)
                         )
                     ]);
                 },
@@ -585,8 +569,7 @@ public sealed class HostingTests {
                                  key,
                                  "missing-connection",
                                  1,
-                                 TimeSpan.FromSeconds(5),
-                                 512
+                                 TimeSpan.FromSeconds(5)
                              )
                          ]),
                          Connections(),
@@ -628,8 +611,7 @@ public sealed class HostingTests {
                 ),
                 "main",
                 1,
-                TimeSpan.FromSeconds(30),
-                1024
+                TimeSpan.FromSeconds(30)
             )
         ]);
         RecapGridRuntimeHost host = RecapGridRuntimeHost.Create(
@@ -673,8 +655,7 @@ public sealed class HostingTests {
                         null),
                     "main",
                     1,
-                    TimeSpan.FromSeconds(30),
-                    1024)
+                    TimeSpan.FromSeconds(30))
             ]),
             Connections(),
             factory);
@@ -760,8 +741,7 @@ public sealed class HostingTests {
                 ),
                 "main",
                 2,
-                TimeSpan.FromSeconds(30),
-                1024
+                TimeSpan.FromSeconds(30)
             )
         ]);
 

@@ -214,6 +214,7 @@ mkdir -p "$operator_dir"
 galatea_connections="prototypes/Galatea/.atelia/galatea/connections.json"
 recap_source_connection_id="opus4-6"
 recap_connection_id="opus4-6-recap"
+recap_max_tokens=32768
 partition_algorithm="atelia.history-timeline.partition.first-replay-safe-at-target.v1"
 estimator="atelia.history-load.o200k-base.history-unit-v1"
 minimum_recent=24000
@@ -236,7 +237,8 @@ recipe_file="$operator_dir/galatea-rolling-full-recipe.json"
 # 显式创建runtime-only recap id与low effort，不复制literal apiKey。所有output必须事先不存在。
 ( set -o noclobber; umask 077; jq -e \
   --arg source "$recap_source_connection_id" \
-  --arg target "$recap_connection_id" '
+  --arg target "$recap_connection_id" \
+  --argjson recap_max_tokens "$recap_max_tokens" '
     [.connections[] | select(.id == $source)]
     | if length != 1 then error("exact source connection absent or duplicate")
       else .[0] end
@@ -251,7 +253,8 @@ recipe_file="$operator_dir/galatea-rolling-full-recipe.json"
             kind: $connection.kind,
             modelId: $connection.modelId,
             completionSurfaceId: ($connection.completionSurfaceId // "anthropic"),
-            reasoningEffort: "low"
+            reasoningEffort: "low",
+            maxTokens: $recap_max_tokens
           }
           + (if (($connection.baseAddressEnv // "") | length) > 0 then
                {baseAddressEnv: $connection.baseAddressEnv}
@@ -260,9 +263,6 @@ recipe_file="$operator_dir/galatea-rolling-full-recipe.json"
              else error("selected connection has no endpoint source") end)
           + (if (($connection.apiKeyEnv // "") | length) > 0 then
                {apiKeyEnv: $connection.apiKeyEnv}
-             else {} end)
-          + (if $connection.maxTokens != null then
-               {maxTokens: $connection.maxTokens}
              else {} end)
           + (if $connection.anthropicPromptCacheTtl != null then
                {anthropicPromptCacheTtl: $connection.anthropicPromptCacheTtl}
@@ -292,7 +292,6 @@ scaffold_report="$(dotnet run --project prototypes/SessionJournal.Cli -- \
   --max-bootstrap-rows "$bootstrap_row_cap" \
   --max-projected-calls "$projected_call_cap" \
   --max-concurrency 1 --dispatch-timeout-ms 900000 \
-  --max-output-tokens 32768 \
   --admission-output "$admission" --profile-output "$profile" \
   --route-output "$route_manifest")"
 world_definition="$(jq -er '.detail.definitions[] | select(.logicalColumnId == "world-understanding") | .digest' <<<"$scaffold_report")"

@@ -24,7 +24,6 @@ internal static partial class RecapGridCommands {
             "max-projected-calls",
             "max-concurrency",
             "dispatch-timeout-ms",
-            "max-output-tokens",
             "admission-output",
             "profile-output",
             "route-output"
@@ -67,10 +66,6 @@ internal static partial class RecapGridCommands {
         int dispatchTimeoutMilliseconds = RequirePositiveInt(
             options,
             "dispatch-timeout-ms"
-        );
-        int maximumOutputTokens = RequirePositiveInt(
-            options,
-            "max-output-tokens"
         );
         string? requestedSemanticModel = options.GetOptionalSingle(
             "semantic-model-id"
@@ -138,8 +133,7 @@ internal static partial class RecapGridCommands {
                 key,
                 connectionId,
                 maximumConcurrency,
-                TimeSpan.FromMilliseconds(dispatchTimeoutMilliseconds),
-                maximumOutputTokens
+                TimeSpan.FromMilliseconds(dispatchTimeoutMilliseconds)
             ))
         );
 

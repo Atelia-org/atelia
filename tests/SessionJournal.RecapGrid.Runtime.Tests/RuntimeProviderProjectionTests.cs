@@ -37,6 +37,7 @@ public sealed class RuntimeProviderProjectionTests {
         Assert.Equal(2, captured.Length);
         CompletionRequest required = captured[0];
         CompletionRequest sibling = captured[1];
+        Assert.All(captured, static request => Assert.Null(request.MaxTokens));
         Assert.Same(required.PromptPrefix, sibling.PromptPrefix);
         Assert.NotEqual(
             ((ObservationMessage)required.TailMessages.Single()).Content,

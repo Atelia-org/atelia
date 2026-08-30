@@ -154,8 +154,7 @@ public sealed partial class RecapCompletionRuntime {
             var request = new CompletionRequest(
                 route!.ModelId,
                 family!.Prefix,
-                [RuntimeRenderer.RenderWorkTail(work)],
-                route.MaximumOutputTokens
+                [RuntimeRenderer.RenderWorkTail(work)]
             );
             priorByColumn.TryGetValue(
                 work.LogicalColumnId,

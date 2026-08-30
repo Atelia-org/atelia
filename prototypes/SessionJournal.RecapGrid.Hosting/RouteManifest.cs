@@ -18,8 +18,7 @@ public sealed record RecapGridRouteManifestEntry {
         RecapCompletionRouteKey key,
         string connectionId,
         int maximumConcurrency,
-        TimeSpan dispatchTimeout,
-        int? maximumOutputTokens
+        TimeSpan dispatchTimeout
     ) {
         Key = key;
         ConnectionId = RequireIdentifier(connectionId, nameof(connectionId));
@@ -31,19 +30,14 @@ public sealed record RecapGridRouteManifestEntry {
             || dispatchTimeout.Ticks % TimeSpan.TicksPerMillisecond != 0) {
             throw new ArgumentOutOfRangeException(nameof(dispatchTimeout));
         }
-        if (maximumOutputTokens is <= 0) {
-            throw new ArgumentOutOfRangeException(nameof(maximumOutputTokens));
-        }
         MaximumConcurrency = maximumConcurrency;
         DispatchTimeout = dispatchTimeout;
-        MaximumOutputTokens = maximumOutputTokens;
     }
 
     public RecapCompletionRouteKey Key { get; }
     public string ConnectionId { get; }
     public int MaximumConcurrency { get; }
     public TimeSpan DispatchTimeout { get; }
-    public int? MaximumOutputTokens { get; }
 
     private static string RequireIdentifier(
         string value,
@@ -76,7 +70,7 @@ public sealed record RecapGridRouteManifestEntry {
 }
 
 public sealed class RecapGridRouteManifest {
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
     private readonly byte[] _canonicalBytes;
 
     private RecapGridRouteManifest(
@@ -135,7 +129,7 @@ public sealed class RecapGridRouteManifest {
         if (bytes.Length is < 1
             or > RecapGridRouteManifestLimits.MaximumCanonicalUtf8Bytes) {
             throw new InvalidDataException(
-                "Route manifest canonical bytes exceed the V1 bound."
+                "Route manifest canonical bytes exceed the V2 bound."
             );
         }
         try {
@@ -159,7 +153,7 @@ public sealed class RecapGridRouteManifest {
                 || array.GetArrayLength()
                     > RecapGridRouteManifestLimits.MaximumRouteCount) {
                 throw new InvalidDataException(
-                    "Route manifest routes are invalid or exceed the V1 bound."
+                    "Route manifest routes are invalid or exceed the V2 bound."
                 );
             }
             var routes = new List<RecapGridRouteManifestEntry>(
@@ -173,8 +167,7 @@ public sealed class RecapGridRouteManifest {
                     "semanticModelId",
                     "connectionId",
                     "maximumConcurrency",
-                    "dispatchTimeoutMilliseconds",
-                    "maximumOutputTokens"
+                    "dispatchTimeoutMilliseconds"
                 );
                 JsonElement semantic = item.GetProperty("semanticModelId");
                 string? semanticModelId = semantic.ValueKind switch {
@@ -182,14 +175,6 @@ public sealed class RecapGridRouteManifest {
                     JsonValueKind.String => semantic.GetString(),
                     _ => throw new InvalidDataException(
                         "semanticModelId must be an explicit string or null."
-                    )
-                };
-                JsonElement output = item.GetProperty("maximumOutputTokens");
-                int? maximumOutputTokens = output.ValueKind switch {
-                    JsonValueKind.Null => null,
-                    JsonValueKind.Number => output.GetInt32(),
-                    _ => throw new InvalidDataException(
-                        "maximumOutputTokens must be an integer or null."
                     )
                 };
                 routes.Add(new RecapGridRouteManifestEntry(
@@ -203,14 +188,13 @@ public sealed class RecapGridRouteManifest {
                     RequireString(item, "connectionId"),
                     item.GetProperty("maximumConcurrency").GetInt32(),
                     TimeSpan.FromMilliseconds(item.GetProperty(
-                        "dispatchTimeoutMilliseconds").GetInt64()),
-                    maximumOutputTokens
+                        "dispatchTimeoutMilliseconds").GetInt64())
                 ));
             }
             RecapGridRouteManifest decoded = Create(routes);
             if (!bytes.SequenceEqual(decoded._canonicalBytes)) {
                 throw new InvalidDataException(
-                    "Route manifest bytes are not exact canonical V1 bytes."
+                    "Route manifest bytes are not exact canonical V2 bytes."
                 );
             }
             return decoded;
@@ -225,7 +209,7 @@ public sealed class RecapGridRouteManifest {
                 or InvalidOperationException
                 or OverflowException) {
             throw new InvalidDataException(
-                "Route manifest is not a valid canonical V1 value.",
+                "Route manifest is not a valid canonical V2 value.",
                 exception
             );
         }
@@ -266,12 +250,6 @@ public sealed class RecapGridRouteManifest {
                 "dispatchTimeoutMilliseconds",
                 checked((long)route.DispatchTimeout.TotalMilliseconds)
             );
-            if (route.MaximumOutputTokens is { } tokens) {
-                writer.WriteNumber("maximumOutputTokens", tokens);
-            }
-            else {
-                writer.WriteNull("maximumOutputTokens");
-            }
             writer.WriteEndObject();
         }
         writer.WriteEndArray();

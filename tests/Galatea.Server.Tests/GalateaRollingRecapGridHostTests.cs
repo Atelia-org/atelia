@@ -710,8 +710,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
                     ),
                     RecapConnectionId,
                     maximumConcurrency: 2,
-                    dispatchTimeout: TimeSpan.FromSeconds(30),
-                    maximumOutputTokens: 2_048
+                    dispatchTimeout: TimeSpan.FromSeconds(30)
                 )
             ]);
         };

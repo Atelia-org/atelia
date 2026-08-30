@@ -70,7 +70,6 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         Assert.Equal("agent-connection", entry.ConnectionId);
         Assert.Equal(2, entry.MaximumConcurrency);
         Assert.Equal(TimeSpan.FromSeconds(30), entry.DispatchTimeout);
-        Assert.Equal(2048, entry.MaximumOutputTokens);
 
         JsonElement detail = report.GetProperty("detail");
         Assert.Equal(64, detail.GetProperty("admission")
@@ -239,6 +238,8 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
                          "--permission", "create"],
                      ScaffoldArguments(Paths("malformed"))
                          .ReplaceOption("max-concurrency", "0"),
+                     ScaffoldArguments(Paths("legacy-max-output"))
+                         .AppendOptions("--max-output-tokens", "2048"),
                      ScaffoldArguments(Paths("semantic"))
                          .AppendOptions("--semantic-model-id", "model-a"),
                      duplicateOutputs
@@ -315,7 +316,6 @@ public sealed class ProgramRecapGridScaffoldCommandTests : IDisposable {
         "--max-projected-calls", "1024",
         "--max-concurrency", "2",
         "--dispatch-timeout-ms", "30000",
-        "--max-output-tokens", "2048",
         "--admission-output", paths.Admission,
         "--profile-output", paths.Profile,
         "--route-output", paths.Route

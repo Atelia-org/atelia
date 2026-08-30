@@ -2015,8 +2015,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                     ),
                     "test",
                     1,
-                    TimeSpan.FromSeconds(30),
-                    128
+                    TimeSpan.FromSeconds(30)
                 )
             ]).ToCanonicalBytes()
         );
@@ -2088,8 +2087,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
                     ),
                     "test",
                     1,
-                    TimeSpan.FromSeconds(30),
-                    128
+                    TimeSpan.FromSeconds(30)
                 )
             ]).ToCanonicalBytes()
         );

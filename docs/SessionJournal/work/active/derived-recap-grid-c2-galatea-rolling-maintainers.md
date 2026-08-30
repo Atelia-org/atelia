@@ -101,7 +101,7 @@ runtime route manifest:
   exact key above -> ConnectionId
 
 connections.json:
-  ConnectionId -> provider kind / ModelId / endpoint / credentials / reasoning / cache policy
+  ConnectionId -> provider kind / ModelId / endpoint / credentials / reasoning / cache / provider-client output policy
 ```
 
 因此一个shared Family只需要一条`semanticModelId: null`的exact route。Galatea的`recapGrid.routeManifestPath`仍是deferred、strict、
