@@ -1753,7 +1753,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void DotAndDotDotAliasesAreRejectedByLoaderAndHost() {
+    public void DotAliasesNormalizeInLoaderButDirectHostRejectsNonCanonical() {
         string root = NewRoot();
         string canonical = Path.Combine(root, "sessions", "alice");
         string alias = Path.Combine(
@@ -1771,7 +1771,8 @@ public sealed class GalateaConfigValidationTests {
                 [User("alice", canonical), User("bob", alias)],
                 Path.TrimEndingDirectorySeparator(
                     Path.GetFullPath(canonical)
-                )
+                ),
+                expectedNonCanonicalHostUserId: "bob"
             );
         }
         finally {
@@ -1821,7 +1822,8 @@ public sealed class GalateaConfigValidationTests {
     private static void AssertRejectedByLoaderAndHost(
         string root,
         IReadOnlyList<GalateaUserConfig> users,
-        string expectedNormalizedPath
+        string expectedNormalizedPath,
+        string? expectedNonCanonicalHostUserId = null
     ) {
         string configPath = WriteConfig(root, users);
         InvalidOperationException loadFailure = Assert.Throws<
@@ -1845,10 +1847,24 @@ public sealed class GalateaConfigValidationTests {
             factory,
             DisabledGalateaUserMessageNormalizer.Instance
         ));
-        AssertDuplicateDetail(
-            constructionFailure,
-            expectedNormalizedPath
-        );
+        if (expectedNonCanonicalHostUserId is null) {
+            AssertDuplicateDetail(
+                constructionFailure,
+                expectedNormalizedPath
+            );
+        }
+        else {
+            Assert.Contains(
+                $"sessionDir for user '{expectedNonCanonicalHostUserId}'",
+                constructionFailure.Message,
+                StringComparison.Ordinal
+            );
+            Assert.Contains(
+                "canonical",
+                constructionFailure.Message,
+                StringComparison.Ordinal
+            );
+        }
 
         Assert.Equal(0, factory.CreateCallCount);
         Assert.All(
