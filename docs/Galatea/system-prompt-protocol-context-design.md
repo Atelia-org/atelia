@@ -23,7 +23,8 @@ universal code-owned mailbox base
 
 Root config因此hard-cut到V5，并用`characterContextTemplate` /
 `characterContextTemplateFile`取代V4的`systemPromptTemplate*`。Runtime DTO与SessionJournal仍只接收finalized
-`SystemPrompt`，不引入分段durable identity或schema。
+`SystemPrompt`，不引入分段durable identity或schema。Mailbox base与outbound appendix物理上是两份resource，
+启用outbound时则向模型连续呈现为一份Quick Start。
 
 ## 2. 为什么需要拆分ownership
 
@@ -67,14 +68,15 @@ fields不能删除或重排validated binding所选的code-owned bytes，但opera
 
 [`prompt/trpg-mailbox-protocol-base-zh-cn.md`](prompt/trpg-mailbox-protocol-base-zh-cn.md)由Galatea.Server
 embedded resource拥有。它始终定义角色如何理解和接收界外来信，只承诺收件匣、阅读、忽略与保存；不承诺主动
-发送、Codex route或未来回信。
+发送、Codex route或未来回信。它以`## 界外邮箱`开始逻辑Quick Start。
 
 ### 3.4 Conditional Codex outbound appendix
 
 [`prompt/trpg-outbound-mail-protocol-appendix-zh-cn.md`](prompt/trpg-outbound-mail-protocol-appendix-zh-cn.md)
 也是Galatea.Server embedded、code-owned。仅当Completion-owned sibling config已经通过Galatea routing validation，
 且exact `galatea.outbound-mail-extractor` binding非`null`时，composer才追加该段。它定义当前唯一可投递recipient
-`Codex`、完成发送的叙事证据与未来回信语义。
+`Codex`、完成发送的叙事证据与后续回合的回信/送达失败语义。它以`### 发信给 Codex`继续同一份
+逻辑Quick Start，不是第二份独立的模型使用协议。
 
 这个布尔选择来自现有validated host binding，不是operator可排列的prompt module，也没有per-user开关。
 
@@ -86,9 +88,9 @@ embedded resource拥有。它始终定义角色如何理解和接收界外来信
 External context与每份embedded resource有1 MiB读取cap，composite source与final rendered prompt也分别受1 MiB
 cap；embedded resources还要求BOM-less、LF-only、nonblank strict UTF-8。
 
-Markdown heading只帮助LLM与人阅读，不是machine discriminator。Runtime不会扫描`## 世界观`、`## 自主记忆`或
-`## 界外邮箱机制`来决定分段、权限、feature或安全性。是否追加outbound appendix只看validated sibling binding，
-不看operator prose。
+Markdown heading只帮助LLM与人阅读，不是machine discriminator。Runtime不会扫描`## 世界观`、`## 自主记忆`、
+`## 界外邮箱`或`### 发信给 Codex`来决定分段、权限、feature或安全性。是否追加outbound appendix只看
+validated sibling binding，不看operator prose。
 
 ## 5. 为什么不采用更通用的方案
 

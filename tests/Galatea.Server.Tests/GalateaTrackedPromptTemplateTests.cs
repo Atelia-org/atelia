@@ -53,14 +53,14 @@ public sealed class GalateaTrackedPromptTemplateTests {
         Assert.Equal(enabledExpected, enabled);
         Assert.DoesNotContain("${", disabled, StringComparison.Ordinal);
         Assert.DoesNotContain("${", enabled, StringComparison.Ordinal);
-        Assert.DoesNotContain("Codex 界外投递", disabled,
+        Assert.DoesNotContain("### 发信给 Codex", disabled,
             StringComparison.Ordinal);
-        Assert.Contains("## Codex 界外投递", enabled,
+        Assert.Contains("### 发信给 Codex", enabled,
             StringComparison.Ordinal);
         Assert.True(
-            enabled.IndexOf("## 界外邮箱机制", StringComparison.Ordinal)
+            enabled.IndexOf("## 界外邮箱", StringComparison.Ordinal)
             < enabled.IndexOf(
-                "## Codex 界外投递",
+                "### 发信给 Codex",
                 StringComparison.Ordinal
             )
         );
@@ -136,21 +136,43 @@ public sealed class GalateaTrackedPromptTemplateTests {
             StringComparison.Ordinal);
         Assert.Contains("阅读、忽略或保存", mailboxBase,
             StringComparison.Ordinal);
+        Assert.Contains("发件人、收件人、可选主题和正文", mailboxBase,
+            StringComparison.Ordinal);
+        Assert.Contains("带来源的界外信息", mailboxBase,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("Codex", mailboxBase,
             StringComparison.Ordinal);
-        Assert.DoesNotContain("完成发送", mailboxBase,
+        Assert.DoesNotContain("发送", mailboxBase,
             StringComparison.Ordinal);
         Assert.DoesNotContain("回复", mailboxBase,
             StringComparison.Ordinal);
-        Assert.Contains("当前唯一可投递的界外收件人是`Codex`",
+        Assert.DoesNotContain("[${characterName}]", mailboxBase,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("[旁白]", mailboxBase,
+            StringComparison.Ordinal);
+        Assert.Contains("唯一可投递的收件人", outboundAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("逐字、区分大小写地写作`Codex`",
             outboundAppendix, StringComparison.Ordinal);
-        Assert.DoesNotContain("在所有界外收件人中", outboundAppendix,
+        Assert.Contains("同一次回复", outboundAppendix,
             StringComparison.Ordinal);
         Assert.Contains("收件人和完整正文", outboundAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("已经完成发送", outboundAppendix,
+        Assert.Contains("${characterName}本人已经寄出", outboundAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("回信会立刻出现", outboundAppendix,
+        Assert.Contains("计划", outboundAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("草稿", outboundAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("后续回合", outboundAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("成功回信会在后续回合进入收件匣", outboundAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("送达失败也会在后续回合通知她", outboundAppendix,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("[${characterName}]", outboundAppendix,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("[旁白]", outboundAppendix,
             StringComparison.Ordinal);
     }
 

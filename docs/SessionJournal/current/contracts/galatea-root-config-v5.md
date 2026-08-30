@@ -29,9 +29,13 @@ Reader与runtime materialization由`GalateaStrictConfigReader`、`GalateaConfigL
    code-owned，定义TRPG GM、voice/output grammar与GM carrier来源边界；
 2. operator `characterContextTemplate`或`characterContextTemplateFile`：世界观、人物设定与长期记忆；
 3. [mailbox protocol base](../../../Galatea/prompt/trpg-mailbox-protocol-base-zh-cn.md)：Galatea.Server
-   embedded、code-owned，始终定义接收界外来信的收件匣；
+   embedded、code-owned，始终定义邮箱Quick Start的收件部分；
 4. [Codex outbound appendix](../../../Galatea/prompt/trpg-outbound-mail-protocol-appendix-zh-cn.md)：
-   Galatea.Server embedded、code-owned，仅在validated `galatea.outbound-mail-extractor` binding非`null`时追加。
+   Galatea.Server embedded、code-owned，仅在validated `galatea.outbound-mail-extractor` binding非`null`时追加，
+   并继续同一份Quick Start的发件部分。
+
+这两份resource的物理拆分保留capability boundary；outbound启用时，它们向模型连续呈现为一份
+Quick Start。其`##` / `###` heading只是呈现结构，appendix presence只由validated sibling binding决定。
 
 `GalateaUserFileConfig`只表示operator file shape；它保存character context source及optional file path。
 `GalateaUserConfig`只表示resolved runtime shape；它保存validated `GalateaCharacterName`、

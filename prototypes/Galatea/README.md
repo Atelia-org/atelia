@@ -63,7 +63,9 @@ universal code-owned
 `prefix + "\n\n---\n\n" + context + "\n\n---\n\n" + mailboxBase`拼接；仅当validated
 `galatea.outbound-mail-extractor` binding非`null`时，再以`"\n\n"`追加code-owned
 [`Codex outbound appendix`](../../docs/Galatea/prompt/trpg-outbound-mail-protocol-appendix-zh-cn.md)。完成组合后才用
-同一个closed renderer展开名字。
+同一个closed renderer展开名字。Mailbox base与appendix物理上保持两份resource以表达capability
+boundary；outbound启用时，它们以H2/H3向模型连续呈现为一份Quick Start。Heading只用于呈现，
+appendix gating只看validated binding。
 每个external/resource source有1 MiB读取上限，拼接后的composite source与final rendered prompt也分别受
 1 MiB上限；runtime只保留两个validated names与finalized
 `SystemPrompt`，不会在每个turn重读template file。四份tracked resource的ownership见
