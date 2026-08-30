@@ -75,6 +75,42 @@ public sealed class MemoPodArchitectureTests {
     }
 
     [Fact]
+    public void ReconciliationSurfaceDoesNotExposeSnapshotOrRevisionTypes() {
+        MethodInfo identity = typeof(MemoPod).GetMethod(
+            nameof(MemoPod.ComputeStateIdentity),
+            BindingFlags.Public
+                | BindingFlags.Instance
+                | BindingFlags.DeclaredOnly
+        ) ?? throw new Xunit.Sdk.XunitException(
+            "MemoPod.ComputeStateIdentity must be public."
+        );
+        Assert.Equal(typeof(string), identity.ReturnType);
+        Assert.Empty(identity.GetParameters());
+
+        MethodInfo durability = typeof(MemoPod).GetMethod(
+            nameof(MemoPod.ConfirmCurrentDocumentDurability),
+            BindingFlags.Public
+                | BindingFlags.Instance
+                | BindingFlags.DeclaredOnly
+        ) ?? throw new Xunit.Sdk.XunitException(
+            "MemoPod.ConfirmCurrentDocumentDurability must be public."
+        );
+        Assert.Equal(typeof(void), durability.ReturnType);
+        Assert.Empty(durability.GetParameters());
+
+        Assert.DoesNotContain(
+            typeof(Memo).Assembly.GetExportedTypes(),
+            static type => type.Name.Contains(
+                "Snapshot",
+                StringComparison.Ordinal
+            ) || type.Name.Contains(
+                "Revision",
+                StringComparison.Ordinal
+            )
+        );
+    }
+
+    [Fact]
     public void ProductDependenciesRemainWithinAllowlistAndFriendsAreExact() {
         string projectPath = Path.Combine(
             FindRepositoryRoot(),

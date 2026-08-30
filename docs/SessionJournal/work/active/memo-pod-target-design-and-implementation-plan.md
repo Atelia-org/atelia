@@ -221,6 +221,12 @@ snapshot-scoped lookup与多版本回收；代价是上层必须保证：
 4. 未来一旦出现真实并发、多 handle 或跨进程共享需求，必须重新立项，不得用零散 `lock` 把当前合同伪装
    成 snapshot-safe。
 
+2026-08-30新增的`ComputeStateIdentity()`不改变该边界。它只返回
+`atelia.memo-pod.document.v2.sha256:<lowercase-hex>`：digest输入是当前working aggregate经
+`MemoPodDocumentCodec.Encode`得到的exact canonical complete document bytes。在Editable阶段它只是未提交candidate
+identity，在Frozen阶段才表示该valid handle所代表的committed state；它不返回正文、revision、epoch handle或
+snapshot-scoped resolver，也不提供CAS语义。indeterminate handle仍必须拒绝并要求fresh `Open`。
+
 ## 5. Persistence target
 
 ### 5.1 One aggregate document per Pod
@@ -272,6 +278,12 @@ Editable entry mutations只修改内存working state并设置`Dirty`。`FreezeAs
 最低承诺是reopen只能接受完整旧文档或完整新文档，绝不能接受torn/mixed JSON；这与断电后的durability承诺
 分开。目录fsync、Windows replacement与indeterminate settlement的精确平台合同由foundation store工作包
 根据现有Atelia filesystem primitives锁定；不能在目标设计中虚构已经获得跨平台证明。
+
+Linux current implementation另提供Frozen-only `ConfirmCurrentDocumentDurability()`：仅在fresh strict `Open`已经
+观察并核对exact target identity后，重新验证current document path并fsync该Pod exact `memo-pods/v1/pods`
+directory。它用于关闭rename已可见但先前directory fsync settlement未知的恢复窗口；正常
+`FreezeAsync` proven Published已经完成相同directory sync，不需要重复调用。该方法不把indeterminate旧handle
+恢复成valid，也不扩大跨平台durability承诺。
 
 `Create(...)` 从 Editable 开始，首次 Freeze 才创建 durable document；`Open` 从已提交文档恢复为 Frozen。
 `ResumeEditing` 本身不改变 durable bytes。进程在下一次 Freeze 前退出时，本轮尚未提交的编辑允许丢失。

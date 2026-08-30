@@ -35,6 +35,23 @@ active IDs, and hydrates immutable Memo values before the Frozen epoch can be
 left. Provider failures, malformed model output, local byte caps, and caller
 cancellation remain distinct outcomes; no automatic retry occurs.
 
+Single-owner external-effect reconciliation has two narrow public read/seal
+operations. `ComputeStateIdentity()` is available in Editable and Frozen phases
+and returns `atelia.memo-pod.document.v2.sha256:<lowercase-hex>`, derived from
+the exact canonical complete document candidate bytes. In Editable phase this
+is only a working candidate identity; in Frozen phase it identifies the
+committed state represented by that valid handle. The identity is not a
+snapshot, revision, CAS token, or concurrent-read lease.
+
+`ConfirmCurrentDocumentDurability()` is Frozen-only. After a fresh strict
+`Open` has already matched the expected state identity, it validates the
+current document path and fsyncs that Pod's exact `memo-pods/v1/pods`
+directory. It exists only to close an installed-but-previously-unsynced
+recovery window; a normally successful `FreezeAsync` already performed this
+directory sync and needs no second confirmation. An indeterminate handle must
+still be discarded and reopened before either reconciliation operation can be
+used.
+
 Concrete provider configuration and live canary activation are not delivered
 here. No prompt, renderer, Store backend, snapshot, detached resolver, or
 provider-specific client is part of the public API.
