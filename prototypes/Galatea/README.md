@@ -84,9 +84,11 @@ missing target也不自动创建。
 runtime只交付canonical absolute path；absolute值保持同一target。Delegation与Character Memory path都没有fallback
 或derived-path规则。所有character-memory paths必须exact unique、互不嵌套，并与所有session/delegation paths及
 optional `callLogDir`双向non-nested；total topology validator也由直接构造runtime config的consumer共用。Existing
-character-memory path components不得是symlink/reparse point。当前V6配置包只解析和验证
-`characterMemoryStateDir`，不open/create/lock/store-validate该目录，也不接入MemoPod；binding非`null`仍不表示Note
-已经保存。Durable delegation supervisor继续在production composition中由host启动时eager classify每个user；只有
+character-memory path components不得是symlink/reparse point。`characterMemoryStateDir`本身只建立path authority：
+Character Note binding为`null`时只完成path/topology/reparse preflight，不create/open/lock/store-validate；maintenance
+mode即使binding非`null`也完全不接触Character Memory state；只有binding非`null`的writable session lazy attach才会在
+missing path创建baseline store与empty Default MemoPod，或strict-open existing state，并把owner/lock保持到session
+dispose。Bootstrap仍不创建character-memory state。Durable delegation supervisor继续在production composition中由host启动时eager classify每个user；只有
 `delegationStateDir`与对应`sessionDir`都存在时才strict-open store并取得process-lifetime exclusive OS lock。
 state存在但session缺失时以`SESSION_MISSING` fail closed，不打开SQLite/lock；state路径不存在时先保持
 `Uninitialized`，直到对应writable SessionJournal首次成功打开或provision后，才在该exact target创建baseline。目录内的权威文件是

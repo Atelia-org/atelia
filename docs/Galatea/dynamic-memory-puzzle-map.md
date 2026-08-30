@@ -21,7 +21,7 @@ future Observation     -> visible recall result
 
 - 后续代码和文档统一使用 `RecallBarrier` / `Barrier`，表达“当前上下文已可见召回 anchor 的去重屏障”。
 - `{ RecallType, SourceId }` 适合作为去重 key，但它只说明“这个召回粒度对这个来源已经可见过”，不是 MemoPod 存储权威，也不是内容仍然最新的证明。
-- `SourceId` 不能长期只是裸 `MemoId`，除非 Galatea 明确永远只有一个角色级 MemoPod。V0 只约束它是 bounded canonical metadata line；未来 MemoPod 接入时还需要决定 Galatea-owned source id codec，例如把 pod identity 与 memo id 一起编码。
+- `SourceId` 不能长期只是裸 `MemoId`，除非 Galatea 明确永远只有一个角色级 MemoPod。V0 只约束它是 bounded canonical metadata line；未来把Default MemoPod接入recall时还需要决定 Galatea-owned source id codec，例如把 pod identity 与 memo id 一起编码。
 - `RecallEntry` 只表示 anchor；真正渲染进 Observation 的 payload 是 `PlayerTurnRecall`，携带 `RecallEntry` 加上本次注入的 visible text。
 - Barrier 的输入是本次 Completion provider-visible raw Observation 后缀，而不是 browser recent list，也不是整条 SessionJournal 历史。V0 已在 `GalateaServices` 内通过同一轮 RecapGrid online candidate source 构造。
 - V0 barrier 只做 exact-key de-dupe，不做 `MemoExactText covers MemoSummary covers MemoGist` 这种 dominance 推理。
@@ -211,7 +211,8 @@ internal sealed class PlayerTurnObservation {
 }
 ```
 
-没有把 recall 强行塞成 `PlayerTurnNotice.Reply`。`Notice` 当前更像外界 delegation result；Memo recall 是 Galatea runtime memory assembly 结果，语义上相邻但不是同一种事件。
+没有把 recall 强行塞成 `PlayerTurnNotice.Reply`。`Notice` 当前承载异步runtime结果，包括外界delegation reply/failure
+与Character Note save receipt；Memo recall则是Galatea runtime memory assembly结果，语义上相邻但不是同一种事件。
 
 渲染顺序已固定为：
 
@@ -320,13 +321,13 @@ new player action + exact completion boundary
 - `SourceId` canonical codec 与跨 pod / 跨 source 边界；
 - dominance / coverage：例如 ExactText 已可见时是否阻止 Summary 和 Gist；
 - durable/rebuildable ownership：哪些状态必须持久化，哪些可以由 MemoPod/index 重建；
-- tests：MemoPod 接入、planner 决策、dominance、budget failure、active lease、provider invalid output / cancellation。
+- tests：MemoPod recall query接入、planner 决策、dominance、budget failure、active lease、provider invalid output / cancellation。
 
 ## 第一批实现建议
 
 ### 已完成
 
-1. 已扩展 `PlayerTurnObservation` 的强类型模型和 canonical renderer/parser，加入 `RecallType`、`RecallEntry`、`PlayerTurnRecall`，并覆盖 render/parse/display/validation/legacy rejection 测试；尚未接 MemoPod。
+1. 已扩展 `PlayerTurnObservation` 的强类型模型和 canonical renderer/parser，加入 `RecallType`、`RecallEntry`、`PlayerTurnRecall`，并覆盖 render/parse/display/validation/legacy rejection 测试；生产recall provider尚未接Default MemoPod query。
 2. 已实现 `RecallBarrier` 与 parser-based 聚合器，能从多条 canonical Observation 中聚合 exact keys，并跳过 invalid / legacy / inbound / null 输入。
 3. 已给 `GalateaServices` 预留 `IGalateaPlayerTurnRecallProvider` 注入 seam，测试中用固定 recall payload 验证了 render、recovery、recent display，也验证了第二轮能从 provider-visible context 聚合已可见 barrier。
 4. 已实现capability-gated的Character Note保存Quick Start、`CharacterNoteIntent` semantic.v4提取、durable capture/zero tombstone、Default MemoPod apply，以及只由`AppliedNow`生成的honest save receipt。

@@ -3,6 +3,7 @@
 ## 状态
 
 - 方案日期：2026-08-30
+- 文档状态：**Historical predecessor**；已由[`Character Note Default MemoPod V1`](character-note-default-memopod-v1.md)取代；下文保留V0当时实现与证据，不描述current runtime
 - 当前阶段：A0 shared target、A1 semantic.v3 request extractor、A2 capability-gated composition、A3 runtime coordinator、A4 receipt/queue/injection与R0独立review均已完成
 - 目标版本：V0 development vertical slice
 - 对外承诺：只确认 runtime 识别到角色的 Note 请求，不承诺 Memo 已保存

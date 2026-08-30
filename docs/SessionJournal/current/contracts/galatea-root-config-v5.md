@@ -33,7 +33,7 @@ Reader与runtime materialization由`GalateaStrictConfigReader`、`GalateaConfigL
 4. [Codex outbound appendix](../../../Galatea/prompt/trpg-outbound-mail-protocol-appendix-zh-cn.md)：
    Galatea.Server embedded、code-owned，仅在validated `galatea.outbound-mail-extractor` binding非`null`时追加，
    并继续同一份Quick Start的发件部分；
-5. [Character Note request development appendix](../../../Galatea/prompt/trpg-character-note-request-development-appendix-zh-cn.md)：
+5. [Character Note request development appendix（historical V0 behavior）](../../../Galatea/character-note-request-receipt-v0.md)：
    Galatea.Server embedded、code-owned，仅在validated `galatea.character-note-extractor` binding非`null`时追加，
    只定义诚实的development保存请求与后续回执，不承诺保存、索引或召回。
 

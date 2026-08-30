@@ -89,7 +89,7 @@ Root file必须是Linux no-follow regular file，长度为1 byte..1 MiB，JSON m
 | `playerName` | required string | 服从§3.3；故事内玩家角色，不是login `userId`；无default/推断；不同user可以相同 |
 | `sessionDir` | required string | nonblank；relative以config directory为base；absolute保持同一target；runtime只接收absolute path |
 | `delegationStateDir` | required string | nonblank；relative以config directory为base；runtime只接收canonical absolute path；没有fallback或从`sessionDir`推导 |
-| `characterMemoryStateDir` | required string | nonblank；relative以config directory为base；runtime只接收canonical absolute path；没有fallback或从其他storage path推导；当前V6配置包不open/create该目录 |
+| `characterMemoryStateDir` | required string | nonblank；relative以config directory为base；runtime只接收canonical absolute path；没有fallback或从其他storage path推导；字段本身只建立path authority，binding/session-mode lifecycle见§3.5 |
 | `sessionProvisioning` | required string | closed exact token：`existing-only`或`create-if-missing` |
 | `characterContextTemplate` | string；可missing | 没有有效file时必须提供合法context source；inline text除validation外保持exact |
 | `characterContextTemplateFile` | optional string-or-null | missing/`null`/empty/whitespace视为absent；nonblank path在load时必须读取成功并覆盖inline；missing in-root path可由§4 bootstrap创建 |
@@ -176,10 +176,18 @@ non-nested，并与所有session/delegation paths双向non-nested。Optional `ca
 双向non-nested。Loader对character-memory与delegation path执行existing-ancestor symlink/reparse preflight；所有这些
 lexical关系由loader与直接构造runtime config共同调用的同一total topology validator拥有。
 
-本次V6配置包只建立Character Memory path authority，不接入Character Memory runtime lifecycle。无论validated
-Character Note binding是`null`还是非`null`，current runtime都不创建目录、不open/validate store、不取得锁，也不创建
-MemoPod；因此该字段存在不表示Note已经保存。后续Default MemoPod实现必须另行接入writable session attach，不能从
-路径存在性自动adopt state。
+Character Memory runtime lifecycle由validated binding与session mode共同决定：
+
+- Character Note binding为`null`时，loader仍完成path resolve、total topology与existing-ancestor reparse preflight，
+  但runtime不create/open/lock/store-validate该目录；
+- maintenance mode即使binding非`null`也不create/open/lock/apply Character Memory，只保留SessionJournal read-only能力；
+- binding非`null`的writable session lazy attach时，missing path以current physical frontier和selected head创建baseline
+  store与committed empty Default MemoPod，existing path则strict-open并验证owner/schema/integrity；owner与exclusive lock保持到
+  session dispose。Runtime不按路径存在性adopt、reset或自动迁移state。
+
+Bootstrap仍只写V6字段，不创建character-memory state。字段存在或binding启用本身都不是Note保存证明；只有
+Default MemoPod durable apply settlement建立保存事实，可见save receipt另受at-most-once in-process delivery限制。完整合同见
+[Character Note Default MemoPod V1](../../../Galatea/character-note-default-memopod-v1.md)。
 
 Durable delegation supervisor继续在host启动时eager classify每个user。Existing state与matching session才
 strict-open并取得process-lifetime writer lock；state存在但session missing时在SQLite/lock open前fail closed；
@@ -248,6 +256,7 @@ Underlying IO/path/permission与owner-local dependency exception可以传播；d
 
 本合同不承诺password encryption、hot reload、automatic config migration、existing-session character/player rename、
 pronoun/persona profile、arbitrary prompt modules、独立world/memory files、operator protocol override、Markdown security
-policy或普遍path confinement。当前V6配置包也不承诺Character Memory store、MemoPod、Note durable apply或save receipt。
-V6不改版RecapGrid、mail extractor/ContractId、mail/player envelope、delegation SQLite、SessionJournal、Completion、HTTP
-或SSE durable/schema contract。
+policy、普遍path confinement、Character Note分类/metadata补全/recall，或save receipt跨restart durable delivery。
+V6只版本化root config field language与上述lifecycle gate；Character Memory store/apply/save-receipt grammar由其owning
+code、tests与V1合同独立拥有。V6不改版RecapGrid、mail extractor/ContractId、delegation SQLite、SessionJournal、
+Completion、HTTP或SSE durable/schema contract。

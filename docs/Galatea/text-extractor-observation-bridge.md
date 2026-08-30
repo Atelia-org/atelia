@@ -146,7 +146,7 @@ ready-turn、inbound与recovery都不领取；领取后的pre-dispatch stop、�
 
 命名要暴露通讯方向和 domain：
 
-- 从角色叙事提取意图：`CharacterNoteIntent`, `ICharacterNoteExtractor`, `CharacterNoteExtractionReconciler`。
+- 从角色叙事提取并保存Note：`CharacterNoteIntent`, `ICharacterNoteExtractor`, `CharacterNoteDefaultPodReconciler`。
 - 把 runtime 信息注入下一轮：`CharacterRecallNotice`, `CharacterRecallObservationEnvelope`。
 - 通用 helper 保持 domain-neutral：`TextExtractor`, `GalateaVisibleActionTextRenderer`, `GalateaFreshInput`。
 

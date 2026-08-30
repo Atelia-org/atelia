@@ -25,8 +25,9 @@
 | 审阅 approved public API / wire-format surface与R2停止边界 | [Contract R2 anchored surfaces and intentional Defer map](current/contracts/session-journal-contract-r2.md)、[R2 closure evidence](evidence/contract-freeze-r2-closure.md) | immutable v1-v6 tags分别锚定surface sets 1-6；closure记录exact tag map、Stop-after-V6理由、intentional remaining matrix与fresh-candidate reopen triggers；remaining Defer/non-promises不是active backlog |
 | 审阅 post-cutover cadence、recent reserve、长期容量或 cyber 激活边界 | [Cadence/capacity audit](work/active/derived-recap-grid-cadence-capacity-and-activation-audit.md) | A0-A2已实现24k target reserve；C2/C5 activation完成，C4仍Open |
 | 实现 Galatea 自传/world-understanding rolling maintainers，或审阅未来 Editor/ExperienceRefiner 边界 | [C2 Galatea rolling maintainers](work/active/derived-recap-grid-c2-galatea-rolling-maintainers.md) | shared Family、runtime-configurable model、operator asset assembly与验收矩阵 |
-| 设计或实现面向具体事务细节的动态外置记忆 | [MemoPod目标设计与施工计划](work/active/memo-pod-target-design-and-implementation-plan.md) | MemoPod与RecapGrid互补；首版只做单Pod、Editable/Frozen、aggregate document与ID-only recall；Galatea接入另读下项 |
-| 重新设计MemoPod未来upper-consumer integration | [MemoPod Galatea / SessionJournal integration plan](work/active/memo-pod-galatea-integration-plan.md) | Design Reopened；先关闭query timing、Pod动态生命周期、Indexer、empty-query cache renewal、main-thread injection与跨turn reference continuity；当前没有active B1/B2 authorization |
+| 设计或实现面向具体事务细节的动态外置记忆 | [MemoPod目标设计与施工计划](work/active/memo-pod-target-design-and-implementation-plan.md) | MemoPod与RecapGrid互补；首版只做单Pod、Editable/Frozen、aggregate document与ID-only recall |
+| 审阅Galatea Character Note Default-Pod保存闭环 | [Character Note Default MemoPod V1](../Galatea/character-note-default-memopod-v1.md) | current V1已经实现durable capture/apply与honest save receipt；不承诺分类、metadata补全或main-request recall |
+| 重新设计MemoPod未来main-request recall integration | [MemoPod Galatea / SessionJournal integration plan](work/active/memo-pod-galatea-integration-plan.md) | Design Reopened；先关闭query timing、Pod动态生命周期、Indexer、empty-query cache renewal、main-thread injection与跨turn reference continuity；当前没有active B1/B2 recall authorization |
 | 审计已撤回的Prepared v6 candidate | [withdrawn Tier-A amendment](archive/superseded/completion-request-prepared-v6-tier-a-amendment.md)、[historical rolled-back evidence](evidence/completion-request-prepared-v6-candidate.md) | historical `83477c06` reviews仍为事实；用户撤回且`1d8c33bb`已回滚；Gate B/B2 never authorized，current approved+code均为v5/v1/count `0..128` |
 | CLI operator 或 Galatea integration | [CLI guide](../../prototypes/SessionJournal.Cli/README.md)、[Galatea guide](../../prototypes/Galatea/README.md)、[Host integration](current/host-integration/derived-recap-host-integration.md) | current composition/code/tests |
 | 重跑 Galatea G2A staging acceptance | [G2A runbook](operations/galatea-g2a-staging-acceptance.md) | 本轮新生成的 acceptance evidence；runbook 存在不等于本轮 Passed |
@@ -47,11 +48,14 @@
   记录首个production recipe、runtime model policy、prompt/asset owner与未来refiner扩展边界。
   [MemoPod动态外置记忆目标设计与施工计划](work/active/memo-pod-target-design-and-implementation-plan.md)
   记录与RecapGrid互补的细粒度事务记忆边界、Editable/Frozen状态机、单文档持久化、ID-only recall与WP-00至WP-07实施门禁；
-  WP-00–WP-06、Track C1/C2与MemoPod core不受SessionJournal rollback影响；MemoPod当前没有product upper consumer，
-  production显式依赖仅`Completion.Abstractions`。WP-07现为Design Reopened，不是implementation authority。
+  WP-00–WP-06、Track C1/C2与MemoPod core不受SessionJournal rollback影响；Galatea已经按
+  [Character Note Default MemoPod V1](../Galatea/character-note-default-memopod-v1.md)成为durable save consumer，但没有
+  main-request recall consumer。依赖方向是Galatea→MemoPod；MemoPod自身production显式依赖仍仅`Completion.Abstractions`。
+  WP-07现为recall Design Reopened，不是implementation authority。
   [MemoPod Galatea / SessionJournal integration plan](work/active/memo-pod-galatea-integration-plan.md)
   active authority仅是Design Reopened状态与六项未决设计闸；旧WP-07A/B全文只作historical input。六项关闭并获fresh
-  user design authorization前，不得设计或实现SessionJournal interface/wire、Galatea adapter或main-thread injection。
+  user design authorization前，不得设计或实现SessionJournal interface/wire、Galatea main-request recall adapter或
+  main-thread injection。
   [Withdrawn CompletionRequestPrepared v6 Tier-A amendment](archive/superseded/completion-request-prepared-v6-tier-a-amendment.md)
   与[historical evidence](evidence/completion-request-prepared-v6-candidate.md)保留旧implementation/review/audit事实。用户已撤回，
   `1d8c33bb`已回滚；Gate B canceled/never granted，promotion never started，旧B2 canceled/never authorized。

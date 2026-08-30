@@ -15,8 +15,9 @@ WP-07A/B的历史输入，不是active decision、accepted shape、implementatio
 ## 0. Active design-reopen authority
 
 current事实：MemoPod core、fake-first operator、provider-neutral recall与provider-free Track C2均不因SessionJournal rollback
-而撤回；但MemoPod目前没有product upper consumer。`MemoPod.csproj`的production显式依赖仅有
-`Completion.Abstractions`，没有SessionJournal、Galatea或RecapGrid dependency。
+而撤回；Galatea已经通过[Character Note Default MemoPod V1](../../../Galatea/character-note-default-memopod-v1.md)
+成为durable save consumer，但仍没有main-request recall consumer。依赖方向是Galatea→MemoPod；`MemoPod.csproj`自身的
+production显式依赖仍仅有`Completion.Abstractions`，没有SessionJournal、Galatea或RecapGrid dependency。
 
 重新讨论上层结合前，必须分别形成可审阅decision并关闭以下设计闸：
 
@@ -30,7 +31,7 @@ current事实：MemoPod core、fake-first operator、provider-neutral recall与p
    recovery/replay与失效引用的closed behavior。
 
 在六项全部完成独立review并获得fresh user design authorization之前，不再设计或实现任何SessionJournal结合interface、
-Prepared recipe/body version、recovery wire、Galatea adapter/config或main-thread injection。未来施工必须新建fresh Candidate与
+Prepared recipe/body version、recovery wire、Galatea main-request recall adapter/config或main-thread injection。未来施工必须新建fresh Candidate与
 fresh gates；不得续用旧Gate A、旧WP-07A/B exact cut或historical PASS。
 
 ## 1. Historical withdrawn decision summary
@@ -141,7 +142,7 @@ Owning current evidence至少包括：
 - **B1 historical then rolled back**：`ISessionSupplementalContextSource`及其request/result types、
   `SessionRuntime.SupplementalContextSource`、supplemental recipe v2/control envelope和SessionJournal-owner tests已在
   `83477c06`实现且reviews均PASS，随后由用户撤回并在`1d8c33bb`回滚；这些只属于historical candidate；
-- **旧B2 canceled / never authorized**：Galatea MemoPod adapter、JSONL carrier、`memo-pods.json`、recall-specific call
+- **旧B2 canceled / never authorized**：Galatea main-request recall adapter、JSONL carrier、`memo-pods.json`、recall-specific call
   ledger和Galatea cross-layer tests均未实现；
 - 任何“Galatea main request已经使用Memo”的claim仍为false；B1的internal failpoint/tests不能被误读成B2接入。
 

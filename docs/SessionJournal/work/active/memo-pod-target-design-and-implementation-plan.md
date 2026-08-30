@@ -8,8 +8,9 @@ Gate B/B2 canceled且从未授权
 验证和收口的工作包。本文是 target/plan，不是当前实现事实；当前事实仍以 owning code、tests 与
 [SessionJournal 当前架构地图](../../current/architecture-and-code-map.md)为准。
 
-current MemoPod是standalone library/operator能力，没有product upper consumer；其production显式`ProjectReference`仅为
-`Completion.Abstractions`，不依赖SessionJournal、Galatea或RecapGrid。
+current MemoPod已有Galatea Character Note Default-Pod durable save consumer，但仍没有main-request recall consumer；
+依赖方向是Galatea→MemoPod，其自身production显式`ProjectReference`仍仅为`Completion.Abstractions`，不依赖
+SessionJournal、Galatea或RecapGrid。
 
 状态证据只作导航：WP-00 target lock为`f0121f2b`；WP-01至WP-05 product/test链已收口到`7cd69639`；WP-06
 fake-first operator及tail evidence为`6f2000d6`、`eaa57715`；Track C1为`18f168b8`；Track C2的provider-free live
@@ -916,7 +917,7 @@ Galatea integration design。
 - 旧WP-07A plan和Prepared v6 Candidate只作historical input；
 - historical B1 `83477c06`及其reviews曾PASS，但已由single atomic rollback `1d8c33bb`撤回；
 - 旧Gate A随用户撤回终止且不可续用；Gate B canceled/never granted，promotion never started；
-- 旧B2 canceled/never authorized，Galatea MemoPod adapter/config/vertical从未实现；
+- 旧B2 canceled/never authorized，Galatea main-request recall adapter/config/vertical从未实现；
 - WP-00–WP-06、Track C1、Track C2与MemoPod core不受影响。
 
 **Current design gates**
@@ -928,13 +929,13 @@ cross-turn dangling/reference continuity。
 **Hard stop**
 
 六项设计闸全部完成独立review并获得fresh user design authorization前，不得继续设计或实现SessionJournal integration
-interface、Prepared recipe/body version、recovery wire、Galatea adapter/config或main-thread injection。未来若继续，必须新建
+interface、Prepared recipe/body version、recovery wire、Galatea main-request recall adapter/config或main-thread injection。未来若继续，必须新建
 fresh Candidate、fresh code/test scope与fresh user gates；旧WP-07A/B text、Gate A和historical PASS都不能直接复用。
 
 **Done when**
 
-- 只表示六项设计问题已有可独立审阅的决策与authority/cost/privacy/recovery边界；不表示任何upper-consumer
-  implementation获准开始。
+- 只表示六项recall设计问题已有可独立审阅的决策与authority/cost/privacy/recovery边界；不表示任何main-request
+  recall consumer implementation获准开始。
 
 ## 10. Acceptance matrix
 
@@ -952,7 +953,7 @@ fresh Candidate、fresh code/test scope与fresh user gates；旧WP-07A/B text、
 | Recall protocol | exactly-one required tool、strict IDs、empty≠failure、same-Frozen-Pod hydrate；production无detached prompt/resolve |
 | Safety | untrusted Memo无写权限/其他工具；logs/reports默认不泄漏正文 |
 | Cache evidence | Track C2：real DeepSeek cold/warm telemetry；无权威字段则记录unavailable且不宣称命中 |
-| Upper-consumer integration | 当前无product upper consumer；WP-07 Design Reopened六项闸关闭并获得fresh授权前，无SessionJournal/Galatea interface、wire、recovery或injection acceptance |
+| Upper-consumer integration | Galatea Default-Pod durable save consumer已实现；WP-07 Design Reopened六项闸关闭并获得fresh授权前，仍无SessionJournal/Galatea main-request recall interface、wire、recovery或injection acceptance |
 | Documentation | current/target/evidence分层、README routing、docs checker与diff check通过 |
 
 ## 11. Review checklist

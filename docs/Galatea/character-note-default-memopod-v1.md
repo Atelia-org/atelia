@@ -417,6 +417,8 @@ Write scope：`prototypes/MemoPod`、`tests/MemoPod.Tests`、MemoPod README/targ
 
 Done when：Editable/Frozen、`nextMemoId`变化、metadata/content变化、reopen identity与commit-indeterminate后durability confirmation都有golden/negative tests；无snapshot/version API扩张。
 
+Status：Complete；opaque complete-document identity、Frozen directory durability confirmation与old-or-new recovery seam均已由MemoPod focused tests覆盖。
+
 ### A1 — Character-memory durable store
 
 Intent：实现独立SQLite schema、lifetime lock、baseline、Provisioning/Ready/Quarantined health、capture/tombstone、current Pod tip、plan/settle/reject与bounded exact reads。
@@ -424,6 +426,8 @@ Intent：实现独立SQLite schema、lifetime lock、baseline、Provisioning/Rea
 Write scope：`prototypes/Galatea/CharacterMemory`、focused Galatea tests。
 
 Done when：duplicate commitment、zero、single-active slot、bounds、provision/current-tip invariants、store transaction crash hooks与strict reopen完整覆盖。
+
+Status：Complete；per-user SQLite/lock/baseline、capture/tombstone、plan/settle/reject与strict reopen均有focused store tests覆盖。
 
 ### A2 — Default Pod reconciler
 

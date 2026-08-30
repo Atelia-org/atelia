@@ -2,7 +2,7 @@
 
 状态：**Implemented；current root contract is V6**  
 日期：2026-08-29  
-实现基线：`b0760310`  
+实现基线：V5 ownership `b0760310`；Character Note save prompt hard cut `78385612`；durable save closure `82414433`  
 Current contract：[Galatea root config V6](../SessionJournal/current/contracts/galatea-root-config-v6.md)
 
 ## 1. 结论
@@ -109,7 +109,7 @@ Markdown heading只帮助LLM与人阅读，不是machine discriminator。Runtime
 
 - **不保留`systemPromptTemplate*`并悄悄改变语义。** 同一个V4字段此前表示完整prompt；复用会让旧文件被再次
   拼接协议，或迫使runtime猜测并剥离自然语言。
-- **不拆成独立world/memory文件。** 当前两类内容都是同一个operator、同一次load、同一final setup authority，
+- **不拆成独立world/memory文件。** 这里指operator context内的world/persona与人工长期记录；两者仍是同一个operator、同一次load、同一final setup authority，
   没有独立writer、权限或提交生命周期。拆文件只会增加顺序、partial-missing、bootstrap和bounds矩阵。
 - **不做module/include engine。** 当前只有固定base composition和两个existing-binding-controlled appendix，不需要
   module ID、priority、operator optional list、include cycle、per-module digest或动态registry。
@@ -117,8 +117,9 @@ Markdown heading只帮助LLM与人阅读，不是machine discriminator。Runtime
 - **不追求旧prompt bytes永远不变。** Finalized text真正变化时，由既有desired-setup reconciliation追加一次setup
   即可；为了zero setup保留兼容分支得不偿失。
 
-如果未来出现独立memory writer、独立事务或多个可选protocol，届时以新的real requirement设计下一版；V5不预留
-半套module机制。
+后续Character Memory V1已经按真实需求建立独立writer与事务，并由
+[Default MemoPod V1](character-note-default-memopod-v1.md)独立定义；这没有把prompt composition扩张为module engine。
+若未来出现多个可选protocol，再按届时的authority与lifecycle设计新版本；V5不预留半套module机制。
 
 ## 6. Durable 与其他子系统边界
 
@@ -130,7 +131,8 @@ Markdown heading只帮助LLM与人阅读，不是machine discriminator。Runtime
 - Prepared/Frozen recovery继续读取historical governing setup与frozen request，不用current composition resources重组。
 - RecapGrid V6仍由character/player names决定Definition/BuildTarget；主prompt拆分不旋转asset。
 - Outbound与Character Note extractor继续各自使用code-owned prompt和ContractId；主prompt appendix不进入extractor identity。
-- Mail/player envelope、delegation SQLite、SessionJournal、Completion、HTTP/SSE均不改schema或version。
+- Prompt ownership本身不拥有Mail/delegation SQLite、SessionJournal、Completion或HTTP/SSE schema；Character Note
+  save-receipt grammar的后续hard cut由Default MemoPod V1/runtime合同独立拥有。
 
 ## 7. Machine-local migration语义
 
@@ -153,7 +155,7 @@ Read-only canary应验证load、final composition与现有readiness；真正的s
 
 | 维度 | 必须证明 |
 |:--|:--|
-| Strict root | exact `v:6`；V1–V5、旧字段、unknown/wrong-case/duplicate/type mismatch拒绝；required `characterMemoryStateDir`只建立path authority |
+| Strict root | exact `v:6`；V1–V5、旧字段、unknown/wrong-case/duplicate/type mismatch拒绝；required `characterMemoryStateDir`建立path authority，实际open另受Note binding与writable-session gate控制 |
 | Context precedence | valid file覆盖inline；inline exact；file decode后`Trim()`；missing/outside-root按contract失败 |
 | Context grammar | nonblank、required character token、optional player token；unknown/malformed token拒绝 |
 | Composition | exact prefix/separator/context/separator/mailbox base；两个non-null binding独立追加outbound/note appendix，both时顺序固定；只render一次 |
