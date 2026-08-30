@@ -152,6 +152,82 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
     }
 
     [Fact]
+    public async Task ProvisioningNotFoundFailureStaysRebuildable() {
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        CharacterMemoryStoreOwner owner = Owner(engine);
+        CharacterMemorySqliteStore store =
+            CharacterMemorySqliteStore.CreateNew(
+                paths.StatePath,
+                owner,
+                Baseline(engine),
+                CharacterNoteDefaultPodV1.EmptyStateIdentity
+            );
+        var access = FakePodAccess.Absent();
+        access.NextCreateFailure =
+            CharacterNoteDefaultPodFailureKind.NotFound;
+
+        await Assert.ThrowsAsync<CharacterNoteDefaultPodAccessException>(
+            async () => await CharacterNoteDefaultPodReconciler.AttachAsync(
+                store,
+                new RecordingExtractor(_ => []),
+                access
+            )
+        );
+
+        CharacterMemorySqliteStore reopened =
+            CharacterMemorySqliteStore.OpenExisting(
+                paths.StatePath,
+                owner
+            );
+        Assert.Equal(CharacterMemoryStoreState.Provisioning,
+            reopened.ReadStatusSnapshot().StoreState);
+        using CharacterNoteDefaultPodReconciler rebuilt =
+            await CharacterNoteDefaultPodReconciler.AttachAsync(
+                reopened,
+                new RecordingExtractor(_ => []),
+                access
+            );
+        Assert.Equal(CharacterMemoryStoreState.Ready,
+            rebuilt.ReadStatusSnapshot().StoreState);
+    }
+
+    [Theory]
+    [InlineData("UnsafePath")]
+    [InlineData("InvalidDocument")]
+    public async Task ProvisioningUnsafeOrInvalidOpenQuarantines(
+        string failureName
+    ) {
+        CharacterNoteDefaultPodFailureKind failure =
+            Enum.Parse<CharacterNoteDefaultPodFailureKind>(failureName);
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        CharacterMemorySqliteStore store =
+            CharacterMemorySqliteStore.CreateNew(
+                paths.StatePath,
+                Owner(engine),
+                Baseline(engine),
+                CharacterNoteDefaultPodV1.EmptyStateIdentity
+            );
+        var access = FakePodAccess.ReadyEmpty();
+        access.NextOpenFailure = failure;
+
+        using CharacterNoteDefaultPodReconciler reconciler =
+            await CharacterNoteDefaultPodReconciler.AttachAsync(
+                store,
+                new RecordingExtractor(_ => []),
+                access
+            );
+
+        Assert.Equal(CharacterMemoryStoreState.Quarantined,
+            reconciler.ReadStatusSnapshot().StoreState);
+        Assert.Equal(
+            CharacterNoteDefaultPodOutcomeCodes.ProvisionStateMismatch,
+            reconciler.ReadStatusSnapshot().QuarantineCode
+        );
+    }
+
+    [Fact]
     public async Task ZeroCaptureIsDurableAndExistingCaptureSkipsExtractor() {
         using var fixture = await RuntimeFixture.CreateAsync(_ => []);
         (_, GalateaTerminalActionExtractionTarget target) =
@@ -175,6 +251,32 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
             second
         );
         Assert.Equal(1, fixture.Extractor.CallCount);
+    }
+
+    [Fact]
+    public async Task PreCapturePodIoFailureThrowsWithoutCapture() {
+        var access = FakePodAccess.ReadyEmpty();
+        using var fixture = await RuntimeFixture.CreateWithAccessAsync(
+            _ => [new CharacterNoteIntent("exact", "submitted")],
+            access
+        );
+        (_, GalateaTerminalActionExtractionTarget target) =
+            fixture.AppendTarget("exact submitted");
+        access.NextOpenFailure =
+            CharacterNoteDefaultPodFailureKind.IoFailure;
+
+        await Assert.ThrowsAsync<CharacterNoteDefaultPodAccessException>(
+            async () => await fixture.Reconciler.ReconcileTargetAsync(
+                fixture.Engine,
+                target
+            )
+        );
+
+        CharacterMemoryStatusSnapshot status =
+            fixture.Reconciler.ReadStatusSnapshot();
+        Assert.Null(status.ActiveSourceAction);
+        Assert.Null(status.ActiveCapture);
+        Assert.Equal(0, fixture.Extractor.CallCount);
     }
 
     [Fact]
@@ -317,6 +419,109 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
             .SettledDefaultPodStateIdentity);
     }
 
+    [Theory]
+    [InlineData("NotFound")]
+    [InlineData("UnsafePath")]
+    [InlineData("InvalidDocument")]
+    public async Task PlannedOpenMissingUnsafeOrInvalidQuarantines(
+        string failureName
+    ) {
+        CharacterNoteDefaultPodFailureKind failure =
+            Enum.Parse<CharacterNoteDefaultPodFailureKind>(failureName);
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        var access = FakePodAccess.ReadyEmpty();
+        (CharacterMemorySqliteStore store, _) =
+            CreateInstalledPlannedTargetStore(
+                paths.StatePath,
+                engine,
+                access
+            );
+        using CharacterNoteDefaultPodReconciler reconciler =
+            await CharacterNoteDefaultPodReconciler.AttachAsync(
+                store,
+                new RecordingExtractor(_ => []),
+                access
+            );
+        access.NextOpenFailure = failure;
+
+        var pending = Assert.IsType<
+            CharacterNotePendingReconcileResult.Reconciled
+        >(await reconciler.ReconcilePendingAsync());
+        var quarantined = Assert.IsType<
+            CharacterNoteDefaultPodReconcileResult.Quarantined
+        >(pending.Result);
+
+        Assert.Equal(
+            CharacterNoteDefaultPodOutcomeCodes.CurrentStateMismatch,
+            quarantined.Code
+        );
+        Assert.Equal(0, access.AppendCount);
+        Assert.Equal(0, access.FreezeCount);
+        Assert.Equal(CharacterMemoryStoreState.Quarantined,
+            reconciler.ReadStatusSnapshot().StoreState);
+    }
+
+    [Theory]
+    [InlineData("NotFound", true)]
+    [InlineData("UnsafePath", true)]
+    [InlineData("InvalidDocument", true)]
+    [InlineData("IoFailure", false)]
+    public async Task PlannedTargetConfirmClassifiesFailureKind(
+        string failureName,
+        bool expectsQuarantine
+    ) {
+        CharacterNoteDefaultPodFailureKind failure =
+            Enum.Parse<CharacterNoteDefaultPodFailureKind>(failureName);
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        var access = FakePodAccess.ReadyEmpty();
+        (CharacterMemorySqliteStore store, _) =
+            CreateInstalledPlannedTargetStore(
+                paths.StatePath,
+                engine,
+                access
+            );
+        using CharacterNoteDefaultPodReconciler reconciler =
+            await CharacterNoteDefaultPodReconciler.AttachAsync(
+                store,
+                new RecordingExtractor(_ => []),
+                access
+            );
+        access.NextConfirmFailure = failure;
+
+        var pending = Assert.IsType<
+            CharacterNotePendingReconcileResult.Reconciled
+        >(await reconciler.ReconcilePendingAsync());
+
+        if (expectsQuarantine) {
+            var quarantined = Assert.IsType<
+                CharacterNoteDefaultPodReconcileResult.Quarantined
+            >(pending.Result);
+            Assert.Equal(
+                CharacterNoteDefaultPodOutcomeCodes.CurrentStateMismatch,
+                quarantined.Code
+            );
+            Assert.Equal(CharacterMemoryStoreState.Quarantined,
+                reconciler.ReadStatusSnapshot().StoreState);
+        }
+        else {
+            var deferred = Assert.IsType<
+                CharacterNoteDefaultPodReconcileResult.DeferredAfterCapture
+            >(pending.Result);
+            Assert.Equal(
+                CharacterNoteDefaultPodOutcomeCodes.DurabilityUnconfirmed,
+                deferred.Code
+            );
+            Assert.Equal(CharacterMemoryStoreState.Ready,
+                reconciler.ReadStatusSnapshot().StoreState);
+            Assert.Equal(CharacterMemoryCaptureState.Planned,
+                reconciler.ReadStatusSnapshot().ActiveCapture!.State);
+        }
+        Assert.Equal(0, access.AppendCount);
+        Assert.Equal(0, access.FreezeCount);
+    }
+
     [Fact]
     public async Task InstalledIndeterminateTargetIsConfirmedAndNotReappended() {
         var access = FakePodAccess.ReadyEmpty();
@@ -427,6 +632,48 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
     }
 
     [Fact]
+    public async Task PlannedBaseTipMismatchQuarantinesBeforePodEffects() {
+        using var paths = new FixturePaths();
+        using SessionJournalEngine engine = CreateEngine(paths.SessionPath);
+        var access = FakePodAccess.ReadyEmpty();
+        (CharacterMemorySqliteStore store, _) =
+            CreateInstalledPlannedTargetStore(
+                paths.StatePath,
+                engine,
+                access
+            );
+        using CharacterNoteDefaultPodReconciler reconciler =
+            await CharacterNoteDefaultPodReconciler.AttachAsync(
+                store,
+                new RecordingExtractor(_ => []),
+                access
+            );
+        CharacterMemoryStatusSnapshot status =
+            reconciler.ReadStatusSnapshot();
+        CharacterMemoryCaptureSnapshot mismatched =
+            status.ActiveCapture! with {
+                BasePodStateIdentity = "fake-mismatched-base"
+            };
+
+        var result = Assert.IsType<
+            CharacterNoteDefaultPodReconcileResult.Quarantined
+        >(await reconciler.ReconcileCapturedBatchAsync(
+            status,
+            mismatched
+        ));
+
+        Assert.Equal(
+            CharacterNoteDefaultPodOutcomeCodes.CurrentStateMismatch,
+            result.Code
+        );
+        Assert.Equal(0, access.AppendCount);
+        Assert.Equal(0, access.FreezeCount);
+        Assert.Equal(0, access.ConfirmCount);
+        Assert.Equal(CharacterMemoryStoreState.Quarantined,
+            reconciler.ReadStatusSnapshot().StoreState);
+    }
+
+    [Fact]
     public async Task CapacityFailureIsTerminalRejectedWithoutAppendOrFreeze() {
         var access = FakePodAccess.ReadyEmpty();
         access.ActiveMemoCount = MemoPodLimits.MaximumActiveMemoCount;
@@ -466,6 +713,36 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
             CharacterNoteDefaultPodV1.EmptyStateIdentity
         );
         return store;
+    }
+
+    private static (
+        CharacterMemorySqliteStore Store,
+        FakePodPreview Preview
+    ) CreateInstalledPlannedTargetStore(
+        string path,
+        SessionJournalEngine engine,
+        FakePodAccess access
+    ) {
+        CharacterMemorySqliteStore store = ReadyStore(path, engine);
+        EventAddress source = AppendAction(engine, "planned target");
+        CharacterMemoryCaptureSnapshot capture = store.CaptureNew(new(
+            EventAddressTextCodec.Format(source),
+            Sha256("planned target"),
+            Encoding.UTF8.GetByteCount("planned target"),
+            "stored-contract",
+            ["saved"]
+        )).Capture!;
+        FakePodPreview preview = access.Preview(["saved"]);
+        _ = store.PlanApply(new(
+            capture.SourceActionAddress,
+            capture.ExtractionCommitment,
+            CharacterNoteDefaultPodV1.EmptyStateIdentity,
+            preview.TargetIdentity,
+            preview.MemoIds
+        ));
+        access.Install(preview);
+        access.ResetCounters();
+        return (store, preview);
     }
 
     private static CharacterMemoryStoreOwner Owner(
@@ -619,8 +896,21 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
         internal int FreezeCount { get; private set; }
         internal int ConfirmCount { get; private set; }
         internal FakeFreeze NextFreeze { get; set; }
+        internal CharacterNoteDefaultPodFailureKind? NextCreateFailure {
+            get;
+            set;
+        }
+        internal CharacterNoteDefaultPodFailureKind? NextOpenFailure {
+            get;
+            set;
+        }
+        internal CharacterNoteDefaultPodFailureKind? NextConfirmFailure {
+            get;
+            set;
+        }
 
         internal static FakePodAccess ReadyEmpty() => new();
+        internal static FakePodAccess Absent() => new() { Exists = false };
 
         public ICharacterNoteDefaultPodHandle Create(
             string rootPath,
@@ -630,6 +920,10 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
             _ = rootPath;
             Assert.Equal(CharacterNoteDefaultPodV1.PodId, podId);
             Assert.Equal(CharacterNoteDefaultPodV1.Topic, topic);
+            if (NextCreateFailure is { } failure) {
+                NextCreateFailure = null;
+                throw Failure(failure, "create");
+            }
             return new Handle(this, create: true);
         }
 
@@ -639,9 +933,23 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
         ) {
             _ = rootPath;
             Assert.Equal(CharacterNoteDefaultPodV1.PodId, podId);
-            if (!Exists) { throw new FileNotFoundException(); }
+            if (NextOpenFailure is { } failure) {
+                NextOpenFailure = null;
+                throw Failure(failure, "open");
+            }
+            if (!Exists) {
+                throw Failure(
+                    CharacterNoteDefaultPodFailureKind.NotFound,
+                    "open"
+                );
+            }
             return new Handle(this, create: false);
         }
+
+        private static CharacterNoteDefaultPodAccessException Failure(
+            CharacterNoteDefaultPodFailureKind kind,
+            string operation
+        ) => new(kind, $"fake {operation} failure");
 
         internal FakePodPreview Preview(IReadOnlyList<string> exactTexts) {
             var handle = new Handle(this, create: false);
@@ -731,7 +1039,10 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
                 }
                 if (mode is FakeFreeze.InstallThenThrow
                     or FakeFreeze.LeaveBaseThenThrow) {
-                    throw new IOException("fake publish failure");
+                    throw Failure(
+                        CharacterNoteDefaultPodFailureKind.IoFailure,
+                        "publish"
+                    );
                 }
                 Phase = MemoPodPhase.Frozen;
                 return Task.CompletedTask;
@@ -740,6 +1051,10 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
             public void ConfirmCurrentDocumentDurability() {
                 Assert.Equal(MemoPodPhase.Frozen, Phase);
                 _owner.ConfirmCount++;
+                if (_owner.NextConfirmFailure is { } failure) {
+                    _owner.NextConfirmFailure = null;
+                    throw Failure(failure, "confirm");
+                }
             }
 
             internal FakePodPreview Preview(string[] memoIds) => new(

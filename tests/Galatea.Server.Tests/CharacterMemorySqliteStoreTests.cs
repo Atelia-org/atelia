@@ -454,6 +454,36 @@ public sealed class CharacterMemorySqliteStoreTests {
             CharacterMemorySqliteStore.OpenExisting(directory, owner));
     }
 
+    [Fact]
+    public void StrictReopenRejectsPlannedBaseDifferentFromSettledTip() {
+        using var fixture = new ReadyStore();
+        CharacterMemoryCaptureSnapshot capture = fixture.Store.CaptureNew(
+            Capture(Address(72), ["note"])
+        ).Capture!;
+        _ = fixture.Store.PlanApply(new CharacterMemoryPlanRequest(
+            Address(72),
+            capture.ExtractionCommitment,
+            State('p'),
+            State('t'),
+            ["m1:00000001"]
+        ));
+        string directory = fixture.DirectoryPath;
+        CharacterMemoryStoreOwner owner = fixture.Owner;
+        fixture.DisposeStore();
+        ExecuteSql(
+            System.IO.Path.Combine(
+                directory,
+                CharacterMemorySqliteStore.DatabaseFileName
+            ),
+            "UPDATE note_action_capture SET base_pod_state_identity = '"
+                + State('q') + "' WHERE source_action_address = '"
+                + Address(72) + "';"
+        );
+
+        Assert.Throws<InvalidDataException>(() =>
+            CharacterMemorySqliteStore.OpenExisting(directory, owner));
+    }
+
     [Theory]
     [InlineData("""
         DROP INDEX ux_character_note_memo_id;

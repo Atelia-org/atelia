@@ -433,7 +433,7 @@ Write scope：CharacterMemory domain/reconciler、Galatea↔MemoPod project refe
 
 Done when：zero、first provision、many-note batch、AlreadyApplied、capacity Rejected、crash windows、planned-ID mismatch、durability confirmation与single Freeze语义通过。
 
-Status：Complete；code-owned empty identity由真实MemoPod candidate锁定，focused A2 tests 11/11通过。
+Status：Complete；code-owned empty identity由真实MemoPod candidate锁定，focused A2 tests 23/23通过。
 
 ### A3 — V6 config and lifecycle composition
 

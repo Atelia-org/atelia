@@ -115,6 +115,21 @@ internal interface ICharacterNoteDefaultPodAccess {
     );
 }
 
+internal enum CharacterNoteDefaultPodFailureKind {
+    NotFound,
+    UnsafePath,
+    InvalidDocument,
+    IoFailure,
+}
+
+internal sealed class CharacterNoteDefaultPodAccessException(
+    CharacterNoteDefaultPodFailureKind kind,
+    string message,
+    Exception? innerException = null
+) : IOException(message, innerException) {
+    internal CharacterNoteDefaultPodFailureKind Kind { get; } = kind;
+}
+
 internal sealed class CharacterNoteMemoPodAccess
     : ICharacterNoteDefaultPodAccess {
     internal static CharacterNoteMemoPodAccess Instance { get; } = new();
@@ -125,16 +140,49 @@ internal sealed class CharacterNoteMemoPodAccess
         string rootPath,
         MemoPodId podId,
         string topic
-    ) => new Handle(global::Atelia.MemoPod.MemoPod.Create(
-        rootPath,
-        podId,
-        topic
-    ));
+    ) {
+        try {
+            return new Handle(global::Atelia.MemoPod.MemoPod.Create(
+                rootPath,
+                podId,
+                topic
+            ));
+        }
+        catch (MemoPodPersistenceException exception) {
+            throw Map(exception);
+        }
+    }
 
     public ICharacterNoteDefaultPodHandle Open(
         string rootPath,
         MemoPodId podId
-    ) => new Handle(global::Atelia.MemoPod.MemoPod.Open(rootPath, podId));
+    ) {
+        try {
+            return new Handle(global::Atelia.MemoPod.MemoPod.Open(
+                rootPath,
+                podId
+            ));
+        }
+        catch (MemoPodPersistenceException exception) {
+            throw Map(exception);
+        }
+    }
+
+    private static CharacterNoteDefaultPodAccessException Map(
+        MemoPodPersistenceException exception
+    ) => new(
+        exception.FailureKind switch {
+            MemoPodPersistenceFailureKind.NotFound =>
+                CharacterNoteDefaultPodFailureKind.NotFound,
+            MemoPodPersistenceFailureKind.UnsafePath =>
+                CharacterNoteDefaultPodFailureKind.UnsafePath,
+            MemoPodPersistenceFailureKind.InvalidDocument =>
+                CharacterNoteDefaultPodFailureKind.InvalidDocument,
+            _ => CharacterNoteDefaultPodFailureKind.IoFailure,
+        },
+        "MemoPod operation failed during Character Note reconciliation.",
+        exception
+    );
 
     private sealed class Handle(global::Atelia.MemoPod.MemoPod pod)
         : ICharacterNoteDefaultPodHandle {
@@ -147,10 +195,24 @@ internal sealed class CharacterNoteMemoPodAccess
         public MemoId Append(string exactText) => pod.Append(exactText);
         public void ResumeEditing() => pod.ResumeEditing();
         public string ComputeStateIdentity() => pod.ComputeStateIdentity();
-        public Task FreezeAsync(
+        public async Task FreezeAsync(
             CancellationToken cancellationToken = default
-        ) => pod.FreezeAsync(cancellationToken);
-        public void ConfirmCurrentDocumentDurability() =>
-            pod.ConfirmCurrentDocumentDurability();
+        ) {
+            try {
+                await pod.FreezeAsync(cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (MemoPodPersistenceException exception) {
+                throw Map(exception);
+            }
+        }
+        public void ConfirmCurrentDocumentDurability() {
+            try {
+                pod.ConfirmCurrentDocumentDurability();
+            }
+            catch (MemoPodPersistenceException exception) {
+                throw Map(exception);
+            }
+        }
     }
 }

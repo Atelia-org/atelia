@@ -903,6 +903,16 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             _ => false,
         };
         if (!valid) { throw Corrupt("Character Memory meta state shape is invalid."); }
+        if (state is CharacterMemoryStoreState.Ready
+            && active is { State: CharacterMemoryCaptureState.Planned }
+            && !string.Equals(
+                active.BasePodStateIdentity,
+                settled,
+                StringComparison.Ordinal)) {
+            throw Corrupt(
+                "Active Planned base does not match the settled Default Pod tip."
+            );
+        }
     }
 
     private static void RequireOwner(

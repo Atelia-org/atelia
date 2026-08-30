@@ -135,12 +135,20 @@ internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
             _store.ReadCaptureExact(sourceAction);
         if (existing is not null) {
             CharacterNoteDefaultPodReconcileResult? health =
-                CheckCurrentTip(status, target.SourceAction);
+                CheckCurrentTip(
+                    status,
+                    target.SourceAction,
+                    captureExists: true
+                );
             return health ?? ResultForTerminalCapture(existing);
         }
 
         CharacterNoteDefaultPodReconcileResult? current =
-            CheckCurrentTip(status, target.SourceAction);
+            CheckCurrentTip(
+                status,
+                target.SourceAction,
+                captureExists: false
+            );
         if (current is not null) { return current; }
         if (_store.Baseline.CaptureFromPhysicalFrontier.Contains(
                 target.SourceAction)) {
@@ -274,11 +282,27 @@ internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
             return;
         }
 
-        ICharacterNoteDefaultPodHandle candidate = _pods.Create(
-            _store.StoreDirectory,
-            CharacterNoteDefaultPodV1.PodId,
-            CharacterNoteDefaultPodV1.Topic
-        );
+        ICharacterNoteDefaultPodHandle candidate;
+        try {
+            candidate = _pods.Create(
+                _store.StoreDirectory,
+                CharacterNoteDefaultPodV1.PodId,
+                CharacterNoteDefaultPodV1.Topic
+            );
+        }
+        catch (CharacterNoteDefaultPodAccessException exception) {
+            if (exception.Kind is CharacterNoteDefaultPodFailureKind.NotFound
+                or CharacterNoteDefaultPodFailureKind.IoFailure) {
+                throw;
+            }
+            _ = Quarantine(
+                status,
+                CharacterNoteDefaultPodOutcomeCodes
+                    .ProvisionStateMismatch,
+                observedIdentity: null
+            );
+            return;
+        }
         string candidateIdentity = candidate.ComputeStateIdentity();
         if (!string.Equals(
                 candidateIdentity,
@@ -319,7 +343,22 @@ internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
             );
             return ValueTask.CompletedTask;
         }
-        observed.Pod.ConfirmCurrentDocumentDurability();
+        try {
+            observed.Pod.ConfirmCurrentDocumentDurability();
+        }
+        catch (CharacterNoteDefaultPodAccessException exception) {
+            if (exception.Kind is CharacterNoteDefaultPodFailureKind.NotFound
+                or CharacterNoteDefaultPodFailureKind.IoFailure) {
+                throw;
+            }
+            _ = Quarantine(
+                status,
+                CharacterNoteDefaultPodOutcomeCodes
+                    .ProvisionStateMismatch,
+                observed.Identity
+            );
+            return ValueTask.CompletedTask;
+        }
         _ = _store.RecordInitialDefaultPod(observed.Identity);
         return ValueTask.CompletedTask;
     }
@@ -351,7 +390,7 @@ internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
         }
     }
 
-    private async ValueTask<CharacterNoteDefaultPodReconcileResult>
+    internal async ValueTask<CharacterNoteDefaultPodReconcileResult>
         ReconcileCapturedBatchAsync(
         CharacterMemoryStatusSnapshot status,
         CharacterMemoryCaptureSnapshot capture
@@ -370,11 +409,11 @@ internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
                     source
                 ),
             CharacterMemoryCaptureState.Applied =>
-                CheckCurrentTip(status, source)
+                CheckCurrentTip(status, source, captureExists: true)
                     ?? new CharacterNoteDefaultPodReconcileResult
                         .AlreadyApplied(source),
             CharacterMemoryCaptureState.Rejected =>
-                CheckCurrentTip(status, source)
+                CheckCurrentTip(status, source, captureExists: true)
                     ?? new CharacterNoteDefaultPodReconcileResult.Rejected(
                         source,
                         capture.RejectionCode!
@@ -474,6 +513,16 @@ internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
         EventAddress source = EventAddressTextCodec.Parse(
             capture.SourceActionAddress
         );
+        if (!string.Equals(
+                capture.BasePodStateIdentity,
+                status.SettledDefaultPodStateIdentity,
+                StringComparison.Ordinal)) {
+            return QuarantineResult(
+                status,
+                CharacterNoteDefaultPodOutcomeCodes.CurrentStateMismatch,
+                capture.BasePodStateIdentity
+            );
+        }
         PodOpenResult observed = OpenDefaultPod();
         if (observed is PodOpenResult.Unavailable) {
             return Deferred(source,
@@ -494,10 +543,19 @@ internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
             try {
                 available.Pod.ConfirmCurrentDocumentDurability();
             }
-            catch (IOException) {
-                return Deferred(source,
+            catch (CharacterNoteDefaultPodAccessException exception) {
+                if (exception.Kind is
+                        CharacterNoteDefaultPodFailureKind.IoFailure) {
+                    return Deferred(source,
+                        CharacterNoteDefaultPodOutcomeCodes
+                            .DurabilityUnconfirmed);
+                }
+                return QuarantineResult(
+                    status,
                     CharacterNoteDefaultPodOutcomeCodes
-                        .DurabilityUnconfirmed);
+                        .CurrentStateMismatch,
+                    available.Identity
+                );
             }
             return SettleApplied(capture);
         }
@@ -592,10 +650,19 @@ internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
             try {
                 available.Pod.ConfirmCurrentDocumentDurability();
             }
-            catch (IOException) {
-                return Deferred(source,
+            catch (CharacterNoteDefaultPodAccessException exception) {
+                if (exception.Kind is
+                        CharacterNoteDefaultPodFailureKind.IoFailure) {
+                    return Deferred(source,
+                        CharacterNoteDefaultPodOutcomeCodes
+                            .DurabilityUnconfirmed);
+                }
+                return QuarantineResult(
+                    status,
                     CharacterNoteDefaultPodOutcomeCodes
-                        .DurabilityUnconfirmed);
+                        .CurrentStateMismatch,
+                    available.Identity
+                );
             }
             return SettleApplied(capture);
         }
@@ -658,10 +725,12 @@ internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
 
     private CharacterNoteDefaultPodReconcileResult? CheckCurrentTip(
         CharacterMemoryStatusSnapshot status,
-        EventAddress source
+        EventAddress source,
+        bool captureExists
     ) {
         PodOpenResult observed = OpenDefaultPod();
-        if (observed is PodOpenResult.Unavailable) {
+        if (observed is PodOpenResult.Unavailable unavailable) {
+            if (!captureExists) { throw unavailable.Exception; }
             return Deferred(source,
                 CharacterNoteDefaultPodOutcomeCodes.PodUnavailable);
         }
@@ -739,23 +808,14 @@ internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
                 pod.ComputeStateIdentity()
             );
         }
-        catch (MemoPodPersistenceException exception) {
-            return exception.FailureKind switch {
-                MemoPodPersistenceFailureKind.NotFound =>
+        catch (CharacterNoteDefaultPodAccessException exception) {
+            return exception.Kind switch {
+                CharacterNoteDefaultPodFailureKind.NotFound =>
                     new PodOpenResult.Absent(),
-                MemoPodPersistenceFailureKind.IoFailure =>
+                CharacterNoteDefaultPodFailureKind.IoFailure =>
                     new PodOpenResult.Unavailable(exception),
                 _ => new PodOpenResult.Invalid(),
             };
-        }
-        catch (FileNotFoundException) {
-            return new PodOpenResult.Absent();
-        }
-        catch (DirectoryNotFoundException) {
-            return new PodOpenResult.Absent();
-        }
-        catch (IOException exception) {
-            return new PodOpenResult.Unavailable(exception);
         }
     }
 
@@ -799,7 +859,7 @@ internal sealed class CharacterNoteDefaultPodReconciler : IDisposable {
         internal sealed record Absent : PodOpenResult;
         internal sealed record Invalid : PodOpenResult;
         internal sealed record Unavailable(
-            IOException Exception
+            CharacterNoteDefaultPodAccessException Exception
         ) : PodOpenResult;
         internal sealed record Available(
             ICharacterNoteDefaultPodHandle Pod,
