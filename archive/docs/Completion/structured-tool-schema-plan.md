@@ -59,7 +59,7 @@ var definition = ReflectedToolDefinitionBuilder.Build<IssueTriage>(
 
 ### 2.3 `ToolSchema` 采用封闭递归 tree
 
-当前落地形态在 [ToolDefinition.cs](/repos/focus/atelia/prototypes/Completion.Abstractions/ToolDefinition.cs)：
+当前落地形态在 [ToolDefinition.cs](/repos/focus/atelia/src/Completion.Abstractions/ToolDefinition.cs)：
 
 ```csharp
 public abstract record class ToolSchema(string? Description = null, string? Example = null) {
@@ -143,7 +143,7 @@ public sealed record class ToolDefinition {
 
 ### 3.2 `ReflectedToolDefinitionBuilder`
 
-当前 builder 已放在 [ReflectedToolDefinitionBuilder.cs](/repos/focus/atelia/prototypes/Completion.Tools/Declaration/ReflectedToolDefinitionBuilder.cs)：
+当前 builder 已放在 [ReflectedToolDefinitionBuilder.cs](/repos/focus/atelia/src/Completion.Tools/Declaration/ReflectedToolDefinitionBuilder.cs)：
 
 ```csharp
 public static class ReflectedToolDefinitionBuilder {
@@ -165,7 +165,7 @@ public static class ReflectedToolDefinitionBuilder {
 
 ### 3.3 provider schema 投影
 
-[JsonToolSchemaBuilder.cs](/repos/focus/atelia/prototypes/Completion/Utils/JsonToolSchemaBuilder.cs) 已直接消费 `ToolDefinition.InputSchema`：
+[JsonToolSchemaBuilder.cs](/repos/focus/atelia/src/Completion/Utils/JsonToolSchemaBuilder.cs) 已直接消费 `ToolDefinition.InputSchema`：
 
 - `ToolSchema.Object` -> JSON Schema `type: object`
 - `ToolSchema.Array` -> JSON Schema `type: array`

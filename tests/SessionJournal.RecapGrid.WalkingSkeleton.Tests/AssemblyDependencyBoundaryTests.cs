@@ -51,7 +51,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
-                "../Completion.Abstractions/Completion.Abstractions.csproj",
+                "../../src/Completion.Abstractions/Completion.Abstractions.csproj",
                 "../SessionJournal/SessionJournal.csproj",
                 "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"
             ],
@@ -60,8 +60,8 @@ public sealed class AssemblyDependencyBoundaryTests {
         Assert.Equal(
             [
                 "../../src/EventJournal/EventJournal.csproj",
-                "../Completion.Abstractions/Completion.Abstractions.csproj",
-                "../Completion.Tools/Completion.Tools.csproj",
+                "../../src/Completion.Abstractions/Completion.Abstractions.csproj",
+                "../../src/Completion.Tools/Completion.Tools.csproj",
                 "../SessionJournal/SessionJournal.csproj",
                 "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
                 "../SessionJournal.RecapGrid.Cadence/SessionJournal.RecapGrid.Cadence.csproj"
@@ -72,8 +72,8 @@ public sealed class AssemblyDependencyBoundaryTests {
             [
                 "../SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj",
                 "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
-                "../Completion/Completion.csproj",
-                "../Completion.Abstractions/Completion.Abstractions.csproj"
+                "../../src/Completion/Completion.csproj",
+                "../../src/Completion.Abstractions/Completion.Abstractions.csproj"
             ],
             DirectProjectReferences(hostingProject)
         );
@@ -663,7 +663,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         }
         string[] completionFriends = [.. File.ReadLines(Path.Combine(
                 root,
-                "prototypes",
+                "src",
                 "Completion",
                 "Properties",
                 "AssemblyInfo.cs"
@@ -686,7 +686,7 @@ public sealed class AssemblyDependencyBoundaryTests {
             "SessionJournal.RecapGrid.Runtime.Tests.csproj"
         );
         Assert.Contains(
-            "../../prototypes/Completion/Completion.csproj",
+            "../../src/Completion/Completion.csproj",
             DirectProjectReferences(runtimeTestsProject),
             StringComparer.Ordinal
         );
@@ -1251,7 +1251,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
 
         Assert.DoesNotContain(closure, path => path.EndsWith(
-            "/prototypes/Completion/Completion.csproj",
+            "/src/Completion/Completion.csproj",
             StringComparison.OrdinalIgnoreCase
         ));
         Assert.DoesNotContain(closure, path => path.Contains(

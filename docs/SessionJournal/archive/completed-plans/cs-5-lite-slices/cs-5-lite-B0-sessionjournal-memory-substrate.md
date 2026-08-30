@@ -161,8 +161,8 @@ public SessionContextHeader ToSessionContextHeader();
 ```text
 prototypes/SessionJournal
   -> src/EventJournal
-  -> prototypes/Completion.Abstractions
-  -> prototypes/Completion.Tools
+  -> src/Completion.Abstractions
+  -> src/Completion.Tools
 
 prototypes/ChatSession.Memory
   -> prototypes/SessionJournal

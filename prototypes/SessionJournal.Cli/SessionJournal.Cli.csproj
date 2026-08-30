@@ -16,7 +16,7 @@
     <ProjectReference Include="../SessionJournal.RecapGrid.Cadence/SessionJournal.RecapGrid.Cadence.csproj" />
     <ProjectReference Include="../SessionJournal.RecapGrid.Hosting/SessionJournal.RecapGrid.Hosting.csproj" />
     <ProjectReference Include="../SessionJournal.Offline/SessionJournal.Offline.csproj" />
-    <ProjectReference Include="../Completion/Completion.csproj" />
+    <ProjectReference Include="../../src/Completion/Completion.csproj" />
     <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
   </ItemGroup>
 

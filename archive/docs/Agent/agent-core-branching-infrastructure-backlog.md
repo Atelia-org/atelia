@@ -16,7 +16,7 @@
 - `prototypes/Agent.Core/Persistence/AgentEngineWorkspaceSnapshotHelper.cs`
 - `prototypes/Agent.Core/History/AgentState.cs`
 - `prototypes/Agent.Core/IApp.cs`
-- `prototypes/Completion.Tools/ToolSession.cs`
+- `src/Completion.Tools/ToolSession.cs`
 
 ## 0. 一句话结论
 

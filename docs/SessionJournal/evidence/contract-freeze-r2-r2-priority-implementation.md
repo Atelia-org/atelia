@@ -109,9 +109,9 @@ current config实际引用的repository经旧binary只读验证为Idle，active 
 ### 4.2 Implemented language
 
 唯一 byte decoder现在由
-[`CompletionConnectionConfigLoader`](../../../prototypes/Completion/CompletionConnections.cs) 拥有，strict
+[`CompletionConnectionConfigLoader`](../../../src/Completion/CompletionConnections.cs) 拥有，strict
 parser位于internal/non-public
-[`CompletionConnectionsManifestV1Reader`](../../../prototypes/Completion/CompletionConnectionsManifestV1Reader.cs)。
+[`CompletionConnectionsManifestV1Reader`](../../../src/Completion/CompletionConnectionsManifestV1Reader.cs)。
 Completion file load、两个RecapGrid CLI ingress、Galatea guarded load全部进入该decoder；Hosting只保留
 internal programmatic `Freeze`。旧H/G grammar、DTO、public limits/decoder已删除。
 

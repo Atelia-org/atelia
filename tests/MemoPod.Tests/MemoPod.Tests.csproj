@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../prototypes/Completion/Completion.csproj" />
+    <ProjectReference Include="../../src/Completion/Completion.csproj" />
     <ProjectReference Include="../../prototypes/MemoPod.DebugApp/MemoPod.DebugApp.csproj" />
     <ProjectReference Include="../../prototypes/MemoPod/MemoPod.csproj" />
     <ProjectReference Include="../MemoPod.CrashHarness/MemoPod.CrashHarness.csproj"

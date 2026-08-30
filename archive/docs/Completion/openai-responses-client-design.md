@@ -1,7 +1,7 @@
 # OpenAI Responses Client 设计草案
 
-> **用途**：为 `prototypes/Completion` 设计一个符合 `OpenAI Responses API` 语义、但仍实现现有 `prototypes/Completion.Abstractions/ICompletionClient.cs` 的 provider。
-> **适用范围**：`prototypes/Completion/OpenAI/*`
+> **用途**：为 `src/Completion` 设计一个符合 `OpenAI Responses API` 语义、但仍实现现有 `src/Completion.Abstractions/ICompletionClient.cs` 的 provider。
+> **适用范围**：`src/Completion/OpenAI/*`
 > **最后更新**：2026-05-27
 
 ---
@@ -102,12 +102,12 @@
 
 新增以下文件：
 
-- `prototypes/Completion/OpenAI/OpenAIResponsesClient.cs`
-- `prototypes/Completion/OpenAI/OpenAIResponsesApiModels.cs`
-- `prototypes/Completion/OpenAI/OpenAIResponsesMessageConverter.cs`
-- `prototypes/Completion/OpenAI/OpenAIResponsesStreamParser.cs`
-- `prototypes/Completion/OpenAI/OpenAIResponsesReasoningBlock.cs`
-- `prototypes/Completion/OpenAI/OpenAIResponsesClientOptions.cs`
+- `src/Completion/OpenAI/OpenAIResponsesClient.cs`
+- `src/Completion/OpenAI/OpenAIResponsesApiModels.cs`
+- `src/Completion/OpenAI/OpenAIResponsesMessageConverter.cs`
+- `src/Completion/OpenAI/OpenAIResponsesStreamParser.cs`
+- `src/Completion/OpenAI/OpenAIResponsesReasoningBlock.cs`
+- `src/Completion/OpenAI/OpenAIResponsesClientOptions.cs`
 
 建议 `ApiSpecId`：
 
@@ -718,7 +718,7 @@ public sealed class OpenAIResponsesClientOptions {
 建议保持与现有 OpenAI Chat 路径对称：
 
 ```text
-prototypes/Completion/OpenAI/
+src/Completion/OpenAI/
 ├─ OpenAIResponsesClient.cs
 ├─ OpenAIResponsesClientOptions.cs
 ├─ OpenAIResponsesApiModels.cs
@@ -748,4 +748,4 @@ prototypes/Completion/OpenAI/
 - parser 真正消费 `response.*` 事件
 - reasoning 真正保留可 replay 的原生 item
 
-这样既对得起 OpenAI 官方语义，也对得起 `prototypes/Completion` 当前已经形成的分层风格。
+这样既对得起 OpenAI 官方语义，也对得起 `src/Completion` 当前已经形成的分层风格。

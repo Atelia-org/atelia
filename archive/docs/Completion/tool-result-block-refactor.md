@@ -52,9 +52,9 @@
 
 按当前主线代码来看，`ToolResult.Result` 的消费面主要是：
 
-- `prototypes/Completion/Anthropic/AnthropicMessageConverter.cs`
-- `prototypes/Completion/Gemini/GeminiMessageConverter.cs`
-- `prototypes/Completion/OpenAI/OpenAIChatMessageConverter.cs`
+- `src/Completion/Anthropic/AnthropicMessageConverter.cs`
+- `src/Completion/Gemini/GeminiMessageConverter.cs`
+- `src/Completion/OpenAI/OpenAIChatMessageConverter.cs`
 - `tests/Completion.Tests/*` 中对应 converter / projection round-trip 测试
 
 工具执行链本身目前停在 `ToolExecuteResult.Content : string`。这反而说明 phase 1 可以很收敛：

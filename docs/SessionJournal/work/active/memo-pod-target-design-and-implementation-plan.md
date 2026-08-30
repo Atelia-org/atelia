@@ -854,7 +854,7 @@ correctness工作包；实施时仍须重新核对当时owning code与
 
 **Write scope**
 
-- `prototypes/Completion/OpenAI/`
+- `src/Completion/OpenAI/`
 - `tests/Completion.Tests/OpenAI/`。
 
 **Validation**

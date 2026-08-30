@@ -17,7 +17,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\prototypes\LiveContextProto\LiveContextProto.csproj" />
     <ProjectReference Include="..\..\prototypes\Agent.Core\Agent.Core.csproj" />
-    <ProjectReference Include="..\..\prototypes\Completion\Completion.csproj" />
-    <ProjectReference Include="..\..\prototypes\Completion.Tools\Completion.Tools.csproj" />
+    <ProjectReference Include="..\..\src\Completion\Completion.csproj" />
+    <ProjectReference Include="..\..\src\Completion.Tools\Completion.Tools.csproj" />
   </ItemGroup>
 </Project>

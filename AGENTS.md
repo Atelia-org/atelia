@@ -26,7 +26,7 @@ Copilot可以理解成一种职业，这并不与LLM会话的底层模型切换�
   - 已验证 `bash -lc 'export PATH=/root/.local/bin:$PATH && pmux game new'` 可正常工作；已验证 `bash -lc 'source /root/miniconda3/etc/profile.d/conda.sh && conda activate py313 && python --version'` 可进入 `py313`。
 
 ## LiveContextProto 工具自动化
-- 当前主线使用 `prototypes/Completion.Tools/MethodToolWrapper.cs` 提供的 `MethodToolWrapper` 自动生成可供 Agent 调用的工具。
+- 当前主线使用 `src/Completion.Tools/MethodToolWrapper.cs` 提供的 `MethodToolWrapper` 自动生成可供 Agent 调用的工具。
 - 目标方法需要添加 `[ToolAttribute("tool.name", "说明文本")]`，并采用 `ValueTask<ToolExecuteResult> Method(TInput input, ToolExecutionContext context, CancellationToken ct)` 形状；`TInput` 使用单个业务输入对象。
 - tool-level description 来自 `[ToolAttribute]`；输入字段 description 来自 `TInput` 属性上的 `[Description]` / `JsonPropertyName` / DataAnnotations，方法可通过 `MethodToolWrapper.FromMethod(instance, methodInfo)` 或 `MethodToolWrapper.FromDelegate(delegate)` 注册。
 

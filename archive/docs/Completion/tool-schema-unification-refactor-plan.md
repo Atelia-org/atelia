@@ -122,10 +122,10 @@
 
 `Completion.Abstractions` 里的 `ToolSchema` 已经存在，真正还没迁过去的是：
 
-- [ITool.cs](/repos/focus/atelia/prototypes/Completion.Tools/ITool.cs)
-- [ToolExecutor.cs](/repos/focus/atelia/prototypes/Completion.Tools/ToolExecutor.cs)
-- [JsonArgumentParser.cs](/repos/focus/atelia/prototypes/Completion.Tools/JsonArgumentParser.cs)
-- [MethodToolWrapper.Impl.cs](/repos/focus/atelia/prototypes/Completion.Tools/MethodToolWrapper.Impl.cs)
+- [ITool.cs](/repos/focus/atelia/src/Completion.Tools/ITool.cs)
+- [ToolExecutor.cs](/repos/focus/atelia/src/Completion.Tools/ToolExecutor.cs)
+- [JsonArgumentParser.cs](/repos/focus/atelia/src/Completion.Tools/JsonArgumentParser.cs)
+- [MethodToolWrapper.Impl.cs](/repos/focus/atelia/src/Completion.Tools/MethodToolWrapper.Impl.cs)
 
 换句话说，问题不在“能不能定义递归 schema”，而在“执行契约还停留在 flat 参数时代”。
 

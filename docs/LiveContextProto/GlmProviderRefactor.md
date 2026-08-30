@@ -1,26 +1,26 @@
-Robird: 请帮我分析“prototypes\Completion.Abstractions”项目中的类型名还有哪些更好的设计方案。
+Robird: 请帮我分析“src\Completion.Abstractions”项目中的类型名还有哪些更好的设计方案。
 
 GitHub Copilot: 我来分析 `Completion.Abstractions` 项目中的类型设计。首先让我查看所有相关文件的内容。
 
-读取 [](file:///e%3A/repos/Atelia-org/atelia/prototypes/Completion.Abstractions/IContextMessage.cs)
+读取 [](file:///e%3A/repos/Atelia-org/atelia/src/Completion.Abstractions/IContextMessage.cs)
 
-读取 [](file:///e%3A/repos/Atelia-org/atelia/prototypes/Completion.Abstractions/IProviderClient.cs)
+读取 [](file:///e%3A/repos/Atelia-org/atelia/src/Completion.Abstractions/IProviderClient.cs)
 
-读取 [](file:///e%3A/repos/Atelia-org/atelia/prototypes/Completion.Abstractions/LlmRequest.cs)
+读取 [](file:///e%3A/repos/Atelia-org/atelia/src/Completion.Abstractions/LlmRequest.cs)
 
-读取 [](file:///e%3A/repos/Atelia-org/atelia/prototypes/Completion.Abstractions/ModelOutputDelta.cs)
+读取 [](file:///e%3A/repos/Atelia-org/atelia/src/Completion.Abstractions/ModelOutputDelta.cs)
 
-读取 [](file:///e%3A/repos/Atelia-org/atelia/prototypes/Completion.Abstractions/ToolCall.cs)
+读取 [](file:///e%3A/repos/Atelia-org/atelia/src/Completion.Abstractions/ToolCall.cs)
 
-读取 [](file:///e%3A/repos/Atelia-org/atelia/prototypes/Completion.Abstractions/ToolDefinition.cs)
+读取 [](file:///e%3A/repos/Atelia-org/atelia/src/Completion.Abstractions/ToolDefinition.cs)
 
 现在让我再看一下实现项目中的使用情况，以便更全面地分析：
 
-读取 [](file:///e%3A/repos/Atelia-org/atelia/prototypes/Completion/Anthropic/AnthropicProviderClient.cs)
+读取 [](file:///e%3A/repos/Atelia-org/atelia/src/Completion/Anthropic/AnthropicProviderClient.cs)
 
-读取 [](file:///e%3A/repos/Atelia-org/atelia/prototypes/Completion/Anthropic/AnthropicMessageConverter.cs)
+读取 [](file:///e%3A/repos/Atelia-org/atelia/src/Completion/Anthropic/AnthropicMessageConverter.cs)
 
-搜索 `IContextMessage|IProviderClient|LlmRequest|ModelOutputDelta|ToolCall|ToolDefinition` (`**/prototypes/Completion/**/*.cs`)、20 结果的文本
+搜索 `IContextMessage|IProviderClient|LlmRequest|ModelOutputDelta|ToolCall|ToolDefinition` (`**/src/Completion/**/*.cs`)、20 结果的文本
 
 基于对代码的全面分析，我来提供一份关于类型命名的改进建议报告：
 

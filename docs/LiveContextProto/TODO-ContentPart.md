@@ -1,5 +1,5 @@
 
-# prototypes\Completion.Abstractions ContentPart 化
+# src\Completion.Abstractions ContentPart 化
 
 更侧重于**模型的实际处理流程**和**未来多模态扩展性**，融入一些 Google API 设计理念。
 

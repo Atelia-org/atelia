@@ -21,6 +21,9 @@ src/
   Diagnostics/
   Analyzers.Style/
   Analyzers.Style.CodeFixes/
+  Completion/
+  Completion.Abstractions/
+  Completion.Tools/
 tests/
   Data.Tests/
   Analyzers.Style.Tests/
@@ -28,8 +31,6 @@ prototypes/
   LiveContextProto/
   Agent/
   Agent.Core/
-  Completion/
-  Completion.Abstractions/
 ```
 
 ## 2. 命名空间

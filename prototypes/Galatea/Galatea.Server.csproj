@@ -11,8 +11,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../Completion/Completion.csproj" />
-    <ProjectReference Include="../Completion.Tools/Completion.Tools.csproj" />
+    <ProjectReference Include="../../src/Completion/Completion.csproj" />
+    <ProjectReference Include="../../src/Completion.Tools/Completion.Tools.csproj" />
     <ProjectReference Include="../Galatea.Prompts/Galatea.Prompts.csproj" />
     <ProjectReference Include="../Galatea.RecapGrid/Galatea.RecapGrid.csproj" />
     <ProjectReference Include="../MemoPod/MemoPod.csproj" />

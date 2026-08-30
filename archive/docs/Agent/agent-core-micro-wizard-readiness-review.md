@@ -292,7 +292,7 @@ Micro-Wizard 非常依赖这种能力，比如：
 
 位置：
 
-- `prototypes/Completion.Tools/ToolAccessSnapshot.cs`
+- `src/Completion.Tools/ToolAccessSnapshot.cs`
 
 新增了：
 

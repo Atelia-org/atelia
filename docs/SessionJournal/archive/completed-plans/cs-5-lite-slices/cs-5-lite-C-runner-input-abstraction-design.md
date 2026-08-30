@@ -233,7 +233,7 @@ tests/ChatSession.BacktestCli.Tests/ChatSession.BacktestCli.Tests.csproj
 测试项目引用：
 
 - `prototypes/ChatSession.BacktestCli`
-- `prototypes/Completion.Abstractions` 如需要 stub client
+- `src/Completion.Abstractions` 如需要 stub client
 - xUnit / Microsoft.NET.Test.Sdk
 
 因为 runner 和 source 类型是 `internal`，可在 CLI 项目添加：

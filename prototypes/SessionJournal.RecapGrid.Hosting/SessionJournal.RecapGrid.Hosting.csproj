@@ -9,8 +9,8 @@
   <ItemGroup>
     <ProjectReference Include="../SessionJournal.RecapGrid/SessionJournal.RecapGrid.csproj" />
     <ProjectReference Include="../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
-    <ProjectReference Include="../Completion/Completion.csproj" />
-    <ProjectReference Include="../Completion.Abstractions/Completion.Abstractions.csproj" />
+    <ProjectReference Include="../../src/Completion/Completion.csproj" />
+    <ProjectReference Include="../../src/Completion.Abstractions/Completion.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>

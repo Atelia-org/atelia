@@ -1,6 +1,6 @@
 # PersistentAgentProto
 
-> **目的**：用 `prototypes/Completion(.Abstractions)` + `src/StateJournal` 拼一个最简持久化 multi-turn 对话原型，作为后续 ToolCalls / Thinking / Tool-Result 持久化等富 schema 实验的基础。
+> **目的**：用 `src/Completion(.Abstractions)` + `src/StateJournal` 拼一个最简持久化 multi-turn 对话原型，作为后续 ToolCalls / Thinking / Tool-Result 持久化等富 schema 实验的基础。
 > **当前状态**：单一正式方案 `PersistentSession`（原 `PersistentSessionV2`），多轮历史可断点续跑，每条消息落盘后立即 freeze。
 
 ## 1. 用法

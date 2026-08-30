@@ -106,7 +106,7 @@ consumer scan 的结论：
 owners：
 
 - shared DTO、normalizer、registry、fingerprint、factory 已在
-  [`CompletionConnections`](../../../prototypes/Completion/CompletionConnections.cs)；
+  [`CompletionConnections`](../../../src/Completion/CompletionConnections.cs)；
 - H strict grammar 在
   [`CompletionConnectionsManifest`](../../../prototypes/SessionJournal.RecapGrid.Hosting/CompletionConnectionsManifest.cs)；
 - Galatea grammar与 guarded file acquisition 混在

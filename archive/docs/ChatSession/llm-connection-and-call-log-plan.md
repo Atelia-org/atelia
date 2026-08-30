@@ -21,7 +21,7 @@
 
 ## 2. 边界判断
 
-推荐把公共 connection 管理放在 `prototypes/Completion`，而不是 `prototypes/ChatSession`。
+推荐把公共 connection 管理放在 `src/Completion`，而不是 `prototypes/ChatSession`。
 
 理由：
 

@@ -512,8 +512,8 @@ DM-4 再删除剩余 kind-12 raw reader/validator）：
 
 关键文件：
 
-- `prototypes/Completion.Tools/ToolSession.cs`
-- `prototypes/Completion.Tools/ToolDispatch.cs`
+- `src/Completion.Tools/ToolSession.cs`
+- `src/Completion.Tools/ToolDispatch.cs`
 - `prototypes/SessionJournal/SessionJournalContracts.cs`
 - `prototypes/SessionJournal/SessionRequestManifestCodec.cs`
 - `prototypes/SessionJournal/SessionEventCodec.cs`

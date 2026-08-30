@@ -330,8 +330,8 @@ public delegate ValidateResult ArtifactHandler<T>(T artifact) where T : notnull;
 
 重点文件：
 
-- `prototypes/Completion.Tools/ITool.cs`
-- `prototypes/Completion.Tools/ToolExecutor.cs`
+- `src/Completion.Tools/ITool.cs`
+- `src/Completion.Tools/ToolExecutor.cs`
 - `tests/Atelia.LiveContextProto.Tests/*`
 - `prototypes/TextAdv/*` 中直接实现 `ITool` 的少量类型
 
@@ -349,7 +349,7 @@ public delegate ValidateResult ArtifactHandler<T>(T artifact) where T : notnull;
 
 重点文件：
 
-- `prototypes/Completion.Tools/ToolExecutor.cs`
+- `src/Completion.Tools/ToolExecutor.cs`
 
 完成定义：
 

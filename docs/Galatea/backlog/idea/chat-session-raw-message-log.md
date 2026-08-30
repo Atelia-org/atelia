@@ -20,7 +20,7 @@
 - [`prototypes/ChatSession/ChatSessionEngine.cs`](../../../../prototypes/ChatSession/ChatSessionEngine.cs)
 - [`prototypes/ChatSession/ChatSessionEngine.State.cs`](../../../../prototypes/ChatSession/ChatSessionEngine.State.cs)
 - [`prototypes/ChatSession/MessageRecord.cs`](../../../../prototypes/ChatSession/MessageRecord.cs)
-- [`prototypes/Completion.Abstractions/ActionMessageSerialization.cs`](../../../../prototypes/Completion.Abstractions/ActionMessageSerialization.cs)
+- [`src/Completion.Abstractions/ActionMessageSerialization.cs`](../../../../src/Completion.Abstractions/ActionMessageSerialization.cs)
 - [`docs/Rbf/rbf-guide.md`](../../../Rbf/rbf-guide.md)
 - [`docs/Rbf/rbf-interface.md`](../../../Rbf/rbf-interface.md)
 - [`docs/StateJournal/usage-guide.md`](../../../StateJournal/usage-guide.md)

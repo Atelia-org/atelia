@@ -155,7 +155,7 @@ dotnet build Atelia.sln
 核心文件预估：
 
 - `prototypes/Agent.Core/History/AgentState.cs`
-- `prototypes/Completion.Abstractions/IHistoryMessage.cs`
+- `src/Completion.Abstractions/IHistoryMessage.cs`
 - 新增 projection 相关类型（建议放 `prototypes/Agent.Core/History/`）
 - `prototypes/Agent.Core/AgentEngine.cs`
 - 使用旧 `ProjectContext` 的调用点与测试
@@ -239,9 +239,9 @@ dotnet build Atelia.sln
 
 核心文件预估：
 
-- `prototypes/Completion.Abstractions/CompletionChunk.cs`
+- `src/Completion.Abstractions/CompletionChunk.cs`
 - `prototypes/Agent.Core/History/CompletionAccumulator.cs`
-- `prototypes/Completion/Anthropic/AnthropicStreamParser.cs`
+- `src/Completion/Anthropic/AnthropicStreamParser.cs`
 - `tests/Atelia.LiveContextProto.Tests/AnthropicStreamParserTests.cs`
 - 相关端到端测试或新增测试
 
@@ -315,7 +315,7 @@ dotnet test tests/Atelia.LiveContextProto.Tests/Atelia.LiveContextProto.Tests.cs
 
 - `prototypes/Agent.Core/History/AgentState.cs`
 - projection 相关新增类型
-- `prototypes/Completion/Anthropic/AnthropicMessageConverter.cs`
+- `src/Completion/Anthropic/AnthropicMessageConverter.cs`
 - `tests/Atelia.LiveContextProto.Tests/AnthropicMessageConverterTests.cs`
 - 新增投影层单测与端到端测试
 

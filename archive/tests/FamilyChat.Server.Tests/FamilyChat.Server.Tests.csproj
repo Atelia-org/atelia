@@ -18,7 +18,7 @@
   <ItemGroup>
     <ProjectReference Include="../../prototypes/FamilyChat.Server/FamilyChat.Server.csproj" />
     <ProjectReference Include="../../prototypes/ChatSession/ChatSession.csproj" />
-    <ProjectReference Include="../../prototypes/Completion.Tools/Completion.Tools.csproj" />
+    <ProjectReference Include="../../src/Completion.Tools/Completion.Tools.csproj" />
   </ItemGroup>
 
 </Project>

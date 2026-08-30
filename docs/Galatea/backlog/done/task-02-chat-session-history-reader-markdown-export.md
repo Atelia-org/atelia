@@ -14,8 +14,8 @@
 
 - [`prototypes/ChatSession/ChatSessionEngine.State.cs`](../../../../prototypes/ChatSession/ChatSessionEngine.State.cs)
 - [`prototypes/ChatSession/MessageRecord.cs`](../../../../prototypes/ChatSession/MessageRecord.cs)
-- [`prototypes/Completion.Abstractions/IHistoryMessage.cs`](../../../../prototypes/Completion.Abstractions/IHistoryMessage.cs)
-- [`prototypes/Completion.Abstractions/ActionMessageSerialization.cs`](../../../../prototypes/Completion.Abstractions/ActionMessageSerialization.cs)
+- [`src/Completion.Abstractions/IHistoryMessage.cs`](../../../../src/Completion.Abstractions/IHistoryMessage.cs)
+- [`src/Completion.Abstractions/ActionMessageSerialization.cs`](../../../../src/Completion.Abstractions/ActionMessageSerialization.cs)
 - [`docs/StateJournal/usage-guide.md`](../../../StateJournal/usage-guide.md)
 - [`prototypes/ChatSession/README.md`](../../../../prototypes/ChatSession/README.md)
 

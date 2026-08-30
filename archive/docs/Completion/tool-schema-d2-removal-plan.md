@@ -30,9 +30,9 @@
 
 当前核心残留还在这里：
 
-- [ITool.cs](/repos/focus/atelia/prototypes/Completion.Tools/ITool.cs)
+- [ITool.cs](/repos/focus/atelia/src/Completion.Tools/ITool.cs)
   还保留 `Name` / `Description` / `Parameters`
-- [ToolDefinition.cs](/repos/focus/atelia/prototypes/Completion.Abstractions/ToolDefinition.cs)
+- [ToolDefinition.cs](/repos/focus/atelia/src/Completion.Abstractions/ToolDefinition.cs)
   还保留 `Parameters` 兼容投影和 `CreateFlat(...)`
 - 同文件中的 `ToolParamSpec`
   仍是公共类型
@@ -43,7 +43,7 @@
 
 当前生产/原型代码里，真正还在显式构造 flat schema 的地方主要有：
 
-- [MethodToolWrapper.Impl.cs](/repos/focus/atelia/prototypes/Completion.Tools/MethodToolWrapper.Impl.cs)
+- [MethodToolWrapper.Impl.cs](/repos/focus/atelia/src/Completion.Tools/MethodToolWrapper.Impl.cs)
   仍先构 `ToolParamSpec[]`，再走 `ToolDefinition.CreateFlat(...)`
 - [PlayerActionGuideCatalog.cs](/repos/focus/atelia/prototypes/TextAdv/PlayerActionGuideCatalog.cs)
   四个玩家工具 metadata 仍用 `CreateFlat(...)` + `ToolParamSpec`
@@ -60,9 +60,9 @@
 
 - [LlmPlayerAgentDriver.cs](/repos/focus/atelia/prototypes/TextAdv/LlmPlayerAgentDriver.cs)
   `BuildInitialObservation(...)` 仍按 `tool.Parameters` 渲染 prompt
-- [MethodToolWrapper.cs](/repos/focus/atelia/prototypes/Completion.Tools/MethodToolWrapper.cs)
+- [MethodToolWrapper.cs](/repos/focus/atelia/src/Completion.Tools/MethodToolWrapper.cs)
   仍把 `Definition.Parameters` 暴露为兼容属性
-- [ToolContracts.cs](/repos/focus/atelia/prototypes/Completion.Tools/ToolContracts.cs)
+- [ToolContracts.cs](/repos/focus/atelia/src/Completion.Tools/ToolContracts.cs)
   `EnsureStableFlatProjection(...)` 仍依赖 `definition.Parameters`
 - 多个测试 double / 测试断言
   仍把 `Definition.Parameters` 当作可见公共 API
@@ -222,8 +222,8 @@ D2 适合新增的 helper 只有一种：
 
 写入重点：
 
-- [ITool.cs](/repos/focus/atelia/prototypes/Completion.Tools/ITool.cs)
-- [MethodToolWrapper.cs](/repos/focus/atelia/prototypes/Completion.Tools/MethodToolWrapper.cs)
+- [ITool.cs](/repos/focus/atelia/src/Completion.Tools/ITool.cs)
+- [MethodToolWrapper.cs](/repos/focus/atelia/src/Completion.Tools/MethodToolWrapper.cs)
 - [LlmPlayerAgentDriver.cs](/repos/focus/atelia/prototypes/TextAdv/LlmPlayerAgentDriver.cs)
 - Agent.Core / LiveContextProto 相关测试替身
 
@@ -245,7 +245,7 @@ D2 适合新增的 helper 只有一种：
 
 写入重点：
 
-- [MethodToolWrapper.Impl.cs](/repos/focus/atelia/prototypes/Completion.Tools/MethodToolWrapper.Impl.cs)
+- [MethodToolWrapper.Impl.cs](/repos/focus/atelia/src/Completion.Tools/MethodToolWrapper.Impl.cs)
 - [PlayerActionGuideCatalog.cs](/repos/focus/atelia/prototypes/TextAdv/PlayerActionGuideCatalog.cs)
 - [GameActionValidator.cs](/repos/focus/atelia/prototypes/TextAdv/GameActionValidator.cs)
 - [DeepSeekDebug/Program.cs](/repos/focus/atelia/prototypes/DeepSeekDebug/Program.cs)
@@ -268,9 +268,9 @@ D2 适合新增的 helper 只有一种：
 
 写入重点：
 
-- [ToolDefinition.cs](/repos/focus/atelia/prototypes/Completion.Abstractions/ToolDefinition.cs)
+- [ToolDefinition.cs](/repos/focus/atelia/src/Completion.Abstractions/ToolDefinition.cs)
 - 与之直接耦合的 tests
-- [ToolContracts.cs](/repos/focus/atelia/prototypes/Completion.Tools/ToolContracts.cs)
+- [ToolContracts.cs](/repos/focus/atelia/src/Completion.Tools/ToolContracts.cs)
 
 需要一起删除/重写的内容：
 
