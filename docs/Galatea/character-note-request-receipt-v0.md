@@ -3,7 +3,7 @@
 ## 状态
 
 - 方案日期：2026-08-30
-- 当前阶段：方案基线已建立，实施尚未开始
+- 当前阶段：A1 extractor contract 已完成；其余 implementation packages 尚未开始
 - 目标版本：V0 development vertical slice
 - 对外承诺：只确认 runtime 识别到角色的 Note 请求，不承诺 Memo 已保存
 
@@ -89,7 +89,6 @@ Galatea runtime 已识别到 1 条 Note 请求。
 ```csharp
 internal sealed record CharacterNoteIntent(
     string ExactText,
-    string? Title,
     string EvidenceQuote
 );
 ```
@@ -97,7 +96,6 @@ internal sealed record CharacterNoteIntent(
 字段语义：
 
 - `ExactText`：角色明确完成记录的 Note 正文；不得总结、润色或补写。
-- `Title`：仅当 Action 明确给出标题时携带；不得推断标题。
 - `EvidenceQuote`：Action visible text 中能证明“谁完成了什么记录动作”的原文片段。
 
 runtime 另行绑定 `SourceAction`、visible text SHA-256、UTF-8 byte count 和 extractor `ContractId`；这些不是模型自报字段。
@@ -105,12 +103,11 @@ runtime 另行绑定 `SourceAction`、visible text SHA-256、UTF-8 byte count �
 初始 bounds：
 
 - 每条 `ExactText` 最大 64 KiB；
-- `Title` 最大 512 UTF-8 bytes；
 - `EvidenceQuote` 最大 8 KiB；
 - 每个 Action 最多 16 条 Note；
 - 单批 `ExactText` 总计最大 256 KiB。
 
-`ExactText`、`EvidenceQuote` 以及非空 `Title` 必须能以 ordinal substring 在本次 visible Action text 中找到。该约束有意比 Mailbox 更严格，用于避免 V0 在没有 durable apply/review 阶段时悄悄改写角色原文。
+`ExactText` 与 `EvidenceQuote` 必须能以 ordinal substring 在本次 visible Action text 中找到。该约束有意比 Mailbox 更严格，用于避免 V0 在没有 durable apply/review 阶段时悄悄改写角色原文。
 
 ### 保守提取定义
 
@@ -241,7 +238,7 @@ V0 不修改主系统提示词来宣称“角色拥有可保存、可召回的�
 - visible Action hash / byte count；
 - extractor `ContractId`；
 - outcome / artifact count / latency；
-- 每条 artifact 的 `title`、`exactText`、`evidenceQuote`。
+- 每条 artifact 的 `exactText`、`evidenceQuote`。
 
 不得打印完整 source Action。日志不是 replay、migration 或未来 Memo apply 的输入。
 
@@ -283,7 +280,7 @@ V0 不实现：
 |---|---|---|---|
 | D0 | 建立本方案、目标/非目标、failure matrix | Complete | 本文档 |
 | A0 | `ICompletionClient` 并发合同 audit；terminal Action 单一 target；Mail target overload | Pending | focused tests + build |
-| A1 | `CharacterNoteIntent`、prompt、extractor、ContractId、bounds/source-grounding | Pending | extractor tests |
+| A1 | `CharacterNoteIntent`、prompt、extractor、ContractId、bounds/source-grounding | Complete | `CharacterNoteExtractorTests` 10/10 |
 | A2 | exact config binding、lazy per-user composition | Pending | config/composition tests |
 | A3 | post-completion 并行 coordinator、timeout/failure matrix、diagnostics | Pending | lifecycle/concurrency tests |
 | A4 | 进程内 receipt queue/reservation；`PlayerTurnObservation` canonical 注入 | Pending | render/parse/recovery/requeue tests |
