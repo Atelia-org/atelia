@@ -18,7 +18,7 @@ universal code-owned mailbox base
         + when validated outbound binding is non-null:
           "\n\n" + code-owned Codex outbound appendix
         + when validated Character Note binding is non-null:
-          "\n\n" + code-owned development Note request appendix
+          "\n\n" + code-owned Character Note save appendix
         -> one closed name render
         -> finalized SystemPrompt
 ```
@@ -82,12 +82,12 @@ embedded resource拥有。它始终定义角色如何理解和接收界外来信
 
 这个布尔选择来自现有validated host binding，不是operator可排列的prompt module，也没有per-user开关。
 
-### 3.5 Conditional development Character Note request appendix
+### 3.5 Conditional Character Note save appendix
 
-[`prompt/trpg-character-note-request-development-appendix-zh-cn.md`](prompt/trpg-character-note-request-development-appendix-zh-cn.md)
+[`prompt/trpg-character-note-save-appendix-zh-cn.md`](prompt/trpg-character-note-save-appendix-zh-cn.md)
 也是Galatea.Server embedded、code-owned。仅当exact `galatea.character-note-extractor` binding非`null`时，composer
-才在outbound appendix之后追加该段。它只教`${characterName}`如何明确完成提交development Note保存请求，并说明
-后续eligible普通回合只返回识别回执；它明确不承诺保存、索引或召回。
+才在outbound appendix之后追加该段。它教`${characterName}`如何明确提交长期Note完整原文，并说明只有后续runtime
+发出的`Note 保存回执`才能证明保存成功；没有回执不能判断成功或失败。它不承诺分类、metadata补全或召回。
 
 Note appendix presence与outbound独立，两个binding形成四种exact composition。是否追加同样只来自validated sibling
 binding，不看operator prose或Markdown heading。
@@ -97,12 +97,12 @@ binding，不看operator prose或Markdown heading。
 `GalateaSystemPromptComposer`先固定组合
 `prefix + "\n\n---\n\n" + context + "\n\n---\n\n" + mailboxBase`。Outbound binding非`null`
 时先追加`"\n\n" + outboundAppendix`；Character Note binding非`null`时再追加
-`"\n\n" + noteRequestDevelopmentAppendix`；随后调用已有`${characterName}` / `${playerName}` renderer一次。
+`"\n\n" + characterNoteSaveAppendix`；随后调用已有`${characterName}` / `${playerName}` renderer一次。
 External context与每份embedded resource有1 MiB读取cap，composite source与final rendered prompt也分别受1 MiB
 cap；embedded resources还要求BOM-less、LF-only、nonblank strict UTF-8。
 
 Markdown heading只帮助LLM与人阅读，不是machine discriminator。Runtime不会扫描`## 世界观`、`## 自主记忆`、
-`## 界外邮箱`、`### 发信给 Codex`或`### 提交 Note 请求（开发中）`来决定分段、权限、feature或安全性。
+`## 界外邮箱`、`### 发信给 Codex`或`### 保存长期 Note`来决定分段、权限、feature或安全性。
 是否追加两个appendix分别只看对应validated sibling binding，不看operator prose。
 
 ## 5. 为什么不采用更通用的方案
@@ -143,8 +143,8 @@ Codex outbound appendix。旧`cyber.md`已有等价邮箱段，正确切分可�
 inbox base，但prompt不再承诺主动发送或Codex投递。未被config引用的`cyber_template.md`不阻塞迁移。
 
 Character Note key是同一strict `bindings` object的required sibling；旧ignored文件缺key时必须由operator停服、备份后
-显式补成`null`或exact connection ID，runtime不提供missing-key兼容。选择non-`null`会追加诚实的development request
-appendix，但仍不创建Memo sink。
+显式补成`null`或exact connection ID，runtime不提供missing-key兼容。选择non-`null`会追加Character Note保存
+Quick Start；实际保存与回执仍由runtime durable apply边界负责。
 
 迁移不provision/rebuild/promote RecapGrid，不运行outbound mail extraction，不改delegation store或raw SessionJournal。
 Read-only canary应验证load、final composition与现有readiness；真正的setup rotation只发生在之后的普通fresh turn。

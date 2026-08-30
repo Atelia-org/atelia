@@ -33,9 +33,9 @@ Reader与runtime materialization由`GalateaStrictConfigReader`、`GalateaConfigL
 4. [Codex outbound appendix](../../../Galatea/prompt/trpg-outbound-mail-protocol-appendix-zh-cn.md)：
    Galatea.Server embedded、code-owned，仅在validated `galatea.outbound-mail-extractor` binding非`null`时追加，
    并继续同一份Quick Start的发件部分；
-5. [Character Note request development appendix](../../../Galatea/prompt/trpg-character-note-request-development-appendix-zh-cn.md)：
+5. [Character Note save appendix](../../../Galatea/prompt/trpg-character-note-save-appendix-zh-cn.md)：
    Galatea.Server embedded、code-owned，仅在validated `galatea.character-note-extractor` binding非`null`时追加，
-   只定义诚实的development保存请求与后续回执，不承诺保存、索引或召回。
+   定义长期Note保存Quick Start；只有runtime保存回执证明成功，不承诺分类、metadata补全或召回。
 
 三份base/appendix resource的物理拆分保留capability boundary；启用对应binding时，它们向模型连续呈现为简短
 Quick Start。其`##` / `###` heading只是呈现结构，两个appendix presence各自只由validated sibling binding决定。
@@ -138,7 +138,7 @@ protocolPrefix + "\n\n---\n\n"
 若validated Character Note binding非`null`，在outbound appendix（若有）之后再追加：
 
 ```text
-"\n\n" + characterNoteRequestDevelopmentAppendix
+"\n\n" + characterNoteSaveAppendix
 ```
 
 四份code-owned protocol source均为nonblank、BOM-less、LF-only、bounded strict UTF-8，并在使用前通过同一
@@ -201,8 +201,8 @@ exact existing connection ID或explicit
 secret不进入主prompt分段identity。Outbound binding为`null`时final prompt仍包含universal mailbox base但不包含
 主动发送承诺；非`null`时追加Codex outbound appendix。这个fixed feature branch来自validated sibling binding，
 不是新的root/operator prompt module field。Character Note binding同样提供hidden、lazy、borrowed的per-user
-extractor runtime supply；为`null`时final prompt不出现Note请求能力，非`null`时追加诚实的development request
-appendix。该appendix只教角色完成提交请求并明确不表示Note已保存、索引或可召回。
+extractor runtime supply；为`null`时final prompt不出现Note保存能力，非`null`时追加Character Note保存Quick Start。
+该appendix只教角色提交完整原文，并明确只有后续runtime保存回执证明成功；不承诺分类、metadata补全或召回。
 
 ## 4. Bootstrap与V5 migration
 

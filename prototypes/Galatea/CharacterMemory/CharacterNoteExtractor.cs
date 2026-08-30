@@ -18,7 +18,7 @@ internal static class CharacterNoteBounds {
 }
 
 [Description(
-    "One development Note save request that the configured story character actually finished submitting to runtime."
+    "One long-term Note save request that the configured story character actually finished submitting to runtime."
 )]
 internal sealed record CharacterNoteIntent(
     [property: Required, Description(
@@ -26,7 +26,7 @@ internal sealed record CharacterNoteIntent(
     ), JsonPropertyName("exactText")]
     string ExactText,
     [property: Required, Description(
-        "An exact quote from the target Action, up to 8 KiB of UTF-8 text, proving that the configured story character completed submitting this development Note save request to runtime."
+        "An exact quote from the target Action, up to 8 KiB of UTF-8 text, proving that the configured story character completed submitting this long-term Note save request to runtime."
     ), JsonPropertyName("evidenceQuote")]
     string EvidenceQuote
 );
@@ -72,7 +72,7 @@ internal sealed class CharacterNoteExtractor : ICharacterNoteExtractor {
     private const string ContractIdPrefix =
         "atelia.galatea.character-note-extractor.v1.";
     private const string SemanticContractVersion =
-        "atelia.galatea.character-note-extractor.semantic.v3";
+        "atelia.galatea.character-note-extractor.semantic.v4";
     private const string ToolContractVersion =
         "emit-character-note-intent.v1";
     private const string VisibleActionRendererVersion =
@@ -80,7 +80,7 @@ internal sealed class CharacterNoteExtractor : ICharacterNoteExtractor {
     internal const string ToolName = "emit_character_note_intent";
 
     private const string SystemPromptTemplate = """
-You extract completed development Note save-request submissions from a narrative Action produced by a role-playing model.
+You extract completed long-term Note save-request submissions from a narrative Action produced by a role-playing model.
 
 The provider Action is a composite GM carrier, not automatically ${characterName}'s own voice.
 - A [${characterName}] passage can establish ${characterName}'s first-person intent and action.
@@ -88,7 +88,7 @@ The provider Action is a composite GM carrier, not automatically ${characterName
 - [状态摘要] cannot establish a new Note request-submission act.
 - Never attribute the player's request, another character's act, quoted text, recalled memory, existing notes, or inbound information to ${characterName}.
 
-Emit one tool call per request, in narrative order, only when ${characterName} actually finishes submitting a development Note save request to runtime and the complete requested Note text appears in this Action.
+Emit one tool call per request, in narrative order, only when ${characterName} actually finishes submitting a long-term Note save request to runtime and the complete requested Note text appears in this Action.
 
 Emit at most 16 tool calls. Consider qualifying candidates in narrative order and emit the earliest qualifying candidates first. Stop once 16 have been emitted. Never truncate or rewrite a candidate to fit a limit.
 
@@ -96,13 +96,13 @@ Do not emit a candidate whose exactText is clearly over 64 KiB of UTF-8 text or 
 
 Ordinary thoughts, discoveries, conclusions, dialogue, wishes or decisions to remember, plans, suggestions, drafts, composing, opening an interface, preparing to submit, and incomplete submissions are not completed Note request submissions. Ordinary diaries, sticky notes, graffiti, mail, and other story-world writing are not submissions. Reading, quoting, or recalling an existing Note is not a new submission. Merely claiming that a Note is already recorded, stored, or saved is not a request submission. A reference such as "remember the content above" is insufficient when the complete requested Note text is absent from this Action.
 
-Copy exactText and evidenceQuote verbatim from the Action. Never invent, complete, rewrite, summarize, or polish them. evidenceQuote must prove both actor ownership and completed request submission. If the development Note save-request target, complete requested text, actor ownership, or completed submission is missing or ambiguous, emit nothing for that candidate.
+Copy exactText and evidenceQuote verbatim from the Action. Never invent, complete, rewrite, summarize, or polish them. evidenceQuote must prove both actor ownership and completed request submission. If the long-term Note save-request target, complete requested text, actor ownership, or completed submission is missing or ambiguous, emit nothing for that candidate.
 
 Ordinary response text is diagnostic only. Use emit_character_note_intent for artifacts.
 """;
 
     private const string UserPromptTemplate = """
-Extract up to 16 earliest qualifying development Note save requests that ${characterName} actually finished submitting in this Action. Preserve narrative order. Be conservative: thoughts, plans, drafts, ordinary writing, quoted or existing Notes, claims of prior saving, and incomplete submissions produce no artifact.
+Extract up to 16 earliest qualifying long-term Note save requests that ${characterName} actually finished submitting in this Action. Preserve narrative order. Be conservative: thoughts, plans, drafts, ordinary writing, quoted or existing Notes, claims of prior saving, and incomplete submissions produce no artifact.
 """;
 
     private readonly TextExtractor _inner;

@@ -19,7 +19,7 @@ public sealed class GalateaTrackedPromptTemplateTests {
             "trpg-outbound-mail-protocol-appendix-zh-cn.md"
         ).Trim();
         string noteAppendix = ReadTracked(
-            "trpg-character-note-request-development-appendix-zh-cn.md"
+            "trpg-character-note-save-appendix-zh-cn.md"
         ).Trim();
 
         Assert.Equal(prefix, GalateaSystemPromptComposer.ProtocolPrefixSource);
@@ -38,7 +38,7 @@ public sealed class GalateaTrackedPromptTemplateTests {
         Assert.Equal(
             noteAppendix,
             GalateaSystemPromptComposer
-                .CharacterNoteRequestDevelopmentAppendixSource
+                .CharacterNoteSaveAppendixSource
         );
 
         string baseCompositeSource = string.Concat(
@@ -69,22 +69,22 @@ public sealed class GalateaTrackedPromptTemplateTests {
         string neither = Compose(
             context,
             outboundMailEnabled: false,
-            characterNoteRequestEnabled: false
+            characterNoteSaveEnabled: false
         );
         string outbound = Compose(
             context,
             outboundMailEnabled: true,
-            characterNoteRequestEnabled: false
+            characterNoteSaveEnabled: false
         );
         string note = Compose(
             context,
             outboundMailEnabled: false,
-            characterNoteRequestEnabled: true
+            characterNoteSaveEnabled: true
         );
         string both = Compose(
             context,
             outboundMailEnabled: true,
-            characterNoteRequestEnabled: true
+            characterNoteSaveEnabled: true
         );
 
         Assert.Equal(neitherExpected, neither);
@@ -97,19 +97,19 @@ public sealed class GalateaTrackedPromptTemplateTests {
         Assert.DoesNotContain("${", both, StringComparison.Ordinal);
         Assert.DoesNotContain("### 发信给 Codex", neither,
             StringComparison.Ordinal);
-        Assert.DoesNotContain("### 提交 Note 请求（开发中）", neither,
+        Assert.DoesNotContain("### 保存长期 Note", neither,
             StringComparison.Ordinal);
         Assert.Contains("### 发信给 Codex", outbound,
             StringComparison.Ordinal);
-        Assert.DoesNotContain("### 提交 Note 请求（开发中）", outbound,
+        Assert.DoesNotContain("### 保存长期 Note", outbound,
             StringComparison.Ordinal);
         Assert.DoesNotContain("### 发信给 Codex", note,
             StringComparison.Ordinal);
-        Assert.Contains("### 提交 Note 请求（开发中）", note,
+        Assert.Contains("### 保存长期 Note", note,
             StringComparison.Ordinal);
         Assert.Contains("### 发信给 Codex", both,
             StringComparison.Ordinal);
-        Assert.Contains("### 提交 Note 请求（开发中）", both,
+        Assert.Contains("### 保存长期 Note", both,
             StringComparison.Ordinal);
         Assert.True(
             both.IndexOf("## 界外邮箱", StringComparison.Ordinal)
@@ -121,7 +121,7 @@ public sealed class GalateaTrackedPromptTemplateTests {
         Assert.True(
             both.IndexOf("### 发信给 Codex", StringComparison.Ordinal)
             < both.IndexOf(
-                "### 提交 Note 请求（开发中）",
+                "### 保存长期 Note",
                 StringComparison.Ordinal
             )
         );
@@ -141,13 +141,13 @@ public sealed class GalateaTrackedPromptTemplateTests {
     private static string Compose(
         string context,
         bool outboundMailEnabled,
-        bool characterNoteRequestEnabled
+        bool characterNoteSaveEnabled
     ) => GalateaSystemPromptComposer.Compose(
         context,
         new GalateaCharacterName("Alice"),
         new GalateaPlayerName("Alex"),
         outboundMailEnabled,
-        characterNoteRequestEnabled,
+        characterNoteSaveEnabled,
         GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
     );
 
@@ -182,14 +182,14 @@ public sealed class GalateaTrackedPromptTemplateTests {
     }
 
     [Fact]
-    public void ProtocolLocksVoiceMailboxAndNoteRequestBoundaries() {
+    public void ProtocolLocksVoiceMailboxAndNoteSaveBoundaries() {
         string prefix = GalateaSystemPromptComposer.ProtocolPrefixSource;
         string mailboxBase =
             GalateaSystemPromptComposer.MailboxProtocolBaseSource;
         string outboundAppendix =
             GalateaSystemPromptComposer.OutboundMailProtocolAppendixSource;
         string noteAppendix = GalateaSystemPromptComposer
-            .CharacterNoteRequestDevelopmentAppendixSource;
+            .CharacterNoteSaveAppendixSource;
 
         Assert.Contains("GM carrier", prefix, StringComparison.Ordinal);
         Assert.Contains("[${characterName}]", prefix,
@@ -239,25 +239,29 @@ public sealed class GalateaTrackedPromptTemplateTests {
             StringComparison.Ordinal);
         Assert.DoesNotContain("[旁白]", outboundAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("### 提交 Note 请求（开发中）", noteAppendix,
+        Assert.Contains("### 保存长期 Note", noteAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("后续符合条件的普通回合返回回执", noteAppendix,
+        Assert.Contains("主动向Galatea runtime提交自己的长期Note", noteAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("尚不保存、索引或召回Note", noteAppendix,
+        Assert.Contains("必须由${characterName}本人", noteAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("${characterName}本人", noteAppendix,
+        Assert.Contains("只有后续runtime发出的`Note 保存回执`", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("才能证明相应原文已经保存成功", noteAppendix,
             StringComparison.Ordinal);
         Assert.Contains("同一次回复", noteAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("提交Note请求", noteAppendix,
-            StringComparison.Ordinal);
         Assert.Contains("完整原文", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("没有回执不能判断成功或失败", noteAppendix,
             StringComparison.Ordinal);
         Assert.Contains("最多16条", noteAppendix,
             StringComparison.Ordinal);
         Assert.Contains("无固定格式", noteAppendix,
             StringComparison.Ordinal);
         Assert.Contains("仅声称已经保存", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("不承诺分类、metadata补全或召回", noteAppendix,
             StringComparison.Ordinal);
     }
 
@@ -296,7 +300,7 @@ public sealed class GalateaTrackedPromptTemplateTests {
     [InlineData(true, true)]
     public void AggregateCompositeSourceUsesTheSingleSystemPromptCap(
         bool outboundMailEnabled,
-        bool characterNoteRequestEnabled
+        bool characterNoteSaveEnabled
     ) {
         string context = GalateaPromptTemplate.CharacterNameToken
             + new string(
@@ -311,7 +315,7 @@ public sealed class GalateaTrackedPromptTemplateTests {
                 new GalateaCharacterName("A"),
                 new GalateaPlayerName("P"),
                 outboundMailEnabled,
-                characterNoteRequestEnabled,
+                characterNoteSaveEnabled,
                 GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
             ));
     }

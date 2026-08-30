@@ -245,7 +245,7 @@ public sealed class GalateaConfigValidationTests {
             Assert.DoesNotContain("### 发信给 Codex", user.SystemPrompt,
                 StringComparison.Ordinal);
             Assert.DoesNotContain(
-                "### 提交 Note 请求（开发中）",
+                "### 保存长期 Note",
                 user.SystemPrompt,
                 StringComparison.Ordinal
             );
@@ -1394,7 +1394,7 @@ public sealed class GalateaConfigValidationTests {
             Assert.DoesNotContain("### 发信给 Codex", disabledPrompt,
                 StringComparison.Ordinal);
             Assert.DoesNotContain(
-                "### 提交 Note 请求（开发中）",
+                "### 保存长期 Note",
                 disabledPrompt,
                 StringComparison.Ordinal
             );
@@ -1416,7 +1416,7 @@ public sealed class GalateaConfigValidationTests {
             Assert.Contains("### 发信给 Codex", enabledPrompt,
                 StringComparison.Ordinal);
             Assert.DoesNotContain(
-                "### 提交 Note 请求（开发中）",
+                "### 保存长期 Note",
                 enabledPrompt,
                 StringComparison.Ordinal
             );
@@ -1438,13 +1438,15 @@ public sealed class GalateaConfigValidationTests {
             Assert.DoesNotContain("### 发信给 Codex", noteEnabledPrompt,
                 StringComparison.Ordinal);
             Assert.Contains(
-                "### 提交 Note 请求（开发中）",
+                "### 保存长期 Note",
                 noteEnabledPrompt,
                 StringComparison.Ordinal
             );
-            Assert.Contains("尚不保存、索引或召回Note", noteEnabledPrompt,
+            Assert.Contains("只有后续runtime发出的`Note 保存回执`", noteEnabledPrompt,
                 StringComparison.Ordinal);
-            Assert.Contains("明确完成“提交Note请求”的动作", noteEnabledPrompt,
+            Assert.Contains("本人在同一次回复", noteEnabledPrompt,
+                StringComparison.Ordinal);
+            Assert.Contains("不承诺分类、metadata补全或召回", noteEnabledPrompt,
                 StringComparison.Ordinal);
             Assert.NotEqual(disabledPrompt, noteEnabledPrompt);
 
@@ -1460,7 +1462,7 @@ public sealed class GalateaConfigValidationTests {
                     "### 发信给 Codex",
                     StringComparison.Ordinal
                 ) < bothEnabledPrompt.IndexOf(
-                    "### 提交 Note 请求（开发中）",
+                    "### 保存长期 Note",
                     StringComparison.Ordinal
                 )
             );

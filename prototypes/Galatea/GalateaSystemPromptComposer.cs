@@ -12,8 +12,8 @@ internal static class GalateaSystemPromptComposer {
         "Atelia.Galatea.Server.PromptTemplates.TrpgHost.MailboxProtocolBase.zh-CN.md";
     internal const string OutboundMailProtocolAppendixResourceName =
         "Atelia.Galatea.Server.PromptTemplates.TrpgHost.OutboundMailProtocolAppendix.zh-CN.md";
-    internal const string CharacterNoteRequestDevelopmentAppendixResourceName =
-        "Atelia.Galatea.Server.PromptTemplates.TrpgHost.CharacterNoteRequestDevelopmentAppendix.zh-CN.md";
+    internal const string CharacterNoteSaveAppendixResourceName =
+        "Atelia.Galatea.Server.PromptTemplates.TrpgHost.CharacterNoteSaveAppendix.zh-CN.md";
 
     private static readonly Lazy<GalateaEmbeddedPromptResource>
         ProtocolPrefix = new(() => LoadProtocol(
@@ -31,9 +31,9 @@ internal static class GalateaSystemPromptComposer {
             "Galatea outbound mail protocol appendix"
         ));
     private static readonly Lazy<GalateaEmbeddedPromptResource>
-        CharacterNoteRequestDevelopmentAppendix = new(() => LoadProtocol(
-            CharacterNoteRequestDevelopmentAppendixResourceName,
-            "Galatea Character Note request development appendix"
+        CharacterNoteSaveAppendix = new(() => LoadProtocol(
+            CharacterNoteSaveAppendixResourceName,
+            "Galatea Character Note save appendix"
         ));
 
     internal static string ProtocolPrefixSource =>
@@ -45,15 +45,15 @@ internal static class GalateaSystemPromptComposer {
     internal static string OutboundMailProtocolAppendixSource =>
         OutboundMailAppendix.Value.Source;
 
-    internal static string CharacterNoteRequestDevelopmentAppendixSource =>
-        CharacterNoteRequestDevelopmentAppendix.Value.Source;
+    internal static string CharacterNoteSaveAppendixSource =>
+        CharacterNoteSaveAppendix.Value.Source;
 
     internal static string Compose(
         string characterContextTemplate,
         GalateaCharacterName characterName,
         GalateaPlayerName playerName,
         bool outboundMailEnabled,
-        bool characterNoteRequestEnabled,
+        bool characterNoteSaveEnabled,
         int maximumUtf8Bytes
     ) {
         ArgumentNullException.ThrowIfNull(characterContextTemplate);
@@ -89,11 +89,11 @@ internal static class GalateaSystemPromptComposer {
                 OutboundMailAppendix.Value.Source
             );
         }
-        if (characterNoteRequestEnabled) {
+        if (characterNoteSaveEnabled) {
             compositeSource = string.Concat(
                 compositeSource,
                 AppendixSeparator,
-                CharacterNoteRequestDevelopmentAppendix.Value.Source
+                CharacterNoteSaveAppendix.Value.Source
             );
         }
         return GalateaPromptTemplate.Render(

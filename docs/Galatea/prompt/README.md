@@ -15,9 +15,9 @@ Galatea 主system prompt不是一份可由operator整体替换的文件。Curren
 4. [`trpg-outbound-mail-protocol-appendix-zh-cn.md`](trpg-outbound-mail-protocol-appendix-zh-cn.md)：
    Galatea.Server embedded、code-owned；仅当validated `galatea.outbound-mail-extractor` binding非`null`时追加，
    作为同一份Quick Start的发件部分。
-5. [`trpg-character-note-request-development-appendix-zh-cn.md`](trpg-character-note-request-development-appendix-zh-cn.md)：
+5. [`trpg-character-note-save-appendix-zh-cn.md`](trpg-character-note-save-appendix-zh-cn.md)：
    Galatea.Server embedded、code-owned；仅当validated `galatea.character-note-extractor` binding非`null`时追加，
-   定义development Note保存请求的诚实Quick Start，不承诺保存、索引或召回。
+   定义长期Note保存Quick Start；只有runtime保存回执证明成功，不承诺分类、metadata补全或召回。
 
 邮箱说明在物理上保持两份resource，用以保留capability boundary；在outbound启用时，
 H2 base与H3 appendix连续呈现为模型可见的一份Quick Start。Exact composition为：
@@ -25,7 +25,7 @@ H2 base与H3 appendix连续呈现为模型可见的一份Quick Start。Exact com
 ```text
 prefix + "\n\n---\n\n" + operator context + "\n\n---\n\n" + mailbox base
 [when outbound binding is non-null: "\n\n" + outbound appendix]
-[when Character Note binding is non-null: "\n\n" + Note request development appendix]
+[when Character Note binding is non-null: "\n\n" + Character Note save appendix]
 ```
 
 组合后只执行一次closed `${characterName}` / `${playerName}` renderer。H2/H3只用于呈现；是否追加

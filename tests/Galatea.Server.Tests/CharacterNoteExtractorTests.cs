@@ -89,7 +89,7 @@ public sealed class CharacterNoteExtractorTests {
                 )
         ).SystemPrompt;
         Assert.Contains(
-            "### 提交 Note 请求（开发中）",
+            "### 保存长期 Note",
             finalizedPrompt,
             StringComparison.Ordinal
         );
@@ -187,7 +187,7 @@ public sealed class CharacterNoteExtractorTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "development Note save-request submissions",
+            "long-term Note save-request submissions",
             aliceRequest.PromptPrefix.SystemPrompt,
             StringComparison.Ordinal
         );
@@ -245,7 +245,7 @@ public sealed class CharacterNoteExtractorTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "up to 16 earliest qualifying development Note save requests",
+            "up to 16 earliest qualifying long-term Note save requests",
             aliceTail.Content,
             StringComparison.Ordinal
         );
@@ -264,13 +264,33 @@ public sealed class CharacterNoteExtractorTests {
             schema,
             StringComparison.OrdinalIgnoreCase
         );
+        Assert.DoesNotContain(
+            "gist",
+            schema,
+            StringComparison.OrdinalIgnoreCase
+        );
+        Assert.DoesNotContain(
+            "summary",
+            schema,
+            StringComparison.OrdinalIgnoreCase
+        );
+        Assert.DoesNotContain(
+            "category",
+            schema,
+            StringComparison.OrdinalIgnoreCase
+        );
+        Assert.DoesNotContain(
+            "recall",
+            schema,
+            StringComparison.OrdinalIgnoreCase
+        );
     }
 
     [Fact]
     public async Task ReturnsZeroAndPreservesOrderedGroundedIntents() {
         const string Target = """
-[Galatea] I submitted a development Note save request with exact text "first exact note" and completed the submission.
-[Galatea] I submitted a development Note save request with exact text "second exact note" and completed the submission.
+[Galatea] I submitted a long-term Note save request with exact text "first exact note" and completed the submission.
+[Galatea] I submitted a long-term Note save request with exact text "second exact note" and completed the submission.
 """;
         var client = new QueueClient(
             _ => Message(),
@@ -278,12 +298,12 @@ public sealed class CharacterNoteExtractorTests {
                 Tool(
                     "note-1",
                     "first exact note",
-                    "[Galatea] I submitted a development Note save request"
+                    "[Galatea] I submitted a long-term Note save request"
                 ),
                 Tool(
                     "note-2",
                     "second exact note",
-                    "[Galatea] I submitted a development Note save request"
+                    "[Galatea] I submitted a long-term Note save request"
                 )
             )
         );
@@ -302,8 +322,8 @@ public sealed class CharacterNoteExtractorTests {
         );
         Assert.Equal(
             [
-                "[Galatea] I submitted a development Note save request",
-                "[Galatea] I submitted a development Note save request",
+                "[Galatea] I submitted a long-term Note save request",
+                "[Galatea] I submitted a long-term Note save request",
             ],
             intents.Select(static intent => intent.EvidenceQuote)
         );

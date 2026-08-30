@@ -64,7 +64,7 @@ universal code-owned
 `galatea.outbound-mail-extractor` binding非`null`时，再以`"\n\n"`追加code-owned
 [`Codex outbound appendix`](../../docs/Galatea/prompt/trpg-outbound-mail-protocol-appendix-zh-cn.md)；仅当validated
 `galatea.character-note-extractor` binding非`null`时，再追加code-owned
-[`development Note request appendix`](../../docs/Galatea/prompt/trpg-character-note-request-development-appendix-zh-cn.md)。
+[`Character Note save appendix`](../../docs/Galatea/prompt/trpg-character-note-save-appendix-zh-cn.md)。
 完成组合后才用同一个closed renderer展开名字。Mailbox base与两个appendix物理分离以表达capability boundary；
 启用对应binding时按base→outbound→Note顺序向模型呈现简短Quick Start。Heading只用于呈现，两个appendix各自只看
 对应validated binding。
@@ -487,9 +487,9 @@ Action target，同时直接启动Mail `ReconcileTargetAsync`与enabled Characte
 30秒cooperative deadline只丢弃V0回执，不使已完成主回合失败。deadline通过cancellation token请求停止，不强杀
 忽略cancellation的provider；borrowed client释放前仍会drain实际调用。
 
-Note extractor只把`${characterName}`本人已明确完成提交的development Note保存请求识别为artifact；想到、计划、
+Note extractor只把`${characterName}`本人已明确完成提交的长期Note保存请求识别为artifact；想到、计划、
 草稿、普通世界内书写、引用旧Note或仅声称已经保存都不构成提交。`ExactText`与`EvidenceQuote`必须是visible Action
-的ordinal substring；semantic contract为`semantic.v3`。
+的ordinal substring；semantic contract为`semantic.v4`，tool name与`exactText` / `evidenceQuote` schema保持不变。
 
 Note成功且final head仍等于target Action时，0 artifact不排队；1..N artifact由code-owned renderer冻结成一条
 `NoteRequestReceipt`，再放入每个`UserSessionHost`私有的bounded in-process FIFO。只有下一次普通player
