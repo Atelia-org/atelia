@@ -3,7 +3,7 @@
 ## 状态
 
 - 方案日期：2026-08-30
-- 当前阶段：A0 shared target、A1 extractor contract、A2 config/composition与A4a receipt protocol/queue已完成；A3/A4b runtime接线尚未开始
+- 当前阶段：A0 shared target、A1 extractor contract、A2 config/composition、A3 runtime coordinator与A4 receipt/queue/injection均已完成；等待R0独立review与完整验证
 - 目标版本：V0 development vertical slice
 - 对外承诺：只确认 runtime 识别到角色的 Note 请求，不承诺 Memo 已保存
 
@@ -187,7 +187,10 @@ fresh/recovery main Completion 完成
 - Note 成功结果先留在内存，只有 Mail 成功且最终 head fence 仍成立时才能排入回执；
 - `0` artifact 是成功但不产生回执。
 
-理论延迟从串行的 `mailMs + noteMs` 收敛为约 `max(mailMs, noteMs)`；但 Note 仍可能把 `PublishDone` 最多推迟到自身 deadline。开发日志应记录 `mailMs`、`noteMs` 和 batch wall time，而不是假定并行自然有效。
+理论延迟从串行的 `mailMs + noteMs` 收敛为约 `max(mailMs, noteMs)`。Note使用code-owned 30秒
+cooperative deadline：deadline只通过独立token请求取消Note，不取消Mail，也不强杀忽略cancellation的provider。
+为了在`TurnLock`与borrowed client lifetime内drain全部调用，uncooperative client仍可能让`PublishDone`超过30秒；
+不得用`WaitAsync(timeout)`遗留活动task。开发日志记录`mailMs`、`noteMs`和batch wall time，而不是假定并行自然有效。
 
 `ICompletionClient` 已明确同一实例可以接收重叠的 `StreamCompletionAsync`
 调用：每次 invocation 的 request/observer/parser/result/cancellation 必须隔离，但
@@ -271,10 +274,14 @@ V0 不修改主系统提示词来宣称“角色拥有可保存、可召回的�
 - `sourceAction`；
 - visible Action hash / byte count；
 - extractor `ContractId`；
-- outcome / artifact count / latency；
-- 每条 artifact 的 `exactText`、`evidenceQuote`。
+- batch summary的Mail/Note outcome、artifact count、receipt/queue outcome、queue count与`mailMs` / `noteMs` / `batchMs`；
+- 每条成功artifact另发一条content event，包含ordinal index、`exactText`与`evidenceQuote`。
 
-不得打印完整 source Action。日志不是 replay、migration 或未来 Memo apply 的输入。
+所有event都通过`JsonSerializer.Serialize`生成；换行只以JSON escape存在，绝不把raw content拼进日志行。
+只有Mail成功且final head fence通过、并且artifact/receipt输入通过validation后才输出content event；Mail失败、caller
+cancellation、timeout、invalid output或head change不输出artifact正文。不得打印完整source Action、provider raw
+response、exception message、secret、endpoint或prompt。expected best-effort failure仍使用`Info`加code-owned outcome，
+只有runtime invariant failure才升级`Warning`。日志不是replay、migration或未来Memo apply的输入。
 
 注意 `DebugUtil.Info` 在 Debug build 默认可能写入 `.atelia/debug-logs/galatea.charactermemory.log`；`CallLogDir` 开启时 provider request/tool arguments 还可能被独立保存。测试与使用说明必须明确这项隐私边界。
 
@@ -317,9 +324,9 @@ V0 不实现：
 | A0 | `ICompletionClient` 并发合同 audit；terminal Action 单一 target；Mail target overload | Complete | `GalateaOutboundMailExtractionReconcilerTests` 19/19 |
 | A1 | `CharacterNoteIntent`、prompt、extractor、ContractId、bounds/source-grounding | Complete | `CharacterNoteExtractorTests` 10/10 |
 | A2 | exact config binding、lazy per-user composition | Complete | focused config/composition tests 42/42 |
-| A3 | post-completion 并行 coordinator、timeout/failure matrix、diagnostics | Pending | lifecycle/concurrency tests |
+| A3 | post-completion 并行 coordinator、timeout/failure matrix、diagnostics | Complete | `CharacterNoteRuntimeTests` 12/12中的shared-client overlap与failure matrix |
 | A4a | code-owned receipt、bounded FIFO、`PlayerTurnObservation` canonical grammar | Complete | focused receipt/Observation tests 16/16；Galatea build 0 warnings/errors |
-| A4b | `UserSessionHost` queue ownership与普通`StartTurn` at-most-once注入 | Pending | runtime injection tests |
+| A4b | `UserSessionHost` queue ownership与普通`StartTurn` at-most-once注入 | Complete | `CharacterNoteRuntimeTests` 12/12中的ordinary/ready/inbound/recovery入口矩阵 |
 | R0 | 独立 code review、尾修、完整串行验证、状态回写 | Pending | review findings + final commands |
 
 ## 验收标准

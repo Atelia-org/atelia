@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Runtime.ExceptionServices;
@@ -41,6 +42,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal const int MaximumPopReceiptUtf8Bytes = 2 * 1024 * 1024;
     internal const string ReadyReplyTurnPlayerText =
         "玩家本轮未提交新的动作；本轮仅由外界回信到达触发。";
+    private static readonly TimeSpan DefaultCharacterNoteExtractionDeadline =
+        TimeSpan.FromSeconds(30);
     private readonly GalateaInputPreprocessor _inputPreprocessor;
     private readonly IReadOnlyDictionary<string, IOutboundMailExtractor>
         _outboundMailExtractors;
@@ -58,6 +61,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal GalateaDisposeTestHooks? DisposeHooksForTest { get; set; }
     internal GalateaSessionProvisioningTestHooks?
         SessionProvisioningHooksForTest { get; set; }
+    internal TimeSpan? CharacterNoteExtractionDeadlineForTest { get; set; }
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
     private readonly IReadOnlyDictionary<string, CompletionConnectionConfig>
@@ -909,8 +913,15 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaDurableReplyLeaseBeginResult cutoff =
             host.ReplyLeaseReconciler.BeginCutoff(userMessage);
         if (cutoff is GalateaDurableReplyLeaseBeginResult.Empty) {
+            GalateaFreshInput.PlayerAction input = host.NoteRequestReceipts
+                .TryDequeue(out CharacterNoteRequestReceipt? receipt)
+                    ? new GalateaFreshInput.PlayerAction(
+                        userMessage,
+                        [receipt.Notice]
+                    )
+                    : new GalateaFreshInput.PlayerAction(userMessage);
             return host.StartTurn(
-                new GalateaFreshInput.PlayerAction(userMessage),
+                input,
                 options
             );
         }
@@ -1286,6 +1297,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "A completed Galatea operation must leave an Idle durable boundary."
             );
         }
+        EventAddress completedHead = completedBoundary.Head
+            ?? throw new InvalidDataException(
+                "A completed Galatea operation must leave a non-empty durable head."
+            );
         GalateaDurableReplyLeaseReconcileResult leaseSettlement =
             ReconcileDurableReplyLease(host, ct);
         if (leaseSettlement is GalateaDurableReplyLeaseReconcileResult
@@ -1295,7 +1310,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "delegation-reply-lease-retained"
             );
         }
-        await ReconcileOutboundMailExtractionAsync(host, ct)
+        await ReconcilePostCompletionExtractionsAsync(
+                host,
+                completedHead,
+                ct
+            )
             .ConfigureAwait(false);
         RecentTurnsResponseDto? snapshot =
             await RefreshRecentTurnsForCompletedStreamAsync(
@@ -1314,15 +1333,25 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaOutboundMailExtractionReconcileResult>
         ReconcileOutboundMailExtractionAsync(
         UserSessionHost host,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        GalateaTerminalActionExtractionTarget? target = null
     ) {
         try {
             GalateaOutboundMailExtractionReconcileResult result =
-                await host.OutboundMailExtractionReconciler.ReconcileAsync(
-                        host.Engine,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
+                target is null
+                    ? await host.OutboundMailExtractionReconciler
+                        .ReconcileAsync(
+                            host.Engine,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false)
+                    : await host.OutboundMailExtractionReconciler
+                        .ReconcileTargetAsync(
+                            host.Engine,
+                            target,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false);
             if (result is GalateaOutboundMailExtractionReconcileResult
                     .SelectedHeadChanged) {
                 throw new GalateaTurnException(
@@ -1388,6 +1417,422 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
         }
     }
+
+    private async ValueTask ReconcilePostCompletionExtractionsAsync(
+        UserSessionHost host,
+        EventAddress completedHead,
+        CancellationToken callerToken
+    ) {
+        GalateaTerminalActionExtractionReadResult read =
+            GalateaTerminalActionExtractionTargetReader.ReadAt(
+                host.Engine,
+                completedHead,
+                callerToken
+            );
+        GalateaTerminalActionExtractionTarget target = read switch {
+            GalateaTerminalActionExtractionReadResult.Available available =>
+                available.Target,
+            GalateaTerminalActionExtractionReadResult
+                    .NoTerminalActionAtHead => throw new InvalidDataException(
+                "A completed Galatea operation must end at its terminal Action."
+            ),
+            GalateaTerminalActionExtractionReadResult.Failed failed =>
+                throw CreateTerminalActionReadFailure(failed),
+            _ => throw new InvalidDataException(
+                "Unknown terminal Action extraction read result."
+            )
+        };
+
+        if (host.CharacterNoteExtractor
+                is DisabledCharacterNoteExtractor) {
+            _ = await ReconcileOutboundMailExtractionAsync(
+                    host,
+                    callerToken,
+                    target
+                )
+                .ConfigureAwait(false);
+            return;
+        }
+
+        TimeSpan noteDeadline = CharacterNoteExtractionDeadlineForTest
+            ?? DefaultCharacterNoteExtractionDeadline;
+        if (noteDeadline <= TimeSpan.Zero) {
+            throw new InvalidOperationException(
+                "Character Note extraction deadline must be positive."
+            );
+        }
+
+        using var deadlineCts = new CancellationTokenSource(noteDeadline);
+        using var noteCts = CancellationTokenSource.CreateLinkedTokenSource(
+            callerToken,
+            deadlineCts.Token
+        );
+        long batchStarted = Stopwatch.GetTimestamp();
+        long mailMilliseconds = -1;
+        long noteMilliseconds = -1;
+        Task<GalateaOutboundMailExtractionReconcileResult> mailTask =
+            MeasureAsync(
+                () => ReconcileOutboundMailExtractionAsync(
+                    host,
+                    callerToken,
+                    target
+                ),
+                value => mailMilliseconds = value
+            );
+        Task<IReadOnlyList<CharacterNoteIntent>> noteTask = MeasureAsync(
+            () => ExtractCharacterNotesAsync(
+                host,
+                target,
+                noteCts.Token
+            ),
+            value => noteMilliseconds = value
+        );
+
+        GalateaOutboundMailExtractionReconcileResult mailResult;
+        try {
+            mailResult = await mailTask.ConfigureAwait(false);
+        }
+        catch (Exception original) when (
+            original is OperationCanceledException
+                || GalateaExceptionClassifier.IsNonFatal(original)) {
+            noteCts.Cancel();
+            (string noteOutcome, int artifactCount) =
+                await DrainCharacterNoteAfterMailFailureAsync(
+                        noteTask
+                    )
+                    .ConfigureAwait(false);
+            LogCharacterNoteBatch(
+                host,
+                target,
+                mailOutcome: "failure",
+                noteOutcome,
+                artifactCount,
+                receiptOutcome: "discarded-after-mail-failure",
+                mailMilliseconds,
+                noteMilliseconds,
+                ElapsedMilliseconds(batchStarted),
+                eventKind: DebugEventKind.Failure
+            );
+            if (original is OperationCanceledException
+                && callerToken.IsCancellationRequested) {
+                ExceptionDispatchInfo.Capture(original).Throw();
+            }
+            callerToken.ThrowIfCancellationRequested();
+            ExceptionDispatchInfo.Capture(original).Throw();
+            throw;
+        }
+
+        string mailOutcome = DescribeMailOutcome(mailResult);
+        IReadOnlyList<CharacterNoteIntent> intents;
+        try {
+            intents = await noteTask.ConfigureAwait(false)
+                ?? throw new InvalidDataException(
+                    "Character Note extractor returned a null intent batch."
+                );
+        }
+        catch (OperationCanceledException) when (
+            callerToken.IsCancellationRequested) {
+            LogCharacterNoteBatch(
+                host,
+                target,
+                mailOutcome,
+                noteOutcome: "caller-canceled",
+                artifactCount: 0,
+                receiptOutcome: "none",
+                mailMilliseconds,
+                noteMilliseconds,
+                ElapsedMilliseconds(batchStarted),
+                eventKind: DebugEventKind.Skip
+            );
+            throw;
+        }
+        catch (OperationCanceledException) when (
+            deadlineCts.IsCancellationRequested) {
+            LogCharacterNoteBatch(
+                host,
+                target,
+                mailOutcome,
+                noteOutcome: "timeout",
+                artifactCount: 0,
+                receiptOutcome: "none",
+                mailMilliseconds,
+                noteMilliseconds,
+                ElapsedMilliseconds(batchStarted),
+                eventKind: DebugEventKind.Skip
+            );
+            return;
+        }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
+            callerToken.ThrowIfCancellationRequested();
+            LogCharacterNoteBatch(
+                host,
+                target,
+                mailOutcome,
+                noteOutcome: DescribeNoteFailure(exception),
+                artifactCount: 0,
+                receiptOutcome: "none",
+                mailMilliseconds,
+                noteMilliseconds,
+                ElapsedMilliseconds(batchStarted),
+                eventKind: DebugEventKind.Failure
+            );
+            return;
+        }
+
+        callerToken.ThrowIfCancellationRequested();
+        EventAddress? observedHead = host.Engine.ReadCurrentHead();
+        if (observedHead != target.SourceAction) {
+            LogCharacterNoteBatch(
+                host,
+                target,
+                mailOutcome,
+                noteOutcome: "success",
+                artifactCount: intents.Count,
+                receiptOutcome: "head-changed",
+                mailMilliseconds,
+                noteMilliseconds,
+                ElapsedMilliseconds(batchStarted),
+                eventKind: DebugEventKind.Failure
+            );
+            throw new GalateaTurnException(
+                "Durable extraction head changed; retry admission.",
+                "delegation-state-changed"
+            );
+        }
+
+        if (intents.Count == 0) {
+            LogCharacterNoteBatch(
+                host,
+                target,
+                mailOutcome,
+                noteOutcome: "success",
+                artifactCount: 0,
+                receiptOutcome: "none-zero-artifacts",
+                mailMilliseconds,
+                noteMilliseconds,
+                ElapsedMilliseconds(batchStarted),
+                eventKind: DebugEventKind.Success
+            );
+            return;
+        }
+
+        CharacterNoteRequestReceipt? receipt;
+        bool receiptCreated;
+        try {
+            receiptCreated = CharacterNoteRequestReceipt.TryCreate(
+                intents,
+                out receipt
+            );
+        }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
+            callerToken.ThrowIfCancellationRequested();
+            LogCharacterNoteBatch(
+                host,
+                target,
+                mailOutcome,
+                noteOutcome: "invalid-output",
+                artifactCount: intents.Count,
+                receiptOutcome: "none",
+                mailMilliseconds,
+                noteMilliseconds,
+                ElapsedMilliseconds(batchStarted),
+                eventKind: DebugEventKind.Failure
+            );
+            return;
+        }
+
+        callerToken.ThrowIfCancellationRequested();
+        LogCharacterNoteArtifacts(host, target, intents);
+        if (!receiptCreated) {
+            LogCharacterNoteBatch(
+                host,
+                target,
+                mailOutcome,
+                noteOutcome: "success",
+                artifactCount: intents.Count,
+                receiptOutcome: "receipt-unrenderable",
+                mailMilliseconds,
+                noteMilliseconds,
+                ElapsedMilliseconds(batchStarted),
+                eventKind: DebugEventKind.Skip
+            );
+            return;
+        }
+
+        CharacterNoteRequestReceipt queuedReceipt = receipt
+            ?? throw new InvalidDataException(
+                "A successful Character Note receipt render returned null."
+            );
+        bool enqueued = host.NoteRequestReceipts.TryEnqueue(queuedReceipt);
+        LogCharacterNoteBatch(
+            host,
+            target,
+            mailOutcome,
+            noteOutcome: "success",
+            artifactCount: intents.Count,
+            receiptOutcome: enqueued ? "queued" : "queue-full",
+            mailMilliseconds,
+            noteMilliseconds,
+            ElapsedMilliseconds(batchStarted),
+            eventKind: enqueued
+                ? DebugEventKind.Success
+                : DebugEventKind.Skip
+        );
+    }
+
+    private static async ValueTask<IReadOnlyList<CharacterNoteIntent>>
+        ExtractCharacterNotesAsync(
+        UserSessionHost host,
+        GalateaTerminalActionExtractionTarget target,
+        CancellationToken cancellationToken
+    ) {
+        if (string.IsNullOrWhiteSpace(target.VisibleText)) {
+            return Array.Empty<CharacterNoteIntent>();
+        }
+        return await host.CharacterNoteExtractor.ExtractAsync(
+                target.VisibleText,
+                cancellationToken
+            )
+            .ConfigureAwait(false)
+            ?? throw new InvalidDataException(
+                "Character Note extractor returned a null intent batch."
+            );
+    }
+
+    private static async Task<T> MeasureAsync<T>(
+        Func<ValueTask<T>> operation,
+        Action<long> recordElapsedMilliseconds
+    ) {
+        long started = Stopwatch.GetTimestamp();
+        try {
+            return await operation().ConfigureAwait(false);
+        }
+        finally {
+            recordElapsedMilliseconds(ElapsedMilliseconds(started));
+        }
+    }
+
+    private static async Task<(string Outcome, int ArtifactCount)>
+        DrainCharacterNoteAfterMailFailureAsync(
+        Task<IReadOnlyList<CharacterNoteIntent>> noteTask
+    ) {
+        try {
+            IReadOnlyList<CharacterNoteIntent> intents = await noteTask
+                .ConfigureAwait(false);
+            return ("discarded-after-mail-failure", intents.Count);
+        }
+        catch (OperationCanceledException) {
+            return ("canceled-after-mail-failure", 0);
+        }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
+            return (DescribeNoteFailure(exception), 0);
+        }
+    }
+
+    private static GalateaTurnException CreateTerminalActionReadFailure(
+        GalateaTerminalActionExtractionReadResult.Failed failure
+    ) => failure.Kind switch {
+        GalateaTerminalActionExtractionReadFailureKind.LimitExceeded => new(
+            "Durable extraction exceeded its read bound.",
+            "delegation-proof-limit-exceeded"
+        ),
+        GalateaTerminalActionExtractionReadFailureKind.UnsupportedSchema =>
+            new(
+                "Durable extraction uses an unsupported schema.",
+                "delegation-session-schema-unsupported"
+            ),
+        GalateaTerminalActionExtractionReadFailureKind.Corruption => new(
+            "Durable extraction evidence is invalid.",
+            "delegation-state-invalid"
+        ),
+        _ => new GalateaTurnException(
+            "Durable extraction is unavailable.",
+            "delegation-extraction-unavailable"
+        )
+    };
+
+    private static string DescribeMailOutcome(
+        GalateaOutboundMailExtractionReconcileResult result
+    ) => result switch {
+        GalateaOutboundMailExtractionReconcileResult.BaselineCovered =>
+            "baseline-covered",
+        GalateaOutboundMailExtractionReconcileResult.AlreadyCaptured =>
+            "already-captured",
+        GalateaOutboundMailExtractionReconcileResult.Captured => "captured",
+        _ => result.GetType().Name
+    };
+
+    private static string DescribeNoteFailure(Exception exception) =>
+        exception is TextExtractionException extraction
+            ? "text-extraction-" + extraction.Kind.ToString()
+            : "exception-" + exception.GetType().Name;
+
+    private static long ElapsedMilliseconds(long started) => checked((long)
+        Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+
+    private static void LogCharacterNoteArtifacts(
+        UserSessionHost host,
+        GalateaTerminalActionExtractionTarget target,
+        IReadOnlyList<CharacterNoteIntent> intents
+    ) {
+        for (int index = 0; index < intents.Count; index++) {
+            CharacterNoteIntent intent = intents[index];
+            DebugUtil.Info(
+                "Galatea.CharacterMemory",
+                JsonSerializer.Serialize(new {
+                    @event = "character-note-artifact",
+                    developmentOnly = true,
+                    durableMemo = false,
+                    userId = host.User.UserId,
+                    sourceAction = EventAddressTextCodec.Format(
+                        target.SourceAction
+                    ),
+                    contractId = host.CharacterNoteExtractor.ContractId,
+                    index,
+                    exactText = intent.ExactText,
+                    evidenceQuote = intent.EvidenceQuote,
+                }),
+                eventKind: DebugEventKind.Success
+            );
+        }
+    }
+
+    private static void LogCharacterNoteBatch(
+        UserSessionHost host,
+        GalateaTerminalActionExtractionTarget target,
+        string mailOutcome,
+        string noteOutcome,
+        int artifactCount,
+        string receiptOutcome,
+        long mailMilliseconds,
+        long noteMilliseconds,
+        long batchMilliseconds,
+        DebugEventKind eventKind
+    ) => DebugUtil.Info(
+        "Galatea.CharacterMemory",
+        JsonSerializer.Serialize(new {
+            @event = "character-note-extraction-batch",
+            developmentOnly = true,
+            durableMemo = false,
+            userId = host.User.UserId,
+            sourceAction = EventAddressTextCodec.Format(target.SourceAction),
+            visibleActionSha256 = target.VisibleTextSha256,
+            visibleActionUtf8Bytes = target.VisibleTextUtf8Bytes,
+            contractId = host.CharacterNoteExtractor.ContractId,
+            mailOutcome,
+            noteOutcome,
+            artifactCount,
+            receiptOutcome,
+            queueCount = host.NoteRequestReceipts.Count,
+            mailMs = mailMilliseconds,
+            noteMs = noteMilliseconds,
+            batchMs = batchMilliseconds,
+        }),
+        eventKind: eventKind
+    );
 
     private async Task<GalateaCompletedOperation> RunFreshSendAsync(
         UserSessionHost host,
@@ -2470,6 +2915,9 @@ public sealed class UserSessionHost : IAsyncDisposable {
     internal GalateaRecapGridTargetExpectation TargetExpectation { get; }
 
     internal ICharacterNoteExtractor CharacterNoteExtractor { get; }
+
+    internal CharacterNoteRequestReceiptQueue NoteRequestReceipts { get; } =
+        new();
 
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
 

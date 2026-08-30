@@ -14,6 +14,7 @@
 - [`TextExtractor`](../../prototypes/Galatea/TextExtractor.cs)：一次性 structured extraction wrapper。它调用 Completion，收集 artifact tool calls，返回 `TextExtractionResult`。
 - [`TextExtractorArtifactTool`](../../prototypes/Galatea/TextExtractor.cs)：把 typed POCO 挂成 artifact tool；普通 assistant text 只作为 bounded diagnostic，不会被解析为 artifact。
 - [`GalateaVisibleActionTextRenderer`](../../prototypes/Galatea/GalateaVisibleActionTextRenderer.cs)：从 terminal `ActionMessage` 中提取角色可见文本，排除 reasoning/tool blocks 并剥离 inline think。
+- [`GalateaTerminalActionExtractionTarget`](../../prototypes/Galatea/GalateaTerminalActionExtractionTarget.cs)：冻结一条exact terminal Action的address、visible text、SHA-256与UTF-8 byte count，供多个extractor共享。
 - [`GalateaFreshInput`](../../prototypes/Galatea/GalateaFreshInput.cs)：fresh turn 的 typed input 总入口。Mailbox 只是其中一个来源，后续 note/recall 不应把这个类型下沉到 Mailbox namespace。
 - [`PlayerTurnObservation`](../../prototypes/Galatea/PlayerTurnObservation.cs)：普通 player turn 的 composite Observation 模型。
 - [`PlayerTurnObservationEnvelope`](../../prototypes/Galatea/PlayerTurnObservation.cs)：把玩家行动、runtime metadata、reply/failure notices 渲染成 canonical Observation。
@@ -28,9 +29,15 @@ Mailbox specialization：
 - [`GalateaDelegationSqliteStore`](../../prototypes/Galatea/GalateaDelegationSqliteStore.cs)：当前 outbound mail artifact 的 durable owner。
 - [`GalateaDurableDelegationDriver`](../../prototypes/Galatea/GalateaDurableDelegationDriver.cs)：把 routed outbound mail dispatch 到 Codex sidecar，并把 reply/failure 转成 ready notice。
 
+Character Memory V0 specialization：
+
+- [`CharacterNoteIntent` / `CharacterNoteExtractor`](../../prototypes/Galatea/CharacterMemory/CharacterNoteExtractor.cs)：保守提取角色本人已完成记录、且正文exact source-grounded的长期Note请求。
+- [`CharacterNoteRequestReceipt`](../../prototypes/Galatea/CharacterMemory/CharacterNoteRequestReceipt.cs)：把一批validated intent渲染成honest development-only回执，并提供per-session bounded in-process FIFO。
+- `PlayerTurnNotice.NoteRequestReceipt`：普通player Observation中的独立strong type；canonical顺序中至多一条且必须为最后notice。
+
 入口与注入点：
 
-- [`GalateaHostService`](../../prototypes/Galatea/GalateaServices.cs)：在 admission / send / recovery 边界串联 lease settlement、outbound mail extraction、fresh Observation materialization。
+- [`GalateaHostService`](../../prototypes/Galatea/GalateaServices.cs)：在 admission / send / recovery 边界串联lease settlement、shared-target Mail/Note post-completion extraction，以及fresh Observation materialization。
 - [`Program.cs`](../../prototypes/Galatea/Program.cs)：HTTP `POST /api/v1/mailbox/inbound` 与 `POST /api/v1/mailbox/ready-turn`。
 - [`GalateaRecentTurnDisplayAdapter`](../../prototypes/Galatea/GalateaRecentTurnDisplayAdapter.cs)：把 stored Observation 投影回 browser 可读显示。
 
@@ -49,6 +56,17 @@ Mailbox specialization：
 5. runtime 验证每个 `SendMailIntent` 的结构、UTF-8 bound、single-line recipient/subject、canonical reply id 等。
 6. durable store 在一个 transaction 中 capture 整批 artifact；0 artifact 也是成功 tombstone，extractor failure 不能冒充空结果。
 
+successful fresh/recovery主Completion的现行post-completion路径只读取/render一次terminal Action target。Host直接
+启动Mail `ReconcileTargetAsync`与enabled Character Note extraction，再先await Mail、后await Note。Mail继续拥有
+durable/fail-closed语义；Note是best-effort：caller/shutdown cancellation传播，provider/validation failure与30秒
+cooperative deadline只丢弃回执。Mail失败会取消并drain Note；两条task都在`TurnLock`和borrowed client lifetime内
+结束，不使用`Task.Run`、`Task.WhenAll`或fire-and-forget。同一connection可收到两个overlapping调用，但client仍可
+自行限流。
+
+Note成功时，host在final `current head == SourceAction` fence后把1..N条intent冻结为一条请求回执；0 intent不排队。
+queue full或receipt因outer Observation bound无法render都只产生development diagnostic，不使主回合失败。V0没有
+Note durable tombstone，因此admission/restart gap reconciliation仍只运行Mail，不补跑Note。
+
 这一路的语义 authority 是分层的：
 
 - “角色是否真的发送了邮件”“邮件正文是什么”“recipient 是否来自叙事 Action”由 extractor LLM 按 code-owned prompt 保守判断。
@@ -61,10 +79,15 @@ runtime 也不把外部事件塞进角色的 hidden state。它把外部信息�
 
 现行有两种注入形状：
 
-- 普通 player turn composite Observation：`PlayerTurnObservationEnvelope` 写入玩家行动、Observation 形成时的外界本地时间、0..N 条 reply/failure notice。
+- 普通 player turn composite Observation：`PlayerTurnObservationEnvelope` 写入玩家行动、Observation 形成时的外界本地时间、0..N 条 reply/failure notice，以及可选且必须位于最后的单条Note请求回执。
 - Inbound mail Observation：`GalateaMailboxObservationEnvelope` 把外部来信写成 escaped XML envelope，再作为 fresh input 启动一轮主线 Completion。
 
 普通 player turn 中的 notices 对位 tool-result：它们是上一次或更早 outbound artifact 的异步结果，但不在原 provider invocation 内返回。runtime 在 `BeginCutoff` 时冻结 bounded FIFO 前缀，把已经 Ready 的 notice 拼进本轮 Observation；之后才 Ready 的结果留给下一轮。
+
+Note receipt使用另一条in-process at-most-once attach规则：只有普通player `StartTurn`在
+`BeginCutoff == Empty`时`TryDequeue`一条，作为sole/final notice冻结进本次`PlayerAction`。Created reply cutoff、
+ready-turn、inbound与recovery都不领取；领取后的pre-dispatch stop、失败、Undo、rewind或restart不重新排队。它只
+证明runtime识别到了请求，不证明Memo已经保存、索引或可召回。
 
 这一路的安全/耐久边界是：
 
@@ -77,9 +100,12 @@ runtime 也不把外部事件塞进角色的 hidden state。它把外部信息�
 
 自主笔记和动态信息召回很像 Mailbox，但不应该复用 Mailbox 名字或 storage contract。
 
-可能的映射：
+已经落地的V0映射：
 
-- note write intent：角色在 Action 中叙事化地记录“我想记下一条内容”；runtime 用新的 `NoteIntent` artifact tool 提取。
+- note write intent：角色在Action中明确完成记录自己的长期Note；runtime用`CharacterNoteIntent` artifact tool保守提取，并在未来eligible普通player turn返回honest请求回执。
+
+仍属后续候选的映射：
+
 - recall trigger：runtime 在 admission、turn completion 或显式事件边界判断是否需要召回。
 - recall result injection：runtime 把召回内容作为新的 `PlayerTurnNotice` kind，或作为独立 fresh input / Observation envelope 注入。
 

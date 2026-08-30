@@ -132,8 +132,9 @@ unknown ID 或多余 binding
 model/provider/surface/endpoint/secret locator 全部来自该 connection，client 只在首次真正
 需要清洗时惰性创建；OutboundMailExtractor 同样使用hidden、lazy、borrowed client，且不进入
 Agent/UI selectable allowlist。CharacterNoteExtractor也按每个user的exact `CharacterName`构造，借用同一
-registry并保持client lazy；其V0只提供runtime extraction supply，不承诺Note已保存或可召回，也不改变主
-system prompt。Bootstrap connections template把outbound与Character Note两个extractor binding都写为`null`。
+registry并保持client lazy。其V0在successful fresh/recovery完成边界提取请求，并把development-only回执排入
+下一次eligible普通player turn；不承诺Note已保存、可召回或跨restart保留，也不改变主system prompt。
+Bootstrap connections template把outbound与Character Note两个extractor binding都写为`null`。
 Outbound binding从`null`切换到non-`null`会改变finalized prompt并在下一次fresh turn自然触发existing exact
 desired-setup rotation；Character Note binding切换则保持finalized prompt byte-exact，不引入operator prompt
 module field。
@@ -253,12 +254,12 @@ timer/consumer/in-flight pulse，随后dispose共享sidecar transport、关闭�
 最后关闭Completion/RecapGrid owner。任何阶段的nonfatal cleanup failure都会被保留并在最终以single或
 aggregate exception诚实返回，不把未确认的child或lock cleanup报告成成功。
 
-### Development Codex delegation observability
+### Development runtime observability
 
 开发期可在repo root用Debug build启动，并显式打开server-side进度日志：
 
 ```bash
-ATELIA_DEBUG_CATEGORIES='Galatea.Mailbox,Galatea.TextExtractor,Galatea.Delegation,Galatea.Delegation.Supervisor,Galatea.DelegateSidecar' \
+ATELIA_DEBUG_CATEGORIES='Galatea.Mailbox,Galatea.TextExtractor,Galatea.CharacterMemory,Galatea.Delegation,Galatea.Delegation.Supervisor,Galatea.DelegateSidecar' \
 dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 ```
 
@@ -266,12 +267,17 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 pre-response transient transport failure的attempt与退避时间；`Galatea.Delegation`显示durable
 binding、dispatch、reconciliation、terminal与backoff；`Galatea.Delegation.Supervisor`显示store availability、
 pulse fail-closed与shutdown；`Galatea.DelegateSidecar`显示Node child启动、ready与stable transport failure。
+`Galatea.CharacterMemory`是development-only例外：每批输出identity/hash、Mail/Note outcome、artifact/queue count与
+latency的single-line JSON，并逐条输出JSON-escaped `exactText`/`evidenceQuote`，用来人工检查V0提取质量。
 `Info`调用在Release被编译掉；Debug下无论console category是否
 打开，仍按`DebugUtil`规则写入`.atelia/debug-logs/galatea.mailbox.log`、
-`galatea.delegation.log`、`galatea.delegation.supervisor.log`与`galatea.delegatesidecar.log`
-（若该目录不可写则使用既有fallback）。这些
-progress log只包含bounded identifier/recipient summary、count、byte size、boolean、stage/code和
-process id，不重复邮件正文、subject、evidence、Codex final或sidecar stderr。
+`galatea.charactermemory.log`、`galatea.delegation.log`、`galatea.delegation.supervisor.log`与
+`galatea.delegatesidecar.log`
+（若该目录不可写则使用既有fallback）。除上述显式Character Note content event外，progress log只包含
+bounded identifier/recipient summary、count、
+byte size、boolean、stage/code和process id，不重复邮件正文、subject、evidence、Codex final或sidecar stderr。
+Character Note debug log与启用`CallLogDir`后可能保存的provider request/tool arguments都包含敏感故事内容；两者
+都不是replay、migration或未来Memo apply authority，使用者必须自行管理本地文件访问与保留期。
 
 当前Node hop是实现边界而不是产品语义要求。未来可以让C# host直接spawn并通过stdio驱动Codex
 app-server，从而移除一层process/protocol；这项简化需要等价接管strict framing与bounds、RPC
@@ -359,8 +365,8 @@ recovery或dedupe语义。工具契约继续由`Completion.Tools/ArtifactToolWra
 provider tool name/call ID、tool/call数量、raw arguments与diagnostics均有
 code-owned bounds；caller cancellation与transport exception直接传播。
 
-`TextExtractor` 与 composite Observation 共同形成的异步双向通讯模式，作为后续 note/recall
-类功能的复用入口，见
+`TextExtractor` 与 composite Observation 共同形成的异步双向通讯模式；Mailbox与development-only Character
+Note request receipt已复用这条路径，后续recall仍可沿同一边界设计，见
 [`TextExtractor / Observation Bridge`](../../docs/Galatea/text-extractor-observation-bridge.md)。
 
 ## Mailbox、OutboundMailExtractor 与 durable Codex delegation
@@ -468,6 +474,19 @@ Extractor system/user source prompt使用shared `${characterName}` renderer并�
 tool contract版本与exact rendered system/user prompts，不包含provider/model/connection。相同名字与contract
 产生相同ID，不同名字分离；底层Completion client仍由host registry按connection惰性共享。
 
+successful fresh/recovery主Completion回到`Idle`并结算reply lease后，host只读取/render一份frozen terminal
+Action target，同时直接启动Mail `ReconcileTargetAsync`与enabled Character Note extraction；不使用`Task.Run`、
+`Task.WhenAll`或fire-and-forget。host先await Mail；Mail失败或final fence变化会取消并drain Note后保留既有Mail
+失败语义。Mail成功后再观察Note：caller/shutdown cancellation传播；Note provider/validation failure与code-owned
+30秒cooperative deadline只丢弃V0回执，不使已完成主回合失败。deadline通过cancellation token请求停止，不强杀
+忽略cancellation的provider；borrowed client释放前仍会drain实际调用。
+
+Note成功且final head仍等于target Action时，0 artifact不排队；1..N artifact由code-owned renderer冻结成一条
+`NoteRequestReceipt`，再放入每个`UserSessionHost`私有的bounded in-process FIFO。只有下一次普通player
+`StartTurn`的`BeginCutoff == Empty`分支会`TryDequeue`一条，作为sole/final notice执行at-most-once attach。
+Created reply cutoff、ready-turn、inbound与recovery不领取；领取后的pre-dispatch stop、失败、Undo、rewind或restart
+都不重新排队。该回执只说明请求已识别，绝不表示Memo已持久化或可召回。
+
 每个Action extraction batch由`GalateaDelegationSqliteStore`单事务全有或全无地capture；成功的0-intent
 extraction也写`action_capture` tombstone，extractor failure绝不能冒充空结果。stable dispatch ID是对length-prefixed
 `(userId,"Codex",canonical Action head,artifact ordinal)`计算SHA-256后形成的
@@ -512,7 +531,7 @@ TextExtractor只对`OpenAICodexResponsesException`的exact
 `TransportOutcomeUnknown`做最多5次总尝试，重试前依次等待1s、2s、4s、8s；HTTP status failure、
 SSE/protocol failure与普通异常不重试。每个logical extraction复用同一request/client，artifact tool只在
 最终成功响应后执行；因为pre-response outcome仍可能已经消耗provider算力，重试可能产生重复计费，但不会
-重复本地artifact副作用。Extraction不再设置code-owned elapsed deadline，只服从caller cancellation；若
+重复本地artifact副作用。Outbound Mail extraction不设置code-owned elapsed deadline，只服从caller cancellation；若
 provider持续不结束且caller不取消，当前turn、recent refresh、SSE `done`与`TurnLock`会继续等待，这是当前
 有意选择的完成优先语义。failure/cancellation不写empty tombstone；主Action仍已durable，当前SSE以错误结束，
 下一次admission会在接受新turn前重试该exact extraction gap。capture commit只signal supervisor，主Galatea turn
