@@ -153,6 +153,38 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
     }
 
     [Fact]
+    public async Task NestedFatalProviderFailurePropagates() {
+        using var fixture = await Fixture.CreateAsync();
+        (_, GalateaTerminalActionExtractionTarget target) =
+            fixture.AppendTurn("observation", "save fatal note");
+        _ = await fixture.Reconciler.ReconcileTargetAsync(
+            fixture.Engine,
+            target
+        );
+
+        AggregateException failure = await Assert.ThrowsAsync<
+            AggregateException>(() => fixture.Reconciler
+                .ReconcileNextDerivedInfoAsync(
+                    fixture.Materialize,
+                    new NestedFatalEnricher()
+                )
+                .AsTask());
+
+        Assert.False(GalateaExceptionClassifier.IsNonFatal(failure));
+        Assert.IsType<OutOfMemoryException>(Assert.Single(
+            failure.InnerExceptions
+        ).InnerException);
+        Assert.Equal(CharacterMemoryStoreState.Ready,
+            fixture.Reconciler.ReadStatusSnapshot().StoreState);
+        Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Applied>(
+            await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
+                fixture.Materialize,
+                new RecordingEnricher()
+            )
+        );
+    }
+
+    [Fact]
     public async Task ProviderDoesNotHoldGateAndPreparedNeverRecallsModel() {
         var access = new FaultingPodAccess();
         using var fixture = await Fixture.CreateAsync(access);
@@ -661,6 +693,25 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
             _ = cancellationToken;
             CallCount++;
             throw new InvalidDataException("invalid provider output");
+        }
+    }
+
+    private sealed class NestedFatalEnricher
+        : ICharacterNoteDerivedInfoEnricher {
+        public string ContractId => "fatal-derived-info-test-v1";
+
+        public ValueTask<IReadOnlyList<CharacterNoteDerivedInfo>> EnrichAsync(
+            CharacterNoteDerivedInfoEnrichmentRequest request,
+            CancellationToken cancellationToken
+        ) {
+            _ = request;
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new AggregateException(
+                new InvalidOperationException(
+                    "nested fatal provider failure",
+                    new OutOfMemoryException("simulated fatal failure")
+                )
+            );
         }
     }
 

@@ -160,21 +160,24 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
     }
 
     [Fact]
-    public async Task OneSignalProcessesAtMostOneWorkAndLaterSignalAdvancesQueue() {
+    public async Task BusyPumpPreservesEveryPublishedSignalGeneration() {
         await using var fixture = await PumpFixture.CreateAsync();
+        fixture.Enricher.BlockFirstCall = true;
         fixture.AppendAndCapture("first observation", "first note");
         fixture.AppendAndCapture("second observation", "second note");
+        fixture.AppendAndCapture("third observation", "third note");
 
         Assert.True(fixture.Pump!.Signal());
-        await fixture.Enricher.WaitForCallsAsync(1);
-        await WaitUntilAsync(() => fixture.AppliedMemoCount() == 1);
+        await fixture.Enricher.FirstCallStarted.Task.WaitAsync(Deadline);
+        Assert.True(fixture.Pump.Signal());
+        Assert.True(fixture.Pump.Signal());
+        fixture.Enricher.ReleaseFirstCall();
+
+        await fixture.Enricher.WaitForCallsAsync(3);
+        await WaitUntilAsync(() => fixture.AppliedMemoCount() == 3);
         await Task.Delay(100);
-        Assert.Equal(1, fixture.Enricher.CallCount);
-        Assert.Equal(1, fixture.AppliedMemoCount());
-
-        Assert.True(fixture.Pump!.Signal());
-        await fixture.Enricher.WaitForCallsAsync(2);
-        await WaitUntilAsync(() => fixture.AppliedMemoCount() == 2);
+        Assert.Equal(3, fixture.Enricher.CallCount);
+        Assert.Equal(3, fixture.AppliedMemoCount());
     }
 
     [Fact]
@@ -190,6 +193,42 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         Assert.True(fixture.Enricher.CancellationObserved);
         Assert.False(fixture.Pump.Signal());
         Assert.Null(fixture.ReadMemos().Single().Title);
+    }
+
+    [Fact]
+    public async Task ThrowingCancellationCallbackStillStopsPumpAndReleasesAuthority() {
+        var fixture = await PumpFixture.CreateAsync(createPump: false);
+        try {
+            fixture.Enricher.BlockUntilCanceled = true;
+            fixture.Enricher.ThrowOnCancellation = true;
+            fixture.AppendAndCapture("observation", "throwing cancel note");
+            CharacterMemoryStoreOwner owner = fixture.Owner;
+            string statePath = fixture.StatePath;
+            UserSessionHost host = fixture.CreateHost(
+                fixture.Enricher,
+                TimeSpan.FromMinutes(5)
+            );
+            Assert.True(host.CharacterNoteDerivedInfoPump!.Signal());
+            await fixture.Enricher.WaitForCallsAsync(1);
+
+            AggregateException failure = await Assert.ThrowsAsync<
+                AggregateException>(() => host.DisposeAsync().AsTask());
+
+            Assert.Contains(failure.Flatten().InnerExceptions,
+                static exception => exception is IOException);
+            Assert.True(fixture.Enricher.CancellationObserved);
+            Assert.False(host.CharacterNoteDerivedInfoPump.Signal());
+            using CharacterMemorySqliteStore reopened =
+                CharacterMemorySqliteStore.OpenExisting(
+                    statePath,
+                    owner
+                );
+            Assert.Equal(CharacterMemoryStoreState.Ready,
+                reopened.ReadStatusSnapshot().StoreState);
+        }
+        finally {
+            await fixture.DisposeAsync();
+        }
     }
 
     [Theory]
@@ -515,28 +554,56 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
 
         public string ContractId => "derived-info-runtime-enricher-v1";
         internal int CallCount => Volatile.Read(ref _callCount);
+        internal bool BlockFirstCall { get; set; }
         internal bool BlockUntilCanceled { get; set; }
+        internal bool ThrowOnCancellation { get; set; }
         internal bool CancellationObserved =>
             Volatile.Read(ref _cancellationObserved) != 0;
+        internal TaskCompletionSource FirstCallStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        private TaskCompletionSource FirstCallRelease { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        internal void ReleaseFirstCall() => FirstCallRelease.TrySetResult();
 
         public async ValueTask<IReadOnlyList<CharacterNoteDerivedInfo>> EnrichAsync(
             CharacterNoteDerivedInfoEnrichmentRequest request,
             CancellationToken cancellationToken
         ) {
             cancellationToken.ThrowIfCancellationRequested();
-            Interlocked.Increment(ref _callCount);
+            int call = Interlocked.Increment(ref _callCount);
             _calls.Release();
-            if (BlockUntilCanceled) {
-                try {
+            if (call == 1) { FirstCallStarted.TrySetResult(); }
+            CancellationTokenRegistration registration =
+                ThrowOnCancellation
+                    ? cancellationToken.Register(static () =>
+                        throw new IOException(
+                            "simulated cancellation callback failure"
+                        ))
+                    : default;
+            try {
+                if (BlockFirstCall && call == 1) {
+                    await FirstCallRelease.Task.WaitAsync(
+                        cancellationToken
+                    );
+                }
+                if (BlockUntilCanceled) {
                     await Task.Delay(
                         Timeout.InfiniteTimeSpan,
                         cancellationToken
                     );
                 }
-                catch (OperationCanceledException) {
+            }
+            catch (OperationCanceledException) {
+                if (BlockUntilCanceled) {
                     Volatile.Write(ref _cancellationObserved, 1);
-                    throw;
                 }
+                throw;
+            }
+            finally {
+                registration.Dispose();
             }
             return request.Targets.Select(static target =>
                 new CharacterNoteDerivedInfo(
@@ -598,6 +665,11 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         }
 
         internal SessionJournalEngine Engine { get; }
+        internal string StatePath => Path.Combine(_root, "memory");
+        internal CharacterMemoryStoreOwner Owner => new(
+            "user",
+            Engine.Path
+        );
         internal CharacterNoteDefaultPodReconciler Reconciler { get; }
         internal RecordingEnricher Enricher { get; }
         internal TogglePodAccess PodAccess { get; }
@@ -750,7 +822,10 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             ));
         }
 
-        internal UserSessionHost CreateHost() {
+        internal UserSessionHost CreateHost(
+            ICharacterNoteDerivedInfoEnricher? derivedInfoEnricher = null,
+            TimeSpan? derivedInfoProviderDeadline = null
+        ) {
             var user = new GalateaUserConfig(
                 "user",
                 "password",
@@ -775,8 +850,8 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
                 delegationHandle: null,
                 DisabledOutboundMailExtractor.Instance,
                 new RecordingNoteExtractor(),
-                derivedInfoEnricher: null,
-                derivedInfoProviderDeadline: null
+                derivedInfoEnricher,
+                derivedInfoProviderDeadline
             );
         }
 

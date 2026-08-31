@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using Atelia.Diagnostics;
 using Atelia.EventJournal;
@@ -22,7 +23,10 @@ internal sealed class CharacterNoteDerivedInfoPump : IAsyncDisposable {
     private readonly TimeSpan _providerDeadline;
     private readonly Channel<bool> _signals;
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly object _signalGate = new();
     private readonly Task _runTask;
+    private long _publishedSignalGeneration;
+    private long _consumedSignalGeneration;
     private int _disposeStarted;
 
     internal CharacterNoteDerivedInfoPump(
@@ -57,18 +61,41 @@ internal sealed class CharacterNoteDerivedInfoPump : IAsyncDisposable {
         _runTask = RunAsync();
     }
 
-    internal bool Signal() => Volatile.Read(ref _disposeStarted) == 0
-        && _signals.Writer.TryWrite(true);
+    internal bool Signal() {
+        lock (_signalGate) {
+            if (_disposeStarted != 0) { return false; }
+            _publishedSignalGeneration = checked(
+                _publishedSignalGeneration + 1
+            );
+            _ = _signals.Writer.TryWrite(true);
+            return true;
+        }
+    }
 
     private async Task RunAsync() {
         try {
-            await foreach (bool _ in _signals.Reader.ReadAllAsync(
+            await foreach (bool wakeup in _signals.Reader.ReadAllAsync(
                     _lifetime.Token)) {
-                await ReconcileOneAsync().ConfigureAwait(false);
+                _ = wakeup;
+                while (_signals.Reader.TryRead(out _)) { }
+                while (TryConsumeSignalGeneration()) {
+                    await ReconcileOneAsync().ConfigureAwait(false);
+                }
             }
         }
         catch (OperationCanceledException) when (
             _lifetime.IsCancellationRequested) {
+        }
+    }
+
+    private bool TryConsumeSignalGeneration() {
+        lock (_signalGate) {
+            if (_consumedSignalGeneration
+                    >= _publishedSignalGeneration) {
+                return false;
+            }
+            _consumedSignalGeneration++;
+            return true;
         }
     }
 
@@ -159,17 +186,59 @@ internal sealed class CharacterNoteDerivedInfoPump : IAsyncDisposable {
         (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
 
     public async ValueTask DisposeAsync() {
-        if (Interlocked.Exchange(ref _disposeStarted, 1) != 0) {
+        bool firstDisposal;
+        lock (_signalGate) {
+            firstDisposal = _disposeStarted == 0;
+            if (firstDisposal) {
+                _disposeStarted = 1;
+                _signals.Writer.TryComplete();
+            }
+        }
+        if (!firstDisposal) {
             await _runTask.ConfigureAwait(false);
             return;
         }
-        _signals.Writer.TryComplete();
-        _lifetime.Cancel();
+
+        var failures = new List<Exception>(3);
+        try {
+            _lifetime.Cancel();
+        }
+        catch (Exception exception) {
+            failures.Add(exception);
+        }
         try {
             await _runTask.ConfigureAwait(false);
         }
-        finally {
+        catch (Exception exception) {
+            failures.Add(exception);
+        }
+        try {
             _lifetime.Dispose();
         }
+        catch (Exception exception) {
+            failures.Add(exception);
+        }
+        ThrowDisposeFailures(failures);
+    }
+
+    private static void ThrowDisposeFailures(
+        IReadOnlyList<Exception> failures
+    ) {
+        if (failures.Count == 0) { return; }
+        if (failures.Count == 1) {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+        Exception? fatal = failures.FirstOrDefault(static exception =>
+            !GalateaExceptionClassifier.IsNonFatal(exception));
+        if (fatal is not null) {
+            throw new AggregateException(
+                "Character Note DerivedInfo pump disposal encountered a fatal failure.",
+                failures
+            );
+        }
+        throw new AggregateException(
+            "Character Note DerivedInfo pump disposal encountered multiple failures.",
+            failures
+        );
     }
 }

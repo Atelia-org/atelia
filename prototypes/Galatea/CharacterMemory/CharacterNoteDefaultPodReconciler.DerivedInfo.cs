@@ -133,7 +133,8 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
                     "Character Note DerivedInfo enricher returned a null batch."
                 );
         }
-        catch (Exception exception) when (!IsFatalDerivedInfo(exception)) {
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
             return DeferredDerivedInfo(
                 source,
                 CharacterNoteDefaultPodOutcomeCodes
@@ -733,11 +734,6 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
         EventAddress source,
         string code
     ) => new CharacterNoteDerivedInfoReconcileResult.Deferred(source, code);
-
-    private static bool IsFatalDerivedInfo(Exception exception) =>
-        exception is OutOfMemoryException
-            or StackOverflowException
-            or AccessViolationException;
 
     private abstract record DerivedInfoCandidateResult {
         private DerivedInfoCandidateResult() { }
