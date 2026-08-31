@@ -126,6 +126,12 @@ internal abstract record CharacterNoteDerivedInfoReconcileResult {
         : CharacterNoteDerivedInfoReconcileResult;
 }
 
+internal delegate ValueTask<CharacterNoteDerivedInfoEnrichmentRequest>
+    CharacterNoteDerivedInfoMaterializeCallback(
+        CharacterMemoryDerivedInfoWorkSnapshot work,
+        CancellationToken cancellationToken
+    );
+
 internal interface ICharacterNoteDefaultPodHandle {
     MemoPodId PodId { get; }
     MemoPodPhase Phase { get; }

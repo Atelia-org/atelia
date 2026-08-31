@@ -7,18 +7,18 @@ namespace Atelia.Galatea.Server.CharacterMemory;
 internal sealed partial class CharacterNoteDefaultPodReconciler {
     internal async ValueTask<CharacterNoteDerivedInfoReconcileResult>
         ReconcileNextDerivedInfoAsync(
-        SessionJournalEngine engine,
+        CharacterNoteDerivedInfoMaterializeCallback materialize,
         ICharacterNoteDerivedInfoEnricher enricher,
         CancellationToken providerCancellationToken = default
     ) {
         ThrowIfDisposed();
-        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(materialize);
         ArgumentNullException.ThrowIfNull(enricher);
         await _derivedInfoDispatchGate.WaitAsync(CancellationToken.None)
             .ConfigureAwait(false);
         try {
             return await ReconcileNextDerivedInfoCoreAsync(
-                    engine,
+                    materialize,
                     enricher,
                     providerCancellationToken
                 )
@@ -31,7 +31,7 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
 
     private async ValueTask<CharacterNoteDerivedInfoReconcileResult>
         ReconcileNextDerivedInfoCoreAsync(
-        SessionJournalEngine engine,
+        CharacterNoteDerivedInfoMaterializeCallback materialize,
         ICharacterNoteDerivedInfoEnricher enricher,
         CancellationToken providerCancellationToken
     ) {
@@ -72,17 +72,20 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
         );
         CharacterNoteDerivedInfoEnrichmentRequest request;
         try {
-            request = CharacterNoteDerivedInfoContextMaterializer.Materialize(
-                engine,
-                work,
-                providerCancellationToken
-            );
+            request = await materialize(
+                    work,
+                    providerCancellationToken
+                )
+                .ConfigureAwait(false)
+                ?? throw new InvalidDataException(
+                    "Character Note DerivedInfo materializer returned a null request."
+                );
         }
         catch (OperationCanceledException) {
             return DeferredDerivedInfo(
                 source,
                 CharacterNoteDefaultPodOutcomeCodes
-                    .DerivedInfoProviderUnavailable
+                    .DerivedInfoContextUnavailable
             );
         }
         catch (InvalidDataException) {

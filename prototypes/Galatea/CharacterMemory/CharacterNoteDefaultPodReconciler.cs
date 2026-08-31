@@ -292,9 +292,10 @@ internal sealed partial class CharacterNoteDefaultPodReconciler
                         "Character Note extractor returned a null batch."
                     );
         preCaptureCancellationToken.ThrowIfCancellationRequested();
-        await _podMutationGate.WaitAsync(CancellationToken.None)
+        await _podMutationGate.WaitAsync(preCaptureCancellationToken)
             .ConfigureAwait(false);
         try {
+            preCaptureCancellationToken.ThrowIfCancellationRequested();
             CharacterMemoryStatusSnapshot status =
                 _store.ReadStatusSnapshot();
             CharacterMemoryCaptureSnapshot? existing =

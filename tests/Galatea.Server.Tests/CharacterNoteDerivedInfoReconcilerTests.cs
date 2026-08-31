@@ -35,7 +35,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
 
         CharacterNoteDerivedInfoReconcileResult derived =
             await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
-                fixture.Engine,
+                fixture.Materialize,
                 enricher
             );
 
@@ -64,7 +64,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
         Assert.Equal("Summary 0", memo.Summary);
         Assert.IsType<CharacterNoteDerivedInfoReconcileResult.NoWork>(
             await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
-                fixture.Engine,
+                fixture.Materialize,
                 enricher
             )
         );
@@ -84,7 +84,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
 
         CharacterNoteDerivedInfoReconcileResult failed =
             await providerFixture.Reconciler.ReconcileNextDerivedInfoAsync(
-                providerFixture.Engine,
+                providerFixture.Materialize,
                 new ThrowingEnricher()
             );
 
@@ -100,7 +100,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
         Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Applied>(
             await providerFixture.Reconciler
                 .ReconcileNextDerivedInfoAsync(
-                    providerFixture.Engine,
+                    providerFixture.Materialize,
                     new RecordingEnricher()
                 )
         );
@@ -131,7 +131,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
 
         CharacterNoteDerivedInfoReconcileResult mismatch =
             await contextFixture.Reconciler.ReconcileNextDerivedInfoAsync(
-                contextFixture.Engine,
+                contextFixture.Materialize,
                 contextEnricher
             );
 
@@ -145,7 +145,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
             contextFixture.Reconciler.ReadStatusSnapshot().StoreState);
         Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Applied>(
             await contextFixture.Reconciler.ReconcileNextDerivedInfoAsync(
-                contextFixture.Engine,
+                contextFixture.Materialize,
                 contextEnricher
             )
         );
@@ -165,13 +165,32 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
             first
         );
 
+        bool materializerActive = false;
+        bool materializerExited = false;
+        async ValueTask<CharacterNoteDerivedInfoEnrichmentRequest>
+            MaterializeInScope(
+            CharacterMemoryDerivedInfoWorkSnapshot work,
+            CancellationToken cancellationToken
+        ) {
+            materializerActive = true;
+            try {
+                return await fixture.Materialize(work, cancellationToken);
+            }
+            finally {
+                materializerActive = false;
+                materializerExited = true;
+            }
+        }
+
         var blocked = new BlockingEnricher();
         Task<CharacterNoteDerivedInfoReconcileResult> derivedTask =
             fixture.Reconciler.ReconcileNextDerivedInfoAsync(
-                fixture.Engine,
+                MaterializeInScope,
                 blocked
             ).AsTask();
         await blocked.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(materializerExited);
+        Assert.False(materializerActive);
 
         access.NextFreezeFault = FreezeFault.BeforePublish;
         (_, GalateaTerminalActionExtractionTarget second) = fixture.AppendTurn(
@@ -204,11 +223,121 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
 
         Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Applied>(
             await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
-                fixture.Engine,
+                fixture.Materialize,
                 mustNotRun
             )
         );
         Assert.Equal(0, mustNotRun.CallCount);
+    }
+
+    [Fact]
+    public async Task MaterializerCancellationLeavesPendingAndSkipsProvider() {
+        using var fixture = await Fixture.CreateAsync();
+        (_, GalateaTerminalActionExtractionTarget target) = fixture.AppendTurn(
+            "observation",
+            "save cancellation note"
+        );
+        _ = await fixture.Reconciler.ReconcileTargetAsync(
+            fixture.Engine,
+            target
+        );
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        var enricher = new RecordingEnricher();
+
+        CharacterNoteDerivedInfoReconcileResult deferred =
+            await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
+                fixture.Materialize,
+                enricher,
+                canceled.Token
+            );
+
+        Assert.Equal(
+            CharacterNoteDefaultPodOutcomeCodes
+                .DerivedInfoContextUnavailable,
+            Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Deferred>(
+                deferred
+            ).Code
+        );
+        Assert.Empty(enricher.Requests);
+        Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Applied>(
+            await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
+                fixture.Materialize,
+                enricher
+            )
+        );
+    }
+
+    [Fact]
+    public async Task PreCaptureCancellationWhileWaitingForPodGateDoesNotCapture() {
+        var access = new FaultingPodAccess();
+        var extractor = new BlockingNoteExtractor();
+        using var fixture = await Fixture.CreateAsync(access, extractor);
+        (_, GalateaTerminalActionExtractionTarget first) = fixture.AppendTurn(
+            "first observation",
+            "save first gate note"
+        );
+        _ = await fixture.Reconciler.ReconcileTargetAsync(
+            fixture.Engine,
+            first
+        );
+
+        extractor.ArmNextCall();
+        using var canceled = new CancellationTokenSource();
+        (_, GalateaTerminalActionExtractionTarget second) = fixture.AppendTurn(
+            "second observation",
+            "save canceled gate note"
+        );
+        Task<CharacterNoteDefaultPodReconcileResult> exactTask =
+            fixture.Reconciler.ReconcileTargetAsync(
+                fixture.Engine,
+                second,
+                canceled.Token
+            ).AsTask();
+        await extractor.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        access.ArmBlockingFreeze();
+        Task<CharacterNoteDerivedInfoReconcileResult> derivedTask =
+            fixture.Reconciler.ReconcileNextDerivedInfoAsync(
+                fixture.Materialize,
+                new RecordingEnricher()
+            ).AsTask();
+        await access.FreezeStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        try {
+            extractor.Release.SetResult();
+            await extractor.Completed.Task.WaitAsync(
+                TimeSpan.FromSeconds(10)
+            );
+            await Assert.ThrowsAsync<TimeoutException>(
+                async () => await exactTask.WaitAsync(
+                    TimeSpan.FromMilliseconds(100)
+                )
+            );
+            canceled.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                async () => await exactTask.WaitAsync(
+                    TimeSpan.FromSeconds(10)
+                )
+            );
+        }
+        finally {
+            extractor.Release.TrySetResult();
+            access.ReleaseFreeze.TrySetResult();
+        }
+
+        Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Applied>(
+            await derivedTask
+        );
+        Assert.Equal(2, extractor.CallCount);
+
+        Assert.IsType<CharacterNoteDefaultPodReconcileResult.AppliedNow>(
+            await fixture.Reconciler.ReconcileTargetAsync(
+                fixture.Engine,
+                second
+            )
+        );
+        Assert.Equal(3, extractor.CallCount);
     }
 
     [Fact]
@@ -229,7 +358,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
 
         CharacterNoteDerivedInfoReconcileResult result =
             await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
-                fixture.Engine,
+                fixture.Materialize,
                 new RecordingEnricher()
             );
 
@@ -247,7 +376,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
         Assert.Null(memo.Title);
         Assert.IsType<CharacterNoteDerivedInfoReconcileResult.NoWork>(
             await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
-                fixture.Engine,
+                fixture.Materialize,
                 new ThrowingEnricher()
             )
         );
@@ -269,7 +398,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
 
         Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Deferred>(
             await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
-                fixture.Engine,
+                fixture.Materialize,
                 new RecordingEnricher()
             )
         );
@@ -298,7 +427,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
 
         CharacterNoteDerivedInfoReconcileResult interrupted =
             await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
-                fixture.Engine,
+                fixture.Materialize,
                 new RecordingEnricher()
             );
         Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Deferred>(
@@ -339,6 +468,44 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
                 )
             ]);
         }
+    }
+
+    private sealed class BlockingNoteExtractor : ICharacterNoteExtractor {
+        private int _blockNext;
+
+        public string ContractId => "blocking-note-extractor-test-v1";
+        internal int CallCount { get; private set; }
+        internal TaskCompletionSource Started { get; private set; } = NewGate();
+        internal TaskCompletionSource Release { get; private set; } = NewGate();
+        internal TaskCompletionSource Completed { get; private set; } = NewGate();
+
+        internal void ArmNextCall() {
+            Started = NewGate();
+            Release = NewGate();
+            Completed = NewGate();
+            Volatile.Write(ref _blockNext, 1);
+        }
+
+        public async ValueTask<IReadOnlyList<CharacterNoteIntent>> ExtractAsync(
+            string visibleActionText,
+            CancellationToken cancellationToken
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            CallCount++;
+            if (Interlocked.Exchange(ref _blockNext, 0) == 1) {
+                Started.SetResult();
+                await Release.Task.WaitAsync(cancellationToken);
+                Completed.SetResult();
+            }
+            return [new CharacterNoteIntent(
+                "Exact memo: " + visibleActionText,
+                visibleActionText
+            )];
+        }
+
+        private static TaskCompletionSource NewGate() => new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
     }
 
     private class RecordingEnricher : ICharacterNoteDerivedInfoEnricher {
@@ -406,13 +573,24 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
     private enum FreezeFault {
         None,
         BeforePublish,
+        BlockBeforePublish,
         AfterPublishLoseRecoveryOpen,
     }
 
     private sealed class FaultingPodAccess : ICharacterNoteDefaultPodAccess {
         internal FreezeFault NextFreezeFault { get; set; }
         internal bool ReportDerivedInfoCapacityFull { get; set; }
+        internal TaskCompletionSource FreezeStarted { get; private set; } =
+            NewGate();
+        internal TaskCompletionSource ReleaseFreeze { get; private set; } =
+            NewGate();
         private bool _failNextOpen;
+
+        internal void ArmBlockingFreeze() {
+            FreezeStarted = NewGate();
+            ReleaseFreeze = NewGate();
+            NextFreezeFault = FreezeFault.BlockBeforePublish;
+        }
 
         public ICharacterNoteDefaultPodHandle Create(
             string rootPath,
@@ -449,6 +627,10 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
             $"simulated {operation} failure"
         );
 
+        private static TaskCompletionSource NewGate() => new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
         private sealed class Handle(
             FaultingPodAccess owner,
             ICharacterNoteDefaultPodHandle inner
@@ -483,6 +665,12 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
                 if (fault is FreezeFault.BeforePublish) {
                     throw Failure("pre-publish");
                 }
+                if (fault is FreezeFault.BlockBeforePublish) {
+                    owner.FreezeStarted.SetResult();
+                    await owner.ReleaseFreeze.Task.WaitAsync(
+                        cancellationToken
+                    );
+                }
                 await inner.FreezeAsync(cancellationToken);
                 if (fault is FreezeFault.AfterPublishLoseRecoveryOpen) {
                     owner._failNextOpen = true;
@@ -498,13 +686,13 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
     private sealed class Fixture : IDisposable {
         private readonly FixturePaths _paths;
         private readonly ICharacterNoteDefaultPodAccess _access;
-        private readonly RecordingNoteExtractor _extractor;
+        private readonly ICharacterNoteExtractor _extractor;
 
         private Fixture(
             FixturePaths paths,
             SessionJournalEngine engine,
             CharacterNoteDefaultPodReconciler reconciler,
-            RecordingNoteExtractor extractor,
+            ICharacterNoteExtractor extractor,
             ICharacterNoteDefaultPodAccess access
         ) {
             _paths = paths;
@@ -522,7 +710,8 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
         }
 
         internal static async ValueTask<Fixture> CreateAsync(
-            ICharacterNoteDefaultPodAccess? access = null
+            ICharacterNoteDefaultPodAccess? access = null,
+            ICharacterNoteExtractor? extractor = null
         ) {
             var paths = new FixturePaths();
             SessionJournalEngine engine = SessionJournalEngine.Create(
@@ -533,7 +722,8 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
                     "surface-a"
                 )
             );
-            var extractor = new RecordingNoteExtractor();
+            ICharacterNoteExtractor selectedExtractor = extractor
+                ?? new RecordingNoteExtractor();
             CharacterMemorySqliteStore store =
                 CharacterMemorySqliteStore.CreateNew(
                     paths.StatePath,
@@ -546,17 +736,29 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
             CharacterNoteDefaultPodReconciler reconciler =
                 await CharacterNoteDefaultPodReconciler.AttachAsync(
                     store,
-                    extractor,
+                    selectedExtractor,
                     selected
                 );
             return new Fixture(
                 paths,
                 engine,
                 reconciler,
-                extractor,
+                selectedExtractor,
                 selected
             );
         }
+
+        internal ValueTask<CharacterNoteDerivedInfoEnrichmentRequest>
+            Materialize(
+            CharacterMemoryDerivedInfoWorkSnapshot work,
+            CancellationToken cancellationToken
+        ) => ValueTask.FromResult(
+            CharacterNoteDerivedInfoContextMaterializer.Materialize(
+                Engine,
+                work,
+                cancellationToken
+            )
+        );
 
         internal (EventAddress,
             GalateaTerminalActionExtractionTarget) AppendTurn(
