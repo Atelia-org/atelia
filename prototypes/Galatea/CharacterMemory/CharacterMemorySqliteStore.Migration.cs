@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Security.Cryptography;
 using Atelia.EventJournal;
 using Microsoft.Data.Sqlite;
 
@@ -5,6 +7,8 @@ namespace Atelia.Galatea.Server.CharacterMemory;
 
 internal sealed partial class CharacterMemorySqliteStore {
     private const int PreviousSchemaVersion = 1;
+    private const string V1AuthorityDigestVersion =
+        "atelia.galatea.character-memory.v1-migration-authority.v1";
     private const string V1MetaSchemaSha256 =
         "8220d2dca086a69fcdec65a7b1d015f7b726acbd7bf05cf176f6615daf986ac4";
     private const string V1NoteSchemaSha256 =
@@ -21,6 +25,11 @@ internal sealed partial class CharacterMemorySqliteStore {
         long StoreRevision
     );
 
+    private sealed record V1ValidatedAuthority(
+        V1Status Status,
+        string AuthoritySha256
+    );
+
     private static void MigrateV1ToV2IfNeeded(
         SqliteConnection connection,
         CharacterMemoryStoreOwner owner,
@@ -34,11 +43,31 @@ internal sealed partial class CharacterMemorySqliteStore {
             );
         }
 
-        V1Status v1 = ValidateV1Database(connection, owner);
         const string operation = "migrate-character-memory-v1-to-v2";
+        V1ValidatedAuthority preflight = ValidateV1Database(
+            connection,
+            owner,
+            transaction: null
+        );
+        hooks.AfterValidationBeforeTransaction?.Invoke(operation);
         Exception? uncertain = null;
+        V1ValidatedAuthority locked;
         using (SqliteTransaction transaction =
                connection.BeginTransaction(deferred: false)) {
+            locked = ValidateV1Database(
+                connection,
+                owner,
+                transaction
+            );
+            if (!string.Equals(
+                preflight.AuthoritySha256,
+                locked.AuthoritySha256,
+                StringComparison.Ordinal
+            )) {
+                throw Corrupt(
+                    "Character Memory V1 authority changed after migration preflight."
+                );
+            }
             RebuildV1AsV2(connection, transaction);
             hooks.BeforeCommit?.Invoke(operation);
             try {
@@ -56,6 +85,7 @@ internal sealed partial class CharacterMemorySqliteStore {
                 connection,
                 owner
             );
+            V1Status v1 = locked.Status;
             if (v2.Baseline != v1.Baseline
                 || v2.StoreState != v1.StoreState
                 || !string.Equals(
@@ -103,12 +133,14 @@ internal sealed partial class CharacterMemorySqliteStore {
         }
     }
 
-    private static V1Status ValidateV1Database(
+    private static V1ValidatedAuthority ValidateV1Database(
         SqliteConnection connection,
-        CharacterMemoryStoreOwner owner
+        CharacterMemoryStoreOwner owner,
+        SqliteTransaction? transaction
     ) {
-        ValidateV1SchemaIdentity(connection);
+        ValidateV1SchemaIdentity(connection, transaction);
         using (SqliteCommand integrity = connection.CreateCommand()) {
+            integrity.Transaction = transaction;
             integrity.CommandText = "PRAGMA integrity_check;";
             if (!string.Equals(
                 integrity.ExecuteScalar() as string,
@@ -119,6 +151,7 @@ internal sealed partial class CharacterMemorySqliteStore {
             }
         }
         using (SqliteCommand foreignKeys = connection.CreateCommand()) {
+            foreignKeys.Transaction = transaction;
             foreignKeys.CommandText = "PRAGMA foreign_key_check;";
             using SqliteDataReader reader = foreignKeys.ExecuteReader();
             if (reader.Read()) {
@@ -126,9 +159,10 @@ internal sealed partial class CharacterMemorySqliteStore {
             }
         }
 
-        V1Status status = ReadV1Status(connection, owner);
+        V1Status status = ReadV1Status(connection, owner, transaction);
         var sources = new List<string>();
         using (SqliteCommand command = connection.CreateCommand()) {
+            command.Transaction = transaction;
             command.CommandText = """
                 SELECT source_action_address
                 FROM note_action_capture
@@ -137,10 +171,11 @@ internal sealed partial class CharacterMemorySqliteStore {
             using SqliteDataReader reader = command.ExecuteReader();
             while (reader.Read()) { sources.Add(reader.GetString(0)); }
         }
+        var captures = new List<CharacterMemoryCaptureSnapshot>(sources.Count);
         foreach (string source in sources) {
             CharacterMemoryCaptureSnapshot capture = ReadCaptureCore(
                 connection,
-                transaction: null,
+                transaction,
                 source
             )
                 ?? throw Corrupt("Character Memory V1 capture disappeared during validation.");
@@ -149,16 +184,34 @@ internal sealed partial class CharacterMemorySqliteStore {
                     "Character Memory V1 capture revision exceeds store revision."
                 );
             }
+            captures.Add(capture);
         }
-        ValidateV1GlobalCountInvariants(connection, status);
-        return status;
+        ValidateV1GlobalCountInvariants(connection, status, transaction);
+        return new V1ValidatedAuthority(
+            status,
+            ComputeV1AuthoritySha256(owner, status, captures)
+        );
     }
 
-    private static void ValidateV1SchemaIdentity(SqliteConnection connection) {
-        RequirePragmaInteger(connection, "application_id", ApplicationId);
-        RequirePragmaInteger(connection, "user_version", PreviousSchemaVersion);
+    private static void ValidateV1SchemaIdentity(
+        SqliteConnection connection,
+        SqliteTransaction? transaction
+    ) {
+        RequirePragmaInteger(
+            connection,
+            "application_id",
+            ApplicationId,
+            transaction
+        );
+        RequirePragmaInteger(
+            connection,
+            "user_version",
+            PreviousSchemaVersion,
+            transaction
+        );
         var actual = new HashSet<string>(StringComparer.Ordinal);
         using (SqliteCommand command = connection.CreateCommand()) {
+            command.Transaction = transaction;
             command.CommandText = """
                 SELECT type || ':' || name FROM sqlite_schema
                 WHERE name NOT LIKE 'sqlite_%'
@@ -185,40 +238,43 @@ internal sealed partial class CharacterMemorySqliteStore {
             "settled_default_pod_state_identity", "active_source_action",
             "quarantine_code", "quarantine_observed_pod_state_identity",
             "store_revision",
-        ]);
+        ], transaction);
         RequireExactColumns(connection, "note_action_capture", [
             "source_action_address", "visible_action_sha256",
             "visible_action_utf8_bytes", "extractor_contract_id",
             "extraction_commitment", "artifact_count", "state",
             "base_pod_state_identity", "target_pod_state_identity",
             "rejection_code", "state_revision",
-        ]);
+        ], transaction);
         RequireExactColumns(connection, "character_note", [
             "source_action_address", "artifact_ordinal", "exact_text", "memo_id",
-        ]);
+        ], transaction);
         foreach (string table in new[] {
             "character_memory_meta", "note_action_capture", "character_note",
         }) {
-            RequireStrictTable(connection, table);
+            RequireStrictTable(connection, table, transaction);
         }
         RequireExactTableSchema(
             connection,
             "character_memory_meta",
-            V1MetaSchemaSha256
+            V1MetaSchemaSha256,
+            transaction
         );
         RequireExactTableSchema(
             connection,
             "note_action_capture",
-            CaptureSchemaSha256
+            CaptureSchemaSha256,
+            transaction
         );
         RequireExactTableSchema(
             connection,
             "character_note",
-            V1NoteSchemaSha256
+            V1NoteSchemaSha256,
+            transaction
         );
         RequireExactForeignKeys(connection, "character_note", [
             "source_action_address->note_action_capture.source_action_address:RESTRICT"
-        ]);
+        ], transaction);
         RequireExactIndex(
             connection,
             "character_note",
@@ -228,7 +284,8 @@ internal sealed partial class CharacterMemorySqliteStore {
             """
                 CREATE UNIQUE INDEX ux_character_note_memo_id
                 ON character_note(memo_id) WHERE memo_id IS NOT NULL
-                """
+                """,
+            transaction
         );
         RequireExactIndex(
             connection,
@@ -240,15 +297,18 @@ internal sealed partial class CharacterMemorySqliteStore {
                 CREATE UNIQUE INDEX ux_note_capture_single_active
                 ON note_action_capture((1))
                 WHERE state IN ('Captured', 'Planned')
-                """
+                """,
+            transaction
         );
     }
 
     private static V1Status ReadV1Status(
         SqliteConnection connection,
-        CharacterMemoryStoreOwner expectedOwner
+        CharacterMemoryStoreOwner expectedOwner,
+        SqliteTransaction? transaction
     ) {
         using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT schema_version, user_id, session_repository_id,
                    capture_frontier_segment_number,
@@ -291,7 +351,7 @@ internal sealed partial class CharacterMemorySqliteStore {
         if (observed is not null) { RequirePodStateIdentity(observed, "V1 observed identity"); }
         CharacterMemoryCaptureSnapshot? active = activeSource is null
             ? null
-            : ReadCaptureCore(connection, transaction: null, activeSource)
+            : ReadCaptureCore(connection, transaction, activeSource)
                 ?? throw Corrupt("Character Memory V1 active source has no capture.");
         bool valid = state switch {
             CharacterMemoryStoreState.Provisioning => settled is null
@@ -325,9 +385,11 @@ internal sealed partial class CharacterMemorySqliteStore {
 
     private static void ValidateV1GlobalCountInvariants(
         SqliteConnection connection,
-        V1Status status
+        V1Status status,
+        SqliteTransaction? transaction
     ) {
         using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT
                 (SELECT COUNT(*) FROM note_action_capture
@@ -359,6 +421,95 @@ internal sealed partial class CharacterMemorySqliteStore {
             || reader.Read()) {
             throw Corrupt("Character Memory V1 global invariants are invalid.");
         }
+    }
+
+    private static string ComputeV1AuthoritySha256(
+        CharacterMemoryStoreOwner owner,
+        V1Status status,
+        IReadOnlyList<CharacterMemoryCaptureSnapshot> captures
+    ) {
+        using IncrementalHash hash = IncrementalHash.CreateHash(
+            HashAlgorithmName.SHA256
+        );
+        AppendCommitmentPart(hash, V1AuthorityDigestVersion);
+        AppendCommitmentPart(hash, owner.UserId);
+        AppendCommitmentPart(hash, owner.SessionRepositoryId);
+        AppendCommitmentPart(
+            hash,
+            status.Baseline.CaptureFromPhysicalFrontier.SegmentNumber
+                .ToString(CultureInfo.InvariantCulture)
+        );
+        AppendCommitmentPart(
+            hash,
+            status.Baseline.CaptureFromPhysicalFrontier.TailOffset
+                .ToString(CultureInfo.InvariantCulture)
+        );
+        AppendNullableAuthorityPart(hash, status.Baseline.SelectedHead);
+        AppendCommitmentPart(hash, status.StoreState.ToString());
+        AppendCommitmentPart(hash, status.ProvisionTargetPodStateIdentity);
+        AppendNullableAuthorityPart(
+            hash,
+            status.SettledDefaultPodStateIdentity
+        );
+        AppendNullableAuthorityPart(hash, status.ActiveSourceAction);
+        AppendNullableAuthorityPart(hash, status.QuarantineCode);
+        AppendNullableAuthorityPart(
+            hash,
+            status.QuarantineObservedPodStateIdentity
+        );
+        AppendCommitmentPart(
+            hash,
+            status.StoreRevision.ToString(CultureInfo.InvariantCulture)
+        );
+        AppendCommitmentPart(
+            hash,
+            captures.Count.ToString(CultureInfo.InvariantCulture)
+        );
+        foreach (CharacterMemoryCaptureSnapshot capture in captures) {
+            AppendCommitmentPart(hash, capture.SourceActionAddress);
+            AppendCommitmentPart(hash, capture.VisibleActionSha256);
+            AppendCommitmentPart(
+                hash,
+                capture.VisibleActionUtf8Bytes.ToString(
+                    CultureInfo.InvariantCulture
+                )
+            );
+            AppendCommitmentPart(hash, capture.ExtractorContractId);
+            AppendCommitmentPart(hash, capture.ExtractionCommitment);
+            AppendCommitmentPart(
+                hash,
+                capture.ArtifactCount.ToString(CultureInfo.InvariantCulture)
+            );
+            AppendCommitmentPart(hash, capture.State.ToString());
+            AppendNullableAuthorityPart(hash, capture.BasePodStateIdentity);
+            AppendNullableAuthorityPart(hash, capture.TargetPodStateIdentity);
+            AppendNullableAuthorityPart(hash, capture.RejectionCode);
+            AppendCommitmentPart(
+                hash,
+                capture.StateRevision.ToString(CultureInfo.InvariantCulture)
+            );
+            AppendCommitmentPart(
+                hash,
+                capture.Notes.Count.ToString(CultureInfo.InvariantCulture)
+            );
+            foreach (CharacterMemoryNoteSnapshot note in capture.Notes) {
+                AppendCommitmentPart(
+                    hash,
+                    note.ArtifactOrdinal.ToString(CultureInfo.InvariantCulture)
+                );
+                AppendCommitmentPart(hash, note.ExactText);
+                AppendNullableAuthorityPart(hash, note.MemoId);
+            }
+        }
+        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    private static void AppendNullableAuthorityPart(
+        IncrementalHash hash,
+        string? value
+    ) {
+        AppendCommitmentPart(hash, value is null ? "null" : "value");
+        if (value is not null) { AppendCommitmentPart(hash, value); }
     }
 
     private static void RebuildV1AsV2(
@@ -459,18 +610,10 @@ internal sealed partial class CharacterMemorySqliteStore {
                         AND target_pod_state_identity IS NOT NULL
                         AND rejection_code IS NULL)
                     OR (state = 'Rejected'
-                        AND ((enricher_contract_id IS NULL
-                                AND derived_info_commitment IS NULL
-                                AND base_pod_state_identity IS NULL
-                                AND target_pod_state_identity IS NULL)
-                            OR (enricher_contract_id IS NOT NULL
-                                AND derived_info_commitment IS NOT NULL
-                                AND base_pod_state_identity IS NULL
-                                AND target_pod_state_identity IS NULL)
-                            OR (enricher_contract_id IS NOT NULL
-                                AND derived_info_commitment IS NOT NULL
-                                AND base_pod_state_identity IS NOT NULL
-                                AND target_pod_state_identity IS NOT NULL))
+                        AND enricher_contract_id IS NOT NULL
+                        AND derived_info_commitment IS NOT NULL
+                        AND base_pod_state_identity IS NULL
+                        AND target_pod_state_identity IS NULL
                         AND rejection_code IS NOT NULL)
                 )
             ) STRICT;
@@ -520,6 +663,10 @@ internal sealed partial class CharacterMemorySqliteStore {
 
             CREATE UNIQUE INDEX ux_derived_info_single_planned
             ON derived_info_work((1)) WHERE state = 'Planned';
+
+            CREATE INDEX ix_derived_info_pending_schedule
+            ON derived_info_work(created_revision, source_action_address)
+            WHERE state = 'Pending';
 
             PRAGMA user_version = 2;
             """;

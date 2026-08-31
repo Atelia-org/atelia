@@ -25,24 +25,64 @@ internal sealed partial class CharacterMemorySqliteStore {
         }
     }
 
-    internal CharacterMemoryDerivedInfoWorkSnapshot? ReadNextDerivedInfoWork() {
+    internal CharacterMemoryDerivedInfoWorkSnapshot? ReadNextDerivedInfoWork(
+        CharacterMemoryDerivedInfoPendingCursor? pendingAfter = null
+    ) {
+        if (pendingAfter is not null) {
+            ValidateDerivedInfoPendingCursor(pendingAfter);
+        }
         lock (_gate) {
             ThrowIfDisposed();
             using SqliteConnection connection = OpenVerifiedConnection();
             _ = RequireReady(connection, transaction: null);
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT source_action_address
-                FROM derived_info_work
-                WHERE state IN ('Planned', 'Prepared', 'Pending')
-                ORDER BY CASE state
-                    WHEN 'Planned' THEN 0
-                    WHEN 'Prepared' THEN 1
-                    ELSE 2
-                END, created_revision, source_action_address
-                LIMIT 1;
-                """;
-            string? source = command.ExecuteScalar() as string;
+            string? source;
+            using (SqliteCommand priority = connection.CreateCommand()) {
+                priority.CommandText = """
+                    SELECT source_action_address
+                    FROM derived_info_work
+                    WHERE state IN ('Planned', 'Prepared')
+                    ORDER BY CASE state
+                        WHEN 'Planned' THEN 0
+                        ELSE 1
+                    END, created_revision, source_action_address
+                    LIMIT 1;
+                    """;
+                source = priority.ExecuteScalar() as string;
+            }
+            if (source is null) {
+                if (pendingAfter is not null) {
+                    using SqliteCommand after = connection.CreateCommand();
+                    after.CommandText = """
+                        SELECT source_action_address
+                        FROM derived_info_work
+                        WHERE state = 'Pending'
+                          AND (created_revision, source_action_address)
+                              > ($after_revision, $after_source)
+                        ORDER BY created_revision, source_action_address
+                        LIMIT 1;
+                        """;
+                    after.Parameters.AddWithValue(
+                        "$after_revision",
+                        pendingAfter.CreatedRevision
+                    );
+                    after.Parameters.AddWithValue(
+                        "$after_source",
+                        pendingAfter.SourceActionAddress
+                    );
+                    source = after.ExecuteScalar() as string;
+                }
+                if (source is null) {
+                    using SqliteCommand oldest = connection.CreateCommand();
+                    oldest.CommandText = """
+                        SELECT source_action_address
+                        FROM derived_info_work
+                        WHERE state = 'Pending'
+                        ORDER BY created_revision, source_action_address
+                        LIMIT 1;
+                        """;
+                    source = oldest.ExecuteScalar() as string;
+                }
+            }
             return source is null
                 ? null
                 : ReadDerivedInfoWorkCore(
@@ -400,6 +440,7 @@ internal sealed partial class CharacterMemorySqliteStore {
                             request.SourceActionAddress
                         );
                     RequireDerivedInfoExtractionIdentity(work, request.ExtractionCommitment);
+                    RequireDerivedInfoCommitment(work, request.DerivedInfoCommitment);
                     if (work.State is CharacterMemoryDerivedInfoState.Rejected) {
                         if (!string.Equals(
                             work.RejectionCode,
@@ -416,12 +457,9 @@ internal sealed partial class CharacterMemorySqliteStore {
                             work
                         );
                     }
-                    if (work.State is not (
-                        CharacterMemoryDerivedInfoState.Pending
-                        or CharacterMemoryDerivedInfoState.Prepared
-                    )) {
+                    if (work.State is not CharacterMemoryDerivedInfoState.Prepared) {
                         throw new CharacterMemoryStoreConflictException(
-                            "Only Pending or Prepared derived-info work can be rejected."
+                            "Only Prepared derived-info work can be rejected."
                         );
                     }
                     long revision = IncrementStoreRevision(connection, transaction);
@@ -432,7 +470,7 @@ internal sealed partial class CharacterMemorySqliteStore {
                         SET state = 'Rejected', rejection_code = $code,
                             state_revision = $revision
                         WHERE source_action_address = $source
-                          AND state IN ('Pending', 'Prepared');
+                          AND state = 'Prepared';
                         """;
                     update.Parameters.AddWithValue("$code", request.RejectionCode);
                     update.Parameters.AddWithValue("$revision", revision);
@@ -452,6 +490,11 @@ internal sealed partial class CharacterMemorySqliteStore {
                     request.SourceActionAddress,
                     result.StoreRevision,
                     work => work.State is CharacterMemoryDerivedInfoState.Rejected
+                        && string.Equals(
+                            work.DerivedInfoCommitment,
+                            request.DerivedInfoCommitment,
+                            StringComparison.Ordinal
+                        )
                         && string.Equals(
                             work.RejectionCode,
                             request.RejectionCode,
@@ -649,9 +692,8 @@ internal sealed partial class CharacterMemorySqliteStore {
                     && work.RejectionCode is null:
                 break;
             case CharacterMemoryDerivedInfoState.Rejected
-                when (allFieldsNull || allFieldsPresent)
-                    && preparedIdentityPresent == allFieldsPresent
-                    && (!planPresent || preparedIdentityPresent)
+                when allFieldsPresent && preparedIdentityPresent
+                    && !planPresent
                     && work.RejectionCode is not null:
                 break;
             default:
@@ -767,7 +809,22 @@ internal sealed partial class CharacterMemorySqliteStore {
         ArgumentNullException.ThrowIfNull(request);
         RequireEventAddress(request.SourceActionAddress, nameof(request.SourceActionAddress));
         RequireSha256(request.ExtractionCommitment, nameof(request.ExtractionCommitment));
+        RequireSha256(request.DerivedInfoCommitment, nameof(request.DerivedInfoCommitment));
         RequireCode(request.RejectionCode, nameof(request.RejectionCode));
+    }
+
+    private static void ValidateDerivedInfoPendingCursor(
+        CharacterMemoryDerivedInfoPendingCursor cursor
+    ) {
+        if (cursor.CreatedRevision < 1) {
+            throw new ArgumentOutOfRangeException(
+                nameof(cursor.CreatedRevision)
+            );
+        }
+        RequireEventAddress(
+            cursor.SourceActionAddress,
+            nameof(cursor.SourceActionAddress)
+        );
     }
 
     private static void RequireDerivedInfoExtractionIdentity(

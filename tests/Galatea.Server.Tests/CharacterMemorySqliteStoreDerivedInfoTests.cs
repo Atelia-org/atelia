@@ -199,6 +199,7 @@ public sealed class CharacterMemorySqliteStoreTestsV2 {
             fixture.Store.RejectDerivedInfo(new(
                 first.SourceActionAddress,
                 first.ExtractionCommitment,
+                prepared.DerivedInfoCommitment!,
                 "DO_NOT_DROP_PLANNED"
             )));
 
@@ -239,19 +240,52 @@ public sealed class CharacterMemorySqliteStoreTestsV2 {
             ["second"],
             ["m1:00000002"]
         );
+        Assert.Throws<CharacterMemoryStoreConflictException>(() =>
+            fixture.Store.RejectDerivedInfo(new(
+                first.SourceActionAddress,
+                first.ExtractionCommitment,
+                Sha('f'),
+                "PROVIDER_FAILURE_MUST_REMAIN_PENDING"
+            )));
+        Assert.Equal(CharacterMemoryDerivedInfoState.Pending,
+            fixture.Store.ReadDerivedInfoWorkExact(
+                first.SourceActionAddress
+            )!.State);
+        CharacterMemoryDerivedInfoWorkSnapshot prepared = fixture.Store
+            .PrepareDerivedInfo(Prepare(first, "reject")).Work;
         var request = new CharacterMemoryRejectDerivedInfoRequest(
             first.SourceActionAddress,
             first.ExtractionCommitment,
-            "SOURCE_TURN_UNAVAILABLE"
+            prepared.DerivedInfoCommitment!,
+            "DERIVED_INFO_CAPACITY"
         );
 
+        CharacterMemoryRejectDerivedInfoResult rejected =
+            fixture.Store.RejectDerivedInfo(request);
         Assert.Equal(CharacterMemoryRejectDerivedInfoDisposition.Rejected,
-            fixture.Store.RejectDerivedInfo(request).Disposition);
+            rejected.Disposition);
+        Assert.Equal(prepared.DerivedInfoCommitment,
+            rejected.Work.DerivedInfoCommitment);
+        Assert.All(rejected.Work.Notes, static note => {
+            Assert.NotNull(note.Title);
+            Assert.NotNull(note.Gist);
+            Assert.NotNull(note.Summary);
+        });
+        Assert.Null(rejected.Work.BasePodStateIdentity);
+        Assert.Null(rejected.Work.TargetPodStateIdentity);
         Assert.Equal(CharacterMemoryRejectDerivedInfoDisposition.AlreadyRejected,
             fixture.Store.RejectDerivedInfo(request).Disposition);
         Assert.Throws<CharacterMemoryStoreConflictException>(() =>
             fixture.Store.RejectDerivedInfo(request with {
                 RejectionCode = "DIFFERENT"
+            }));
+        Assert.Throws<CharacterMemoryStoreConflictException>(() =>
+            fixture.Store.RejectDerivedInfo(request with {
+                DerivedInfoCommitment = Sha('f')
+            }));
+        Assert.Throws<CharacterMemoryStoreConflictException>(() =>
+            fixture.Store.RejectDerivedInfo(request with {
+                ExtractionCommitment = Sha('f')
             }));
         Assert.Equal(second.SourceActionAddress,
             fixture.Store.ReadNextDerivedInfoWork()!.SourceActionAddress);
@@ -296,6 +330,7 @@ public sealed class CharacterMemorySqliteStoreTestsV2 {
                 fixture.Store.RejectDerivedInfo(new(
                     pending.SourceActionAddress,
                     pending.ExtractionCommitment,
+                    work.DerivedInfoCommitment!,
                     "NO_CONTEXT"
                 ));
             Assert.Equal(CharacterMemoryDerivedInfoState.Rejected,
@@ -376,6 +411,7 @@ public sealed class CharacterMemorySqliteStoreTestsV2 {
             var reject = new CharacterMemoryRejectDerivedInfoRequest(
                 pending.SourceActionAddress,
                 pending.ExtractionCommitment,
+                prepared.DerivedInfoCommitment!,
                 "NO_CONTEXT"
             );
             Assert.Throws<IOException>(() =>
@@ -538,6 +574,35 @@ public sealed class CharacterMemorySqliteStoreTestsV2 {
     }
 
     [Fact]
+    public void V1MigrationRejectsAuthorityChangeBetweenPreflightAndWriteLock() {
+        using var fixture = V1Store.Create(valid: true);
+        int fired = 0;
+        var hooks = new CharacterMemoryStoreTestHooks(
+            AfterValidationBeforeTransaction: operation => {
+                if (operation != "migrate-character-memory-v1-to-v2"
+                    || Interlocked.Exchange(ref fired, 1) != 0) {
+                    return;
+                }
+                ExecuteSql(fixture.DatabasePath, """
+                    UPDATE character_memory_meta
+                    SET store_revision = store_revision + 1
+                    WHERE singleton = 1;
+                    """);
+            }
+        );
+
+        Assert.Throws<InvalidDataException>(() =>
+            CharacterMemorySqliteStore.OpenExisting(
+                fixture.Path,
+                Owner(),
+                hooks
+            ));
+        Assert.Equal(1, fired);
+        Assert.Equal(1, ReadUserVersion(fixture.DatabasePath));
+        Assert.False(TableExists(fixture.DatabasePath, "derived_info_work"));
+    }
+
+    [Fact]
     public void StrictV2ReopenRejectsPartialDerivedInfoBatch() {
         using var fixture = new ReadyStore();
         _ = ApplyCapture(
@@ -588,6 +653,171 @@ public sealed class CharacterMemorySqliteStoreTestsV2 {
             ));
     }
 
+    [Fact]
+    public void StrictV2ReopenRejectsUnownedDerivedInfoFields() {
+        using var fixture = new ReadyStore();
+        _ = fixture.Store.CaptureNew(
+            Capture(Address(72), ["active exact capture"])
+        );
+        string path = fixture.DatabasePath;
+        fixture.DisposeStore();
+        ExecuteSql(path, """
+            UPDATE character_note SET derived_title = 'not owned by work'
+            WHERE source_action_address = $source;
+            """, ("$source", Address(72)));
+
+        Assert.Throws<InvalidDataException>(() =>
+            CharacterMemorySqliteStore.OpenExisting(
+                fixture.DirectoryPath,
+                fixture.Owner
+            ));
+    }
+
+    [Fact]
+    public void StrictV2ReopenRejectsRejectedWorkWithPlanIdentities() {
+        using var fixture = new ReadyStore();
+        CharacterMemoryDerivedInfoWorkSnapshot pending = ApplyCapture(
+            fixture.Store,
+            Address(73),
+            State('p'),
+            State('a'),
+            ["note"],
+            ["m1:00000001"]
+        );
+        CharacterMemoryDerivedInfoWorkSnapshot prepared = fixture.Store
+            .PrepareDerivedInfo(Prepare(pending, "planned-reject")).Work;
+        _ = fixture.Store.PlanDerivedInfo(new(
+            pending.SourceActionAddress,
+            pending.ExtractionCommitment,
+            prepared.DerivedInfoCommitment!,
+            State('a'),
+            State('b')
+        ));
+        string path = fixture.DatabasePath;
+        fixture.DisposeStore();
+        ExecuteSql(path, """
+            PRAGMA ignore_check_constraints = ON;
+            UPDATE derived_info_work
+            SET state = 'Rejected', rejection_code = 'UNREACHABLE'
+            WHERE source_action_address = $source;
+            """, ("$source", Address(73)));
+
+        Assert.Throws<InvalidDataException>(() =>
+            CharacterMemorySqliteStore.OpenExisting(
+                fixture.DirectoryPath,
+                fixture.Owner
+            ));
+    }
+
+    [Fact]
+    public void StrictV2ReopenRequiresCreatedRevisionToEqualAppliedCapture() {
+        using var fixture = new ReadyStore();
+        CharacterMemoryDerivedInfoWorkSnapshot pending = ApplyCapture(
+            fixture.Store,
+            Address(74),
+            State('p'),
+            State('a'),
+            ["note"],
+            ["m1:00000001"]
+        );
+        Assert.True(pending.CreatedRevision > 1);
+        string path = fixture.DatabasePath;
+        fixture.DisposeStore();
+        ExecuteSql(path, """
+            UPDATE derived_info_work SET created_revision = 1
+            WHERE source_action_address = $source;
+            """, ("$source", Address(74)));
+
+        Assert.Throws<InvalidDataException>(() =>
+            CharacterMemorySqliteStore.OpenExisting(
+                fixture.DirectoryPath,
+                fixture.Owner
+            ));
+    }
+
+    [Fact]
+    public void PendingCursorAdvancesAndWrapsWithoutPersistingFailure() {
+        using var fixture = new ReadyStore();
+        CharacterMemoryDerivedInfoWorkSnapshot first = ApplyCapture(
+            fixture.Store,
+            Address(75),
+            State('p'),
+            State('a'),
+            ["first"],
+            ["m1:00000001"]
+        );
+        CharacterMemoryDerivedInfoWorkSnapshot second = ApplyCapture(
+            fixture.Store,
+            Address(76),
+            State('a'),
+            State('b'),
+            ["second"],
+            ["m1:00000002"]
+        );
+        CharacterMemoryDerivedInfoWorkSnapshot third = ApplyCapture(
+            fixture.Store,
+            Address(77),
+            State('b'),
+            State('c'),
+            ["third"],
+            ["m1:00000003"]
+        );
+
+        Assert.Equal(first.SourceActionAddress,
+            fixture.Store.ReadNextDerivedInfoWork()!.SourceActionAddress);
+        Assert.Equal(second.SourceActionAddress,
+            fixture.Store.ReadNextDerivedInfoWork(Cursor(first))!
+                .SourceActionAddress);
+        Assert.Equal(third.SourceActionAddress,
+            fixture.Store.ReadNextDerivedInfoWork(Cursor(second))!
+                .SourceActionAddress);
+        Assert.Equal(first.SourceActionAddress,
+            fixture.Store.ReadNextDerivedInfoWork(Cursor(third))!
+                .SourceActionAddress);
+        Assert.All([first, second, third], work =>
+            Assert.Equal(
+                CharacterMemoryDerivedInfoState.Pending,
+                fixture.Store.ReadDerivedInfoWorkExact(
+                    work.SourceActionAddress
+                )!.State
+            ));
+
+        CharacterMemoryDerivedInfoWorkSnapshot prepared = fixture.Store
+            .PrepareDerivedInfo(Prepare(third, "priority")).Work;
+        Assert.Equal(prepared.SourceActionAddress,
+            fixture.Store.ReadNextDerivedInfoWork(Cursor(first))!
+                .SourceActionAddress);
+        _ = fixture.Store.PlanDerivedInfo(new(
+            prepared.SourceActionAddress,
+            prepared.ExtractionCommitment,
+            prepared.DerivedInfoCommitment!,
+            State('c'),
+            State('d')
+        ));
+        Assert.Equal(prepared.SourceActionAddress,
+            fixture.Store.ReadNextDerivedInfoWork(Cursor(first))!
+                .SourceActionAddress);
+    }
+
+    [Fact]
+    public void StrictV2ReopenRejectsWrongPendingScheduleIndex() {
+        using var fixture = new ReadyStore();
+        string path = fixture.DatabasePath;
+        fixture.DisposeStore();
+        ExecuteSql(path, """
+            DROP INDEX ix_derived_info_pending_schedule;
+            CREATE INDEX ix_derived_info_pending_schedule
+            ON derived_info_work(source_action_address, created_revision)
+            WHERE state = 'Pending';
+            """);
+
+        Assert.Throws<InvalidDataException>(() =>
+            CharacterMemorySqliteStore.OpenExisting(
+                fixture.DirectoryPath,
+                fixture.Owner
+            ));
+    }
+
     private static CharacterMemoryDerivedInfoWorkSnapshot ApplyCapture(
         CharacterMemorySqliteStore store,
         string source,
@@ -628,6 +858,10 @@ public sealed class CharacterMemorySqliteStoreTestsV2 {
             $"Summary {suffix} {note.ArtifactOrdinal}"
         )).ToArray()
     );
+
+    private static CharacterMemoryDerivedInfoPendingCursor Cursor(
+        CharacterMemoryDerivedInfoWorkSnapshot work
+    ) => new(work.CreatedRevision, work.SourceActionAddress);
 
     private static CharacterMemoryStoreOwner Owner() => new(
         "user",

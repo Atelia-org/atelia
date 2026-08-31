@@ -95,7 +95,13 @@ internal sealed record CharacterMemorySettleDerivedInfoRequest(
 internal sealed record CharacterMemoryRejectDerivedInfoRequest(
     string SourceActionAddress,
     string ExtractionCommitment,
+    string DerivedInfoCommitment,
     string RejectionCode
+);
+
+internal sealed record CharacterMemoryDerivedInfoPendingCursor(
+    long CreatedRevision,
+    string SourceActionAddress
 );
 
 internal sealed record CharacterMemoryRejectRequest(
@@ -291,7 +297,8 @@ internal sealed record CharacterMemoryQuarantineResult(
 
 internal sealed record CharacterMemoryStoreTestHooks(
     Action<string>? BeforeCommit = null,
-    Action<string>? AfterCommitBeforeReturn = null
+    Action<string>? AfterCommitBeforeReturn = null,
+    Action<string>? AfterValidationBeforeTransaction = null
 ) {
     internal static CharacterMemoryStoreTestHooks None { get; } = new();
 }

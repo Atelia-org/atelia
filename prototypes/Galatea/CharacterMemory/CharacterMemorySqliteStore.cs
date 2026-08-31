@@ -31,7 +31,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     private const string V2NoteSchemaSha256 =
         "a9f47db6e48c6322c30b8b4a2cdb03002608e03cace3c24905124e7120ff99da";
     private const string V2DerivedInfoSchemaSha256 =
-        "f6d72065c0f2293a61738fa873d2d20bf716628ef54e5b179aaaa5f2eaa82c30";
+        "428129a9119944d0f6207d9c6bb64e10c3ff53bd7671f976d9241626a965b4b1";
     private static readonly UTF8Encoding StrictUtf8 = new(
         encoderShouldEmitUTF8Identifier: false,
         throwOnInvalidBytes: true
@@ -677,18 +677,10 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                         AND target_pod_state_identity IS NOT NULL
                         AND rejection_code IS NULL)
                     OR (state = 'Rejected'
-                        AND ((enricher_contract_id IS NULL
-                                AND derived_info_commitment IS NULL
-                                AND base_pod_state_identity IS NULL
-                                AND target_pod_state_identity IS NULL)
-                            OR (enricher_contract_id IS NOT NULL
-                                AND derived_info_commitment IS NOT NULL
-                                AND base_pod_state_identity IS NULL
-                                AND target_pod_state_identity IS NULL)
-                            OR (enricher_contract_id IS NOT NULL
-                                AND derived_info_commitment IS NOT NULL
-                                AND base_pod_state_identity IS NOT NULL
-                                AND target_pod_state_identity IS NOT NULL))
+                        AND enricher_contract_id IS NOT NULL
+                        AND derived_info_commitment IS NOT NULL
+                        AND base_pod_state_identity IS NULL
+                        AND target_pod_state_identity IS NULL
                         AND rejection_code IS NOT NULL)
                 )
             ) STRICT;
@@ -702,6 +694,10 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
 
             CREATE UNIQUE INDEX ux_derived_info_single_planned
             ON derived_info_work((1)) WHERE state = 'Planned';
+
+            CREATE INDEX ix_derived_info_pending_schedule
+            ON derived_info_work(created_revision, source_action_address)
+            WHERE state = 'Pending';
             """;
         command.ExecuteNonQuery();
     }
@@ -854,6 +850,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             "index:ux_character_note_memo_id",
             "index:ux_note_capture_single_active",
             "index:ux_derived_info_single_planned",
+            "index:ix_derived_info_pending_schedule",
         ];
         if (!actual.SetEquals(expected)) {
             throw new InvalidDataException(
@@ -951,6 +948,21 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                 CREATE UNIQUE INDEX ux_note_capture_single_active
                 ON note_action_capture((1))
                 WHERE state IN ('Captured', 'Planned')
+                """
+        );
+        RequireExactCompositeIndex(
+            connection,
+            table: "derived_info_work",
+            index: "ix_derived_info_pending_schedule",
+            expectedUnique: false,
+            expectedKeyColumns: [
+                (7, "created_revision"),
+                (0, "source_action_address"),
+            ],
+            expectedSql: """
+                CREATE INDEX ix_derived_info_pending_schedule
+                ON derived_info_work(created_revision, source_action_address)
+                WHERE state = 'Pending'
                 """
         );
     }
@@ -1185,7 +1197,9 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                             AND work.source_action_address IS NULL)
                     OR (work.source_action_address IS NOT NULL
                             AND (capture.state != 'Applied'
-                                OR capture.artifact_count = 0))),
+                                OR capture.artifact_count = 0
+                                OR work.created_revision
+                                    != capture.state_revision))),
                 (SELECT COUNT(*) FROM (
                     SELECT work.source_action_address
                     FROM derived_info_work AS work
@@ -1200,14 +1214,9 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                                    OR COUNT(note.derived_gist) != COUNT(*)
                                    OR COUNT(note.derived_summary) != COUNT(*)))
                         OR (work.state = 'Rejected'
-                               AND NOT (
-                                   (COUNT(note.derived_title) = 0
-                                       AND COUNT(note.derived_gist) = 0
-                                       AND COUNT(note.derived_summary) = 0)
-                                   OR (COUNT(note.derived_title) = COUNT(*)
-                                       AND COUNT(note.derived_gist) = COUNT(*)
-                                       AND COUNT(note.derived_summary) = COUNT(*))
-                               ))
+                               AND (COUNT(note.derived_title) != COUNT(*)
+                                   OR COUNT(note.derived_gist) != COUNT(*)
+                                   OR COUNT(note.derived_summary) != COUNT(*)))
                 )),
                 (SELECT COUNT(*) FROM derived_info_work
                   WHERE created_revision > state_revision
@@ -1219,7 +1228,15 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                   WHERE state_revision > (
                       SELECT store_revision FROM character_memory_meta
                       WHERE singleton = 1
-                  ))
+                  )),
+                (SELECT COUNT(*)
+                 FROM character_note AS note
+                 LEFT JOIN derived_info_work AS work
+                   USING(source_action_address)
+                 WHERE work.source_action_address IS NULL
+                   AND (note.derived_title IS NOT NULL
+                       OR note.derived_gist IS NOT NULL
+                       OR note.derived_summary IS NOT NULL))
             ;
             """;
         using SqliteDataReader reader = command.ExecuteReader();
@@ -1247,6 +1264,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             : reader.GetInt64(8);
         long derivedRevisionMismatch = reader.GetInt64(9);
         long captureRevisionMismatch = reader.GetInt64(10);
+        long unownedDerivedFieldCount = reader.GetInt64(11);
         if (reader.Read()) {
             throw Corrupt("Character Memory count invariant query is not singleton.");
         }
@@ -1287,6 +1305,9 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         }
         if (captureRevisionMismatch != 0) {
             throw Corrupt("Character Note capture revisions are invalid.");
+        }
+        if (unownedDerivedFieldCount != 0) {
+            throw Corrupt("Unowned Character Note derived-info fields are invalid.");
         }
     }
 
@@ -1667,10 +1688,12 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     private static void RequireExactColumns(
         SqliteConnection connection,
         string table,
-        IReadOnlyList<string> expected
+        IReadOnlyList<string> expected,
+        SqliteTransaction? transaction = null
     ) {
         var actual = new List<string>();
         using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = $"PRAGMA table_info('{table}');";
         using SqliteDataReader reader = command.ExecuteReader();
         while (reader.Read()) { actual.Add(reader.GetString(1)); }
@@ -1681,9 +1704,11 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
 
     private static void RequireStrictTable(
         SqliteConnection connection,
-        string table
+        string table,
+        SqliteTransaction? transaction = null
     ) {
         using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT type, strict FROM pragma_table_list
             WHERE schema = 'main' AND name = $table;
@@ -1699,9 +1724,11 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     private static void RequireExactTableSchema(
         SqliteConnection connection,
         string table,
-        string expectedSha256
+        string expectedSha256,
+        SqliteTransaction? transaction = null
     ) {
         using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT sql FROM sqlite_schema
             WHERE type = 'table' AND name = $table;
@@ -1730,10 +1757,12 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     private static void RequireExactForeignKeys(
         SqliteConnection connection,
         string table,
-        IReadOnlyList<string> expected
+        IReadOnlyList<string> expected,
+        SqliteTransaction? transaction = null
     ) {
         var actual = new HashSet<string>(StringComparer.Ordinal);
         using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = $"PRAGMA foreign_key_list('{table}');";
         using SqliteDataReader reader = command.ExecuteReader();
         while (reader.Read()) {
@@ -1751,10 +1780,12 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         string index,
         int expectedKeyColumnId,
         string? expectedKeyColumnName,
-        string expectedSql
+        string expectedSql,
+        SqliteTransaction? transaction = null
     ) {
         bool found = false;
         using (SqliteCommand command = connection.CreateCommand()) {
+            command.Transaction = transaction;
             command.CommandText = $"PRAGMA index_list('{table}');";
             using SqliteDataReader reader = command.ExecuteReader();
             while (reader.Read()) {
@@ -1780,6 +1811,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
 
         int keyCount = 0;
         using (SqliteCommand command = connection.CreateCommand()) {
+            command.Transaction = transaction;
             command.CommandText = $"PRAGMA index_xinfo('{index}');";
             using SqliteDataReader reader = command.ExecuteReader();
             while (reader.Read()) {
@@ -1806,6 +1838,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         }
 
         using (SqliteCommand command = connection.CreateCommand()) {
+            command.Transaction = transaction;
             command.CommandText = """
                 SELECT tbl_name, sql FROM sqlite_schema
                 WHERE type = 'index' AND name = $index;
@@ -1820,6 +1853,100 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                     NormalizeSchemaSql(reader.GetString(1)),
                     NormalizeSchemaSql(expectedSql),
                     StringComparison.Ordinal)
+                || reader.Read()) {
+                throw Corrupt(
+                    $"Index '{index}' expression or predicate is not exact."
+                );
+            }
+        }
+    }
+
+    private static void RequireExactCompositeIndex(
+        SqliteConnection connection,
+        string table,
+        string index,
+        bool expectedUnique,
+        IReadOnlyList<(int ColumnId, string ColumnName)> expectedKeyColumns,
+        string expectedSql,
+        SqliteTransaction? transaction = null
+    ) {
+        bool found = false;
+        using (SqliteCommand command = connection.CreateCommand()) {
+            command.Transaction = transaction;
+            command.CommandText = $"PRAGMA index_list('{table}');";
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read()) {
+                if (!string.Equals(
+                    reader.GetString(1),
+                    index,
+                    StringComparison.Ordinal
+                )) {
+                    continue;
+                }
+                if (found
+                    || (reader.GetInt32(2) != 0) != expectedUnique
+                    || !string.Equals(reader.GetString(3), "c", StringComparison.Ordinal)
+                    || reader.GetInt32(4) != 1) {
+                    throw Corrupt(
+                        $"Index '{index}' is not an exact partial index."
+                    );
+                }
+                found = true;
+            }
+        }
+        if (!found) { throw Corrupt($"Index '{index}' is absent from '{table}'."); }
+
+        int keyCount = 0;
+        using (SqliteCommand command = connection.CreateCommand()) {
+            command.Transaction = transaction;
+            command.CommandText = $"PRAGMA index_xinfo('{index}');";
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read()) {
+                if (reader.GetInt32(5) != 1) { continue; }
+                if (keyCount >= expectedKeyColumns.Count) {
+                    throw Corrupt($"Index '{index}' has extra key columns.");
+                }
+                (int columnId, string columnName) = expectedKeyColumns[keyCount];
+                if (reader.GetInt32(0) != keyCount
+                    || reader.GetInt32(1) != columnId
+                    || !string.Equals(
+                        reader.GetString(2),
+                        columnName,
+                        StringComparison.Ordinal
+                    )
+                    || reader.GetInt32(3) != 0
+                    || !string.Equals(
+                        reader.GetString(4),
+                        "BINARY",
+                        StringComparison.Ordinal
+                    )) {
+                    throw Corrupt(
+                        $"Index '{index}' key columns are not exact."
+                    );
+                }
+                keyCount++;
+            }
+        }
+        if (keyCount != expectedKeyColumns.Count) {
+            throw Corrupt($"Index '{index}' key count is not exact.");
+        }
+
+        using (SqliteCommand command = connection.CreateCommand()) {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT tbl_name, sql FROM sqlite_schema
+                WHERE type = 'index' AND name = $index;
+                """;
+            command.Parameters.AddWithValue("$index", index);
+            using SqliteDataReader reader = command.ExecuteReader();
+            if (!reader.Read()
+                || !string.Equals(reader.GetString(0), table, StringComparison.Ordinal)
+                || reader.IsDBNull(1)
+                || !string.Equals(
+                    NormalizeSchemaSql(reader.GetString(1)),
+                    NormalizeSchemaSql(expectedSql),
+                    StringComparison.Ordinal
+                )
                 || reader.Read()) {
                 throw Corrupt(
                     $"Index '{index}' expression or predicate is not exact."
@@ -1854,9 +1981,11 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     private static void RequirePragmaInteger(
         SqliteConnection connection,
         string name,
-        long expected
+        long expected,
+        SqliteTransaction? transaction = null
     ) {
         using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = $"PRAGMA {name};";
         if (Convert.ToInt64(command.ExecuteScalar()) != expected) {
             throw Corrupt($"SQLite PRAGMA {name} is not exact.");
