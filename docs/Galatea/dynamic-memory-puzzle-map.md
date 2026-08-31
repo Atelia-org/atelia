@@ -3,7 +3,8 @@
 本文记录 Galatea 自主笔记与动态信息召回系统当前已经清晰的底层拼图。它是恢复思路用的工作笔记；其中
 `PlayerTurnObservation` recall block、`RecallEntry`、`PlayerTurnRecall`、`RecallBarrier`、
 `CharacterNoteOriginBarrier`、Galatea-side provider seam，以及Character Note保存请求的durable capture、
-默认MemoPod apply与诚实保存回执已经落地为V1代码级契约。召回规划、分类/metadata补全与索引维护仍是后续设计。
+默认MemoPod apply与诚实保存回执已经落地为V1代码级契约。MemoPod DerivedInfo更新与全文-only recall
+projection、Character Note DerivedInfo批量生成契约也已落地；生成结果的durable apply、召回规划、分类与索引维护仍是后续设计。
 
 ## 当前判断
 
@@ -27,6 +28,7 @@ future Observation     -> visible recall result
 - V0 barrier 只做 exact-key de-dupe，不做 `MemoExactText covers MemoSummary covers MemoGist` 这种 dominance 推理。
 - `CharacterNoteIntent` 仍只表达模型从角色叙事中提取出的 `ExactText` / `EvidenceQuote`；Action address、visible-text SHA-256 与 UTF-8 byte count 必须由 runtime 派生并由 CharacterMemory 持久化，不能成为模型自报字段。
 - `CharacterNoteOriginBarrier` 是与 `RecallBarrier` 并列的第二道屏障：前者阻止来源 Action 仍直接可见的 Character Note Memo，后者阻止已经作为 canonical recall block 注入过的 exact recall anchor。
+- 首个真实 recall MVP 应优先支持 `MemoExactText`，但 `Title` 是所有 Memo recall 的硬 eligibility 条件：正文已入库而 Title 尚未补齐的 Memo 暂不召回，不用占位标题冒充完成。实施顺序仍是先 ExactText、后 Gist/Summary，不改变三档渐进式可见粒度的长期设计。
 
 ## 已有拼图
 
@@ -39,9 +41,9 @@ future Observation     -> visible recall result
 - [`MemoPodRecall`](../../prototypes/MemoPod/Recall/MemoPodRecall.cs)
 - [`MemoPod README`](../../prototypes/MemoPod/README.md)
 
-MemoPod 当前解决的是“一堆 Memo 中如何按语义 query 找回候选 Memo”。`Memo` 已有 stable `Id`、必需的 `ExactText`，以及可空的 `Title`、`Gist`、`Summary` 元数据。
+MemoPod 当前解决的是“一堆 Memo 中如何按语义 query 找回候选 Memo”。`Memo` 已有 stable `Id`、必需且创建后不可修改的 `ExactText`，以及可空的 `Title`、`Gist`、`Summary` DerivedInfo。
 
-Memo 创建时必须有正文，因为正文是后续摘要、印象、标题与索引的事实来源；`Title`、`Gist`、`Summary` 在创建正文时都可以暂时缺失。未来的 LLM 内容处理管线负责补齐缺失条目，典型路径是补齐 `Summary` 与 `Gist`；很多时候 `Title` 可以在创建正文时直接从角色叙事里一起捕获。
+Memo 创建时必须有正文，因为正文是后续摘要、印象、标题与索引的事实来源；`Title`、`Gist`、`Summary` 在创建正文时都可以暂时缺失。`MemoPod.UpdateDerivedInfo`允许在保持`MemoId`与`ExactText`不变的前提下原子替换或清除这三项可重建信息；它们继续进入durable document与完整state identity，但不进入`MemoPodFrozenPrompt` / `ObservationMessage`。Prompt v3的Memo entry只包含`id + exact_text`，因此当前MemoPod recall selector不依赖Title、Gist或Summary。
 
 MemoPod 不负责：
 
@@ -66,6 +68,20 @@ Mailbox 已经证明这个方向可行：`OutboundMailExtractor`从角色叙事A
 `CharacterNoteIntent` / `CharacterNoteExtractor`已复用该模式，保守提取角色明确完成提交的长期Note保存请求；对应binding
 非`null`时主prompt才追加保存Quick Start。提取结果本身不表示保存；只有Default MemoPod reconciler的durable
 `AppliedNow`结果有资格生成保存回执。
+
+### Character Note DerivedInfo Enricher
+
+源码入口：
+
+- [`CharacterNoteDerivedInfoEnricher`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDerivedInfoEnricher.cs)
+
+纯生成契约已经落地：一次调用只消费产生该批Note的raw `ObservationContent`、visible Action，以及ordered
+`{ArtifactOrdinal, ExactText}` targets；模型必须用单个batch artifact为每条目标返回非空的`Title/Gist/Summary`。
+runtime严格验证数量、ordinal exact-once覆盖、输入顺序、trim/control character、strict UTF-8与MemoPod字段上限，
+任一项无效则整批失败。`Gist`的一句话要求与`Summary`的主旨摘要要求当前属于prompt semantic，不做脆弱的标点启发式判断。
+
+这还不是自动内容增强管线。当前没有config/runtime composition，也没有把生成结果接入CharacterMemory durable
+plan/settlement；因此生产Character Note仍会以DerivedInfo可空的形态保存。
 
 ### PlayerTurnObservation
 
@@ -122,13 +138,15 @@ internal enum RecallType {
 }
 ```
 
-这三个值表达的是渐进式可见粒度。设计意图上，`Title` 是三个粒度都统一携带的定位字段；差异主要在于除标题外还暴露哪一层内容。
+这三个值表达的是渐进式可见粒度。设计意图上，`Title` 是三个粒度都统一携带的定位字段；差异主要在于除标题外还暴露哪一层内容。粒度从粗到细的排列不等于功能应按同一顺序上线。
 
 - `MemoGist`：目录/索引级提示，包含 `Title` 与 `Gist`。
 - `MemoSummary`：较详细摘要，包含 `Title` 与 `Summary`。
 - `MemoExactText`：原始 Memo 正文，包含 `Title` 与 `ExactText`。
 
-因为 `Title/Gist/Summary` 都是可空元数据，未来 recall planner 需要区分“当前 metadata 还没补齐”和“选择这个粒度注入”。更成熟的路径是先由内容处理管线补齐缺失字段，再把对应粒度放入 `PlayerTurnObservation`；MVP 若允许缺字段通过，也应该在 provider 组装的 body 中显式表达缺失，而不是把 `MemoGist` 悄悄降级成只有正文或只有 id 的提示。
+因为 `Title/Gist/Summary` 都是可空DerivedInfo，未来 recall planner 需要区分“当前DerivedInfo还没补齐”和“选择这个粒度注入”。`Title`缺失时整个Memo不具备recall资格；`MemoGist`与`MemoSummary`还分别要求对应字段可用，不能把某一档悄悄降级成另一档。
+
+首个 recall MVP 选择 `MemoExactText` 更合适：`ExactText` 是 Memo 的必需事实正文，因此不依赖Gist/Summary质量或更广的摘要上下文。它仍需等待最小内容增强管线补齐Title；这项前置只决定Memo何时具备recall资格，不把摘要字段引入MemoPod selector corpus。具体body形状留给recall MVP的种子设计决定。
 
 如果未来 recall source 不止 Memo，可以再拆成 `RecallSourceKind + RecallGranularity`。当前阶段把 `Memo` 前缀写进 enum value 是可以接受的，因为它清楚表达这些 anchor 来自 Memo source。
 
@@ -325,7 +343,21 @@ terminal Action
   -> next eligible ordinary PlayerTurnObservation
 ```
 
-它证明ExactText保存到单一默认MemoPod，但暂不承诺分类、metadata补全、索引或召回。
+它证明ExactText保存到单一默认MemoPod，但暂不承诺分类、DerivedInfo durable补全、索引或召回。
+
+计划中的入库后DerivedInfo闭环：
+
+```text
+Applied Character Note batch + exact source completed turn
+  -> CharacterNoteDerivedInfoEnricher prepares one complete batch
+  -> persist exact generated result before touching MemoPod
+  -> plan UpdateDerivedInfo against base/target Pod identities
+  -> Freeze + durability confirmation
+  -> settle enriched Pod tip
+  -> Title-present Memo becomes recall-eligible
+```
+
+这条闭环尚未接入生产。它必须是可恢复的post-store reconciler，而不是绕过CharacterMemory settled Pod identity的普通callback；provider失败应保留已保存的ExactText并让该批继续pending，不撤销保存回执。
 
 动态召回注入：
 
@@ -345,8 +377,9 @@ new player action + exact completion boundary
 这份笔记不设计完整方案，但当前缺口大致是：
 
 - Memo 的归类、整理、合并、分裂、失效和二级索引维护；
+- CharacterMemory DerivedInfo durable state、V1→V2 migration、post-store plan/apply/settle与bounded retry；
 - recall trigger：按当前 player action、场景、实体、时间、未完成事项等决定何时查；
-- recall planner：在 Gist/Summary/ExactText 之间选择合适粒度；
+- recall planner：先完成只产出Title+ExactText的最小路径，后续再根据DerivedInfo可用性、内容增强结果与预算在Gist/Summary/ExactText之间选择合适粒度；
 - recall budget：和 RecapGrid recent raw tail、derived context contributions 共用 request budget；
 - active durable reply lease 场景的 recall 注入策略；
 - `SourceId` canonical codec 与跨 pod / 跨 source 边界；
@@ -363,10 +396,14 @@ new player action + exact completion boundary
 3. 已给 `GalateaServices` 预留 `IGalateaPlayerTurnRecallProvider` 注入 seam，测试中用固定 recall payload 验证了 render、recovery、recent display，也验证了第二轮能从 provider-visible context 聚合已可见 barrier。
 4. 已实现capability-gated的Character Note保存Quick Start、`CharacterNoteIntent` semantic.v4提取、durable capture/zero tombstone、Default MemoPod apply，以及只由`AppliedNow`生成的honest save receipt。
 5. 已实现 `CharacterNoteOriginBarrier`：复用同一 provider-visible context materialization，按 runtime-derived Action 指纹与 CharacterMemory `Applied` provenance 构造 typed Memo blockers，并与 `RecallBarrier` 一起交给 provider；这避免刚写下的 Note 在来源 Action 尚可见时被零增量重复召回。
+6. 已实现`MemoPod.UpdateDerivedInfo`与prompt v3：DerivedInfo可按稳定MemoId重建更新并继续进入durable state identity，但不进入FrozenPrompt；现有MemoPod selector只消费id与ExactText。
+7. 已实现纯`CharacterNoteDerivedInfoEnricher`契约：按同一source turn成批生成Title/Gist/Summary，并严格验证单batch、exact ordinal映射和字段边界；尚未接durable store或runtime。
 
 ### 下一批候选
 
-6. 设计 MemoPod recall planner 的最小边界，把 `MemoGist` 作为第一档上线；Summary / ExactText 作为后续升级路径。这里需要先决定 `SourceId` codec、Title/Gist 缺失时的显式展示策略，以及 planner 怎样同时消费两道 barrier。
-7. 在真实 recall 开始消耗 context budget 之后，再补 dominance、budget、active durable reply lease 与 provider failure/cancellation 的契约。
+8. 实现CharacterMemory V2 DerivedInfo durable state与V1→V2迁移，再接post-store reconciler和runtime hook。ExactText保存与回执必须先结算；Pending/provider失败不能阻断后续turn，Prepared之后不得重新调用模型，Planned之后必须先恢复Pod base/target再允许后续mutation。
+9. 设计 MemoPod recall MVP 的子模块种子边界，第一版只产出 `MemoExactText`，且只接受Title已补齐的Memo。这里需要决定 `SourceId` codec、Title+ExactText body、candidate query 与选择职责的切分，以及 planner 怎样同时消费两道 barrier。
+10. durable内容增强管线能够可靠提供`Gist` / `Summary`之后，再启用`MemoGist`与`MemoSummary`，并迭代摘要质量和生成上下文。
+11. 在真实 recall 开始消耗 context budget 之后，再补 dominance、budget、active durable reply lease 与 provider failure/cancellation 的契约。
 
-这个顺序保持authority前置：V1已经建立真实保存的独立durable owner；下一步从该authority出发接查询、召回与索引维护。
+这个顺序保持authority前置：V1已经建立真实保存的独立durable owner；下一步先让最小DerivedInfo生成结果通过同一Pod authority可靠落盘，再从Title+事实正文接通查询与召回。
