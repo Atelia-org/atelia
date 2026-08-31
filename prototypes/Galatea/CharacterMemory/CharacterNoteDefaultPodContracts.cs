@@ -34,6 +34,19 @@ internal static class CharacterNoteDefaultPodOutcomeCodes {
         "DEFAULT_POD_PLANNED_MEMO_ID_MISMATCH";
     internal const string PlannedTargetMismatch =
         "DEFAULT_POD_PLANNED_TARGET_MISMATCH";
+
+    internal const string DerivedInfoCapacityExceeded =
+        "DEFAULT_POD_DERIVED_INFO_CAPACITY";
+    internal const string DerivedInfoProviderUnavailable =
+        "DERIVED_INFO_PROVIDER_UNAVAILABLE";
+    internal const string DerivedInfoContextMismatch =
+        "DERIVED_INFO_CONTEXT_MISMATCH";
+    internal const string DerivedInfoContextUnavailable =
+        "DERIVED_INFO_CONTEXT_UNAVAILABLE";
+    internal const string DerivedInfoMemoMismatch =
+        "DERIVED_INFO_MEMO_MISMATCH";
+    internal const string DerivedInfoTargetMismatch =
+        "DERIVED_INFO_TARGET_MISMATCH";
 }
 
 internal sealed record CharacterNoteAppliedMemo(
@@ -90,12 +103,43 @@ internal abstract record CharacterNotePendingReconcileResult {
     ) : CharacterNotePendingReconcileResult;
 }
 
+internal abstract record CharacterNoteDerivedInfoReconcileResult {
+    private CharacterNoteDerivedInfoReconcileResult() { }
+
+    internal sealed record NoWork
+        : CharacterNoteDerivedInfoReconcileResult;
+
+    internal sealed record Applied(EventAddress SourceAction)
+        : CharacterNoteDerivedInfoReconcileResult;
+
+    internal sealed record Rejected(
+        EventAddress SourceAction,
+        string Code
+    ) : CharacterNoteDerivedInfoReconcileResult;
+
+    internal sealed record Deferred(
+        EventAddress SourceAction,
+        string Code
+    ) : CharacterNoteDerivedInfoReconcileResult;
+
+    internal sealed record Quarantined(string Code)
+        : CharacterNoteDerivedInfoReconcileResult;
+}
+
 internal interface ICharacterNoteDefaultPodHandle {
     MemoPodId PodId { get; }
     MemoPodPhase Phase { get; }
     int ActiveMemoCount { get; }
     int ActiveExactTextUtf8Bytes { get; }
+    int ActiveDerivedInfoUtf8Bytes { get; }
     MemoId Append(string exactText);
+    Memo Get(MemoId id);
+    void UpdateDerivedInfo(
+        MemoId id,
+        string title,
+        string gist,
+        string summary
+    );
     void ResumeEditing();
     string ComputeStateIdentity();
     Task FreezeAsync(CancellationToken cancellationToken = default);
@@ -192,7 +236,19 @@ internal sealed class CharacterNoteMemoPodAccess
         public int ActiveExactTextUtf8Bytes => pod.List().Sum(
             static memo => TextExtractorUtf8.GetByteCount(memo.ExactText)
         );
+        public int ActiveDerivedInfoUtf8Bytes => pod.List().Sum(
+            static memo => OptionalUtf8Bytes(memo.Title)
+                + OptionalUtf8Bytes(memo.Gist)
+                + OptionalUtf8Bytes(memo.Summary)
+        );
         public MemoId Append(string exactText) => pod.Append(exactText);
+        public Memo Get(MemoId id) => pod.Get(id);
+        public void UpdateDerivedInfo(
+            MemoId id,
+            string title,
+            string gist,
+            string summary
+        ) => pod.UpdateDerivedInfo(id, title, gist, summary);
         public void ResumeEditing() => pod.ResumeEditing();
         public string ComputeStateIdentity() => pod.ComputeStateIdentity();
         public async Task FreezeAsync(
@@ -214,5 +270,9 @@ internal sealed class CharacterNoteMemoPodAccess
                 throw Map(exception);
             }
         }
+
+        private static int OptionalUtf8Bytes(string? value) => value is null
+            ? 0
+            : TextExtractorUtf8.GetByteCount(value);
     }
 }

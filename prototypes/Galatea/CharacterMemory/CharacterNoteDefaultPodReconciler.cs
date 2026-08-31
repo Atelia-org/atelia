@@ -8,11 +8,15 @@ namespace Atelia.Galatea.Server.CharacterMemory;
 /// Owns one per-user Character Memory store and reconciles its single V1
 /// Default MemoPod. Callers still serialize SessionJournal work with TurnLock.
 /// </summary>
-internal sealed class CharacterNoteDefaultPodReconciler
+internal sealed partial class CharacterNoteDefaultPodReconciler
     : ICharacterNoteOriginReader, IDisposable {
     private readonly CharacterMemorySqliteStore _store;
     private readonly ICharacterNoteExtractor _extractor;
     private readonly ICharacterNoteDefaultPodAccess _pods;
+    private readonly SemaphoreSlim _podMutationGate = new(1, 1);
+    private readonly SemaphoreSlim _derivedInfoDispatchGate = new(1, 1);
+    private CharacterMemoryDerivedInfoPendingCursor?
+        _derivedInfoPendingCursor;
     private bool _disposed;
 
     private CharacterNoteDefaultPodReconciler(
@@ -185,6 +189,18 @@ internal sealed class CharacterNoteDefaultPodReconciler
     internal async ValueTask<CharacterNotePendingReconcileResult>
         ReconcilePendingAsync() {
         ThrowIfDisposed();
+        await _podMutationGate.WaitAsync(CancellationToken.None)
+            .ConfigureAwait(false);
+        try {
+            return await ReconcilePendingCoreAsync().ConfigureAwait(false);
+        }
+        finally {
+            _podMutationGate.Release();
+        }
+    }
+
+    private async ValueTask<CharacterNotePendingReconcileResult>
+        ReconcilePendingCoreAsync() {
         CharacterMemoryStatusSnapshot status = _store.ReadStatusSnapshot();
         if (status.StoreState is CharacterMemoryStoreState.Quarantined) {
             return new CharacterNotePendingReconcileResult.Reconciled(
@@ -202,7 +218,7 @@ internal sealed class CharacterNoteDefaultPodReconciler
             return new CharacterNotePendingReconcileResult.NoPending();
         }
         return new CharacterNotePendingReconcileResult.Reconciled(
-            await ReconcileCapturedBatchAsync(
+            await ReconcileCapturedBatchCoreAsync(
                     status,
                     status.ActiveCapture
                 )
@@ -229,30 +245,38 @@ internal sealed class CharacterNoteDefaultPodReconciler
         string sourceAction = EventAddressTextCodec.Format(
             target.SourceAction
         );
-        CharacterMemoryStatusSnapshot status = _store.ReadStatusSnapshot();
-        CharacterMemoryCaptureSnapshot? existing =
-            _store.ReadCaptureExact(sourceAction);
-        if (existing is not null) {
-            CharacterNoteDefaultPodReconcileResult? health =
+        await _podMutationGate.WaitAsync(CancellationToken.None)
+            .ConfigureAwait(false);
+        try {
+            CharacterMemoryStatusSnapshot status =
+                _store.ReadStatusSnapshot();
+            CharacterMemoryCaptureSnapshot? existing =
+                _store.ReadCaptureExact(sourceAction);
+            if (existing is not null) {
+                CharacterNoteDefaultPodReconcileResult? health =
+                    CheckCurrentTip(
+                        status,
+                        target.SourceAction,
+                        captureExists: true
+                    );
+                return health ?? ResultForTerminalCapture(existing);
+            }
+
+            CharacterNoteDefaultPodReconcileResult? current =
                 CheckCurrentTip(
                     status,
                     target.SourceAction,
-                    captureExists: true
+                    captureExists: false
                 );
-            return health ?? ResultForTerminalCapture(existing);
+            if (current is not null) { return current; }
+            if (_store.Baseline.CaptureFromPhysicalFrontier.Contains(
+                    target.SourceAction)) {
+                return new CharacterNoteDefaultPodReconcileResult
+                    .BaselineCovered(target.SourceAction);
+            }
         }
-
-        CharacterNoteDefaultPodReconcileResult? current =
-            CheckCurrentTip(
-                status,
-                target.SourceAction,
-                captureExists: false
-            );
-        if (current is not null) { return current; }
-        if (_store.Baseline.CaptureFromPhysicalFrontier.Contains(
-                target.SourceAction)) {
-            return new CharacterNoteDefaultPodReconcileResult
-                .BaselineCovered(target.SourceAction);
+        finally {
+            _podMutationGate.Release();
         }
 
         preCaptureCancellationToken.ThrowIfCancellationRequested();
@@ -268,47 +292,78 @@ internal sealed class CharacterNoteDefaultPodReconciler
                         "Character Note extractor returned a null batch."
                     );
         preCaptureCancellationToken.ThrowIfCancellationRequested();
-        EventAddress? observedHead = engine.ReadCurrentHead();
-        if (observedHead != target.SourceAction) {
-            return new CharacterNoteDefaultPodReconcileResult
-                .SelectedHeadChanged(target.SourceAction, observedHead);
-        }
+        await _podMutationGate.WaitAsync(CancellationToken.None)
+            .ConfigureAwait(false);
+        try {
+            CharacterMemoryStatusSnapshot status =
+                _store.ReadStatusSnapshot();
+            CharacterMemoryCaptureSnapshot? existing =
+                _store.ReadCaptureExact(sourceAction);
+            if (existing is not null) {
+                CharacterNoteDefaultPodReconcileResult? health =
+                    CheckCurrentTip(
+                        status,
+                        target.SourceAction,
+                        captureExists: true
+                    );
+                return health ?? ResultForTerminalCapture(existing);
+            }
 
-        CharacterMemoryCaptureResult captured = _store.CaptureNew(new(
-            sourceAction,
-            target.VisibleTextSha256,
-            target.VisibleTextUtf8Bytes,
-            _extractor.ContractId,
-            intents.Select(static intent => intent.ExactText).ToArray()
-        ));
-        return captured.Disposition switch {
-            CharacterMemoryCaptureDisposition.BaselineCovered =>
-                new CharacterNoteDefaultPodReconcileResult.BaselineCovered(
-                    target.SourceAction
-                ),
-            CharacterMemoryCaptureDisposition.ZeroCaptured =>
-                new CharacterNoteDefaultPodReconcileResult.ZeroCaptured(
-                    target.SourceAction
-                ),
-            CharacterMemoryCaptureDisposition.Captured
-                or CharacterMemoryCaptureDisposition.AlreadyCaptured =>
-                await ReconcileCapturedBatchAsync(
-                        _store.ReadStatusSnapshot(),
-                        captured.Capture ?? throw new InvalidDataException(
-                            "A non-zero capture result has no capture snapshot."
+            EventAddress? observedHead = engine.ReadCurrentHead();
+            if (observedHead != target.SourceAction) {
+                return new CharacterNoteDefaultPodReconcileResult
+                    .SelectedHeadChanged(target.SourceAction, observedHead);
+            }
+            CharacterNoteDefaultPodReconcileResult? current =
+                CheckCurrentTip(
+                    status,
+                    target.SourceAction,
+                    captureExists: false
+                );
+            if (current is not null) { return current; }
+
+            CharacterMemoryCaptureResult captured = _store.CaptureNew(new(
+                sourceAction,
+                target.VisibleTextSha256,
+                target.VisibleTextUtf8Bytes,
+                _extractor.ContractId,
+                intents.Select(static intent => intent.ExactText).ToArray()
+            ));
+            return captured.Disposition switch {
+                CharacterMemoryCaptureDisposition.BaselineCovered =>
+                    new CharacterNoteDefaultPodReconcileResult.BaselineCovered(
+                        target.SourceAction
+                    ),
+                CharacterMemoryCaptureDisposition.ZeroCaptured =>
+                    new CharacterNoteDefaultPodReconcileResult.ZeroCaptured(
+                        target.SourceAction
+                    ),
+                CharacterMemoryCaptureDisposition.Captured
+                    or CharacterMemoryCaptureDisposition.AlreadyCaptured =>
+                    await ReconcileCapturedBatchCoreAsync(
+                            _store.ReadStatusSnapshot(),
+                            captured.Capture
+                                ?? throw new InvalidDataException(
+                                    "A non-zero capture result has no capture snapshot."
+                                )
                         )
-                    )
-                    .ConfigureAwait(false),
-            _ => throw new InvalidDataException(
-                "Unknown Character Memory capture disposition."
-            )
-        };
+                        .ConfigureAwait(false),
+                _ => throw new InvalidDataException(
+                    "Unknown Character Memory capture disposition."
+                )
+            };
+        }
+        finally {
+            _podMutationGate.Release();
+        }
     }
 
     public void Dispose() {
         if (_disposed) { return; }
         _disposed = true;
         _store.Dispose();
+        _podMutationGate.Dispose();
+        _derivedInfoDispatchGate.Dispose();
     }
 
     private async ValueTask EnsureProvisionedAsync() {
@@ -346,7 +401,21 @@ internal sealed class CharacterNoteDefaultPodReconciler
                         plannedTarget,
                         StringComparison.Ordinal
                     );
-                if (matchesSettled || matchesPlannedTarget) { return; }
+                bool matchesDerivedInfoPlannedTarget =
+                    status.ActiveDerivedInfoWork is {
+                        State: CharacterMemoryDerivedInfoState.Planned,
+                        TargetPodStateIdentity: { } derivedInfoTarget
+                    }
+                    && string.Equals(
+                        ready.Identity,
+                        derivedInfoTarget,
+                        StringComparison.Ordinal
+                    );
+                if (matchesSettled
+                    || matchesPlannedTarget
+                    || matchesDerivedInfoPlannedTarget) {
+                    return;
+                }
             }
             if (observed is PodOpenResult.Unavailable unavailable) {
                 throw unavailable.Exception;
@@ -491,6 +560,23 @@ internal sealed class CharacterNoteDefaultPodReconciler
 
     internal async ValueTask<CharacterNoteDefaultPodReconcileResult>
         ReconcileCapturedBatchAsync(
+        CharacterMemoryStatusSnapshot status,
+        CharacterMemoryCaptureSnapshot capture
+    ) {
+        ThrowIfDisposed();
+        await _podMutationGate.WaitAsync(CancellationToken.None)
+            .ConfigureAwait(false);
+        try {
+            return await ReconcileCapturedBatchCoreAsync(status, capture)
+                .ConfigureAwait(false);
+        }
+        finally {
+            _podMutationGate.Release();
+        }
+    }
+
+    private async ValueTask<CharacterNoteDefaultPodReconcileResult>
+        ReconcileCapturedBatchCoreAsync(
         CharacterMemoryStatusSnapshot status,
         CharacterMemoryCaptureSnapshot capture
     ) {

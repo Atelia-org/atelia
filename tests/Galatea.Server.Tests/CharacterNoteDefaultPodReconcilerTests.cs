@@ -1227,6 +1227,7 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
             public MemoPodPhase Phase { get; private set; }
             public int ActiveMemoCount => _activeCount;
             public int ActiveExactTextUtf8Bytes => _activeBytes;
+            public int ActiveDerivedInfoUtf8Bytes => 0;
 
             public MemoId Append(string exactText) {
                 Assert.Equal(MemoPodPhase.Editable, Phase);
@@ -1238,6 +1239,19 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
                 _owner.AppendCount++;
                 return id;
             }
+
+            public Memo Get(MemoId id) => throw new NotSupportedException(
+                $"Fake ExactText-only Pod does not expose memo '{id}'."
+            );
+
+            public void UpdateDerivedInfo(
+                MemoId id,
+                string title,
+                string gist,
+                string summary
+            ) => throw new NotSupportedException(
+                $"Fake ExactText-only Pod cannot update memo '{id}'."
+            );
 
             public void ResumeEditing() {
                 Assert.Equal(MemoPodPhase.Frozen, Phase);
