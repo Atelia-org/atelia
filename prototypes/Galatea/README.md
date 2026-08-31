@@ -139,7 +139,9 @@ unknown ID 或多余 binding
 model/provider/surface/endpoint/secret locator 全部来自该 connection，client 只在首次真正
 需要清洗时惰性创建；OutboundMailExtractor 同样使用hidden、lazy、borrowed client，且不进入
 Agent/UI selectable allowlist。CharacterNoteExtractor也按每个user的exact `CharacterName`构造，借用同一
-registry并保持client lazy。V1在successful fresh/recovery完成边界把提取结果交给Character Memory reconciler；
+registry并保持client lazy。DerivedInfo enricher复用同一个Character Note connection/client routing，但每个user拥有
+独立实例、prompt与`ContractId`，不新增第四个binding。Character Note保存路径在successful fresh/recovery完成边界
+把提取结果交给Character Memory reconciler；
 0结果也写durable tombstone，非0结果幂等保存到每个角色的默认MemoPod。只有当前
 post-completion返回`AppliedNow`且final head仍一致时才queue保存回执；admission/restart恢复不补回执。Binding非
 `null`时主system prompt追加Character Note保存Quick Start，`null`时完全不出现该能力。
@@ -497,6 +499,22 @@ deadline、`TextExtractionException`与Pod availability当best-effort；`Deferre
 Quarantined/invariant fail closed。admission先恢复pending，再对latest exact target并行结算Mail/Note；任何admission
 pre-capture失败都会阻止新mutation。
 
+non-empty ExactText batch结算为`Applied`时，CharacterMemory SQLite V2在同一事务建立DerivedInfo `Pending` work。
+session-owned background pump使用capacity-1 wakeup channel与单调external signal generation；channel可以合并忙碌期
+wakeup，但不会丢掉每个外部signal对应的单次推进额度，也不会无signal自主热重试。每个signal至多处理一批：它短暂取得`TurnLock`，按
+source Action地址从SessionJournal重建raw Observation与visible Action并核验durable fingerprint，随即释放锁，再调用
+独立`CharacterNoteDerivedInfoEnricher`生成完整Title/Gist/Summary batch。provider调用使用独立30秒deadline，不继承HTTP/
+browser/当前turn cancellation；timeout、invalid output或provider failure保留Pending，不撤销ExactText或回执，也不让主
+turn失败。startup和后续安全turn boundary会再次signal，session内Pending cursor按round-robin避免一个长期失败batch
+永久遮挡后续batch；当前没有持久化retry schedule或attempt counter。30秒deadline通过cancellation请求实现；若底层
+provider完全忽略cancellation，session shutdown会继续等待该调用返回，以免提前释放仍被使用的durable/session资源。
+
+生成结果先durable写成`Prepared`，之后不再调用模型；Default MemoPod mutation按base/target identity执行
+`UpdateDerivedInfo -> Planned -> Freeze/confirm -> Applied`。只有Planned占用mutation slot，并在attach、fresh、recovery
+admission以及任何新ExactText capture前provider-free恢复。MemoPod document/state identity包含DerivedInfo，但FrozenPrompt v3
+仍只包含`id + exact_text`。CharacterMemory store会在strict V1 validation后事务化迁移为V2；程序测试不会主动打开ignored
+live store。
+
 Note extractor只把`${characterName}`本人已明确完成提交的长期Note保存请求识别为artifact；想到、计划、
 草稿、普通世界内书写、引用旧Note或仅声称已经保存都不构成提交。`ExactText`与`EvidenceQuote`必须是visible Action
 的ordinal substring；semantic contract为`semantic.v4`，tool name与`exactText` / `evidenceQuote` schema保持不变。
@@ -511,6 +529,7 @@ Deferred、AlreadyApplied、admission recovery、render failure或queue full都�
 Created reply cutoff、ready-turn、inbound与recovery不领取；领取后的pre-dispatch stop、失败、Undo、rewind或restart
 都不重新排队。该回执只证明列出的ExactText已保存到默认MemoPod，不承诺分类、metadata补全或召回。非fatal Mail
 失败不回滚已保存Memo：final fence仍成立时先queue真实回执，再原样传播Mail错误；fatal/caller cancel/head change不queue。
+DerivedInfo pump signal同样在最终Mail错误传播前完成，但signal不等于metadata已生成或已落盘。
 
 每个outbound-mail Action extraction batch由`GalateaDelegationSqliteStore`单事务全有或全无地capture；成功的0-intent
 extraction也写`action_capture` tombstone，extractor failure绝不能冒充空结果。stable dispatch ID是对length-prefixed

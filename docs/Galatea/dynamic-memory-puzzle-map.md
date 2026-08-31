@@ -4,7 +4,8 @@
 `PlayerTurnObservation` recall block、`RecallEntry`、`PlayerTurnRecall`、`RecallBarrier`、
 `CharacterNoteOriginBarrier`、Galatea-side provider seam，以及Character Note保存请求的durable capture、
 默认MemoPod apply与诚实保存回执已经落地为V1代码级契约。MemoPod DerivedInfo更新与全文-only recall
-projection、Character Note DerivedInfo批量生成契约也已落地；生成结果的durable apply、召回规划、分类与索引维护仍是后续设计。
+projection、Character Note DerivedInfo批量生成、durable apply与非阻塞runtime pump也已落地；召回规划、
+分类与索引维护仍是后续设计。
 
 ## 当前判断
 
@@ -74,14 +75,30 @@ Mailbox 已经证明这个方向可行：`OutboundMailExtractor`从角色叙事A
 源码入口：
 
 - [`CharacterNoteDerivedInfoEnricher`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDerivedInfoEnricher.cs)
+- [`CharacterMemorySqliteStore.DerivedInfo`](../../prototypes/Galatea/CharacterMemory/CharacterMemorySqliteStore.DerivedInfo.cs)
+- [`CharacterNoteDefaultPodReconciler.DerivedInfo`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDefaultPodReconciler.DerivedInfo.cs)
+- [`CharacterNoteDerivedInfoPump`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDerivedInfoPump.cs)
 
 纯生成契约已经落地：一次调用只消费产生该批Note的raw `ObservationContent`、visible Action，以及ordered
 `{ArtifactOrdinal, ExactText}` targets；模型必须用单个batch artifact为每条目标返回非空的`Title/Gist/Summary`。
 runtime严格验证数量、ordinal exact-once覆盖、输入顺序、trim/control character、strict UTF-8与MemoPod字段上限，
 任一项无效则整批失败。`Gist`的一句话要求与`Summary`的主旨摘要要求当前属于prompt semantic，不做脆弱的标点启发式判断。
 
-这还不是自动内容增强管线。当前没有config/runtime composition，也没有把生成结果接入CharacterMemory durable
-plan/settlement；因此生产Character Note仍会以DerivedInfo可空的形态保存。
+这条生成契约现在已经接入自动内容增强管线。CharacterMemory SQLite V2在ExactText `Applied`结算的同一事务中
+创建`Pending` work；正常写回路径为`Pending -> Prepared -> Planned -> Applied`，确定性容量不足只允许从
+`Prepared -> Rejected`分支退出。状态保存完整生成结果和Pod base/target identity。`Prepared`之后不再调用模型；
+只有`Planned`占用Pod mutation slot，并在restart/admission中按
+observed base/target恢复，neither则quarantine。
+
+每个writable session拥有一个capacity-1 wakeup channel与单调external signal generation驱动的background pump。
+每个外部signal至多换取一次work attempt；忙碌期间channel可以合并wakeup，但generation不会丢掉推进额度，也不会在
+没有新signal时自主热重试。pump在`TurnLock`内只按source Action地址从
+SessionJournal重建immutable raw Observation/visible Action并核验指纹，释放锁后才调用provider；ExactText保存、
+`AppliedNow`、回执和主回合完成都不等待增强provider。provider失败或timeout保留`Pending`，后续startup或安全turn
+boundary signal再做一次bounded尝试；当前不持久化attempt counter或retry schedule。MVP复用
+`galatea.character-note-extractor`的connection/client routing，但enricher实例、prompt与`ContractId`保持独立。
+30秒deadline通过cancellation请求实现；若底层provider完全忽略cancellation，session shutdown会继续等待该调用返回，
+以免提前释放它仍在使用的SessionJournal、CharacterMemory或Completion资源。
 
 ### PlayerTurnObservation
 
@@ -343,13 +360,16 @@ terminal Action
   -> next eligible ordinary PlayerTurnObservation
 ```
 
-它证明ExactText保存到单一默认MemoPod，但暂不承诺分类、DerivedInfo durable补全、索引或召回。
+它证明ExactText保存到单一默认MemoPod；保存回执仍只证明这件事，不承诺异步DerivedInfo已经补全，也不承诺分类、
+索引或召回。
 
-计划中的入库后DerivedInfo闭环：
+现行入库后DerivedInfo闭环：
 
 ```text
 Applied Character Note batch + exact source completed turn
-  -> CharacterNoteDerivedInfoEnricher prepares one complete batch
+  -> durable Pending work + session pump signal generation
+  -> rebuild exact source Observation/Action under TurnLock
+  -> CharacterNoteDerivedInfoEnricher prepares one complete batch outside TurnLock
   -> persist exact generated result before touching MemoPod
   -> plan UpdateDerivedInfo against base/target Pod identities
   -> Freeze + durability confirmation
@@ -357,7 +377,10 @@ Applied Character Note batch + exact source completed turn
   -> Title-present Memo becomes recall-eligible
 ```
 
-这条闭环尚未接入生产。它必须是可恢复的post-store reconciler，而不是绕过CharacterMemory settled Pod identity的普通callback；provider失败应保留已保存的ExactText并让该批继续pending，不撤销保存回执。
+这条闭环已经接入生产。它是可恢复的post-store reconciler，不是绕过CharacterMemory settled Pod identity的普通
+callback；provider失败保留已保存的ExactText和`Pending` work，不撤销保存回执，也不阻断后续turn。V1 store在持有
+lifetime lock后执行strict validation，再在`BEGIN IMMEDIATE`内重验同一authority并事务化迁移到V2；历史Applied
+capture会得到Pending work，ignored live store不会由测试或提交过程主动打开。
 
 动态召回注入：
 
@@ -377,7 +400,8 @@ new player action + exact completion boundary
 这份笔记不设计完整方案，但当前缺口大致是：
 
 - Memo 的归类、整理、合并、分裂、失效和二级索引维护；
-- CharacterMemory DerivedInfo durable state、V1→V2 migration、post-store plan/apply/settle与bounded retry；
+- DerivedInfo retry的持久化schedule、attempt telemetry与长期backoff策略；当前只有session内round-robin cursor与外部安全边界signal；
+- 对完全不遵守cancellation的provider建立更强的隔离/终止边界；当前shutdown选择等待而不是冒险use-after-dispose；
 - recall trigger：按当前 player action、场景、实体、时间、未完成事项等决定何时查；
 - recall planner：先完成只产出Title+ExactText的最小路径，后续再根据DerivedInfo可用性、内容增强结果与预算在Gist/Summary/ExactText之间选择合适粒度；
 - recall budget：和 RecapGrid recent raw tail、derived context contributions 共用 request budget；
@@ -397,13 +421,15 @@ new player action + exact completion boundary
 4. 已实现capability-gated的Character Note保存Quick Start、`CharacterNoteIntent` semantic.v4提取、durable capture/zero tombstone、Default MemoPod apply，以及只由`AppliedNow`生成的honest save receipt。
 5. 已实现 `CharacterNoteOriginBarrier`：复用同一 provider-visible context materialization，按 runtime-derived Action 指纹与 CharacterMemory `Applied` provenance 构造 typed Memo blockers，并与 `RecallBarrier` 一起交给 provider；这避免刚写下的 Note 在来源 Action 尚可见时被零增量重复召回。
 6. 已实现`MemoPod.UpdateDerivedInfo`与prompt v3：DerivedInfo可按稳定MemoId重建更新并继续进入durable state identity，但不进入FrozenPrompt；现有MemoPod selector只消费id与ExactText。
-7. 已实现纯`CharacterNoteDerivedInfoEnricher`契约：按同一source turn成批生成Title/Gist/Summary，并严格验证单batch、exact ordinal映射和字段边界；尚未接durable store或runtime。
+7. 已实现`CharacterNoteDerivedInfoEnricher`契约：按同一source turn成批生成Title/Gist/Summary，并严格验证单batch、exact ordinal映射和字段边界。
+8. 已实现CharacterMemory SQLite V2 DerivedInfo queue、strict V1->V2 migration、`UpdateDerivedInfo` plan/apply/settle与crash recovery；session-owned background pump在保存与回执之后非阻塞触发，provider失败保留Pending，Prepared不重调模型，Planned在所有新turn/capture admission前恢复。
 
 ### 下一批候选
 
-8. 实现CharacterMemory V2 DerivedInfo durable state与V1→V2迁移，再接post-store reconciler和runtime hook。ExactText保存与回执必须先结算；Pending/provider失败不能阻断后续turn，Prepared之后不得重新调用模型，Planned之后必须先恢复Pod base/target再允许后续mutation。
 9. 设计 MemoPod recall MVP 的子模块种子边界，第一版只产出 `MemoExactText`，且只接受Title已补齐的Memo。这里需要决定 `SourceId` codec、Title+ExactText body、candidate query 与选择职责的切分，以及 planner 怎样同时消费两道 barrier。
-10. durable内容增强管线能够可靠提供`Gist` / `Summary`之后，再启用`MemoGist`与`MemoSummary`，并迭代摘要质量和生成上下文。
-11. 在真实 recall 开始消耗 context budget 之后，再补 dominance、budget、active durable reply lease 与 provider failure/cancellation 的契约。
+10. 在生产使用中观察最小DerivedInfo管线的摘要质量与失败分布，再决定是否增加持久化retry schedule、attempt telemetry、独立connection binding或更广的生成上下文。
+11. 内容增强质量达到可用门槛后，再启用`MemoGist`与`MemoSummary`，并迭代摘要质量和生成上下文。
+12. 在真实 recall 开始消耗 context budget 之后，再补 dominance、budget、active durable reply lease 与 provider failure/cancellation 的契约。
 
-这个顺序保持authority前置：V1已经建立真实保存的独立durable owner；下一步先让最小DerivedInfo生成结果通过同一Pod authority可靠落盘，再从Title+事实正文接通查询与召回。
+这个顺序保持authority前置：真实保存与最小DerivedInfo已经通过同一Pod authority可靠落盘；下一步可以从
+Title+事实正文接通查询与召回，不必把尚未成熟的分类、二级索引或Gist/Summary策略提前塞进第一个MVP。

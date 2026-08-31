@@ -31,10 +31,12 @@ Mailbox specialization：
 - [`GalateaDelegationSqliteStore`](../../prototypes/Galatea/GalateaDelegationSqliteStore.cs)：当前 outbound mail artifact 的 durable owner。
 - [`GalateaDurableDelegationDriver`](../../prototypes/Galatea/GalateaDurableDelegationDriver.cs)：把 routed outbound mail dispatch 到 Codex sidecar，并把 reply/failure 转成 ready notice。
 
-Character Memory V1 specialization：
+Character Memory specialization：
 
 - [`CharacterNoteIntent` / `CharacterNoteExtractor`](../../prototypes/Galatea/CharacterMemory/CharacterNoteExtractor.cs)：保守提取角色本人已明确完成提交、且正文exact source-grounded的长期Note保存请求；仅声称已经保存不构成提交。
 - [`CharacterNoteDefaultPodReconciler`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDefaultPodReconciler.cs)：durable capture/zero tombstone、Default MemoPod plan/apply与restart/admission恢复owner。
+- [`CharacterNoteDerivedInfoEnricher`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDerivedInfoEnricher.cs)：在ExactText已保存后，基于source turn的raw Observation、visible Action与ordered Note targets生成完整Title/Gist/Summary batch。
+- [`CharacterNoteDerivedInfoPump`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDerivedInfoPump.cs)：session-owned非阻塞调度器；只在context materialization时短暂持有`TurnLock`，provider调用与Pod apply在锁外执行。
 - [`CharacterNoteSaveReceipt`](../../prototypes/Galatea/CharacterMemory/CharacterNoteSaveReceipt.cs)：只消费durable `AppliedNow` memos并渲染诚实保存回执，同时提供per-session bounded in-process FIFO。
 - [`CharacterNoteOriginBarrier`](../../prototypes/Galatea/CharacterMemory/CharacterNoteOriginBarrier.cs)：把当前provider-visible raw Action与CharacterMemory durable provenance做bounded exact join，阻止来源正文仍直接可见的Memo被动态召回重复注入；production recall disabled时整条barrier路径在context selection前绕过。
 - `PlayerTurnNotice.NoteSaveReceipt`：普通player Observation中的独立strong type；canonical顺序中至多一条且必须为最后notice。
@@ -104,9 +106,10 @@ ready-turn、inbound与recovery都不领取；领取后的pre-dispatch stop、�
 
 自主笔记和动态信息召回很像 Mailbox，但不应该复用 Mailbox 名字或 storage contract。
 
-已经落地的V1映射：
+已经落地的映射：
 
 - note save intent：仅当对应binding非`null`时，code-owned主prompt appendix才告诉角色如何提交长期Note完整原文；runtime用`CharacterNoteIntent`保守提取，经durable capture/apply写入默认MemoPod，并只为本进程的`AppliedNow`结果返回honest保存回执。
+- note derived-info enrichment：ExactText Applied后由CharacterMemory V2建立Pending work；background pump从SessionJournal exact source重建上下文，在锁外调用独立enricher，并用Prepared/Planned/base-target recovery把Title/Gist/Summary写回同一Memo。失败保留Pending，不改变保存回执事实。
 - note origin suppression：`CharacterNoteIntent` 不携带Action identity；runtime从canonical visible Action派生address/hash/byte count并持久化。后续普通player turn从同一provider-visible raw context重建`CharacterNoteOriginBarrier`，在来源Action仍可见时阻止对应typed Memo candidate重复注入。
 
 仍属后续候选的映射：
