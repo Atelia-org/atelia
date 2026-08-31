@@ -524,7 +524,7 @@ api.MapPost(
         GalateaLiveTurn? liveTurn = null;
         bool writerOwnershipTransferred = false;
         try {
-            await hostService.ReconcileDurableAdmissionAsync(
+            await hostService.PrepareRecoveryAdmissionAsync(
                 session,
                 httpContext.RequestAborted
             );

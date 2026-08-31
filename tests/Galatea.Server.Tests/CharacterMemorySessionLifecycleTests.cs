@@ -163,7 +163,12 @@ public sealed class CharacterMemorySessionLifecycleTests {
         );
         bool disposed = false;
         try {
-            UserSessionHost session = await GetSessionAsync(host);
+            GalateaHostService service = host.Factory.Services
+                .GetRequiredService<GalateaHostService>();
+            UserSessionHost session = await service.GetSessionAsync(
+                "alice",
+                CancellationToken.None
+            );
             CharacterMemoryStatusSnapshot expected = Assert.IsType<
                 CharacterNoteDefaultPodReconciler
             >(session.CharacterMemoryReconciler).ReadStatusSnapshot();
@@ -173,8 +178,7 @@ public sealed class CharacterMemorySessionLifecycleTests {
                     expected.Owner
                 ));
 
-            await host.DisposeAsync();
-            disposed = true;
+            await service.DisposeAsync();
 
             using CharacterMemorySqliteStore reopened =
                 CharacterMemorySqliteStore.OpenExisting(
@@ -182,6 +186,8 @@ public sealed class CharacterMemorySessionLifecycleTests {
                     expected.Owner
                 );
             Assert.Equal(expected, reopened.ReadStatusSnapshot());
+            await host.DisposeAsync();
+            disposed = true;
         }
         finally {
             if (!disposed) {

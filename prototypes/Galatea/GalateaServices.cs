@@ -50,7 +50,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _outboundMailExtractors;
     private readonly IReadOnlyDictionary<string, ICharacterNoteExtractor>
         _characterNoteExtractors;
+    private readonly IReadOnlyDictionary<string,
+        ICharacterNoteDerivedInfoEnricher>
+        _characterNoteDerivedInfoEnrichers;
     private readonly bool _characterNoteBindingEnabled;
+    private readonly bool _allowMissingCharacterNoteDerivedInfoEnricher;
     private readonly IReadOnlyDictionary<string,
         GalateaRecapGridTargetExpectation> _targetExpectations;
     private readonly bool _maintenanceMode;
@@ -64,6 +68,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal GalateaSessionProvisioningTestHooks?
         SessionProvisioningHooksForTest { get; set; }
     internal TimeSpan? CharacterNoteExtractionDeadlineForTest { get; set; }
+    internal TimeSpan? CharacterNoteDerivedInfoDeadlineForTest { get; set; }
     internal Action<string>? CharacterNoteDiagnosticSinkForTest { get; set; }
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
@@ -133,8 +138,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _inputPreprocessor = components.InputPreprocessor;
         _outboundMailExtractors = components.OutboundMailExtractors;
         _characterNoteExtractors = components.CharacterNoteExtractors;
+        _characterNoteDerivedInfoEnrichers =
+            components.CharacterNoteDerivedInfoEnrichers;
         _characterNoteBindingEnabled =
             components.CharacterNoteBindingEnabled;
+        _allowMissingCharacterNoteDerivedInfoEnricher = false;
         _targetExpectations = components.TargetExpectations;
         _maintenanceMode = components.MaintenanceMode;
         _users = components.Users;
@@ -150,7 +158,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>?
             targetExpectations = null,
         TimeProvider? timeProvider = null,
-        IGalateaPlayerTurnRecallProvider? playerTurnRecallProvider = null
+        IGalateaPlayerTurnRecallProvider? playerTurnRecallProvider = null,
+        IReadOnlyDictionary<string, ICharacterNoteDerivedInfoEnricher>?
+            characterNoteDerivedInfoEnrichers = null
     ) {
         ArgumentNullException.ThrowIfNull(recapGrid);
         ArgumentNullException.ThrowIfNull(userMessageNormalizer);
@@ -185,6 +195,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _maintenanceMode = config.MaintenanceMode;
         _characterNoteBindingEnabled =
             config.CharacterNoteExtractorConnectionId is not null;
+        _allowMissingCharacterNoteDerivedInfoEnricher = true;
         _users = config.Users.ToDictionary(
             static value => value.UserId,
             StringComparer.Ordinal
@@ -201,6 +212,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 DisabledCharacterNoteExtractor.Instance,
             StringComparer.Ordinal
         );
+        _characterNoteDerivedInfoEnrichers =
+            characterNoteDerivedInfoEnrichers
+            ?? new Dictionary<string, ICharacterNoteDerivedInfoEnricher>(
+                StringComparer.Ordinal
+            );
         _targetExpectations = targetExpectations
             ?? CreateTargetExpectations(_users);
         IReadOnlyDictionary<string, CompletionConnectionConfig> fullCatalog =
@@ -283,6 +299,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     owner.CharacterNoteExtractorConnection,
                     owner.GetCharacterNoteExtractorClient
                 );
+            IReadOnlyDictionary<string,
+                ICharacterNoteDerivedInfoEnricher>
+                characterNoteDerivedInfoEnrichers =
+                    CreateCharacterNoteDerivedInfoEnrichers(
+                        users,
+                        owner.CharacterNoteExtractorConnection,
+                        owner.GetCharacterNoteExtractorClient
+                    );
             IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>
                 targetExpectations = CreateTargetExpectations(users);
             IReadOnlyDictionary<string, CompletionConnectionConfig>
@@ -316,6 +340,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 inputPreprocessor,
                 outboundMailExtractors,
                 characterNoteExtractors,
+                characterNoteDerivedInfoEnrichers,
                 owner.CharacterNoteExtractorConnection is not null,
                 targetExpectations,
                 delegationSupervisor,
@@ -366,6 +391,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             OutboundMailExtractors,
         IReadOnlyDictionary<string, ICharacterNoteExtractor>
             CharacterNoteExtractors,
+        IReadOnlyDictionary<string, ICharacterNoteDerivedInfoEnricher>
+            CharacterNoteDerivedInfoEnrichers,
         bool CharacterNoteBindingEnabled,
         IReadOnlyDictionary<string, GalateaRecapGridTargetExpectation>
             TargetExpectations,
@@ -416,6 +443,31 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ? (ICharacterNoteExtractor)
                     DisabledCharacterNoteExtractor.Instance
                 : new CharacterNoteExtractor(
+                    pair.Value.CharacterName,
+                    connection,
+                    getClient
+                ),
+            StringComparer.Ordinal
+        );
+    }
+
+    internal static IReadOnlyDictionary<string,
+        ICharacterNoteDerivedInfoEnricher>
+        CreateCharacterNoteDerivedInfoEnrichers(
+        IReadOnlyDictionary<string, GalateaUserConfig> users,
+        CompletionConnectionConfig? connection,
+        Func<ICompletionClient> getClient
+    ) {
+        ArgumentNullException.ThrowIfNull(users);
+        ArgumentNullException.ThrowIfNull(getClient);
+        if (connection is null) {
+            return new Dictionary<string,
+                ICharacterNoteDerivedInfoEnricher>(StringComparer.Ordinal);
+        }
+        return users.ToDictionary(
+            static pair => pair.Key,
+            pair => (ICharacterNoteDerivedInfoEnricher)
+                new CharacterNoteDerivedInfoEnricher(
                     pair.Value.CharacterName,
                     connection,
                     getClient
@@ -892,6 +944,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 .ConfigureAwait(false);
             return;
         }
+        await ReconcileActiveCharacterNoteDerivedInfoPlanAsync(host)
+            .ConfigureAwait(false);
 
         CharacterNotePendingReconcileResult pending = await memory
             .ReconcilePendingAsync()
@@ -942,6 +996,58 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 );
         }
     }
+
+    /// <summary>
+    /// Recovers only an already durable DerivedInfo plan. This admission
+    /// fence never materializes turn context and never calls a provider.
+    /// The caller must own <see cref="UserSessionHost.TurnLock"/>.
+    /// </summary>
+    internal static async ValueTask
+        ReconcileActiveCharacterNoteDerivedInfoPlanAsync(
+        UserSessionHost host
+    ) {
+        ArgumentNullException.ThrowIfNull(host);
+        CharacterNoteDefaultPodReconciler? memory =
+            host.CharacterMemoryReconciler;
+        if (memory is null) { return; }
+
+        CharacterNoteDerivedInfoReconcileResult result = await memory
+            .ReconcileActiveDerivedInfoPlanAsync()
+            .ConfigureAwait(false);
+        switch (result) {
+            case CharacterNoteDerivedInfoReconcileResult.NoWork:
+            case CharacterNoteDerivedInfoReconcileResult.Applied:
+            case CharacterNoteDerivedInfoReconcileResult.Rejected:
+                return;
+            case CharacterNoteDerivedInfoReconcileResult.Deferred deferred:
+                throw new GalateaTurnException(
+                    "Character Memory DerivedInfo settlement is temporarily unavailable.",
+                    "character-memory-settlement-deferred",
+                    new IOException(deferred.Code)
+                );
+            case CharacterNoteDerivedInfoReconcileResult.Quarantined
+                    quarantined:
+                throw new GalateaTurnException(
+                    "Character Memory authority is quarantined.",
+                    "character-memory-quarantined",
+                    new InvalidDataException(quarantined.Code)
+                );
+            default:
+                throw new InvalidDataException(
+                    "Unknown Character Note DerivedInfo reconciliation result."
+                );
+        }
+    }
+
+    /// <summary>
+    /// Applies the complete durable recovery admission fence before the HTTP
+    /// recovery endpoint may create a live turn. This includes provider-free
+    /// recovery of any active Character Note DerivedInfo plan.
+    /// </summary>
+    internal ValueTask PrepareRecoveryAdmissionAsync(
+        UserSessionHost host,
+        CancellationToken cancellationToken
+    ) => ReconcileDurableAdmissionAsync(host, cancellationToken);
 
     private async ValueTask ReconcileAdmissionExtractionsAsync(
         UserSessionHost host,
@@ -1100,6 +1206,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (deadline <= TimeSpan.Zero) {
             throw new InvalidOperationException(
                 "Character Note extraction deadline must be positive."
+            );
+        }
+        return deadline;
+    }
+
+    private TimeSpan RequireCharacterNoteDerivedInfoDeadline() {
+        TimeSpan deadline = CharacterNoteDerivedInfoDeadlineForTest
+            ?? CharacterNoteDerivedInfoPump.DefaultProviderDeadline;
+        if (deadline <= TimeSpan.Zero) {
+            throw new InvalidOperationException(
+                "Character Note DerivedInfo deadline must be positive."
             );
         }
         return deadline;
@@ -1397,6 +1514,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(admitted);
+        await ReconcileActiveCharacterNoteDerivedInfoPlanAsync(host)
+            .ConfigureAwait(false);
         SessionRuntimeRecoveryRequirements current =
             host.Engine.InspectRuntimeRecoveryRequirements(
                 cancellationToken
@@ -1832,6 +1951,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 .ConfigureAwait(false);
             return;
         }
+        using var derivedInfoSignal = new PostCompletionDerivedInfoSignal(
+            host.CharacterNoteDerivedInfoPump
+        );
 
         TimeSpan noteDeadline = RequireCharacterNoteDeadline();
         using var deadlineCts =
@@ -2115,6 +2237,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (mailFailure is not null) {
             failures.ThrowMailPrimary();
         }
+    }
+
+    private sealed class PostCompletionDerivedInfoSignal(
+        CharacterNoteDerivedInfoPump? pump
+    ) : IDisposable {
+        public void Dispose() => _ = pump?.Signal();
     }
 
     private static bool IsBestEffortPreCaptureFailure(
@@ -2947,6 +3075,19 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     : throw new InvalidDataException(
                         $"Galatea user '{user.UserId}' has no character note extractor binding."
                     );
+            ICharacterNoteDerivedInfoEnricher? derivedInfoEnricher = null;
+            if (!_maintenanceMode && _characterNoteBindingEnabled) {
+                bool found = _characterNoteDerivedInfoEnrichers.TryGetValue(
+                    user.UserId,
+                    out derivedInfoEnricher
+                );
+                if (!found
+                    && !_allowMissingCharacterNoteDerivedInfoEnricher) {
+                    throw new InvalidDataException(
+                        $"Galatea user '{user.UserId}' has no Character Note DerivedInfo enricher binding."
+                    );
+                }
+            }
             if (!_maintenanceMode && _characterNoteBindingEnabled) {
                 ct.ThrowIfCancellationRequested();
                 characterMemory = await CharacterMemorySessionComposition
@@ -2972,7 +3113,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 characterMemory,
                 delegationHandle,
                 outboundMailExtractor,
-                characterNoteExtractor
+                characterNoteExtractor,
+                derivedInfoEnricher,
+                derivedInfoEnricher is null
+                    ? null
+                    : RequireCharacterNoteDerivedInfoDeadline()
             );
             characterMemory = null;
             delegationHandle = null;
@@ -2986,6 +3131,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 finally {
                     host.TurnLock.Release();
                 }
+                _ = host.CharacterNoteDerivedInfoPump?.Signal();
             }
             return host;
         }
@@ -3398,7 +3544,9 @@ public sealed class UserSessionHost : IAsyncDisposable {
         CharacterNoteDefaultPodReconciler? characterMemoryReconciler,
         GalateaDelegationSessionHandle? delegationHandle,
         IOutboundMailExtractor outboundMailExtractor,
-        ICharacterNoteExtractor characterNoteExtractor
+        ICharacterNoteExtractor characterNoteExtractor,
+        ICharacterNoteDerivedInfoEnricher? derivedInfoEnricher,
+        TimeSpan? derivedInfoProviderDeadline
     ) {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(engine);
@@ -3413,6 +3561,17 @@ public sealed class UserSessionHost : IAsyncDisposable {
         CharacterMemoryReconciler = characterMemoryReconciler;
         DelegationHandle = delegationHandle;
         CharacterNoteExtractor = characterNoteExtractor;
+        if (characterMemoryReconciler is not null
+            && derivedInfoEnricher is not null) {
+            CharacterNoteDerivedInfoPump =
+                new CharacterNoteDerivedInfoPump(
+                    characterMemoryReconciler,
+                    derivedInfoEnricher,
+                    engine,
+                    TurnLock,
+                    derivedInfoProviderDeadline
+                );
+        }
         if (delegationHandle is not null) {
             ReplyLeaseReconciler =
                 new GalateaDurableReplyLeaseReconciler(
@@ -3436,6 +3595,9 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
     internal CharacterNoteDefaultPodReconciler?
         CharacterMemoryReconciler { get; }
+
+    internal CharacterNoteDerivedInfoPump?
+        CharacterNoteDerivedInfoPump { get; }
 
     internal CharacterNoteSaveReceiptQueue NoteSaveReceipts { get; } =
         new();
@@ -3559,22 +3721,53 @@ public sealed class UserSessionHost : IAsyncDisposable {
     }
 
     public async ValueTask DisposeAsync() {
-        await TurnLock.WaitAsync().ConfigureAwait(false);
+        var failures = new List<Exception>(2);
         try {
-            try {
-                CharacterMemoryReconciler?.Dispose();
-            }
-            finally {
-                try {
-                    DelegationHandle?.Dispose();
-                }
-                finally {
-                    Engine.Dispose();
-                }
+            if (CharacterNoteDerivedInfoPump is not null) {
+                await CharacterNoteDerivedInfoPump.DisposeAsync()
+                    .ConfigureAwait(false);
             }
         }
-        finally {
-            TurnLock.Release();
+        catch (Exception exception) {
+            failures.Add(exception);
+        }
+
+        try {
+            await TurnLock.WaitAsync().ConfigureAwait(false);
+            try {
+                try {
+                    CharacterMemoryReconciler?.Dispose();
+                }
+                finally {
+                    try {
+                        DelegationHandle?.Dispose();
+                    }
+                    finally {
+                        Engine.Dispose();
+                    }
+                }
+            }
+            finally {
+                TurnLock.Release();
+            }
+        }
+        catch (Exception exception) {
+            failures.Add(exception);
+        }
+
+        Exception? fatal = failures.FirstOrDefault(static exception =>
+            !GalateaExceptionClassifier.IsNonFatal(exception));
+        if (fatal is not null) {
+            ExceptionDispatchInfo.Capture(fatal).Throw();
+        }
+        if (failures.Count == 1) {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+        if (failures.Count > 1) {
+            throw new AggregateException(
+                "Galatea session disposal encountered multiple failures.",
+                failures
+            );
         }
     }
 }

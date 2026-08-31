@@ -250,6 +250,13 @@ internal sealed partial class CharacterNoteDefaultPodReconciler
         try {
             CharacterMemoryStatusSnapshot status =
                 _store.ReadStatusSnapshot();
+            CharacterNoteDefaultPodReconcileResult? derivedInfo =
+                await RecoverActiveDerivedInfoBeforeExactCaptureWithPodGateOwnedAsync(
+                        status
+                    )
+                    .ConfigureAwait(false);
+            if (derivedInfo is not null) { return derivedInfo; }
+            status = _store.ReadStatusSnapshot();
             CharacterMemoryCaptureSnapshot? existing =
                 _store.ReadCaptureExact(sourceAction);
             if (existing is not null) {
@@ -298,6 +305,13 @@ internal sealed partial class CharacterNoteDefaultPodReconciler
             preCaptureCancellationToken.ThrowIfCancellationRequested();
             CharacterMemoryStatusSnapshot status =
                 _store.ReadStatusSnapshot();
+            CharacterNoteDefaultPodReconcileResult? derivedInfo =
+                await RecoverActiveDerivedInfoBeforeExactCaptureWithPodGateOwnedAsync(
+                        status
+                    )
+                    .ConfigureAwait(false);
+            if (derivedInfo is not null) { return derivedInfo; }
+            status = _store.ReadStatusSnapshot();
             CharacterMemoryCaptureSnapshot? existing =
                 _store.ReadCaptureExact(sourceAction);
             if (existing is not null) {

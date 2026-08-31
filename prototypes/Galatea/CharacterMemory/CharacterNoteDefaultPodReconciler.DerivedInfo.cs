@@ -9,18 +9,27 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
         ReconcileNextDerivedInfoAsync(
         CharacterNoteDerivedInfoMaterializeCallback materialize,
         ICharacterNoteDerivedInfoEnricher enricher,
-        CancellationToken providerCancellationToken = default
+        CancellationToken sessionCancellationToken = default,
+        TimeSpan? providerDeadline = null
     ) {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(materialize);
         ArgumentNullException.ThrowIfNull(enricher);
+        if (providerDeadline is { } configuredDeadline
+            && configuredDeadline <= TimeSpan.Zero) {
+            throw new ArgumentOutOfRangeException(
+                nameof(providerDeadline),
+                "Character Note DerivedInfo provider deadline must be positive."
+            );
+        }
         await _derivedInfoDispatchGate.WaitAsync(CancellationToken.None)
             .ConfigureAwait(false);
         try {
             return await ReconcileNextDerivedInfoCoreAsync(
                     materialize,
                     enricher,
-                    providerCancellationToken
+                    sessionCancellationToken,
+                    providerDeadline
                 )
                 .ConfigureAwait(false);
         }
@@ -33,7 +42,8 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
         ReconcileNextDerivedInfoCoreAsync(
         CharacterNoteDerivedInfoMaterializeCallback materialize,
         ICharacterNoteDerivedInfoEnricher enricher,
-        CancellationToken providerCancellationToken
+        CancellationToken sessionCancellationToken,
+        TimeSpan? providerDeadline
     ) {
         CharacterMemoryStatusSnapshot status = _store.ReadStatusSnapshot();
         if (status.StoreState is CharacterMemoryStoreState.Quarantined) {
@@ -74,7 +84,7 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
         try {
             request = await materialize(
                     work,
-                    providerCancellationToken
+                    sessionCancellationToken
                 )
                 .ConfigureAwait(false)
                 ?? throw new InvalidDataException(
@@ -104,10 +114,19 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
         }
 
         IReadOnlyList<CharacterNoteDerivedInfo> output;
+        using CancellationTokenSource? deadline = providerDeadline is { }
+            ? new CancellationTokenSource(providerDeadline.Value)
+            : null;
+        using CancellationTokenSource? provider = deadline is null
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(
+                sessionCancellationToken,
+                deadline.Token
+            );
         try {
             output = await enricher.EnrichAsync(
                     request,
-                    providerCancellationToken
+                    provider?.Token ?? sessionCancellationToken
                 )
                 .ConfigureAwait(false)
                 ?? throw new InvalidDataException(
@@ -211,53 +230,92 @@ internal sealed partial class CharacterNoteDefaultPodReconciler {
         await _podMutationGate.WaitAsync(CancellationToken.None)
             .ConfigureAwait(false);
         try {
-            CharacterMemoryStatusSnapshot status =
-                _store.ReadStatusSnapshot();
-            if (status.StoreState is CharacterMemoryStoreState.Quarantined) {
-                return new CharacterNoteDerivedInfoReconcileResult
-                    .Quarantined(status.QuarantineCode!);
-            }
-            CharacterMemoryDerivedInfoWorkSnapshot current =
-                _store.ReadDerivedInfoWorkExact(work.SourceActionAddress)
-                ?? throw new InvalidDataException(
-                    "Selected Character Note DerivedInfo work is absent."
-                );
-            return current.State switch {
-                CharacterMemoryDerivedInfoState.Prepared =>
-                    await PlanAndPublishDerivedInfoAsync(status, current)
-                        .ConfigureAwait(false),
-                CharacterMemoryDerivedInfoState.Planned =>
-                    await ReconcilePlannedDerivedInfoAsync(status, current)
-                        .ConfigureAwait(false),
-                CharacterMemoryDerivedInfoState.Applied =>
-                    new CharacterNoteDerivedInfoReconcileResult.Applied(
-                        EventAddressTextCodec.Parse(
-                            current.SourceActionAddress
-                        )
-                    ),
-                CharacterMemoryDerivedInfoState.Rejected =>
-                    new CharacterNoteDerivedInfoReconcileResult.Rejected(
-                        EventAddressTextCodec.Parse(
-                            current.SourceActionAddress
-                        ),
-                        current.RejectionCode!
-                    ),
-                CharacterMemoryDerivedInfoState.Pending =>
-                    DeferredDerivedInfo(
-                        EventAddressTextCodec.Parse(
-                            current.SourceActionAddress
-                        ),
-                        CharacterNoteDefaultPodOutcomeCodes
-                            .DerivedInfoProviderUnavailable
-                    ),
-                _ => throw new InvalidDataException(
-                    "Unknown Character Note DerivedInfo state."
-                ),
-            };
+            return await ReconcileDerivedInfoWithPodGateOwnedAsync(work)
+                .ConfigureAwait(false);
         }
         finally {
             _podMutationGate.Release();
         }
+    }
+
+    private async ValueTask<CharacterNoteDerivedInfoReconcileResult>
+        ReconcileDerivedInfoWithPodGateOwnedAsync(
+        CharacterMemoryDerivedInfoWorkSnapshot work
+    ) {
+        CharacterMemoryStatusSnapshot status =
+            _store.ReadStatusSnapshot();
+        if (status.StoreState is CharacterMemoryStoreState.Quarantined) {
+            return new CharacterNoteDerivedInfoReconcileResult
+                .Quarantined(status.QuarantineCode!);
+        }
+        CharacterMemoryDerivedInfoWorkSnapshot current =
+            _store.ReadDerivedInfoWorkExact(work.SourceActionAddress)
+            ?? throw new InvalidDataException(
+                "Selected Character Note DerivedInfo work is absent."
+            );
+        return current.State switch {
+            CharacterMemoryDerivedInfoState.Prepared =>
+                await PlanAndPublishDerivedInfoAsync(status, current)
+                    .ConfigureAwait(false),
+            CharacterMemoryDerivedInfoState.Planned =>
+                await ReconcilePlannedDerivedInfoAsync(status, current)
+                    .ConfigureAwait(false),
+            CharacterMemoryDerivedInfoState.Applied =>
+                new CharacterNoteDerivedInfoReconcileResult.Applied(
+                    EventAddressTextCodec.Parse(
+                        current.SourceActionAddress
+                    )
+                ),
+            CharacterMemoryDerivedInfoState.Rejected =>
+                new CharacterNoteDerivedInfoReconcileResult.Rejected(
+                    EventAddressTextCodec.Parse(
+                        current.SourceActionAddress
+                    ),
+                    current.RejectionCode!
+                ),
+            CharacterMemoryDerivedInfoState.Pending =>
+                DeferredDerivedInfo(
+                    EventAddressTextCodec.Parse(
+                        current.SourceActionAddress
+                    ),
+                    CharacterNoteDefaultPodOutcomeCodes
+                        .DerivedInfoProviderUnavailable
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown Character Note DerivedInfo state."
+            ),
+        };
+    }
+
+    private async ValueTask<CharacterNoteDefaultPodReconcileResult?>
+        RecoverActiveDerivedInfoBeforeExactCaptureWithPodGateOwnedAsync(
+        CharacterMemoryStatusSnapshot status
+    ) {
+        if (status.ActiveDerivedInfoWork is not { } active) {
+            return null;
+        }
+        CharacterNoteDerivedInfoReconcileResult recovered =
+            await ReconcileDerivedInfoWithPodGateOwnedAsync(active)
+                .ConfigureAwait(false);
+        return recovered switch {
+            CharacterNoteDerivedInfoReconcileResult.NoWork => null,
+            CharacterNoteDerivedInfoReconcileResult.Applied => null,
+            CharacterNoteDerivedInfoReconcileResult.Rejected => null,
+            CharacterNoteDerivedInfoReconcileResult.Deferred deferred =>
+                throw new CharacterNoteDefaultPodAccessException(
+                    CharacterNoteDefaultPodFailureKind.IoFailure,
+                    "Character Note exact capture is waiting for DerivedInfo settlement: "
+                        + deferred.Code
+                ),
+            CharacterNoteDerivedInfoReconcileResult.Quarantined
+                    quarantined =>
+                new CharacterNoteDefaultPodReconcileResult.Quarantined(
+                    quarantined.Code
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown Character Note DerivedInfo reconciliation result."
+            ),
+        };
     }
 
     private async ValueTask<CharacterNoteDerivedInfoReconcileResult>

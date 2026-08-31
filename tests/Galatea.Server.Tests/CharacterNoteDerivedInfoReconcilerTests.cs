@@ -410,6 +410,121 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
     }
 
     [Fact]
+    public async Task ExactCaptureRecoversConcurrentDerivedInfoPlanUnderPodGate() {
+        var access = new FaultingPodAccess();
+        using var fixture = await Fixture.CreateAsync(access);
+        (_, GalateaTerminalActionExtractionTarget first) = fixture.AppendTurn(
+            "first observation",
+            "save first note"
+        );
+        _ = await fixture.Reconciler.ReconcileTargetAsync(
+            fixture.Engine,
+            first
+        );
+        access.NextFreezeFault = FreezeFault.BeforePublish;
+        Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Deferred>(
+            await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
+                fixture.Materialize,
+                new RecordingEnricher()
+            )
+        );
+        Assert.NotNull(fixture.Reconciler.ReadStatusSnapshot()
+            .ActiveDerivedInfoWork);
+
+        (_, GalateaTerminalActionExtractionTarget second) =
+            fixture.AppendTurn("second observation", "save second note");
+        CharacterNoteDefaultPodReconcileResult result =
+            await fixture.Reconciler.ReconcileTargetAsync(
+                fixture.Engine,
+                second
+            );
+
+        Assert.IsType<CharacterNoteDefaultPodReconcileResult.AppliedNow>(
+            result
+        );
+        Assert.Null(fixture.Reconciler.ReadStatusSnapshot()
+            .ActiveDerivedInfoWork);
+        Assert.Equal(2, global::Atelia.MemoPod.MemoPod.Open(
+            fixture.StatePath,
+            CharacterNoteDefaultPodV1.PodId
+        ).List().Count());
+    }
+
+    [Fact]
+    public async Task ExactCaptureDefersWithoutQuarantineWhenActivePlanIsUnavailable() {
+        var access = new FaultingPodAccess();
+        using var fixture = await Fixture.CreateAsync(access);
+        (_, GalateaTerminalActionExtractionTarget first) = fixture.AppendTurn(
+            "first observation",
+            "save first note"
+        );
+        _ = await fixture.Reconciler.ReconcileTargetAsync(
+            fixture.Engine,
+            first
+        );
+        access.NextFreezeFault = FreezeFault.BeforePublish;
+        Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Deferred>(
+            await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
+                fixture.Materialize,
+                new RecordingEnricher()
+            )
+        );
+        access.FailNextOpen();
+        (_, GalateaTerminalActionExtractionTarget second) =
+            fixture.AppendTurn("second observation", "save second note");
+
+        CharacterNoteDefaultPodAccessException failure =
+            await Assert.ThrowsAsync<CharacterNoteDefaultPodAccessException>(
+                () => fixture.Reconciler.ReconcileTargetAsync(
+                    fixture.Engine,
+                    second
+                ).AsTask()
+            );
+
+        Assert.Equal(CharacterNoteDefaultPodFailureKind.IoFailure,
+            failure.Kind);
+        CharacterMemoryStatusSnapshot status = fixture.Reconciler
+            .ReadStatusSnapshot();
+        Assert.Equal(CharacterMemoryStoreState.Ready, status.StoreState);
+        Assert.NotNull(status.ActiveDerivedInfoWork);
+    }
+
+    [Fact]
+    public async Task ProviderDeadlineStartsAfterContextMaterialization() {
+        using var fixture = await Fixture.CreateAsync();
+        (_, GalateaTerminalActionExtractionTarget target) = fixture.AppendTurn(
+            "observation",
+            "save deadline note"
+        );
+        _ = await fixture.Reconciler.ReconcileTargetAsync(
+            fixture.Engine,
+            target
+        );
+        var enricher = new RecordingEnricher();
+
+        CharacterNoteDerivedInfoReconcileResult result =
+            await fixture.Reconciler.ReconcileNextDerivedInfoAsync(
+                async (work, cancellationToken) => {
+                    await Task.Delay(
+                        TimeSpan.FromMilliseconds(80),
+                        cancellationToken
+                    );
+                    return await fixture.Materialize(
+                        work,
+                        cancellationToken
+                    );
+                },
+                enricher,
+                providerDeadline: TimeSpan.FromMilliseconds(20)
+            );
+
+        Assert.IsType<CharacterNoteDerivedInfoReconcileResult.Applied>(
+            result
+        );
+        Assert.Single(enricher.Requests);
+    }
+
+    [Fact]
     public async Task AdmissionRecoversDurablePlannedTargetWithoutProvider() {
         var access = new FaultingPodAccess();
         using var fixture = await Fixture.CreateAsync(access);
@@ -585,6 +700,8 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
         internal TaskCompletionSource ReleaseFreeze { get; private set; } =
             NewGate();
         private bool _failNextOpen;
+
+        internal void FailNextOpen() => _failNextOpen = true;
 
         internal void ArmBlockingFreeze() {
             FreezeStarted = NewGate();
