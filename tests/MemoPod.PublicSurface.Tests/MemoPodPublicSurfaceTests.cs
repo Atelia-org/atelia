@@ -70,6 +70,8 @@ public sealed class MemoPodPublicSurfaceTests {
         Assert.Equal(
             new[] {
                 "Append",
+                "ComputeStateIdentity",
+                "ConfirmCurrentDocumentDurability",
                 "Create",
                 "FreezeAsync",
                 "Get",
@@ -79,6 +81,7 @@ public sealed class MemoPodPublicSurfaceTests {
                 "Remove",
                 "ResumeEditing",
                 "TryGet",
+                "UpdateDerivedInfo",
             },
             type.GetMethods(
                     BindingFlags.Public
@@ -95,8 +98,7 @@ public sealed class MemoPodPublicSurfaceTests {
             static method => method.Name.Contains(
                 "Replace",
                 StringComparison.Ordinal
-            ) || method.Name.Contains("Update", StringComparison.Ordinal)
-                || method.Name.Contains("Upsert", StringComparison.Ordinal)
+            ) || method.Name.Contains("Upsert", StringComparison.Ordinal)
                 || method.Name.Contains("SetTopic", StringComparison.Ordinal)
                 || method.Name.Contains("Prompt", StringComparison.Ordinal)
                 || method.Name.Contains("Snapshot", StringComparison.Ordinal)
@@ -106,7 +108,7 @@ public sealed class MemoPodPublicSurfaceTests {
     }
 
     [Fact]
-    public void MemoExposesImmutableIdentityTextAndNullableMetadata() {
+    public void MemoExposesImmutableIdentityTextAndNullableDerivedInfo() {
         Type type = typeof(Memo);
 
         Assert.True(type.IsSealed);
@@ -181,6 +183,25 @@ public sealed class MemoPodPublicSurfaceTests {
         Assert.All(
             append.GetParameters().Skip(1),
             static parameter => Assert.Null(parameter.DefaultValue)
+        );
+        MethodInfo updateDerivedInfo = type.GetMethod(
+            nameof(MemoPod.UpdateDerivedInfo)
+        )!;
+        Assert.Equal(typeof(void), updateDerivedInfo.ReturnType);
+        Assert.Equal(
+            [
+                typeof(MemoId),
+                typeof(string),
+                typeof(string),
+                typeof(string),
+            ],
+            updateDerivedInfo.GetParameters()
+                .Select(static parameter => parameter.ParameterType)
+                .ToArray()
+        );
+        Assert.All(
+            updateDerivedInfo.GetParameters(),
+            static parameter => Assert.False(parameter.HasDefaultValue)
         );
         Assert.Equal(
             typeof(ImmutableArray<Memo>),
@@ -258,6 +279,14 @@ public sealed class MemoPodPublicSurfaceTests {
 
     [Fact]
     public void RecallTypesExposeOnlyValidatedOptionsAndClosedResult() {
+        Assert.Null(typeof(MemoPodLimits).GetField(
+            "MaximumActiveMemoMetadataUtf8Bytes",
+            BindingFlags.Public | BindingFlags.Static
+        ));
+        Assert.NotNull(typeof(MemoPodLimits).GetField(
+            nameof(MemoPodLimits.MaximumActiveMemoDerivedInfoUtf8Bytes),
+            BindingFlags.Public | BindingFlags.Static
+        ));
         Assert.Null(typeof(MemoPodLimits).GetField(
             "MaximumRecallToolArgumentsUtf8Bytes",
             BindingFlags.Public | BindingFlags.Static

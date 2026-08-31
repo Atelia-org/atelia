@@ -13,19 +13,19 @@ public sealed record Memo {
             exactText,
             nameof(exactText)
         );
-        TitleUtf8ByteCount = MemoPodSyntax.RequireOptionalMemoMetadata(
+        TitleUtf8ByteCount = MemoPodSyntax.RequireOptionalMemoDerivedInfo(
             title,
             "title",
             MemoPodLimits.MaximumMemoTitleUtf8Bytes,
             nameof(title)
         );
-        GistUtf8ByteCount = MemoPodSyntax.RequireOptionalMemoMetadata(
+        GistUtf8ByteCount = MemoPodSyntax.RequireOptionalMemoDerivedInfo(
             gist,
             "gist",
             MemoPodLimits.MaximumMemoGistUtf8Bytes,
             nameof(gist)
         );
-        SummaryUtf8ByteCount = MemoPodSyntax.RequireOptionalMemoMetadata(
+        SummaryUtf8ByteCount = MemoPodSyntax.RequireOptionalMemoDerivedInfo(
             summary,
             "summary",
             MemoPodLimits.MaximumMemoSummaryUtf8Bytes,
@@ -35,7 +35,7 @@ public sealed record Memo {
         Title = title;
         Gist = gist;
         Summary = summary;
-        MetadataUtf8ByteCount = checked(
+        DerivedInfoUtf8ByteCount = checked(
             TitleUtf8ByteCount + GistUtf8ByteCount + SummaryUtf8ByteCount
         );
     }
@@ -50,5 +50,5 @@ public sealed record Memo {
     internal int TitleUtf8ByteCount { get; }
     internal int GistUtf8ByteCount { get; }
     internal int SummaryUtf8ByteCount { get; }
-    internal int MetadataUtf8ByteCount { get; }
+    internal int DerivedInfoUtf8ByteCount { get; }
 }

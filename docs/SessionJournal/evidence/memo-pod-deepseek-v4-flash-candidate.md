@@ -90,7 +90,7 @@ nullable token/selection字段在JSON中显式保留`null`，不以零或空集�
 exact text、query、system prompt、raw request/response、CLI args、diagnostics、exception、endpoint配置与secret。
 prompt bytes/hash来自Recall传给client的single shared Frozen `ObservationMessage`；wrapper只保存bytes/hash，
 不保存request或正文，并校验hash等于`MemoRecallResult.FrozenPromptSha256`。`frozenPromptFormatId`固定为
-`atelia.memo-pod.prompt.v1`；provider-free composition test同时锁定该字段和Frozen prompt首行header中的
+`atelia.memo-pod.prompt.v3`；provider-free composition test同时锁定该字段和Frozen prompt首行header中的
 exact schema identity。
 
 ## 5. Authenticated canary gate — still NotRun

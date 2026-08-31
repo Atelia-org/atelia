@@ -6,7 +6,7 @@ internal sealed class MemoPodWorkingAggregate {
     private readonly SortedDictionary<uint, Memo> _memos;
     private ulong _nextMemoOrdinal;
     private int _activeExactTextUtf8Bytes;
-    private int _activeMemoMetadataUtf8Bytes;
+    private int _activeMemoDerivedInfoUtf8Bytes;
 
     private MemoPodWorkingAggregate(
         MemoPodId podId,
@@ -14,14 +14,14 @@ internal sealed class MemoPodWorkingAggregate {
         ulong nextMemoOrdinal,
         SortedDictionary<uint, Memo> memos,
         int activeExactTextUtf8Bytes,
-        int activeMemoMetadataUtf8Bytes
+        int activeMemoDerivedInfoUtf8Bytes
     ) {
         PodId = podId;
         Topic = topic;
         _nextMemoOrdinal = nextMemoOrdinal;
         _memos = memos;
         _activeExactTextUtf8Bytes = activeExactTextUtf8Bytes;
-        _activeMemoMetadataUtf8Bytes = activeMemoMetadataUtf8Bytes;
+        _activeMemoDerivedInfoUtf8Bytes = activeMemoDerivedInfoUtf8Bytes;
     }
 
     internal MemoPodId PodId { get; }
@@ -37,7 +37,7 @@ internal sealed class MemoPodWorkingAggregate {
         nextMemoOrdinal: 1,
         new SortedDictionary<uint, Memo>(),
         activeExactTextUtf8Bytes: 0,
-        activeMemoMetadataUtf8Bytes: 0
+        activeMemoDerivedInfoUtf8Bytes: 0
     );
 
     internal static MemoPodWorkingAggregate FromDocument(
@@ -54,7 +54,7 @@ internal sealed class MemoPodWorkingAggregate {
             document.NextMemoOrdinal,
             memos,
             document.ActiveExactTextUtf8Bytes,
-            document.ActiveMemoMetadataUtf8Bytes
+            document.ActiveMemoDerivedInfoUtf8Bytes
         );
     }
 
@@ -68,25 +68,25 @@ internal sealed class MemoPodWorkingAggregate {
             exactText,
             nameof(exactText)
         );
-        int titleUtf8ByteCount = MemoPodSyntax.RequireOptionalMemoMetadata(
+        int titleUtf8ByteCount = MemoPodSyntax.RequireOptionalMemoDerivedInfo(
             title,
             "title",
             MemoPodLimits.MaximumMemoTitleUtf8Bytes,
             nameof(title)
         );
-        int gistUtf8ByteCount = MemoPodSyntax.RequireOptionalMemoMetadata(
+        int gistUtf8ByteCount = MemoPodSyntax.RequireOptionalMemoDerivedInfo(
             gist,
             "gist",
             MemoPodLimits.MaximumMemoGistUtf8Bytes,
             nameof(gist)
         );
-        int summaryUtf8ByteCount = MemoPodSyntax.RequireOptionalMemoMetadata(
+        int summaryUtf8ByteCount = MemoPodSyntax.RequireOptionalMemoDerivedInfo(
             summary,
             "summary",
             MemoPodLimits.MaximumMemoSummaryUtf8Bytes,
             nameof(summary)
         );
-        int metadataUtf8ByteCount = checked(
+        int derivedInfoUtf8ByteCount = checked(
             titleUtf8ByteCount + gistUtf8ByteCount + summaryUtf8ByteCount
         );
         if (_nextMemoOrdinal > uint.MaxValue) {
@@ -105,10 +105,10 @@ internal sealed class MemoPodWorkingAggregate {
                 "The active memo exact-text byte limit has been reached."
             );
         }
-        if ((long)_activeMemoMetadataUtf8Bytes + metadataUtf8ByteCount
-            > MemoPodLimits.MaximumActiveMemoMetadataUtf8Bytes) {
+        if ((long)_activeMemoDerivedInfoUtf8Bytes + derivedInfoUtf8ByteCount
+            > MemoPodLimits.MaximumActiveMemoDerivedInfoUtf8Bytes) {
             throw new InvalidOperationException(
-                "The active memo metadata byte limit has been reached."
+                "The active memo derived-info byte limit has been reached."
             );
         }
 
@@ -117,8 +117,64 @@ internal sealed class MemoPodWorkingAggregate {
         _memos.Add(id.Ordinal, memo);
         _nextMemoOrdinal++;
         _activeExactTextUtf8Bytes += exactTextUtf8ByteCount;
-        _activeMemoMetadataUtf8Bytes += metadataUtf8ByteCount;
+        _activeMemoDerivedInfoUtf8Bytes += derivedInfoUtf8ByteCount;
         return id;
+    }
+
+    internal bool UpdateDerivedInfo(
+        MemoId id,
+        string? title,
+        string? gist,
+        string? summary
+    ) {
+        MemoPodSyntax.RequireMemoId(id, nameof(id));
+        if (!_memos.TryGetValue(id.Ordinal, out Memo? current)) {
+            throw new KeyNotFoundException(
+                $"Active memo '{id}' does not exist."
+            );
+        }
+
+        var replacement = new Memo(
+            current.Id,
+            current.ExactText,
+            title,
+            gist,
+            summary
+        );
+        if (string.Equals(
+                current.Title,
+                replacement.Title,
+                StringComparison.Ordinal
+            )
+            && string.Equals(
+                current.Gist,
+                replacement.Gist,
+                StringComparison.Ordinal
+            )
+            && string.Equals(
+                current.Summary,
+                replacement.Summary,
+                StringComparison.Ordinal
+            )) {
+            return false;
+        }
+
+        long projectedDerivedInfoUtf8Bytes =
+            (long)_activeMemoDerivedInfoUtf8Bytes
+            - current.DerivedInfoUtf8ByteCount
+            + replacement.DerivedInfoUtf8ByteCount;
+        if (projectedDerivedInfoUtf8Bytes
+            > MemoPodLimits.MaximumActiveMemoDerivedInfoUtf8Bytes) {
+            throw new InvalidOperationException(
+                "The active memo derived-info byte limit has been reached."
+            );
+        }
+
+        _memos[id.Ordinal] = replacement;
+        _activeMemoDerivedInfoUtf8Bytes = checked(
+            (int)projectedDerivedInfoUtf8Bytes
+        );
+        return true;
     }
 
     internal void Remove(MemoId id) {
@@ -130,7 +186,7 @@ internal sealed class MemoPodWorkingAggregate {
         }
         _memos.Remove(id.Ordinal);
         _activeExactTextUtf8Bytes -= memo.ExactTextUtf8ByteCount;
-        _activeMemoMetadataUtf8Bytes -= memo.MetadataUtf8ByteCount;
+        _activeMemoDerivedInfoUtf8Bytes -= memo.DerivedInfoUtf8ByteCount;
     }
 
     internal Memo Get(MemoId id) {

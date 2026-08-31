@@ -534,7 +534,7 @@ internal static class LiveMemoRecallEvidenceSerializer {
     internal const string Schema =
         "atelia.memo-pod.deepseek-v4-flash-candidate.v1";
     internal const string FrozenPromptFormatId =
-        "atelia.memo-pod.prompt.v2";
+        "atelia.memo-pod.prompt.v3";
 
     private static readonly JsonSerializerOptions Options = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

@@ -83,23 +83,23 @@ public sealed class MemoTextContractTests {
     }
 
     [Fact]
-    public void MemoMetadataRoundTripsAsNullableImmutableFields() {
+    public void MemoDerivedInfoRoundTripsAsNullableImmutableFields() {
         MemoPodWorkingAggregate aggregate = CreateAggregate();
 
-        MemoId withoutMetadata = aggregate.Append("plain memo");
-        MemoId withMetadata = aggregate.Append(
+        MemoId withoutDerivedInfo = aggregate.Append("plain memo");
+        MemoId withDerivedInfo = aggregate.Append(
             "order 17 ships Friday",
             title: "Order 17",
             gist: "Ships Friday",
             summary: "The customer expects order 17 to ship on Friday."
         );
 
-        Memo plain = aggregate.Get(withoutMetadata);
+        Memo plain = aggregate.Get(withoutDerivedInfo);
         Assert.Null(plain.Title);
         Assert.Null(plain.Gist);
         Assert.Null(plain.Summary);
 
-        Memo annotated = aggregate.Get(withMetadata);
+        Memo annotated = aggregate.Get(withDerivedInfo);
         Assert.Equal("Order 17", annotated.Title);
         Assert.Equal("Ships Friday", annotated.Gist);
         Assert.Equal(
@@ -110,7 +110,7 @@ public sealed class MemoTextContractTests {
     }
 
     [Fact]
-    public void MemoMetadataRejectsBlankUntrimmedControlledOrInvalidUtf16() {
+    public void MemoDerivedInfoRejectsBlankUntrimmedControlledOrInvalidUtf16() {
         MemoPodWorkingAggregate aggregate = CreateAggregate();
 
         Assert.Throws<ArgumentException>(() =>
@@ -129,7 +129,7 @@ public sealed class MemoTextContractTests {
     }
 
     [Fact]
-    public void MemoMetadataUsesStrictUtf8FieldAndAggregateBounds() {
+    public void MemoDerivedInfoUsesStrictUtf8FieldAndAggregateBounds() {
         MemoPodWorkingAggregate fieldAggregate = CreateAggregate();
         string titleBoundary = new(
             'x',
@@ -165,7 +165,7 @@ public sealed class MemoTextContractTests {
         MemoPodWorkingAggregate aggregateAggregate = CreateAggregate();
         string chunk = new('x', MemoPodLimits.MaximumMemoTitleUtf8Bytes);
         int acceptedCount =
-            MemoPodLimits.MaximumActiveMemoMetadataUtf8Bytes
+            MemoPodLimits.MaximumActiveMemoDerivedInfoUtf8Bytes
             / MemoPodLimits.MaximumMemoTitleUtf8Bytes;
         for (int index = 0; index < acceptedCount; index++) {
             aggregateAggregate.Append("memo", title: chunk);

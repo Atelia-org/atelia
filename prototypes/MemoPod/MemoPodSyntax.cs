@@ -58,7 +58,7 @@ internal static class MemoPodSyntax {
         );
     }
 
-    internal static int RequireOptionalMemoMetadata(
+    internal static int RequireOptionalMemoDerivedInfo(
         string? value,
         string displayName,
         int maximumUtf8Bytes,

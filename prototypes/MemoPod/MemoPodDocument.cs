@@ -20,7 +20,7 @@ internal sealed record MemoPodDocument {
 
         var builder = ImmutableArray.CreateBuilder<Memo>();
         long activeExactTextUtf8Bytes = 0;
-        long activeMemoMetadataUtf8Bytes = 0;
+        long activeMemoDerivedInfoUtf8Bytes = 0;
         uint previousOrdinal = 0;
         foreach (Memo? memo in memos) {
             if (memo is null) {
@@ -52,7 +52,7 @@ internal sealed record MemoPodDocument {
             }
 
             activeExactTextUtf8Bytes += memo.ExactTextUtf8ByteCount;
-            activeMemoMetadataUtf8Bytes += memo.MetadataUtf8ByteCount;
+            activeMemoDerivedInfoUtf8Bytes += memo.DerivedInfoUtf8ByteCount;
             if (activeExactTextUtf8Bytes
                 > MemoPodLimits.MaximumActiveExactTextUtf8Bytes) {
                 throw new ArgumentOutOfRangeException(
@@ -60,11 +60,11 @@ internal sealed record MemoPodDocument {
                     $"Active memo exact text exceeds {MemoPodLimits.MaximumActiveExactTextUtf8Bytes} UTF-8 bytes."
                 );
             }
-            if (activeMemoMetadataUtf8Bytes
-                > MemoPodLimits.MaximumActiveMemoMetadataUtf8Bytes) {
+            if (activeMemoDerivedInfoUtf8Bytes
+                > MemoPodLimits.MaximumActiveMemoDerivedInfoUtf8Bytes) {
                 throw new ArgumentOutOfRangeException(
                     nameof(memos),
-                    $"Active memo metadata exceeds {MemoPodLimits.MaximumActiveMemoMetadataUtf8Bytes} UTF-8 bytes."
+                    $"Active memo derived info exceeds {MemoPodLimits.MaximumActiveMemoDerivedInfoUtf8Bytes} UTF-8 bytes."
                 );
             }
 
@@ -75,8 +75,8 @@ internal sealed record MemoPodDocument {
         NextMemoOrdinal = nextMemoOrdinal;
         Memos = builder.ToImmutable();
         ActiveExactTextUtf8Bytes = checked((int)activeExactTextUtf8Bytes);
-        ActiveMemoMetadataUtf8Bytes = checked(
-            (int)activeMemoMetadataUtf8Bytes
+        ActiveMemoDerivedInfoUtf8Bytes = checked(
+            (int)activeMemoDerivedInfoUtf8Bytes
         );
     }
 
@@ -85,5 +85,5 @@ internal sealed record MemoPodDocument {
     internal ulong NextMemoOrdinal { get; }
     internal ImmutableArray<Memo> Memos { get; }
     internal int ActiveExactTextUtf8Bytes { get; }
-    internal int ActiveMemoMetadataUtf8Bytes { get; }
+    internal int ActiveMemoDerivedInfoUtf8Bytes { get; }
 }

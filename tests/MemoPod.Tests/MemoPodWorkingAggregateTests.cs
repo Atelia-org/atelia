@@ -62,6 +62,154 @@ public sealed class MemoPodWorkingAggregateTests {
     }
 
     [Fact]
+    public void UpdateDerivedInfoReplacesAllFieldsWithoutChangingIdentityOrText() {
+        MemoPodWorkingAggregate aggregate = CreateAggregate();
+        MemoId id = aggregate.Append(
+            "exact text",
+            title: "Old title",
+            gist: "Old gist",
+            summary: "Old summary"
+        );
+        Memo oldSnapshot = aggregate.Get(id);
+        ulong nextMemoOrdinal = aggregate.NextMemoOrdinal;
+
+        bool changed = aggregate.UpdateDerivedInfo(
+            id,
+            title: "New title",
+            gist: null,
+            summary: "New summary"
+        );
+
+        Assert.True(changed);
+        Memo updated = aggregate.Get(id);
+        Assert.NotSame(oldSnapshot, updated);
+        Assert.Equal(id, updated.Id);
+        Assert.Equal("exact text", updated.ExactText);
+        Assert.Equal("New title", updated.Title);
+        Assert.Null(updated.Gist);
+        Assert.Equal("New summary", updated.Summary);
+        Assert.Equal(nextMemoOrdinal, aggregate.NextMemoOrdinal);
+        Assert.Equal("Old title", oldSnapshot.Title);
+        Assert.Equal("Old gist", oldSnapshot.Gist);
+        Assert.Equal("Old summary", oldSnapshot.Summary);
+    }
+
+    [Fact]
+    public void UpdateDerivedInfoCanClearAllFieldsAndDetectExactNoOp() {
+        MemoPodWorkingAggregate aggregate = CreateAggregate();
+        MemoId id = aggregate.Append(
+            "exact text",
+            title: "Title",
+            gist: "Gist",
+            summary: "Summary"
+        );
+
+        Assert.True(aggregate.UpdateDerivedInfo(id, null, null, null));
+        Memo cleared = aggregate.Get(id);
+        Assert.Null(cleared.Title);
+        Assert.Null(cleared.Gist);
+        Assert.Null(cleared.Summary);
+        Assert.False(aggregate.UpdateDerivedInfo(id, null, null, null));
+        Assert.Same(cleared, aggregate.Get(id));
+    }
+
+    [Fact]
+    public void RejectedDerivedInfoUpdatesAreAtomic() {
+        MemoPodWorkingAggregate aggregate = CreateAggregate();
+        MemoId id = aggregate.Append("exact text", title: "Title");
+        Memo before = aggregate.Get(id);
+        MemoPodDocument beforeDocument = aggregate.CaptureDocument();
+
+        Assert.Throws<ArgumentException>(() =>
+            aggregate.UpdateDerivedInfo(default, null, null, null));
+        Assert.Throws<KeyNotFoundException>(() =>
+            aggregate.UpdateDerivedInfo(
+                MemoId.Parse("m1:000000ff"),
+                null,
+                null,
+                null
+            ));
+        Assert.Throws<ArgumentException>(() =>
+            aggregate.UpdateDerivedInfo(id, " leading", null, null));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            aggregate.UpdateDerivedInfo(
+                id,
+                new string(
+                    'x',
+                    MemoPodLimits.MaximumMemoTitleUtf8Bytes + 1
+                ),
+                null,
+                null
+            ));
+
+        Assert.Same(before, aggregate.Get(id));
+        MemoPodDocument afterDocument = aggregate.CaptureDocument();
+        Assert.Equal(
+            beforeDocument.Memos.ToArray(),
+            afterDocument.Memos.ToArray()
+        );
+        Assert.Equal(
+            beforeDocument.NextMemoOrdinal,
+            afterDocument.NextMemoOrdinal
+        );
+    }
+
+    [Fact]
+    public void UpdateDerivedInfoAppliesAggregateCapacityByByteDifference() {
+        string maximumTitle = new(
+            'x',
+            MemoPodLimits.MaximumMemoTitleUtf8Bytes
+        );
+        int memoCount =
+            MemoPodLimits.MaximumActiveMemoDerivedInfoUtf8Bytes
+            / MemoPodLimits.MaximumMemoTitleUtf8Bytes;
+        Memo[] memos = Enumerable.Range(1, memoCount)
+            .Select(ordinal => new Memo(
+                MemoId.FromOrdinal((uint)ordinal),
+                "text",
+                title: maximumTitle
+            ))
+            .ToArray();
+        MemoPodWorkingAggregate aggregate =
+            MemoPodWorkingAggregate.FromDocument(
+                new MemoPodDocument(
+                    PodId,
+                    "topic",
+                    (ulong)memoCount + 1,
+                    memos
+                )
+            );
+        MemoId first = MemoId.FromOrdinal(1);
+        MemoId second = MemoId.FromOrdinal(2);
+        Memo firstBefore = aggregate.Get(first);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            aggregate.UpdateDerivedInfo(
+                first,
+                maximumTitle,
+                gist: "x",
+                summary: null
+            ));
+        Assert.Same(firstBefore, aggregate.Get(first));
+
+        Assert.True(aggregate.UpdateDerivedInfo(first, null, null, null));
+        Assert.True(aggregate.UpdateDerivedInfo(
+            second,
+            maximumTitle,
+            gist: new string(
+                'y',
+                MemoPodLimits.MaximumMemoTitleUtf8Bytes
+            ),
+            summary: null
+        ));
+        Assert.Null(aggregate.Get(first).Title);
+        Assert.Equal(
+            MemoPodLimits.MaximumMemoTitleUtf8Bytes,
+            aggregate.Get(second).Gist!.Length
+        );
+    }
+
+    [Fact]
     public void MissingRemoveAndDefaultIdsFailWithoutMutation() {
         MemoPodWorkingAggregate aggregate = CreateAggregate();
         MemoId existing = aggregate.Append("existing");

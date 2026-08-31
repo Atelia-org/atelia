@@ -44,6 +44,13 @@ public sealed class MemoPodLifecycleTests : IDisposable {
         Assert.Throws<ArgumentException>(() => pod.TryGet(default, out _));
         Assert.Throws<KeyNotFoundException>(() =>
             pod.Remove(MemoId.Parse("m1:00000001")));
+        Assert.Throws<KeyNotFoundException>(() =>
+            pod.UpdateDerivedInfo(
+                MemoId.Parse("m1:00000001"),
+                null,
+                null,
+                null
+            ));
         Assert.Throws<InvalidOperationException>(() => pod.ResumeEditing());
     }
 
@@ -70,6 +77,8 @@ public sealed class MemoPodLifecycleTests : IDisposable {
             () => pod.Append("rejected")
         );
         Assert.Throws<InvalidOperationException>(() => pod.Remove(first));
+        Assert.Throws<InvalidOperationException>(() =>
+            pod.UpdateDerivedInfo(first, null, null, null));
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => pod.FreezeAsync()
         );
@@ -89,6 +98,43 @@ public sealed class MemoPodLifecycleTests : IDisposable {
             pod.FrozenPrompt.Sha256,
             reopened.FrozenPrompt.Sha256
         );
+    }
+
+    [Fact]
+    public async Task UpdateDerivedInfoPersistsWithoutChangingRecallCorpus() {
+        MemoPod pod = MemoPod.Create(_root, PodId, "topic");
+        MemoId id = pod.Append("immutable exact text");
+        await pod.FreezeAsync();
+        string beforeIdentity = pod.ComputeStateIdentity();
+        string beforePrompt = pod.FrozenPrompt.ExactText;
+        string beforePromptSha256 = pod.FrozenPrompt.Sha256;
+
+        pod.ResumeEditing();
+        Memo oldSnapshot = pod.Get(id);
+        pod.UpdateDerivedInfo(
+            id,
+            title: "Title",
+            gist: "One-line gist",
+            summary: "A more detailed summary."
+        );
+        Memo updated = pod.Get(id);
+
+        Assert.NotSame(oldSnapshot, updated);
+        Assert.Null(oldSnapshot.Title);
+        Assert.Equal(id, updated.Id);
+        Assert.Equal("immutable exact text", updated.ExactText);
+        await pod.FreezeAsync();
+
+        Assert.NotEqual(beforeIdentity, pod.ComputeStateIdentity());
+        Assert.Equal(beforePrompt, pod.FrozenPrompt.ExactText);
+        Assert.Equal(beforePromptSha256, pod.FrozenPrompt.Sha256);
+
+        MemoPod reopened = MemoPod.Open(_root, PodId);
+        Memo durable = reopened.Get(id);
+        Assert.Equal("Title", durable.Title);
+        Assert.Equal("One-line gist", durable.Gist);
+        Assert.Equal("A more detailed summary.", durable.Summary);
+        Assert.Equal("immutable exact text", durable.ExactText);
     }
 
     [Fact]
@@ -192,7 +238,11 @@ public sealed class MemoPodLifecycleTests : IDisposable {
         );
         pod.ResumeEditing();
 
+        MemoId id = Assert.Single(pod.List()).Id;
+        pod.UpdateDerivedInfo(id, null, null, null);
         Assert.Throws<ArgumentException>(() => pod.Append(string.Empty));
+        Assert.Throws<ArgumentException>(() =>
+            pod.UpdateDerivedInfo(id, " leading", null, null));
         Assert.Throws<KeyNotFoundException>(
             () => pod.Remove(MemoId.Parse("m1:000000ff"))
         );
@@ -381,6 +431,8 @@ public sealed class MemoPodLifecycleTests : IDisposable {
         AssertInvalidated(() => _ = pod.Phase);
         AssertInvalidated(() => pod.Append("later"));
         AssertInvalidated(() => pod.Remove(id));
+        AssertInvalidated(() =>
+            pod.UpdateDerivedInfo(id, null, null, null));
         AssertInvalidated(() => pod.Get(id));
         AssertInvalidated(() => pod.TryGet(id, out _));
         AssertInvalidated(() => pod.List());

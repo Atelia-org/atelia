@@ -112,9 +112,17 @@ public sealed class MemoPodRecallResultTests {
         MemoPod pod = MemoPod.Create(root, MemoPodRecallFixture.PodId, "topic");
         MemoId id = pod.Append(
             "remember me",
+            title: "Initial title",
+            gist: "Initial gist",
+            summary: "Initial summary"
+        );
+        await pod.FreezeAsync();
+        pod.ResumeEditing();
+        pod.UpdateDerivedInfo(
+            id,
             title: "Durable detail",
             gist: "Remember this",
-            summary: "The result must keep this metadata after removal."
+            summary: "The result must keep the latest derived info after removal."
         );
         await pod.FreezeAsync();
         using MemoPodRecallFixture fixture =
@@ -141,7 +149,7 @@ public sealed class MemoPodRecallResultTests {
         Assert.Equal("Durable detail", recalled.Title);
         Assert.Equal("Remember this", recalled.Gist);
         Assert.Equal(
-            "The result must keep this metadata after removal.",
+            "The result must keep the latest derived info after removal.",
             recalled.Summary
         );
         Assert.Equal("remember me", recalled.ExactText);

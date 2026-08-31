@@ -88,6 +88,20 @@ public sealed partial class MemoPod {
         _dirty = true;
     }
 
+    public void UpdateDerivedInfo(
+        MemoId id,
+        string? title,
+        string? gist,
+        string? summary
+    ) {
+        ThrowIfInvalidated();
+        RequirePhase(MemoPodPhase.Editable, nameof(UpdateDerivedInfo));
+
+        if (_working.UpdateDerivedInfo(id, title, gist, summary)) {
+            _dirty = true;
+        }
+    }
+
     public Memo Get(MemoId id) {
         ThrowIfInvalidated();
         return _working.Get(id);

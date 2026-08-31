@@ -146,13 +146,13 @@ public sealed class MemoPodDocumentTests {
     }
 
     [Fact]
-    public void DocumentRejectsExcessiveActiveMetadataBytes() {
+    public void DocumentRejectsExcessiveActiveDerivedInfoBytes() {
         string maximumTitle = new(
             'x',
             MemoPodLimits.MaximumMemoTitleUtf8Bytes
         );
         int memoCount =
-            (MemoPodLimits.MaximumActiveMemoMetadataUtf8Bytes
+            (MemoPodLimits.MaximumActiveMemoDerivedInfoUtf8Bytes
                 / MemoPodLimits.MaximumMemoTitleUtf8Bytes)
             + 1;
         Memo[] overByteLimit = Enumerable.Range(1, memoCount)

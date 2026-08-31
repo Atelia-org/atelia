@@ -245,7 +245,7 @@ public sealed class MemoPodLifecyclePersistenceTests : IDisposable {
     [Fact]
     public void MaximumLogicalV2DocumentCanPublishOpenAndWorstCaseRender() {
         const int jsonWorstCaseExpansion = 6;
-        const int memoLineBytesExcludingText = 77;
+        const int memoLineBytesExcludingText = 37;
         string topic = new('"', MemoPodLimits.MaximumTopicUtf8Bytes);
         int exactTextBytesPerMemo =
             MemoPodLimits.MaximumActiveExactTextUtf8Bytes
@@ -302,7 +302,7 @@ public sealed class MemoPodLifecyclePersistenceTests : IDisposable {
         Memo[] reopened = pod.List().ToArray();
         string headerWithoutTopic =
             """
-            {"schema":"atelia.memo-pod.prompt.v2","pod_id":"99999999999999999999999999999999","topic":""}
+            {"schema":"atelia.memo-pod.prompt.v3","pod_id":"99999999999999999999999999999999","topic":""}
             """ + "\n";
         int expectedPromptLength = checked(
             Encoding.UTF8.GetByteCount(headerWithoutTopic)
