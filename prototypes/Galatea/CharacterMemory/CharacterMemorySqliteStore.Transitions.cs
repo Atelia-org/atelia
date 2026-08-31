@@ -131,9 +131,10 @@ internal sealed partial class CharacterMemorySqliteStore {
                             existing
                         );
                     }
-                    if (status.ActiveSourceAction is not null) {
+                    if (status.ActiveSourceAction is not null
+                        || status.ActiveDerivedInfoSourceAction is not null) {
                         throw new CharacterMemoryStoreConflictException(
-                            "Another Character Note capture still requires settlement."
+                            "The Default Pod mutation slot is already occupied."
                         );
                     }
 
@@ -231,6 +232,7 @@ internal sealed partial class CharacterMemorySqliteStore {
                             status.ActiveSourceAction,
                             request.SourceActionAddress,
                             StringComparison.Ordinal)
+                        || status.ActiveDerivedInfoSourceAction is not null
                         || !string.Equals(
                             status.SettledDefaultPodStateIdentity,
                             request.BasePodStateIdentity,
@@ -332,6 +334,11 @@ internal sealed partial class CharacterMemorySqliteStore {
                         );
                     }
                     if (capture.State is CharacterMemoryCaptureState.Applied) {
+                        _ = RequireDerivedInfoWork(
+                            connection,
+                            transaction,
+                            request.SourceActionAddress
+                        );
                         return new CharacterMemorySettleResult(
                             CharacterMemorySettleDisposition.AlreadyApplied,
                             status.StoreRevision,
@@ -373,6 +380,12 @@ internal sealed partial class CharacterMemorySqliteStore {
                         meta.Parameters.AddWithValue("$source", request.SourceActionAddress);
                         RequireOne(meta.ExecuteNonQuery(), "settled Pod tip advancement");
                     }
+                    InsertPendingDerivedInfoWork(
+                        connection,
+                        transaction,
+                        request.SourceActionAddress,
+                        revision
+                    );
                     return new CharacterMemorySettleResult(
                         CharacterMemorySettleDisposition.Applied,
                         revision,
@@ -393,6 +406,8 @@ internal sealed partial class CharacterMemorySqliteStore {
                                 status.SettledDefaultPodStateIdentity,
                                 request.TargetPodStateIdentity,
                                 StringComparison.Ordinal))
+                        && ReadDerivedInfoWorkExact(request.SourceActionAddress)
+                            is not null
                         && status.StoreRevision == result.StoreRevision;
                 }
             );
@@ -645,6 +660,30 @@ internal sealed partial class CharacterMemorySqliteStore {
             child.Parameters.AddWithValue("$text", request.ExactTexts[ordinal]);
             RequireOne(child.ExecuteNonQuery(), "captured Character Note");
         }
+    }
+
+    private static void InsertPendingDerivedInfoWork(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string sourceActionAddress,
+        long revision
+    ) {
+        using SqliteCommand command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO derived_info_work(
+                source_action_address, state, enricher_contract_id,
+                derived_info_commitment, base_pod_state_identity,
+                target_pod_state_identity, rejection_code,
+                created_revision, state_revision
+            ) VALUES (
+                $source, 'Pending', NULL, NULL, NULL, NULL, NULL,
+                $revision, $revision
+            );
+            """;
+        command.Parameters.AddWithValue("$source", sourceActionAddress);
+        command.Parameters.AddWithValue("$revision", revision);
+        RequireOne(command.ExecuteNonQuery(), "Pending derived-info creation");
     }
 
     private static void RequireCaptureIdentity(

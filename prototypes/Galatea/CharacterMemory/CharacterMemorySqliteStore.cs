@@ -14,7 +14,7 @@ namespace Atelia.Galatea.Server.CharacterMemory;
 /// exclusive filesystem lock and serializes every operation on one handle.
 /// </summary>
 internal sealed partial class CharacterMemorySqliteStore : IDisposable {
-    internal const int SchemaVersion = 1;
+    internal const int SchemaVersion = 2;
     internal const int ApplicationId = 0x47434D31; // "GCM1"
     internal const string DatabaseFileName = "character-memory.sqlite3";
     internal const string LockFileName = "character-memory.lock";
@@ -23,6 +23,15 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     private const int RequestedSourceInsertBatchSize = 400;
     private const string CommitmentVersion =
         "atelia.galatea.character-memory.extraction-commitment.v1";
+    // SHA-256 of NormalizeSchemaSql(sqlite_schema.sql) for each exact table.
+    private const string V2MetaSchemaSha256 =
+        "319ca61bea7abe13d7536cdbb31302797ff6100f4515dcd08abec1acc18b2faf";
+    private const string CaptureSchemaSha256 =
+        "bdd6634ced7368d131652007a23eafd62a4345095bf6583e95d707b9531429fd";
+    private const string V2NoteSchemaSha256 =
+        "a9f47db6e48c6322c30b8b4a2cdb03002608e03cace3c24905124e7120ff99da";
+    private const string V2DerivedInfoSchemaSha256 =
+        "f6d72065c0f2293a61738fa873d2d20bf716628ef54e5b179aaaa5f2eaa82c30";
     private static readonly UTF8Encoding StrictUtf8 = new(
         encoderShouldEmitUTF8Identifier: false,
         throwOnInvalidBytes: true
@@ -156,6 +165,11 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                 create: false
             );
             ConfigureOpenedDatabase(connection);
+            MigrateV1ToV2IfNeeded(
+                connection,
+                owner,
+                hooks ?? CharacterMemoryStoreTestHooks.None
+            );
             CharacterMemoryStatusSnapshot snapshot =
                 ValidateOpenedDatabase(connection, owner);
             return new CharacterMemorySqliteStore(
@@ -537,7 +551,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         command.CommandText = """
             CREATE TABLE character_memory_meta (
                 singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
-                schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+                schema_version INTEGER NOT NULL CHECK(schema_version = 2),
                 user_id TEXT NOT NULL,
                 session_repository_id TEXT NOT NULL,
                 capture_frontier_segment_number INTEGER NOT NULL
@@ -553,6 +567,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                 provision_target_pod_state_identity TEXT NOT NULL,
                 settled_default_pod_state_identity TEXT NULL,
                 active_source_action TEXT NULL,
+                active_derived_info_source_action TEXT NULL,
                 quarantine_code TEXT NULL,
                 quarantine_observed_pod_state_identity TEXT NULL,
                 store_revision INTEGER NOT NULL CHECK(store_revision >= 0),
@@ -560,6 +575,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                     (store_state = 'Provisioning'
                         AND settled_default_pod_state_identity IS NULL
                         AND active_source_action IS NULL
+                        AND active_derived_info_source_action IS NULL
                         AND quarantine_code IS NULL
                         AND quarantine_observed_pod_state_identity IS NULL)
                     OR (store_state = 'Ready'
@@ -568,7 +584,9 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                         AND quarantine_observed_pod_state_identity IS NULL)
                     OR (store_state = 'Quarantined'
                         AND quarantine_code IS NOT NULL)
-                )
+                ),
+                CHECK(active_source_action IS NULL
+                    OR active_derived_info_source_action IS NULL)
             ) STRICT;
 
             CREATE TABLE note_action_capture (
@@ -619,7 +637,60 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                     CHECK(artifact_ordinal BETWEEN 0 AND 15),
                 exact_text TEXT NOT NULL CHECK(length(exact_text) > 0),
                 memo_id TEXT NULL,
+                derived_title TEXT NULL,
+                derived_gist TEXT NULL,
+                derived_summary TEXT NULL,
                 PRIMARY KEY(source_action_address, artifact_ordinal)
+            ) STRICT;
+
+            CREATE TABLE derived_info_work (
+                source_action_address TEXT NOT NULL PRIMARY KEY
+                    REFERENCES note_action_capture(source_action_address)
+                    ON DELETE RESTRICT,
+                state TEXT NOT NULL CHECK(state IN (
+                    'Pending', 'Prepared', 'Planned', 'Applied', 'Rejected'
+                )),
+                enricher_contract_id TEXT NULL,
+                derived_info_commitment TEXT NULL,
+                base_pod_state_identity TEXT NULL,
+                target_pod_state_identity TEXT NULL,
+                rejection_code TEXT NULL,
+                created_revision INTEGER NOT NULL CHECK(created_revision >= 1),
+                state_revision INTEGER NOT NULL CHECK(state_revision >= 1),
+                CHECK(
+                    (state = 'Pending'
+                        AND enricher_contract_id IS NULL
+                        AND derived_info_commitment IS NULL
+                        AND base_pod_state_identity IS NULL
+                        AND target_pod_state_identity IS NULL
+                        AND rejection_code IS NULL)
+                    OR (state = 'Prepared'
+                        AND enricher_contract_id IS NOT NULL
+                        AND derived_info_commitment IS NOT NULL
+                        AND base_pod_state_identity IS NULL
+                        AND target_pod_state_identity IS NULL
+                        AND rejection_code IS NULL)
+                    OR (state IN ('Planned', 'Applied')
+                        AND enricher_contract_id IS NOT NULL
+                        AND derived_info_commitment IS NOT NULL
+                        AND base_pod_state_identity IS NOT NULL
+                        AND target_pod_state_identity IS NOT NULL
+                        AND rejection_code IS NULL)
+                    OR (state = 'Rejected'
+                        AND ((enricher_contract_id IS NULL
+                                AND derived_info_commitment IS NULL
+                                AND base_pod_state_identity IS NULL
+                                AND target_pod_state_identity IS NULL)
+                            OR (enricher_contract_id IS NOT NULL
+                                AND derived_info_commitment IS NOT NULL
+                                AND base_pod_state_identity IS NULL
+                                AND target_pod_state_identity IS NULL)
+                            OR (enricher_contract_id IS NOT NULL
+                                AND derived_info_commitment IS NOT NULL
+                                AND base_pod_state_identity IS NOT NULL
+                                AND target_pod_state_identity IS NOT NULL))
+                        AND rejection_code IS NOT NULL)
+                )
             ) STRICT;
 
             CREATE UNIQUE INDEX ux_character_note_memo_id
@@ -628,6 +699,9 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             CREATE UNIQUE INDEX ux_note_capture_single_active
             ON note_action_capture((1))
             WHERE state IN ('Captured', 'Planned');
+
+            CREATE UNIQUE INDEX ux_derived_info_single_planned
+            ON derived_info_work((1)) WHERE state = 'Planned';
             """;
         command.ExecuteNonQuery();
     }
@@ -652,11 +726,12 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                     capture_frontier_tail_offset, baseline_selected_head,
                     store_state, provision_target_pod_state_identity,
                     settled_default_pod_state_identity, active_source_action,
+                    active_derived_info_source_action,
                     quarantine_code, quarantine_observed_pod_state_identity,
                     store_revision
                 ) VALUES (
-                    1, 1, $user, $repository, $segment, $tail, $head,
-                    'Provisioning', $target, NULL, NULL, NULL, NULL, 0
+                    1, 2, $user, $repository, $segment, $tail, $head,
+                    'Provisioning', $target, NULL, NULL, NULL, NULL, NULL, 0
                 );
                 """;
             command.Parameters.AddWithValue("$user", owner.UserId);
@@ -705,6 +780,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                     StringComparison.Ordinal)
                 && status.SettledDefaultPodStateIdentity is null
                 && status.ActiveSourceAction is null
+                && status.ActiveDerivedInfoSourceAction is null
                 && status.StoreRevision == 0) {
                 return;
             }
@@ -753,6 +829,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             transaction: null
         );
         ValidateGlobalCountInvariants(connection, status);
+        ValidateAllDerivedInfoWork(connection);
         return status;
     }
 
@@ -773,8 +850,10 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             "table:character_memory_meta",
             "table:note_action_capture",
             "table:character_note",
+            "table:derived_info_work",
             "index:ux_character_note_memo_id",
             "index:ux_note_capture_single_active",
+            "index:ux_derived_info_single_planned",
         ];
         if (!actual.SetEquals(expected)) {
             throw new InvalidDataException(
@@ -787,6 +866,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             "capture_frontier_tail_offset", "baseline_selected_head",
             "store_state", "provision_target_pod_state_identity",
             "settled_default_pod_state_identity", "active_source_action",
+            "active_derived_info_source_action",
             "quarantine_code", "quarantine_observed_pod_state_identity",
             "store_revision",
         ]);
@@ -799,14 +879,44 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         ]);
         RequireExactColumns(connection, "character_note", [
             "source_action_address", "artifact_ordinal", "exact_text",
-            "memo_id",
+            "memo_id", "derived_title", "derived_gist", "derived_summary",
+        ]);
+        RequireExactColumns(connection, "derived_info_work", [
+            "source_action_address", "state", "enricher_contract_id",
+            "derived_info_commitment", "base_pod_state_identity",
+            "target_pod_state_identity", "rejection_code",
+            "created_revision", "state_revision",
         ]);
         foreach (string table in new[] {
-            "character_memory_meta", "note_action_capture", "character_note"
+            "character_memory_meta", "note_action_capture", "character_note",
+            "derived_info_work",
         }) {
             RequireStrictTable(connection, table);
         }
+        RequireExactTableSchema(
+            connection,
+            "character_memory_meta",
+            V2MetaSchemaSha256
+        );
+        RequireExactTableSchema(
+            connection,
+            "note_action_capture",
+            CaptureSchemaSha256
+        );
+        RequireExactTableSchema(
+            connection,
+            "character_note",
+            V2NoteSchemaSha256
+        );
+        RequireExactTableSchema(
+            connection,
+            "derived_info_work",
+            V2DerivedInfoSchemaSha256
+        );
         RequireExactForeignKeys(connection, "character_note", [
+            "source_action_address->note_action_capture.source_action_address:RESTRICT"
+        ]);
+        RequireExactForeignKeys(connection, "derived_info_work", [
             "source_action_address->note_action_capture.source_action_address:RESTRICT"
         ]);
         RequireExactIndex(
@@ -818,6 +928,17 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             expectedSql: """
                 CREATE UNIQUE INDEX ux_character_note_memo_id
                 ON character_note(memo_id) WHERE memo_id IS NOT NULL
+                """
+        );
+        RequireExactIndex(
+            connection,
+            table: "derived_info_work",
+            index: "ux_derived_info_single_planned",
+            expectedKeyColumnId: -2,
+            expectedKeyColumnName: null,
+            expectedSql: """
+                CREATE UNIQUE INDEX ux_derived_info_single_planned
+                ON derived_info_work((1)) WHERE state = 'Planned'
                 """
         );
         RequireExactIndex(
@@ -846,8 +967,9 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                    capture_frontier_tail_offset, baseline_selected_head,
                    store_state, provision_target_pod_state_identity,
                    settled_default_pod_state_identity,
-                   active_source_action, quarantine_code,
-                   quarantine_observed_pod_state_identity, store_revision
+                   active_source_action, active_derived_info_source_action,
+                   quarantine_code, quarantine_observed_pod_state_identity,
+                   store_revision
             FROM character_memory_meta WHERE singleton = 1;
             """;
         using SqliteDataReader reader = command.ExecuteReader();
@@ -873,13 +995,16 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         string? activeSource = reader.IsDBNull(8)
             ? null
             : reader.GetString(8);
-        string? quarantineCode = reader.IsDBNull(9)
+        string? activeDerivedSource = reader.IsDBNull(9)
             ? null
             : reader.GetString(9);
-        string? observed = reader.IsDBNull(10)
+        string? quarantineCode = reader.IsDBNull(10)
             ? null
             : reader.GetString(10);
-        long revision = reader.GetInt64(11);
+        string? observed = reader.IsDBNull(11)
+            ? null
+            : reader.GetString(11);
+        long revision = reader.GetInt64(12);
         if (reader.Read()) { throw Corrupt("Character Memory meta is not singleton."); }
         reader.Close();
 
@@ -892,6 +1017,12 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         if (activeSource is not null) {
             RequireEventAddress(activeSource, "active source Action");
         }
+        if (activeDerivedSource is not null) {
+            RequireEventAddress(
+                activeDerivedSource,
+                "active derived-info source Action"
+            );
+        }
         if (quarantineCode is not null) {
             RequireCode(quarantineCode, "quarantine code");
         }
@@ -902,13 +1033,25 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             ? null
             : ReadCaptureCore(connection, transaction, activeSource)
                 ?? throw Corrupt("Active source Action has no capture row.");
+        CharacterMemoryDerivedInfoWorkSnapshot? activeDerived =
+            activeDerivedSource is null
+                ? null
+                : ReadDerivedInfoWorkCore(
+                    connection,
+                    transaction,
+                    activeDerivedSource
+                ) ?? throw Corrupt(
+                    "Active derived-info source Action has no work row."
+                );
         ValidateStatusShape(
             state,
             settled,
             activeSource,
+            activeDerivedSource,
             quarantineCode,
             observed,
-            active
+            active,
+            activeDerived
         );
         return new CharacterMemoryStatusSnapshot(
             owner,
@@ -917,10 +1060,12 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             provisionTarget,
             settled,
             activeSource,
+            activeDerivedSource,
             quarantineCode,
             observed,
             revision,
-            active
+            active,
+            activeDerived
         );
     }
 
@@ -1024,7 +1169,57 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                     OR (capture.artifact_count > 0
                         AND (children.minimum_ordinal != 0
                             OR children.maximum_ordinal
-                                != capture.artifact_count - 1)))
+                                != capture.artifact_count - 1))),
+                (SELECT COUNT(*) FROM derived_info_work
+                 WHERE state = 'Planned'),
+                (SELECT MIN(source_action_address) FROM derived_info_work
+                 WHERE state = 'Planned'),
+                (SELECT MAX(source_action_address) FROM derived_info_work
+                 WHERE state = 'Planned'),
+                (SELECT COUNT(*)
+                 FROM note_action_capture AS capture
+                 LEFT JOIN derived_info_work AS work
+                   USING(source_action_address)
+                 WHERE (capture.state = 'Applied'
+                            AND capture.artifact_count > 0
+                            AND work.source_action_address IS NULL)
+                    OR (work.source_action_address IS NOT NULL
+                            AND (capture.state != 'Applied'
+                                OR capture.artifact_count = 0))),
+                (SELECT COUNT(*) FROM (
+                    SELECT work.source_action_address
+                    FROM derived_info_work AS work
+                    JOIN character_note AS note USING(source_action_address)
+                    GROUP BY work.source_action_address
+                    HAVING (work.state = 'Pending'
+                               AND (COUNT(note.derived_title) != 0
+                                   OR COUNT(note.derived_gist) != 0
+                                   OR COUNT(note.derived_summary) != 0))
+                        OR (work.state IN ('Prepared', 'Planned', 'Applied')
+                               AND (COUNT(note.derived_title) != COUNT(*)
+                                   OR COUNT(note.derived_gist) != COUNT(*)
+                                   OR COUNT(note.derived_summary) != COUNT(*)))
+                        OR (work.state = 'Rejected'
+                               AND NOT (
+                                   (COUNT(note.derived_title) = 0
+                                       AND COUNT(note.derived_gist) = 0
+                                       AND COUNT(note.derived_summary) = 0)
+                                   OR (COUNT(note.derived_title) = COUNT(*)
+                                       AND COUNT(note.derived_gist) = COUNT(*)
+                                       AND COUNT(note.derived_summary) = COUNT(*))
+                               ))
+                )),
+                (SELECT COUNT(*) FROM derived_info_work
+                  WHERE created_revision > state_revision
+                     OR state_revision > (
+                         SELECT store_revision FROM character_memory_meta
+                         WHERE singleton = 1
+                     )),
+                (SELECT COUNT(*) FROM note_action_capture
+                  WHERE state_revision > (
+                      SELECT store_revision FROM character_memory_meta
+                      WHERE singleton = 1
+                  ))
             ;
             """;
         using SqliteDataReader reader = command.ExecuteReader();
@@ -1039,6 +1234,19 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             ? null
             : reader.GetString(2);
         long artifactCountMismatch = reader.GetInt64(3);
+        long activeDerivedCount = reader.GetInt64(4);
+        string? minimumActiveDerived = reader.IsDBNull(5)
+            ? null
+            : reader.GetString(5);
+        string? maximumActiveDerived = reader.IsDBNull(6)
+            ? null
+            : reader.GetString(6);
+        long workCaptureMismatch = reader.GetInt64(7);
+        long derivedFieldMismatch = reader.IsDBNull(8)
+            ? 0
+            : reader.GetInt64(8);
+        long derivedRevisionMismatch = reader.GetInt64(9);
+        long captureRevisionMismatch = reader.GetInt64(10);
         if (reader.Read()) {
             throw Corrupt("Character Memory count invariant query is not singleton.");
         }
@@ -1052,6 +1260,53 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         }
         if (artifactCountMismatch != 0) {
             throw Corrupt("Capture artifact row counts are invalid.");
+        }
+        long expectedActiveDerivedCount =
+            status.ActiveDerivedInfoSourceAction is null ? 0 : 1;
+        if (activeDerivedCount != expectedActiveDerivedCount
+            || !string.Equals(
+                minimumActiveDerived,
+                status.ActiveDerivedInfoSourceAction,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                maximumActiveDerived,
+                status.ActiveDerivedInfoSourceAction,
+                StringComparison.Ordinal
+            )) {
+            throw Corrupt("Character Memory active derived-info count is invalid.");
+        }
+        if (workCaptureMismatch != 0) {
+            throw Corrupt("Derived-info work/capture ownership is invalid.");
+        }
+        if (derivedFieldMismatch != 0) {
+            throw Corrupt("Derived-info note field shape is invalid.");
+        }
+        if (derivedRevisionMismatch != 0) {
+            throw Corrupt("Derived-info work revisions are invalid.");
+        }
+        if (captureRevisionMismatch != 0) {
+            throw Corrupt("Character Note capture revisions are invalid.");
+        }
+    }
+
+    private static void ValidateAllDerivedInfoWork(
+        SqliteConnection connection
+    ) {
+        var sources = new List<string>();
+        using (SqliteCommand command = connection.CreateCommand()) {
+            command.CommandText = """
+                SELECT source_action_address FROM derived_info_work
+                ORDER BY source_action_address;
+                """;
+            using SqliteDataReader reader = command.ExecuteReader();
+            while (reader.Read()) { sources.Add(reader.GetString(0)); }
+        }
+        foreach (string source in sources) {
+            _ = ReadDerivedInfoWorkCore(connection, transaction: null, source)
+                ?? throw Corrupt(
+                    "Derived-info work disappeared during strict validation."
+                );
         }
     }
 
@@ -1139,20 +1394,29 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         CharacterMemoryStoreState state,
         string? settled,
         string? activeSource,
+        string? activeDerivedSource,
         string? quarantineCode,
         string? observed,
-        CharacterMemoryCaptureSnapshot? active
+        CharacterMemoryCaptureSnapshot? active,
+        CharacterMemoryDerivedInfoWorkSnapshot? activeDerived
     ) {
         bool valid = state switch {
             CharacterMemoryStoreState.Provisioning => settled is null
-                && activeSource is null && quarantineCode is null
-                && observed is null && active is null,
+                && activeSource is null && activeDerivedSource is null
+                && quarantineCode is null && observed is null
+                && active is null && activeDerived is null,
             CharacterMemoryStoreState.Ready => settled is not null
                 && quarantineCode is null && observed is null
+                && (activeSource is null || activeDerivedSource is null)
                 && ((activeSource is null && active is null)
                     || (activeSource is not null && active is not null
                         && active.State is CharacterMemoryCaptureState.Captured
-                            or CharacterMemoryCaptureState.Planned)),
+                            or CharacterMemoryCaptureState.Planned))
+                && ((activeDerivedSource is null && activeDerived is null)
+                    || (activeDerivedSource is not null
+                        && activeDerived is {
+                            State: CharacterMemoryDerivedInfoState.Planned
+                        })),
             CharacterMemoryStoreState.Quarantined => quarantineCode is not null,
             _ => false,
         };
@@ -1165,6 +1429,19 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                 StringComparison.Ordinal)) {
             throw Corrupt(
                 "Active Planned base does not match the settled Default Pod tip."
+            );
+        }
+        if (state is CharacterMemoryStoreState.Ready
+            && activeDerived is {
+                State: CharacterMemoryDerivedInfoState.Planned
+            }
+            && !string.Equals(
+                activeDerived.BasePodStateIdentity,
+                settled,
+                StringComparison.Ordinal
+            )) {
+            throw Corrupt(
+                "Active DerivedInfo Planned base does not match the settled Default Pod tip."
             );
         }
     }
@@ -1416,6 +1693,37 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         if (!reader.Read() || reader.GetString(0) != "table"
             || reader.GetInt32(1) != 1 || reader.Read()) {
             throw Corrupt($"Table '{table}' is not exact STRICT schema.");
+        }
+    }
+
+    private static void RequireExactTableSchema(
+        SqliteConnection connection,
+        string table,
+        string expectedSha256
+    ) {
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT sql FROM sqlite_schema
+            WHERE type = 'table' AND name = $table;
+            """;
+        command.Parameters.AddWithValue("$table", table);
+        using SqliteDataReader reader = command.ExecuteReader();
+        if (!reader.Read() || reader.IsDBNull(0)) {
+            throw Corrupt($"Table '{table}' schema SQL is absent.");
+        }
+        string normalized = NormalizeSchemaSql(reader.GetString(0));
+        if (reader.Read()) {
+            throw Corrupt($"Table '{table}' schema SQL is not unique.");
+        }
+        string actualSha256 = Convert.ToHexString(
+            SHA256.HashData(StrictUtf8.GetBytes(normalized))
+        ).ToLowerInvariant();
+        if (!string.Equals(
+            actualSha256,
+            expectedSha256,
+            StringComparison.Ordinal
+        )) {
+            throw Corrupt($"Table '{table}' definition is not exact.");
         }
     }
 
