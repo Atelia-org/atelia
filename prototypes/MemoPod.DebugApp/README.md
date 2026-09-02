@@ -144,8 +144,11 @@ dotnet run -c Release \
 
 `--case` is 1–64 lowercase ASCII letters/digits plus `.`, `_`, and `-` after
 the first character. Live mode accepts 1–8 query files, prompt bytes in
-1–33,554,432, max tokens in 1–4,096, and delay in 0–30,000 milliseconds. Fake
-arguments and live arguments are mutually exclusive.
+1–33,554,432, an optional max-tokens override in 1–4,096, and delay in
+0–30,000 milliseconds. Omitting `--max-tokens` leaves
+`CompletionRequest.MaxTokens` null so the selected provider/client keeps
+ownership of its supported output setting or default. Fake arguments and live
+arguments are mutually exclusive.
 
 Each attempted provider call writes one content-free JSONL evidence record.
 It contains route identifiers, Pod/active counts, the fixed

@@ -309,12 +309,6 @@ public sealed class GalateaMemoRecallContractsTests {
     [Fact]
     public void MvpPolicy_IsNamedAndWithinMemoPodContracts() {
         Assert.Equal(8, GalateaMemoRecallMvpPolicy.MaxResults);
-        Assert.Equal(256, GalateaMemoRecallMvpPolicy.DefaultMaxTokens);
-        Assert.InRange(
-            GalateaMemoRecallMvpPolicy.DefaultMaxTokens,
-            1,
-            MemoPodLimits.MaximumRecallMaxTokens
-        );
         Assert.Equal(
             MemoPodLimits.MaximumRenderedPromptUtf8Bytes,
             GalateaMemoRecallMvpPolicy.MaximumFrozenPromptUtf8Bytes

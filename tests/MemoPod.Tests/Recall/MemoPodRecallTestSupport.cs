@@ -129,7 +129,7 @@ internal sealed class MemoPodRecallFixture : IDisposable {
 
     internal static MemoRecallOptions Options(
         int maxResults = 8,
-        int maxTokens = 256,
+        int? maxTokens = null,
         int maximumFrozenPromptUtf8Bytes =
             MemoPodLimits.MaximumRenderedPromptUtf8Bytes,
         int maximumHydratedExactTextUtf8Bytes =

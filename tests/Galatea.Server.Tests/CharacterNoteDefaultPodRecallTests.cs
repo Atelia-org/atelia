@@ -29,17 +29,18 @@ public sealed class CharacterNoteDefaultPodRecallTests {
     );
 
     [Theory]
-    [InlineData(null, GalateaMemoRecallMvpPolicy.DefaultMaxTokens)]
-    [InlineData(73, 73)]
-    public async Task ProviderUsesNamedOptionsAndReturnsNoMatch(
+    [InlineData("openai-codex-responses", null, null)]
+    [InlineData("openai-chat", 73, 73)]
+    public async Task ProviderPreservesConnectionMaxTokensAndReturnsNoMatch(
+        string connectionKind,
         int? configuredMaxTokens,
-        int expectedMaxTokens
+        int? expectedMaxTokens
     ) {
         using var fixture = await RuntimeFixture.CreateAsync();
         var client = new RecallCompletionClient(_ => []);
         var provider = new GalateaDefaultMemoPodRecallProvider(
             fixture.Reconciler,
-            Connection(configuredMaxTokens),
+            Connection(configuredMaxTokens, connectionKind),
             () => client
         );
 
@@ -369,15 +370,18 @@ public sealed class CharacterNoteDefaultPodRecallTests {
 
     private static MemoRecallOptions Options() => new(
         GalateaMemoRecallMvpPolicy.MaxResults,
-        GalateaMemoRecallMvpPolicy.DefaultMaxTokens,
+        maxTokens: null,
         GalateaMemoRecallMvpPolicy.MaximumFrozenPromptUtf8Bytes,
         GalateaMemoRecallMvpPolicy.MaximumHydratedExactTextUtf8Bytes
     );
 
-    private static CompletionConnectionConfig Connection(int? maxTokens) =>
+    private static CompletionConnectionConfig Connection(
+        int? maxTokens,
+        string kind = "test"
+    ) =>
         new(
             "memo-recall",
-            "test",
+            kind,
             "memo-recall-model",
             "surface",
             "https://example.invalid",

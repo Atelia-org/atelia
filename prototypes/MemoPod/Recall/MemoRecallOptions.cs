@@ -3,7 +3,7 @@ namespace Atelia.MemoPod;
 public sealed class MemoRecallOptions {
     public MemoRecallOptions(
         int maxResults,
-        int maxTokens,
+        int? maxTokens,
         int maximumFrozenPromptUtf8Bytes,
         int maximumHydratedExactTextUtf8Bytes
     ) {
@@ -13,12 +13,14 @@ public sealed class MemoRecallOptions {
             MemoPodLimits.MaximumRecallResultCount,
             nameof(maxResults)
         );
-        MaxTokens = RequireInRange(
-            maxTokens,
-            1,
-            MemoPodLimits.MaximumRecallMaxTokens,
-            nameof(maxTokens)
-        );
+        MaxTokens = maxTokens is null
+            ? null
+            : RequireInRange(
+                maxTokens.Value,
+                1,
+                MemoPodLimits.MaximumRecallMaxTokens,
+                nameof(maxTokens)
+            );
         MaximumFrozenPromptUtf8Bytes = RequireInRange(
             maximumFrozenPromptUtf8Bytes,
             1,
@@ -34,7 +36,7 @@ public sealed class MemoRecallOptions {
     }
 
     public int MaxResults { get; }
-    public int MaxTokens { get; }
+    public int? MaxTokens { get; }
     public int MaximumFrozenPromptUtf8Bytes { get; }
     public int MaximumHydratedExactTextUtf8Bytes { get; }
 

@@ -11,7 +11,7 @@ internal static class Program {
 
     private static readonly MemoRecallOptions RecallOptions = new(
         MemoPodLimits.MaximumRecallResultCount,
-        maxTokens: 256,
+        maxTokens: null,
         MemoPodLimits.MaximumRenderedPromptUtf8Bytes,
         MemoPodLimits.MaximumActiveExactTextUtf8Bytes
     );

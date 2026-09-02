@@ -7,6 +7,7 @@ namespace Atelia.MemoPod.Tests.Recall;
 public sealed class MemoPodRecallLimitsAndProviderTests {
     [Fact]
     public void OptionsValidateEveryClosedRange() {
+        var omitted = new MemoRecallOptions(1, null, 1, 1);
         var minimum = new MemoRecallOptions(1, 1, 1, 1);
         var maximum = new MemoRecallOptions(
             MemoPodLimits.MaximumRecallResultCount,
@@ -15,6 +16,7 @@ public sealed class MemoPodRecallLimitsAndProviderTests {
             MemoPodLimits.MaximumActiveExactTextUtf8Bytes
         );
 
+        Assert.Null(omitted.MaxTokens);
         Assert.Equal(1, minimum.MaxResults);
         Assert.Equal(1, minimum.MaxTokens);
         Assert.Equal(1, minimum.MaximumFrozenPromptUtf8Bytes);

@@ -4,7 +4,6 @@ namespace Atelia.Galatea.Server.CharacterMemory;
 
 internal static class GalateaMemoRecallMvpPolicy {
     internal const int MaxResults = 8;
-    internal const int DefaultMaxTokens = 256;
     internal const int MaximumQueryUtf8Bytes =
         MemoPodLimits.MaximumRecallQueryUtf8Bytes;
     internal const int MaximumRecentVisibleActionCount = 1;

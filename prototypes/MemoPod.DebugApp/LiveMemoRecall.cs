@@ -50,12 +50,17 @@ internal static class LiveMemoRecallRunner {
             1,
             MemoPodLimits.MaximumRenderedPromptUtf8Bytes
         );
-        int maxTokens = ParseBoundedInt(
-            arguments.GetSingleOrDefault("max-tokens"),
-            defaultValue: 256,
-            minimum: 1,
-            maximum: MemoPodLimits.MaximumRecallMaxTokens
+        string? maxTokensText = arguments.GetSingleOrDefault(
+            "max-tokens"
         );
+        int? maxTokens = maxTokensText is null
+            ? null
+            : ParseBoundedInt(
+                maxTokensText,
+                defaultValue: 1,
+                minimum: 1,
+                maximum: MemoPodLimits.MaximumRecallMaxTokens
+            );
         int delayMilliseconds = ParseBoundedInt(
             arguments.GetSingleOrDefault("delay-ms"),
             defaultValue: 0,
@@ -515,7 +520,7 @@ internal sealed record LiveMemoRecallEvidence(
     int QueryUtf8Bytes,
     int MaxResults,
     int MaxPromptUtf8Bytes,
-    int MaxTokens,
+    int? MaxTokens,
     int DelayMilliseconds,
     long ElapsedMilliseconds,
     string Outcome,

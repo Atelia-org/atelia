@@ -266,8 +266,8 @@ Title已经由MemoPod验证为trimmed、nonblank、无control characters；Exact
 MVP final injection count为`0..1`。MemoPod可以bounded over-fetch。WP-03必须把`MemoRecallOptions`四项全部锁成named policy并测试：
 
 - `MaxResults`：初始候选8；
-- `MaxTokens`：优先使用dedicated connection的正数`MaxTokens`，null时使用code-owned小输出默认值；最终值必须落在MemoPod
-  `1..4096`合同内，超界配置启动时拒绝；
+- `MaxTokens`：精确保留dedicated connection的nullable provider/client输出设置；正数必须落在MemoPod
+  `1..4096`合同内，超界配置启动时拒绝，null不得被business runtime补成独立request budget；
 - `MaximumFrozenPromptUtf8Bytes`：首版不低于Default Pod允许的完整FrozenPrompt hard limit，避免静默把合法Pod变成部分corpus；
 - `MaximumHydratedExactTextUtf8Bytes`：至少覆盖`MaxResults * MaximumMemoExactTextUtf8Bytes`，并受MemoPod active exact-text hard
   limit约束。

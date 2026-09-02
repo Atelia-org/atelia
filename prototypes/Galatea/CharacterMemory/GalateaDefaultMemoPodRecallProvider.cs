@@ -22,7 +22,7 @@ internal sealed class GalateaDefaultMemoPodRecallProvider
         ArgumentException.ThrowIfNullOrWhiteSpace(connection.Id);
         ArgumentException.ThrowIfNullOrWhiteSpace(connection.ModelId);
 
-        int maxTokens = RequireValidMaxTokens(connection);
+        int? maxTokens = RequireValidMaxTokens(connection);
 
         _reconciler = reconciler;
         _connection = connection;
@@ -35,12 +35,11 @@ internal sealed class GalateaDefaultMemoPodRecallProvider
         );
     }
 
-    internal static int RequireValidMaxTokens(
+    internal static int? RequireValidMaxTokens(
         CompletionConnectionConfig connection
     ) {
         ArgumentNullException.ThrowIfNull(connection);
-        int maxTokens = connection.MaxTokens
-            ?? GalateaMemoRecallMvpPolicy.DefaultMaxTokens;
+        int? maxTokens = connection.MaxTokens;
         if (maxTokens is < 1
             or > MemoPodLimits.MaximumRecallMaxTokens) {
             throw new ArgumentOutOfRangeException(
