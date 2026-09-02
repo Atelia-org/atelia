@@ -1,5 +1,7 @@
 using System.Text;
 using System.Globalization;
+using Atelia.Galatea.Server.CharacterMemory;
+using Atelia.MemoPod;
 using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
@@ -267,7 +269,10 @@ internal sealed class PlayerTurnObservation {
 
 internal static class PlayerTurnObservationEnvelope {
     internal const int MaximumRecallSourceIdUtf8Bytes = 512;
-    internal const int MaximumRecallBodyUtf8Bytes = 256 * 1024;
+    internal const int MaximumRecallBodyUtf8Bytes =
+        MemoPodLimits.MaximumMemoTitleUtf8Bytes
+        + MemoPodLimits.MaximumMemoExactTextUtf8Bytes
+        + GalateaMemoExactTextBodyRenderer.FixedLabelUtf8Bytes;
     internal const int MaximumRecallCount = 32;
     internal const int MaximumReplyUtf8Bytes = 256 * 1024;
     internal const int MaximumFailureUtf8Bytes = 4 * 1024;

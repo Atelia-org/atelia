@@ -1,3 +1,4 @@
+using System.Text;
 using Atelia.EventJournal;
 using Atelia.Galatea.Server.CharacterMemory;
 
@@ -8,7 +9,68 @@ internal sealed record GalateaPlayerTurnRecallBarriers(
     CharacterNoteOriginBarrier CharacterNoteOriginBarrier
 );
 
+internal sealed record GalateaRecentVisibleAction {
+    internal GalateaRecentVisibleAction(string text) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(text);
+        try {
+            _ = GalateaBoundedJson.StrictUtf8.GetByteCount(text);
+        }
+        catch (EncoderFallbackException exception) {
+            throw new ArgumentException(
+                "Recent visible Action must contain valid Unicode.",
+                nameof(text),
+                exception
+            );
+        }
+        Text = text;
+    }
+
+    internal string Text { get; }
+}
+
+internal sealed record GalateaPlayerTurnRecallContext {
+    internal GalateaPlayerTurnRecallContext(
+        RecallBarrier recallBarrier,
+        CharacterNoteOriginBarrier characterNoteOriginBarrier,
+        IEnumerable<GalateaRecentVisibleAction>? recentVisibleActions = null
+    ) {
+        ArgumentNullException.ThrowIfNull(recallBarrier);
+        ArgumentNullException.ThrowIfNull(characterNoteOriginBarrier);
+        GalateaRecentVisibleAction[] frozen = recentVisibleActions?.Select(
+            static action => action ?? throw new ArgumentException(
+                "Recall context Action collections must not contain null items.",
+                nameof(recentVisibleActions)
+            )
+        ).ToArray() ?? [];
+
+        RecallBarrier = recallBarrier;
+        CharacterNoteOriginBarrier = characterNoteOriginBarrier;
+        RecentVisibleActions = Array.AsReadOnly(frozen);
+    }
+
+    internal RecallBarrier RecallBarrier { get; }
+    internal CharacterNoteOriginBarrier CharacterNoteOriginBarrier { get; }
+    internal IReadOnlyList<GalateaRecentVisibleAction> RecentVisibleActions {
+        get;
+    }
+}
+
 internal sealed record GalateaPlayerTurnRecallRequest {
+    internal GalateaPlayerTurnRecallRequest(
+        GalateaUserConfig user,
+        EventAddress completionBoundary,
+        PlayerTurnObservation currentObservation,
+        GalateaPlayerTurnRecallContext context
+    ) : this(
+        user,
+        completionBoundary,
+        currentObservation,
+        context,
+        requireCompleteObservation: true
+    ) { }
+
+    // WP-02 removes this adapter when the production caller owns the sampled
+    // preliminary Observation and the complete pre-append recall context.
     internal GalateaPlayerTurnRecallRequest(
         GalateaUserConfig user,
         EventAddress completionBoundary,
@@ -16,35 +78,57 @@ internal sealed record GalateaPlayerTurnRecallRequest {
         IReadOnlyList<PlayerTurnNotice> notices,
         RecallBarrier recallBarrier,
         CharacterNoteOriginBarrier characterNoteOriginBarrier
+    ) : this(
+        user,
+        completionBoundary,
+        new PlayerTurnObservation(playerText, notices),
+        new GalateaPlayerTurnRecallContext(
+            recallBarrier,
+            characterNoteOriginBarrier
+        ),
+        requireCompleteObservation: false
+    ) { }
+
+    private GalateaPlayerTurnRecallRequest(
+        GalateaUserConfig user,
+        EventAddress completionBoundary,
+        PlayerTurnObservation currentObservation,
+        GalateaPlayerTurnRecallContext context,
+        bool requireCompleteObservation
     ) {
         ArgumentNullException.ThrowIfNull(user);
-        ArgumentNullException.ThrowIfNull(notices);
-        ArgumentNullException.ThrowIfNull(recallBarrier);
-        ArgumentNullException.ThrowIfNull(characterNoteOriginBarrier);
+        ArgumentNullException.ThrowIfNull(currentObservation);
+        ArgumentNullException.ThrowIfNull(context);
         if (completionBoundary == default) {
             throw new ArgumentException(
                 "Completion boundary cannot be the default EventAddress.",
                 nameof(completionBoundary)
             );
         }
-        var observation = new PlayerTurnObservation(playerText, notices);
+        if (currentObservation.Recalls.Count != 0) {
+            throw new ArgumentException(
+                "A preliminary recall Observation must not already contain recalls.",
+                nameof(currentObservation)
+            );
+        }
+        if (requireCompleteObservation
+            && currentObservation.ExternalLocalTimestamp is null) {
+            throw new ArgumentException(
+                "A preliminary recall Observation requires its sampled external local timestamp.",
+                nameof(currentObservation)
+            );
+        }
 
         User = user;
         CompletionBoundary = completionBoundary;
-        PlayerText = observation.PlayerText;
-        Notices = observation.Notices;
-        RecallBarrier = recallBarrier;
-        CharacterNoteOriginBarrier = characterNoteOriginBarrier;
+        CurrentObservation = currentObservation;
+        Context = context;
     }
 
     internal GalateaUserConfig User { get; }
     internal EventAddress CompletionBoundary { get; }
-    internal string PlayerText { get; }
-    internal IReadOnlyList<PlayerTurnNotice> Notices { get; }
-    internal RecallBarrier RecallBarrier { get; }
-    internal CharacterNoteOriginBarrier CharacterNoteOriginBarrier {
-        get;
-    }
+    internal PlayerTurnObservation CurrentObservation { get; }
+    internal GalateaPlayerTurnRecallContext Context { get; }
 }
 
 internal interface IGalateaPlayerTurnRecallProvider {

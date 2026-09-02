@@ -401,10 +401,15 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         GalateaPlayerTurnRecallRequest recallRequest =
             Assert.Single(recallProvider.Requests);
         Assert.Same(session.User, recallRequest.User);
-        Assert.Equal("normalized input", recallRequest.PlayerText);
-        Assert.Empty(recallRequest.Notices);
-        Assert.Empty(recallRequest.RecallBarrier.Entries);
-        Assert.Empty(recallRequest.CharacterNoteOriginBarrier.Entries);
+        Assert.Equal(
+            "normalized input",
+            recallRequest.CurrentObservation.PlayerText
+        );
+        Assert.Empty(recallRequest.CurrentObservation.Notices);
+        Assert.Empty(recallRequest.Context.RecallBarrier.Entries);
+        Assert.Empty(
+            recallRequest.Context.CharacterNoteOriginBarrier.Entries
+        );
         Assert.NotEqual(default, recallRequest.CompletionBoundary);
 
         CompletionRequest request = Assert.IsType<CompletionRequest>(
@@ -504,8 +509,10 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         )).WaitAsync(CompletionDeadline);
 
         Assert.Equal(2, recallProvider.Requests.Count);
-        Assert.Empty(recallProvider.Requests[0].RecallBarrier.Entries);
-        Assert.True(recallProvider.Requests[1].RecallBarrier.Contains(
+        Assert.Empty(
+            recallProvider.Requests[0].Context.RecallBarrier.Entries
+        );
+        Assert.True(recallProvider.Requests[1].Context.RecallBarrier.Contains(
             RecallType.MemoGist,
             "memo-pod:galatea#memo-0001"
         ));
@@ -885,7 +892,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             cancellationToken.ThrowIfCancellationRequested();
             Requests.Add(request);
             IReadOnlyList<PlayerTurnRecall> recalls =
-                request.RecallBarrier.Contains(recall.Entry)
+                request.Context.RecallBarrier.Contains(recall.Entry)
                     ? []
                     : [recall];
             ReturnedCounts.Add(recalls.Count);

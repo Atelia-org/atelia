@@ -194,12 +194,12 @@ public sealed class CharacterNoteRuntimeTests {
 
             Assert.Equal(2, recallProvider.Requests.Count);
             Assert.False(recallProvider.Requests[0]
-                .CharacterNoteOriginBarrier.Contains(
+                .Context.CharacterNoteOriginBarrier.Contains(
                     CharacterNoteDefaultPodV1.PodId,
                     MemoId.Parse("m1:00000001")
                 ));
             Assert.True(recallProvider.Requests[1]
-                .CharacterNoteOriginBarrier.Contains(
+                .Context.CharacterNoteOriginBarrier.Contains(
                     CharacterNoteDefaultPodV1.PodId,
                     MemoId.Parse("m1:00000001")
                 ));
@@ -2118,11 +2118,11 @@ public sealed class CharacterNoteRuntimeTests {
             cancellationToken.ThrowIfCancellationRequested();
             Requests.Add(request);
             bool candidateAvailable = Requests.Count > 1;
-            bool blocked = request.CharacterNoteOriginBarrier.Contains(
+            bool blocked = request.Context.CharacterNoteOriginBarrier.Contains(
                 CharacterNoteDefaultPodV1.PodId,
                 CandidateMemoId
             );
-            bool unrelatedBlocked = request.CharacterNoteOriginBarrier
+            bool unrelatedBlocked = request.Context.CharacterNoteOriginBarrier
                 .Contains(
                     CharacterNoteDefaultPodV1.PodId,
                     UnrelatedMemoId
