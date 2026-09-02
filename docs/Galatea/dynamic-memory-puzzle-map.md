@@ -426,10 +426,10 @@ new player action + exact completion boundary
 
 ### 下一批候选
 
-9. 设计 MemoPod recall MVP 的子模块种子边界，第一版只产出 `MemoExactText`，且只接受Title已补齐的Memo。这里需要决定 `SourceId` codec、Title+ExactText body、candidate query 与选择职责的切分，以及 planner 怎样同时消费两道 barrier。
+9. MemoPod recall MVP 已进入 active implementation work order：[`Galatea Default MemoPod Recall MVP 实施工单`](./work/active/memo-recall-mvp-work-order.md)。第一版只产出 `MemoExactText`，只接受Title已补齐的Memo；query由当前preliminary `PlayerTurnObservation`与pre-append context window中的bounded recent Action确定性渲染，不新增前置LLM query builder。production activation前必须证明或pin这份projection与post-append final main context兼容。该工单同时锁定SourceId codec、Title+ExactText body、Default Pod Frozen snapshot、两道barrier、独立connection binding、failure policy与production vertical完成条件。
 10. 在生产使用中观察最小DerivedInfo管线的摘要质量与失败分布，再决定是否增加持久化retry schedule、attempt telemetry、独立connection binding或更广的生成上下文。
 11. 内容增强质量达到可用门槛后，再启用`MemoGist`与`MemoSummary`，并迭代摘要质量和生成上下文。
-12. 在真实 recall 开始消耗 context budget 之后，再补 dominance、budget、active durable reply lease 与 provider failure/cancellation 的契约。
+12. Recall MVP先关闭local query/body/final Observation bounds以及configured provider failure/cancellation；真实使用后再设计跨RecapGrid与main request的全局budget分配、dominance、active durable reply lease和可选best-effort policy。
 
 这个顺序保持authority前置：真实保存与最小DerivedInfo已经通过同一Pod authority可靠落盘；下一步可以从
 Title+事实正文接通查询与召回，不必把尚未成熟的分类、二级索引或Gist/Summary策略提前塞进第一个MVP。
