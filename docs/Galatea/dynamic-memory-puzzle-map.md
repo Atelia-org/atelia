@@ -4,8 +4,8 @@
 `PlayerTurnObservation` recall block、`RecallEntry`、`PlayerTurnRecall`、`RecallBarrier`、
 `CharacterNoteOriginBarrier`、Galatea-side provider seam，以及Character Note保存请求的durable capture、
 默认MemoPod apply与诚实保存回执已经落地为V1代码级契约。MemoPod DerivedInfo更新与全文-only recall
-projection、Character Note DerivedInfo批量生成、durable apply与非阻塞runtime pump也已落地；召回规划、
-分类与索引维护仍是后续设计。
+projection、Character Note DerivedInfo批量生成、durable apply与非阻塞runtime pump也已落地；Default MemoPod
+`MemoExactText` recall MVP现已接通，分类、多Pod与二级索引维护仍是后续设计。
 
 ## 当前判断
 
@@ -23,7 +23,7 @@ future Observation     -> visible recall result
 
 - 后续代码和文档统一使用 `RecallBarrier` / `Barrier`，表达“当前上下文已可见召回 anchor 的去重屏障”。
 - `{ RecallType, SourceId }` 适合作为去重 key，但它只说明“这个召回粒度对这个来源已经可见过”，不是 MemoPod 存储权威，也不是内容仍然最新的证明。
-- `SourceId` 不能长期只是裸 `MemoId`，除非 Galatea 明确永远只有一个角色级 MemoPod。V0 只约束它是 bounded canonical metadata line；未来把Default MemoPod接入recall时还需要决定 Galatea-owned source id codec，例如把 pod identity 与 memo id 一起编码。
+- `SourceId` 不能只是裸 `MemoId`。MVP已锁定Galatea-owned canonical codec：`memo-pod:v1/<MemoPodId>/<MemoId>`，同时携带pod identity与memo id。
 - `RecallEntry` 只表示 anchor；真正渲染进 Observation 的 payload 是 `PlayerTurnRecall`，携带 `RecallEntry` 加上本次注入的 visible text。
 - Barrier 的输入是本次 Completion provider-visible raw Observation 后缀，而不是 browser recent list，也不是整条 SessionJournal 历史。V0 已在 `GalateaServices` 内通过同一轮 RecapGrid online candidate source 构造。
 - V0 barrier 只做 exact-key de-dupe，不做 `MemoExactText covers MemoSummary covers MemoGist` 这种 dominance 推理。
@@ -122,7 +122,7 @@ boundary signal再做一次bounded尝试；当前不持久化attempt counter或r
 
 Recall block 的 authority 仍然来自 runtime renderer，而不是外部 caller 自报。recent display 会显示 recall heading 与 body，但隐藏 `SourceId` anchor metadata；Undo / pop receipt 仍只把这条 Observation 当成普通 player turn，返回玩家行动正文。
 
-Galatea 侧已有 internal `IGalateaPlayerTurnRecallProvider` seam。生产默认 provider 为 disabled singleton，并在 context selection / barrier 构建之前直接绕过，因此未启用 recall 时没有额外的 provider-context 或 CharacterMemory I/O。测试里可以注入固定 provider，已经覆盖 render、recovery 与 recent display。enabled provider request 同时携带 `RecallBarrier` 与 `CharacterNoteOriginBarrier`。当前只在没有 active durable reply lease 的普通 player turn 调用 provider；reply lease 场景先保持无 recall 注入，等 lease schema / restart 语义设计清楚后再接。
+Galatea 侧的 internal `IGalateaPlayerTurnRecallProvider`已由per-session factory接入production。`galatea.memo-recall`为null或maintenance mode时使用disabled singleton，并在context selection / barrier构建之前直接绕过；enabled provider request携带preliminary typed Observation、recent visible Action、`RecallBarrier`与`CharacterNoteOriginBarrier`。当前只在没有active durable reply lease的普通player turn调用Default MemoPod selector；reply lease场景先保持无recall注入。
 
 ### RecapGrid / Context Candidate
 
@@ -212,7 +212,7 @@ internal sealed record PlayerTurnRecall(
 
 已落地约束：
 
-- `Body` nonblank、strict UTF-8 valid，上限 256 KiB；
+- `Body` nonblank、strict UTF-8 valid，上限262,677 bytes，恰好覆盖最大合法Title、ExactText与固定标签；
 - 单条 `PlayerTurnObservation` 最多 32 条 recall；
 - 同一 Observation 内禁止重复 `{ RecallType, SourceId }`。
 
@@ -389,7 +389,7 @@ new player action + exact completion boundary
   -> materialize provider-visible context
   -> RecallBarrierBuilder parses visible PlayerTurnObservation recalls
   -> CharacterNoteOriginBarrierBuilder joins visible Actions to Applied memos
-  -> recall planner queries MemoPod / indexes
+  -> canonical query renderer calls settled Default MemoPod selector
   -> drop entries blocked by RecallBarrier or CharacterNoteOriginBarrier
   -> render PlayerTurnObservation with PlayerTurnRecall blocks
   -> main Galatea Completion receives composite Observation
@@ -397,39 +397,40 @@ new player action + exact completion boundary
 
 ## 尚缺的胶水层
 
-这份笔记不设计完整方案，但当前缺口大致是：
+MVP之后仍真实存在的缺口大致是：
 
 - Memo 的归类、整理、合并、分裂、失效和二级索引维护；
 - DerivedInfo retry的持久化schedule、attempt telemetry与长期backoff策略；当前只有session内round-robin cursor与外部安全边界signal；
 - 对完全不遵守cancellation的provider建立更强的隔离/终止边界；当前shutdown选择等待而不是冒险use-after-dispose；
-- recall trigger：按当前 player action、场景、实体、时间、未完成事项等决定何时查；
-- recall planner：先完成只产出Title+ExactText的最小路径，后续再根据DerivedInfo可用性、内容增强结果与预算在Gist/Summary/ExactText之间选择合适粒度；
+- recall trigger：现行每个eligible ordinary player turn查询一次；是否按场景、实体、时间或未完成事项跳过，需要真实telemetry后再设计；
+- recall planner：现行只产出Title+ExactText；后续再根据DerivedInfo质量与预算在Gist/Summary/ExactText之间选择合适粒度；
 - recall budget：和 RecapGrid recent raw tail、derived context contributions 共用 request budget；
 - active durable reply lease 场景的 recall 注入策略；
-- `SourceId` canonical codec 与跨 pod / 跨 source 边界；
+- 多Pod启用后的SourceId跨pod routing与失效边界；
 - dominance / coverage：例如 ExactText 已可见时是否阻止 Summary 和 Gist；
 - durable/rebuildable ownership：哪些状态必须持久化，哪些可以由 MemoPod/index 重建；
-- tests：MemoPod recall query接入、planner 决策、dominance、budget failure、active lease、provider invalid output / cancellation。
+- tests/eval：真实provider precision/recall、cache usage、dominance、active lease与多Pod routing。
 
 ## 第一批实现建议
 
 ### 已完成
 
-1. 已扩展 `PlayerTurnObservation` 的强类型模型和 canonical renderer/parser，加入 `RecallType`、`RecallEntry`、`PlayerTurnRecall`，并覆盖 render/parse/display/validation/legacy rejection 测试；生产recall provider尚未接Default MemoPod query。
+1. 已扩展 `PlayerTurnObservation` 的强类型模型和 canonical renderer/parser，加入 `RecallType`、`RecallEntry`、`PlayerTurnRecall`，并覆盖 render/parse/display/validation/legacy rejection 测试。
 2. 已实现 `RecallBarrier` 与 parser-based 聚合器，能从多条 canonical Observation 中聚合 exact keys，并跳过 invalid / legacy / inbound / null 输入。
-3. 已给 `GalateaServices` 预留 `IGalateaPlayerTurnRecallProvider` 注入 seam，测试中用固定 recall payload 验证了 render、recovery、recent display，也验证了第二轮能从 provider-visible context 聚合已可见 barrier。
+3. 已把`IGalateaPlayerTurnRecallProvider`收口为host-wide factory创建per-session provider；fixed tests继续验证render、recovery、recent display与第二轮barrier，production binding vertical验证真实MemoPod no-match与configured failure顺序。
 4. 已实现capability-gated的Character Note保存Quick Start、`CharacterNoteIntent` semantic.v4提取、durable capture/zero tombstone、Default MemoPod apply，以及只由`AppliedNow`生成的honest save receipt。
 5. 已实现 `CharacterNoteOriginBarrier`：复用同一 provider-visible context materialization，按 runtime-derived Action 指纹与 CharacterMemory `Applied` provenance 构造 typed Memo blockers，并与 `RecallBarrier` 一起交给 provider；这避免刚写下的 Note 在来源 Action 尚可见时被零增量重复召回。
 6. 已实现`MemoPod.UpdateDerivedInfo`与prompt v3：DerivedInfo可按稳定MemoId重建更新并继续进入durable state identity，但不进入FrozenPrompt；现有MemoPod selector只消费id与ExactText。
 7. 已实现`CharacterNoteDerivedInfoEnricher`契约：按同一source turn成批生成Title/Gist/Summary，并严格验证单batch、exact ordinal映射和字段边界。
 8. 已实现CharacterMemory SQLite V2 DerivedInfo queue、strict V1->V2 migration、`UpdateDerivedInfo` plan/apply/settle与crash recovery；session-owned background pump在保存与回执之后非阻塞触发，provider失败保留Pending，Prepared不重调模型，Planned在所有新turn/capture admission前恢复。
+9. 已实现Default MemoPod recall MVP：canonical runtime query、512 KiB whole-item budget、settled Frozen epoch、Title eligibility、canonical SourceId、两道barrier、0..1 `MemoExactText`、独立optional connection binding与production no-match/failure/selected vertical。provider await不持有Pod mutation gate；disabled与maintenance路径保持零selector。完整实施记录见[`Galatea Default MemoPod Recall MVP 实施工单`](./work/completed/memo-recall-mvp-work-order.md)。
 
 ### 下一批候选
 
-9. MemoPod recall MVP 已进入 active implementation work order：[`Galatea Default MemoPod Recall MVP 实施工单`](./work/active/memo-recall-mvp-work-order.md)。第一版只产出 `MemoExactText`，只接受Title已补齐的Memo；query由当前preliminary `PlayerTurnObservation`与pre-append context window中的bounded recent Action确定性渲染，不新增前置LLM query builder。production activation前必须证明或pin这份projection与post-append final main context兼容。该工单同时锁定SourceId codec、Title+ExactText body、Default Pod Frozen snapshot、两道barrier、独立connection binding、failure policy与production vertical完成条件。
 10. 在生产使用中观察最小DerivedInfo管线的摘要质量与失败分布，再决定是否增加持久化retry schedule、attempt telemetry、独立connection binding或更广的生成上下文。
-11. 内容增强质量达到可用门槛后，再启用`MemoGist`与`MemoSummary`，并迭代摘要质量和生成上下文。
-12. Recall MVP先关闭local query/body/final Observation bounds以及configured provider failure/cancellation；真实使用后再设计跨RecapGrid与main request的全局budget分配、dominance、active durable reply lease和可选best-effort policy。
+11. 收集Memo recall的empty rate、Title-missing/filter rate、query/cache tokens与latency，先用证据判断是否需要typed exclusions、更宽recent Action suffix或cue extractor。
+12. 内容增强质量达到可用门槛后，再启用`MemoGist`与`MemoSummary`，并迭代摘要质量和生成上下文。
+13. 真实使用后再设计跨RecapGrid与main request的全局budget分配、dominance、active durable reply lease和可选best-effort policy。
 
 这个顺序保持authority前置：真实保存与最小DerivedInfo已经通过同一Pod authority可靠落盘；下一步可以从
 Title+事实正文接通查询与召回，不必把尚未成熟的分类、二级索引或Gist/Summary策略提前塞进第一个MVP。

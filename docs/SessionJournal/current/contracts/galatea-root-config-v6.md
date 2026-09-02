@@ -203,7 +203,8 @@ Route仍延迟到首次RecapGrid work读取，没有wildcard/default fallback。
 Galatea RecapGrid V6继续使用validated character/player names展开member prompts；V6不改变asset、Definition、
 BuildTarget、route或active recipe。Sibling `connections.json`继续使用Completion-owned numeric V1；Galatea仍要求
 nonempty exact `selectableConnectionIds`包含default connection，并要求`bindings` exact只含
-`galatea.input-normalizer`、`galatea.outbound-mail-extractor`与`galatea.character-note-extractor`，每个值为
+`galatea.input-normalizer`、`galatea.outbound-mail-extractor`、`galatea.character-note-extractor`与
+`galatea.memo-recall`，每个值为
 exact existing connection ID或explicit
 `null`。Missing、wrong-case、extra、blank或unknown全部fail closed，不fallback default。Provider/model/endpoint/
 secret不进入主prompt分段identity。Outbound binding为`null`时final prompt仍包含universal mailbox base但不包含
@@ -211,6 +212,8 @@ secret不进入主prompt分段identity。Outbound binding为`null`时final promp
 不是新的root/operator prompt module field。Character Note binding同样提供hidden、lazy、borrowed的per-user
 extractor runtime supply；为`null`时final prompt不出现Note保存能力，非`null`时追加Character Note保存Quick Start。
 该appendix只教角色提交完整原文，并明确只有后续runtime保存回执证明成功；不承诺分类、metadata补全或召回。
+Memo recall binding非`null`时必须同时启用Character Note binding；它选择hidden、lazy、borrowed selector client，
+但不改变主system prompt。为`null`时production在context materialization前旁路recall。
 
 ## 4. Bootstrap与V5 migration
 
@@ -226,8 +229,10 @@ Bootstrap只为existing/new V6 root中nonblank `characterContextTemplateFile`指
 missing parent，以`FileMode.CreateNew`写入standard context并`Flush(true)`。多user共享同一路径只创建一次；
 existing file永不覆盖；missing outside-root target不创建。任何生成都fail-stop并列出paths，operator检查后重启。
 Code-owned protocol resources只从binary embedded resources读取，绝不复制到operator目录。Bootstrap生成的
-`connections.json`把outbound与Character Note extractor bindings都写为`null`，所以starter composition只有
-mailbox base、不含两个appendix，也不启用Character Note extraction supply。
+`connections.json`把outbound、Character Note extractor与Memo recall bindings都写为`null`，所以starter composition只有
+mailbox base、不含两个appendix，也不启用Character Note extraction或recall supply。
+现有只含前三个binding key的sibling文件不会兼容读取：operator必须停服、备份，并显式增加
+`"galatea.memo-recall": null`后再启动新binary。应用不会自动改写可能包含secret的`connections.json`。
 Bootstrap不创建SessionJournal、RecapGrid state、delegation state、character-memory state、MemoPod或provider effect。
 
 V5 operator必须停服、备份并确认actual `Galatea:ConfigPath`，把exact version改为`6`，并为每个user增加互不冲突的
@@ -256,7 +261,8 @@ Underlying IO/path/permission与owner-local dependency exception可以传播；d
 
 本合同不承诺password encryption、hot reload、automatic config migration、existing-session character/player rename、
 pronoun/persona profile、arbitrary prompt modules、独立world/memory files、operator protocol override、Markdown security
-policy、普遍path confinement、Character Note分类/metadata补全/recall，或save receipt跨restart durable delivery。
+policy、普遍path confinement、Character Note分类/metadata补全、多Pod recall，或save receipt跨restart durable delivery。
 V6只版本化root config field language与上述lifecycle gate；Character Memory store/apply/save-receipt grammar由其owning
-code、tests与V1合同独立拥有。V6不改版RecapGrid、mail extractor/ContractId、delegation SQLite、SessionJournal、
+code、tests与V1合同独立拥有；Default MemoPod recall的query/planner语义同样由Galatea owning code/tests独立拥有。
+V6不改版RecapGrid、mail extractor/ContractId、delegation SQLite、SessionJournal、
 Completion、HTTP或SSE durable/schema contract。

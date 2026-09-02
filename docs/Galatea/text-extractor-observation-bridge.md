@@ -39,6 +39,8 @@ Character Memory specialization：
 - [`CharacterNoteDerivedInfoPump`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDerivedInfoPump.cs)：session-owned非阻塞调度器；只在context materialization时短暂持有`TurnLock`，provider调用与Pod apply在锁外执行。
 - [`CharacterNoteSaveReceipt`](../../prototypes/Galatea/CharacterMemory/CharacterNoteSaveReceipt.cs)：只消费durable `AppliedNow` memos并渲染诚实保存回执，同时提供per-session bounded in-process FIFO。
 - [`CharacterNoteOriginBarrier`](../../prototypes/Galatea/CharacterMemory/CharacterNoteOriginBarrier.cs)：把当前provider-visible raw Action与CharacterMemory durable provenance做bounded exact join，阻止来源正文仍直接可见的Memo被动态召回重复注入；production recall disabled时整条barrier路径在context selection前绕过。
+- [`GalateaMemoRecallQueryRenderer`](../../prototypes/Galatea/CharacterMemory/GalateaMemoRecallQueryRenderer.cs)：把preliminary typed Observation与同窗recent Action确定性渲染成MemoPod query，不增加前置LLM。
+- [`GalateaDefaultMemoPodRecallProvider`](../../prototypes/Galatea/CharacterMemory/GalateaDefaultMemoPodRecallProvider.cs)：在settled Default Pod Frozen epoch上调用selector，并以Title、两道barrier与Observation budget规划0..1条`MemoExactText`。
 - `PlayerTurnNotice.NoteSaveReceipt`：普通player Observation中的独立strong type；canonical顺序中至多一条且必须为最后notice。
 
 入口与注入点：
@@ -114,8 +116,8 @@ ready-turn、inbound与recovery都不领取；领取后的pre-dispatch stop、�
 
 仍属后续候选的映射：
 
-- recall trigger：runtime 在 admission、turn completion 或显式事件边界判断是否需要召回。
-- recall result planning：生产provider尚未查询MemoPod或索引；未来planner先同时应用canonical recall anchor barrier与Character Note origin barrier，再把选中的`PlayerTurnRecall`注入现有composite Observation。
+- recall trigger：现行MVP只在没有active durable reply lease的普通player turn查询一次Default MemoPod；更细的触发策略仍留待真实使用数据。
+- recall result planning：production provider已用current Observation加同窗recent Action构造canonical query，调用MemoPod selector后同时应用canonical recall anchor barrier与Character Note origin barrier，再把第一条Title-qualified `MemoExactText`注入现有composite Observation。
 
 应该复用的东西：
 

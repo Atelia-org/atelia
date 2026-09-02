@@ -1,6 +1,6 @@
 # Galatea Default MemoPod Recall MVP 实施工单
 
-状态：Active，已获准进入“逐步完成细节设计并实施落地”阶段
+状态：Complete，production MVP已落地并通过provider-free验证
 
 建立日期：2026-09-02
 
@@ -8,7 +8,7 @@
 
 首版交付：单一 Default MemoPod、`MemoExactText`、每轮至多一条 recall
 
-本文是交给专门 Coding Agent 会话的现行 implementation work order。它负责把已经落地的 MemoPod、DerivedInfo、
+本文最初是交给专门 Coding Agent 会话的implementation work order；完成后保留为implementation record。它负责把已经落地的 MemoPod、DerivedInfo、
 `PlayerTurnObservation`、`RecallBarrier`、`CharacterNoteOriginBarrier` 与 production Composition 串成第一条真实 recall
 vertical，同时允许实施 Agent 在本文边界内继续完成局部细节设计。
 
@@ -36,8 +36,8 @@ Complete并写入 implementation record；若目标设计发生实质变化，�
 ### Intent
 
 在普通 fresh player turn 中，把当前尚未注入 recall 的 `PlayerTurnObservation` 与pre-append context projection中最近的角色可见
-Action，确定性投影成一次 MemoPod query。实施必须先证明这份pre-append projection与Observation append后主请求最终选中的context
-兼容，不能仅因二者复用同一candidate source就宣称相同。MemoPod selector只输出相关 Memo IDs；Galatea随后执行Title资格、两道
+Action，确定性投影成一次 MemoPod query。实施必须证明这份pre-append projection对Observation append后主请求最终选中的raw tail
+是安全的保守超集，不能仅因二者复用同一candidate source就宣称兼容。MemoPod selector只输出相关 Memo IDs；Galatea随后执行Title资格、两道
 barrier、SourceId和Observation预算等权威检查，最终至多注入一条包含`Title + ExactText`的`MemoExactText` recall。
 
 ### 用户可见承诺
@@ -60,7 +60,7 @@ barrier、SourceId和Observation预算等权威检查，最终至多注入一条
 - provider不可用时静默降级成无recall；
 - live provider质量、价格或cache hit率已经由单元测试证明。
 
-## 2. 当前 baseline
+## 2. 实施前 baseline
 
 ### 已落地
 
@@ -86,7 +86,7 @@ barrier、SourceId和Observation预算等权威检查，最终至多注入一条
 - CharacterMemory SQLite V2已经把Title/Gist/Summary增强实现为可恢复的
   `Pending -> Prepared -> Planned -> Applied`后台管线。
 
-### 当前关键缺口
+### 实施前关键缺口
 
 1. provider request只携带player text、notices和barriers，尚未携带preliminary typed Observation、timestamp或recent Action；
 2. barrier materialization得到的`SessionHistoryPlanningWindow`在构造barrier后被丢弃，没有同时投影query evidence；
@@ -95,7 +95,7 @@ barrier、SourceId和Observation预算等权威检查，最终至多注入一条
 5. 没有production recall connection binding与per-session provider composition；
 6. MemoPod query当前64 KiB hard limit不能保证容纳最大合法player text加canonical encoding overhead；
 7. Recall body当前256 KiB hard limit不能天然保证容纳最大合法ExactText再加Title和固定标签；
-8. pre-append barrier/query projection与Observation append后main request最终context之间缺少pin或revalidation proof。
+8. pre-append barrier/query projection与Observation append后main request最终raw tail之间的suffix-compatibility尚未形成显式设计记录与测试。
 
 ## 3. 锁定的设计裁决
 
@@ -128,24 +128,28 @@ Galatea recall planner/provider
   does not become: Memo durable authority or SessionJournal context owner
 ```
 
-### 3.3 Context authority 与 compatibility proof
+### 3.3 Context authority 与 suffix compatibility
 
 recent Action必须来自构造`RecallBarrier`与`CharacterNoteOriginBarrier`的同一个pre-append
 `SessionHistoryPlanningWindow`。不得另行读取browser recent view、全部durable history或一个独立“最近N轮”快照。
 
-但这份window当前不能直接称为“main provider最终可见window”：Galatea在Observation append前materialize它，之后
-`SessionJournalEngine.SendAsync`仍会在新的completion boundary上再次执行candidate selection/materialization。复用同一个
-`ICoherentContextCandidateSource`不自动证明descriptor、raw start、derived contributions或final context保持兼容。
+这份window不是“main provider最终可见window”：Galatea在Observation append前materialize它，之后
+`SessionJournalEngine.SendAsync`会以新的completion boundary再次执行candidate selection/materialization。追加一个正load的Observation可能跨过
+RecapGrid recent-reserve阈值，使最终selected row/anchor向head方向移动；因此要求二者使用同一anchor或要求`final = pre + Observation`并不成立。
 
-WP-00必须先关闭以下二选一的阻断闸：
+MVP真正需要的防重复不变量更弱，也更直接：在`OpenFreshAsync`已经把同一Online handle catch up到Ready/RawHistoryAuthorized、且整个turn由
+`UserSessionHost.TurnLock`串行化的前提下，追加Observation只会让最终旧raw tail保持不变或成为pre-window的exact suffix，不会让final
+raw tail出现pre-window从未看见的旧raw证据。因此：
 
-1. **Existing-contract proof**：用现有descriptor/admission anchor/setup/raw-range identities证明pre-append window恰好等于final main
-   context去掉本轮新Observation后的部分，并用race/stale/candidate-change tests锁定；或
-2. **Minimal pin/revalidation seam**：设计一个provider-neutral、非durable-schema的最小seam，让recall使用的selection在final request
-   construction时被exact复用或重验。
+- pre-window构造的`RecallBarrier`与`CharacterNoteOriginBarrier`是final raw tail barriers的保守超集；它们可能少召回一条已经离开final
+  window的Memo，但不会漏挡final仍可见的recall anchor或source Action；
+- latest recent Action是query的bounded辅助证据，不是durable authority。它在极端阈值跨越时可能刚好离开final raw tail，但仍是紧邻本轮的
+  最近角色输出；MVP接受这一点，不为此pin整个context epoch；
+- selected descriptor仍必须通过`MaterializeAsync`并使用`AnchorSetups`创建seeded planning window，不能只信任裸`SetAdmissionAnchor`；
+- stale/invalid materialization继续在调用recall provider前fail closed。
 
-若现有contracts无法证明，实施Agent必须先提交seam candidate与本文修订，取得fresh authorization后才能修改SessionJournal owner。
-不得为了绕开该闸恢复Prepared v6/supplemental context，也不得先启用一个“看起来通常相同”的production recall路径。
+WP-00用recent-reserve anchor单调前移与exact suffix测试关闭这项不变量。只有发现追加Observation能让final选择一个比pre-window更旧的anchor，
+才重新打开最小pin/revalidation seam设计。不得恢复Prepared v6/supplemental context。
 
 目标形状：
 
@@ -221,8 +225,7 @@ atelia.galatea.memo-recall-context.v1
 - current player text与固定字段是required，不能截断或省略。
 - optional item的优先级固定为：current external notices的最长whole-item前缀，然后latest recent Action；
   不能只截取开头、结尾或中间片段。未纳入的optional item必须有bounded `DebugUtil.Trace/Info`诊断。
-- 为visible Action建立code-owned UTF-8 admission cap，初始候选为64 KiB；超过cap时整条Action不进入query并记录bounded诊断，
-  current player text仍完整保留。
+- recent Action不设第二个重复的独立byte cap；它只受总query budget约束，能完整放入则纳入，否则整条省略并记录bounded诊断。
 - 若required部分仍无法render，configured recall path fail closed；不能把它伪装成no-match。
 - 调整`MaximumRecallBodyUtf8Bytes`或建立更窄的MemoExactText body bound，使每条合法`Title + ExactText + fixed labels`都能完整
   表达；不能截断Memo正文。
@@ -364,7 +367,7 @@ fresh PlayerAction + sampled timestamp
        -> RecallBarrier
        -> CharacterNoteOriginBarrier
        -> latest non-empty visible Action (MVP max 1)
-  -> prove/pin compatibility with the final post-append main-request context
+  -> prove suffix compatibility with the final post-append raw tail
   -> GalateaMemoRecallQueryRenderer
   -> open Default MemoPod Frozen snapshot under short pod gate
   -> release pod gate
@@ -400,8 +403,8 @@ tool continuation或recovery selection语义。
 若结论只要求本文边界内的小幅调整，先更新本文再继续；只有需要改变“无第二LLM、ExactText-only、两道barrier、每轮最多一条、
 fail closed、PlayerTurnObservation注入”之一时才升级给用户。
 
-完成定义：baseline call graph、涉及文件、拟新增types与测试分组在首个commit或implementation record中可定位；context compatibility
-proof已有executable test，或本包停在seam candidate并取得fresh authorization。该闸未关闭时WP-04不得激活production recall。
+完成定义：baseline call graph、涉及文件、拟新增types与测试分组在implementation record中可定位；recent-reserve anchor单调前移与
+pre-window保守超集已有executable test。该闸未关闭时WP-04不得激活production recall。
 
 ### WP-01：Pure contracts、codec 与 canonical renderer
 
@@ -441,8 +444,7 @@ proof已有executable test，或本包停在seam candidate并取得fresh authori
 - current preliminary Observation含exact timestamp且recalls为空；
 - 证明query和两道barrier没有各自触发重复的pre-append读取，同时承认SessionJournal final main request仍有自己的post-append
   selection/materialization；
-- 通过WP-00选定的identity proof或pin/revalidation seam，证明final context不会遗漏pre-append barrier应看见的recall anchors与source
-  Actions；
+- 通过WP-00的suffix-compatibility proof，证明pre-append barriers不会漏掉final raw tail仍可见的recall anchors与source Actions；
 - disabled provider仍在materialization之前旁路。
 
 本包继续使用fake/fixed provider，不查询MemoPod。
@@ -507,7 +509,7 @@ proof已有executable test，或本包停在seam candidate并取得fresh authori
 - Action reasoning、tool-call与inline think不进入query；
 - latest Action为空时向前找最近非空；完全没有时数组为空；
 - query recent Action与两道barrier来自同一次pre-append materialization；
-- pre/post context compatibility proof在candidate变化、stale materialization与raw head推进场景仍fail closed；
+- pre/post suffix compatibility在recent-reserve candidate前移时仍成立；stale/invalid materialization在provider前fail closed；
 - JSON property/order/escaping/timestamp有exact golden；
 - required text不截断，optional items只按whole-item policy纳入。
 
@@ -574,17 +576,17 @@ git diff --check
 只有同时满足以下条件，本工单才可标记Complete：
 
 - production non-null `galatea.memo-recall` binding能在普通fresh player turn完成Default MemoPod真实selector调用；
-- query由canonical runtime projector生成，包含完整current player text；符合Action cap且remaining budget可容纳时包含同窗latest recent
-  Action，否则保留明确whole-item omission诊断；
+- query由canonical runtime projector生成，包含完整current player text；remaining budget可容纳时包含同窗latest recent Action，
+  否则保留明确whole-item omission诊断；
 - selector是整条query construction/selection路径中唯一新增的LLM调用；
 - only Title-qualified `MemoExactText`按稳定SourceId注入，final count严格为0..1；
-- RecallBarrier、CharacterNoteOriginBarrier与recent Action由同一pre-append window构造，并通过已验证的compatibility proof或pin seam
-  对齐post-append final main context；
+- RecallBarrier、CharacterNoteOriginBarrier与recent Action由同一pre-append window构造，并通过已验证的suffix-compatibility proof成为
+  post-append final raw tail的安全保守投影；
 - no-match、underfill、failure、cancellation、disabled、maintenance、active lease语义均有vertical tests；
 - Pod snapshot一致性与“provider await不持有mutation gate”有可执行并发测试；
 - query/body bounds通过worst-case golden关闭，无静默截断；
 - MemoPod、Galatea focused/full tests与diff check通过，或只剩明确记录且与本工单无关的baseline failure；
-- 三份Galatea文档与实际代码一致，本文写入implementation record与remaining risks；
+- Galatea现行文档与root config contract均与实际代码一致，本文写入implementation record与remaining risks；
 - 独立review无未修复的P0/P1 finding。
 
 ## 10. 实施报告格式
@@ -598,7 +600,65 @@ git diff --check
 - 是否接触ignored live state或真实provider，默认答案应为“否”；
 - 仍未关闭的风险与下一轮最自然入口。
 
-## 11. 完成后的下一步候选
+## 11. Implementation record
+
+完成日期：2026-09-02
+
+### Commits
+
+- `a2f67332` `docs(galatea): define MemoPod recall MVP work order`
+- `a01ec0b5` `feat(galatea): add memo recall query contracts`
+- `0816fb58` `feat(galatea): add settled MemoPod recall provider`
+- `f2c0c75d` `feat(galatea): wire MemoPod recall into player turns`
+
+### 实际落地
+
+- `GalateaPlayerTurnRecallRequest`只有typed preliminary Observation与同窗context一套真源；timestamp在fresh turn采样一次，
+  `Recalls`必须为空。
+- `atelia.galatea.memo-recall-context.v1`由runtime使用structured JSON writer确定性渲染；required player text完整，
+  Reply/DeliveryFailure与latest visible Action按whole-item策略竞争512 KiB总budget，`NoteSaveReceipt`排除。
+- canonical SourceId为`memo-pod:v1/<MemoPodId>/<MemoId>`；MVP body为完整Title+ExactText，最大合法body精确闭合为
+  262,677 UTF-8 bytes。
+- Default Pod recall复用`MemoPod.Open`已经提供的独立内存Frozen epoch，没有增加复制型snapshot DTO。reconciler在短
+  `_podMutationGate`内恢复active Planned DerivedInfo、校验store/capture/Pod identity并打开handle，随后在gate外await provider。
+- planner按selector order依次应用Title eligibility、`CharacterNoteOriginBarrier`、`RecallBarrier`与1 MiB final Observation
+  budget，选择第一条`MemoExactText`，最终数量严格为0..1。
+- optional exact binding`galatea.memo-recall`由host-wide registry校验并借用client；per-session factory只在writable
+  CharacterMemory attach成功后创建provider。null binding与maintenance mode使用disabled singleton并在context materialization前旁路。
+- existing three-key `connections.json`是有意hard cut：operator必须停服、备份并新增`"galatea.memo-recall": null`；没有兼容reader。
+- production vertical覆盖empty Pod no-match、configured selector failure、真实Character Note capture + DerivedInfo + selector hydration +
+  `MemoExactText`注入与持久化。selected用例先rewind source turn，使origin Action真实离开selected lineage，而不是绕过barrier。
+
+### 简化裁决
+
+- 删除独立LLM query-builder；MemoPod selector是唯一新增语义调用。
+- 删除独立64 KiB Action cap，只保留512 KiB总query budget与whole-item omission。
+- 不新增MemoPod snapshot复制层、provider dispose协议或第二套Completion registry。
+- 不新增SessionJournal pin/Prepared schema。production assumptions下recent-reserve anchor在追加正load Observation后只能保持或向head
+  前移，固定`NthPrevious`保持该单调性；final旧raw tail因此是pre-window的suffix，两道pre barriers是安全保守超集。测试覆盖了
+  跨threshold anchor前移与exact old-tail suffix。
+
+### Validation
+
+- `Galatea.Server.Tests`: 646 passed, 1 skipped, 0 failed。
+- `SessionJournal.HistoryTimeline.Tests`: 183 passed, 0 failed。
+- `MemoPod.Tests`: 277 passed, 0 failed。
+- `MemoPod.PublicSurface.Tests`: 6 passed, 0 failed。
+- `git diff --check`: passed。
+- 两轮独立read-only review最终均无P0/P1/P2 finding；其中一次最初把generic candidate source允许的变化误套到production
+  RecapGrid path，沿catch-up、TurnLock、lifecycle、reserve monotonicity与`NthPrevious`复核后撤回。
+- 未调用真实provider，未读取或迁移ignored live CharacterMemory state。一处误加到ignored local `connections.json`的binding行在
+  同轮立即恢复，最终无ignored-state差异，也未把该文件用于测试。
+
+### Remaining risks
+
+- 没有真实provider相关性、价格、cache telemetry或latency canary；这仍需用户另行明确授权。
+- suffix proof尚未为`NthPrevious > 0`与`RawHistoryAuthorized -> Selected`分别增加独立样例；现有代码单调性证明与threshold
+  test足以支持MVP，不为这项P3测试广度引入runtime pin seam。
+- active durable reply lease继续明确旁路recall；Gist/Summary、dominance、多Pod、typed exclusions、best-effort policy与全局context
+  budget仍按计划延后。
+
+## 12. 完成后的下一步候选
 
 MVP获得真实使用数据后，再按证据选择下一项，而不是在本工单中预埋半成品：
 

@@ -130,9 +130,9 @@ metadata。根必须包含 integer token `"v": 1`、非空 `connections`、exact
 connection 仍可被内部 exact binding、RecapGrid route 或 frozen recovery 使用，但不会
 显示在 browser 中，也不能作为 fresh/current Agent connection 提交。
 
-Galatea 当前要求 `bindings` exact 包含三个兄弟 key：
+Galatea 当前要求 `bindings` exact 包含四个兄弟 key：
 `"galatea.input-normalizer"`、`"galatea.outbound-mail-extractor"` 与
-`"galatea.character-note-extractor"`。每个值为
+`"galatea.character-note-extractor"`、`"galatea.memo-recall"`。每个值为
 connection ID 时启用对应feature，为 `null` 时显式禁用；不存在、blank、wrong-case、
 unknown ID 或多余 binding
 都会在 startup fail closed，绝不 fallback 到 `defaultConnectionId`。Normalizer 的
@@ -140,12 +140,16 @@ model/provider/surface/endpoint/secret locator 全部来自该 connection，clie
 需要清洗时惰性创建；OutboundMailExtractor 同样使用hidden、lazy、borrowed client，且不进入
 Agent/UI selectable allowlist。CharacterNoteExtractor也按每个user的exact `CharacterName`构造，借用同一
 registry并保持client lazy。DerivedInfo enricher复用同一个Character Note connection/client routing，但每个user拥有
-独立实例、prompt与`ContractId`，不新增第四个binding。Character Note保存路径在successful fresh/recovery完成边界
+独立实例、prompt与`ContractId`。Memo recall使用独立optional binding；它可以显式指向同一connection ID，但不会
+隐式复用Character Note binding。non-null Memo recall要求non-null Character Note binding。Character Note保存路径在successful fresh/recovery完成边界
 把提取结果交给Character Memory reconciler；
 0结果也写durable tombstone，非0结果幂等保存到每个角色的默认MemoPod。只有当前
 post-completion返回`AppliedNow`且final head仍一致时才queue保存回执；admission/restart恢复不补回执。Binding非
 `null`时主system prompt追加Character Note保存Quick Start，`null`时完全不出现该能力。
-Bootstrap connections template把outbound与Character Note两个extractor binding都写为`null`。
+Bootstrap connections template把outbound、Character Note与Memo recall bindings都写为`null`。
+这是一次有意的closed-shape hard cut：现有只含三个binding key的`connections.json`会在startup被拒绝。升级时必须
+先停服、备份，并显式增加`"galatea.memo-recall": null`；runtime不自动改写可能包含secret的sibling config，也不保留
+three-key兼容reader。
 Outbound或Character Note binding从`null`切换到non-`null`或反向切换都会改变对应appendix presence，并在下一次
 fresh turn自然触发existing exact desired-setup rotation；不引入operator prompt module field。
 
@@ -408,7 +412,7 @@ dialect以及既有无timestamp的current/legacy历史；带timestamp的shape只
 其他非canonical变体均拒绝。每个块独立使用
 `AdaptiveMarkdownFenceRenderer`：tilde fence至少4字符且长于正文内最长连续tilde，正文不trim、
 normalize或escape，因此嵌套backtick fence、Markdown、HTML/XML与Unicode可原样呈现给LLM。
-recall `SourceId`上限512 bytes UTF-8，recall正文上限256 KiB，reply正文上限256 KiB，
+recall `SourceId`上限512 bytes UTF-8，recall正文上限262,677 bytes，reply正文上限256 KiB，
 failure上限4 KiB，整份composite上限1 MiB；越界全部拒绝而不截断。
 
 `PlayerTurnObservationEnvelope` parser只接受code-owned prefix、heading、info string、顺序与动态fence的canonical重渲染结果。
@@ -424,9 +428,9 @@ failure会阻止放弃旧failed turn、创建cutoff和接受新turn；普通nonf
 以及固定timestamp metadata的最坏adaptive-fence渲染预留空间。inbound与recovery入口都不开始新cutoff；
 `GalateaMailboxObservationEnvelope`也不因此增加timestamp。
 
-Galatea侧已有internal `IGalateaPlayerTurnRecallProvider`注入seam，生产默认实现为disabled singleton，不接MemoPod、
-不查询索引，并在context selection/barrier构建前直接绕过，因此默认路径没有额外CharacterMemory I/O。
-当前V0只在没有active durable reply lease的普通player turn调用provider；有reply lease时暂不注入recall，
+Galatea侧的internal `IGalateaPlayerTurnRecallProvider`由per-session factory在CharacterMemory lazy attach后构造。
+`galatea.memo-recall`为`null`或maintenance mode时使用disabled singleton，并在context selection/barrier构建前直接绕过，
+因此disabled路径没有额外CharacterMemory或selector I/O。enabled MVP只在没有active durable reply lease的普通player turn调用provider；有reply lease时暂不注入recall，
 避免在未设计lease schema与restart settlement前破坏exact rendered Observation recovery。provider request同时携带
 `RecallBarrier`与`CharacterNoteOriginBarrier`。前者由同一轮RecapGrid online candidate source选出的provider-visible
 raw Observation后缀经`PlayerTurnObservationEnvelope` parser聚合；后者在同一次materialization中读取带exact
@@ -437,6 +441,16 @@ origin join最多接受65,536个distinct Action source，按400条批量写入co
 selected candidate会先确认可materialize，derived context contribution与browser recent display文本都不参与构造。
 `RecallBarrier`当前只做parser-based exact-key去重，尚不表达`MemoExactText`覆盖`MemoSummary`/`MemoGist`的dominance；
 origin barrier则按Memo阻止全部召回粒度，不解析`SourceId`。
+
+enabled provider把已采样timestamp且尚无recall的typed `PlayerTurnObservation`、同一pre-append raw window中的
+Reply/DeliveryFailure notices与最近一条非空visible Action确定性渲染为
+`atelia.galatea.memo-recall-context.v1` JSON；不调用第二个query-builder模型。required player text完整保留，optional
+notice按whole-item前缀、Action按whole item纳入512 KiB总query budget，`NoteSaveReceipt`不进入query。Default MemoPod
+在短`_podMutationGate`内按settled state identity打开独立Frozen handle，provider await发生在gate外。selector最多返回8个
+ordered IDs；Galatea按Title eligibility、origin barrier、recall barrier与1 MiB final Observation budget选择第一条
+`MemoExactText`，最终注入数量为0..1。canonical SourceId为
+`memo-pod:v1/<32-lowerhex PodId>/<canonical MemoId>`，body为完整`Title + ExactText`，不截断。selector成功返回空数组或
+候选全部被过滤是正常underfill；configured provider/authority failure fail closed并阻止main Completion。
 
 `SessionJournal`公开的`AdaptiveMarkdownFenceRenderer.RenderBlock(infoString, exactBody)`要求1..64字符
 ASCII token作为code-owned info string。现有Recap contribution已复用它，并保持原`recap-block`输出逐字不变。
