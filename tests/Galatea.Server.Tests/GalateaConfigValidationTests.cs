@@ -1327,7 +1327,10 @@ public sealed class GalateaConfigValidationTests {
         Assert.Null(decoded.Bindings[
             GalateaCompletionOwner.CharacterNoteExtractorBindingKey
         ]);
-        Assert.Equal(3, decoded.Bindings.Count);
+        Assert.Null(decoded.Bindings[
+            GalateaCompletionOwner.MemoRecallBindingKey
+        ]);
+        Assert.Equal(4, decoded.Bindings.Count);
         using (JsonDocument document = JsonDocument.Parse(template)) {
             JsonElement root = document.RootElement;
             Assert.Equal("1", root.GetProperty("v").GetRawText());
@@ -1388,6 +1391,7 @@ public sealed class GalateaConfigValidationTests {
             Assert.Null(
                 outboundDisabled.CharacterNoteExtractorConnectionId
             );
+            Assert.Null(outboundDisabled.MemoRecallConnectionId);
             Assert.Contains("## 界外邮箱", disabledPrompt,
                 StringComparison.Ordinal);
             Assert.DoesNotContain("### 发信给 Codex", disabledPrompt,
@@ -1430,6 +1434,7 @@ public sealed class GalateaConfigValidationTests {
                 "test",
                 noteEnabled.CharacterNoteExtractorConnectionId
             );
+            Assert.Null(noteEnabled.MemoRecallConnectionId);
             Assert.Null(noteEnabled.OutboundMailExtractorConnectionId);
             string noteEnabledPrompt = Assert.Single(
                 noteEnabled.Users
@@ -1466,6 +1471,22 @@ public sealed class GalateaConfigValidationTests {
                 )
             );
 
+            JsonObject recallEnabledJson = noteEnabledJson
+                .DeepClone().AsObject();
+            recallEnabledJson["bindings"]!.AsObject()[
+                GalateaCompletionOwner.MemoRecallBindingKey
+            ] = "test";
+            GalateaConfig recallEnabled = Load(recallEnabledJson);
+            Assert.Equal("test", recallEnabled.MemoRecallConnectionId);
+
+            JsonObject recallWithoutNotes = original.DeepClone().AsObject();
+            recallWithoutNotes["bindings"]!.AsObject()[
+                GalateaCompletionOwner.MemoRecallBindingKey
+            ] = "test";
+            Assert.Throws<InvalidDataException>(
+                () => Load(recallWithoutNotes)
+            );
+
             AssertRejected(original, "selectableConnectionIds");
             AssertRejected(original, "bindings");
 
@@ -1483,6 +1504,7 @@ public sealed class GalateaConfigValidationTests {
                 [GalateaCompletionOwner.OutboundMailExtractorBindingKey] =
                     null,
                 ["Galatea.Character-Note-Extractor"] = null,
+                [GalateaCompletionOwner.MemoRecallBindingKey] = null,
             };
             Assert.Throws<InvalidDataException>(() => Load(wrongCase));
 

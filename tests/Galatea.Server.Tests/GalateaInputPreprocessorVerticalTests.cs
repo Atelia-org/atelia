@@ -375,7 +375,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         await using var host = GalateaTestHost.Create(
             new SingleClientFactory(completion),
             normalizer,
-            playerTurnRecallProvider: recallProvider
+            playerTurnRecallProviderFactory: (_, _) => recallProvider
         );
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
@@ -406,6 +406,11 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             recallRequest.CurrentObservation.PlayerText
         );
         Assert.Empty(recallRequest.CurrentObservation.Notices);
+        Assert.NotNull(
+            recallRequest.CurrentObservation.ExternalLocalTimestamp
+        );
+        Assert.Empty(recallRequest.CurrentObservation.Recalls);
+        Assert.Empty(recallRequest.Context.RecentVisibleActions);
         Assert.Empty(recallRequest.Context.RecallBarrier.Entries);
         Assert.Empty(
             recallRequest.Context.CharacterNoteOriginBarrier.Entries
@@ -477,7 +482,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         await using var host = GalateaTestHost.Create(
             new SingleClientFactory(completion),
             new ReturningNormalizer("normalized input"),
-            playerTurnRecallProvider: recallProvider
+            playerTurnRecallProviderFactory: (_, _) => recallProvider
         );
         using HttpClient client = host.CreateClient();
         await LoginAsync(client);
@@ -516,6 +521,10 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             RecallType.MemoGist,
             "memo-pod:galatea#memo-0001"
         ));
+        GalateaRecentVisibleAction recentAction = Assert.Single(
+            recallProvider.Requests[1].Context.RecentVisibleActions
+        );
+        Assert.Equal("assistant reply", recentAction.Text);
         Assert.Equal([1, 0], recallProvider.ReturnedCounts);
         var turns = session.Engine
             .ReadRecentCompletedTurns(2)
@@ -553,7 +562,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
                 ),
                 new ReturningNormalizer("normalized input"),
                 deleteFilesOnDispose: false,
-                playerTurnRecallProvider:
+                playerTurnRecallProviderFactory: (_, _) =>
                     new FixedPlayerTurnRecallProvider([recall])
             );
             root = first.RootDirectory;

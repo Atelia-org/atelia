@@ -851,7 +851,8 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
                 DisabledOutboundMailExtractor.Instance,
                 new RecordingNoteExtractor(),
                 derivedInfoEnricher,
-                derivedInfoProviderDeadline
+                derivedInfoProviderDeadline,
+                DisabledGalateaPlayerTurnRecallProvider.Instance
             );
         }
 

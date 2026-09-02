@@ -22,16 +22,7 @@ internal sealed class GalateaDefaultMemoPodRecallProvider
         ArgumentException.ThrowIfNullOrWhiteSpace(connection.Id);
         ArgumentException.ThrowIfNullOrWhiteSpace(connection.ModelId);
 
-        int maxTokens = connection.MaxTokens
-            ?? GalateaMemoRecallMvpPolicy.DefaultMaxTokens;
-        if (maxTokens is < 1
-            or > MemoPodLimits.MaximumRecallMaxTokens) {
-            throw new ArgumentOutOfRangeException(
-                nameof(connection),
-                connection.MaxTokens,
-                $"Memo recall MaxTokens must be between 1 and {MemoPodLimits.MaximumRecallMaxTokens}."
-            );
-        }
+        int maxTokens = RequireValidMaxTokens(connection);
 
         _reconciler = reconciler;
         _connection = connection;
@@ -42,6 +33,23 @@ internal sealed class GalateaDefaultMemoPodRecallProvider
             GalateaMemoRecallMvpPolicy.MaximumFrozenPromptUtf8Bytes,
             GalateaMemoRecallMvpPolicy.MaximumHydratedExactTextUtf8Bytes
         );
+    }
+
+    internal static int RequireValidMaxTokens(
+        CompletionConnectionConfig connection
+    ) {
+        ArgumentNullException.ThrowIfNull(connection);
+        int maxTokens = connection.MaxTokens
+            ?? GalateaMemoRecallMvpPolicy.DefaultMaxTokens;
+        if (maxTokens is < 1
+            or > MemoPodLimits.MaximumRecallMaxTokens) {
+            throw new ArgumentOutOfRangeException(
+                nameof(connection),
+                connection.MaxTokens,
+                $"Memo recall MaxTokens must be between 1 and {MemoPodLimits.MaximumRecallMaxTokens}."
+            );
+        }
+        return maxTokens;
     }
 
     public async ValueTask<IReadOnlyList<PlayerTurnRecall>>

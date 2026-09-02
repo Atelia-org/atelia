@@ -153,7 +153,7 @@ public sealed class CharacterNoteRuntimeTests {
             connections: [main, note],
             selectableConnectionIds: [main.Id],
             characterNoteExtractorConnectionId: note.Id,
-            playerTurnRecallProvider: recallProvider
+            playerTurnRecallProviderFactory: (_, _) => recallProvider
         );
         (GalateaHostService service, UserSessionHost session) =
             await GetRuntimeAsync(host);

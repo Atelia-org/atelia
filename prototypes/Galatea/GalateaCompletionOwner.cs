@@ -17,6 +17,8 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         "galatea.outbound-mail-extractor";
     internal const string CharacterNoteExtractorBindingKey =
         "galatea.character-note-extractor";
+    internal const string MemoRecallBindingKey =
+        "galatea.memo-recall";
 
     private readonly CompletionConnectionRegistry _registry;
     private readonly object _disposeGate = new();
@@ -45,6 +47,8 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                         config.OutboundMailExtractorConnectionId,
                     [CharacterNoteExtractorBindingKey] =
                         config.CharacterNoteExtractorConnectionId,
+                    [MemoRecallBindingKey] =
+                        config.MemoRecallConnectionId,
                 }
             ));
         ValidateGalateaRouting(normalized);
@@ -93,6 +97,9 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         ];
         CharacterNoteExtractorConnectionId = normalized.Bindings[
             CharacterNoteExtractorBindingKey
+        ];
+        MemoRecallConnectionId = normalized.Bindings[
+            MemoRecallBindingKey
         ];
     }
 
@@ -148,6 +155,20 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             )
             : _registry.GetClient(CharacterNoteExtractorConnectionId);
 
+    internal string? MemoRecallConnectionId { get; }
+
+    internal CompletionConnectionConfig? MemoRecallConnection =>
+        MemoRecallConnectionId is null
+            ? null
+            : TryGetConnectionExact(MemoRecallConnectionId);
+
+    internal ICompletionClient GetMemoRecallClient() =>
+        MemoRecallConnectionId is null
+            ? throw new InvalidOperationException(
+                "Galatea Memo recall is disabled."
+            )
+            : _registry.GetClient(MemoRecallConnectionId);
+
     private CompletionConnectionConfig TryGetConnectionExact(string id) =>
         _registry.TryGet(id, out CompletionConnectionConfig connection)
             ? connection
@@ -165,19 +186,30 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             );
         }
         if (config.Bindings is null
-            || config.Bindings.Count != 3
+            || config.Bindings.Count != 4
             || !config.Bindings.ContainsKey(InputNormalizerBindingKey)
             || !config.Bindings.ContainsKey(
                 OutboundMailExtractorBindingKey
             )
             || !config.Bindings.ContainsKey(
                 CharacterNoteExtractorBindingKey
+            )
+            || !config.Bindings.ContainsKey(
+                MemoRecallBindingKey
             )) {
             throw new InvalidDataException(
                 "Galatea connections require exactly the "
                 + $"'{InputNormalizerBindingKey}' and "
                 + $"'{OutboundMailExtractorBindingKey}' and "
-                + $"'{CharacterNoteExtractorBindingKey}' bindings."
+                + $"'{CharacterNoteExtractorBindingKey}' and "
+                + $"'{MemoRecallBindingKey}' bindings."
+            );
+        }
+        if (config.Bindings[MemoRecallBindingKey] is not null
+            && config.Bindings[CharacterNoteExtractorBindingKey] is null) {
+            throw new InvalidDataException(
+                $"Galatea binding '{MemoRecallBindingKey}' requires "
+                    + $"'{CharacterNoteExtractorBindingKey}'."
             );
         }
     }

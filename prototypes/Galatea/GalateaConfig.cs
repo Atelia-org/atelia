@@ -20,6 +20,7 @@ public sealed record GalateaConfig(
     GalateaDelegateConfig Delegates,
     string? OutboundMailExtractorConnectionId = null,
     string? CharacterNoteExtractorConnectionId = null,
+    string? MemoRecallConnectionId = null,
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
     bool MaintenanceMode = false,

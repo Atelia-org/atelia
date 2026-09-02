@@ -43,7 +43,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer? normalizer,
         IGalateaDurableDelegateTransport? delegateTransport,
-        IGalateaPlayerTurnRecallProvider? playerTurnRecallProvider,
+        GalateaPlayerTurnRecallProviderFactory?
+            playerTurnRecallProviderFactory,
         bool deleteFilesOnDispose
     ) {
         _tempRoot = tempRoot;
@@ -55,7 +56,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             completionClientFactory,
             normalizer,
             delegateTransport,
-            playerTurnRecallProvider
+            playerTurnRecallProviderFactory
         );
     }
 
@@ -98,8 +99,10 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
+        string? memoRecallConnectionId = null,
         IGalateaDurableDelegateTransport? delegateTransport = null,
-        IGalateaPlayerTurnRecallProvider? playerTurnRecallProvider = null
+        GalateaPlayerTurnRecallProviderFactory?
+            playerTurnRecallProviderFactory = null
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
 
@@ -155,7 +158,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             outboundMailExtractorConnectionId:
                 outboundMailExtractorConnectionId,
             characterNoteExtractorConnectionId:
-                characterNoteExtractorConnectionId
+                characterNoteExtractorConnectionId,
+            memoRecallConnectionId: memoRecallConnectionId
         );
 
         return new GalateaTestHost(
@@ -165,7 +169,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             completionClientFactory,
             normalizer,
             delegateTransport,
-            playerTurnRecallProvider,
+            playerTurnRecallProviderFactory,
             deleteFilesOnDispose
         );
     }
@@ -238,7 +242,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 completionClientFactory,
                 normalizer,
                 delegateTransport: null,
-                playerTurnRecallProvider: null,
+                playerTurnRecallProviderFactory: null,
                 deleteFilesOnDispose
             );
         }
@@ -270,7 +274,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IReadOnlyList<string>? selectableConnectionIds = null,
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
-        string? characterNoteExtractorConnectionId = null
+        string? characterNoteExtractorConnectionId = null,
+        string? memoRecallConnectionId = null
     ) => PointAtSessionCore(
         sessionDirectory,
         connections,
@@ -286,7 +291,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         selectableConnectionIds,
         inputNormalizerConnectionId,
         outboundMailExtractorConnectionId,
-        characterNoteExtractorConnectionId
+        characterNoteExtractorConnectionId,
+        memoRecallConnectionId
     );
 
     /// <summary>
@@ -304,7 +310,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IReadOnlyList<string>? selectableConnectionIds = null,
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
-        string? characterNoteExtractorConnectionId = null
+        string? characterNoteExtractorConnectionId = null,
+        string? memoRecallConnectionId = null
     ) => PointAtSessionCore(
         sessionDirectory,
         connections,
@@ -320,7 +327,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         selectableConnectionIds,
         inputNormalizerConnectionId,
         outboundMailExtractorConnectionId,
-        characterNoteExtractorConnectionId
+        characterNoteExtractorConnectionId,
+        memoRecallConnectionId
     );
 
     private static GalateaTestHost PointAtSessionCore(
@@ -338,7 +346,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IReadOnlyList<string>? selectableConnectionIds,
         string? inputNormalizerConnectionId,
         string? outboundMailExtractorConnectionId,
-        string? characterNoteExtractorConnectionId
+        string? characterNoteExtractorConnectionId,
+        string? memoRecallConnectionId
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionDirectory);
         ArgumentNullException.ThrowIfNull(connections);
@@ -380,7 +389,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 selectableConnectionIds,
                 inputNormalizerConnectionId,
                 outboundMailExtractorConnectionId,
-                characterNoteExtractorConnectionId
+                characterNoteExtractorConnectionId,
+                memoRecallConnectionId
             );
             return new GalateaTestHost(
                 configurationRoot,
@@ -389,7 +399,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             completionClientFactory,
             normalizer,
             delegateTransport: null,
-            playerTurnRecallProvider: null,
+            playerTurnRecallProviderFactory: null,
             deleteFilesOnDispose: true
         );
         }
@@ -450,7 +460,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             completionClientFactory,
             normalizer,
             delegateTransport,
-            playerTurnRecallProvider: null,
+            playerTurnRecallProviderFactory: null,
             deleteFilesOnDispose
         );
         _restartCreated = true;
@@ -492,7 +502,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IReadOnlyList<string>? selectableConnectionIds = null,
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
-        string? characterNoteExtractorConnectionId = null
+        string? characterNoteExtractorConnectionId = null,
+        string? memoRecallConnectionId = null
     ) {
         string agentControlProfileFile = "recap-grid-profile.json";
         RecapGridAgentControlProfile profile = agentControlProfile
@@ -556,7 +567,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             selectableConnectionIds,
             inputNormalizerConnectionId,
             outboundMailExtractorConnectionId,
-            characterNoteExtractorConnectionId
+            characterNoteExtractorConnectionId,
+            memoRecallConnectionId
         );
         WriteDelegatesFile(configurationDirectory);
         return configPath;
@@ -627,7 +639,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IReadOnlyList<string>? selectableConnectionIds = null,
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
-        string? characterNoteExtractorConnectionId = null
+        string? characterNoteExtractorConnectionId = null,
+        string? memoRecallConnectionId = null
     ) {
         var output = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(output)) {
@@ -703,6 +716,17 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     GalateaCompletionOwner
                         .CharacterNoteExtractorBindingKey,
                     characterNoteExtractorConnectionId
+                );
+            }
+            if (memoRecallConnectionId is null) {
+                writer.WriteNull(
+                    GalateaCompletionOwner.MemoRecallBindingKey
+                );
+            }
+            else {
+                writer.WriteString(
+                    GalateaCompletionOwner.MemoRecallBindingKey,
+                    memoRecallConnectionId
                 );
             }
             writer.WriteEndObject();
@@ -808,7 +832,8 @@ internal sealed class GalateaWebApplicationFactory(
     ICompletionClientFactory completionClientFactory,
     IGalateaUserMessageNormalizer? normalizer,
     IGalateaDurableDelegateTransport? delegateTransport,
-    IGalateaPlayerTurnRecallProvider? playerTurnRecallProvider
+    GalateaPlayerTurnRecallProviderFactory?
+        playerTurnRecallProviderFactory
 ) : WebApplicationFactory<Program> {
     protected override void ConfigureWebHost(IWebHostBuilder builder) {
         builder.UseEnvironment("Testing");
@@ -823,7 +848,7 @@ internal sealed class GalateaWebApplicationFactory(
                 );
             }
             if (delegateTransport is not null
-                || playerTurnRecallProvider is not null) {
+                || playerTurnRecallProviderFactory is not null) {
                 services.RemoveAll<GalateaHostService>();
                 services.AddSingleton(provider =>
                     new GalateaHostService(
@@ -833,7 +858,7 @@ internal sealed class GalateaWebApplicationFactory(
                         provider.GetRequiredService<
                             IGalateaUserMessageNormalizerFactory>(),
                         delegateTransport,
-                        playerTurnRecallProvider
+                        playerTurnRecallProviderFactory
                     ));
             }
         });

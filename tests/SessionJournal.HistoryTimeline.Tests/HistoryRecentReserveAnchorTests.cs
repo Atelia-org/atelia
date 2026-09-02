@@ -93,6 +93,55 @@ public sealed class HistoryRecentReserveAnchorTests : IDisposable {
     }
 
     [Fact]
+    public void AppendedObservationCanAdvanceAnchorButPreservesOldTailSuffix() {
+        using Fixture fixture = CreateFixture(turns: 3);
+        HistoryRecentReserveAnchorResult.Eligible before = Assert.IsType<
+            HistoryRecentReserveAnchorResult.Eligible>(
+                fixture.Session.FindRecentReserveAnchor(
+                    fixture.Head,
+                    fixture.RawHead,
+                    Requirement(fixture.Policy, minimumRecent: 3)
+                )
+            );
+        SessionHistoryPlanningWindow beforeWindow = fixture.Writer
+            .ReadHistoryPlanningWindowAt(
+                fixture.RawHead,
+                before.Anchor.Descriptor.EndInclusive
+            );
+
+        EventAddress observation = fixture.Writer.AppendObservation(
+            "current player observation"
+        );
+        HistoryRecentReserveAnchorResult.Eligible after = Assert.IsType<
+            HistoryRecentReserveAnchorResult.Eligible>(
+                fixture.Session.FindRecentReserveAnchor(
+                    fixture.Head,
+                    observation,
+                    Requirement(fixture.Policy, minimumRecent: 3)
+                )
+            );
+        SessionHistoryPlanningWindow afterWindow = fixture.Writer
+            .ReadHistoryPlanningWindowAt(
+                observation,
+                after.Anchor.Descriptor.EndInclusive
+            );
+
+        Assert.NotEqual(
+            before.Anchor.Descriptor.RowId,
+            after.Anchor.Descriptor.RowId
+        );
+        EventAddress[] oldFinalTail = afterWindow.RawAddresses
+            .Where(address => address != observation)
+            .ToArray();
+        Assert.Equal(
+            oldFinalTail,
+            beforeWindow.RawAddresses
+                .TakeLast(oldFinalTail.Length)
+                .ToArray()
+        );
+    }
+
+    [Fact]
     public void RequirementMustMatchExactActivePolicyAndEstimator() {
         using Fixture fixture = CreateFixture(turns: 1);
         var mismatch = Assert.IsType<
@@ -235,6 +284,7 @@ public sealed class HistoryRecentReserveAnchorTests : IDisposable {
         IReadOnlyList<HistorySegmentDescriptor> rows
     ) : IDisposable {
         internal HistoryTimelineBuildReadSession Session { get; } = session;
+        internal SessionJournalEngine Writer => writer;
         internal TimelineHeadRef Head { get; } = head;
         internal EventAddress RawHead { get; } = rawHead;
         internal PartitionPolicyRevision Policy { get; } = policy;

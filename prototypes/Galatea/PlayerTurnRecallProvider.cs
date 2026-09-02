@@ -4,11 +4,6 @@ using Atelia.Galatea.Server.CharacterMemory;
 
 namespace Atelia.Galatea.Server;
 
-internal sealed record GalateaPlayerTurnRecallBarriers(
-    RecallBarrier RecallBarrier,
-    CharacterNoteOriginBarrier CharacterNoteOriginBarrier
-);
-
 internal sealed record GalateaRecentVisibleAction {
     internal GalateaRecentVisibleAction(string text) {
         ArgumentException.ThrowIfNullOrWhiteSpace(text);
@@ -61,40 +56,6 @@ internal sealed record GalateaPlayerTurnRecallRequest {
         EventAddress completionBoundary,
         PlayerTurnObservation currentObservation,
         GalateaPlayerTurnRecallContext context
-    ) : this(
-        user,
-        completionBoundary,
-        currentObservation,
-        context,
-        requireCompleteObservation: true
-    ) { }
-
-    // WP-02 removes this adapter when the production caller owns the sampled
-    // preliminary Observation and the complete pre-append recall context.
-    internal GalateaPlayerTurnRecallRequest(
-        GalateaUserConfig user,
-        EventAddress completionBoundary,
-        string playerText,
-        IReadOnlyList<PlayerTurnNotice> notices,
-        RecallBarrier recallBarrier,
-        CharacterNoteOriginBarrier characterNoteOriginBarrier
-    ) : this(
-        user,
-        completionBoundary,
-        new PlayerTurnObservation(playerText, notices),
-        new GalateaPlayerTurnRecallContext(
-            recallBarrier,
-            characterNoteOriginBarrier
-        ),
-        requireCompleteObservation: false
-    ) { }
-
-    private GalateaPlayerTurnRecallRequest(
-        GalateaUserConfig user,
-        EventAddress completionBoundary,
-        PlayerTurnObservation currentObservation,
-        GalateaPlayerTurnRecallContext context,
-        bool requireCompleteObservation
     ) {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(currentObservation);
@@ -111,8 +72,7 @@ internal sealed record GalateaPlayerTurnRecallRequest {
                 nameof(currentObservation)
             );
         }
-        if (requireCompleteObservation
-            && currentObservation.ExternalLocalTimestamp is null) {
+        if (currentObservation.ExternalLocalTimestamp is null) {
             throw new ArgumentException(
                 "A preliminary recall Observation requires its sampled external local timestamp.",
                 nameof(currentObservation)
@@ -137,6 +97,12 @@ internal interface IGalateaPlayerTurnRecallProvider {
         CancellationToken cancellationToken
     );
 }
+
+internal delegate IGalateaPlayerTurnRecallProvider
+    GalateaPlayerTurnRecallProviderFactory(
+        GalateaUserConfig user,
+        CharacterNoteDefaultPodReconciler? characterMemory
+    );
 
 internal sealed class DisabledGalateaPlayerTurnRecallProvider
     : IGalateaPlayerTurnRecallProvider {
