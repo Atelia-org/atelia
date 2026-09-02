@@ -1,3 +1,4 @@
+using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.MemoPod;
 
@@ -150,6 +151,15 @@ internal interface ICharacterNoteDefaultPodHandle {
     string ComputeStateIdentity();
     Task FreezeAsync(CancellationToken cancellationToken = default);
     void ConfirmCurrentDocumentDurability();
+    Task<MemoRecallResult> RecallAsync(
+        ICompletionClient completionClient,
+        string modelId,
+        string query,
+        MemoRecallOptions options,
+        CancellationToken cancellationToken = default
+    ) => throw new NotSupportedException(
+        "This Character Note Default Pod handle does not support recall."
+    );
 }
 
 internal interface ICharacterNoteDefaultPodAccess {
@@ -276,6 +286,20 @@ internal sealed class CharacterNoteMemoPodAccess
                 throw Map(exception);
             }
         }
+
+        public Task<MemoRecallResult> RecallAsync(
+            ICompletionClient completionClient,
+            string modelId,
+            string query,
+            MemoRecallOptions options,
+            CancellationToken cancellationToken = default
+        ) => pod.RecallAsync(
+            completionClient,
+            modelId,
+            query,
+            options,
+            cancellationToken
+        );
 
         private static int OptionalUtf8Bytes(string? value) => value is null
             ? 0
