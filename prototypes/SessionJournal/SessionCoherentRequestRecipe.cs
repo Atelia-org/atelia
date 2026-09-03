@@ -7,7 +7,7 @@ namespace Atelia.SessionJournal;
 /// <summary>
 /// Version-owned exact request-context aggregation and expansion.
 /// Candidate selection, artifact membership, lineage, and latest-selection policy remain outside
-/// Prepared v5 execution recovery. An empty exact-input list represents the explicit bounded
+/// Prepared execution recovery. An empty exact-input list represents the explicit bounded
 /// empty-memory bootstrap recipe.
 /// </summary>
 internal static class SessionCoherentRequestRecipe {

@@ -490,7 +490,6 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
             client,
             tools,
             Target,
-            MaxTokens: 123,
             ToolRuntimeIdentity: ToolIdentity,
             ContextCandidateSource: candidates
         );

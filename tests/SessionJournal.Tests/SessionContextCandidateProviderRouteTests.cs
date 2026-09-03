@@ -637,7 +637,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task EmptyLineageBootstrap_CommitsPreparedV5AndReopensWithoutDerivedSource() {
+    public async Task EmptyLineageBootstrap_CommitsPreparedV7AndReopensWithoutDerivedSource() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource {
@@ -849,8 +849,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                     CompletionOutputContract.ProviderDefault([]),
                     [new ObservationMessage(observation)]
                 ),
-                tailMessages: [],
-                maxTokens: 256
+                tailMessages: []
             )
         ).Length;
         SessionRuntime runtime = CreateRuntime(client, source) with {
@@ -2105,7 +2104,6 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             "candidate-test-connection-v1",
             "candidate-test-adapter-v1"
         ),
-        MaxTokens: 256,
         ToolRuntimeIdentity: ToolRuntimeIdentity,
         ContextCandidateSource: source
     );

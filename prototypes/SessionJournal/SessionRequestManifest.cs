@@ -54,9 +54,23 @@ internal sealed record SessionGoverningSetupReferences(
     SessionSetupReference SystemPrompt
 );
 
+/// <summary>
+/// Current Prepared v7 provider-neutral request parameters. The absence of an output ceiling is
+/// intentional: optional provider fields are omitted and required fields use the model maximum
+/// inside the concrete provider client, never in SessionJournal durable state.
+/// </summary>
 internal sealed record SessionRequestParameters(
+    string ModelId
+);
+
+/// <summary>
+/// Historical Prepared v5 request parameters. <see cref="LegacyMaxTokens"/> exists only so the
+/// old canonical-json-v1 commitment can be verified; it is never normalized into a current
+/// request or passed to a completion provider.
+/// </summary>
+internal sealed record HistoricalSessionRequestParametersV5(
     string ModelId,
-    int? MaxTokens
+    int? LegacyMaxTokens
 );
 
 /// <summary>
@@ -94,8 +108,80 @@ internal sealed record SessionRequestCommitment(
 );
 
 internal static class SessionRequestManifestDefaults {
+    public const int CurrentBodySchemaVersion = 7;
+    public const int HistoricalBodySchemaVersionV5 = 5;
     public const string RecipeId =
         "atelia.session-journal.coherent-artifact-tail.recipe.v1";
-    public const string CanonicalRequestCodecId = "atelia.completion-request.canonical-json.v1";
+    public const string CanonicalRequestCodecId = "atelia.completion-request.canonical-json.v2";
+    public const string HistoricalCanonicalRequestCodecIdV1 =
+        "atelia.completion-request.canonical-json.v1";
     public const string ToolCodecId = "atelia.tool-definition.canonical-json.v1";
+}
+
+/// <summary>
+/// Read-only representation of a historical Prepared v5 body. Its legacy output ceiling is
+/// retained solely for byte-exact commitment verification and has no current execution meaning.
+/// </summary>
+internal sealed record HistoricalCompletionRequestPreparedV5Body(
+    SessionRequestOrigin Origin,
+    SessionExecutionCheckpoint Execution,
+    SessionContextPlan Plan,
+    SessionGoverningSetupReferences Setups,
+    HistoricalSessionRequestParametersV5 Parameters,
+    SessionRequestToolSet ToolSet,
+    SessionRequestRecipe Recipe,
+    SessionRequestTarget Target,
+    SessionRequestCommitment Commitment
+);
+
+/// <summary>
+/// Ceiling-free manifest facts shared by lineage, state-machine, and setup validation. This view
+/// is not a dispatchable request and deliberately cannot expose a historical v5 output limit.
+/// </summary>
+internal sealed record SessionPreparedManifestView(
+    int BodySchemaVersion,
+    SessionRequestOrigin Origin,
+    SessionExecutionCheckpoint Execution,
+    SessionContextPlan Plan,
+    SessionGoverningSetupReferences Setups,
+    string ModelId,
+    SessionRequestToolSet ToolSet,
+    SessionRequestRecipe Recipe,
+    SessionRequestTarget Target,
+    SessionRequestCommitment Commitment
+) {
+    public static SessionPreparedManifestView FromDecoded(
+        int bodySchemaVersion,
+        object body
+    ) => (bodySchemaVersion, body) switch {
+        (SessionRequestManifestDefaults.CurrentBodySchemaVersion,
+            CompletionRequestPreparedBody current) => new(
+                bodySchemaVersion,
+                current.Origin,
+                current.Execution,
+                current.Plan,
+                current.Setups,
+                current.Parameters.ModelId,
+                current.ToolSet,
+                current.Recipe,
+                current.Target,
+                current.Commitment
+            ),
+        (SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5,
+            HistoricalCompletionRequestPreparedV5Body historical) => new(
+                bodySchemaVersion,
+                historical.Origin,
+                historical.Execution,
+                historical.Plan,
+                historical.Setups,
+                historical.Parameters.ModelId,
+                historical.ToolSet,
+                historical.Recipe,
+                historical.Target,
+                historical.Commitment
+            ),
+        _ => throw new InvalidDataException(
+            "CompletionRequestPrepared body type does not match its schema version."
+        )
+    };
 }

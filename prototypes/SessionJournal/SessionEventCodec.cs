@@ -33,7 +33,7 @@ internal static class SessionEventCodec {
     }
 
     public static object Decode(SessionEventKind kind, ReadOnlySpan<byte> payload, out int bodySchemaVersion) {
-        int expectedBodySchemaVersion = GetExpectedBodySchemaVersion(kind);
+        int currentBodySchemaVersion = GetExpectedBodySchemaVersion(kind);
         JsonDocument document;
         try {
             document = JsonDocument.Parse(payload.ToArray());
@@ -48,10 +48,18 @@ internal static class SessionEventCodec {
             JsonElement root = document.RootElement;
             RequireObject(root, "envelope");
             bodySchemaVersion = ReadRequiredInt32(root, "v");
-            if (bodySchemaVersion != expectedBodySchemaVersion) {
+            bool supportedHistoricalPrepared =
+                kind == SessionEventKind.CompletionRequestPrepared
+                && bodySchemaVersion
+                    == SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5;
+            if (bodySchemaVersion != currentBodySchemaVersion
+                && !supportedHistoricalPrepared) {
                 throw new NotSupportedException(
                     $"Unsupported body schema version for session event kind '{kind}': "
-                    + $"actual={bodySchemaVersion}, expected={expectedBodySchemaVersion}."
+                    + $"actual={bodySchemaVersion}, expected={currentBodySchemaVersion}"
+                    + (kind == SessionEventKind.CompletionRequestPrepared
+                        ? $", readableHistorical={SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5}."
+                        : ".")
                 );
             }
 
@@ -67,7 +75,15 @@ internal static class SessionEventCodec {
                     SessionEventKind.AgentActionProduced => DecodeAgentActionProduced(body, bodySchemaVersion),
                     SessionEventKind.ToolExecutionStarted => DecodeToolExecutionStarted(body),
                     SessionEventKind.ToolResultObserved => DecodeToolResultObserved(body),
-                    SessionEventKind.CompletionRequestPrepared => SessionRequestManifestCodec.Decode(body),
+                    SessionEventKind.CompletionRequestPrepared => bodySchemaVersion switch {
+                        SessionRequestManifestDefaults.CurrentBodySchemaVersion =>
+                            SessionRequestManifestCodec.Decode(body),
+                        SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5 =>
+                            SessionRequestManifestV5HistoricalCodec.Decode(body),
+                        _ => throw new NotSupportedException(
+                            $"Unsupported CompletionRequestPrepared body schema version '{bodySchemaVersion}'."
+                        )
+                    },
                     SessionEventKind.CompletionAttemptFailed => DecodeCompletionAttemptFailed(body),
                     SessionEventKind.ImportedAgentAction => DecodeAgentActionProduced(body, bodySchemaVersion),
                     SessionEventKind.CompletionAttemptStarted => DecodeCompletionAttemptStarted(body),
@@ -100,7 +116,8 @@ internal static class SessionEventCodec {
             SessionEventKind.AgentActionProduced => 1,
             SessionEventKind.ToolExecutionStarted => 1,
             SessionEventKind.ToolResultObserved => 1,
-            SessionEventKind.CompletionRequestPrepared => 5,
+            SessionEventKind.CompletionRequestPrepared =>
+                SessionRequestManifestDefaults.CurrentBodySchemaVersion,
             SessionEventKind.CompletionAttemptFailed => 2,
             SessionEventKind.ImportedAgentAction => 1,
             SessionEventKind.CompletionAttemptStarted => 1,

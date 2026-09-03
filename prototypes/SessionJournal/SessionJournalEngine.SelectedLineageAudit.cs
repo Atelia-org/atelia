@@ -387,10 +387,11 @@ public sealed partial class SessionJournalEngine {
                     pageSystemPromptSetup ??= reference;
                 }
             }
-            if (body is CompletionRequestPreparedBody) {
-                _ = SessionPreparedRequestReconstructor.Reconstruct(
+            if (kind == SessionEventKind.CompletionRequestPrepared) {
+                SessionPreparedRequestAuditVerifier.Verify(
                     _reader,
                     address,
+                    bodySchemaVersion,
                     cancellationToken
                 );
             }
@@ -1556,10 +1557,11 @@ public sealed partial class SessionJournalEngine {
             out int bodySchemaVersion
         );
         if (reconstructPrepared
-            && body is CompletionRequestPreparedBody) {
-            _ = SessionPreparedRequestReconstructor.Reconstruct(
+            && kind == SessionEventKind.CompletionRequestPrepared) {
+            SessionPreparedRequestAuditVerifier.Verify(
                 _reader,
                 entry.Address,
+                bodySchemaVersion,
                 cancellationToken
             );
         }

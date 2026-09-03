@@ -20,12 +20,12 @@ internal static class SessionRequestCanonicalizer {
             request.PromptPrefix.OutputContract;
         if (!outputContract.IsProviderDefault) {
             throw new NotSupportedException(
-                "Completion request canonical-json v1 cannot represent non-default tool-choice or parallel-call policy."
+                "Completion request canonical-json v2 cannot represent non-default tool-choice or parallel-call policy."
             );
         }
         if (!request.TailMessages.IsEmpty) {
             throw new NotSupportedException(
-                "Completion request canonical-json v1 cannot represent a non-empty typed request tail."
+                "Completion request canonical-json v2 cannot represent a non-empty typed request tail."
             );
         }
 
@@ -45,12 +45,6 @@ internal static class SessionRequestCanonicalizer {
                 WriteToolDefinition(writer, definition);
             }
             writer.WriteEndArray();
-            if (request.MaxTokens is int maxTokens) {
-                writer.WriteNumber("maxTokens", maxTokens);
-            }
-            else {
-                writer.WriteNull("maxTokens");
-            }
             writer.WriteEndObject();
         }
 
@@ -85,6 +79,8 @@ internal static class SessionRequestCanonicalizer {
         => Convert.ToHexStringLower(SHA256.HashData(bytes));
 
     internal static void WriteToolDefinition(Utf8JsonWriter writer, ToolDefinition definition) {
+        // Frozen shared byte grammar used by current canonical-json-v2 and historical
+        // canonical-json-v1 verification. A future incompatible grammar needs a new helper.
         ArgumentNullException.ThrowIfNull(definition);
         writer.WriteStartObject();
         writer.WriteString("name", definition.Name);
@@ -104,6 +100,8 @@ internal static class SessionRequestCanonicalizer {
     }
 
     internal static void WriteHistoryMessage(Utf8JsonWriter writer, IHistoryMessage message) {
+        // Frozen shared byte grammar used by current canonical-json-v2 and historical
+        // canonical-json-v1 verification. A future incompatible grammar needs a new helper.
         ArgumentNullException.ThrowIfNull(message);
         writer.WriteStartObject();
         switch (message) {

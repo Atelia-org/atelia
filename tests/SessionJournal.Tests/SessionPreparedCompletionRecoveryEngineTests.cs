@@ -140,6 +140,220 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
+    public async Task HistoricalV5Prepared_IsVerifiedButCannotEnterFrozenRecoveryOrDispatch() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        EventAddress currentPrepared = await CreatePreparedAsync(
+            path,
+            CreateRuntime(client)
+        );
+        EventAddress historicalPrepared = ReplacePreparedWithHistoricalV5(
+            path,
+            currentPrepared,
+            legacyMaxTokens: 4096
+        );
+
+        using (var inspection = SessionJournalEngine.OpenReadOnly(path)) {
+            NotSupportedException error = Assert.Throws<NotSupportedException>(
+                () => inspection.InspectRuntimeRecoveryRequirements()
+            );
+            Assert.Contains("verified", error.Message, StringComparison.Ordinal);
+            Assert.Contains("cannot be resumed", error.Message, StringComparison.Ordinal);
+        }
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(path),
+            CreateRuntime(
+                client,
+                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+            )
+        )) {
+            NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(
+                () => reopened.ResumeAsync(CancellationToken.None)
+            );
+            Assert.Contains("cannot be resumed", error.Message, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(historicalPrepared, ReadHead(path));
+        Assert.Equal(0, client.Calls);
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted));
+    }
+
+    [Fact]
+    public async Task HistoricalV5Started_RestartPolicyStillFailsBeforeProviderOrWrite() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        EventAddress currentPrepared = await CreatePreparedAsync(
+            path,
+            CreateRuntime(client)
+        );
+        EventAddress historicalPrepared = ReplacePreparedWithHistoricalV5(
+            path,
+            currentPrepared,
+            legacyMaxTokens: null
+        );
+        EventAddress started;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            started = journal.CommitToRef(
+                SessionJournalDefaults.MainBranchName,
+                historicalPrepared,
+                SessionEventCodec.Encode(
+                    SessionEventKind.CompletionAttemptStarted,
+                    new CompletionAttemptStartedBody()
+                ),
+                opaqueEventKind: (uint)SessionEventKind.CompletionAttemptStarted,
+                hint: default
+            ).Unwrap().EventAddress;
+        }
+
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(path),
+            CreateRuntime(
+                client,
+                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+            )
+        )) {
+            await Assert.ThrowsAsync<NotSupportedException>(
+                () => reopened.ResumeAsync(CancellationToken.None)
+            );
+        }
+
+        Assert.Equal(started, ReadHead(path));
+        Assert.Equal(0, client.Calls);
+        Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted));
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptFailed));
+    }
+
+    [Fact]
+    public async Task HistoricalV5CeilingTamper_IsCorruptionBeforeRecoveryRefusal() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        EventAddress currentPrepared = await CreatePreparedAsync(
+            path,
+            CreateRuntime(client)
+        );
+        EventAddress historicalPrepared = ReplacePreparedWithHistoricalV5(
+            path,
+            currentPrepared,
+            legacyMaxTokens: 4096,
+            rewrite: static body => body with {
+                Parameters = body.Parameters with { LegacyMaxTokens = 8192 }
+            }
+        );
+
+        using (var inspection = SessionJournalEngine.OpenReadOnly(path)) {
+            InvalidDataException error = Assert.Throws<InvalidDataException>(
+                () => inspection.InspectRuntimeRecoveryRequirements()
+            );
+            Assert.Contains("commitment", error.Message, StringComparison.Ordinal);
+        }
+        Assert.Equal(historicalPrepared, ReadHead(path));
+        Assert.Equal(0, client.Calls);
+    }
+
+    [Fact]
+    public async Task CompletedHistoricalV5_RemainsAuditableAndCanBeFollowedByCurrentV7() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        SessionRuntime runtime = CreateRuntime(client);
+        EventAddress currentPrepared = await CreatePreparedAsync(path, runtime);
+        EventAddress historicalPrepared = ReplacePreparedWithHistoricalV5(
+            path,
+            currentPrepared,
+            legacyMaxTokens: 4096
+        );
+        HistoricalCompletionRequestPreparedV5Body manifest = ReadBody<
+            HistoricalCompletionRequestPreparedV5Body
+        >(path, historicalPrepared, SessionEventKind.CompletionRequestPrepared);
+        EventAddress historicalAction;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            EventAddress started = journal.CommitToRef(
+                SessionJournalDefaults.MainBranchName,
+                historicalPrepared,
+                SessionEventCodec.Encode(
+                    SessionEventKind.CompletionAttemptStarted,
+                    new CompletionAttemptStartedBody()
+                ),
+                opaqueEventKind: (uint)SessionEventKind.CompletionAttemptStarted,
+                hint: default
+            ).Unwrap().EventAddress;
+            historicalAction = journal.CommitToRef(
+                SessionJournalDefaults.MainBranchName,
+                started,
+                SessionEventCodec.Encode(
+                    SessionEventKind.AgentActionProduced,
+                    new AgentActionProducedBody(
+                        new ActionMessage([
+                            new ActionBlock.Text("historical answer")
+                        ]),
+                        new CompletionDescriptor(
+                            "historical-provider",
+                            "historical-api",
+                            manifest.Parameters.ModelId
+                        ),
+                        manifest.Origin.CorrelationId,
+                        manifest.Execution,
+                        ToolRuntimeIdentity: null
+                    )
+                ),
+                opaqueEventKind: (uint)SessionEventKind.AgentActionProduced,
+                hint: default
+            ).Unwrap().EventAddress;
+        }
+
+        client.Enqueue(request => Success(request, "current answer"));
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(path),
+            runtime
+        )) {
+            TurnResult result = await reopened.SendAsync(
+                "current observation",
+                CancellationToken.None
+            );
+            Assert.Equal("current answer", result.Message.GetFlattenedText());
+            SessionCompletedTurnsReadResult.Snapshot recent = Assert.IsType<
+                SessionCompletedTurnsReadResult.Snapshot
+            >(reopened.ReadRecentCompletedTurns(10));
+            Assert.Equal(2, recent.Value.Turns.Count);
+        }
+
+        using (var readOnly = SessionJournalEngine.OpenReadOnly(path)) {
+            var events = new List<SessionJournalAuditEvent>();
+            SessionJournalAuditScanResult audit = readOnly
+                .ScanCheckedAuditEvents(events.Add);
+            Assert.Equal(2, audit.Diagnostics.PreparedReconstructionCount);
+            Assert.Equal(
+                [5, 7],
+                events
+                    .Where(static entry => entry.Kind
+                        == SessionEventKind.CompletionRequestPrepared)
+                    .Select(static entry => entry.BodySchemaVersion)
+                    .ToArray()
+            );
+            SessionSelectedLineageAuditSession selected =
+                readOnly.BeginSelectedLineageAudit();
+            while (!selected.IsCaptureComplete) {
+                _ = selected.ReadNextPage(maxEventCount: 3);
+            }
+            SessionSelectedLineageAuditAuthority selectedAuthority =
+                selected.Complete();
+            Assert.Equal(audit.CapturedHead, selectedAuthority.Capture.CapturedHead);
+        }
+
+        Atelia.SessionJournal.Offline.SessionJournalOfflineValidationReport offline =
+            await Atelia.SessionJournal.Offline.SessionJournalOfflineValidator
+                .ValidateAsync(path, CancellationToken.None);
+        Assert.Equal(2, offline.PreparedRequestCount);
+        Assert.Equal(SessionExecutionPhase.Idle, offline.ExecutionPhase);
+        using var finalJournal = EventJournal.EventJournal.OpenExisting(path);
+        Assert.Equal(
+            SessionEventKind.AgentActionProduced,
+            (SessionEventKind)finalJournal.ReadEventHeaderChecked(
+                historicalAction
+            ).Unwrap().OpaqueEventKind
+        );
+    }
+
+    [Fact]
     public async Task ResumeAsync_PreCanceledPrepared_DoesNotAppendStartedOrCallProvider() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
@@ -199,33 +413,6 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         Assert.Equal(prepared, ReadParent(path, restarted));
         Assert.Equal(restarted, ReadParent(path, action));
         Assert.Equal(1, recoveryClient.Calls);
-    }
-
-    [Fact]
-    public async Task ResumeAsync_RestartUsesPreparedRequestInsteadOfCurrentRuntimeParameters() {
-        string path = NewJournalPath();
-        var sourceClient = new ScriptedClient();
-        _ = await CreateUncertainAsync(
-            path,
-            CreateRuntime(sourceClient, maxTokens: 111)
-        );
-        var recoveryClient = new ScriptedClient();
-        recoveryClient.Enqueue(request => Success(request, "reconstructed"));
-        using (var reopened = SessionJournalTestRuntime.Attach(
-            SessionJournalEngine.Open(
-                path
-            ),
-            CreateRuntime(
-                recoveryClient,
-                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt,
-                maxTokens: 999
-            )
-        )) {
-            _ = await reopened.ResumeAsync(CancellationToken.None);
-        }
-
-        CompletionRequest request = Assert.Single(recoveryClient.Requests);
-        Assert.Equal(111, request.MaxTokens);
     }
 
     [Fact]
@@ -888,6 +1075,41 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         return engine.ResolveExecutionTail().Head!.Value;
     }
 
+    private static EventAddress ReplacePreparedWithHistoricalV5(
+        string path,
+        EventAddress currentPrepared,
+        int? legacyMaxTokens,
+        Func<HistoricalCompletionRequestPreparedV5Body,
+            HistoricalCompletionRequestPreparedV5Body>? rewrite = null
+    ) {
+        using var journal = EventJournal.EventJournal.OpenExisting(path);
+        RefId main = journal.OpenBranch(
+            SessionJournalDefaults.MainBranchName
+        ).Unwrap();
+        SessionPreparedRequestReconstruction reconstruction =
+            SessionPreparedRequestReconstructor.Reconstruct(
+                journal,
+                currentPrepared,
+                CancellationToken.None
+            );
+        HistoricalCompletionRequestPreparedV5Body historical =
+            HistoricalPreparedV5TestFixture.FromCurrent(
+                reconstruction.Manifest,
+                reconstruction.Request,
+                legacyMaxTokens
+            );
+        historical = rewrite?.Invoke(historical) ?? historical;
+        EventAddress parent = reconstruction.RawEndInclusive;
+        Assert.True(journal.MoveRef(main, currentPrepared, parent).Unwrap());
+        return journal.CommitToRef(
+            main,
+            parent,
+            HistoricalPreparedV5TestFixture.Encode(historical),
+            opaqueEventKind: (uint)SessionEventKind.CompletionRequestPrepared,
+            hint: default
+        ).Unwrap().EventAddress;
+    }
+
     private async Task<EventAddress> CreateUncertainAsync(
         string path,
         SessionRuntime runtime
@@ -912,14 +1134,12 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         SessionCompletionTargetIdentity? target = null,
         SessionUncertainCompletionRecoveryPolicy recoveryPolicy =
             SessionUncertainCompletionRecoveryPolicy.Refuse,
-        int? maxTokens = 256,
         SessionToolRuntimeIdentity? toolRuntimeIdentity = null,
         SessionContextCandidate? contextCandidate = null
     ) => new(
         CompletionClient: client,
         ToolSession: tools,
         CompletionTarget: target ?? DefaultTarget,
-        MaxTokens: maxTokens,
         UncertainCompletionRecoveryPolicy: recoveryPolicy,
         ToolRuntimeIdentity: toolRuntimeIdentity ?? ToolRuntimeIdentity,
         ContextCandidateSource: new TestContextCandidateSource(contextCandidate)

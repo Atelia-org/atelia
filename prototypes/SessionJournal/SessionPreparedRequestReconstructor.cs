@@ -17,9 +17,21 @@ internal sealed record SessionPreparedRequestReconstruction(
 );
 
 /// <summary>
-/// The single authoritative CS-3C reconstruction path. This component is intentionally
-/// read-only: it never plans, opens a derived artifact store, or substitutes current runtime
-/// configuration for the setup references pinned by the manifest.
+/// Provider-inert request materialization shared by current reconstruction and historical
+/// commitment verification. It intentionally contains no output ceiling and is not itself a
+/// dispatchable <see cref="CompletionRequest"/>.
+/// </summary>
+internal sealed record SessionPreparedRequestMaterialization(
+    string ModelId,
+    CompletionPromptPrefix PromptPrefix,
+    IReadOnlyList<IHistoryMessage> TailMessages
+);
+
+/// <summary>
+/// The only reconstruction path that can produce a current dispatchable request. This component
+/// accepts Prepared v7 only and is intentionally read-only: it never plans, opens a derived
+/// artifact store, or substitutes current runtime configuration for pinned setup references.
+/// Historical v5 is handled by a separate verifier that cannot return CompletionRequest.
 /// </summary>
 internal static class SessionPreparedRequestReconstructor {
     public static SessionPreparedRequestReconstruction Reconstruct(
@@ -54,10 +66,14 @@ internal static class SessionPreparedRequestReconstructor {
             ?? throw new InvalidDataException(
                 $"CompletionRequestPrepared at {sourcePreparedAddress} must have a raw boundary parent."
             );
-        object decoded = SessionEventCodec.Decode(kind, frame.Payload, out _);
+        object decoded = SessionEventCodec.Decode(
+            kind,
+            frame.Payload,
+            out int bodySchemaVersion
+        );
         var manifest = decoded as CompletionRequestPreparedBody
             ?? throw new InvalidDataException(
-                $"CompletionRequestPrepared at {sourcePreparedAddress} decoded to an unexpected body."
+                $"CompletionRequestPrepared at {sourcePreparedAddress} is body v{bodySchemaVersion}; only current v{SessionRequestManifestDefaults.CurrentBodySchemaVersion} can be reconstructed for dispatch."
             );
 
         return Reconstruct(reader, manifest, rawEndInclusive, cancellationToken) with {
@@ -89,6 +105,44 @@ internal static class SessionPreparedRequestReconstructor {
         ArgumentNullException.ThrowIfNull(manifest);
         cancellationToken.ThrowIfCancellationRequested();
         SessionRequestManifestCodec.Validate(manifest);
+        SessionPreparedManifestView view = SessionPreparedManifestView.FromDecoded(
+            SessionRequestManifestDefaults.CurrentBodySchemaVersion,
+            manifest
+        );
+
+        SessionPreparedRequestMaterialization materialization = Materialize(
+            reader,
+            view,
+            authoritativeRawEndInclusive,
+            cancellationToken
+        );
+        var request = new CompletionRequest(
+            materialization.ModelId,
+            materialization.PromptPrefix,
+            materialization.TailMessages
+        );
+
+        byte[] canonicalBytes = SessionRequestCanonicalizer.Canonicalize(request);
+        ValidateCommitment(view.Commitment, canonicalBytes);
+
+        return new SessionPreparedRequestReconstruction(
+            request,
+            canonicalBytes,
+            manifest,
+            authoritativeRawEndInclusive,
+            SourcePreparedAddress: null
+        );
+    }
+
+    internal static SessionPreparedRequestMaterialization Materialize(
+        SessionJournalEventReader reader,
+        SessionPreparedManifestView manifest,
+        EventAddress authoritativeRawEndInclusive,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(reader);
+        ArgumentNullException.ThrowIfNull(manifest);
+        cancellationToken.ThrowIfCancellationRequested();
 
         IReadOnlyList<DecodedSessionEvent> rawEvents = ReadAndValidateRawRange(
             reader,
@@ -120,7 +174,7 @@ internal static class SessionPreparedRequestReconstructor {
                 StringComparison.Ordinal
             )) {
             throw new InvalidDataException(
-                "Prepared v5 plan.rawStartSetups do not match the authoritative governing setup at rawStartExclusive."
+                $"Prepared v{manifest.BodySchemaVersion} plan.rawStartSetups do not match the authoritative governing setup at rawStartExclusive."
             );
         }
         SessionRuntimeConfiguration runtimeConfig = ReadAndValidateSetupReference<SessionRuntimeConfiguration>(
@@ -137,7 +191,7 @@ internal static class SessionPreparedRequestReconstructor {
         );
 
         ValidateRuntime(manifest, runtimeConfig);
-        CompletionRequest request = ReconstructExactContextTail(
+        return ReconstructExactContextTail(
             reader,
             manifest,
             authoritativeRawEndInclusive,
@@ -147,30 +201,26 @@ internal static class SessionPreparedRequestReconstructor {
             rawStartSetup,
             cancellationToken
         );
+    }
 
-        byte[] canonicalBytes = SessionRequestCanonicalizer.Canonicalize(request);
+    internal static void ValidateCommitment(
+        SessionRequestCommitment expected,
+        ReadOnlySpan<byte> canonicalBytes
+    ) {
         var actualCommitment = new SessionRequestCommitment(
             canonicalBytes.Length,
             SessionRequestCanonicalizer.Sha256Hex(canonicalBytes)
         );
-        if (manifest.Commitment != actualCommitment) {
+        if (expected != actualCommitment) {
             throw new InvalidDataException(
                 "completion-request-prepared commitment does not match the reconstructed canonical request."
             );
         }
-
-        return new SessionPreparedRequestReconstruction(
-            request,
-            canonicalBytes,
-            manifest,
-            authoritativeRawEndInclusive,
-            SourcePreparedAddress: null
-        );
     }
 
-    private static CompletionRequest ReconstructExactContextTail(
+    private static SessionPreparedRequestMaterialization ReconstructExactContextTail(
         SessionJournalEventReader reader,
-        CompletionRequestPreparedBody manifest,
+        SessionPreparedManifestView manifest,
         EventAddress rawEndInclusive,
         SessionRuntimeConfiguration referencedRuntime,
         string referencedSystemPrompt,
@@ -194,7 +244,7 @@ internal static class SessionPreparedRequestReconstructor {
                 or SessionEventKind.ToolResultObserved
             )) {
             throw new InvalidDataException(
-                "Prepared v5 tail boundary must be ObservationAccepted or a dependency-closed ToolResultObserved."
+                $"Prepared v{manifest.BodySchemaVersion} tail boundary must be ObservationAccepted or a dependency-closed ToolResultObserved."
             );
         }
         ValidateAttemptBoundary(
@@ -218,7 +268,7 @@ internal static class SessionPreparedRequestReconstructor {
             || folded.ToolExecutionSequenceCheckpoint != finalRecovery.State.ToolExecutionSequenceCheckpoint
             || !string.Equals(folded.ActiveCorrelationId, finalRecovery.State.ActiveCorrelationId, StringComparison.Ordinal)) {
             throw new InvalidDataException(
-                "Prepared v5 tail fold does not match its pinned setup or exact final recovery."
+                $"Prepared v{manifest.BodySchemaVersion} tail fold does not match its pinned setup or exact final recovery."
             );
         }
 
@@ -234,8 +284,8 @@ internal static class SessionPreparedRequestReconstructor {
         );
         context.AddRange(snapshotContext);
         context.AddRange(folded.Context);
-        return new CompletionRequest(
-            manifest.Parameters.ModelId,
+        return new SessionPreparedRequestMaterialization(
+            manifest.ModelId,
             new CompletionPromptPrefix(
                 expandedSystemPrompt,
                 CompletionOutputContract.ProviderDefault(
@@ -243,13 +293,12 @@ internal static class SessionPreparedRequestReconstructor {
                 ),
                 context.MoveToImmutable()
             ),
-            tailMessages: [],
-            manifest.Parameters.MaxTokens
+            TailMessages: []
         );
     }
 
     private static void ValidateAttemptBoundary(
-        CompletionRequestPreparedBody manifest,
+        SessionPreparedManifestView manifest,
         DecodedSessionEvent finalEvent,
         string? expectedCorrelationId
     ) {
@@ -286,10 +335,10 @@ internal static class SessionPreparedRequestReconstructor {
     }
 
     private static void ValidateRuntime(
-        CompletionRequestPreparedBody manifest,
+        SessionPreparedManifestView manifest,
         SessionRuntimeConfiguration runtimeConfig
     ) {
-        if (!string.Equals(manifest.Parameters.ModelId, runtimeConfig.ModelId, StringComparison.Ordinal)) {
+        if (!string.Equals(manifest.ModelId, runtimeConfig.ModelId, StringComparison.Ordinal)) {
             throw new InvalidDataException(
                 "Manifest request model does not match the referenced runtime configuration."
             );

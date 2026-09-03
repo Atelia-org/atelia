@@ -86,8 +86,7 @@ internal static class SessionJournalAuditScanner {
             );
             reverseEvents.Add(new MaterializedAuditEvent(
                 cached,
-                IsPrepared:
-                    body is CompletionRequestPreparedBody,
+                IsPrepared: kind == SessionEventKind.CompletionRequestPrepared,
                 CreateAuditEvent(
                     cached,
                     kind,
@@ -133,9 +132,10 @@ internal static class SessionJournalAuditScanner {
             if (!materialized.IsPrepared) {
                 continue;
             }
-            _ = SessionPreparedRequestReconstructor.Reconstruct(
+            SessionPreparedRequestAuditVerifier.Verify(
                 indexedReader,
                 materialized.Cached.Address,
+                materialized.PublicEvent.BodySchemaVersion,
                 cancellationToken
             );
             preparedReconstructionCount = checked(
@@ -201,11 +201,12 @@ internal static class SessionJournalAuditScanner {
         bodySchemaVersion,
         cached.Header.PayloadLength,
         payloadSha256,
-        CreateAuditFact(kind, body)
+        CreateAuditFact(kind, bodySchemaVersion, body)
     );
 
     private static SessionJournalAuditFact CreateAuditFact(
         SessionEventKind kind,
+        int bodySchemaVersion,
         object body
     ) => kind switch {
         SessionEventKind.RuntimeConfigSetup =>
@@ -226,7 +227,10 @@ internal static class SessionJournalAuditScanner {
             ),
         SessionEventKind.CompletionRequestPrepared =>
             CreatePreparedFact(
-                RequireBody<CompletionRequestPreparedBody>(kind, body)
+                SessionPreparedManifestView.FromDecoded(
+                    bodySchemaVersion,
+                    body
+                )
             ),
         SessionEventKind.AgentActionProduced
             or SessionEventKind.ImportedAgentAction =>
@@ -265,7 +269,7 @@ internal static class SessionJournalAuditScanner {
         );
 
     private static SessionJournalAuditPreparedFact CreatePreparedFact(
-        CompletionRequestPreparedBody body
+        SessionPreparedManifestView body
     ) => new(
         body.Origin.CorrelationId,
         body.Origin.Reason,

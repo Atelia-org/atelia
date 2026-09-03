@@ -141,6 +141,30 @@ public sealed partial class SessionJournalEngine {
             );
         }
 
+        int bodySchemaVersion = recovery.PreparedRuntime
+            ?.BodySchemaVersion
+            ?? throw new InvalidDataException(
+                "Prepared recovery is missing its durable body schema version."
+            );
+        if (bodySchemaVersion
+            == SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5) {
+            _ = SessionPreparedRequestV5HistoricalVerifier.Verify(
+                _reader,
+                sourcePreparedAddress,
+                cancellationToken
+            );
+            throw new NotSupportedException(
+                "Historical CompletionRequestPrepared v5 was verified but cannot be resumed. "
+                + "Only current v7 requests can enter completion dispatch."
+            );
+        }
+        if (bodySchemaVersion
+            != SessionRequestManifestDefaults.CurrentBodySchemaVersion) {
+            throw new NotSupportedException(
+                $"CompletionRequestPrepared v{bodySchemaVersion} cannot be resumed."
+            );
+        }
+
         SessionPreparedRequestReconstruction reconstruction =
             SessionPreparedRequestReconstructor.Reconstruct(
                 _reader,

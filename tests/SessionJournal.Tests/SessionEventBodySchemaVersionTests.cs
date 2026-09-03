@@ -18,7 +18,7 @@ public sealed class SessionEventBodySchemaVersionTests {
     }
 
     [Fact]
-    public void ExpectedVersionMap_DefinesPreparedV5AndCurrentPerKindVersions() {
+    public void ExpectedVersionMap_DefinesPreparedV7AndCurrentPerKindVersions() {
         SessionEventKind[] kinds = Enum.GetValues<SessionEventKind>();
 
         Assert.NotEmpty(kinds);
@@ -119,7 +119,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=2", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=5", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=7", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -133,7 +133,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=3", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=5", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=7", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -147,7 +147,21 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=4", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=5", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=7", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WithdrawnPreparedV6_IsUnsupportedBeforeMalformedBodyIsParsed() {
+        var error = Assert.Throws<NotSupportedException>(() =>
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                """{"v":6,"body":"withdrawn-v6"}"""u8,
+                out _
+            )
+        );
+
+        Assert.Contains("actual=6", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=7", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -195,7 +209,7 @@ public sealed class SessionEventBodySchemaVersionTests {
 
     private static int ExpectedVersion(SessionEventKind kind)
         => kind switch {
-            SessionEventKind.CompletionRequestPrepared => 5,
+            SessionEventKind.CompletionRequestPrepared => 7,
             SessionEventKind.RuntimeConfigSetup => 2,
             SessionEventKind.SessionCreated => 2,
             SessionEventKind.CompletionAttemptFailed => 2,

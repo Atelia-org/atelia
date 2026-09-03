@@ -15,7 +15,7 @@ public sealed class SessionRequestManifestCodecTests {
         EventAddressTextCodec.Parse("ej1:00000000000000040000000100000000");
 
     [Fact]
-    public void CompletionRequestPreparedV5_RoundtripsCanonicalLiteralGolden() {
+    public void CompletionRequestPreparedV7_RoundtripsCanonicalLiteralGolden() {
         CompletionRequestPreparedBody body = CreateManifest();
 
         byte[] encoded = SessionEventCodec.Encode(
@@ -30,7 +30,7 @@ public sealed class SessionRequestManifestCodecTests {
             )
         );
 
-        Assert.Equal(5, version);
+        Assert.Equal(7, version);
         Assert.Equal(encoded,
             SessionEventCodec.Encode(
                 SessionEventKind.CompletionRequestPrepared,
@@ -55,9 +55,170 @@ public sealed class SessionRequestManifestCodecTests {
         Assert.Equal(body.Commitment, decoded.Commitment);
         Assert.Equal(
             """
-            {"v":5,"body":{"origin":{"correlationId":"correlation-01","reason":"observation"},"execution":{"lastIssuedToolExecutionSequence":17},"plan":{"rawStartExclusive":"ej1:00000000000000010000000100000000","rawRangeSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rawStartSetups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"exactContextInputs":[{"contentSha256":"e6babf8c03395cef81dcfa83a6dbb4ec4a8892a9fe188a4b37d99123b79b67df","contextSnapshot":{"systemPromptFragment":"system recap","observationMessage":"","actionMessage":""}},{"contentSha256":"60b37427fabe85d010aa6c32e7b5239eda1d3cc0472fc9a02ae6027f3aba4d02","contextSnapshot":{"systemPromptFragment":"","observationMessage":"world recap","actionMessage":""}}]},"setups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"parameters":{"modelId":"model-A","maxTokens":4096},"toolSet":{"codecId":"atelia.tool-definition.canonical-json.v1","sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","runtimeIdentity":null,"definitions":[]},"recipe":{"recipeId":"atelia.session-journal.coherent-artifact-tail.recipe.v1","canonicalRequestCodecId":"atelia.completion-request.canonical-json.v1"},"target":{"connection":{"connectionId":"connection-A","kind":"test","connectionFingerprint":"connection-fingerprint-A","requestAdapterFingerprint":"adapter-fingerprint-A"},"clientName":"client-A","apiSpecId":"api-A"},"commitment":{"byteLength":123,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}
+            {"v":7,"body":{"origin":{"correlationId":"correlation-01","reason":"observation"},"execution":{"lastIssuedToolExecutionSequence":17},"plan":{"rawStartExclusive":"ej1:00000000000000010000000100000000","rawRangeSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rawStartSetups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"exactContextInputs":[{"contentSha256":"e6babf8c03395cef81dcfa83a6dbb4ec4a8892a9fe188a4b37d99123b79b67df","contextSnapshot":{"systemPromptFragment":"system recap","observationMessage":"","actionMessage":""}},{"contentSha256":"60b37427fabe85d010aa6c32e7b5239eda1d3cc0472fc9a02ae6027f3aba4d02","contextSnapshot":{"systemPromptFragment":"","observationMessage":"world recap","actionMessage":""}}]},"setups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"parameters":{"modelId":"model-A"},"toolSet":{"codecId":"atelia.tool-definition.canonical-json.v1","sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","runtimeIdentity":null,"definitions":[]},"recipe":{"recipeId":"atelia.session-journal.coherent-artifact-tail.recipe.v1","canonicalRequestCodecId":"atelia.completion-request.canonical-json.v2"},"target":{"connection":{"connectionId":"connection-A","kind":"test","connectionFingerprint":"connection-fingerprint-A","requestAdapterFingerprint":"adapter-fingerprint-A"},"clientName":"client-A","apiSpecId":"api-A"},"commitment":{"byteLength":123,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}
             """.Trim(),
             Encoding.UTF8.GetString(encoded)
+        );
+    }
+
+    [Fact]
+    public void CompletionRequestPreparedV7_StrictDecodeRejectsHistoricalMaxTokensField() {
+        string canonical = EncodeManifestJson();
+
+        AssertStrictDecodeRejected(ReplaceOnce(
+            canonical,
+            "\"parameters\":{\"modelId\":\"model-A\"}",
+            "\"parameters\":{\"modelId\":\"model-A\",\"maxTokens\":4096}"
+        ));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(4096)]
+    public void HistoricalPreparedV5_StrictDecoderReadsLegacyCeilingForVerificationOnly(
+        int? legacyMaxTokens
+    ) {
+        CompletionRequestPreparedBody current = CreateManifest();
+        var request = new CompletionRequest(
+            "model-A",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault([]),
+                [new ObservationMessage("observation")]
+            ),
+            tailMessages: []
+        );
+        HistoricalCompletionRequestPreparedV5Body historical =
+            HistoricalPreparedV5TestFixture.FromCurrent(
+                current,
+                request,
+                legacyMaxTokens
+            );
+
+        byte[] encoded = HistoricalPreparedV5TestFixture.Encode(historical);
+        var decoded = Assert.IsType<HistoricalCompletionRequestPreparedV5Body>(
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                encoded,
+                out int bodySchemaVersion
+            )
+        );
+
+        Assert.Equal(5, bodySchemaVersion);
+        Assert.Equal(legacyMaxTokens, decoded.Parameters.LegacyMaxTokens);
+        Assert.DoesNotContain(
+            typeof(CompletionRequest).GetProperties(),
+            static property => string.Equals(
+                property.Name,
+                "MaxTokens",
+                StringComparison.Ordinal
+            )
+        );
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("\"4096\"")]
+    public void HistoricalPreparedV5_RejectsMalformedLegacyCeiling(
+        string replacement
+    ) {
+        CompletionRequestPreparedBody current = CreateManifest();
+        var request = new CompletionRequest(
+            "model-A",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault([]),
+                [new ObservationMessage("observation")]
+            ),
+            tailMessages: []
+        );
+        byte[] encoded = HistoricalPreparedV5TestFixture.Encode(
+            HistoricalPreparedV5TestFixture.FromCurrent(
+                current,
+                request,
+                legacyMaxTokens: 4096
+            )
+        );
+        string json = Encoding.UTF8.GetString(encoded);
+
+        Assert.Throws<InvalidDataException>(() => SessionEventCodec.Decode(
+            SessionEventKind.CompletionRequestPrepared,
+            Encoding.UTF8.GetBytes(ReplaceOnce(
+                json,
+                "\"maxTokens\":4096",
+                $"\"maxTokens\":{replacement}"
+            )),
+            out _
+        ));
+    }
+
+    [Theory]
+    [InlineData(",\"maxTokens\":4096", "")]
+    [InlineData("\"maxTokens\":4096", "\"legacyMaxTokens\":4096")]
+    [InlineData("\"maxTokens\":4096", "\"maxTokens\":4096,\"maxTokens\":4096")]
+    public void HistoricalPreparedV5_RejectsMissingUnknownOrDuplicateLegacyCeiling(
+        string marker,
+        string replacement
+    ) {
+        CompletionRequestPreparedBody current = CreateManifest();
+        var request = new CompletionRequest(
+            "model-A",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault([]),
+                [new ObservationMessage("observation")]
+            ),
+            tailMessages: []
+        );
+        string json = Encoding.UTF8.GetString(
+            HistoricalPreparedV5TestFixture.Encode(
+                HistoricalPreparedV5TestFixture.FromCurrent(
+                    current,
+                    request,
+                    legacyMaxTokens: 4096
+                )
+            )
+        );
+
+        Assert.Throws<InvalidDataException>(() => SessionEventCodec.Decode(
+            SessionEventKind.CompletionRequestPrepared,
+            Encoding.UTF8.GetBytes(ReplaceOnce(json, marker, replacement)),
+            out _
+        ));
+    }
+
+    [Fact]
+    public void HistoricalVerifier_ResultCannotExposeDispatchableRequestOrLegacyCeiling() {
+        Type resultType = typeof(SessionPreparedRequestV5HistoricalVerification);
+
+        Assert.DoesNotContain(
+            resultType.GetProperties(),
+            static property => property.PropertyType
+                == typeof(CompletionRequest)
+        );
+        Assert.DoesNotContain(
+            resultType.GetProperties(),
+            static property => property.Name.Contains(
+                "Token",
+                StringComparison.Ordinal
+            )
+        );
+        Assert.All(
+            typeof(SessionPreparedRequestV5HistoricalVerifier)
+                .GetMethods(System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.Static),
+            static method => Assert.NotEqual(
+                typeof(CompletionRequest),
+                method.ReturnType
+            )
+        );
+        Assert.DoesNotContain(
+            typeof(SessionRequestParameters).GetProperties(),
+            static property => property.Name.Contains(
+                "Token",
+                StringComparison.OrdinalIgnoreCase
+            )
         );
     }
 
@@ -69,7 +230,7 @@ public sealed class SessionRequestManifestCodecTests {
     [InlineData("\"commitment\":{\"byteLength\":", "\"commitment\":{\"unknown\":true,\"byteLength\":")]
     [InlineData("\"correlationId\":\"correlation-01\",", "\"correlationId\":\"duplicate\",\"correlationId\":\"correlation-01\",")]
     [InlineData("\"recipeId\":\"atelia.session-journal.coherent-artifact-tail.recipe.v1\",", "\"recipeId\":\"duplicate\",\"recipeId\":\"atelia.session-journal.coherent-artifact-tail.recipe.v1\",")]
-    public void CompletionRequestPreparedV5_StrictDecodeRejectsUnknownOrDuplicateProperties(
+    public void CompletionRequestPreparedV7_StrictDecodeRejectsUnknownOrDuplicateProperties(
         string marker,
         string replacement
     ) {
@@ -82,7 +243,7 @@ public sealed class SessionRequestManifestCodecTests {
     [InlineData("\"recipe\":{", "\"removedRecipe\":{")]
     [InlineData("\"rawStartExclusive\":", "\"removedRawStart\":")]
     [InlineData("\"rawStartSetups\":", "\"removedRawStartSetups\":")]
-    public void CompletionRequestPreparedV5_StrictDecodeRejectsMissingRequiredProperties(
+    public void CompletionRequestPreparedV7_StrictDecodeRejectsMissingRequiredProperties(
         string marker,
         string replacement
     ) {
@@ -197,8 +358,7 @@ public sealed class SessionRequestManifestCodecTests {
                 )
             ]
             ),
-            tailMessages: [],
-            maxTokens: 512
+            tailMessages: []
         );
 
         byte[] canonical = SessionRequestCanonicalizer.Canonicalize(request);
@@ -217,7 +377,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CompletionRequestPreparedV5_PreservesAbsentNullAndNumericToolDefaults() {
+    public void CompletionRequestPreparedV7_PreservesAbsentNullAndNumericToolDefaults() {
         CompletionRequestPreparedBody body = CreateManifest(
             CreateToolDefinitions()
         );
@@ -261,7 +421,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CompletionRequestPreparedV5_RoundtripsComprehensiveNestedToolSchemasInOrder() {
+    public void CompletionRequestPreparedV7_RoundtripsComprehensiveNestedToolSchemasInOrder() {
         CompletionRequestPreparedBody body = CreateManifest(
             CreateComprehensiveToolDefinitions()
         );
@@ -316,7 +476,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CanonicalRequest_AllFiveFieldsHaveStableLiteralCommitment() {
+    public void CanonicalRequest_AllFourFieldsHaveStableLiteralCommitment() {
         ImmutableArray<ToolDefinition> tools = CreateToolDefinitions();
         var request = new CompletionRequest(
             "model-α",
@@ -353,24 +513,35 @@ public sealed class SessionRequestManifestCodecTests {
                 )
             ]
             ),
-            tailMessages: [],
-            maxTokens: 4096
+            tailMessages: []
         );
 
         byte[] canonical = SessionRequestCanonicalizer.Canonicalize(request);
         SessionRequestCommitment commitment =
             SessionRequestCanonicalizer.CreateCommitment(request);
 
-        Assert.Equal(1921, canonical.Length);
-        Assert.Equal(1921, commitment.ByteLength);
+        Assert.Equal(1904, canonical.Length);
+        Assert.Equal(1904, commitment.ByteLength);
+        Assert.Equal(
+            "cb50250f64549c4de81d4a46de83849c1001a81360caec006f50ca7a16b88fd2",
+            commitment.Sha256
+        );
+
+        byte[] historical = SessionRequestV5HistoricalCanonicalizer.Canonicalize(
+            request.ModelId,
+            request.PromptPrefix,
+            request.TailMessages,
+            legacyMaxTokens: 4096
+        );
+        Assert.Equal(1921, historical.Length);
         Assert.Equal(
             "dc714068ed5e60a5213cc7c673ca4f6c65a42caae0a8d60d224d0c5ac2d0fb95",
-            commitment.Sha256
+            SessionRequestCanonicalizer.Sha256Hex(historical)
         );
     }
 
     [Fact]
-    public void CanonicalRequest_CommitmentChangesForEachOfFiveFields() {
+    public void CanonicalRequest_CommitmentChangesForEachOfFourFields() {
         var baseline = new CompletionRequest(
             "model",
             new CompletionPromptPrefix(
@@ -378,8 +549,7 @@ public sealed class SessionRequestManifestCodecTests {
                 CompletionOutputContract.ProviderDefault([]),
                 [new ObservationMessage("observation")]
             ),
-            tailMessages: [],
-            maxTokens: 100
+            tailMessages: []
         );
         string hash = SessionRequestCanonicalizer.CreateCommitment(
             baseline
@@ -413,15 +583,10 @@ public sealed class SessionRequestManifestCodecTests {
                 RebuildRequest(baseline, tools: changedTools)
             ).Sha256
         );
-        Assert.NotEqual(hash,
-            SessionRequestCanonicalizer.CreateCommitment(
-                RebuildRequest(baseline, maxTokens: 101)
-            ).Sha256
-        );
     }
 
     [Fact]
-    public void CanonicalRequestV1_RejectsNonDefaultOutputPolicy() {
+    public void CanonicalRequestV2_RejectsNonDefaultOutputPolicy() {
         var request = new CompletionRequest(
             "model",
             new CompletionPromptPrefix(
@@ -440,14 +605,14 @@ public sealed class SessionRequestManifestCodecTests {
         );
 
         Assert.Contains(
-            "canonical-json v1",
+            "canonical-json v2",
             exception.Message,
             StringComparison.Ordinal
         );
     }
 
     [Fact]
-    public void CanonicalRequestV1_RejectsNonEmptyTypedTail() {
+    public void CanonicalRequestV2_RejectsNonEmptyTypedTail() {
         var request = new CompletionRequest(
             "model",
             new CompletionPromptPrefix(
@@ -474,8 +639,7 @@ public sealed class SessionRequestManifestCodecTests {
         string? modelId = null,
         string? systemPrompt = null,
         IReadOnlyList<IHistoryMessage>? sharedContextMessages = null,
-        ImmutableArray<ToolDefinition>? tools = null,
-        int? maxTokens = null
+        ImmutableArray<ToolDefinition>? tools = null
     ) => new(
         modelId ?? source.ModelId,
         new CompletionPromptPrefix(
@@ -486,8 +650,7 @@ public sealed class SessionRequestManifestCodecTests {
             sharedContextMessages
                 ?? source.PromptPrefix.SharedContextMessages
         ),
-        source.TailMessages,
-        maxTokens ?? source.MaxTokens
+        source.TailMessages
     );
 
     [Fact]
@@ -502,8 +665,7 @@ public sealed class SessionRequestManifestCodecTests {
                         CompletionOutputContract.ProviderDefault([]),
                         [new UnsupportedHistoryMessage(HistoryMessageKind.ContextHeader)]
                     ),
-                    tailMessages: [],
-                    maxTokens: null
+                    tailMessages: []
                 )
             )
         );
@@ -517,8 +679,7 @@ public sealed class SessionRequestManifestCodecTests {
                         CompletionOutputContract.ProviderDefault([]),
                         [new UnsupportedHistoryMessage(HistoryMessageKind.Observation)]
                     ),
-                    tailMessages: [],
-                    maxTokens: null
+                    tailMessages: []
                 )
             )
         );
@@ -532,8 +693,7 @@ public sealed class SessionRequestManifestCodecTests {
                         CompletionOutputContract.ProviderDefault([]),
                         [new DerivedObservationMessage("derived")]
                     ),
-                    tailMessages: [],
-                    maxTokens: null
+                    tailMessages: []
                 )
             )
         );
@@ -572,7 +732,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CompletionRequestPreparedV5_StrictDecodeRejectsNestedSnapshotAndToolSchemaDrift() {
+    public void CompletionRequestPreparedV7_StrictDecodeRejectsNestedSnapshotAndToolSchemaDrift() {
         string canonical = EncodeManifestJson(CreateToolDefinitions());
         (string Marker, string Replacement)[] mutations = [
             (
@@ -641,7 +801,7 @@ public sealed class SessionRequestManifestCodecTests {
                     new string('c', 64)
                 )
             ),
-            new SessionRequestParameters("model-A", 4096),
+            new SessionRequestParameters("model-A"),
             new SessionRequestToolSet(
                 SessionRequestManifestDefaults.ToolCodecId,
                 SessionRequestCanonicalizer.ComputeToolSetSha256(tools),

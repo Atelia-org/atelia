@@ -13,7 +13,7 @@ internal static class SessionExecutionTailResolver {
         EventAddress SourcePreparedAddress,
         EventAddress? SourcePreparedParent,
         EventAddress? ActiveAttemptAddress,
-        CompletionRequestPreparedBody SourceManifest
+        SessionPreparedManifestView SourceManifest
     );
 
     public static SessionExecutionRecovery Resolve(
@@ -264,6 +264,7 @@ internal static class SessionExecutionTailResolver {
                         chain.SourcePreparedAddress
                 ),
                 new SessionPreparedRuntimeRecoverySnapshot(
+                    chain.SourceManifest.BodySchemaVersion,
                     chain.SourceManifest.Target.Connection,
                     chain.SourceManifest.Target.ClientName,
                     chain.SourceManifest.Target.ApiSpecId,
@@ -539,7 +540,7 @@ internal static class SessionExecutionTailResolver {
             var newestToOldestStarts =
                 new List<(EventAddress Address, EventAddress Parent)>();
             EventAddress cursor = activeAttemptHead;
-            CompletionRequestPreparedBody sourceManifest;
+            SessionPreparedManifestView sourceManifest;
             EventAddress sourcePreparedAddress;
             EventAddress? sourcePreparedParent;
             while (true) {
@@ -559,7 +560,10 @@ internal static class SessionExecutionTailResolver {
                         $"Prepared recovery chain reached '{ev.Kind}' at {cursor} instead of CompletionRequestPrepared."
                     );
                 }
-                sourceManifest = RequireBody<CompletionRequestPreparedBody>(ev);
+                sourceManifest = SessionPreparedManifestView.FromDecoded(
+                    ev.BodySchemaVersion,
+                    ev.Body
+                );
                 sourcePreparedAddress = cursor;
                 sourcePreparedParent = ev.Parent;
                 break;
@@ -893,7 +897,7 @@ internal static class SessionExecutionTailResolver {
                 );
 
         private static EventAddress? TryObservationSource(
-            CompletionRequestPreparedBody manifest,
+            SessionPreparedManifestView manifest,
             EventAddress? sourceParent
         ) => string.Equals(
                 manifest.Origin.Reason,

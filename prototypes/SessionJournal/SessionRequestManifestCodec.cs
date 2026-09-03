@@ -58,6 +58,38 @@ internal static class SessionRequestManifestCodec {
 
     public static void Validate(CompletionRequestPreparedBody body) {
         ArgumentNullException.ThrowIfNull(body);
+        ValidateCommon(
+            SessionPreparedManifestView.FromDecoded(
+                SessionRequestManifestDefaults.CurrentBodySchemaVersion,
+                body
+            ),
+            SessionRequestManifestDefaults.CanonicalRequestCodecId
+        );
+    }
+
+    internal static void ValidateHistoricalV5(
+        HistoricalCompletionRequestPreparedV5Body body
+    ) {
+        ArgumentNullException.ThrowIfNull(body);
+        if (body.Parameters.LegacyMaxTokens is <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(body),
+                "historical v5 parameters.maxTokens must be positive when present."
+            );
+        }
+        ValidateCommon(
+            SessionPreparedManifestView.FromDecoded(
+                SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5,
+                body
+            ),
+            SessionRequestManifestDefaults.HistoricalCanonicalRequestCodecIdV1
+        );
+    }
+
+    private static void ValidateCommon(
+        SessionPreparedManifestView body,
+        string expectedCanonicalRequestCodecId
+    ) {
         RequireText(body.Origin.CorrelationId, "origin.correlationId");
         RequireText(body.Origin.Reason, "origin.reason");
         if (body.Execution.LastIssuedToolExecutionSequence < 0) {
@@ -73,7 +105,7 @@ internal static class SessionRequestManifestCodec {
         ValidateSetup(body.Plan.RawStartSetups.SystemPrompt, "plan.rawStartSetups.systemPrompt");
         if (body.Plan.ExactContextInputs.Length > MaxExactContextInputCount) {
             throw new InvalidDataException(
-                $"Prepared v5 plan.exactContextInputs cannot exceed {MaxExactContextInputCount} entries."
+                $"Prepared v{body.BodySchemaVersion} plan.exactContextInputs cannot exceed {MaxExactContextInputCount} entries."
             );
         }
         foreach (SessionRequestContextInput input in body.Plan.ExactContextInputs) {
@@ -84,7 +116,7 @@ internal static class SessionRequestManifestCodec {
                 + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ActionMessage) ? 0 : 1);
             if (populatedCarriers != 1) {
                 throw new InvalidDataException(
-                    "Prepared v5 exact context inputs must populate exactly one contextSnapshot carrier."
+                    $"Prepared v{body.BodySchemaVersion} exact context inputs must populate exactly one contextSnapshot carrier."
                 );
             }
         }
@@ -92,10 +124,7 @@ internal static class SessionRequestManifestCodec {
         ValidateSetup(body.Setups.RuntimeConfig, "setups.runtimeConfig");
         ValidateSetup(body.Setups.SystemPrompt, "setups.systemPrompt");
 
-        RequireText(body.Parameters.ModelId, "parameters.modelId");
-        if (body.Parameters.MaxTokens is <= 0) {
-            throw new ArgumentOutOfRangeException(nameof(body), "parameters.maxTokens must be positive when present.");
-        }
+        RequireText(body.ModelId, "parameters.modelId");
 
         if (!string.Equals(body.ToolSet.CodecId, SessionRequestManifestDefaults.ToolCodecId, StringComparison.Ordinal)) {
             throw new NotSupportedException($"Unsupported tool set codec '{body.ToolSet.CodecId}'.");
@@ -130,7 +159,7 @@ internal static class SessionRequestManifestCodec {
         }
         if (!string.Equals(
                 body.Recipe.CanonicalRequestCodecId,
-                SessionRequestManifestDefaults.CanonicalRequestCodecId,
+                expectedCanonicalRequestCodecId,
                 StringComparison.Ordinal
             )) {
             throw new NotSupportedException(
@@ -217,12 +246,6 @@ internal static class SessionRequestManifestCodec {
     private static void WriteParameters(Utf8JsonWriter writer, SessionRequestParameters value) {
         writer.WriteStartObject("parameters");
         writer.WriteString("modelId", value.ModelId);
-        if (value.MaxTokens is int maxTokens) {
-            writer.WriteNumber("maxTokens", maxTokens);
-        }
-        else {
-            writer.WriteNull("maxTokens");
-        }
         writer.WriteEndObject();
     }
 
@@ -266,7 +289,7 @@ internal static class SessionRequestManifestCodec {
         writer.WriteEndObject();
     }
 
-    private static SessionRequestOrigin ReadOrigin(JsonElement element) {
+    internal static SessionRequestOrigin ReadOrigin(JsonElement element) {
         RequireExactProperties(element, "origin", "correlationId", "reason");
         return new(
             ReadRequiredString(element, "correlationId"),
@@ -274,14 +297,14 @@ internal static class SessionRequestManifestCodec {
         );
     }
 
-    private static SessionExecutionCheckpoint ReadExecution(JsonElement element) {
+    internal static SessionExecutionCheckpoint ReadExecution(JsonElement element) {
         RequireExactProperties(element, "execution", "lastIssuedToolExecutionSequence");
         return new SessionExecutionCheckpoint(
             ReadRequiredInt64(element, "lastIssuedToolExecutionSequence")
         );
     }
 
-    private static SessionContextPlan ReadPlan(JsonElement element) {
+    internal static SessionContextPlan ReadPlan(JsonElement element) {
         RequireExactProperties(
             element,
             "plan",
@@ -328,7 +351,7 @@ internal static class SessionRequestManifestCodec {
         );
     }
 
-    private static SessionGoverningSetupReferences ReadSetups(JsonElement element) {
+    internal static SessionGoverningSetupReferences ReadSetups(JsonElement element) {
         RequireExactProperties(element, "setups", "runtimeConfig", "systemPrompt");
         return new(
             ReadSetup(ReadRequiredObject(element, "runtimeConfig")),
@@ -346,14 +369,13 @@ internal static class SessionRequestManifestCodec {
     }
 
     private static SessionRequestParameters ReadParameters(JsonElement element) {
-        RequireExactProperties(element, "parameters", "modelId", "maxTokens");
+        RequireExactProperties(element, "parameters", "modelId");
         return new(
-            ReadRequiredString(element, "modelId"),
-            ReadNullableInt32(element, "maxTokens")
+            ReadRequiredString(element, "modelId")
         );
     }
 
-    private static SessionRequestToolSet ReadToolSet(JsonElement element) {
+    internal static SessionRequestToolSet ReadToolSet(JsonElement element) {
         RequireExactProperties(element, "toolSet", "codecId", "sha256", "runtimeIdentity", "definitions");
         return new(
             ReadRequiredString(element, "codecId"),
@@ -365,7 +387,7 @@ internal static class SessionRequestManifestCodec {
         );
     }
 
-    private static SessionRequestRecipe ReadRecipe(JsonElement element) {
+    internal static SessionRequestRecipe ReadRecipe(JsonElement element) {
         RequireExactProperties(
             element,
             "recipe",
@@ -378,7 +400,7 @@ internal static class SessionRequestManifestCodec {
         );
     }
 
-    private static SessionRequestTarget ReadTarget(JsonElement element) {
+    internal static SessionRequestTarget ReadTarget(JsonElement element) {
         RequireExactProperties(
             element,
             "target",
@@ -407,7 +429,7 @@ internal static class SessionRequestManifestCodec {
         );
     }
 
-    private static SessionRequestCommitment ReadCommitment(JsonElement element) {
+    internal static SessionRequestCommitment ReadCommitment(JsonElement element) {
         RequireExactProperties(element, "commitment", "byteLength", "sha256");
         return new(
             ReadRequiredInt32(element, "byteLength"),
@@ -496,7 +518,7 @@ internal static class SessionRequestManifestCodec {
         }
     }
 
-    private static JsonElement ReadRequiredObject(JsonElement element, string propertyName) {
+    internal static JsonElement ReadRequiredObject(JsonElement element, string propertyName) {
         JsonElement property = ReadRequiredProperty(element, propertyName);
         RequireObject(property, propertyName);
         return property;
@@ -515,7 +537,7 @@ internal static class SessionRequestManifestCodec {
             ? property
             : throw new InvalidDataException($"Required property '{propertyName}' is missing.");
 
-    private static string ReadRequiredString(JsonElement element, string propertyName) {
+    internal static string ReadRequiredString(JsonElement element, string propertyName) {
         JsonElement property = ReadRequiredProperty(element, propertyName);
         return property.ValueKind == JsonValueKind.String
             ? property.GetString()!
@@ -536,7 +558,7 @@ internal static class SessionRequestManifestCodec {
             : throw new InvalidDataException($"Required long integer property '{propertyName}' is invalid.");
     }
 
-    private static int? ReadNullableInt32(JsonElement element, string propertyName) {
+    internal static int? ReadNullableInt32(JsonElement element, string propertyName) {
         JsonElement property = ReadRequiredProperty(element, propertyName);
         if (property.ValueKind == JsonValueKind.Null) { return null; }
         return property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out int value)
@@ -560,7 +582,7 @@ internal static class SessionRequestManifestCodec {
         }
     }
 
-    private static void RequireExactProperties(JsonElement element, string name, params string[] allowedProperties) {
+    internal static void RequireExactProperties(JsonElement element, string name, params string[] allowedProperties) {
         RequireObject(element, name);
         var allowed = new HashSet<string>(allowedProperties, StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);

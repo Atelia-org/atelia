@@ -364,7 +364,6 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
             "performance-connection-v1",
             "performance-adapter-v1"
         ),
-        MaxTokens: 512,
         ToolRuntimeIdentity: tools is null
             ? null
             : new SessionToolRuntimeIdentity(

@@ -2927,8 +2927,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 CompletionOutputContract.ProviderDefault(tools),
                 materialization.Context
             ),
-            tailMessages: [],
-            maxTokens: runtime.MaxTokens
+            tailMessages: []
         );
         if (runtime.MaximumCanonicalRequestBytes
                 is long maximumCanonicalRequestBytes
@@ -4563,8 +4562,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 CompletionOutputContract.ProviderDefault(tools),
                 context.MoveToImmutable()
             ),
-            tailMessages: [],
-            runtime.MaxTokens
+            tailMessages: []
         );
     }
 
@@ -4623,7 +4621,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 CreateSetupReference(governingSetup.RuntimeConfigSetupAddress, SessionEventKind.RuntimeConfigSetup),
                 CreateSetupReference(governingSetup.SystemPromptSetupAddress, SessionEventKind.SystemPromptSetup)
             ),
-            new SessionRequestParameters(request.ModelId, request.MaxTokens),
+            new SessionRequestParameters(request.ModelId),
             new SessionRequestToolSet(
                 SessionRequestManifestDefaults.ToolCodecId,
                 SessionRequestCanonicalizer.ComputeToolSetSha256(tools),
@@ -4936,12 +4934,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
             runtime.CompletionClient.ApiSpecId,
             "CompletionClient.ApiSpecId"
         );
-        if (runtime.MaxTokens is <= 0) {
-            throw new ArgumentOutOfRangeException(
-                nameof(runtime),
-                "SessionJournal runtime MaxTokens must be positive when specified."
-            );
-        }
         return target;
     }
 

@@ -10,6 +10,11 @@ surface set 6 production/test source：`97ec7c1c6129b73062f9e46725c1fe3f2dcece92
 approval anchors：immutable v1 `session-journal-contract-r2-approved-surfaces-v1`；immutable v2 `session-journal-contract-r2-approved-surfaces-v2`（tag object `13111f3d` → `c4c6dd16`）；immutable v3 `session-journal-contract-r2-approved-surfaces-v3`（tag object `511c5099` → `adf547e2`）；immutable v4 `session-journal-contract-r2-approved-surfaces-v4`（tag object `76dcdc70` → `0dac57a9`）；immutable v5 `session-journal-contract-r2-approved-surfaces-v5`（tag object `e1100017` → `89d61ba2`）；immutable v6 `session-journal-contract-r2-approved-surfaces-v6`（tag object `acc73dab` → `14b570cb`）  
 记录日期：2026-08-19
 
+> **Post-R2 successor:** current `CompletionRequestPrepared` write/recovery language has been superseded by
+> [Prepared v7](completion-request-prepared-v7.md). The R2 tables and claims below remain the immutable
+> Prepared-v5 approval record and are intentionally not rewritten. Current code retains v5 only as a
+> read-only historical verifier so existing raw addresses remain valid; v5 is not executable recovery.
+
 本文是current SessionJournal、HistoryTimeline与RecapGrid contract的Shape/Rule入口。它把明确支持的
 .NET role、raw/companion/operational wire与upgrade policy放在同一张地图中，但只有
 [R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)记录了prior source `a77ed16c`的final gates；

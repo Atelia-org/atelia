@@ -2,7 +2,7 @@ namespace Atelia.SessionJournal;
 
 /// <summary>
 /// Renders validated, pre-Prepared derived contributions into exact request
-/// snapshots. Prepared v5 persists the resulting snapshot and never
+/// snapshots. Current Prepared v7 persists the resulting snapshot and never
 /// re-renders it through this contract.
 /// </summary>
 internal static class SessionContextContributionRenderer {

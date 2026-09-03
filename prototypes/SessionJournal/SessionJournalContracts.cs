@@ -94,11 +94,19 @@ public enum SessionUncertainCompletionRecoveryPolicy {
     RestartWithNewAttempt,
 }
 
+/// <summary>
+/// Host-owned runtime dependencies for current SessionJournal execution.
+/// </summary>
+/// <remarks>
+/// This contract intentionally has no host-selected output-token limit. Completion providers
+/// omit optional limit fields when omission means unlimited or the model maximum; providers
+/// that require a numeric field must send the selected model's exact provider maximum. Historical
+/// Prepared v5 limits are verification-only data and never enter this runtime or a provider call.
+/// </remarks>
 public sealed record SessionRuntime(
     ICompletionClient CompletionClient,
     ToolSession? ToolSession = null,
     SessionCompletionTargetIdentity? CompletionTarget = null,
-    int? MaxTokens = null,
     SessionUncertainCompletionRecoveryPolicy UncertainCompletionRecoveryPolicy =
         SessionUncertainCompletionRecoveryPolicy.Refuse,
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null,
@@ -297,6 +305,10 @@ internal sealed record ToolResultObservedBody(
     IReadOnlyList<ToolResultBlock> Blocks
 );
 
+/// <summary>
+/// Current Prepared v7 body. This is the only Prepared body that may be reconstructed into a
+/// dispatchable CompletionRequest; historical versions use distinct verification-only types.
+/// </summary>
 internal sealed record CompletionRequestPreparedBody(
     SessionRequestOrigin Origin,
     SessionExecutionCheckpoint Execution,
@@ -352,6 +364,7 @@ internal sealed record SessionExecutionRecovery(
 /// tool definitions, operation identity, and provider credentials.
 /// </summary>
 internal sealed record SessionPreparedRuntimeRecoverySnapshot(
+    int BodySchemaVersion,
     SessionCompletionTargetIdentity CompletionTarget,
     string ClientName,
     string ApiSpecId,

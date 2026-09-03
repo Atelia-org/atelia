@@ -4,7 +4,7 @@ using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal.Tests;
 
-internal static class PreparedV5Fixture {
+internal static class PreparedV7Fixture {
     public static CompletionRequestPreparedBody Create(
         string correlationId,
         string reason,
@@ -40,7 +40,7 @@ internal static class PreparedV5Fixture {
                 new SessionSetupReference(runtimeSetup, 1, new string('b', 64)),
                 new SessionSetupReference(promptSetup, 1, new string('c', 64))
             ),
-            new SessionRequestParameters(modelId, MaxTokens: null),
+            new SessionRequestParameters(modelId),
             new SessionRequestToolSet(
                 SessionRequestManifestDefaults.ToolCodecId,
                 SessionRequestCanonicalizer.ComputeToolSetSha256(tools),

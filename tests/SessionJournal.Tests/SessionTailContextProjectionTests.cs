@@ -547,7 +547,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     [InlineData("invalid-target-field")]
     [InlineData("invalid-client-name")]
     [InlineData("invalid-client-api")]
-    [InlineData("nonpositive-max-tokens")]
     public async Task SendAsync_InvalidPlanningPrerequisiteFailsBeforeObservation(
         string scenario
     ) {
@@ -577,7 +576,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                     ConnectionId = " "
                 }
             },
-            "nonpositive-max-tokens" => runtime with { MaxTokens = 0 },
             _ => runtime
         };
         using (var reopened = SessionJournalTestRuntime.Attach(
@@ -1195,7 +1193,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             "tail-connection-v1",
             "tail-adapter-v1"
         ),
-        MaxTokens: 512,
         ToolRuntimeIdentity: toolRuntimeIdentity,
         ContextCandidateSource: new TestContextCandidateSource(candidate)
     );
@@ -1215,7 +1212,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 "tail-connection-v1",
                 "tail-adapter-v1"
             ),
-            MaxTokens: 512,
             ContextCandidateSource: new TestContextCandidateSource()
         );
     }

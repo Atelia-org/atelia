@@ -48,12 +48,16 @@ internal static class SessionAuthoritativeGoverningSetupResolver {
                 using SessionJournalEventFrame frame = reader.ReadEvent(address).Unwrap();
                 payloadReads++;
                 checkpointPayloadReads++;
-                object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
+                object body = SessionEventCodec.Decode(
+                    kind,
+                    frame.Payload,
+                    out int bodySchemaVersion
+                );
                 SessionGoverningSetupReferences references =
-                    (body as CompletionRequestPreparedBody)?.Setups
-                    ?? throw new InvalidDataException(
-                        $"Setup checkpoint at {address} decoded to '{body.GetType().Name}'."
-                    );
+                    SessionPreparedManifestView.FromDecoded(
+                        bodySchemaVersion,
+                        body
+                    ).Setups;
                 if (runtimeAddress is null) {
                     runtime = ReadSetup<SessionRuntimeConfiguration>(
                         reader, references.RuntimeConfig, SessionEventKind.RuntimeConfigSetup, ref payloadReads

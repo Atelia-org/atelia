@@ -3538,7 +3538,6 @@ public sealed class SessionJournalEngineTests : IDisposable {
     private SessionRuntime CreateRuntime(
         ICompletionClient client,
         ToolSession? toolSession = null,
-        int? maxTokens = null,
         SessionToolRuntimeIdentity? toolRuntimeIdentity = null,
         SessionContextCandidate? contextCandidate = null,
         TestContextCandidateSource? candidateSource = null
@@ -3551,7 +3550,6 @@ public sealed class SessionJournalEngineTests : IDisposable {
             ConnectionFingerprint: "test-connection-fingerprint-v1",
             RequestAdapterFingerprint: "test-request-adapter-v1"
         ),
-        maxTokens,
         ToolRuntimeIdentity: toolRuntimeIdentity ?? ToolRuntimeIdentity,
         ContextCandidateSource:
             candidateSource

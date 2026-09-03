@@ -14,6 +14,30 @@ public sealed class SessionJournalNamedRoleTests : IDisposable {
     );
 
     [Fact]
+    public void SessionRuntimeHasNoCallerSelectedOutputLimitSurface() {
+        Assert.DoesNotContain(
+            typeof(SessionRuntime).GetProperties(),
+            static property => property.Name.Contains(
+                "MaxToken",
+                StringComparison.OrdinalIgnoreCase
+            ) || property.Name.Contains(
+                "OutputToken",
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
+        Assert.All(
+            typeof(SessionRuntime).GetConstructors()
+                .SelectMany(static constructor => constructor.GetParameters()),
+            static parameter => Assert.False(
+                parameter.Name?.Contains(
+                    "maxTokens",
+                    StringComparison.OrdinalIgnoreCase
+                ) ?? false
+            )
+        );
+    }
+
+    [Fact]
     public async Task ExternalCompositionCanImplementContextRolesAndUseExactHeadOwnerCalls() {
         using SessionJournalEngine engine = SessionJournalEngine.Create(
             _path,

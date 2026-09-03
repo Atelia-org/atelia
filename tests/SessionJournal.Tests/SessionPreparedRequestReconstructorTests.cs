@@ -164,8 +164,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 CompletionOutputContract.ProviderDefault(scenario.ExpectedRequest.PromptPrefix.OutputContract.Tools),
                 scenario.ExpectedRequest.PromptPrefix.SharedContextMessages
             ),
-            tailMessages: [],
-            maxTokens: scenario.ExpectedRequest.MaxTokens
+            tailMessages: []
         );
         CompletionRequestPreparedBody forged = scenario.Manifest with {
             Plan = scenario.Manifest.Plan with {
@@ -224,8 +223,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 scenario.ExpectedRequest.PromptPrefix.OutputContract,
                 scenario.ExpectedRequest.PromptPrefix.SharedContextMessages
             ),
-            scenario.ExpectedRequest.TailMessages,
-            scenario.ExpectedRequest.MaxTokens
+            scenario.ExpectedRequest.TailMessages
         );
         CompletionRequestPreparedBody forged = scenario.Manifest with {
             Plan = scenario.Manifest.Plan with { RawStartSetups = staleSetups },
@@ -356,8 +354,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     [Fact]
-    public void PreparedV5_RejectsMultiCarrierExactContextInput() {
-        CompletionRequestPreparedBody manifest = PreparedV5Fixture.Create(
+    public void PreparedV7_RejectsMultiCarrierExactContextInput() {
+        CompletionRequestPreparedBody manifest = PreparedV7Fixture.Create(
             "correlation", "observation", Address(1), Address(2), Address(3), Address(4),
             "model", [], null
         );
@@ -649,7 +647,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             CreateSetupReference(journal, runtime),
             CreateSetupReference(journal, prompt)
         ),
-        new SessionRequestParameters(request.ModelId, request.MaxTokens),
+        new SessionRequestParameters(request.ModelId),
         new SessionRequestToolSet(
             SessionRequestManifestDefaults.ToolCodecId,
             SessionRequestCanonicalizer.ComputeToolSetSha256(request.PromptPrefix.OutputContract.Tools),

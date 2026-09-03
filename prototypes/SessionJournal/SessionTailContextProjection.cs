@@ -60,7 +60,7 @@ internal static class SessionTailContextProjection {
         string? activeCorrelationId = seed.ActiveCorrelationId;
         SessionExecutionPhase phase = seed.Phase;
         SessionToolRuntimeIdentity? pendingToolRuntimeIdentity = null;
-        CompletionRequestPreparedBody? sourcePrepared = null;
+        SessionPreparedManifestView? sourcePrepared = null;
         EventAddress? sourcePreparedAddress = null;
         EventAddress? activeAttemptAddress = null;
         EventAddress? firstObservedToolResultAddress = null;
@@ -142,8 +142,11 @@ internal static class SessionTailContextProjection {
                 }
                 case SessionEventKind.CompletionRequestPrepared: {
                     EnsureNoOpenTool(ev, openAction);
-                    CompletionRequestPreparedBody prepared =
-                        RequireBody<CompletionRequestPreparedBody>(ev);
+                    SessionPreparedManifestView prepared =
+                        SessionPreparedManifestView.FromDecoded(
+                            ev.BodySchemaVersion,
+                            ev.Body
+                        );
                     if (phase != SessionExecutionPhase.AwaitingAgentAction
                         || sourcePrepared is not null) {
                         throw new InvalidDataException(
@@ -451,7 +454,7 @@ internal static class SessionTailContextProjection {
         DecodedSessionEvent ev,
         SessionExecutionPhase phase,
         ActionMessage? openAction,
-        CompletionRequestPreparedBody? sourcePrepared
+        SessionPreparedManifestView? sourcePrepared
     ) {
         EnsureNoOpenTool(ev, openAction);
         if (sourcePrepared is not null
