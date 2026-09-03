@@ -354,6 +354,146 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
+    public async Task CompletedMixedLineage_HistoricalCeilingTamperIsRejectedByEveryAuditPath() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        SessionRuntime runtime = CreateRuntime(client);
+        EventAddress currentPrepared = await CreatePreparedAsync(path, runtime);
+        EventAddress historicalPrepared = ReplacePreparedWithHistoricalV5(
+            path,
+            currentPrepared,
+            legacyMaxTokens: 4096,
+            rewrite: static body => body with {
+                Parameters = body.Parameters with { LegacyMaxTokens = 8192 }
+            }
+        );
+        HistoricalCompletionRequestPreparedV5Body historical = ReadBody<
+            HistoricalCompletionRequestPreparedV5Body
+        >(path, historicalPrepared, SessionEventKind.CompletionRequestPrepared);
+        _ = AppendCompletedHistoricalAction(
+            path,
+            historicalPrepared,
+            historical,
+            new ActionMessage([new ActionBlock.Text("historical answer")]),
+            toolRuntimeIdentity: null
+        );
+
+        client.Enqueue(request => Success(request, "current answer"));
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(path),
+            runtime
+        )) {
+            TurnResult result = await reopened.SendAsync(
+                "current observation",
+                CancellationToken.None
+            );
+            Assert.Equal("current answer", result.Message.GetFlattenedText());
+        }
+
+        using (var fullAudit = SessionJournalEngine.OpenReadOnly(path)) {
+            InvalidDataException error = Assert.Throws<InvalidDataException>(
+                () => fullAudit.ScanCheckedAuditEvents(_ => { })
+            );
+            Assert.Contains("commitment", error.Message, StringComparison.Ordinal);
+        }
+        using (var selectedAudit = SessionJournalEngine.OpenReadOnly(path)) {
+            SessionSelectedLineageAuditSession selected =
+                selectedAudit.BeginSelectedLineageAudit();
+            InvalidDataException error = Assert.Throws<InvalidDataException>(() => {
+                while (!selected.IsCaptureComplete) {
+                    _ = selected.ReadNextPage(maxEventCount: 2);
+                }
+            });
+            Assert.Contains("commitment", error.Message, StringComparison.Ordinal);
+        }
+        InvalidDataException offlineError = await Assert.ThrowsAsync<
+            InvalidDataException
+        >(() => Atelia.SessionJournal.Offline.SessionJournalOfflineValidator
+            .ValidateAsync(path, CancellationToken.None).AsTask());
+        Assert.Contains(
+            "commitment",
+            offlineError.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(1, client.Calls);
+    }
+
+    [Fact]
+    public async Task ToolBearingCompletedHistoricalV5_ContinuesWithCurrentV7AfterToolResult() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var tool = new RecordingTool("lookup");
+        ToolSession tools = new ToolRegistry([tool]).CreateSession();
+        SessionRuntime runtime = CreateRuntime(client, tools);
+        EventAddress currentPrepared = await CreatePreparedAsync(path, runtime);
+        EventAddress historicalPrepared = ReplacePreparedWithHistoricalV5(
+            path,
+            currentPrepared,
+            legacyMaxTokens: 4096
+        );
+        HistoricalCompletionRequestPreparedV5Body historical = ReadBody<
+            HistoricalCompletionRequestPreparedV5Body
+        >(path, historicalPrepared, SessionEventKind.CompletionRequestPrepared);
+        EventAddress historicalAction = AppendCompletedHistoricalAction(
+            path,
+            historicalPrepared,
+            historical,
+            new ActionMessage([
+                new ActionBlock.ToolCall(
+                    new RawToolCall("lookup", "historical-call", "{}")
+                )
+            ]),
+            ToolRuntimeIdentity
+        );
+
+        EventAddress toolResultHead;
+        using (var engine = SessionJournalEngine.Open(path)) {
+            SessionPendingToolBoundaryResult.Settled settled = Assert.IsType<
+                SessionPendingToolBoundaryResult.Settled
+            >(await engine.ExecutePendingToolToBoundaryAsync(
+                historicalAction,
+                tools,
+                ToolRuntimeIdentity,
+                CancellationToken.None
+            ));
+            toolResultHead = settled.Head;
+        }
+        Assert.Equal(1, tool.Calls);
+
+        client.Enqueue(request => Success(request, "current continuation"));
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(path),
+            runtime
+        )) {
+            ResumeOutcome outcome = await reopened.ResumeAsync(
+                toolResultHead,
+                CancellationToken.None
+            );
+            Assert.True(outcome.Advanced);
+            Assert.Equal(
+                "current continuation",
+                outcome.Message?.GetFlattenedText()
+            );
+        }
+
+        Assert.Equal(1, client.Calls);
+        using var readOnly = SessionJournalEngine.OpenReadOnly(path);
+        var events = new List<SessionJournalAuditEvent>();
+        SessionJournalAuditScanResult audit = readOnly
+            .ScanCheckedAuditEvents(events.Add);
+        Assert.Equal(2, audit.Diagnostics.PreparedReconstructionCount);
+        Assert.Equal(
+            [5, 7],
+            events
+                .Where(static entry => entry.Kind
+                    == SessionEventKind.CompletionRequestPrepared)
+                .Select(static entry => entry.BodySchemaVersion)
+                .ToArray()
+        );
+        Assert.Equal(SessionExecutionPhase.Idle, audit.ExecutionStateAtCapturedHead.Phase);
+    }
+
+    [Fact]
     public async Task ResumeAsync_PreCanceledPrepared_DoesNotAppendStartedOrCallProvider() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
@@ -1106,6 +1246,46 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             parent,
             HistoricalPreparedV5TestFixture.Encode(historical),
             opaqueEventKind: (uint)SessionEventKind.CompletionRequestPrepared,
+            hint: default
+        ).Unwrap().EventAddress;
+    }
+
+    private static EventAddress AppendCompletedHistoricalAction(
+        string path,
+        EventAddress historicalPrepared,
+        HistoricalCompletionRequestPreparedV5Body manifest,
+        ActionMessage action,
+        SessionToolRuntimeIdentity? toolRuntimeIdentity
+    ) {
+        using var journal = EventJournal.EventJournal.OpenExisting(path);
+        EventAddress started = journal.CommitToRef(
+            SessionJournalDefaults.MainBranchName,
+            historicalPrepared,
+            SessionEventCodec.Encode(
+                SessionEventKind.CompletionAttemptStarted,
+                new CompletionAttemptStartedBody()
+            ),
+            opaqueEventKind: (uint)SessionEventKind.CompletionAttemptStarted,
+            hint: default
+        ).Unwrap().EventAddress;
+        return journal.CommitToRef(
+            SessionJournalDefaults.MainBranchName,
+            started,
+            SessionEventCodec.Encode(
+                SessionEventKind.AgentActionProduced,
+                new AgentActionProducedBody(
+                    action,
+                    new CompletionDescriptor(
+                        "historical-provider",
+                        "historical-api",
+                        manifest.Parameters.ModelId
+                    ),
+                    manifest.Origin.CorrelationId,
+                    manifest.Execution,
+                    toolRuntimeIdentity
+                )
+            ),
+            opaqueEventKind: (uint)SessionEventKind.AgentActionProduced,
             hint: default
         ).Unwrap().EventAddress;
     }
