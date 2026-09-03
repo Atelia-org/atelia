@@ -645,7 +645,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         var output = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(output)) {
             writer.WriteStartObject();
-            writer.WriteNumber("v", 1);
+            writer.WriteNumber("v", 2);
             writer.WriteStartArray("connections");
             foreach (CompletionConnectionConfig connection in connections) {
                 if (!string.IsNullOrWhiteSpace(connection.BaseAddressEnv)
@@ -665,9 +665,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 writer.WriteString("baseAddress", connection.BaseAddress);
                 if (!string.IsNullOrWhiteSpace(connection.ApiKey)) {
                     writer.WriteString("apiKey", connection.ApiKey);
-                }
-                if (connection.MaxTokens is int maxTokens) {
-                    writer.WriteNumber("maxTokens", maxTokens);
                 }
                 writer.WriteEndObject();
             }

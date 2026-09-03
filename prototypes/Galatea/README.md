@@ -123,7 +123,7 @@ Current product contract见[root config V6](../../docs/SessionJournal/current/co
 `session-journal-contract-r2-approved-surfaces-v2`锚定的历史事实；该旧tag不认证V2–V6 delta。
 
 `connections.json` 是唯一 Completion endpoint catalog，同时携带 host-level selection
-metadata。根必须包含 integer token `"v": 1`、非空 `connections`、exact
+metadata。根必须包含 integer token `"v": 2`、非空 `connections`、exact
 `defaultConnectionId`、非空 `selectableConnectionIds` 与 exact `bindings` object。
 `selectableConnectionIds` 是有序的 Agent/UI allowlist：每项必须 exact 命中 catalog，
 不得重复，且必须包含 `defaultConnectionId`。不在 allowlist 中的 helper/Recap
@@ -155,10 +155,9 @@ fresh turn自然触发existing exact desired-setup rotation；不引入operator 
 
 每个 connection 必须显式提供 `completionSurfaceId`，并在 `baseAddress` /
 `baseAddressEnv` 中恰好选择一个，在 `apiKey` / `apiKeyEnv` 中至多选择一个。
-Numeric V1 现在通用地允许 optional `selectableConnectionIds` / `bindings`；Galatea 对两者
-做上述 required 收紧。当前 binary 仍可读取没有这两个字段的通用 V1，但扩展后的
-Galatea 文件会被旧 closed-root binary 拒绝；operator 必须停服、备份并将 code 与
-manifest 配套发布，应用不会自动改写可能含 secret 的文件。
+Numeric V2 通用地允许 optional `selectableConnectionIds` / `bindings`；Galatea 对两者
+做上述 required 收紧，并且不接受caller-selected output cap。V1不会被读取或迁移；operator必须停服、
+备份并将code与manifest配套发布，应用不会自动改写可能含secret的文件。
 
 `.atelia/galatea/delegates.json` 是独立于 Completion catalog 的 required、
 machine-local Codex 代行配置。V2 是 closed schema，并且当前只允许一条 exact、
@@ -375,7 +374,8 @@ provider invocation/termination/error不匹配都会使整次调用失败，不�
 每次调用创建独立`ToolSession`与collector，因此同一extractor可并发复用且不会串线；该结果不具备durable
 recovery或dedupe语义。工具契约继续由`Completion.Tools/ArtifactToolWrapper<T>`提供，无需修改其core。
 如果connection kind exact为`openai-codex-responses`，工具名还必须满足1..64个ASCII字母、数字、下划线或
-连字符（例如`artifact_person`），且必须省略当前尚无verified mapping的`MaxTokens`。system/target/instruction、
+连字符（例如`artifact_person`）。Completion request与connection有意不暴露caller output cap；具体adapter
+在省略表示不限量/模型最大值时省略provider字段，否则只发送所选模型的provider-reported maximum。system/target/instruction、
 provider tool name/call ID、tool/call数量、raw arguments与diagnostics均有
 code-owned bounds；caller cancellation与transport exception直接传播。
 
@@ -601,8 +601,8 @@ identity 绑定；fresh/NewRequest 不再绑定 current profile，也不向新�
 `recap_grid_control`。配置中的 current profile 仅提供 missing-session structural bootstrap
 所需的 admission authority。Route manifest 仍在首次
 RecapGrid work 时延迟读取；current canonical V2只保留 exact per-route `connectionId` 及并发/timeout调度
-policy。Recap request不设置`MaxTokens`，provider/client output setting由selected connection拥有，
-没有 wildcard/default fallback。
+policy。Completion contract有意不提供caller-selected output cap；具体adapter只使用“不限量/模型最大值”语义，
+route与connection都不能覆盖该策略，并且没有 wildcard/default fallback。
 
 ## 恢复顺序
 
@@ -610,7 +610,7 @@ policy。Recap request不设置`MaxTokens`，provider/client output setting由se
   derived stores。
 - Started：启动时 strict config/connections 已冻结；默认 Refuse 早于本次 current
   connection selection/client、route 与 derived owner。
-- 当前 root strict config language为V5；connections与profile保持owner-defined V1，delegate route为owner-defined V2。当前Linux-only
+- 当前 root strict config language为V6；connections与delegate route保持owner-defined V2，profile保持owner-defined V1。当前Linux-only
   file loader对这些文件与`characterContextTemplateFile`都执行code-owned byte cap、existing-ancestor no-reparse与final-file
   no-follow regular-file 规则读取；bootstrap 也会在首次写前验证 parent chain。
 - ToolContinuation：先 bind frozen tool profile/operation，再以无工具的 current completion

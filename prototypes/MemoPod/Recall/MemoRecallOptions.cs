@@ -1,9 +1,17 @@
 namespace Atelia.MemoPod;
 
+/// <summary>
+/// Bounds local MemoPod selection and materialization work.
+/// </summary>
+/// <remarks>
+/// This contract intentionally exposes no caller-selected output-token cap.
+/// Completion adapters either omit a provider limit when omission means
+/// unlimited or the model maximum, or send the selected model's exact
+/// provider maximum when the wire requires a number.
+/// </remarks>
 public sealed class MemoRecallOptions {
     public MemoRecallOptions(
         int maxResults,
-        int? maxTokens,
         int maximumFrozenPromptUtf8Bytes,
         int maximumHydratedExactTextUtf8Bytes
     ) {
@@ -13,14 +21,6 @@ public sealed class MemoRecallOptions {
             MemoPodLimits.MaximumRecallResultCount,
             nameof(maxResults)
         );
-        MaxTokens = maxTokens is null
-            ? null
-            : RequireInRange(
-                maxTokens.Value,
-                1,
-                MemoPodLimits.MaximumRecallMaxTokens,
-                nameof(maxTokens)
-            );
         MaximumFrozenPromptUtf8Bytes = RequireInRange(
             maximumFrozenPromptUtf8Bytes,
             1,
@@ -36,7 +36,6 @@ public sealed class MemoRecallOptions {
     }
 
     public int MaxResults { get; }
-    public int? MaxTokens { get; }
     public int MaximumFrozenPromptUtf8Bytes { get; }
     public int MaximumHydratedExactTextUtf8Bytes { get; }
 

@@ -735,7 +735,7 @@ WP-02与WP-03在WP-01之后可以并行；两者均只接受immutable value，�
 
 - `Create`首次Freeze no-clobber；`Open`从strict committed document进入Frozen；
 - 最大合法durable V2 document可成功Open/render；renderer hard bound覆盖storage语言允许状态的最坏canonical
-  projection，route token cap仍只在Recall preflight生效；
+  projection；Recall只施加本地prompt/hydration bounds，Completion有意不提供caller-selected output cap；
 - Dirty false的Editable refreeze不重写authority，但会重建prompt并进入Frozen；
 - mutation×Frozen和Freeze/Resume非法转换完整negative matrix；
 - preparation cancel/fault保持Editable和原Dirty；successful settlement得到Frozen/Dirty false；
@@ -762,8 +762,9 @@ WP-02与WP-03在WP-01之后可以并行；两者均只接受immutable value，�
 **In scope**
 
 - stable system prompt、tool schema和`CompletionPromptPrefix`；
-- query tail；仅接收`ICompletionClient`、`modelId`、`maxTokens`与带
+- query tail；仅接收`ICompletionClient`、`modelId`与带
   `PromptCacheReuseHint.ReuseExpectedSoon`的`CompletionInvocationOptions`；
+- 有意不暴露caller-selected output cap；具体adapter只使用不限量或所选模型最大值语义；
 - exact terminal parser、closed outcomes、ID validation与same-Frozen-Pod hydration；
 - 只公开`RecallAsync`闭合调用，renderer output与独立ID resolver保持internal/test-only；
 - prompt injection adversarial fixtures；

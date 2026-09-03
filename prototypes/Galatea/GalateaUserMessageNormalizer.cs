@@ -106,8 +106,7 @@ public sealed class ConfiguredGalateaUserMessageNormalizer
                     ),
                     [new ObservationMessage(BuildNormalizationPrompt(userMessage))]
                 ),
-                tailMessages: [],
-                maxTokens: _connection.MaxTokens
+                tailMessages: []
             );
 
             ICompletionClient completionClient = _getClient();

@@ -13,5 +13,4 @@ public static class MemoPodLimits {
     public const int MaximumRenderedPromptUtf8Bytes = 32 * 1024 * 1024;
     public const int MaximumRecallQueryUtf8Bytes = 512 * 1024;
     public const int MaximumRecallResultCount = 64;
-    public const int MaximumRecallMaxTokens = 4_096;
 }

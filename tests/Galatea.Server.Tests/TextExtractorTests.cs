@@ -43,7 +43,6 @@ public sealed class TextExtractorTests {
             client.LastRequest
         );
         Assert.Equal("model-a", request.ModelId);
-        Assert.Null(request.MaxTokens);
         Assert.Empty(request.PromptPrefix.SharedContextMessages);
         Assert.Equal(
             CompletionToolChoiceKind.Auto,
@@ -107,7 +106,7 @@ public sealed class TextExtractorTests {
         var extractor = new TextExtractor(
             "system fixture",
             tools,
-            Connection(maxTokens: 123),
+            Connection(),
             () => client
         );
 
@@ -131,7 +130,6 @@ public sealed class TextExtractorTests {
         Assert.Equal(7, score.Value.Score);
         Assert.Equal(2, score.ExecutionSequence);
         Assert.Equal("beforeafter", result.DiagnosticText);
-        Assert.Equal(123, client.LastRequest!.MaxTokens);
         Assert.Throws<NotSupportedException>(() =>
             ((IList<ITextExtractionArtifact>)result.Artifacts)[0] = score
         );
@@ -753,16 +751,6 @@ public sealed class TextExtractorTests {
             Connection(kind: "openai-codex-responses"),
             () => throw new InvalidOperationException("must stay lazy")
         );
-        Assert.Throws<ArgumentException>(() => new TextExtractor(
-            "system fixture",
-            TextExtractorToolSet.Create(person),
-            Connection(
-                maxTokens: 123,
-                kind: "openai-codex-responses"
-            ),
-            () => throw new InvalidOperationException("must stay lazy")
-        ));
-
         int accessorCalls = 0;
         var client = new ScriptedClient(static (self, request, _) =>
             Task.FromResult(self.Completed(
@@ -824,15 +812,13 @@ public sealed class TextExtractorTests {
         );
 
     private static CompletionConnectionConfig Connection(
-        int? maxTokens = null,
         string kind = "test"
     ) => new(
         "extractor",
         kind,
         "model-a",
         "test-v1",
-        "https://example.invalid/",
-        MaxTokens: maxTokens
+        "https://example.invalid/"
     );
 
     private static ScriptedClient CallsClient(params RawToolCall[] calls) =>

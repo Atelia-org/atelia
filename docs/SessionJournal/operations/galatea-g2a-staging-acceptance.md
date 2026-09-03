@@ -214,7 +214,6 @@ mkdir -p "$operator_dir"
 galatea_connections="prototypes/Galatea/.atelia/galatea/connections.json"
 recap_source_connection_id="opus4-6"
 recap_connection_id="opus4-6-recap"
-recap_max_tokens=32768
 partition_algorithm="atelia.history-timeline.partition.first-replay-safe-at-target.v1"
 estimator="atelia.history-load.o200k-base.history-unit-v1"
 minimum_recent=24000
@@ -237,15 +236,14 @@ recipe_file="$operator_dir/galatea-rolling-full-recipe.json"
 # 显式创建runtime-only recap id与low effort，不复制literal apiKey。所有output必须事先不存在。
 ( set -o noclobber; umask 077; jq -e \
   --arg source "$recap_source_connection_id" \
-  --arg target "$recap_connection_id" \
-  --argjson recap_max_tokens "$recap_max_tokens" '
+  --arg target "$recap_connection_id" '
     [.connections[] | select(.id == $source)]
     | if length != 1 then error("exact source connection absent or duplicate")
       else .[0] end
     | select(.kind == "anthropic")
     | . as $connection
     | {
-        v: 1,
+        v: 2,
         defaultConnectionId: $target,
         connections: [
           ({
@@ -253,8 +251,7 @@ recipe_file="$operator_dir/galatea-rolling-full-recipe.json"
             kind: $connection.kind,
             modelId: $connection.modelId,
             completionSurfaceId: ($connection.completionSurfaceId // "anthropic"),
-            reasoningEffort: "low",
-            maxTokens: $recap_max_tokens
+            reasoningEffort: "low"
           }
           + (if (($connection.baseAddressEnv // "") | length) > 0 then
                {baseAddressEnv: $connection.baseAddressEnv}
@@ -270,6 +267,9 @@ recipe_file="$operator_dir/galatea-rolling-full-recipe.json"
         ]
       }
   ' "$galatea_connections" >"$strict_connections" )
+
+# Completion connections V2有意不接受caller-selected output cap。具体adapter在省略表示
+# 不限量/模型最大值时省略provider字段，否则只发送所选模型的provider-reported maximum。
 
 base_address_env="$(jq -er '.connections[0].baseAddressEnv' "$strict_connections")"
 api_key_env="$(jq -er '.connections[0].apiKeyEnv' "$strict_connections")"

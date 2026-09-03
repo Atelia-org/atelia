@@ -1035,7 +1035,6 @@ public sealed class GalateaDurableRecoveryVerticalTests {
                 dispatch.ConnectionFingerprint,
                 dispatch.RequestAdapterFingerprint
             ),
-            MaxTokens: connection.MaxTokens,
             ContextCandidateSource: new EmptyLineageCandidateSource()
         );
     }

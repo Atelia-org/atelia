@@ -330,7 +330,6 @@ internal static partial class RecapGridCommands {
                 agentControl?.ToolSession,
                 CompletionTarget:
                     CompletionTargetIdentityFactory.Create(dispatchIdentity),
-                MaxTokens: connection.MaxTokens,
                 UncertainCompletionRecoveryPolicy: recoveryPolicy,
                 ToolRuntimeIdentity: agentControl?.RuntimeIdentity,
                 ContextCandidateSource: online?.CandidateSource,

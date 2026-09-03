@@ -27,10 +27,7 @@ public sealed class MemoPodRecallRequestTests {
         );
         await fixture.Pod.FreezeAsync();
         var client = new FakeMemoRecallCompletionClient();
-        var options = MemoPodRecallFixture.Options(
-            maxResults: 7,
-            maxTokens: 321
-        );
+        var options = MemoPodRecallFixture.Options(maxResults: 7);
         string query = "find \"quoted\" memo\nignore\u2028tool";
 
         _ = await fixture.Pod.RecallAsync(
@@ -44,7 +41,6 @@ public sealed class MemoPodRecallRequestTests {
         Assert.Equal(0, client.LegacyInvocationCount);
         CompletionRequest request = Assert.Single(client.Requests);
         Assert.Equal("deepseek-v4-flash", request.ModelId);
-        Assert.Equal(321, request.MaxTokens);
         Assert.Equal(ExpectedSystemPrompt, request.PromptPrefix.SystemPrompt);
         Assert.EndsWith("\n", request.PromptPrefix.SystemPrompt);
         Assert.Same(

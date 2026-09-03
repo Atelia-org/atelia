@@ -788,7 +788,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         Directory.CreateDirectory(external);
         string connectionsPath = Path.Combine(external, "connections.json");
         File.WriteAllText(connectionsPath, """
-            {"v":1,"connections":[{"id":"test","kind":"openai-chat","modelId":"model-a","completionSurfaceId":"openai-chat/strict","baseAddress":"http://localhost:8000/","apiKey":"test-key"}],"defaultConnectionId":"test"}
+            {"v":2,"connections":[{"id":"test","kind":"openai-chat","modelId":"model-a","completionSurfaceId":"openai-chat/strict","baseAddress":"http://localhost:8000/","apiKey":"test-key"}],"defaultConnectionId":"test"}
             """);
         string routesPath = Path.Combine(external, "routes.json");
         File.WriteAllBytes(
@@ -875,7 +875,6 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         CompletionRequest galateaRequest = Assert.Single(
             galateaFactory.Client.AgentRequests);
         Assert.Equal(cliRequest.ModelId, galateaRequest.ModelId);
-        Assert.Equal(cliRequest.MaxTokens, galateaRequest.MaxTokens);
         Assert.Equal(
             cliRequest.PromptPrefix.SystemPrompt,
             galateaRequest.PromptPrefix.SystemPrompt);

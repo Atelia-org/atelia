@@ -20,7 +20,6 @@ internal static class LiveMemoRecallRunner {
         "connection",
         "case",
         "max-prompt-bytes",
-        "max-tokens",
         "delay-ms"
     );
     private static readonly IReadOnlySet<string> RepeatedKeys = Set(
@@ -50,17 +49,6 @@ internal static class LiveMemoRecallRunner {
             1,
             MemoPodLimits.MaximumRenderedPromptUtf8Bytes
         );
-        string? maxTokensText = arguments.GetSingleOrDefault(
-            "max-tokens"
-        );
-        int? maxTokens = maxTokensText is null
-            ? null
-            : ParseBoundedInt(
-                maxTokensText,
-                defaultValue: 1,
-                minimum: 1,
-                maximum: MemoPodLimits.MaximumRecallMaxTokens
-            );
         int delayMilliseconds = ParseBoundedInt(
             arguments.GetSingleOrDefault("delay-ms"),
             defaultValue: 0,
@@ -82,7 +70,6 @@ internal static class LiveMemoRecallRunner {
         string connectionId = arguments.RequireSingle("connection");
         var options = new MemoRecallOptions(
             MemoPodLimits.MaximumRecallResultCount,
-            maxTokens,
             maximumPromptUtf8Bytes,
             MemoPodLimits.MaximumActiveExactTextUtf8Bytes
         );
@@ -206,7 +193,6 @@ internal static class LiveMemoRecallRunner {
                         queryUtf8Bytes,
                         options.MaxResults,
                         options.MaximumFrozenPromptUtf8Bytes,
-                        options.MaxTokens,
                         delayMilliseconds,
                         stopwatch.ElapsedMilliseconds,
                         outcome,
@@ -520,7 +506,6 @@ internal sealed record LiveMemoRecallEvidence(
     int QueryUtf8Bytes,
     int MaxResults,
     int MaxPromptUtf8Bytes,
-    int? MaxTokens,
     int DelayMilliseconds,
     long ElapsedMilliseconds,
     string Outcome,
@@ -537,7 +522,7 @@ internal sealed record LiveMemoRecallEvidence(
 
 internal static class LiveMemoRecallEvidenceSerializer {
     internal const string Schema =
-        "atelia.memo-pod.deepseek-v4-flash-candidate.v1";
+        "atelia.memo-pod.deepseek-v4-flash-candidate.v2";
     internal const string FrozenPromptFormatId =
         "atelia.memo-pod.prompt.v3";
 

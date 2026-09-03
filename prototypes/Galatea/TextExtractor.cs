@@ -306,26 +306,12 @@ internal sealed class TextExtractor {
         _connection = connection
             ?? throw new ArgumentNullException(nameof(connection));
         ArgumentException.ThrowIfNullOrWhiteSpace(connection.ModelId);
-        if (connection.MaxTokens is <= 0) {
-            throw new ArgumentOutOfRangeException(
-                nameof(connection),
-                "Text extractor connection MaxTokens must be positive when specified."
-            );
-        }
         if (string.Equals(
                 connection.Kind,
                 CodexResponsesConnectionKind,
                 StringComparison.Ordinal
             )) {
             ValidateCodexResponsesToolNames(_toolSet.Definitions);
-            if (connection.MaxTokens is not null) {
-                throw new ArgumentException(
-                    "Text extractor openai-codex-responses connections must "
-                        + "omit MaxTokens because that client has no verified "
-                        + "mapping for this option.",
-                    nameof(connection)
-                );
-            }
         }
         _getClient = getClient
             ?? throw new ArgumentNullException(nameof(getClient));
@@ -368,8 +354,7 @@ internal sealed class TextExtractor {
             tailMessages: [new ObservationMessage(BuildEnvelope(
                     targetText,
                     userPrompt
-                ))],
-            maxTokens: _connection.MaxTokens
+                ))]
         );
 
         ICompletionClient client = _getClient()

@@ -23,7 +23,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         CompletionConnectionConfig helper = Connection(
             "input-helper",
             "helper-model"
-        ) with { MaxTokens = 37 };
+        );
         var mainClient = new ScriptedCompletionClient("assistant reply");
         var helperClient = new ScriptedCompletionClient(
             "<cleaned>normalized input</cleaned>"
@@ -64,7 +64,6 @@ public sealed class GalateaInputPreprocessorVerticalTests {
 
         Assert.Equal([helper.Id, main.Id], factory.CreatedConnectionIds);
         Assert.Equal("helper-model", helperClient.LastRequest!.ModelId);
-        Assert.Equal(37, helperClient.LastRequest.MaxTokens);
         Assert.Equal(1, helperClient.DispatchCallCount);
         Assert.Equal(1, mainClient.DispatchCallCount);
         Assert.Equal([main.Id], service.Connections.Select(

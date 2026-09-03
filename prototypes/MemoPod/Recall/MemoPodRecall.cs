@@ -44,8 +44,7 @@ public sealed partial class MemoPod {
                 MemoPodRecallProtocol.OutputContract,
                 [frozenPrompt.ToHistoryMessage()]
             ),
-            [new ObservationMessage(queryTail)],
-            options.MaxTokens
+            [new ObservationMessage(queryTail)]
         );
 
         CompletionResult completionResult;

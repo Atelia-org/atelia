@@ -298,7 +298,6 @@ public sealed class MemoPodPublicSurfaceTests {
         Assert.Equal(
             new[] {
                 "MaxResults",
-                "MaxTokens",
                 "MaximumFrozenPromptUtf8Bytes",
                 "MaximumHydratedExactTextUtf8Bytes",
             },
@@ -323,7 +322,7 @@ public sealed class MemoPodPublicSurfaceTests {
             )
         );
         Assert.Equal(
-            [typeof(int), typeof(int), typeof(int), typeof(int)],
+            [typeof(int), typeof(int), typeof(int)],
             optionsConstructor.GetParameters()
                 .Select(static parameter => parameter.ParameterType)
                 .ToArray()

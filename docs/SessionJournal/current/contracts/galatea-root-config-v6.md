@@ -201,7 +201,8 @@ files；`currentAgentControlProfileId`必须exact命中loaded registry且只提�
 Route仍延迟到首次RecapGrid work读取，没有wildcard/default fallback。
 
 Galatea RecapGrid V6继续使用validated character/player names展开member prompts；V6不改变asset、Definition、
-BuildTarget、route或active recipe。Sibling `connections.json`继续使用Completion-owned numeric V1；Galatea仍要求
+BuildTarget、route或active recipe。Sibling `connections.json`使用Completion-owned numeric V2；它有意不接受
+caller-selected output cap，具体adapter只使用不限量或所选模型最大值语义。Galatea仍要求
 nonempty exact `selectableConnectionIds`包含default connection，并要求`bindings` exact只含
 `galatea.input-normalizer`、`galatea.outbound-mail-extractor`、`galatea.character-note-extractor`与
 `galatea.memo-recall`，每个值为

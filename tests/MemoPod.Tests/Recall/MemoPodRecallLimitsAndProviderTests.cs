@@ -7,60 +7,40 @@ namespace Atelia.MemoPod.Tests.Recall;
 public sealed class MemoPodRecallLimitsAndProviderTests {
     [Fact]
     public void OptionsValidateEveryClosedRange() {
-        var omitted = new MemoRecallOptions(1, null, 1, 1);
-        var minimum = new MemoRecallOptions(1, 1, 1, 1);
+        var minimum = new MemoRecallOptions(1, 1, 1);
         var maximum = new MemoRecallOptions(
             MemoPodLimits.MaximumRecallResultCount,
-            MemoPodLimits.MaximumRecallMaxTokens,
             MemoPodLimits.MaximumRenderedPromptUtf8Bytes,
             MemoPodLimits.MaximumActiveExactTextUtf8Bytes
         );
 
-        Assert.Null(omitted.MaxTokens);
         Assert.Equal(1, minimum.MaxResults);
-        Assert.Equal(1, minimum.MaxTokens);
         Assert.Equal(1, minimum.MaximumFrozenPromptUtf8Bytes);
         Assert.Equal(1, minimum.MaximumHydratedExactTextUtf8Bytes);
         Assert.Equal(
             MemoPodLimits.MaximumRecallResultCount,
             maximum.MaxResults
         );
-        Assert.Equal(
-            MemoPodLimits.MaximumRecallMaxTokens,
-            maximum.MaxTokens
-        );
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new MemoRecallOptions(0, 1, 1, 1));
+            new MemoRecallOptions(0, 1, 1));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             new MemoRecallOptions(
                 MemoPodLimits.MaximumRecallResultCount + 1,
                 1,
-                1,
                 1
             ));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new MemoRecallOptions(1, 0, 1, 1));
+            new MemoRecallOptions(1, 0, 1));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             new MemoRecallOptions(
-                1,
-                MemoPodLimits.MaximumRecallMaxTokens + 1,
-                1,
-                1
-            ));
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new MemoRecallOptions(1, 1, 0, 1));
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new MemoRecallOptions(
-                1,
                 1,
                 MemoPodLimits.MaximumRenderedPromptUtf8Bytes + 1,
                 1
             ));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new MemoRecallOptions(1, 1, 1, 0));
+            new MemoRecallOptions(1, 1, 0));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             new MemoRecallOptions(
-                1,
                 1,
                 1,
                 MemoPodLimits.MaximumActiveExactTextUtf8Bytes + 1

@@ -23,9 +23,9 @@ Galatea Program只构造一个`RecapGridCompletionHost`；`GalateaHostService`�
 recap runtime借用同一connection registry中的clients，shutdown顺序是Online/request handles → Runtime
 drain → registry distinct-client cleanup。
 
-Route manifest V2只把exact key绑定到connection id、并发与timeout。Recap runtime不设置
-`CompletionRequest.MaxTokens`；provider/client output setting随frozen connection进入client。这样切换route的
-`connectionId`不会遗留另一份provider-incompatible token override。
+Route manifest V2只把exact key绑定到connection id、并发与timeout。Completion request与connection有意不提供
+caller-selected output cap；具体adapter在省略表示不限量/模型最大值时省略provider字段，否则只发送所选模型的
+provider-reported maximum。route切换因此不会遗留provider-incompatible token override。
 
 ## Phase ordering
 

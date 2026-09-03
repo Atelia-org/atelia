@@ -101,7 +101,7 @@ export ATELIA_DEBUG_CONSOLE_LEVEL=ERROR
 
 Use a disposable working directory and a disposable synthetic Pod. Do not use
 a user Pod or a working directory whose `.atelia/debug-logs` contains retained
-production diagnostics. The strict V1 connections file must select one exact
+production diagnostics. The strict V2 connections file must select one exact
 ID with this policy:
 
 - `kind`: `openai-chat`;
@@ -132,26 +132,27 @@ dotnet run -c Release \
   recall --live true \
   --root "$disposable_pod_root" \
   --pod 11111111111111111111111111111111 \
-  --connections "$disposable_connections_v1" \
+  --connections "$disposable_connections_v2" \
   --connection deepseek-v4-flash-recall \
   --case cold-01 \
   --query-file "$synthetic_query_1" \
   --query-file "$synthetic_query_2" \
   --max-prompt-bytes 33554432 \
-  --max-tokens 256 \
   --delay-ms 0
 ```
 
 `--case` is 1–64 lowercase ASCII letters/digits plus `.`, `_`, and `-` after
 the first character. Live mode accepts 1–8 query files, prompt bytes in
-1–33,554,432, an optional max-tokens override in 1–4,096, and delay in
-0–30,000 milliseconds. Omitting `--max-tokens` leaves
-`CompletionRequest.MaxTokens` null so the selected provider/client keeps
-ownership of its supported output setting or default. Fake arguments and live
-arguments are mutually exclusive.
+1–33,554,432 and delay in 0–30,000 milliseconds. The CLI intentionally exposes
+no caller-selected output-token cap. The selected Completion adapter omits a
+provider limit when omission means unlimited or the model maximum, or sends the
+selected model's exact provider maximum when the wire requires a number. Fake
+arguments and live arguments are mutually exclusive.
 
 Each attempted provider call writes one content-free JSONL evidence record.
-It contains route identifiers, Pod/active counts, the fixed
+The current schema is `atelia.memo-pod.deepseek-v4-flash-candidate.v2`; V1
+records remain historical evidence and are not rewritten. It contains route
+identifiers, Pod/active counts, the fixed
 `frozenPromptFormatId=atelia.memo-pod.prompt.v3`, prompt hash/bytes, query bytes,
 bounds, delay, elapsed time, outcome, normalized cache status/token fields, and
 selected Memo IDs. It never contains Topic, Memo/query text, system
@@ -160,5 +161,6 @@ endpoint configuration, or credentials. The live runner computes the shared
 Frozen Observation hash/UTF-8 length transiently, clears its temporary byte
 buffer, and checks the hash against `MemoRecallResult.FrozenPromptSha256`.
 
-The tracked candidate record starts at `NotRun`:
+The tracked V1 candidate record starts at `NotRun`; it does not claim a current
+V2 authenticated run:
 [`memo-pod-deepseek-v4-flash-candidate.md`](../../docs/SessionJournal/evidence/memo-pod-deepseek-v4-flash-candidate.md).

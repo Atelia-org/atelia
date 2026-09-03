@@ -215,8 +215,7 @@ public sealed class LiveMemoRecallConfigurationTests {
             AddOption(baseline, "--fake-return-id", "m1:00000001"),
             AddOption(baseline, "--max-prompt-bytes", "0"),
             AddOption(baseline, "--max-prompt-bytes", "33554433"),
-            AddOption(baseline, "--max-tokens", "0"),
-            AddOption(baseline, "--max-tokens", "4097"),
+            AddOption(baseline, "--max-tokens", "256"),
             AddOption(baseline, "--delay-ms", "-1"),
             AddOption(baseline, "--delay-ms", "30001")
         };
@@ -352,7 +351,6 @@ public sealed class LiveMemoRecallConfigurationTests {
             7,
             64,
             1024,
-            256,
             0,
             42,
             "failed",
@@ -379,7 +377,7 @@ public sealed class LiveMemoRecallConfigurationTests {
             "podId", "activeMemoCount", "frozenPromptFormatId",
             "frozenPromptSha256",
             "frozenPromptUtf8Bytes", "queryUtf8Bytes", "maxResults",
-            "maxPromptUtf8Bytes", "maxTokens", "delayMilliseconds",
+            "maxPromptUtf8Bytes", "delayMilliseconds",
             "elapsedMilliseconds", "outcome", "promptCacheRequestStatus",
             "promptCacheSupportStatus", "promptCacheObservationStatus",
             "uncachedInputTokens", "cacheCreationInputTokens",

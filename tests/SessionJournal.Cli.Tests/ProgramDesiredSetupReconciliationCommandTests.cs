@@ -243,7 +243,7 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
             "prompt-A"
         );
         string noVersion = File.ReadAllText(inputs.ConnectionsPath).Replace(
-            "\"v\": 1,",
+            "\"v\": 2,",
             string.Empty,
             StringComparison.Ordinal
         );
@@ -309,7 +309,7 @@ public sealed class ProgramDesiredSetupReconciliationCommandTests
             connectionsPath,
             """
             {
-              "v": 1,
+              "v": 2,
               "defaultConnectionId": "target",
               "connections": [
                 {

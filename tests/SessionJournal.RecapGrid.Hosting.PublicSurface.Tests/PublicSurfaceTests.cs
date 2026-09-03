@@ -51,7 +51,7 @@ public sealed class PublicSurfaceTests {
         CompletionConnectionsFileConfig connections =
             CompletionConnectionConfigLoader.Decode(
                 Encoding.UTF8.GetBytes("""
-                    {"v":1,"connections":[{"id":"main","kind":"test","modelId":"model","completionSurfaceId":"test-v1","baseAddress":"https://example.invalid/"}],"defaultConnectionId":"main"}
+                    {"v":2,"connections":[{"id":"main","kind":"test","modelId":"model","completionSurfaceId":"test-v1","baseAddress":"https://example.invalid/"}],"defaultConnectionId":"main"}
                     """)
             );
         await using RecapGridRuntimeHost host = RecapGridRuntimeHost.Create(
@@ -76,7 +76,7 @@ public sealed class PublicSurfaceTests {
         CompletionConnectionsFileConfig connections =
             CompletionConnectionConfigLoader.Decode(
                 Encoding.UTF8.GetBytes("""
-                    {"v":1,"connections":[{"id":"main","kind":"test","modelId":"model","completionSurfaceId":"test-v1","baseAddress":"https://example.invalid/"}],"defaultConnectionId":"main"}
+                    {"v":2,"connections":[{"id":"main","kind":"test","modelId":"model","completionSurfaceId":"test-v1","baseAddress":"https://example.invalid/"}],"defaultConnectionId":"main"}
                     """));
         var factory = new BorrowedFactory();
         await using RecapGridCompletionHost host =
@@ -125,7 +125,7 @@ public sealed class PublicSurfaceTests {
         CompletionConnectionsFileConfig connections =
             CompletionConnectionConfigLoader.Decode(
                 Encoding.UTF8.GetBytes("""
-                    {"v":1,"connections":[{"id":"main","kind":"test","modelId":"model","completionSurfaceId":"test-v1","baseAddress":"https://example.invalid/"}],"defaultConnectionId":"main"}
+                    {"v":2,"connections":[{"id":"main","kind":"test","modelId":"model","completionSurfaceId":"test-v1","baseAddress":"https://example.invalid/"}],"defaultConnectionId":"main"}
                     """));
         var factory = new BorrowedFactory();
         await using var registry = new CompletionConnectionRegistry(

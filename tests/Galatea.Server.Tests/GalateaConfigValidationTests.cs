@@ -1275,8 +1275,8 @@ public sealed class GalateaConfigValidationTests {
 
             string[] invalidConnections = [
                 originalConnections.Replace(
-                    "{\"v\":1,",
-                    "{\"unknown\":1,\"v\":1,",
+                    "{\"v\":2,",
+                    "{\"unknown\":1,\"v\":2,",
                     StringComparison.Ordinal
                 ),
                 originalConnections.Replace(
@@ -1308,7 +1308,7 @@ public sealed class GalateaConfigValidationTests {
     }
 
     [Fact]
-    public void ConnectionsRequireCompletionOwnedV1AndBootstrapRoundTrips() {
+    public void ConnectionsRequireCompletionOwnedV2AndBootstrapRoundTrips() {
         byte[] template = GalateaConfigTemplateFactory
             .CreateConnectionsFileUtf8();
         CompletionConnectionsFileConfig decoded =
@@ -1333,7 +1333,7 @@ public sealed class GalateaConfigValidationTests {
         Assert.Equal(4, decoded.Bindings.Count);
         using (JsonDocument document = JsonDocument.Parse(template)) {
             JsonElement root = document.RootElement;
-            Assert.Equal("1", root.GetProperty("v").GetRawText());
+            Assert.Equal("2", root.GetProperty("v").GetRawText());
             JsonElement item = root.GetProperty("connections")[0];
             Assert.True(item.TryGetProperty("baseAddress", out _));
             Assert.False(item.TryGetProperty("baseAddressEnv", out _));
@@ -1352,7 +1352,7 @@ public sealed class GalateaConfigValidationTests {
                 GalateaConfigLoader.ConnectionsFileName
             );
             string noVersion = File.ReadAllText(connectionsPath).Replace(
-                "\"v\":1,",
+                "\"v\":2,",
                 string.Empty,
                 StringComparison.Ordinal
             );

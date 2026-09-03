@@ -37,7 +37,6 @@ public sealed class RuntimeProviderProjectionTests {
         Assert.Equal(2, captured.Length);
         CompletionRequest required = captured[0];
         CompletionRequest sibling = captured[1];
-        Assert.All(captured, static request => Assert.Null(request.MaxTokens));
         Assert.Same(required.PromptPrefix, sibling.PromptPrefix);
         Assert.NotEqual(
             ((ObservationMessage)required.TailMessages.Single()).Content,
@@ -80,7 +79,11 @@ public sealed class RuntimeProviderProjectionTests {
 
     private static void AssertAnthropic(CompletionRequest required) {
         AnthropicApiRequest requiredApi = AnthropicMessageConverter
-            .ConvertToApiRequest(required, enablePromptCaching: true);
+            .ConvertToApiRequest(
+                required,
+                modelMaximumTokens: 4_096,
+                enablePromptCaching: true
+            );
         Assert.Null(requiredApi.Tools);
         Assert.Null(requiredApi.ToolChoice);
         string json = JsonSerializer.Serialize(requiredApi);
@@ -89,7 +92,7 @@ public sealed class RuntimeProviderProjectionTests {
 
     private static void AssertGemini(CompletionRequest required) {
         GeminiGenerateContentRequest requiredApi = GeminiMessageConverter
-            .ConvertToApiRequest(required);
+            .ConvertToApiRequest(required, modelMaximumTokens: 4_096);
         Assert.Null(requiredApi.Tools);
         Assert.Null(requiredApi.ToolConfig);
     }

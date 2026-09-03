@@ -400,9 +400,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(owner);
         CompletionConnectionConfig? connection = owner.MemoRecallConnection;
         if (connection is null) { return null; }
-        _ = GalateaDefaultMemoPodRecallProvider.RequireValidMaxTokens(
-            connection
-        );
 
         return (_, characterMemory) =>
             new GalateaDefaultMemoPodRecallProvider(
@@ -2958,7 +2955,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     turn.Client,
                     turn.AgentControl?.ToolSession,
                     CompletionTarget: frozen.CompletionTarget,
-                    MaxTokens: turn.Connection.MaxTokens,
                     UncertainCompletionRecoveryPolicy:
                         liveTurn.Options.RestartUncertainCompletion
                             ? SessionUncertainCompletionRecoveryPolicy
@@ -3041,7 +3037,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
             turn.Identity.Kind,
             turn.Identity.ConnectionFingerprint,
             turn.Identity.RequestAdapterFingerprint),
-        MaxTokens: turn.Connection.MaxTokens,
         UncertainCompletionRecoveryPolicy: recoveryPolicy,
         ToolRuntimeIdentity: turn.AgentControl?.RuntimeIdentity,
         ContextCandidateSource: candidates,
@@ -4511,7 +4506,7 @@ internal static class GalateaConfigTemplateFactory {
             new JsonWriterOptions { Indented = true }
         )) {
             writer.WriteStartObject();
-            writer.WriteNumber("v", 1);
+            writer.WriteNumber("v", 2);
             writer.WriteStartArray("connections");
             writer.WriteStartObject();
             writer.WriteString("id", DefaultConnectionId);

@@ -5,10 +5,10 @@ using Xunit;
 
 namespace Atelia.SessionJournal.Cli.Tests;
 
-public sealed class ProgramCompletionConnectionsV1Tests : IDisposable {
+public sealed class ProgramCompletionConnectionsV2Tests : IDisposable {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
-        "atelia-cli-connections-v1-tests",
+        "atelia-cli-connections-v2-tests",
         Guid.NewGuid().ToString("N")
     );
 

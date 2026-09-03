@@ -2022,7 +2022,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         string connections = Path.Combine(_root, "connections.json");
         File.WriteAllText(connections, """
             {
-              "v": 1,
+              "v": 2,
               "connections": [{
                 "id": "test",
                 "kind": "test",
@@ -2040,7 +2040,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         File.WriteAllText(
             noVersionConnections,
             File.ReadAllText(connections).Replace(
-                "\"v\": 1,",
+                "\"v\": 2,",
                 string.Empty,
                 StringComparison.Ordinal
             )
@@ -2153,7 +2153,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
             using JsonDocument log = JsonDocument.Parse(
                 File.ReadAllBytes(callLog));
             Assert.Equal(
-                "atelia.completion.call-log.v9",
+                "atelia.completion.call-log.v10",
                 log.RootElement.GetProperty("schema").GetString()
             );
             Assert.Equal(
@@ -2740,7 +2740,7 @@ public sealed class ProgramRecapGridCommandTests : IDisposable {
         string path = Path.Combine(_root, "connections.json");
         File.WriteAllText(path, """
             {
-              "v": 1,
+              "v": 2,
               "connections": [{
                 "id": "test",
                 "kind": "test",

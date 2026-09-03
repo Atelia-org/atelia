@@ -6,15 +6,20 @@ current rollback source：`1d8c33bb6b88e588e45e0ac1a77183578b1f3310` / tree `a41
 historical source：旧plan `d5a403c4`、withdrawn Tier-A Candidate `edfe5230`/`19776980`、historical B1
 `83477c06`与[rolled-back evidence](../../evidence/completion-request-prepared-v6-candidate.md)
 
+> Current successor（2026-09-03）：SessionJournal当前合同是
+> [Prepared V7](../../current/contracts/completion-request-prepared-v7.md)，Completion与Memo recall均有意不暴露
+> caller-selected output cap；Galatea main-request recall已由后续独立工作落地。下述§1–§16中的Prepared v5、
+> `MaxTokens`与“没有main-request recall consumer”等表述只记录撤回当时的历史事实，不描述current product。
+
 用户于2026-08-20撤回旧方向；single atomic rollback `1d8c33bb`已使SessionJournal product/tests回到
 `a5098a77` exact tree。旧Gate A随撤回终止且不可续用，Gate B canceled/never granted，promotion never started，旧B2
-canceled/never authorized；current code与current approved Tier-A authority均为Prepared v5/recipe v1/count `0..128`。
+canceled/never authorized；当时rollback landing与approved Tier-A authority均为Prepared v5/recipe v1/count `0..128`。
 本文保留active路径只为了拥有**Design Reopened**状态与未决设计闸；§1–§16全部是旧
 WP-07A/B的历史输入，不是active decision、accepted shape、implementation plan或authorization。
 
 ## 0. Active design-reopen authority
 
-current事实：MemoPod core、fake-first operator、provider-neutral recall与provider-free Track C2均不因SessionJournal rollback
+本计划重开时的历史事实：MemoPod core、fake-first operator、provider-neutral recall与provider-free Track C2均不因SessionJournal rollback
 而撤回；Galatea已经通过[Character Note Default MemoPod V1](../../../Galatea/character-note-default-memopod-v1.md)
 成为durable save consumer，但仍没有main-request recall consumer。依赖方向是Galatea→MemoPod；`MemoPod.csproj`自身的
 production显式依赖仍仅有`Completion.Abstractions`，没有SessionJournal、Galatea或RecapGrid dependency。

@@ -21,8 +21,8 @@ logical-column prefixes、admission budgets与route dispatch limits；family/cap
 registration bundle，不能从payload自授权。三个output先整体验证absent/distinct，再分别在写前/后用正式
 decoder exact self-check；该命令不打开provider、Timeline、Control或Store。
 
-Output-token setting不属于route或Recap build budget。Recap request始终省略`MaxTokens`；provider wire需要的
-值由selected connection/client负责。需要不同provider policy时使用不同connection id，不在route覆盖。
+Output-token setting不属于route、connection或Recap build budget。Completion有意不暴露caller output cap；
+具体adapter在省略表示不限量/模型最大值时省略provider字段，否则只发送所选模型的provider-reported maximum。
 
 Build budgets约束 selected rows、recipe-row steps、new calls与elapsed time。Control admission ceilings不是
 runtime spent-state。HistoryLoad/partition policy由HistoryTimeline policy拥有，不能从recipe或provider

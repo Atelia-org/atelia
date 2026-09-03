@@ -31,14 +31,14 @@ public sealed class CompletionTargetIdentityFactoryTests {
         Assert.Equal("kind-a", identity.Kind);
         Assert.Equal(
             "sha256:"
-            + "f4172cc5b7775416319274be9ad6c55c"
-            + "96c32bbdf03359bf5f4d69a0b1bea513",
+            + "d252b9c28316fb0440afe6bf9773be15"
+            + "da4e5c52666959b02dceb9eaaf88275e",
             identity.ConnectionFingerprint
         );
         Assert.Equal(
             "sha256:"
-            + "7dd61e0ffc56fddba9b55da90909c93e"
-            + "6b4add16176f8dcf70aa67afd65aa7e5",
+            + "3fa2e051a2424462acd1d2c7096000d9"
+            + "aad88ce524185a5886a87a5ebed4bf72",
             identity.RequestAdapterFingerprint
         );
         Assert.Equal(identity, changedSecrets);
@@ -86,10 +86,6 @@ public sealed class CompletionTargetIdentityFactoryTests {
                         BaseAddress = "https://b.example/v1/"
                     }
                 ),
-            CompletionTargetIdentityFactory
-                .ComputeConnectionFingerprint(
-                    connection with { MaxTokens = 8192 }
-                )
         ];
         string[] adapterVariants = [
             CompletionTargetIdentityFactory
@@ -155,8 +151,7 @@ public sealed class CompletionTargetIdentityFactoryTests {
             BaseAddress: "https://a.example/v1/",
             ApiKey: "secret-a",
             BaseAddressEnv: "BASE_ADDRESS_ENV",
-            ApiKeyEnv: "API_KEY_ENV",
-            MaxTokens: 4096
+            ApiKeyEnv: "API_KEY_ENV"
         );
 
     private sealed class IdentityCompletionClient(

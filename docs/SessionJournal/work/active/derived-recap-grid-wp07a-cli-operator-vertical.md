@@ -4,7 +4,7 @@
 
 > 历史说明：本文锁定的是当时的Route manifest V1（含`max-output`）。current product已在post-R2
 > hard-cut为[Route manifest V2](../../current/contracts/recap-grid-route-manifest-v2.md)：route删除该字段，
-> Recap request不设置`MaxTokens`，provider/client output setting归selected connection所有。
+> Completion request与connection均有意不暴露caller output cap；具体adapter只使用不限量或模型最大值语义。
 
 只需加载：目标设计、Master、WP-06 handoff、本文与WP-07B摘要。
 

@@ -11,7 +11,6 @@ internal static class Program {
 
     private static readonly MemoRecallOptions RecallOptions = new(
         MemoPodLimits.MaximumRecallResultCount,
-        maxTokens: null,
         MemoPodLimits.MaximumRenderedPromptUtf8Bytes,
         MemoPodLimits.MaximumActiveExactTextUtf8Bytes
     );
@@ -442,7 +441,7 @@ internal static class Program {
             "  recall --root <dir> --pod <id> --query-file <file> [--fake-return-id <raw>]..."
         ).ConfigureAwait(false);
         await output.WriteLineAsync(
-            "  recall --live true --root <dir> --pod <id> --connections <v1-file> --connection <exact-id> --case <label> --query-file <file> [--query-file <file>]... [--max-prompt-bytes <n>] [--max-tokens <n>] [--delay-ms <n>]"
+            "  recall --live true --root <dir> --pod <id> --connections <v2-file> --connection <exact-id> --case <label> --query-file <file> [--query-file <file>]... [--max-prompt-bytes <n>] [--delay-ms <n>]"
         ).ConfigureAwait(false);
     }
 

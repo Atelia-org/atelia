@@ -251,7 +251,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             maintenanceMode: maintenanceMode,
             connections: [
                 Connection("test", "main-model"),
-                Connection("recall", "recall-model", maxTokens: 128),
+                Connection("recall", "recall-model"),
             ],
             selectableConnectionIds: ["test"],
             characterNoteExtractorConnectionId: "recall",
@@ -268,16 +268,14 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
 
     private static CompletionConnectionConfig Connection(
         string id,
-        string modelId,
-        int? maxTokens = null
+        string modelId
     ) => new(
         id,
         "openai-chat",
         modelId,
         "openai-chat/strict",
         "http://localhost:8000/",
-        ApiKey: "test-key",
-        MaxTokens: maxTokens
+        ApiKey: "test-key"
     );
 
     private sealed class RoutingClientFactory(

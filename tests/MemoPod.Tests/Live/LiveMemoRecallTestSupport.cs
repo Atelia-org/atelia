@@ -47,7 +47,7 @@ internal sealed class LiveMemoRecallTestHost : IDisposable {
     ) {
         string json =
             $$"""
-            {"v":1,"connections":[{"id":"{{connectionId}}","kind":"openai-chat","modelId":"deepseek-v4-flash","completionSurfaceId":"openai-chat/deepseek-v4","baseAddress":"{{baseAddress}}","apiKeyEnv":"{{apiKeyEnvironmentVariable}}","reasoningEffort":"disabled"}],"defaultConnectionId":"{{defaultConnectionId}}"}
+            {"v":2,"connections":[{"id":"{{connectionId}}","kind":"openai-chat","modelId":"deepseek-v4-flash","completionSurfaceId":"openai-chat/deepseek-v4","baseAddress":"{{baseAddress}}","apiKeyEnv":"{{apiKeyEnvironmentVariable}}","reasoningEffort":"disabled"}],"defaultConnectionId":"{{defaultConnectionId}}"}
             """;
         return WriteText(json, ".json");
     }

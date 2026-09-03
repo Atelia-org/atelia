@@ -191,7 +191,6 @@ public sealed class LiveMemoRecallCompositionTests {
         "--case", caseLabel,
         "--query-file", queryPath,
         "--max-prompt-bytes", "33554432",
-        "--max-tokens", "256",
         "--delay-ms", "0"
     ];
 }
