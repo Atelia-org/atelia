@@ -1,5 +1,10 @@
 # Anthropic Provider Client
 
+> **Archived / non-current**：本文记录已退休的LiveContextProto `IProviderClient`实现，以下类型名、固定
+> `max_tokens`行为与future-work清单都不描述current Completion产品。现行合同见
+> [`docs/Completion/quick-start.md`](../../Completion/quick-start.md)；current adapter有意不暴露caller-selected
+> output cap，只使用省略所表达的不限量/模型最大值，或在wire要求数值时发送所选模型的provider-reported maximum。
+
 这是一个符合 Atelia LiveContextProto 架构的 Anthropic Messages API 客户端实现。
 
 ## 架构概览

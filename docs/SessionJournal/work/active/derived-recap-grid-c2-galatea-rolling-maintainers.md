@@ -101,8 +101,11 @@ runtime route manifest:
   exact key above -> ConnectionId
 
 connections.json:
-  ConnectionId -> provider kind / ModelId / endpoint / credentials / reasoning / cache / provider-client output policy
+  ConnectionId -> provider kind / ModelId / endpoint / credentials / reasoning / cache
 ```
+
+Completion request与connection有意不暴露caller-selected output cap；具体adapter在省略表示不限量/模型最大值时
+省略provider字段，否则只发送所选模型的provider-reported maximum。
 
 因此一个shared Family只需要一条`semanticModelId: null`的exact route。Galatea的`recapGrid.routeManifestPath`仍是deferred、strict、
 no-fallback输入；实际model默认来自`connections.json`中被选connection的`modelId`。C2允许operator修改配置后重启/重开Host切换模型，
