@@ -258,6 +258,18 @@ durable `OutcomeUnknown`；host crash后遗留`Started`也先零external-call转
 暂时unavailable继续等待；exact running持久Accepted；exact terminal在同一事务写Reply/DeliveryFailure
 notice并释放route active dispatch；ownership/cwd/body/multiple/identity冲突使route/mail durable
 Quarantined。binding outcome unknown可以使用同一binding operation重试，因为该阶段保证没有邮件turn。
+已接受邮件的exact Running观测会清除之前`NOT_FOUND`/暂时transport miss留下的
+reconcile attempt/code/next-at，因此后续新miss从attempt 1重新计算，SQLite也不会
+持续显示已经恢复的旧错误。
+
+`inspect-dispatch`的首次、cache miss、terminal与cache input/live-turn identity不一致仍由Node通过
+`thread/read(includeTurns=true)`完整核对exact dispatch ID、task body与turn ID；metadata read若发现
+thread/name/cwd不一致则直接ambiguous fail closed。只有同一app-server generation内成功的
+`turn/start` accepted response或`turn/started` notification建立live proof，且full inspection确认Running后，
+warm process才使用bounded、non-durable metadata fast path；它仍核对thread ID、ownership、
+canonical cwd、active status与exact runtime turn identity。terminal/new-turn/process exit/stop立即清理
+该proof，cold restart绝不从persisted `inProgress`伪造live cache。缓存容量不足或task过大时
+只退化为full inspection，不改变durable结果。
 
 C# client只在`start-turn` frame可能写出时登记最多4096个client-lifetime dispatch tombstones；相同ID
 不因换generation重发，容量耗尽fail closed。stdout由一个bounded strict-UTF8 reader拥有；malformed、
@@ -270,6 +282,12 @@ ApplicationStopping先通知supervisor停止新pulse/signal；host disposal逐�
 timer/consumer/in-flight pulse，随后dispose共享sidecar transport、关闭每个SQLite store并释放lifetime lock，
 最后关闭Completion/RecapGrid owner。任何阶段的nonfatal cleanup failure都会被保留并在最终以single或
 aggregate exception诚实返回，不把未确认的child或lock cleanup报告成成功。
+若关服时尚有nonterminal dispatch，它保持durable active并在transport dispose前记录
+`preservedForColdRestartReconciliation=true`；关服不为此新增turn elapsed deadline。下次driver
+创建会记录reconciliation scheduled，随后仅通过read-only inspect结算final或
+`TURN_INTERRUPTED`，不再执行`start-turn`。关服取消与read-only inspect竞态时，cancellation只压过
+`NotFound`/exact `Running`等非终态结果；已返回的terminal、identity conflict与fatal transport
+evidence仍优先持久化。
 
 ### Development runtime observability
 
@@ -282,8 +300,11 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 
 `Galatea.Mailbox`显示Action可见文本进入extractor及其intent数量；`Galatea.TextExtractor`显示
 pre-response transient transport failure的attempt与退避时间；`Galatea.Delegation`显示durable
-binding、dispatch、reconciliation、terminal与backoff；`Galatea.Delegation.Supervisor`显示store availability、
-pulse fail-closed与shutdown；`Galatea.DelegateSidecar`显示Node child启动、ready与stable transport failure。
+binding、dispatch、reconciliation、terminal与backoff；exact Running在首次确认、每约60秒liveness及
+miss恢复时记录，不再为每秒fallback pulse刷重复行。terminal failure显式带stage/code。
+`Galatea.Delegation.Supervisor`显示store availability、pulse fail-closed、active dispatch的cold-restart保留
+与shutdown completion；`Galatea.DelegateSidecar`显示Node child启动、ready、正常stopping/stopped与真实
+transport/reap failure，正常dispose不再误报`SIDECAR_DISPOSED` Warning。
 `Galatea.CharacterMemory`每批输出identity/hash、Mail/Note outcome、durable memo/queue count与latency的single-line
 JSON；只有durable `AppliedNow`结果逐条输出JSON-escaped `PodId`、`MemoId`与`ExactText`，不输出`EvidenceQuote`。
 `Info`调用在Release被编译掉；Debug下无论console category是否
