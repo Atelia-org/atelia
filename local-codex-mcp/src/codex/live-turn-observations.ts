@@ -14,10 +14,14 @@ export interface LiveStartExpectation {
   readonly dispatchId: string;
   readonly taskDigest: string;
   readonly tracked: boolean;
-  terminalBarrier?: {
-    turnId: string;
-    baseFingerprint: string;
-  };
+  terminalBarriers?: Map<string, UnassociatedTerminalCandidate>;
+  terminalBarrierOverflow?: boolean;
+}
+
+interface UnassociatedTerminalCandidate {
+  status: Exclude<Turn["status"], "inProgress">;
+  baseFingerprint: string;
+  conflict: boolean;
 }
 
 type FinalValue =
@@ -53,6 +57,7 @@ interface Observation {
 }
 
 const maximumObservedIdentifierUtf8Bytes = 1_024;
+const maximumUnassociatedTerminalCandidates = 8;
 
 function isBoundedIdentifier(value: string): boolean {
   return value.length > 0 && Buffer.byteLength(value, "utf8") <= maximumObservedIdentifierUtf8Bytes;
@@ -190,20 +195,7 @@ export class LiveTurnObservations {
       const user = initialUser(turn);
       if (!expected) return;
       if (!user) {
-        if (turn.status === "completed" && turn.itemsView !== "full"
-            && isBoundedIdentifier(turn.id)) {
-          const barrier = {
-            turnId: turn.id,
-            baseFingerprint: terminalBaseFingerprint(turn),
-          };
-          if (expected.terminalBarrier
-              && (expected.terminalBarrier.turnId !== barrier.turnId
-                || expected.terminalBarrier.baseFingerprint !== barrier.baseFingerprint)) {
-            expected.terminalBarrier = undefined;
-          } else {
-            expected.terminalBarrier = barrier;
-          }
-        }
+        this.observeUnassociatedTerminal(expected, turn);
         return;
       }
       if (user.dispatchId !== expected.dispatchId || taskDigest(user.task) !== expected.taskDigest) return;
@@ -336,6 +328,8 @@ export class LiveTurnObservations {
         && user.dispatchId === expected.dispatchId && taskDigest(user.task) === expected.taskDigest;
       if (!trustedResponse && !matchesPending) return;
       if (!user) return;
+      const terminalCandidate = expected?.terminalBarriers?.get(turn.id);
+      if (expected?.terminalBarrierOverflow && !terminalCandidate) return;
       if (currentTurnId) {
         this.observations.delete(key(threadId, currentTurnId));
         this.currentTurnByThread.delete(threadId);
@@ -354,20 +348,51 @@ export class LiveTurnObservations {
       };
       this.observations.set(key(threadId, turn.id), observation);
       this.currentTurnByThread.set(threadId, turn.id);
-      if (expected?.terminalBarrier?.turnId === turn.id) {
-        observation.pendingCompleted = {
-          baseFingerprint: expected.terminalBarrier.baseFingerprint,
-        };
+    }
+    for (const item of turn.items) this.observeItem(threadId, turn.id, item);
+    const expected = this.pendingStarts.get(threadId);
+    const terminalCandidate = expected?.terminalBarriers?.get(turn.id);
+    const observation = this.currentObservation(threadId, turn.id);
+    if (observation && terminalCandidate && !observation.terminal && !observation.pendingCompleted) {
+      if (terminalCandidate.conflict) {
+        observation.conflict = true;
+      } else if (terminalCandidate.status === "completed") {
+        observation.pendingCompleted = { baseFingerprint: terminalCandidate.baseFingerprint };
         if (finalEvidenceAvailable(observation)) {
           observation.terminal = {
             status: "completed",
-            fingerprint: terminalFingerprint(expected.terminalBarrier.baseFingerprint, observation),
+            fingerprint: terminalFingerprint(terminalCandidate.baseFingerprint, observation),
           };
           observation.pendingCompleted = undefined;
         }
+      } else {
+        observation.terminal = {
+          status: terminalCandidate.status,
+          fingerprint: terminalFingerprint(terminalCandidate.baseFingerprint, observation),
+        };
       }
     }
-    for (const item of turn.items) this.observeItem(threadId, turn.id, item);
+  }
+
+  private observeUnassociatedTerminal(
+    expectation: LiveStartExpectation,
+    turn: Turn,
+  ): void {
+    if (turn.status === "inProgress" || !isBoundedIdentifier(turn.id)) return;
+    const barriers = expectation.terminalBarriers ??= new Map();
+    const baseFingerprint = terminalBaseFingerprint(turn);
+    const existing = barriers.get(turn.id);
+    if (existing) {
+      if (existing.status !== turn.status || existing.baseFingerprint !== baseFingerprint) {
+        existing.conflict = true;
+      }
+      return;
+    }
+    if (barriers.size >= maximumUnassociatedTerminalCandidates) {
+      expectation.terminalBarrierOverflow = true;
+      return;
+    }
+    barriers.set(turn.id, { status: turn.status, baseFingerprint, conflict: false });
   }
 
   private currentObservation(threadId: string, turnId: string): Observation | undefined {

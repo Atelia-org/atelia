@@ -173,6 +173,52 @@ test("an unassociated incomplete terminal barrier binds to the later exact start
   assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "completed");
 });
 
+for (const [status, code] of [
+  ["failed", "TURN_FAILED"],
+  ["interrupted", "TURN_INTERRUPTED"],
+] as const) {
+  test(`an unassociated ${status} barrier settles after exact response association`, () => {
+    const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+    const expectation = observations.beginStart("thread", "d", "task");
+    observations.observeTurnCompleted("thread", {
+      ...turn("t", status, []),
+      itemsView: "notLoaded",
+    });
+    assert.equal(observations.observeStartResponse(
+      "thread",
+      turn("t", "inProgress", [userMessage("d", "task")]),
+      expectation,
+    ), true);
+    observations.endStart(expectation);
+    const terminal = observations.inspect("thread", "t", "d", "task");
+    assert.equal(terminal?.kind, "failed");
+    if (terminal?.kind === "failed") assert.equal(terminal.code, code);
+  });
+}
+
+test("out-of-order unassociated terminal candidates are keyed and exact response selects only its turn", () => {
+  const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+  const expectation = observations.beginStart("thread", "d", "task");
+  observations.observeTurnCompleted("thread", {
+    ...turn("old", "completed", []),
+    itemsView: "summary",
+  });
+  observations.observeTurnCompleted("thread", {
+    ...turn("exact", "interrupted", []),
+    itemsView: "notLoaded",
+  });
+  assert.equal(observations.observeStartResponse(
+    "thread",
+    turn("exact", "inProgress", [userMessage("d", "task")]),
+    expectation,
+  ), true);
+  observations.endStart(expectation);
+  const terminal = observations.inspect("thread", "exact", "d", "task");
+  assert.equal(terminal?.kind, "failed");
+  if (terminal?.kind === "failed") assert.equal(terminal.code, "TURN_INTERRUPTED");
+  assert.equal(observations.inspect("thread", "old", "d", "task"), undefined);
+});
+
 test("pending capacity loss never bypasses start-response identity validation", () => {
   const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
   const occupying = observations.beginStart("occupied", "d1", "task1");

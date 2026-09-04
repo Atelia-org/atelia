@@ -76,6 +76,24 @@ test("Accepted uses exact live turn and completion survives early start-response
   if (result.kind === "completed") assert.match(result.final, /事情已经办妥/);
 });
 
+test("live Running cannot hide a persistent terminal when terminal notifications are lost", async (t) => {
+  const value = await harness(t);
+  const binding = await bind(value);
+  const task = "[DROP_TERMINAL_SIGNALS][NATURAL] exact task";
+  const accepted = await start(value, binding.threadId, "mail-dropped-terminal", task);
+  await delay(30);
+  const completed = await value.backend.inspectDispatch({
+    threadId: binding.threadId,
+    expectedCwd: value.root,
+    dispatchId: "mail-dropped-terminal",
+    task,
+    expectedTurnId: accepted.turnId,
+    maximumFinalUtf8Bytes: 20_000,
+  });
+  assert.equal(completed.kind, "completed");
+  assert.equal(completed.source, "persistent");
+});
+
 test("incomplete live terminal maps to retryable inspection failure until final item arrives", async (t) => {
   const value = await harness(t);
   const binding = await bind(value);

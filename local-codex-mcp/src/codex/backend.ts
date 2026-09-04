@@ -437,7 +437,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
           input.task,
         );
         this.assertSameGeneration(generation);
-        if (live) return live;
+        if (live && (live.kind !== "running" || metadata.thread.status.type === "active")) {
+          return live;
+        }
         const awaitingLiveTerminal = this.liveObservations.isAwaitingTerminalEvidence(
           input.threadId,
           input.expectedTurnId,

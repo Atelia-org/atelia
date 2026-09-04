@@ -157,6 +157,7 @@ function completeTurn(
     : userItems;
   thread.status = { type: "idle" };
   persistState();
+  if (behavior.includes("[DROP_TERMINAL_SIGNALS]")) return;
   if (status === "completed" && (behavior.includes("[SUMMARY_BEFORE_FINAL]")
       || behavior.includes("[SUMMARY_DROP_SIGNAL]"))) {
     itemProjectionVisibleAt.set(
