@@ -147,9 +147,10 @@ export class GalateaDurableAdapter {
         expectedCwd: this.options.cwd,
         dispatchId: frame.dispatchId,
         task: frame.task,
+        expectedTurnId: frame.expectedTurnId,
         maximumFinalUtf8Bytes: this.options.maximumFinalUtf8Bytes,
       });
-      await this.writeInspection(frame, inspection);
+      await this.writeInspection(frame, this.correlateInspection(frame, inspection));
     } catch (error) {
       const bridgeError = asBridgeError(error);
       await this.options.write({
@@ -181,10 +182,19 @@ export class GalateaDurableAdapter {
     let output: GalateaDurableOutputFrame;
     switch (inspection.kind) {
       case "not-found":
-        output = { ...base, outcome: "not-found" };
+        output = { ...base, outcome: "not-found", source: inspection.source };
+        break;
+      case "unavailable":
+        output = {
+          ...base,
+          outcome: "unavailable",
+          source: inspection.source,
+          turnId: inspection.turnId,
+          code: inspection.code,
+        };
         break;
       case "running":
-        output = { ...base, outcome: "running", turnId: inspection.turnId };
+        output = { ...base, outcome: "running", turnId: inspection.turnId, source: inspection.source };
         break;
       case "completed":
         output = {
@@ -192,6 +202,7 @@ export class GalateaDurableAdapter {
           outcome: "completed",
           turnId: inspection.turnId,
           final: inspection.final,
+          source: inspection.source,
         };
         if (encodedGalateaDurableOutputFrameBytes(output)
             > this.options.maximumOutputFrameBytes) {
@@ -200,6 +211,7 @@ export class GalateaDurableAdapter {
             outcome: "failed",
             turnId: inspection.turnId,
             code: "FINAL_TOO_LARGE",
+            source: inspection.source,
           };
         }
         break;
@@ -209,13 +221,46 @@ export class GalateaDurableAdapter {
           outcome: "failed",
           turnId: inspection.turnId,
           code: inspection.code,
+          source: inspection.source,
         };
         break;
       case "ambiguous":
-        output = { ...base, outcome: "ambiguous", code: inspection.code };
+        output = { ...base, outcome: "ambiguous", code: inspection.code, source: inspection.source };
         break;
     }
     await this.options.write(output);
+  }
+
+  private correlateInspection(
+    frame: GalateaInspectDispatchFrame,
+    inspection: GalateaDispatchInspection,
+  ): GalateaDispatchInspection {
+    if (inspection.threadId !== frame.threadId) {
+      return {
+        kind: "ambiguous",
+        threadId: frame.threadId,
+        source: inspection.source,
+        code: "THREAD_ID_MISMATCH",
+      };
+    }
+    if (frame.expectedTurnId === null || inspection.kind === "ambiguous") return inspection;
+    if (inspection.kind === "not-found") {
+      return {
+        kind: "ambiguous",
+        threadId: frame.threadId,
+        source: "persistent",
+        code: "DISPATCH_TURN_MISMATCH",
+      };
+    }
+    if (inspection.turnId !== frame.expectedTurnId) {
+      return {
+        kind: "ambiguous",
+        threadId: frame.threadId,
+        source: inspection.source,
+        code: "DISPATCH_TURN_MISMATCH",
+      };
+    }
+    return inspection;
   }
 
   private async writeShutdown(frame: GalateaDurableInputFrame): Promise<void> {

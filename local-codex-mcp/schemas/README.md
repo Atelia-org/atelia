@@ -1,6 +1,7 @@
 # Generated Codex app-server protocol
 
-这些文件由本机 `codex-cli 0.147.0-alpha.6.5` 生成：
+这些文件由 Galatea ignored `delegates.json` 当前配置的 executable
+`codex-cli 0.151.0` 生成：
 
 ```bash
 codex app-server generate-ts --out ./schemas

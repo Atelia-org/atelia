@@ -134,6 +134,7 @@ export async function runGalateaDurableSidecar(
     store,
     logger,
     profile: galateaCodexBackendProfile,
+    galateaMaximumFinalUtf8Bytes: config.maxFinalBytes,
   });
   const writer = new JsonlFrameWriter<GalateaDurableOutputFrame>(
     output,

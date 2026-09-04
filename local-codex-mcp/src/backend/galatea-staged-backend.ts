@@ -33,8 +33,11 @@ export interface InspectGalateaDispatchInput {
   expectedCwd: string;
   dispatchId: string;
   task: string;
+  expectedTurnId: string | null;
   maximumFinalUtf8Bytes: number;
 }
+
+export type GalateaDispatchInspectionSource = "live" | "persistent";
 
 export type GalateaDispatchFailureCode =
   | "TURN_FAILED"
@@ -58,36 +61,53 @@ export type GalateaDispatchAmbiguityCode =
   | "ITEM_ID_INVALID"
   | "ITEM_ID_NOT_UNIQUE"
   | "DISPATCH_ID_NOT_UNIQUE"
+  | "DISPATCH_TURN_MISMATCH"
   | "DISPATCH_BODY_MISMATCH"
   | "TURN_STATUS_INVALID"
-  | "FINAL_AMBIGUOUS";
+  | "FINAL_AMBIGUOUS"
+  | "LIVE_OBSERVATION_CONFLICT"
+  | "PAGE_SHAPE_INVALID"
+  | "PAGINATION_CURSOR_INVALID"
+  | "PAGINATION_CURSOR_LOOP";
 
 export type GalateaDispatchInspection =
   | {
       kind: "not-found";
       threadId: string;
+      source: "persistent";
+    }
+  | {
+      kind: "unavailable";
+      threadId: string;
+      turnId: string;
+      source: "persistent";
+      code: "ACCEPTED_TURN_NOT_VISIBLE";
     }
   | {
       kind: "running";
       threadId: string;
       turnId: string;
+      source: GalateaDispatchInspectionSource;
     }
   | {
       kind: "completed";
       threadId: string;
       turnId: string;
       final: string;
+      source: GalateaDispatchInspectionSource;
     }
   | {
       kind: "failed";
       threadId: string;
       turnId: string;
       code: GalateaDispatchFailureCode;
+      source: GalateaDispatchInspectionSource;
     }
   | {
       kind: "ambiguous";
       threadId: string;
       code: GalateaDispatchAmbiguityCode;
+      source: GalateaDispatchInspectionSource;
     };
 
 export interface GalateaStagedBackend {

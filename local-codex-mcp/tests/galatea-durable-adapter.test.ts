@@ -20,8 +20,10 @@ class StubBackend implements GalateaStagedBackend {
   inspection: GalateaDispatchInspection = {
     kind: "not-found",
     threadId: "thread-1",
+    source: "persistent",
   };
   inspectError?: Error;
+  inspectionInput?: InspectGalateaDispatchInput;
   releaseStart?: Promise<void>;
 
   async ensureBinding(_input: EnsureGalateaBindingInput) {
@@ -34,7 +36,8 @@ class StubBackend implements GalateaStagedBackend {
     return { threadId: "thread-1", turnId: "turn-1" };
   }
 
-  async inspectDispatch(_input: InspectGalateaDispatchInput) {
+  async inspectDispatch(input: InspectGalateaDispatchInput) {
+    this.inspectionInput = input;
     if (this.inspectError) throw this.inspectError;
     return this.inspection;
   }
@@ -46,8 +49,16 @@ function frame(
   type: "start-turn" | "inspect-dispatch",
   requestId: string,
 ): GalateaDurableInputFrame {
-  return {
-    v: 2,
+  return type === "inspect-dispatch" ? {
+    v: 3,
+    type,
+    requestId,
+    dispatchId: "dispatch-1",
+    threadId: "thread-1",
+    task: "exact task",
+    expectedTurnId: null,
+  } : {
+    v: 3,
     type,
     requestId,
     dispatchId: "dispatch-1",
@@ -76,23 +87,24 @@ function harness(maximumOutputFrameBytes = 10_000) {
 test("durable adapter emits one short correlated response for each staged operation", async () => {
   const value = harness();
   await value.adapter.handle({
-    v: 2,
+    v: 3,
     type: "ensure-binding",
     requestId: "request-binding",
     bindingOperationId: "binding-1",
   });
   await value.adapter.handle(frame("start-turn", "request-start"));
   await value.adapter.handle(frame("inspect-dispatch", "request-inspect"));
+  assert.equal(value.backend.inspectionInput?.expectedTurnId, null);
   assert.deepEqual(value.frames, [
     {
-      v: 2,
+      v: 3,
       type: "binding-established",
       requestId: "request-binding",
       bindingOperationId: "binding-1",
       threadId: "thread-1",
     },
     {
-      v: 2,
+      v: 3,
       type: "turn-accepted",
       requestId: "request-start",
       dispatchId: "dispatch-1",
@@ -100,12 +112,13 @@ test("durable adapter emits one short correlated response for each staged operat
       turnId: "turn-1",
     },
     {
-      v: 2,
+      v: 3,
       type: "dispatch-inspected",
       requestId: "request-inspect",
       dispatchId: "dispatch-1",
       threadId: "thread-1",
       outcome: "not-found",
+      source: "persistent",
     },
   ]);
 });
@@ -138,6 +151,7 @@ test("durable adapter maps inspection outcomes and transport unavailability with
     threadId: "thread-1",
     turnId: "turn-1",
     final: "x".repeat(500),
+    source: "live",
   };
   await value.adapter.handle(frame("inspect-dispatch", "request-large"));
   assert.equal(value.frames[0]?.type, "dispatch-inspected");
@@ -157,4 +171,61 @@ test("durable adapter maps inspection outcomes and transport unavailability with
     unavailable?.type === "failed" && unavailable.code,
     "INSPECTION_UNAVAILABLE",
   );
+});
+
+test("durable adapter preserves Accepted selector and retryable visibility outcome", async () => {
+  const value = harness();
+  value.backend.inspection = {
+    kind: "unavailable",
+    threadId: "thread-1",
+    turnId: "turn-expected",
+    source: "persistent",
+    code: "ACCEPTED_TURN_NOT_VISIBLE",
+  };
+  await value.adapter.handle({
+    v: 3,
+    type: "inspect-dispatch",
+    requestId: "request-known",
+    dispatchId: "dispatch-1",
+    threadId: "thread-1",
+    task: "exact task",
+    expectedTurnId: "turn-expected",
+  });
+  assert.equal(value.backend.inspectionInput?.expectedTurnId, "turn-expected");
+  assert.deepEqual(value.frames[0], {
+    v: 3,
+    type: "dispatch-inspected",
+    requestId: "request-known",
+    dispatchId: "dispatch-1",
+    threadId: "thread-1",
+    outcome: "unavailable",
+    source: "persistent",
+    turnId: "turn-expected",
+    code: "ACCEPTED_TURN_NOT_VISIBLE",
+  });
+});
+
+test("durable adapter rejects a wrong returned Accepted turn identity", async () => {
+  const value = harness();
+  value.backend.inspection = {
+    kind: "running",
+    threadId: "thread-1",
+    turnId: "wrong-turn",
+    source: "live",
+  };
+  await value.adapter.handle({
+    v: 3,
+    type: "inspect-dispatch",
+    requestId: "request-wrong-turn",
+    dispatchId: "dispatch-1",
+    threadId: "thread-1",
+    task: "exact task",
+    expectedTurnId: "turn-expected",
+  });
+  const result = value.frames[0];
+  assert.equal(result?.type, "dispatch-inspected");
+  if (result?.type === "dispatch-inspected") {
+    assert.equal(result.outcome, "ambiguous");
+    if (result.outcome === "ambiguous") assert.equal(result.code, "DISPATCH_TURN_MISMATCH");
+  }
 });

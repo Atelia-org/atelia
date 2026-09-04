@@ -55,12 +55,18 @@ export class CodexAppServerClient {
   private stopPromise?: Promise<void>;
   private initialized = false;
   private stopEpoch = 0;
+  private appServerGeneration = 0;
 
   constructor(private readonly options: CodexClientOptions) {}
 
   get isRunning(): boolean {
     const child = this.connection?.child;
     return child !== undefined && child.exitCode === null && !child.killed && !this.connection?.failed;
+  }
+
+  /** Monotonic identity of the currently initialized app-server process. */
+  get generation(): number {
+    return this.appServerGeneration;
   }
 
   subscribe(subscriber: NotificationSubscriber): () => void {
@@ -127,6 +133,7 @@ export class CodexAppServerClient {
         throw new BridgeError("CODEX_START_FAILED", "Codex app-server stopped during initialization.");
       }
       this.initialized = true;
+      this.appServerGeneration += 1;
       this.options.logger.log("info", "codex_started", { pid: child.pid });
     } catch (error) {
       await this.beginTermination(connection, false);

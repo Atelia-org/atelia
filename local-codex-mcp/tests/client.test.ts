@@ -181,12 +181,14 @@ test("malformed stdout terminates the failed child and a new generation can star
   });
   t.after(() => value.stop());
   const first = await value.request<{ pid: number }>("test/state", {});
+  const firstGeneration = value.generation;
   await assert.rejects(value.request("test/malformed", {}), /invalid JSON/);
   await waitForProcessExit(first.pid);
 
   const second = await value.request<{ initialized: boolean; pid: number }>("test/state", {});
   assert.equal(second.initialized, true);
   assert.notEqual(second.pid, first.pid);
+  assert.ok(value.generation > firstGeneration);
 });
 
 test("stop waits for a stubborn child before an immediate restart", async (t) => {

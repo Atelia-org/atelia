@@ -1,0 +1,23 @@
+{
+  "scenario": "accepted-turn-not-visible",
+  "durable": {
+    "state": "Accepted",
+    "threadId": "thread-sanitized",
+    "turnId": "turn-sanitized"
+  },
+  "officialThreadMetadata": {
+    "id": "thread-sanitized",
+    "exists": true
+  },
+  "officialTurnsPages": [
+    {
+      "data": [],
+      "nextCursor": null
+    }
+  ],
+  "expected": {
+    "outcome": "unavailable",
+    "code": "ACCEPTED_TURN_NOT_VISIBLE",
+    "source": "persistent"
+  }
+}

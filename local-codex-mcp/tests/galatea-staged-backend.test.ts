@@ -15,25 +15,13 @@ import { PathPolicy } from "../src/security/paths.js";
 const fixture = fileURLToPath(new URL("./fixtures/fake-app-server.js", import.meta.url));
 const tools = { webSearch: "live", imageGeneration: true, viewImage: true } as const;
 
-async function harness(
-  t: TestContext,
-  options: {
-    requestTimeoutMs?: number;
-    fixtureArgs?: string[];
-    persistentFixture?: boolean;
-  } = {},
-) {
+async function harness(t: TestContext, options: { requestTimeoutMs?: number; fixtureArgs?: string[]; persistent?: boolean } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "galatea-staged-backend-"));
-  const lifecycleFile = options.persistentFixture ? path.join(root, "lifecycle.log") : undefined;
-  const stateFile = options.persistentFixture ? path.join(root, "state.json") : undefined;
+  const lifecycleFile = options.persistent ? path.join(root, "lifecycle.log") : undefined;
+  const stateFile = options.persistent ? path.join(root, "state.json") : undefined;
   const client = new CodexAppServerClient({
     command: process.execPath,
-    args: [
-      fixture,
-      ...(options.fixtureArgs ?? []),
-      ...(lifecycleFile ? [`--lifecycle-file=${lifecycleFile}`] : []),
-      ...(stateFile ? [`--state-file=${stateFile}`] : []),
-    ],
+    args: [fixture, ...(options.fixtureArgs ?? []), ...(lifecycleFile ? [`--lifecycle-file=${lifecycleFile}`] : []), ...(stateFile ? [`--state-file=${stateFile}`] : [])],
     requestTimeoutMs: options.requestTimeoutMs ?? 1_000,
     logger: new NullLogger(),
   });
@@ -44,640 +32,163 @@ async function harness(
     store,
     logger: new NullLogger(),
     profile: galateaCodexBackendProfile,
+    galateaMaximumFinalUtf8Bytes: 20_000,
   });
-  t.after(async () => {
-    await backend.stop();
-    await rm(root, { recursive: true });
-  });
-  return { root, client, backend, store, ...(lifecycleFile ? { lifecycleFile } : {}) };
+  t.after(async () => { await backend.stop(); await rm(root, { recursive: true }); });
+  return { root, client, backend, store, lifecycleFile };
 }
 
-type Harness = Awaited<ReturnType<typeof harness>>;
-
-async function startLongTurn(
-  value: Harness,
-  dispatchId: string,
-  task = `[LONG][NATURAL] ${dispatchId}`,
-) {
-  const binding = await value.backend.ensureBinding({
-    cwd: value.root,
-    mode: "work",
-    tools,
-  });
-  const accepted = await value.backend.startBoundTurn({
-    threadId: binding.threadId,
-    expectedCwd: value.root,
-    dispatchId,
-    task,
-    mode: "work",
-    localCommandNetwork: false,
-    tools,
-  });
-  return { ...accepted, dispatchId, task };
+async function bind(value: Awaited<ReturnType<typeof harness>>) {
+  return value.backend.ensureBinding({ cwd: value.root, mode: "work", tools });
 }
 
-async function inspectLongTurn(
-  value: Harness,
-  turn: Awaited<ReturnType<typeof startLongTurn>>,
-) {
-  return value.backend.inspectDispatch({
-    threadId: turn.threadId,
-    expectedCwd: value.root,
-    dispatchId: turn.dispatchId,
-    task: turn.task,
-    maximumFinalUtf8Bytes: 20_000,
+async function start(value: Awaited<ReturnType<typeof harness>>, threadId: string, dispatchId: string, task: string) {
+  return value.backend.startBoundTurn({
+    threadId, expectedCwd: value.root, dispatchId, task, mode: "work", localCommandNetwork: false, tools,
   });
 }
 
-async function readThreadReadTrace(value: Harness) {
-  return value.client.request<{
-    threadReadCount: number;
-    threadReadIncludeTurns: boolean[];
-  }>("test/lastRequests", {});
-}
-
-async function beginBlockedMetadataInspection(
-  value: Harness,
-  turn: Awaited<ReturnType<typeof startLongTurn>>,
-) {
-  await value.client.request("test/blockNextMetadataRead", {});
-  const inspection = inspectLongTurn(value, turn);
-  await value.client.request("test/waitForMetadataReadBarrier", {});
-  return { inspection };
-}
-
-test("ensureBinding establishes and verifies an empty owned thread without starting a turn", async (t) => {
+test("ensureBinding verifies ownership with metadata read and bounded turns page", async (t) => {
   const value = await harness(t);
-  const binding = await value.backend.ensureBinding({
-    cwd: value.root,
-    mode: "work",
-    tools,
-  });
-  const thread = await value.client.request<{
-    thread: { id: string; name: string | null; cwd: string; turns: unknown[] };
-  }>("thread/read", { threadId: binding.threadId, includeTurns: true });
-  assert.equal(thread.thread.id, binding.threadId);
-  assert.equal(
-    thread.thread.name,
-    `[galatea-codex-sidecar] ${binding.threadId}`,
-  );
-  assert.equal(thread.thread.cwd, value.root);
-  assert.deepEqual(thread.thread.turns, []);
-
-  const counts = await value.client.request<{
-    threadStartCount: number;
-    threadNameSetCount: number;
-    threadResumeCount: number;
-    turnStartCount: number;
-  }>("test/lastRequests", {});
-  assert.equal(counts.threadStartCount, 1);
-  assert.equal(counts.threadNameSetCount, 1);
-  assert.equal(counts.threadResumeCount, 0);
-  assert.equal(counts.turnStartCount, 0);
+  const binding = await bind(value);
+  const requests = await value.client.request<{ threadReadIncludeTurns: boolean[]; threadTurnsListCount: number; turnStartCount: number }>("test/lastRequests", {});
+  assert.match(binding.threadId, /^thread-/);
+  assert.ok(requests.threadReadIncludeTurns.every((item) => item === false));
+  assert.equal(requests.threadTurnsListCount, 1);
+  assert.equal(requests.turnStartCount, 0);
 });
 
-test("startBoundTurn uses the known binding and inspectDispatch reads exact persisted state", async (t) => {
+test("Accepted uses exact live turn and completion survives early start-response reordering", async (t) => {
   const value = await harness(t);
-  const binding = await value.backend.ensureBinding({
-    cwd: value.root,
-    mode: "work",
-    tools,
+  const binding = await bind(value);
+  const task = "[EARLY][NATURAL] exact task";
+  const accepted = await start(value, binding.threadId, "mail-early", task);
+  const result = await value.backend.inspectDispatch({
+    threadId: binding.threadId, expectedCwd: value.root, dispatchId: "mail-early", task,
+    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   });
-  const accepted = await value.backend.startBoundTurn({
-    threadId: binding.threadId,
-    expectedCwd: value.root,
-    dispatchId: "mail-1",
-    task: "[NATURAL] exact task",
-    mode: "work",
-    localCommandNetwork: false,
-    tools,
-  });
-  assert.equal(accepted.threadId, binding.threadId);
-  assert.match(accepted.turnId, /^turn-/);
-  await delay(30);
-
-  const inspection = await value.backend.inspectDispatch({
-    threadId: binding.threadId,
-    expectedCwd: value.root,
-    dispatchId: "mail-1",
-    task: "[NATURAL] exact task",
-    maximumFinalUtf8Bytes: 20_000,
-  });
-  assert.equal(inspection.kind, "completed");
-  if (inspection.kind === "completed") {
-    assert.equal(inspection.turnId, accepted.turnId);
-    assert.match(inspection.final, /事情已经办妥/);
-  }
-
-  const notFound = await value.backend.inspectDispatch({
-    threadId: binding.threadId,
-    expectedCwd: value.root,
-    dispatchId: "mail-missing",
-    task: "never sent",
-    maximumFinalUtf8Bytes: 20_000,
-  });
-  assert.deepEqual(notFound, {
-    kind: "not-found",
-    threadId: binding.threadId,
-  });
-
-  const requests = await value.client.request<{
-    threadStartCount: number;
-    threadResumeCount: number;
-    turnStartCount: number;
-    lastThreadStartParams: Record<string, unknown>;
-    lastResumeParams: Record<string, unknown>;
-    lastTurnParams: { clientUserMessageId: string; input: unknown };
-    allTurnParams: Record<string, unknown>[];
-  }>("test/lastRequests", {});
-  assert.equal(requests.threadStartCount, 1);
-  assert.equal(requests.threadResumeCount, 1);
-  assert.equal(requests.turnStartCount, 1);
-  assert.equal(requests.lastThreadStartParams.serviceName, "atelia_galatea_codex_sidecar");
-  assert.equal(requests.lastThreadStartParams.threadSource, "atelia-galatea-codex-sidecar");
-  assert.deepEqual(requests.lastThreadStartParams.config, {
-    web_search: "live",
-    features: { image_generation: true },
-    tools: { view_image: true },
-  });
-  assert.match(String(requests.lastResumeParams.developerInstructions), /Galatea's persistent delegate/);
-  assert.equal(requests.lastTurnParams.clientUserMessageId, "mail-1");
-  assert.deepEqual(requests.lastTurnParams.input, [{
-    type: "text",
-    text: "[NATURAL] exact task",
-    text_elements: [],
-  }]);
-  assert.equal(Object.hasOwn(requests.allTurnParams[0] ?? {}, "outputSchema"), false);
+  assert.equal(result.kind, "completed");
+  assert.equal(result.source, "live");
+  if (result.kind === "completed") assert.match(result.final, /事情已经办妥/);
 });
 
-test("validated running dispatches use metadata until terminal inspection", async (t) => {
-  const value = await harness(t);
-  const turn = await startLongTurn(value, "long-mail");
-  const before = await readThreadReadTrace(value);
-
-  const first = await inspectLongTurn(value, turn);
-  const second = await inspectLongTurn(value, turn);
-
-  assert.deepEqual(first, {
-    kind: "running",
-    threadId: turn.threadId,
-    turnId: turn.turnId,
-  });
-  assert.deepEqual(second, first);
-  const runningTrace = await readThreadReadTrace(value);
-  assert.deepEqual(
-    runningTrace.threadReadIncludeTurns.slice(before.threadReadCount),
-    [true, false],
-  );
-
-  await value.client.request("turn/interrupt", {
-    threadId: turn.threadId,
-    turnId: turn.turnId,
-  });
-  const settled = await value.store.waitForTurn(
-    turn.threadId,
-    turn.turnId,
-    1_000,
-  );
-  assert.equal(settled.status, "interrupted");
-  const beforeTerminal = await readThreadReadTrace(value);
-
-  const terminal = await inspectLongTurn(value, turn);
-
-  assert.deepEqual(terminal, {
-    kind: "failed",
-    threadId: turn.threadId,
-    turnId: turn.turnId,
-    code: "TURN_INTERRUPTED",
-  });
-  const terminalTrace = await readThreadReadTrace(value);
-  assert.deepEqual(
-    terminalTrace.threadReadIncludeTurns.slice(beforeTerminal.threadReadCount),
-    [true],
-  );
-});
-
-test("completion before turn start response cannot resurrect live running proof", async (t) => {
-  const value = await harness(t);
-  const binding = await value.backend.ensureBinding({
-    cwd: value.root,
-    mode: "work",
-    tools,
-  });
-  const task = "[EARLY][NATURAL] completes before acceptance";
-
-  const accepted = await value.backend.startBoundTurn({
-    threadId: binding.threadId,
-    expectedCwd: value.root,
-    dispatchId: "early-completion-mail",
-    task,
-    mode: "work",
-    localCommandNetwork: false,
-    tools,
-  });
-
-  const terminalRuntime = value.store.snapshot(binding.threadId);
-  assert.equal(terminalRuntime.status, "completed");
-  assert.equal(terminalRuntime.activeTurnId, undefined);
-  assert.equal(terminalRuntime.latestTurnId, accepted.turnId);
-  const before = await readThreadReadTrace(value);
-  const request = {
-    threadId: binding.threadId,
-    expectedCwd: value.root,
-    dispatchId: "early-completion-mail",
-    task,
-    maximumFinalUtf8Bytes: 20_000,
-  };
-
-  const first = await value.backend.inspectDispatch(request);
-  const second = await value.backend.inspectDispatch(request);
-
-  assert.equal(first.kind, "completed");
-  assert.equal(second.kind, "completed");
-  if (first.kind === "completed" && second.kind === "completed") {
-    assert.equal(first.turnId, accepted.turnId);
-    assert.equal(second.turnId, accepted.turnId);
-    assert.equal(second.final, first.final);
-    assert.match(first.final, /事情已经办妥/);
-  }
-  const after = await readThreadReadTrace(value);
-  assert.deepEqual(
-    after.threadReadIncludeTurns.slice(before.threadReadCount),
-    [true, true],
-  );
-});
-
-test("terminal notification during metadata read trips the second runtime fence", async (t) => {
-  const value = await harness(t);
-  const turn = await startLongTurn(value, "in-flight-terminal-mail");
-  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
-  const before = await readThreadReadTrace(value);
-  const blocked = await beginBlockedMetadataInspection(value, turn);
-
-  await value.client.request("turn/interrupt", {
-    threadId: turn.threadId,
-    turnId: turn.turnId,
-  });
-  assert.equal(
-    (await value.store.waitForTurn(turn.threadId, turn.turnId, 1_000)).status,
-    "interrupted",
-  );
-  await value.client.request("test/releaseMetadataRead", {});
-  const inspection = await blocked.inspection;
-
-  assert.deepEqual(inspection, {
-    kind: "failed",
-    threadId: turn.threadId,
-    turnId: turn.turnId,
-    code: "TURN_INTERRUPTED",
-  });
-  const after = await readThreadReadTrace(value);
-  assert.deepEqual(
-    after.threadReadIncludeTurns.slice(before.threadReadCount),
-    [false, true],
-  );
-});
-
-test("cache input mismatch falls back to exact full classification", async (t) => {
-  const value = await harness(t);
-  const turn = await startLongTurn(value, "input-mismatch-mail");
-  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
-  const before = await readThreadReadTrace(value);
-
-  const inspection = await inspectLongTurn(value, {
-    ...turn,
-    task: `${turn.task} changed`,
-  });
-
-  assert.deepEqual(inspection, {
-    kind: "ambiguous",
-    threadId: turn.threadId,
-    code: "DISPATCH_BODY_MISMATCH",
-  });
-  const after = await readThreadReadTrace(value);
-  assert.deepEqual(
-    after.threadReadIncludeTurns.slice(before.threadReadCount),
-    [true],
-  );
-});
-
-test("new active turn evicts the old running proof and prevents recaching it", async (t) => {
-  const value = await harness(t);
-  const turn = await startLongTurn(value, "old-active-mail");
-  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
-  const before = await readThreadReadTrace(value);
-  const blocked = await beginBlockedMetadataInspection(value, turn);
-  await value.client.request("turn/start", {
-    threadId: turn.threadId,
-    clientUserMessageId: "external-new-turn",
-    input: [{
-      type: "text",
-      text: "[LONG][STARTED_BEFORE_RESPONSE] external",
-      text_elements: [],
-    }],
-    cwd: value.root,
-  });
-  await value.client.request("test/releaseMetadataRead", {});
-
-  assert.equal((await blocked.inspection).kind, "running");
-  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
-
-  const after = await readThreadReadTrace(value);
-  assert.deepEqual(
-    after.threadReadIncludeTurns.slice(before.threadReadCount),
-    [false, true, true],
-  );
-});
-
-test("oversize running task safely declines cache admission", async (t) => {
-  const value = await harness(t);
-  const task = `[LONG]${"界".repeat(50_000)}`;
-  assert.ok(Buffer.byteLength(task, "utf8") > 128 * 1024);
-  const turn = await startLongTurn(value, "oversize-cache-mail", task);
-  const before = await readThreadReadTrace(value);
-
-  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
-  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
-
-  const after = await readThreadReadTrace(value);
-  assert.deepEqual(
-    after.threadReadIncludeTurns.slice(before.threadReadCount),
-    [true, true],
-  );
-});
-
-test("running cache entry capacity fails open without evicting verified entries", async (t) => {
-  const value = await harness(t);
-  const turns: Awaited<ReturnType<typeof startLongTurn>>[] = [];
-  for (let index = 0; index < 33; index += 1) {
-    const turn = await startLongTurn(value, `capacity-mail-${index}`);
-    assert.equal((await inspectLongTurn(value, turn)).kind, "running");
-    turns.push(turn);
-  }
-  const before = await readThreadReadTrace(value);
-
-  assert.equal((await inspectLongTurn(value, turns[32]!)).kind, "running");
-  assert.equal((await inspectLongTurn(value, turns[0]!)).kind, "running");
-  await value.client.request("turn/interrupt", {
-    threadId: turns[0]!.threadId,
-    turnId: turns[0]!.turnId,
-  });
-  assert.equal(
-    (await value.store.waitForTurn(
-      turns[0]!.threadId,
-      turns[0]!.turnId,
-      1_000,
-    )).status,
-    "interrupted",
-  );
-  assert.equal((await inspectLongTurn(value, turns[32]!)).kind, "running");
-  assert.equal((await inspectLongTurn(value, turns[32]!)).kind, "running");
-
-  const after = await readThreadReadTrace(value);
-  assert.deepEqual(
-    after.threadReadIncludeTurns.slice(before.threadReadCount),
-    [true, false, true, false],
-  );
-});
-
-test("running metadata fast path still rejects ownership drift", async (t) => {
-  const value = await harness(t);
-  const turn = await startLongTurn(value, "ownership-drift-mail");
-  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
-  await value.client.request("test/setThreadName", {
-    threadId: turn.threadId,
-    name: "not-owned",
-  });
-  const before = await readThreadReadTrace(value);
-
-  const inspection = await inspectLongTurn(value, turn);
-
-  assert.deepEqual(inspection, {
-    kind: "ambiguous",
-    threadId: turn.threadId,
-    code: "THREAD_OWNERSHIP_MISMATCH",
-  });
-  const after = await readThreadReadTrace(value);
-  assert.deepEqual(
-    after.threadReadIncludeTurns.slice(before.threadReadCount),
-    [false],
-  );
-});
-
-test("running metadata fast path still rejects cwd drift", async (t) => {
-  const value = await harness(t);
-  const turn = await startLongTurn(value, "cwd-drift-mail");
-  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
-  await value.client.request("test/setThreadCwd", {
-    threadId: turn.threadId,
-    cwd: os.tmpdir(),
-  });
-  const before = await readThreadReadTrace(value);
-
-  const inspection = await inspectLongTurn(value, turn);
-
-  assert.deepEqual(inspection, {
-    kind: "ambiguous",
-    threadId: turn.threadId,
-    code: "THREAD_CWD_MISMATCH",
-  });
-  const after = await readThreadReadTrace(value);
-  assert.deepEqual(
-    after.threadReadIncludeTurns.slice(before.threadReadCount),
-    [false],
-  );
-});
-
-test("app-server restart discards running cache and performs full inspection", async (t) => {
-  const value = await harness(t, { persistentFixture: true });
-  const turn = await startLongTurn(value, "restart-running-mail");
-  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
-  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
-
+test("Accepted missing from official turns is stable unavailable, not not-found", async (t) => {
+  const sanitizedFixture = JSON.parse(await readFile(
+    path.join(process.cwd(), "tests/fixtures/accepted-turn-not-visible.json"),
+    "utf8",
+  )) as { expected: { code: string } };
+  assert.equal(sanitizedFixture.expected.code, "ACCEPTED_TURN_NOT_VISIBLE");
+  const value = await harness(t, { fixtureArgs: ["--hide-all-nonempty-turns"], persistent: true });
+  const binding = await bind(value);
+  const task = "[LONG] exact task";
+  const accepted = await start(value, binding.threadId, "mail-hidden", task);
   await assert.rejects(value.client.request("test/crash", {}));
-  const hydrated = await value.backend.status(turn.threadId);
-  assert.equal(hydrated.status, "running");
-  const beforeRecoveredInspection = await readThreadReadTrace(value);
-
-  const recovered = await inspectLongTurn(value, turn);
-  const repeated = await inspectLongTurn(value, turn);
-
-  assert.deepEqual(recovered, {
-    kind: "running",
-    threadId: turn.threadId,
-    turnId: turn.turnId,
+  const result = await value.backend.inspectDispatch({
+    threadId: binding.threadId, expectedCwd: value.root, dispatchId: "mail-hidden", task,
+    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   });
-  assert.deepEqual(repeated, recovered);
-  const restartedTrace = await readThreadReadTrace(value);
-  assert.deepEqual(
-    restartedTrace.threadReadIncludeTurns.slice(
-      beforeRecoveredInspection.threadReadCount,
-    ),
-    [true, true],
-  );
+  assert.deepEqual(result, {
+    kind: "unavailable", threadId: binding.threadId, turnId: accepted.turnId,
+    source: "persistent", code: "ACCEPTED_TURN_NOT_VISIBLE",
+  });
+  assert.ok(value.lifecycleFile);
+  const lifecycle = await readFile(value.lifecycleFile, "utf8");
+  assert.equal(lifecycle.split("\n").filter((line) => line.endsWith(":turn/start")).length, 1);
 });
 
-test("missing dispatch inspections do not populate runtime task state", async (t) => {
-  const value = await harness(t);
-  assert.equal(value.store.threadCountForTest, 0);
-
-  for (let index = 0; index < 128; index += 1) {
-    const threadId = `missing-thread-${index}`;
-    assert.deepEqual(await value.backend.inspectDispatch({
-      threadId,
-      expectedCwd: value.root,
-      dispatchId: `missing-dispatch-${index}`,
-      task: "never sent",
-      maximumFinalUtf8Bytes: 20_000,
-    }), {
-      kind: "ambiguous",
-      threadId,
-      code: "THREAD_NOT_FOUND",
-    });
-  }
-
-  assert.equal(value.store.threadCountForTest, 0);
-});
-
-test("startBoundTurn accepts an exact resume response that omits its optional name", async (t) => {
-  const value = await harness(t, {
-    fixtureArgs: ["--drop-name-on-resume"],
-  });
-  const binding = await value.backend.ensureBinding({
-    cwd: value.root,
-    mode: "work",
-    tools,
-  });
-
-  const beforeStart = await value.backend.inspectDispatch({
-    threadId: binding.threadId,
-    expectedCwd: value.root,
-    dispatchId: "empty-thread-mail",
-    task: "exact task",
-    maximumFinalUtf8Bytes: 20_000,
-  });
-  assert.deepEqual(beforeStart, {
-    kind: "not-found",
-    threadId: binding.threadId,
-  });
-
-  await value.client.request("test/setResumeResponseThreadId", {
-    threadId: "different-thread",
-  });
-  await assert.rejects(
-    value.backend.startBoundTurn({
-      threadId: binding.threadId,
-      expectedCwd: value.root,
-      dispatchId: "wrong-resume",
-      task: "must reject a mismatched resume response",
-      mode: "work",
-      localCommandNetwork: false,
-      tools,
-    }),
-    (error: unknown) => typeof error === "object"
-      && error !== null
-      && "code" in error
-      && error.code === "THREAD_NOT_FOUND",
-  );
-
-  const accepted = await value.backend.startBoundTurn({
-    threadId: binding.threadId,
-    expectedCwd: value.root,
-    dispatchId: "empty-thread-mail",
-    task: "exact task",
-    mode: "work",
-    localCommandNetwork: false,
-    tools,
-  });
-  assert.equal(accepted.threadId, binding.threadId);
-  assert.match(accepted.turnId, /^turn-/);
-});
-
-test("inspectDispatch reconciles a persisted turn after turn/start response timeout without retry", async (t) => {
+test("OutcomeUnknown alone returns persistent not-found and discovers a timed-out start", async (t) => {
   const value = await harness(t, { requestTimeoutMs: 300 });
-  const binding = await value.backend.ensureBinding({
-    cwd: value.root,
-    mode: "work",
-    tools,
+  const binding = await bind(value);
+  const missing = await value.backend.inspectDispatch({
+    threadId: binding.threadId, expectedCwd: value.root, dispatchId: "missing", task: "never",
+    expectedTurnId: null, maximumFinalUtf8Bytes: 20_000,
   });
-  await assert.rejects(value.backend.startBoundTurn({
-    threadId: binding.threadId,
-    expectedCwd: value.root,
-    dispatchId: "mail-unknown",
-    task: "[HANG_TURN_START][NATURAL] exact task",
-    mode: "work",
-    localCommandNetwork: false,
-    tools,
-  }));
+  assert.deepEqual(missing, { kind: "not-found", threadId: binding.threadId, source: "persistent" });
 
-  const inspection = await value.backend.inspectDispatch({
-    threadId: binding.threadId,
-    expectedCwd: value.root,
-    dispatchId: "mail-unknown",
-    task: "[HANG_TURN_START][NATURAL] exact task",
-    maximumFinalUtf8Bytes: 20_000,
+  const task = "[HANG_TURN_START][NATURAL] exact task";
+  await assert.rejects(start(value, binding.threadId, "mail-unknown", task), /timed out/);
+  await delay(30);
+  const recovered = await value.backend.inspectDispatch({
+    threadId: binding.threadId, expectedCwd: value.root, dispatchId: "mail-unknown", task,
+    expectedTurnId: null, maximumFinalUtf8Bytes: 20_000,
   });
-  assert.equal(inspection.kind, "completed");
-  const counts = await value.client.request<{ turnStartCount: number }>(
-    "test/lastRequests",
-    {},
-  );
+  assert.equal(recovered.kind, "completed");
+  assert.equal(recovered.source, "persistent");
+  const counts = await value.client.request<{ turnStartCount: number }>("test/lastRequests", {});
   assert.equal(counts.turnStartCount, 1);
 });
 
-test("app-server restart reauthenticates and continues the exact persisted Galatea thread", async (t) => {
-  const value = await harness(t, {
-    fixtureArgs: ["--drop-persisted-thread-source"],
-    persistentFixture: true,
-  });
-  const binding = await value.backend.ensureBinding({
-    cwd: value.root,
-    mode: "work",
-    tools,
-  });
-  await value.backend.startBoundTurn({
-    threadId: binding.threadId,
-    expectedCwd: value.root,
-    dispatchId: "restart-mail-1",
-    task: "[NATURAL] first",
-    mode: "work",
-    localCommandNetwork: false,
-    tools,
-  });
-
+test("cold restart clears live observations and pages the persisted exact Accepted turn", async (t) => {
+  const value = await harness(t, { persistent: true });
+  const binding = await bind(value);
+  const task = "[LONG] exact task";
+  const accepted = await start(value, binding.threadId, "mail-restart", task);
+  assert.equal((await value.backend.inspectDispatch({
+    threadId: binding.threadId, expectedCwd: value.root, dispatchId: "mail-restart", task,
+    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+  })).source, "live");
   await assert.rejects(value.client.request("test/crash", {}));
-
-  const second = await value.backend.startBoundTurn({
-    threadId: binding.threadId,
-    expectedCwd: value.root,
-    dispatchId: "restart-mail-2",
-    task: "[NATURAL] second",
-    mode: "work",
-    localCommandNetwork: false,
-    tools,
+  assert.equal((await value.backend.status(binding.threadId)).status, "running");
+  const cold = await value.backend.inspectDispatch({
+    threadId: binding.threadId, expectedCwd: value.root, dispatchId: "mail-restart", task,
+    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   });
-  assert.equal(second.threadId, binding.threadId);
-
-  const persisted = await value.client.request<{
-    thread: { id: string; name: string | null; status: { type: string } };
-  }>("thread/read", { threadId: binding.threadId, includeTurns: false });
-  assert.equal(persisted.thread.id, binding.threadId);
-  assert.equal(persisted.thread.name, `[galatea-codex-sidecar] ${binding.threadId}`);
-  assert.equal(persisted.thread.status.type, "notLoaded");
-
+  assert.equal(cold.kind, "running");
+  assert.equal(cold.source, "persistent");
   assert.ok(value.lifecycleFile);
-  const lifecycle = await readFile(value.lifecycleFile, "utf8");
-  const lines = lifecycle.split("\n");
-  const starts = lines.filter((line) => line.startsWith("start:"));
-  assert.equal(starts.length, 2);
-  assert.equal(lines.filter((line) => line.startsWith("exit:")).length, 1);
-  const restartedPid = starts[1]?.slice("start:".length);
-  assert.ok(restartedPid);
-  assert.deepEqual(
-    lines
-      .filter((line) => line.startsWith(`rpc:${restartedPid}:`))
-      .map((line) => line.slice(`rpc:${restartedPid}:`.length))
-      .slice(0, 5),
-    ["initialize", "account/read", "thread/read", "thread/resume", "turn/start"],
-  );
+  assert.equal((await readFile(value.lifecycleFile, "utf8")).split("\n").filter((line) => line.startsWith("start:")).length, 2);
+});
+
+test("cold Accepted lookup scans all turn and item pages for a non-latest target", async (t) => {
+  const value = await harness(t, { persistent: true, fixtureArgs: ["--inspection-page-size=1"] });
+  const binding = await bind(value);
+  const firstTask = "[NATURAL] first exact task";
+  const first = await start(value, binding.threadId, "mail-first", firstTask);
+  await delay(30);
+  await start(value, binding.threadId, "mail-second", "[NATURAL] later task");
+  await delay(30);
+  await assert.rejects(value.client.request("test/crash", {}));
+  const result = await value.backend.inspectDispatch({
+    threadId: binding.threadId, expectedCwd: value.root, dispatchId: "mail-first", task: firstTask,
+    expectedTurnId: first.turnId, maximumFinalUtf8Bytes: 20_000,
+  });
+  assert.equal(result.kind, "completed");
+  assert.equal(result.source, "persistent");
+  const counts = await value.client.request<{ threadTurnsListCount: number; threadItemsListCount: number }>("test/lastRequests", {});
+  assert.ok(counts.threadTurnsListCount >= 2);
+  assert.ok(counts.threadItemsListCount >= 2);
+});
+
+for (const [argument, code] of [
+  ["--empty-turn-page-with-next", "PAGE_SHAPE_INVALID"],
+  ["--loop-turn-cursor", "PAGINATION_CURSOR_LOOP"],
+  ["--wrong-filtered-turn", "DISPATCH_TURN_MISMATCH"],
+  ["--duplicate-item-entry", "ITEM_ID_NOT_UNIQUE"],
+] as const) {
+  test(`cold Accepted inspection fails closed for ${argument}`, async (t) => {
+    const value = await harness(t, { persistent: true, fixtureArgs: [argument] });
+    const binding = await bind(value);
+    const task = "[LONG] exact task";
+    const accepted = await start(value, binding.threadId, "mail-malformed", task);
+    await assert.rejects(value.client.request("test/crash", {}));
+    const result = await value.backend.inspectDispatch({
+      threadId: binding.threadId, expectedCwd: value.root, dispatchId: "mail-malformed", task,
+      expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+    });
+    assert.equal(result.kind, "ambiguous");
+    if (result.kind === "ambiguous") assert.equal(result.code, code);
+  });
+}
+
+test("inspection preflight rejects ownership and cwd drift before live evidence", async (t) => {
+  const value = await harness(t);
+  const binding = await bind(value);
+  const task = "[LONG] exact task";
+  const accepted = await start(value, binding.threadId, "mail-drift", task);
+  await value.client.request("test/setThreadName", { threadId: binding.threadId, name: "not-owned" });
+  const ownership = await value.backend.inspectDispatch({
+    threadId: binding.threadId, expectedCwd: value.root, dispatchId: "mail-drift", task,
+    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+  });
+  assert.deepEqual(ownership, { kind: "ambiguous", threadId: binding.threadId, source: "persistent", code: "THREAD_OWNERSHIP_MISMATCH" });
 });

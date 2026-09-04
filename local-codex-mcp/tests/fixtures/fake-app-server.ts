@@ -20,6 +20,10 @@ const stateFile = stateFileArgument?.slice("--state-file=".length);
 const restored: PersistedFixtureState | undefined = stateFile && existsSync(stateFile)
   ? JSON.parse(readFileSync(stateFile, "utf8")) as PersistedFixtureState
   : undefined;
+const pageSizeArgument = process.argv.find((argument) => argument.startsWith("--inspection-page-size="));
+const forcedInspectionPageSize = pageSizeArgument
+  ? Number(pageSizeArgument.slice("--inspection-page-size=".length))
+  : undefined;
 
 let initialized = false;
 let initializeCount = 0;
@@ -35,6 +39,8 @@ const allTurnParams: Record<string, unknown>[] = [];
 let threadStartCount = 0;
 let threadReadCount = 0;
 const threadReadIncludeTurns: boolean[] = [];
+let threadTurnsListCount = 0;
+let threadItemsListCount = 0;
 let threadNameSetCount = 0;
 let threadResumeCount = 0;
 let turnStartCount = 0;
@@ -225,6 +231,8 @@ lines.on("line", (line) => {
           threadStartCount,
           threadReadCount,
           threadReadIncludeTurns,
+          threadTurnsListCount,
+          threadItemsListCount,
           threadNameSetCount,
           threadResumeCount,
           turnStartCount,
@@ -355,6 +363,72 @@ lines.on("line", (line) => {
           send({ id: message.id, result });
         }
       }
+      break;
+    }
+    case "thread/turns/list": {
+      threadTurnsListCount += 1;
+      const thread = threads.get(String(message.params?.threadId));
+      if (!thread) {
+        send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
+        break;
+      }
+      const all = (process.argv.includes("--omit-turns-list")
+          || (process.argv.includes("--hide-all-nonempty-turns")
+            && (thread.turns as unknown[]).length > 0))
+        ? []
+        : structuredClone(thread.turns as Array<Record<string, unknown>>).reverse();
+      if (process.argv.includes("--empty-turn-page-with-next")
+          && (thread.turns as unknown[]).length > 0) {
+        send({ id: message.id, result: { data: [], nextCursor: "again", backwardsCursor: null } });
+        break;
+      }
+      if (process.argv.includes("--loop-turn-cursor")
+          && (thread.turns as unknown[]).length > 0
+          && message.params?.cursor === "loop") {
+        const source = structuredClone((thread.turns as Array<Record<string, unknown>>)[0]!);
+        source.id = "synthetic-loop-turn";
+        source.items = [];
+        source.itemsView = "notLoaded";
+        send({ id: message.id, result: { data: [source], nextCursor: "loop", backwardsCursor: "loop" } });
+        break;
+      }
+      const offset = Number(message.params?.cursor ?? 0);
+      const limit = Math.max(1, forcedInspectionPageSize ?? Number(message.params?.limit ?? 100));
+      const data = all.slice(offset, offset + limit).map((turn) => ({
+        ...turn,
+        items: [],
+        itemsView: "notLoaded",
+      }));
+      const nextCursor = process.argv.includes("--loop-turn-cursor") && all.length > 0
+        ? "loop"
+        : offset + data.length < all.length ? String(offset + data.length) : null;
+      send({ id: message.id, result: { data, nextCursor, backwardsCursor: data.length ? String(offset) : null } });
+      break;
+    }
+    case "thread/items/list": {
+      threadItemsListCount += 1;
+      const thread = threads.get(String(message.params?.threadId));
+      if (!thread) {
+        send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
+        break;
+      }
+      const requestedTurnId = typeof message.params?.turnId === "string"
+        ? message.params.turnId
+        : null;
+      const all = (thread.turns as Array<Record<string, unknown>>)
+        .filter((turn) => requestedTurnId === null || turn.id === requestedTurnId)
+        .flatMap((turn) => (turn.items as unknown[]).map((item) => ({ turnId: turn.id, item })));
+      const offset = Number(message.params?.cursor ?? 0);
+      const limit = Math.max(1, forcedInspectionPageSize ?? Number(message.params?.limit ?? 100));
+      let data = structuredClone(all.slice(offset, offset + limit));
+      if (process.argv.includes("--wrong-filtered-turn") && requestedTurnId !== null && data[0]) {
+        data[0].turnId = "wrong-turn";
+      }
+      if (process.argv.includes("--duplicate-item-entry") && data[0]) {
+        data = [data[0], structuredClone(data[0]), ...data.slice(1)];
+      }
+      const nextCursor = offset + data.length < all.length ? String(offset + data.length) : null;
+      send({ id: message.id, result: { data, nextCursor, backwardsCursor: data.length ? String(offset) : null } });
       break;
     }
     case "thread/name/set": {
