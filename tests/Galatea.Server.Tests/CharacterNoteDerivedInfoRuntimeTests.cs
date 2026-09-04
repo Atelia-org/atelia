@@ -88,7 +88,9 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             Memo memo = OpenMemo(session);
             return memo.Title == "Blue title"
                 && memo.Gist == "Blue gist."
-                && memo.Summary == "Blue summary";
+                && memo.Summary == "Blue summary"
+                && session.CharacterMemoryReconciler!
+                    .ReadStatusSnapshot().ActiveDerivedInfoWork is null;
         });
         Assert.Null(session.CharacterMemoryReconciler!
             .ReadStatusSnapshot().ActiveDerivedInfoWork);

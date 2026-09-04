@@ -115,6 +115,8 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             Assert.Equal(1, factory.CreateCallCount);
             Assert.Equal(2, client.DispatchCallCount);
             Assert.Equal(0, client.DisposeCount);
+            await service.DisposeAsync();
+            Assert.Equal(1, client.DisposeCount);
         }
         finally {
             await host.DisposeAsync();
