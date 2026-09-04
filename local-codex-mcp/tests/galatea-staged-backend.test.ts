@@ -13,6 +13,10 @@ import { NullLogger } from "../src/logger.js";
 import { PathPolicy } from "../src/security/paths.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-app-server.js", import.meta.url));
+const acceptedTurnNotVisibleFixture = path.join(
+  process.cwd(),
+  "tests/fixtures/accepted-turn-not-visible.json",
+);
 const tools = { webSearch: "live", imageGeneration: true, viewImage: true } as const;
 
 async function harness(t: TestContext, options: { requestTimeoutMs?: number; fixtureArgs?: string[]; persistent?: boolean } = {}) {
@@ -74,11 +78,20 @@ test("Accepted uses exact live turn and completion survives early start-response
 
 test("Accepted missing from official turns is stable unavailable, not not-found", async (t) => {
   const sanitizedFixture = JSON.parse(await readFile(
-    path.join(process.cwd(), "tests/fixtures/accepted-turn-not-visible.json"),
+    acceptedTurnNotVisibleFixture,
     "utf8",
-  )) as { expected: { code: string } };
+  )) as {
+    officialTurnsPages: Array<{ data: unknown[]; nextCursor: string | null; backwardsCursor: string | null }>;
+    expected: { code: string };
+  };
   assert.equal(sanitizedFixture.expected.code, "ACCEPTED_TURN_NOT_VISIBLE");
-  const value = await harness(t, { fixtureArgs: ["--hide-all-nonempty-turns"], persistent: true });
+  assert.deepEqual(sanitizedFixture.officialTurnsPages, [{
+    data: [], nextCursor: null, backwardsCursor: null,
+  }]);
+  const value = await harness(t, {
+    fixtureArgs: [`--inspection-fixture=${acceptedTurnNotVisibleFixture}`],
+    persistent: true,
+  });
   const binding = await bind(value);
   const task = "[LONG] exact task";
   const accepted = await start(value, binding.threadId, "mail-hidden", task);
@@ -94,6 +107,21 @@ test("Accepted missing from official turns is stable unavailable, not not-found"
   assert.ok(value.lifecycleFile);
   const lifecycle = await readFile(value.lifecycleFile, "utf8");
   assert.equal(lifecycle.split("\n").filter((line) => line.endsWith(":turn/start")).length, 1);
+});
+
+test("Accepted turn with an empty filtered item projection stays retryable unavailable", async (t) => {
+  const value = await harness(t, { fixtureArgs: ["--empty-filtered-items"], persistent: true });
+  const binding = await bind(value);
+  const task = "[LONG] exact task";
+  const accepted = await start(value, binding.threadId, "mail-items-empty", task);
+  await assert.rejects(value.client.request("test/crash", {}));
+  assert.deepEqual(await value.backend.inspectDispatch({
+    threadId: binding.threadId, expectedCwd: value.root, dispatchId: "mail-items-empty", task,
+    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+  }), {
+    kind: "unavailable", threadId: binding.threadId, turnId: accepted.turnId,
+    source: "persistent", code: "ACCEPTED_TURN_NOT_VISIBLE",
+  });
 });
 
 test("OutcomeUnknown alone returns persistent not-found and discovers a timed-out start", async (t) => {
@@ -164,6 +192,9 @@ for (const [argument, code] of [
   ["--loop-turn-cursor", "PAGINATION_CURSOR_LOOP"],
   ["--wrong-filtered-turn", "DISPATCH_TURN_MISMATCH"],
   ["--duplicate-item-entry", "ITEM_ID_NOT_UNIQUE"],
+  ["--missing-backwards-cursor", "PAGE_SHAPE_INVALID"],
+  ["--unknown-item", "PAGE_SHAPE_INVALID"],
+  ["--agent-missing-delivery", "PAGE_SHAPE_INVALID"],
 ] as const) {
   test(`cold Accepted inspection fails closed for ${argument}`, async (t) => {
     const value = await harness(t, { persistent: true, fixtureArgs: [argument] });
@@ -179,6 +210,29 @@ for (const [argument, code] of [
     if (result.kind === "ambiguous") assert.equal(result.code, code);
   });
 }
+
+test("inspection rejects a generation change between metadata and pagination", async (t) => {
+  const value = await harness(t, {
+    persistent: true,
+    fixtureArgs: ["--signal-generation-change-after-metadata"],
+  });
+  const binding = await bind(value);
+  const task = "[LONG] exact task";
+  const accepted = await start(value, binding.threadId, "mail-generation", task);
+  await assert.rejects(value.client.request("test/crash", {}));
+  const unsubscribe = value.client.subscribe((notification) => {
+    if (notification.method === "test/generationChanged") {
+      (value.client as unknown as { appServerGeneration: number }).appServerGeneration += 1;
+    }
+  });
+  t.after(unsubscribe);
+  const result = await value.backend.inspectDispatch({
+    threadId: binding.threadId, expectedCwd: value.root, dispatchId: "mail-generation", task,
+    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+  });
+  assert.equal(result.kind, "ambiguous");
+  if (result.kind === "ambiguous") assert.equal(result.code, "PAGINATION_CURSOR_INVALID");
+});
 
 test("inspection preflight rejects ownership and cwd drift before live evidence", async (t) => {
   const value = await harness(t);

@@ -144,25 +144,60 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const knownNonMessageThreadItemTypes = new Set([
+  "hookPrompt", "functionCallOutput", "plan", "reasoning", "commandExecution",
+  "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall",
+  "subAgentActivity", "webSearch", "imageView", "sleep", "imageGeneration",
+  "enteredReviewMode", "exitedReviewMode", "contextCompaction",
+]);
+
 function isThreadItem(value: unknown): value is ThreadItem {
   if (!isRecord(value) || typeof value.id !== "string" || typeof value.type !== "string") return false;
   if (value.type === "userMessage") {
     return (value.clientId === null || typeof value.clientId === "string")
-      && Array.isArray(value.content);
+      && Array.isArray(value.content)
+      && value.content.every((content) => {
+        if (!isRecord(content) || typeof content.type !== "string") return false;
+        switch (content.type) {
+          case "text": return typeof content.text === "string" && Array.isArray(content.text_elements);
+          case "image":
+          case "audio": return typeof content.url === "string";
+          case "localImage":
+          case "localAudio": return typeof content.path === "string";
+          case "skill":
+          case "mention": return typeof content.name === "string" && typeof content.path === "string";
+          default: return false;
+        }
+      });
   }
   if (value.type === "agentMessage") {
     return typeof value.text === "string"
-      && (value.phase === null || value.phase === "commentary" || value.phase === "final_answer");
+      && (value.phase === null || value.phase === "commentary" || value.phase === "final_answer")
+      && (value.delivery === null || value.delivery === "async")
+      && (value.memoryCitation === null
+        || (isRecord(value.memoryCitation)
+          && Array.isArray(value.memoryCitation.entries)
+          && Array.isArray(value.memoryCitation.threadIds)));
   }
-  return true;
+  return knownNonMessageThreadItemTypes.has(value.type);
 }
 
 function isTurn(value: unknown): value is Turn {
   return isRecord(value)
-    && typeof value.id === "string"
+    && typeof value.id === "string" && value.id.length > 0
     && Array.isArray(value.items)
-    && typeof value.itemsView === "string"
-    && typeof value.status === "string";
+    && value.items.every(isThreadItem)
+    && (value.itemsView === "notLoaded" || value.itemsView === "summary" || value.itemsView === "full")
+    && (value.status === "completed" || value.status === "interrupted"
+      || value.status === "failed" || value.status === "inProgress")
+    && (value.error === null || (isRecord(value.error)
+      && typeof value.error.message === "string"
+      && (value.error.additionalDetails === null || typeof value.error.additionalDetails === "string")
+      && (value.error.codexErrorInfo === null || isRecord(value.error.codexErrorInfo))
+      && (value.error.misalignment === null || isRecord(value.error.misalignment))))
+    && (value.startedAt === null || typeof value.startedAt === "number")
+    && (value.completedAt === null || typeof value.completedAt === "number")
+    && (value.durationMs === null || typeof value.durationMs === "number");
 }
 
 function isItemEntry(value: unknown): value is ThreadItemEntry {
@@ -172,7 +207,8 @@ function isItemEntry(value: unknown): value is ThreadItemEntry {
 
 function validatePage<T>(value: unknown): { data: T[]; nextCursor: string | null } {
   if (!isRecord(value) || !Array.isArray(value.data)
-      || (value.nextCursor !== null && typeof value.nextCursor !== "string")) {
+      || (value.nextCursor !== null && typeof value.nextCursor !== "string")
+      || (value.backwardsCursor !== null && typeof value.backwardsCursor !== "string")) {
     throw new PersistentInspectionError("PAGE_SHAPE_INVALID");
   }
   return { data: value.data as T[], nextCursor: value.nextCursor };
@@ -323,25 +359,28 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   ): Promise<GalateaDispatchInspection> {
     this.throwIfStopped();
     await this.ensureReady();
-    this.throwIfStopped();
-    const expectedCwd = await this.options.pathPolicy.resolveCwd(input.expectedCwd);
-    const metadata = await this.readInspectionThread(input.threadId, expectedCwd);
-    if (!metadata.ok) return metadata.inspection;
-
-    if (input.expectedTurnId !== null) {
-      const live = this.liveObservations.inspect(
-        input.threadId,
-        input.expectedTurnId,
-        input.dispatchId,
-        input.task,
-      );
-      if (live) return live;
-    }
-
+    const generation = this.options.client.generation;
     try {
+      this.throwIfStopped();
+      const expectedCwd = await this.options.pathPolicy.resolveCwd(input.expectedCwd);
+      this.assertSameGeneration(generation);
+      const metadata = await this.readInspectionThread(input.threadId, expectedCwd, generation);
+      if (!metadata.ok) return metadata.inspection;
+
+      if (input.expectedTurnId !== null) {
+        const live = this.liveObservations.inspect(
+          input.threadId,
+          input.expectedTurnId,
+          input.dispatchId,
+          input.task,
+        );
+        this.assertSameGeneration(generation);
+        if (live) return live;
+      }
+
       return input.expectedTurnId === null
-        ? await this.inspectUnknownDispatch(input)
-        : await this.inspectAcceptedTurn(input, input.expectedTurnId);
+        ? await this.inspectUnknownDispatch(input, generation)
+        : await this.inspectAcceptedTurn(input, input.expectedTurnId, generation);
     } catch (error) {
       if (error instanceof PersistentInspectionError) {
         return { kind: "ambiguous", threadId: input.threadId, source: "persistent", code: error.code };
@@ -353,8 +392,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   private async inspectAcceptedTurn(
     input: InspectGalateaDispatchInput,
     expectedTurnId: string,
+    generation: number,
   ): Promise<GalateaDispatchInspection> {
-    const turns = await this.listTurns(input.threadId, DefaultGalateaDispatchInspectionLimits.maximumTurns);
+    const turns = await this.listTurns(input.threadId, DefaultGalateaDispatchInspectionLimits.maximumTurns, generation);
     const matches = turns.filter((turn) => turn.id === expectedTurnId);
     if (matches.length === 0) {
       return {
@@ -370,7 +410,17 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
       input.threadId,
       expectedTurnId,
       DefaultGalateaDispatchInspectionLimits.maximumItems,
+      generation,
     );
+    if (!items.some((entry) => entry.item.type === "userMessage")) {
+      return {
+        kind: "unavailable",
+        threadId: input.threadId,
+        turnId: expectedTurnId,
+        source: "persistent",
+        code: "ACCEPTED_TURN_NOT_VISIBLE",
+      };
+    }
     return classifyTurnEvidence(
       input.threadId,
       matches[0]!,
@@ -384,11 +434,13 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
 
   private async inspectUnknownDispatch(
     input: InspectGalateaDispatchInput,
+    generation: number,
   ): Promise<GalateaDispatchInspection> {
     const entries = await this.listItems(
       input.threadId,
       null,
       DefaultGalateaDispatchInspectionLimits.maximumItems,
+      generation,
     );
     const matches = entries.filter(
       (entry) => entry.item.type === "userMessage" && entry.item.clientId === input.dispatchId,
@@ -401,7 +453,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     if (!hasExactTaskBody(match.item, input.task)) {
       throw new PersistentInspectionError("DISPATCH_BODY_MISMATCH");
     }
-    const turns = await this.listTurns(input.threadId, DefaultGalateaDispatchInspectionLimits.maximumTurns);
+    const turns = await this.listTurns(input.threadId, DefaultGalateaDispatchInspectionLimits.maximumTurns, generation);
     const turnMatches = turns.filter((turn) => turn.id === match.turnId);
     if (turnMatches.length !== 1) {
       throw new PersistentInspectionError(
@@ -422,8 +474,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     );
   }
 
-  private async listTurns(threadId: string, maximumTurns: number): Promise<Turn[]> {
-    const generation = this.options.client.generation;
+  private async listTurns(threadId: string, maximumTurns: number, generation = this.options.client.generation): Promise<Turn[]> {
     const turns: Turn[] = [];
     const ids = new Set<string>();
     const cursors = new Set<string>();
@@ -465,8 +516,8 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     threadId: string,
     turnId: string | null,
     maximumItems: number,
+    generation: number,
   ): Promise<ThreadItemEntry[]> {
-    const generation = this.options.client.generation;
     const entries: ThreadItemEntry[] = [];
     const ids = new Set<string>();
     const cursors = new Set<string>();
@@ -530,6 +581,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   private async readInspectionThread(
     threadId: string,
     expectedCwd: string,
+    generation: number,
   ): Promise<InspectionThreadRead> {
     let response: ThreadReadResponse;
     try {
@@ -538,6 +590,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         includeTurns: false,
       });
     } catch (error) {
+      this.assertSameGeneration(generation);
       const bridgeError = asBridgeError(error);
       if (bridgeError.code === "THREAD_NOT_FOUND") {
         return {
@@ -552,6 +605,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
       }
       throw bridgeError;
     }
+    this.assertSameGeneration(generation);
     this.throwIfStopped();
     const thread = response.thread;
     if (!thread || thread.id !== threadId) {
@@ -579,7 +633,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     let actualCwd: string;
     try {
       actualCwd = await this.options.pathPolicy.resolveCwd(thread.cwd);
-    } catch {
+      this.assertSameGeneration(generation);
+    } catch (error) {
+      if (error instanceof PersistentInspectionError) throw error;
       return {
         ok: false,
         inspection: {

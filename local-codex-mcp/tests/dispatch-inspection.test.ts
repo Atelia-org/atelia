@@ -113,3 +113,56 @@ test("live observations are bounded, clearable, digest exact UTF-16, and conflic
   assert.equal(result?.kind, "failed");
   if (result?.kind === "failed") assert.equal(result.code, "FINAL_TOO_LARGE");
 });
+
+test("live final selection prefers a small explicit final over an oversize legacy candidate", () => {
+  const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 8 });
+  observations.observeTurn("thread", turn("t", "inProgress", [userMessage("d", "task")]));
+  observations.observeItem("thread", "t", agentMessage("legacy text is oversize", "legacy", null));
+  observations.observeItem("thread", "t", agentMessage("final", "explicit", "final_answer"));
+  observations.observeTurn("thread", turn("t", "completed", [userMessage("d", "task")]));
+  assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+    kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "final",
+  });
+});
+
+test("live terminal evidence is first-wins, duplicate-idempotent, and conflicting closed", () => {
+  const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+  const running = turn("t", "inProgress", [userMessage("d", "task")]);
+  const completed = turn("t", "completed", [userMessage("d", "task"), agentMessage("final")]);
+  observations.observeTurn("thread", running);
+  observations.observeTurn("thread", completed);
+  observations.observeTurn("thread", completed);
+  assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "completed");
+  observations.observeTurn("thread", turn("t", "failed", [userMessage("d", "task")]));
+  const conflict = observations.inspect("thread", "t", "d", "task");
+  assert.equal(conflict?.kind, "ambiguous");
+  if (conflict?.kind === "ambiguous") assert.equal(conflict.code, "LIVE_OBSERVATION_CONFLICT");
+});
+
+test("a new turn on the fixed thread replaces old terminal capacity", () => {
+  const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+  observations.observeTurn("thread", turn("old", "completed", [
+    userMessage("old-dispatch", "old task"), agentMessage("old final"),
+  ]));
+  observations.observeTurn("thread", turn("new", "inProgress", [userMessage("new-dispatch", "new task")]));
+  assert.equal(observations.inspect("thread", "old", "old-dispatch", "old task"), undefined);
+  assert.deepEqual(observations.inspect("thread", "new", "new-dispatch", "new task"), {
+    kind: "running", threadId: "thread", turnId: "new", source: "live",
+  });
+});
+
+test("live semantic item identity metadata is bounded and duplicate IDs fail closed", () => {
+  const duplicate = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+  duplicate.observeTurn("thread", turn("t", "inProgress", [userMessage("d", "task", "shared")]));
+  duplicate.observeItem("thread", "t", agentMessage("final", "shared"));
+  assert.equal(duplicate.inspect("thread", "t", "d", "task")?.kind, "ambiguous");
+
+  const capped = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+  capped.observeTurn("thread", turn("t", "inProgress", [userMessage("d", "task")]));
+  for (let index = 0; index < 64; index += 1) {
+    capped.observeItem("thread", "t", agentMessage("ignored commentary", `commentary-${index}`, "commentary"));
+  }
+  const overflow = capped.inspect("thread", "t", "d", "task");
+  assert.equal(overflow?.kind, "ambiguous");
+  if (overflow?.kind === "ambiguous") assert.equal(overflow.code, "LIVE_OBSERVATION_CONFLICT");
+});

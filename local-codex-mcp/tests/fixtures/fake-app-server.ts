@@ -24,6 +24,12 @@ const pageSizeArgument = process.argv.find((argument) => argument.startsWith("--
 const forcedInspectionPageSize = pageSizeArgument
   ? Number(pageSizeArgument.slice("--inspection-page-size=".length))
   : undefined;
+const inspectionFixtureArgument = process.argv.find((argument) => argument.startsWith("--inspection-fixture="));
+const inspectionFixture = inspectionFixtureArgument
+  ? JSON.parse(readFileSync(inspectionFixtureArgument.slice("--inspection-fixture=".length), "utf8")) as {
+      officialTurnsPages: Array<Record<string, unknown>>;
+    }
+  : undefined;
 
 let initialized = false;
 let initializeCount = 0;
@@ -128,6 +134,7 @@ function completeTurn(
     text: behavior.includes("[NATURAL]") ? natural : behavior.includes("[OVERSIZE]") ? "x".repeat(10_000) : report,
     phase: behavior.includes("[LEGACY]") ? null : "final_answer",
     memoryCitation: null,
+    delivery: null,
   };
   const fileItem = {
     type: "fileChange",
@@ -136,7 +143,9 @@ function completeTurn(
     status: "completed",
   };
   turn.status = status;
-  turn.error = status === "failed" ? { message: "fake failure", codexErrorInfo: null, additionalDetails: null } : null;
+  turn.error = status === "failed"
+    ? { message: "fake failure", codexErrorInfo: null, additionalDetails: null, misalignment: null }
+    : null;
   turn.completedAt = Math.floor(Date.now() / 1000);
   turn.durationMs = 10;
   const userItems = (turn.items as Array<Record<string, unknown>>).filter(
@@ -353,6 +362,10 @@ lines.on("line", (line) => {
           }
         }
         const result = { thread: returned };
+        if (process.argv.includes("--signal-generation-change-after-metadata")
+            && !message.params?.includeTurns && (thread.turns as unknown[]).length > 0) {
+          send({ method: "test/generationChanged", params: {} });
+        }
         if (!message.params?.includeTurns && blockNextMetadataRead) {
           blockNextMetadataRead = false;
           blockedMetadataRead = { id: message.id!, result };
@@ -370,6 +383,16 @@ lines.on("line", (line) => {
       const thread = threads.get(String(message.params?.threadId));
       if (!thread) {
         send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
+        break;
+      }
+      if (inspectionFixture && (thread.turns as unknown[]).length > 0) {
+        const pageIndex = Number(message.params?.cursor ?? 0);
+        const page = inspectionFixture.officialTurnsPages[pageIndex];
+        if (!page) {
+          send({ id: message.id, result: { data: [], nextCursor: null, backwardsCursor: null } });
+        } else {
+          send({ id: message.id, result: page });
+        }
         break;
       }
       const all = (process.argv.includes("--omit-turns-list")
@@ -402,7 +425,11 @@ lines.on("line", (line) => {
       const nextCursor = process.argv.includes("--loop-turn-cursor") && all.length > 0
         ? "loop"
         : offset + data.length < all.length ? String(offset + data.length) : null;
-      send({ id: message.id, result: { data, nextCursor, backwardsCursor: data.length ? String(offset) : null } });
+      const turnPage = { data, nextCursor, backwardsCursor: data.length ? String(offset) : null } as Record<string, unknown>;
+      if (process.argv.includes("--missing-backwards-cursor") && data.length > 0) {
+        delete turnPage.backwardsCursor;
+      }
+      send({ id: message.id, result: turnPage });
       break;
     }
     case "thread/items/list": {
@@ -418,6 +445,10 @@ lines.on("line", (line) => {
       const all = (thread.turns as Array<Record<string, unknown>>)
         .filter((turn) => requestedTurnId === null || turn.id === requestedTurnId)
         .flatMap((turn) => (turn.items as unknown[]).map((item) => ({ turnId: turn.id, item })));
+      if (process.argv.includes("--empty-filtered-items") && requestedTurnId !== null) {
+        send({ id: message.id, result: { data: [], nextCursor: null, backwardsCursor: null } });
+        break;
+      }
       const offset = Number(message.params?.cursor ?? 0);
       const limit = Math.max(1, forcedInspectionPageSize ?? Number(message.params?.limit ?? 100));
       let data = structuredClone(all.slice(offset, offset + limit));
@@ -426,6 +457,14 @@ lines.on("line", (line) => {
       }
       if (process.argv.includes("--duplicate-item-entry") && data[0]) {
         data = [data[0], structuredClone(data[0]), ...data.slice(1)];
+      }
+      if (process.argv.includes("--unknown-item") && requestedTurnId !== null) {
+        data = [{ turnId: requestedTurnId, item: { type: "futureItem", id: "future-item" } }];
+      }
+      if (process.argv.includes("--agent-missing-delivery") && requestedTurnId !== null) {
+        data = [{ turnId: requestedTurnId, item: {
+          type: "agentMessage", id: "bad-agent", text: "final", phase: "final_answer", memoryCitation: null,
+        } }];
       }
       const nextCursor = offset + data.length < all.length ? String(offset + data.length) : null;
       send({ id: message.id, result: { data, nextCursor, backwardsCursor: data.length ? String(offset) : null } });

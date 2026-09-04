@@ -12,7 +12,8 @@
   "officialTurnsPages": [
     {
       "data": [],
-      "nextCursor": null
+      "nextCursor": null,
+      "backwardsCursor": null
     }
   ],
   "expected": {
