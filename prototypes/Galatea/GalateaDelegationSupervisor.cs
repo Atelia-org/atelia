@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Channels;
@@ -589,16 +590,33 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
     private async Task DisposeCoreAsync() {
         BeginShutdown();
         var failures = new List<Exception>();
-        await ObserveAsync(_timerTask, failures).ConfigureAwait(false);
-        await ObserveAsync(_consumerTask, failures).ConfigureAwait(false);
+        await ObserveAsync(
+                _timerTask,
+                "fallback-signal-producer",
+                failures
+            )
+            .ConfigureAwait(false);
+        await ObserveAsync(
+                _consumerTask,
+                "signal-consumer",
+                failures
+            )
+            .ConfigureAwait(false);
 
         Task[] pulses;
         lock (_lifecycleGate) {
             pulses = _inFlightPulses.ToArray();
         }
         if (pulses.Length != 0) {
-            await ObserveAsync(Task.WhenAll(pulses), failures)
+            await ObserveAsync(
+                    Task.WhenAll(pulses),
+                    "in-flight-pulses",
+                    failures
+                )
                 .ConfigureAwait(false);
+        }
+        foreach (UserSlot slot in _slots.Values) {
+            slot.LogActiveDispatchPreservedForColdRestart();
         }
         try {
             await _transport.DisposeAsync().ConfigureAwait(false);
@@ -606,6 +624,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
             failures.Add(exception);
+            LogCleanupFailure("transport", exception);
         }
         foreach (UserSlot slot in _slots.Values) {
             try {
@@ -614,16 +633,35 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             catch (Exception exception) when (
                 GalateaExceptionClassifier.IsNonFatal(exception)) {
                 failures.Add(exception);
+                LogCleanupFailure(
+                    $"store user={Safe(slot.UserId)}",
+                    exception
+                );
             }
         }
         _shutdown.Dispose();
 
+        if (failures.Count == 0) {
+            DebugUtil.Info(
+                LogCategory,
+                "Durable delegation supervisor shutdown completed.",
+                eventKind: DebugEventKind.Success
+            );
+            return;
+        }
+        DebugUtil.Warning(
+            LogCategory,
+            "Durable delegation supervisor shutdown completed with "
+                + $"cleanupFailures={failures.Count}.",
+            eventKind: DebugEventKind.Failure
+        );
         if (failures.Count == 1) { throw failures[0]; }
         if (failures.Count > 1) { throw new AggregateException(failures); }
     }
 
     private static async Task ObserveAsync(
         Task task,
+        string component,
         List<Exception> failures
     ) {
         try {
@@ -633,8 +671,21 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
             failures.Add(exception);
+            LogCleanupFailure(component, exception);
         }
     }
+
+    private static void LogCleanupFailure(
+        string component,
+        Exception exception
+    ) => DebugUtil.Warning(
+        LogCategory,
+        "Durable delegation supervisor cleanup failed: "
+            + $"component={component}, "
+            + $"exception={exception.GetType().Name}.",
+        exception,
+        DebugEventKind.Failure
+    );
 
     private static string Safe(string? value) =>
         string.IsNullOrWhiteSpace(value)
@@ -956,6 +1007,49 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                 bool requested = _pulseRequested;
                 _pulseRequested = false;
                 return requested;
+            }
+        }
+
+        [Conditional("DEBUG")]
+        internal void LogActiveDispatchPreservedForColdRestart() {
+            try {
+                GalateaDelegationStateSnapshot? snapshot;
+                lock (_gate) {
+                    snapshot = _store?.ReadSnapshot();
+                }
+                if (snapshot?.Route.ActiveDispatchId is not { } dispatchId) {
+                    return;
+                }
+                GalateaOutboundMailSnapshot? mail = snapshot.Mails
+                    .SingleOrDefault(value => string.Equals(
+                        value.DispatchId,
+                        dispatchId,
+                        StringComparison.Ordinal
+                    ));
+                if (mail?.State is not (
+                        GalateaDurableMailState.Started
+                        or GalateaDurableMailState.OutcomeUnknown
+                        or GalateaDurableMailState.Accepted)) {
+                    return;
+                }
+                DebugUtil.Info(
+                    LogCategory,
+                    "Durable active dispatch preserved for cold-restart "
+                        + $"reconciliation: user={Safe(UserId)}, "
+                        + $"dispatchId={dispatchId}, state={mail.State}, "
+                        + "preservedForColdRestartReconciliation=true."
+                );
+            }
+            catch (Exception exception) when (
+                GalateaExceptionClassifier.IsNonFatal(exception)) {
+                DebugUtil.Warning(
+                    LogCategory,
+                    "Durable delegation shutdown state inspection failed: "
+                        + $"user={Safe(UserId)}, "
+                        + $"exception={exception.GetType().Name}.",
+                    exception,
+                    DebugEventKind.Failure
+                );
             }
         }
 

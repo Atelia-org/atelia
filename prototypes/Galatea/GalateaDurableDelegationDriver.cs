@@ -62,7 +62,7 @@ internal sealed class GalateaDurableDelegationDriver {
     private readonly TimeProvider _timeProvider;
     private readonly Func<string> _bindingOperationIdFactory;
     private readonly SemaphoreSlim _pulseGate = new(1, 1);
-    private HashSet<string>? _debugRunningConfirmedDispatchIds;
+    private string? _debugCleanRunningConfirmedDispatchId;
 
     internal GalateaDurableDelegationDriver(
         GalateaDelegationSqliteStore store,
@@ -90,6 +90,7 @@ internal sealed class GalateaDurableDelegationDriver {
                 "The durable driver route policy does not match its store."
             );
         }
+        LogStartupReconciliationScheduled(snapshot);
     }
 
     internal async Task<GalateaDurableDelegationPulseResult> PulseAsync(
@@ -574,6 +575,11 @@ internal sealed class GalateaDurableDelegationDriver {
                     cancellationToken
                 )
                 .ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested) {
+            throw;
         }
         catch (OperationCanceledException) {
             return RecordPollMiss(
@@ -582,6 +588,10 @@ internal sealed class GalateaDurableDelegationDriver {
                 InspectionCancelledCode,
                 GetUnixTimeMilliseconds()
             );
+        }
+        catch (GalateaDurableDelegateTransportException) when (
+            cancellationToken.IsCancellationRequested) {
+            throw new OperationCanceledException(cancellationToken);
         }
         catch (GalateaDurableDelegateTransportException exception) {
             return exception.FailurePolicy switch {
@@ -977,21 +987,48 @@ internal sealed class GalateaDurableDelegationDriver {
         GalateaMailboxText.SummarizeForLog(value);
 
     [Conditional("DEBUG")]
+    private static void LogStartupReconciliationScheduled(
+        GalateaDelegationStateSnapshot snapshot
+    ) {
+        GalateaOutboundMailSnapshot? active = ReadActiveMail(snapshot);
+        if (active is null
+            || active.State is not (
+                GalateaDurableMailState.Started
+                or GalateaDurableMailState.OutcomeUnknown
+                or GalateaDurableMailState.Accepted)) {
+            return;
+        }
+        DebugUtil.Info(
+            LogCategory,
+            "Durable active dispatch reconciliation scheduled: "
+                + $"user={Safe(snapshot.Owner.UserId)}, "
+                + $"dispatchId={active.DispatchId}, state={active.State}, "
+                + $"threadId={snapshot.Route.ThreadId ?? "<none>"}, "
+                + $"turnId={active.AcceptedTurnId ?? "<none>"}."
+        );
+    }
+
+    [Conditional("DEBUG")]
     private void LogRunningConfirmed(
         GalateaDelegationStateSnapshot snapshot,
         GalateaOutboundMailSnapshot mail,
         GalateaDelegateDispatchInspection.Running running
     ) {
-        _debugRunningConfirmedDispatchIds ??= new(StringComparer.Ordinal);
-        if (!_debugRunningConfirmedDispatchIds.Add(mail.DispatchId)) {
+        bool recovered = mail.ReconcileAttemptCount > 0;
+        if (!recovered && string.Equals(
+                _debugCleanRunningConfirmedDispatchId,
+                mail.DispatchId,
+                StringComparison.Ordinal)) {
             return;
         }
+        _debugCleanRunningConfirmedDispatchId = mail.DispatchId;
         DebugUtil.Info(
             LogCategory,
             "Durable dispatch Running confirmed: "
                 + $"user={Safe(snapshot.Owner.UserId)}, "
                 + $"dispatchId={mail.DispatchId}, "
                 + $"threadId={running.ThreadId}, turnId={running.TurnId}, "
+                + $"recovered={recovered.ToString().ToLowerInvariant()}, "
                 + $"clearedAttempt={mail.ReconcileAttemptCount}, "
                 + $"clearedCode={mail.ReconcileLastCode ?? "<none>"}.",
             eventKind: DebugEventKind.Success
@@ -1011,18 +1048,32 @@ internal sealed class GalateaDurableDelegationDriver {
             + $"nextAt={mail.NextReconcileAtUnixTimeMilliseconds}."
     );
 
+    [Conditional("DEBUG")]
     private static void LogTerminal(
         GalateaDelegationStateSnapshot snapshot,
         GalateaReplyNoticeSnapshot notice
-    ) => DebugUtil.Info(
-        LogCategory,
-        "Durable terminal notice ready: "
+    ) {
+        string summary = "Durable terminal notice ready: "
             + $"user={Safe(snapshot.Owner.UserId)}, "
             + $"dispatchId={notice.DispatchId}, kind={notice.Kind}, "
             + $"sequence={notice.CompletionSequence}, "
-            + $"noticeUtf8Bytes={TextExtractorUtf8.GetByteCount(notice.Body)}.",
-        eventKind: DebugEventKind.Success
-    );
+            + $"noticeUtf8Bytes={TextExtractorUtf8.GetByteCount(notice.Body)}";
+        if (notice.Kind == GalateaReplyNoticeKind.DeliveryFailure) {
+            DebugUtil.Info(
+                LogCategory,
+                summary
+                    + $", stage={notice.Stage ?? "<none>"}, "
+                    + $"code={notice.Code ?? "<none>"}.",
+                eventKind: DebugEventKind.Failure
+            );
+            return;
+        }
+        DebugUtil.Info(
+            LogCategory,
+            summary + ".",
+            eventKind: DebugEventKind.Success
+        );
+    }
 
     private static void LogQuarantine(
         GalateaDelegationStateSnapshot snapshot,

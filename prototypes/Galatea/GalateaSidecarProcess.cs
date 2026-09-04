@@ -344,15 +344,65 @@ internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
             }
         }
         if (generation is not null) {
-            FailGeneration(
-                generation,
-                "shutdown",
-                "SIDECAR_DISPOSED",
-                graceful: true
-            );
-            await generation.CleanupTask.ConfigureAwait(false);
+            await StopGenerationForDisposeAsync(generation)
+                .ConfigureAwait(false);
         }
         await barrier.ConfigureAwait(false);
+    }
+
+    private async Task StopGenerationForDisposeAsync(
+        GalateaSidecarProcessGeneration generation
+    ) {
+        Task cleanup;
+        bool normalStop;
+        lock (_stateGate) {
+            normalStop = generation.TryMarkFailure(
+                "shutdown",
+                "SIDECAR_DISPOSED"
+            );
+            if (normalStop) {
+                cleanup = generation.TerminateAsync(graceful: true);
+                generation.CleanupTask = cleanup;
+            }
+            else {
+                cleanup = generation.CleanupTask;
+            }
+        }
+        if (!normalStop) {
+            await cleanup.ConfigureAwait(false);
+            return;
+        }
+
+        generation.CompleteFailure("shutdown", "SIDECAR_DISPOSED");
+        DebugUtil.Info(
+            LogCategory,
+            $"Sidecar generation stopping: generation={generation.Id}."
+        );
+        try {
+            await cleanup.ConfigureAwait(false);
+            DebugUtil.Info(
+                LogCategory,
+                $"Sidecar generation stopped: generation={generation.Id}.",
+                eventKind: DebugEventKind.Success
+            );
+        }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)) {
+            string stage = exception is GalateaSidecarOperationException sidecar
+                ? sidecar.Stage
+                : "shutdown";
+            string code = exception is GalateaSidecarOperationException failure
+                ? failure.Code
+                : "SIDECAR_REAP_UNCONFIRMED";
+            DebugUtil.Warning(
+                LogCategory,
+                $"Sidecar generation shutdown failed: generation={generation.Id}, "
+                    + $"stage={stage}, code={code}.",
+                exception,
+                DebugEventKind.Failure
+            );
+            throw;
+        }
     }
 
     internal Exception NewFailure(string stage, string code) =>

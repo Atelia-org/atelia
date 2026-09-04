@@ -425,6 +425,124 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     }
 
     [Fact]
+    public async Task AcceptedMail_GracefulRestartConsumesInterruptedFailure() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig extractor = Connection("mail-helper");
+        var mainClient = new QueueClient(
+            _ => Completed(main, "[Galatea] sent one letter."),
+            _ => Completed(main, "received interruption notice")
+        );
+        var extractorClient = new QueueClient(
+            _ => CompletedWithTools(
+                extractor,
+                MailTool("mail-interrupted", "interrupted task")
+            ),
+            _ => Completed(extractor, "no mail")
+        );
+        var factory = new RoutingFactory(new Dictionary<
+            string,
+            ICompletionClient
+        >(StringComparer.Ordinal) {
+            [main.Id] = mainClient,
+            [extractor.Id] = extractorClient,
+        });
+        var backend = new DurableBackend();
+        var first = GalateaTestHost.Create(
+            factory,
+            DisabledGalateaUserMessageNormalizer.Instance,
+            deleteFilesOnDispose: false,
+            connections: [main, extractor],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: extractor.Id,
+            delegateTransport: new DurableTransport(
+                backend,
+                interruptRunningOnDispose: true
+            )
+        );
+        GalateaTestHost? restarted = null;
+        try {
+            using (HttpClient http = first.CreateClient()) {
+                await LoginAsync(http);
+                GalateaHostService service = first.Factory.Services
+                    .GetRequiredService<GalateaHostService>();
+                UserSessionHost session = await service.GetSessionAsync(
+                    "alice",
+                    CancellationToken.None
+                );
+                _ = await StartAndWaitAsync(
+                    http,
+                    service,
+                    session,
+                    "send before interruption"
+                );
+                await WaitUntilAsync(() => session.DelegationHandle!.Store
+                    .ReadSnapshot().Mails.Single().State
+                    == GalateaDurableMailState.Accepted);
+            }
+            Assert.Equal(1, backend.StartCallCount);
+            await first.DisposeAsync();
+
+            restarted = first.CreateRestarted(
+                factory,
+                DisabledGalateaUserMessageNormalizer.Instance,
+                new DurableTransport(backend)
+            );
+            using HttpClient restartedHttp = restarted.CreateClient();
+            await LoginAsync(restartedHttp);
+            GalateaHostService restartedService = restarted.Factory.Services
+                .GetRequiredService<GalateaHostService>();
+            UserSessionHost restartedSession =
+                await restartedService.GetSessionAsync(
+                    "alice",
+                    CancellationToken.None
+                );
+            await WaitUntilAsync(() => restartedSession.DelegationHandle!.Store
+                .ReadSnapshot().Notices.SingleOrDefault()?.State
+                == GalateaReplyNoticeState.Ready);
+
+            GalateaReplyNoticeSnapshot ready = restartedSession
+                .DelegationHandle!.Store.ReadSnapshot().Notices.Single();
+            Assert.Equal(GalateaReplyNoticeKind.DeliveryFailure, ready.Kind);
+            Assert.Equal("inspect-dispatch", ready.Stage);
+            Assert.Equal("TURN_INTERRUPTED", ready.Code);
+            Assert.Equal(1, backend.StartCallCount);
+
+            _ = await StartAndWaitAsync(
+                restartedHttp,
+                restartedService,
+                restartedSession,
+                "receive interruption notice"
+            );
+            SessionCompletedTurnProjection receiving = restartedSession.Engine
+                .ReadRecentCompletedTurns(1)
+                .RequireSnapshot().Turns.Single();
+            Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
+                receiving.ObservationContent,
+                out PlayerTurnObservation observation
+            ));
+            Assert.Contains(
+                ready.Body,
+                observation.Notices.Select(static notice => notice.Body)
+            );
+            Assert.Equal(
+                GalateaReplyNoticeState.Consumed,
+                restartedSession.DelegationHandle.Store.ReadSnapshot()
+                    .Notices.Single().State
+            );
+            Assert.Equal(1, backend.StartCallCount);
+            Assert.True(backend.InspectCallCount > 0);
+        }
+        finally {
+            if (restarted is not null) {
+                await restarted.DisposeAsync();
+            }
+            else {
+                await first.DisposeAsync();
+            }
+        }
+    }
+
+    [Fact]
     public async Task MaintenanceHost_PerformsNoDurableTransportCall() {
         CompletionConnectionConfig main = Connection("test");
         var backend = new DurableBackend();
@@ -645,6 +763,15 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         ) {
             Interlocked.Increment(ref _inspectCallCount);
             DurableCall call = _calls[request.DispatchId];
+            string? failureCode = Volatile.Read(ref call.FailureCode);
+            if (failureCode is not null) {
+                return new GalateaDelegateDispatchInspection.Failed(
+                    request.DispatchId,
+                    request.ThreadId,
+                    call.TurnId,
+                    failureCode
+                );
+            }
             string? final = Volatile.Read(ref call.Final);
             return final is null
                 ? new GalateaDelegateDispatchInspection.Running(
@@ -665,14 +792,26 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             lock (_starts) { request = _starts[ordinal]; }
             Volatile.Write(ref _calls[request.DispatchId].Final, final);
         }
+
+        internal void InterruptRunning() {
+            foreach (DurableCall call in _calls.Values) {
+                if (Volatile.Read(ref call.Final) is null) {
+                    Volatile.Write(ref call.FailureCode, "TURN_INTERRUPTED");
+                }
+            }
+        }
     }
 
     private sealed class DurableCall(string turnId) {
         internal string TurnId { get; } = turnId;
         internal string? Final;
+        internal string? FailureCode;
     }
 
-    private sealed class DurableTransport(DurableBackend backend)
+    private sealed class DurableTransport(
+        DurableBackend backend,
+        bool interruptRunningOnDispose = false
+    )
         : IGalateaDurableDelegateTransport {
         public Task<GalateaDelegateBindingEstablished> EnsureBindingAsync(
             GalateaEnsureDelegateBindingRequest request,
@@ -698,6 +837,11 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             return Task.FromResult(backend.Inspect(request));
         }
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync() {
+            if (interruptRunningOnDispose) {
+                backend.InterruptRunning();
+            }
+            return ValueTask.CompletedTask;
+        }
     }
 }
