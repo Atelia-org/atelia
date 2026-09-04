@@ -36,7 +36,12 @@ import { BridgeError, asBridgeError } from "../errors.js";
 import type { BridgeLogger } from "../logger.js";
 import { PathPolicy } from "../security/paths.js";
 import { CodexAppServerClient } from "./client.js";
-import { classifyTurnEvidence, DefaultGalateaDispatchInspectionLimits, hasExactTaskBody } from "./dispatch-inspection.js";
+import {
+  classifyTurnEvidence,
+  DefaultGalateaDispatchInspectionLimits,
+  hasExactTaskBody,
+  reconcilePendingLiveCompletion,
+} from "./dispatch-inspection.js";
 import { LiveTurnObservations } from "./live-turn-observations.js";
 import type { JsonRpcNotification } from "./protocol.js";
 import { agentReportJsonSchema } from "./report.js";
@@ -453,7 +458,8 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
           input.task,
         );
         if (completedLive) return completedLive;
-        if (this.isCompleteColdTerminal(persistent)) return persistent;
+        const reconciled = reconcilePendingLiveCompletion(input.threadId, persistent);
+        if (reconciled) return reconciled;
         throw new BridgeError(
           "CODEX_PROTOCOL_ERROR",
           "Live and persistent terminal evidence is incomplete; retry inspection.",
@@ -466,11 +472,6 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
       }
       throw error;
     }
-  }
-
-  private isCompleteColdTerminal(inspection: GalateaDispatchInspection): boolean {
-    return inspection.kind === "completed"
-      || (inspection.kind === "failed" && inspection.code !== "FINAL_MISSING");
   }
 
   private async inspectAcceptedTurn(

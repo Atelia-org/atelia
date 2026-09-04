@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ThreadItem } from "../schemas/v2/ThreadItem.js";
 import type { Turn } from "../schemas/v2/Turn.js";
-import { classifyTurnEvidence } from "../src/codex/dispatch-inspection.js";
+import {
+  classifyTurnEvidence,
+  reconcilePendingLiveCompletion,
+} from "../src/codex/dispatch-inspection.js";
 import { LiveTurnObservations } from "../src/codex/live-turn-observations.js";
 
 function userMessage(clientId: string, text: string, id = `user-${clientId}`): ThreadItem {
@@ -67,6 +70,33 @@ test("exact turn evidence fails closed on selector, body, and final ambiguity", 
   }
 });
 
+test("pending live completion reconciles the complete cold evidence matrix", () => {
+  const completed = { kind: "completed", threadId: "thread", turnId: "t", source: "persistent", final: "final" } as const;
+  assert.equal(reconcilePendingLiveCompletion("thread", completed), completed);
+  for (const code of ["FINAL_BLANK", "FINAL_INVALID_UNICODE", "FINAL_TOO_LARGE"] as const) {
+    const failed = { kind: "failed", threadId: "thread", turnId: "t", source: "persistent", code } as const;
+    assert.equal(reconcilePendingLiveCompletion("thread", failed), failed);
+  }
+  for (const code of ["TURN_FAILED", "TURN_INTERRUPTED"] as const) {
+    assert.deepEqual(reconcilePendingLiveCompletion("thread", {
+      kind: "failed", threadId: "thread", turnId: "t", source: "persistent", code,
+    }), {
+      kind: "ambiguous", threadId: "thread", source: "live", code: "LIVE_OBSERVATION_CONFLICT",
+    });
+  }
+  const semantic = {
+    kind: "ambiguous", threadId: "thread", source: "persistent", code: "DISPATCH_BODY_MISMATCH",
+  } as const;
+  assert.equal(reconcilePendingLiveCompletion("thread", semantic), semantic);
+  for (const incomplete of [
+    { kind: "running", threadId: "thread", turnId: "t", source: "persistent" },
+    { kind: "unavailable", threadId: "thread", turnId: "t", source: "persistent", code: "ACCEPTED_TURN_NOT_VISIBLE" },
+    { kind: "failed", threadId: "thread", turnId: "t", source: "persistent", code: "FINAL_MISSING" },
+  ] as const) {
+    assert.equal(reconcilePendingLiveCompletion("thread", incomplete), null);
+  }
+});
+
 test("live observations retain terminal across late running and collect item/completed final", () => {
   const observations = new LiveTurnObservations({ maximumObservations: 2, maximumFinalUtf8Bytes: 100 });
   const running = turn("t", "inProgress", [userMessage("d", "task")]);
@@ -121,6 +151,46 @@ test("a trusted start response still must match its exact pending identity", () 
   ), false);
   observations.endStart(expectation);
   assert.equal(observations.inspect("thread", "wrong", "different", "different task"), undefined);
+});
+
+test("an unassociated incomplete terminal barrier binds to the later exact start response", () => {
+  const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+  const expectation = observations.beginStart("thread", "d", "task");
+  observations.observeTurnCompleted("thread", {
+    ...turn("t", "completed", []),
+    itemsView: "summary",
+  });
+  assert.equal(observations.inspect("thread", "t", "d", "task"), undefined);
+  assert.equal(observations.observeStartResponse(
+    "thread",
+    turn("t", "inProgress", [userMessage("d", "task")]),
+    expectation,
+  ), true);
+  observations.endStart(expectation);
+  assert.equal(observations.inspect("thread", "t", "d", "task"), undefined);
+  assert.equal(observations.isAwaitingTerminalEvidence("thread", "t", "d", "task"), true);
+  observations.observeItem("thread", "t", agentMessage("late final"));
+  assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "completed");
+});
+
+test("pending capacity loss never bypasses start-response identity validation", () => {
+  const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+  const occupying = observations.beginStart("occupied", "d1", "task1");
+  const untracked = observations.beginStart("thread", "d2", "task2");
+  assert.equal(untracked.tracked, false);
+  assert.equal(observations.observeStartResponse(
+    "thread",
+    turn("wrong", "inProgress", [userMessage("wrong", "wrong task")]),
+    untracked,
+  ), false);
+  assert.equal(observations.observeStartResponse(
+    "thread",
+    turn("right", "inProgress", [userMessage("d2", "task2")]),
+    untracked,
+  ), true);
+  assert.equal(observations.inspect("thread", "right", "d2", "task2"), undefined);
+  observations.endStart(untracked);
+  observations.endStart(occupying);
 });
 
 test("live observations are bounded, clearable, digest exact UTF-16, and conflict closed", () => {

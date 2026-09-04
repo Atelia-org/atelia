@@ -110,3 +110,22 @@ export function selectFinal(
   }
   return { kind: "completed", threadId, turnId, source, final };
 }
+
+/** Reconciles cold evidence while a same-generation live completion awaits final evidence. */
+export function reconcilePendingLiveCompletion(
+  threadId: string,
+  persistent: GalateaDispatchInspection,
+): GalateaDispatchInspection | null {
+  if (persistent.kind === "completed" || persistent.kind === "ambiguous") return persistent;
+  if (persistent.kind !== "failed") return null;
+  if (persistent.code === "FINAL_MISSING") return null;
+  if (persistent.code === "TURN_FAILED" || persistent.code === "TURN_INTERRUPTED") {
+    return {
+      kind: "ambiguous",
+      threadId,
+      source: "live",
+      code: "LIVE_OBSERVATION_CONFLICT",
+    };
+  }
+  return persistent;
+}

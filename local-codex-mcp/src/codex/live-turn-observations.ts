@@ -13,6 +13,11 @@ export interface LiveStartExpectation {
   readonly threadId: string;
   readonly dispatchId: string;
   readonly taskDigest: string;
+  readonly tracked: boolean;
+  terminalBarrier?: {
+    turnId: string;
+    baseFingerprint: string;
+  };
 }
 
 type FinalValue =
@@ -138,17 +143,22 @@ export class LiveTurnObservations {
     this.pendingStarts.clear();
   }
 
-  beginStart(threadId: string, dispatchId: string, task: string): LiveStartExpectation | undefined {
-    if (!isBoundedIdentifier(threadId) || !isBoundedIdentifier(dispatchId)) return undefined;
-    if (!this.pendingStarts.has(threadId)
-        && this.pendingStarts.size >= this.options.maximumObservations) return undefined;
-    const expectation = { threadId, dispatchId, taskDigest: taskDigest(task) };
-    this.pendingStarts.set(threadId, expectation);
+  beginStart(threadId: string, dispatchId: string, task: string): LiveStartExpectation {
+    const tracked = isBoundedIdentifier(threadId) && isBoundedIdentifier(dispatchId)
+      && (this.pendingStarts.has(threadId)
+        || this.pendingStarts.size < this.options.maximumObservations);
+    const expectation: LiveStartExpectation = {
+      threadId,
+      dispatchId,
+      taskDigest: taskDigest(task),
+      tracked,
+    };
+    if (tracked) this.pendingStarts.set(threadId, expectation);
     return expectation;
   }
 
   endStart(expectation: LiveStartExpectation | undefined): void {
-    if (expectation && this.pendingStarts.get(expectation.threadId) === expectation) {
+    if (expectation?.tracked && this.pendingStarts.get(expectation.threadId) === expectation) {
       this.pendingStarts.delete(expectation.threadId);
     }
   }
@@ -160,9 +170,10 @@ export class LiveTurnObservations {
   ): boolean {
     if (expectation) {
       const user = initialUser(turn);
-      if (this.pendingStarts.get(threadId) !== expectation || !user
+      if ((expectation.tracked && this.pendingStarts.get(threadId) !== expectation) || !user
           || user.dispatchId !== expectation.dispatchId
           || taskDigest(user.task) !== expectation.taskDigest) return false;
+      if (!expectation.tracked) return true;
     }
     this.observeStarted(threadId, turn, true);
     return true;
@@ -177,8 +188,25 @@ export class LiveTurnObservations {
     if (!observation) {
       const expected = this.pendingStarts.get(threadId);
       const user = initialUser(turn);
-      if (!expected || !user || user.dispatchId !== expected.dispatchId
-          || taskDigest(user.task) !== expected.taskDigest) return;
+      if (!expected) return;
+      if (!user) {
+        if (turn.status === "completed" && turn.itemsView !== "full"
+            && isBoundedIdentifier(turn.id)) {
+          const barrier = {
+            turnId: turn.id,
+            baseFingerprint: terminalBaseFingerprint(turn),
+          };
+          if (expected.terminalBarrier
+              && (expected.terminalBarrier.turnId !== barrier.turnId
+                || expected.terminalBarrier.baseFingerprint !== barrier.baseFingerprint)) {
+            expected.terminalBarrier = undefined;
+          } else {
+            expected.terminalBarrier = barrier;
+          }
+        }
+        return;
+      }
+      if (user.dispatchId !== expected.dispatchId || taskDigest(user.task) !== expected.taskDigest) return;
       this.observeStarted(threadId, turn, false);
       observation = this.currentObservation(threadId, turn.id);
     }
@@ -326,6 +354,18 @@ export class LiveTurnObservations {
       };
       this.observations.set(key(threadId, turn.id), observation);
       this.currentTurnByThread.set(threadId, turn.id);
+      if (expected?.terminalBarrier?.turnId === turn.id) {
+        observation.pendingCompleted = {
+          baseFingerprint: expected.terminalBarrier.baseFingerprint,
+        };
+        if (finalEvidenceAvailable(observation)) {
+          observation.terminal = {
+            status: "completed",
+            fingerprint: terminalFingerprint(expected.terminalBarrier.baseFingerprint, observation),
+          };
+          observation.pendingCompleted = undefined;
+        }
+      }
     }
     for (const item of turn.items) this.observeItem(threadId, turn.id, item);
   }
