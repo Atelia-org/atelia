@@ -10,6 +10,10 @@ crash matrix 与非目标见
 [`codex-delegation-durability-design.md`](codex-delegation-durability-design.md)。本文只作为阶段完成 tombstone，
 不再复制产品说明。
 
+后续local-only V3 resilience slice见
+[`codex-delegation-local-resilience-work-order.md`](codex-delegation-local-resilience-work-order.md)；它不重新打开
+本文已完成的V2 hard-cut清单。
+
 完成结果：
 
 - Root config已hard-cut strict V3；existing state只有在matching session存在时才strict-open并持有lifetime

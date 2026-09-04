@@ -225,10 +225,13 @@ fallback pulse总会重读SQLite。每个user至多一个pulse在途，每次pul
 
 transport启动`nodeCommand entryPoint`并通过environment注入code-owned allowed roots、cwd、Codex
 command、mode、local command network、built-in tool policy及RPC/body/frame bounds。邮件正文只能进入
-JSONL `task`字段，不能覆盖route policy。现行wire是strict bounded JSONL V2，三个input分别为
+JSONL `task`字段，不能覆盖route policy。现行wire是strict bounded JSONL V3，三个input分别为
 `ensure-binding`、`start-turn`与`inspect-dispatch`；对应结果为`binding-established`、`turn-accepted`与
-`dispatch-inspected(not-found|running|completed|failed|ambiguous)`。`turn-accepted`只持久化稳定
-`dispatchId/threadId/turnId`，不等待final；之后只用read-only inspect读取app-server persistent state。
+`dispatch-inspected(not-found|unavailable|running|completed|failed|ambiguous)`，每个semantic inspection结果
+都带`source=live|persistent`。inspect的`expectedTurnId`是required nullable字段：`OutcomeUnknown`只能发null并按
+dispatch发现，`Accepted`只能发durable exact turn ID。`turn-accepted`只持久化稳定
+`dispatchId/threadId/turnId`，不等待final；之后只用read-only inspect读取same-generation live observation或
+app-server official persistent APIs。
 `ensure-binding`只允许`thread/start + thread/name/set + ownership/cwd verify`，绝不携带邮件正文或执行
 `turn/start`。只有`Bound(threadId)`已经durable后，第一封和后续邮件才能`Queued -> Started`并调用
 `start-turn`。
@@ -242,7 +245,7 @@ capability或把代行thread附着到父Codex session。fixed thread ownership�
 profile-specific exact name marker、canonical cwd/path policy与Galatea持久route identity；
 `threadSource`/`source`都只是analytics，不参与authorization。
 
-V2将本地命令出网与Codex内建工具解耦：`localCommandNetwork`只控制turn
+sidecar profile将本地命令出网与Codex内建工具解耦：`localCommandNetwork`只控制turn
 `sandboxPolicy.networkAccess`；`tools.webSearch`逐turn映射到Codex top-level
 `web_search`（`disabled|cached|indexed|live`），`imageGeneration`与`viewImage`分别映射到
 `features.image_generation`和`tools.view_image`。当前开发实例使用`true + live + true + true`，
@@ -254,22 +257,25 @@ Browser/Computer Use依赖客户端/图形宿主，不属于本次headless sidec
 `Queued -> Started`与冻结operation/thread/policy、占用route active dispatch在一个SQLite transaction
 完成，commit后才允许`start-turn`。从此任何timeout、cancel、EOF、process death或protocol loss都进入
 durable `OutcomeUnknown`；host crash后遗留`Started`也先零external-call转为`OutcomeUnknown`。这两种状态
-都不得回到Queued或重发task，只能按持久1/2/4/...秒bounded backoff执行`inspect-dispatch`。not-found或
-暂时unavailable继续等待；exact running持久Accepted；exact terminal在同一事务写Reply/DeliveryFailure
+都不得回到Queued或重发task，只能按持久1/2/4/...秒bounded backoff执行`inspect-dispatch`。只有
+`OutcomeUnknown`零dispatch匹配可返回ordinary not-found；`Accepted` exact turn或identity items尚未出现在
+official projection时返回`ACCEPTED_TURN_NOT_VISIBLE`并保持Accepted。两者与暂时transport unavailable都继续
+等待；exact running持久Accepted；exact terminal在同一事务写Reply/DeliveryFailure
 notice并释放route active dispatch；ownership/cwd/body/multiple/identity冲突使route/mail durable
 Quarantined。binding outcome unknown可以使用同一binding operation重试，因为该阶段保证没有邮件turn。
-已接受邮件的exact Running观测会清除之前`NOT_FOUND`/暂时transport miss留下的
+已接受邮件的exact Running观测会清除之前`ACCEPTED_TURN_NOT_VISIBLE`/暂时transport miss留下的
 reconcile attempt/code/next-at，因此后续新miss从attempt 1重新计算，SQLite也不会
 持续显示已经恢复的旧错误。
 
-`inspect-dispatch`的首次、cache miss、terminal与cache input/live-turn identity不一致仍由Node通过
-`thread/read(includeTurns=true)`完整核对exact dispatch ID、task body与turn ID；metadata read若发现
-thread/name/cwd不一致则直接ambiguous fail closed。只有同一app-server generation内成功的
-`turn/start` accepted response或`turn/started` notification建立live proof，且full inspection确认Running后，
-warm process才使用bounded、non-durable metadata fast path；它仍核对thread ID、ownership、
-canonical cwd、active status与exact runtime turn identity。terminal/new-turn/process exit/stop立即清理
-该proof，cold restart绝不从persisted `inProgress`伪造live cache。缓存容量不足或task过大时
-只退化为full inspection，不改变durable结果。
+`inspect-dispatch`先以metadata-only `thread/read`核对exact thread/name/cwd，再在同一app-server generation内
+检查一份bounded、non-durable exact live turn observation。该observation只由`turn/start`response及官方
+`turn/started`、`item/completed`、`turn/completed`通知建立，保存task digest与bounded identity/final evidence，
+不保存raw task、command output或完整turn items；terminal压过late Running，重复冲突fail closed。
+process exit/stop/generation replacement会整体清理，`TaskStore` persistent hydrate不能创建live evidence。
+live miss后，Accepted通过官方bounded`thread/turns/list`与filtered`thread/items/list`按exact turn检查；
+OutcomeUnknown先用bounded thread items发现dispatch，再用turn pages分类。分页要求cursor单调进展、generation
+不变且shape/identity/capacity完整；不再使用deprecated full-history hydration。live证据只经正常C# driver与
+SQLite terminal CAS发布，不成为第二份durable authority。
 
 C# client只在`start-turn` frame可能写出时登记最多4096个client-lifetime dispatch tombstones；相同ID
 不因换generation重发，容量耗尽fail closed。stdout由一个bounded strict-UTF8 reader拥有；malformed、
@@ -300,7 +306,9 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 
 `Galatea.Mailbox`显示Action可见文本进入extractor及其intent数量；`Galatea.TextExtractor`显示
 pre-response transient transport failure的attempt与退避时间；`Galatea.Delegation`显示durable
-binding、dispatch、reconciliation、terminal与backoff；exact Running在首次确认、每约60秒liveness及
+binding、dispatch、reconciliation、terminal与backoff；inspection日志区分`selectorMode`、known turn、
+`source=live|persistent|none`、stage/code与recovered/attempt/next-at。Accepted projection不可见使用
+`ACCEPTED_TURN_NOT_VISIBLE` Warning并受durable backoff限频；exact Running在首次确认、每约60秒liveness及
 miss恢复时记录，不再为每秒fallback pulse刷重复行。terminal failure显式带stage/code。
 `Galatea.Delegation.Supervisor`显示store availability、pulse fail-closed、active dispatch的cold-restart保留
 与shutdown completion；`Galatea.DelegateSidecar`显示Node child启动、ready、正常stopping/stopped与真实
@@ -322,15 +330,15 @@ app-server，从而移除一层process/protocol；这项简化需要等价接管
 correlation/notification projection、fixed-thread ownership、environment scrubbing、outcome-unknown
 fencing以及bounded kill/reap。SQLite store/driver与durable reply lease的产品契约不应因此改变。
 
-### Gated real Codex V2 transport canary
+### Gated real Codex V3 transport canary
 
 2026-08-27通过的real app-server canary验证的是已经删除的process-local/V1 owner，只保留为历史
-证据，不能证明当前SQLite/V2产品链。Hard cut已删除旧V1 canary实现/runbook、C# V1
-coordinator/sidecar以及Node V1 entry；任何current V2 live test都必须重新建立自己的exact契约与证据，
+证据，不能证明当前SQLite/V3产品链。Hard cut已删除旧V1 canary实现/runbook、C# V1
+coordinator/sidecar以及Node V1 entry；任何current V3 live test都必须重新建立自己的exact契约与证据，
 不能复用旧结论。
 
-当前`GalateaCodexDelegationLiveTests.DurableV2_EnsureStartInspectCompletesInCleanRepo`是显式opt-in的
-real app-server V2 transport canary；默认test discovery在读取配置、创建临时目录或启动sidecar之前skip。
+当前`GalateaCodexDelegationLiveTests.DurableV3_EnsureStartInspectCompletesInCleanRepo`是显式opt-in的
+real app-server V3 transport canary；默认test discovery在读取配置、创建临时目录或启动sidecar之前skip。
 运行前构建Node sidecar并确认ignored machine-local config中的exact Codex executable已登录：
 
 ```bash
@@ -339,18 +347,19 @@ export ATELIA_GALATEA_CODEX_DELEGATES_CONFIG="$(realpath prototypes/Galatea/.ate
 codex_command="$(jq -r '.sidecar.codexCommand' "$ATELIA_GALATEA_CODEX_DELEGATES_CONFIG")"
 "$codex_command" login status
 export ATELIA_RUN_GALATEA_CODEX_DELEGATION_LIVE=1
-dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'FullyQualifiedName=Atelia.Galatea.Server.Tests.GalateaCodexDelegationLiveTests.DurableV2_EnsureStartInspectCompletesInCleanRepo'
+dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'FullyQualifiedName=Atelia.Galatea.Server.Tests.GalateaCodexDelegationLiveTests.DurableV3_EnsureStartInspectCompletesInCleanRepo'
 ```
 
-2026-08-28当前build按该gate真实PASS 1/1，业务段约9秒：`ensure-binding`先建立empty owned thread，
+2026-08-28旧V2 build曾按该gate真实PASS 1/1，业务段约9秒：`ensure-binding`先建立empty owned thread，
 pre-start `inspect-dispatch`返回NotFound，随后exact一次unique `start-turn`；同dispatch重发被C#本地
 tombstone以`DUPLICATE_DISPATCH_ID`拒绝而未写第二个frame，最终只经inspect读到Completed且final exact
 匹配随机token。隔离临时repository保持clean、顶层仅`.git`后删除，sidecar/app-server无测试残留进程。
 Canary把route重建为research、local command network=false、全部hosted tools disabled，并把唯一allowed root/cwd
 钉在随机临时Git repository；它仍需要app-server连接provider/auth的网络。
 
-该canary只证明当前C#/Node V2 transport、fixed-thread ownership、一次start fencing与real app-server
-ensure/start/inspect链；它不构造Galatea host/SQLite baseline，不验证accepted后C# host restart、双信FIFO或
+该历史canary只证明当时C#/Node V2 transport、fixed-thread ownership、一次start fencing与real app-server
+ensure/start/inspect链；当前V3 phase未运行live canary或E2E。canary不构造Galatea host/SQLite baseline，
+不验证accepted后C# host restart、双信FIFO或
 durable reply lease。Codex保存的thread/turn及随机token是外部持久状态；测试不把本地临时目录清理冒充外部
 history已删除。完整durable real-provider vertical仍可作为独立future operational verification，即使通过也不
 构成app-server/provider exactly-once承诺。

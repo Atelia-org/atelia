@@ -89,9 +89,11 @@ side effect 能被 raw ref move 撤销。
 
 ### 2.3 External effect authority：Codex app-server persistent state
 
-Codex app-server提供可持久读取的owned thread/turn history；该外部状态唯一决定thread是否已建立、
-turn是否已接受或terminal，以及exact final是什么。Node sidecar和C# transport只是协议适配器，
-不是durable ownership authority；history可读也不构成provider exactly-once承诺。
+Codex app-server提供owned thread/turn history与同generation lifecycle notifications；该外部状态唯一决定thread
+是否已建立、turn是否已接受或terminal，以及exact final是什么。其可重建persistent read projection可能暂时
+滞后或损坏，所以RPC success不等于目标turn/item一定可见。Node sidecar和C# transport只是协议适配器，
+最多保留bounded process-local live observation，不是durable ownership authority；history可读也不构成provider
+exactly-once承诺。
 
 reconciliation 必须用 code-owned thread ownership marker、canonical cwd、stable `dispatchId` /
 `clientUserMessageId` 以及已知 `threadId`/`turnId` 的 exact 组合证据证明同一个外部
@@ -367,8 +369,10 @@ death、protocol loss 或 host crash，都使 mail row 进入 `OutcomeUnknown`�
 - exact 找到同一 `clientUserMessageId/dispatchId` 的 owned thread/turn：持久 accepted
   identity，继续 poll terminal；
 - exact 找到同一 turn 的 terminal final/failure：直接持久 terminal 与 notice；
-- app-server/sidecar 暂时 unavailable，或当次 read-only lookup 返回 not-found：mail
+- app-server/sidecar暂时unavailable，或OutcomeUnknown当次read-only dispatch discovery返回not-found：mail
   保持 `OutcomeUnknown`，持久 code-owned backoff 后再做 read-only retry；
+- Accepted的exact turn或identity items尚未出现在official persistent projection：mail保持`Accepted`，持久
+  `ACCEPTED_TURN_NOT_VISIBLE`与同一bounded backoff后重试；不得退回dispatch selector；
 - 发现 multiple candidates、ownership/cwd/body/client-message/thread/turn identity 的确定性冲突：
   持久 `Quarantined`。
 
@@ -383,10 +387,18 @@ reconciliation 只有在同一事务已持久确定 terminal/notice 时才清除
 turn，mail 改为 Accepted 但 active dispatch 保留到 terminal settlement，不允许同 thread
 并发第二个 turn。
 
-### 7.4 Accepted 与 terminal polling
+### 7.4 Accepted、live observation 与 terminal polling
 
-accepted `threadId/turnId`持久后，staged V2没有V1式terminal Task；host-local signal只提示
-supervisor尽快pulse，pulse以exact IDs调用read-only `inspect-dispatch`读取app-server persistent state。
+accepted `threadId/turnId`持久后，staged V3没有V1式terminal Task；host-local signal只提示
+supervisor尽快pulse，pulse以exact IDs调用read-only `inspect-dispatch`。V3用required
+`expectedTurnId:string|null`硬分离selector：Accepted只能按exact turn，OutcomeUnknown只能按dispatch discovery。
+每个semantic result都携带`source=live|persistent`。
+
+Node先以metadata-only thread read核对ownership/cwd；同一app-server generation的`turn/start` response与官方
+turn/item notifications可建立一份bounded、non-durable exact live observation。它只保存task digest与必要的
+bounded identity/final evidence，terminal压过late Running，conflict fail closed；process exit/stop/generation
+replacement全部清理，persisted `TaskStore` hydration不能建立它。live miss后只用official bounded
+`thread/turns/list`与`thread/items/list`分页检查，不读取rollout JSONL或Codex private SQLite。
 任一signal或单次inspection attempt丢失都不影响后续1秒fallback。对同一accepted turn的重复terminal
 observation必须幂等：同一terminal零修改，不同final/status冲突进quarantine。
 
@@ -501,9 +513,10 @@ non-overlap gate，不允许 signal 和 timer 同时对同一 user 执行 effect
 | `ensure-binding` 创建 thread，`Bound` commit 前 | route 仍 Binding，无 mail turn | 允许重新 ensure，容忍 empty orphan thread | reconcile/retry 任何 mail body |
 | `Bound(threadId)` commit，首封 mail Started 前 | fixed thread 已 durable，mail 仍 Queued | 按普通 FIFO 推进第一封 mail | 重新 ensure 或覆盖 thread ID |
 | `Queued -> Started` commit，`start-turn` write 前或中 | known bound thread + active dispatch durable；effect 是否发生不可由重启证明 | mail 改 OutcomeUnknown，在该 thread 上 read-only reconcile | 回 Queued 或重发 `turn/start` |
-| OutcomeUnknown lookup unavailable/not-found | mail 及 route active dispatch 仍 durable，无确定性冲突 | 持久 backoff，到期后 read-only retry | quarantine、DeliveryFailure 或重发 |
+| OutcomeUnknown lookup unavailable/not-found | mail 及 route active dispatch 仍 durable，无确定性冲突 | 持久 backoff，到期后按dispatch read-only retry | quarantine、DeliveryFailure 或重发 |
 | app-server accepted，SQLite 未记录 | SQLite 已有 bound thread，app-server 可能有 exact client message/turn | 在已 bound thread 上 read-only reconcile，exact 证明后记录 Accepted | 创建新 thread 或重发 body |
-| `Accepted` durable，signal/inspection attempt丢失 | SQLite 有exact thread/turn | fallback pulse以`inspect-dispatch`读app-server persistent turn | 重发task body或等待不存在的V1 terminal Task |
+| `Accepted` durable，signal/inspection attempt丢失 | SQLite 有exact thread/turn | fallback pulse以exact `expectedTurnId` inspect live或official persistent APIs | 回退dispatch lookup、重发task body或等待不存在的V1 terminal Task |
+| Accepted turn/items从persistent projection暂时不可见 | SQLite仍有exact accepted thread/turn，无确定性冲突 | 持久`ACCEPTED_TURN_NOT_VISIBLE` backoff并重试；same-generation live terminal仍可正常CAS | not-found、quarantine、DeliveryFailure、raw history runtime reader或重发 |
 | app-server terminal，SQLite 未记录 | external terminal authority 存在 | 以 exact IDs 读取并幂等写 terminal+notice | 根据 log 猜 final |
 | notice Ready，signal 前 | `reply_notice=Ready` | 后续普通player cutoff直接从SQLite claim/inject；无需signal replay | 丢弃notice或由pulse擅自建立lease |
 | cutoff frozen，desired setup reconciliation 前/后但 bind 前 | lease 只有 membership/player text，无 SJ base | 同事务 notices -> Ready 并删除 lease/items | 保留 RolledBack lease 或从 current head 猜测 bind |
@@ -522,14 +535,14 @@ non-overlap gate，不允许 signal 和 timer 同时对同一 user 执行 effect
 与ContractId。这是因为
 existing writable store可能立即被pulse；composition不能在此后再保留会使host半构造失败的preflight。
 
-Supervisor拥有一个shared lazy V2 transport及每user store/driver。Existing state目录只在matching session
+Supervisor拥有一个shared lazy V3 transport及每user store/driver。Existing state目录只在matching session
 目录也存在时于host启动strict-open并取得lifetime writer lock；`SESSION_MISSING`在store open前fail closed。
 Missing state目录只在第一次writable SessionJournal attach时按§4创建
 baseline。Maintenance只read-only open existing store，不attach writable session、不启动scheduler，也不
 执行transport call。
 
 Production source已删除旧C# coordinator/ledger/ReplyInbox/V1 client以及Node V1 entry/adapter/protocol。
-同一extraction batch没有dual-write，reply cutoff没有双authority，`npm run start:galatea`只指向durable V2。
+同一extraction batch没有dual-write，reply cutoff没有双authority，`npm run start:galatea`只指向durable V3。
 这里没有hidden feature flag、fallback branch、`AbandonDurableCandidate`或任何恢复旧owner的operator路径；
 store/baseline失败只会使该user fail closed，不能靠删除durable evidence继续运行。
 
@@ -579,10 +592,10 @@ Galatea host/SQLite vertical。同日ignored `cyber` production smoke独立验�
 ### 13.2 Effect/recovery gates
 
 - crash/restart tests必须同时断言transport start count与最终state，不能只看最终state而遗漏重复effect。
-- `Started/OutcomeUnknown` 恢复路径对 `turn/start` 是零调用，只允许 read-only
-  reconciliation；unavailable/not-found 持久 backoff 并继续 OutcomeUnknown，只有确定性
-  ownership/cwd/multiple/identity 冲突 durable quarantine；此路径必须始终带 known
-  bound thread ID。
+- `Started/OutcomeUnknown`恢复路径对`turn/start`是零调用，只允许read-only reconciliation；
+  unavailable/not-found持久backoff并继续OutcomeUnknown。Accepted只按durable turn ID，persistent projection
+  缺失使用`ACCEPTED_TURN_NOT_VISIBLE`并继续Accepted；只有确定性ownership/cwd/multiple/identity冲突
+  durable quarantine。所有路径始终带known bound thread ID。
 - `ensure-binding` 的deterministic protocol/backend tests证明它只执行thread start/name/verify，对
   `turn/start` 零调用。在 thread 建立与 `Bound` commit 之间崩溃可重新 ensure，但
   所有遗留候选都是没有 mail turn 的 empty orphan。
@@ -591,7 +604,8 @@ Galatea host/SQLite vertical。同日ignored `cyber` production smoke独立验�
 - mail 没有 `Prepared` state 或 Started-to-Prepared 退回；`Queued -> Started` 与冻结
   thread/policy、设置 route active dispatch 是一个 transaction，provider I/O 只发生在其后。
 - accepted后signal或inspection attempt丢失时，使用persisted thread/turn继续read-only inspect final，不重发body；
-  staged V2没有可等待的terminal Task。
+  staged V3没有可等待的terminal Task。warm live evidence与cold official pagination都必须经过同一个C#
+  terminal CAS。
 - capture 后 Undo 不减少 outbox，不 interrupt active turn，不清除 Ready notice。
 - reply lease 覆盖 cutoff 后 bind 前、`BindObservationBase` 后 Observation 前、Observation 后、
   terminal Action 后四个崩溃窗口；bind 前无 SessionJournal head/body，在 desired setup
@@ -615,9 +629,25 @@ Galatea host/SQLite vertical。同日ignored `cyber` production smoke独立验�
 - Focused store/state-machine/Galatea tests、full Galatea tests、solution build、Node suite、docs checker与
   `git diff --check`是后续修改必须重跑的常规gate；repository durability tests使用真实稳定存储，不用tmpfs
   伪装durability。
-- 已通过的current real app-server V2 transport canary证明`ensure-binding`建立empty fixed thread、pre-start
+- 已通过的historical real app-server V2 transport canary证明当时`ensure-binding`建立empty fixed thread、pre-start
   inspection为NotFound、exact一次`start-turn`、duplicate在本地tombstone拒绝且最终inspect Completed。它不证明
   production supervisor创建baseline、accepted与final之间C# host restart、第二封续用同thread或reply lease
   one-shot consume；其中baseline/lock/cold reopen已由独立无provider的ignored开发实例smoke验证，其余可由future
-  full-host provider vertical另行验证。任何canary/smoke都只证明该exact
+  full-host provider vertical另行验证。当前V3 phase没有运行live canary/E2E。任何canary/smoke都只证明该exact
   build/environment，不升格为app-server/provider exactly-once承诺。
+
+## 14. Local resilience slice（2026-09-04）
+
+当前tracked runtime已将Galatea sidecar hard-cut到V3，并以state-specific selector、same-generation live
+observation及official paginated cold inspection处理Codex rebuildable projection滞后。实现仍保持本设计的三个
+authority、fixed thread与at-most-one start law；没有新增SQLite列、sidecar ledger、raw rollout reader、自动重发、
+elapsed turn deadline或thread rollover。
+
+`GalateaDelegationDurableContract.RouteProtocolVersion`的historical值仍为
+`galatea-codex-sidecar-jsonrpc-v2`。该字符串已经进入existing store的route-policy fingerprint，是旧durable
+policy identity，不是当前wire parser/version宣告；wire唯一接受V3。改变该fingerprint会使existing store
+identity失配并需要单独设计的停服迁移，因此不属于本local resilience slice。
+
+Accepted projection长期不可见时，runtime只继续durable backoff并暴露诊断，不尝试修复Codex私有存储。
+当前ignored mail的人工处置必须走单独授权的backup-first operator gate，见
+[`codex-delegation-operator-recovery.md`](codex-delegation-operator-recovery.md)。

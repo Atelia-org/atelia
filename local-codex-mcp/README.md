@@ -23,7 +23,7 @@ MVP 暴露五个 tools：
 - 一个或多个允许 ChatGPT 委派任务的绝对目录。
 - Secure MCP Tunnel 还需要 Platform tunnel 权限、`tunnel_id` 与 runtime/control-plane API key。
 
-本工程当前用 Codex `0.147.0` 生成了 `schemas/`。升级 Codex 后应重新生成并跑测试。
+本工程当前用 configured Codex `0.151.0` 生成了 `schemas/`。升级 Codex 后应重新生成并跑测试。
 
 ## 1. 安装、生成 schema 与构建
 
@@ -88,7 +88,7 @@ stdio 的 stdout 专用于 MCP JSON-RPC，结构化日志只写 stderr。
 
 同一 backend 另有一个不暴露 MCP 的 Galatea adapter。它把工作目录、sandbox mode、本地命令
 出网权限与内建工具 policy 固定在启动环境中，并提供三个可恢复的阶段式操作：建立持久 thread binding、
-启动一个 turn、按 exact `{threadId, dispatchId, task}` 检查结果。Codex 的自然 Markdown final 原样返回，
+启动一个 turn、按 exact `{threadId, dispatchId, task, expectedTurnId}` 检查结果。Codex 的自然 Markdown final 原样返回，
 不使用 `AgentReport` output schema。
 
 ```bash
@@ -103,21 +103,25 @@ npm run build
 npm run start:galatea
 ```
 
-stdin/stdout 是 strict bounded JSONL V2，stdout 只有协议 frame，日志只写 stderr。默认命令只启动这一版协议：
+stdin/stdout 是 strict bounded JSONL V3，stdout 只有协议 frame，日志只写 stderr。默认命令只启动这一版协议：
 
 ```json
-{"v":2,"type":"ready"}
-{"v":2,"type":"ensure-binding","requestId":"r1","bindingOperationId":"binding-1"}
-{"v":2,"type":"binding-established","requestId":"r1","bindingOperationId":"binding-1","threadId":"thread-id"}
-{"v":2,"type":"start-turn","requestId":"r2","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复"}
-{"v":2,"type":"turn-accepted","requestId":"r2","dispatchId":"d1","threadId":"thread-id","turnId":"turn-id"}
-{"v":2,"type":"inspect-dispatch","requestId":"r3","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复"}
-{"v":2,"type":"dispatch-inspected","requestId":"r3","dispatchId":"d1","threadId":"thread-id","outcome":"completed","turnId":"turn-id","final":"自然 Markdown 回信"}
+{"v":3,"type":"ready"}
+{"v":3,"type":"ensure-binding","requestId":"r1","bindingOperationId":"binding-1"}
+{"v":3,"type":"binding-established","requestId":"r1","bindingOperationId":"binding-1","threadId":"thread-id"}
+{"v":3,"type":"start-turn","requestId":"r2","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复"}
+{"v":3,"type":"turn-accepted","requestId":"r2","dispatchId":"d1","threadId":"thread-id","turnId":"turn-id"}
+{"v":3,"type":"inspect-dispatch","requestId":"r3","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复","expectedTurnId":"turn-id"}
+{"v":3,"type":"dispatch-inspected","requestId":"r3","dispatchId":"d1","threadId":"thread-id","outcome":"completed","turnId":"turn-id","final":"自然 Markdown 回信","source":"live"}
 ```
 
 失败以 `failed` frame 返回稳定的 `stage`/`code`。`turn-accepted` 只表示 `turn/start` 已返回稳定 handle；
-sidecar 不同步等待 final。runtime 应持续发送 `inspect-dispatch`，并处理 `not-found`、`running`、`completed`、
-`failed` 或 `ambiguous`。`START_OUTCOME_UNKNOWN` 之后必须先 inspect，不能盲目重发 `start-turn`。
+sidecar 不同步等待 final。runtime 应持续发送 `inspect-dispatch`，并处理 `not-found`、`unavailable`、
+`running`、`completed`、`failed` 或 `ambiguous`；所有semantic结果都携带exact `source=live|persistent`。
+`OutcomeUnknown`必须发送`expectedTurnId:null`并仅按dispatch marker发现；`Accepted`必须发送已持久化的exact
+turn ID。`ACCEPTED_TURN_NOT_VISIBLE`表示官方persistent projection尚未给出完整accepted turn/item view，
+它是可重试的`unavailable`，不是ordinary not-found、terminal、quarantine或再次`turn/start`的授权。
+`START_OUTCOME_UNKNOWN` 之后必须先 inspect，不能盲目重发 `start-turn`。
 缺失、截断或超过上限的 final 均不会伪装成完整回信。EOF、SIGINT 与 SIGTERM 会回收 app-server child。
 每封 frame 不接受 `cwd`、`mode`、本地命令出网或内建工具字段；相关 capability 只能由启动环境决定。
 
@@ -270,7 +274,17 @@ ChatGPT -> authenticated VPS HTTPS /mcp -> private link -> 127.0.0.1:3000/mcp
 - approval、permission、elicitation 与未知 server requests 全部 fail-closed；绝不自动批准 escalation。
 - Bridge-created threads 用response ID、持久化exact name marker与canonical cwd做ownership协调；optional analytics `threadSource`和origin `source`不参与。普通其他 thread ID 会返回 `THREAD_NOT_FOUND`。这是私人同一用户进程间的防误用边界，不是对同机恶意进程的认证：能直接调用 app-server 的本机进程也能伪造 title。若威胁模型包含不可信本机进程，需要在第二阶段增加bridge私有持久allowlist/签名元数据。
 - 只存运行时 turn 状态；重启后从 `thread/read` 恢复 persisted thread。stdio child 的 in-flight turn 不保证跨 Bridge 进程重启存活。
-- Galatea dispatch首次检查、`OutcomeUnknown`、terminal与任何live identity不一致都使用`thread/read(includeTurns=true)`重新核对完整history中的exact dispatch ID、task body与turn ID。只有同一app-server generation内的`turn/start` accepted或`turn/started` notification建立live-running proof，且full inspection也确认同一turn仍为running后，warm process才缓存这一份非durable证明；`status/read`对持久history的hydrate不能建立live proof。后续轮询仍以`thread/read(includeTurns=false)`重新验证thread ID、ownership name、canonical cwd和active状态，并在请求前后都要求live proof精确匹配。缓存显式限制为至多32个thread、每个thread当前一个dispatch且task不超过128 KiB UTF-8；generation-local live proof本身至多4096项；超限只退化为full inspection。terminal/new-turn通知、app-server退出和Bridge停止都会即时清理对应证明。cold/process restart后不从persisted `inProgress`重建live cache：真实的无执行者turn应由app-server映射为Interrupted；若上游仍暂报Running，则保守地持续full inspection。缓存不是恢复或业务authority。
+- Galatea inspection先用metadata-only `thread/read`核对thread ID、ownership name和canonical cwd。Accepted只按
+  durable `expectedTurnId`选择，OutcomeUnknown只按exact `dispatchId/clientId + task`发现；两者随后使用官方
+  bounded `thread/turns/list`与`thread/items/list`分页，检查page shape、cursor progress、generation、capacity、
+  duplicate identity及final bounds。只有OutcomeUnknown零匹配可返回`not-found`；Accepted turn或其identity items
+  未出现在persistent projection时返回`ACCEPTED_TURN_NOT_VISIBLE`并重试。
+- 同一app-server generation内另维护一份bounded、non-durable exact turn observation，只接收`turn/start`
+  response和官方`turn/started`、`item/completed`、`turn/completed`通知。它只保存task digest、bounded identity/
+  final evidence，不保存raw task、command output或完整items；terminal证据压过late Running，冲突fail closed。
+  app-server exit、Bridge stop或generation切换会清空它，`TaskStore.hydrate()`绝不重建live evidence。它只是
+  persistent projection损坏时的warm-process低延迟证据，Galatea SQLite terminal CAS仍是唯一local publication
+  authority。通用MCP `status/read`仍可按自身接口读取history，不参与Galatea reconciliation。
 - 当前本机生成的 `SandboxPolicy` 还没有官方新文档展示的 restricted read roots 字段。因此 allowed roots 严格控制 cwd 与**写入**，但本版本不能承诺 Codex 完全无法读取 cwd 外文件。需要更强读取隔离时，应升级到支持该协议的 Codex 或增加 OS/container sandbox。
 - `local_command_network`不再连带控制hosted tools；要关闭全部外部访问，必须显式使用`local_command_network=false, web_search=disabled`。Codex apps/MCP仍由child args独立关闭；本地Codex hooks/未来新增执行通道仍应在部署时审计。
 - MCP output 有字符/数组硬上限，不返回 reasoning、命令 stdout、完整 diff、完整文件或 thread transcript。
