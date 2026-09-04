@@ -156,6 +156,16 @@ function completeTurn(
     : userItems;
   thread.status = { type: "idle" };
   persistState();
+  if (status === "completed" && behavior.includes("[SUMMARY_BEFORE_FINAL]")) {
+    send({ method: "turn/completed", params: {
+      threadId,
+      turn: { ...turn, items: [], itemsView: "summary" },
+    } });
+    setTimeout(() => {
+      send({ method: "item/completed", params: { threadId, turnId, item: agentItem, completedAtMs: Date.now() } });
+    }, 50);
+    return;
+  }
   if (status === "completed" && !behavior.includes("[MISSING]")) {
     send({ method: "item/completed", params: { threadId, turnId, item: agentItem, completedAtMs: Date.now() } });
     send({ method: "item/completed", params: { threadId, turnId, item: fileItem, completedAtMs: Date.now() } });
@@ -465,6 +475,9 @@ lines.on("line", (line) => {
         data = [{ turnId: requestedTurnId, item: {
           type: "agentMessage", id: "bad-agent", text: "final", phase: "final_answer", memoryCitation: null,
         } }];
+      }
+      if (process.argv.includes("--file-change-missing-fields") && requestedTurnId !== null) {
+        data = [{ turnId: requestedTurnId, item: { type: "fileChange", id: "bad-file-change" } }];
       }
       const nextCursor = offset + data.length < all.length ? String(offset + data.length) : null;
       send({ id: message.id, result: { data, nextCursor, backwardsCursor: data.length ? String(offset) : null } });

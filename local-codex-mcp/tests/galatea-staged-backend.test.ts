@@ -76,6 +76,29 @@ test("Accepted uses exact live turn and completion survives early start-response
   if (result.kind === "completed") assert.match(result.final, /事情已经办妥/);
 });
 
+test("incomplete live terminal maps to retryable inspection failure until final item arrives", async (t) => {
+  const value = await harness(t);
+  const binding = await bind(value);
+  const task = "[SUMMARY_BEFORE_FINAL][NATURAL] exact task";
+  const accepted = await start(value, binding.threadId, "mail-late-final", task);
+  await delay(25);
+  const request = {
+    threadId: binding.threadId,
+    expectedCwd: value.root,
+    dispatchId: "mail-late-final",
+    task,
+    expectedTurnId: accepted.turnId,
+    maximumFinalUtf8Bytes: 20_000,
+  };
+  await assert.rejects(value.backend.inspectDispatch(request), (error: unknown) =>
+    typeof error === "object" && error !== null && "code" in error
+      && error.code === "CODEX_PROTOCOL_ERROR");
+  await delay(60);
+  const completed = await value.backend.inspectDispatch(request);
+  assert.equal(completed.kind, "completed");
+  assert.equal(completed.source, "live");
+});
+
 test("Accepted missing from official turns is stable unavailable, not not-found", async (t) => {
   const sanitizedFixture = JSON.parse(await readFile(
     acceptedTurnNotVisibleFixture,
@@ -195,6 +218,7 @@ for (const [argument, code] of [
   ["--missing-backwards-cursor", "PAGE_SHAPE_INVALID"],
   ["--unknown-item", "PAGE_SHAPE_INVALID"],
   ["--agent-missing-delivery", "PAGE_SHAPE_INVALID"],
+  ["--file-change-missing-fields", "PAGE_SHAPE_INVALID"],
 ] as const) {
   test(`cold Accepted inspection fails closed for ${argument}`, async (t) => {
     const value = await harness(t, { persistent: true, fixtureArgs: [argument] });
@@ -226,12 +250,11 @@ test("inspection rejects a generation change between metadata and pagination", a
     }
   });
   t.after(unsubscribe);
-  const result = await value.backend.inspectDispatch({
+  await assert.rejects(value.backend.inspectDispatch({
     threadId: binding.threadId, expectedCwd: value.root, dispatchId: "mail-generation", task,
     expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
-  });
-  assert.equal(result.kind, "ambiguous");
-  if (result.kind === "ambiguous") assert.equal(result.code, "PAGINATION_CURSOR_INVALID");
+  }), (error: unknown) => typeof error === "object" && error !== null
+    && "code" in error && error.code === "CODEX_PROTOCOL_ERROR");
 });
 
 test("inspection preflight rejects ownership and cwd drift before live evidence", async (t) => {

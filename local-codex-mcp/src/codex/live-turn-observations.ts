@@ -9,6 +9,12 @@ export interface LiveTurnObservationOptions {
   maximumFinalUtf8Bytes: number;
 }
 
+export interface LiveStartExpectation {
+  readonly threadId: string;
+  readonly dispatchId: string;
+  readonly taskDigest: string;
+}
+
 type FinalValue =
   | { kind: "text"; text: string }
   | { kind: "blank" | "invalid-unicode" | "too-large" };
@@ -23,11 +29,8 @@ interface TerminalEvidence {
   fingerprint: string;
 }
 
-const maximumObservedIdentifierUtf8Bytes = 1_024;
-const maximumSemanticItemIdsPerTurn = 64;
-
-function isBoundedIdentifier(value: string): boolean {
-  return value.length > 0 && Buffer.byteLength(value, "utf8") <= maximumObservedIdentifierUtf8Bytes;
+interface PendingCompletedEvidence {
+  baseFingerprint: string;
 }
 
 interface Observation {
@@ -37,11 +40,17 @@ interface Observation {
   taskDigest: string;
   userItemId: string;
   userFingerprint: string;
-  semanticItemFingerprints: Map<string, string>;
   explicit: FinalSlot;
   legacy: FinalSlot;
   terminal?: TerminalEvidence;
+  pendingCompleted?: PendingCompletedEvidence;
   conflict: boolean;
+}
+
+const maximumObservedIdentifierUtf8Bytes = 1_024;
+
+function isBoundedIdentifier(value: string): boolean {
+  return value.length > 0 && Buffer.byteLength(value, "utf8") <= maximumObservedIdentifierUtf8Bytes;
 }
 
 function utf16Digest(domain: string, value: string): string {
@@ -95,21 +104,26 @@ function slotFingerprint(slot: FinalSlot): unknown {
     : { kind: slot.kind };
 }
 
-function terminalEvidence(turn: Turn, observation: Observation): TerminalEvidence | undefined {
-  if (turn.status === "inProgress") return undefined;
-  return {
-    status: turn.status,
-    fingerprint: valueFingerprint({
-      status: turn.status,
-      error: turn.error,
-      explicit: slotFingerprint(observation.explicit),
-      legacy: slotFingerprint(observation.legacy),
-    }),
-  };
+function finalEvidenceAvailable(observation: Observation): boolean {
+  return observation.explicit.kind !== "none" || observation.legacy.kind !== "none";
+}
+
+function terminalBaseFingerprint(turn: Turn): string {
+  return valueFingerprint({ status: turn.status, error: turn.error });
+}
+
+function terminalFingerprint(baseFingerprint: string, observation: Observation): string {
+  return valueFingerprint({
+    baseFingerprint,
+    explicit: slotFingerprint(observation.explicit),
+    legacy: slotFingerprint(observation.legacy),
+  });
 }
 
 export class LiveTurnObservations {
   private readonly observations = new Map<string, Observation>();
+  private readonly currentTurnByThread = new Map<string, string>();
+  private readonly pendingStarts = new Map<string, LiveStartExpectation>();
 
   constructor(private readonly options: LiveTurnObservationOptions) {
     if (!Number.isInteger(options.maximumObservations) || options.maximumObservations < 1
@@ -120,61 +134,67 @@ export class LiveTurnObservations {
 
   clear(): void {
     this.observations.clear();
+    this.currentTurnByThread.clear();
+    this.pendingStarts.clear();
   }
 
-  observeTurn(threadId: string, turn: Turn): void {
-    if (!isBoundedIdentifier(threadId) || !turn || typeof turn.id !== "string"
-        || !isBoundedIdentifier(turn.id)) return;
-    const observationKey = key(threadId, turn.id);
-    let observation = this.observations.get(observationKey);
-    if (!observation) {
-      const user = initialUser(turn);
-      if (!user) return;
-      this.removeOldTerminalObservations(threadId, turn.id);
-      if (this.observations.size >= this.options.maximumObservations) return;
-      observation = {
-        threadId,
-        turnId: turn.id,
-        dispatchId: user.dispatchId,
-        taskDigest: taskDigest(user.task),
-        userItemId: user.id,
-        userFingerprint: valueFingerprint(user),
-        semanticItemFingerprints: new Map([[user.id, valueFingerprint(user)]]),
-        explicit: { kind: "none" },
-        legacy: { kind: "none" },
-        conflict: false,
-      };
-      this.observations.set(observationKey, observation);
-    }
+  beginStart(threadId: string, dispatchId: string, task: string): LiveStartExpectation | undefined {
+    if (!isBoundedIdentifier(threadId) || !isBoundedIdentifier(dispatchId)) return undefined;
+    if (!this.pendingStarts.has(threadId)
+        && this.pendingStarts.size >= this.options.maximumObservations) return undefined;
+    const expectation = { threadId, dispatchId, taskDigest: taskDigest(task) };
+    this.pendingStarts.set(threadId, expectation);
+    return expectation;
+  }
 
+  endStart(expectation: LiveStartExpectation | undefined): void {
+    if (expectation && this.pendingStarts.get(expectation.threadId) === expectation) {
+      this.pendingStarts.delete(expectation.threadId);
+    }
+  }
+
+  observeStartResponse(threadId: string, turn: Turn): void {
+    this.observeStarted(threadId, turn, true);
+  }
+
+  observeTurnStarted(threadId: string, turn: Turn): void {
+    this.observeStarted(threadId, turn, false);
+  }
+
+  observeTurnCompleted(threadId: string, turn: Turn): void {
+    const observation = this.currentObservation(threadId, turn.id);
+    if (!observation || turn.status === "inProgress") return;
     for (const item of turn.items) this.observeItem(threadId, turn.id, item);
-    const terminal = terminalEvidence(turn, observation);
-    if (terminal) this.observeTerminal(observation, terminal);
+    const baseFingerprint = terminalBaseFingerprint(turn);
+    if (observation.terminal) {
+      const incoming = terminalFingerprint(baseFingerprint, observation);
+      if (observation.terminal.status !== turn.status
+          || observation.terminal.fingerprint !== incoming) observation.conflict = true;
+      return;
+    }
+    if (observation.pendingCompleted
+        && (turn.status !== "completed"
+          || observation.pendingCompleted.baseFingerprint !== baseFingerprint)) {
+      observation.conflict = true;
+      return;
+    }
+    if (turn.status === "completed" && turn.itemsView !== "full"
+        && !finalEvidenceAvailable(observation)) {
+      observation.pendingCompleted = {
+        baseFingerprint,
+      };
+      return;
+    }
+    observation.pendingCompleted = undefined;
+    observation.terminal = { status: turn.status, fingerprint: terminalFingerprint(baseFingerprint, observation) };
   }
 
   observeItem(threadId: string, turnId: string, item: ThreadItem): void {
-    const observation = this.observations.get(key(threadId, turnId));
+    const observation = this.currentObservation(threadId, turnId);
     if (!observation || !item || typeof item.id !== "string" || !item.id) return;
     const user = exactUser(item);
-    if (item.type === "userMessage" || item.type === "agentMessage") {
-      if (!isBoundedIdentifier(item.id)) {
-        observation.conflict = true;
-        return;
-      }
-      const fingerprint = valueFingerprint(user ?? item);
-      const existing = observation.semanticItemFingerprints.get(item.id);
-      if (existing !== undefined) {
-        if (existing !== fingerprint) observation.conflict = true;
-        return;
-      }
-      if (observation.semanticItemFingerprints.size >= maximumSemanticItemIdsPerTurn) {
-        observation.conflict = true;
-        return;
-      }
-      observation.semanticItemFingerprints.set(item.id, fingerprint);
-    }
-    if (user) {
-      if (user.id !== observation.userItemId
+    if (item.type === "userMessage") {
+      if (!user || user.id !== observation.userItemId
           || user.dispatchId !== observation.dispatchId
           || taskDigest(user.task) !== observation.taskDigest
           || valueFingerprint(user) !== observation.userFingerprint) {
@@ -182,12 +202,21 @@ export class LiveTurnObservations {
       }
       return;
     }
-    if (item.type === "userMessage") {
+    if (item.type !== "agentMessage" || item.phase === "commentary") return;
+    if (!isBoundedIdentifier(item.id)) {
+      this.discardObservation(observation);
+      return;
+    }
+    if (item.id === observation.userItemId) {
       observation.conflict = true;
       return;
     }
-    if (item.type !== "agentMessage" || item.phase === "commentary") return;
     const slot = item.phase === "final_answer" ? "explicit" : "legacy";
+    const other = slot === "explicit" ? observation.legacy : observation.explicit;
+    if (other.kind === "one" && other.itemId === item.id) {
+      observation.conflict = true;
+      return;
+    }
     const before = slotFingerprint(observation[slot]);
     const fingerprint = valueFingerprint({ phase: item.phase, text: item.text });
     const current = observation[slot];
@@ -205,21 +234,27 @@ export class LiveTurnObservations {
         observation[slot] = { kind: "ambiguous" };
       }
     }
-    if (observation.terminal && valueFingerprint(before) !== valueFingerprint(slotFingerprint(observation[slot]))) {
+    const changed = valueFingerprint(before) !== valueFingerprint(slotFingerprint(observation[slot]));
+    if (observation.terminal && changed) {
       observation.conflict = true;
+    } else if (observation.pendingCompleted && finalEvidenceAvailable(observation)) {
+      observation.terminal = {
+        status: "completed",
+        fingerprint: terminalFingerprint(observation.pendingCompleted.baseFingerprint, observation),
+      };
+      observation.pendingCompleted = undefined;
     }
   }
 
   inspect(threadId: string, turnId: string, dispatchId: string, task: string): GalateaDispatchInspection | undefined {
-    const observation = this.observations.get(key(threadId, turnId));
+    const observation = this.currentObservation(threadId, turnId);
     if (!observation || observation.dispatchId !== dispatchId
         || observation.taskDigest !== taskDigest(task)) return undefined;
     if (observation.conflict) {
       return { kind: "ambiguous", threadId, source: "live", code: "LIVE_OBSERVATION_CONFLICT" };
     }
-    if (!observation.terminal) {
-      return { kind: "running", threadId, turnId, source: "live" };
-    }
+    if (observation.pendingCompleted) return undefined;
+    if (!observation.terminal) return { kind: "running", threadId, turnId, source: "live" };
     if (observation.terminal.status === "failed") {
       return { kind: "failed", threadId, turnId, source: "live", code: "TURN_FAILED" };
     }
@@ -229,12 +264,63 @@ export class LiveTurnObservations {
     return this.selectFinal(observation);
   }
 
-  private observeTerminal(observation: Observation, terminal: TerminalEvidence): void {
-    if (!observation.terminal) {
-      observation.terminal = terminal;
-    } else if (observation.terminal.status !== terminal.status
-        || observation.terminal.fingerprint !== terminal.fingerprint) {
-      observation.conflict = true;
+  isAwaitingTerminalEvidence(
+    threadId: string,
+    turnId: string,
+    dispatchId: string,
+    task: string,
+  ): boolean {
+    const observation = this.currentObservation(threadId, turnId);
+    return observation !== undefined
+      && observation.dispatchId === dispatchId
+      && observation.taskDigest === taskDigest(task)
+      && observation.pendingCompleted !== undefined
+      && !observation.conflict;
+  }
+
+  private observeStarted(threadId: string, turn: Turn, trustedResponse: boolean): void {
+    if (!isBoundedIdentifier(threadId) || !turn || typeof turn.id !== "string"
+        || !isBoundedIdentifier(turn.id)) return;
+    const currentTurnId = this.currentTurnByThread.get(threadId);
+    if (currentTurnId !== turn.id) {
+      const user = initialUser(turn);
+      const expected = this.pendingStarts.get(threadId);
+      const matchesPending = user !== undefined && expected !== undefined
+        && user.dispatchId === expected.dispatchId && taskDigest(user.task) === expected.taskDigest;
+      if (!trustedResponse && !matchesPending) return;
+      if (!user) return;
+      if (currentTurnId) {
+        this.observations.delete(key(threadId, currentTurnId));
+        this.currentTurnByThread.delete(threadId);
+      }
+      if (this.observations.size >= this.options.maximumObservations) return;
+      const observation: Observation = {
+        threadId,
+        turnId: turn.id,
+        dispatchId: user.dispatchId,
+        taskDigest: taskDigest(user.task),
+        userItemId: user.id,
+        userFingerprint: valueFingerprint(user),
+        explicit: { kind: "none" },
+        legacy: { kind: "none" },
+        conflict: false,
+      };
+      this.observations.set(key(threadId, turn.id), observation);
+      this.currentTurnByThread.set(threadId, turn.id);
+    }
+    for (const item of turn.items) this.observeItem(threadId, turn.id, item);
+  }
+
+  private currentObservation(threadId: string, turnId: string): Observation | undefined {
+    return this.currentTurnByThread.get(threadId) === turnId
+      ? this.observations.get(key(threadId, turnId))
+      : undefined;
+  }
+
+  private discardObservation(observation: Observation): void {
+    this.observations.delete(key(observation.threadId, observation.turnId));
+    if (this.currentTurnByThread.get(observation.threadId) === observation.turnId) {
+      this.currentTurnByThread.delete(observation.threadId);
     }
   }
 
@@ -255,15 +341,6 @@ export class LiveTurnObservations {
         return { kind: "failed", threadId: observation.threadId, turnId: observation.turnId, source: "live", code: "FINAL_TOO_LARGE" };
       case "text":
         return { kind: "completed", threadId: observation.threadId, turnId: observation.turnId, source: "live", final: selected.value.text };
-    }
-  }
-
-  private removeOldTerminalObservations(threadId: string, currentTurnId: string): void {
-    for (const [observationKey, observation] of this.observations) {
-      if (observation.threadId === threadId && observation.turnId !== currentTurnId
-          && observation.terminal !== undefined) {
-        this.observations.delete(observationKey);
-      }
     }
   }
 }

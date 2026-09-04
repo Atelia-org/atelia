@@ -144,12 +144,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const knownNonMessageThreadItemTypes = new Set([
-  "hookPrompt", "functionCallOutput", "plan", "reasoning", "commandExecution",
-  "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall",
-  "subAgentActivity", "webSearch", "imageView", "sleep", "imageGeneration",
-  "enteredReviewMode", "exitedReviewMode", "contextCompaction",
-]);
+function isNullableString(value: unknown): boolean {
+  return value === null || typeof value === "string";
+}
+
+function isNullableNumber(value: unknown): boolean {
+  return value === null || typeof value === "number";
+}
+
+function hasFields(value: Record<string, unknown>, fields: readonly string[]): boolean {
+  return fields.every((field) => Object.hasOwn(value, field));
+}
 
 function isThreadItem(value: unknown): value is ThreadItem {
   if (!isRecord(value) || typeof value.id !== "string" || typeof value.type !== "string") return false;
@@ -179,7 +184,59 @@ function isThreadItem(value: unknown): value is ThreadItem {
           && Array.isArray(value.memoryCitation.entries)
           && Array.isArray(value.memoryCitation.threadIds)));
   }
-  return knownNonMessageThreadItemTypes.has(value.type);
+  switch (value.type) {
+    case "hookPrompt": return Array.isArray(value.fragments);
+    case "functionCallOutput":
+      return typeof value.name === "string" && isNullableString(value.namespace)
+        && (typeof value.output === "string" || Array.isArray(value.output));
+    case "plan": return typeof value.text === "string";
+    case "reasoning":
+      return Array.isArray(value.summary) && value.summary.every((item) => typeof item === "string")
+        && Array.isArray(value.content) && value.content.every((item) => typeof item === "string");
+    case "commandExecution":
+      return isNullableString(value.pluginId) && isNullableString(value.scriptPath)
+        && typeof value.command === "string" && typeof value.cwd === "string"
+        && isNullableString(value.processId) && typeof value.source === "string"
+        && typeof value.status === "string" && Array.isArray(value.commandActions)
+        && isNullableString(value.aggregatedOutput) && isNullableNumber(value.exitCode)
+        && isNullableNumber(value.durationMs);
+    case "fileChange": return Array.isArray(value.changes) && typeof value.status === "string";
+    case "mcpToolCall":
+      return typeof value.server === "string" && typeof value.tool === "string"
+        && typeof value.status === "string" && hasFields(value, ["arguments"])
+        && (value.appContext === null || isRecord(value.appContext))
+        && isNullableString(value.pluginId)
+        && (value.readOnlyHint === null || typeof value.readOnlyHint === "boolean")
+        && (value.result === null || isRecord(value.result))
+        && (value.error === null || isRecord(value.error))
+        && isNullableNumber(value.durationMs);
+    case "dynamicToolCall":
+      return isNullableString(value.namespace) && typeof value.tool === "string"
+        && hasFields(value, ["arguments"]) && typeof value.status === "string"
+        && (value.contentItems === null || Array.isArray(value.contentItems))
+        && (value.success === null || typeof value.success === "boolean")
+        && isNullableNumber(value.durationMs);
+    case "collabAgentToolCall":
+      return typeof value.tool === "string" && typeof value.status === "string"
+        && typeof value.senderThreadId === "string" && Array.isArray(value.receiverThreadIds)
+        && isNullableString(value.prompt) && isNullableString(value.model)
+        && isNullableString(value.reasoningEffort) && isRecord(value.agentsStates);
+    case "subAgentActivity":
+      return typeof value.kind === "string" && typeof value.agentThreadId === "string"
+        && typeof value.agentPath === "string";
+    case "webSearch":
+      return typeof value.query === "string" && (value.action === null || isRecord(value.action))
+        && (value.results === null || Array.isArray(value.results));
+    case "imageView": return typeof value.path === "string";
+    case "sleep": return typeof value.durationMs === "number";
+    case "imageGeneration":
+      return typeof value.status === "string" && isNullableString(value.revisedPrompt)
+        && typeof value.result === "string" && (value.failure === null || isRecord(value.failure));
+    case "enteredReviewMode":
+    case "exitedReviewMode": return typeof value.review === "string";
+    case "contextCompaction": return true;
+    default: return false;
+  }
 }
 
 function isTurn(value: unknown): value is Turn {
@@ -376,6 +433,17 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         );
         this.assertSameGeneration(generation);
         if (live) return live;
+        if (this.liveObservations.isAwaitingTerminalEvidence(
+          input.threadId,
+          input.expectedTurnId,
+          input.dispatchId,
+          input.task,
+        )) {
+          throw new BridgeError(
+            "CODEX_PROTOCOL_ERROR",
+            "Live terminal evidence is incomplete; retry inspection.",
+          );
+        }
       }
 
       return input.expectedTurnId === null
@@ -557,7 +625,10 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
 
   private assertSameGeneration(expected: number): void {
     if (this.options.client.generation !== expected) {
-      throw new PersistentInspectionError("PAGINATION_CURSOR_INVALID");
+      throw new BridgeError(
+        "CODEX_PROTOCOL_ERROR",
+        "Codex app-server generation changed during dispatch inspection.",
+      );
     }
   }
 
@@ -567,7 +638,11 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     if (notification.method === "turn/started" || notification.method === "turn/completed") {
       if ("threadId" in params && typeof params.threadId === "string"
           && "turn" in params && isTurn(params.turn)) {
-        this.liveObservations.observeTurn(params.threadId, params.turn);
+        if (notification.method === "turn/started") {
+          this.liveObservations.observeTurnStarted(params.threadId, params.turn);
+        } else {
+          this.liveObservations.observeTurnCompleted(params.threadId, params.turn);
+        }
       }
     } else if (notification.method === "item/completed") {
       if ("threadId" in params && typeof params.threadId === "string"
@@ -884,7 +959,11 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     clientUserMessageId?: string,
   ): Promise<GalateaStartedTurn> {
     this.throwIfStopped();
-    const response = await this.options.client.request<TurnStartResponse>("turn/start", {
+    const expectation = clientUserMessageId === undefined
+      ? undefined
+      : this.liveObservations.beginStart(threadId, clientUserMessageId, task);
+    try {
+      const response = await this.options.client.request<TurnStartResponse>("turn/start", {
         threadId,
         ...(clientUserMessageId === undefined ? {} : { clientUserMessageId }),
         input: [{ type: "text", text: task, text_elements: [] }],
@@ -894,15 +973,18 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         sandboxPolicy: preciseSandbox(mode, cwd, localCommandNetwork),
         summary: "concise",
         ...(this.profile.outputSchema === undefined ? {} : { outputSchema: this.profile.outputSchema }),
-    });
-    this.throwIfStopped();
-    if (!isTurn(response.turn) || response.turn.id.length === 0) {
-      throw new BridgeError("CODEX_PROTOCOL_ERROR", "Codex returned an invalid turn identity.");
+      });
+      this.throwIfStopped();
+      if (!isTurn(response.turn) || response.turn.id.length === 0) {
+        throw new BridgeError("CODEX_PROTOCOL_ERROR", "Codex returned an invalid turn identity.");
+      }
+      const turnId = response.turn.id;
+      this.liveObservations.observeStartResponse(threadId, response.turn);
+      this.options.store.beginTurn(threadId, turnId);
+      return { threadId, turnId };
+    } finally {
+      this.liveObservations.endStart(expectation);
     }
-    const turnId = response.turn.id;
-    this.liveObservations.observeTurn(threadId, response.turn);
-    this.options.store.beginTurn(threadId, turnId);
-    return { threadId, turnId };
   }
 
   private async readOwnedThread(threadId: string, includeTurns: boolean): Promise<Thread> {

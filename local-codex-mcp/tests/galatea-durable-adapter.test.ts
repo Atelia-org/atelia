@@ -162,7 +162,7 @@ test("durable adapter maps inspection outcomes and transport unavailability with
 
   value.backend.inspectError = new BridgeError(
     "CODEX_PROTOCOL_ERROR",
-    "temporary read failure",
+    "app-server generation changed during inspection",
   );
   await value.adapter.handle(frame("inspect-dispatch", "request-unavailable"));
   const unavailable = value.frames[1];
@@ -171,6 +171,7 @@ test("durable adapter maps inspection outcomes and transport unavailability with
     unavailable?.type === "failed" && unavailable.code,
     "INSPECTION_UNAVAILABLE",
   );
+  assert.equal(unavailable !== undefined && Object.hasOwn(unavailable, "source"), false);
 });
 
 test("durable adapter preserves Accepted selector and retryable visibility outcome", async () => {

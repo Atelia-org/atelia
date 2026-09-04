@@ -70,23 +70,25 @@ test("exact turn evidence fails closed on selector, body, and final ambiguity", 
 test("live observations retain terminal across late running and collect item/completed final", () => {
   const observations = new LiveTurnObservations({ maximumObservations: 2, maximumFinalUtf8Bytes: 100 });
   const running = turn("t", "inProgress", [userMessage("d", "task")]);
-  observations.observeTurn("thread", running);
+  observations.observeStartResponse("thread", running);
   assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "running");
   observations.observeItem("thread", "t", agentMessage("final"));
-  observations.observeTurn("thread", turn("t", "completed", [userMessage("d", "task")]));
+  observations.observeTurnCompleted("thread", turn("t", "completed", [userMessage("d", "task")]));
   assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
     kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "final",
   });
-  observations.observeTurn("thread", running);
+  observations.observeStartResponse("thread", running);
   assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "completed");
 });
 
 test("terminal and item notifications before an incomplete late start response still win", () => {
   const observations = new LiveTurnObservations({ maximumObservations: 2, maximumFinalUtf8Bytes: 100 });
-  observations.observeTurn("thread", turn("t", "inProgress", [userMessage("d", "task")]));
+  const expectation = observations.beginStart("thread", "d", "task");
+  observations.observeTurnStarted("thread", turn("t", "inProgress", [userMessage("d", "task")]));
   observations.observeItem("thread", "t", agentMessage("early final"));
-  observations.observeTurn("thread", turn("t", "completed", []));
-  observations.observeTurn("thread", turn("t", "inProgress", [userMessage("d", "task")]));
+  observations.observeTurnCompleted("thread", turn("t", "completed", []));
+  observations.observeStartResponse("thread", turn("t", "inProgress", [userMessage("d", "task")]));
+  observations.endStart(expectation);
   assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
     kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "early final",
   });
@@ -94,11 +96,11 @@ test("terminal and item notifications before an incomplete late start response s
 
 test("live observations are bounded, clearable, digest exact UTF-16, and conflict closed", () => {
   const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 3 });
-  observations.observeTurn("thread", turn("t1", "inProgress", [userMessage("d", "\ud800")]));
-  observations.observeTurn("thread", turn("t2", "inProgress", [userMessage("d2", "task2")]));
+  observations.observeStartResponse("thread", turn("t1", "inProgress", [userMessage("d", "\ud800")]));
+  observations.observeStartResponse("other-thread", turn("t2", "inProgress", [userMessage("d2", "task2")]));
   assert.equal(observations.inspect("thread", "t1", "d", "\ud800")?.kind, "running");
   assert.equal(observations.inspect("thread", "t1", "d", "\ufffd"), undefined);
-  assert.equal(observations.inspect("thread", "t2", "d2", "task2"), undefined);
+  assert.equal(observations.inspect("other-thread", "t2", "d2", "task2"), undefined);
   observations.observeItem("thread", "t1", agentMessage("one", "same"));
   observations.observeItem("thread", "t1", agentMessage("two", "same"));
   assert.equal(observations.inspect("thread", "t1", "d", "\ud800")?.kind, "ambiguous");
@@ -106,9 +108,9 @@ test("live observations are bounded, clearable, digest exact UTF-16, and conflic
   assert.equal(observations.inspect("thread", "t1", "d", "\ud800"), undefined);
 
   const boundedFinal = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 3 });
-  boundedFinal.observeTurn("thread", turn("terminal", "inProgress", [userMessage("d", "task")]));
+  boundedFinal.observeStartResponse("thread", turn("terminal", "inProgress", [userMessage("d", "task")]));
   boundedFinal.observeItem("thread", "terminal", agentMessage("oversize"));
-  boundedFinal.observeTurn("thread", turn("terminal", "completed", [userMessage("d", "task")]));
+  boundedFinal.observeTurnCompleted("thread", turn("terminal", "completed", [userMessage("d", "task")]));
   const result = boundedFinal.inspect("thread", "terminal", "d", "task");
   assert.equal(result?.kind, "failed");
   if (result?.kind === "failed") assert.equal(result.code, "FINAL_TOO_LARGE");
@@ -116,10 +118,10 @@ test("live observations are bounded, clearable, digest exact UTF-16, and conflic
 
 test("live final selection prefers a small explicit final over an oversize legacy candidate", () => {
   const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 8 });
-  observations.observeTurn("thread", turn("t", "inProgress", [userMessage("d", "task")]));
+  observations.observeStartResponse("thread", turn("t", "inProgress", [userMessage("d", "task")]));
   observations.observeItem("thread", "t", agentMessage("legacy text is oversize", "legacy", null));
   observations.observeItem("thread", "t", agentMessage("final", "explicit", "final_answer"));
-  observations.observeTurn("thread", turn("t", "completed", [userMessage("d", "task")]));
+  observations.observeTurnCompleted("thread", turn("t", "completed", [userMessage("d", "task")]));
   assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
     kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "final",
   });
@@ -129,11 +131,11 @@ test("live terminal evidence is first-wins, duplicate-idempotent, and conflictin
   const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
   const running = turn("t", "inProgress", [userMessage("d", "task")]);
   const completed = turn("t", "completed", [userMessage("d", "task"), agentMessage("final")]);
-  observations.observeTurn("thread", running);
-  observations.observeTurn("thread", completed);
-  observations.observeTurn("thread", completed);
+  observations.observeStartResponse("thread", running);
+  observations.observeTurnCompleted("thread", completed);
+  observations.observeTurnCompleted("thread", completed);
   assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "completed");
-  observations.observeTurn("thread", turn("t", "failed", [userMessage("d", "task")]));
+  observations.observeTurnCompleted("thread", turn("t", "failed", [userMessage("d", "task")]));
   const conflict = observations.inspect("thread", "t", "d", "task");
   assert.equal(conflict?.kind, "ambiguous");
   if (conflict?.kind === "ambiguous") assert.equal(conflict.code, "LIVE_OBSERVATION_CONFLICT");
@@ -141,10 +143,11 @@ test("live terminal evidence is first-wins, duplicate-idempotent, and conflictin
 
 test("a new turn on the fixed thread replaces old terminal capacity", () => {
   const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
-  observations.observeTurn("thread", turn("old", "completed", [
+  observations.observeStartResponse("thread", turn("old", "inProgress", [userMessage("old-dispatch", "old task")]));
+  observations.observeTurnCompleted("thread", turn("old", "completed", [
     userMessage("old-dispatch", "old task"), agentMessage("old final"),
   ]));
-  observations.observeTurn("thread", turn("new", "inProgress", [userMessage("new-dispatch", "new task")]));
+  observations.observeStartResponse("thread", turn("new", "inProgress", [userMessage("new-dispatch", "new task")]));
   assert.equal(observations.inspect("thread", "old", "old-dispatch", "old task"), undefined);
   assert.deepEqual(observations.inspect("thread", "new", "new-dispatch", "new task"), {
     kind: "running", threadId: "thread", turnId: "new", source: "live",
@@ -153,16 +156,56 @@ test("a new turn on the fixed thread replaces old terminal capacity", () => {
 
 test("live semantic item identity metadata is bounded and duplicate IDs fail closed", () => {
   const duplicate = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
-  duplicate.observeTurn("thread", turn("t", "inProgress", [userMessage("d", "task", "shared")]));
+  duplicate.observeStartResponse("thread", turn("t", "inProgress", [userMessage("d", "task", "shared")]));
   duplicate.observeItem("thread", "t", agentMessage("final", "shared"));
   assert.equal(duplicate.inspect("thread", "t", "d", "task")?.kind, "ambiguous");
 
-  const capped = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
-  capped.observeTurn("thread", turn("t", "inProgress", [userMessage("d", "task")]));
-  for (let index = 0; index < 64; index += 1) {
-    capped.observeItem("thread", "t", agentMessage("ignored commentary", `commentary-${index}`, "commentary"));
+  const commentary = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+  commentary.observeStartResponse("thread", turn("t", "inProgress", [userMessage("d", "task")]));
+  for (let index = 0; index < 1_000; index += 1) {
+    commentary.observeItem("thread", "t", agentMessage("ignored commentary", `commentary-${index}`, "commentary"));
   }
-  const overflow = capped.inspect("thread", "t", "d", "task");
-  assert.equal(overflow?.kind, "ambiguous");
-  if (overflow?.kind === "ambiguous") assert.equal(overflow.code, "LIVE_OBSERVATION_CONFLICT");
+  assert.equal(commentary.inspect("thread", "t", "d", "task")?.kind, "running");
 });
+
+test("late old terminal events cannot replace or corrupt the current fixed-thread turn", () => {
+  const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+  const oldRunning = turn("old", "inProgress", [userMessage("old-dispatch", "old task")]);
+  const oldCompleted = turn("old", "completed", [
+    userMessage("old-dispatch", "old task"), agentMessage("old final", "old-final"),
+  ]);
+  const newRunning = turn("new", "inProgress", [userMessage("new-dispatch", "new task")]);
+  const newCompleted = turn("new", "completed", [
+    userMessage("new-dispatch", "new task"), agentMessage("new final", "new-final"),
+  ]);
+  observations.observeStartResponse("thread", oldRunning);
+  observations.observeTurnCompleted("thread", oldCompleted);
+  observations.observeStartResponse("thread", newRunning);
+  observations.observeTurnCompleted("thread", newCompleted);
+  observations.observeTurnCompleted("thread", oldCompleted);
+  observations.observeItem("thread", "old", agentMessage("late old final", "old-late"));
+  observations.observeTurnStarted("thread", oldRunning);
+
+  assert.equal(observations.inspect("thread", "old", "old-dispatch", "old task"), undefined);
+  assert.deepEqual(observations.inspect("thread", "new", "new-dispatch", "new task"), {
+    kind: "completed", threadId: "thread", turnId: "new", source: "live", final: "new final",
+  });
+});
+
+for (const itemsView of ["summary", "notLoaded"] as const) {
+  test(`incomplete ${itemsView} completion waits for a late final item`, () => {
+    const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+    observations.observeStartResponse("thread", turn("t", "inProgress", [userMessage("d", "task")]));
+    observations.observeTurnCompleted("thread", {
+      ...turn("t", "completed", []),
+      itemsView,
+    });
+    assert.equal(observations.inspect("thread", "t", "d", "task"), undefined);
+    assert.equal(observations.isAwaitingTerminalEvidence("thread", "t", "d", "task"), true);
+    observations.observeItem("thread", "t", agentMessage("late final"));
+    assert.equal(observations.isAwaitingTerminalEvidence("thread", "t", "d", "task"), false);
+    assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+      kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "late final",
+    });
+  });
+}
