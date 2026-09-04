@@ -34,6 +34,7 @@ let lastThreadStartParams: Record<string, unknown> | undefined;
 const allTurnParams: Record<string, unknown>[] = [];
 let threadStartCount = 0;
 let threadReadCount = 0;
+const threadReadIncludeTurns: boolean[] = [];
 let threadNameSetCount = 0;
 let threadResumeCount = 0;
 let turnStartCount = 0;
@@ -220,6 +221,7 @@ lines.on("line", (line) => {
           allTurnParams,
           threadStartCount,
           threadReadCount,
+          threadReadIncludeTurns,
           threadNameSetCount,
           threadResumeCount,
           turnStartCount,
@@ -245,6 +247,16 @@ lines.on("line", (line) => {
       if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
       else {
         thread.cwd = message.params?.cwd;
+        persistState();
+        send({ id: message.id, result: {} });
+      }
+      break;
+    }
+    case "test/setThreadName": {
+      const thread = threads.get(String(message.params?.threadId));
+      if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
+      else {
+        thread.name = message.params?.name;
         persistState();
         send({ id: message.id, result: {} });
       }
@@ -291,6 +303,7 @@ lines.on("line", (line) => {
     }
     case "thread/read": {
       threadReadCount += 1;
+      threadReadIncludeTurns.push(message.params?.includeTurns === true);
       const thread = threads.get(String(message.params?.threadId));
       if (!thread) {
         send({ id: message.id, error: { code: -32001, message: "Thread not found" } });

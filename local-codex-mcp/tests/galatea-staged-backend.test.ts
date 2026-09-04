@@ -37,10 +37,11 @@ async function harness(
     requestTimeoutMs: options.requestTimeoutMs ?? 1_000,
     logger: new NullLogger(),
   });
+  const store = new TaskStore(20_000, 100);
   const backend = new CodexBackend({
     client,
     pathPolicy: await PathPolicy.create([root], root),
-    store: new TaskStore(20_000, 100),
+    store,
     logger: new NullLogger(),
     profile: galateaCodexBackendProfile,
   });
@@ -48,7 +49,48 @@ async function harness(
     await backend.stop();
     await rm(root, { recursive: true });
   });
-  return { root, client, backend, ...(lifecycleFile ? { lifecycleFile } : {}) };
+  return { root, client, backend, store, ...(lifecycleFile ? { lifecycleFile } : {}) };
+}
+
+type Harness = Awaited<ReturnType<typeof harness>>;
+
+async function startLongTurn(value: Harness, dispatchId: string) {
+  const task = `[LONG][NATURAL] ${dispatchId}`;
+  const binding = await value.backend.ensureBinding({
+    cwd: value.root,
+    mode: "work",
+    tools,
+  });
+  const accepted = await value.backend.startBoundTurn({
+    threadId: binding.threadId,
+    expectedCwd: value.root,
+    dispatchId,
+    task,
+    mode: "work",
+    localCommandNetwork: false,
+    tools,
+  });
+  return { ...accepted, dispatchId, task };
+}
+
+async function inspectLongTurn(
+  value: Harness,
+  turn: Awaited<ReturnType<typeof startLongTurn>>,
+) {
+  return value.backend.inspectDispatch({
+    threadId: turn.threadId,
+    expectedCwd: value.root,
+    dispatchId: turn.dispatchId,
+    task: turn.task,
+    maximumFinalUtf8Bytes: 20_000,
+  });
+}
+
+async function readThreadReadTrace(value: Harness) {
+  return value.client.request<{
+    threadReadCount: number;
+    threadReadIncludeTurns: boolean[];
+  }>("test/lastRequests", {});
 }
 
 test("ensureBinding establishes and verifies an empty owned thread without starting a turn", async (t) => {
@@ -153,6 +195,120 @@ test("startBoundTurn uses the known binding and inspectDispatch reads exact pers
     text_elements: [],
   }]);
   assert.equal(Object.hasOwn(requests.allTurnParams[0] ?? {}, "outputSchema"), false);
+});
+
+test("validated running dispatches use metadata until terminal inspection", async (t) => {
+  const value = await harness(t);
+  const turn = await startLongTurn(value, "long-mail");
+  const before = await readThreadReadTrace(value);
+
+  const first = await inspectLongTurn(value, turn);
+  const second = await inspectLongTurn(value, turn);
+
+  assert.deepEqual(first, {
+    kind: "running",
+    threadId: turn.threadId,
+    turnId: turn.turnId,
+  });
+  assert.deepEqual(second, first);
+  const runningTrace = await readThreadReadTrace(value);
+  assert.deepEqual(
+    runningTrace.threadReadIncludeTurns.slice(before.threadReadCount),
+    [true, false],
+  );
+
+  await value.client.request("turn/interrupt", {
+    threadId: turn.threadId,
+    turnId: turn.turnId,
+  });
+  const settled = await value.store.waitForTurn(
+    turn.threadId,
+    turn.turnId,
+    1_000,
+  );
+  assert.equal(settled.status, "interrupted");
+  const beforeTerminal = await readThreadReadTrace(value);
+
+  const terminal = await inspectLongTurn(value, turn);
+
+  assert.deepEqual(terminal, {
+    kind: "failed",
+    threadId: turn.threadId,
+    turnId: turn.turnId,
+    code: "TURN_INTERRUPTED",
+  });
+  const terminalTrace = await readThreadReadTrace(value);
+  assert.deepEqual(
+    terminalTrace.threadReadIncludeTurns.slice(beforeTerminal.threadReadCount),
+    [true],
+  );
+});
+
+test("running metadata fast path still rejects ownership drift", async (t) => {
+  const value = await harness(t);
+  const turn = await startLongTurn(value, "ownership-drift-mail");
+  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+  await value.client.request("test/setThreadName", {
+    threadId: turn.threadId,
+    name: "not-owned",
+  });
+  const before = await readThreadReadTrace(value);
+
+  const inspection = await inspectLongTurn(value, turn);
+
+  assert.deepEqual(inspection, {
+    kind: "ambiguous",
+    threadId: turn.threadId,
+    code: "THREAD_OWNERSHIP_MISMATCH",
+  });
+  const after = await readThreadReadTrace(value);
+  assert.deepEqual(
+    after.threadReadIncludeTurns.slice(before.threadReadCount),
+    [false],
+  );
+});
+
+test("running metadata fast path still rejects cwd drift", async (t) => {
+  const value = await harness(t);
+  const turn = await startLongTurn(value, "cwd-drift-mail");
+  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+  await value.client.request("test/setThreadCwd", {
+    threadId: turn.threadId,
+    cwd: os.tmpdir(),
+  });
+  const before = await readThreadReadTrace(value);
+
+  const inspection = await inspectLongTurn(value, turn);
+
+  assert.deepEqual(inspection, {
+    kind: "ambiguous",
+    threadId: turn.threadId,
+    code: "THREAD_CWD_MISMATCH",
+  });
+  const after = await readThreadReadTrace(value);
+  assert.deepEqual(
+    after.threadReadIncludeTurns.slice(before.threadReadCount),
+    [false],
+  );
+});
+
+test("app-server restart discards running cache and performs full inspection", async (t) => {
+  const value = await harness(t, { persistentFixture: true });
+  const turn = await startLongTurn(value, "restart-running-mail");
+  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+
+  await assert.rejects(value.client.request("test/crash", {}));
+
+  const recovered = await inspectLongTurn(value, turn);
+
+  assert.deepEqual(recovered, {
+    kind: "running",
+    threadId: turn.threadId,
+    turnId: turn.turnId,
+  });
+  const restartedTrace = await readThreadReadTrace(value);
+  assert.deepEqual(restartedTrace.threadReadIncludeTurns, [true]);
 });
 
 test("startBoundTurn accepts an exact resume response that omits its optional name", async (t) => {

@@ -116,17 +116,38 @@ export interface CodexBackendOptions {
   profile?: CodexBackendProfile;
 }
 
+interface VerifiedRunningDispatch {
+  threadId: string;
+  dispatchId: string;
+  task: string;
+  turnId: string;
+}
+
+type InspectionThreadRead =
+  | { ok: true; thread: Thread }
+  | { ok: false; inspection: GalateaDispatchInspection };
+
 export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   private authenticated = false;
   private readonly continueReservations = new Set<string>();
   private readonly profile: CodexBackendProfile;
+  // This is only a warm-process optimization. Each thread can retain at most
+  // its current fully verified running dispatch; terminal/cold paths always
+  // return to durable full-history inspection.
+  private readonly verifiedRunningDispatches = new Map<
+    string,
+    VerifiedRunningDispatch
+  >();
   private stopped = false;
   private stopPromise?: Promise<void>;
 
   constructor(private readonly options: CodexBackendOptions) {
     this.profile = { ...(options.profile ?? mcpCodexBackendProfile) };
     this.options.client.subscribe((notification) => {
-      if (notification.method === "bridge/processExited") this.authenticated = false;
+      if (notification.method === "bridge/processExited") {
+        this.authenticated = false;
+        this.verifiedRunningDispatches.clear();
+      }
       this.options.store.handleNotification(notification);
     });
   }
@@ -140,6 +161,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     if (this.stopPromise) return this.stopPromise;
     this.stopped = true;
     this.authenticated = false;
+    this.verifiedRunningDispatches.clear();
     this.stopPromise = this.options.client.stop();
     return this.stopPromise;
   }
@@ -237,58 +259,50 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     await this.ensureReady();
     this.throwIfStopped();
     const expectedCwd = await this.options.pathPolicy.resolveCwd(input.expectedCwd);
-    let response: ThreadReadResponse;
-    try {
-      response = await this.options.client.request<ThreadReadResponse>("thread/read", {
-        threadId: input.threadId,
-        includeTurns: true,
-      });
-    } catch (error) {
-      const bridgeError = asBridgeError(error);
-      if (bridgeError.code === "THREAD_NOT_FOUND") {
+    const verified = this.verifiedRunningDispatches.get(input.threadId);
+    const runtime = this.options.store.snapshot(input.threadId);
+    if (
+      verified?.threadId === input.threadId
+      && verified.dispatchId === input.dispatchId
+      && verified.task === input.task
+      && runtime.status === "running"
+      && runtime.activeTurnId === verified.turnId
+    ) {
+      const metadata = await this.readInspectionThread(
+        input.threadId,
+        expectedCwd,
+        false,
+      );
+      if (!metadata.ok) {
+        this.verifiedRunningDispatches.delete(input.threadId);
+        return metadata.inspection;
+      }
+      const confirmedRuntime = this.options.store.snapshot(input.threadId);
+      if (
+        metadata.thread.status.type === "active"
+        && confirmedRuntime.status === "running"
+        && confirmedRuntime.activeTurnId === verified.turnId
+        && this.verifiedRunningDispatches.get(input.threadId) === verified
+      ) {
         return {
-          kind: "ambiguous",
+          kind: "running",
           threadId: input.threadId,
-          code: "THREAD_NOT_FOUND",
+          turnId: verified.turnId,
         };
       }
-      throw bridgeError;
+      this.verifiedRunningDispatches.delete(input.threadId);
+    } else if (verified !== undefined) {
+      this.verifiedRunningDispatches.delete(input.threadId);
     }
-    this.throwIfStopped();
-    const thread = response.thread;
-    if (!thread || thread.id !== input.threadId) {
-      return {
-        kind: "ambiguous",
-        threadId: input.threadId,
-        code: "THREAD_ID_MISMATCH",
-      };
-    }
-    if (thread.name !== this.ownershipName(input.threadId)) {
-      return {
-        kind: "ambiguous",
-        threadId: input.threadId,
-        code: "THREAD_OWNERSHIP_MISMATCH",
-      };
-    }
-    let actualCwd: string;
-    try {
-      actualCwd = await this.options.pathPolicy.resolveCwd(thread.cwd);
-    } catch {
-      return {
-        kind: "ambiguous",
-        threadId: input.threadId,
-        code: "THREAD_CWD_MISMATCH",
-      };
-    }
-    if (actualCwd !== expectedCwd) {
-      return {
-        kind: "ambiguous",
-        threadId: input.threadId,
-        code: "THREAD_CWD_MISMATCH",
-      };
-    }
-    return classifyGalateaDispatch(
-      thread,
+
+    const full = await this.readInspectionThread(
+      input.threadId,
+      expectedCwd,
+      true,
+    );
+    if (!full.ok) return full.inspection;
+    const inspection = classifyGalateaDispatch(
+      full.thread,
       input.dispatchId,
       input.task,
       {
@@ -296,6 +310,96 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         maximumFinalUtf8Bytes: input.maximumFinalUtf8Bytes,
       },
     );
+    const confirmedRuntime = this.options.store.snapshot(input.threadId);
+    if (
+      inspection.kind === "running"
+      && confirmedRuntime.status === "running"
+      && confirmedRuntime.activeTurnId === inspection.turnId
+    ) {
+      this.verifiedRunningDispatches.set(input.threadId, {
+        threadId: input.threadId,
+        dispatchId: input.dispatchId,
+        task: input.task,
+        turnId: inspection.turnId,
+      });
+    } else {
+      this.verifiedRunningDispatches.delete(input.threadId);
+    }
+    return inspection;
+  }
+
+  private async readInspectionThread(
+    threadId: string,
+    expectedCwd: string,
+    includeTurns: boolean,
+  ): Promise<InspectionThreadRead> {
+    let response: ThreadReadResponse;
+    try {
+      response = await this.options.client.request<ThreadReadResponse>("thread/read", {
+        threadId,
+        includeTurns,
+      });
+    } catch (error) {
+      const bridgeError = asBridgeError(error);
+      if (bridgeError.code === "THREAD_NOT_FOUND") {
+        return {
+          ok: false,
+          inspection: {
+            kind: "ambiguous",
+            threadId,
+            code: "THREAD_NOT_FOUND",
+          },
+        };
+      }
+      throw bridgeError;
+    }
+    this.throwIfStopped();
+    const thread = response.thread;
+    if (!thread || thread.id !== threadId) {
+      return {
+        ok: false,
+        inspection: {
+          kind: "ambiguous",
+          threadId,
+          code: "THREAD_ID_MISMATCH",
+        },
+      };
+    }
+    if (thread.name !== this.ownershipName(threadId)) {
+      return {
+        ok: false,
+        inspection: {
+          kind: "ambiguous",
+          threadId,
+          code: "THREAD_OWNERSHIP_MISMATCH",
+        },
+      };
+    }
+    let actualCwd: string;
+    try {
+      actualCwd = await this.options.pathPolicy.resolveCwd(thread.cwd);
+    } catch {
+      return {
+        ok: false,
+        inspection: {
+          kind: "ambiguous",
+          threadId,
+          code: "THREAD_CWD_MISMATCH",
+        },
+      };
+    }
+    this.throwIfStopped();
+    if (actualCwd !== expectedCwd) {
+      return {
+        ok: false,
+        inspection: {
+          kind: "ambiguous",
+          threadId,
+          code: "THREAD_CWD_MISMATCH",
+        },
+      };
+    }
+    return { ok: true, thread };
   }
 
   async delegate(input: DelegateTaskInput): Promise<TaskSnapshot> {
