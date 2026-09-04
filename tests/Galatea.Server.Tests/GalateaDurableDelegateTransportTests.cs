@@ -257,18 +257,19 @@ public sealed class GalateaDurableDelegateTransportTests {
     }
 
     [Theory]
-    [InlineData("missing-source")]
-    [InlineData("wrong-source-case")]
-    [InlineData("extra-property")]
-    [InlineData("duplicate-property")]
-    [InlineData("accepted-not-found")]
-    [InlineData("outcome-unknown-unavailable")]
-    [InlineData("not-found-live")]
-    [InlineData("unavailable-live")]
-    [InlineData("unavailable-wrong-code")]
-    [InlineData("wrong-returned-turn")]
+    [InlineData("missing-source", false)]
+    [InlineData("wrong-source-case", false)]
+    [InlineData("extra-property", false)]
+    [InlineData("duplicate-property", false)]
+    [InlineData("accepted-not-found", true)]
+    [InlineData("outcome-unknown-unavailable", true)]
+    [InlineData("not-found-live", false)]
+    [InlineData("unavailable-live", false)]
+    [InlineData("unavailable-wrong-code", false)]
+    [InlineData("wrong-returned-turn", true)]
     public async Task InvalidInspectionFrameOrSelectorCombinationIsFatal(
-        string kind
+        string kind,
+        bool selectorMismatch
     ) {
         string response = kind switch {
             "missing-source" =>
@@ -320,9 +321,16 @@ public sealed class GalateaDurableDelegateTransportTests {
                         CancellationToken.None
                     ));
 
-        Assert.Equal("INSPECTION_UNAVAILABLE", failure.Code);
         Assert.Equal(
-            GalateaDurableDelegateFailurePolicy.InspectionUnavailable,
+            selectorMismatch
+                ? "INSPECTION_SELECTOR_MISMATCH"
+                : "INSPECTION_UNAVAILABLE",
+            failure.Code
+        );
+        Assert.Equal(
+            selectorMismatch
+                ? GalateaDurableDelegateFailurePolicy.DeterministicConflict
+                : GalateaDurableDelegateFailurePolicy.InspectionUnavailable,
             failure.FailurePolicy
         );
     }
@@ -355,7 +363,7 @@ public sealed class GalateaDurableDelegateTransportTests {
     }
 
     [Fact]
-    public async Task GenericAcceptedTurnNotVisibleFailureRemainsRetryable() {
+    public async Task GenericAcceptedTurnNotVisibleFailureIsNotSemantic() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
             printf '%s\n' '{"v":3,"type":"ready"}'
@@ -385,8 +393,55 @@ public sealed class GalateaDurableDelegateTransportTests {
 
         Assert.Equal("ACCEPTED_TURN_NOT_VISIBLE", failure.Code);
         Assert.Equal(
-            GalateaDurableDelegateFailurePolicy.InspectionUnavailable,
+            GalateaDurableDelegateFailurePolicy.FatalTransport,
             failure.FailurePolicy
+        );
+    }
+
+    [Theory]
+    [InlineData("DISPATCH_TURN_MISMATCH")]
+    [InlineData("LIVE_OBSERVATION_CONFLICT")]
+    [InlineData("PAGE_SHAPE_INVALID")]
+    [InlineData("PAGINATION_CURSOR_INVALID")]
+    [InlineData("PAGINATION_CURSOR_LOOP")]
+    public async Task V3PaginationAndLiveAmbiguitiesRemainSemantic(
+        string code
+    ) {
+        string source = code == "LIVE_OBSERVATION_CONFLICT"
+            ? "live"
+            : "persistent";
+        using var fixture = new GalateaSidecarProcessFixture(
+            $$"""
+            printf '%s\n' '{"v":3,"type":"ready"}'
+            IFS= read -r line
+            request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
+            dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
+            thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+            printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"ambiguous","code":"{{code}}","source":"{{source}}"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            while IFS= read -r ignored; do :; done
+            """
+        );
+        await using GalateaCodexDurableSidecarClient client =
+            fixture.CreateV3Client();
+
+        GalateaDelegateDispatchInspection inspection =
+            await client.InspectDispatchAsync(
+                GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
+                    "dispatch-1",
+                    "thread-fixed",
+                    "task"
+                ),
+                CancellationToken.None
+            );
+
+        var ambiguous = Assert.IsType<
+            GalateaDelegateDispatchInspection.Ambiguous>(inspection);
+        Assert.Equal(code, ambiguous.Code);
+        Assert.Equal(
+            source == "live"
+                ? GalateaDelegateInspectionSource.Live
+                : GalateaDelegateInspectionSource.Persistent,
+            ambiguous.Source
         );
     }
 
@@ -691,6 +746,53 @@ public sealed class GalateaDurableDelegateTransportTests {
     }
 
     [Fact]
+    public async Task DisposeCompletesInspectionWithoutAggregateDeadline() {
+        using var fixture = new GalateaSidecarProcessFixture(
+            $$"""
+            printf '%s\n' '{"v":3,"type":"ready"}'
+            IFS= read -r line
+            printf '%s\n' "$line" > {{Q("INPUT")}}
+            while IFS= read -r ignored; do :; done
+            printf '%s' 'graceful-eof' > {{Q("ENV")}}
+            """
+        );
+        GalateaCodexDurableSidecarClient client = fixture.CreateV3Client();
+        Task? dispose = null;
+        try {
+            Task<GalateaDelegateDispatchInspection> pending =
+                client.InspectDispatchAsync(
+                    GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
+                        "dispatch-1",
+                        "thread-fixed",
+                        "task"
+                    ),
+                    CancellationToken.None
+                );
+            await WaitForLinesAsync(fixture.InputPath, 1);
+
+            dispose = client.DisposeAsync().AsTask();
+            GalateaDurableDelegateTransportException failure =
+                await Assert.ThrowsAsync<
+                    GalateaDurableDelegateTransportException>(async () =>
+                        await pending.WaitAsync(Deadline));
+            await dispose.WaitAsync(Deadline);
+
+            Assert.Equal("INSPECTION_UNAVAILABLE", failure.Code);
+            Assert.Equal(1, client.GenerationCountForTest);
+            Assert.Equal("graceful-eof",
+                File.ReadAllText(fixture.EnvironmentPath));
+        }
+        finally {
+            if (dispose is null) {
+                await client.DisposeAsync();
+            }
+            else if (!dispose.IsCompleted) {
+                await dispose.WaitAsync(Deadline);
+            }
+        }
+    }
+
+    [Fact]
     public async Task CancelledInFlightInspectionKeepsGenerationForLateResponse() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
@@ -880,11 +982,16 @@ public sealed class GalateaDurableDelegateTransportTests {
     [InlineData(
         "inspect-dispatch",
         "ACCEPTED_TURN_NOT_VISIBLE",
-        (int)GalateaDurableDelegateFailurePolicy.InspectionUnavailable
+        (int)GalateaDurableDelegateFailurePolicy.FatalTransport
     )]
     [InlineData(
         "protocol",
         "DUPLICATE_DISPATCH_ID",
+        (int)GalateaDurableDelegateFailurePolicy.DeterministicConflict
+    )]
+    [InlineData(
+        "inspect-dispatch",
+        "INSPECTION_SELECTOR_MISMATCH",
         (int)GalateaDurableDelegateFailurePolicy.DeterministicConflict
     )]
     [InlineData(

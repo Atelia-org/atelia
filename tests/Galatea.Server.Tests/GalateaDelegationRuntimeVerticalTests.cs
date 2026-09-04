@@ -777,7 +777,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
                     request.DispatchId,
                     request.ThreadId,
                     call.TurnId,
-                    failureCode
+                    failureCode,
+                    GalateaDelegateInspectionSource.Persistent
                 );
             }
             string? final = Volatile.Read(ref call.Final);
@@ -785,13 +786,15 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
                 ? new GalateaDelegateDispatchInspection.Running(
                     request.DispatchId,
                     request.ThreadId,
-                    call.TurnId
+                    call.TurnId,
+                    GalateaDelegateInspectionSource.Persistent
                 )
                 : new GalateaDelegateDispatchInspection.Completed(
                     request.DispatchId,
                     request.ThreadId,
                     call.TurnId,
-                    final
+                    final,
+                    GalateaDelegateInspectionSource.Persistent
                 );
         }
 

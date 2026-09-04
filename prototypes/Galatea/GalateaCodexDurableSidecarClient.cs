@@ -52,7 +52,12 @@ internal sealed class GalateaCodexDurableSidecarClient
         "DISPATCH_ID_NOT_UNIQUE",
         "DISPATCH_BODY_MISMATCH",
         "TURN_STATUS_INVALID",
-        "FINAL_AMBIGUOUS"
+        "FINAL_AMBIGUOUS",
+        "DISPATCH_TURN_MISMATCH",
+        "LIVE_OBSERVATION_CONFLICT",
+        "PAGE_SHAPE_INVALID",
+        "PAGINATION_CURSOR_INVALID",
+        "PAGINATION_CURSOR_LOOP"
     };
 
     private readonly object _operationGate = new();
@@ -960,7 +965,10 @@ internal sealed class GalateaCodexDurableSidecarClient
             PendingInspection pending = Take<PendingInspection>(requestId);
             if (!pending.Matches(dispatchId, threadId)
                 || !pending.MatchesSelector(result)) {
-                Restore(pending);
+                pending.Fail(new GalateaDurableDelegateTransportException(
+                    "inspect-dispatch",
+                    "INSPECTION_SELECTOR_MISMATCH"
+                ));
                 throw new InvalidDataException(
                     "Durable inspection response identity or selector is invalid."
                 );

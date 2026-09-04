@@ -192,7 +192,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                 new GalateaDelegateDispatchInspection.Running(
                     request.DispatchId,
                     request.ThreadId,
-                    "turn-1"
+                    "turn-1",
+                    GalateaDelegateInspectionSource.Persistent
                 )
             ));
         GalateaDurableDelegationDriver driver = fixture.Driver(
@@ -250,7 +251,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                 GalateaDelegateDispatchInspection>(
                     new GalateaDelegateDispatchInspection.NotFound(
                         request.DispatchId,
-                        request.ThreadId
+                        request.ThreadId,
+                        GalateaDelegateInspectionSource.Persistent
                     )
                 ));
         }
@@ -314,6 +316,10 @@ public sealed class GalateaDurableDelegationDriverTests {
             clock
         );
         _ = await driver.PulseAsync();
+        GalateaDelegationStateSnapshot acceptedSnapshot =
+            fixture.Store.ReadSnapshot();
+        GalateaOutboundMailSnapshot acceptedBefore =
+            acceptedSnapshot.Mails.Single();
 
         Assert.Equal(
             GalateaDurableDelegationPulseStep.AcceptedTurnNotVisible,
@@ -326,6 +332,33 @@ public sealed class GalateaDurableDelegationDriverTests {
         Assert.Equal(1, mail.ReconcileAttemptCount);
         Assert.Equal("ACCEPTED_TURN_NOT_VISIBLE", mail.ReconcileLastCode);
         Assert.Equal(1_000, mail.NextReconcileAtUnixTimeMilliseconds);
+        string diagnostic = GalateaDurableDelegationDriver
+            .FormatInspectionDeferredDiagnostic(
+                acceptedSnapshot,
+                acceptedBefore,
+                mail,
+                "inspect-dispatch",
+                "ACCEPTED_TURN_NOT_VISIBLE",
+                GalateaDelegateInspectionSource.Persistent
+            );
+        Assert.Contains("selectorMode=accepted-turn", diagnostic,
+            StringComparison.Ordinal);
+        Assert.Contains("knownTurnId=turn-1", diagnostic,
+            StringComparison.Ordinal);
+        Assert.Contains("source=persistent", diagnostic,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "stage=inspect-dispatch, code=ACCEPTED_TURN_NOT_VISIBLE",
+            diagnostic,
+            StringComparison.Ordinal
+        );
+        Assert.Contains("recovered=false, attempt=1, nextAt=1000",
+            diagnostic, StringComparison.Ordinal);
+        Assert.True(GalateaDurableDelegationDriver
+            .ShouldWarnInspectionDeferred(
+                acceptedBefore,
+                "ACCEPTED_TURN_NOT_VISIBLE"
+            ));
         Assert.Empty(fixture.Store.ReadSnapshot().Notices);
         Assert.Equal(GalateaDelegationRouteState.Bound,
             fixture.Store.ReadSnapshot().Route.State);
@@ -365,6 +398,86 @@ public sealed class GalateaDurableDelegationDriverTests {
     public async Task IllegalSelectorResultCombinations_FailClosed() {
         await VerifyAcceptedNotFoundQuarantinesAsync();
         await VerifyOutcomeUnknownUnavailableQuarantinesAsync();
+    }
+
+    [Fact]
+    public async Task OutcomeUnknownGenericAcceptedInvisibleCode_FailsClosed() {
+        using var fixture = new DriverStore();
+        fixture.Bind("thread-1");
+        var clock = new ManualTimeProvider();
+        await using var transport = new ScriptedTransport();
+        transport.StartSteps.Enqueue(static (_, _) => Task.FromException<
+            GalateaDelegateTurnAccepted>(new IOException("lost")));
+        transport.InspectSteps.Enqueue(static (_, _) => Task.FromException<
+            GalateaDelegateDispatchInspection>(
+                new GalateaDurableDelegateTransportException(
+                    "inspect-dispatch",
+                    "ACCEPTED_TURN_NOT_VISIBLE"
+                )
+            ));
+        GalateaDurableDelegationDriver driver = fixture.Driver(
+            transport,
+            clock
+        );
+        _ = await driver.PulseAsync();
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(GalateaDurableDelegationPulseStep.Quarantined,
+            (await driver.PulseAsync()).Step);
+        GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
+        Assert.Equal(GalateaDurableMailState.Quarantined,
+            snapshot.Mails.Single().State);
+        Assert.Empty(snapshot.Notices);
+        Assert.Equal(1, transport.StartCallCount);
+        Assert.Null(transport.InspectRequests.Single().ExpectedTurnId);
+    }
+
+    [Fact]
+    public async Task SidecarAcceptedNotFound_QuarantinesWithoutSecondStart() {
+        using var store = new DriverStore();
+        store.Bind("thread-1");
+        using var sidecar = new GalateaSidecarProcessFixture(
+            $$"""
+            printf '%s\n' '{"v":3,"type":"ready"}'
+            count=0
+            while IFS= read -r line; do
+              count=$((count + 1))
+              printf '%s\n' "$line" >> {{GalateaSidecarProcessFixture.ShellQuote("INPUT")}}
+              request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
+              dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
+              thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+              if [ "$count" -eq 1 ]; then
+                printf '{"v":3,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-1"}\n' "$request_id" "$dispatch_id" "$thread_id"
+              else
+                printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+              fi
+            done
+            """
+        );
+        await using GalateaCodexDurableSidecarClient transport =
+            sidecar.CreateV3Client();
+        GalateaDurableDelegationDriver driver = store.Driver(transport);
+
+        Assert.Equal(GalateaDurableDelegationPulseStep.MailAccepted,
+            (await driver.PulseAsync()).Step);
+        GalateaDurableDelegationPulseResult result =
+            await driver.PulseAsync();
+
+        Assert.Equal(GalateaDurableDelegationPulseStep.Quarantined,
+            result.Step);
+        Assert.Equal("INSPECTION_SELECTOR_MISMATCH", result.Code);
+        GalateaDelegationStateSnapshot snapshot = store.Store.ReadSnapshot();
+        Assert.Equal(GalateaDurableMailState.Quarantined,
+            snapshot.Mails.Single().State);
+        Assert.Empty(snapshot.Notices);
+        string[] lines = File.ReadAllLines(sidecar.InputPath);
+        Assert.Equal(2, lines.Length);
+        Assert.Contains("\"type\":\"start-turn\"", lines[0],
+            StringComparison.Ordinal);
+        Assert.Contains("\"type\":\"inspect-dispatch\"", lines[1],
+            StringComparison.Ordinal);
+        Assert.Contains("\"expectedTurnId\":\"turn-1\"", lines[1],
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -419,7 +532,7 @@ public sealed class GalateaDurableDelegationDriverTests {
 
     [Theory]
     [InlineData("inspect-dispatch", "INSPECTION_UNAVAILABLE", false)]
-    [InlineData("inspect-dispatch", "ACCEPTED_TURN_NOT_VISIBLE", false)]
+    [InlineData("inspect-dispatch", "ACCEPTED_TURN_NOT_VISIBLE", true)]
     [InlineData("protocol", "SIDECAR_WRITE_FAILED", false)]
     [InlineData("shutdown", "STOPPING", false)]
     [InlineData("start-turn", "THREAD_NOT_FOUND", true)]
@@ -446,12 +559,51 @@ public sealed class GalateaDurableDelegationDriverTests {
         Assert.Equal(
             quarantine
                 ? GalateaDurableDelegationPulseStep.Quarantined
-                : code == "ACCEPTED_TURN_NOT_VISIBLE"
-                    ? GalateaDurableDelegationPulseStep
-                        .AcceptedTurnNotVisible
-                    : GalateaDurableDelegationPulseStep.Backoff,
+                : GalateaDurableDelegationPulseStep.Backoff,
             result.Step
         );
+    }
+
+    [Fact]
+    public async Task DeferredDiagnosticPreservesTransportStage() {
+        using var fixture = new DriverStore();
+        fixture.Bind("thread-1");
+        await using var transport = new ScriptedTransport();
+        transport.StartSteps.Enqueue(Accept("turn-1"));
+        transport.InspectSteps.Enqueue(static (_, _) => Task.FromException<
+            GalateaDelegateDispatchInspection>(
+                new GalateaDurableDelegateTransportException(
+                    "shutdown",
+                    "STOPPING"
+                )
+            ));
+        GalateaDurableDelegationDriver driver = fixture.Driver(transport);
+        _ = await driver.PulseAsync();
+        GalateaDelegationStateSnapshot before = fixture.Store.ReadSnapshot();
+
+        Assert.Equal(GalateaDurableDelegationPulseStep.Backoff,
+            (await driver.PulseAsync()).Step);
+        GalateaOutboundMailSnapshot after =
+            fixture.Store.ReadSnapshot().Mails.Single();
+        string diagnostic = GalateaDurableDelegationDriver
+            .FormatInspectionDeferredDiagnostic(
+                before,
+                before.Mails.Single(),
+                after,
+                "shutdown",
+                "STOPPING",
+                source: null
+            );
+
+        Assert.Contains("source=none", diagnostic,
+            StringComparison.Ordinal);
+        Assert.Contains("stage=shutdown, code=STOPPING", diagnostic,
+            StringComparison.Ordinal);
+        Assert.False(GalateaDurableDelegationDriver
+            .ShouldWarnInspectionDeferred(
+                before.Mails.Single(),
+                "STOPPING"
+            ));
     }
 
     [Fact]
@@ -479,8 +631,19 @@ public sealed class GalateaDurableDelegationDriverTests {
         Assert.Equal(0, transport.InspectCallCount);
     }
 
-    [Fact]
-    public async Task AmbiguousInspection_QuarantinesRouteAndMail() {
+    [Theory]
+    [InlineData("DISPATCH_TURN_MISMATCH")]
+    [InlineData("LIVE_OBSERVATION_CONFLICT")]
+    [InlineData("PAGE_SHAPE_INVALID")]
+    [InlineData("PAGINATION_CURSOR_INVALID")]
+    [InlineData("PAGINATION_CURSOR_LOOP")]
+    public async Task AmbiguousInspection_QuarantinesRouteAndMail(
+        string code
+    ) {
+        GalateaDelegateInspectionSource source =
+            code == "LIVE_OBSERVATION_CONFLICT"
+                ? GalateaDelegateInspectionSource.Live
+                : GalateaDelegateInspectionSource.Persistent;
         using var fixture = new DriverStore();
         fixture.Bind("thread-1");
         await using var transport = new ScriptedTransport();
@@ -490,7 +653,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                 new GalateaDelegateDispatchInspection.Ambiguous(
                     request.DispatchId,
                     request.ThreadId,
-                    "MULTIPLE_MATCHES"
+                    code,
+                    source
                 )
             ));
         GalateaDurableDelegationDriver driver = fixture.Driver(transport);
@@ -504,6 +668,8 @@ public sealed class GalateaDurableDelegationDriverTests {
             snapshot.Route.State);
         Assert.Equal(GalateaDurableMailState.Quarantined,
             snapshot.Mails.Single().State);
+        Assert.Equal(code, snapshot.Route.QuarantineCode);
+        Assert.Empty(snapshot.Notices);
     }
 
     [Fact]
@@ -721,7 +887,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                 "running" => new GalateaDelegateDispatchInspection.Running(
                     request.DispatchId,
                     request.ThreadId,
-                    "turn-1"
+                    "turn-1",
+                    GalateaDelegateInspectionSource.Persistent
                 ),
                 "unavailable" => new GalateaDelegateDispatchInspection
                     .AcceptedTurnNotVisible(
@@ -732,7 +899,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                     ),
                 _ => new GalateaDelegateDispatchInspection.NotFound(
                     request.DispatchId,
-                    request.ThreadId
+                    request.ThreadId,
+                    GalateaDelegateInspectionSource.Persistent
                 )
             };
         });
@@ -829,13 +997,15 @@ public sealed class GalateaDurableDelegationDriverTests {
                     request.DispatchId,
                     request.ThreadId,
                     "turn-1",
-                    "done"
+                    "done",
+                    GalateaDelegateInspectionSource.Persistent
                 )
                 : new GalateaDelegateDispatchInspection.Failed(
                     request.DispatchId,
                     request.ThreadId,
                     "turn-1",
-                    "TURN_FAILED"
+                    "TURN_FAILED",
+                    GalateaDelegateInspectionSource.Persistent
                 );
         });
         GalateaDurableDelegationDriver driver = fixture.Driver(transport);
@@ -899,18 +1069,21 @@ public sealed class GalateaDurableDelegationDriverTests {
                     new GalateaDelegateDispatchInspection.Running(
                         request.DispatchId + "-wrong",
                         request.ThreadId,
-                        "turn-1"
+                        "turn-1",
+                        GalateaDelegateInspectionSource.Persistent
                     ),
                 "turn-identity" =>
                     new GalateaDelegateDispatchInspection.Running(
                         request.DispatchId,
                         request.ThreadId,
-                        "turn-wrong"
+                        "turn-wrong",
+                        GalateaDelegateInspectionSource.Persistent
                     ),
                 _ => new GalateaDelegateDispatchInspection.Ambiguous(
                     request.DispatchId,
                     request.ThreadId,
-                    expectedCode
+                    expectedCode,
+                    GalateaDelegateInspectionSource.Persistent
                 )
             };
         });
@@ -948,7 +1121,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                     request.DispatchId,
                     request.ThreadId,
                     "turn-1",
-                    "done"
+                    "done",
+                    GalateaDelegateInspectionSource.Persistent
                 )
             ));
         GalateaDurableDelegationDriver driver = fixture.Driver(transport);
@@ -1025,7 +1199,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                     request.DispatchId,
                     request.ThreadId,
                     "turn-1",
-                    "CODE-X"
+                    "CODE-X",
+                    GalateaDelegateInspectionSource.Persistent
                 )
             ));
         GalateaDurableDelegationDriver driver = fixture.Driver(transport);
@@ -1054,7 +1229,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                     request.DispatchId,
                     request.ThreadId,
                     "turn-1",
-                    "recovered"
+                    "recovered",
+                    GalateaDelegateInspectionSource.Persistent
                 )
             ));
         GalateaDurableDelegationDriver driver = fixture.Driver(
@@ -1081,7 +1257,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                     request.DispatchId,
                     request.ThreadId,
                     "turn-1",
-                    final
+                    final,
+                    GalateaDelegateInspectionSource.Persistent
                 )
             ));
         GalateaDurableDelegationDriver driver = fixture.Driver(transport);
@@ -1112,7 +1289,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                     request.DispatchId,
                     request.ThreadId,
                     "turn-1",
-                    code
+                    code,
+                    GalateaDelegateInspectionSource.Persistent
                 )
             ));
         GalateaDurableDelegationDriver driver = fixture.Driver(transport);
@@ -1173,7 +1351,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                 new GalateaDelegateDispatchInspection.Running(
                     request.DispatchId,
                     request.ThreadId,
-                    "wrong-turn"
+                    "wrong-turn",
+                    GalateaDelegateInspectionSource.Persistent
                 )
             ));
         GalateaDurableDelegationDriver driver = fixture.Driver(transport);
@@ -1192,7 +1371,8 @@ public sealed class GalateaDurableDelegationDriverTests {
                 new GalateaDelegateDispatchInspection.Running(
                     request.DispatchId + "-wrong",
                     request.ThreadId,
-                    "turn-1"
+                    "turn-1",
+                    GalateaDelegateInspectionSource.Persistent
                 )
             ));
         GalateaDurableDelegationDriver driver = fixture.Driver(transport);
@@ -1271,7 +1451,8 @@ public sealed class GalateaDurableDelegationDriverTests {
             GalateaDelegateDispatchInspection>(
                 new GalateaDelegateDispatchInspection.NotFound(
                     request.DispatchId,
-                    request.ThreadId
+                    request.ThreadId,
+                    GalateaDelegateInspectionSource.Persistent
                 )
             );
 
@@ -1358,7 +1539,7 @@ public sealed class GalateaDurableDelegationDriverTests {
         internal GalateaDelegationSqliteStore Store { get; private set; }
 
         internal GalateaDurableDelegationDriver Driver(
-            ScriptedTransport transport,
+            IGalateaDurableDelegateTransport transport,
             TimeProvider? clock = null
         ) => new(
             Store,

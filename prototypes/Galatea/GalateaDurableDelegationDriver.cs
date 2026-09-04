@@ -610,6 +610,7 @@ internal sealed class GalateaDurableDelegationDriver {
             return RecordPollMiss(
                 snapshot,
                 mail,
+                FailureStage,
                 InspectionCancelledCode,
                 GetUnixTimeMilliseconds(),
                 source: null
@@ -631,6 +632,7 @@ internal sealed class GalateaDurableDelegationDriver {
                     RecordPollMiss(
                         snapshot,
                         mail,
+                        SafeCode(exception.Stage, FailureStage),
                         SafeCode(exception.Code, InspectionFatalCode),
                         GetUnixTimeMilliseconds(),
                         source: null
@@ -642,7 +644,7 @@ internal sealed class GalateaDurableDelegationDriver {
                         mail,
                         SafeCode(exception.Code, InspectionFatalCode),
                         source: null,
-                        stage: FailureStage
+                        stage: SafeCode(exception.Stage, FailureStage)
                     ),
                 _ => QuarantineActive(
                     snapshot,
@@ -692,6 +694,7 @@ internal sealed class GalateaDurableDelegationDriver {
                     ? RecordPollMiss(
                         snapshot,
                         mail,
+                        FailureStage,
                         NotFoundCode,
                         GetUnixTimeMilliseconds(),
                         notFound.Source
@@ -714,6 +717,7 @@ internal sealed class GalateaDurableDelegationDriver {
                     ? RecordPollMiss(
                         snapshot,
                         mail,
+                        FailureStage,
                         AcceptedTurnNotVisibleCode,
                         GetUnixTimeMilliseconds(),
                         unavailable.Source
@@ -757,6 +761,7 @@ internal sealed class GalateaDurableDelegationDriver {
     private GalateaDurableDelegationPulseResult RecordPollMiss(
         GalateaDelegationStateSnapshot snapshot,
         GalateaOutboundMailSnapshot mail,
+        string stage,
         string code,
         long now,
         GalateaDelegateInspectionSource? source
@@ -767,18 +772,15 @@ internal sealed class GalateaDurableDelegationDriver {
             code,
             now
         );
-        string message = "Durable dispatch inspection deferred: "
-            + $"user={Safe(snapshot.Owner.UserId)}, "
-            + $"dispatchId={mail.DispatchId}, "
-            + $"selectorMode={SelectorMode(mail)}, "
-            + $"knownTurnId={mail.AcceptedTurnId ?? "<none>"}, "
-            + $"source={InspectionSourceText(source)}, "
-            + $"stage={FailureStage}, code={code}, "
-            + $"recovered={(mail.ReconcileAttemptCount > 0).ToString().ToLowerInvariant()}, "
-            + $"attempt={deferred.ReconcileAttemptCount}, "
-            + $"nextAt={deferred.NextReconcileAtUnixTimeMilliseconds}.";
-        if (mail.State == GalateaDurableMailState.Accepted
-            && code == AcceptedTurnNotVisibleCode) {
+        string message = FormatInspectionDeferredDiagnostic(
+            snapshot,
+            mail,
+            deferred,
+            stage,
+            code,
+            source
+        );
+        if (ShouldWarnInspectionDeferred(mail, code)) {
             DebugUtil.Warning(LogCategory, message);
         }
         else {
@@ -798,6 +800,30 @@ internal sealed class GalateaDurableDelegationDriver {
             Code: code
         );
     }
+
+    internal static string FormatInspectionDeferredDiagnostic(
+        GalateaDelegationStateSnapshot snapshot,
+        GalateaOutboundMailSnapshot before,
+        GalateaOutboundMailSnapshot after,
+        string stage,
+        string code,
+        GalateaDelegateInspectionSource? source
+    ) => "Durable dispatch inspection deferred: "
+        + $"user={Safe(snapshot.Owner.UserId)}, "
+        + $"dispatchId={before.DispatchId}, "
+        + $"selectorMode={SelectorMode(before)}, "
+        + $"knownTurnId={before.AcceptedTurnId ?? "<none>"}, "
+        + $"source={InspectionSourceText(source)}, "
+        + $"stage={stage}, code={code}, "
+        + $"recovered={(before.ReconcileAttemptCount > 0).ToString().ToLowerInvariant()}, "
+        + $"attempt={after.ReconcileAttemptCount}, "
+        + $"nextAt={after.NextReconcileAtUnixTimeMilliseconds}.";
+
+    internal static bool ShouldWarnInspectionDeferred(
+        GalateaOutboundMailSnapshot mail,
+        string code
+    ) => mail.State == GalateaDurableMailState.Accepted
+        && code == AcceptedTurnNotVisibleCode;
 
     private GalateaDurableDelegationPulseResult RecordRunning(
         GalateaDelegationStateSnapshot snapshot,
