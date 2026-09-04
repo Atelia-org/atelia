@@ -257,6 +257,56 @@ test("validated running dispatches use metadata until terminal inspection", asyn
   );
 });
 
+test("completion before turn start response cannot resurrect live running proof", async (t) => {
+  const value = await harness(t);
+  const binding = await value.backend.ensureBinding({
+    cwd: value.root,
+    mode: "work",
+    tools,
+  });
+  const task = "[EARLY][NATURAL] completes before acceptance";
+
+  const accepted = await value.backend.startBoundTurn({
+    threadId: binding.threadId,
+    expectedCwd: value.root,
+    dispatchId: "early-completion-mail",
+    task,
+    mode: "work",
+    localCommandNetwork: false,
+    tools,
+  });
+
+  const terminalRuntime = value.store.snapshot(binding.threadId);
+  assert.equal(terminalRuntime.status, "completed");
+  assert.equal(terminalRuntime.activeTurnId, undefined);
+  assert.equal(terminalRuntime.latestTurnId, accepted.turnId);
+  const before = await readThreadReadTrace(value);
+  const request = {
+    threadId: binding.threadId,
+    expectedCwd: value.root,
+    dispatchId: "early-completion-mail",
+    task,
+    maximumFinalUtf8Bytes: 20_000,
+  };
+
+  const first = await value.backend.inspectDispatch(request);
+  const second = await value.backend.inspectDispatch(request);
+
+  assert.equal(first.kind, "completed");
+  assert.equal(second.kind, "completed");
+  if (first.kind === "completed" && second.kind === "completed") {
+    assert.equal(first.turnId, accepted.turnId);
+    assert.equal(second.turnId, accepted.turnId);
+    assert.equal(second.final, first.final);
+    assert.match(first.final, /事情已经办妥/);
+  }
+  const after = await readThreadReadTrace(value);
+  assert.deepEqual(
+    after.threadReadIncludeTurns.slice(before.threadReadCount),
+    [true, true],
+  );
+});
+
 test("terminal notification during metadata read trips the second runtime fence", async (t) => {
   const value = await harness(t);
   const turn = await startLongTurn(value, "in-flight-terminal-mail");
