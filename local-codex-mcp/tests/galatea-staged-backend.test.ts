@@ -99,6 +99,43 @@ test("incomplete live terminal maps to retryable inspection failure until final 
   assert.equal(completed.source, "live");
 });
 
+test("incomplete live terminal allows later healthy persistent final recovery without an item signal", async (t) => {
+  const value = await harness(t);
+  const binding = await bind(value);
+  const task = "[SUMMARY_DROP_SIGNAL][NATURAL] exact task";
+  const accepted = await start(value, binding.threadId, "mail-persistent-final", task);
+  await delay(25);
+  const request = {
+    threadId: binding.threadId,
+    expectedCwd: value.root,
+    dispatchId: "mail-persistent-final",
+    task,
+    expectedTurnId: accepted.turnId,
+    maximumFinalUtf8Bytes: 20_000,
+  };
+  await assert.rejects(value.backend.inspectDispatch(request), (error: unknown) =>
+    typeof error === "object" && error !== null && "code" in error
+      && error.code === "CODEX_PROTOCOL_ERROR");
+  await delay(80);
+  const recovered = await value.backend.inspectDispatch(request);
+  assert.equal(recovered.kind, "completed");
+  assert.equal(recovered.source, "persistent");
+});
+
+test("turn/start response must match the pending dispatch identity and task", async (t) => {
+  const value = await harness(t, { fixtureArgs: ["--mismatch-turn-start-response"] });
+  const binding = await bind(value);
+  await assert.rejects(start(
+    value,
+    binding.threadId,
+    "mail-exact",
+    "[STARTED_BEFORE_RESPONSE][LONG] exact task",
+  ), (error: unknown) => typeof error === "object" && error !== null
+    && "code" in error && error.code === "CODEX_PROTOCOL_ERROR");
+  const counts = await value.client.request<{ turnStartCount: number }>("test/lastRequests", {});
+  assert.equal(counts.turnStartCount, 1);
+});
+
 test("Accepted missing from official turns is stable unavailable, not not-found", async (t) => {
   const sanitizedFixture = JSON.parse(await readFile(
     acceptedTurnNotVisibleFixture,

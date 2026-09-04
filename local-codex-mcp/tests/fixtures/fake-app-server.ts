@@ -38,6 +38,7 @@ let nextTurn = restored?.nextTurn ?? 1;
 let nextServerRequest = 10_000;
 const pendingServerRequests = new Map<string | number, string | number>();
 const threads = new Map<string, Record<string, unknown>>(restored?.threads ?? []);
+const itemProjectionVisibleAt = new Map<string, number>();
 let lastTurnParams: Record<string, unknown> | undefined;
 let lastResumeParams: Record<string, unknown> | undefined;
 let lastThreadStartParams: Record<string, unknown> | undefined;
@@ -156,14 +157,22 @@ function completeTurn(
     : userItems;
   thread.status = { type: "idle" };
   persistState();
-  if (status === "completed" && behavior.includes("[SUMMARY_BEFORE_FINAL]")) {
+  if (status === "completed" && (behavior.includes("[SUMMARY_BEFORE_FINAL]")
+      || behavior.includes("[SUMMARY_DROP_SIGNAL]"))) {
+    itemProjectionVisibleAt.set(
+      turnId,
+      behavior.includes("[SUMMARY_DROP_SIGNAL]") ? Date.now() + 70 : Number.POSITIVE_INFINITY,
+    );
     send({ method: "turn/completed", params: {
       threadId,
       turn: { ...turn, items: [], itemsView: "summary" },
     } });
-    setTimeout(() => {
-      send({ method: "item/completed", params: { threadId, turnId, item: agentItem, completedAtMs: Date.now() } });
-    }, 50);
+    if (behavior.includes("[SUMMARY_BEFORE_FINAL]")) {
+      setTimeout(() => {
+        itemProjectionVisibleAt.delete(turnId);
+        send({ method: "item/completed", params: { threadId, turnId, item: agentItem, completedAtMs: Date.now() } });
+      }, 50);
+    }
     return;
   }
   if (status === "completed" && !behavior.includes("[MISSING]")) {
@@ -186,6 +195,15 @@ function responseForThread(thread: Record<string, unknown>) {
     sandbox: { type: "workspaceWrite", writableRoots: [thread.cwd], networkAccess: false },
     reasoningEffort: null,
   };
+}
+
+function turnStartResult(turn: Record<string, unknown>): { turn: Record<string, unknown> } {
+  const returned = structuredClone(turn);
+  if (process.argv.includes("--mismatch-turn-start-response")) {
+    const user = (returned.items as Array<Record<string, unknown>>)[0];
+    if (user) user.clientId = "mismatched-client";
+  }
+  return { turn: returned };
 }
 
 const lines = readline.createInterface({ input: process.stdin });
@@ -454,7 +472,13 @@ lines.on("line", (line) => {
         : null;
       const all = (thread.turns as Array<Record<string, unknown>>)
         .filter((turn) => requestedTurnId === null || turn.id === requestedTurnId)
-        .flatMap((turn) => (turn.items as unknown[]).map((item) => ({ turnId: turn.id, item })));
+        .flatMap((turn) => {
+          const visibleAt = itemProjectionVisibleAt.get(String(turn.id));
+          const items = visibleAt !== undefined && Date.now() < visibleAt
+            ? (turn.items as Array<Record<string, unknown>>).filter((item) => item.type === "userMessage")
+            : turn.items as unknown[];
+          return items.map((item) => ({ turnId: turn.id, item }));
+        });
       if (process.argv.includes("--empty-filtered-items") && requestedTurnId !== null) {
         send({ id: message.id, result: { data: [], nextCursor: null, backwardsCursor: null } });
         break;
@@ -555,16 +579,16 @@ lines.on("line", (line) => {
         setTimeout(() => completeTurn(threadId, turnId, "completed", input), 10);
       } else if (input.includes("[STARTED_BEFORE_RESPONSE]")) {
         send({ method: "turn/started", params: { threadId, turn } });
-        send({ id: message.id, result: { turn } });
+        send({ id: message.id, result: turnStartResult(turn) });
         if (!input.includes("[LONG]")) {
           setTimeout(() => completeTurn(threadId, turnId, "completed", input), 10);
         }
       } else if (input.includes("[EARLY]")) {
         send({ method: "turn/started", params: { threadId, turn } });
         completeTurn(threadId, turnId, "completed", input);
-        send({ id: message.id, result: { turn } });
+        send({ id: message.id, result: turnStartResult(turn) });
       } else {
-        send({ id: message.id, result: { turn } });
+        send({ id: message.id, result: turnStartResult(turn) });
         send({ method: "turn/started", params: { threadId, turn } });
         if (input.includes("[CRASH]")) {
           setTimeout(() => process.exit(24), 5);

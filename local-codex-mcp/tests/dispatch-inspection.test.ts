@@ -94,6 +94,35 @@ test("terminal and item notifications before an incomplete late start response s
   });
 });
 
+test("a full exact terminal notification can establish before the start response", () => {
+  const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+  const expectation = observations.beginStart("thread", "d", "task");
+  const completed = turn("t", "completed", [userMessage("d", "task"), agentMessage("final")]);
+  observations.observeTurnCompleted("thread", completed);
+  assert.deepEqual(observations.inspect("thread", "t", "d", "task"), {
+    kind: "completed", threadId: "thread", turnId: "t", source: "live", final: "final",
+  });
+  assert.equal(observations.observeStartResponse(
+    "thread",
+    turn("t", "inProgress", [userMessage("d", "task")]),
+    expectation,
+  ), true);
+  observations.endStart(expectation);
+  assert.equal(observations.inspect("thread", "t", "d", "task")?.kind, "completed");
+});
+
+test("a trusted start response still must match its exact pending identity", () => {
+  const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 100 });
+  const expectation = observations.beginStart("thread", "d", "task");
+  assert.equal(observations.observeStartResponse(
+    "thread",
+    turn("wrong", "inProgress", [userMessage("different", "different task")]),
+    expectation,
+  ), false);
+  observations.endStart(expectation);
+  assert.equal(observations.inspect("thread", "wrong", "different", "different task"), undefined);
+});
+
 test("live observations are bounded, clearable, digest exact UTF-16, and conflict closed", () => {
   const observations = new LiveTurnObservations({ maximumObservations: 1, maximumFinalUtf8Bytes: 3 });
   observations.observeStartResponse("thread", turn("t1", "inProgress", [userMessage("d", "\ud800")]));

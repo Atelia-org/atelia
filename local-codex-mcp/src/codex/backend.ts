@@ -433,28 +433,44 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         );
         this.assertSameGeneration(generation);
         if (live) return live;
-        if (this.liveObservations.isAwaitingTerminalEvidence(
+        const awaitingLiveTerminal = this.liveObservations.isAwaitingTerminalEvidence(
           input.threadId,
           input.expectedTurnId,
           input.dispatchId,
           input.task,
-        )) {
-          throw new BridgeError(
-            "CODEX_PROTOCOL_ERROR",
-            "Live terminal evidence is incomplete; retry inspection.",
-          );
-        }
+        );
+        const persistent = await this.inspectAcceptedTurn(
+          input,
+          input.expectedTurnId,
+          generation,
+        );
+        if (!awaitingLiveTerminal) return persistent;
+        this.assertSameGeneration(generation);
+        const completedLive = this.liveObservations.inspect(
+          input.threadId,
+          input.expectedTurnId,
+          input.dispatchId,
+          input.task,
+        );
+        if (completedLive) return completedLive;
+        if (this.isCompleteColdTerminal(persistent)) return persistent;
+        throw new BridgeError(
+          "CODEX_PROTOCOL_ERROR",
+          "Live and persistent terminal evidence is incomplete; retry inspection.",
+        );
       }
-
-      return input.expectedTurnId === null
-        ? await this.inspectUnknownDispatch(input, generation)
-        : await this.inspectAcceptedTurn(input, input.expectedTurnId, generation);
+      return await this.inspectUnknownDispatch(input, generation);
     } catch (error) {
       if (error instanceof PersistentInspectionError) {
         return { kind: "ambiguous", threadId: input.threadId, source: "persistent", code: error.code };
       }
       throw error;
     }
+  }
+
+  private isCompleteColdTerminal(inspection: GalateaDispatchInspection): boolean {
+    return inspection.kind === "completed"
+      || (inspection.kind === "failed" && inspection.code !== "FINAL_MISSING");
   }
 
   private async inspectAcceptedTurn(
@@ -979,7 +995,12 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         throw new BridgeError("CODEX_PROTOCOL_ERROR", "Codex returned an invalid turn identity.");
       }
       const turnId = response.turn.id;
-      this.liveObservations.observeStartResponse(threadId, response.turn);
+      if (!this.liveObservations.observeStartResponse(threadId, response.turn, expectation)) {
+        throw new BridgeError(
+          "CODEX_PROTOCOL_ERROR",
+          "Codex turn/start response did not match the requested client identity and task.",
+        );
+      }
       this.options.store.beginTurn(threadId, turnId);
       return { threadId, turnId };
     } finally {

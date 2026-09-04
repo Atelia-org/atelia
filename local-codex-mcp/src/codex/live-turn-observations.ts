@@ -153,8 +153,19 @@ export class LiveTurnObservations {
     }
   }
 
-  observeStartResponse(threadId: string, turn: Turn): void {
+  observeStartResponse(
+    threadId: string,
+    turn: Turn,
+    expectation?: LiveStartExpectation,
+  ): boolean {
+    if (expectation) {
+      const user = initialUser(turn);
+      if (this.pendingStarts.get(threadId) !== expectation || !user
+          || user.dispatchId !== expectation.dispatchId
+          || taskDigest(user.task) !== expectation.taskDigest) return false;
+    }
     this.observeStarted(threadId, turn, true);
+    return true;
   }
 
   observeTurnStarted(threadId: string, turn: Turn): void {
@@ -162,7 +173,15 @@ export class LiveTurnObservations {
   }
 
   observeTurnCompleted(threadId: string, turn: Turn): void {
-    const observation = this.currentObservation(threadId, turn.id);
+    let observation = this.currentObservation(threadId, turn.id);
+    if (!observation) {
+      const expected = this.pendingStarts.get(threadId);
+      const user = initialUser(turn);
+      if (!expected || !user || user.dispatchId !== expected.dispatchId
+          || taskDigest(user.task) !== expected.taskDigest) return;
+      this.observeStarted(threadId, turn, false);
+      observation = this.currentObservation(threadId, turn.id);
+    }
     if (!observation || turn.status === "inProgress") return;
     for (const item of turn.items) this.observeItem(threadId, turn.id, item);
     const baseFingerprint = terminalBaseFingerprint(turn);
