@@ -36,6 +36,8 @@ internal sealed record GalateaDurableDelegationPulseResult(
 /// call; the host-wide supervisor owns scheduling.
 /// </summary>
 internal sealed class GalateaDurableDelegationDriver {
+    internal static readonly TimeSpan DebugRunningLivenessInterval =
+        TimeSpan.FromSeconds(60);
     private const string LogCategory = "Galatea.Delegation";
     private const string RecoveredStartedCode = "RECOVERED_STARTED";
     private const string NotFoundCode = "NOT_FOUND";
@@ -62,7 +64,8 @@ internal sealed class GalateaDurableDelegationDriver {
     private readonly TimeProvider _timeProvider;
     private readonly Func<string> _bindingOperationIdFactory;
     private readonly SemaphoreSlim _pulseGate = new(1, 1);
-    private string? _debugCleanRunningConfirmedDispatchId;
+    private string? _debugRunningLivenessDispatchId;
+    private long _debugNextRunningLivenessAtUnixTimeMilliseconds;
 
     internal GalateaDurableDelegationDriver(
         GalateaDelegationSqliteStore store,
@@ -575,7 +578,6 @@ internal sealed class GalateaDurableDelegationDriver {
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) when (
             cancellationToken.IsCancellationRequested) {
@@ -589,8 +591,12 @@ internal sealed class GalateaDurableDelegationDriver {
                 GetUnixTimeMilliseconds()
             );
         }
-        catch (GalateaDurableDelegateTransportException) when (
-            cancellationToken.IsCancellationRequested) {
+        catch (GalateaDurableDelegateTransportException exception) when (
+            cancellationToken.IsCancellationRequested
+            && exception.FailurePolicy is (
+                GalateaDurableDelegateFailurePolicy.InspectionUnavailable
+                or GalateaDurableDelegateFailurePolicy.PreWriteRejected
+                or GalateaDurableDelegateFailurePolicy.Stopped)) {
             throw new OperationCanceledException(cancellationToken);
         }
         catch (GalateaDurableDelegateTransportException exception) {
@@ -633,6 +639,9 @@ internal sealed class GalateaDurableDelegationDriver {
                 StringComparison.Ordinal)) {
             return QuarantineActive(snapshot, mail, InspectionResultCode);
         }
+        if (inspection is GalateaDelegateDispatchInspection.NotFound) {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
         return inspection switch {
             GalateaDelegateDispatchInspection.NotFound => RecordPollMiss(
                 snapshot,
@@ -641,7 +650,12 @@ internal sealed class GalateaDurableDelegationDriver {
                 GetUnixTimeMilliseconds()
             ),
             GalateaDelegateDispatchInspection.Running running =>
-                RecordRunning(snapshot, mail, running),
+                RecordRunning(
+                    snapshot,
+                    mail,
+                    running,
+                    cancellationToken
+                ),
             GalateaDelegateDispatchInspection.Completed completed =>
                 RecordCompleted(snapshot, mail, completed),
             GalateaDelegateDispatchInspection.Failed failed =>
@@ -689,7 +703,8 @@ internal sealed class GalateaDurableDelegationDriver {
     private GalateaDurableDelegationPulseResult RecordRunning(
         GalateaDelegationStateSnapshot snapshot,
         GalateaOutboundMailSnapshot mail,
-        GalateaDelegateDispatchInspection.Running running
+        GalateaDelegateDispatchInspection.Running running,
+        CancellationToken cancellationToken
     ) {
         if (!IsWireIdentity(running.TurnId)) {
             return QuarantineActive(snapshot, mail, InspectionResultCode);
@@ -705,6 +720,7 @@ internal sealed class GalateaDurableDelegationDriver {
                     StringComparison.Ordinal)) {
                 return QuarantineActive(snapshot, mail, InspectionTurnCode);
             }
+            cancellationToken.ThrowIfCancellationRequested();
             if (mail.ReconcileAttemptCount > 0) {
                 _ = _store.ConfirmAcceptedMailRunning(
                     mail.DispatchId,
@@ -721,6 +737,7 @@ internal sealed class GalateaDurableDelegationDriver {
                 running.TurnId
             );
         }
+        cancellationToken.ThrowIfCancellationRequested();
         GalateaOutboundMailSnapshot accepted = _store.RecordMailAccepted(
             mail.DispatchId,
             mail.Revision,
@@ -1015,13 +1032,9 @@ internal sealed class GalateaDurableDelegationDriver {
         GalateaDelegateDispatchInspection.Running running
     ) {
         bool recovered = mail.ReconcileAttemptCount > 0;
-        if (!recovered && string.Equals(
-                _debugCleanRunningConfirmedDispatchId,
-                mail.DispatchId,
-                StringComparison.Ordinal)) {
+        if (!ShouldLogDebugRunningLiveness(mail.DispatchId, recovered)) {
             return;
         }
-        _debugCleanRunningConfirmedDispatchId = mail.DispatchId;
         DebugUtil.Info(
             LogCategory,
             "Durable dispatch Running confirmed: "
@@ -1033,6 +1046,32 @@ internal sealed class GalateaDurableDelegationDriver {
                 + $"clearedCode={mail.ReconcileLastCode ?? "<none>"}.",
             eventKind: DebugEventKind.Success
         );
+    }
+
+    internal bool ShouldLogDebugRunningLiveness(
+        string dispatchId,
+        bool recovered
+    ) {
+        long now = GetUnixTimeMilliseconds();
+        bool firstForDispatch = !string.Equals(
+            _debugRunningLivenessDispatchId,
+            dispatchId,
+            StringComparison.Ordinal
+        );
+        if (!recovered
+            && !firstForDispatch
+            && now < _debugNextRunningLivenessAtUnixTimeMilliseconds) {
+            return false;
+        }
+        _debugRunningLivenessDispatchId = dispatchId;
+        long interval = checked(
+            (long)DebugRunningLivenessInterval.TotalMilliseconds
+        );
+        _debugNextRunningLivenessAtUnixTimeMilliseconds =
+            now > long.MaxValue - interval
+                ? long.MaxValue
+                : now + interval;
+        return true;
     }
 
     private static void LogOutcomeUnknown(

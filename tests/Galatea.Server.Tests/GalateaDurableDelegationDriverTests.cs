@@ -332,6 +332,56 @@ public sealed class GalateaDurableDelegationDriverTests {
         Assert.Equal(4, transport.InspectCallCount);
     }
 
+    [Fact]
+    public async Task RunningLivenessGate_LogsFirstRecoveryAndEveryMinute() {
+        using var fixture = new DriverStore();
+        var clock = new ManualTimeProvider();
+        await using var transport = new ScriptedTransport();
+        GalateaDurableDelegationDriver driver = fixture.Driver(
+            transport,
+            clock
+        );
+
+        Assert.True(driver.ShouldLogDebugRunningLiveness(
+            "dispatch-1",
+            recovered: false
+        ));
+        clock.Advance(TimeSpan.FromSeconds(59));
+        Assert.False(driver.ShouldLogDebugRunningLiveness(
+            "dispatch-1",
+            recovered: false
+        ));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(driver.ShouldLogDebugRunningLiveness(
+            "dispatch-1",
+            recovered: false
+        ));
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.True(driver.ShouldLogDebugRunningLiveness(
+            "dispatch-1",
+            recovered: true
+        ));
+        clock.Advance(TimeSpan.FromSeconds(59));
+        Assert.False(driver.ShouldLogDebugRunningLiveness(
+            "dispatch-1",
+            recovered: false
+        ));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(driver.ShouldLogDebugRunningLiveness(
+            "dispatch-1",
+            recovered: false
+        ));
+        Assert.True(driver.ShouldLogDebugRunningLiveness(
+            "dispatch-2",
+            recovered: false
+        ));
+        Assert.Equal(
+            TimeSpan.FromSeconds(60),
+            GalateaDurableDelegationDriver.DebugRunningLivenessInterval
+        );
+    }
+
     [Theory]
     [InlineData("inspect-dispatch", "INSPECTION_UNAVAILABLE", false)]
     [InlineData("protocol", "SIDECAR_WRITE_FAILED", false)]
@@ -608,8 +658,12 @@ public sealed class GalateaDurableDelegationDriverTests {
         Assert.Equal(1, transport.InspectCallCount);
     }
 
-    [Fact]
-    public async Task InspectOuterCancellation_WinsOverLateNotFound() {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InspectOuterCancellation_WinsOverLateNonterminal(
+        bool running
+    ) {
         using var fixture = new DriverStore();
         fixture.Bind("thread-1");
         await using var transport = new ScriptedTransport();
@@ -623,10 +677,16 @@ public sealed class GalateaDurableDelegationDriverTests {
         transport.InspectSteps.Enqueue(async (request, _) => {
             entered.TrySetResult();
             await release.Task;
-            return new GalateaDelegateDispatchInspection.NotFound(
-                request.DispatchId,
-                request.ThreadId
-            );
+            return running
+                ? new GalateaDelegateDispatchInspection.Running(
+                    request.DispatchId,
+                    request.ThreadId,
+                    "turn-1"
+                )
+                : new GalateaDelegateDispatchInspection.NotFound(
+                    request.DispatchId,
+                    request.ThreadId
+                );
         });
         GalateaDurableDelegationDriver driver = fixture.Driver(transport);
         _ = await driver.PulseAsync();
@@ -648,6 +708,183 @@ public sealed class GalateaDurableDelegationDriverTests {
         Assert.Equal(0, mail.ReconcileAttemptCount);
         Assert.Null(mail.ReconcileLastCode);
         Assert.Null(mail.NextReconcileAtUnixTimeMilliseconds);
+        Assert.Equal(1, transport.StartCallCount);
+        Assert.Equal(1, transport.InspectCallCount);
+    }
+
+    [Theory]
+    [InlineData("start-turn", "THREAD_NOT_FOUND")]
+    [InlineData("future-stage", "FUTURE_CODE")]
+    public async Task InspectOuterCancellation_DoesNotMaskTransportConflict(
+        string stage,
+        string code
+    ) {
+        using var fixture = new DriverStore();
+        fixture.Bind("thread-1");
+        await using var transport = new ScriptedTransport();
+        transport.StartSteps.Enqueue(Accept("turn-1"));
+        var entered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var release = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        transport.InspectSteps.Enqueue(async (_, _) => {
+            entered.TrySetResult();
+            await release.Task;
+            throw new GalateaDurableDelegateTransportException(stage, code);
+        });
+        GalateaDurableDelegationDriver driver = fixture.Driver(transport);
+        _ = await driver.PulseAsync();
+        using var cancellation = new CancellationTokenSource();
+        Task<GalateaDurableDelegationPulseResult> pulse =
+            driver.PulseAsync(cancellation.Token);
+        await entered.Task;
+
+        cancellation.Cancel();
+        release.TrySetResult();
+
+        GalateaDurableDelegationPulseResult result = await pulse;
+        Assert.Equal(GalateaDurableDelegationPulseStep.Quarantined,
+            result.Step);
+        GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
+        Assert.Equal(GalateaDelegationRouteState.Quarantined,
+            snapshot.Route.State);
+        Assert.Equal(GalateaDurableMailState.Quarantined,
+            snapshot.Mails.Single().State);
+        Assert.Equal(code, snapshot.Route.QuarantineCode);
+        Assert.Equal(1, transport.StartCallCount);
+        Assert.Equal(1, transport.InspectCallCount);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task InspectOuterCancellation_DoesNotMaskTerminal(
+        bool completed
+    ) {
+        using var fixture = new DriverStore();
+        fixture.Bind("thread-1");
+        await using var transport = new ScriptedTransport();
+        transport.StartSteps.Enqueue(Accept("turn-1"));
+        var entered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var release = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        transport.InspectSteps.Enqueue(async (request, _) => {
+            entered.TrySetResult();
+            await release.Task;
+            return completed
+                ? new GalateaDelegateDispatchInspection.Completed(
+                    request.DispatchId,
+                    request.ThreadId,
+                    "turn-1",
+                    "done"
+                )
+                : new GalateaDelegateDispatchInspection.Failed(
+                    request.DispatchId,
+                    request.ThreadId,
+                    "turn-1",
+                    "TURN_FAILED"
+                );
+        });
+        GalateaDurableDelegationDriver driver = fixture.Driver(transport);
+        _ = await driver.PulseAsync();
+        using var cancellation = new CancellationTokenSource();
+        Task<GalateaDurableDelegationPulseResult> pulse =
+            driver.PulseAsync(cancellation.Token);
+        await entered.Task;
+
+        cancellation.Cancel();
+        release.TrySetResult();
+
+        GalateaDurableDelegationPulseResult result = await pulse;
+        GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
+        Assert.Equal(
+            completed
+                ? GalateaDurableDelegationPulseStep.TerminalCompleted
+                : GalateaDurableDelegationPulseStep.TerminalFailed,
+            result.Step
+        );
+        Assert.Equal(
+            completed
+                ? GalateaDurableMailState.TerminalCompleted
+                : GalateaDurableMailState.TerminalFailed,
+            snapshot.Mails.Single().State
+        );
+        Assert.Equal(
+            completed
+                ? GalateaReplyNoticeKind.Reply
+                : GalateaReplyNoticeKind.DeliveryFailure,
+            snapshot.Notices.Single().Kind
+        );
+        Assert.Null(snapshot.Route.ActiveDispatchId);
+        Assert.Equal(1, transport.StartCallCount);
+        Assert.Equal(1, transport.InspectCallCount);
+    }
+
+    [Theory]
+    [InlineData("base-identity", "INSPECTION_RESULT_IDENTITY_MISMATCH")]
+    [InlineData("turn-identity", "INSPECTION_TURN_IDENTITY_MISMATCH")]
+    [InlineData("ambiguous", "DISPATCH_BODY_MISMATCH")]
+    public async Task InspectOuterCancellation_DoesNotMaskReturnedConflict(
+        string kind,
+        string expectedCode
+    ) {
+        using var fixture = new DriverStore();
+        fixture.Bind("thread-1");
+        await using var transport = new ScriptedTransport();
+        transport.StartSteps.Enqueue(Accept("turn-1"));
+        var entered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var release = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        transport.InspectSteps.Enqueue(async (request, _) => {
+            entered.TrySetResult();
+            await release.Task;
+            return kind switch {
+                "base-identity" =>
+                    new GalateaDelegateDispatchInspection.Running(
+                        request.DispatchId + "-wrong",
+                        request.ThreadId,
+                        "turn-1"
+                    ),
+                "turn-identity" =>
+                    new GalateaDelegateDispatchInspection.Running(
+                        request.DispatchId,
+                        request.ThreadId,
+                        "turn-wrong"
+                    ),
+                _ => new GalateaDelegateDispatchInspection.Ambiguous(
+                    request.DispatchId,
+                    request.ThreadId,
+                    expectedCode
+                )
+            };
+        });
+        GalateaDurableDelegationDriver driver = fixture.Driver(transport);
+        _ = await driver.PulseAsync();
+        using var cancellation = new CancellationTokenSource();
+        Task<GalateaDurableDelegationPulseResult> pulse =
+            driver.PulseAsync(cancellation.Token);
+        await entered.Task;
+
+        cancellation.Cancel();
+        release.TrySetResult();
+
+        GalateaDurableDelegationPulseResult result = await pulse;
+        Assert.Equal(GalateaDurableDelegationPulseStep.Quarantined,
+            result.Step);
+        GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
+        Assert.Equal(GalateaDelegationRouteState.Quarantined,
+            snapshot.Route.State);
+        Assert.Equal(GalateaDurableMailState.Quarantined,
+            snapshot.Mails.Single().State);
+        Assert.Equal(expectedCode, snapshot.Route.QuarantineCode);
         Assert.Equal(1, transport.StartCallCount);
         Assert.Equal(1, transport.InspectCallCount);
     }
