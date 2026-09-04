@@ -54,8 +54,11 @@ async function harness(
 
 type Harness = Awaited<ReturnType<typeof harness>>;
 
-async function startLongTurn(value: Harness, dispatchId: string) {
-  const task = `[LONG][NATURAL] ${dispatchId}`;
+async function startLongTurn(
+  value: Harness,
+  dispatchId: string,
+  task = `[LONG][NATURAL] ${dispatchId}`,
+) {
   const binding = await value.backend.ensureBinding({
     cwd: value.root,
     mode: "work",
@@ -244,6 +247,127 @@ test("validated running dispatches use metadata until terminal inspection", asyn
   );
 });
 
+test("terminal notification during metadata read trips the second runtime fence", async (t) => {
+  const value = await harness(t);
+  const turn = await startLongTurn(value, "in-flight-terminal-mail");
+  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+  await value.client.request("test/completeOnNextMetadataRead", {
+    threadId: turn.threadId,
+    turnId: turn.turnId,
+  });
+  const before = await readThreadReadTrace(value);
+
+  const inspection = await inspectLongTurn(value, turn);
+
+  assert.deepEqual(inspection, {
+    kind: "failed",
+    threadId: turn.threadId,
+    turnId: turn.turnId,
+    code: "TURN_INTERRUPTED",
+  });
+  const after = await readThreadReadTrace(value);
+  assert.deepEqual(
+    after.threadReadIncludeTurns.slice(before.threadReadCount),
+    [false, true],
+  );
+});
+
+test("cache input mismatch falls back to exact full classification", async (t) => {
+  const value = await harness(t);
+  const turn = await startLongTurn(value, "input-mismatch-mail");
+  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+  const before = await readThreadReadTrace(value);
+
+  const inspection = await inspectLongTurn(value, {
+    ...turn,
+    task: `${turn.task} changed`,
+  });
+
+  assert.deepEqual(inspection, {
+    kind: "ambiguous",
+    threadId: turn.threadId,
+    code: "DISPATCH_BODY_MISMATCH",
+  });
+  const after = await readThreadReadTrace(value);
+  assert.deepEqual(
+    after.threadReadIncludeTurns.slice(before.threadReadCount),
+    [true],
+  );
+});
+
+test("new active turn evicts the old running proof and prevents recaching it", async (t) => {
+  const value = await harness(t);
+  const turn = await startLongTurn(value, "old-active-mail");
+  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+  await value.client.request("turn/start", {
+    threadId: turn.threadId,
+    clientUserMessageId: "external-new-turn",
+    input: [{ type: "text", text: "[LONG] external", text_elements: [] }],
+    cwd: value.root,
+  });
+  const before = await readThreadReadTrace(value);
+
+  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+
+  const after = await readThreadReadTrace(value);
+  assert.deepEqual(
+    after.threadReadIncludeTurns.slice(before.threadReadCount),
+    [true, true],
+  );
+});
+
+test("oversize running task safely declines cache admission", async (t) => {
+  const value = await harness(t);
+  const task = `[LONG]${"界".repeat(50_000)}`;
+  assert.ok(Buffer.byteLength(task, "utf8") > 128 * 1024);
+  const turn = await startLongTurn(value, "oversize-cache-mail", task);
+  const before = await readThreadReadTrace(value);
+
+  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+
+  const after = await readThreadReadTrace(value);
+  assert.deepEqual(
+    after.threadReadIncludeTurns.slice(before.threadReadCount),
+    [true, true],
+  );
+});
+
+test("running cache entry capacity fails open without evicting verified entries", async (t) => {
+  const value = await harness(t);
+  const turns: Awaited<ReturnType<typeof startLongTurn>>[] = [];
+  for (let index = 0; index < 33; index += 1) {
+    const turn = await startLongTurn(value, `capacity-mail-${index}`);
+    assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+    turns.push(turn);
+  }
+  const before = await readThreadReadTrace(value);
+
+  assert.equal((await inspectLongTurn(value, turns[32]!)).kind, "running");
+  assert.equal((await inspectLongTurn(value, turns[0]!)).kind, "running");
+  await value.client.request("turn/interrupt", {
+    threadId: turns[0]!.threadId,
+    turnId: turns[0]!.turnId,
+  });
+  assert.equal(
+    (await value.store.waitForTurn(
+      turns[0]!.threadId,
+      turns[0]!.turnId,
+      1_000,
+    )).status,
+    "interrupted",
+  );
+  assert.equal((await inspectLongTurn(value, turns[32]!)).kind, "running");
+  assert.equal((await inspectLongTurn(value, turns[32]!)).kind, "running");
+
+  const after = await readThreadReadTrace(value);
+  assert.deepEqual(
+    after.threadReadIncludeTurns.slice(before.threadReadCount),
+    [true, false, true, false],
+  );
+});
+
 test("running metadata fast path still rejects ownership drift", async (t) => {
   const value = await harness(t);
   const turn = await startLongTurn(value, "ownership-drift-mail");
@@ -301,14 +425,16 @@ test("app-server restart discards running cache and performs full inspection", a
   await assert.rejects(value.client.request("test/crash", {}));
 
   const recovered = await inspectLongTurn(value, turn);
+  const repeated = await inspectLongTurn(value, turn);
 
   assert.deepEqual(recovered, {
     kind: "running",
     threadId: turn.threadId,
     turnId: turn.turnId,
   });
+  assert.deepEqual(repeated, recovered);
   const restartedTrace = await readThreadReadTrace(value);
-  assert.deepEqual(restartedTrace.threadReadIncludeTurns, [true]);
+  assert.deepEqual(restartedTrace.threadReadIncludeTurns, [true, true]);
 });
 
 test("startBoundTurn accepts an exact resume response that omits its optional name", async (t) => {

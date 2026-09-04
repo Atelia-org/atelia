@@ -40,6 +40,7 @@ let threadResumeCount = 0;
 let turnStartCount = 0;
 let keepAliveAfterStdinClose = false;
 let resumeResponseThreadIdOverride: string | undefined;
+let completeOnNextMetadataRead: { threadId: string; turnId: string } | undefined;
 
 const lifecycleFileArgument = process.argv.find((argument) => argument.startsWith("--lifecycle-file="));
 const lifecycleFile = lifecycleFileArgument?.slice("--lifecycle-file=".length);
@@ -242,6 +243,13 @@ lines.on("line", (line) => {
       resumeResponseThreadIdOverride = String(message.params?.threadId);
       send({ id: message.id, result: {} });
       break;
+    case "test/completeOnNextMetadataRead":
+      completeOnNextMetadataRead = {
+        threadId: String(message.params?.threadId),
+        turnId: String(message.params?.turnId),
+      };
+      send({ id: message.id, result: {} });
+      break;
     case "test/setThreadCwd": {
       const thread = threads.get(String(message.params?.threadId));
       if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
@@ -316,6 +324,15 @@ lines.on("line", (line) => {
           }
         }
         send({ id: message.id, result: { thread: returned } });
+        const completion = completeOnNextMetadataRead;
+        if (
+          !message.params?.includeTurns
+          && completion !== undefined
+          && completion.threadId === thread.id
+        ) {
+          completeOnNextMetadataRead = undefined;
+          completeTurn(completion.threadId, completion.turnId, "interrupted");
+        }
       }
       break;
     }

@@ -35,6 +35,7 @@ import {
   classifyGalateaDispatch,
   DefaultGalateaDispatchInspectionLimits,
 } from "./dispatch-inspection.js";
+import type { JsonRpcNotification } from "./protocol.js";
 import { agentReportJsonSchema } from "./report.js";
 import { TaskStore } from "./task-store.js";
 
@@ -42,6 +43,9 @@ const DEVELOPER_INSTRUCTIONS = `You are the local execution subagent behind an M
 Complete the requested task inside the supplied cwd and sandbox. Do not request privilege escalation.
 Keep the final report concise: outcome, important findings, changed file paths, validation results, and warnings.
 Never include chain-of-thought, full command logs, large diffs, or full file contents in the final report.`;
+
+const MAXIMUM_VERIFIED_RUNNING_DISPATCHES = 32;
+const MAXIMUM_VERIFIED_RUNNING_TASK_UTF8_BYTES = 128 * 1024;
 
 export interface CodexBackendProfile {
   serviceName: string;
@@ -146,7 +150,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     this.options.client.subscribe((notification) => {
       if (notification.method === "bridge/processExited") {
         this.authenticated = false;
-        this.verifiedRunningDispatches.clear();
+        this.clearVerifiedRunningDispatches();
+      } else {
+        this.evictVerifiedRunningDispatchForNotification(notification);
       }
       this.options.store.handleNotification(notification);
     });
@@ -161,7 +167,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     if (this.stopPromise) return this.stopPromise;
     this.stopped = true;
     this.authenticated = false;
-    this.verifiedRunningDispatches.clear();
+    this.clearVerifiedRunningDispatches();
     this.stopPromise = this.options.client.stop();
     return this.stopPromise;
   }
@@ -274,7 +280,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         false,
       );
       if (!metadata.ok) {
-        this.verifiedRunningDispatches.delete(input.threadId);
+        this.evictVerifiedRunningDispatch(input.threadId);
         return metadata.inspection;
       }
       const confirmedRuntime = this.options.store.snapshot(input.threadId);
@@ -290,9 +296,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
           turnId: verified.turnId,
         };
       }
-      this.verifiedRunningDispatches.delete(input.threadId);
+      this.evictVerifiedRunningDispatch(input.threadId);
     } else if (verified !== undefined) {
-      this.verifiedRunningDispatches.delete(input.threadId);
+      this.evictVerifiedRunningDispatch(input.threadId);
     }
 
     const full = await this.readInspectionThread(
@@ -316,16 +322,82 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
       && confirmedRuntime.status === "running"
       && confirmedRuntime.activeTurnId === inspection.turnId
     ) {
-      this.verifiedRunningDispatches.set(input.threadId, {
-        threadId: input.threadId,
-        dispatchId: input.dispatchId,
-        task: input.task,
-        turnId: inspection.turnId,
-      });
+      this.tryCacheVerifiedRunningDispatch(input, inspection.turnId);
     } else {
-      this.verifiedRunningDispatches.delete(input.threadId);
+      this.evictVerifiedRunningDispatch(input.threadId);
     }
     return inspection;
+  }
+
+  private tryCacheVerifiedRunningDispatch(
+    input: InspectGalateaDispatchInput,
+    turnId: string,
+  ): void {
+    this.evictVerifiedRunningDispatch(input.threadId);
+    if (
+      this.verifiedRunningDispatches.size
+        >= MAXIMUM_VERIFIED_RUNNING_DISPATCHES
+      || Buffer.byteLength(input.task, "utf8")
+        > MAXIMUM_VERIFIED_RUNNING_TASK_UTF8_BYTES
+    ) {
+      return;
+    }
+    this.verifiedRunningDispatches.set(input.threadId, {
+      threadId: input.threadId,
+      dispatchId: input.dispatchId,
+      task: input.task,
+      turnId,
+    });
+  }
+
+  private evictVerifiedRunningDispatch(
+    threadId: string,
+    expectedTurnId?: string,
+  ): void {
+    const verified = this.verifiedRunningDispatches.get(threadId);
+    if (
+      verified !== undefined
+      && (expectedTurnId === undefined || verified.turnId === expectedTurnId)
+    ) {
+      this.verifiedRunningDispatches.delete(threadId);
+    }
+  }
+
+  private clearVerifiedRunningDispatches(): void {
+    this.verifiedRunningDispatches.clear();
+  }
+
+  private evictVerifiedRunningDispatchForNotification(
+    notification: JsonRpcNotification,
+  ): void {
+    if (
+      notification.method !== "turn/started"
+      && notification.method !== "turn/completed"
+    ) {
+      return;
+    }
+    const params = notification.params;
+    if (
+      typeof params !== "object"
+      || params === null
+      || !("threadId" in params)
+      || typeof params.threadId !== "string"
+      || !("turn" in params)
+      || typeof params.turn !== "object"
+      || params.turn === null
+      || !("id" in params.turn)
+      || typeof params.turn.id !== "string"
+    ) {
+      return;
+    }
+    if (notification.method === "turn/completed") {
+      this.evictVerifiedRunningDispatch(params.threadId, params.turn.id);
+      return;
+    }
+    const verified = this.verifiedRunningDispatches.get(params.threadId);
+    if (verified !== undefined && verified.turnId !== params.turn.id) {
+      this.evictVerifiedRunningDispatch(params.threadId);
+    }
   }
 
   private async readInspectionThread(
