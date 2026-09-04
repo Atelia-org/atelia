@@ -453,8 +453,9 @@ recall_memos
 首版不返回 score、reason、摘要或新 Memo proposal。`allowParallelToolCalls=false`；response必须恰好包含一次
 目标 tool call，并且没有需要信任的自由文本正文。
 
-`tool + Text block`和`tool + Reasoning block`都视为mixed output并拒绝；宿主不从附带文本中提取或猜测ID，
-也不因已有一个合法tool call而忽略额外model output。
+`tool + Text block`视为mixed output并拒绝；0..N个任意位置的`ReasoningBlock`只作为provider sideband忽略，
+不读取或信任其payload/`PlainText`。除此之外，宿主不从附带文本中提取或猜测ID，也不因已有一个合法tool call
+而忽略额外model output；null、未知future block和第二个tool call仍fail closed。
 
 ### 7.2 Host validation
 
@@ -782,7 +783,9 @@ WP-02与WP-03在WP-01之后可以并行；两者均只接受immutable value，�
 **Validation**
 
 - one/many/none；ordered IDs；unknown/duplicate/oversize ID拒绝；
-- wrong tool、multiple tool calls、free-text-only、`tool + Text`、`tool + Reasoning`、incomplete/error/cancel；
+- 唯一tool call周围0..N个`ReasoningBlock`成功且reasoning payload/`PlainText`不参与解析；
+- wrong tool、multiple tool calls、reasoning-only、free-text-only、`reasoning + Text + tool`、null/unknown block、
+  incomplete/error/cancel；
 - recall期间Pod保持Frozen，返回结果自包含；
 - provider failure、invalid output与caller cancellation后prompt/hash不变，下一次Recall复用相同prefix；
 - fake provider证明storage bytes和provider request不是同一contract。

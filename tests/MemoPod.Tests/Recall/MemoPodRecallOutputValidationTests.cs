@@ -3,16 +3,22 @@ using Atelia.Completion.Abstractions;
 namespace Atelia.MemoPod.Tests.Recall;
 
 public sealed class MemoPodRecallOutputValidationTests {
+    public enum ValidReasoningBlockShape {
+        ToolAndReasoning,
+        ReasoningAndTool,
+        MultipleReasoningAroundTool,
+    }
+
     public enum InvalidBlockShape {
         Empty,
         TextOnly,
         EmptyTextOnly,
         ReasoningOnly,
         ToolAndText,
-        ToolAndReasoning,
         TextAndTool,
-        ReasoningAndTool,
+        ReasoningTextAndTool,
         TwoTools,
+        ReasoningAndTwoTools,
         NullBlock,
         NullToolCall,
         WrongTool,
@@ -65,10 +71,10 @@ public sealed class MemoPodRecallOutputValidationTests {
     [InlineData(InvalidBlockShape.EmptyTextOnly)]
     [InlineData(InvalidBlockShape.ReasoningOnly)]
     [InlineData(InvalidBlockShape.ToolAndText)]
-    [InlineData(InvalidBlockShape.ToolAndReasoning)]
     [InlineData(InvalidBlockShape.TextAndTool)]
-    [InlineData(InvalidBlockShape.ReasoningAndTool)]
+    [InlineData(InvalidBlockShape.ReasoningTextAndTool)]
     [InlineData(InvalidBlockShape.TwoTools)]
+    [InlineData(InvalidBlockShape.ReasoningAndTwoTools)]
     [InlineData(InvalidBlockShape.NullBlock)]
     [InlineData(InvalidBlockShape.NullToolCall)]
     [InlineData(InvalidBlockShape.WrongTool)]
@@ -101,13 +107,21 @@ public sealed class MemoPodRecallOutputValidationTests {
                     tool,
                     new ActionBlock.Text("text")
                 ],
-                InvalidBlockShape.ToolAndReasoning => [tool, reasoning],
                 InvalidBlockShape.TextAndTool => [
                     new ActionBlock.Text("text"),
                     tool
                 ],
-                InvalidBlockShape.ReasoningAndTool => [reasoning, tool],
+                InvalidBlockShape.ReasoningTextAndTool => [
+                    reasoning,
+                    new ActionBlock.Text("text"),
+                    tool
+                ],
                 InvalidBlockShape.TwoTools => [tool, tool],
+                InvalidBlockShape.ReasoningAndTwoTools => [
+                    reasoning,
+                    tool,
+                    tool
+                ],
                 InvalidBlockShape.NullBlock => [null!],
                 InvalidBlockShape.NullToolCall => [
                     new ActionBlock.ToolCall(null!)
@@ -122,6 +136,124 @@ public sealed class MemoPodRecallOutputValidationTests {
         };
 
         await AssertInvalidOutputAndUnchanged(fixture, client);
+    }
+
+    [Theory]
+    [InlineData(ValidReasoningBlockShape.ToolAndReasoning)]
+    [InlineData(ValidReasoningBlockShape.ReasoningAndTool)]
+    [InlineData(ValidReasoningBlockShape.MultipleReasoningAroundTool)]
+    public async Task ReasoningSidebandsAroundExactlyOneToolAreIgnored(
+        ValidReasoningBlockShape shape
+    ) {
+        using MemoPodRecallFixture fixture =
+            await MemoPodRecallFixture.CreateAsync(
+                exactTexts: ["memo"]
+            );
+        var client = new FakeMemoRecallCompletionClient();
+        client.Handler = (self, request, _) => {
+            CompletionDescriptor descriptor = CompletionDescriptor.From(
+                self,
+                request
+            );
+            ActionBlock tool = self.ToolCall("{\"memoIds\":[]}");
+            ActionBlock textReasoning = new ActionBlock.TextReasoningBlock(
+                "reasoning-payload-canary",
+                descriptor,
+                "reasoning-plain-text-canary"
+            );
+            ActionBlock opaqueReasoning =
+                new ActionBlock.OpaqueReasoningBlock(
+                    "atelia.memo-pod-test.reasoning.v1",
+                    new byte[] { 0x00, 0x7f, 0xff },
+                    descriptor,
+                    "opaque-plain-text-canary"
+                );
+            IReadOnlyList<ActionBlock> blocks = shape switch {
+                ValidReasoningBlockShape.ToolAndReasoning => [
+                    tool,
+                    textReasoning
+                ],
+                ValidReasoningBlockShape.ReasoningAndTool => [
+                    opaqueReasoning,
+                    tool
+                ],
+                ValidReasoningBlockShape.MultipleReasoningAroundTool => [
+                    textReasoning,
+                    opaqueReasoning,
+                    tool,
+                    opaqueReasoning,
+                    textReasoning
+                ],
+                _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+            };
+            return Task.FromResult(self.Result(request, blocks));
+        };
+
+        MemoRecallResult result = await fixture.Pod.RecallAsync(
+            client,
+            "model",
+            "query",
+            MemoPodRecallFixture.Options()
+        );
+
+        Assert.Empty(result.Memos);
+        Assert.Equal(1, client.InvocationCount);
+    }
+
+    [Fact]
+    public async Task InvalidMixedShapeDoesNotLeakBlockOrToolPayloads() {
+        using MemoPodRecallFixture fixture =
+            await MemoPodRecallFixture.CreateAsync(
+                exactTexts: ["memo"]
+            );
+        const string ReasoningPayloadCanary =
+            "REASONING_PAYLOAD_CANARY";
+        const string ReasoningPlainTextCanary =
+            "REASONING_PLAIN_TEXT_CANARY";
+        const string ToolNameCanary = "ACTUAL_TOOL_NAME_CANARY";
+        const string ToolCallIdCanary = "TOOL_CALL_ID_CANARY";
+        const string ArgumentsCanary = "ARGUMENTS_CANARY";
+        const string TextCanary = "TEXT_CANARY";
+        var client = new FakeMemoRecallCompletionClient();
+        client.Handler = (self, request, _) => Task.FromResult(
+            self.Result(
+                request,
+                [
+                    new ActionBlock.TextReasoningBlock(
+                        ReasoningPayloadCanary,
+                        CompletionDescriptor.From(self, request),
+                        ReasoningPlainTextCanary
+                    ),
+                    self.ToolCall(
+                        $"{{\"memoIds\":[\"{ArgumentsCanary}\"]}}",
+                        ToolNameCanary,
+                        ToolCallIdCanary
+                    ),
+                    new ActionBlock.Text(TextCanary)
+                ]
+            )
+        );
+
+        MemoRecallException failure =
+            await Assert.ThrowsAsync<MemoRecallException>(() =>
+                fixture.Pod.RecallAsync(
+                    client,
+                    "model",
+                    "query",
+                    MemoPodRecallFixture.Options()
+                ));
+
+        Assert.Equal(
+            MemoRecallFailureKind.InvalidModelOutput,
+            failure.FailureKind
+        );
+        string diagnostic = failure.ToString();
+        Assert.DoesNotContain(ReasoningPayloadCanary, diagnostic);
+        Assert.DoesNotContain(ReasoningPlainTextCanary, diagnostic);
+        Assert.DoesNotContain(ToolNameCanary, diagnostic);
+        Assert.DoesNotContain(ToolCallIdCanary, diagnostic);
+        Assert.DoesNotContain(ArgumentsCanary, diagnostic);
+        Assert.DoesNotContain(TextCanary, diagnostic);
     }
 
     [Theory]

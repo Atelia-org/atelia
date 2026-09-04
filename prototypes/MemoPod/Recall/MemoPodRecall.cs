@@ -123,12 +123,27 @@ public sealed partial class MemoPod {
                 "MemoPod recall provider reported completion errors."
             );
         }
-        if (completionResult.Message.Blocks.Count != 1
-            || completionResult.Message.Blocks[0]
-                is not ActionBlock.ToolCall toolCall
-            || toolCall.Call is null) {
+        ActionBlock.ToolCall? toolCall = null;
+        foreach (ActionBlock? block in completionResult.Message.Blocks) {
+            switch (block) {
+                case ActionBlock.ReasoningBlock:
+                    break;
+
+                case ActionBlock.ToolCall candidate
+                    when candidate.Call is not null
+                        && toolCall is null:
+                    toolCall = candidate;
+                    break;
+
+                default:
+                    throw MemoPodRecallValidation.InvalidOutput(
+                        "MemoPod recall output may contain only one tool-call block and optional reasoning blocks."
+                    );
+            }
+        }
+        if (toolCall is null) {
             throw MemoPodRecallValidation.InvalidOutput(
-                "MemoPod recall output must contain exactly one tool-call block."
+                "MemoPod recall output must contain exactly one tool-call block; reasoning blocks are optional."
             );
         }
         if (!string.Equals(
