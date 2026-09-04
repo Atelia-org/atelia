@@ -749,6 +749,116 @@ internal sealed partial class GalateaDelegationSqliteStore {
         );
     }
 
+    /// <summary>
+    /// Clears the current reconciliation-miss streak after an exact Running
+    /// observation confirms the already-Accepted thread and turn. This is a
+    /// state-preserving Accepted transition; it never authorizes another start.
+    /// </summary>
+    internal GalateaOutboundMailSnapshot ConfirmAcceptedMailRunning(
+        string dispatchId,
+        long expectedMailRevision,
+        string threadId,
+        string turnId
+    ) {
+        RequireDispatchId(dispatchId);
+        RequireWireIdentity(threadId, nameof(threadId));
+        RequireWireIdentity(turnId, nameof(turnId));
+        lock (_gate) {
+            ThrowIfNotWritable();
+            return ExecuteWrite(
+                "confirm-accepted-mail-running",
+                (connection, transaction) => {
+                    GalateaRouteBindingSnapshot route = ReadRoute(
+                        connection,
+                        transaction
+                    );
+                    GalateaOutboundMailSnapshot mail = ReadMailRequired(
+                        connection,
+                        transaction,
+                        dispatchId
+                    );
+                    if (route.State != GalateaDelegationRouteState.Bound
+                        || !string.Equals(
+                            route.ActiveDispatchId,
+                            dispatchId,
+                            StringComparison.Ordinal)
+                        || !string.Equals(
+                            route.ThreadId,
+                            threadId,
+                            StringComparison.Ordinal)
+                        || mail.State != GalateaDurableMailState.Accepted
+                        || mail.Revision != expectedMailRevision
+                        || !string.Equals(
+                            mail.RequestedThreadId,
+                            threadId,
+                            StringComparison.Ordinal)
+                        || !string.Equals(
+                            mail.AcceptedThreadId,
+                            threadId,
+                            StringComparison.Ordinal)
+                        || !string.Equals(
+                            mail.AcceptedTurnId,
+                            turnId,
+                            StringComparison.Ordinal)
+                        || mail.ReconcileAttemptCount <= 0
+                        || mail.ReconcileLastCode is null
+                        || mail.NextReconcileAtUnixTimeMilliseconds is null) {
+                        throw Conflict(
+                            "Accepted Running confirmation identity or reconciliation state conflicts."
+                        );
+                    }
+                    _ = IncrementStoreRevision(connection, transaction);
+                    using SqliteCommand update = connection.CreateCommand();
+                    update.Transaction = transaction;
+                    update.CommandText = """
+                        UPDATE outbound_mail
+                        SET reconcile_attempt_count = 0,
+                            reconcile_last_code = NULL,
+                            next_reconcile_at_ms = NULL,
+                            revision = revision + 1
+                        WHERE dispatch_id = $dispatch
+                          AND state = 'Accepted'
+                          AND requested_thread_id = $thread
+                          AND accepted_thread_id = $thread
+                          AND accepted_turn_id = $turn
+                          AND reconcile_attempt_count > 0
+                          AND reconcile_last_code IS NOT NULL
+                          AND next_reconcile_at_ms IS NOT NULL
+                          AND revision = $revision;
+                        """;
+                    update.Parameters.AddWithValue("$dispatch", dispatchId);
+                    update.Parameters.AddWithValue("$thread", threadId);
+                    update.Parameters.AddWithValue("$turn", turnId);
+                    update.Parameters.AddWithValue(
+                        "$revision",
+                        expectedMailRevision
+                    );
+                    RequireOne(
+                        update.ExecuteNonQuery(),
+                        "Accepted mail Running confirmation"
+                    );
+                    return mail with {
+                        ReconcileAttemptCount = 0,
+                        ReconcileLastCode = null,
+                        NextReconcileAtUnixTimeMilliseconds = null,
+                        Revision = checked(mail.Revision + 1)
+                    };
+                },
+                (snapshot, result) => snapshot.Mails.Contains(result)
+                    && snapshot.Route.State
+                        == GalateaDelegationRouteState.Bound
+                    && string.Equals(
+                        snapshot.Route.ActiveDispatchId,
+                        dispatchId,
+                        StringComparison.Ordinal)
+                    && string.Equals(
+                        snapshot.Route.ThreadId,
+                        threadId,
+                        StringComparison.Ordinal)
+            );
+        }
+    }
+
     internal GalateaOutboundMailSnapshot RecordMailPollMiss(
         string dispatchId,
         long expectedMailRevision,

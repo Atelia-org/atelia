@@ -477,7 +477,21 @@ public sealed class GalateaDelegationSqliteStoreTests {
 
     [Fact]
     public void MailStateMachine_BindsBeforeStart_AndOutcomeUnknownNeverRequeues() {
-        using var fixture = new RoutedStore(maximumInboxReplies: 4);
+        bool injectRunningConfirmationUncertain = true;
+        using var fixture = new RoutedStore(
+            maximumInboxReplies: 4,
+            hooks: new GalateaDelegationStoreTestHooks(
+                AfterCommitBeforeReturn: operation => {
+                    if (injectRunningConfirmationUncertain
+                        && operation == "confirm-accepted-mail-running") {
+                        injectRunningConfirmationUncertain = false;
+                        throw new IOException(
+                            "injected after Running confirmation"
+                        );
+                    }
+                }
+            )
+        );
         GalateaDelegationStateSnapshot initial = fixture.Store.ReadSnapshot();
         GalateaOutboundMailSnapshot mail = initial.Mails[0];
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
@@ -542,6 +556,22 @@ public sealed class GalateaDelegationSqliteStoreTests {
             "thread-1",
             "turn-1"
         );
+        Assert.Equal(0, accepted.ReconcileAttemptCount);
+        Assert.Null(accepted.ReconcileLastCode);
+        Assert.Null(accepted.NextReconcileAtUnixTimeMilliseconds);
+        long cleanAcceptedStoreRevision = fixture.Store.ReadSnapshot()
+            .StoreRevision;
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            fixture.Store.ConfirmAcceptedMailRunning(
+                mail.DispatchId,
+                accepted.Revision,
+                "thread-1",
+                "turn-1"
+            ));
+        Assert.Equal(
+            cleanAcceptedStoreRevision,
+            fixture.Store.ReadSnapshot().StoreRevision
+        );
         accepted = fixture.Store.RecordMailPollMiss(
             mail.DispatchId,
             accepted.Revision,
@@ -552,12 +582,58 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Equal("thread-1", accepted.AcceptedThreadId);
         Assert.Equal("turn-1", accepted.AcceptedTurnId);
         Assert.Equal(1, accepted.ReconcileAttemptCount);
+        long missedStoreRevision = fixture.Store.ReadSnapshot().StoreRevision;
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            fixture.Store.ConfirmAcceptedMailRunning(
+                mail.DispatchId,
+                accepted.Revision,
+                "wrong-thread",
+                "turn-1"
+            ));
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            fixture.Store.ConfirmAcceptedMailRunning(
+                mail.DispatchId,
+                accepted.Revision,
+                "thread-1",
+                "wrong-turn"
+            ));
+        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
+            fixture.Store.ConfirmAcceptedMailRunning(
+                mail.DispatchId,
+                accepted.Revision - 1,
+                "thread-1",
+                "turn-1"
+            ));
+        Assert.Equal(
+            missedStoreRevision,
+            fixture.Store.ReadSnapshot().StoreRevision
+        );
+        Assert.Equal(
+            accepted,
+            fixture.Store.ReadSnapshot().Mails[0]
+        );
+        accepted = fixture.Store.ConfirmAcceptedMailRunning(
+            mail.DispatchId,
+            accepted.Revision,
+            "thread-1",
+            "turn-1"
+        );
+        Assert.False(injectRunningConfirmationUncertain);
+        Assert.Equal(0, accepted.ReconcileAttemptCount);
+        Assert.Null(accepted.ReconcileLastCode);
+        Assert.Null(accepted.NextReconcileAtUnixTimeMilliseconds);
+        Assert.Equal(
+            missedStoreRevision + 1,
+            fixture.Store.ReadSnapshot().StoreRevision
+        );
         fixture.Reopen();
         accepted = fixture.Store.ReadSnapshot().Mails[0];
         Assert.Equal(GalateaDurableMailState.Accepted, accepted.State);
         Assert.Equal("thread-1", accepted.AcceptedThreadId);
         Assert.Equal("turn-1", accepted.AcceptedTurnId);
-        Assert.Equal("POLL_UNAVAILABLE", accepted.ReconcileLastCode);
+        Assert.Equal(0, accepted.ReconcileAttemptCount);
+        Assert.Null(accepted.ReconcileLastCode);
+        Assert.Null(accepted.NextReconcileAtUnixTimeMilliseconds);
         GalateaReplyNoticeSnapshot notice = fixture.Store.RecordCompletedMail(
             mail.DispatchId,
             accepted.Revision,

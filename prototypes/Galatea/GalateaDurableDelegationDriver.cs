@@ -1,5 +1,6 @@
 using Atelia.Diagnostics;
 using Atelia.Galatea.Server.Mailbox;
+using System.Diagnostics;
 using System.Text;
 
 namespace Atelia.Galatea.Server;
@@ -61,6 +62,7 @@ internal sealed class GalateaDurableDelegationDriver {
     private readonly TimeProvider _timeProvider;
     private readonly Func<string> _bindingOperationIdFactory;
     private readonly SemaphoreSlim _pulseGate = new(1, 1);
+    private HashSet<string>? _debugRunningConfirmedDispatchIds;
 
     internal GalateaDurableDelegationDriver(
         GalateaDelegationSqliteStore store,
@@ -113,7 +115,6 @@ internal sealed class GalateaDurableDelegationDriver {
         GalateaRouteBindingSnapshot route = snapshot.Route;
         GalateaOutboundMailSnapshot? active = ReadActiveMail(snapshot);
 
-        LogPulse(snapshot, active);
         if (route.State == GalateaDelegationRouteState.Quarantined) {
             return new(GalateaDurableDelegationPulseStep.Quarantined,
                 active?.DispatchId, route.ThreadId,
@@ -694,6 +695,15 @@ internal sealed class GalateaDurableDelegationDriver {
                     StringComparison.Ordinal)) {
                 return QuarantineActive(snapshot, mail, InspectionTurnCode);
             }
+            if (mail.ReconcileAttemptCount > 0) {
+                _ = _store.ConfirmAcceptedMailRunning(
+                    mail.DispatchId,
+                    mail.Revision,
+                    running.ThreadId,
+                    running.TurnId
+                );
+            }
+            LogRunningConfirmed(snapshot, mail, running);
             return new(
                 GalateaDurableDelegationPulseStep.AcceptedRunning,
                 mail.DispatchId,
@@ -707,6 +717,7 @@ internal sealed class GalateaDurableDelegationDriver {
             running.ThreadId,
             running.TurnId
         );
+        LogRunningConfirmed(snapshot, mail, running);
         return new(
             GalateaDurableDelegationPulseStep.MailAccepted,
             accepted.DispatchId,
@@ -965,17 +976,27 @@ internal sealed class GalateaDurableDelegationDriver {
     private static string Safe(string value) =>
         GalateaMailboxText.SummarizeForLog(value);
 
-    private static void LogPulse(
+    [Conditional("DEBUG")]
+    private void LogRunningConfirmed(
         GalateaDelegationStateSnapshot snapshot,
-        GalateaOutboundMailSnapshot? active
-    ) => DebugUtil.Trace(
-        LogCategory,
-        "Durable pulse selected: "
-            + $"user={Safe(snapshot.Owner.UserId)}, "
-            + $"storeRevision={snapshot.StoreRevision}, "
-            + $"routeState={snapshot.Route.State}, "
-            + $"activeDispatchId={active?.DispatchId ?? "<none>"}."
-    );
+        GalateaOutboundMailSnapshot mail,
+        GalateaDelegateDispatchInspection.Running running
+    ) {
+        _debugRunningConfirmedDispatchIds ??= new(StringComparer.Ordinal);
+        if (!_debugRunningConfirmedDispatchIds.Add(mail.DispatchId)) {
+            return;
+        }
+        DebugUtil.Info(
+            LogCategory,
+            "Durable dispatch Running confirmed: "
+                + $"user={Safe(snapshot.Owner.UserId)}, "
+                + $"dispatchId={mail.DispatchId}, "
+                + $"threadId={running.ThreadId}, turnId={running.TurnId}, "
+                + $"clearedAttempt={mail.ReconcileAttemptCount}, "
+                + $"clearedCode={mail.ReconcileLastCode ?? "<none>"}.",
+            eventKind: DebugEventKind.Success
+        );
+    }
 
     private static void LogOutcomeUnknown(
         GalateaDelegationStateSnapshot snapshot,

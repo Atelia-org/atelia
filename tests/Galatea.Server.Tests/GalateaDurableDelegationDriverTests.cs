@@ -279,24 +279,57 @@ public sealed class GalateaDurableDelegationDriverTests {
     }
 
     [Fact]
-    public async Task AcceptedNotFound_PreservesAcceptedThreadAndTurn() {
+    public async Task AcceptedNotFoundThenRunning_ClearsOnlyCurrentMissStreak() {
         using var fixture = new DriverStore();
         fixture.Bind("thread-1");
+        var clock = new ManualTimeProvider();
         await using var transport = new ScriptedTransport();
         transport.StartSteps.Enqueue(Accept("turn-1"));
         transport.InspectSteps.Enqueue(NotFound());
-        GalateaDurableDelegationDriver driver = fixture.Driver(transport);
+        transport.InspectSteps.Enqueue(Running("turn-1"));
+        transport.InspectSteps.Enqueue(Running("turn-1"));
+        transport.InspectSteps.Enqueue(NotFound());
+        GalateaDurableDelegationDriver driver = fixture.Driver(
+            transport,
+            clock
+        );
         _ = await driver.PulseAsync();
 
         Assert.Equal(GalateaDurableDelegationPulseStep.InspectionNotFound,
             (await driver.PulseAsync()).Step);
-
         GalateaOutboundMailSnapshot mail =
             fixture.Store.ReadSnapshot().Mails.Single();
         Assert.Equal(GalateaDurableMailState.Accepted, mail.State);
         Assert.Equal("thread-1", mail.AcceptedThreadId);
         Assert.Equal("turn-1", mail.AcceptedTurnId);
         Assert.Equal(1, mail.ReconcileAttemptCount);
+        Assert.Equal("NOT_FOUND", mail.ReconcileLastCode);
+        Assert.Equal(1_000, mail.NextReconcileAtUnixTimeMilliseconds);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(GalateaDurableDelegationPulseStep.AcceptedRunning,
+            (await driver.PulseAsync()).Step);
+        mail = fixture.Store.ReadSnapshot().Mails.Single();
+        Assert.Equal(0, mail.ReconcileAttemptCount);
+        Assert.Null(mail.ReconcileLastCode);
+        Assert.Null(mail.NextReconcileAtUnixTimeMilliseconds);
+        long cleanStoreRevision = fixture.Store.ReadSnapshot().StoreRevision;
+
+        Assert.Equal(GalateaDurableDelegationPulseStep.AcceptedRunning,
+            (await driver.PulseAsync()).Step);
+        Assert.Equal(
+            cleanStoreRevision,
+            fixture.Store.ReadSnapshot().StoreRevision
+        );
+
+        Assert.Equal(GalateaDurableDelegationPulseStep.InspectionNotFound,
+            (await driver.PulseAsync()).Step);
+        mail = fixture.Store.ReadSnapshot().Mails.Single();
+        Assert.Equal(1, mail.ReconcileAttemptCount);
+        Assert.Equal("NOT_FOUND", mail.ReconcileLastCode);
+        Assert.Equal(2_000, mail.NextReconcileAtUnixTimeMilliseconds);
+        Assert.Equal(1, transport.StartCallCount);
+        Assert.Equal(4, transport.InspectCallCount);
     }
 
     [Theory]
@@ -805,6 +838,17 @@ public sealed class GalateaDurableDelegationDriverTests {
                 new GalateaDelegateDispatchInspection.NotFound(
                     request.DispatchId,
                     request.ThreadId
+                )
+            );
+
+    private static Func<GalateaInspectDelegateDispatchRequest,
+        CancellationToken, Task<GalateaDelegateDispatchInspection>>
+        Running(string turnId) => (request, _) => Task.FromResult<
+            GalateaDelegateDispatchInspection>(
+                new GalateaDelegateDispatchInspection.Running(
+                    request.DispatchId,
+                    request.ThreadId,
+                    turnId
                 )
             );
 
