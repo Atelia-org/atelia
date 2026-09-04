@@ -39,6 +39,22 @@ public sealed class GalateaDelegateConfigTests {
         Assert.Throws<InvalidDataException>(() => fixture.Load(legacy));
     }
 
+    [Fact]
+    public void RetiredTurnTimeoutIsRejectedAsUnknownWithoutCompatibilityFallback() {
+        using var fixture = new Fixture();
+        JsonObject root = fixture.Parse();
+        root["sidecar"]!.AsObject()["turnTimeoutMs"] = 1_200_000;
+
+        InvalidDataException failure = Assert.Throws<InvalidDataException>(
+            () => fixture.Load(root)
+        );
+        Assert.Contains(
+            "sidecar contains unknown property 'turnTimeoutMs'",
+            failure.Message,
+            StringComparison.Ordinal
+        );
+    }
+
     [Theory]
     [InlineData("unknown")]
     [InlineData("wrong-case")]
@@ -121,7 +137,6 @@ public sealed class GalateaDelegateConfigTests {
     [Theory]
     [InlineData("rpcTimeoutMs", 99)]
     [InlineData("rpcTimeoutMs", 300001)]
-    [InlineData("turnTimeoutMs", 99)]
     [InlineData("shutdownGraceMs", 9)]
     [InlineData("maximumFrameUtf8Bytes", 1023)]
     public void SidecarRangesAreClosed(string property, int value) {
@@ -321,6 +336,11 @@ public sealed class GalateaDelegateConfigTests {
             File.ReadAllText(delegatesPath),
             StringComparison.Ordinal
         );
+        Assert.DoesNotContain(
+            "turnTimeoutMs",
+            File.ReadAllText(delegatesPath),
+            StringComparison.Ordinal
+        );
         Assert.Equal("existing-connections", File.ReadAllText(connectionsPath));
     }
 
@@ -380,7 +400,6 @@ public sealed class GalateaDelegateConfigTests {
             "entryPoint": {{JsonSerializer.Serialize(EntryPoint)}},
             "codexCommand": {{JsonSerializer.Serialize(Executable)}},
             "rpcTimeoutMs": 1000,
-            "turnTimeoutMs": 1000,
             "shutdownGraceMs": 100,
             "maximumFrameUtf8Bytes": 1048576
           },

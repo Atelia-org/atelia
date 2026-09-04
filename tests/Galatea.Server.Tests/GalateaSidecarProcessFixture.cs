@@ -74,7 +74,6 @@ internal sealed class GalateaSidecarProcessFixture : IDisposable {
             ScriptPath,
             "/usr/bin/true",
             RpcTimeoutMs: rpcTimeoutMs,
-            TurnTimeoutMs: 2_000,
             ShutdownGraceMs: 100,
             MaximumFrameUtf8Bytes: maximumFrameUtf8Bytes
         ),

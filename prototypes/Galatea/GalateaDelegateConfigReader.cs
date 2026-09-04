@@ -13,8 +13,6 @@ internal static class GalateaDelegateConfigReader {
     private const int MaximumAllowedRoots = 64;
     private const int MinimumRpcTimeoutMs = 100;
     private const int MaximumRpcTimeoutMs = 300_000;
-    private const int MinimumTurnTimeoutMs = 100;
-    private const int MaximumTurnTimeoutMs = 86_400_000;
     private const int MinimumShutdownGraceMs = 10;
     private const int MaximumShutdownGraceMs = 30_000;
     private const int MinimumFrameUtf8Bytes = 1_024;
@@ -64,12 +62,6 @@ internal static class GalateaDelegateConfigReader {
             "rpcTimeoutMs",
             MinimumRpcTimeoutMs,
             MaximumRpcTimeoutMs
-        );
-        int turnTimeoutMs = ReadBoundedInteger(
-            sidecarElement,
-            "turnTimeoutMs",
-            MinimumTurnTimeoutMs,
-            MaximumTurnTimeoutMs
         );
         int shutdownGraceMs = ReadBoundedInteger(
             sidecarElement,
@@ -209,7 +201,6 @@ internal static class GalateaDelegateConfigReader {
                 entryPoint,
                 codexCommand,
                 rpcTimeoutMs,
-                turnTimeoutMs,
                 shutdownGraceMs,
                 maximumFrameUtf8Bytes
             ),
@@ -266,8 +257,6 @@ internal static class GalateaDelegateConfigReader {
         );
         RequireBoundedInteger(sidecar.RpcTimeoutMs, "rpcTimeoutMs",
             MinimumRpcTimeoutMs, MaximumRpcTimeoutMs);
-        RequireBoundedInteger(sidecar.TurnTimeoutMs, "turnTimeoutMs",
-            MinimumTurnTimeoutMs, MaximumTurnTimeoutMs);
         RequireBoundedInteger(sidecar.ShutdownGraceMs, "shutdownGraceMs",
             MinimumShutdownGraceMs, MaximumShutdownGraceMs);
         RequireBoundedInteger(
@@ -366,7 +355,6 @@ internal static class GalateaDelegateConfigReader {
                 entryPoint,
                 codexCommand,
                 sidecar.RpcTimeoutMs,
-                sidecar.TurnTimeoutMs,
                 sidecar.ShutdownGraceMs,
                 sidecar.MaximumFrameUtf8Bytes
             ),
@@ -402,7 +390,6 @@ internal static class GalateaDelegateConfigReader {
             "entryPoint": "/REPLACE_WITH_GALATEA_SIDECAR_ENTRY_POINT",
             "codexCommand": "/REPLACE_WITH_CANONICAL_CODEX_EXECUTABLE",
             "rpcTimeoutMs": 30000,
-            "turnTimeoutMs": 1200000,
             "shutdownGraceMs": 5000,
             "maximumFrameUtf8Bytes": 1048576
           },
@@ -484,13 +471,12 @@ internal static class GalateaDelegateConfigReader {
             ["entryPoint"] = RequireString,
             ["codexCommand"] = RequireString,
             ["rpcTimeoutMs"] = RequireNumber,
-            ["turnTimeoutMs"] = RequireNumber,
             ["shutdownGraceMs"] = RequireNumber,
             ["maximumFrameUtf8Bytes"] = RequireNumber
         });
         RequireExactProperties(seen, "sidecar", [
             "nodeCommand", "entryPoint", "codexCommand", "rpcTimeoutMs",
-            "turnTimeoutMs", "shutdownGraceMs", "maximumFrameUtf8Bytes"
+            "shutdownGraceMs", "maximumFrameUtf8Bytes"
         ]);
     }
 

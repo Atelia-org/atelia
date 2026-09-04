@@ -603,7 +603,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 "entryPoint": {{JsonSerializer.Serialize(entryPoint)}},
                 "codexCommand": {{JsonSerializer.Serialize(executable)}},
                 "rpcTimeoutMs": 1000,
-                "turnTimeoutMs": 1000,
                 "shutdownGraceMs": 100,
                 "maximumFrameUtf8Bytes": 1048576
               },

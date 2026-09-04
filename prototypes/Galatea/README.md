@@ -171,7 +171,6 @@ case-sensitive route：`recipient: "Codex"` / `kind: "codex-app-server"`。示�
     "entryPoint": "/canonical/path/to/local-codex-mcp/dist/src/galatea-durable-sidecar.js",
     "codexCommand": "/canonical/path/to/codex.js",
     "rpcTimeoutMs": 30000,
-    "turnTimeoutMs": 1200000,
     "shutdownGraceMs": 5000,
     "maximumFrameUtf8Bytes": 1048576
   },
@@ -209,6 +208,11 @@ Bootstrap会同时生成一份
 programmatic `GalateaConfig`也走同一套path/executable/range/frame/containment校验；sidecar
 持有canonical immutable snapshot，caller之后修改原始list不会改变生效policy。
 
+delegated Codex turn有意不设置elapsed deadline：一旦`start-turn`被接受，Galatea不会仅因
+时间流逝而自动`interrupt`仍在工作的LLM会话。`rpcTimeoutMs`只限制单次sidecar/app-server
+控制RPC的等待，不是turn lifetime；`shutdownGraceMs`只限制sidecar关服已经开始后等待child
+process退出或kill后reap确认的时长，也不是运行中turn的deadline。
+
 `GalateaHostService`拥有一个host-wide `GalateaDelegationSupervisor`、一个共享且lazy的
 `GalateaCodexDurableSidecarClient`以及每个user独立的SQLite store/driver。所有其他fallible composition
 preflight都先完成，最后才构造supervisor，因为existing writable outbox可能从构造成功后立即被pulse。
@@ -220,7 +224,7 @@ fallback pulse总会重读SQLite。每个user至多一个pulse在途，每次pul
 保持`Uninitialized`，maintenance不会创建baseline。
 
 transport启动`nodeCommand entryPoint`并通过environment注入code-owned allowed roots、cwd、Codex
-command、mode、local command network、built-in tool policy及timeout/body/frame bounds。邮件正文只能进入
+command、mode、local command network、built-in tool policy及RPC/body/frame bounds。邮件正文只能进入
 JSONL `task`字段，不能覆盖route policy。现行wire是strict bounded JSONL V2，三个input分别为
 `ensure-binding`、`start-turn`与`inspect-dispatch`；对应结果为`binding-established`、`turn-accepted`与
 `dispatch-inspected(not-found|running|completed|failed|ambiguous)`。`turn-accepted`只持久化稳定

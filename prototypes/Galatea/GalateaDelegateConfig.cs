@@ -10,12 +10,23 @@ public sealed record GalateaDelegateConfig(
     public GalateaDelegateRouteConfig CodexRoute => Routes[0];
 }
 
+/// <summary>
+/// Configures the durable Codex sidecar process and its control-plane bounds.
+/// A delegated Codex turn intentionally has no elapsed-time deadline and is
+/// never interrupted merely because time passes.
+/// </summary>
+/// <param name="RpcTimeoutMs">
+/// Bounds one sidecar/app-server control RPC wait; it does not bound the
+/// lifetime of an accepted delegated Codex turn.
+/// </param>
+/// <param name="ShutdownGraceMs">
+/// Bounds child-process reap waits only after sidecar shutdown has begun.
+/// </param>
 public sealed record GalateaDelegateSidecarConfig(
     string NodeCommand,
     string EntryPoint,
     string CodexCommand,
     int RpcTimeoutMs,
-    int TurnTimeoutMs,
     int ShutdownGraceMs,
     int MaximumFrameUtf8Bytes
 );

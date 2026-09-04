@@ -23,7 +23,6 @@ internal static class GalateaDelegateTestConfiguration {
                 entryPoint,
                 executable,
                 RpcTimeoutMs: 1_000,
-                TurnTimeoutMs: 1_000,
                 ShutdownGraceMs: 100,
                 MaximumFrameUtf8Bytes: 1_048_576
             ),
