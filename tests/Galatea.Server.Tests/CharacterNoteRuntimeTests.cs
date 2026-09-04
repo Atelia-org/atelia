@@ -224,7 +224,7 @@ public sealed class CharacterNoteRuntimeTests {
     }
 
     [Fact]
-    public async Task DiagnosticSinkCapturesSingleLineJsonWithinContentBoundary() {
+    public async Task DiagnosticSinkFollowsBuildConfigurationAndDebugPayloadBoundary() {
         const string ExactText = "remember blue\nsecond line";
         const string Evidence =
             "I completed submitting a long-term Note save request:\nremember blue\nsecond line";
@@ -278,58 +278,65 @@ public sealed class CharacterNoteRuntimeTests {
                 .WaitAsync(Deadline);
             service.FinishTurn(session, turn);
 
-            string artifactJson = Assert.Single(DiagnosticEvents(
-                diagnostics,
-                "character-note-durable-memo"
-            ));
-            string batchJson = Assert.Single(DiagnosticEvents(
-                diagnostics,
-                "character-note-extraction-batch"
-            ));
-            Assert.All(diagnostics, static json => {
-                Assert.DoesNotContain('\r', json);
-                Assert.DoesNotContain('\n', json);
-            });
-            Assert.Contains("\\n", artifactJson, StringComparison.Ordinal);
-            using (JsonDocument artifact = JsonDocument.Parse(artifactJson)) {
-                Assert.Equal(
-                    ExactText,
-                    artifact.RootElement.GetProperty("exactText").GetString()
-                );
-                Assert.Equal(
-                    CharacterNoteDefaultPodV1.PodId.Value,
-                    artifact.RootElement.GetProperty("podId").GetString()
-                );
-                Assert.False(artifact.RootElement.TryGetProperty(
-                    "evidenceQuote",
-                    out _
+            AssertCharacterNoteDiagnosticsForBuild(diagnostics, observed => {
+                string artifactJson = Assert.Single(DiagnosticEvents(
+                    observed,
+                    "character-note-durable-memo"
                 ));
-            }
-            using (JsonDocument batch = JsonDocument.Parse(batchJson)) {
-                Assert.Equal(
-                    "captured",
-                    batch.RootElement.GetProperty("mailOutcome").GetString()
-                );
-                Assert.Equal(
-                    "applied-now",
-                    batch.RootElement.GetProperty("noteOutcome").GetString()
-                );
-                Assert.Equal(
-                    "queued",
-                    batch.RootElement.GetProperty("receiptOutcome").GetString()
-                );
-                Assert.True(batch.RootElement.GetProperty("mailMs")
-                    .GetInt64() >= 0);
-                Assert.True(batch.RootElement.GetProperty("noteMs")
-                    .GetInt64() >= 0);
-            }
-            Assert.All(diagnostics, json => {
-                Assert.DoesNotContain(ActionMarker, json,
+                string batchJson = Assert.Single(DiagnosticEvents(
+                    observed,
+                    "character-note-extraction-batch"
+                ));
+                Assert.All(observed, static json => {
+                    Assert.DoesNotContain('\r', json);
+                    Assert.DoesNotContain('\n', json);
+                });
+                Assert.Contains("\\n", artifactJson,
                     StringComparison.Ordinal);
-                Assert.DoesNotContain("sensitive-endpoint", json,
-                    StringComparison.Ordinal);
-                Assert.DoesNotContain("sensitive-secret", json,
-                    StringComparison.Ordinal);
+                using (JsonDocument artifact = JsonDocument.Parse(
+                    artifactJson
+                )) {
+                    Assert.Equal(
+                        ExactText,
+                        artifact.RootElement.GetProperty("exactText")
+                            .GetString()
+                    );
+                    Assert.Equal(
+                        CharacterNoteDefaultPodV1.PodId.Value,
+                        artifact.RootElement.GetProperty("podId").GetString()
+                    );
+                    Assert.False(artifact.RootElement.TryGetProperty(
+                        "evidenceQuote",
+                        out _
+                    ));
+                }
+                using (JsonDocument batch = JsonDocument.Parse(batchJson)) {
+                    Assert.Equal(
+                        "captured",
+                        batch.RootElement.GetProperty("mailOutcome").GetString()
+                    );
+                    Assert.Equal(
+                        "applied-now",
+                        batch.RootElement.GetProperty("noteOutcome").GetString()
+                    );
+                    Assert.Equal(
+                        "queued",
+                        batch.RootElement.GetProperty("receiptOutcome")
+                            .GetString()
+                    );
+                    Assert.True(batch.RootElement.GetProperty("mailMs")
+                        .GetInt64() >= 0);
+                    Assert.True(batch.RootElement.GetProperty("noteMs")
+                        .GetInt64() >= 0);
+                }
+                Assert.All(observed, json => {
+                    Assert.DoesNotContain(ActionMarker, json,
+                        StringComparison.Ordinal);
+                    Assert.DoesNotContain("sensitive-endpoint", json,
+                        StringComparison.Ordinal);
+                    Assert.DoesNotContain("sensitive-secret", json,
+                        StringComparison.Ordinal);
+                });
             });
         }
         finally {
@@ -432,17 +439,19 @@ public sealed class CharacterNoteRuntimeTests {
             if (outcome == NoteOutcome.Timeout) {
                 Assert.True(noteClient.CancellationObserved);
             }
-            AssertNoArtifactDiagnostics(diagnostics);
-            string batchJson = Assert.Single(DiagnosticEvents(
-                diagnostics,
-                "character-note-extraction-batch"
-            ));
-            Assert.DoesNotContain("note provider unavailable", batchJson,
-                StringComparison.Ordinal);
-            Assert.DoesNotContain("http://localhost:8000", batchJson,
-                StringComparison.Ordinal);
-            Assert.DoesNotContain("test-key", batchJson,
-                StringComparison.Ordinal);
+            AssertCharacterNoteDiagnosticsForBuild(diagnostics, observed => {
+                AssertNoArtifactDiagnostics(observed);
+                string batchJson = Assert.Single(DiagnosticEvents(
+                    observed,
+                    "character-note-extraction-batch"
+                ));
+                Assert.DoesNotContain("note provider unavailable", batchJson,
+                    StringComparison.Ordinal);
+                Assert.DoesNotContain("http://localhost:8000", batchJson,
+                    StringComparison.Ordinal);
+                Assert.DoesNotContain("test-key", batchJson,
+                    StringComparison.Ordinal);
+            });
         }
         finally {
             session.TurnLock.Release();
@@ -834,13 +843,15 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.Empty(session.DelegationHandle!.Store
                 .ReadSnapshot().Captures);
             Assert.Equal(0, session.NoteSaveReceipts.Count);
-            AssertNoArtifactDiagnostics(diagnostics);
-            string batchJson = Assert.Single(DiagnosticEvents(
-                diagnostics,
-                "character-note-extraction-batch"
-            ));
-            Assert.DoesNotContain("mail extractor unavailable", batchJson,
-                StringComparison.Ordinal);
+            AssertCharacterNoteDiagnosticsForBuild(diagnostics, observed => {
+                AssertNoArtifactDiagnostics(observed);
+                string batchJson = Assert.Single(DiagnosticEvents(
+                    observed,
+                    "character-note-extraction-batch"
+                ));
+                Assert.DoesNotContain("mail extractor unavailable", batchJson,
+                    StringComparison.Ordinal);
+            });
         }
         finally {
             service.FinishTurn(session, turn);
@@ -962,7 +973,10 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.True(noteClient.CancellationObserved);
             Assert.Equal(0, noteClient.ActiveCalls);
             Assert.Equal(0, session.NoteSaveReceipts.Count);
-            Assert.Empty(diagnostics);
+            AssertCharacterNoteDiagnosticsForBuild(
+                diagnostics,
+                static observed => Assert.Empty(observed)
+            );
         }
         finally {
             service.FinishTurn(session, turn);
@@ -1023,7 +1037,10 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.Equal(0, mailClient.ActiveCalls);
             Assert.Equal(0, noteClient.ActiveCalls);
             Assert.Equal(0, session.NoteSaveReceipts.Count);
-            AssertNoArtifactDiagnostics(diagnostics);
+            AssertCharacterNoteDiagnosticsForBuild(
+                diagnostics,
+                static observed => AssertNoArtifactDiagnostics(observed)
+            );
         }
         finally {
             service.FinishTurn(session, turn);
@@ -1155,16 +1172,18 @@ public sealed class CharacterNoteRuntimeTests {
             Assert.Single(session.DelegationHandle!.Store
                 .ReadSnapshot().Captures);
             Assert.Equal(0, session.NoteSaveReceipts.Count);
-            AssertNoArtifactDiagnostics(diagnostics);
-            string batchJson = Assert.Single(DiagnosticEvents(
-                diagnostics,
-                "character-note-extraction-batch"
-            ));
-            using JsonDocument batch = JsonDocument.Parse(batchJson);
-            Assert.Equal(
-                "head-changed",
-                batch.RootElement.GetProperty("receiptOutcome").GetString()
-            );
+            AssertCharacterNoteDiagnosticsForBuild(diagnostics, observed => {
+                AssertNoArtifactDiagnostics(observed);
+                string batchJson = Assert.Single(DiagnosticEvents(
+                    observed,
+                    "character-note-extraction-batch"
+                ));
+                using JsonDocument batch = JsonDocument.Parse(batchJson);
+                Assert.Equal(
+                    "head-changed",
+                    batch.RootElement.GetProperty("receiptOutcome").GetString()
+                );
+            });
         }
         finally {
             noteClient.Release();
@@ -1555,6 +1574,17 @@ public sealed class CharacterNoteRuntimeTests {
             StringComparison.Ordinal
         );
     }).ToArray();
+
+    private static void AssertCharacterNoteDiagnosticsForBuild(
+        IReadOnlyList<string> diagnostics,
+        Action<IReadOnlyList<string>> assertDebugDiagnostics
+    ) {
+#if DEBUG
+        assertDebugDiagnostics(diagnostics);
+#else
+        Assert.Empty(diagnostics);
+#endif
+    }
 
     private static void AssertNoArtifactDiagnostics(
         IEnumerable<string> diagnostics
