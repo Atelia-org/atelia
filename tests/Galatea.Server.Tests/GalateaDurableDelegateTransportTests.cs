@@ -393,6 +393,80 @@ public sealed class GalateaDurableDelegateTransportTests {
     }
 
     [Fact]
+    public async Task CancelledInFlightStartStillFencesReplayAsOutcomeUnknown() {
+        using var fixture = new GalateaSidecarProcessFixture(
+            $$"""
+            count=0
+            if [ -f {{Q("COUNT")}} ]; then count=$(cat {{Q("COUNT")}}); fi
+            count=$((count + 1))
+            printf '%s' "$count" > {{Q("COUNT")}}
+            printf '%s\n' '{"v":2,"type":"ready"}'
+            IFS= read -r line
+            printf '%s\n' "$line" >> {{Q("INPUT")}}
+            if [ "$count" -eq 1 ]; then
+              sleep 30
+            else
+              request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
+              dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
+              thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+              printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found"}\n' "$request_id" "$dispatch_id" "$thread_id"
+              while IFS= read -r ignored; do :; done
+            fi
+            """
+        );
+        GalateaCodexDurableSidecarClient client = fixture.CreateV2Client();
+        try {
+            using var cancellation = new CancellationTokenSource();
+            Task<GalateaDelegateTurnAccepted> first = client.StartTurnAsync(
+                new("dispatch-cancelled", "thread-fixed", "exact task"),
+                cancellation.Token
+            );
+            await WaitForLinesAsync(fixture.InputPath, 1);
+            cancellation.Cancel();
+
+            GalateaDurableDelegateTransportException unknown =
+                await Assert.ThrowsAsync<
+                    GalateaDurableDelegateTransportException>(async () =>
+                        await first.WaitAsync(Deadline));
+            Assert.Equal("START_OUTCOME_UNKNOWN", unknown.Code);
+
+            GalateaDurableDelegateTransportException replay =
+                await Assert.ThrowsAsync<
+                    GalateaDurableDelegateTransportException>(() =>
+                        client.StartTurnAsync(
+                            new(
+                                "dispatch-cancelled",
+                                "thread-fixed",
+                                "exact task"
+                            ),
+                            CancellationToken.None
+                        ));
+            Assert.Equal("DUPLICATE_DISPATCH_ID", replay.Code);
+
+            GalateaDelegateDispatchInspection inspection =
+                await client.InspectDispatchAsync(
+                    new(
+                        "dispatch-cancelled",
+                        "thread-fixed",
+                        "exact task"
+                    ),
+                    CancellationToken.None
+                );
+            Assert.IsType<GalateaDelegateDispatchInspection.NotFound>(
+                inspection
+            );
+            Assert.Equal(2, client.GenerationCountForTest);
+            string[] lines = File.ReadAllLines(fixture.InputPath);
+            Assert.Equal(2, lines.Length);
+            Assert.Equal("start-turn", ReadType(lines[0]));
+            Assert.Equal("inspect-dispatch", ReadType(lines[1]));
+        }
+        finally {
+            await client.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task InspectionTimeoutCanRetryAndNotFoundStaysNonTerminal() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
@@ -443,12 +517,69 @@ public sealed class GalateaDurableDelegateTransportTests {
     }
 
     [Fact]
+    public async Task CancelledInFlightInspectionKeepsGenerationForLateResponse() {
+        using var fixture = new GalateaSidecarProcessFixture(
+            $$"""
+            printf '%s\n' '{"v":2,"type":"ready"}'
+            IFS= read -r first
+            printf '%s\n' "$first" >> {{Q("INPUT")}}
+            while [ ! -f {{Q("COUNT")}} ]; do sleep 0.01; done
+            request_id=$(printf '%s' "$first" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
+            dispatch_id=$(printf '%s' "$first" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
+            thread_id=$(printf '%s' "$first" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+            printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            IFS= read -r second
+            printf '%s\n' "$second" >> {{Q("INPUT")}}
+            request_id=$(printf '%s' "$second" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
+            dispatch_id=$(printf '%s' "$second" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
+            thread_id=$(printf '%s' "$second" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+            printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"running","turnId":"turn-2"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            while IFS= read -r ignored; do :; done
+            printf '%s' 'graceful-eof' > {{Q("ENV")}}
+            """
+        );
+        GalateaCodexDurableSidecarClient client = fixture.CreateV2Client();
+        try {
+            using var cancellation = new CancellationTokenSource();
+            Task<GalateaDelegateDispatchInspection> cancelled =
+                client.InspectDispatchAsync(
+                    new("dispatch-1", "thread-fixed", "task"),
+                    cancellation.Token
+                );
+            await WaitForLinesAsync(fixture.InputPath, 1);
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await cancelled.WaitAsync(Deadline));
+            Assert.Equal(1, client.GenerationCountForTest);
+
+            File.WriteAllText(fixture.CountPath, "release");
+            GalateaDelegateDispatchInspection inspection =
+                await client.InspectDispatchAsync(
+                    new("dispatch-2", "thread-fixed", "task"),
+                    CancellationToken.None
+                );
+
+            var running = Assert.IsType<
+                GalateaDelegateDispatchInspection.Running>(inspection);
+            Assert.Equal("turn-2", running.TurnId);
+            Assert.Equal(1, client.GenerationCountForTest);
+            Assert.Equal(2, File.ReadAllLines(fixture.InputPath).Length);
+        }
+        finally {
+            await client.DisposeAsync();
+        }
+        Assert.Equal("graceful-eof", File.ReadAllText(fixture.EnvironmentPath));
+    }
+
+    [Fact]
     public async Task UnconfirmedReapPermanentlyBlocksV2Restart() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
             printf '%s\n' '{"v":2,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" > {{Q("INPUT")}}
+            printf '%s\n' '{"v":2,"type":"broken",'
             sleep 30
             """
         );
@@ -460,14 +591,12 @@ public sealed class GalateaDurableDelegateTransportTests {
             rpcTimeoutMs: 100,
             processHooks: hooks
         );
-        using var cancellation = new CancellationTokenSource();
         Task<GalateaDelegateDispatchInspection> first =
             client.InspectDispatchAsync(
                 new("dispatch-1", "thread-fixed", "task"),
-                cancellation.Token
+                CancellationToken.None
             );
         await WaitForLinesAsync(fixture.InputPath, 1);
-        cancellation.Cancel();
         try {
             GalateaDurableDelegateTransportException unavailable =
                 await Assert.ThrowsAsync<

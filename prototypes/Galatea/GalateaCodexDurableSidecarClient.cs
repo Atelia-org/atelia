@@ -99,6 +99,7 @@ internal sealed class GalateaCodexDurableSidecarClient
                 ComputeBindingDeadline(Config.Sidecar.RpcTimeoutMs),
                 "ensure-binding",
                 "BINDING_OUTCOME_UNKNOWN",
+                detachOnCallerCancellation: false,
                 ct
             )
             .ConfigureAwait(false);
@@ -138,6 +139,7 @@ internal sealed class GalateaCodexDurableSidecarClient
                 ComputeStartTurnDeadline(Config.Sidecar.RpcTimeoutMs),
                 "start-turn",
                 "START_OUTCOME_UNKNOWN",
+                detachOnCallerCancellation: false,
                 ct
             )
             .ConfigureAwait(false);
@@ -178,6 +180,7 @@ internal sealed class GalateaCodexDurableSidecarClient
                 ComputeInspectionDeadline(Config.Sidecar.RpcTimeoutMs),
                 "inspect-dispatch",
                 "INSPECTION_UNAVAILABLE",
+                detachOnCallerCancellation: true,
                 ct
             )
             .ConfigureAwait(false);
@@ -662,6 +665,7 @@ internal sealed class GalateaCodexDurableSidecarClient
             TimeSpan responseDeadline,
             string stage,
             string outcomeUnknownCode,
+            bool detachOnCallerCancellation,
             CancellationToken ct
         ) {
             lock (_pendingGate) {
@@ -724,6 +728,40 @@ internal sealed class GalateaCodexDurableSidecarClient
                 throw;
             }
 
+            if (!detachOnCallerCancellation) {
+                return await AwaitAttachedResponseAsync(
+                        pending,
+                        responseDeadline,
+                        stage,
+                        outcomeUnknownCode,
+                        ct
+                    )
+                    .ConfigureAwait(false);
+            }
+
+            Task<T> response = AwaitDetachedResponseAsync(
+                pending,
+                responseDeadline,
+                stage,
+                outcomeUnknownCode
+            );
+            try {
+                return await response.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                ct.IsCancellationRequested) {
+                ObserveTaskFault(response);
+                throw;
+            }
+        }
+
+        private async Task<T> AwaitAttachedResponseAsync<T>(
+            PendingRequest<T> pending,
+            TimeSpan responseDeadline,
+            string stage,
+            string outcomeUnknownCode,
+            CancellationToken ct
+        ) {
             try {
                 return await pending.Completion.Task.WaitAsync(
                         responseDeadline,
@@ -742,6 +780,38 @@ internal sealed class GalateaCodexDurableSidecarClient
                 exception is TimeoutException
                     || exception is OperationCanceledException
                         && ct.IsCancellationRequested) {
+                _owner.FailGenerationForGeneration(
+                    this,
+                    stage,
+                    outcomeUnknownCode,
+                    graceful: false
+                );
+                ObservePendingFault(pending);
+                throw new GalateaDurableDelegateTransportException(
+                    stage,
+                    outcomeUnknownCode
+                );
+            }
+        }
+
+        private async Task<T> AwaitDetachedResponseAsync<T>(
+            PendingRequest<T> pending,
+            TimeSpan responseDeadline,
+            string stage,
+            string outcomeUnknownCode
+        ) {
+            try {
+                return await pending.Completion.Task.WaitAsync(responseDeadline)
+                    .ConfigureAwait(false);
+            }
+            catch (GenerationRequestFailedException) {
+                ObservePendingFault(pending);
+                throw new GalateaDurableDelegateTransportException(
+                    stage,
+                    outcomeUnknownCode
+                );
+            }
+            catch (TimeoutException) {
                 _owner.FailGenerationForGeneration(
                     this,
                     stage,
@@ -970,7 +1040,11 @@ internal sealed class GalateaCodexDurableSidecarClient
         }
 
         private static void ObservePendingFault(PendingRequest pending) {
-            _ = pending.FaultTask.ContinueWith(
+            ObserveTaskFault(pending.FaultTask);
+        }
+
+        private static void ObserveTaskFault(Task task) {
+            _ = task.ContinueWith(
                 static task => _ = task.Exception,
                 CancellationToken.None,
                 TaskContinuationOptions.OnlyOnFaulted
