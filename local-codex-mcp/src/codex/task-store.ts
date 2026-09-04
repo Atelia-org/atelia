@@ -34,6 +34,10 @@ export class TaskStore {
     private readonly maxProgressChars: number,
   ) {}
 
+  get threadCountForTest(): number {
+    return this.threads.size;
+  }
+
   beginTurn(threadId: string, turnId: string): void {
     const state = this.getOrCreate(threadId);
     // turn/started or even turn/completed may arrive before the turn/start response.

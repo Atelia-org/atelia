@@ -40,7 +40,9 @@ let threadResumeCount = 0;
 let turnStartCount = 0;
 let keepAliveAfterStdinClose = false;
 let resumeResponseThreadIdOverride: string | undefined;
-let completeOnNextMetadataRead: { threadId: string; turnId: string } | undefined;
+let blockNextMetadataRead = false;
+let blockedMetadataRead: { id: string | number; result: unknown } | undefined;
+const metadataReadBarrierWaiters: Array<string | number> = [];
 
 const lifecycleFileArgument = process.argv.find((argument) => argument.startsWith("--lifecycle-file="));
 const lifecycleFile = lifecycleFileArgument?.slice("--lifecycle-file=".length);
@@ -243,13 +245,32 @@ lines.on("line", (line) => {
       resumeResponseThreadIdOverride = String(message.params?.threadId);
       send({ id: message.id, result: {} });
       break;
-    case "test/completeOnNextMetadataRead":
-      completeOnNextMetadataRead = {
-        threadId: String(message.params?.threadId),
-        turnId: String(message.params?.turnId),
-      };
+    case "test/blockNextMetadataRead":
+      if (blockNextMetadataRead || blockedMetadataRead !== undefined) {
+        send({ id: message.id, error: { code: -32000, message: "Metadata read barrier already armed" } });
+        break;
+      }
+      blockNextMetadataRead = true;
       send({ id: message.id, result: {} });
       break;
+    case "test/waitForMetadataReadBarrier":
+      if (blockedMetadataRead !== undefined) {
+        send({ id: message.id, result: {} });
+      } else {
+        metadataReadBarrierWaiters.push(message.id!);
+      }
+      break;
+    case "test/releaseMetadataRead": {
+      const blocked = blockedMetadataRead;
+      if (blocked === undefined) {
+        send({ id: message.id, error: { code: -32000, message: "Metadata read barrier is not blocked" } });
+        break;
+      }
+      blockedMetadataRead = undefined;
+      send({ id: blocked.id, result: blocked.result });
+      send({ id: message.id, result: {} });
+      break;
+    }
     case "test/setThreadCwd": {
       const thread = threads.get(String(message.params?.threadId));
       if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
@@ -323,15 +344,15 @@ lines.on("line", (line) => {
             returned.status = { type: "notLoaded" };
           }
         }
-        send({ id: message.id, result: { thread: returned } });
-        const completion = completeOnNextMetadataRead;
-        if (
-          !message.params?.includeTurns
-          && completion !== undefined
-          && completion.threadId === thread.id
-        ) {
-          completeOnNextMetadataRead = undefined;
-          completeTurn(completion.threadId, completion.turnId, "interrupted");
+        const result = { thread: returned };
+        if (!message.params?.includeTurns && blockNextMetadataRead) {
+          blockNextMetadataRead = false;
+          blockedMetadataRead = { id: message.id!, result };
+          for (const waiter of metadataReadBarrierWaiters.splice(0)) {
+            send({ id: waiter, result: {} });
+          }
+        } else {
+          send({ id: message.id, result });
         }
       }
       break;
@@ -406,6 +427,12 @@ lines.on("line", (line) => {
       if (input.includes("[HANG_TURN_START]")) {
         send({ method: "turn/started", params: { threadId, turn } });
         setTimeout(() => completeTurn(threadId, turnId, "completed", input), 10);
+      } else if (input.includes("[STARTED_BEFORE_RESPONSE]")) {
+        send({ method: "turn/started", params: { threadId, turn } });
+        send({ id: message.id, result: { turn } });
+        if (!input.includes("[LONG]")) {
+          setTimeout(() => completeTurn(threadId, turnId, "completed", input), 10);
+        }
       } else if (input.includes("[EARLY]")) {
         send({ method: "turn/started", params: { threadId, turn } });
         completeTurn(threadId, turnId, "completed", input);

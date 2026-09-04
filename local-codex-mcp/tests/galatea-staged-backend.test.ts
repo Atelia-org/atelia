@@ -96,6 +96,16 @@ async function readThreadReadTrace(value: Harness) {
   }>("test/lastRequests", {});
 }
 
+async function beginBlockedMetadataInspection(
+  value: Harness,
+  turn: Awaited<ReturnType<typeof startLongTurn>>,
+) {
+  await value.client.request("test/blockNextMetadataRead", {});
+  const inspection = inspectLongTurn(value, turn);
+  await value.client.request("test/waitForMetadataReadBarrier", {});
+  return { inspection };
+}
+
 test("ensureBinding establishes and verifies an empty owned thread without starting a turn", async (t) => {
   const value = await harness(t);
   const binding = await value.backend.ensureBinding({
@@ -251,13 +261,19 @@ test("terminal notification during metadata read trips the second runtime fence"
   const value = await harness(t);
   const turn = await startLongTurn(value, "in-flight-terminal-mail");
   assert.equal((await inspectLongTurn(value, turn)).kind, "running");
-  await value.client.request("test/completeOnNextMetadataRead", {
+  const before = await readThreadReadTrace(value);
+  const blocked = await beginBlockedMetadataInspection(value, turn);
+
+  await value.client.request("turn/interrupt", {
     threadId: turn.threadId,
     turnId: turn.turnId,
   });
-  const before = await readThreadReadTrace(value);
-
-  const inspection = await inspectLongTurn(value, turn);
+  assert.equal(
+    (await value.store.waitForTurn(turn.threadId, turn.turnId, 1_000)).status,
+    "interrupted",
+  );
+  await value.client.request("test/releaseMetadataRead", {});
+  const inspection = await blocked.inspection;
 
   assert.deepEqual(inspection, {
     kind: "failed",
@@ -299,21 +315,27 @@ test("new active turn evicts the old running proof and prevents recaching it", a
   const value = await harness(t);
   const turn = await startLongTurn(value, "old-active-mail");
   assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+  const before = await readThreadReadTrace(value);
+  const blocked = await beginBlockedMetadataInspection(value, turn);
   await value.client.request("turn/start", {
     threadId: turn.threadId,
     clientUserMessageId: "external-new-turn",
-    input: [{ type: "text", text: "[LONG] external", text_elements: [] }],
+    input: [{
+      type: "text",
+      text: "[LONG][STARTED_BEFORE_RESPONSE] external",
+      text_elements: [],
+    }],
     cwd: value.root,
   });
-  const before = await readThreadReadTrace(value);
+  await value.client.request("test/releaseMetadataRead", {});
 
-  assert.equal((await inspectLongTurn(value, turn)).kind, "running");
+  assert.equal((await blocked.inspection).kind, "running");
   assert.equal((await inspectLongTurn(value, turn)).kind, "running");
 
   const after = await readThreadReadTrace(value);
   assert.deepEqual(
     after.threadReadIncludeTurns.slice(before.threadReadCount),
-    [true, true],
+    [false, true, true],
   );
 });
 
@@ -423,6 +445,9 @@ test("app-server restart discards running cache and performs full inspection", a
   assert.equal((await inspectLongTurn(value, turn)).kind, "running");
 
   await assert.rejects(value.client.request("test/crash", {}));
+  const hydrated = await value.backend.status(turn.threadId);
+  assert.equal(hydrated.status, "running");
+  const beforeRecoveredInspection = await readThreadReadTrace(value);
 
   const recovered = await inspectLongTurn(value, turn);
   const repeated = await inspectLongTurn(value, turn);
@@ -434,7 +459,34 @@ test("app-server restart discards running cache and performs full inspection", a
   });
   assert.deepEqual(repeated, recovered);
   const restartedTrace = await readThreadReadTrace(value);
-  assert.deepEqual(restartedTrace.threadReadIncludeTurns, [true, true]);
+  assert.deepEqual(
+    restartedTrace.threadReadIncludeTurns.slice(
+      beforeRecoveredInspection.threadReadCount,
+    ),
+    [true, true],
+  );
+});
+
+test("missing dispatch inspections do not populate runtime task state", async (t) => {
+  const value = await harness(t);
+  assert.equal(value.store.threadCountForTest, 0);
+
+  for (let index = 0; index < 128; index += 1) {
+    const threadId = `missing-thread-${index}`;
+    assert.deepEqual(await value.backend.inspectDispatch({
+      threadId,
+      expectedCwd: value.root,
+      dispatchId: `missing-dispatch-${index}`,
+      task: "never sent",
+      maximumFinalUtf8Bytes: 20_000,
+    }), {
+      kind: "ambiguous",
+      threadId,
+      code: "THREAD_NOT_FOUND",
+    });
+  }
+
+  assert.equal(value.store.threadCountForTest, 0);
 });
 
 test("startBoundTurn accepts an exact resume response that omits its optional name", async (t) => {

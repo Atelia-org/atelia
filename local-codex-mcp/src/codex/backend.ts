@@ -46,6 +46,8 @@ Never include chain-of-thought, full command logs, large diffs, or full file con
 
 const MAXIMUM_VERIFIED_RUNNING_DISPATCHES = 32;
 const MAXIMUM_VERIFIED_RUNNING_TASK_UTF8_BYTES = 128 * 1024;
+const MAXIMUM_LIVE_RUNNING_TURN_PROOFS = 4_096;
+const MAXIMUM_PENDING_START_TERMINAL_TOMBSTONES = 16;
 
 export interface CodexBackendProfile {
   serviceName: string;
@@ -127,6 +129,12 @@ interface VerifiedRunningDispatch {
   turnId: string;
 }
 
+interface PendingTurnStart {
+  generation: number;
+  terminalTurnIds: Set<string>;
+  terminalOverflow: boolean;
+}
+
 type InspectionThreadRead =
   | { ok: true; thread: Thread }
   | { ok: false; inspection: GalateaDispatchInspection };
@@ -142,6 +150,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     string,
     VerifiedRunningDispatch
   >();
+  private readonly liveRunningTurnProofs = new Map<string, string>();
+  private readonly pendingTurnStarts = new Map<string, PendingTurnStart>();
+  private liveGeneration = 0;
   private stopped = false;
   private stopPromise?: Promise<void>;
 
@@ -150,9 +161,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     this.options.client.subscribe((notification) => {
       if (notification.method === "bridge/processExited") {
         this.authenticated = false;
-        this.clearVerifiedRunningDispatches();
+        this.resetLiveRunningState();
       } else {
-        this.evictVerifiedRunningDispatchForNotification(notification);
+        this.observeLiveTurnNotification(notification);
       }
       this.options.store.handleNotification(notification);
     });
@@ -167,7 +178,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     if (this.stopPromise) return this.stopPromise;
     this.stopped = true;
     this.authenticated = false;
-    this.clearVerifiedRunningDispatches();
+    this.resetLiveRunningState();
     this.stopPromise = this.options.client.stop();
     return this.stopPromise;
   }
@@ -266,13 +277,11 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     this.throwIfStopped();
     const expectedCwd = await this.options.pathPolicy.resolveCwd(input.expectedCwd);
     const verified = this.verifiedRunningDispatches.get(input.threadId);
-    const runtime = this.options.store.snapshot(input.threadId);
     if (
       verified?.threadId === input.threadId
       && verified.dispatchId === input.dispatchId
       && verified.task === input.task
-      && runtime.status === "running"
-      && runtime.activeTurnId === verified.turnId
+      && this.hasLiveRunningTurnProof(input.threadId, verified.turnId)
     ) {
       const metadata = await this.readInspectionThread(
         input.threadId,
@@ -283,11 +292,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         this.evictVerifiedRunningDispatch(input.threadId);
         return metadata.inspection;
       }
-      const confirmedRuntime = this.options.store.snapshot(input.threadId);
       if (
         metadata.thread.status.type === "active"
-        && confirmedRuntime.status === "running"
-        && confirmedRuntime.activeTurnId === verified.turnId
+        && this.hasLiveRunningTurnProof(input.threadId, verified.turnId)
         && this.verifiedRunningDispatches.get(input.threadId) === verified
       ) {
         return {
@@ -316,11 +323,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         maximumFinalUtf8Bytes: input.maximumFinalUtf8Bytes,
       },
     );
-    const confirmedRuntime = this.options.store.snapshot(input.threadId);
     if (
       inspection.kind === "running"
-      && confirmedRuntime.status === "running"
-      && confirmedRuntime.activeTurnId === inspection.turnId
+      && this.hasLiveRunningTurnProof(input.threadId, inspection.turnId)
     ) {
       this.tryCacheVerifiedRunningDispatch(input, inspection.turnId);
     } else {
@@ -367,7 +372,40 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     this.verifiedRunningDispatches.clear();
   }
 
-  private evictVerifiedRunningDispatchForNotification(
+  private hasLiveRunningTurnProof(threadId: string, turnId: string): boolean {
+    return this.liveRunningTurnProofs.get(threadId) === turnId;
+  }
+
+  private establishLiveRunningTurnProof(threadId: string, turnId: string): void {
+    const current = this.liveRunningTurnProofs.get(threadId);
+    if (current === turnId) return;
+    this.evictVerifiedRunningDispatch(threadId);
+    if (
+      current === undefined
+      && this.liveRunningTurnProofs.size >= MAXIMUM_LIVE_RUNNING_TURN_PROOFS
+    ) {
+      return;
+    }
+    this.liveRunningTurnProofs.set(threadId, turnId);
+  }
+
+  private evictLiveRunningTurnProof(
+    threadId: string,
+    expectedTurnId: string,
+  ): void {
+    if (this.liveRunningTurnProofs.get(threadId) === expectedTurnId) {
+      this.liveRunningTurnProofs.delete(threadId);
+    }
+  }
+
+  private resetLiveRunningState(): void {
+    this.liveGeneration += 1;
+    this.liveRunningTurnProofs.clear();
+    this.pendingTurnStarts.clear();
+    this.clearVerifiedRunningDispatches();
+  }
+
+  private observeLiveTurnNotification(
     notification: JsonRpcNotification,
   ): void {
     if (
@@ -390,14 +428,32 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     ) {
       return;
     }
+    const threadId = params.threadId;
+    const turnId = params.turn.id;
     if (notification.method === "turn/completed") {
+      const pending = this.pendingTurnStarts.get(threadId);
+      if (pending !== undefined) {
+        if (
+          pending.terminalTurnIds.size
+            < MAXIMUM_PENDING_START_TERMINAL_TOMBSTONES
+        ) {
+          pending.terminalTurnIds.add(turnId);
+        } else {
+          pending.terminalOverflow = true;
+        }
+      }
       this.evictVerifiedRunningDispatch(params.threadId, params.turn.id);
+      this.evictLiveRunningTurnProof(threadId, turnId);
       return;
     }
-    const verified = this.verifiedRunningDispatches.get(params.threadId);
-    if (verified !== undefined && verified.turnId !== params.turn.id) {
-      this.evictVerifiedRunningDispatch(params.threadId);
+    const pending = this.pendingTurnStarts.get(threadId);
+    if (
+      pending?.terminalOverflow
+      || pending?.terminalTurnIds.has(turnId)
+    ) {
+      return;
     }
+    this.establishLiveRunningTurnProof(threadId, turnId);
   }
 
   private async readInspectionThread(
@@ -697,23 +753,49 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     clientUserMessageId?: string,
   ): Promise<GalateaStartedTurn> {
     this.throwIfStopped();
-    const response = await this.options.client.request<TurnStartResponse>("turn/start", {
-      threadId,
-      ...(clientUserMessageId === undefined ? {} : { clientUserMessageId }),
-      input: [{ type: "text", text: task, text_elements: [] }],
-      cwd,
-      approvalPolicy: "never",
-      approvalsReviewer: "user",
-      sandboxPolicy: preciseSandbox(mode, cwd, localCommandNetwork),
-      summary: "concise",
-      ...(this.profile.outputSchema === undefined ? {} : { outputSchema: this.profile.outputSchema }),
-    });
-    this.throwIfStopped();
-    if (!response.turn || typeof response.turn.id !== "string" || response.turn.id.length === 0) {
-      throw new BridgeError("CODEX_PROTOCOL_ERROR", "Codex returned an invalid turn identity.");
+    if (this.pendingTurnStarts.has(threadId)) {
+      throw new BridgeError("BRIDGE_BUSY", "This Codex thread already has a pending turn start.");
     }
-    this.options.store.beginTurn(threadId, response.turn.id);
-    return { threadId, turnId: response.turn.id };
+    const pending: PendingTurnStart = {
+      generation: this.liveGeneration,
+      terminalTurnIds: new Set<string>(),
+      terminalOverflow: false,
+    };
+    this.pendingTurnStarts.set(threadId, pending);
+    try {
+      const response = await this.options.client.request<TurnStartResponse>("turn/start", {
+        threadId,
+        ...(clientUserMessageId === undefined ? {} : { clientUserMessageId }),
+        input: [{ type: "text", text: task, text_elements: [] }],
+        cwd,
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandboxPolicy: preciseSandbox(mode, cwd, localCommandNetwork),
+        summary: "concise",
+        ...(this.profile.outputSchema === undefined ? {} : { outputSchema: this.profile.outputSchema }),
+      });
+      this.throwIfStopped();
+      if (!response.turn || typeof response.turn.id !== "string" || response.turn.id.length === 0) {
+        throw new BridgeError("CODEX_PROTOCOL_ERROR", "Codex returned an invalid turn identity.");
+      }
+      const turnId = response.turn.id;
+      const currentProof = this.liveRunningTurnProofs.get(threadId);
+      if (
+        pending.generation === this.liveGeneration
+        && this.pendingTurnStarts.get(threadId) === pending
+        && !pending.terminalOverflow
+        && !pending.terminalTurnIds.has(turnId)
+        && (currentProof === undefined || currentProof === turnId)
+      ) {
+        this.establishLiveRunningTurnProof(threadId, turnId);
+      }
+      this.options.store.beginTurn(threadId, turnId);
+      return { threadId, turnId };
+    } finally {
+      if (this.pendingTurnStarts.get(threadId) === pending) {
+        this.pendingTurnStarts.delete(threadId);
+      }
+    }
   }
 
   private async readOwnedThread(threadId: string, includeTurns: boolean): Promise<Thread> {
