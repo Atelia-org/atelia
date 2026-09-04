@@ -7,17 +7,16 @@ using Atelia.Diagnostics;
 namespace Atelia.Galatea.Server;
 
 /// <summary>
-/// Production exact V2 transport for durable Codex delegation. The durable
+/// Production exact V3 transport for durable Codex delegation. The durable
 /// store and driver own business correlation and recovery state; this client
 /// owns only the exact sidecar protocol and process transport.
 /// </summary>
 internal sealed class GalateaCodexDurableSidecarClient
     : GalateaSidecarProcessClientBase, IGalateaDurableDelegateTransport {
-    private const int ProtocolVersion = 2;
+    private const int ProtocolVersion = 3;
     private const int OperationStartupMarginMs = 5_000;
     private const int BindingRpcBudgetCount = 5;
     private const int StartTurnRpcBudgetCount = 5;
-    private const int InspectionRpcBudgetCount = 3;
     private const int MaximumOperationTombstones = 4_096;
 
     private static readonly JsonSerializerOptions WireJson = new() {
@@ -127,7 +126,7 @@ internal sealed class GalateaCodexDurableSidecarClient
         );
         return await generation.ExecuteAsync(
                 pending,
-                SerializeFrame(new DispatchWireFrame(
+                SerializeFrame(new StartTurnWireFrame(
                     ProtocolVersion,
                     "start-turn",
                     requestId,
@@ -156,6 +155,12 @@ internal sealed class GalateaCodexDurableSidecarClient
             request.ThreadId,
             request.Task
         );
+        if (request.ExpectedTurnId is { } expectedTurnId) {
+            GalateaSidecarWire.RequireIdentifier(
+                expectedTurnId,
+                nameof(request.ExpectedTurnId)
+            );
+        }
         ct.ThrowIfCancellationRequested();
         var generation = (Generation)await GetReadyGenerationAsync(ct)
             .ConfigureAwait(false);
@@ -164,20 +169,22 @@ internal sealed class GalateaCodexDurableSidecarClient
             requestId,
             request.DispatchId,
             request.ThreadId,
-            request.Task
+            request.Task,
+            request.ExpectedTurnId
         );
         return await generation.ExecuteAsync(
                 pending,
-                SerializeFrame(new DispatchWireFrame(
+                SerializeFrame(new InspectDispatchWireFrame(
                     ProtocolVersion,
                     "inspect-dispatch",
                     requestId,
                     request.DispatchId,
                     request.ThreadId,
-                    request.Task
+                    request.Task,
+                    request.ExpectedTurnId
                 )),
                 beforeWrite: null,
-                ComputeInspectionDeadline(Config.Sidecar.RpcTimeoutMs),
+                responseDeadline: null,
                 "inspect-dispatch",
                 "INSPECTION_UNAVAILABLE",
                 detachOnCallerCancellation: true,
@@ -191,9 +198,6 @@ internal sealed class GalateaCodexDurableSidecarClient
 
     internal static TimeSpan ComputeStartTurnDeadline(int rpcTimeoutMs) =>
         ComputeOperationDeadline(rpcTimeoutMs, StartTurnRpcBudgetCount);
-
-    internal static TimeSpan ComputeInspectionDeadline(int rpcTimeoutMs) =>
-        ComputeOperationDeadline(rpcTimeoutMs, InspectionRpcBudgetCount);
 
     protected override GalateaSidecarProcessGeneration CreateGeneration(
         int id,
@@ -339,26 +343,31 @@ internal sealed class GalateaCodexDurableSidecarClient
             properties,
             "threadId"
         );
+        GalateaDelegateInspectionSource source = RequireInspectionSource(
+            properties
+        );
         switch (outcome) {
             case "not-found":
                 GalateaSidecarWire.RequireExactKeys(properties, [
                     "v", "type", "requestId", "dispatchId", "threadId",
-                    "outcome"
+                    "outcome", "source"
                 ]);
+                RequirePersistentSource(source, outcome);
                 generation.CompleteInspection(
                     requestId,
                     dispatchId,
                     threadId,
                     new GalateaDelegateDispatchInspection.NotFound(
                         dispatchId,
-                        threadId
+                        threadId,
+                        source
                     )
                 );
                 return;
             case "running": {
                 GalateaSidecarWire.RequireExactKeys(properties, [
                     "v", "type", "requestId", "dispatchId", "threadId",
-                    "outcome", "turnId"
+                    "outcome", "turnId", "source"
                 ]);
                 string turnId = GalateaSidecarWire.RequireIdentifier(
                     properties,
@@ -371,7 +380,8 @@ internal sealed class GalateaCodexDurableSidecarClient
                     new GalateaDelegateDispatchInspection.Running(
                         dispatchId,
                         threadId,
-                        turnId
+                        turnId,
+                        source
                     )
                 );
                 return;
@@ -379,7 +389,7 @@ internal sealed class GalateaCodexDurableSidecarClient
             case "completed": {
                 GalateaSidecarWire.RequireExactKeys(properties, [
                     "v", "type", "requestId", "dispatchId", "threadId",
-                    "outcome", "turnId", "final"
+                    "outcome", "turnId", "final", "source"
                 ]);
                 string turnId = GalateaSidecarWire.RequireIdentifier(
                     properties,
@@ -405,7 +415,8 @@ internal sealed class GalateaCodexDurableSidecarClient
                         dispatchId,
                         threadId,
                         turnId,
-                        final
+                        final,
+                        source
                     )
                 );
                 return;
@@ -413,7 +424,7 @@ internal sealed class GalateaCodexDurableSidecarClient
             case "failed": {
                 GalateaSidecarWire.RequireExactKeys(properties, [
                     "v", "type", "requestId", "dispatchId", "threadId",
-                    "outcome", "turnId", "code"
+                    "outcome", "turnId", "code", "source"
                 ]);
                 string code = RequireClosedCode(
                     properties,
@@ -432,7 +443,8 @@ internal sealed class GalateaCodexDurableSidecarClient
                         dispatchId,
                         threadId,
                         turnId,
-                        code
+                        code,
+                        source
                     )
                 );
                 return;
@@ -440,7 +452,7 @@ internal sealed class GalateaCodexDurableSidecarClient
             case "ambiguous": {
                 GalateaSidecarWire.RequireExactKeys(properties, [
                     "v", "type", "requestId", "dispatchId", "threadId",
-                    "outcome", "code"
+                    "outcome", "code", "source"
                 ]);
                 string code = RequireClosedCode(
                     properties,
@@ -454,8 +466,46 @@ internal sealed class GalateaCodexDurableSidecarClient
                     new GalateaDelegateDispatchInspection.Ambiguous(
                         dispatchId,
                         threadId,
-                        code
+                        code,
+                        source
                     )
+                );
+                return;
+            }
+            case "unavailable": {
+                GalateaSidecarWire.RequireExactKeys(properties, [
+                    "v", "type", "requestId", "dispatchId", "threadId",
+                    "outcome", "turnId", "code", "source"
+                ]);
+                RequirePersistentSource(source, outcome);
+                string code = GalateaSidecarWire.RequireIdentifier(
+                    properties,
+                    "code"
+                );
+                if (!string.Equals(
+                        code,
+                        GalateaDelegateDispatchInspection
+                            .AcceptedTurnNotVisible.FailureCode,
+                        StringComparison.Ordinal)) {
+                    throw new InvalidDataException(
+                        "Durable sidecar inspection unavailable code is invalid."
+                    );
+                }
+                string turnId = GalateaSidecarWire.RequireIdentifier(
+                    properties,
+                    "turnId"
+                );
+                generation.CompleteInspection(
+                    requestId,
+                    dispatchId,
+                    threadId,
+                    new GalateaDelegateDispatchInspection
+                        .AcceptedTurnNotVisible(
+                            dispatchId,
+                            threadId,
+                            turnId,
+                            source
+                        )
                 );
                 return;
             }
@@ -463,6 +513,27 @@ internal sealed class GalateaCodexDurableSidecarClient
                 throw new InvalidDataException(
                     "Durable sidecar inspection outcome is invalid."
                 );
+        }
+    }
+
+    private static GalateaDelegateInspectionSource RequireInspectionSource(
+        Dictionary<string, JsonElement> properties
+    ) => GalateaSidecarWire.RequireString(properties, "source") switch {
+        "live" => GalateaDelegateInspectionSource.Live,
+        "persistent" => GalateaDelegateInspectionSource.Persistent,
+        _ => throw new InvalidDataException(
+            "Durable sidecar inspection source is invalid."
+        )
+    };
+
+    private static void RequirePersistentSource(
+        GalateaDelegateInspectionSource source,
+        string outcome
+    ) {
+        if (source != GalateaDelegateInspectionSource.Persistent) {
+            throw new InvalidDataException(
+                $"Durable sidecar {outcome} must come from persistent inspection."
+            );
         }
     }
 
@@ -662,7 +733,7 @@ internal sealed class GalateaCodexDurableSidecarClient
             PendingRequest<T> pending,
             byte[] frame,
             Func<OperationClaim>? beforeWrite,
-            TimeSpan responseDeadline,
+            TimeSpan? responseDeadline,
             string stage,
             string outcomeUnknownCode,
             bool detachOnCallerCancellation,
@@ -757,17 +828,17 @@ internal sealed class GalateaCodexDurableSidecarClient
 
         private async Task<T> AwaitAttachedResponseAsync<T>(
             PendingRequest<T> pending,
-            TimeSpan responseDeadline,
+            TimeSpan? responseDeadline,
             string stage,
             string outcomeUnknownCode,
             CancellationToken ct
         ) {
             try {
-                return await pending.Completion.Task.WaitAsync(
-                        responseDeadline,
-                        ct
-                    )
-                    .ConfigureAwait(false);
+                return responseDeadline is { } deadline
+                    ? await pending.Completion.Task.WaitAsync(deadline, ct)
+                        .ConfigureAwait(false)
+                    : await pending.Completion.Task.WaitAsync(ct)
+                        .ConfigureAwait(false);
             }
             catch (GenerationRequestFailedException) {
                 ObservePendingFault(pending);
@@ -796,13 +867,15 @@ internal sealed class GalateaCodexDurableSidecarClient
 
         private async Task<T> AwaitDetachedResponseAsync<T>(
             PendingRequest<T> pending,
-            TimeSpan responseDeadline,
+            TimeSpan? responseDeadline,
             string stage,
             string outcomeUnknownCode
         ) {
             try {
-                return await pending.Completion.Task.WaitAsync(responseDeadline)
-                    .ConfigureAwait(false);
+                return responseDeadline is { } deadline
+                    ? await pending.Completion.Task.WaitAsync(deadline)
+                        .ConfigureAwait(false)
+                    : await pending.Completion.Task.ConfigureAwait(false);
             }
             catch (GenerationRequestFailedException) {
                 ObservePendingFault(pending);
@@ -885,10 +958,11 @@ internal sealed class GalateaCodexDurableSidecarClient
             GalateaDelegateDispatchInspection result
         ) {
             PendingInspection pending = Take<PendingInspection>(requestId);
-            if (!pending.Matches(dispatchId, threadId)) {
+            if (!pending.Matches(dispatchId, threadId)
+                || !pending.MatchesSelector(result)) {
                 Restore(pending);
                 throw new InvalidDataException(
-                    "Durable inspection response identity is invalid."
+                    "Durable inspection response identity or selector is invalid."
                 );
             }
             pending.Completion.TrySetResult(result);
@@ -1120,7 +1194,8 @@ internal sealed class GalateaCodexDurableSidecarClient
         string requestId,
         string dispatchId,
         string threadId,
-        string task
+        string task,
+        string? expectedTurnId
     ) : PendingRequest<GalateaDelegateDispatchInspection>(requestId),
         IPendingDispatch {
         private readonly PendingDispatchIdentity _identity = new(
@@ -1132,9 +1207,38 @@ internal sealed class GalateaCodexDurableSidecarClient
         internal string DispatchId => _identity.DispatchId;
         internal string ThreadId => _identity.ThreadId;
         internal string Task => _identity.Task;
+        internal string? ExpectedTurnId { get; } = expectedTurnId;
         internal override string DuplicateCode => "DUPLICATE_DISPATCH_ID";
         internal bool Matches(string dispatchId, string threadId) =>
             _identity.Matches(dispatchId, threadId);
+
+        internal bool MatchesSelector(
+            GalateaDelegateDispatchInspection result
+        ) {
+            if (ExpectedTurnId is null) {
+                return result is not GalateaDelegateDispatchInspection
+                    .AcceptedTurnNotVisible;
+            }
+            return result switch {
+                GalateaDelegateDispatchInspection.NotFound => false,
+                GalateaDelegateDispatchInspection.Running running =>
+                    MatchesExpectedTurn(running.TurnId),
+                GalateaDelegateDispatchInspection.Completed completed =>
+                    MatchesExpectedTurn(completed.TurnId),
+                GalateaDelegateDispatchInspection.Failed failed =>
+                    MatchesExpectedTurn(failed.TurnId),
+                GalateaDelegateDispatchInspection.AcceptedTurnNotVisible
+                    unavailable => MatchesExpectedTurn(unavailable.TurnId),
+                GalateaDelegateDispatchInspection.Ambiguous => true,
+                _ => false
+            };
+        }
+
+        private bool MatchesExpectedTurn(string turnId) => string.Equals(
+            ExpectedTurnId,
+            turnId,
+            StringComparison.Ordinal
+        );
 
         bool IPendingDispatch.Matches(string dispatchId, string threadId) =>
             Matches(dispatchId, threadId);
@@ -1158,13 +1262,24 @@ internal sealed class GalateaCodexDurableSidecarClient
         string BindingOperationId
     );
 
-    private sealed record DispatchWireFrame(
+    private sealed record StartTurnWireFrame(
         [property: JsonPropertyName("v")] int Version,
         [property: JsonPropertyName("type")] string Type,
         [property: JsonPropertyName("requestId")] string RequestId,
         [property: JsonPropertyName("dispatchId")] string DispatchId,
         [property: JsonPropertyName("threadId")] string ThreadId,
         [property: JsonPropertyName("task")] string Task
+    );
+
+    private sealed record InspectDispatchWireFrame(
+        [property: JsonPropertyName("v")] int Version,
+        [property: JsonPropertyName("type")] string Type,
+        [property: JsonPropertyName("requestId")] string RequestId,
+        [property: JsonPropertyName("dispatchId")] string DispatchId,
+        [property: JsonPropertyName("threadId")] string ThreadId,
+        [property: JsonPropertyName("task")] string Task,
+        [property: JsonPropertyName("expectedTurnId")]
+        string? ExpectedTurnId
     );
 
     private enum OperationClaim {

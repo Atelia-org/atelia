@@ -763,6 +763,14 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         ) {
             Interlocked.Increment(ref _inspectCallCount);
             DurableCall call = _calls[request.DispatchId];
+            if (!string.Equals(
+                    request.ExpectedTurnId,
+                    call.TurnId,
+                    StringComparison.Ordinal)) {
+                throw new InvalidOperationException(
+                    "Accepted vertical inspection did not select its exact turn."
+                );
+            }
             string? failureCode = Volatile.Read(ref call.FailureCode);
             if (failureCode is not null) {
                 return new GalateaDelegateDispatchInspection.Failed(

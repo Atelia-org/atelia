@@ -7,10 +7,10 @@ public sealed class GalateaDurableDelegateTransportTests {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
     [Fact]
-    public async Task ExactV2FramesAndFiveInspectionOutcomesAreTyped() {
+    public async Task ExactV3FramesAndSixInspectionOutcomesAreTyped() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":2,"type":"ready"}'
+            printf '%s\n' '{"v":3,"type":"ready"}'
             count=0
             while IFS= read -r line; do
               count=$((count + 1))
@@ -21,32 +21,35 @@ public sealed class GalateaDurableDelegateTransportTests {
               case "$count" in
                 1)
                   binding_id=$(printf '%s' "$line" | sed -n 's/.*"bindingOperationId":"\([^"]*\)".*/\1/p')
-                  printf '{"v":2,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-fixed"}\n' "$request_id" "$binding_id"
+                  printf '{"v":3,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-fixed"}\n' "$request_id" "$binding_id"
                   ;;
                 2)
-                  printf '{"v":2,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-1"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":3,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-1"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
                 3)
-                  printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
                 4)
-                  printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"running","turnId":"turn-1"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"running","turnId":"turn-1","source":"live"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
                 5)
-                  printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"completed","turnId":"turn-1","final":"完成，包含中文。"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"completed","turnId":"turn-1","final":"完成，包含中文。","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
                 6)
-                  printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"failed","turnId":"turn-1","code":"TURN_FAILED"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"failed","turnId":"turn-1","code":"TURN_FAILED","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
                 7)
-                  printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"ambiguous","code":"DISPATCH_BODY_MISMATCH"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"ambiguous","code":"DISPATCH_BODY_MISMATCH","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                  ;;
+                8)
+                  printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"unavailable","turnId":"turn-1","code":"ACCEPTED_TURN_NOT_VISIBLE","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
                   ;;
               esac
             done
             """
         );
         await using GalateaCodexDurableSidecarClient client =
-            fixture.CreateV2Client();
+            fixture.CreateV3Client();
 
         GalateaDelegateBindingEstablished binding =
             await client.EnsureBindingAsync(
@@ -63,55 +66,87 @@ public sealed class GalateaDurableDelegateTransportTests {
 
         GalateaDelegateDispatchInspection[] inspections = [
             await client.InspectDispatchAsync(
-                new("dispatch-missing", binding.ThreadId, "never sent"),
+                GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
+                    "dispatch-missing",
+                    binding.ThreadId,
+                    "never sent"
+                ),
                 CancellationToken.None
             ),
             await client.InspectDispatchAsync(
-                new("dispatch-1", binding.ThreadId, "exact\n你好"),
+                GalateaInspectDelegateDispatchRequest.ForAccepted(
+                    "dispatch-1", binding.ThreadId, "exact\n你好", "turn-1"
+                ),
                 CancellationToken.None
             ),
             await client.InspectDispatchAsync(
-                new("dispatch-1", binding.ThreadId, "exact\n你好"),
+                GalateaInspectDelegateDispatchRequest.ForAccepted(
+                    "dispatch-1", binding.ThreadId, "exact\n你好", "turn-1"
+                ),
                 CancellationToken.None
             ),
             await client.InspectDispatchAsync(
-                new("dispatch-1", binding.ThreadId, "exact\n你好"),
+                GalateaInspectDelegateDispatchRequest.ForAccepted(
+                    "dispatch-1", binding.ThreadId, "exact\n你好", "turn-1"
+                ),
                 CancellationToken.None
             ),
             await client.InspectDispatchAsync(
-                new("dispatch-1", binding.ThreadId, "exact\n你好"),
+                GalateaInspectDelegateDispatchRequest.ForAccepted(
+                    "dispatch-1", binding.ThreadId, "exact\n你好", "turn-1"
+                ),
+                CancellationToken.None
+            ),
+            await client.InspectDispatchAsync(
+                GalateaInspectDelegateDispatchRequest.ForAccepted(
+                    "dispatch-1", binding.ThreadId, "exact\n你好", "turn-1"
+                ),
                 CancellationToken.None
             )
         ];
 
-        Assert.IsType<GalateaDelegateDispatchInspection.NotFound>(
-            inspections[0]
+        Assert.Equal(
+            GalateaDelegateInspectionSource.Persistent,
+            Assert.IsType<GalateaDelegateDispatchInspection.NotFound>(
+                inspections[0]
+            ).Source
         );
-        Assert.IsType<GalateaDelegateDispatchInspection.Running>(
-            inspections[1]
+        Assert.Equal(
+            GalateaDelegateInspectionSource.Live,
+            Assert.IsType<GalateaDelegateDispatchInspection.Running>(
+                inspections[1]
+            ).Source
         );
         var completed = Assert.IsType<
             GalateaDelegateDispatchInspection.Completed>(inspections[2]);
         Assert.Equal("完成，包含中文。", completed.Final);
-        Assert.Equal(
-            "TURN_FAILED",
-            Assert.IsType<GalateaDelegateDispatchInspection.Failed>(
-                inspections[3]
-            ).Code
-        );
-        Assert.Equal(
-            "DISPATCH_BODY_MISMATCH",
-            Assert.IsType<GalateaDelegateDispatchInspection.Ambiguous>(
-                inspections[4]
-            ).Code
-        );
+        Assert.Equal(GalateaDelegateInspectionSource.Persistent,
+            completed.Source);
+        var failed = Assert.IsType<
+            GalateaDelegateDispatchInspection.Failed>(inspections[3]);
+        Assert.Equal("TURN_FAILED", failed.Code);
+        Assert.Equal(GalateaDelegateInspectionSource.Persistent,
+            failed.Source);
+        var ambiguous = Assert.IsType<
+            GalateaDelegateDispatchInspection.Ambiguous>(inspections[4]);
+        Assert.Equal("DISPATCH_BODY_MISMATCH", ambiguous.Code);
+        Assert.Equal(GalateaDelegateInspectionSource.Persistent,
+            ambiguous.Source);
+        var unavailable = Assert.IsType<
+            GalateaDelegateDispatchInspection.AcceptedTurnNotVisible>(
+                inspections[5]
+            );
+        Assert.Equal("ACCEPTED_TURN_NOT_VISIBLE", unavailable.Code);
+        Assert.Equal(GalateaDelegateInspectionSource.Persistent,
+            unavailable.Source);
 
         string[] lines = File.ReadAllLines(fixture.InputPath);
-        Assert.Equal(7, lines.Length);
+        Assert.Equal(8, lines.Length);
         Assert.Equal(
             [
                 "ensure-binding",
                 "start-turn",
+                "inspect-dispatch",
                 "inspect-dispatch",
                 "inspect-dispatch",
                 "inspect-dispatch",
@@ -129,6 +164,21 @@ public sealed class GalateaDurableDelegateTransportTests {
                 .Select(static value => value.Name)
                 .Order(StringComparer.Ordinal)
         );
+        using JsonDocument unknownInspect = JsonDocument.Parse(lines[2]);
+        Assert.Equal(JsonValueKind.Null, unknownInspect.RootElement
+            .GetProperty("expectedTurnId").ValueKind);
+        Assert.Equal(
+            [
+                "dispatchId", "expectedTurnId", "requestId", "task",
+                "threadId", "type", "v"
+            ],
+            unknownInspect.RootElement.EnumerateObject()
+                .Select(static value => value.Name)
+                .Order(StringComparer.Ordinal)
+        );
+        using JsonDocument acceptedInspect = JsonDocument.Parse(lines[3]);
+        Assert.Equal("turn-1", acceptedInspect.RootElement
+            .GetProperty("expectedTurnId").GetString());
         Assert.Equal(1, client.GenerationCountForTest);
     }
 
@@ -136,7 +186,7 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task ConcurrentResponsesAreCorrelatedByRequestId() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":2,"type":"ready"}'
+            printf '%s\n' '{"v":3,"type":"ready"}'
             IFS= read -r first
             IFS= read -r second
             printf '%s\n' "$first" >> {{Q("INPUT")}}
@@ -145,13 +195,13 @@ public sealed class GalateaDurableDelegateTransportTests {
             first_dispatch=$(printf '%s' "$first" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
             second_request=$(printf '%s' "$second" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
             second_dispatch=$(printf '%s' "$second" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
-            printf '{"v":2,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-fixed","turnId":"turn-%s"}\n' "$second_request" "$second_dispatch" "$second_dispatch"
-            printf '{"v":2,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-fixed","turnId":"turn-%s"}\n' "$first_request" "$first_dispatch" "$first_dispatch"
+            printf '{"v":3,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-fixed","turnId":"turn-%s"}\n' "$second_request" "$second_dispatch" "$second_dispatch"
+            printf '{"v":3,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"thread-fixed","turnId":"turn-%s"}\n' "$first_request" "$first_dispatch" "$first_dispatch"
             while IFS= read -r ignored; do :; done
             """
         );
         await using GalateaCodexDurableSidecarClient client =
-            fixture.CreateV2Client();
+            fixture.CreateV3Client();
 
         Task<GalateaDelegateTurnAccepted> first = client.StartTurnAsync(
             new("dispatch-first", "thread-fixed", "first"),
@@ -171,26 +221,29 @@ public sealed class GalateaDurableDelegateTransportTests {
     [InlineData("extra-property")]
     [InlineData("wrong-case")]
     [InlineData("duplicate-property")]
-    public async Task InvalidV2BusinessFrameIsGenerationFatal(string kind) {
+    [InlineData("v2")]
+    public async Task InvalidV3BusinessFrameIsGenerationFatal(string kind) {
         string response = kind switch {
             "wrong-identity" =>
-                "printf '{\"v\":2,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"wrong\",\"threadId\":\"thread-1\"}\\n' \"$request_id\"",
+                "printf '{\"v\":3,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"wrong\",\"threadId\":\"thread-1\"}\\n' \"$request_id\"",
             "extra-property" =>
-                "printf '{\"v\":2,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\",\"extra\":1}\\n' \"$request_id\"",
+                "printf '{\"v\":3,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\",\"extra\":1}\\n' \"$request_id\"",
             "wrong-case" =>
-                "printf '{\"v\":2,\"type\":\"binding-established\",\"RequestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\"}\\n' \"$request_id\"",
+                "printf '{\"v\":3,\"type\":\"binding-established\",\"RequestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\"}\\n' \"$request_id\"",
+            "duplicate-property" =>
+                "printf '{\"v\":3,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\",\"threadId\":\"thread-2\"}\\n' \"$request_id\"",
             _ =>
-                "printf '{\"v\":2,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\",\"threadId\":\"thread-2\"}\\n' \"$request_id\""
+                "printf '{\"v\":2,\"type\":\"binding-established\",\"requestId\":\"%s\",\"bindingOperationId\":\"binding-1\",\"threadId\":\"thread-1\"}\\n' \"$request_id\""
         };
         using var fixture = new GalateaSidecarProcessFixture(
-            "printf '%s\\n' '{\"v\":2,\"type\":\"ready\"}'\n"
+            "printf '%s\\n' '{\"v\":3,\"type\":\"ready\"}'\n"
                 + "IFS= read -r line\n"
                 + "request_id=$(printf '%s' \"$line\" | sed -n 's/.*\"requestId\":\"\\([^\"]*\\)\".*/\\1/p')\n"
                 + response
                 + "\nsleep 30\n"
         );
         await using GalateaCodexDurableSidecarClient client =
-            fixture.CreateV2Client();
+            fixture.CreateV3Client();
 
         GalateaDurableDelegateTransportException failure =
             await Assert.ThrowsAsync<
@@ -204,6 +257,140 @@ public sealed class GalateaDurableDelegateTransportTests {
     }
 
     [Theory]
+    [InlineData("missing-source")]
+    [InlineData("wrong-source-case")]
+    [InlineData("extra-property")]
+    [InlineData("duplicate-property")]
+    [InlineData("accepted-not-found")]
+    [InlineData("outcome-unknown-unavailable")]
+    [InlineData("not-found-live")]
+    [InlineData("unavailable-live")]
+    [InlineData("unavailable-wrong-code")]
+    [InlineData("wrong-returned-turn")]
+    public async Task InvalidInspectionFrameOrSelectorCombinationIsFatal(
+        string kind
+    ) {
+        string response = kind switch {
+            "missing-source" =>
+                "printf '{\"v\":3,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-1\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+            "wrong-source-case" =>
+                "printf '{\"v\":3,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-1\",\"source\":\"Persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+            "extra-property" =>
+                "printf '{\"v\":3,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-1\",\"source\":\"persistent\",\"extra\":1}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+            "duplicate-property" =>
+                "printf '{\"v\":3,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-1\",\"source\":\"persistent\",\"source\":\"live\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+            "accepted-not-found" =>
+                "printf '{\"v\":3,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"not-found\",\"source\":\"persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+            "outcome-unknown-unavailable" =>
+                "printf '{\"v\":3,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"unavailable\",\"turnId\":\"turn-1\",\"code\":\"ACCEPTED_TURN_NOT_VISIBLE\",\"source\":\"persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+            "not-found-live" =>
+                "printf '{\"v\":3,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"not-found\",\"source\":\"live\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+            "unavailable-live" =>
+                "printf '{\"v\":3,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"unavailable\",\"turnId\":\"turn-1\",\"code\":\"ACCEPTED_TURN_NOT_VISIBLE\",\"source\":\"live\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+            "unavailable-wrong-code" =>
+                "printf '{\"v\":3,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"unavailable\",\"turnId\":\"turn-1\",\"code\":\"INSPECTION_UNAVAILABLE\",\"source\":\"persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\"",
+            _ =>
+                "printf '{\"v\":3,\"type\":\"dispatch-inspected\",\"requestId\":\"%s\",\"dispatchId\":\"%s\",\"threadId\":\"%s\",\"outcome\":\"running\",\"turnId\":\"turn-2\",\"source\":\"persistent\"}\\n' \"$request_id\" \"$dispatch_id\" \"$thread_id\""
+        };
+        using var fixture = new GalateaSidecarProcessFixture(
+            "printf '%s\\n' '{\"v\":3,\"type\":\"ready\"}'\n"
+                + "IFS= read -r line\n"
+                + "request_id=$(printf '%s' \"$line\" | sed -n 's/.*\"requestId\":\"\\([^\"]*\\)\".*/\\1/p')\n"
+                + "dispatch_id=$(printf '%s' \"$line\" | sed -n 's/.*\"dispatchId\":\"\\([^\"]*\\)\".*/\\1/p')\n"
+                + "thread_id=$(printf '%s' \"$line\" | sed -n 's/.*\"threadId\":\"\\([^\"]*\\)\".*/\\1/p')\n"
+                + response
+                + "\nsleep 30\n"
+        );
+        await using GalateaCodexDurableSidecarClient client =
+            fixture.CreateV3Client();
+        GalateaInspectDelegateDispatchRequest request =
+            kind == "outcome-unknown-unavailable"
+                ? GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
+                    "dispatch-1", "thread-fixed", "task"
+                )
+                : GalateaInspectDelegateDispatchRequest.ForAccepted(
+                    "dispatch-1", "thread-fixed", "task", "turn-1"
+                );
+
+        GalateaDurableDelegateTransportException failure =
+            await Assert.ThrowsAsync<
+                GalateaDurableDelegateTransportException>(() =>
+                    client.InspectDispatchAsync(
+                        request,
+                        CancellationToken.None
+                    ));
+
+        Assert.Equal("INSPECTION_UNAVAILABLE", failure.Code);
+        Assert.Equal(
+            GalateaDurableDelegateFailurePolicy.InspectionUnavailable,
+            failure.FailurePolicy
+        );
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not allowed")]
+    [InlineData("\n")]
+    public async Task InvalidExpectedTurnIdIsRejectedBeforeProcessStart(
+        string expectedTurnId
+    ) {
+        using var fixture = new GalateaSidecarProcessFixture(
+            "printf '%s\\n' '{\"v\":3,\"type\":\"ready\"}'\n"
+        );
+        await using GalateaCodexDurableSidecarClient client =
+            fixture.CreateV3Client();
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.InspectDispatchAsync(
+                GalateaInspectDelegateDispatchRequest.ForAccepted(
+                    "dispatch-1",
+                    "thread-fixed",
+                    "task",
+                    expectedTurnId
+                ),
+                CancellationToken.None
+            ));
+
+        Assert.False(client.HasStartedProcessForTest);
+    }
+
+    [Fact]
+    public async Task GenericAcceptedTurnNotVisibleFailureRemainsRetryable() {
+        using var fixture = new GalateaSidecarProcessFixture(
+            $$"""
+            printf '%s\n' '{"v":3,"type":"ready"}'
+            IFS= read -r line
+            request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
+            dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
+            thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+            printf '{"v":3,"type":"failed","stage":"inspect-dispatch","requestId":"%s","dispatchId":"%s","threadId":"%s","code":"ACCEPTED_TURN_NOT_VISIBLE"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            while IFS= read -r ignored; do :; done
+            """
+        );
+        await using GalateaCodexDurableSidecarClient client =
+            fixture.CreateV3Client();
+
+        GalateaDurableDelegateTransportException failure =
+            await Assert.ThrowsAsync<
+                GalateaDurableDelegateTransportException>(() =>
+                    client.InspectDispatchAsync(
+                        GalateaInspectDelegateDispatchRequest.ForAccepted(
+                            "dispatch-1",
+                            "thread-fixed",
+                            "task",
+                            "turn-1"
+                        ),
+                        CancellationToken.None
+                    ));
+
+        Assert.Equal("ACCEPTED_TURN_NOT_VISIBLE", failure.Code);
+        Assert.Equal(
+            GalateaDurableDelegateFailurePolicy.InspectionUnavailable,
+            failure.FailurePolicy
+        );
+    }
+
+    [Theory]
     [InlineData("start", "malformed", "START_OUTCOME_UNKNOWN")]
     [InlineData("start", "exit", "START_OUTCOME_UNKNOWN")]
     [InlineData("inspect", "malformed", "INSPECTION_UNAVAILABLE")]
@@ -214,16 +401,16 @@ public sealed class GalateaDurableDelegateTransportTests {
         string expectedCode
     ) {
         string terminal = failureKind == "malformed"
-            ? "printf '%s\\n' '{\"v\":2,\"type\":\"broken\",'"
+            ? "printf '%s\\n' '{\"v\":3,\"type\":\"broken\",'"
             : "exit 7";
         using var fixture = new GalateaSidecarProcessFixture(
-            "printf '%s\\n' '{\"v\":2,\"type\":\"ready\"}'\n"
+            "printf '%s\\n' '{\"v\":3,\"type\":\"ready\"}'\n"
                 + "IFS= read -r line\n"
                 + terminal
                 + "\n"
         );
         await using GalateaCodexDurableSidecarClient client =
-            fixture.CreateV2Client();
+            fixture.CreateV3Client();
 
         GalateaDurableDelegateTransportException failure = operation == "start"
             ? await Assert.ThrowsAsync<
@@ -235,7 +422,10 @@ public sealed class GalateaDurableDelegateTransportTests {
             : await Assert.ThrowsAsync<
                 GalateaDurableDelegateTransportException>(() =>
                     client.InspectDispatchAsync(
-                        new("dispatch-1", "thread-fixed", "task"),
+                        GalateaInspectDelegateDispatchRequest
+                            .ForOutcomeUnknown(
+                                "dispatch-1", "thread-fixed", "task"
+                            ),
                         CancellationToken.None
                     ));
 
@@ -246,18 +436,18 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task ConcurrentBindingDuplicateDoesNotReleaseOwnersClaim() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":2,"type":"ready"}'
+            printf '%s\n' '{"v":3,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" > {{Q("INPUT")}}
             request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
             binding_id=$(printf '%s' "$line" | sed -n 's/.*"bindingOperationId":"\([^"]*\)".*/\1/p')
             while [ ! -f {{Q("COUNT")}} ]; do sleep 0.01; done
-            printf '{"v":2,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-1"}\n' "$request_id" "$binding_id"
+            printf '{"v":3,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-1"}\n' "$request_id" "$binding_id"
             while IFS= read -r ignored; do :; done
             """
         );
         await using GalateaCodexDurableSidecarClient client =
-            fixture.CreateV2Client();
+            fixture.CreateV3Client();
         Task<GalateaDelegateBindingEstablished> owner =
             client.EnsureBindingAsync(
                 new("binding-active"),
@@ -289,7 +479,7 @@ public sealed class GalateaDurableDelegateTransportTests {
             if [ -f {{Q("COUNT")}} ]; then count=$(cat {{Q("COUNT")}}); fi
             count=$((count + 1))
             printf '%s' "$count" > {{Q("COUNT")}}
-            printf '%s\n' '{"v":2,"type":"ready"}'
+            printf '%s\n' '{"v":3,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" >> {{Q("INPUT")}}
             request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
@@ -297,13 +487,13 @@ public sealed class GalateaDurableDelegateTransportTests {
             if [ "$count" -eq 1 ]; then
               sleep 30
             else
-              printf '{"v":2,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-2"}\n' "$request_id" "$binding_id"
+              printf '{"v":3,"type":"binding-established","requestId":"%s","bindingOperationId":"%s","threadId":"thread-2"}\n' "$request_id" "$binding_id"
               while IFS= read -r ignored; do :; done
             fi
             """
         );
         await using GalateaCodexDurableSidecarClient client =
-            fixture.CreateV2Client(rpcTimeoutMs: 100);
+            fixture.CreateV3Client(rpcTimeoutMs: 100);
         Task<GalateaDelegateBindingEstablished> first =
             client.EnsureBindingAsync(
                 new("binding-retry"),
@@ -337,7 +527,7 @@ public sealed class GalateaDurableDelegateTransportTests {
             if [ -f {{Q("COUNT")}} ]; then count=$(cat {{Q("COUNT")}}); fi
             count=$((count + 1))
             printf '%s' "$count" > {{Q("COUNT")}}
-            printf '%s\n' '{"v":2,"type":"ready"}'
+            printf '%s\n' '{"v":3,"type":"ready"}'
             if [ "$count" -eq 1 ]; then
               IFS= read -r line
               printf '%s\n' "$line" >> {{Q("INPUT")}}
@@ -348,13 +538,13 @@ public sealed class GalateaDurableDelegateTransportTests {
               request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
               dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
               thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
-              printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found"}\n' "$request_id" "$dispatch_id" "$thread_id"
+              printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
               while IFS= read -r ignored; do :; done
             fi
             """
         );
         await using GalateaCodexDurableSidecarClient client =
-            fixture.CreateV2Client(rpcTimeoutMs: 100);
+            fixture.CreateV3Client(rpcTimeoutMs: 100);
         Task<GalateaDelegateTurnAccepted> first = client.StartTurnAsync(
             new("dispatch-unknown", "thread-fixed", "exact task"),
             CancellationToken.None
@@ -382,7 +572,9 @@ public sealed class GalateaDurableDelegateTransportTests {
 
         GalateaDelegateDispatchInspection inspection =
             await client.InspectDispatchAsync(
-                new("dispatch-unknown", "thread-fixed", "exact task"),
+                GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
+                    "dispatch-unknown", "thread-fixed", "exact task"
+                ),
                 CancellationToken.None
             );
         Assert.IsType<GalateaDelegateDispatchInspection.NotFound>(inspection);
@@ -400,7 +592,7 @@ public sealed class GalateaDurableDelegateTransportTests {
             if [ -f {{Q("COUNT")}} ]; then count=$(cat {{Q("COUNT")}}); fi
             count=$((count + 1))
             printf '%s' "$count" > {{Q("COUNT")}}
-            printf '%s\n' '{"v":2,"type":"ready"}'
+            printf '%s\n' '{"v":3,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" >> {{Q("INPUT")}}
             if [ "$count" -eq 1 ]; then
@@ -409,12 +601,12 @@ public sealed class GalateaDurableDelegateTransportTests {
               request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
               dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
               thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
-              printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found"}\n' "$request_id" "$dispatch_id" "$thread_id"
+              printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
               while IFS= read -r ignored; do :; done
             fi
             """
         );
-        GalateaCodexDurableSidecarClient client = fixture.CreateV2Client();
+        GalateaCodexDurableSidecarClient client = fixture.CreateV3Client();
         try {
             using var cancellation = new CancellationTokenSource();
             Task<GalateaDelegateTurnAccepted> first = client.StartTurnAsync(
@@ -445,7 +637,7 @@ public sealed class GalateaDurableDelegateTransportTests {
 
             GalateaDelegateDispatchInspection inspection =
                 await client.InspectDispatchAsync(
-                    new(
+                    GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
                         "dispatch-cancelled",
                         "thread-fixed",
                         "exact task"
@@ -467,83 +659,67 @@ public sealed class GalateaDurableDelegateTransportTests {
     }
 
     [Fact]
-    public async Task InspectionTimeoutCanRetryAndNotFoundStaysNonTerminal() {
+    public async Task InspectionHasNoClientAggregateDeadline() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            count=0
-            if [ -f {{Q("COUNT")}} ]; then count=$(cat {{Q("COUNT")}}); fi
-            count=$((count + 1))
-            printf '%s' "$count" > {{Q("COUNT")}}
-            printf '%s\n' '{"v":2,"type":"ready"}'
+            printf '%s\n' '{"v":3,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" >> {{Q("INPUT")}}
-            if [ "$count" -eq 1 ]; then
-              sleep 30
-            else
-              request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
-              dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
-              thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
-              printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found"}\n' "$request_id" "$dispatch_id" "$thread_id"
-              while IFS= read -r ignored; do :; done
-            fi
+            request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
+            dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
+            thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
+            # The removed C# three-RPC aggregate deadline was 5.3 seconds
+            # for rpcTimeoutMs=100. Node owns each bounded RPC now.
+            sleep 6
+            printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            while IFS= read -r ignored; do :; done
             """
         );
         await using GalateaCodexDurableSidecarClient client =
-            fixture.CreateV2Client(rpcTimeoutMs: 100);
-        Task<GalateaDelegateDispatchInspection> first =
-            client.InspectDispatchAsync(
-                new("dispatch-1", "thread-fixed", "task"),
-                CancellationToken.None
-            );
-        await WaitForLinesAsync(fixture.InputPath, 1);
-
-        GalateaDurableDelegateTransportException unavailable =
-            await Assert.ThrowsAsync<
-                GalateaDurableDelegateTransportException>(async () =>
-                    await first);
-        Assert.Equal("INSPECTION_UNAVAILABLE", unavailable.Code);
-
-        GalateaDelegateDispatchInspection retried =
+            fixture.CreateV3Client(rpcTimeoutMs: 100);
+        GalateaDelegateDispatchInspection result =
             await client.InspectDispatchAsync(
-                new("dispatch-1", "thread-fixed", "task"),
+                GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
+                    "dispatch-1", "thread-fixed", "task"
+                ),
                 CancellationToken.None
             );
-        Assert.IsType<GalateaDelegateDispatchInspection.NotFound>(retried);
-        Assert.Equal(2, client.GenerationCountForTest);
-        Assert.All(
-            File.ReadAllLines(fixture.InputPath),
-            line => Assert.Equal("inspect-dispatch", ReadType(line))
-        );
+
+        Assert.IsType<GalateaDelegateDispatchInspection.NotFound>(result);
+        Assert.Equal(1, client.GenerationCountForTest);
+        Assert.Single(File.ReadAllLines(fixture.InputPath));
     }
 
     [Fact]
     public async Task CancelledInFlightInspectionKeepsGenerationForLateResponse() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":2,"type":"ready"}'
+            printf '%s\n' '{"v":3,"type":"ready"}'
             IFS= read -r first
             printf '%s\n' "$first" >> {{Q("INPUT")}}
             while [ ! -f {{Q("COUNT")}} ]; do sleep 0.01; done
             request_id=$(printf '%s' "$first" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
             dispatch_id=$(printf '%s' "$first" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
             thread_id=$(printf '%s' "$first" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
-            printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
             IFS= read -r second
             printf '%s\n' "$second" >> {{Q("INPUT")}}
             request_id=$(printf '%s' "$second" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
             dispatch_id=$(printf '%s' "$second" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
             thread_id=$(printf '%s' "$second" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
-            printf '{"v":2,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"running","turnId":"turn-2"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"running","turnId":"turn-2","source":"live"}\n' "$request_id" "$dispatch_id" "$thread_id"
             while IFS= read -r ignored; do :; done
             printf '%s' 'graceful-eof' > {{Q("ENV")}}
             """
         );
-        GalateaCodexDurableSidecarClient client = fixture.CreateV2Client();
+        GalateaCodexDurableSidecarClient client = fixture.CreateV3Client();
         try {
             using var cancellation = new CancellationTokenSource();
             Task<GalateaDelegateDispatchInspection> cancelled =
                 client.InspectDispatchAsync(
-                    new("dispatch-1", "thread-fixed", "task"),
+                    GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
+                        "dispatch-1", "thread-fixed", "task"
+                    ),
                     cancellation.Token
                 );
             await WaitForLinesAsync(fixture.InputPath, 1);
@@ -556,7 +732,9 @@ public sealed class GalateaDurableDelegateTransportTests {
             File.WriteAllText(fixture.CountPath, "release");
             GalateaDelegateDispatchInspection inspection =
                 await client.InspectDispatchAsync(
-                    new("dispatch-2", "thread-fixed", "task"),
+                    GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
+                        "dispatch-2", "thread-fixed", "task"
+                    ),
                     CancellationToken.None
                 );
 
@@ -573,13 +751,13 @@ public sealed class GalateaDurableDelegateTransportTests {
     }
 
     [Fact]
-    public async Task UnconfirmedReapPermanentlyBlocksV2Restart() {
+    public async Task UnconfirmedReapPermanentlyBlocksV3Restart() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":2,"type":"ready"}'
+            printf '%s\n' '{"v":3,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" > {{Q("INPUT")}}
-            printf '%s\n' '{"v":2,"type":"broken",'
+            printf '%s\n' '{"v":3,"type":"broken",'
             sleep 30
             """
         );
@@ -587,13 +765,15 @@ public sealed class GalateaDurableDelegateTransportTests {
             WaitForExitBoundedAsync: static (_, _) =>
                 Task.FromResult(false)
         );
-        GalateaCodexDurableSidecarClient client = fixture.CreateV2Client(
+        GalateaCodexDurableSidecarClient client = fixture.CreateV3Client(
             rpcTimeoutMs: 100,
             processHooks: hooks
         );
         Task<GalateaDelegateDispatchInspection> first =
             client.InspectDispatchAsync(
-                new("dispatch-1", "thread-fixed", "task"),
+                GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
+                    "dispatch-1", "thread-fixed", "task"
+                ),
                 CancellationToken.None
             );
         await WaitForLinesAsync(fixture.InputPath, 1);
@@ -608,7 +788,10 @@ public sealed class GalateaDurableDelegateTransportTests {
                 await Assert.ThrowsAsync<
                     GalateaDurableDelegateTransportException>(() =>
                         client.InspectDispatchAsync(
-                            new("dispatch-1", "thread-fixed", "task"),
+                            GalateaInspectDelegateDispatchRequest
+                                .ForOutcomeUnknown(
+                                    "dispatch-1", "thread-fixed", "task"
+                                ),
                             CancellationToken.None
                         ));
             Assert.Equal("SIDECAR_REAP_UNCONFIRMED", blocked.Code);
@@ -627,7 +810,7 @@ public sealed class GalateaDurableDelegateTransportTests {
     public async Task ColdInnerRestartDelayUsesFiveRpcStartBudget() {
         using var fixture = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":2,"type":"ready"}'
+            printf '%s\n' '{"v":3,"type":"ready"}'
             IFS= read -r line
             printf '%s\n' "$line" > {{Q("INPUT")}}
             request_id=$(printf '%s' "$line" | sed -n 's/.*"requestId":"\([^"]*\)".*/\1/p')
@@ -641,12 +824,12 @@ public sealed class GalateaDurableDelegateTransportTests {
             sleep 3
             sleep 3
             sleep 3
-            printf '{"v":2,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-after-cold-restart"}\n' "$request_id" "$dispatch_id" "$thread_id"
+            printf '{"v":3,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-after-cold-restart"}\n' "$request_id" "$dispatch_id" "$thread_id"
             while IFS= read -r ignored; do :; done
             """
         );
         await using GalateaCodexDurableSidecarClient client =
-            fixture.CreateV2Client(rpcTimeoutMs: 3_000);
+            fixture.CreateV3Client(rpcTimeoutMs: 3_000);
 
         GalateaDelegateTurnAccepted accepted = await client.StartTurnAsync(
             new("dispatch-cold", "thread-fixed", "task"),
@@ -658,12 +841,11 @@ public sealed class GalateaDurableDelegateTransportTests {
     }
 
     [Theory]
-    [InlineData(100, 5_500, 5_300)]
-    [InlineData(300_000, 1_505_000, 905_000)]
+    [InlineData(100, 5_500)]
+    [InlineData(300_000, 1_505_000)]
     public void NamedDeadlinesMatchNodeRpcComposition(
         int rpcTimeoutMs,
-        int fiveRpcMilliseconds,
-        int threeRpcMilliseconds
+        int fiveRpcMilliseconds
     ) {
         Assert.Equal(
             TimeSpan.FromMilliseconds(fiveRpcMilliseconds),
@@ -674,12 +856,6 @@ public sealed class GalateaDurableDelegateTransportTests {
         Assert.Equal(
             TimeSpan.FromMilliseconds(fiveRpcMilliseconds),
             GalateaCodexDurableSidecarClient.ComputeStartTurnDeadline(
-                rpcTimeoutMs
-            )
-        );
-        Assert.Equal(
-            TimeSpan.FromMilliseconds(threeRpcMilliseconds),
-            GalateaCodexDurableSidecarClient.ComputeInspectionDeadline(
                 rpcTimeoutMs
             )
         );
@@ -699,6 +875,11 @@ public sealed class GalateaDurableDelegateTransportTests {
     [InlineData(
         "inspect-dispatch",
         "INSPECTION_UNAVAILABLE",
+        (int)GalateaDurableDelegateFailurePolicy.InspectionUnavailable
+    )]
+    [InlineData(
+        "inspect-dispatch",
+        "ACCEPTED_TURN_NOT_VISIBLE",
         (int)GalateaDurableDelegateFailurePolicy.InspectionUnavailable
     )]
     [InlineData(

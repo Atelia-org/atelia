@@ -15,7 +15,7 @@ public sealed class GalateaCodexDelegationLiveFactAttribute : FactAttribute {
                 Environment.GetEnvironmentVariable(RunGate),
                 "1",
                 StringComparison.Ordinal)) {
-            Skip = $"Set {RunGate}=1 to run the real Codex V2 canary.";
+            Skip = $"Set {RunGate}=1 to run the real Codex V3 canary.";
         }
     }
 }
@@ -29,7 +29,7 @@ public sealed class GalateaCodexDelegationLiveTests {
         TimeSpan.FromSeconds(15);
 
     [GalateaCodexDelegationLiveFact]
-    public async Task DurableV2_EnsureStartInspectCompletesInCleanRepo() {
+    public async Task DurableV3_EnsureStartInspectCompletesInCleanRepo() {
         if (!string.Equals(
                 Environment.GetEnvironmentVariable(
                     GalateaCodexDelegationLiveFactAttribute.RunGate
@@ -91,7 +91,7 @@ public sealed class GalateaCodexDelegationLiveTests {
             CancellationToken ct = deadline.Token;
 
             const string bindingOperationId =
-                "galatea-live-canary-binding-v2";
+                "galatea-live-canary-binding-v3";
             GalateaDelegateBindingEstablished binding =
                 await client.EnsureBindingAsync(
                     new(bindingOperationId),
@@ -104,10 +104,10 @@ public sealed class GalateaCodexDelegationLiveTests {
             );
             RequireIdentifier(binding.ThreadId, "thread");
 
-            string token = "GALATEA_V2_CANARY_"
+            string token = "GALATEA_V3_CANARY_"
                 + Guid.NewGuid().ToString("N");
             const string dispatchId =
-                "galatea-live-canary-dispatch-v2";
+                "galatea-live-canary-dispatch-v3";
             string task = "Return exactly the requested canary token as "
                 + "your entire final answer. Do not create, edit, delete, "
                 + "or rename any file in the repository. Canary token: "
@@ -119,7 +119,7 @@ public sealed class GalateaCodexDelegationLiveTests {
             );
             GalateaDelegateDispatchInspection beforeStart =
                 await client.InspectDispatchAsync(
-                    new(
+                    GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
                         dispatchId,
                         binding.ThreadId,
                         task
@@ -256,10 +256,12 @@ public sealed class GalateaCodexDelegationLiveTests {
         string expectedTurnId,
         CancellationToken ct
     ) {
-        var inspectionRequest = new GalateaInspectDelegateDispatchRequest(
+        GalateaInspectDelegateDispatchRequest inspectionRequest =
+            GalateaInspectDelegateDispatchRequest.ForAccepted(
             request.DispatchId,
             request.ThreadId,
-            request.Task
+            request.Task,
+            expectedTurnId
         );
         try {
             while (true) {
@@ -286,7 +288,8 @@ public sealed class GalateaCodexDelegationLiveTests {
                     case GalateaDelegateDispatchInspection.Running running:
                         RequireExact(expectedTurnId, running.TurnId, "turn");
                         break;
-                    case GalateaDelegateDispatchInspection.NotFound:
+                    case GalateaDelegateDispatchInspection
+                        .AcceptedTurnNotVisible:
                         break;
                     case GalateaDelegateDispatchInspection.Failed failed:
                         throw new InvalidOperationException(
@@ -308,7 +311,7 @@ public sealed class GalateaCodexDelegationLiveTests {
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) {
             throw new TimeoutException(
-                "The real Codex V2 canary exceeded its bounded deadline."
+                "The real Codex V3 canary exceeded its bounded deadline."
             );
         }
     }
@@ -316,7 +319,7 @@ public sealed class GalateaCodexDelegationLiveTests {
     private static string CreateIsolatedRepositoryPath() {
         string path = Path.Combine(
             Path.GetTempPath(),
-            "atelia-galatea-codex-v2-live-"
+            "atelia-galatea-codex-v3-live-"
                 + Guid.NewGuid().ToString("N")
         );
         TestDirectorySafety.EnsureExistingPathChainHasNoReparsePoint(path);

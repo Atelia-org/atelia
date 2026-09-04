@@ -21,11 +21,45 @@ internal sealed record GalateaDelegateTurnAccepted(
     string TurnId
 );
 
-internal sealed record GalateaInspectDelegateDispatchRequest(
-    string DispatchId,
-    string ThreadId,
-    string Task
-);
+internal sealed record GalateaInspectDelegateDispatchRequest {
+    private GalateaInspectDelegateDispatchRequest(
+        string dispatchId,
+        string threadId,
+        string task,
+        string? expectedTurnId
+    ) {
+        DispatchId = dispatchId;
+        ThreadId = threadId;
+        Task = task;
+        ExpectedTurnId = expectedTurnId;
+    }
+
+    internal string DispatchId { get; }
+    internal string ThreadId { get; }
+    internal string Task { get; }
+    internal string? ExpectedTurnId { get; }
+
+    internal static GalateaInspectDelegateDispatchRequest ForOutcomeUnknown(
+        string dispatchId,
+        string threadId,
+        string task
+    ) => new(dispatchId, threadId, task, expectedTurnId: null);
+
+    internal static GalateaInspectDelegateDispatchRequest ForAccepted(
+        string dispatchId,
+        string threadId,
+        string task,
+        string expectedTurnId
+    ) {
+        ArgumentNullException.ThrowIfNull(expectedTurnId);
+        return new(dispatchId, threadId, task, expectedTurnId);
+    }
+}
+
+internal enum GalateaDelegateInspectionSource {
+    Live,
+    Persistent
+}
 
 internal abstract record GalateaDelegateDispatchInspection(
     string DispatchId,
@@ -33,34 +67,54 @@ internal abstract record GalateaDelegateDispatchInspection(
 ) {
     internal sealed record NotFound(
         string DispatchId,
-        string ThreadId
+        string ThreadId,
+        GalateaDelegateInspectionSource Source =
+            GalateaDelegateInspectionSource.Persistent
     ) : GalateaDelegateDispatchInspection(DispatchId, ThreadId);
 
     internal sealed record Running(
         string DispatchId,
         string ThreadId,
-        string TurnId
+        string TurnId,
+        GalateaDelegateInspectionSource Source =
+            GalateaDelegateInspectionSource.Persistent
     ) : GalateaDelegateDispatchInspection(DispatchId, ThreadId);
 
     internal sealed record Completed(
         string DispatchId,
         string ThreadId,
         string TurnId,
-        string Final
+        string Final,
+        GalateaDelegateInspectionSource Source =
+            GalateaDelegateInspectionSource.Persistent
     ) : GalateaDelegateDispatchInspection(DispatchId, ThreadId);
 
     internal sealed record Failed(
         string DispatchId,
         string ThreadId,
         string TurnId,
-        string Code
+        string Code,
+        GalateaDelegateInspectionSource Source =
+            GalateaDelegateInspectionSource.Persistent
     ) : GalateaDelegateDispatchInspection(DispatchId, ThreadId);
 
     internal sealed record Ambiguous(
         string DispatchId,
         string ThreadId,
-        string Code
+        string Code,
+        GalateaDelegateInspectionSource Source =
+            GalateaDelegateInspectionSource.Persistent
     ) : GalateaDelegateDispatchInspection(DispatchId, ThreadId);
+
+    internal sealed record AcceptedTurnNotVisible(
+        string DispatchId,
+        string ThreadId,
+        string TurnId,
+        GalateaDelegateInspectionSource Source
+    ) : GalateaDelegateDispatchInspection(DispatchId, ThreadId) {
+        internal const string FailureCode = "ACCEPTED_TURN_NOT_VISIBLE";
+        internal string Code => FailureCode;
+    }
 }
 
 internal sealed class GalateaDurableDelegateTransportException
@@ -102,6 +156,10 @@ internal static class GalateaDurableDelegateFailurePolicies {
         ("start-turn", "START_OUTCOME_UNKNOWN") =>
             GalateaDurableDelegateFailurePolicy.StartOutcomeUnknown,
         ("inspect-dispatch", "INSPECTION_UNAVAILABLE") =>
+            GalateaDurableDelegateFailurePolicy.InspectionUnavailable,
+        // A conforming V3 peer returns this as a semantic unavailable result.
+        // Keep the generic failure form retryable as a defensive boundary.
+        ("inspect-dispatch", "ACCEPTED_TURN_NOT_VISIBLE") =>
             GalateaDurableDelegateFailurePolicy.InspectionUnavailable,
         ("protocol", "DUPLICATE_BINDING_OPERATION_ID")
             or ("protocol", "DUPLICATE_DISPATCH_ID")

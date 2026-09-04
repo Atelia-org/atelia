@@ -9,7 +9,7 @@ namespace Atelia.Galatea.Server;
 
 /// <summary>
 /// Code-owned durable identities and bounds for the delegation current-state
-/// store and V2 transport.
+/// store and V3 transport.
 /// </summary>
 internal static class GalateaDelegationDurableContract {
     internal const int MaximumCandidateCount = 4_096;
