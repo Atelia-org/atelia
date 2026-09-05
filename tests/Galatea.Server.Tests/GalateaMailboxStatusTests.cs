@@ -25,7 +25,7 @@ public sealed class GalateaMailboxStatusTests {
         Assert.Equal(GalateaMailboxStatusState.Quarantined, status.State);
         Assert.Equal(3, status.QueuedCount);
         Assert.Equal(2, status.ReadyNoticeCount);
-        Assert.Equal(0, status.AttemptCount);
+        Assert.Equal(7, status.AttemptCount);
         Assert.Equal("ROUTE_BAD", status.Code);
         Assert.Null(status.NextRetryAtUnixTimeMilliseconds);
     }

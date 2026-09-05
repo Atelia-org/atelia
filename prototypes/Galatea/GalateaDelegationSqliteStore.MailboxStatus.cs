@@ -113,7 +113,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             return Build(
                 GalateaMailboxStatusState.Quarantined,
                 value,
-                attemptCount: 0,
+                AttemptCount(value),
                 code,
                 nextRetryAtUnixTimeMilliseconds: null
             );

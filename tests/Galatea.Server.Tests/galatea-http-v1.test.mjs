@@ -90,11 +90,19 @@ assert.doesNotMatch(
   production.formatMailboxStatus({
     ...exactMailboxStatus,
     state: "quarantined",
-    attemptCount: 0,
     code: "ROUTE_BAD",
     nextRetryAtUnixTimeMilliseconds: null,
   }),
   /重试/,
+);
+assert.match(
+  production.formatMailboxStatus({
+    ...exactMailboxStatus,
+    state: "quarantined",
+    code: "ROUTE_BAD",
+    nextRetryAtUnixTimeMilliseconds: null,
+  }),
+  /此前尝试 4 次/,
 );
 
 const scheduledMailboxTimers = [];

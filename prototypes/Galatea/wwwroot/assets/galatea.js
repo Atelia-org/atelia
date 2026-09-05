@@ -104,10 +104,7 @@ export function requireMailboxStatus(value) {
   }
   if (
     status.state === "quarantined"
-    && (
-      status.attemptCount !== 0
-      || status.nextRetryAtUnixTimeMilliseconds !== null
-    )
+    && status.nextRetryAtUnixTimeMilliseconds !== null
   ) {
     throw new Error("mailbox quarantined state must not imply retry");
   }
@@ -209,7 +206,9 @@ export function formatMailboxStatus(
   };
   const detail = [];
   if (status.attemptCount > 0) {
-    detail.push(`尝试 ${status.attemptCount} 次`);
+    detail.push(status.state === "quarantined"
+      ? `此前尝试 ${status.attemptCount} 次`
+      : `尝试 ${status.attemptCount} 次`);
   }
   if (status.nextRetryAtUnixTimeMilliseconds !== null) {
     detail.push(
