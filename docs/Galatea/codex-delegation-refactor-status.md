@@ -14,6 +14,15 @@ crash matrix 与非目标见
 [`codex-delegation-local-resilience-work-order.md`](codex-delegation-local-resilience-work-order.md)；它不重新打开
 本文已完成的V2 hard-cut清单。
 
+2026-09-05 的dependency follow-up已将sidecar hard-cut到repo-local
+`@openai/codex@0.154.0-alpha.3` exact pin，并以initialize版本preflight拒绝旧/错误binary。该官方版本包含
+duplicate/regressed ordinal tolerant projector；真实故障形状已在disposable、provider-free copied-home canary
+中通过。实现没有引入Codex fork、raw rollout runtime reader、第二ledger或自动重发。
+
+同一follow-up还增加了backup-first offline completed-turn recovery command，以及不创建session、不推进状态机的
+`GET /api/v1/mailbox/status` aggregate观察面。事故中的旧`Accepted`已通过production terminal CAS精确结算；
+幂等重跑零写、后续queued mail未变，Galatea与provider仍未启动，因此这不是新的live E2E结论。
+
 完成结果：
 
 - Root config已hard-cut strict V3；existing state只有在matching session存在时才strict-open并持有lifetime

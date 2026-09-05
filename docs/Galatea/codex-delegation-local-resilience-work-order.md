@@ -422,3 +422,26 @@ Gate 5 updated current READMEs and durability documentation and added the separa
 operator recovery procedure. This phase did **not** recover or mutate ignored mail/state, start
 Galatea, run a live Codex/provider canary or E2E, install/upgrade Codex, modify `/repos/codex/`, or
 file an upstream report.
+
+## 10. Post-completion dependency follow-up（2026-09-05）
+
+The earlier Gate 0 record above remains historical evidence for the implementation baseline. A later,
+separately authorized root fix replaced that configured `0.151.0` dependency with a repo-local ignored
+exact pin of `@openai/codex@0.154.0-alpha.3`; no `/repos/codex` fork is maintained. The tracked installer
+input locks exact registry SRI, refuses an existing drifted version directory, and the runtime rejects any
+configured app-server whose `InitializeResponse.userAgent` does not report the exact supported version.
+Schemas were regenerated from that exact repo-local executable.
+
+A provider-free disposable-home canary retained the incident shape (`token_count` ordinal 354 followed by
+`thread_settings_applied` ordinal 354 and a completed suffix). Official `thread/resume(excludeTurns=true)`
+plus `thread/turns/list(itemsView=full)` on `0.154.0-alpha.3` exposed the post-duplicate completed turn and
+final answer. The canary did not call `turn/start`, access a provider, modify `/root/.codex` state, start
+Galatea, or commit the private rollout fixture. Current operational details are maintained in the durability
+design and `local-codex-mcp/README.md` rather than retroactively changing the completed Gate 0 evidence.
+
+The same separately authorized follow-up implemented the narrow offline completed-turn recovery command and
+the pure-read mailbox status surface described by the durability design and operator runbook. After separate
+validated backups and an exact no-write dry-run, the affected ignored `Accepted` mail was settled once through
+the production terminal CAS. An immediate repeat was classified `AlreadyApplied` with identical database
+bytes; the next queued mail remained queued and no Galatea, sidecar, `turn/start`, or provider process was
+started. This operational recovery is not evidence for a fresh V3 live E2E, which remains a later restart step.

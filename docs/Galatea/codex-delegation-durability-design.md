@@ -651,3 +651,45 @@ identity失配并需要单独设计的停服迁移，因此不属于本local res
 Accepted projection长期不可见时，runtime只继续durable backoff并暴露诊断，不尝试修复Codex私有存储。
 当前ignored mail的人工处置必须走单独授权的backup-first operator gate，见
 [`codex-delegation-operator-recovery.md`](codex-delegation-operator-recovery.md)。
+
+## 15. Codex dependency root fix（2026-09-05）
+
+本地 sidecar 不再依赖 PATH 上的任意 Codex，也不维护 `/repos/codex` fork。唯一受支持版本 hard-cut 为
+repo-local ignored `@openai/codex@0.154.0-alpha.3`：tracked lockfile 固定 main 与六个平台 package 的
+exact version/registry SRI，reviewed content manifest固定各package文件的SHA-256。installer只写
+`.codex-packages/<version>/`，existing同版本目录若文件集或内容漂移则拒绝覆盖。
+sidecar 还会从 official `InitializeResponse.userAgent` 解析运行版本；不是exact pin时以
+`CODEX_VERSION_MISMATCH`在ready前fail closed，并只记录规范化expected/actual version。
+
+该版本纳入 upstream tolerant SQLite projector
+([`095ac4f`](https://github.com/openai/codex/commit/095ac4f131e759b204fa6368dc42d2feff6eb21a))
+和 canonical rollout decoder
+([`69cebb5`](https://github.com/openai/codex/commit/69cebb5d15939bf9b6c1b4647b53879beab91ba2))。
+前者会推进checkpoint并跳过duplicate/regressed ordinal等坏记录，使后续合法turn重新进入official persistent
+projection；这修复依赖层的rebuildable projection，不改变Galatea SQLite authority、selector或at-most-one
+start law，也没有增加raw rollout runtime fallback、第二ledger或自动重发。
+
+已在disposable `CODEX_HOME`中以真实故障形状验证：`token_count ordinal 354`后紧邻
+`thread_settings_applied ordinal 354`，其后completed turn/final经pinned official app-server的
+`thread/resume(excludeTurns=true)`与`thread/turns/list(itemsView=full)`可见。该canary不调用`turn/start`或
+provider，不读写active Codex SQLite/config；private fixture不进入tracked仓库。安装、schema生成与canary命令见
+[`local-codex-mcp/README.md`](../../local-codex-mcp/README.md)。
+
+## 16. Offline recovery 与只读状态面（2026-09-05）
+
+稀有cold gap不通过自动重发、第二ledger或runtime私有格式reader处理。Galatea提供进程最前置的
+`operator recover-codex-completed`离线命令：默认dry-run，显式`--apply`才在exclusive lifetime lock下复用
+production `RecordCompletedMail` CAS。它要求strict、owner-only evidence file，首次apply前核对exact
+dispatch/thread/turn/task/final；terminal后task body按既有隐私边界擦除，因此幂等重跑只按仍持久存在的
+terminal identity、final与notice分类为零写`AlreadyApplied`。完整边界见operator runbook。
+
+本次事故已在Galatea与exact Codex rollout分别完成原子备份、归档测试和SHA-256后执行该流程：dry-run保持
+数据库bytes不变；一次apply只将目标`Accepted`转为`TerminalCompleted`、创建一条`Ready` reply notice并释放
+route active dispatch；下一封`Queued` mail保持不变；第二次apply为零写`AlreadyApplied`，SQLite
+`quick_check`/`integrity_check`均为`ok`。该操作没有启动Galatea、sidecar、`turn/start`或provider。
+
+浏览器另有独立`GET /api/v1/mailbox/status`观察面。它直接读取Galatea delegation store的单事务aggregate，
+不初始化/attach session，不拿`TurnLock`，不signal supervisor，不调用extractor、transport或provider，也不读取或
+返回正文、recipient、subject、durable identity或hash。前端以独立低频single-flight timer显示queue、ready、
+backoff、history-unavailable、quarantine与maintenance-paused状态；checkbox仍只控制`POST ready-turn`。
+成功状态poll有意不逐次写Debug log，避免重新制造heartbeat噪声。
