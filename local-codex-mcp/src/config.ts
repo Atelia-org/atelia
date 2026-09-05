@@ -85,8 +85,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
 
   const configuredCodexCommand = env.CODEX_BRIDGE_CODEX_COMMAND?.trim();
   const usePinnedCodex = !configuredCodexCommand;
-  const defaultCodexArgs = [
-    ...(usePinnedCodex ? [PINNED_CODEX_ENTRYPOINT] : []),
+  const appServerArgs = parseJsonStringArray(
+    env.CODEX_BRIDGE_CODEX_ARGS,
+    "CODEX_BRIDGE_CODEX_ARGS",
+    [
     "app-server",
     "--listen",
     "stdio://",
@@ -94,17 +96,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     "mcp_servers={}",
     "-c",
     "features.apps=false",
-  ];
+    ],
+  );
 
   return {
     allowedRoots: parseJsonStringArray(env.CODEX_BRIDGE_ALLOWED_ROOTS, "CODEX_BRIDGE_ALLOWED_ROOTS"),
     defaultCwd: env.CODEX_BRIDGE_DEFAULT_CWD,
     codexCommand: usePinnedCodex ? process.execPath : configuredCodexCommand,
-    codexArgs: parseJsonStringArray(
-      env.CODEX_BRIDGE_CODEX_ARGS,
-      "CODEX_BRIDGE_CODEX_ARGS",
-      defaultCodexArgs,
-    ),
+    codexArgs: [...(usePinnedCodex ? [PINNED_CODEX_ENTRYPOINT] : []), ...appServerArgs],
     transport,
     httpHost,
     httpPort: parseInteger(env.CODEX_BRIDGE_HTTP_PORT, 3000, "CODEX_BRIDGE_HTTP_PORT", 1, 65_535),

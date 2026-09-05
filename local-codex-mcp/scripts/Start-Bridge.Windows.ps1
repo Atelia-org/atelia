@@ -5,7 +5,7 @@ param(
 
     [string] $DefaultCwd = $AllowedRoot,
 
-    [string] $CodexCommand = 'codex',
+    [string] $CodexCommand = '',
 
     [string] $NodeCommand = 'node'
 )
@@ -19,7 +19,11 @@ $bridgeEntryPoint = (Resolve-Path -LiteralPath $bridgeEntryPoint).Path
 
 $env:CODEX_BRIDGE_ALLOWED_ROOTS = ConvertTo-Json -Compress -InputObject @($resolvedAllowedRoot)
 $env:CODEX_BRIDGE_DEFAULT_CWD = $resolvedDefaultCwd
-$env:CODEX_BRIDGE_CODEX_COMMAND = $CodexCommand
+Remove-Item Env:CODEX_BRIDGE_CODEX_COMMAND -ErrorAction SilentlyContinue
+Remove-Item Env:CODEX_BRIDGE_CODEX_ARGS -ErrorAction SilentlyContinue
+if ($CodexCommand) {
+    $env:CODEX_BRIDGE_CODEX_COMMAND = $CodexCommand
+}
 $env:CODEX_BRIDGE_TRANSPORT = 'stdio'
 
 # tunnel-client has already resolved this value before it launches the MCP

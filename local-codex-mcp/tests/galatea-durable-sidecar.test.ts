@@ -70,7 +70,7 @@ test("durable sidecar fails before ready when configured Codex version drifts", 
         CODEX_BRIDGE_CODEX_COMMAND: process.execPath,
         CODEX_BRIDGE_CODEX_ARGS: JSON.stringify([
           fixture,
-          "--user-agent=codex_vscode/0.151.0 (must-not-be-logged)",
+          "--user-agent=atelia_local_codex_mcp/0.151.0 (must-not-be-logged)",
         ]),
         CODEX_BRIDGE_RPC_TIMEOUT_MS: "1000",
       },

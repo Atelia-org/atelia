@@ -35,3 +35,17 @@ test("explicit Codex command does not prepend the repo-local wrapper", () => {
   assert.equal(config.codexCommand, "/opt/codex");
   assert.equal(config.codexArgs[0], "app-server");
 });
+
+test("args-only override retains the repo-local exact entrypoint", () => {
+  const config = loadConfig({
+    CODEX_BRIDGE_ALLOWED_ROOTS: "[\"/tmp\"]",
+    CODEX_BRIDGE_CODEX_ARGS: "[\"app-server\",\"--listen\",\"stdio://\"]",
+  });
+  assert.equal(config.codexCommand, process.execPath);
+  assert.deepEqual(config.codexArgs, [
+    PINNED_CODEX_ENTRYPOINT,
+    "app-server",
+    "--listen",
+    "stdio://",
+  ]);
+});

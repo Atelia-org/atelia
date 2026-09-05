@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   cpSync,
+  createReadStream,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,7 +16,7 @@ import {
   statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const PINNED_CODEX_VERSION = "0.154.0-alpha.3";
@@ -21,6 +24,7 @@ export const PINNED_CODEX_VERSION = "0.154.0-alpha.3";
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
 const packageSource = join(scriptDirectory, "pinned-codex");
+const contentManifestPath = join(packageSource, "content-manifest.json");
 const defaultInstallRoot = join(projectRoot, ".codex-packages");
 const expectedLockEntries = Object.freeze({
   "node_modules/@openai/codex": Object.freeze({
@@ -79,6 +83,11 @@ function assertExactPackageLock(source = packageSource) {
   if (rootDependency !== PINNED_CODEX_VERSION) {
     throw new Error(`Pinned lock root must require @openai/codex exactly ${PINNED_CODEX_VERSION}.`);
   }
+  const actualPackageKeys = Object.keys(packageLock.packages ?? {}).sort();
+  const expectedPackageKeys = ["", ...Object.keys(expectedLockEntries)].sort();
+  if (JSON.stringify(actualPackageKeys) !== JSON.stringify(expectedPackageKeys)) {
+    throw new Error("Pinned Codex package-lock.json contains an unexpected package set.");
+  }
   for (const [key, expected] of Object.entries(expectedLockEntries)) {
     const actual = packageLock.packages?.[key];
     if (actual?.version !== expected.version || actual.integrity !== expected.integrity) {
@@ -109,6 +118,89 @@ function verifyPackageManifest(path, expectedVersion, label) {
   }
 }
 
+function digestFile(path) {
+  return new Promise((resolveDigest, reject) => {
+    const hash = createHash("sha256");
+    const input = createReadStream(path);
+    input.on("data", (chunk) => hash.update(chunk));
+    input.on("error", reject);
+    input.on("end", () => resolveDigest(hash.digest("hex")));
+  });
+}
+
+function packageFiles(root, directory = root) {
+  const files = [];
+  for (const name of readdirSync(directory).sort()) {
+    const path = join(directory, name);
+    const stat = lstatSync(path);
+    if (stat.isDirectory()) files.push(...packageFiles(root, path));
+    else if (stat.isFile()) files.push({
+      path: relative(root, path).split("\\").join("/"),
+      absolutePath: path,
+      bytes: stat.size,
+    });
+    else throw new Error(`Installed package contains unsupported non-regular entry: ${relative(root, path)}.`);
+  }
+  return files;
+}
+
+export async function verifyContentTree(root, expectedFiles) {
+  const actualFiles = packageFiles(root);
+  const actualPaths = actualFiles.map((file) => file.path);
+  const expectedPaths = expectedFiles.map((file) => file.path);
+  if (JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)) {
+    throw new Error("Installed package file set does not match the reviewed tarball content manifest.");
+  }
+  for (let index = 0; index < actualFiles.length; index += 1) {
+    const actual = actualFiles[index];
+    const expected = expectedFiles[index];
+    if (actual.bytes !== expected.bytes || await digestFile(actual.absolutePath) !== expected.sha256) {
+      throw new Error(`Installed package content drifted: ${actual.path}.`);
+    }
+  }
+}
+
+function reviewedContentManifest() {
+  const manifest = parseJson(contentManifestPath);
+  if (manifest.schema !== 1 || manifest.codexVersion !== PINNED_CODEX_VERSION) {
+    throw new Error("Pinned Codex content manifest identity drifted.");
+  }
+  const expectedPackageNames = Object.keys(expectedLockEntries)
+    .map((key) => key.slice("node_modules/".length))
+    .sort();
+  if (JSON.stringify(Object.keys(manifest.packages ?? {}).sort()) !== JSON.stringify(expectedPackageNames)) {
+    throw new Error("Pinned Codex content manifest contains an unexpected package set.");
+  }
+  for (const [lockKey, expectedLock] of Object.entries(expectedLockEntries)) {
+    const directoryName = lockKey.slice("node_modules/".length);
+    const expectedContent = manifest.packages?.[directoryName];
+    if (expectedContent?.version !== expectedLock.version
+        || expectedContent.integrity !== expectedLock.integrity
+        || !Array.isArray(expectedContent.files)
+        || expectedContent.files.length === 0) {
+      throw new Error(`Pinned Codex content manifest drifted for ${directoryName}.`);
+    }
+    for (const file of expectedContent.files) {
+      if (typeof file?.path !== "string"
+          || file.path.length === 0
+          || file.path.startsWith("/")
+          || file.path.split("/").includes("..")
+          || !Number.isSafeInteger(file.bytes)
+          || file.bytes < 0
+          || typeof file.sha256 !== "string"
+          || !/^[0-9a-f]{64}$/u.test(file.sha256)) {
+        throw new Error(`Pinned Codex content manifest has an invalid entry for ${directoryName}.`);
+      }
+    }
+    const sorted = [...expectedContent.files].sort((left, right) =>
+      left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+    if (JSON.stringify(sorted) !== JSON.stringify(expectedContent.files)) {
+      throw new Error(`Pinned Codex content manifest paths are not canonical for ${directoryName}.`);
+    }
+  }
+  return manifest;
+}
+
 function runEntrypoint(entrypoint, args, options = {}) {
   const result = spawnSync(process.execPath, [entrypoint, ...args], {
     encoding: "utf8",
@@ -121,7 +213,7 @@ function runEntrypoint(entrypoint, args, options = {}) {
   return result;
 }
 
-function verifyInstalledDirectory({
+async function verifyInstalledDirectory({
   directory,
   platform = process.platform,
   architecture = process.arch,
@@ -133,6 +225,20 @@ function verifyInstalledDirectory({
   const platformManifest = join(directory, "node_modules", "@openai", platformDirectoryName, "package.json");
   verifyPackageManifest(rootManifest, PINNED_CODEX_VERSION, "@openai/codex");
   verifyPackageManifest(platformManifest, expectedLockEntries[platformKey].version, platformDirectoryName);
+  const expectedDirectories = ["codex", platformDirectoryName].sort();
+  const actualDirectories = readdirSync(join(directory, "node_modules", "@openai")).sort();
+  if (JSON.stringify(actualDirectories) !== JSON.stringify(expectedDirectories)) {
+    throw new Error("Installed @openai package set does not match the exact platform pin.");
+  }
+  const contentManifest = reviewedContentManifest();
+  await verifyContentTree(
+    join(directory, "node_modules", "@openai", "codex"),
+    contentManifest.packages["@openai/codex"].files,
+  );
+  await verifyContentTree(
+    join(directory, "node_modules", "@openai", platformDirectoryName),
+    contentManifest.packages[`@openai/${platformDirectoryName}`].files,
+  );
   const entrypoint = join(directory, "node_modules", "@openai", "codex", "bin", "codex.js");
   const version = runEntrypoint(entrypoint, ["--version"]).stdout.trim();
   const expected = `codex-cli ${PINNED_CODEX_VERSION}`;
@@ -142,24 +248,24 @@ function verifyInstalledDirectory({
   return { directory, entrypoint, version };
 }
 
-export function verifyPinnedCodex({
+export async function verifyPinnedCodex({
   installRoot = defaultInstallRoot,
   platform = process.platform,
   architecture = process.arch,
 } = {}) {
-  return verifyInstalledDirectory({
+  return await verifyInstalledDirectory({
     directory: pinnedCodexDirectory(installRoot),
     platform,
     architecture,
   });
 }
 
-export function installPinnedCodex({ installRoot = defaultInstallRoot } = {}) {
+export async function installPinnedCodex({ installRoot = defaultInstallRoot } = {}) {
   assertExactPackageLock();
   const target = pinnedCodexDirectory(installRoot);
   if (existsSync(target)) {
     try {
-      return { ...verifyPinnedCodex({ installRoot }), installed: false };
+      return { ...await verifyPinnedCodex({ installRoot }), installed: false };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       throw new Error(
@@ -174,27 +280,30 @@ export function installPinnedCodex({ installRoot = defaultInstallRoot } = {}) {
   try {
     cpSync(join(packageSource, "package.json"), join(staging, "package.json"));
     cpSync(join(packageSource, "package-lock.json"), join(staging, "package-lock.json"));
-    const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-    const install = spawnSync(
-      npmCommand,
-      ["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--omit=dev"],
-      { cwd: staging, stdio: "inherit" },
-    );
+    const npmArguments = ["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--omit=dev"];
+    const npmExecPath = process.env.npm_execpath;
+    const install = npmExecPath
+      ? spawnSync(process.execPath, [npmExecPath, ...npmArguments], { cwd: staging, stdio: "inherit" })
+      : spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", npmArguments, {
+          cwd: staging,
+          stdio: "inherit",
+          shell: process.platform === "win32",
+        });
     if (install.error) throw install.error;
     if (install.status !== 0) {
       throw new Error(`npm ci failed with exit code ${String(install.status)}.`);
     }
-    verifyInstalledDirectory({ directory: staging });
+    await verifyInstalledDirectory({ directory: staging });
     renameSync(staging, target);
-    return { ...verifyPinnedCodex({ installRoot }), installed: true };
+    return { ...await verifyPinnedCodex({ installRoot }), installed: true };
   } catch (error) {
     rmSync(staging, { recursive: true, force: true });
     throw error;
   }
 }
 
-export function generateSchemas({ installRoot = defaultInstallRoot } = {}) {
-  const { entrypoint } = verifyPinnedCodex({ installRoot });
+export async function generateSchemas({ installRoot = defaultInstallRoot } = {}) {
+  const { entrypoint } = await verifyPinnedCodex({ installRoot });
   const schemaDirectory = join(projectRoot, "schemas");
   mkdirSync(defaultInstallRoot, { recursive: true });
   const stagingRoot = mkdtempSync(join(defaultInstallRoot, ".schema-generation-"));
@@ -234,8 +343,8 @@ function relativeFiles(root, prefix = "") {
   return files;
 }
 
-export function verifySchemas({ installRoot = defaultInstallRoot } = {}) {
-  const { entrypoint } = verifyPinnedCodex({ installRoot });
+export async function verifySchemas({ installRoot = defaultInstallRoot } = {}) {
+  const { entrypoint } = await verifyPinnedCodex({ installRoot });
   const generated = mkdtempSync(join(tmpdir(), "atelia-codex-schemas-"));
   try {
     runEntrypoint(entrypoint, ["app-server", "generate-ts", "--out", generated]);
@@ -264,10 +373,10 @@ function printVerification(result, action) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const action = process.argv[2];
-    if (action === "install") printVerification(installPinnedCodex(), "verified");
-    else if (action === "verify") printVerification(verifyPinnedCodex(), "verified");
-    else if (action === "generate-schemas") generateSchemas();
-    else if (action === "verify-schemas") verifySchemas();
+    if (action === "install") printVerification(await installPinnedCodex(), "verified");
+    else if (action === "verify") printVerification(await verifyPinnedCodex(), "verified");
+    else if (action === "generate-schemas") await generateSchemas();
+    else if (action === "verify-schemas") await verifySchemas();
     else throw new Error("Usage: manage-pinned-codex.mjs install|verify|generate-schemas|verify-schemas");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

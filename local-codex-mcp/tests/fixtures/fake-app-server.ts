@@ -32,7 +32,7 @@ const inspectionFixture = inspectionFixtureArgument
   : undefined;
 const userAgentArgument = process.argv.find((argument) => argument.startsWith("--user-agent="));
 const userAgent = userAgentArgument?.slice("--user-agent=".length)
-  ?? "codex_vscode/0.154.0-alpha.3 (fixture)";
+  ?? "atelia_local_codex_mcp/0.154.0-alpha.3 (fixture) unknown (fixture; 0.1.0)";
 
 let initialized = false;
 let initializeCount = 0;

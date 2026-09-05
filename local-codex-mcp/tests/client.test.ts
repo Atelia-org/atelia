@@ -57,7 +57,7 @@ test("initialize rejects a Codex version mismatch and logs only normalized versi
   const logger = new RecordingLogger();
   const value = new CodexAppServerClient({
     command: process.execPath,
-    args: [fixture, "--user-agent=codex_vscode/0.151.0 (fixture secret detail)"],
+    args: [fixture, "--user-agent=atelia_local_codex_mcp/0.151.0 (fixture secret detail)"],
     requestTimeoutMs: 1_000,
     logger,
   });
@@ -79,6 +79,25 @@ test("initialize rejects a Codex version mismatch and logs only normalized versi
     assert.doesNotMatch(JSON.stringify(logger.entries), /fixture secret detail/);
   } finally {
     await value.stop();
+  }
+});
+
+test("initialize rejects a foreign or ambiguous user-agent product token", async () => {
+  for (const userAgent of [
+    "codex_vscode/0.154.0-alpha.3 (fixture)",
+    "atelia_local_codex_mcp/0.154.0-alpha.3/other (fixture)",
+  ]) {
+    const value = new CodexAppServerClient({
+      command: process.execPath,
+      args: [fixture, `--user-agent=${userAgent}`],
+      requestTimeoutMs: 1_000,
+      logger: new NullLogger(),
+    });
+    try {
+      await assert.rejects(value.start(), /version mismatch/);
+    } finally {
+      await value.stop();
+    }
   }
 });
 

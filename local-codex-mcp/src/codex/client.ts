@@ -4,7 +4,11 @@ import type { InitializeResponse } from "../../schemas/InitializeResponse.js";
 import { BridgeError } from "../errors.js";
 import type { BridgeLogger } from "../logger.js";
 import { hasId, hasMethod, type JsonRpcId, type JsonRpcNotification } from "./protocol.js";
-import { codexVersionFromUserAgent, PINNED_CODEX_VERSION } from "./pinned-version.js";
+import {
+  CODEX_BRIDGE_CLIENT_NAME,
+  codexVersionFromUserAgent,
+  PINNED_CODEX_VERSION,
+} from "./pinned-version.js";
 
 interface Connection {
   child: ChildProcessWithoutNullStreams;
@@ -107,7 +111,7 @@ export class CodexAppServerClient {
     try {
       const initializeResponse = await this.rawRequest<InitializeResponse>(connection, "initialize", {
         clientInfo: {
-          name: "atelia_local_codex_mcp",
+          name: CODEX_BRIDGE_CLIENT_NAME,
           title: "Atelia Local Codex MCP Bridge",
           version: "0.1.0",
         },

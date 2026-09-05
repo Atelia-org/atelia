@@ -46,25 +46,29 @@ npm run build
 ```
 
 installer 只写 ignored `.codex-packages/0.154.0-alpha.3/`，不会安装或覆盖全局 npm Codex。
-它以 tracked `scripts/pinned-codex/package-lock.json` 的 exact version 与 registry SRI 执行 `npm ci`；重复执行会验证并复用，
+它以 tracked `scripts/pinned-codex/package-lock.json` 的 exact version/registry SRI和
+`content-manifest.json`逐文件SHA-256执行并复核`npm ci`；重复执行会验证并复用，
 但若同版本目录内容漂移会 fail closed，要求人工移走后再装。Bridge 未配置 command override 时直接通过 Node 启动该 repo-local
 wrapper；`initialize.userAgent` 若不报告 exact `0.154.0-alpha.3`，sidecar 会以 `CODEX_VERSION_MISMATCH` 退出并只记录
 expected/actual 规范化版本。
 
 升级流程是一个 hard cut：先审阅新 package 与平台 package 的 registry SRI，更新
-`scripts/pinned-codex/package.json`、lockfile、installer 与 runtime version 常量，再安装到新的 versioned 目录；随后用该 binary
+`scripts/pinned-codex/package.json`、lockfile、content manifest、installer 与 runtime version 常量，再安装到新的 versioned 目录；随后用该 binary
 重生成 `schemas/`、适配类型并跑完整测试和 provider-free projector canary。不要让两个 Codex 版本共用“受支持”语义。
+content manifest的信任边界是reviewed tracked inputs：它检测安装后的偶发本地增删改，不试图防御能同时改写
+tracked verifier/manifest的恶意同用户进程。
+更新lock/SRI后用`npm run codex:manifest:refresh`下载全部六个平台tarball、复核SRI并重算manifest；其diff必须人工审阅。
 
 ## 2. 确认 Codex auth
 
 ```bash
-codex login status
+node .codex-packages/0.154.0-alpha.3/node_modules/@openai/codex/bin/codex.js login status
 ```
 
 若未登录，先运行：
 
 ```bash
-codex login
+node .codex-packages/0.154.0-alpha.3/node_modules/@openai/codex/bin/codex.js login
 ```
 
 Bridge 启动和每次进程恢复都会调用 `account/read`。未登录时 tool 返回稳定错误 `CODEX_NOT_AUTHENTICATED`；Bridge 不读取、复制或代理 ChatGPT OAuth token。
@@ -118,6 +122,20 @@ export GALATEA_CODEX_VIEW_IMAGE=true
 npm run build
 npm run start:galatea
 ```
+
+Galatea C# V2 `delegates.json`当前只有`sidecar.codexCommand`、没有独立的Codex JS entrypoint args字段；因此
+Linux配置必须把该字段精确设为安装后的executable wrapper：
+
+```json
+{
+  "sidecar": {
+    "codexCommand": "/repos/focus/atelia/local-codex-mcp/.codex-packages/0.154.0-alpha.3/node_modules/@openai/codex/bin/codex.js"
+  }
+}
+```
+
+C#仍注入code-owned app-server args；不要把`node`填进该字段，否则entrypoint会丢失。wrapper必须是canonical、
+existing、executable regular file，且initialize handshake仍会验证exact version。
 
 stdin/stdout 是 strict bounded JSONL V3，stdout 只有协议 frame，日志只写 stderr。默认命令只启动这一版协议：
 

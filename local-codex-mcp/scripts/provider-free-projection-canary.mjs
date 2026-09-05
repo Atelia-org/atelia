@@ -148,7 +148,7 @@ class AppServerProbe {
 }
 
 const fixture = parseFixture(sourcePath);
-const verification = verifyPinnedCodex();
+const verification = await verifyPinnedCodex();
 const codexHome = mkdtempSync(join(tmpdir(), "atelia-codex-projection-canary-"));
 const workspace = join(codexHome, "workspace");
 const sessionDirectory = join(codexHome, "sessions", "2000", "01", "01");

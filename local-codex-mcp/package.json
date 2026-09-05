@@ -17,9 +17,11 @@
     "start:http": "CODEX_BRIDGE_TRANSPORT=http node dist/src/index.js",
     "codex:install": "node scripts/manage-pinned-codex.mjs install",
     "codex:verify": "node scripts/manage-pinned-codex.mjs verify",
+    "canary:initialize": "node scripts/provider-free-initialize-canary.mjs",
     "canary:projection": "node scripts/provider-free-projection-canary.mjs",
     "schemas:generate": "node scripts/manage-pinned-codex.mjs generate-schemas",
     "schemas:verify": "node scripts/manage-pinned-codex.mjs verify-schemas",
+    "codex:manifest:refresh": "node scripts/refresh-pinned-codex-content-manifest.mjs",
     "inspect": "npx --package=@modelcontextprotocol/inspector@2.1.0 mcp-inspector"
   },
   "dependencies": {
