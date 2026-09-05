@@ -54,7 +54,8 @@ expected/actual 规范化版本。
 
 升级流程是一个 hard cut：先审阅新 package 与平台 package 的 registry SRI，更新
 `scripts/pinned-codex/package.json`、lockfile、content manifest、installer 与 runtime version 常量，再安装到新的 versioned 目录；随后用该 binary
-重生成 `schemas/`、适配类型并跑完整测试和 provider-free projector canary。不要让两个 Codex 版本共用“受支持”语义。
+重生成 `schemas/`、适配类型并跑完整测试、`npm run canary:initialize`和provider-free projector canary。
+`npm test`会断言installer/runtime version常量exact相等；不要让两个Codex版本共用“受支持”语义。
 content manifest的信任边界是reviewed tracked inputs：它检测安装后的偶发本地增删改，不试图防御能同时改写
 tracked verifier/manifest的恶意同用户进程。
 更新lock/SRI后用`npm run codex:manifest:refresh`下载全部六个平台tarball、复核SRI并重算manifest；其diff必须人工审阅。

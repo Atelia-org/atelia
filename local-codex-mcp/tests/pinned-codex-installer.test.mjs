@@ -4,12 +4,17 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { PINNED_CODEX_VERSION as RUNTIME_PINNED_CODEX_VERSION } from "../dist/src/codex/pinned-version.js";
 import {
   installPinnedCodex,
   PINNED_CODEX_VERSION,
   pinnedCodexDirectory,
   verifyContentTree,
 } from "../scripts/manage-pinned-codex.mjs";
+
+test("installer and runtime use one exact Codex version contract", () => {
+  assert.equal(RUNTIME_PINNED_CODEX_VERSION, PINNED_CODEX_VERSION);
+});
 
 function createInstalledFixture(installRoot, version = PINNED_CODEX_VERSION) {
   const directory = pinnedCodexDirectory(installRoot);
