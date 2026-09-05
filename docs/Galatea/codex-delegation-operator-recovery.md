@@ -103,9 +103,13 @@ Apply reopens and revalidates the exact state under the exclusive lifetime lock,
 then calls the production `RecordCompletedMail` transaction. That single CAS
 changes only the exact mail to `TerminalCompleted`, creates its exact `Ready`
 reply notice, and clears the route active dispatch; queued mail remains untouched.
-A strict post-readback must match that complete transition. Repeating exact
-evidence returns `AlreadyApplied` without a write. Malformed/mismatched evidence,
-a conflicting terminal state, or a held lifetime lock refuses without invoking
+A strict post-readback must match that complete transition. A rerun whose
+durable dispatch/thread/turn identity, final hash/body, and notice all match
+returns `AlreadyApplied` without a write. The task digest is validated exactly
+before the first apply; after terminalization Galatea intentionally erases the
+task body, so a no-write terminal rerun cannot independently validate `task*`
+again and does not claim that it can. Malformed/mismatched evidence, a
+conflicting terminal state, or a held lifetime lock refuses without invoking
 the terminal transition; in particular it cannot trigger the store's terminal
 conflict quarantine path.
 

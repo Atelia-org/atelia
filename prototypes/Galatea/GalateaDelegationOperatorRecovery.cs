@@ -560,7 +560,7 @@ internal static class GalateaDelegationOperatorRecovery {
                 == checked(before.NextCompletionSequence + 1)
             && after.Route == expectedRoute
             && after.Captures.SequenceEqual(before.Captures)
-            && after.ActiveLease == before.ActiveLease
+            && ActiveLeasesEqual(after.ActiveLease, before.ActiveLease)
             && afterMail == expectedMail
             && after.Mails.Where(value => !string.Equals(
                     value.DispatchId,
@@ -581,6 +581,30 @@ internal static class GalateaDelegationOperatorRecovery {
                 + "Accepted-to-completed transition."
             );
         }
+    }
+
+    private static bool ActiveLeasesEqual(
+        GalateaReplyLeaseSnapshot? left,
+        GalateaReplyLeaseSnapshot? right
+    ) {
+        if (left is null || right is null) { return left is null && right is null; }
+        return string.Equals(left.LeaseId, right.LeaseId,
+                StringComparison.Ordinal)
+            && left.State == right.State
+            && string.Equals(left.PlayerText, right.PlayerText,
+                StringComparison.Ordinal)
+            && string.Equals(left.ExpectedSessionHead,
+                right.ExpectedSessionHead, StringComparison.Ordinal)
+            && string.Equals(left.RenderedObservation,
+                right.RenderedObservation, StringComparison.Ordinal)
+            && left.ObservationUtf8Bytes == right.ObservationUtf8Bytes
+            && string.Equals(left.ObservationSha256,
+                right.ObservationSha256, StringComparison.Ordinal)
+            && left.CompletionFrontier == right.CompletionFrontier
+            && string.Equals(left.ObservationAddress,
+                right.ObservationAddress, StringComparison.Ordinal)
+            && left.Revision == right.Revision
+            && left.NoticeIds.SequenceEqual(right.NoticeIds);
     }
 
     private static GalateaDelegationStoreOwner CreateOwner(

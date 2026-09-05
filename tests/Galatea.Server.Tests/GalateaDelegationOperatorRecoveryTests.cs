@@ -107,6 +107,64 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
         );
         Assert.Equal(beforeRerun, DatabaseDigest(fixture.StateDirectory));
         Assert.False(File.Exists(DatabasePath(fixture.StateDirectory) + "-journal"));
+
+        GalateaCodexCompletionRecoveryResult terminalIdentityRerun =
+            GalateaDelegationOperatorRecovery.Execute(
+                fixture.User,
+                fixture.Route,
+                fixture.Evidence with { TaskSha256 = new string('0', 64) },
+                apply: true
+            );
+        Assert.Equal(
+            GalateaCodexCompletionRecoveryOutcome.AlreadyApplied,
+            terminalIdentityRerun.Outcome
+        );
+        Assert.Equal(beforeRerun, DatabaseDigest(fixture.StateDirectory));
+    }
+
+    [Fact]
+    public void Execute_ApplyPreservesStructurallyEqualActiveLease() {
+        using var fixture = new RecoveryFixture(
+            closeStore: true,
+            withActiveLease: true
+        );
+        GalateaReplyLeaseSnapshot beforeLease;
+        using (GalateaDelegationSqliteStore store = fixture.ReopenReadOnly()) {
+            beforeLease = Assert.IsType<GalateaReplyLeaseSnapshot>(
+                store.ReadSnapshot().ActiveLease
+            );
+        }
+
+        GalateaCodexCompletionRecoveryResult result =
+            GalateaDelegationOperatorRecovery.Execute(
+                fixture.User,
+                fixture.Route,
+                fixture.Evidence,
+                apply: true
+            );
+
+        Assert.Equal(GalateaCodexCompletionRecoveryOutcome.Applied,
+            result.Outcome);
+        using GalateaDelegationSqliteStore reopened = fixture.ReopenReadOnly();
+        GalateaReplyLeaseSnapshot afterLease = Assert.IsType<
+            GalateaReplyLeaseSnapshot>(reopened.ReadSnapshot().ActiveLease);
+        Assert.Equal(beforeLease.LeaseId, afterLease.LeaseId);
+        Assert.Equal(beforeLease.State, afterLease.State);
+        Assert.Equal(beforeLease.PlayerText, afterLease.PlayerText);
+        Assert.Equal(beforeLease.ExpectedSessionHead,
+            afterLease.ExpectedSessionHead);
+        Assert.Equal(beforeLease.RenderedObservation,
+            afterLease.RenderedObservation);
+        Assert.Equal(beforeLease.ObservationUtf8Bytes,
+            afterLease.ObservationUtf8Bytes);
+        Assert.Equal(beforeLease.ObservationSha256,
+            afterLease.ObservationSha256);
+        Assert.Equal(beforeLease.CompletionFrontier,
+            afterLease.CompletionFrontier);
+        Assert.Equal(beforeLease.ObservationAddress,
+            afterLease.ObservationAddress);
+        Assert.Equal(beforeLease.Revision, afterLease.Revision);
+        Assert.Equal(beforeLease.NoticeIds, afterLease.NoticeIds);
     }
 
     [Fact]
@@ -433,7 +491,10 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
         private readonly string _root;
         private GalateaDelegationSqliteStore? _store;
 
-        internal RecoveryFixture(bool closeStore) {
+        internal RecoveryFixture(
+            bool closeStore,
+            bool withActiveLease = false
+        ) {
             _root = Path.Combine(
                 Path.GetTempPath(),
                 "atelia-galatea-operator-recovery-"
@@ -482,16 +543,23 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                 limits
             );
             const string task = "Please complete exact recovery task.";
+            SendMailIntent[] intents = withActiveLease
+                ? [
+                    Mail("prior completed task"),
+                    Mail(task),
+                    Mail("queued untouched")
+                ]
+                : [
+                    Mail(task),
+                    Mail("queued untouched")
+                ];
             GalateaDelegationCaptureResult capture = _store.CaptureActionBatch(
                 new GalateaDelegationCaptureRequest(
                     Address(9),
                     new string('a', 64),
                     VisibleActionUtf8Bytes: 12,
                     "extractor-contract-v1",
-                    [
-                        Mail(task),
-                        Mail("queued untouched")
-                    ]
+                    intents
                 )
             );
             GalateaDelegationStateSnapshot initial = _store.ReadSnapshot();
@@ -504,9 +572,37 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                 "thread-1",
                 binding.Revision
             );
+            int targetIndex = 0;
+            if (withActiveLease) {
+                GalateaOutboundMailSnapshot priorStarted =
+                    _store.StartQueuedMail(
+                        capture.DispatchIds[0],
+                        initial.Mails[0].Revision,
+                        bound.Revision
+                    );
+                GalateaReplyNoticeSnapshot priorNotice =
+                    _store.RecordCompletedMail(
+                        priorStarted.DispatchId,
+                        priorStarted.Revision,
+                        "thread-1",
+                        "prior-turn",
+                        "prior reply"
+                    );
+                _ = _store.BeginReplyLeaseMembership(
+                    "existing-lease",
+                    "pending player text",
+                    [new GalateaReplyLeaseMember(
+                        priorNotice.NoticeId,
+                        priorNotice.Revision
+                    )]
+                );
+                targetIndex = 1;
+                initial = _store.ReadSnapshot();
+                bound = initial.Route;
+            }
             GalateaOutboundMailSnapshot started = _store.StartQueuedMail(
-                capture.DispatchIds[0],
-                initial.Mails[0].Revision,
+                capture.DispatchIds[targetIndex],
+                initial.Mails[targetIndex].Revision,
                 bound.Revision
             );
             GalateaOutboundMailSnapshot accepted = _store.RecordMailAccepted(
@@ -522,7 +618,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                     .FailureCode,
                 nowUnixTimeMilliseconds: 1_000
             );
-            QueuedMailBefore = _store.ReadSnapshot().Mails[1];
+            QueuedMailBefore = _store.ReadSnapshot().Mails[targetIndex + 1];
             Final = "exact final reply\nwith UTF-8: 终";
             byte[] taskBytes = Encoding.UTF8.GetBytes(task);
             byte[] finalBytes = Encoding.UTF8.GetBytes(Final);

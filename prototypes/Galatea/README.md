@@ -282,7 +282,9 @@ SQLite terminal CAS发布，不成为第二份durable authority。
 `operator recover-codex-completed`命令。该命令在`WebApplication.CreateBuilder`之前分流，不启动Web host、
 Completion provider或sidecar；默认dry-run，只有显式`--apply`才复用production `RecordCompletedMail`事务写入
 exact Reply notice并释放active dispatch。证据为strict closed V1 JSON，final只通过evidence file中的canonical
-UTF-8 base64传入，不进入argv或普通日志；错误证据和终态冲突在store terminal调用前拒绝，exact rerun零写。
+UTF-8 base64传入，不进入argv或普通日志；错误证据和终态冲突在store terminal调用前拒绝。首次apply前会exact
+验证task digest；terminal后task body按设计已擦除，因此rerun只按durable dispatch/thread/turn、final与notice
+确认`AlreadyApplied`并保持零写，不声称再次独立验证已经不存在的task body。
 完整前置条件、schema与操作步骤见
 [`docs/Galatea/codex-delegation-operator-recovery.md`](../../docs/Galatea/codex-delegation-operator-recovery.md)。
 
