@@ -277,6 +277,15 @@ OutcomeUnknown先用bounded thread items发现dispatch，再用turn pages分类�
 不变且shape/identity/capacity完整；不再使用deprecated full-history hydration。live证据只经正常C# driver与
 SQLite terminal CAS发布，不成为第二份durable authority。
 
+当operator已分别核实某个exact `Accepted` turn确实完成、但official projection持续返回
+`ACCEPTED_TURN_NOT_VISIBLE`时，可以在停服、锁检查及备份完成后使用Galatea-owned offline
+`operator recover-codex-completed`命令。该命令在`WebApplication.CreateBuilder`之前分流，不启动Web host、
+Completion provider或sidecar；默认dry-run，只有显式`--apply`才复用production `RecordCompletedMail`事务写入
+exact Reply notice并释放active dispatch。证据为strict closed V1 JSON，final只通过evidence file中的canonical
+UTF-8 base64传入，不进入argv或普通日志；错误证据和终态冲突在store terminal调用前拒绝，exact rerun零写。
+完整前置条件、schema与操作步骤见
+[`docs/Galatea/codex-delegation-operator-recovery.md`](../../docs/Galatea/codex-delegation-operator-recovery.md)。
+
 C# client只在`start-turn` frame可能写出时登记最多4096个client-lifetime dispatch tombstones；相同ID
 不因换generation重发，容量耗尽fail closed。stdout由一个bounded strict-UTF8 reader拥有；malformed、
 oversize、unknown、duplicate property、错误correlation或process exit会使当前generation失败，绝不把

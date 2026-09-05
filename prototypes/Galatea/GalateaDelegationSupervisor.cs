@@ -465,7 +465,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
     }
 
-    private static GalateaDelegationStoreLimits CreateLimits(
+    internal static GalateaDelegationStoreLimits CreateLimits(
         GalateaDelegateRouteConfig route
     ) => new(
         route.MaximumQueuedMails,

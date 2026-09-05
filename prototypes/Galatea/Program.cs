@@ -12,6 +12,15 @@ using Atelia.SessionJournal;
 const string CookieScheme = "GalateaCookie";
 const string DefaultConfigPath = ".atelia/galatea/config.json";
 
+if (GalateaDelegationOperatorRecovery.IsOperatorInvocation(args)) {
+    Environment.ExitCode = GalateaDelegationOperatorRecovery.Run(
+        args,
+        Console.Out,
+        Console.Error
+    );
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 string configuredConfigPath = builder.Configuration["Galatea:ConfigPath"] ?? DefaultConfigPath;
