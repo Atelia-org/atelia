@@ -34,8 +34,14 @@ internal sealed partial class GalateaDelegationSqliteStore {
                        WHERE state = 'Ready'
                    )
             FROM route_binding AS route
-            LEFT JOIN outbound_mail AS active
-              ON active.dispatch_id = route.active_dispatch_id
+            LEFT JOIN (
+                SELECT state, terminal_code, reconcile_attempt_count,
+                       reconcile_last_code, next_reconcile_at_ms
+                FROM outbound_mail
+                WHERE state IN (
+                    'Started', 'OutcomeUnknown', 'Accepted', 'Quarantined'
+                )
+            ) AS active ON TRUE
             WHERE route.singleton = 1;
             """;
         using SqliteDataReader reader = command.ExecuteReader();
