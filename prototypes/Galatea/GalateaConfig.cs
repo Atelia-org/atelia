@@ -529,6 +529,41 @@ internal sealed record ReadyReplyTurnRequest(
     string? ConnectionId = null
 );
 
+internal sealed record GalateaMailboxStatusDto(
+    string State,
+    int QueuedCount,
+    int ReadyNoticeCount,
+    int AttemptCount,
+    string? Code,
+    long? NextRetryAtUnixTimeMilliseconds
+) {
+    internal static GalateaMailboxStatusDto FromProjection(
+        GalateaMailboxStatusProjection value
+    ) {
+        ArgumentNullException.ThrowIfNull(value);
+        string state = value.State switch {
+            GalateaMailboxStatusState.NoMail => "no-mail",
+            GalateaMailboxStatusState.Queued => "queued",
+            GalateaMailboxStatusState.ActiveRunning => "active-running",
+            GalateaMailboxStatusState.Backoff => "backoff",
+            GalateaMailboxStatusState.AcceptedHistoryUnavailable =>
+                "accepted-history-unavailable",
+            GalateaMailboxStatusState.ReadyReply => "ready-reply",
+            GalateaMailboxStatusState.Quarantined => "quarantined",
+            GalateaMailboxStatusState.Unavailable => "unavailable",
+            _ => throw new ArgumentOutOfRangeException(nameof(value))
+        };
+        return new(
+            state,
+            value.QueuedCount,
+            value.ReadyNoticeCount,
+            value.AttemptCount,
+            value.Code,
+            value.NextRetryAtUnixTimeMilliseconds
+        );
+    }
+}
+
 internal sealed record InboundMailboxAcceptedDto(
     string TurnId,
     string MessageId

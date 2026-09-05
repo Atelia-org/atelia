@@ -96,6 +96,16 @@ public sealed class GalateaMaintenanceModeTests {
         Assert.Equal("alice", me!.UserId);
         Assert.True(me.MaintenanceMode);
 
+        GalateaMailboxStatusDto? mailboxStatus = await client
+            .GetFromJsonAsync<GalateaMailboxStatusDto>(
+                "/api/v1/mailbox/status"
+            );
+        Assert.NotNull(mailboxStatus);
+        Assert.Equal("unavailable", mailboxStatus!.State);
+        Assert.Equal("STORE_UNINITIALIZED", mailboxStatus.Code);
+        Assert.Equal(0, mailboxStatus.QueuedCount);
+        Assert.Equal(0, mailboxStatus.ReadyNoticeCount);
+
         RecentTurnsResponseDto? recent = await client
             .GetFromJsonAsync<RecentTurnsResponseDto>(
                 "/api/v1/recent-turns"

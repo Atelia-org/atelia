@@ -11,6 +11,77 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaDelegationSqliteStoreTests {
     [Fact]
+    public void MailboxStatus_IsAggregateOnlyReadAndPreservesRevision() {
+        using var directory = new StoreDirectory();
+        GalateaDelegationStoreOwner owner = Owner();
+        GalateaDelegationStoreLimits limits = Limits();
+        using GalateaDelegationSqliteStore store =
+            GalateaDelegationSqliteStore.CreateNew(
+                directory.Path,
+                owner,
+                Baseline(),
+                limits
+            );
+
+        GalateaDelegationStateSnapshot emptyBefore = store.ReadSnapshot();
+        Assert.Equal(
+            GalateaMailboxStatusProjection.NoMail,
+            store.ReadMailboxStatus()
+        );
+        Assert.Equal(
+            emptyBefore.StoreRevision,
+            store.ReadSnapshot().StoreRevision
+        );
+
+        _ = store.CaptureActionBatch(Capture(
+            Address(99),
+            [Mail("Codex", "secret-one"), Mail("Codex", "secret-two")]
+        ));
+        long revisionBeforeRead = store.ReadSnapshot().StoreRevision;
+        GalateaMailboxStatusProjection status = store.ReadMailboxStatus();
+
+        Assert.Equal(GalateaMailboxStatusState.Queued, status.State);
+        Assert.Equal(2, status.QueuedCount);
+        Assert.Equal(0, status.ReadyNoticeCount);
+        Assert.Equal(0, status.AttemptCount);
+        Assert.Null(status.Code);
+        Assert.Null(status.NextRetryAtUnixTimeMilliseconds);
+        Assert.Equal(revisionBeforeRead, store.ReadSnapshot().StoreRevision);
+    }
+
+    [Fact]
+    public void MailboxStatus_ReadOnlyStoreIsReadableAndBytePreserving() {
+        using var directory = new StoreDirectory();
+        GalateaDelegationStoreOwner owner = Owner();
+        GalateaDelegationStoreLimits limits = Limits();
+        using (GalateaDelegationSqliteStore writable =
+               GalateaDelegationSqliteStore.CreateNew(
+                   directory.Path, owner, Baseline(), limits)) {
+            _ = writable.CaptureActionBatch(Capture(
+                Address(98),
+                [Mail("Codex", "secret")]
+            ));
+        }
+        string databasePath = System.IO.Path.Combine(
+            directory.Path,
+            GalateaDelegationSqliteStore.DatabaseFileName
+        );
+        byte[] before = File.ReadAllBytes(databasePath);
+
+        using (GalateaDelegationSqliteStore readOnly =
+               GalateaDelegationSqliteStore.OpenExistingReadOnly(
+                   directory.Path, owner, limits)) {
+            GalateaMailboxStatusProjection status =
+                readOnly.ReadMailboxStatus();
+            Assert.Equal(GalateaMailboxStatusState.Queued, status.State);
+            Assert.Equal(1, status.QueuedCount);
+        }
+
+        Assert.Equal(before, File.ReadAllBytes(databasePath));
+        Assert.False(File.Exists(databasePath + "-journal"));
+    }
+
+    [Fact]
     public void CreateOpen_RequiresExactIdentityLimitsAndExclusiveOwner() {
         using var directory = new StoreDirectory();
         GalateaDelegationStoreOwner owner = Owner();

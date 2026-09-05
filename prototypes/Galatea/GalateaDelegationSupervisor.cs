@@ -273,6 +273,17 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         return GetSlot(userId).ReadStatus();
     }
 
+    /// <summary>
+    /// Pure observation facade. It intentionally does not initialize or
+    /// attach a session, signal the scheduler, or advance delegation state.
+    /// </summary>
+    internal GalateaMailboxStatusProjection ReadMailboxStatus(
+        string userId
+    ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+        return GetSlot(userId).ReadMailboxStatus();
+    }
+
     internal GalateaDelegationSessionHandle AttachWritableSession(
         string userId,
         SessionJournalEngine engine
@@ -801,6 +812,42 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         internal GalateaDelegationUserStatus ReadStatus() {
             lock (_gate) {
                 return new(UserId, _availability, _unavailableCode);
+            }
+        }
+
+        internal GalateaMailboxStatusProjection ReadMailboxStatus() {
+            lock (_gate) {
+                if (_availability
+                    == GalateaDelegationUserAvailability.Unavailable) {
+                    return GalateaMailboxStatusProjection.Unavailable(
+                        _unavailableCode ?? "STORE_UNAVAILABLE"
+                    );
+                }
+                if (_store is null) {
+                    // A missing store cannot prove an initialized empty
+                    // mailbox. Observing it must not initialize a session.
+                    return GalateaMailboxStatusProjection.Unavailable(
+                        "STORE_UNINITIALIZED"
+                    );
+                }
+                try {
+                    return _store.ReadMailboxStatus();
+                }
+                catch (Exception exception) when (
+                    GalateaExceptionClassifier.IsNonFatal(exception)) {
+                    DebugUtil.Warning(
+                        LogCategory,
+                        "Durable mailbox status read failed: "
+                            + $"user={Safe(UserId)}, "
+                            + "code=STORE_READ_FAILED, "
+                            + $"exception={exception.GetType().Name}.",
+                        exception,
+                        DebugEventKind.Failure
+                    );
+                    return GalateaMailboxStatusProjection.Unavailable(
+                        "STORE_READ_FAILED"
+                    );
+                }
             }
         }
 

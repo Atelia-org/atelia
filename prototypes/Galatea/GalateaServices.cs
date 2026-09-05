@@ -548,6 +548,16 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal GalateaDelegationSupervisor DelegationSupervisor =>
         _delegationSupervisor;
 
+    /// <summary>
+    /// Reads mailbox progress without GetSessionAsync, TurnLock, extraction,
+    /// transport, provider work, or reply-lease admission. This separation
+    /// from the mutating browser heartbeat is intentional.
+    /// </summary>
+    internal GalateaMailboxStatusDto ReadMailboxStatus(string userId) =>
+        GalateaMailboxStatusDto.FromProjection(
+            _delegationSupervisor.ReadMailboxStatus(userId)
+        );
+
     public bool TryGetConnection(
         string? requestedConnectionId,
         out CompletionConnectionConfig connection
@@ -4680,6 +4690,7 @@ internal static class GalateaHtml {
           <input id="mail-loop-enabled" type="checkbox"{{maintenanceDisabled}}>
           <span>页面打开时，收到 Codex 回信后自动继续</span>
         </label>
+        <div id="mailbox-status" class="mailbox-status" role="status" aria-live="polite">邮箱状态：正在读取…</div>
         <div class="composer-actions">
           <div class="composer-status">
             <span id="composer-mode-hint" class="eyebrow hidden"></span>

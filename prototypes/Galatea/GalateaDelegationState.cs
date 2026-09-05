@@ -57,6 +57,66 @@ internal enum GalateaReplyLeaseState {
     Quarantined
 }
 
+internal enum GalateaMailboxStatusState {
+    NoMail,
+    Queued,
+    ActiveRunning,
+    Backoff,
+    AcceptedHistoryUnavailable,
+    ReadyReply,
+    Quarantined,
+    Unavailable
+}
+
+/// <summary>
+/// Non-sensitive aggregate projection for mailbox observability. This type
+/// deliberately cannot carry message content or durable identities.
+/// </summary>
+internal sealed record GalateaMailboxStatusProjection(
+    GalateaMailboxStatusState State,
+    int QueuedCount,
+    int ReadyNoticeCount,
+    int AttemptCount,
+    string? Code,
+    long? NextRetryAtUnixTimeMilliseconds
+) {
+    internal static GalateaMailboxStatusProjection NoMail { get; } = new(
+        GalateaMailboxStatusState.NoMail,
+        QueuedCount: 0,
+        ReadyNoticeCount: 0,
+        AttemptCount: 0,
+        Code: null,
+        NextRetryAtUnixTimeMilliseconds: null
+    );
+
+    internal static GalateaMailboxStatusProjection Unavailable(
+        string code
+    ) => new(
+        GalateaMailboxStatusState.Unavailable,
+        QueuedCount: 0,
+        ReadyNoticeCount: 0,
+        AttemptCount: 0,
+        code,
+        NextRetryAtUnixTimeMilliseconds: null
+    );
+}
+
+internal sealed record GalateaMailboxStatusAggregate(
+    GalateaDelegationRouteState RouteState,
+    string? RouteQuarantineCode,
+    int RouteAttemptCount,
+    string? RouteLastCode,
+    long? RouteNextRetryAtUnixTimeMilliseconds,
+    GalateaDurableMailState? ActiveMailState,
+    string? ActiveMailTerminalCode,
+    int ActiveMailAttemptCount,
+    string? ActiveMailLastCode,
+    long? ActiveMailNextRetryAtUnixTimeMilliseconds,
+    bool ActiveLeaseQuarantined,
+    int QueuedCount,
+    int ReadyNoticeCount
+);
+
 internal sealed record GalateaDelegationStoreOwner(
     string UserId,
     string SessionRepositoryId,

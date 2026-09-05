@@ -451,6 +451,11 @@ public sealed class GalateaSseV1Tests {
             html,
             StringComparison.Ordinal
         );
+        Assert.Contains(
+            "id=\"mailbox-status\" class=\"mailbox-status\" role=\"status\" aria-live=\"polite\"",
+            html,
+            StringComparison.Ordinal
+        );
         Assert.DoesNotContain(
             "id=\"mail-loop-enabled\" type=\"checkbox\" checked",
             html,

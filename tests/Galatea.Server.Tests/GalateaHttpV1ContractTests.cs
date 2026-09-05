@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
@@ -13,6 +14,75 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaHttpV1ContractTests {
+    [Fact]
+    public async Task MailboxStatus_IsAuthenticatedNoStoreExactAndSessionFree() {
+        await using var host = CreateHost();
+        using HttpClient client = host.CreateClient();
+
+        using (HttpResponseMessage anonymous = await client.GetAsync(
+                   "/api/v1/mailbox/status")) {
+            await AssertApiErrorAsync(
+                anonymous,
+                HttpStatusCode.Unauthorized,
+                "authentication-required"
+            );
+        }
+        _ = await GalateaTestHost.LoginAsync(client);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        Assert.Equal(0, GetSessionCount(service));
+
+        using HttpResponseMessage response = await client.GetAsync(
+            "/api/v1/mailbox/status"
+        );
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+        Assert.Equal(
+            "{\"state\":\"unavailable\",\"queuedCount\":0,"
+                + "\"readyNoticeCount\":0,\"attemptCount\":0,"
+                + "\"code\":\"STORE_UNINITIALIZED\","
+                + "\"nextRetryAtUnixTimeMilliseconds\":null}",
+            await response.Content.ReadAsStringAsync()
+        );
+        Assert.Equal(0, GetSessionCount(service));
+        Assert.False(Directory.Exists(host.DelegationStateDirectory));
+    }
+
+    [Fact]
+    public async Task MailboxStatus_DoesNotAcquireSessionTurnLock() {
+        await using var host = CreateHost();
+        using HttpClient client = host.CreateClient();
+        _ = await GalateaTestHost.LoginAsync(client);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        session.TurnLock.Wait();
+        try {
+            long revision = session.DelegationHandle!.Store
+                .ReadSnapshot().StoreRevision;
+            using HttpResponseMessage response = await client.GetAsync(
+                "/api/v1/mailbox/status"
+            ).WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            GalateaMailboxStatusDto? status = await response.Content
+                .ReadFromJsonAsync<GalateaMailboxStatusDto>();
+            Assert.NotNull(status);
+            Assert.Equal("no-mail", status!.State);
+            Assert.Equal(
+                revision,
+                session.DelegationHandle.Store.ReadSnapshot().StoreRevision
+            );
+        }
+        finally {
+            session.TurnLock.Release();
+        }
+    }
+
     [Fact]
     public async Task JsonBodyEndpoints_CarryPolicyMetadata() {
         await using var host = CreateHost();

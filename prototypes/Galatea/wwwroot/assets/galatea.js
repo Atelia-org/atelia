@@ -62,6 +62,49 @@ function requireNonnegativeInteger(value, label) {
   return value;
 }
 
+export function requireMailboxStatus(value) {
+  const status = requireExactKeys(value, [
+    "state", "queuedCount", "readyNoticeCount", "attemptCount", "code",
+    "nextRetryAtUnixTimeMilliseconds",
+  ], "mailbox status");
+  const states = [
+    "no-mail", "queued", "active-running", "backoff",
+    "accepted-history-unavailable", "ready-reply", "quarantined",
+    "unavailable",
+  ];
+  if (!states.includes(status.state)) {
+    throw new Error("mailbox status.state is unknown");
+  }
+  requireNonnegativeInteger(status.queuedCount, "mailbox status.queuedCount");
+  requireNonnegativeInteger(
+    status.readyNoticeCount,
+    "mailbox status.readyNoticeCount",
+  );
+  requireNonnegativeInteger(status.attemptCount, "mailbox status.attemptCount");
+  if (status.code !== null) {
+    requireNonblankString(status.code, "mailbox status.code");
+  }
+  if (status.nextRetryAtUnixTimeMilliseconds !== null) {
+    requireNonnegativeInteger(
+      status.nextRetryAtUnixTimeMilliseconds,
+      "mailbox status.nextRetryAtUnixTimeMilliseconds",
+    );
+  }
+  if (
+    status.state === "accepted-history-unavailable"
+    && status.code !== "ACCEPTED_TURN_NOT_VISIBLE"
+  ) {
+    throw new Error("mailbox accepted-history-unavailable code is invalid");
+  }
+  if (
+    status.state === "backoff"
+    && status.nextRetryAtUnixTimeMilliseconds === null
+  ) {
+    throw new Error("mailbox backoff must include next retry time");
+  }
+  return status;
+}
+
 function requireNullableObject(value, validator, label) {
   return value === null ? null : validator(value, label);
 }
@@ -822,6 +865,9 @@ function startGalateaApp() {
     mailLoopInFlight: false,
     mailLoopTimerId: null,
     mailLoopInitialized: false,
+    mailboxStatusInFlight: false,
+    mailboxStatusTimerId: null,
+    mailboxStatus: null,
     selectedConnectionId: null,
     contextHeader: { observation: "", action: "" },
     recapGridReadiness: null,
@@ -852,6 +898,7 @@ function startGalateaApp() {
   const undoLastButton = document.getElementById("undo-last-button");
   const stopButton = document.getElementById("stop-button");
   const mailLoopEnabled = document.getElementById("mail-loop-enabled");
+  const mailboxStatus = document.getElementById("mailbox-status");
   const connectionPicker = document.getElementById("connection-picker");
   const composerModeHint = document.getElementById("composer-mode-hint");
   const statusText = document.getElementById("status-text");
@@ -885,6 +932,93 @@ function startGalateaApp() {
       throw failure;
     }
     return await readJsonResponse(response, validator);
+  }
+
+  function renderMailboxStatus(status) {
+    state.mailboxStatus = status;
+    const labels = {
+      "no-mail": "邮箱空闲",
+      queued: "邮件已排队",
+      "active-running": "Codex 正在处理邮件",
+      backoff: "后台暂时失败，正在等待重试",
+      "accepted-history-unavailable":
+        "Codex 已接受邮件，但持久历史暂不可见；正在安全重试",
+      "ready-reply": "Codex 回信已就绪",
+      quarantined: "邮件链路已隔离，等待人工检查",
+      unavailable: "邮箱状态暂不可用",
+    };
+    const detail = [];
+    if (status.attemptCount > 0) {
+      detail.push(`尝试 ${status.attemptCount} 次`);
+    }
+    if (status.nextRetryAtUnixTimeMilliseconds !== null) {
+      detail.push(
+        `下次重试 ${new Date(
+          status.nextRetryAtUnixTimeMilliseconds,
+        ).toLocaleTimeString()}`,
+      );
+    }
+    if (status.code !== null) {
+      detail.push(`代码 ${status.code}`);
+    }
+    const suffix = [
+      `排队：${status.queuedCount}`,
+      `待续接回信：${status.readyNoticeCount}`,
+      ...detail,
+    ].join("；");
+    const text = `邮箱状态：${labels[status.state]}（${suffix}）`;
+    if (mailboxStatus && mailboxStatus.textContent !== text) {
+      mailboxStatus.textContent = text;
+    }
+  }
+
+  function clearMailboxStatusTimer() {
+    if (state.mailboxStatusTimerId !== null) {
+      window.clearTimeout(state.mailboxStatusTimerId);
+      state.mailboxStatusTimerId = null;
+    }
+  }
+
+  function scheduleMailboxStatusPoll(delayMs = 5000) {
+    if (
+      state.mailboxStatusTimerId !== null
+      || state.mailboxStatusInFlight
+    ) {
+      return;
+    }
+    state.mailboxStatusTimerId = window.setTimeout(() => {
+      state.mailboxStatusTimerId = null;
+      void runMailboxStatusPoll();
+    }, delayMs);
+  }
+
+  async function runMailboxStatusPoll() {
+    if (state.mailboxStatusInFlight) {
+      scheduleMailboxStatusPoll();
+      return;
+    }
+    state.mailboxStatusInFlight = true;
+    try {
+      const status = await fetchJson(
+        "/api/v1/mailbox/status",
+        requireMailboxStatus,
+        { cache: "no-store" },
+      );
+      renderMailboxStatus(status);
+    } catch {
+      const previous = state.mailboxStatus;
+      renderMailboxStatus({
+        state: "unavailable",
+        queuedCount: previous?.queuedCount ?? 0,
+        readyNoticeCount: previous?.readyNoticeCount ?? 0,
+        attemptCount: 0,
+        code: "STATUS_READ_FAILED",
+        nextRetryAtUnixTimeMilliseconds: null,
+      });
+    } finally {
+      state.mailboxStatusInFlight = false;
+      scheduleMailboxStatusPoll();
+    }
   }
 
   function renderTurns() {
@@ -2066,6 +2200,7 @@ function startGalateaApp() {
     setStreaming(false, "");
   }
 
+  scheduleMailboxStatusPoll(0);
   initializeApp()
     .then(() => {
       state.mailLoopInitialized = true;

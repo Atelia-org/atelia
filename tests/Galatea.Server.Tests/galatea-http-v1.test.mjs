@@ -10,6 +10,46 @@ const production = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
 );
 
+const exactMailboxStatus = {
+  state: "accepted-history-unavailable",
+  queuedCount: 2,
+  readyNoticeCount: 1,
+  attemptCount: 4,
+  code: "ACCEPTED_TURN_NOT_VISIBLE",
+  nextRetryAtUnixTimeMilliseconds: 1_788_000_000_000,
+};
+assert.equal(
+  production.requireMailboxStatus(exactMailboxStatus),
+  exactMailboxStatus,
+);
+assert.throws(
+  () => production.requireMailboxStatus({ ...exactMailboxStatus, extra: 1 }),
+  /unexpected fields/,
+);
+assert.throws(
+  () => production.requireMailboxStatus({
+    ...exactMailboxStatus,
+    state: "future-state",
+  }),
+  /state is unknown/,
+);
+assert.throws(
+  () => production.requireMailboxStatus({
+    ...exactMailboxStatus,
+    queuedCount: -1,
+  }),
+  /nonnegative safe integer/,
+);
+assert.throws(
+  () => production.requireMailboxStatus({
+    ...exactMailboxStatus,
+    state: "backoff",
+    code: "TEMPORARY",
+    nextRetryAtUnixTimeMilliseconds: null,
+  }),
+  /must include next retry time/,
+);
+
 const valid = {
   turns: [{
     userText: "user",
@@ -357,6 +397,38 @@ assert.match(mailLoopScheduler, /state\.mailLoopTimerId !== null/);
 assert.match(mailLoopScheduler, /state\.mailLoopInFlight/);
 assert.match(mailLoopScheduler, /window\.setTimeout/);
 assert.doesNotMatch(source, /setInterval\(/);
+
+const mailboxStatusValidator = source.slice(
+  source.indexOf("export function requireMailboxStatus"),
+  source.indexOf("export function requireRecentTurnsResponse"),
+);
+assert.match(mailboxStatusValidator, /requireExactKeys/);
+for (const field of [
+  "state", "queuedCount", "readyNoticeCount", "attemptCount", "code",
+  "nextRetryAtUnixTimeMilliseconds",
+]) {
+  assert.match(mailboxStatusValidator, new RegExp(`"${field}"`));
+}
+for (const state of [
+  "no-mail", "queued", "active-running", "backoff",
+  "accepted-history-unavailable", "ready-reply", "quarantined",
+  "unavailable",
+]) {
+  assert.match(mailboxStatusValidator, new RegExp(`"${state}"`));
+}
+
+const mailboxStatusPoller = source.slice(
+  source.indexOf("function clearMailboxStatusTimer"),
+  source.indexOf("function renderTurns"),
+);
+assert.match(mailboxStatusPoller, /\/api\/v1\/mailbox\/status/);
+assert.match(mailboxStatusPoller, /requireMailboxStatus/);
+assert.match(mailboxStatusPoller, /cache: "no-store"/);
+assert.match(mailboxStatusPoller, /window\.setTimeout/);
+assert.match(mailboxStatusPoller, /delayMs = 5000/);
+assert.match(mailboxStatusPoller, /state\.mailboxStatusInFlight/);
+assert.doesNotMatch(mailboxStatusPoller, /mailLoopEnabled/);
+assert.match(source, /scheduleMailboxStatusPoll\(0\);/);
 
 const streamEventHandler = source.slice(
   source.indexOf("function handleEvent"),

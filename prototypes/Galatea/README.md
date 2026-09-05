@@ -530,6 +530,16 @@ unprovisioned、非预期协议以及无法由current/recent只读视图确认�
 202的turn在`done`时清空草稿。Checkbox由每个tab各自拥有，关闭/休眠页面会暂停调度，browser timer throttling
 也意味着1秒只是best-effort间隔；唯一消费仍由server `TurnLock`与durable lease保证。
 
+独立的`GET /api/v1/mailbox/status`只读取supervisor已持有的delegation store，不调用
+`GetSessionAsync`、不attach session、不Signal pulse，也不触发extractor、transport或provider。它在单个
+SQLite read transaction中只聚合状态、排队数量、Ready notice数量、attempt/code与next retry time；不会选择或
+返回正文、收件人、主题、dispatch/thread/turn/operation identity或hash。响应固定为
+`{state,queuedCount,readyNoticeCount,attemptCount,code,nextRetryAtUnixTimeMilliseconds}`并带
+`Cache-Control: no-store`；state优先级为`unavailable > quarantined > accepted-history-unavailable > backoff >
+active-running > ready-reply > queued > no-mail`。页面以独立single-in-flight、递归`setTimeout`的5秒轮询展示
+该状态和两个count，无论自动续接checkbox是否勾选都会继续；它只提供观察能力，不改变
+`POST /mailbox/ready-turn`的lease/admission语义。
+
 主线terminal Action durable并回到`Idle`后，host先用SessionJournal exact raw evidence结算当前reply lease，
 再在recent refresh与SSE `done`之前使用
 `GalateaVisibleActionTextRenderer`提取可见文本：按顺序连接Text blocks，排除reasoning/tool block，

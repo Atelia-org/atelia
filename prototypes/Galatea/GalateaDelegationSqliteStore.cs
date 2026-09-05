@@ -211,6 +211,26 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         }
     }
 
+    /// <summary>
+    /// Reads the public mailbox progress projection in one deferred read
+    /// transaction. The query never selects message content, routing
+    /// identities, operation ids, thread ids, turn ids, or hashes.
+    /// </summary>
+    internal GalateaMailboxStatusProjection ReadMailboxStatus() {
+        lock (_gate) {
+            ThrowIfDisposed();
+            using SqliteConnection connection = OpenVerifiedConnection();
+            using SqliteTransaction transaction =
+                connection.BeginTransaction(deferred: true);
+            GalateaMailboxStatusAggregate aggregate =
+                ReadMailboxStatusAggregate(connection, transaction);
+            GalateaMailboxStatusProjection projection =
+                ProjectMailboxStatus(aggregate);
+            transaction.Commit();
+            return projection;
+        }
+    }
+
     public void Dispose() {
         lock (_gate) {
             if (_disposed) { return; }

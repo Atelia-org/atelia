@@ -72,6 +72,13 @@ body {
   font-family: "IBM Plex Mono", "Maple Mono", monospace;
 }
 
+.mailbox-status {
+  margin-top: 8px;
+  color: #6f6859;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
 .connection-picker {
   border: 1px solid #e0d7c5;
   border-radius: 14px;

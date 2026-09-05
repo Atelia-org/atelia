@@ -325,6 +325,33 @@ api.MapGet(
     }
 );
 
+api.MapGet(
+    "/mailbox/status",
+    (
+        HttpContext httpContext,
+        ClaimsPrincipal user,
+        GalateaHostService hostService
+    ) => {
+        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
+            ?? throw new InvalidOperationException(
+                "Authenticated principal is missing user id."
+            );
+        httpContext.Response.Headers.CacheControl = "no-store";
+        GalateaMailboxStatusDto response = hostService.ReadMailboxStatus(
+            userId
+        );
+        DebugUtil.Trace(
+            "Galatea.Api",
+            "GET /api/v1/mailbox/status "
+                + $"user={userId}, state={response.State}, "
+                + $"queued={response.QueuedCount}, "
+                + $"ready={response.ReadyNoticeCount}, "
+                + $"code={response.Code ?? "<none>"}"
+        );
+        return Results.Ok(response);
+    }
+);
+
 api.MapPost(
     "/chat/turns",
     async (
