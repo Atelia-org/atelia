@@ -745,24 +745,41 @@ api.MapPost(
                     session,
                     new GalateaTurnOptions(connection.Id)
                 );
-            if (started is GalateaReadyReplyTurnStartResult.Empty) {
-                DebugUtil.Trace(
-                    "Galatea.Api",
-                    $"POST /api/v1/mailbox/ready-turn user={userId}, ready=false"
-                );
-                return Results.NoContent();
+            string origin;
+            if (started is GalateaReadyReplyTurnStartResult.Started reply) {
+                liveTurn = reply.Turn;
+                origin = "delegate-reply";
             }
-            liveTurn = ((GalateaReadyReplyTurnStartResult.Started)started)
-                .Turn;
+            else if (started is GalateaReadyReplyTurnStartResult.Empty) {
+                GalateaBrowserSponsoredAutonomyPulseResult pulse = session
+                    .BrowserSponsoredAutonomy.ObserveSponsorPulse();
+                if (pulse is not GalateaBrowserSponsoredAutonomyPulseResult
+                        .AutonomousActivationDue) {
+                    return Results.Ok(LoopPulseStatusDto.FromProjection(
+                        session.BrowserSponsoredAutonomy.ProjectStatus()
+                    ));
+                }
+                liveTurn = hostService.StartHeartbeatActivationTurn(
+                    session,
+                    new GalateaTurnOptions(connection.Id)
+                );
+                origin = "heartbeat-activation";
+            }
+            else {
+                throw new InvalidDataException(
+                    "Unknown ready-reply turn start result."
+                );
+            }
             DebugUtil.Info(
                 "Galatea.Api",
-                $"POST /api/v1/mailbox/ready-turn user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}"
+                $"POST /api/v1/mailbox/ready-turn user={userId}, turnId={liveTurn.TurnId}, origin={origin}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}"
             );
             IResult result = StartAcceptedTurn(
                 session,
                 liveTurn,
                 hostService,
-                applicationLifetime
+                applicationLifetime,
+                origin
             );
             writerOwnershipTransferred = true;
             return result;
@@ -792,6 +809,13 @@ api.MapPost(
             if (!writerOwnershipTransferred) {
                 try {
                     if (liveTurn is not null) {
+                        if (liveTurn.FreshInput
+                                is GalateaFreshInput.HeartbeatActivation) {
+                            hostService.RollbackHeartbeatActivationAdmission(
+                                session,
+                                liveTurn
+                            );
+                        }
                         hostService.FinishTurn(session, liveTurn);
                         if (string.Equals(
                                 liveTurn.Status,
@@ -1131,12 +1155,27 @@ static IResult StartAcceptedTurn(
     UserSessionHost session,
     GalateaLiveTurn liveTurn,
     GalateaHostService hostService,
-    IHostApplicationLifetime applicationLifetime
+    IHostApplicationLifetime applicationLifetime,
+    string? loopPulseOrigin = null
 ) {
-    IResult acceptedResult = Results.Json(
-        new StartTurnResponseDto(liveTurn.TurnId),
-        statusCode: StatusCodes.Status202Accepted
-    );
+    IResult acceptedResult = loopPulseOrigin switch {
+        null => Results.Json(
+            new StartTurnResponseDto(liveTurn.TurnId),
+            statusCode: StatusCodes.Status202Accepted
+        ),
+        "delegate-reply" or "heartbeat-activation" => Results.Json(
+            new LoopPulseAcceptedTurnDto(
+                liveTurn.TurnId,
+                loopPulseOrigin
+            ),
+            statusCode: StatusCodes.Status202Accepted
+        ),
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(loopPulseOrigin),
+            loopPulseOrigin,
+            "Unknown loop-pulse origin."
+        )
+    };
     var runTask = Task.Run(
         async () => {
             try {

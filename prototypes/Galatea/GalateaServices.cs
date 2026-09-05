@@ -41,8 +41,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         16 * 1024;
     internal const int MaximumPoppedUserTextUtf8Bytes = 256 * 1024;
     internal const int MaximumPopReceiptUtf8Bytes = 2 * 1024 * 1024;
-    internal const string ReadyReplyTurnPlayerText =
-        "玩家本轮未提交新的动作；本轮仅由外界回信到达触发。";
     private static readonly TimeSpan DefaultCharacterNoteExtractionDeadline =
         TimeSpan.FromSeconds(30);
     private readonly GalateaInputPreprocessor _inputPreprocessor;
@@ -112,7 +110,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         IGalateaUserMessageNormalizerFactory userMessageNormalizerFactory,
         IGalateaDurableDelegateTransport? delegateTransport,
         GalateaPlayerTurnRecallProviderFactory?
-            playerTurnRecallProviderFactory
+            playerTurnRecallProviderFactory,
+        TimeProvider? timeProvider = null
     ) : this(
         config,
         CreateProductionComponents(
@@ -121,12 +120,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
             userMessageNormalizerFactory,
             delegateTransport,
             playerTurnRecallProviderFactory
-        )
+        ),
+        timeProvider
     ) { }
 
     private GalateaHostService(
         GalateaConfig config,
-        GalateaProductionComponents components
+        GalateaProductionComponents components,
+        TimeProvider? timeProvider = null
     ) {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(components);
@@ -135,7 +136,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _delegationSupervisor = components.DelegationSupervisor;
         _playerTurnRecallProviderFactory =
             components.PlayerTurnRecallProviderFactory;
-        _timeProvider = TimeProvider.System;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _recapGrid = components.RecapGrid;
         _inputPreprocessor = components.InputPreprocessor;
         _outboundMailExtractors = components.OutboundMailExtractors;
@@ -648,9 +649,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 == head
             && PlayerTurnObservationClassifier.TryProject(
                 snapshot.Turns.First().ObservationContent,
-                out _,
-                out _
+                out PlayerTurnObservationClassifier.Projection projection
             )
+            && projection.RestorablePlayerText is not null
                 ? EventAddressTextCodec.Format(head)
                 : null;
         DebugUtil.Info(
@@ -1447,22 +1448,30 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (messageError is not null) {
             throw new ArgumentException(messageError, nameof(userMessage));
         }
+        bool isDelegateReplyDiscriminator = string.Equals(
+            userMessage,
+            PlayerTurnObservationEnvelope
+                .DelegateReplyLeasePlayerTextDiscriminator,
+            StringComparison.Ordinal
+        );
         GalateaDurableReplyLeaseBeginResult cutoff =
             host.ReplyLeaseReconciler.BeginCutoff(userMessage);
         if (cutoff is GalateaDurableReplyLeaseBeginResult.Empty) {
-            GalateaFreshInput.PlayerAction input = host.NoteSaveReceipts
-                .TryDequeue(out CharacterNoteSaveReceipt? receipt)
-                    ? new GalateaFreshInput.PlayerAction(
-                        userMessage,
-                        [receipt.Notice]
-                    )
-                    : new GalateaFreshInput.PlayerAction(userMessage);
-            return host.StartTurn(
-                input,
+            return StartPlayerTurnWithoutReplyLease(
+                host,
+                userMessage,
                 options
             );
         }
         if (cutoff is GalateaDurableReplyLeaseBeginResult.Created created) {
+            if (isDelegateReplyDiscriminator) {
+                created.Lease.RollbackBeforeEffect();
+                return StartPlayerTurnWithoutReplyLease(
+                    host,
+                    userMessage,
+                    options
+                );
+            }
             return StartPlayerTurnWithCreatedCutoff(
                 host,
                 userMessage,
@@ -1473,6 +1482,21 @@ public sealed class GalateaHostService : IAsyncDisposable {
         throw new InvalidDataException(
             "Unknown durable reply cutoff result."
         );
+    }
+
+    private static GalateaLiveTurn StartPlayerTurnWithoutReplyLease(
+        UserSessionHost host,
+        string playerText,
+        GalateaTurnOptions options
+    ) {
+        GalateaFreshInput.PlayerAction input = host.NoteSaveReceipts
+            .TryDequeue(out CharacterNoteSaveReceipt? receipt)
+                ? new GalateaFreshInput.PlayerAction(
+                    playerText,
+                    [receipt.Notice]
+                )
+                : new GalateaFreshInput.PlayerAction(playerText);
+        return host.StartTurn(input, options);
     }
 
     /// <summary>
@@ -1488,15 +1512,17 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(options);
         GalateaDurableReplyLeaseBeginResult cutoff = host
-            .ReplyLeaseReconciler.BeginCutoff(ReadyReplyTurnPlayerText);
+            .ReplyLeaseReconciler.BeginCutoff(
+                PlayerTurnObservationEnvelope
+                    .DelegateReplyLeasePlayerTextDiscriminator
+            );
         return cutoff switch {
             GalateaDurableReplyLeaseBeginResult.Empty =>
                 new GalateaReadyReplyTurnStartResult.Empty(),
             GalateaDurableReplyLeaseBeginResult.Created created =>
                 new GalateaReadyReplyTurnStartResult.Started(
-                    StartPlayerTurnWithCreatedCutoff(
+                    StartDelegateReplyTurnWithCreatedCutoff(
                         host,
-                        ReadyReplyTurnPlayerText,
                         options,
                         created
                     )
@@ -1505,6 +1531,40 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "Unknown durable reply cutoff result."
             )
         };
+    }
+
+    private static GalateaLiveTurn StartDelegateReplyTurnWithCreatedCutoff(
+        UserSessionHost host,
+        GalateaTurnOptions options,
+        GalateaDurableReplyLeaseBeginResult.Created created
+    ) {
+        try {
+            return host.StartTurn(
+                new GalateaFreshInput.DelegateReply(
+                    created.Lease.ReadNotices()
+                ),
+                options,
+                created.Lease
+            );
+        }
+        catch (Exception original) {
+            try {
+                created.Lease.RollbackBeforeEffect();
+            }
+            catch (Exception cleanup) when (
+                GalateaExceptionClassifier.IsNonFatal(cleanup)) {
+                if (!GalateaExceptionClassifier.IsNonFatal(original)) {
+                    ExceptionDispatchInfo.Capture(original).Throw();
+                }
+                throw new AggregateException(
+                    "Fresh-turn admission and durable cutoff rollback both failed.",
+                    original,
+                    cleanup
+                );
+            }
+            ExceptionDispatchInfo.Capture(original).Throw();
+            throw;
+        }
     }
 
     private static GalateaLiveTurn StartPlayerTurnWithCreatedCutoff(
@@ -1660,8 +1720,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
         if (!PlayerTurnObservationClassifier.TryProject(
                 ready.Value.ObservationContent,
-                out string poppedUserText,
-                out _)) {
+                out PlayerTurnObservationClassifier.Projection projection)
+            || projection.RestorablePlayerText is not { } poppedUserText) {
             return null;
         }
         int sourceBytes;
@@ -1718,10 +1778,93 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return host.FindTurn(turnId);
     }
 
+    /// <summary>
+    /// Settles one live turn and its process-local autonomy cadence outcome.
+    /// The caller must own <see cref="UserSessionHost.TurnLock"/>.
+    /// </summary>
     internal void FinishTurn(UserSessionHost host, GalateaLiveTurn turn) {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(turn);
+        bool completed = string.Equals(
+            turn.Status,
+            "completed",
+            StringComparison.Ordinal
+        );
+        bool settled = host.BrowserSponsoredAutonomy.SettleMainTurn(
+            turn.BrowserSponsoredAutonomySettlement,
+            turn.FreshInput is GalateaFreshInput.HeartbeatActivation,
+            completed,
+            turn.BrowserSponsoredAutonomyClaim
+        );
+        if (settled
+            && !completed
+            && turn.FreshInput
+                is GalateaFreshInput.HeartbeatActivation) {
+            DebugUtil.Warning(
+                "Galatea.Autonomy",
+                $"Autonomous activation paused after non-completed turn: user={host.User.UserId}, turnId={turn.TurnId}"
+            );
+        }
         host.FinishTurn(turn);
+    }
+
+    /// <summary>
+    /// Creates and claims one already-due browser-sponsored autonomous turn.
+    /// The caller must own <see cref="UserSessionHost.TurnLock"/> and must have
+    /// completed exact Idle admission after finding no Ready reply prefix.
+    /// </summary>
+    internal GalateaLiveTurn StartHeartbeatActivationTurn(
+        UserSessionHost host,
+        GalateaTurnOptions options
+    ) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentNullException.ThrowIfNull(options);
+        GalateaLiveTurn turn = host.StartTurn(
+            new GalateaFreshInput.HeartbeatActivation(
+                host.User.CharacterName
+            ),
+            options
+        );
+        if (host.BrowserSponsoredAutonomy
+            .TryClaimAutonomousActivationStarted(out
+                GalateaBrowserSponsoredAutonomyClaim? claim)) {
+            turn.BindBrowserSponsoredAutonomyClaim(
+                claim ?? throw new InvalidOperationException(
+                    "A successful autonomous cadence claim returned no token."
+                )
+            );
+            return turn;
+        }
+        turn.AbortTransportWithoutTerminal();
+        host.FinishTurn(turn);
+        throw new InvalidOperationException(
+            "A heartbeat activation live turn was created without a due cadence claim."
+        );
+    }
+
+    /// <summary>
+    /// Compensates a heartbeat live turn whose synchronous HTTP acceptance
+    /// failed before writer ownership transferred. The caller must own
+    /// <see cref="UserSessionHost.TurnLock"/>. Background-owned turns must never
+    /// call this method.
+    /// </summary>
+    internal void RollbackHeartbeatActivationAdmission(
+        UserSessionHost host,
+        GalateaLiveTurn turn
+    ) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentNullException.ThrowIfNull(turn);
+        if (turn.FreshInput is not GalateaFreshInput.HeartbeatActivation
+            || turn.BrowserSponsoredAutonomyClaim is not { } claim
+            || !host.BrowserSponsoredAutonomy
+                .TryRollbackAutonomousActivationClaim(
+                    claim,
+                    turn.BrowserSponsoredAutonomySettlement
+                )) {
+            throw new InvalidOperationException(
+                "Heartbeat activation admission could not roll back its exact cadence claim."
+            );
+        }
     }
 
     internal bool RequestStop(UserSessionHost host, string turnId) {
@@ -2614,23 +2757,40 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string prompted;
         GalateaFreshInput.PlayerAction? playerAction = null;
         PlayerTurnObservation? preliminaryPlayerObservation = null;
-        DateTimeOffset playerTimestamp = default;
-        if (liveTurn.FreshInput is GalateaFreshInput.PlayerAction player) {
-            playerAction = player;
-            playerTimestamp =
+        DateTimeOffset observationTimestamp = default;
+        if (liveTurn.FreshInput is GalateaFreshInput.PlayerAction
+                or GalateaFreshInput.DelegateReply
+                or GalateaFreshInput.HeartbeatActivation) {
+            observationTimestamp =
                 PlayerTurnObservationEnvelope.TruncateToSecond(
                     _timeProvider.GetLocalNow()
                 );
-            preliminaryPlayerObservation = new PlayerTurnObservation(
-                player.Text,
-                playerTimestamp,
-                player.Notices
+            preliminaryPlayerObservation = liveTurn.FreshInput switch {
+                GalateaFreshInput.PlayerAction player =>
+                    new PlayerTurnObservation(
+                        player.Text,
+                        observationTimestamp,
+                        player.Notices
+                    ),
+                GalateaFreshInput.DelegateReply reply =>
+                    PlayerTurnObservation.CreateDelegateReply(
+                        observationTimestamp,
+                        reply.Notices
+                    ),
+                GalateaFreshInput.HeartbeatActivation activation =>
+                    PlayerTurnObservation.CreateHeartbeatActivation(
+                        observationTimestamp,
+                        activation.CharacterName
+                    ),
+                _ => throw new InvalidOperationException(
+                    "Fresh typed Observation input is invalid."
+                )
+            };
+            playerAction = liveTurn.FreshInput
+                as GalateaFreshInput.PlayerAction;
+            prompted = PlayerTurnObservationEnvelope.Wrap(
+                preliminaryPlayerObservation
             );
-            prompted = liveTurn.DurableReplyLease is { } lease
-                ? lease.RenderObservation(playerTimestamp)
-                : PlayerTurnObservationEnvelope.Wrap(
-                    preliminaryPlayerObservation
-                );
         }
         else if (liveTurn.FreshInput is GalateaFreshInput.InboundMail mail) {
             prompted = mail.DurableObservation;
@@ -2688,7 +2848,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 prompted = PlayerTurnObservationEnvelope.Wrap(
                     new PlayerTurnObservation(
                         playerAction.Text,
-                        playerTimestamp,
+                        observationTimestamp,
                         playerAction.Notices,
                         recalls
                     )
@@ -3196,7 +3356,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 derivedInfoEnricher is null
                     ? null
                     : RequireCharacterNoteDerivedInfoDeadline(),
-                playerTurnRecallProvider
+                playerTurnRecallProvider,
+                _timeProvider
             );
             characterMemory = null;
             delegationHandle = null;
@@ -3451,9 +3612,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal static string NormalizeUserMessageForDisplay(string? storedUserMessage) {
         return PlayerTurnObservationClassifier.TryProject(
             storedUserMessage,
-            out _,
-            out string display
-        ) ? display : storedUserMessage ?? string.Empty;
+            out PlayerTurnObservationClassifier.Projection projection
+        ) ? projection.DisplayText : storedUserMessage ?? string.Empty;
     }
 
     private static string DescribeTurn(RecentTurnDto? turn) {
@@ -3626,7 +3786,8 @@ public sealed class UserSessionHost : IAsyncDisposable {
         ICharacterNoteExtractor characterNoteExtractor,
         ICharacterNoteDerivedInfoEnricher? derivedInfoEnricher,
         TimeSpan? derivedInfoProviderDeadline,
-        IGalateaPlayerTurnRecallProvider playerTurnRecallProvider
+        IGalateaPlayerTurnRecallProvider playerTurnRecallProvider,
+        TimeProvider? timeProvider = null
     ) {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(engine);
@@ -3643,6 +3804,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
         DelegationHandle = delegationHandle;
         CharacterNoteExtractor = characterNoteExtractor;
         PlayerTurnRecallProvider = playerTurnRecallProvider;
+        BrowserSponsoredAutonomy = new(timeProvider ?? TimeProvider.System);
         if (characterMemoryReconciler is not null
             && derivedInfoEnricher is not null) {
             CharacterNoteDerivedInfoPump =
@@ -3687,6 +3849,10 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
     internal CharacterNoteSaveReceiptQueue NoteSaveReceipts { get; } =
         new();
+
+    internal GalateaBrowserSponsoredAutonomy BrowserSponsoredAutonomy {
+        get;
+    }
 
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
 
@@ -4690,8 +4856,13 @@ internal static class GalateaHtml {
         <textarea id="message-input" rows="3" placeholder="说点什么……" required{{maintenanceDisabled}}></textarea>
         <label class="composer-option">
           <input id="mail-loop-enabled" type="checkbox"{{maintenanceDisabled}}>
-          <span>页面打开时，收到 Codex 回信后自动继续</span>
+          <span>页面打开时自动续接 Codex 回信，并在空闲 10 分钟后唤醒角色</span>
         </label>
+        <div id="autonomy-status" class="autonomy-status">
+          <span id="autonomy-state" role="status" aria-live="polite">自主活动：未启用</span>
+          <span id="autonomy-countdown" aria-live="off"></span>
+          <span id="autonomy-last-activation" aria-live="off">上次自主激活：尚无</span>
+        </div>
         <div id="mailbox-status" class="mailbox-status" role="status" aria-live="polite">邮箱状态：正在读取…</div>
         <div class="composer-actions">
           <div class="composer-status">

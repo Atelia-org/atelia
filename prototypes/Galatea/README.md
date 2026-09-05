@@ -434,16 +434,28 @@ Codex delegation现已hard-cut到SQLite-backed durable owner；本节及对应�
 阶段实现记录与real-provider证据边界见
 [`docs/Galatea/codex-delegation-refactor-status.md`](../../docs/Galatea/codex-delegation-refactor-status.md)。
 
-所有新普通player turn（包括当前尚无ready reply的情况）都构造成runtime-owned
-`PlayerTurnObservation`，再由`PlayerTurnObservationEnvelope`包装成composite Observation持久化。
-runtime在canonical Observation materialization时通过宿主`TimeProvider`只采样一次本地时间，
-向下截断到整秒，并在原有prefix之后、player块之前写入code-owned metadata行
+所有新的player-composite turn都构造成runtime-owned `PlayerTurnObservation`，其closed trigger set为
+`PlayerAction`、`DelegateReply`与`HeartbeatActivation`，再由`PlayerTurnObservationEnvelope`包装成
+composite Observation持久化。runtime在canonical Observation materialization时通过宿主`TimeProvider`
+只采样一次本地时间，向下截断到整秒，并在原有prefix之后、trigger块之前写入code-owned metadata行
 `Observation 形成时的外界本地时间（不自动等同于故事世界时间）：yyyy-MM-dd'T'HH:mm:sszzz`；
 例如`2026-08-29T14:23:05+08:00`，UTC也固定写`+00:00`而不是`Z`。这只是Observation形成时的
-外界粗粒度时间，不是故事世界时间，也不参与turn排序、identity或settlement。首个兄弟块固定为
-`## 玩家角色试图采取的行动`/`player-action`，随后可按顺序携带0..32个
-角色笔记recall兄弟块，再携带合计0..16个notice：`Reply` / `DeliveryFailure`，以及至多1个且必须位于最后的
-`NoteSaveReceipt`（它计入16个总上限且必须最后）。canonical heading/info string为`Note 保存回执` /
+外界粗粒度时间，不是故事世界时间，也不参与turn排序、identity、cadence或settlement。三个trigger的
+current write grammar互斥：
+
+- `PlayerAction`要求非空玩家文本，首块为`## 玩家角色试图采取的行动`/`player-action`，随后可按顺序携带
+  0..32个角色笔记recall，再携带合计0..16个notice；它是唯一可调用Memo recall、生成可恢复玩家草稿并获得
+  browser rewind token的variant。
+- `DelegateReply`没有player text或recall，timestamp之后直接写1..16个`Reply` / `DeliveryFailure` notice；
+  current writer不再伪造synthetic player-action块。
+- `HeartbeatActivation`没有player text、notice或recall，只写`## 角色自主活动时机` /
+  `heartbeat-activation`。runtime在fresh materialization时把validated per-user
+  `characterName`非递归注入code-owned模板
+  `外层世界里，又有十分钟流逝。此刻，${characterName}拥有一段由自己支配的时间：可以留意正在变化的局势，把握稍纵即逝的机会，或推进自己认为重要的事。`；
+  durable parser从正文恢复并重新验证同一canonical角色名与exact rendered bytes。
+
+`PlayerAction` notice中至多1个`NoteSaveReceipt`且必须位于最后（它计入16个总上限）。canonical
+heading/info string为`Note 保存回执` /
 `character-note-save-receipt`；旧V0 `Note 请求回执` / `character-note-request-receipt`明确拒绝。recall block使用
 `SourceId: ...`单行metadata作为anchor，`RecallType+SourceId`构成exact去重key，当前三种info string为
 `memo-gist-recall`、`memo-summary-recall`、`memo-exact-text-recall`；对应heading分别是
@@ -460,9 +472,16 @@ normalize或escape，因此嵌套backtick fence、Markdown、HTML/XML与Unicode�
 recall `SourceId`上限512 bytes UTF-8，recall正文上限262,677 bytes，reply正文上限256 KiB，
 failure上限4 KiB，整份composite上限1 MiB；越界全部拒绝而不截断。
 
-`PlayerTurnObservationEnvelope` parser只接受code-owned prefix、heading、info string、顺序与动态fence的canonical重渲染结果。
-recent view显示玩家文本、recall正文及每条独立通知，但隐藏recall anchor metadata；普通Undo仍把它识别为player turn，但pop receipt只返回玩家文本。
-历史Galatea heading与backtick player envelope继续只读兼容recent/Undo；inbound mail envelope仍不属于普通player Undo。
+`PlayerTurnObservationEnvelope` parser只接受code-owned prefix、timestamp、closed trigger shape、heading、
+info string、顺序与动态fence的canonical重渲染结果；混入player text/recall/非法notice的automatic variant都会拒绝。
+recent view为三个trigger显示各自的code-owned可读文本，但只有`PlayerAction`产生`RestorablePlayerText`；
+`DelegateReply`以`本轮由 Codex 回信触发。`开头，`HeartbeatActivation`显示其code-owned trigger正文；两者都
+不能获得rewind token，也不会把synthetic text放回composer。
+历史Galatea heading与backtick player envelope继续只读兼容。旧reply Observation中的固定文本
+`玩家本轮未提交新的动作；本轮仅由外界回信到达触发。`只有在同一envelope还含至少一条且只含
+`Reply`/`DeliveryFailure` notice、没有recall时才被识别为历史`DelegateReply`；同一literal作为普通玩家文本
+本身仍是`PlayerAction`。V1 `reply_lease.player_text`继续保留该值作为internal discriminator与既有durable
+identity，不把它渲染或暴露成current player text，也不迁移历史。inbound mail envelope仍不属于普通player Undo。
 input normalizer只接收玩家文本，绝不接收ready notices。普通player入口持有per-session `TurnLock`，先结算
 既有durable reply lease和latest post-baseline extraction gap，再验证recovery boundary与main connection；
 随后在HTTP 202之前完成normalization。Caller cancellation、fatal、显式`GalateaTurnException`或input-limit
@@ -475,8 +494,8 @@ failure会阻止放弃旧failed turn、创建cutoff和接受新turn；普通nonf
 
 Galatea侧的internal `IGalateaPlayerTurnRecallProvider`由per-session factory在CharacterMemory lazy attach后构造。
 `galatea.memo-recall`为`null`或maintenance mode时使用disabled singleton，并在context selection/barrier构建前直接绕过，
-因此disabled路径没有额外CharacterMemory或selector I/O。enabled MVP只在没有active durable reply lease的普通player turn调用provider；有reply lease时暂不注入recall，
-避免在未设计lease schema与restart settlement前破坏exact rendered Observation recovery。provider request同时携带
+因此disabled路径没有额外CharacterMemory或selector I/O。enabled MVP只为`PlayerAction`调用provider；
+`DelegateReply`、`HeartbeatActivation`、inbound与recovery都不召回。provider request同时携带
 `RecallBarrier`与`CharacterNoteOriginBarrier`。前者由同一轮RecapGrid online candidate source选出的provider-visible
 raw Observation后缀经`PlayerTurnObservationEnvelope` parser聚合；后者在同一次materialization中读取带exact
 source address的raw Action units，以runtime-derived visible-text SHA-256/UTF-8 byte count与CharacterMemory
@@ -487,7 +506,7 @@ selected candidate会先确认可materialize，derived context contribution与br
 `RecallBarrier`当前只做parser-based exact-key去重，尚不表达`MemoExactText`覆盖`MemoSummary`/`MemoGist`的dominance；
 origin barrier则按Memo阻止全部召回粒度，不解析`SourceId`。
 
-enabled provider把已采样timestamp且尚无recall的typed `PlayerTurnObservation`、同一pre-append raw window中的
+enabled provider把已采样timestamp且尚无recall的typed `PlayerAction` Observation、同一pre-append raw window中的
 Reply/DeliveryFailure notices与最近一条非空visible Action确定性渲染为
 `atelia.galatea.memo-recall-context.v1` JSON；不调用第二个query-builder模型。required player text完整保留，optional
 notice按whole-item前缀、Action按whole item纳入512 KiB总query budget，`NoteSaveReceipt`不进入query。Default MemoPod
@@ -512,23 +531,48 @@ per-session `TurnLock`、recovery admission与main connection allowlist。
 `POST /api/v1/mailbox/ready-turn` 是供first-party browser心跳使用的conditional mutation，接受strict JSON
 `{connectionId?}`。它不向browser暴露`reply_notice`正文，也不接受player text：server在per-session
 `TurnLock`内先结算既有lease与latest extraction gap，只允许exact `Idle` boundary，再验证main connection与
-fresh admission。随后用code-owned固定文本`玩家本轮未提交新的动作；本轮仅由外界回信到达触发。`执行
-`BeginCutoff`。没有`Ready` notice时返回204 empty，且不创建新live turn、main-Agent provider call或active reply
-lease；但admission仍可能结算既有reply lease/extraction gap，必要时会调用outbound extractor并持久化
-capture/tombstone。有notice时才原子冻结bounded FIFO prefix，并以202 `{turnId}`启动现有
-player-composite/SSE fresh turn。该固定文本不经过input normalizer，textarea等browser草稿不进入Observation。
-busy、failed turn及其他recovery boundary返回typed
+fresh admission。每次pulse先以V1 internal discriminator执行现有`BeginCutoff`：有Ready notice时原子冻结
+bounded FIFO prefix，并以202 exact `{turnId,origin:"delegate-reply"}`启动typed `DelegateReply`；durable lease仍是
+唯一Ready-to-Leased authority。只有没有Ready prefix时，才观察process-local autonomy cadence：未到期或暂停返回
+200 exact `{state,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code}`，其中
+`state`只能是`waiting`或`autonomy-paused`：waiting要求non-null next/null code，paused要求null next/non-null
+diagnostic code，last activation在两种状态都可为null；到期则唯一claim并以202 exact
+`{turnId,origin:"heartbeat-activation"}`启动typed `HeartbeatActivation`。Ready reply即使在autonomy paused时也
+始终优先，不被pause阻断。waiting pulse不创建live turn或main-Agent provider call；但admission仍可能结算既有
+reply lease/extraction gap，必要时会调用outbound extractor并持久化capture/tombstone。两个automatic trigger都
+不经过input normalizer，textarea等browser草稿不进入Observation。busy、failed turn及其他recovery boundary返回typed
 409；尤其不会自动abandon failed turn、resume/restart recovery或claim对应Ready notice。多tab竞争由
-`TurnLock`与SQLite lease共同串行化；server endpoint自身不形成后台无限循环，browser opt-in仍是调度开关。
+`TurnLock`、SQLite reply lease与process-local autonomy gate共同串行化；server endpoint自身不形成后台scheduler，
+browser opt-in仍是唯一sponsor开关。
 
-First-party browser在composer中提供默认关闭且不持久化的“页面打开时，收到 Codex 回信后自动继续”开关。
-勾选后使用single timer递归执行1秒heartbeat；前一次HTTP admission或其accepted SSE turn未结束时不会重叠
-发起下一次。204只续约下一次heartbeat；202沿用现有turn stream；busy只跟随已发布turn。任意terminal SSE
-error都会取消勾选，避免rollback为Ready的notice被自动重试。recovery、
+每个session的browser-sponsored autonomy state只存在于server进程内并由同一`TurnLock`保护；它用宿主
+`TimeProvider`的monotonic timestamp裁决10分钟idle interval，wall-clock Unix milliseconds只用于HTTP/UI投影，
+不参与due identity。首次pulse或间隔严格超过30秒的sponsor gap都会从该pulse重新arm完整10分钟；exact 30秒仍
+视为continuous sponsorship。browser休眠只会让
+激活变晚，不会提前，也不会补发missed tick。任意successful completed main turn（manual、reply、inbound、
+recovery或autonomous）在已armed时重置完整interval并清除pause。terminal `HeartbeatActivation` failure会暂停后续
+空激活；后续成功的non-autonomous turn可清除pause。server/session重启丢弃这些状态并保守地重新arm，不从
+SessionJournal或delegation SQLite恢复倒计时。
+
+First-party browser在composer中提供默认关闭且不持久化的“页面打开时自动续接 Codex 回信，并在空闲10分钟后
+唤醒角色”开关。勾选后立即发起首个pulse，之后用single-flight递归timer每10秒调用一次同一conditional endpoint；
+前一次HTTP admission或其accepted SSE turn未结束时，同一opt-in generation不会重叠。200 waiting/paused更新
+server-authoritative状态、下次激活与上次自主激活显示；两次network pulse之间的“约”倒计时只是browser本地
+monotonic projection，不裁决due。202按server返回的exact origin沿用现有turn stream；busy只跟随已发布turn。
+paused是正常状态并继续pulse，因此显式重新勾选后仍可领取优先到达的Ready reply。任意terminal SSE error都会
+取消发起tab的勾选；server pause同时阻止其他tab反复发起空激活。recovery、
 unprovisioned、非预期协议以及无法由current/recent只读视图确认的response-loss都会fail closed并取消勾选，
 不会自动重发mutation或授权resume。自动turn从不读取、提交或清空textarea；只有本tab手动提交且亲自收到
-202的turn在`done`时清空草稿。Checkbox由每个tab各自拥有，关闭/休眠页面会暂停调度，browser timer throttling
-也意味着1秒只是best-effort间隔；唯一消费仍由server `TurnLock`与durable lease保证。
+202的turn在`done`时清空草稿。Checkbox由每个tab各自拥有，不做browser leader election；所有页面关闭或休眠时
+没有sponsor pulse，也就没有自主激活保证。browser的10秒pulse只负责主会话admission，不改变delegation
+supervisor每秒重读SQLite的durable fallback pulse。
+
+一次`HeartbeatActivation`会产生一次正常main Completion成本；它不调用player-only Memo recall，但successful
+terminal Action仍进入既有Outbound Mail与Character Note post-processing，角色也可能由此发送Codex邮件并产生后续
+reply turn。runtime不要求角色必须采取动作、调用工具或发送邮件，选择休息同样是合法terminal Action。本MVP没有
+自主turn count/token/output cap、`MaxTokens`/`MaxOutputTokens`、output deadline或自动interrupt，也没有durable
+scheduler、catch-up、可配置cadence、service worker或leader election；运行成本与停止权由默认关闭的checkbox、
+10分钟idle cadence、single-flight、fail-closed pause及人工取消共同约束。
 
 独立的`GET /api/v1/mailbox/status`只读取supervisor已持有的delegation store，不调用
 `GetSessionAsync`、不attach session、不Signal pulse，也不触发extractor、transport或provider。它在单个
@@ -537,7 +581,8 @@ SQLite read transaction中只聚合状态、排队数量、Ready notice数量、
 `{state,queuedCount,readyNoticeCount,attemptCount,code,nextRetryAtUnixTimeMilliseconds}`并带
 `Cache-Control: no-store`；state优先级为`unavailable > quarantined > accepted-history-unavailable > backoff >
 active-running > ready-reply > queued > no-mail`。页面以独立single-in-flight、递归`setTimeout`的5秒轮询展示
-该状态和两个count，无论自动续接checkbox是否勾选都会继续；它只提供观察能力，不改变
+该状态和两个count，无论browser-sponsored checkbox是否勾选都会继续；它既不提供autonomy countdown，也不驱动
+或取代10秒conditional pulse，只提供delegation观察能力，不改变
 `POST /mailbox/ready-turn`的lease/admission语义。Maintenance下existing store仍会读取并显示count，但主状态固定为
 `unavailable/MAINTENANCE_READ_ONLY`且不显示attempt/next retry，明确表示后台处理已暂停。成功的5秒poll有意不逐次
 写Debug log，避免重新制造heartbeat噪声；store read失败仍由supervisor记录Warning。
@@ -691,7 +736,7 @@ route。当前versioned endpoints是：
 | POST | `/api/v1/chat/turns` | 202 `{turnId}` |
 | POST | `/api/v1/chat/turns/resume` | 202 `{turnId}` |
 | POST | `/api/v1/mailbox/inbound` | 202 `{turnId,messageId}` |
-| POST | `/api/v1/mailbox/ready-turn` | 无Ready为204 empty；已原子启动为202 `{turnId}` |
+| POST | `/api/v1/mailbox/ready-turn` | 未启动为200 `{state,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code}`；启动为202 `{turnId,origin}` |
 | POST | `/api/v1/chat/turns/pop-latest` | `{poppedUserText}` |
 | GET | `/api/v1/chat/turns/current` | `status,turnId,connectionId,restartRequired,recoveryHead` |
 | POST | `/api/v1/chat/turns/{turnId}/stop` | 204 empty |

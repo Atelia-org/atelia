@@ -144,6 +144,332 @@ assert.equal(scheduledMailboxTimers[0].delay, 5000);
 mailboxPoller.stop();
 assert.deepEqual(clearedMailboxTimers, [scheduledMailboxTimers[0].id]);
 
+const waitingPulseStatus = {
+  state: "waiting",
+  nextActivationAtUnixTimeMilliseconds: 11_000,
+  lastActivationAtUnixTimeMilliseconds: null,
+  code: null,
+};
+const pausedPulseStatus = {
+  state: "autonomy-paused",
+  nextActivationAtUnixTimeMilliseconds: null,
+  lastActivationAtUnixTimeMilliseconds: 7_000,
+  code: "AUTONOMOUS_TURN_FAILED",
+};
+const acceptedDelegateReply = {
+  turnId: "0123456789abcdef0123456789abcdef",
+  origin: "delegate-reply",
+};
+const acceptedHeartbeatActivation = {
+  ...acceptedDelegateReply,
+  origin: "heartbeat-activation",
+};
+
+assert.equal(
+  production.requireLoopPulseStatus(waitingPulseStatus),
+  waitingPulseStatus,
+);
+assert.equal(
+  production.requireLoopPulseStatus(pausedPulseStatus),
+  pausedPulseStatus,
+);
+for (const invalid of [
+  { ...waitingPulseStatus, extra: true },
+  { ...waitingPulseStatus, state: "future" },
+  { ...waitingPulseStatus, nextActivationAtUnixTimeMilliseconds: null },
+  { ...waitingPulseStatus, code: "UNEXPECTED" },
+  { ...pausedPulseStatus, nextActivationAtUnixTimeMilliseconds: 12_000 },
+  { ...pausedPulseStatus, code: null },
+  { ...pausedPulseStatus, lastActivationAtUnixTimeMilliseconds: -1 },
+]) {
+  assert.throws(() => production.requireLoopPulseStatus(invalid));
+}
+assert.equal(
+  production.requireLoopPulseAcceptedTurn(acceptedDelegateReply),
+  acceptedDelegateReply,
+);
+assert.equal(
+  production.requireLoopPulseAcceptedTurn(acceptedHeartbeatActivation),
+  acceptedHeartbeatActivation,
+);
+for (const invalid of [
+  { ...acceptedDelegateReply, extra: true },
+  { ...acceptedDelegateReply, turnId: "not-a-turn" },
+  { ...acceptedDelegateReply, origin: "manual" },
+]) {
+  assert.throws(() => production.requireLoopPulseAcceptedTurn(invalid));
+}
+assert.deepEqual(
+  production.requireLoopPulseSuccess(200, pausedPulseStatus),
+  { kind: "status", status: pausedPulseStatus },
+);
+assert.deepEqual(
+  production.requireLoopPulseSuccess(202, acceptedDelegateReply),
+  { kind: "accepted", accepted: acceptedDelegateReply },
+);
+assert.throws(
+  () => production.requireLoopPulseSuccess(204, null),
+  /success status is unknown/,
+);
+
+const countdownProjection = production.createAutonomyCountdownProjection(
+  waitingPulseStatus,
+  1_000,
+  50,
+);
+assert.deepEqual(countdownProjection, {
+  remainingAtReceiptMilliseconds: 10_000,
+  receiptMonotonicMilliseconds: 50,
+});
+assert.equal(
+  production.projectAutonomyCountdown(countdownProjection, 5_050),
+  5_000,
+);
+assert.equal(
+  production.projectAutonomyCountdown(countdownProjection, 12_000),
+  0,
+  "local projection clamps after the server deadline",
+);
+assert.equal(
+  production.projectAutonomyCountdown(countdownProjection, 25),
+  10_000,
+  "a monotonic clock regression cannot make the countdown early",
+);
+assert.equal(
+  production.createAutonomyCountdownProjection(pausedPulseStatus, 1_000, 50),
+  null,
+);
+assert.equal(production.formatAutonomyCountdown(65_000), "约 1 分 5 秒");
+assert.equal(production.formatAutonomyCountdown(0), "约 0 秒");
+assert.deepEqual(
+  production.formatAutonomyPulseStatus(waitingPulseStatus, 5_000),
+  {
+    stateText: "自主活动：等待空闲倒计时",
+    countdownText: "下次自主激活：约 5 秒",
+    lastActivationText: "上次自主激活：尚无",
+    paused: false,
+  },
+);
+assert.deepEqual(
+  production.formatAutonomyPulseStatus(
+    pausedPulseStatus,
+    null,
+    (milliseconds) => `time-${milliseconds}`,
+  ),
+  {
+    stateText: "自主活动：已暂停（AUTONOMOUS_TURN_FAILED）；仍会继续收取 Codex 回信",
+    countdownText: "",
+    lastActivationText: "上次自主激活：time-7000",
+    paused: true,
+  },
+);
+assert.deepEqual(
+  production.describeAutomaticTurnOrigin("delegate-reply"),
+  {
+    attachStatus: "收到 Codex 回信，正在继续…",
+    autonomyStatus: "自主活动：正在处理 Codex 回信；本轮完成后重新计时",
+  },
+);
+assert.match(
+  production.describeAutomaticTurnOrigin("heartbeat-activation").attachStatus,
+  /角色正在自主活动/,
+);
+
+const overlapTimers = [];
+const overlapPending = [];
+const appliedPulseStatuses = [];
+const attachedPulseOrigins = [];
+const overlapFlightTransitions = [];
+let overlapCalls = 0;
+let nextOverlapTimerId = 1;
+const overlapScheduler = production.createLoopPulseScheduler({
+  runPulse: (context) => new Promise((resolve) => {
+    overlapCalls += 1;
+    overlapPending.push({ context, resolve });
+  }).then(({ statusCode, value }) => {
+    const decision = production.decideLoopPulseParsedResponse(
+      statusCode,
+      value,
+      context.isCurrent(),
+    );
+    if (decision.kind === "apply-status") {
+      appliedPulseStatuses.push(decision.status.state);
+    } else if (decision.kind === "attach") {
+      attachedPulseOrigins.push(decision.accepted.origin);
+    }
+  }),
+  canRun: () => true,
+  setTimeoutFn: (callback, delay) => {
+    const timer = { id: nextOverlapTimerId++, callback, delay };
+    overlapTimers.push(timer);
+    return timer.id;
+  },
+  clearTimeoutFn: (id) => {
+    const index = overlapTimers.findIndex((timer) => timer.id === id);
+    if (index >= 0) {
+      overlapTimers.splice(index, 1);
+    }
+  },
+  setInFlight: (value) => overlapFlightTransitions.push(value),
+});
+overlapScheduler.start();
+const immediatePulse = overlapTimers.shift();
+assert.equal(immediatePulse.delay, 0);
+immediatePulse.callback();
+assert.equal(overlapCalls, 1);
+overlapScheduler.start();
+assert.equal(overlapTimers.length, 0, "start cannot overlap an in-flight pulse");
+const stalePulse = overlapPending.shift();
+overlapScheduler.stop();
+assert.equal(stalePulse.context.isCurrent(), false);
+overlapScheduler.start();
+assert.equal(
+  overlapTimers.length,
+  0,
+  "stop then start records an immediate pulse without overlapping the old flight",
+);
+assert.equal(overlapCalls, 1);
+stalePulse.resolve({ statusCode: 200, value: waitingPulseStatus });
+await new Promise((resolve) => setImmediate(resolve));
+assert.deepEqual(
+  appliedPulseStatuses,
+  [],
+  "a stopped generation cannot present its deferred 200 status",
+);
+assert.deepEqual(overlapFlightTransitions, [true, false]);
+assert.equal(overlapTimers[0].delay, 0);
+overlapTimers.shift().callback();
+assert.equal(overlapCalls, 2);
+assert.deepEqual(overlapFlightTransitions, [true, false, true]);
+const currentPulse = overlapPending.shift();
+assert.equal(currentPulse.context.isCurrent(), true);
+currentPulse.resolve({ statusCode: 200, value: pausedPulseStatus });
+await new Promise((resolve) => setImmediate(resolve));
+assert.deepEqual(appliedPulseStatuses, ["autonomy-paused"]);
+assert.deepEqual(overlapFlightTransitions, [true, false, true, false]);
+assert.equal(overlapTimers[0].delay, 10_000);
+overlapTimers.shift().callback();
+const replyPulse = overlapPending.shift();
+replyPulse.resolve({ statusCode: 202, value: acceptedDelegateReply });
+await new Promise((resolve) => setImmediate(resolve));
+assert.deepEqual(attachedPulseOrigins, ["delegate-reply"]);
+assert.deepEqual(
+  overlapFlightTransitions,
+  [true, false, true, false, true, false],
+  "UI busy ownership is paired around every actual global flight",
+);
+assert.equal(overlapTimers[0].delay, 10_000);
+overlapScheduler.stop();
+assert.equal(
+  overlapTimers.length,
+  0,
+  "stop clears the next recursive pulse",
+);
+
+const stoppedFlightTimers = [];
+const stoppedFlightTransitions = [];
+let resolveStoppedFlight;
+const stoppedFlightScheduler = production.createLoopPulseScheduler({
+  runPulse: () => new Promise((resolve) => {
+    resolveStoppedFlight = resolve;
+  }),
+  canRun: () => true,
+  setTimeoutFn: (callback, delay) => {
+    stoppedFlightTimers.push({ callback, delay });
+    return stoppedFlightTimers.length;
+  },
+  clearTimeoutFn: () => {},
+  setInFlight: (value) => stoppedFlightTransitions.push(value),
+});
+stoppedFlightScheduler.start();
+stoppedFlightTimers.shift().callback();
+stoppedFlightScheduler.stop();
+resolveStoppedFlight();
+await new Promise((resolve) => setImmediate(resolve));
+assert.deepEqual(stoppedFlightTransitions, [true, false]);
+assert.equal(
+  stoppedFlightTimers.length,
+  0,
+  "stop without restart releases busy state and does not reschedule",
+);
+
+const deferredTimers = [];
+const clearedDeferredTimers = [];
+let deferredCalls = 0;
+const deferredScheduler = production.createLoopPulseScheduler({
+  runPulse: async () => {
+    deferredCalls += 1;
+  },
+  canRun: () => false,
+  setTimeoutFn: (callback, delay) => {
+    const timer = { id: deferredTimers.length + 10, callback, delay };
+    deferredTimers.push(timer);
+    return timer.id;
+  },
+  clearTimeoutFn: (id) => clearedDeferredTimers.push(id),
+});
+deferredScheduler.start();
+deferredTimers.shift().callback();
+assert.equal(deferredCalls, 0);
+assert.equal(deferredTimers[0].delay, 10_000);
+const deferredTimerId = deferredTimers[0].id;
+deferredScheduler.stop();
+assert.deepEqual(clearedDeferredTimers, [deferredTimerId]);
+
+assert.equal(
+  production.decideLoopPulseParsedResponse(
+    200,
+    waitingPulseStatus,
+    false,
+  ).kind,
+  "ignore-stale-status",
+);
+assert.equal(
+  production.decideLoopPulseParsedResponse(
+    200,
+    { malformed: true },
+    false,
+  ).kind,
+  "ignore-stale-status",
+  "a stale no-start 200 is ignored before body validation",
+);
+assert.equal(
+  production.shouldIgnoreStaleLoopPulseResponse(200, false),
+  true,
+);
+assert.equal(
+  production.shouldIgnoreStaleLoopPulseResponse(200, true),
+  false,
+);
+assert.equal(
+  production.shouldIgnoreStaleLoopPulseResponse(202, false),
+  false,
+  "a stale accepted mutation must still be validated",
+);
+assert.equal(
+  production.decideLoopPulseParsedResponse(
+    202,
+    acceptedHeartbeatActivation,
+    false,
+  ).kind,
+  "attach",
+  "a stale generation must still attach a confirmed mutation",
+);
+for (const [statusCode, invalid] of [
+  [200, { ...waitingPulseStatus, code: "INVALID" }],
+  [202, { ...acceptedDelegateReply, origin: "manual" }],
+]) {
+  assert.equal(
+    production.decideLoopPulseParsedResponse(
+      statusCode,
+      invalid,
+      true,
+    ).kind,
+    "reconcile-stop",
+    "malformed success responses fail closed into read-only reconciliation",
+  );
+}
+
 const valid = {
   turns: [{
     userText: "user",
@@ -408,7 +734,9 @@ assert.equal(currentReads, 2);
 assert.equal(recentReads, 1);
 
 assert.equal(production.shouldClearDraftForTurnOrigin("manual"), true);
-for (const origin of ["mail-loop", "observed", "recovery"]) {
+for (const origin of [
+  "delegate-reply", "heartbeat-activation", "observed", "recovery",
+]) {
   assert.equal(production.shouldClearDraftForTurnOrigin(origin), false);
 }
 assert.throws(
@@ -430,6 +758,29 @@ assert.equal(
 assert.throws(
   () => production.shouldDisableMailLoopAfterTerminal("status", true),
   /terminal type is unknown/,
+);
+for (const decision of ["stop-protocol", "stop-unconfirmed"]) {
+  assert.equal(
+    production.shouldDisableMailLoopAfterUnrecoverableStream(decision, true),
+    true,
+  );
+  assert.equal(
+    production.shouldDisableMailLoopAfterUnrecoverableStream(decision, false),
+    false,
+  );
+}
+for (const decision of ["retry-confirm", "reconnect", "refresh-stop"]) {
+  assert.equal(
+    production.shouldDisableMailLoopAfterUnrecoverableStream(decision, true),
+    false,
+  );
+}
+assert.throws(
+  () => production.shouldDisableMailLoopAfterUnrecoverableStream(
+    "future-decision",
+    true,
+  ),
+  /decision is unknown/,
 );
 
 const popFunction = source.slice(
@@ -471,25 +822,29 @@ assert.match(
   /body: JSON\.stringify\(\{\s+connectionId: state\.selectedConnectionId,\s+\}\)/,
 );
 assert.doesNotMatch(mailLoopPulseFunction, /input\.value/);
-assert.match(mailLoopPulseFunction, /response\.status === 204/);
-assert.match(mailLoopPulseFunction, /emptyBody !== ""/);
+assert.doesNotMatch(mailLoopPulseFunction, /mailboxStatus|fetchMailboxStatus/);
+assert.match(mailLoopPulseFunction, /response\.status === 200/);
 assert.match(mailLoopPulseFunction, /response\.status === 202/);
+assert.ok(
+  mailLoopPulseFunction.indexOf("shouldIgnoreStaleLoopPulseResponse(")
+    < mailLoopPulseFunction.indexOf("await readJsonResponse(response"),
+  "stale 200 responses are ignored before reading or validating their body",
+);
 assert.match(
   mailLoopPulseFunction,
-  /accepted\.turnId,[\s\S]*"mail-loop"/,
+  /decideLoopPulseParsedResponse\([\s\S]*response\.status,[\s\S]*value,[\s\S]*context\.isCurrent\(\)/,
+);
+assert.match(
+  mailLoopPulseFunction,
+  /accepted\.turnId,[\s\S]*accepted\.origin/,
 );
 assert.match(
   mailLoopPulseFunction,
   /error\.turnId, error\.error, "observed"/,
 );
 
-const mailLoopScheduler = source.slice(
-  source.indexOf("function scheduleMailLoopPulse"),
-  source.indexOf("async function loadObservedCurrentTurn"),
-);
-assert.match(mailLoopScheduler, /state\.mailLoopTimerId !== null/);
-assert.match(mailLoopScheduler, /state\.mailLoopInFlight/);
-assert.match(mailLoopScheduler, /window\.setTimeout/);
+assert.match(source, /intervalMilliseconds = 10_000/);
+assert.match(source, /setInFlight: setMailLoopInFlight/);
 assert.doesNotMatch(source, /setInterval\(/);
 
 const mailboxStatusValidator = source.slice(
@@ -516,7 +871,14 @@ const mailboxStatusPoller = source.slice(
   source.indexOf("export function formatMailboxStatus"),
 );
 assert.doesNotMatch(mailboxStatusPoller, /mailLoopEnabled|ready-turn|textarea/);
+assert.doesNotMatch(mailboxStatusPoller, /autonomy/i);
 assert.match(source, /mailboxStatusPoller\.start\(\);/);
+for (const id of [
+  "autonomy-status", "autonomy-state", "autonomy-countdown",
+  "autonomy-last-activation",
+]) {
+  assert.match(source, new RegExp(`"${id}"`));
+}
 
 const streamEventHandler = source.slice(
   source.indexOf("function handleEvent"),
@@ -532,7 +894,7 @@ assert.match(
   /shouldDisableMailLoopAfterTerminal\([\s\S]*"error"[\s\S]*mailLoopEnabled\?\.checked/,
 );
 assert.match(streamEventHandler, /disableMailLoop\(\)/);
-assert.match(streamEventHandler, /本轮失败，自动收信已关闭/);
+assert.match(streamEventHandler, /本轮失败，自动循环已关闭/);
 const doneEventBranch = streamEventHandler.slice(
   streamEventHandler.indexOf('case "done"'),
   streamEventHandler.indexOf('case "error"'),
@@ -541,15 +903,24 @@ assert.doesNotMatch(doneEventBranch, /disableMailLoop/);
 
 const attachFunction = source.slice(
   source.indexOf("async function attachToTurn"),
-  source.indexOf("function clearMailLoopTimer"),
+  source.indexOf("function disableMailLoop"),
 );
+assert.ok(attachFunction.length > 0, "attach source slice has a real endpoint");
 assert.match(
   attachFunction,
   /const terminalErrorDisabledMailLoop =\s+state\.terminalErrorDisabledMailLoop;\s+clearActiveTurn\(\)/,
 );
 assert.match(
   attachFunction,
-  /terminalErrorDisabledMailLoop[\s\S]*本轮失败，自动收信已关闭/,
+  /terminalErrorDisabledMailLoop[\s\S]*本轮失败，自动循环已关闭/,
+);
+assert.match(
+  attachFunction,
+  /decision !== "stop-protocol"[\s\S]*shouldDisableMailLoopAfterUnrecoverableStream\([\s\S]*disableMailLoop\(\)/,
+);
+assert.match(
+  attachFunction,
+  /decision === "stop-unconfirmed"[\s\S]*shouldDisableMailLoopAfterUnrecoverableStream\([\s\S]*disableMailLoop\(\)/,
 );
 
 const freshSubmitFunction = source.slice(

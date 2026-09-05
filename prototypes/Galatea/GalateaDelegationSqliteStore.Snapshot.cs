@@ -916,7 +916,15 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
         try {
             RequireWireIdentity(lease.LeaseId, nameof(lease.LeaseId));
-            _ = new PlayerTurnObservation(lease.PlayerText);
+            string? playerTextError = GalateaHttpV1.ValidateMessage(
+                lease.PlayerText
+            );
+            if (playerTextError is not null) {
+                throw new ArgumentException(
+                    playerTextError,
+                    nameof(lease.PlayerText)
+                );
+            }
         }
         catch (ArgumentException exception) {
             throw Corrupt("Reply lease player text is invalid.", exception);
@@ -974,46 +982,17 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     StringComparison.Ordinal)) {
                 throw Corrupt("Reply lease Observation identity is invalid.");
             }
-            PlayerTurnNotice[] expectedNotices = lease.NoticeIds.Select(
-                noticeId => {
-                    GalateaReplyNoticeSnapshot notice = notices.Single(
-                        value => string.Equals(
-                            value.NoticeId,
-                            noticeId,
-                            StringComparison.Ordinal
-                        )
-                    );
-                    return notice.Kind switch {
-                        GalateaReplyNoticeKind.Reply =>
-                            (PlayerTurnNotice)new PlayerTurnNotice.Reply(
-                                notice.Body
-                            ),
-                        GalateaReplyNoticeKind.DeliveryFailure =>
-                            new PlayerTurnNotice.DeliveryFailure(
-                                notice.Body
-                            ),
-                        _ => throw Corrupt("Reply notice kind is unknown.")
-                    };
-                }
-            ).ToArray();
+            PlayerTurnNotice[] expectedNotices = ProjectLeaseNotices(
+                lease,
+                notices
+            );
             if (!PlayerTurnObservationEnvelope.TryUnwrap(
                     lease.RenderedObservation,
                     out PlayerTurnObservation parsed)
-                || !string.Equals(
-                    parsed.PlayerText,
-                    lease.PlayerText,
-                    StringComparison.Ordinal)
-                || parsed.Notices.Count != expectedNotices.Length
-                || !parsed.Notices.Zip(
-                    expectedNotices,
-                    static (actual, expected) =>
-                        actual.GetType() == expected.GetType()
-                        && string.Equals(
-                            actual.Body,
-                            expected.Body,
-                            StringComparison.Ordinal
-                        )
-                ).All(static matches => matches)) {
+                || !StoredLeaseObservationMatches(
+                    parsed,
+                    lease,
+                    expectedNotices)) {
                 throw Corrupt(
                     "Reply lease Observation is not its canonical cutoff."
                 );

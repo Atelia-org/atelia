@@ -62,6 +62,17 @@ function requireNonnegativeInteger(value, label) {
   return value;
 }
 
+function requireNullableNonnegativeInteger(value, label) {
+  return value === null ? null : requireNonnegativeInteger(value, label);
+}
+
+function requireNonnegativeFiniteNumber(value, label) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} must be a nonnegative finite number`);
+  }
+  return value;
+}
+
 export function requireMailboxStatus(value) {
   const status = requireExactKeys(value, [
     "state", "queuedCount", "readyNoticeCount", "attemptCount", "code",
@@ -226,6 +237,331 @@ export function formatMailboxStatus(
     ...detail,
   ].join("；");
   return `邮箱状态：${labels[status.state]}（${suffix}）`;
+}
+
+export function requireLoopPulseStatus(value) {
+  const status = requireExactKeys(value, [
+    "state", "nextActivationAtUnixTimeMilliseconds",
+    "lastActivationAtUnixTimeMilliseconds", "code",
+  ], "loop pulse status");
+  if (!["waiting", "autonomy-paused"].includes(status.state)) {
+    throw new Error("loop pulse status.state is unknown");
+  }
+  requireNullableNonnegativeInteger(
+    status.nextActivationAtUnixTimeMilliseconds,
+    "loop pulse status.nextActivationAtUnixTimeMilliseconds",
+  );
+  requireNullableNonnegativeInteger(
+    status.lastActivationAtUnixTimeMilliseconds,
+    "loop pulse status.lastActivationAtUnixTimeMilliseconds",
+  );
+  if (status.code !== null) {
+    requireNonblankString(status.code, "loop pulse status.code");
+  }
+  if (status.state === "waiting") {
+    if (status.nextActivationAtUnixTimeMilliseconds === null
+        || status.code !== null) {
+      throw new Error("waiting loop pulse status has an invalid state matrix");
+    }
+  } else if (status.nextActivationAtUnixTimeMilliseconds !== null
+      || status.code === null) {
+    throw new Error("paused loop pulse status has an invalid state matrix");
+  }
+  return status;
+}
+
+export function requireLoopPulseAcceptedTurn(value) {
+  const accepted = requireExactKeys(
+    value,
+    ["turnId", "origin"],
+    "loop pulse accepted turn",
+  );
+  if (!/^[0-9a-f]{32}$/.test(accepted.turnId)) {
+    throw new Error("loop pulse accepted turn.turnId is invalid");
+  }
+  if (!["delegate-reply", "heartbeat-activation"].includes(accepted.origin)) {
+    throw new Error("loop pulse accepted turn.origin is unknown");
+  }
+  return accepted;
+}
+
+export function requireLoopPulseSuccess(statusCode, value) {
+  if (statusCode === 200) {
+    return Object.freeze({
+      kind: "status",
+      status: requireLoopPulseStatus(value),
+    });
+  }
+  if (statusCode === 202) {
+    return Object.freeze({
+      kind: "accepted",
+      accepted: requireLoopPulseAcceptedTurn(value),
+    });
+  }
+  throw new Error("loop pulse success status is unknown");
+}
+
+export function decideLoopPulseParsedResponse(
+  statusCode,
+  value,
+  currentOptInGeneration,
+) {
+  requireBoolean(currentOptInGeneration, "current opt-in generation");
+  if (statusCode === 200 && !currentOptInGeneration) {
+    return Object.freeze({ kind: "ignore-stale-status" });
+  }
+  let success;
+  try {
+    success = requireLoopPulseSuccess(statusCode, value);
+  } catch (error) {
+    return Object.freeze({ kind: "reconcile-stop", error });
+  }
+  if (success.kind === "accepted") {
+    return Object.freeze({
+      kind: "attach",
+      accepted: success.accepted,
+    });
+  }
+  return currentOptInGeneration
+    ? Object.freeze({ kind: "apply-status", status: success.status })
+    : Object.freeze({ kind: "ignore-stale-status" });
+}
+
+export function shouldIgnoreStaleLoopPulseResponse(
+  statusCode,
+  currentOptInGeneration,
+) {
+  requireBoolean(currentOptInGeneration, "current opt-in generation");
+  return statusCode === 200 && !currentOptInGeneration;
+}
+
+export function createAutonomyCountdownProjection(
+  statusValue,
+  receiptUnixTimeMilliseconds,
+  receiptMonotonicMilliseconds,
+) {
+  const status = requireLoopPulseStatus(statusValue);
+  requireNonnegativeInteger(
+    receiptUnixTimeMilliseconds,
+    "countdown receipt unix time",
+  );
+  requireNonnegativeFiniteNumber(
+    receiptMonotonicMilliseconds,
+    "countdown receipt monotonic time",
+  );
+  if (status.state !== "waiting") {
+    return null;
+  }
+  return Object.freeze({
+    remainingAtReceiptMilliseconds: Math.max(
+      0,
+      status.nextActivationAtUnixTimeMilliseconds
+        - receiptUnixTimeMilliseconds,
+    ),
+    receiptMonotonicMilliseconds,
+  });
+}
+
+export function projectAutonomyCountdown(
+  projectionValue,
+  currentMonotonicMilliseconds,
+) {
+  const projection = requireExactKeys(projectionValue, [
+    "remainingAtReceiptMilliseconds", "receiptMonotonicMilliseconds",
+  ], "countdown projection");
+  requireNonnegativeFiniteNumber(
+    projection.remainingAtReceiptMilliseconds,
+    "countdown projection remaining time",
+  );
+  requireNonnegativeFiniteNumber(
+    projection.receiptMonotonicMilliseconds,
+    "countdown projection receipt time",
+  );
+  requireNonnegativeFiniteNumber(
+    currentMonotonicMilliseconds,
+    "countdown current monotonic time",
+  );
+  return Math.max(
+    0,
+    projection.remainingAtReceiptMilliseconds
+      - Math.max(
+        0,
+        currentMonotonicMilliseconds
+          - projection.receiptMonotonicMilliseconds,
+      ),
+  );
+}
+
+export function formatAutonomyCountdown(remainingMilliseconds) {
+  requireNonnegativeFiniteNumber(
+    remainingMilliseconds,
+    "autonomy countdown remaining time",
+  );
+  const totalSeconds = Math.ceil(remainingMilliseconds / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0
+    ? `约 ${minutes} 分 ${seconds} 秒`
+    : `约 ${seconds} 秒`;
+}
+
+export function formatAutonomyPulseStatus(
+  statusValue,
+  remainingMilliseconds,
+  formatActivationTime = (milliseconds) =>
+    new Date(milliseconds).toLocaleString(),
+) {
+  const status = requireLoopPulseStatus(statusValue);
+  if (typeof formatActivationTime !== "function") {
+    throw new Error("autonomy activation-time formatter is required");
+  }
+  const lastActivationText =
+    status.lastActivationAtUnixTimeMilliseconds === null
+      ? "上次自主激活：尚无"
+      : `上次自主激活：${formatActivationTime(
+        status.lastActivationAtUnixTimeMilliseconds,
+      )}`;
+  if (status.state === "autonomy-paused") {
+    return Object.freeze({
+      stateText: `自主活动：已暂停（${status.code}）；仍会继续收取 Codex 回信`,
+      countdownText: "",
+      lastActivationText,
+      paused: true,
+    });
+  }
+  requireNonnegativeFiniteNumber(
+    remainingMilliseconds,
+    "autonomy status remaining time",
+  );
+  return Object.freeze({
+    stateText: "自主活动：等待空闲倒计时",
+    countdownText: `下次自主激活：${formatAutonomyCountdown(
+      remainingMilliseconds,
+    )}`,
+    lastActivationText,
+    paused: false,
+  });
+}
+
+export function describeAutomaticTurnOrigin(origin) {
+  switch (origin) {
+    case "delegate-reply":
+      return Object.freeze({
+        attachStatus: "收到 Codex 回信，正在继续…",
+        autonomyStatus: "自主活动：正在处理 Codex 回信；本轮完成后重新计时",
+      });
+    case "heartbeat-activation":
+      return Object.freeze({
+        attachStatus: "空闲倒计时结束，角色正在自主活动…",
+        autonomyStatus: "自主活动：角色正在自主活动…",
+      });
+    default:
+      throw new Error("automatic turn origin is unknown");
+  }
+}
+
+export function createLoopPulseScheduler({
+  runPulse,
+  canRun,
+  setTimeoutFn,
+  clearTimeoutFn,
+  setInFlight = () => {},
+  intervalMilliseconds = 10_000,
+}) {
+  for (const [name, value] of Object.entries({
+    runPulse, canRun, setTimeoutFn, clearTimeoutFn, setInFlight,
+  })) {
+    if (typeof value !== "function") {
+      throw new Error(`loop pulse scheduler ${name} is required`);
+    }
+  }
+  if (!Number.isSafeInteger(intervalMilliseconds)
+      || intervalMilliseconds <= 0) {
+    throw new Error("loop pulse scheduler interval must be a positive safe integer");
+  }
+
+  let enabled = false;
+  let generation = 0;
+  let timer = null;
+  let inFlight = false;
+  let immediateRequested = false;
+
+  function isCurrent(candidateGeneration) {
+    return enabled && candidateGeneration === generation;
+  }
+
+  function schedule(delayMilliseconds, candidateGeneration = generation) {
+    if (!isCurrent(candidateGeneration) || timer !== null || inFlight) {
+      return;
+    }
+    const scheduled = {
+      generation: candidateGeneration,
+      id: null,
+    };
+    scheduled.id = setTimeoutFn(() => {
+      if (timer === scheduled) {
+        timer = null;
+      }
+      void run(candidateGeneration);
+    }, delayMilliseconds);
+    timer = scheduled;
+  }
+
+  async function run(candidateGeneration) {
+    if (!isCurrent(candidateGeneration) || inFlight) {
+      return;
+    }
+    const context = Object.freeze({
+      generation: candidateGeneration,
+      isCurrent: () => isCurrent(candidateGeneration),
+    });
+    immediateRequested = false;
+    if (!canRun(context)) {
+      schedule(intervalMilliseconds, candidateGeneration);
+      return;
+    }
+    inFlight = true;
+    try {
+      setInFlight(true);
+      await runPulse(context);
+    } finally {
+      try {
+        setInFlight(false);
+      } finally {
+        inFlight = false;
+      }
+      if (enabled && immediateRequested) {
+        immediateRequested = false;
+        schedule(0, generation);
+      } else if (enabled && isCurrent(candidateGeneration)) {
+        schedule(intervalMilliseconds, candidateGeneration);
+      }
+    }
+  }
+
+  return Object.freeze({
+    start() {
+      if (enabled) {
+        return;
+      }
+      enabled = true;
+      generation += 1;
+      immediateRequested = true;
+      if (!inFlight) {
+        immediateRequested = false;
+        schedule(0, generation);
+      }
+    },
+    stop() {
+      enabled = false;
+      generation += 1;
+      immediateRequested = false;
+      if (timer !== null) {
+        clearTimeoutFn(timer.id);
+        timer = null;
+      }
+    },
+  });
 }
 
 function requireNullableObject(value, validator, label) {
@@ -934,7 +1270,8 @@ export function shouldClearDraftForTurnOrigin(origin) {
   switch (origin) {
     case "manual":
       return true;
-    case "mail-loop":
+    case "delegate-reply":
+    case "heartbeat-activation":
     case "observed":
     case "recovery":
       return false;
@@ -949,6 +1286,24 @@ export function shouldDisableMailLoopAfterTerminal(terminalType, checked) {
   }
   requireBoolean(checked, "mail loop checked");
   return terminalType === "error" && checked;
+}
+
+export function shouldDisableMailLoopAfterUnrecoverableStream(
+  continuationDecision,
+  checked,
+) {
+  requireBoolean(checked, "mail loop checked");
+  switch (continuationDecision) {
+    case "stop-protocol":
+    case "stop-unconfirmed":
+      return checked;
+    case "retry-confirm":
+    case "reconnect":
+    case "refresh-stop":
+      return false;
+    default:
+      throw new Error("stream continuation decision is unknown");
+  }
 }
 
 async function readJsonResponse(response, validator) {
@@ -986,8 +1341,10 @@ function startGalateaApp() {
     terminalErrorDisabledMailLoop: false,
     streamGeneration: 0,
     mailLoopInFlight: false,
-    mailLoopTimerId: null,
     mailLoopInitialized: false,
+    autonomyPulseStatus: null,
+    autonomyCountdownProjection: null,
+    autonomyCountdownTimerId: null,
     mailboxStatus: null,
     selectedConnectionId: null,
     contextHeader: { observation: "", action: "" },
@@ -1020,6 +1377,12 @@ function startGalateaApp() {
   const stopButton = document.getElementById("stop-button");
   const mailLoopEnabled = document.getElementById("mail-loop-enabled");
   const mailboxStatus = document.getElementById("mailbox-status");
+  const autonomyStatus = document.getElementById("autonomy-status");
+  const autonomyState = document.getElementById("autonomy-state");
+  const autonomyCountdown = document.getElementById("autonomy-countdown");
+  const autonomyLastActivation = document.getElementById(
+    "autonomy-last-activation",
+  );
   const connectionPicker = document.getElementById("connection-picker");
   const composerModeHint = document.getElementById("composer-mode-hint");
   const statusText = document.getElementById("status-text");
@@ -1083,6 +1446,104 @@ function startGalateaApp() {
     setTimeoutFn: window.setTimeout.bind(window),
     clearTimeoutFn: window.clearTimeout.bind(window),
   });
+
+  function applyAutonomyView(view) {
+    if (autonomyState && autonomyState.textContent !== view.stateText) {
+      autonomyState.textContent = view.stateText;
+    }
+    if (autonomyCountdown
+        && autonomyCountdown.textContent !== view.countdownText) {
+      autonomyCountdown.textContent = view.countdownText;
+    }
+    if (autonomyLastActivation
+        && autonomyLastActivation.textContent !== view.lastActivationText) {
+      autonomyLastActivation.textContent = view.lastActivationText;
+    }
+    autonomyStatus?.classList.toggle("is-paused", view.paused === true);
+  }
+
+  function clearAutonomyCountdownTimer() {
+    if (state.autonomyCountdownTimerId !== null) {
+      window.clearTimeout(state.autonomyCountdownTimerId);
+      state.autonomyCountdownTimerId = null;
+    }
+  }
+
+  function formatLastAutonomyActivation() {
+    const last = state.autonomyPulseStatus
+      ?.lastActivationAtUnixTimeMilliseconds;
+    return last === null || last === undefined
+      ? "上次自主激活：尚无"
+      : `上次自主激活：${new Date(last).toLocaleString()}`;
+  }
+
+  function setTransientAutonomyStatus(stateText) {
+    clearAutonomyCountdownTimer();
+    state.autonomyCountdownProjection = null;
+    applyAutonomyView({
+      stateText,
+      countdownText: "",
+      lastActivationText: formatLastAutonomyActivation(),
+      paused: false,
+    });
+  }
+
+  function renderProjectedAutonomyStatus() {
+    const status = state.autonomyPulseStatus;
+    const projection = state.autonomyCountdownProjection;
+    if (!status || !projection || !mailLoopEnabled?.checked) {
+      return;
+    }
+    const remaining = projectAutonomyCountdown(
+      projection,
+      window.performance.now(),
+    );
+    applyAutonomyView(formatAutonomyPulseStatus(status, remaining));
+  }
+
+  function scheduleAutonomyCountdownProjection() {
+    if (!mailLoopEnabled?.checked
+        || state.autonomyCountdownProjection === null
+        || state.autonomyCountdownTimerId !== null) {
+      return;
+    }
+    state.autonomyCountdownTimerId = window.setTimeout(() => {
+      state.autonomyCountdownTimerId = null;
+      renderProjectedAutonomyStatus();
+      scheduleAutonomyCountdownProjection();
+    }, 1000);
+  }
+
+  function publishAutonomyPulseStatus(statusValue) {
+    const status = requireLoopPulseStatus(statusValue);
+    clearAutonomyCountdownTimer();
+    state.autonomyPulseStatus = status;
+    state.autonomyCountdownProjection = createAutonomyCountdownProjection(
+      status,
+      Date.now(),
+      window.performance.now(),
+    );
+    if (status.state === "autonomy-paused") {
+      applyAutonomyView(formatAutonomyPulseStatus(status, 0));
+      return;
+    }
+    renderProjectedAutonomyStatus();
+    scheduleAutonomyCountdownProjection();
+  }
+
+  function markAutonomyTurnInProgress(origin) {
+    if (!mailLoopEnabled?.checked) {
+      setTransientAutonomyStatus("自主活动：未启用");
+      return;
+    }
+    const automatic = origin === "delegate-reply"
+      || origin === "heartbeat-activation"
+      ? describeAutomaticTurnOrigin(origin).autonomyStatus
+      : "自主活动：本轮完成后重新计时";
+    setTransientAutonomyStatus(automatic);
+  }
+
+  let mailLoopScheduler = null;
 
   function renderTurns() {
     turnList.innerHTML = state.recentTurns.map(renderTurn).join("")
@@ -1617,7 +2078,7 @@ function startGalateaApp() {
         setStreaming(
           false,
           disableAutomaticMail
-            ? `${streamEvent.message} 本轮失败，自动收信已关闭。`
+            ? `${streamEvent.message} 本轮失败，自动循环已关闭。`
             : streamEvent.message,
         );
         return;
@@ -1769,6 +2230,7 @@ function startGalateaApp() {
       return;
     }
     shouldClearDraftForTurnOrigin(origin);
+    markAutonomyTurnInProgress(origin);
 
     markRecapCadenceProgressStale("active-turn");
     state.activeTurnId = normalizedTurnId;
@@ -1843,7 +2305,7 @@ function startGalateaApp() {
           terminalStatus = "";
         }
         if (terminalErrorDisabledMailLoop) {
-          terminalStatus += " 本轮失败，自动收信已关闭。";
+          terminalStatus += " 本轮失败，自动循环已关闭。";
         }
         setStreaming(false, terminalStatus);
         return;
@@ -1861,9 +2323,19 @@ function startGalateaApp() {
           if (decision !== "stop-protocol") {
             throw new Error("protocol stream continuation is invalid");
           }
+          const disabledMailLoop =
+            shouldDisableMailLoopAfterUnrecoverableStream(
+              decision,
+              Boolean(mailLoopEnabled?.checked),
+            );
+          if (disabledMailLoop) {
+            disableMailLoop();
+          }
           setStreaming(
             true,
-            "生成流协议无效；已停止自动重连，请刷新页面。",
+            disabledMailLoop
+              ? "生成流协议无效；已停止自动重连并关闭自动循环，请刷新页面。"
+              : "生成流协议无效；已停止自动重连，请刷新页面。",
           );
           return;
         }
@@ -1880,9 +2352,19 @@ function startGalateaApp() {
             reconciliationFailures,
           });
           if (decision === "stop-unconfirmed") {
+            const disabledMailLoop =
+              shouldDisableMailLoopAfterUnrecoverableStream(
+                decision,
+                Boolean(mailLoopEnabled?.checked),
+              );
+            if (disabledMailLoop) {
+              disableMailLoop();
+            }
             setStreaming(
               true,
-              "无法确认生成状态；已停止自动重连，请刷新页面。",
+              disabledMailLoop
+                ? "无法确认生成状态；已停止自动重连并关闭自动循环，请刷新页面。"
+                : "无法确认生成状态；已停止自动重连，请刷新页面。",
             );
             return;
           }
@@ -1924,37 +2406,15 @@ function startGalateaApp() {
     }
   }
 
-  function clearMailLoopTimer() {
-    if (state.mailLoopTimerId !== null) {
-      window.clearTimeout(state.mailLoopTimerId);
-      state.mailLoopTimerId = null;
-    }
-  }
-
   function disableMailLoop(message) {
-    clearMailLoopTimer();
+    mailLoopScheduler?.stop();
+    setTransientAutonomyStatus("自主活动：未启用");
     if (mailLoopEnabled) {
       mailLoopEnabled.checked = false;
     }
     if (message) {
       statusText.textContent = message;
     }
-  }
-
-  function scheduleMailLoopPulse(delayMs = 1000) {
-    if (
-      maintenanceMode
-      || !mailLoopEnabled?.checked
-      || state.mailLoopTimerId !== null
-      || state.mailLoopInFlight
-    ) {
-      return;
-    }
-
-    state.mailLoopTimerId = window.setTimeout(() => {
-      state.mailLoopTimerId = null;
-      void runMailLoopPulse();
-    }, delayMs);
   }
 
   async function loadObservedCurrentTurn(status) {
@@ -1966,48 +2426,47 @@ function startGalateaApp() {
     }
     if (currentTurn?.status === "recovery-required") {
       disableMailLoop(currentTurn.restartRequired
-        ? "自动收信已关闭：上次模型调用结果不确定，需要明确授权后才能恢复。"
-        : "自动收信已关闭：当前会话存在待恢复轮次。");
+        ? "自动循环已关闭：上次模型调用结果不确定，需要明确授权后才能恢复。"
+        : "自动循环已关闭：当前会话存在待恢复轮次。");
       return true;
     }
     if (currentTurn?.status === "unprovisioned") {
-      disableMailLoop("自动收信已关闭：会话仓库尚未完成初始化。");
+      disableMailLoop("自动循环已关闭：会话仓库尚未完成初始化。");
       return true;
     }
     return false;
   }
 
   async function reconcileAmbiguousMailLoopAdmission(cause) {
+    disableMailLoop();
     try {
-      if (await loadObservedCurrentTurn("自动收信响应不完整，正在跟随当前轮次…")) {
+      if (await loadObservedCurrentTurn("自动循环响应不完整，正在跟随当前轮次…")) {
         return;
       }
       await loadRecentTurns().catch(() => {});
       disableMailLoop(
-        "自动收信请求结果不确定；已停止且未自动重发。请确认会话状态后重新勾选。",
+        "自动循环请求结果不确定；已停止且未自动重发。请确认会话状态后重新勾选。",
       );
     } catch {
       disableMailLoop(
         cause?.message
-          ? `自动收信请求结果不确定；未自动重发。${cause.message}`
-          : "自动收信请求结果不确定；未自动重发。请刷新页面确认。",
+          ? `自动循环请求结果不确定；未自动重发。${cause.message}`
+          : "自动循环请求结果不确定；未自动重发。请刷新页面确认。",
       );
     }
   }
 
-  async function runMailLoopPulse() {
+  async function runMailLoopPulse(context) {
     if (
-      maintenanceMode
+      !context?.isCurrent()
+      || maintenanceMode
       || !mailLoopEnabled?.checked
       || !state.mailLoopInitialized
       || state.streaming
-      || state.mailLoopInFlight
     ) {
-      scheduleMailLoopPulse();
       return;
     }
 
-    setMailLoopInFlight(true);
     try {
       let response;
       try {
@@ -2026,33 +2485,49 @@ function startGalateaApp() {
         return;
       }
 
-      if (response.status === 204) {
-        let emptyBody;
-        try {
-          emptyBody = await response.text();
-        } catch {
-          disableMailLoop("自动收信响应协议无效，已关闭自动收信。");
+      if (response.status === 200 || response.status === 202) {
+        if (shouldIgnoreStaleLoopPulseResponse(
+          response.status,
+          context.isCurrent() && Boolean(mailLoopEnabled?.checked),
+        )) {
           return;
         }
-        if (emptyBody !== "") {
-          disableMailLoop("自动收信的 204 响应必须为空，已关闭自动收信。");
-        }
-        return;
-      }
-
-      if (response.status === 202) {
-        let accepted;
+        let value;
         try {
-          accepted = await readJsonResponse(response, requireAcceptedTurn);
+          value = await readJsonResponse(response, (parsed) => parsed);
         } catch (error) {
+          if (shouldIgnoreStaleLoopPulseResponse(
+            response.status,
+            context.isCurrent() && Boolean(mailLoopEnabled?.checked),
+          )) {
+            return;
+          }
           await reconcileAmbiguousMailLoopAdmission(error);
           return;
         }
+        const decision = decideLoopPulseParsedResponse(
+          response.status,
+          value,
+          context.isCurrent() && Boolean(mailLoopEnabled?.checked),
+        );
+        if (decision.kind === "reconcile-stop") {
+          await reconcileAmbiguousMailLoopAdmission(decision.error);
+          return;
+        }
+        if (decision.kind === "ignore-stale-status") {
+          return;
+        }
+        if (decision.kind === "apply-status") {
+          publishAutonomyPulseStatus(decision.status);
+          return;
+        }
+        const accepted = decision.accepted;
+        const description = describeAutomaticTurnOrigin(accepted.origin);
         markRecapCadenceProgressStale("turn-accepted");
         await attachToTurn(
           accepted.turnId,
-          "收到 Codex 回信，正在继续…",
-          "mail-loop",
+          description.attachStatus,
+          accepted.origin,
         );
         return;
       }
@@ -2064,7 +2539,7 @@ function startGalateaApp() {
             ? requireBusyError(value)
             : requireApiError(value));
       } catch {
-        disableMailLoop("自动收信响应协议无效，已关闭自动收信。");
+        disableMailLoop("自动循环响应协议无效，已关闭自动循环。");
         return;
       }
 
@@ -2078,24 +2553,35 @@ function startGalateaApp() {
         return;
       }
 
-      disableMailLoop(`自动收信已关闭：${error.error}`);
+      disableMailLoop(`自动循环已关闭：${error.error}`);
     } catch (error) {
       disableMailLoop(
         error?.message
-          ? `自动收信已关闭：${error.message}`
-          : "自动收信发生未知错误，已关闭。",
+          ? `自动循环已关闭：${error.message}`
+          : "自动循环发生未知错误，已关闭。",
       );
-    } finally {
-      setMailLoopInFlight(false);
-      scheduleMailLoopPulse();
     }
   }
 
+  mailLoopScheduler = createLoopPulseScheduler({
+    runPulse: runMailLoopPulse,
+    canRun: () => !maintenanceMode
+      && Boolean(mailLoopEnabled?.checked)
+      && state.mailLoopInitialized
+      && !state.streaming
+      && !state.mailLoopInFlight,
+    setTimeoutFn: window.setTimeout.bind(window),
+    clearTimeoutFn: window.clearTimeout.bind(window),
+    setInFlight: setMailLoopInFlight,
+  });
+
   mailLoopEnabled?.addEventListener("change", () => {
     if (mailLoopEnabled.checked) {
-      scheduleMailLoopPulse();
+      setTransientAutonomyStatus("自主活动：正在同步…");
+      mailLoopScheduler.start();
     } else {
-      clearMailLoopTimer();
+      mailLoopScheduler.stop();
+      setTransientAutonomyStatus("自主活动：未启用");
     }
   });
 
@@ -2267,7 +2753,10 @@ function startGalateaApp() {
   initializeApp()
     .then(() => {
       state.mailLoopInitialized = true;
-      scheduleMailLoopPulse();
+      if (mailLoopEnabled?.checked) {
+        mailLoopScheduler.stop();
+        mailLoopScheduler.start();
+      }
     })
     .catch((error) => {
       disableMailLoop();

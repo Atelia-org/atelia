@@ -162,6 +162,22 @@ public sealed class GalateaMaintenanceModeTests {
             "id=\"mail-loop-enabled\" type=\"checkbox\" disabled",
             page
         );
+        Assert.Contains(
+            "页面打开时自动续接 Codex 回信，并在空闲 10 分钟后唤醒角色",
+            page
+        );
+        Assert.Contains(
+            "id=\"autonomy-state\" role=\"status\" aria-live=\"polite\">自主活动：未启用",
+            page
+        );
+        Assert.Contains(
+            "id=\"autonomy-countdown\" aria-live=\"off\"",
+            page
+        );
+        Assert.Contains(
+            "id=\"autonomy-last-activation\" aria-live=\"off\">上次自主激活：尚无",
+            page
+        );
 
         GalateaHostService hostService = host.Factory.Services
             .GetRequiredService<GalateaHostService>();

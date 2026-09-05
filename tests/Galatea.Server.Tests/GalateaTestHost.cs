@@ -33,6 +33,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
 
     private readonly string _tempRoot;
     private readonly bool _deleteFilesOnDispose;
+    private readonly TimeProvider? _timeProvider;
     private bool _disposeCompleted;
     private bool _restartCreated;
 
@@ -45,10 +46,12 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IGalateaDurableDelegateTransport? delegateTransport,
         GalateaPlayerTurnRecallProviderFactory?
             playerTurnRecallProviderFactory,
+        TimeProvider? timeProvider,
         bool deleteFilesOnDispose
     ) {
         _tempRoot = tempRoot;
         _deleteFilesOnDispose = deleteFilesOnDispose;
+        _timeProvider = timeProvider;
         SessionDirectory = sessionDirectory;
         ConfigPath = configPath;
         Factory = new GalateaWebApplicationFactory(
@@ -56,7 +59,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             completionClientFactory,
             normalizer,
             delegateTransport,
-            playerTurnRecallProviderFactory
+            playerTurnRecallProviderFactory,
+            timeProvider
         );
     }
 
@@ -102,7 +106,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? memoRecallConnectionId = null,
         IGalateaDurableDelegateTransport? delegateTransport = null,
         GalateaPlayerTurnRecallProviderFactory?
-            playerTurnRecallProviderFactory = null
+            playerTurnRecallProviderFactory = null,
+        TimeProvider? timeProvider = null
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
 
@@ -170,6 +175,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             normalizer,
             delegateTransport,
             playerTurnRecallProviderFactory,
+            timeProvider,
             deleteFilesOnDispose
         );
     }
@@ -243,6 +249,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 normalizer,
                 delegateTransport: null,
                 playerTurnRecallProviderFactory: null,
+                timeProvider: null,
                 deleteFilesOnDispose
             );
         }
@@ -396,12 +403,13 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 configurationRoot,
                 absoluteSessionDirectory,
                 configPath,
-            completionClientFactory,
-            normalizer,
-            delegateTransport: null,
-            playerTurnRecallProviderFactory: null,
-            deleteFilesOnDispose: true
-        );
+                completionClientFactory,
+                normalizer,
+                delegateTransport: null,
+                playerTurnRecallProviderFactory: null,
+                timeProvider: null,
+                deleteFilesOnDispose: true
+            );
         }
         catch {
             Directory.Delete(configurationRoot, recursive: true);
@@ -461,6 +469,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             normalizer,
             delegateTransport,
             playerTurnRecallProviderFactory: null,
+            timeProvider: _timeProvider,
             deleteFilesOnDispose
         );
         _restartCreated = true;
@@ -829,7 +838,8 @@ internal sealed class GalateaWebApplicationFactory(
     IGalateaUserMessageNormalizer? normalizer,
     IGalateaDurableDelegateTransport? delegateTransport,
     GalateaPlayerTurnRecallProviderFactory?
-        playerTurnRecallProviderFactory
+        playerTurnRecallProviderFactory,
+    TimeProvider? timeProvider = null
 ) : WebApplicationFactory<Program> {
     protected override void ConfigureWebHost(IWebHostBuilder builder) {
         builder.UseEnvironment("Testing");
@@ -844,7 +854,8 @@ internal sealed class GalateaWebApplicationFactory(
                 );
             }
             if (delegateTransport is not null
-                || playerTurnRecallProviderFactory is not null) {
+                || playerTurnRecallProviderFactory is not null
+                || timeProvider is not null) {
                 services.RemoveAll<GalateaHostService>();
                 services.AddSingleton(provider =>
                     new GalateaHostService(
@@ -854,7 +865,8 @@ internal sealed class GalateaWebApplicationFactory(
                         provider.GetRequiredService<
                             IGalateaUserMessageNormalizerFactory>(),
                         delegateTransport,
-                        playerTurnRecallProviderFactory
+                        playerTurnRecallProviderFactory,
+                        timeProvider
                     ));
             }
         });

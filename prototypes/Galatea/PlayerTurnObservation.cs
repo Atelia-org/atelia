@@ -1,5 +1,6 @@
 using System.Text;
 using System.Globalization;
+using Atelia.Galatea.Prompts;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.MemoPod;
 using Atelia.SessionJournal;
@@ -160,7 +161,16 @@ internal abstract class PlayerTurnNotice {
     }
 }
 
+internal enum PlayerTurnObservationTriggerKind {
+    PlayerAction,
+    DelegateReply,
+    HeartbeatActivation
+}
+
 internal sealed class PlayerTurnObservation {
+    private readonly string? _playerText;
+    private readonly GalateaCharacterName? _heartbeatCharacterName;
+
     internal PlayerTurnObservation(
         string playerText,
         IEnumerable<PlayerTurnNotice>? notices = null,
@@ -255,16 +265,152 @@ internal sealed class PlayerTurnObservation {
             );
         }
 
-        PlayerText = playerText;
+        TriggerKind = PlayerTurnObservationTriggerKind.PlayerAction;
+        _playerText = playerText;
         ExternalLocalTimestamp = externalLocalTimestamp;
         Recalls = Array.AsReadOnly(frozenRecalls);
         Notices = Array.AsReadOnly(frozen);
     }
 
-    internal string PlayerText { get; }
+    private PlayerTurnObservation(
+        PlayerTurnObservationTriggerKind triggerKind,
+        DateTimeOffset? externalLocalTimestamp,
+        IEnumerable<PlayerTurnNotice>? notices,
+        GalateaCharacterName? heartbeatCharacterName = null,
+        bool usesHistoricalPlayerActionDialect = false
+    ) {
+        if (triggerKind is PlayerTurnObservationTriggerKind.PlayerAction) {
+            throw new ArgumentException(
+                "PlayerAction requires its typed player-text constructor.",
+                nameof(triggerKind)
+            );
+        }
+        if (externalLocalTimestamp is { } timestamp
+            && timestamp.Ticks % TimeSpan.TicksPerSecond != 0) {
+            throw new ArgumentException(
+                "External local timestamp must be truncated to whole seconds.",
+                nameof(externalLocalTimestamp)
+            );
+        }
+
+        IReadOnlyList<PlayerTurnNotice> frozen = triggerKind
+                is PlayerTurnObservationTriggerKind.DelegateReply
+            ? FreezeDelegateReplyNotices(notices)
+            : FreezeNotices(notices);
+        switch (triggerKind) {
+            case PlayerTurnObservationTriggerKind.DelegateReply:
+                if (heartbeatCharacterName is not null) {
+                    throw new ArgumentException(
+                        "DelegateReply must not contain a heartbeat character name.",
+                        nameof(heartbeatCharacterName)
+                    );
+                }
+                break;
+            case PlayerTurnObservationTriggerKind.HeartbeatActivation:
+                ArgumentNullException.ThrowIfNull(heartbeatCharacterName);
+                if (frozen.Count != 0) {
+                    throw new ArgumentException(
+                        "HeartbeatActivation must not contain notices.",
+                        nameof(notices)
+                    );
+                }
+                if (usesHistoricalPlayerActionDialect) {
+                    throw new ArgumentException(
+                        "HeartbeatActivation has no historical player-action dialect.",
+                        nameof(usesHistoricalPlayerActionDialect)
+                    );
+                }
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(triggerKind));
+        }
+
+        TriggerKind = triggerKind;
+        _heartbeatCharacterName = heartbeatCharacterName;
+        ExternalLocalTimestamp = externalLocalTimestamp;
+        Notices = frozen;
+        Recalls = Array.Empty<PlayerTurnRecall>();
+        UsesHistoricalPlayerActionDialect =
+            usesHistoricalPlayerActionDialect;
+    }
+
+    internal static PlayerTurnObservation CreateDelegateReply(
+        DateTimeOffset externalLocalTimestamp,
+        IEnumerable<PlayerTurnNotice> notices
+    ) => new(
+        PlayerTurnObservationTriggerKind.DelegateReply,
+        externalLocalTimestamp,
+        notices
+    );
+
+    internal static PlayerTurnObservation CreateHeartbeatActivation(
+        DateTimeOffset externalLocalTimestamp,
+        GalateaCharacterName characterName
+    ) => new(
+        PlayerTurnObservationTriggerKind.HeartbeatActivation,
+        externalLocalTimestamp,
+        notices: null,
+        heartbeatCharacterName: characterName
+    );
+
+    /// <summary>
+    /// Parser-only representation of the old synthetic player-action reply
+    /// shape. Current fresh writes must use the timestamped
+    /// <see cref="CreateDelegateReply(DateTimeOffset,IEnumerable{PlayerTurnNotice})"/>
+    /// factory instead.
+    /// </summary>
+    internal static PlayerTurnObservation CreateHistoricalDelegateReply(
+        DateTimeOffset? externalLocalTimestamp,
+        IEnumerable<PlayerTurnNotice> notices
+    ) => new(
+        PlayerTurnObservationTriggerKind.DelegateReply,
+        externalLocalTimestamp,
+        notices,
+        heartbeatCharacterName: null,
+        usesHistoricalPlayerActionDialect: true
+    );
+
+    internal static IReadOnlyList<PlayerTurnNotice>
+        FreezeDelegateReplyNotices(
+        IEnumerable<PlayerTurnNotice>? notices
+    ) {
+        IReadOnlyList<PlayerTurnNotice> frozen = FreezeNotices(notices);
+        if (frozen.Count is < 1
+            or > PlayerTurnObservationEnvelope.MaximumNoticeCount
+            || frozen.Any(static notice => notice is not (
+                PlayerTurnNotice.Reply
+                or PlayerTurnNotice.DeliveryFailure))) {
+            throw new ArgumentException(
+                "DelegateReply requires one or more external reply or delivery-failure notices.",
+                nameof(notices)
+            );
+        }
+        return frozen;
+    }
+
+    private static IReadOnlyList<PlayerTurnNotice> FreezeNotices(
+        IEnumerable<PlayerTurnNotice>? notices
+    ) => Array.AsReadOnly(notices?.Select(
+        static notice => notice ?? throw new ArgumentException(
+            "Player-turn notice collections must not contain null items.",
+            nameof(notices)
+        )
+    ).ToArray() ?? []);
+
+    internal PlayerTurnObservationTriggerKind TriggerKind { get; }
+    internal string PlayerText => _playerText
+        ?? throw new InvalidOperationException(
+            $"{TriggerKind} has no player text."
+        );
+    internal GalateaCharacterName HeartbeatCharacterName =>
+        _heartbeatCharacterName
+        ?? throw new InvalidOperationException(
+            $"{TriggerKind} has no heartbeat character name."
+        );
     internal DateTimeOffset? ExternalLocalTimestamp { get; }
     internal IReadOnlyList<PlayerTurnRecall> Recalls { get; }
     internal IReadOnlyList<PlayerTurnNotice> Notices { get; }
+    internal bool UsesHistoricalPlayerActionDialect { get; }
 }
 
 internal static class PlayerTurnObservationEnvelope {
@@ -294,8 +440,34 @@ internal static class PlayerTurnObservationEnvelope {
         "召回的角色笔记（摘要）";
     internal const string RecallExactTextHeading =
         "召回的角色笔记（原文）";
+    internal const string HeartbeatActivationHeading =
+        "角色自主活动时机";
+    private const string HeartbeatActivationBodyPrefix =
+        "外层世界里，又有十分钟流逝。此刻，";
+    private const string HeartbeatActivationBodySuffix =
+        "拥有一段由自己支配的时间：可以留意正在变化的局势，把握稍纵即逝的机会，或推进自己认为重要的事。";
+    /// <summary>
+    /// Code-owned narrative template for autonomous activation. It
+    /// intentionally presents elapsed time as a situated opportunity the
+    /// character may use, rather than as a turn-system event or a wake-up
+    /// from passive suspension.
+    /// </summary>
+    internal const string HeartbeatActivationBodyTemplate =
+        HeartbeatActivationBodyPrefix
+        + GalateaPromptTemplate.CharacterNameToken
+        + HeartbeatActivationBodySuffix;
+    internal const string DelegateReplyDisplayText =
+        "本轮由 Codex 回信触发。";
     internal const string ExternalLocalTimestampPrefix =
         "Observation 形成时的外界本地时间（不自动等同于故事世界时间）：";
+
+    /// <summary>
+    /// V1 reply leases retain this value in <c>reply_lease.player_text</c>
+    /// solely as an internal discriminator. New DelegateReply Observations do
+    /// not render it as player text.
+    /// </summary>
+    internal const string DelegateReplyLeasePlayerTextDiscriminator =
+        "玩家本轮未提交新的动作；本轮仅由外界回信到达触发。";
 
     private const string LegacyReplyHeading =
         "外界代行者 Codex 给 Galatea 的回信";
@@ -309,6 +481,8 @@ internal static class PlayerTurnObservationEnvelope {
     private const string RecallSummaryInfoString = "memo-summary-recall";
     private const string RecallExactTextInfoString =
         "memo-exact-text-recall";
+    private const string HeartbeatActivationInfoString =
+        "heartbeat-activation";
     private const string RecallSourceIdPrefix = "SourceId: ";
     private const string ReplyInfoString = "delegate-reply";
     private const string FailureInfoString = "delivery-failure";
@@ -344,6 +518,14 @@ internal static class PlayerTurnObservationEnvelope {
         timestamp.Offset
     );
 
+    internal static string RenderHeartbeatActivationBody(
+        GalateaCharacterName characterName
+    ) => GalateaPromptTemplate.Render(
+        HeartbeatActivationBodyTemplate,
+        characterName,
+        MaximumRenderedUtf8Bytes
+    );
+
     internal static string Wrap(PlayerTurnObservation observation) {
         ArgumentNullException.ThrowIfNull(observation);
         return Render(
@@ -367,20 +549,44 @@ internal static class PlayerTurnObservationEnvelope {
                 ))
                 .Append(SectionSeparator);
         }
-        AppendSection(
-            builder,
-            PlayerHeading,
-            PlayerInfoString,
-            observation.PlayerText
-        );
-        string previousBody = observation.PlayerText;
-        foreach (PlayerTurnRecall recall in observation.Recalls) {
-            AppendSectionSeparator(builder, previousBody);
-            AppendRecallSection(builder, recall);
-            previousBody = recall.Body;
+        string? previousBody = null;
+        if (observation.TriggerKind
+                is PlayerTurnObservationTriggerKind.PlayerAction
+            || observation.UsesHistoricalPlayerActionDialect) {
+            string playerText = observation.TriggerKind
+                    is PlayerTurnObservationTriggerKind.PlayerAction
+                ? observation.PlayerText
+                : DelegateReplyLeasePlayerTextDiscriminator;
+            AppendSection(
+                builder,
+                PlayerHeading,
+                PlayerInfoString,
+                playerText
+            );
+            previousBody = playerText;
+            foreach (PlayerTurnRecall recall in observation.Recalls) {
+                AppendSectionSeparator(builder, previousBody);
+                AppendRecallSection(builder, recall);
+                previousBody = recall.Body;
+            }
+        }
+        else if (observation.TriggerKind
+                is PlayerTurnObservationTriggerKind.HeartbeatActivation) {
+            string heartbeatBody = RenderHeartbeatActivationBody(
+                observation.HeartbeatCharacterName
+            );
+            AppendSection(
+                builder,
+                HeartbeatActivationHeading,
+                HeartbeatActivationInfoString,
+                heartbeatBody
+            );
+            previousBody = heartbeatBody;
         }
         foreach (PlayerTurnNotice notice in observation.Notices) {
-            AppendSectionSeparator(builder, previousBody);
+            if (previousBody is not null) {
+                AppendSectionSeparator(builder, previousBody);
+            }
             switch (notice) {
                 case PlayerTurnNotice.Reply:
                     AppendSection(
@@ -414,6 +620,11 @@ internal static class PlayerTurnObservationEnvelope {
             }
             previousBody = notice.Body;
         }
+        if (previousBody is null) {
+            throw new InvalidOperationException(
+                "A player-turn Observation has no rendered trigger section."
+            );
+        }
         if (previousBody.EndsWith('\n')) {
             _ = builder.Append('\n');
         }
@@ -433,7 +644,11 @@ internal static class PlayerTurnObservationEnvelope {
         }
         try {
             RequireRenderedFits(stored);
-            return TryUnwrapDialect(
+            return TryUnwrapCurrentAutomaticDialect(
+                    stored,
+                    out observation
+                )
+                || TryUnwrapDialect(
                     stored,
                     ReplyHeading,
                     FailureHeading,
@@ -456,6 +671,155 @@ internal static class PlayerTurnObservationEnvelope {
             ArgumentException or EncoderFallbackException) {
             return false;
         }
+    }
+
+    private static bool TryUnwrapCurrentAutomaticDialect(
+        string stored,
+        out PlayerTurnObservation observation
+    ) {
+        observation = null!;
+        int position = Prefix.Length;
+        if (!TryReadExternalLocalTimestamp(
+                stored,
+                ref position,
+                out DateTimeOffset timestamp)) {
+            return false;
+        }
+
+        PlayerTurnObservation parsed;
+        if (stored.AsSpan(position).StartsWith(
+                "## " + HeartbeatActivationHeading + "\n\n",
+                StringComparison.Ordinal)) {
+            if (!TryReadSection(
+                    stored,
+                    ref position,
+                    HeartbeatActivationHeading,
+                    HeartbeatActivationInfoString,
+                    out string body)
+                || !TryParseHeartbeatActivationBody(
+                    body,
+                    out GalateaCharacterName characterName)
+                || position != stored.Length) {
+                return false;
+            }
+            parsed = PlayerTurnObservation.CreateHeartbeatActivation(
+                timestamp,
+                characterName
+            );
+        }
+        else {
+            var notices = new List<PlayerTurnNotice>();
+            while (position < stored.Length) {
+                if (stored.AsSpan(position).StartsWith(
+                        "## " + ReplyHeading + "\n\n",
+                        StringComparison.Ordinal)) {
+                    if (!TryReadSection(
+                            stored,
+                            ref position,
+                            ReplyHeading,
+                            ReplyInfoString,
+                            out string replyBody)) {
+                        return false;
+                    }
+                    notices.Add(new PlayerTurnNotice.Reply(replyBody));
+                }
+                else if (stored.AsSpan(position).StartsWith(
+                             "## " + FailureHeading + "\n\n",
+                             StringComparison.Ordinal)) {
+                    if (!TryReadSection(
+                            stored,
+                            ref position,
+                            FailureHeading,
+                            FailureInfoString,
+                            out string failureBody)) {
+                        return false;
+                    }
+                    notices.Add(
+                        new PlayerTurnNotice.DeliveryFailure(failureBody)
+                    );
+                }
+                else {
+                    return false;
+                }
+            }
+            if (notices.Count == 0) { return false; }
+            parsed = PlayerTurnObservation.CreateDelegateReply(
+                timestamp,
+                notices
+            );
+        }
+
+        if (!string.Equals(stored, Wrap(parsed), StringComparison.Ordinal)) {
+            return false;
+        }
+        observation = parsed;
+        return true;
+    }
+
+    private static bool TryParseHeartbeatActivationBody(
+        string body,
+        out GalateaCharacterName characterName
+    ) {
+        characterName = null!;
+        if (!body.StartsWith(
+                HeartbeatActivationBodyPrefix,
+                StringComparison.Ordinal)
+            || !body.EndsWith(
+                HeartbeatActivationBodySuffix,
+                StringComparison.Ordinal)
+            || body.Length <= HeartbeatActivationBodyPrefix.Length
+                + HeartbeatActivationBodySuffix.Length) {
+            return false;
+        }
+        string candidate = body[
+            HeartbeatActivationBodyPrefix.Length..
+            ^HeartbeatActivationBodySuffix.Length
+        ];
+        characterName = new GalateaCharacterName(candidate);
+        return string.Equals(
+            body,
+            RenderHeartbeatActivationBody(characterName),
+            StringComparison.Ordinal
+        );
+    }
+
+    private static bool TryReadExternalLocalTimestamp(
+        string stored,
+        ref int position,
+        out DateTimeOffset timestamp
+    ) {
+        timestamp = default;
+        if (!stored.AsSpan(position).StartsWith(
+                ExternalLocalTimestampPrefix,
+                StringComparison.Ordinal)) {
+            return false;
+        }
+        position += ExternalLocalTimestampPrefix.Length;
+        int lineEnd = stored.IndexOf('\n', position);
+        if (lineEnd < position
+            || !stored.AsSpan(lineEnd).StartsWith(
+                SectionSeparator,
+                StringComparison.Ordinal)) {
+            return false;
+        }
+        string timestampText = stored[position..lineEnd];
+        if (!DateTimeOffset.TryParseExact(
+                timestampText,
+                TimestampFormat,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out timestamp)
+            || !string.Equals(
+                timestampText,
+                timestamp.ToString(
+                    TimestampFormat,
+                    CultureInfo.InvariantCulture
+                ),
+                StringComparison.Ordinal)) {
+            return false;
+        }
+        position = lineEnd + SectionSeparator.Length;
+        return true;
     }
 
     private static bool TryUnwrapDialect(
@@ -577,14 +941,28 @@ internal static class PlayerTurnObservationEnvelope {
             }
         }
 
-        var parsed = externalLocalTimestamp is { } timestamp
-            ? new PlayerTurnObservation(
+        bool historicalDelegateReply = string.Equals(
                 playerText,
-                timestamp,
-                notices,
-                recalls
+                DelegateReplyLeasePlayerTextDiscriminator,
+                StringComparison.Ordinal)
+            && recalls.Count == 0
+            && notices.Count > 0
+            && notices.All(static notice => notice is
+                PlayerTurnNotice.Reply
+                or PlayerTurnNotice.DeliveryFailure);
+        PlayerTurnObservation parsed = historicalDelegateReply
+            ? PlayerTurnObservation.CreateHistoricalDelegateReply(
+                externalLocalTimestamp,
+                notices
             )
-            : new PlayerTurnObservation(playerText, notices, recalls);
+            : externalLocalTimestamp is { } timestamp
+                ? new PlayerTurnObservation(
+                    playerText,
+                    timestamp,
+                    notices,
+                    recalls
+                )
+                : new PlayerTurnObservation(playerText, notices, recalls);
         if (!string.Equals(
                 stored,
                 Render(parsed, replyHeading, failureHeading),
@@ -626,7 +1004,20 @@ internal static class PlayerTurnObservationEnvelope {
         PlayerTurnObservation observation
     ) {
         ArgumentNullException.ThrowIfNull(observation);
-        var builder = new StringBuilder(observation.PlayerText);
+        string triggerDisplay = observation.TriggerKind switch {
+            PlayerTurnObservationTriggerKind.PlayerAction =>
+                observation.PlayerText,
+            PlayerTurnObservationTriggerKind.DelegateReply =>
+                DelegateReplyDisplayText,
+            PlayerTurnObservationTriggerKind.HeartbeatActivation =>
+                RenderHeartbeatActivationBody(
+                    observation.HeartbeatCharacterName
+                ),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(observation)
+            )
+        };
+        var builder = new StringBuilder(triggerDisplay);
         foreach (PlayerTurnRecall recall in observation.Recalls) {
             _ = builder.Append("\n\n")
                 .Append(GetRecallHeading(recall.Entry.RecallType))
@@ -872,27 +1263,44 @@ internal static class PlayerTurnObservationEnvelope {
 }
 
 internal static class PlayerTurnObservationClassifier {
+    internal sealed record Projection(
+        PlayerTurnObservationTriggerKind TriggerKind,
+        string? RestorablePlayerText,
+        string DisplayText
+    );
+
     internal static bool TryProject(
         string? stored,
-        out string playerText,
-        out string displayText
+        out Projection projection
     ) {
         if (PlayerTurnObservationEnvelope.TryUnwrap(
                 stored,
                 out PlayerTurnObservation composite)) {
-            playerText = composite.PlayerText;
-            displayText = PlayerTurnObservationEnvelope
-                .FormatForDisplay(composite);
+            projection = new Projection(
+                composite.TriggerKind,
+                composite.TriggerKind
+                        is PlayerTurnObservationTriggerKind.PlayerAction
+                    ? composite.PlayerText
+                    : null,
+                PlayerTurnObservationEnvelope.FormatForDisplay(composite)
+            );
             return true;
         }
         if (GalateaUserMessageEnvelope.TryUnwrapForDisplay(
                 stored,
-                out playerText)) {
-            displayText = playerText;
+                out string playerText)) {
+            projection = new Projection(
+                PlayerTurnObservationTriggerKind.PlayerAction,
+                playerText,
+                playerText
+            );
             return true;
         }
-        playerText = stored ?? string.Empty;
-        displayText = playerText;
+        projection = new Projection(
+            PlayerTurnObservationTriggerKind.PlayerAction,
+            RestorablePlayerText: null,
+            stored ?? string.Empty
+        );
         return false;
     }
 }

@@ -1,3 +1,4 @@
+using Atelia.Galatea.Prompts;
 using Atelia.Galatea.Server.Mailbox;
 
 namespace Atelia.Galatea.Server;
@@ -23,6 +24,31 @@ internal abstract record GalateaFreshInput {
         internal string Text { get; }
         internal IReadOnlyList<PlayerTurnNotice> Notices { get; }
         internal override string DisplayText => Text;
+    }
+
+    internal sealed record DelegateReply : GalateaFreshInput {
+        internal DelegateReply(IEnumerable<PlayerTurnNotice> notices) {
+            Notices = PlayerTurnObservation.FreezeDelegateReplyNotices(
+                notices
+            );
+        }
+
+        internal IReadOnlyList<PlayerTurnNotice> Notices { get; }
+        internal override string DisplayText =>
+            PlayerTurnObservationEnvelope.DelegateReplyDisplayText;
+    }
+
+    internal sealed record HeartbeatActivation : GalateaFreshInput {
+        internal HeartbeatActivation(GalateaCharacterName characterName) {
+            CharacterName = characterName
+                ?? throw new ArgumentNullException(nameof(characterName));
+        }
+
+        internal GalateaCharacterName CharacterName { get; }
+        internal override string DisplayText =>
+            PlayerTurnObservationEnvelope.RenderHeartbeatActivationBody(
+                CharacterName
+            );
     }
 
     internal sealed record InboundMail(MailboxMessage Message)

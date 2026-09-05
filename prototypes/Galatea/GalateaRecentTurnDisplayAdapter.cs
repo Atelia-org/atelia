@@ -107,8 +107,7 @@ internal static class GalateaObservationDisplay {
         }
         return PlayerTurnObservationClassifier.TryProject(
             stored,
-            out _,
-            out string display
-        ) ? display : stored ?? string.Empty;
+            out PlayerTurnObservationClassifier.Projection projection
+        ) ? projection.DisplayText : stored ?? string.Empty;
     }
 }

@@ -259,6 +259,148 @@ public sealed class GalateaHttpV1ContractTests {
         );
     }
 
+    [Fact]
+    public async Task ReadyReplyTurn_FirstPulseReturnsExactStatusEnvelope() {
+        var clock = new FixedTimeProvider(new DateTimeOffset(
+            2030,
+            1,
+            2,
+            3,
+            4,
+            5,
+            TimeSpan.Zero
+        ));
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new NoDispatchCompletionClientFactory(),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            provisionRawOnly: false,
+            timeProvider: clock
+        );
+        using HttpClient client = host.CreateClient();
+        _ = await GalateaTestHost.LoginAsync(client);
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/v1/mailbox/ready-turn",
+            new ReadyReplyTurnRequest("test")
+        );
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            "{\"state\":\"waiting\","
+                + "\"nextActivationAtUnixTimeMilliseconds\":"
+                + (clock.GetUtcNow()
+                    + GalateaBrowserSponsoredAutonomy.IdleInterval)
+                    .ToUnixTimeMilliseconds()
+                + ",\"lastActivationAtUnixTimeMilliseconds\":null,"
+                + "\"code\":null}",
+            await response.Content.ReadAsStringAsync()
+        );
+    }
+
+    [Fact]
+    public void ReadyReplyTurn_WaitingBranchHasNoTraceOrInfoEmission() {
+        string repositoryRoot = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "../../../../.."
+        ));
+        string source = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "prototypes",
+            "Galatea",
+            "Program.cs"
+        ));
+        int start = source.IndexOf(
+            "\"/mailbox/ready-turn\"",
+            StringComparison.Ordinal
+        );
+        int end = source.IndexOf(
+            "\"/mailbox/inbound\"",
+            start,
+            StringComparison.Ordinal
+        );
+        Assert.True(start >= 0 && end > start);
+        string endpoint = source[start..end];
+        Assert.DoesNotContain("DebugUtil.Trace", endpoint,
+            StringComparison.Ordinal);
+        int waitingReturn = endpoint.IndexOf(
+            "return Results.Ok(LoopPulseStatusDto.FromProjection(",
+            StringComparison.Ordinal
+        );
+        int startedInfo = endpoint.IndexOf(
+            "DebugUtil.Info(",
+            StringComparison.Ordinal
+        );
+        Assert.True(waitingReturn >= 0 && startedInfo > waitingReturn);
+    }
+
+    [Fact]
+    public async Task GenericChatAndInboundAcceptedEnvelopesHaveNoOrigin() {
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new SuccessfulCompletionClientFactory(),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            provisionRawOnly: false
+        );
+        using HttpClient client = host.CreateClient();
+        _ = await GalateaTestHost.LoginAsync(client);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+
+        string chatTurnId;
+        using (HttpResponseMessage chat = await client.PostAsJsonAsync(
+                   "/api/v1/chat/turns",
+                   new ChatStreamRequest("hello", "test"))) {
+            Assert.Equal(HttpStatusCode.Accepted, chat.StatusCode);
+            using JsonDocument body = JsonDocument.Parse(
+                await chat.Content.ReadAsStringAsync()
+            );
+            Assert.Equal(
+                ["turnId"],
+                body.RootElement.EnumerateObject()
+                    .Select(static property => property.Name)
+                    .Order(StringComparer.Ordinal)
+                    .ToArray()
+            );
+            chatTurnId = body.RootElement.GetProperty("turnId").GetString()!;
+        }
+        GalateaLiveTurn chatTurn = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(session, chatTurnId)
+        );
+        await Assert.IsAssignableFrom<Task>(chatTurn.RunTask)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        string inboundTurnId;
+        using (HttpResponseMessage inbound = await client.PostAsJsonAsync(
+                   "/api/v1/mailbox/inbound",
+                   new InboundMailboxRequest(
+                       "outside",
+                       "hello from outside",
+                       ConnectionId: "test"
+                   ))) {
+            Assert.Equal(HttpStatusCode.Accepted, inbound.StatusCode);
+            using JsonDocument body = JsonDocument.Parse(
+                await inbound.Content.ReadAsStringAsync()
+            );
+            Assert.Equal(
+                ["messageId", "turnId"],
+                body.RootElement.EnumerateObject()
+                    .Select(static property => property.Name)
+                    .Order(StringComparer.Ordinal)
+                    .ToArray()
+            );
+            inboundTurnId = body.RootElement.GetProperty("turnId")
+                .GetString()!;
+        }
+        GalateaLiveTurn inboundTurn = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(session, inboundTurnId)
+        );
+        await Assert.IsAssignableFrom<Task>(inboundTurn.RunTask)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
     [Theory]
     [InlineData("text/plain")]
     [InlineData("application/problem+json")]
@@ -598,6 +740,44 @@ public sealed class GalateaHttpV1ContractTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             provisionRawOnly: false
         );
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow)
+        : TimeProvider {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+        public override long GetTimestamp() => 0;
+    }
+
+    private sealed class SuccessfulCompletionClientFactory
+        : ICompletionClientFactory {
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) => new SuccessfulCompletionClient(connection);
+    }
+
+    private sealed class SuccessfulCompletionClient(
+        CompletionConnectionConfig connection
+    ) : ICompletionClient {
+        public string Name => "http-contract-success";
+        public string ApiSpecId => "test-v1";
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            const string Text = "completed";
+            observer?.OnTextDelta(Text);
+            return Task.FromResult(new CompletionResult(
+                new ActionMessage([new ActionBlock.Text(Text)]),
+                new CompletionDescriptor(
+                    Name,
+                    ApiSpecId,
+                    connection.ModelId
+                )
+            ));
+        }
+    }
 
     private static HttpRequestMessage JsonRequest(
         HttpMethod method,

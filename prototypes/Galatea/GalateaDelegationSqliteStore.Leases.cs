@@ -168,22 +168,20 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     if (!PlayerTurnObservationEnvelope.TryUnwrap(
                             renderedObservation,
                             out PlayerTurnObservation parsed)
-                        || parsed.ExternalLocalTimestamp is not { }
-                            externalLocalTimestamp) {
+                        || parsed.ExternalLocalTimestamp is null) {
                         throw Conflict(
                             "Rendered Observation must use the timestamped canonical shape."
                         );
                     }
-                    string canonical = RenderLeaseObservation(
-                        connection,
-                        transaction,
-                        lease,
-                        externalLocalTimestamp
-                    );
-                    if (!string.Equals(
-                            renderedObservation,
-                            canonical,
-                            StringComparison.Ordinal)) {
+                    PlayerTurnNotice[] expectedNotices =
+                        ProjectLeaseNotices(
+                            lease,
+                            ReadNotices(connection, transaction)
+                        );
+                    if (!CurrentLeaseObservationMatches(
+                            parsed,
+                            lease,
+                            expectedNotices)) {
                         throw Conflict(
                             "Rendered Observation does not exactly match the frozen cutoff."
                         );
@@ -668,17 +666,11 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
     }
 
-    private static string RenderLeaseObservation(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
+    private static PlayerTurnNotice[] ProjectLeaseNotices(
         GalateaReplyLeaseSnapshot lease,
-        DateTimeOffset externalLocalTimestamp
+        IReadOnlyList<GalateaReplyNoticeSnapshot> notices
     ) {
-        IReadOnlyList<GalateaReplyNoticeSnapshot> notices = ReadNotices(
-            connection,
-            transaction
-        );
-        PlayerTurnNotice[] ready = lease.NoticeIds.Select(noticeId => {
+        return lease.NoticeIds.Select(noticeId => {
             GalateaReplyNoticeSnapshot notice = notices.Single(value =>
                 string.Equals(
                     value.NoticeId,
@@ -695,13 +687,66 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 _ => throw Corrupt("Reply notice kind is unknown.")
             };
         }).ToArray();
-        return PlayerTurnObservationEnvelope.Wrap(
-            new PlayerTurnObservation(
-                lease.PlayerText,
-                externalLocalTimestamp,
-                ready
-            )
+    }
+
+    private static bool CurrentLeaseObservationMatches(
+        PlayerTurnObservation parsed,
+        GalateaReplyLeaseSnapshot lease,
+        IReadOnlyList<PlayerTurnNotice> expectedNotices
+    ) => LeaseObservationMatches(
+        parsed,
+        lease,
+        expectedNotices,
+        allowHistoricalDelegateReply: false
+    );
+
+    private static bool StoredLeaseObservationMatches(
+        PlayerTurnObservation parsed,
+        GalateaReplyLeaseSnapshot lease,
+        IReadOnlyList<PlayerTurnNotice> expectedNotices
+    ) => LeaseObservationMatches(
+        parsed,
+        lease,
+        expectedNotices,
+        allowHistoricalDelegateReply: true
+    );
+
+    private static bool LeaseObservationMatches(
+        PlayerTurnObservation parsed,
+        GalateaReplyLeaseSnapshot lease,
+        IReadOnlyList<PlayerTurnNotice> expectedNotices,
+        bool allowHistoricalDelegateReply
+    ) {
+        bool discriminatorLease = string.Equals(
+            lease.PlayerText,
+            PlayerTurnObservationEnvelope
+                .DelegateReplyLeasePlayerTextDiscriminator,
+            StringComparison.Ordinal
         );
+        bool triggerMatches = discriminatorLease
+            ? parsed.TriggerKind
+                    is PlayerTurnObservationTriggerKind.DelegateReply
+                && (allowHistoricalDelegateReply
+                    || !parsed.UsesHistoricalPlayerActionDialect)
+            : parsed.TriggerKind
+                    is PlayerTurnObservationTriggerKind.PlayerAction
+                && string.Equals(
+                    parsed.PlayerText,
+                    lease.PlayerText,
+                    StringComparison.Ordinal
+                );
+        return triggerMatches
+            && parsed.Notices.Count == expectedNotices.Count
+            && parsed.Notices.Zip(
+                expectedNotices,
+                static (actual, expected) =>
+                    actual.GetType() == expected.GetType()
+                    && string.Equals(
+                        actual.Body,
+                        expected.Body,
+                        StringComparison.Ordinal
+                    )
+            ).All(static matches => matches);
     }
 
     private static bool LeaseMatches(

@@ -30,6 +30,21 @@ internal sealed class GalateaLiveTurn {
         GalateaTurnOptions options,
         GalateaDurableReplyLease? durableReplyLease = null
     ) {
+        bool freshInputLeaseValid = freshInput switch {
+            GalateaFreshInput.PlayerAction => true,
+            GalateaFreshInput.DelegateReply =>
+                durableReplyLease is not null,
+            GalateaFreshInput.HeartbeatActivation
+                or GalateaFreshInput.InboundMail
+                or null => durableReplyLease is null,
+            _ => false
+        };
+        if (!freshInputLeaseValid) {
+            throw new ArgumentException(
+                "The fresh-input trigger and durable reply lease combination is invalid.",
+                nameof(durableReplyLease)
+            );
+        }
         TurnId = Guid.NewGuid().ToString("N");
         FreshInput = freshInput;
         Options = options ?? throw new ArgumentNullException(nameof(options));
@@ -42,6 +57,29 @@ internal sealed class GalateaLiveTurn {
     internal GalateaFreshInput? FreshInput { get; }
 
     internal GalateaDurableReplyLease? DurableReplyLease { get; }
+
+    internal GalateaBrowserSponsoredAutonomyTurnSettlement
+        BrowserSponsoredAutonomySettlement { get; } = new();
+
+    internal GalateaBrowserSponsoredAutonomyClaim?
+        BrowserSponsoredAutonomyClaim { get; private set; }
+
+    /// <summary>
+    /// Binds the exact process-local cadence claim belonging to this heartbeat
+    /// activation. The caller must hold the corresponding session TurnLock.
+    /// </summary>
+    internal void BindBrowserSponsoredAutonomyClaim(
+        GalateaBrowserSponsoredAutonomyClaim claim
+    ) {
+        ArgumentNullException.ThrowIfNull(claim);
+        if (FreshInput is not GalateaFreshInput.HeartbeatActivation
+            || BrowserSponsoredAutonomyClaim is not null) {
+            throw new InvalidOperationException(
+                "Only one cadence claim may bind one heartbeat activation."
+            );
+        }
+        BrowserSponsoredAutonomyClaim = claim;
+    }
 
     public string? UserMessage => FreshInput?.DisplayText;
 

@@ -72,11 +72,28 @@ body {
   font-family: "IBM Plex Mono", "Maple Mono", monospace;
 }
 
-.mailbox-status {
+.mailbox-status,
+.autonomy-status {
   margin-top: 8px;
   color: #6f6859;
   font-size: 0.82rem;
   line-height: 1.4;
+}
+
+.autonomy-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.autonomy-status.is-paused {
+  color: #855412;
+}
+
+#autonomy-state,
+#autonomy-countdown,
+#autonomy-last-activation {
+  display: inline-block;
 }
 
 .connection-picker {

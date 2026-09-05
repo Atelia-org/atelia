@@ -582,6 +582,30 @@ internal sealed record StartTurnResponseDto(
     string TurnId
 );
 
+internal sealed record LoopPulseAcceptedTurnDto(
+    string TurnId,
+    string Origin
+);
+
+internal sealed record LoopPulseStatusDto(
+    string State,
+    long? NextActivationAtUnixTimeMilliseconds,
+    long? LastActivationAtUnixTimeMilliseconds,
+    string? Code
+) {
+    internal static LoopPulseStatusDto FromProjection(
+        GalateaBrowserSponsoredAutonomyStatus value
+    ) {
+        ArgumentNullException.ThrowIfNull(value);
+        return new(
+            value.State,
+            value.NextActivationAtUnixTimeMilliseconds,
+            value.LastActivationAtUnixTimeMilliseconds,
+            value.Code
+        );
+    }
+}
+
 internal sealed record CurrentTurnDto(
     string Status,
     string? TurnId = null,

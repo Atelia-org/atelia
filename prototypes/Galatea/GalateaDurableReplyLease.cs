@@ -96,20 +96,6 @@ internal sealed class GalateaDurableReplyLease {
         return ProjectNotices(lease, storeSnapshot.Notices);
     }
 
-    internal string RenderObservation(
-        DateTimeOffset externalLocalTimestamp
-    ) {
-        GalateaDelegationStateSnapshot storeSnapshot = _store.ReadSnapshot();
-        GalateaReplyLeaseSnapshot lease = RequireCurrent(storeSnapshot);
-        return PlayerTurnObservationEnvelope.Wrap(
-            new PlayerTurnObservation(
-                lease.PlayerText,
-                externalLocalTimestamp,
-                ProjectNotices(lease, storeSnapshot.Notices)
-            )
-        );
-    }
-
     /// <summary>
     /// The caller must own the per-user SessionJournal/store serialization
     /// boundary from this exact-head check through the following SendAsync.
