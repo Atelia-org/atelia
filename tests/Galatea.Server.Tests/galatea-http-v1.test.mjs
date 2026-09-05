@@ -49,6 +49,92 @@ assert.throws(
   }),
   /must include next retry time/,
 );
+assert.throws(
+  () => production.requireMailboxStatus({
+    ...exactMailboxStatus,
+    state: "quarantined",
+    code: "ROUTE_BAD",
+  }),
+  /must not imply retry/,
+);
+
+const mailboxFetchCalls = [];
+const fetchedMailboxStatus = await production.fetchMailboxStatus(
+  async (...args) => {
+    mailboxFetchCalls.push(args);
+    return {
+      ok: true,
+      status: 200,
+      headers: new Map([["content-type", "application/json; charset=utf-8"]]),
+      text: async () => JSON.stringify(exactMailboxStatus),
+    };
+  },
+);
+assert.deepEqual(fetchedMailboxStatus, exactMailboxStatus);
+assert.deepEqual(mailboxFetchCalls, [[
+  "/api/v1/mailbox/status",
+  { method: "GET", credentials: "same-origin", cache: "no-store" },
+]]);
+
+assert.match(
+  production.formatMailboxStatus({
+    ...exactMailboxStatus,
+    state: "unavailable",
+    attemptCount: 0,
+    code: "MAINTENANCE_READ_ONLY",
+    nextRetryAtUnixTimeMilliseconds: null,
+  }),
+  /维护模式，后台处理已暂停.*排队：2.*待续接回信：1/,
+);
+assert.doesNotMatch(
+  production.formatMailboxStatus({
+    ...exactMailboxStatus,
+    state: "quarantined",
+    attemptCount: 0,
+    code: "ROUTE_BAD",
+    nextRetryAtUnixTimeMilliseconds: null,
+  }),
+  /重试/,
+);
+
+const scheduledMailboxTimers = [];
+const clearedMailboxTimers = [];
+const publishedMailboxStatuses = [];
+const pendingMailboxReads = [];
+let nextMailboxTimerId = 1;
+const mailboxPoller = production.createMailboxStatusPoller({
+  readStatus: () => new Promise((resolve, reject) => {
+    pendingMailboxReads.push({ resolve, reject });
+  }),
+  publishStatus: (status) => publishedMailboxStatuses.push(status),
+  setTimeoutFn: (callback, delay) => {
+    const timer = { id: nextMailboxTimerId++, callback, delay };
+    scheduledMailboxTimers.push(timer);
+    return timer.id;
+  },
+  clearTimeoutFn: (id) => clearedMailboxTimers.push(id),
+});
+mailboxPoller.start();
+assert.equal(scheduledMailboxTimers.length, 1);
+assert.equal(scheduledMailboxTimers[0].delay, 0);
+scheduledMailboxTimers.shift().callback();
+assert.equal(pendingMailboxReads.length, 1);
+mailboxPoller.start();
+assert.equal(scheduledMailboxTimers.length, 0, "in-flight read is single");
+pendingMailboxReads.shift().resolve(exactMailboxStatus);
+await new Promise((resolve) => setImmediate(resolve));
+assert.deepEqual(publishedMailboxStatuses, [exactMailboxStatus]);
+assert.equal(scheduledMailboxTimers.length, 1);
+assert.equal(scheduledMailboxTimers[0].delay, 5000);
+scheduledMailboxTimers.shift().callback();
+assert.equal(pendingMailboxReads.length, 1);
+pendingMailboxReads.shift().reject(new Error("temporary"));
+await new Promise((resolve) => setImmediate(resolve));
+assert.deepEqual(publishedMailboxStatuses, [exactMailboxStatus, null]);
+assert.equal(scheduledMailboxTimers.length, 1, "failure keeps polling");
+assert.equal(scheduledMailboxTimers[0].delay, 5000);
+mailboxPoller.stop();
+assert.deepEqual(clearedMailboxTimers, [scheduledMailboxTimers[0].id]);
 
 const valid = {
   turns: [{
@@ -418,17 +504,11 @@ for (const state of [
 }
 
 const mailboxStatusPoller = source.slice(
-  source.indexOf("function clearMailboxStatusTimer"),
-  source.indexOf("function renderTurns"),
+  source.indexOf("export function createMailboxStatusPoller"),
+  source.indexOf("export function formatMailboxStatus"),
 );
-assert.match(mailboxStatusPoller, /\/api\/v1\/mailbox\/status/);
-assert.match(mailboxStatusPoller, /requireMailboxStatus/);
-assert.match(mailboxStatusPoller, /cache: "no-store"/);
-assert.match(mailboxStatusPoller, /window\.setTimeout/);
-assert.match(mailboxStatusPoller, /delayMs = 5000/);
-assert.match(mailboxStatusPoller, /state\.mailboxStatusInFlight/);
-assert.doesNotMatch(mailboxStatusPoller, /mailLoopEnabled/);
-assert.match(source, /scheduleMailboxStatusPoll\(0\);/);
+assert.doesNotMatch(mailboxStatusPoller, /mailLoopEnabled|ready-turn|textarea/);
+assert.match(source, /mailboxStatusPoller\.start\(\);/);
 
 const streamEventHandler = source.slice(
   source.indexOf("function handleEvent"),

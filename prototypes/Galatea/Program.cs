@@ -340,14 +340,6 @@ api.MapGet(
         GalateaMailboxStatusDto response = hostService.ReadMailboxStatus(
             userId
         );
-        DebugUtil.Trace(
-            "Galatea.Api",
-            "GET /api/v1/mailbox/status "
-                + $"user={userId}, state={response.State}, "
-                + $"queued={response.QueuedCount}, "
-                + $"ready={response.ReadyNoticeCount}, "
-                + $"code={response.Code ?? "<none>"}"
-        );
         return Results.Ok(response);
     }
 );

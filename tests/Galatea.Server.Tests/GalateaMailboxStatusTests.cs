@@ -8,11 +8,13 @@ public sealed class GalateaMailboxStatusTests {
         GalateaMailboxStatusAggregate allSignals = Baseline() with {
             RouteState = GalateaDelegationRouteState.Quarantined,
             RouteQuarantineCode = "ROUTE_BAD",
+            RouteHasActiveMail = true,
             ActiveMailState = GalateaDurableMailState.Accepted,
             ActiveMailAttemptCount = 7,
             ActiveMailLastCode = "ACCEPTED_TURN_NOT_VISIBLE",
             ActiveMailNextRetryAtUnixTimeMilliseconds = 1234,
             ActiveLeaseQuarantined = true,
+            ActiveStateMailCount = 1,
             QueuedCount = 3,
             ReadyNoticeCount = 2
         };
@@ -23,9 +25,9 @@ public sealed class GalateaMailboxStatusTests {
         Assert.Equal(GalateaMailboxStatusState.Quarantined, status.State);
         Assert.Equal(3, status.QueuedCount);
         Assert.Equal(2, status.ReadyNoticeCount);
-        Assert.Equal(7, status.AttemptCount);
+        Assert.Equal(0, status.AttemptCount);
         Assert.Equal("ROUTE_BAD", status.Code);
-        Assert.Equal(1234, status.NextRetryAtUnixTimeMilliseconds);
+        Assert.Null(status.NextRetryAtUnixTimeMilliseconds);
     }
 
     [Fact]
@@ -34,6 +36,8 @@ public sealed class GalateaMailboxStatusTests {
             GalateaDelegationSqliteStore.ProjectMailboxStatus(
                 Baseline() with {
                     ActiveMailState = GalateaDurableMailState.Accepted,
+                    RouteHasActiveMail = true,
+                    ActiveStateMailCount = 1,
                     ActiveMailAttemptCount = 4,
                     ActiveMailLastCode = "ACCEPTED_TURN_NOT_VISIBLE",
                     ActiveMailNextRetryAtUnixTimeMilliseconds = 8000
@@ -43,6 +47,8 @@ public sealed class GalateaMailboxStatusTests {
             GalateaDelegationSqliteStore.ProjectMailboxStatus(
                 Baseline() with {
                     ActiveMailState = GalateaDurableMailState.OutcomeUnknown,
+                    RouteHasActiveMail = true,
+                    ActiveStateMailCount = 1,
                     ActiveMailAttemptCount = 2,
                     ActiveMailLastCode = "TEMPORARY",
                     ActiveMailNextRetryAtUnixTimeMilliseconds = 4000
@@ -66,7 +72,11 @@ public sealed class GalateaMailboxStatusTests {
         }) {
             GalateaMailboxStatusProjection status =
                 GalateaDelegationSqliteStore.ProjectMailboxStatus(
-                    Baseline() with { ActiveMailState = mailState }
+                    Baseline() with {
+                        RouteHasActiveMail = true,
+                        ActiveMailState = mailState,
+                        ActiveStateMailCount = 1
+                    }
                 );
 
             Assert.Equal(
@@ -92,6 +102,27 @@ public sealed class GalateaMailboxStatusTests {
         Assert.Equal(GalateaMailboxStatusState.ReadyReply, ready.State);
         Assert.Equal(GalateaMailboxStatusState.Queued, queued.State);
         Assert.Equal(GalateaMailboxStatusState.NoMail, empty.State);
+    }
+
+    [Theory]
+    [InlineData(true, 0)]
+    [InlineData(false, 1)]
+    [InlineData(true, 2)]
+    public void Projection_RejectsInconsistentActiveMailAuthority(
+        bool routeHasActiveMail,
+        int activeStateMailCount
+    ) {
+        GalateaMailboxStatusAggregate inconsistent = Baseline() with {
+            RouteHasActiveMail = routeHasActiveMail,
+            ActiveMailState = routeHasActiveMail
+                ? GalateaDurableMailState.Started
+                : null,
+            ActiveStateMailCount = activeStateMailCount
+        };
+
+        Assert.Throws<InvalidDataException>(() =>
+            GalateaDelegationSqliteStore.ProjectMailboxStatus(inconsistent)
+        );
     }
 
     [Fact]
@@ -120,12 +151,14 @@ public sealed class GalateaMailboxStatusTests {
         RouteAttemptCount: 0,
         RouteLastCode: null,
         RouteNextRetryAtUnixTimeMilliseconds: null,
+        RouteHasActiveMail: false,
         ActiveMailState: null,
         ActiveMailTerminalCode: null,
         ActiveMailAttemptCount: 0,
         ActiveMailLastCode: null,
         ActiveMailNextRetryAtUnixTimeMilliseconds: null,
         ActiveLeaseQuarantined: false,
+        ActiveStateMailCount: 0,
         QueuedCount: 0,
         ReadyNoticeCount: 0
     );

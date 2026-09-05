@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Atelia.Galatea.Prompts;
 using Atelia.Galatea.Server;
+using Atelia.Galatea.Server.Mailbox;
 using Atelia.SessionJournal;
 using Atelia.Testing;
 using Xunit;
@@ -79,7 +80,23 @@ public sealed class GalateaDelegationSupervisorTests {
         using (GalateaDelegationSqliteStore created = CreateStore(
                    engine,
                    writableConfig.Users[0],
-                   writableConfig.Delegates)) { }
+                   writableConfig.Delegates)) {
+            _ = created.CaptureActionBatch(
+                new GalateaDelegationCaptureRequest(
+                    "ej1:00000000000000010000000100000000",
+                    new string('a', 64),
+                    VisibleActionUtf8Bytes: 12,
+                    "extractor-contract-v1",
+                    [new SendMailIntent(
+                        "Codex",
+                        Subject: "secret subject",
+                        Body: "secret body",
+                        InReplyToMessageId: null,
+                        EvidenceQuote: "sent"
+                    )]
+                )
+            );
+        }
 
         var writableTransport = new ProbeTransport();
         await using (var supervisor = new GalateaDelegationSupervisor(
@@ -123,6 +140,17 @@ public sealed class GalateaDelegationSupervisorTests {
             Assert.False(supervisor.Signal());
             await Task.Delay(50);
             Assert.Equal(0, Volatile.Read(ref pulseCount));
+            GalateaMailboxStatusProjection mailboxStatus =
+                supervisor.ReadMailboxStatus("alice");
+            Assert.Equal(
+                GalateaMailboxStatusState.Unavailable,
+                mailboxStatus.State
+            );
+            Assert.Equal("MAINTENANCE_READ_ONLY", mailboxStatus.Code);
+            Assert.Equal(1, mailboxStatus.QueuedCount);
+            Assert.Equal(0, mailboxStatus.ReadyNoticeCount);
+            Assert.Equal(0, mailboxStatus.AttemptCount);
+            Assert.Null(mailboxStatus.NextRetryAtUnixTimeMilliseconds);
             GalateaDelegationUserUnavailableException failure =
                 Assert.Throws<GalateaDelegationUserUnavailableException>(
                     () => supervisor.AttachWritableSession("alice", engine)

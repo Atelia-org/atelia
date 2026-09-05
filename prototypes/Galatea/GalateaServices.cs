@@ -551,7 +551,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
     /// <summary>
     /// Reads mailbox progress without GetSessionAsync, TurnLock, extraction,
     /// transport, provider work, or reply-lease admission. This separation
-    /// from the mutating browser heartbeat is intentional.
+    /// from the mutating browser heartbeat is intentional. Successful polls
+    /// intentionally produce no per-request diagnostic log; failures are
+    /// logged at the supervisor boundary without recreating heartbeat noise.
     /// </summary>
     internal GalateaMailboxStatusDto ReadMailboxStatus(string userId) =>
         GalateaMailboxStatusDto.FromProjection(

@@ -538,7 +538,9 @@ SQLite read transaction中只聚合状态、排队数量、Ready notice数量、
 `Cache-Control: no-store`；state优先级为`unavailable > quarantined > accepted-history-unavailable > backoff >
 active-running > ready-reply > queued > no-mail`。页面以独立single-in-flight、递归`setTimeout`的5秒轮询展示
 该状态和两个count，无论自动续接checkbox是否勾选都会继续；它只提供观察能力，不改变
-`POST /mailbox/ready-turn`的lease/admission语义。
+`POST /mailbox/ready-turn`的lease/admission语义。Maintenance下existing store仍会读取并显示count，但主状态固定为
+`unavailable/MAINTENANCE_READ_ONLY`且不显示attempt/next retry，明确表示后台处理已暂停。成功的5秒poll有意不逐次
+写Debug log，避免重新制造heartbeat噪声；store read失败仍由supervisor记录Warning。
 
 主线terminal Action durable并回到`Idle`后，host先用SessionJournal exact raw evidence结算当前reply lease，
 再在recent refresh与SSE `done`之前使用

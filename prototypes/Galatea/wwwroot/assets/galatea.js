@@ -102,7 +102,131 @@ export function requireMailboxStatus(value) {
   ) {
     throw new Error("mailbox backoff must include next retry time");
   }
+  if (
+    status.state === "quarantined"
+    && (
+      status.attemptCount !== 0
+      || status.nextRetryAtUnixTimeMilliseconds !== null
+    )
+  ) {
+    throw new Error("mailbox quarantined state must not imply retry");
+  }
   return status;
+}
+
+export async function fetchMailboxStatus(fetchImpl) {
+  if (typeof fetchImpl !== "function") {
+    throw new Error("mailbox status fetch implementation is required");
+  }
+  const response = await fetchImpl("/api/v1/mailbox/status", {
+    method: "GET",
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`mailbox status request failed with ${response.status}`);
+  }
+  return await readJsonResponse(response, requireMailboxStatus);
+}
+
+export function createMailboxStatusPoller({
+  readStatus,
+  publishStatus,
+  setTimeoutFn,
+  clearTimeoutFn,
+}) {
+  for (const [name, value] of Object.entries({
+    readStatus, publishStatus, setTimeoutFn, clearTimeoutFn,
+  })) {
+    if (typeof value !== "function") {
+      throw new Error(`mailbox status poller ${name} is required`);
+    }
+  }
+  let timerId = null;
+  let inFlight = false;
+  let stopped = false;
+
+  function schedule(delayMs = 5000) {
+    if (stopped || timerId !== null || inFlight) {
+      return;
+    }
+    timerId = setTimeoutFn(() => {
+      timerId = null;
+      void run();
+    }, delayMs);
+  }
+
+  async function run() {
+    if (stopped || inFlight) {
+      return;
+    }
+    inFlight = true;
+    try {
+      publishStatus(await readStatus());
+    } catch {
+      publishStatus(null);
+    } finally {
+      inFlight = false;
+      schedule();
+    }
+  }
+
+  return Object.freeze({
+    start() {
+      schedule(0);
+    },
+    stop() {
+      stopped = true;
+      if (timerId !== null) {
+        clearTimeoutFn(timerId);
+        timerId = null;
+      }
+    },
+  });
+}
+
+export function formatMailboxStatus(
+  value,
+  formatRetryTime = (milliseconds) =>
+    new Date(milliseconds).toLocaleTimeString(),
+) {
+  const status = requireMailboxStatus(value);
+  if (typeof formatRetryTime !== "function") {
+    throw new Error("mailbox retry-time formatter is required");
+  }
+  const labels = {
+    "no-mail": "邮箱空闲",
+    queued: "邮件已排队",
+    "active-running": "Codex 正在处理邮件",
+    backoff: "后台暂时失败，正在等待重试",
+    "accepted-history-unavailable":
+      "Codex 已接受邮件，但持久历史暂不可见；正在安全重试",
+    "ready-reply": "Codex 回信已就绪",
+    quarantined: "邮件链路已隔离，等待人工检查",
+    unavailable: status.code === "MAINTENANCE_READ_ONLY"
+      ? "维护模式，后台处理已暂停"
+      : "邮箱状态暂不可用",
+  };
+  const detail = [];
+  if (status.attemptCount > 0) {
+    detail.push(`尝试 ${status.attemptCount} 次`);
+  }
+  if (status.nextRetryAtUnixTimeMilliseconds !== null) {
+    detail.push(
+      `下次重试 ${formatRetryTime(
+        status.nextRetryAtUnixTimeMilliseconds,
+      )}`,
+    );
+  }
+  if (status.code !== null) {
+    detail.push(`代码 ${status.code}`);
+  }
+  const suffix = [
+    `排队：${status.queuedCount}`,
+    `待续接回信：${status.readyNoticeCount}`,
+    ...detail,
+  ].join("；");
+  return `邮箱状态：${labels[status.state]}（${suffix}）`;
 }
 
 function requireNullableObject(value, validator, label) {
@@ -865,8 +989,6 @@ function startGalateaApp() {
     mailLoopInFlight: false,
     mailLoopTimerId: null,
     mailLoopInitialized: false,
-    mailboxStatusInFlight: false,
-    mailboxStatusTimerId: null,
     mailboxStatus: null,
     selectedConnectionId: null,
     contextHeader: { observation: "", action: "" },
@@ -936,90 +1058,32 @@ function startGalateaApp() {
 
   function renderMailboxStatus(status) {
     state.mailboxStatus = status;
-    const labels = {
-      "no-mail": "邮箱空闲",
-      queued: "邮件已排队",
-      "active-running": "Codex 正在处理邮件",
-      backoff: "后台暂时失败，正在等待重试",
-      "accepted-history-unavailable":
-        "Codex 已接受邮件，但持久历史暂不可见；正在安全重试",
-      "ready-reply": "Codex 回信已就绪",
-      quarantined: "邮件链路已隔离，等待人工检查",
-      unavailable: "邮箱状态暂不可用",
-    };
-    const detail = [];
-    if (status.attemptCount > 0) {
-      detail.push(`尝试 ${status.attemptCount} 次`);
-    }
-    if (status.nextRetryAtUnixTimeMilliseconds !== null) {
-      detail.push(
-        `下次重试 ${new Date(
-          status.nextRetryAtUnixTimeMilliseconds,
-        ).toLocaleTimeString()}`,
-      );
-    }
-    if (status.code !== null) {
-      detail.push(`代码 ${status.code}`);
-    }
-    const suffix = [
-      `排队：${status.queuedCount}`,
-      `待续接回信：${status.readyNoticeCount}`,
-      ...detail,
-    ].join("；");
-    const text = `邮箱状态：${labels[status.state]}（${suffix}）`;
+    const text = formatMailboxStatus(status);
     if (mailboxStatus && mailboxStatus.textContent !== text) {
       mailboxStatus.textContent = text;
     }
   }
 
-  function clearMailboxStatusTimer() {
-    if (state.mailboxStatusTimerId !== null) {
-      window.clearTimeout(state.mailboxStatusTimerId);
-      state.mailboxStatusTimerId = null;
-    }
-  }
-
-  function scheduleMailboxStatusPoll(delayMs = 5000) {
-    if (
-      state.mailboxStatusTimerId !== null
-      || state.mailboxStatusInFlight
-    ) {
-      return;
-    }
-    state.mailboxStatusTimerId = window.setTimeout(() => {
-      state.mailboxStatusTimerId = null;
-      void runMailboxStatusPoll();
-    }, delayMs);
-  }
-
-  async function runMailboxStatusPoll() {
-    if (state.mailboxStatusInFlight) {
-      scheduleMailboxStatusPoll();
-      return;
-    }
-    state.mailboxStatusInFlight = true;
-    try {
-      const status = await fetchJson(
-        "/api/v1/mailbox/status",
-        requireMailboxStatus,
-        { cache: "no-store" },
-      );
+  const mailboxStatusPoller = createMailboxStatusPoller({
+    readStatus: () => fetchMailboxStatus(window.fetch.bind(window)),
+    publishStatus: (status) => {
+      if (status === null) {
+        const previous = state.mailboxStatus;
+        renderMailboxStatus({
+          state: "unavailable",
+          queuedCount: previous?.queuedCount ?? 0,
+          readyNoticeCount: previous?.readyNoticeCount ?? 0,
+          attemptCount: 0,
+          code: "STATUS_READ_FAILED",
+          nextRetryAtUnixTimeMilliseconds: null,
+        });
+        return;
+      }
       renderMailboxStatus(status);
-    } catch {
-      const previous = state.mailboxStatus;
-      renderMailboxStatus({
-        state: "unavailable",
-        queuedCount: previous?.queuedCount ?? 0,
-        readyNoticeCount: previous?.readyNoticeCount ?? 0,
-        attemptCount: 0,
-        code: "STATUS_READ_FAILED",
-        nextRetryAtUnixTimeMilliseconds: null,
-      });
-    } finally {
-      state.mailboxStatusInFlight = false;
-      scheduleMailboxStatusPoll();
-    }
-  }
+    },
+    setTimeoutFn: window.setTimeout.bind(window),
+    clearTimeoutFn: window.clearTimeout.bind(window),
+  });
 
   function renderTurns() {
     turnList.innerHTML = state.recentTurns.map(renderTurn).join("")
@@ -2200,7 +2264,7 @@ function startGalateaApp() {
     setStreaming(false, "");
   }
 
-  scheduleMailboxStatusPoll(0);
+  mailboxStatusPoller.start();
   initializeApp()
     .then(() => {
       state.mailLoopInitialized = true;

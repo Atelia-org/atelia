@@ -107,12 +107,14 @@ internal sealed record GalateaMailboxStatusAggregate(
     int RouteAttemptCount,
     string? RouteLastCode,
     long? RouteNextRetryAtUnixTimeMilliseconds,
+    bool RouteHasActiveMail,
     GalateaDurableMailState? ActiveMailState,
     string? ActiveMailTerminalCode,
     int ActiveMailAttemptCount,
     string? ActiveMailLastCode,
     long? ActiveMailNextRetryAtUnixTimeMilliseconds,
     bool ActiveLeaseQuarantined,
+    int ActiveStateMailCount,
     int QueuedCount,
     int ReadyNoticeCount
 );

@@ -831,7 +831,18 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                     );
                 }
                 try {
-                    return _store.ReadMailboxStatus();
+                    GalateaMailboxStatusProjection status =
+                        _store.ReadMailboxStatus();
+                    if (_availability
+                        == GalateaDelegationUserAvailability.ReadOnly) {
+                        return status with {
+                            State = GalateaMailboxStatusState.Unavailable,
+                            AttemptCount = 0,
+                            Code = "MAINTENANCE_READ_ONLY",
+                            NextRetryAtUnixTimeMilliseconds = null
+                        };
+                    }
+                    return status;
                 }
                 catch (Exception exception) when (
                     GalateaExceptionClassifier.IsNonFatal(exception)) {

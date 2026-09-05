@@ -16,6 +16,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                    route.ensure_attempt_count,
                    route.ensure_last_code,
                    route.next_ensure_at_ms,
+                   route.active_dispatch_id IS NOT NULL,
                    active.state,
                    active.terminal_code,
                    active.reconcile_attempt_count,
@@ -27,6 +28,13 @@ internal sealed partial class GalateaDelegationSqliteStore {
                    ),
                    (
                        SELECT COUNT(*) FROM outbound_mail
+                       WHERE state IN (
+                           'Started', 'OutcomeUnknown', 'Accepted',
+                           'Quarantined'
+                       )
+                   ),
+                   (
+                       SELECT COUNT(*) FROM outbound_mail
                        WHERE route_class = 'Codex' AND state = 'Queued'
                    ),
                    (
@@ -34,37 +42,33 @@ internal sealed partial class GalateaDelegationSqliteStore {
                        WHERE state = 'Ready'
                    )
             FROM route_binding AS route
-            LEFT JOIN (
-                SELECT state, terminal_code, reconcile_attempt_count,
-                       reconcile_last_code, next_reconcile_at_ms
-                FROM outbound_mail
-                WHERE state IN (
-                    'Started', 'OutcomeUnknown', 'Accepted', 'Quarantined'
-                )
-            ) AS active ON TRUE
+            LEFT JOIN outbound_mail AS active
+              ON active.dispatch_id = route.active_dispatch_id
             WHERE route.singleton = 1;
             """;
         using SqliteDataReader reader = command.ExecuteReader();
         if (!reader.Read()) {
             throw Corrupt("route_binding singleton is missing.");
         }
-        GalateaDurableMailState? activeMailState = reader.IsDBNull(5)
+        GalateaDurableMailState? activeMailState = reader.IsDBNull(6)
             ? null
-            : ParseExact<GalateaDurableMailState>(reader.GetString(5));
+            : ParseExact<GalateaDurableMailState>(reader.GetString(6));
         var aggregate = new GalateaMailboxStatusAggregate(
             ParseExact<GalateaDelegationRouteState>(reader.GetString(0)),
             ReadNullableString(reader, 1),
             reader.GetInt32(2),
             ReadNullableString(reader, 3),
             reader.IsDBNull(4) ? null : reader.GetInt64(4),
+            reader.GetInt64(5) == 1,
             activeMailState,
-            ReadNullableString(reader, 6),
-            reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
-            ReadNullableString(reader, 8),
-            reader.IsDBNull(9) ? null : reader.GetInt64(9),
-            reader.GetInt64(10) == 1,
-            checked((int)reader.GetInt64(11)),
-            checked((int)reader.GetInt64(12))
+            ReadNullableString(reader, 7),
+            reader.IsDBNull(8) ? 0 : reader.GetInt32(8),
+            ReadNullableString(reader, 9),
+            reader.IsDBNull(10) ? null : reader.GetInt64(10),
+            reader.GetInt64(11) == 1,
+            checked((int)reader.GetInt64(12)),
+            checked((int)reader.GetInt64(13)),
+            checked((int)reader.GetInt64(14))
         );
         if (reader.Read()) {
             throw Corrupt("route_binding has multiple singleton rows.");
@@ -76,6 +80,18 @@ internal sealed partial class GalateaDelegationSqliteStore {
         GalateaMailboxStatusAggregate value
     ) {
         ArgumentNullException.ThrowIfNull(value);
+        bool hasJoinedActiveMail = value.ActiveMailState is not null;
+        if (value.RouteHasActiveMail != hasJoinedActiveMail
+            || value.ActiveStateMailCount != (hasJoinedActiveMail ? 1 : 0)
+            || value.ActiveMailState is not null and not (
+                GalateaDurableMailState.Started
+                or GalateaDurableMailState.OutcomeUnknown
+                or GalateaDurableMailState.Accepted
+                or GalateaDurableMailState.Quarantined)) {
+            throw new InvalidDataException(
+                "Mailbox status active-mail authority is inconsistent."
+            );
+        }
         ArgumentOutOfRangeException.ThrowIfNegative(value.QueuedCount);
         ArgumentOutOfRangeException.ThrowIfNegative(value.ReadyNoticeCount);
         ArgumentOutOfRangeException.ThrowIfNegative(value.RouteAttemptCount);
@@ -97,9 +113,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
             return Build(
                 GalateaMailboxStatusState.Quarantined,
                 value,
-                AttemptCount(value),
+                attemptCount: 0,
                 code,
-                NextRetry(value)
+                nextRetryAtUnixTimeMilliseconds: null
             );
         }
 

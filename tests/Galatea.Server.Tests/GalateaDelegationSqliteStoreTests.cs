@@ -82,6 +82,41 @@ public sealed class GalateaDelegationSqliteStoreTests {
     }
 
     [Fact]
+    public void MailboxStatus_FailsClosedOnOrphanActiveStateRow() {
+        using var directory = new StoreDirectory();
+        GalateaDelegationStoreOwner owner = Owner();
+        GalateaDelegationStoreLimits limits = Limits();
+        using GalateaDelegationSqliteStore store =
+            GalateaDelegationSqliteStore.CreateNew(
+                directory.Path, owner, Baseline(), limits
+            );
+        _ = store.CaptureActionBatch(Capture(
+            Address(97),
+            [Mail("Codex", "secret")]
+        ));
+        ExecuteSql(
+            System.IO.Path.Combine(
+                directory.Path,
+                GalateaDelegationSqliteStore.DatabaseFileName
+            ),
+            """
+            UPDATE outbound_mail
+            SET state = 'Started', operation_id = dispatch_id,
+                requested_thread_id = 'thread';
+            """
+        );
+
+        InvalidDataException failure = Assert.Throws<InvalidDataException>(
+            store.ReadMailboxStatus
+        );
+        Assert.Contains(
+            "active-mail authority is inconsistent",
+            failure.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
     public void CreateOpen_RequiresExactIdentityLimitsAndExclusiveOwner() {
         using var directory = new StoreDirectory();
         GalateaDelegationStoreOwner owner = Owner();
