@@ -4,6 +4,7 @@ import type { InitializeResponse } from "../../schemas/InitializeResponse.js";
 import { BridgeError } from "../errors.js";
 import type { BridgeLogger } from "../logger.js";
 import { hasId, hasMethod, type JsonRpcId, type JsonRpcNotification } from "./protocol.js";
+import { codexVersionFromUserAgent, PINNED_CODEX_VERSION } from "./pinned-version.js";
 
 interface Connection {
   child: ChildProcessWithoutNullStreams;
@@ -104,7 +105,7 @@ export class CodexAppServerClient {
     this.connection = connection;
 
     try {
-      await this.rawRequest<InitializeResponse>(connection, "initialize", {
+      const initializeResponse = await this.rawRequest<InitializeResponse>(connection, "initialize", {
         clientInfo: {
           name: "atelia_local_codex_mcp",
           title: "Atelia Local Codex MCP Bridge",
@@ -128,6 +129,24 @@ export class CodexAppServerClient {
           ],
         },
       });
+      const actualVersion = codexVersionFromUserAgent(initializeResponse.userAgent);
+      if (actualVersion !== PINNED_CODEX_VERSION) {
+        this.options.logger.log("error", "codex_version_mismatch", {
+          expected_version: PINNED_CODEX_VERSION,
+          actual_version: actualVersion ?? "unrecognized",
+        });
+        connection.expectedStop = true;
+        throw new BridgeError(
+          "CODEX_VERSION_MISMATCH",
+          `Configured Codex version mismatch: expected ${PINNED_CODEX_VERSION}, found ${actualVersion ?? "an unrecognized user agent"}.`,
+          {
+            details: {
+              expected_version: PINNED_CODEX_VERSION,
+              actual_version: actualVersion ?? "unrecognized",
+            },
+          },
+        );
+      }
       await this.rawNotify(connection, "initialized");
       if (this.connection !== connection || connection.failed) {
         throw new BridgeError("CODEX_START_FAILED", "Codex app-server stopped during initialization.");

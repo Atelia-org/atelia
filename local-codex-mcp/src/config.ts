@@ -1,4 +1,5 @@
 import { BridgeError } from "./errors.js";
+import { PINNED_CODEX_ENTRYPOINT } from "./codex/pinned-version.js";
 
 export type BridgeTransport = "stdio" | "http";
 
@@ -82,19 +83,28 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     maxWaitMs,
   );
 
+  const configuredCodexCommand = env.CODEX_BRIDGE_CODEX_COMMAND?.trim();
+  const usePinnedCodex = !configuredCodexCommand;
+  const defaultCodexArgs = [
+    ...(usePinnedCodex ? [PINNED_CODEX_ENTRYPOINT] : []),
+    "app-server",
+    "--listen",
+    "stdio://",
+    "-c",
+    "mcp_servers={}",
+    "-c",
+    "features.apps=false",
+  ];
+
   return {
     allowedRoots: parseJsonStringArray(env.CODEX_BRIDGE_ALLOWED_ROOTS, "CODEX_BRIDGE_ALLOWED_ROOTS"),
     defaultCwd: env.CODEX_BRIDGE_DEFAULT_CWD,
-    codexCommand: env.CODEX_BRIDGE_CODEX_COMMAND || "codex",
-    codexArgs: parseJsonStringArray(env.CODEX_BRIDGE_CODEX_ARGS, "CODEX_BRIDGE_CODEX_ARGS", [
-      "app-server",
-      "--listen",
-      "stdio://",
-      "-c",
-      "mcp_servers={}",
-      "-c",
-      "features.apps=false",
-    ]),
+    codexCommand: usePinnedCodex ? process.execPath : configuredCodexCommand,
+    codexArgs: parseJsonStringArray(
+      env.CODEX_BRIDGE_CODEX_ARGS,
+      "CODEX_BRIDGE_CODEX_ARGS",
+      defaultCodexArgs,
+    ),
     transport,
     httpHost,
     httpPort: parseInteger(env.CODEX_BRIDGE_HTTP_PORT, 3000, "CODEX_BRIDGE_HTTP_PORT", 1, 65_535),

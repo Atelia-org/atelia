@@ -19,25 +19,41 @@ MVP 暴露五个 tools：
 ## 前置条件
 
 - Node.js 20 或更新版本（Inspector 另需 22.19+）。
-- 当前用户可执行 `codex`，并已用本机自己的 Codex auth 登录。
+- 已运行下文的 exact-pin installer，并已用本机自己的 Codex auth 登录。
 - 一个或多个允许 ChatGPT 委派任务的绝对目录。
 - Secure MCP Tunnel 还需要 Platform tunnel 权限、`tunnel_id` 与 runtime/control-plane API key。
 
-本工程当前用 configured Codex `0.151.0` 生成了 `schemas/`。升级 Codex 后应重新生成并跑测试。
+本工程只支持 repo-local `@openai/codex@0.154.0-alpha.3`。它包含 official SQLite thread-history
+projector 对 malformed/discontinuous records（包括 duplicate/regressed ordinal）的容错修复
+([#42369](https://github.com/openai/codex/pull/42369)、
+[`095ac4f`](https://github.com/openai/codex/commit/095ac4f131e759b204fa6368dc42d2feff6eb21a))，以及 rollout
+读取统一走 canonical JSON decoder 的修复
+([#42378](https://github.com/openai/codex/pull/42378)、
+[`69cebb5`](https://github.com/openai/codex/commit/69cebb5d15939bf9b6c1b4647b53879beab91ba2))。
+这对应 [#35746](https://github.com/openai/codex/issues/35746) 与
+[#42027](https://github.com/openai/codex/issues/42027) 所覆盖的上游故障类别；本项目不维护 Codex fork。
 
 ## 1. 安装、生成 schema 与构建
 
 ```bash
 cd /repos/focus/atelia/local-codex-mcp
 npm ci
-
-codex --version
-command -v codex
-codex app-server generate-ts --out ./schemas
+npm run codex:install
+npm run codex:verify
+npm run schemas:generate
+npm run schemas:verify
 npm run build
 ```
 
-`generate-ts` 的结果与本机 Codex 版本严格对应；Bridge 只引用当前竖切需要的生成类型。若 PATH 中有多个 Codex（例如编辑器内置版本与全局 npm 版本），设置 `CODEX_BRIDGE_CODEX_COMMAND` 为上面生成 schema 的同一个绝对路径。
+installer 只写 ignored `.codex-packages/0.154.0-alpha.3/`，不会安装或覆盖全局 npm Codex。
+它以 tracked `scripts/pinned-codex/package-lock.json` 的 exact version 与 registry SRI 执行 `npm ci`；重复执行会验证并复用，
+但若同版本目录内容漂移会 fail closed，要求人工移走后再装。Bridge 未配置 command override 时直接通过 Node 启动该 repo-local
+wrapper；`initialize.userAgent` 若不报告 exact `0.154.0-alpha.3`，sidecar 会以 `CODEX_VERSION_MISMATCH` 退出并只记录
+expected/actual 规范化版本。
+
+升级流程是一个 hard cut：先审阅新 package 与平台 package 的 registry SRI，更新
+`scripts/pinned-codex/package.json`、lockfile、installer 与 runtime version 常量，再安装到新的 versioned 目录；随后用该 binary
+重生成 `schemas/`、适配类型并跑完整测试和 provider-free projector canary。不要让两个 Codex 版本共用“受支持”语义。
 
 ## 2. 确认 Codex auth
 
@@ -199,6 +215,17 @@ CODEX_BRIDGE_RUN_LIVE=1 npm run test:integration
 
 它会创建临时 git repo，执行 read-only 调查，停止并重启 Bridge/app-server client，再用同一 `thread_id` 创建内容精确的 `hello.txt`，最后删除临时 repo。不会修改当前仓库。
 
+SQLite projector 修复可用一份包含已知 duplicate-ordinal 形状的本机 rollout 做 provider-free 验证：
+
+```bash
+npm run canary:projection -- /absolute/path/to/private-rollout.jsonl
+```
+
+脚本严格要求恰好一个相邻重复，且形状为 `token_count → thread_settings_applied`；它把内容复制到 disposable
+`CODEX_HOME`，替换 session cwd/git 元数据，只调用 `initialize`、`thread/resume(excludeTurns=true)` 与
+`thread/turns/list(itemsView=full)`，确认重复 ordinal 后的 completed turn/final 可见后删除临时目录。
+它不会调用 `turn/start`，不会访问 provider，也不会改写源 rollout 或 active Codex home。private rollout 不得提交。
+
 ## 7. Secure MCP Tunnel（推荐）
 
 Windows 原生部署另见 [Windows Secure MCP Tunnel 配置](./WINDOWS-TUNNEL.md)。
@@ -211,8 +238,7 @@ Bridge 不实现 tunnel protocol，直接使用 OpenAI 官方 `tunnel-client`。
 export CONTROL_PLANE_API_KEY='sk-...'
 export CODEX_BRIDGE_ALLOWED_ROOTS='["/repos/focus/atelia"]'
 export CODEX_BRIDGE_DEFAULT_CWD='/repos/focus/atelia'
-# PATH 中有多个 Codex 时，务必钉住生成 schemas/ 时使用的同一 binary：
-export CODEX_BRIDGE_CODEX_COMMAND='/ABSOLUTE/PATH/TO/codex'
+# 默认使用 repo-local exact pin；只有受控诊断时才显式覆盖 command。
 
 tunnel-client init \
   --sample sample_mcp_stdio_local \

@@ -13,7 +13,15 @@ function userMessage(clientId: string, text: string, id = `user-${clientId}`): T
 }
 
 function agentMessage(text: string, id = "agent", phase: "commentary" | "final_answer" | null = "final_answer"): ThreadItem {
-  return { type: "agentMessage", id, text, phase, memoryCitation: null, delivery: null };
+  return {
+    type: "agentMessage",
+    id,
+    text,
+    phase,
+    memoryCitation: null,
+    delivery: null,
+    questions: null,
+  };
 }
 
 function turn(id: string, status: Turn["status"], items: ThreadItem[]): Turn {

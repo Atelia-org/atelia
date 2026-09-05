@@ -53,6 +53,35 @@ test("initialize handshake runs once and request correlation handles out-of-orde
   assert.equal(fast.value, "fast");
 });
 
+test("initialize rejects a Codex version mismatch and logs only normalized versions", async () => {
+  const logger = new RecordingLogger();
+  const value = new CodexAppServerClient({
+    command: process.execPath,
+    args: [fixture, "--user-agent=codex_vscode/0.151.0 (fixture secret detail)"],
+    requestTimeoutMs: 1_000,
+    logger,
+  });
+  try {
+    await assert.rejects(
+      value.start(),
+      (error: unknown) =>
+        typeof error === "object"
+        && error !== null
+        && "code" in error
+        && error.code === "CODEX_VERSION_MISMATCH",
+    );
+    const mismatch = logger.entries.find((entry) => entry.event === "codex_version_mismatch");
+    assert.equal(mismatch?.level, "error");
+    assert.deepEqual(mismatch?.fields, {
+      expected_version: "0.154.0-alpha.3",
+      actual_version: "0.151.0",
+    });
+    assert.doesNotMatch(JSON.stringify(logger.entries), /fixture secret detail/);
+  } finally {
+    await value.stop();
+  }
+});
+
 test("notifications are dispatched without becoming responses", async (t) => {
   const value = client();
   t.after(() => value.stop());

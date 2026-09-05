@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +21,7 @@ import { createGalateaCodexChildEnvironment } from "../src/galatea/sidecar-confi
 import { NullLogger } from "../src/logger.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-app-server.js", import.meta.url));
+const sidecarEntry = fileURLToPath(new URL("../src/galatea-durable-sidecar.js", import.meta.url));
 
 test("Galatea app-server environment removes only confirmed parent Codex context", () => {
   const sanitized = createGalateaCodexChildEnvironment({
@@ -55,6 +57,46 @@ test("Galatea app-server environment removes only confirmed parent Codex context
   assert.equal(sanitized.OPENAI_API_KEY, "test-auth-sentinel");
   assert.equal(sanitized.OPENAI_BASE_URL, "https://provider.invalid/v1");
   assert.equal(sanitized.HTTPS_PROXY, "https://proxy.invalid");
+});
+
+test("durable sidecar fails before ready when configured Codex version drifts", { timeout: 5_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "galatea-codex-version-drift-"));
+  try {
+    const child = spawn(process.execPath, [sidecarEntry], {
+      env: {
+        ...process.env,
+        CODEX_BRIDGE_ALLOWED_ROOTS: JSON.stringify([root]),
+        CODEX_BRIDGE_DEFAULT_CWD: root,
+        CODEX_BRIDGE_CODEX_COMMAND: process.execPath,
+        CODEX_BRIDGE_CODEX_ARGS: JSON.stringify([
+          fixture,
+          "--user-agent=codex_vscode/0.151.0 (must-not-be-logged)",
+        ]),
+        CODEX_BRIDGE_RPC_TIMEOUT_MS: "1000",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code) => resolve(code));
+    });
+
+    assert.equal(exitCode, 1);
+    assert.equal(stdout, "");
+    assert.match(stderr, /"event":"codex_version_mismatch"/);
+    assert.match(stderr, /"error_code":"CODEX_VERSION_MISMATCH"/);
+    assert.match(stderr, /"expected_version":"0\.154\.0-alpha\.3"/);
+    assert.match(stderr, /"actual_version":"0\.151\.0"/);
+    assert.doesNotMatch(stderr, /must-not-be-logged/);
+  } finally {
+    await rm(root, { recursive: true });
+  }
 });
 
 class FrameCollector {

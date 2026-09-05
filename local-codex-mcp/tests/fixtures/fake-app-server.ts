@@ -30,6 +30,9 @@ const inspectionFixture = inspectionFixtureArgument
       officialTurnsPages: Array<Record<string, unknown>>;
     }
   : undefined;
+const userAgentArgument = process.argv.find((argument) => argument.startsWith("--user-agent="));
+const userAgent = userAgentArgument?.slice("--user-agent=".length)
+  ?? "codex_vscode/0.154.0-alpha.3 (fixture)";
 
 let initialized = false;
 let initializeCount = 0;
@@ -225,7 +228,12 @@ lines.on("line", (line) => {
 
   if (message.method === "initialize") {
     initializeCount += 1;
-    send({ id: message.id, result: { userAgent: "fake", platformFamily: "unix", platformOs: "linux" } });
+    send({ id: message.id, result: {
+      userAgent,
+      codexHome: "/tmp/fake-codex-home",
+      platformFamily: "unix",
+      platformOs: "linux",
+    } });
     return;
   }
   if (message.method === "initialized") {

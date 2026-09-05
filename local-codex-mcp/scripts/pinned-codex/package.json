@@ -1,0 +1,9 @@
+{
+  "name": "@atelia/local-codex-mcp-pinned-codex",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Exact Codex package input for the local bridge installer.",
+  "dependencies": {
+    "@openai/codex": "0.154.0-alpha.3"
+  }
+}

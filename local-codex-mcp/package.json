@@ -10,12 +10,16 @@
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test": "npm run build && node --test dist/tests/*.test.js tests/*.test.mjs",
     "test:integration": "npm run build && CODEX_BRIDGE_RUN_LIVE=1 node --test dist/tests/live-integration.test.js",
     "start": "node dist/src/index.js",
     "start:galatea": "node dist/src/galatea-durable-sidecar.js",
     "start:http": "CODEX_BRIDGE_TRANSPORT=http node dist/src/index.js",
-    "schemas:generate": "codex app-server generate-ts --out ./schemas",
+    "codex:install": "node scripts/manage-pinned-codex.mjs install",
+    "codex:verify": "node scripts/manage-pinned-codex.mjs verify",
+    "canary:projection": "node scripts/provider-free-projection-canary.mjs",
+    "schemas:generate": "node scripts/manage-pinned-codex.mjs generate-schemas",
+    "schemas:verify": "node scripts/manage-pinned-codex.mjs verify-schemas",
     "inspect": "npx --package=@modelcontextprotocol/inspector@2.1.0 mcp-inspector"
   },
   "dependencies": {
