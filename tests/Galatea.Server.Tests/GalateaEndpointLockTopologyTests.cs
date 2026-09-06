@@ -26,6 +26,10 @@ public sealed class GalateaEndpointLockTopologyTests {
             .GetRequiredService<GalateaHostService>();
         GalateaAcceptedTurnRunner runner = host.Factory.Services
             .GetRequiredService<GalateaAcceptedTurnRunner>();
+        // Fatal completion can stop and dispose the service provider before
+        // runTask settles. Capture the token while the host is still running.
+        CancellationToken applicationStopping = host.Factory.Services
+            .GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
         UserSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
         await session.TurnLock.WaitAsync();
         GalateaLiveTurn liveTurn = service.StartTurn(
@@ -54,7 +58,7 @@ public sealed class GalateaEndpointLockTopologyTests {
         Assert.Null(session.GetCurrentTurn());
         Assert.True(session.TurnLock.Wait(0));
         session.TurnLock.Release();
-        Assert.True(host.Factory.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.IsCancellationRequested);
+        Assert.True(applicationStopping.IsCancellationRequested);
         Assert.Same(fatalClient.Failure, await Assert.ThrowsAsync<OutOfMemoryException>(() => runner.DrainAsync()));
         Task disposal = service.DisposeAsync().AsTask();
         Assert.Same(fatalClient.Failure, await Assert.ThrowsAsync<OutOfMemoryException>(() => disposal));
