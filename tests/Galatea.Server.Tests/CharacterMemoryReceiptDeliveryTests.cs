@@ -13,7 +13,7 @@ public sealed partial class CharacterMemorySqliteStoreTests {
             CharacterMemoryCaptureSnapshot capture = fixture.Store.CaptureNew(Capture(source, ["saved note"])).Capture!;
             string next = State((char)('a' + index));
             _ = fixture.Store.PlanApply(new(source, capture.ExtractionCommitment, previous, next,
-                ["m1:" + (index + 1).ToString("X8", System.Globalization.CultureInfo.InvariantCulture)]));
+                ["m1:" + (index + 1).ToString("x8", System.Globalization.CultureInfo.InvariantCulture)]));
             _ = fixture.Store.SettleApplied(new(source, capture.ExtractionCommitment, next));
             previous = next;
         }
