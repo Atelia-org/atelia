@@ -1580,7 +1580,9 @@ public sealed class CharacterNoteRuntimeTests {
                 [main.Id] = new QueueClient(
                     Message(new ActionBlock.Text(Action)),
                     Message(new ActionBlock.Text("Receipt acknowledged."))),
-                [note.Id] = new QueueClient(Message(NoteTool()), Message()),
+                // Save Action, imported delegate source reconciled at admission,
+                // and the final receipt acknowledgement each have their own extraction.
+                [note.Id] = new QueueClient(Message(NoteTool()), Message(), Message()),
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, note],
@@ -1614,10 +1616,7 @@ public sealed class CharacterNoteRuntimeTests {
         const string VisibleAction = "ready reply source";
         GalateaDelegationSqliteStore store = session.DelegationHandle!.Store;
         string sourceAction = EventAddressTextCodec.Format(
-            session.Engine.ReadCurrentHead()
-                ?? throw new Xunit.Sdk.XunitException(
-                    "The test session has no current head."
-                )
+            AppendAction(session.Engine, VisibleAction)
         );
         GalateaDelegationCaptureResult captured = store.CaptureActionBatch(
             new GalateaDelegationCaptureRequest(
@@ -1820,8 +1819,9 @@ public sealed class CharacterNoteRuntimeTests {
             CancellationToken cancellationToken = default
         ) {
             _ = observer;
-            if (!Assert.IsType<ObservationMessage>(Assert.Single(request.TailMessages))
-                .Content.Contains(Action, StringComparison.Ordinal)) {
+            if (!Assert.IsType<string>(Assert.IsType<ObservationMessage>(
+                    Assert.Single(request.TailMessages)).Content)
+                .Contains(Action, StringComparison.Ordinal)) {
                 return new CompletionResult(Message(), CompletionDescriptor.From(this, request));
             }
             _requests.Enqueue(request);

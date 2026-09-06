@@ -246,8 +246,9 @@ public sealed class GalateaAutonomyPostProcessingTests {
             cancellationToken.ThrowIfCancellationRequested();
             if ((HasTool(request, OutboundMailExtractor.ToolName)
                     || HasTool(request, CharacterNoteExtractor.ToolName))
-                && !Assert.IsType<ObservationMessage>(Assert.Single(request.TailMessages))
-                    .Content.Contains(TerminalAction, StringComparison.Ordinal)) {
+                && !Assert.IsType<string>(Assert.IsType<ObservationMessage>(
+                        Assert.Single(request.TailMessages)).Content)
+                    .Contains(TerminalAction, StringComparison.Ordinal)) {
                 return Task.FromResult(new CompletionResult(Message(), CompletionDescriptor.From(this, request)));
             }
             ActionMessage message;
