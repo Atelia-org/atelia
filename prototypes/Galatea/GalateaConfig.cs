@@ -24,8 +24,15 @@ public sealed record GalateaConfig(
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
     bool MaintenanceMode = false,
-    GalateaRecapGridRuntimeConfig? RecapGrid = null
-);
+    GalateaRecapGridRuntimeConfig? RecapGrid = null,
+    IReadOnlyList<string>? ServerAgentUserIds = null
+) {
+    public IReadOnlyList<string> ServerAgentUserIds { get; init; } =
+        GalateaConfigValidation.NormalizeServerAgentUserIds(
+            Users,
+            ServerAgentUserIds
+        );
+}
 
 public sealed record GalateaRecapGridRuntimeConfig(
     string RouteManifestPath,
@@ -50,7 +57,9 @@ internal sealed record GalateaUsersFileConfig(
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
     bool MaintenanceMode = false,
-    GalateaRecapGridFileConfig? RecapGrid = null
+    GalateaRecapGridFileConfig? RecapGrid = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<string>? ServerAgentUserIds = null
 );
 
 /// <summary>
@@ -94,6 +103,45 @@ public enum GalateaSessionProvisioning {
 
 internal static class GalateaConfigValidation {
     internal const int MaximumConnectionIdUtf8Bytes = 128;
+
+    internal static IReadOnlyList<string> NormalizeServerAgentUserIds(
+        IReadOnlyList<GalateaUserConfig> users,
+        IReadOnlyList<string>? serverAgentUserIds
+    ) {
+        ArgumentNullException.ThrowIfNull(users);
+        if (serverAgentUserIds is null or { Count: 0 }) {
+            return Array.Empty<string>();
+        }
+        if (serverAgentUserIds.Count > GalateaStrictConfigReader.MaximumUserCount) {
+            throw new InvalidOperationException(
+                "Galatea config serverAgentUserIds exceeds its count cap."
+            );
+        }
+        var userIds = users.Select(static user => user.UserId)
+            .ToHashSet(StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var snapshot = new string[serverAgentUserIds.Count];
+        for (int index = 0; index < snapshot.Length; index++) {
+            string userId = serverAgentUserIds[index];
+            if (string.IsNullOrWhiteSpace(userId)) {
+                throw new InvalidOperationException(
+                    $"Galatea config serverAgentUserIds[{index}] must not be blank."
+                );
+            }
+            if (!seen.Add(userId)) {
+                throw new InvalidOperationException(
+                    $"Galatea config serverAgentUserIds contains duplicate userId '{userId}'."
+                );
+            }
+            if (!userIds.Contains(userId)) {
+                throw new InvalidOperationException(
+                    $"Galatea config serverAgentUserIds '{userId}' must exactly match a configured userId."
+                );
+            }
+            snapshot[index] = userId;
+        }
+        return Array.AsReadOnly(snapshot);
+    }
 
     internal static void RequireValidConnectionDefaults(
         IReadOnlyList<GalateaUserConfig> users,

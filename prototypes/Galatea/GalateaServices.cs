@@ -75,6 +75,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly IReadOnlyList<GalateaConnectionInfoDto>
         _selectableConnections;
     private readonly RecapGridControlAdmission? _sessionBootstrapAdmission;
+    internal IReadOnlyList<string> ServerAgentUserIds { get; }
     public GalateaHostService(
         GalateaConfig config,
         ICompletionClientFactory completionClientFactory,
@@ -150,6 +151,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _users = components.Users;
         _connectionCatalog = components.ConnectionCatalog;
         _selectableConnections = components.SelectableConnections;
+        ServerAgentUserIds = components.ServerAgentUserIds;
     }
 
     internal GalateaHostService(
@@ -166,6 +168,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(recapGrid);
         ArgumentNullException.ThrowIfNull(userMessageNormalizer);
+        ServerAgentUserIds = GalateaConfigValidation.NormalizeServerAgentUserIds(
+            config.Users,
+            config.ServerAgentUserIds
+        );
         _ = GalateaDelegateConfigReader.Validate(config.Delegates);
         GalateaConfigValidation.RequireValidStorageTopology(
             config.Users,
@@ -263,6 +269,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizerFactory);
+        IReadOnlyList<string> serverAgentUserIds =
+            GalateaConfigValidation.NormalizeServerAgentUserIds(
+                config.Users,
+                config.ServerAgentUserIds
+            );
         GalateaConfigValidation.RequireValidStorageTopology(
             config.Users,
             config.CallLogDir
@@ -363,7 +374,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 config.MaintenanceMode,
                 users,
                 connectionCatalog,
-                selectableConnections
+                selectableConnections,
+                serverAgentUserIds
             );
         }
         catch (Exception exception) {
@@ -433,7 +445,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         IReadOnlyDictionary<string, GalateaUserConfig> Users,
         IReadOnlyDictionary<string, CompletionConnectionConfig>
             ConnectionCatalog,
-        IReadOnlyList<GalateaConnectionInfoDto> SelectableConnections
+        IReadOnlyList<GalateaConnectionInfoDto> SelectableConnections,
+        IReadOnlyList<string> ServerAgentUserIds
     );
 
     internal static IReadOnlyDictionary<string, IOutboundMailExtractor>
@@ -4112,7 +4125,8 @@ internal static class GalateaConfigLoader {
                 configDir
             ),
             MaintenanceMode: usersFile.MaintenanceMode,
-            RecapGrid: LoadRecapGridConfig(usersFile.RecapGrid, configDir)
+            RecapGrid: LoadRecapGridConfig(usersFile.RecapGrid, configDir),
+            ServerAgentUserIds: usersFile.ServerAgentUserIds
         );
 
         Validate(config);
@@ -4669,6 +4683,7 @@ internal static class GalateaConfigTemplateFactory {
                 ),
             ],
             ListenUrls: ["http://0.0.0.0:3510"],
+            ServerAgentUserIds: [],
             RecapGrid: new GalateaRecapGridFileConfig(
                 RouteManifestPath: "recap-grid-routes.json",
                 AgentControlProfileFiles: [

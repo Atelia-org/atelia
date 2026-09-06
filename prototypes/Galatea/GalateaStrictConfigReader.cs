@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 7;
+    internal const int CurrentConfigVersion = 8;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumUserCount = 256;
@@ -221,6 +221,14 @@ internal static class GalateaStrictConfigReader {
                 case "listenUrls":
                     ValidateStringArrayOrNull(ref reader, 256, property);
                     break;
+                case "serverAgentUserIds":
+                    ValidateStringArrayOrNull(
+                        ref reader,
+                        MaximumUserCount,
+                        property,
+                        allowNull: false
+                    );
+                    break;
                 case "callLogDir":
                     RequireStringOrNull(reader.TokenType, property);
                     break;
@@ -247,13 +255,13 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("7"u8)) {
+            || !reader.ValueSpan.SequenceEqual("8"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 7; "
+        "Galatea config requires exact integer version 'v': 8; "
         + "migrate the config before retrying."
     );
 
