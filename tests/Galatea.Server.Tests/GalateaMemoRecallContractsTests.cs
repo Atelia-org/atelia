@@ -21,6 +21,43 @@ public sealed class GalateaMemoRecallContractsTests {
     );
 
     [Fact]
+    public void QueryRenderer_AutomaticTriggersUseTypedEvidenceAndNeverPlayerText() {
+        var character = new GalateaCharacterName("Galatea");
+        var receipt = new PlayerTurnNotice.NoteSaveReceipt("private receipt evidence");
+        PlayerTurnObservation[] observations = [
+            PlayerTurnObservation.CreateHeartbeatActivation(
+                Timestamp, character, [receipt]),
+            PlayerTurnObservation.CreateDelegateReply(
+                Timestamp, [new PlayerTurnNotice.Reply("external reply"), receipt])
+        ];
+        foreach (PlayerTurnObservation observation in observations) {
+            string rendered = GalateaMemoRecallQueryRenderer.Render(
+                character, observation, Context([]));
+            using JsonDocument json = JsonDocument.Parse(rendered);
+            JsonElement current = json.RootElement.GetProperty("currentTurn");
+            JsonElement trigger = current.GetProperty("trigger");
+            Assert.False(trigger.TryGetProperty("playerText", out _));
+            Assert.False(current.TryGetProperty("playerText", out _));
+            Assert.DoesNotContain(receipt.Body, rendered, StringComparison.Ordinal);
+            Assert.Equal("2026-09-02T14:20:00+08:00",
+                current.GetProperty("externalLocalTimestamp").GetString());
+            if (observation.TriggerKind == PlayerTurnObservationTriggerKind.HeartbeatActivation) {
+                Assert.Equal("heartbeat-activation", trigger.GetProperty("kind").GetString());
+                Assert.Equal(PlayerTurnObservationEnvelope.RenderHeartbeatActivationBody(character),
+                    trigger.GetProperty("activationText").GetString());
+                Assert.Empty(current.GetProperty("externalNotices").EnumerateArray());
+            }
+            else {
+                Assert.Equal("delegate-reply", trigger.GetProperty("kind").GetString());
+                Assert.Single(trigger.EnumerateObject());
+                Assert.Equal("external reply",
+                    Assert.Single(current.GetProperty("externalNotices").EnumerateArray())
+                        .GetProperty("text").GetString());
+            }
+        }
+    }
+
+    [Fact]
     public void QueryRenderer_HasCanonicalGoldenJsonAndExactEvidence() {
         var observation = new PlayerTurnObservation(
             "继续\"追问\\她\n",
@@ -42,12 +79,12 @@ public sealed class GalateaMemoRecallContractsTests {
         );
 
         const string Expected =
-            "{\"schema\":\"atelia.galatea.memo-recall-context.v1\","
+            "{\"schema\":\"atelia.galatea.memo-recall-context.v2\","
             + "\"characterName\":\"伽拉忒亚\","
             + "\"retrievalGoal\":\"memories materially useful for the character's next narrative action\","
             + "\"currentTurn\":{"
             + "\"externalLocalTimestamp\":\"2026-09-02T14:20:00+08:00\","
-            + "\"playerText\":\"继续\\\"追问\\\\她\\n\","
+            + "\"trigger\":{\"kind\":\"player-action\",\"playerText\":\"继续\\\"追问\\\\她\\n\"},"
             + "\"externalNotices\":["
             + "{\"kind\":\"reply\",\"text\":\"<线索>&\\\"\"},"
             + "{\"kind\":\"delivery-failure\",\"text\":\"失败\\n原因\"}]},"
@@ -170,6 +207,7 @@ public sealed class GalateaMemoRecallContractsTests {
         Assert.Equal(
             playerText,
             parsed.RootElement.GetProperty("currentTurn")
+                .GetProperty("trigger")
                 .GetProperty("playerText")
                 .GetString()
         );

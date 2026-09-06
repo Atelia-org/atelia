@@ -194,6 +194,45 @@ public sealed class GalateaDurableReplyLeaseTests {
     }
 
     [Fact]
+    public void DelegateReply_MemoryEnrichmentColdReopensAndConsumesWithoutWeakeningCutoff() {
+        using var fixture = new Fixture();
+        fixture.ProduceReadyReply("reply");
+        fixture.ProduceReadyFailure("failure");
+        GalateaDurableReplyLease lease = BeginCreated(
+            fixture.Reconciler,
+            PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator);
+        EventAddress baseHead = fixture.Engine.ReadCurrentHead()!.Value;
+        var receipt = new PlayerTurnNotice.NoteSaveReceipt("saved\n");
+        PlayerTurnObservation enriched = PlayerTurnObservation.CreateDelegateReply(
+            ObservationTimestamp, [.. lease.ReadNotices(), receipt],
+            [new PlayerTurnRecall(new RecallEntry(RecallType.MemoExactText, "memo-source"), "memory\n")]);
+        string rendered = PlayerTurnObservationEnvelope.Wrap(enriched);
+        PlayerTurnObservation changed = enriched.WithNotices([
+            new PlayerTurnNotice.Reply("different"),
+            new PlayerTurnNotice.DeliveryFailure("failure"), receipt]);
+        Assert.Throws<GalateaDelegationStoreConflictException>(() => lease.BindObservationBase(
+            fixture.Engine, baseHead, PlayerTurnObservationEnvelope.Wrap(changed)));
+        PlayerTurnObservation reversed = enriched.WithNotices([
+            new PlayerTurnNotice.DeliveryFailure("failure"),
+            new PlayerTurnNotice.Reply("reply"), receipt]);
+        Assert.Throws<GalateaDelegationStoreConflictException>(() => lease.BindObservationBase(
+            fixture.Engine, baseHead, PlayerTurnObservationEnvelope.Wrap(reversed)));
+
+        _ = lease.BindObservationBase(fixture.Engine, baseHead, rendered);
+        EventAddress observationAddress = fixture.Engine.AppendObservation(rendered);
+        _ = lease.RecordObservationCommitted(observationAddress);
+        fixture.ReopenStore();
+        Assert.Equal(rendered, fixture.Store.ReadSnapshot().ActiveLease!.RenderedObservation);
+        Assert.IsType<GalateaDurableReplyLeaseReconcileResult.Retained>(
+            fixture.Reconciler.ReconcileActiveLease(fixture.Engine));
+        EventAddress terminal = AppendTerminal(fixture.Engine, "terminal");
+        var consumed = Assert.IsType<GalateaDurableReplyLeaseReconcileResult.Consumed>(
+            fixture.Reconciler.ReconcileActiveLease(fixture.Engine));
+        Assert.Equal(terminal, consumed.TerminalActionAddress);
+        Assert.Null(fixture.Store.ReadSnapshot().ActiveLease);
+    }
+
+    [Fact]
     public void DelegateReply_BindsWithV1MarkerAndColdReopensExactBytes() {
         using var fixture = new Fixture();
         fixture.ProduceReadyReply("reply");

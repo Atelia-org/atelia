@@ -735,9 +735,16 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     lease.PlayerText,
                     StringComparison.Ordinal
                 );
+        // The lease owns only its exact external notice prefix. Memory
+        // enrichment has its own authority, but its complete canonical bytes
+        // are frozen in RenderedObservation with this prefix at binding.
+        PlayerTurnNotice[] externalNotices = parsed.Notices.Where(
+            static notice => notice is PlayerTurnNotice.Reply
+                or PlayerTurnNotice.DeliveryFailure
+        ).ToArray();
         return triggerMatches
-            && parsed.Notices.Count == expectedNotices.Count
-            && parsed.Notices.Zip(
+            && externalNotices.Length == expectedNotices.Count
+            && externalNotices.Zip(
                 expectedNotices,
                 static (actual, expected) =>
                     actual.GetType() == expected.GetType()

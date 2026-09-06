@@ -111,12 +111,8 @@ internal static class GalateaDefaultMemoPodRecallPlanner {
                 memo.ExactText
             );
             var recall = new PlayerTurnRecall(entry, body);
-            var finalObservation = new PlayerTurnObservation(
-                request.CurrentObservation.PlayerText,
-                request.CurrentObservation.ExternalLocalTimestamp!.Value,
-                request.CurrentObservation.Notices,
-                [recall]
-            );
+            PlayerTurnObservation finalObservation = request
+                .CurrentObservation.WithRecalls([recall]);
             try {
                 _ = PlayerTurnObservationEnvelope.Wrap(finalObservation);
             }

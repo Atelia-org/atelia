@@ -10,7 +10,7 @@ namespace Atelia.Galatea.Server.CharacterMemory;
 
 internal static class GalateaMemoRecallQueryRenderer {
     internal const string SchemaId =
-        "atelia.galatea.memo-recall-context.v1";
+        "atelia.galatea.memo-recall-context.v2";
     internal const string RetrievalGoal =
         "memories materially useful for the character's next narrative action";
     internal const string ReplyKind = "reply";
@@ -48,7 +48,7 @@ internal static class GalateaMemoRecallQueryRenderer {
         byte[] rendered = RenderUtf8(
             characterName.Value,
             timestamp,
-            currentObservation.PlayerText,
+            currentObservation,
             externalNotices,
             includedNoticeCount,
             recentVisibleAction: null
@@ -59,7 +59,7 @@ internal static class GalateaMemoRecallQueryRenderer {
             byte[] candidate = RenderUtf8(
                 characterName.Value,
                 timestamp,
-                currentObservation.PlayerText,
+                currentObservation,
                 externalNotices,
                 includedNoticeCount + 1,
                 recentVisibleAction: null
@@ -98,7 +98,7 @@ internal static class GalateaMemoRecallQueryRenderer {
             byte[] candidate = RenderUtf8(
                 characterName.Value,
                 timestamp,
-                currentObservation.PlayerText,
+                currentObservation,
                 externalNotices,
                 includedNoticeCount,
                 latestAction.Text
@@ -130,7 +130,7 @@ internal static class GalateaMemoRecallQueryRenderer {
     private static byte[] RenderUtf8(
         string characterName,
         DateTimeOffset timestamp,
-        string playerText,
+        PlayerTurnObservation observation,
         IReadOnlyList<PlayerTurnNotice> notices,
         int includedNoticeCount,
         string? recentVisibleAction
@@ -151,7 +151,25 @@ internal static class GalateaMemoRecallQueryRenderer {
                     CultureInfo.InvariantCulture
                 )
             );
-            writer.WriteString("playerText", playerText);
+            writer.WriteStartObject("trigger");
+            switch (observation.TriggerKind) {
+                case PlayerTurnObservationTriggerKind.PlayerAction:
+                    writer.WriteString("kind", "player-action");
+                    writer.WriteString("playerText", observation.PlayerText);
+                    break;
+                case PlayerTurnObservationTriggerKind.HeartbeatActivation:
+                    writer.WriteString("kind", "heartbeat-activation");
+                    writer.WriteString("activationText",
+                        PlayerTurnObservationEnvelope.RenderHeartbeatActivationBody(
+                            observation.HeartbeatCharacterName));
+                    break;
+                case PlayerTurnObservationTriggerKind.DelegateReply:
+                    writer.WriteString("kind", "delegate-reply");
+                    break;
+                default:
+                    throw new InvalidOperationException("Unknown Observation trigger.");
+            }
+            writer.WriteEndObject();
             writer.WriteStartArray("externalNotices");
             for (int index = 0; index < includedNoticeCount; index++) {
                 PlayerTurnNotice notice = notices[index];

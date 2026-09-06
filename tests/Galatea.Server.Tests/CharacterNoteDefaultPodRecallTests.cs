@@ -302,6 +302,63 @@ public sealed class CharacterNoteDefaultPodRecallTests {
     }
 
     [Fact]
+    public async Task PlannerSupportsAutomaticTriggersWithReceiptAndPreservesBothBarriers() {
+        using var pod = await PlannerPod.CreateAsync(("remember", "Memory"));
+        Memo memo = Assert.Single(pod.Pod.List());
+        var receipt = new PlayerTurnNotice.NoteSaveReceipt("saved");
+        PlayerTurnObservation[] observations = [
+            PlayerTurnObservation.CreateHeartbeatActivation(
+                Timestamp, new GalateaCharacterName("Galatea"), [receipt]),
+            PlayerTurnObservation.CreateDelegateReply(
+                Timestamp, [new PlayerTurnNotice.Reply("reply"), receipt])
+        ];
+        foreach (PlayerTurnObservation observation in observations) {
+            PlayerTurnRecall selected = Assert.Single(GalateaDefaultMemoPodRecallPlanner.Select(
+                Request(RecallBarrier.Empty, CharacterNoteOriginBarrier.Empty, observation),
+                CharacterNoteDefaultPodV1.PodId, pod.Pod.List()));
+            PlayerTurnObservation final = observation.WithRecalls([selected]);
+            Assert.Equal(observation.TriggerKind, final.TriggerKind);
+            Assert.Equal(Timestamp, final.ExternalLocalTimestamp);
+            Assert.Same(receipt, final.Notices.Last());
+            Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
+                PlayerTurnObservationEnvelope.Wrap(final), out var parsed));
+            Assert.Equal(observation.TriggerKind, parsed.TriggerKind);
+            Assert.Empty(GalateaDefaultMemoPodRecallPlanner.Select(
+                Request(new RecallBarrier([selected.Entry]), CharacterNoteOriginBarrier.Empty, observation),
+                CharacterNoteDefaultPodV1.PodId, pod.Pod.List()));
+            var origin = new CharacterNoteVisibleActionIdentity(
+                new EventAddress(Atelia.Data.SizedPtr.Create(12, 4), 1, AddressHint.None),
+                GalateaVisibleActionFingerprint.Derive("visible action"));
+            var originBarrier = new CharacterNoteOriginBarrier([
+                new CharacterNoteOriginBarrierEntry(CharacterNoteDefaultPodV1.PodId, memo.Id, origin)]);
+            Assert.Empty(GalateaDefaultMemoPodRecallPlanner.Select(
+                Request(RecallBarrier.Empty, originBarrier, observation),
+                CharacterNoteDefaultPodV1.PodId, pod.Pod.List()));
+        }
+    }
+
+    [Fact]
+    public async Task PlannerAccountsForDelegateReceiptInAggregateBudget() {
+        using var pod = await PlannerPod.CreateAsync(
+            (new string('x', MemoPodLimits.MaximumMemoExactTextUtf8Bytes), "Large"),
+            ("small", "Fallback"));
+        var observation = PlayerTurnObservation.CreateDelegateReply(
+            Timestamp,
+            [
+                new PlayerTurnNotice.Reply(new string('a', 240 * 1024)),
+                new PlayerTurnNotice.Reply(new string('b', 240 * 1024)),
+                new PlayerTurnNotice.NoteSaveReceipt(new string('r', 400 * 1024))
+            ]);
+        _ = PlayerTurnObservationEnvelope.Wrap(observation);
+        PlayerTurnRecall selected = Assert.Single(GalateaDefaultMemoPodRecallPlanner.Select(
+            Request(RecallBarrier.Empty, CharacterNoteOriginBarrier.Empty, observation),
+            CharacterNoteDefaultPodV1.PodId, pod.Pod.List()));
+        Assert.Equal(GalateaMemoRecallSourceIdCodec.Format(
+            CharacterNoteDefaultPodV1.PodId, pod.Pod.List()[1].Id), selected.Entry.SourceId);
+        _ = PlayerTurnObservationEnvelope.Wrap(observation.WithRecalls([selected]));
+    }
+
+    [Fact]
     public async Task PlannerTreatsRecallOnlyAggregateOverflowAsUnderfill() {
         string exactText = new(
             'x',

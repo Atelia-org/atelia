@@ -25,6 +25,76 @@ public sealed class PlayerTurnObservationTests {
     );
 
     [Fact]
+    public void AutomaticMemory_RoundTripsAndFeedsRecallBarrier() {
+        var recall = new PlayerTurnRecall(
+            new RecallEntry(RecallType.MemoExactText, "memo-source"),
+            "记得这件事\n~~~~\n");
+        var receipt = new PlayerTurnNotice.NoteSaveReceipt("已保存\n~~~~~\n");
+        PlayerTurnObservation[] triggers = [
+            PlayerTurnObservation.CreateHeartbeatActivation(
+                ObservationTimestamp, CharacterName),
+            PlayerTurnObservation.CreateDelegateReply(
+                ObservationTimestamp, [new PlayerTurnNotice.Reply("回信\n")])
+        ];
+        foreach (PlayerTurnObservation trigger in triggers) {
+            PlayerTurnObservation enriched = trigger
+                .WithNotices([.. trigger.Notices, receipt])
+                .WithRecalls([recall]);
+            string rendered = PlayerTurnObservationEnvelope.Wrap(enriched);
+            Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(rendered, out var parsed));
+            Assert.Equal(trigger.TriggerKind, parsed.TriggerKind);
+            Assert.Equal(ObservationTimestamp, parsed.ExternalLocalTimestamp);
+            Assert.Equal(recall, Assert.Single(parsed.Recalls));
+            Assert.Equal(receipt.Body, parsed.Notices.Last().Body);
+            Assert.Equal(rendered, PlayerTurnObservationEnvelope.Wrap(parsed));
+            Assert.DoesNotContain("player-action", rendered, StringComparison.Ordinal);
+            Assert.True(GalateaRecallBarrierBuilder
+                .BuildFromProviderVisibleObservations([rendered])
+                .Contains(recall.Entry));
+            Assert.Empty(trigger.Recalls);
+            Assert.DoesNotContain(trigger.Notices,
+                static notice => notice is PlayerTurnNotice.NoteSaveReceipt);
+        }
+    }
+
+    [Fact]
+    public void AutomaticMemory_RejectsInvalidNoticeKindsOrderCountAndDuplicateRecalls() {
+        var receipt = new PlayerTurnNotice.NoteSaveReceipt("saved");
+        var reply = new PlayerTurnNotice.Reply("reply");
+        var recall = new PlayerTurnRecall(
+            new RecallEntry(RecallType.MemoExactText, "source"), "memory");
+        PlayerTurnObservation heartbeat = PlayerTurnObservation.CreateHeartbeatActivation(
+            ObservationTimestamp, CharacterName);
+        PlayerTurnObservation delegated = PlayerTurnObservation.CreateDelegateReply(
+            ObservationTimestamp, [reply]);
+        Assert.Throws<ArgumentException>(() => heartbeat.WithNotices([reply]));
+        Assert.Throws<ArgumentException>(() => delegated.WithNotices([receipt]));
+        Assert.Throws<ArgumentException>(() => delegated.WithNotices([receipt, reply]));
+        Assert.Throws<ArgumentException>(() => delegated.WithNotices([reply, receipt, receipt]));
+        Assert.Throws<ArgumentOutOfRangeException>(() => delegated.WithNotices(
+            Enumerable.Repeat<PlayerTurnNotice>(reply, 16).Append(receipt)));
+        Assert.Throws<ArgumentException>(() => heartbeat.WithRecalls([recall, recall]));
+
+        string enriched = PlayerTurnObservationEnvelope.Wrap(
+            heartbeat.WithNotices([receipt]).WithRecalls([recall]));
+        int recallStart = enriched.IndexOf("## " + PlayerTurnObservationEnvelope.RecallExactTextHeading,
+            StringComparison.Ordinal);
+        int receiptStart = enriched.IndexOf("## " + PlayerTurnObservationEnvelope.NoteSaveReceiptHeading,
+            StringComparison.Ordinal);
+        string reordered = enriched[..recallStart]
+            + enriched[receiptStart..] + "\n\n"
+            + enriched[recallStart..receiptStart].TrimEnd('\n');
+        Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(reordered, out _));
+        string receiptOnly = enriched[..recallStart] + enriched[receiptStart..];
+        int heartbeatStart = receiptOnly.IndexOf("## " + PlayerTurnObservationEnvelope.HeartbeatActivationHeading,
+            StringComparison.Ordinal);
+        int onlyReceiptStart = receiptOnly.IndexOf("## " + PlayerTurnObservationEnvelope.NoteSaveReceiptHeading,
+            StringComparison.Ordinal);
+        Assert.False(PlayerTurnObservationEnvelope.TryUnwrap(
+            receiptOnly[..heartbeatStart] + receiptOnly[onlyReceiptStart..], out _));
+    }
+
+    [Fact]
     public void TypedAutomaticTriggers_RoundTripWithoutPlayerAction() {
         PlayerTurnObservation reply = PlayerTurnObservation
             .CreateDelegateReply(

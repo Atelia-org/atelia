@@ -50,6 +50,8 @@ internal sealed record GalateaPlayerTurnRecallContext {
     }
 }
 
+// The historical PlayerTurn name denotes the shared typed Observation
+// contract: PlayerAction, HeartbeatActivation, and DelegateReply all use it.
 internal sealed record GalateaPlayerTurnRecallRequest {
     internal GalateaPlayerTurnRecallRequest(
         GalateaUserConfig user,

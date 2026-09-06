@@ -206,35 +206,24 @@ internal sealed class PlayerTurnObservation {
             throw new ArgumentException(messageError, nameof(playerText));
         }
 
-        PlayerTurnNotice[] frozen = notices?.Select(
-            static notice => notice ?? throw new ArgumentException(
-                "Player-turn notice collections must not contain null items.",
-                nameof(notices)
-            )
-        ).ToArray() ?? [];
-        if (frozen.Length
-                > PlayerTurnObservationEnvelope.MaximumNoticeCount) {
-            throw new ArgumentOutOfRangeException(
-                nameof(notices),
-                "A player-turn Observation contains too many notices."
+        Notices = FreezeNotices(notices);
+        Recalls = FreezeRecalls(recalls);
+        if (externalLocalTimestamp is { } timestamp
+            && timestamp.Ticks % TimeSpan.TicksPerSecond != 0) {
+            throw new ArgumentException(
+                "External local timestamp must be truncated to whole seconds.",
+                nameof(externalLocalTimestamp)
             );
         }
-        int noteSaveReceiptCount = 0;
-        for (int index = 0; index < frozen.Length; index++) {
-            if (frozen[index]
-                    is not PlayerTurnNotice.NoteSaveReceipt) {
-                continue;
-            }
-            noteSaveReceiptCount++;
-            if (noteSaveReceiptCount > 1 || index != frozen.Length - 1) {
-                throw new ArgumentException(
-                    "A player-turn Observation may contain at most one "
-                        + "Note save receipt, and it must be the final "
-                        + "notice.",
-                    nameof(notices)
-                );
-            }
-        }
+
+        TriggerKind = PlayerTurnObservationTriggerKind.PlayerAction;
+        _playerText = playerText;
+        ExternalLocalTimestamp = externalLocalTimestamp;
+    }
+
+    private static IReadOnlyList<PlayerTurnRecall> FreezeRecalls(
+        IEnumerable<PlayerTurnRecall>? recalls
+    ) {
         PlayerTurnRecall[] frozenRecalls = recalls?.Select(
             static recall => recall ?? throw new ArgumentException(
                 "Player-turn recall collections must not contain null items.",
@@ -257,19 +246,7 @@ internal sealed class PlayerTurnObservation {
                 );
             }
         }
-        if (externalLocalTimestamp is { } timestamp
-            && timestamp.Ticks % TimeSpan.TicksPerSecond != 0) {
-            throw new ArgumentException(
-                "External local timestamp must be truncated to whole seconds.",
-                nameof(externalLocalTimestamp)
-            );
-        }
-
-        TriggerKind = PlayerTurnObservationTriggerKind.PlayerAction;
-        _playerText = playerText;
-        ExternalLocalTimestamp = externalLocalTimestamp;
-        Recalls = Array.AsReadOnly(frozenRecalls);
-        Notices = Array.AsReadOnly(frozen);
+        return Array.AsReadOnly(frozenRecalls);
     }
 
     private PlayerTurnObservation(
@@ -277,7 +254,8 @@ internal sealed class PlayerTurnObservation {
         DateTimeOffset? externalLocalTimestamp,
         IEnumerable<PlayerTurnNotice>? notices,
         GalateaCharacterName? heartbeatCharacterName = null,
-        bool usesHistoricalPlayerActionDialect = false
+        bool usesHistoricalPlayerActionDialect = false,
+        IEnumerable<PlayerTurnRecall>? recalls = null
     ) {
         if (triggerKind is PlayerTurnObservationTriggerKind.PlayerAction) {
             throw new ArgumentException(
@@ -308,9 +286,10 @@ internal sealed class PlayerTurnObservation {
                 break;
             case PlayerTurnObservationTriggerKind.HeartbeatActivation:
                 ArgumentNullException.ThrowIfNull(heartbeatCharacterName);
-                if (frozen.Count != 0) {
+                if (frozen.Any(static notice =>
+                        notice is not PlayerTurnNotice.NoteSaveReceipt)) {
                     throw new ArgumentException(
-                        "HeartbeatActivation must not contain notices.",
+                        "HeartbeatActivation may only contain a Note save receipt notice.",
                         nameof(notices)
                     );
                 }
@@ -329,34 +308,46 @@ internal sealed class PlayerTurnObservation {
         _heartbeatCharacterName = heartbeatCharacterName;
         ExternalLocalTimestamp = externalLocalTimestamp;
         Notices = frozen;
-        Recalls = Array.Empty<PlayerTurnRecall>();
+        Recalls = FreezeRecalls(recalls);
+        if (usesHistoricalPlayerActionDialect
+            && (Recalls.Count != 0 || frozen.Any(static notice =>
+                notice is PlayerTurnNotice.NoteSaveReceipt))) {
+            throw new ArgumentException(
+                "Historical DelegateReply cannot acquire new memory enrichment."
+            );
+        }
         UsesHistoricalPlayerActionDialect =
             usesHistoricalPlayerActionDialect;
     }
 
     internal static PlayerTurnObservation CreateDelegateReply(
         DateTimeOffset externalLocalTimestamp,
-        IEnumerable<PlayerTurnNotice> notices
+        IEnumerable<PlayerTurnNotice> notices,
+        IEnumerable<PlayerTurnRecall>? recalls = null
     ) => new(
         PlayerTurnObservationTriggerKind.DelegateReply,
         externalLocalTimestamp,
-        notices
+        notices,
+        recalls: recalls
     );
 
     internal static PlayerTurnObservation CreateHeartbeatActivation(
         DateTimeOffset externalLocalTimestamp,
-        GalateaCharacterName characterName
+        GalateaCharacterName characterName,
+        IEnumerable<PlayerTurnNotice>? notices = null,
+        IEnumerable<PlayerTurnRecall>? recalls = null
     ) => new(
         PlayerTurnObservationTriggerKind.HeartbeatActivation,
         externalLocalTimestamp,
-        notices: null,
-        heartbeatCharacterName: characterName
+        notices,
+        heartbeatCharacterName: characterName,
+        recalls: recalls
     );
 
     /// <summary>
     /// Parser-only representation of the old synthetic player-action reply
     /// shape. Current fresh writes must use the timestamped
-    /// <see cref="CreateDelegateReply(DateTimeOffset,IEnumerable{PlayerTurnNotice})"/>
+    /// <see cref="CreateDelegateReply"/>
     /// factory instead.
     /// </summary>
     internal static PlayerTurnObservation CreateHistoricalDelegateReply(
@@ -375,11 +366,8 @@ internal sealed class PlayerTurnObservation {
         IEnumerable<PlayerTurnNotice>? notices
     ) {
         IReadOnlyList<PlayerTurnNotice> frozen = FreezeNotices(notices);
-        if (frozen.Count is < 1
-            or > PlayerTurnObservationEnvelope.MaximumNoticeCount
-            || frozen.Any(static notice => notice is not (
-                PlayerTurnNotice.Reply
-                or PlayerTurnNotice.DeliveryFailure))) {
+        if (!frozen.Any(static notice => notice is
+                PlayerTurnNotice.Reply or PlayerTurnNotice.DeliveryFailure)) {
             throw new ArgumentException(
                 "DelegateReply requires one or more external reply or delivery-failure notices.",
                 nameof(notices)
@@ -390,12 +378,73 @@ internal sealed class PlayerTurnObservation {
 
     private static IReadOnlyList<PlayerTurnNotice> FreezeNotices(
         IEnumerable<PlayerTurnNotice>? notices
-    ) => Array.AsReadOnly(notices?.Select(
-        static notice => notice ?? throw new ArgumentException(
-            "Player-turn notice collections must not contain null items.",
-            nameof(notices)
-        )
-    ).ToArray() ?? []);
+    ) {
+        PlayerTurnNotice[] frozen = notices?.Select(
+            static notice => notice ?? throw new ArgumentException(
+                "Observation notice collections must not contain null items.",
+                nameof(notices)
+            )
+        ).ToArray() ?? [];
+        if (frozen.Length > PlayerTurnObservationEnvelope.MaximumNoticeCount) {
+            throw new ArgumentOutOfRangeException(
+                nameof(notices), "An Observation contains too many notices."
+            );
+        }
+        for (int index = 0; index < frozen.Length; index++) {
+            if (frozen[index] is PlayerTurnNotice.NoteSaveReceipt
+                && index != frozen.Length - 1) {
+                throw new ArgumentException(
+                    "An Observation may contain at most one Note save receipt, "
+                        + "and it must be the final notice.",
+                    nameof(notices)
+                );
+            }
+        }
+        return Array.AsReadOnly(frozen);
+    }
+
+    /// <summary>
+    /// Replaces memory enrichment without changing the trigger identity or
+    /// resampling its timestamp. Historical parser-only Observations cannot
+    /// be enriched for a new fresh send.
+    /// </summary>
+    internal PlayerTurnObservation WithRecalls(
+        IEnumerable<PlayerTurnRecall> recalls
+    ) {
+        ArgumentNullException.ThrowIfNull(recalls);
+        return WithMemory(Notices, recalls);
+    }
+
+    internal PlayerTurnObservation WithNotices(
+        IEnumerable<PlayerTurnNotice> notices
+    ) {
+        ArgumentNullException.ThrowIfNull(notices);
+        return WithMemory(notices, Recalls);
+    }
+
+    private PlayerTurnObservation WithMemory(
+        IEnumerable<PlayerTurnNotice> notices,
+        IEnumerable<PlayerTurnRecall> recalls
+    ) {
+        if (UsesHistoricalPlayerActionDialect) {
+            throw new InvalidOperationException(
+                "Historical DelegateReply cannot acquire new memory enrichment."
+            );
+        }
+        return TriggerKind switch {
+            PlayerTurnObservationTriggerKind.PlayerAction => new(
+                PlayerText, ExternalLocalTimestamp, notices, recalls
+            ),
+            PlayerTurnObservationTriggerKind.DelegateReply => new(
+                TriggerKind, ExternalLocalTimestamp, notices, recalls: recalls
+            ),
+            PlayerTurnObservationTriggerKind.HeartbeatActivation => new(
+                TriggerKind, ExternalLocalTimestamp, notices,
+                HeartbeatCharacterName, recalls: recalls
+            ),
+            _ => throw new InvalidOperationException("Unknown Observation trigger.")
+        };
+    }
 
     internal PlayerTurnObservationTriggerKind TriggerKind { get; }
     internal string PlayerText => _playerText
@@ -564,11 +613,6 @@ internal static class PlayerTurnObservationEnvelope {
                 playerText
             );
             previousBody = playerText;
-            foreach (PlayerTurnRecall recall in observation.Recalls) {
-                AppendSectionSeparator(builder, previousBody);
-                AppendRecallSection(builder, recall);
-                previousBody = recall.Body;
-            }
         }
         else if (observation.TriggerKind
                 is PlayerTurnObservationTriggerKind.HeartbeatActivation) {
@@ -582,6 +626,13 @@ internal static class PlayerTurnObservationEnvelope {
                 heartbeatBody
             );
             previousBody = heartbeatBody;
+        }
+        foreach (PlayerTurnRecall recall in observation.Recalls) {
+            if (previousBody is not null) {
+                AppendSectionSeparator(builder, previousBody);
+            }
+            AppendRecallSection(builder, recall);
+            previousBody = recall.Body;
         }
         foreach (PlayerTurnNotice notice in observation.Notices) {
             if (previousBody is not null) {
@@ -686,7 +737,7 @@ internal static class PlayerTurnObservationEnvelope {
             return false;
         }
 
-        PlayerTurnObservation parsed;
+        GalateaCharacterName? heartbeatCharacterName = null;
         if (stored.AsSpan(position).StartsWith(
                 "## " + HeartbeatActivationHeading + "\n\n",
                 StringComparison.Ordinal)) {
@@ -698,56 +749,63 @@ internal static class PlayerTurnObservationEnvelope {
                     out string body)
                 || !TryParseHeartbeatActivationBody(
                     body,
-                    out GalateaCharacterName characterName)
-                || position != stored.Length) {
+                    out GalateaCharacterName characterName)) {
                 return false;
             }
-            parsed = PlayerTurnObservation.CreateHeartbeatActivation(
-                timestamp,
-                characterName
-            );
+            heartbeatCharacterName = characterName;
         }
-        else {
-            var notices = new List<PlayerTurnNotice>();
-            while (position < stored.Length) {
-                if (stored.AsSpan(position).StartsWith(
-                        "## " + ReplyHeading + "\n\n",
-                        StringComparison.Ordinal)) {
-                    if (!TryReadSection(
-                            stored,
-                            ref position,
-                            ReplyHeading,
-                            ReplyInfoString,
-                            out string replyBody)) {
-                        return false;
-                    }
-                    notices.Add(new PlayerTurnNotice.Reply(replyBody));
-                }
-                else if (stored.AsSpan(position).StartsWith(
-                             "## " + FailureHeading + "\n\n",
-                             StringComparison.Ordinal)) {
-                    if (!TryReadSection(
-                            stored,
-                            ref position,
-                            FailureHeading,
-                            FailureInfoString,
-                            out string failureBody)) {
-                        return false;
-                    }
-                    notices.Add(
-                        new PlayerTurnNotice.DeliveryFailure(failureBody)
-                    );
-                }
-                else {
+        var recalls = new List<PlayerTurnRecall>();
+        var notices = new List<PlayerTurnNotice>();
+        bool noticesStarted = false;
+        bool receiptRead = false;
+        while (position < stored.Length) {
+            if (receiptRead) { return false; }
+            if (!noticesStarted && TryReadRecallSection(
+                    stored, ref position, out PlayerTurnRecall recall)) {
+                recalls.Add(recall);
+            }
+            else if (stored.AsSpan(position).StartsWith(
+                    "## " + ReplyHeading + "\n\n",
+                    StringComparison.Ordinal)) {
+                if (!TryReadSection(
+                        stored, ref position, ReplyHeading,
+                        ReplyInfoString, out string replyBody)) {
                     return false;
                 }
+                noticesStarted = true;
+                notices.Add(new PlayerTurnNotice.Reply(replyBody));
             }
-            if (notices.Count == 0) { return false; }
-            parsed = PlayerTurnObservation.CreateDelegateReply(
-                timestamp,
-                notices
-            );
+            else if (stored.AsSpan(position).StartsWith(
+                    "## " + FailureHeading + "\n\n",
+                    StringComparison.Ordinal)) {
+                if (!TryReadSection(
+                        stored, ref position, FailureHeading,
+                        FailureInfoString, out string failureBody)) {
+                    return false;
+                }
+                noticesStarted = true;
+                notices.Add(new PlayerTurnNotice.DeliveryFailure(failureBody));
+            }
+            else if (stored.AsSpan(position).StartsWith(
+                    "## " + NoteSaveReceiptHeading + "\n\n",
+                    StringComparison.Ordinal)) {
+                if (!TryReadSection(
+                        stored, ref position, NoteSaveReceiptHeading,
+                        NoteSaveReceiptInfoString, out string receiptBody)) {
+                    return false;
+                }
+                noticesStarted = true;
+                receiptRead = true;
+                notices.Add(new PlayerTurnNotice.NoteSaveReceipt(receiptBody));
+            }
+            else {
+                return false;
+            }
         }
+        PlayerTurnObservation parsed = heartbeatCharacterName is not null
+            ? PlayerTurnObservation.CreateHeartbeatActivation(
+                timestamp, heartbeatCharacterName, notices, recalls)
+            : PlayerTurnObservation.CreateDelegateReply(timestamp, notices, recalls);
 
         if (!string.Equals(stored, Wrap(parsed), StringComparison.Ordinal)) {
             return false;
