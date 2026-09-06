@@ -2,6 +2,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.Server.CharacterMemory;
+using Atelia.Galatea.Server.Mailbox;
 using Atelia.Galatea.Prompts;
 using Atelia.MemoPod;
 using Atelia.SessionJournal;
@@ -133,7 +134,10 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
 
         for (int index = 0; index < 2; index++) {
             EventAddress head = session.Engine.ReadCurrentHead()!.Value;
-            Assert.NotNull(service.PrepareAndCommitPopLatestTurn(session, head));
+            // Test-only branch movement through the journal API: the dev UI
+            // intentionally offers rewind only for ordinary Player turns.
+            Assert.IsType<SessionTurnRetractionResult.Moved>(
+                session.Engine.RewindLatestCompletedTurn(head));
         }
 
         _ = await RunTypedTurnAsync(service, session, triggerKind,
@@ -218,23 +222,59 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         string triggerKind,
         string playerText
     ) {
-        GalateaLiveTurn turn = triggerKind == "player-action"
-            ? service.StartTurn(session, playerText, new GalateaTurnOptions("test"))
-            : session.StartTurn(triggerKind == "heartbeat-activation"
-                ? new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice"))
-                : new GalateaFreshInput.DelegateReply([
-                    new PlayerTurnNotice.Reply("外层执行者已恢复，请继续查看蓝门。"),
-                ]), new GalateaTurnOptions("test"));
+        GalateaLiveTurn turn;
+        if (triggerKind == "delegate-reply") {
+            SeedReadyReply(session.DelegationHandle!.Store);
+            turn = Assert.IsType<GalateaReadyReplyTurnStartResult.Started>(
+                service.StartReadyReplyTurn(session, new GalateaTurnOptions("test"))).Turn;
+            Assert.NotNull(turn.DurableReplyLease);
+        }
+        else {
+            turn = triggerKind == "player-action"
+                ? service.StartTurn(session, playerText, new GalateaTurnOptions("test"))
+                : session.StartTurn(new GalateaFreshInput.HeartbeatActivation(
+                    new GalateaCharacterName("Alice")), new GalateaTurnOptions("test"));
+        }
         try {
             await service.RunTurnAsync(session, turn, CancellationToken.None)
                 .WaitAsync(Deadline);
             Assert.Equal("completed", turn.Status);
         }
         finally {
-            // Typed automatic admission has no cadence claim or reply lease.
+            // Direct typed heartbeat admission has no cadence claim.
             session.FinishTurn(turn);
         }
         return turn;
+    }
+
+    private static void SeedReadyReply(GalateaDelegationSqliteStore store) {
+        int ordinal = store.ReadSnapshot().Captures.Count + 1;
+        // Each fixture dispatch has its own valid, non-colliding source identity.
+        // Outbound extraction is disabled here; only ready-reply admission is tested.
+        string source = "ej1:" + (0x1000 + ordinal).ToString("x16")
+            + "0000000100000000";
+        GalateaDelegationCaptureResult captured = store.CaptureActionBatch(new(
+            source, new string('a', 64), VisibleActionUtf8Bytes: 6,
+            "extractor-contract-v1", [new SendMailIntent(
+                GalateaDelegateConfigReader.CanonicalRecipient,
+                Subject: null, Body: "seed task", InReplyToMessageId: null,
+                EvidenceQuote: "seeded")]));
+        GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
+        if (snapshot.Route.State == GalateaDelegationRouteState.Unbound) {
+            GalateaRouteBindingSnapshot binding = store.BeginThreadBinding(
+                "seed-binding", snapshot.Route.Revision);
+            _ = store.CompleteThreadBinding(binding.BindingOperationId!,
+                "seed-thread", binding.Revision);
+            snapshot = store.ReadSnapshot();
+        }
+        string dispatchId = Assert.Single(captured.DispatchIds);
+        GalateaOutboundMailSnapshot mail = snapshot.Mails.Single(
+            value => value.DispatchId == dispatchId);
+        GalateaOutboundMailSnapshot started = store.StartQueuedMail(
+            dispatchId, mail.Revision, snapshot.Route.Revision);
+        _ = store.RecordCompletedMail(dispatchId, started.Revision,
+            "seed-thread", "seed-turn-" + ordinal,
+            "外层执行者已恢复，请继续查看蓝门。");
     }
 
     private static PlayerTurnObservation ReadPersistedObservation(UserSessionHost session) {
