@@ -441,13 +441,13 @@ public sealed class GalateaSseV1Tests {
             html,
             StringComparison.Ordinal
         );
-        Assert.Contains(
-            "<input id=\"mail-loop-enabled\" type=\"checkbox\">",
+        Assert.DoesNotContain(
+            "id=\"mail-loop-enabled\"",
             html,
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "页面打开时自动续接 Codex 回信，并在空闲 10 分钟后唤醒角色",
+            "<button id=\"resume-turn-button\" type=\"button\" class=\"ghost-button\" disabled>恢复待处理轮次</button>",
             html,
             StringComparison.Ordinal
         );
@@ -457,7 +457,7 @@ public sealed class GalateaSseV1Tests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "<span id=\"autonomy-state\" role=\"status\" aria-live=\"polite\">自主活动：未启用</span>",
+            "<span id=\"autonomy-state\" role=\"status\" aria-live=\"polite\">服务端 Agent：正在读取…</span>",
             html,
             StringComparison.Ordinal
         );
@@ -477,7 +477,8 @@ public sealed class GalateaSseV1Tests {
             StringComparison.Ordinal
         );
         foreach (string id in new[] {
-            "mail-loop-enabled",
+            "resume-turn-button",
+            "autonomy-connection",
             "autonomy-status",
             "autonomy-state",
             "autonomy-countdown",
@@ -492,11 +493,6 @@ public sealed class GalateaSseV1Tests {
                 ).Length - 1
             );
         }
-        Assert.DoesNotContain(
-            "id=\"mail-loop-enabled\" type=\"checkbox\" checked",
-            html,
-            StringComparison.Ordinal
-        );
     }
 
     [Fact]

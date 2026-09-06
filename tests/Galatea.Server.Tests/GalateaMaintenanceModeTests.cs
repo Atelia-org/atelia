@@ -158,16 +158,16 @@ public sealed class GalateaMaintenanceModeTests {
         Assert.Contains("HistoryLoad 不是模型 token 数", page);
         Assert.Contains("required disabled", page);
         Assert.Contains("id=\"send-button\" type=\"submit\" disabled", page);
-        Assert.Contains(
-            "id=\"mail-loop-enabled\" type=\"checkbox\" disabled",
+        Assert.DoesNotContain(
+            "id=\"mail-loop-enabled\"",
             page
         );
         Assert.Contains(
-            "页面打开时自动续接 Codex 回信，并在空闲 10 分钟后唤醒角色",
+            "id=\"resume-turn-button\" type=\"button\" class=\"ghost-button\" disabled",
             page
         );
         Assert.Contains(
-            "id=\"autonomy-state\" role=\"status\" aria-live=\"polite\">自主活动：未启用",
+            "id=\"autonomy-state\" role=\"status\" aria-live=\"polite\">服务端 Agent：正在读取…",
             page
         );
         Assert.Contains(
