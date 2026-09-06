@@ -18,7 +18,7 @@ public sealed class GalateaEndpointLockTopologyTests {
     [Fact]
     public async Task AcceptedRunner_WithoutHttpBindsTaskAndOwnsLockUntilFatalCleanup() {
         var fatalClient = new FatalCompletionClient();
-        await using var host = GalateaTestHost.Create(
+        var host = GalateaTestHost.Create(
             new SingleClientFactory(fatalClient),
             new PassThroughNormalizer()
         );
@@ -54,14 +54,18 @@ public sealed class GalateaEndpointLockTopologyTests {
         Assert.Null(session.GetCurrentTurn());
         Assert.True(session.TurnLock.Wait(0));
         session.TurnLock.Release();
+        Assert.True(host.Factory.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.IsCancellationRequested);
+        await Assert.ThrowsAsync<OutOfMemoryException>(() => runner.DrainAsync());
+        await Assert.ThrowsAsync<OutOfMemoryException>(async () => await service.DisposeAsync());
+        await host.DisposeAsync();
     }
 
     [Fact]
-    public async Task AcceptedRunner_AlreadyStoppingStillPublishesShutdownAndReleasesLock() {
+    public async Task AcceptedRunner_StoppingRejectsHandoffAndLeavesCallerOwnership() {
         await using var host = CreateHost();
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
-        var runner = new GalateaAcceptedTurnRunner(service, new AlreadyStoppingLifetime());
+        var runner = host.Factory.Services.GetRequiredService<GalateaAcceptedTurnRunner>();
         UserSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
         await session.TurnLock.WaitAsync();
         GalateaLiveTurn liveTurn = service.StartTurn(
@@ -69,22 +73,13 @@ public sealed class GalateaEndpointLockTopologyTests {
             "shutdown runner fixture",
             new GalateaTurnOptions("test")
         );
-        using GalateaTurnSubscription subscription = liveTurn.Subscribe();
-        Task runTask = runner.Start(session, liveTurn);
-        Assert.Same(runTask, liveTurn.RunTask);
-        // Shutdown also cancels the best-effort recent refresh in cleanup.
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            async () => await runTask.WaitAsync(EndpointDeadline)
-        );
-
-        List<GalateaSseFrame> frames = [];
-        await foreach (GalateaSseFrame frame in subscription.Reader.ReadAllAsync()) {
-            frames.Add(frame);
-        }
-        Assert.Contains(frames, frame => Encoding.UTF8.GetString(frame.Utf8.Span)
-            .Contains("server-shutdown", StringComparison.Ordinal));
-        Assert.Null(session.GetCurrentTurn());
-        Assert.True(session.TurnLock.Wait(0));
+        runner.BeginShutdown();
+        Assert.Throws<OperationCanceledException>(() => { _ = runner.Start(session, liveTurn); });
+        Assert.Null(liveTurn.RunTask);
+        Assert.False(session.TurnLock.Wait(0));
+        liveTurn.PublishError(GalateaSseErrorCode.ServerShutdown);
+        service.FinishTurn(session, liveTurn);
+        liveTurn.Complete();
         session.TurnLock.Release();
     }
 
@@ -263,7 +258,7 @@ public sealed class GalateaEndpointLockTopologyTests {
     [Fact]
     public async Task FatalTurnFailurePreservesCauseAndEndsTransport() {
         var fatalClient = new FatalCompletionClient();
-        await using var host = GalateaTestHost.Create(
+        var host = GalateaTestHost.Create(
             new SingleClientFactory(fatalClient),
             new PassThroughNormalizer()
         );
@@ -309,6 +304,8 @@ public sealed class GalateaEndpointLockTopologyTests {
         Assert.Null(session.GetCurrentTurn());
         Assert.True(session.TurnLock.Wait(0));
         session.TurnLock.Release();
+        await Assert.ThrowsAsync<OutOfMemoryException>(async () => await hostService.DisposeAsync());
+        await host.DisposeAsync();
     }
 
     [Fact]
@@ -681,7 +678,7 @@ public sealed class GalateaEndpointLockTopologyTests {
         string script = await reader.ReadToEndAsync();
 
         Assert.Matches(
-            @"undoLastButton\.disabled\s*=\s*maintenanceMode\s*\|\|\s*state\.streaming\s*\|\|\s*state\.mailLoopInFlight\s*\|\|\s*!hasUndoableTurn\(\)\s*;",
+            @"undoLastButton\.disabled\s*=\s*maintenanceMode\s*\|\|\s*state\.initializing\s*\|\|\s*state\.streaming\s*\|\|\s*!hasUndoableTurn\(\)\s*;",
             script
         );
         Assert.Contains(

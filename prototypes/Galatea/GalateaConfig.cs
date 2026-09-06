@@ -632,9 +632,14 @@ internal sealed record InboundMailboxRequest(
     [property: JsonPropertyName("connectionId")] string? ConnectionId = null
 );
 
-internal sealed record ReadyReplyTurnRequest(
-    [property: JsonPropertyName("connectionId")]
-    string? ConnectionId = null
+internal sealed record ReadyReplyTurnRequest;
+
+internal sealed record GalateaAgentStatusDto(
+    string State,
+    string? ConnectionId,
+    long? NextActivationAtUnixTimeMilliseconds,
+    long? LastActivationAtUnixTimeMilliseconds,
+    string? Code
 );
 
 internal sealed record GalateaMailboxStatusDto(
@@ -702,7 +707,7 @@ internal sealed record LoopPulseStatusDto(
     string? Code
 ) {
     internal static LoopPulseStatusDto FromProjection(
-        GalateaBrowserSponsoredAutonomyStatus value
+        GalateaAutonomyCadenceStatus value
     ) {
         ArgumentNullException.ThrowIfNull(value);
         return new(

@@ -66,9 +66,15 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal GalateaSessionProvisioningTestHooks?
         SessionProvisioningHooksForTest { get; set; }
     internal TimeSpan? CharacterNoteExtractionDeadlineForTest { get; set; }
+    internal Func<UserSessionHost, Task>? SessionAttachedForTest { get; set; }
+    internal Func<Task>? BeforeDelegationAttachForTest { get; set; }
     internal TimeSpan? CharacterNoteDerivedInfoDeadlineForTest { get; set; }
     internal Action<string>? CharacterNoteDiagnosticSinkForTest { get; set; }
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
+    private readonly object _lifecycleGate = new();
+    private bool _stopping;
+    private GalateaAcceptedTurnRunner? _turnRunner;
+    private Task? _disposeTask;
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
     private readonly IReadOnlyDictionary<string, CompletionConnectionConfig>
         _connectionCatalog;
@@ -552,6 +558,33 @@ public sealed class GalateaHostService : IAsyncDisposable {
     public bool TryGetUser(string userId, out GalateaUserConfig user)
         => _users.TryGetValue(userId, out user!);
 
+    internal bool MaintenanceMode => _maintenanceMode;
+    internal TimeProvider TimeProvider => _timeProvider;
+    internal bool IsStopping { get { lock (_lifecycleGate) { return _stopping; } } }
+    internal void RequireRunning() {
+        if (IsStopping) { throw new OperationCanceledException("The Galatea host is stopping."); }
+    }
+
+    internal void RegisterTurnRunner(GalateaAcceptedTurnRunner runner) {
+        bool stopping;
+        lock (_lifecycleGate) {
+            if (_turnRunner is not null && !ReferenceEquals(_turnRunner, runner)) {
+                throw new InvalidOperationException("Only one accepted-turn runner may own a host.");
+            }
+            _turnRunner = runner;
+            stopping = _stopping;
+        }
+        if (stopping) { runner.BeginShutdown(); }
+    }
+
+    internal UserSessionHost? ReadAttachedSession(string userId) {
+        if (!_sessions.TryGetValue(userId, out var lazy) || !lazy.IsValueCreated) {
+            return null;
+        }
+        Task<UserSessionHost> task = lazy.Value;
+        return task.IsCompletedSuccessfully ? task.Result : null;
+    }
+
     public IReadOnlyList<GalateaConnectionInfoDto> Connections =>
         _selectableConnections;
 
@@ -561,7 +594,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     /// <summary>
     /// Reads mailbox progress without GetSessionAsync, TurnLock, extraction,
     /// transport, provider work, or reply-lease admission. This separation
-    /// from the mutating browser heartbeat is intentional. Successful polls
+    /// from the automatic admission is intentional. Successful polls
     /// intentionally produce no per-request diagnostic log; failures are
     /// logged at the supervisor boundary without recreating heartbeat noise.
     /// </summary>
@@ -595,14 +628,18 @@ public sealed class GalateaHostService : IAsyncDisposable {
         var user = _users.GetValueOrDefault(userId)
             ?? throw new InvalidOperationException($"Unknown user '{userId}'.");
 
-        var lazy = _sessions.GetOrAdd(
-            userId,
-            static (key, state) => new Lazy<Task<UserSessionHost>>(
-                () => state.Service.CreateSessionAsync(state.User, CancellationToken.None),
-                LazyThreadSafetyMode.ExecutionAndPublication
-            ),
-            (Service: this, User: user)
-        );
+        Lazy<Task<UserSessionHost>> lazy;
+        lock (_lifecycleGate) {
+            if (_stopping) { throw new OperationCanceledException("The Galatea host is stopping."); }
+            lazy = _sessions.GetOrAdd(
+                userId,
+                static (key, state) => new Lazy<Task<UserSessionHost>>(
+                    () => state.Service.CreateSessionAsync(state.User, CancellationToken.None),
+                    LazyThreadSafetyMode.ExecutionAndPublication
+                ),
+                (Service: this, User: user)
+            );
+        }
 
         try {
             var session = await lazy.Value.ConfigureAwait(false);
@@ -973,7 +1010,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     /// Starts an admitted ordinary player turn and freezes its reply cutoff.
     /// The caller must still own <see cref="UserSessionHost.TurnLock"/> and
     /// must already have accepted the exact recovery boundary and selected
-    /// main connection. Keeping the cutoff here makes the HTTP acceptance
+    /// main connection. Keeping the cutoff here makes caller acceptance
     /// instant, rather than the later background task, authoritative.
     /// </summary>
     internal async ValueTask ReconcileDurableAdmissionAsync(
@@ -1801,12 +1838,19 @@ public sealed class GalateaHostService : IAsyncDisposable {
             "completed",
             StringComparison.Ordinal
         );
-        bool settled = host.BrowserSponsoredAutonomy.SettleMainTurn(
-            turn.BrowserSponsoredAutonomySettlement,
+        bool settled = host.AutonomyCadence.SettleMainTurn(
+            turn.AutonomyCadenceSettlement,
             turn.FreshInput is GalateaFreshInput.HeartbeatActivation,
             completed,
-            turn.BrowserSponsoredAutonomyClaim
+            turn.AutonomyCadenceClaim
         );
+        if (settled && completed) {
+            host.AutomaticReplyFailed = false;
+            host.AutomaticAdmissionFailed = false;
+        }
+        else if (settled && turn.FreshInput is GalateaFreshInput.DelegateReply) {
+            host.AutomaticReplyFailed = true;
+        }
         if (settled
             && !completed
             && turn.FreshInput
@@ -1817,10 +1861,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
         }
         host.FinishTurn(turn);
+        host.PublishAutonomyStatus();
     }
 
     /// <summary>
-    /// Creates and claims one already-due browser-sponsored autonomous turn.
+    /// Creates and claims one already-due server-owned autonomous turn.
     /// The caller must own <see cref="UserSessionHost.TurnLock"/> and must have
     /// completed exact Idle admission after finding no Ready reply prefix.
     /// </summary>
@@ -1836,10 +1881,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
             ),
             options
         );
-        if (host.BrowserSponsoredAutonomy
+        if (host.AutonomyCadence
             .TryClaimAutonomousActivationStarted(out
-                GalateaBrowserSponsoredAutonomyClaim? claim)) {
-            turn.BindBrowserSponsoredAutonomyClaim(
+                GalateaAutonomyCadenceClaim? claim)) {
+            turn.BindAutonomyCadenceClaim(
                 claim ?? throw new InvalidOperationException(
                     "A successful autonomous cadence claim returned no token."
                 )
@@ -1854,7 +1899,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     }
 
     /// <summary>
-    /// Compensates a heartbeat live turn whose synchronous HTTP acceptance
+    /// Compensates a heartbeat live turn whose synchronous caller acceptance
     /// failed before writer ownership transferred. The caller must own
     /// <see cref="UserSessionHost.TurnLock"/>. Background-owned turns must never
     /// call this method.
@@ -1866,11 +1911,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(turn);
         if (turn.FreshInput is not GalateaFreshInput.HeartbeatActivation
-            || turn.BrowserSponsoredAutonomyClaim is not { } claim
-            || !host.BrowserSponsoredAutonomy
+            || turn.AutonomyCadenceClaim is not { } claim
+            || !host.AutonomyCadence
                 .TryRollbackAutonomousActivationClaim(
                     claim,
-                    turn.BrowserSponsoredAutonomySettlement
+                    turn.AutonomyCadenceSettlement
                 )) {
             throw new InvalidOperationException(
                 "Heartbeat activation admission could not roll back its exact cadence claim."
@@ -2678,21 +2723,29 @@ public sealed class GalateaHostService : IAsyncDisposable {
             .ConfigureAwait(false);
     }
 
-    public async ValueTask DisposeAsync() {
+    public ValueTask DisposeAsync() {
         BeginShutdown();
+        lock (_lifecycleGate) {
+            return new ValueTask(_disposeTask ??= Task.Run(DisposeCoreAsync));
+        }
+    }
+
+    private async Task DisposeCoreAsync() {
         List<Exception>? failures = null;
+        if (_turnRunner is { } runner) {
+            try { await runner.DrainAsync().ConfigureAwait(false); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+        }
         int sessionIndex = 0;
         foreach (var entry in _sessions.Values) {
-            if (!entry.IsValueCreated) { continue; }
-
             try {
                 var session = await entry.Value.ConfigureAwait(false);
                 await session.DisposeAsync().ConfigureAwait(false);
                 DisposeHooksForTest?.AfterSessionDisposed?.Invoke(
                     sessionIndex);
             }
-            catch (Exception exception) when (
-                GalateaExceptionClassifier.IsNonFatal(exception)) {
+            catch (OperationCanceledException) when (IsStopping) { }
+            catch (Exception exception) {
                 (failures ??= []).Add(exception);
             }
             sessionIndex++;
@@ -2702,8 +2755,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 .ConfigureAwait(false);
             DisposeHooksForTest?.AfterDelegationSupervisorDisposed?.Invoke();
         }
-        catch (Exception exception) when (
-            GalateaExceptionClassifier.IsNonFatal(exception)) {
+        catch (Exception exception) {
             (failures ??= []).Add(exception);
         }
         try {
@@ -2715,10 +2767,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
             }
             DisposeHooksForTest?.AfterRecapGridDisposed?.Invoke();
         }
-        catch (Exception exception) when (
-            GalateaExceptionClassifier.IsNonFatal(exception)) {
+        catch (Exception exception) {
             (failures ??= []).Add(exception);
         }
+        Exception? fatal = failures?.FirstOrDefault(static exception =>
+            !GalateaExceptionClassifier.IsNonFatal(exception));
+        if (fatal is not null) { ExceptionDispatchInfo.Capture(fatal).Throw(); }
         if (failures is { Count: 1 }) {
             ExceptionDispatchInfo.Capture(failures[0]).Throw();
         }
@@ -2733,8 +2787,15 @@ public sealed class GalateaHostService : IAsyncDisposable {
         Action? AfterDelegationSupervisorDisposed = null
     );
 
-    internal void BeginShutdown() =>
+    internal void BeginShutdown() {
+        GalateaAcceptedTurnRunner? runner;
+        lock (_lifecycleGate) {
+            _stopping = true;
+            runner = _turnRunner;
+        }
+        runner?.BeginShutdown();
         _delegationSupervisor.BeginShutdown();
+    }
 
     private async Task<GalateaCompletedOperation>
         RunRecapGridFreshSendAsync(
@@ -3343,12 +3404,18 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     .ConfigureAwait(false);
             }
             ct.ThrowIfCancellationRequested();
-            delegationHandle = _maintenanceMode
-                ? null
-                : _delegationSupervisor.AttachWritableSession(
-                    user.UserId,
-                    engine
-                );
+            if (BeforeDelegationAttachForTest is { } beforeAttach) {
+                await beforeAttach().ConfigureAwait(false);
+            }
+            RequireRunning();
+            try {
+                delegationHandle = _maintenanceMode
+                    ? null
+                    : _delegationSupervisor.AttachWritableSession(user.UserId, engine);
+            }
+            catch (ObjectDisposedException exception) when (IsStopping) {
+                throw new OperationCanceledException("Session attachment cancelled by host shutdown.", exception);
+            }
             IGalateaPlayerTurnRecallProvider playerTurnRecallProvider =
                 _playerTurnRecallProviderFactory?.Invoke(
                     user,
@@ -3378,11 +3445,18 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 try {
                     await ReconcileDurableAdmissionAsync(host, ct)
                         .ConfigureAwait(false);
+                    if (ServerAgentUserIds.Contains(user.UserId, StringComparer.Ordinal)) {
+                        host.AutonomyCadence.Arm();
+                        host.PublishAutonomyStatus();
+                    }
                 }
                 finally {
                     host.TurnLock.Release();
                 }
                 _ = host.CharacterNoteDerivedInfoPump?.Signal();
+            }
+            if (SessionAttachedForTest is { } attachedHook) {
+                await attachedHook(host).ConfigureAwait(false);
             }
             return host;
         }
@@ -3785,6 +3859,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
     private GalateaLiveTurn? _currentTurn;
     private GalateaLiveTurn? _lastTurn;
     private RecentTurnsResponseDto _recentTurns;
+    private GalateaAgentStatusDto _agentStatus;
 
     internal UserSessionHost(
         GalateaUserConfig user,
@@ -3808,6 +3883,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(characterNoteExtractor);
         ArgumentNullException.ThrowIfNull(playerTurnRecallProvider);
         User = user;
+        _agentStatus = new("starting", user.DefaultConnectionId, null, null, null);
         Engine = engine;
         _recentTurns = recentTurns;
         TargetExpectation = targetExpectation;
@@ -3815,7 +3891,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
         DelegationHandle = delegationHandle;
         CharacterNoteExtractor = characterNoteExtractor;
         PlayerTurnRecallProvider = playerTurnRecallProvider;
-        BrowserSponsoredAutonomy = new(timeProvider ?? TimeProvider.System);
+        AutonomyCadence = new(timeProvider ?? TimeProvider.System);
         if (characterMemoryReconciler is not null
             && derivedInfoEnricher is not null) {
             CharacterNoteDerivedInfoPump =
@@ -3861,8 +3937,41 @@ public sealed class UserSessionHost : IAsyncDisposable {
     internal CharacterNoteSaveReceiptQueue NoteSaveReceipts { get; } =
         new();
 
-    internal GalateaBrowserSponsoredAutonomy BrowserSponsoredAutonomy {
+    internal GalateaAutonomyCadence AutonomyCadence {
         get;
+    }
+
+    // Written only under TurnLock; HTTP reads the immutable cached projection.
+    internal bool AutomaticReplyFailed { get; set; }
+    internal bool AutomaticAdmissionFailed { get; set; }
+
+    internal GalateaAgentStatusDto ReadAgentStatus() => Volatile.Read(ref _agentStatus);
+
+    internal void SetAgentStatus(string state, string? code = null) {
+        GalateaAgentStatusDto previous = ReadAgentStatus();
+        Volatile.Write(ref _agentStatus, new GalateaAgentStatusDto(
+            state, User.DefaultConnectionId,
+            state is "waiting" ? previous.NextActivationAtUnixTimeMilliseconds : null,
+            previous.LastActivationAtUnixTimeMilliseconds, code
+        ));
+    }
+
+    internal void PublishAutonomyStatus() {
+        if (AutomaticAdmissionFailed) {
+            SetAgentStatus("blocked", "AUTOMATIC_ADMISSION_FAILED");
+            return;
+        }
+        if (AutomaticReplyFailed) {
+            SetAgentStatus("blocked", "AUTOMATIC_REPLY_FAILED");
+            return;
+        }
+        if (!AutonomyCadence.IsArmed) { SetAgentStatus("waiting"); return; }
+        GalateaAutonomyCadenceStatus cadence = AutonomyCadence.ProjectStatus();
+        Volatile.Write(ref _agentStatus, new GalateaAgentStatusDto(
+            cadence.State, User.DefaultConnectionId,
+            cadence.NextActivationAtUnixTimeMilliseconds,
+            cadence.LastActivationAtUnixTimeMilliseconds, cadence.Code
+        ));
     }
 
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
@@ -3892,7 +4001,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
             _currentTurn = liveTurn;
             _recentTurns = MarkStale(_recentTurns);
         }
-
+        SetAgentStatus("running");
         return liveTurn;
     }
 
@@ -3909,6 +4018,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
             _currentTurn = liveTurn;
             _recentTurns = MarkStale(_recentTurns);
         }
+        SetAgentStatus("running");
         return liveTurn;
     }
 
@@ -4870,12 +4980,9 @@ internal static class GalateaHtml {
           <div class="recap-planning-note">HistoryLoad 不是模型 token 数，也不是完整 context window 占用</div>
         </section>
         <textarea id="message-input" rows="3" placeholder="说点什么……" required{{maintenanceDisabled}}></textarea>
-        <label class="composer-option">
-          <input id="mail-loop-enabled" type="checkbox"{{maintenanceDisabled}}>
-          <span>页面打开时自动续接 Codex 回信，并在空闲 10 分钟后唤醒角色</span>
-        </label>
         <div id="autonomy-status" class="autonomy-status">
-          <span id="autonomy-state" role="status" aria-live="polite">自主活动：未启用</span>
+          <span id="autonomy-state" role="status" aria-live="polite">服务端 Agent：正在读取…</span>
+          <span id="autonomy-connection"></span>
           <span id="autonomy-countdown" aria-live="off"></span>
           <span id="autonomy-last-activation" aria-live="off">上次自主激活：尚无</span>
         </div>
@@ -4886,6 +4993,7 @@ internal static class GalateaHtml {
             <span id="status-text" class="status-text"></span>
           </div>
           <div class="composer-buttons">
+            <button id="resume-turn-button" type="button" class="ghost-button" disabled>恢复待处理轮次</button>
             <button id="undo-last-button" type="button" class="ghost-button"{{maintenanceDisabled}}>撤销上一轮</button>
             <button id="stop-button" type="button" class="ghost-button"{{maintenanceDisabled}}>停止</button>
             <button id="send-button" type="submit"{{maintenanceDisabled}}>发送</button>

@@ -1,13 +1,13 @@
 namespace Atelia.Galatea.Server;
 
-internal enum GalateaBrowserSponsoredAutonomyPulseResult {
+internal enum GalateaAutonomyCadencePulseResult {
     Rearmed,
     Waiting,
     AutonomousActivationDue,
     AutonomyPaused
 }
 
-internal sealed record GalateaBrowserSponsoredAutonomyStatus(
+internal sealed record GalateaAutonomyCadenceStatus(
     string State,
     long? NextActivationAtUnixTimeMilliseconds,
     long? LastActivationAtUnixTimeMilliseconds,
@@ -15,11 +15,11 @@ internal sealed record GalateaBrowserSponsoredAutonomyStatus(
 );
 
 /// <summary>
-/// One caller-owned guard for settling a main turn against browser-sponsored
+/// One caller-owned guard for settling a main turn against server-owned
 /// autonomy cadence at most once. The caller must hold the corresponding
 /// session TurnLock whenever this guard is used.
 /// </summary>
-internal sealed class GalateaBrowserSponsoredAutonomyTurnSettlement {
+internal sealed class GalateaAutonomyCadenceTurnSettlement {
     private bool _settled;
 
     internal bool IsSettled => _settled;
@@ -38,7 +38,7 @@ internal sealed class GalateaBrowserSponsoredAutonomyTurnSettlement {
 /// activation. The caller must hold the corresponding session TurnLock when
 /// this token is settled or rolled back.
 /// </summary>
-internal sealed class GalateaBrowserSponsoredAutonomyClaim(
+internal sealed class GalateaAutonomyCadenceClaim(
     long previousDueFromTimestamp,
     long? previousLastAutonomousActivationTimestamp,
     long claimedAtTimestamp
@@ -62,13 +62,8 @@ internal sealed class GalateaBrowserSponsoredAutonomyClaim(
 }
 
 /// <summary>
-/// Process-local cadence state for browser-sponsored autonomous turns.
-/// The ten-minute idle interval and sponsor continuity gap strictly longer
-/// than thirty seconds are intentionally fixed, code-owned, and
-/// non-configurable. An exact thirty-second gap remains continuous. This state
-/// is also intentionally non-durable: browser sponsorship is best-effort, and
-/// a new server/session instance conservatively rearms instead of catching up
-/// work.
+/// Process-local cadence for server-owned autonomous turns. Ten minutes is
+/// code-owned; a new session rearms instead of catching up missed work.
 ///
 /// The caller must hold the corresponding session TurnLock for every method.
 /// This type performs no locking and owns no timer, background work, SQLite
@@ -76,60 +71,56 @@ internal sealed class GalateaBrowserSponsoredAutonomyClaim(
 /// Monotonic TimeProvider timestamps are the sole cadence authority; wall time
 /// is used only to project diagnostic timestamps.
 /// </summary>
-internal sealed class GalateaBrowserSponsoredAutonomy {
+internal sealed class GalateaAutonomyCadence {
     internal static readonly TimeSpan IdleInterval = TimeSpan.FromMinutes(10);
-    internal static readonly TimeSpan SponsorContinuityGap =
-        TimeSpan.FromSeconds(30);
 
     internal const string WaitingState = "waiting";
     internal const string PausedState = "autonomy-paused";
     internal const string PausedCode = "AUTONOMOUS_TURN_FAILED";
 
     private readonly TimeProvider _timeProvider;
-    private long? _lastSponsorPulseTimestamp;
+    private long? _lastPulseTimestamp;
     private long? _nextDueFromTimestamp;
     private long? _lastAutonomousActivationTimestamp;
-    private GalateaBrowserSponsoredAutonomyClaim? _activeClaim;
+    private GalateaAutonomyCadenceClaim? _activeClaim;
     private bool _paused;
 
-    internal GalateaBrowserSponsoredAutonomy(TimeProvider timeProvider) {
+    internal GalateaAutonomyCadence(TimeProvider timeProvider) {
         _timeProvider = timeProvider
             ?? throw new ArgumentNullException(nameof(timeProvider));
     }
 
+    internal bool IsArmed => _lastPulseTimestamp is not null;
+
     /// <summary>
-    /// Observes one server-received sponsor pulse and, when continuously
-    /// sponsored and exactly due, reports that one autonomous activation may
+    /// Observes one server pulse and, when exactly due, reports that one activation may
     /// be created. The caller must hold the corresponding session TurnLock.
     /// The due state remains unconsumed until the caller successfully creates
     /// a live turn and calls <see cref="TryClaimAutonomousActivationStarted"/>.
     /// </summary>
-    internal GalateaBrowserSponsoredAutonomyPulseResult ObserveSponsorPulse() {
+    internal GalateaAutonomyCadencePulseResult ObservePulse() {
         long now = _timeProvider.GetTimestamp();
 
         if (_paused) {
-            _lastSponsorPulseTimestamp = now;
-            return GalateaBrowserSponsoredAutonomyPulseResult.AutonomyPaused;
+            _lastPulseTimestamp = now;
+            return GalateaAutonomyCadencePulseResult.AutonomyPaused;
         }
 
-        if (_lastSponsorPulseTimestamp is not { } previous
-            || now < previous
-            || _timeProvider.GetElapsedTime(previous, now)
-                > SponsorContinuityGap) {
+        if (_lastPulseTimestamp is not { } previous || now < previous) {
             Rearm(now);
-            return GalateaBrowserSponsoredAutonomyPulseResult.Rearmed;
+            return GalateaAutonomyCadencePulseResult.Rearmed;
         }
 
-        _lastSponsorPulseTimestamp = now;
+        _lastPulseTimestamp = now;
         if (_nextDueFromTimestamp is not { } dueFrom) {
-            return GalateaBrowserSponsoredAutonomyPulseResult.Waiting;
+            return GalateaAutonomyCadencePulseResult.Waiting;
         }
         if (now < dueFrom
             || _timeProvider.GetElapsedTime(dueFrom, now) < IdleInterval) {
-            return GalateaBrowserSponsoredAutonomyPulseResult.Waiting;
+            return GalateaAutonomyCadencePulseResult.Waiting;
         }
 
-        return GalateaBrowserSponsoredAutonomyPulseResult
+        return GalateaAutonomyCadencePulseResult
             .AutonomousActivationDue;
     }
 
@@ -140,7 +131,7 @@ internal sealed class GalateaBrowserSponsoredAutonomy {
     /// activation.
     /// </summary>
     internal bool TryClaimAutonomousActivationStarted(
-        out GalateaBrowserSponsoredAutonomyClaim? claim
+        out GalateaAutonomyCadenceClaim? claim
     ) {
         claim = null;
         if (_paused
@@ -153,7 +144,7 @@ internal sealed class GalateaBrowserSponsoredAutonomy {
             || _timeProvider.GetElapsedTime(dueFrom, now) < IdleInterval) {
             return false;
         }
-        var created = new GalateaBrowserSponsoredAutonomyClaim(
+        var created = new GalateaAutonomyCadenceClaim(
             dueFrom,
             _lastAutonomousActivationTimestamp,
             now
@@ -172,8 +163,8 @@ internal sealed class GalateaBrowserSponsoredAutonomy {
     /// no already-settled claim may be rolled back.
     /// </summary>
     internal bool TryRollbackAutonomousActivationClaim(
-        GalateaBrowserSponsoredAutonomyClaim claim,
-        GalateaBrowserSponsoredAutonomyTurnSettlement settlement
+        GalateaAutonomyCadenceClaim claim,
+        GalateaAutonomyCadenceTurnSettlement settlement
     ) {
         ArgumentNullException.ThrowIfNull(claim);
         ArgumentNullException.ThrowIfNull(settlement);
@@ -192,15 +183,15 @@ internal sealed class GalateaBrowserSponsoredAutonomy {
     /// <summary>
     /// Settles one terminal main turn. A completed turn clears an autonomy
     /// pause and resets the idle interval only after this state has previously
-    /// observed browser sponsorship. A non-completed autonomous turn pauses
+    /// been armed. A non-completed autonomous turn pauses
     /// further empty activations and clears the due time. The caller must hold
     /// the corresponding session TurnLock.
     /// </summary>
     internal bool SettleMainTurn(
-        GalateaBrowserSponsoredAutonomyTurnSettlement settlement,
+        GalateaAutonomyCadenceTurnSettlement settlement,
         bool isAutonomousActivation,
         bool completed,
-        GalateaBrowserSponsoredAutonomyClaim? autonomousClaim = null
+        GalateaAutonomyCadenceClaim? autonomousClaim = null
     ) {
         ArgumentNullException.ThrowIfNull(settlement);
         if (settlement.IsSettled
@@ -212,7 +203,7 @@ internal sealed class GalateaBrowserSponsoredAutonomy {
         }
 
         long? completedResetFrom = completed
-            && _lastSponsorPulseTimestamp is not null
+            && _lastPulseTimestamp is not null
                 ? _timeProvider.GetTimestamp()
                 : null;
         settlement.SettleAfterValidation();
@@ -242,7 +233,7 @@ internal sealed class GalateaBrowserSponsoredAutonomy {
     /// derived from one wall-clock sample plus monotonic remaining/elapsed
     /// durations and never participate in cadence decisions.
     /// </summary>
-    internal GalateaBrowserSponsoredAutonomyStatus ProjectStatus() {
+    internal GalateaAutonomyCadenceStatus ProjectStatus() {
         long timestampNow = _timeProvider.GetTimestamp();
         DateTimeOffset utcNow = _timeProvider.GetUtcNow();
         DateTimeOffset? nextAt = _nextDueFromTimestamp is { } dueFrom
@@ -252,7 +243,7 @@ internal sealed class GalateaBrowserSponsoredAutonomy {
             _lastAutonomousActivationTimestamp is { } activatedAt
                 ? utcNow - ElapsedOrZero(activatedAt, timestampNow)
                 : null;
-        return new GalateaBrowserSponsoredAutonomyStatus(
+        return new GalateaAutonomyCadenceStatus(
             _paused ? PausedState : WaitingState,
             nextAt?.ToUnixTimeMilliseconds(),
             lastActivationAt?.ToUnixTimeMilliseconds(),
@@ -260,8 +251,12 @@ internal sealed class GalateaBrowserSponsoredAutonomy {
         );
     }
 
+    internal void Arm() {
+        if (_lastPulseTimestamp is null) { Rearm(_timeProvider.GetTimestamp()); }
+    }
+
     private void Rearm(long now) {
-        _lastSponsorPulseTimestamp = now;
+        _lastPulseTimestamp = now;
         _nextDueFromTimestamp = now;
     }
 
@@ -277,7 +272,7 @@ internal sealed class GalateaBrowserSponsoredAutonomy {
         : _timeProvider.GetElapsedTime(start, end);
 
     private bool IsCurrentUnsettledClaim(
-        GalateaBrowserSponsoredAutonomyClaim claim
+        GalateaAutonomyCadenceClaim claim
     ) => !_paused
         && ReferenceEquals(_activeClaim, claim)
         && !claim.IsSettled

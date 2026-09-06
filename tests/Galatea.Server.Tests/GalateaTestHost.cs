@@ -34,6 +34,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
     private readonly string _tempRoot;
     private readonly bool _deleteFilesOnDispose;
     private readonly TimeProvider? _timeProvider;
+    private readonly bool _enableServerAgentHostedService;
     private bool _disposeCompleted;
     private bool _restartCreated;
 
@@ -47,11 +48,13 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         GalateaPlayerTurnRecallProviderFactory?
             playerTurnRecallProviderFactory,
         TimeProvider? timeProvider,
-        bool deleteFilesOnDispose
+        bool deleteFilesOnDispose,
+        bool enableServerAgentHostedService = false
     ) {
         _tempRoot = tempRoot;
         _deleteFilesOnDispose = deleteFilesOnDispose;
         _timeProvider = timeProvider;
+        _enableServerAgentHostedService = enableServerAgentHostedService;
         SessionDirectory = sessionDirectory;
         ConfigPath = configPath;
         Factory = new GalateaWebApplicationFactory(
@@ -60,7 +63,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             normalizer,
             delegateTransport,
             playerTurnRecallProviderFactory,
-            timeProvider
+            timeProvider,
+            enableServerAgentHostedService
         );
     }
 
@@ -107,7 +111,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IGalateaDurableDelegateTransport? delegateTransport = null,
         GalateaPlayerTurnRecallProviderFactory?
             playerTurnRecallProviderFactory = null,
-        TimeProvider? timeProvider = null
+        TimeProvider? timeProvider = null,
+        IReadOnlyList<string>? serverAgentUserIds = null,
+        bool enableServerAgentHostedService = false
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
 
@@ -164,7 +170,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 outboundMailExtractorConnectionId,
             characterNoteExtractorConnectionId:
                 characterNoteExtractorConnectionId,
-            memoRecallConnectionId: memoRecallConnectionId
+            memoRecallConnectionId: memoRecallConnectionId,
+            serverAgentUserIds: serverAgentUserIds
         );
 
         return new GalateaTestHost(
@@ -176,7 +183,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             delegateTransport,
             playerTurnRecallProviderFactory,
             timeProvider,
-            deleteFilesOnDispose
+            deleteFilesOnDispose,
+            enableServerAgentHostedService
         );
     }
 
@@ -470,7 +478,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             delegateTransport,
             playerTurnRecallProviderFactory: null,
             timeProvider: _timeProvider,
-            deleteFilesOnDispose
+            deleteFilesOnDispose,
+            _enableServerAgentHostedService
         );
         _restartCreated = true;
         return restarted;
@@ -512,7 +521,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? inputNormalizerConnectionId = null,
         string? outboundMailExtractorConnectionId = null,
         string? characterNoteExtractorConnectionId = null,
-        string? memoRecallConnectionId = null
+        string? memoRecallConnectionId = null,
+        IReadOnlyList<string>? serverAgentUserIds = null
     ) {
         string agentControlProfileFile = "recap-grid-profile.json";
         RecapGridAgentControlProfile profile = agentControlProfile
@@ -554,7 +564,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 "recap-grid-routes.json",
                 [agentControlProfileFile],
                 profile.ProfileId
-            )
+            ),
+            ServerAgentUserIds: serverAgentUserIds ?? []
         );
         var jsonOptions = new JsonSerializerOptions(
             JsonSerializerDefaults.Web
@@ -840,12 +851,18 @@ internal sealed class GalateaWebApplicationFactory(
     IGalateaDurableDelegateTransport? delegateTransport,
     GalateaPlayerTurnRecallProviderFactory?
         playerTurnRecallProviderFactory,
-    TimeProvider? timeProvider = null
+    TimeProvider? timeProvider = null,
+    bool enableServerAgentHostedService = false
 ) : WebApplicationFactory<Program> {
     protected override void ConfigureWebHost(IWebHostBuilder builder) {
         builder.UseEnvironment("Testing");
         builder.UseSetting("Galatea:ConfigPath", configPath);
         builder.ConfigureTestServices(services => {
+            if (!enableServerAgentHostedService) {
+                ServiceDescriptor? hosted = services.FirstOrDefault(descriptor =>
+                    descriptor.ImplementationType == typeof(GalateaServerAgentHostedService));
+                if (hosted is not null) { services.Remove(hosted); }
+            }
             services.RemoveAll<ICompletionClientFactory>();
             services.AddSingleton(completionClientFactory);
             if (normalizer is not null) {

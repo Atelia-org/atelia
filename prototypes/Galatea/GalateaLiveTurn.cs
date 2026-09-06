@@ -58,27 +58,27 @@ internal sealed class GalateaLiveTurn {
 
     internal GalateaDurableReplyLease? DurableReplyLease { get; }
 
-    internal GalateaBrowserSponsoredAutonomyTurnSettlement
-        BrowserSponsoredAutonomySettlement { get; } = new();
+    internal GalateaAutonomyCadenceTurnSettlement
+        AutonomyCadenceSettlement { get; } = new();
 
-    internal GalateaBrowserSponsoredAutonomyClaim?
-        BrowserSponsoredAutonomyClaim { get; private set; }
+    internal GalateaAutonomyCadenceClaim?
+        AutonomyCadenceClaim { get; private set; }
 
     /// <summary>
     /// Binds the exact process-local cadence claim belonging to this heartbeat
     /// activation. The caller must hold the corresponding session TurnLock.
     /// </summary>
-    internal void BindBrowserSponsoredAutonomyClaim(
-        GalateaBrowserSponsoredAutonomyClaim claim
+    internal void BindAutonomyCadenceClaim(
+        GalateaAutonomyCadenceClaim claim
     ) {
         ArgumentNullException.ThrowIfNull(claim);
         if (FreshInput is not GalateaFreshInput.HeartbeatActivation
-            || BrowserSponsoredAutonomyClaim is not null) {
+            || AutonomyCadenceClaim is not null) {
             throw new InvalidOperationException(
                 "Only one cadence claim may bind one heartbeat activation."
             );
         }
-        BrowserSponsoredAutonomyClaim = claim;
+        AutonomyCadenceClaim = claim;
     }
 
     public string? UserMessage => FreshInput?.DisplayText;

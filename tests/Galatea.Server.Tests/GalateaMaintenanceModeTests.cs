@@ -53,7 +53,7 @@ public sealed class GalateaMaintenanceModeTests {
         await AssertMaintenanceConflictAsync(
             await client.PostAsJsonAsync(
                 "/api/v1/mailbox/ready-turn",
-                new ReadyReplyTurnRequest("test")
+                new ReadyReplyTurnRequest()
             )
         );
         await AssertMaintenanceConflictAsync(
