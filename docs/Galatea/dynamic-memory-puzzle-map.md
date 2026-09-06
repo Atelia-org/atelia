@@ -69,8 +69,8 @@ MemoPod 不负责：
 
 Mailbox 已经证明这个方向可行：`OutboundMailExtractor`从角色叙事Action中提取`SendMailIntent`。现行
 `CharacterNoteIntent` / `CharacterNoteExtractor`已复用该模式，保守提取角色明确完成提交的长期Note保存请求；对应binding
-非`null`时主prompt才追加保存Quick Start。提取结果本身不表示保存；只有Default MemoPod reconciler的durable
-`AppliedNow`结果有资格生成保存回执。
+非`null`时主prompt才追加保存Quick Start。提取结果本身不表示保存；只有Default MemoPod真正durable Applied
+settlement才在同一SQLite事务建立保存回执，不依赖后续AppliedNow函数返回值。
 
 ### Character Note DerivedInfo Enricher
 
@@ -126,7 +126,8 @@ Recall block 的 authority 仍然来自 runtime renderer，而不是外部 calle
 
 Galatea侧的internal `IGalateaPlayerTurnRecallProvider`已由per-session factory接入production；历史名称不限制trigger。
 `galatea.memo-recall`为null或maintenance mode时使用disabled singleton，并在context selection / barrier构建之前绕过；
-独立的receipt delivery不因此关闭。enabled provider request携带preliminary typed Observation、recent visible Action、
+仅禁用Memo binding不关闭独立receipt delivery；maintenance不打开CharacterMemory，也不进行投递写入。
+enabled provider request携带preliminary typed Observation、recent visible Action、
 `RecallBarrier`与`CharacterNoteOriginBarrier`，服务三个fresh trigger，包括携带reply lease的PlayerAction。
 query使用`atelia.galatea.memo-recall-context.v2`，`currentTurn.trigger`保留真实kind及对应playerText/activationText，
 DelegateReply只写kind并由externalNotices提供回信；receipt不进入query。runtime先附receipt，再按剩余预算选择0..1个Memo；
@@ -292,20 +293,22 @@ internal sealed class PlayerTurnObservation {
 ```text
 prefix
 external-local-timestamp
-player-action
+PlayerAction: player-action / HeartbeatActivation: heartbeat-activation / DelegateReply: no synthetic trigger block
 memo recall blocks
-delegate reply / failure notices
+delegate reply / failure notices (forbidden in HeartbeatActivation; required in DelegateReply)
 optional NoteSaveReceipt (final notice)
 ```
 
-原因是 recall 通常由当前 player action 和当前 context 触发，放在 player action 后更容易让模型理解“这些是 runtime 为理解本轮行动补充的记忆”。Codex reply/failure notices 仍然作为异步外界事件保留在后面。
+recall由真实typed trigger与当前context驱动，作为runtime为本轮行动补充的记忆，不伪造玩家输入。
+PlayerAction/HeartbeatActivation先写各自trigger块，再写recall；DelegateReply可直接从recall开始，但后面必须有
+真实Codex reply/failure notice。所有variant都把receipt放在最后，并保持相同canonical顺序与校验。
 
 Recall block 同时渲染 anchor metadata 和正文。当前形状：
 
 ```text
 ## 召回的角色笔记（一句话印象）
 
-SourceId: memo-pod:<pod-id>#<memo-id>
+SourceId: memo-pod:v1/00000000000000000000000000000001/m1:00000001
 
 ~~~~memo-gist-recall
 标题：...
@@ -351,7 +354,10 @@ Build(contextMessages)
 - 构造当前 Observation 时，先用 pre-observation context 生成 barrier，再由 `PlayerTurnObservation` 构造函数禁止同一 Observation 内重复。
 - 聚合结果当前不保留 first/last seen 的 raw address 或 provider-message ordinal；如果后续需要调试 recall 去重决策，可以加 observation address / provider-message ordinal，但去重判断仍只依赖 key。
 
-GalateaServices 当前会在 fresh player turn 中先构造无 recall 的 preliminary Observation，用它打开 RecapGrid online pass，再用同一 candidate source materialize provider-visible raw Observation 后缀构造 `RecallBarrier`。`RawHistoryAuthorized` 只有在同一 open pass 已授权 mature raw history 时才读取 raw window；`Selected` candidate 会先确认可 materialize。这个路径刻意没有新增 SessionJournal public supplemental seam。
+GalateaServices在三种fresh trigger中先构造无recall、可含pending receipt的preliminary Observation，用它打开
+RecapGrid online pass，再用同一candidate source materialize provider-visible raw Observation后缀构造`RecallBarrier`。
+`RawHistoryAuthorized`只有在同一open pass已授权mature raw history时才读取raw window；`Selected` candidate会先确认
+可materialize。这个路径刻意没有新增SessionJournal public supplemental seam。
 
 ## 端到端拼装图
 
@@ -416,10 +422,9 @@ MVP之后仍真实存在的缺口大致是：
 - Memo 的归类、整理、合并、分裂、失效和二级索引维护；
 - DerivedInfo retry的持久化schedule、attempt telemetry与长期backoff策略；当前只有session内round-robin cursor与外部安全边界signal；
 - 对完全不遵守cancellation的provider建立更强的隔离/终止边界；当前shutdown选择等待而不是冒险use-after-dispose；
-- recall trigger：现行每个eligible ordinary player turn查询一次；是否按场景、实体、时间或未完成事项跳过，需要真实telemetry后再设计；
+- recall trigger：现行每个eligible PlayerAction、HeartbeatActivation或DelegateReply fresh turn查询一次；是否按场景、实体、时间或未完成事项跳过，需要真实telemetry后再设计；
 - recall planner：现行只产出Title+ExactText；后续再根据DerivedInfo质量与预算在Gist/Summary/ExactText之间选择合适粒度；
 - recall budget：和 RecapGrid recent raw tail、derived context contributions 共用 request budget；
-- active durable reply lease 场景的 recall 注入策略；
 - 多Pod启用后的SourceId跨pod routing与失效边界；
 - dominance / coverage：例如 ExactText 已可见时是否阻止 Summary 和 Gist；
 - durable/rebuildable ownership：哪些状态必须持久化，哪些可以由 MemoPod/index 重建；
@@ -442,10 +447,10 @@ MVP之后仍真实存在的缺口大致是：
 
 ### 下一批候选
 
-10. 在生产使用中观察最小DerivedInfo管线的摘要质量与失败分布，再决定是否增加持久化retry schedule、attempt telemetry、独立connection binding或更广的生成上下文。
-11. 收集Memo recall的empty rate、Title-missing/filter rate、query/cache tokens与latency，先用证据判断是否需要typed exclusions、更宽recent Action suffix或cue extractor。
-12. 内容增强质量达到可用门槛后，再启用`MemoGist`与`MemoSummary`，并迭代摘要质量和生成上下文。
-13. 真实使用后再设计跨RecapGrid与main request的全局budget分配、dominance、active durable reply lease和可选best-effort policy。
+11. 在生产使用中观察最小DerivedInfo管线的摘要质量与失败分布，再决定是否增加持久化retry schedule、attempt telemetry、独立connection binding或更广的生成上下文。
+12. 收集Memo recall的empty rate、Title-missing/filter rate、query/cache tokens与latency，先用证据判断是否需要typed exclusions、更宽recent Action suffix或cue extractor。
+13. 内容增强质量达到可用门槛后，再启用`MemoGist`与`MemoSummary`，并迭代摘要质量和生成上下文。
+14. 真实使用后再设计跨RecapGrid与main request的全局budget分配、dominance和可选best-effort policy。
 
-这个顺序保持authority前置：真实保存与最小DerivedInfo已经通过同一Pod authority可靠落盘；下一步可以从
-Title+事实正文接通查询与召回，不必把尚未成熟的分类、二级索引或Gist/Summary策略提前塞进第一个MVP。
+这个顺序保持authority前置：真实保存、最小DerivedInfo与三trigger的Title+事实正文召回已通过同一Pod authority接通；
+下一步先收集持续运行证据，不把尚未成熟的分类、二级索引或Gist/Summary策略提前塞进现有MVP。

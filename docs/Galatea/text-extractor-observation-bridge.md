@@ -138,7 +138,7 @@ receipt只证明原文已保存到默认MemoPod，不承诺分类、metadata补�
 - `Atelia.Galatea.Server.Mailbox` namespace。Note/recall 应该有自己的 domain namespace，例如 `Atelia.Galatea.Server.Memory` 或更窄的 `Atelia.Galatea.Server.CharacterMemory`。
 - `SendMailIntent` / `IOutboundMailExtractor` / mailbox bounds。它们是邮箱协议，不是通用 extraction contract。
 - `GalateaDelegationSqliteStore` 的 outbound_mail schema，除非新功能明确属于 Codex delegation owner。
-- Codex recipient allowlist、reply lease、ready-turn browser heartbeat。这些是当前 Mailbox/Codex delegation 的产品策略，不是模式本身。
+- Codex recipient allowlist、reply lease、server automatic coordinator与ready-turn dev one-shot pulse。这些是当前服务端Agent/Mailbox的产品策略，不是模式本身；浏览器不再发送周期heartbeat。
 
 ## 新功能复用检查表
 

@@ -437,7 +437,7 @@ provider tool name/call ID、tool/call数量、raw arguments与diagnostics均有
 code-owned bounds；caller cancellation与transport exception直接传播。
 
 `TextExtractor` 与 composite Observation 共同形成的异步双向通讯模式；Mailbox与durable Character Note保存/
-save receipt已复用这条路径，后续recall仍可沿同一边界设计，见
+save receipt以及三trigger共享Memo recall已复用这条路径，见
 [`TextExtractor / Observation Bridge`](../../docs/Galatea/text-extractor-observation-bridge.md)。
 
 ## Mailbox、OutboundMailExtractor 与 durable Codex delegation
@@ -509,7 +509,8 @@ failure会阻止放弃旧failed turn、创建cutoff和接受新turn；普通nonf
 
 Galatea侧的internal `IGalateaPlayerTurnRecallProvider`由per-session factory在CharacterMemory lazy attach后构造。
 `galatea.memo-recall`为`null`或maintenance mode时使用disabled singleton，并在context selection/barrier构建前直接绕过，
-因此disabled recall路径没有额外的recall context/selector I/O；独立的durable保存回执投递仍照常工作。
+因此disabled recall路径没有额外的recall context/selector I/O。仅将Memo binding设为null不影响独立的durable
+保存回执投递；maintenance mode则不打开CharacterMemory，也不进行回执投递写入。
 enabled provider服务`PlayerAction`、`DelegateReply`与`HeartbeatActivation`，包括PlayerAction携带reply lease的场景；
 inbound与recovery不做fresh召回。provider request同时携带
 `RecallBarrier`与`CharacterNoteOriginBarrier`。前者由同一轮RecapGrid online candidate source选出的provider-visible
