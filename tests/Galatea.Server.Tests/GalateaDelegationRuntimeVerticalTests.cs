@@ -756,6 +756,115 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     }
 
     [Fact]
+    public async Task PreDispatchStoppedReplyBlocksAutomaticRetryUntilSuccessfulManualTurn() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig extractor = Connection("mail-helper");
+        var mainClient = new QueueClient(
+            _ => Completed(main, "[Galatea] sent one letter."),
+            _ => Completed(main, "manual activity completed"),
+            _ => Completed(main, "received reply after manual activity")
+        );
+        var extractorClient = new QueueClient(
+            _ => CompletedWithTools(extractor,
+                MailTool("mail-stopped-reply", "reply after stop")),
+            _ => Completed(extractor, "no mail"),
+            _ => Completed(extractor, "no mail")
+        );
+        var backend = new DurableBackend();
+        await using GalateaTestHost host = GalateaTestHost.Create(
+            new RoutingFactory(new Dictionary<string, ICompletionClient> {
+                [main.Id] = mainClient,
+                [extractor.Id] = extractorClient,
+            }),
+            DisabledGalateaUserMessageNormalizer.Instance,
+            connections: [main, extractor],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: extractor.Id,
+            delegateTransport: new DurableTransport(backend),
+            serverAgentUserIds: ["alice"]
+        );
+        using HttpClient http = host.CreateClient();
+        await LoginAsync(http);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        GalateaAcceptedTurnRunner runner = host.Factory.Services
+            .GetRequiredService<GalateaAcceptedTurnRunner>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice", CancellationToken.None);
+        _ = await StartAndWaitAsync(http, service, session, "send one");
+        await WaitUntilAsync(() => backend.StartCallCount == 1);
+        backend.Complete(0, "durable reply retained across stop");
+        _ = session.DelegationHandle!.Signal();
+        await WaitUntilAsync(() => session.DelegationHandle.Store
+            .ReadSnapshot().Notices.SingleOrDefault()?.State
+                == GalateaReplyNoticeState.Ready);
+
+        // Stop before the runner begins so this deterministically exercises
+        // a pre-dispatch cancellation with an already-owned durable lease.
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn stopped;
+        Task runTask;
+        try {
+            stopped = Assert.IsType<GalateaReadyReplyTurnStartResult.Started>(
+                service.StartReadyReplyTurn(session, new(main.Id))).Turn;
+            Assert.True(stopped.RequestStop());
+            runTask = runner.Start(session, stopped);
+        }
+        catch {
+            session.TurnLock.Release();
+            throw;
+        }
+        await runTask.WaitAsync(Deadline);
+        Assert.NotEqual("completed", stopped.Status);
+        Assert.Equal(SessionExecutionPhase.Idle,
+            session.Engine.InspectExecutionBoundary().Phase);
+        GalateaDelegationStateSnapshot retained = session.DelegationHandle
+            .Store.ReadSnapshot();
+        Assert.Null(retained.ActiveLease);
+        Assert.Equal(GalateaReplyNoticeState.Ready,
+            Assert.Single(retained.Notices).State);
+        int mainCallsBeforeRetry = mainClient.CallCount;
+        int extractorCallsBeforeRetry = extractorClient.CallCount;
+
+        using (HttpResponseMessage blocked = await http.PostAsJsonAsync(
+                   "/api/v1/mailbox/ready-turn", new ReadyReplyTurnRequest())) {
+            Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+            using JsonDocument body = JsonDocument.Parse(
+                await blocked.Content.ReadAsStringAsync());
+            Assert.Equal("automatic-reply-failed",
+                body.RootElement.GetProperty("code").GetString());
+        }
+        Assert.Equal(mainCallsBeforeRetry, mainClient.CallCount);
+        Assert.Equal(extractorCallsBeforeRetry, extractorClient.CallCount);
+        Assert.Equal(1, mainClient.CallCount);
+        Assert.Null(session.DelegationHandle.Store.ReadSnapshot().ActiveLease);
+        Assert.Equal(GalateaReplyNoticeState.Ready,
+            Assert.Single(session.DelegationHandle.Store.ReadSnapshot()
+                .Notices).State);
+
+        // This existing manual-input collision case leaves the Ready reply
+        // untouched, allowing the same reply to prove automatic resumption.
+        GalateaLiveTurn manual = await StartAndWaitAsync(http, service, session,
+            PlayerTurnObservationEnvelope.DelegateReplyLeasePlayerTextDiscriminator);
+        Assert.Equal("completed", manual.Status);
+        Assert.False(session.AutomaticReplyFailed);
+        using HttpResponseMessage resumed = await http.PostAsJsonAsync(
+            "/api/v1/mailbox/ready-turn", new ReadyReplyTurnRequest());
+        Assert.Equal(HttpStatusCode.Accepted, resumed.StatusCode);
+        LoopPulseAcceptedTurnDto accepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
+            await resumed.Content.ReadFromJsonAsync<LoopPulseAcceptedTurnDto>());
+        Assert.Equal("delegate-reply", accepted.Origin);
+        GalateaLiveTurn received = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(session, accepted.TurnId));
+        await Assert.IsAssignableFrom<Task>(received.RunTask).WaitAsync(Deadline);
+        Assert.Equal("completed", received.Status);
+        Assert.Equal(3, mainClient.CallCount);
+        Assert.Equal(GalateaReplyNoticeState.Consumed,
+            Assert.Single(session.DelegationHandle.Store.ReadSnapshot()
+                .Notices).State);
+    }
+
+    [Fact]
     public async Task RestartedSessionFirstPulseLateRearms() {
         CompletionConnectionConfig main = Connection("test");
         var clock = new ManualTimeProvider(new DateTimeOffset(
