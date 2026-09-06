@@ -183,9 +183,13 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
                 .Last().Content);
             Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
                 observationContent, out PlayerTurnObservation observation));
-            using JsonDocument query = JsonDocument.Parse(Assert.IsType<string>(
+            using JsonDocument selectorEnvelope = JsonDocument.Parse(Assert.IsType<string>(
                 Assert.IsType<ObservationMessage>(Assert.Single(
                     recall.Requests[index].TailMessages)).Content));
+            Assert.Equal("atelia.memo-pod.recall-query.v1",
+                selectorEnvelope.RootElement.GetProperty("schema").GetString());
+            using JsonDocument query = JsonDocument.Parse(Assert.IsType<string>(
+                selectorEnvelope.RootElement.GetProperty("query").GetString()));
             Assert.Equal("atelia.galatea.memo-recall-context.v2",
                 query.RootElement.GetProperty("schema").GetString());
             JsonElement current = query.RootElement.GetProperty("currentTurn");
