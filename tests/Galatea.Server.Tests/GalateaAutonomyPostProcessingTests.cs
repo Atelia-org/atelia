@@ -24,12 +24,12 @@ public sealed class GalateaAutonomyPostProcessingTests {
         """;
 
     [Fact]
-    public async Task HeartbeatTerminalActionRunsMailAndCharacterNoteHooks() {
+    public async Task TwoHeartbeatTurnsSaveAndReceiveNoteWithoutPlayerInput() {
         CompletionConnectionConfig main = Connection("test");
         CompletionConnectionConfig helper = Connection("helper");
         var mainClient = new MainClient(main);
         var helperClient = new ExtractorClient();
-        var recall = new NeverRecallProvider();
+        var recall = new AutomaticRecallProvider();
         var clock = new ManualTimeProvider(new DateTimeOffset(
             2030,
             1,
@@ -91,7 +91,7 @@ public sealed class GalateaAutonomyPostProcessingTests {
         Assert.Equal("completed", turn.Status);
         Assert.IsType<GalateaFreshInput.HeartbeatActivation>(turn.FreshInput);
         Assert.Equal(1, mainClient.CallCount);
-        Assert.Equal(0, recall.CallCount);
+        Assert.Equal(1, recall.CallCount);
         Assert.Equal(1, helperClient.MailExtractorCallCount);
         Assert.Equal(1, helperClient.NoteExtractorCallCount);
 
@@ -102,7 +102,7 @@ public sealed class GalateaAutonomyPostProcessingTests {
         Assert.Equal("Alice", mail.Recipient);
         Assert.Equal(GalateaDurableMailState.Unrouted, mail.State);
 
-        Assert.Equal(1, session.NoteSaveReceipts.Count);
+        Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
         global::Atelia.MemoPod.MemoPod notes =
             global::Atelia.MemoPod.MemoPod.Open(
                 session.User.CharacterMemoryStateDir,
@@ -110,6 +110,31 @@ public sealed class GalateaAutonomyPostProcessingTests {
             );
         Assert.Equal(MemoPodPhase.Frozen, notes.Phase);
         Assert.Equal(NoteText, Assert.Single(notes.List()).ExactText);
+
+        // No chat request or browser sponsor: a later server-owned pulse
+        // delivers the saved Note receipt alongside independently recalled memory.
+        clock.Advance(TimeSpan.FromMinutes(10));
+        using HttpResponseMessage secondResponse = await http.PostAsJsonAsync(
+            "/api/v1/mailbox/ready-turn", new ReadyReplyTurnRequest());
+        Assert.Equal(HttpStatusCode.Accepted, secondResponse.StatusCode);
+        LoopPulseAcceptedTurnDto secondAccepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
+            await secondResponse.Content.ReadFromJsonAsync<LoopPulseAcceptedTurnDto>());
+        Assert.Equal("heartbeat-activation", secondAccepted.Origin);
+        GalateaLiveTurn second = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(session, secondAccepted.TurnId));
+        await Assert.IsAssignableFrom<Task>(second.RunTask).WaitAsync(TestDeadline);
+        Assert.Equal("completed", second.Status);
+        Assert.Equal(2, mainClient.CallCount);
+        Assert.Equal(2, recall.CallCount);
+        string stored = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
+            .RequireSnapshot().Turns).ObservationContent;
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(stored, out PlayerTurnObservation observation));
+        Assert.Contains(NoteText, Assert.Single(observation.Notices
+            .OfType<PlayerTurnNotice.NoteSaveReceipt>()).Body);
+        Assert.Equal(AutomaticRecallProvider.UnrelatedMemory, Assert.Single(observation.Recalls));
+        Assert.Null(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
+        Assert.Equal(NoteText, Assert.Single(global::Atelia.MemoPod.MemoPod.Open(
+            session.User.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId).List()).ExactText);
     }
 
     private static async Task AssertWaitingPulseAsync(
@@ -180,12 +205,20 @@ public sealed class GalateaAutonomyPostProcessingTests {
             CompletionStreamObserver? observer,
             CancellationToken cancellationToken = default
         ) {
-            _ = request;
             cancellationToken.ThrowIfCancellationRequested();
-            Assert.Equal(1, Interlocked.Increment(ref _callCount));
-            observer?.OnTextDelta(TerminalAction);
+            int call = Interlocked.Increment(ref _callCount);
+            string text = call == 1 ? TerminalAction : "I acknowledge the saved Note and continue exploring.";
+            if (call == 2) {
+                string content = Assert.IsType<string>(request.PromptPrefix.SharedContextMessages
+                    .OfType<ObservationMessage>().Last().Content);
+                Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(content, out PlayerTurnObservation observation));
+                Assert.Contains(NoteText, Assert.Single(observation.Notices
+                    .OfType<PlayerTurnNotice.NoteSaveReceipt>()).Body);
+                Assert.Equal(AutomaticRecallProvider.UnrelatedMemory, Assert.Single(observation.Recalls));
+            }
+            observer?.OnTextDelta(text);
             return Task.FromResult(new CompletionResult(
-                Message(new ActionBlock.Text(TerminalAction)),
+                Message(new ActionBlock.Text(text)),
                 new CompletionDescriptor(Name, ApiSpecId, connection.ModelId)
             ));
         }
@@ -211,6 +244,12 @@ public sealed class GalateaAutonomyPostProcessingTests {
         ) {
             _ = observer;
             cancellationToken.ThrowIfCancellationRequested();
+            if ((HasTool(request, OutboundMailExtractor.ToolName)
+                    || HasTool(request, CharacterNoteExtractor.ToolName))
+                && !Assert.IsType<ObservationMessage>(Assert.Single(request.TailMessages))
+                    .Content.Contains(TerminalAction, StringComparison.Ordinal)) {
+                return Task.FromResult(new CompletionResult(Message(), CompletionDescriptor.From(this, request)));
+            }
             ActionMessage message;
             if (HasTool(request, OutboundMailExtractor.ToolName)) {
                 Interlocked.Increment(ref _mailExtractorCallCount);
@@ -244,10 +283,13 @@ public sealed class GalateaAutonomyPostProcessingTests {
         );
     }
 
-    private sealed class NeverRecallProvider
+    private sealed class AutomaticRecallProvider
         : IGalateaPlayerTurnRecallProvider {
         private int _callCount;
         internal int CallCount => Volatile.Read(ref _callCount);
+        internal static PlayerTurnRecall UnrelatedMemory { get; } = new(
+            new RecallEntry(RecallType.MemoExactText, "autonomy-existing-memory"),
+            "An older memory suggests investigating the northern path.");
 
         public ValueTask<IReadOnlyList<PlayerTurnRecall>> SelectRecallsAsync(
             GalateaPlayerTurnRecallRequest request,
@@ -255,10 +297,9 @@ public sealed class GalateaAutonomyPostProcessingTests {
         ) {
             ArgumentNullException.ThrowIfNull(request);
             cancellationToken.ThrowIfCancellationRequested();
-            Interlocked.Increment(ref _callCount);
-            throw new InvalidOperationException(
-                "Heartbeat activation must not call player recall."
-            );
+            int call = Interlocked.Increment(ref _callCount);
+            return ValueTask.FromResult<IReadOnlyList<PlayerTurnRecall>>(
+                call == 1 ? [] : [UnrelatedMemory]);
         }
     }
 

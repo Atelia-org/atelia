@@ -72,7 +72,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             service.FinishTurn(session, turn);
 
             Assert.Equal("completed", turn.Status);
-            Assert.Equal(1, session.NoteSaveReceipts.Count);
+            Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
             Assert.False(helperClient.DerivedInfoStarted.Task.IsCompleted);
         }
         finally {
