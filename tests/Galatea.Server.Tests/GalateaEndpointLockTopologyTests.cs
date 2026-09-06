@@ -55,9 +55,11 @@ public sealed class GalateaEndpointLockTopologyTests {
         Assert.True(session.TurnLock.Wait(0));
         session.TurnLock.Release();
         Assert.True(host.Factory.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.IsCancellationRequested);
-        await Assert.ThrowsAsync<OutOfMemoryException>(() => runner.DrainAsync());
-        await Assert.ThrowsAsync<OutOfMemoryException>(async () => await service.DisposeAsync());
-        await host.DisposeAsync();
+        Assert.Same(fatalClient.Failure, await Assert.ThrowsAsync<OutOfMemoryException>(() => runner.DrainAsync()));
+        Task disposal = service.DisposeAsync().AsTask();
+        Assert.Same(fatalClient.Failure, await Assert.ThrowsAsync<OutOfMemoryException>(() => disposal));
+        Assert.Same(disposal, service.DisposeAsync().AsTask());
+        await DisposeFixtureAfterKnownFailureAsync(host, fatalClient.Failure);
     }
 
     [Fact]
@@ -304,8 +306,10 @@ public sealed class GalateaEndpointLockTopologyTests {
         Assert.Null(session.GetCurrentTurn());
         Assert.True(session.TurnLock.Wait(0));
         session.TurnLock.Release();
-        await Assert.ThrowsAsync<OutOfMemoryException>(async () => await hostService.DisposeAsync());
-        await host.DisposeAsync();
+        Task disposal = hostService.DisposeAsync().AsTask();
+        Assert.Same(failure, await Assert.ThrowsAsync<OutOfMemoryException>(() => disposal));
+        Assert.Same(disposal, hostService.DisposeAsync().AsTask());
+        await DisposeFixtureAfterKnownFailureAsync(host, failure);
     }
 
     [Fact]
@@ -824,6 +828,13 @@ public sealed class GalateaEndpointLockTopologyTests {
             new NonDispatchingCompletionClientFactory(),
             new PassThroughNormalizer()
         );
+
+    private static async Task DisposeFixtureAfterKnownFailureAsync(GalateaTestHost fixture, Exception knownFailure) {
+        // WAF may or may not forward the already-observed singleton disposal
+        // failure. Only that exact cause is permitted; unrelated cleanup faults fail.
+        Exception? cleanup = await Record.ExceptionAsync(async () => await fixture.DisposeAsync());
+        if (cleanup is not null) { Assert.Same(knownFailure, cleanup); }
+    }
 
     private static CompletionConnectionConfig Connection(string id) => new(
         id,

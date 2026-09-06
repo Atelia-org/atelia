@@ -1664,46 +1664,45 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             },
             AfterDelegationSupervisorDisposed: () =>
                 disposalOrder.Add("sidecar"));
-        try {
-            AggregateException failure = await Assert.ThrowsAsync<
-                AggregateException>(async () =>
-                    await service.DisposeAsync());
-            Assert.Equal(2, disposedSessions);
-            Assert.Equal(1, disposedCandidate);
-            Assert.Equal(["sidecar", "completion"], disposalOrder);
-            Assert.Collection(
-                failure.InnerExceptions,
-                static value => Assert.IsType<IOException>(value),
-                static value => Assert.IsType<InvalidOperationException>(
-                    value));
-        }
-        finally {
-            service.DisposeHooksForTest = null;
-            await service.DisposeAsync();
-        }
+        Task disposal = service.DisposeAsync().AsTask();
+        AggregateException failure = await Assert.ThrowsAsync<AggregateException>(() => disposal);
+        Assert.Equal(2, disposedSessions);
+        Assert.Equal(1, disposedCandidate);
+        Assert.Equal(["sidecar", "completion"], disposalOrder);
+        Assert.Collection(
+            failure.InnerExceptions,
+            static value => Assert.IsType<IOException>(value),
+            static value => Assert.IsType<InvalidOperationException>(value));
+        service.DisposeHooksForTest = null;
+        Task repeated = service.DisposeAsync().AsTask();
+        Assert.Same(disposal, repeated);
+        Assert.Same(failure, await Assert.ThrowsAsync<AggregateException>(() => repeated));
+        Assert.Equal(2, disposedSessions);
+        Assert.Equal(1, disposedCandidate);
     }
 
     [Fact]
-    public async Task DisposeFatalFailureStopsBeforeRemainingCandidateCleanup() {
+    public async Task DisposeFatalFailureCompletesRemainingCleanupAndPreservesCause() {
         GalateaHostService service = await CreateDisposalFixtureAsync();
         int disposedSessions = 0;
         int disposedCandidate = 0;
+        var fatal = new OutOfMemoryException("fatal cleanup failure");
         service.DisposeHooksForTest = new(
             AfterSessionDisposed: _ => {
                 disposedSessions++;
-                throw new OutOfMemoryException("fatal cleanup failure");
+                throw fatal;
             },
             AfterRecapGridDisposed: () => disposedCandidate++);
-        try {
-            await Assert.ThrowsAsync<OutOfMemoryException>(async () =>
-                await service.DisposeAsync());
-            Assert.Equal(1, disposedSessions);
-            Assert.Equal(0, disposedCandidate);
-        }
-        finally {
-            service.DisposeHooksForTest = null;
-            await service.DisposeAsync();
-        }
+        Task disposal = service.DisposeAsync().AsTask();
+        Assert.Same(fatal, await Assert.ThrowsAsync<OutOfMemoryException>(() => disposal));
+        Assert.Equal(2, disposedSessions);
+        Assert.Equal(1, disposedCandidate);
+        service.DisposeHooksForTest = null;
+        Task repeated = service.DisposeAsync().AsTask();
+        Assert.Same(disposal, repeated);
+        Assert.Same(fatal, await Assert.ThrowsAsync<OutOfMemoryException>(() => repeated));
+        Assert.Equal(2, disposedSessions);
+        Assert.Equal(1, disposedCandidate);
     }
 
     private async Task<GalateaHostService> CreateDisposalFixtureAsync() {
