@@ -259,7 +259,8 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
     }
 
     internal GalateaDurableReplyLeaseBeginResult BeginCutoff(
-        string playerText
+        string playerText,
+        PlayerTurnNotice.NoteSaveReceipt? reservedReceipt = null
     ) {
         _ = new PlayerTurnObservation(playerText);
         GalateaDelegationStateSnapshot snapshot = _store.ReadSnapshot();
@@ -283,13 +284,17 @@ internal sealed class GalateaDurableReplyLeaseReconciler {
         ));
         foreach (GalateaReplyNoticeSnapshot notice in available) {
             if (selected.Count
-                == PlayerTurnObservationEnvelope.MaximumNoticeCount) {
+                == PlayerTurnObservationEnvelope.MaximumNoticeCount
+                    - (reservedReceipt is null ? 0 : 1)) {
                 break;
             }
             PlayerTurnNotice[] proposed = [
                 .. selected.Select(ProjectReadyNotice),
                 ProjectReadyNotice(notice)
             ];
+            if (reservedReceipt is not null) {
+                proposed = [.. proposed, reservedReceipt];
+            }
             if (!PlayerTurnObservationEnvelope
                     .FitsEveryValidPlayerText(proposed)) {
                 break;

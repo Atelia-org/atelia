@@ -1019,7 +1019,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(host);
         GalateaDurableReplyLeaseReconcileResult reply =
-            ReconcileDurableReplyLease(host, cancellationToken);
+            ReconcileDurableDeliveries(host, cancellationToken);
         if (reply is GalateaDurableReplyLeaseReconcileResult.RolledBack
                 or GalateaDurableReplyLeaseReconcileResult.Consumed) {
             _ = host.DelegationHandle?.Signal();
@@ -1503,7 +1503,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             StringComparison.Ordinal
         );
         GalateaDurableReplyLeaseBeginResult cutoff =
-            host.ReplyLeaseReconciler.BeginCutoff(userMessage);
+            host.ReplyLeaseReconciler.BeginCutoff(
+                userMessage, ReadPendingReceiptNotice(host));
         if (cutoff is GalateaDurableReplyLeaseBeginResult.Empty) {
             return StartPlayerTurnWithoutReplyLease(
                 host,
@@ -1537,15 +1538,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string playerText,
         GalateaTurnOptions options
     ) {
-        GalateaFreshInput.PlayerAction input = host.NoteSaveReceipts
-            .TryDequeue(out CharacterNoteSaveReceipt? receipt)
-                ? new GalateaFreshInput.PlayerAction(
-                    playerText,
-                    [receipt.Notice]
-                )
-                : new GalateaFreshInput.PlayerAction(playerText);
-        return host.StartTurn(input, options);
+        return host.StartTurn(new GalateaFreshInput.PlayerAction(playerText), options);
     }
+
+    private static PlayerTurnNotice.NoteSaveReceipt? ReadPendingReceiptNotice(
+        UserSessionHost host
+    ) => host.CharacterMemoryReconciler?.ReadPendingReceiptDelivery() is { } receipt
+        ? new PlayerTurnNotice.NoteSaveReceipt(receipt.NoticeBody)
+        : null;
 
     /// <summary>
     /// Conditionally starts a fresh turn from the durable Ready reply prefix.
@@ -1562,7 +1562,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         GalateaDurableReplyLeaseBeginResult cutoff = host
             .ReplyLeaseReconciler.BeginCutoff(
                 PlayerTurnObservationEnvelope
-                    .DelegateReplyLeasePlayerTextDiscriminator
+                    .DelegateReplyLeasePlayerTextDiscriminator,
+                ReadPendingReceiptNotice(host)
             );
         return cutoff switch {
             GalateaDurableReplyLeaseBeginResult.Empty =>
@@ -1739,6 +1740,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(host);
+        GalateaNoteReceiptDelivery.Reconcile(
+            host.CharacterMemoryReconciler, host.Engine, cancellationToken);
         SessionCompletedTurnRewindPrepareResult preparation =
             host.Engine.PrepareLatestCompletedTurnRewind(
                 expectedHead,
@@ -1999,7 +2002,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             && liveTurn.StopRequested
         ) {
             if (liveTurn.Options.Mode == GalateaTurnMode.FreshSend) {
-                ReconcileDurableReplyLeaseBestEffort(host, liveTurn);
+                ReconcileDurableDeliveriesBestEffort(host, liveTurn);
             }
             throw liveTurn.Options.Mode == GalateaTurnMode.FreshSend
                 ? PreDispatchStopped()
@@ -2024,13 +2027,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
         }
         catch {
-            ReconcileDurableReplyLeaseBestEffort(host, liveTurn);
+            ReconcileDurableDeliveriesBestEffort(host, liveTurn);
             throw;
         }
         SessionExecutionBoundaryInspection completedBoundary =
             host.Engine.InspectExecutionBoundary();
         if (completedBoundary.Phase != SessionExecutionPhase.Idle) {
-            ReconcileDurableReplyLeaseBestEffort(host, liveTurn);
+            ReconcileDurableDeliveriesBestEffort(host, liveTurn);
             throw new InvalidDataException(
                 "A completed Galatea operation must leave an Idle durable boundary."
             );
@@ -2040,7 +2043,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "A completed Galatea operation must leave a non-empty durable head."
             );
         GalateaDurableReplyLeaseReconcileResult leaseSettlement =
-            ReconcileDurableReplyLease(host, ct);
+            ReconcileDurableDeliveries(host, ct);
         if (leaseSettlement is GalateaDurableReplyLeaseReconcileResult
                 .Retained) {
             throw new GalateaTurnException(
@@ -2389,59 +2392,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     "delegation-state-changed"
                 ));
             }
-            string receiptOutcome = "receipt-failed";
-            DebugEventKind eventKind = DebugEventKind.Failure;
-            try {
-                bool created = CharacterNoteSaveReceipt.TryCreate(
-                    applied.Memos,
-                    out CharacterNoteSaveReceipt? receipt
-                );
-                if (!created) {
-                    receiptOutcome = "receipt-unrenderable";
-                    eventKind = DebugEventKind.Skip;
-                }
-                else {
-                    CharacterNoteSaveReceipt queued = receipt
-                        ?? throw new InvalidDataException(
-                            "A successful Character Note save receipt render returned null."
-                        );
-                    failures.ThrowIfCallerCanceled(callerToken);
-                    bool enqueued = host.NoteSaveReceipts.TryEnqueue(queued);
-                    receiptOutcome = enqueued ? "queued" : "queue-full";
-                    eventKind = enqueued
-                        ? DebugEventKind.Success
-                        : DebugEventKind.Skip;
-                }
-            }
-            catch (Exception receiptFailure) {
-                LogCharacterNoteBatch(
-                    host,
-                    target,
-                    mailOutcome,
-                    noteOutcome: "applied-now",
-                    durableMemo: true,
-                    memoCount: applied.Memos.Count,
-                    receiptOutcome: "receipt-failed",
-                    mailMilliseconds,
-                    noteMilliseconds,
-                    ElapsedMilliseconds(batchStarted),
-                    eventKind: DebugEventKind.Failure
-                );
-                var receiptFailures = new CharacterNoteFailureSet(
-                    mailFailure,
-                    receiptFailure,
-                    cancellationFailure,
-                    mailAbortRequested: false,
-                    noteCompletedBeforeMailAbort: true,
-                    deadlineExpired: deadlineCts.IsCancellationRequested,
-                    callerCanceled: callerToken.IsCancellationRequested
-                );
-                receiptFailures.ThrowIfFatal();
-                receiptFailures.ThrowIfCallerCanceled(callerToken);
-                receiptFailures.ThrowNotePrimary(
-                    CreateCharacterNoteFailClosed(receiptFailure)
-                );
-            }
+            // Notification eligibility was committed atomically with Applied,
+            // including admission/recovery and late cancellation paths. Runtime
+            // must not create another in-process or durable issuance authority.
             LogCharacterNoteBatch(
                 host,
                 target,
@@ -2449,11 +2402,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 noteOutcome: "applied-now",
                 durableMemo: true,
                 memoCount: applied.Memos.Count,
-                receiptOutcome,
+                receiptOutcome: "durable-pending",
                 mailMilliseconds,
                 noteMilliseconds,
                 ElapsedMilliseconds(batchStarted),
-                eventKind
+                eventKind: DebugEventKind.Success
             );
         }
         else {
@@ -2641,7 +2594,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
             noteOutcome,
             memoCount,
             receiptOutcome,
-            queueCount = host.NoteSaveReceipts.Count,
             mailMs = mailMilliseconds,
             noteMs = noteMilliseconds,
             batchMs = batchMilliseconds,
@@ -2827,8 +2779,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "recap-grid-desired-setup-unavailable");
         }
         string prompted;
-        GalateaFreshInput.PlayerAction? playerAction = null;
         PlayerTurnObservation? preliminaryPlayerObservation = null;
+        CharacterNoteReceiptDeliverySnapshot? receiptDelivery = null;
         DateTimeOffset observationTimestamp = default;
         if (liveTurn.FreshInput is GalateaFreshInput.PlayerAction
                 or GalateaFreshInput.DelegateReply
@@ -2858,8 +2810,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     "Fresh typed Observation input is invalid."
                 )
             };
-            playerAction = liveTurn.FreshInput
-                as GalateaFreshInput.PlayerAction;
+            receiptDelivery = host.CharacterMemoryReconciler?
+                .ReadPendingReceiptDelivery();
+            if (receiptDelivery is not null) {
+                preliminaryPlayerObservation = preliminaryPlayerObservation.WithNotices([
+                    .. preliminaryPlayerObservation.Notices,
+                    new PlayerTurnNotice.NoteSaveReceipt(receiptDelivery.NoticeBody)
+                ]);
+            }
             prompted = PlayerTurnObservationEnvelope.Wrap(
                 preliminaryPlayerObservation
             );
@@ -2892,8 +2850,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             SessionUncertainCompletionRecoveryPolicy.Refuse));
         IGalateaPlayerTurnRecallProvider recallProvider =
             host.PlayerTurnRecallProvider;
-        if (playerAction is not null
-            && liveTurn.DurableReplyLease is null
+        if (preliminaryPlayerObservation is not null
             && recallProvider
                 is not DisabledGalateaPlayerTurnRecallProvider) {
             GalateaPlayerTurnRecallContext recallContext =
@@ -2909,21 +2866,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     host,
                     recallProvider,
                     ready.GoverningSetup.Head,
-                    preliminaryPlayerObservation
-                        ?? throw new InvalidOperationException(
-                            "A player recall turn requires its preliminary Observation."
-                        ),
+                    preliminaryPlayerObservation,
                     recallContext,
                     cancellationToken
                 ).ConfigureAwait(false);
             if (recalls.Count > 0) {
                 prompted = PlayerTurnObservationEnvelope.Wrap(
-                    new PlayerTurnObservation(
-                        playerAction.Text,
-                        observationTimestamp,
-                        playerAction.Notices,
-                        recalls
-                    )
+                    preliminaryPlayerObservation.WithRecalls(recalls)
                 );
             }
         }
@@ -2932,6 +2881,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
             ready.GoverningSetup.Head,
             prompted
         );
+        if (receiptDelivery is not null) {
+            GalateaNoteReceiptDelivery.Bind(
+                host.CharacterMemoryReconciler!, host.Engine,
+                receiptDelivery, ready.GoverningSetup.Head, prompted);
+        }
         TurnResult result = await host.Engine.SendAsync(
             ready.GoverningSetup.Head,
             prompted,
@@ -3569,7 +3523,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         EventAddress failedHead,
         CancellationToken cancellationToken
     ) {
-        _ = ReconcileDurableReplyLease(
+        _ = ReconcileDurableDeliveries(
             host,
             CancellationToken.None
         );
@@ -3585,7 +3539,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
         }
         GalateaDurableReplyLeaseReconcileResult settled =
-            ReconcileDurableReplyLease(
+            ReconcileDurableDeliveries(
                 host,
                 CancellationToken.None
             );
@@ -3601,10 +3555,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
     }
 
     private static GalateaDurableReplyLeaseReconcileResult
-        ReconcileDurableReplyLease(
+        ReconcileDurableDeliveries(
         UserSessionHost host,
         CancellationToken cancellationToken
     ) {
+        GalateaNoteReceiptDelivery.Reconcile(
+            host.CharacterMemoryReconciler, host.Engine, cancellationToken);
         GalateaDurableReplyLeaseReconcileResult result = host
             .ReplyLeaseReconciler.ReconcileActiveLease(
                 host.Engine,
@@ -3646,12 +3602,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
         };
     }
 
-    private static void ReconcileDurableReplyLeaseBestEffort(
+    private static void ReconcileDurableDeliveriesBestEffort(
         UserSessionHost host,
         GalateaLiveTurn liveTurn
     ) {
         try {
-            _ = ReconcileDurableReplyLease(
+            _ = ReconcileDurableDeliveries(
                 host,
                 CancellationToken.None
             );
@@ -3660,7 +3616,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             GalateaExceptionClassifier.IsNonFatal(exception)) {
             DebugUtil.Warning(
                 "Galatea.Delegation",
-                "Durable reply settlement deferred to recovery: "
+                "Durable receipt/reply settlement deferred to recovery: "
                     + $"turnId={liveTurn.TurnId}, "
                     + $"error={exception.GetType().Name}."
             );
@@ -3933,9 +3889,6 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
     internal CharacterNoteDerivedInfoPump?
         CharacterNoteDerivedInfoPump { get; }
-
-    internal CharacterNoteSaveReceiptQueue NoteSaveReceipts { get; } =
-        new();
 
     internal GalateaAutonomyCadence AutonomyCadence {
         get;
