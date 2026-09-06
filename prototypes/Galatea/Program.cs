@@ -47,6 +47,7 @@ builder.Services.AddSingleton(static services => new GalateaHostService(
     services.GetRequiredService<ICompletionClientFactory>(),
     services.GetRequiredService<IGalateaUserMessageNormalizerFactory>()
 ));
+builder.Services.AddSingleton<GalateaAcceptedTurnRunner>();
 builder.Services.ConfigureHttpJsonOptions(
     options => GalateaHttpV1.ConfigureJson(options.SerializerOptions)
 );
@@ -349,7 +350,8 @@ api.MapPost(
         HttpContext httpContext,
         ClaimsPrincipal user,
         GalateaHostService hostService,
-        IHostApplicationLifetime applicationLifetime
+        IHostApplicationLifetime applicationLifetime,
+        GalateaAcceptedTurnRunner turnRunner
     ) => {
         ChatStreamRequest request = await GalateaHttpV1
             .ReadJsonBodyAsync<ChatStreamRequest>(httpContext);
@@ -447,12 +449,8 @@ api.MapPost(
                 new GalateaTurnOptions(connection.Id)
             );
             DebugUtil.Info("Galatea.Api", $"POST /api/v1/chat/turns user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}");
-            IResult result = StartAcceptedTurn(
-                session,
-                liveTurn,
-                hostService,
-                applicationLifetime
-            );
+            IResult result = BuildAcceptedTurnResult(liveTurn);
+            _ = turnRunner.Start(session, liveTurn);
             writerOwnershipTransferred = true;
             return result;
         }
@@ -514,7 +512,8 @@ api.MapPost(
         HttpContext httpContext,
         ClaimsPrincipal user,
         GalateaHostService hostService,
-        IHostApplicationLifetime applicationLifetime
+        IHostApplicationLifetime applicationLifetime,
+        GalateaAcceptedTurnRunner turnRunner
     ) => {
         ResumeTurnRequest request = await GalateaHttpV1
             .ReadJsonBodyAsync<ResumeTurnRequest>(httpContext);
@@ -639,12 +638,8 @@ api.MapPost(
                     expectedHead
                 )
             );
-            IResult result = StartAcceptedTurn(
-                session,
-                liveTurn,
-                hostService,
-                applicationLifetime
-            );
+            IResult result = BuildAcceptedTurnResult(liveTurn);
+            _ = turnRunner.Start(session, liveTurn);
             writerOwnershipTransferred = true;
             return result;
         }
@@ -677,7 +672,8 @@ api.MapPost(
         HttpContext httpContext,
         ClaimsPrincipal user,
         GalateaHostService hostService,
-        IHostApplicationLifetime applicationLifetime
+        IHostApplicationLifetime applicationLifetime,
+        GalateaAcceptedTurnRunner turnRunner
     ) => {
         ReadyReplyTurnRequest request = await GalateaHttpV1
             .ReadJsonBodyAsync<ReadyReplyTurnRequest>(httpContext);
@@ -776,13 +772,8 @@ api.MapPost(
                 "Galatea.Api",
                 $"POST /api/v1/mailbox/ready-turn user={userId}, turnId={liveTurn.TurnId}, origin={origin}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}"
             );
-            IResult result = StartAcceptedTurn(
-                session,
-                liveTurn,
-                hostService,
-                applicationLifetime,
-                origin
-            );
+            IResult result = BuildAcceptedTurnResult(liveTurn, origin);
+            _ = turnRunner.Start(session, liveTurn);
             writerOwnershipTransferred = true;
             return result;
         }
@@ -851,7 +842,8 @@ api.MapPost(
         HttpContext httpContext,
         ClaimsPrincipal user,
         GalateaHostService hostService,
-        IHostApplicationLifetime applicationLifetime
+        IHostApplicationLifetime applicationLifetime,
+        GalateaAcceptedTurnRunner turnRunner
     ) => {
         InboundMailboxRequest request = await GalateaHttpV1
             .ReadJsonBodyAsync<InboundMailboxRequest>(httpContext);
@@ -948,20 +940,16 @@ api.MapPost(
                 message,
                 new GalateaTurnOptions(connection.Id)
             );
-            _ = StartAcceptedTurn(
-                session,
-                liveTurn,
-                hostService,
-                applicationLifetime
-            );
-            writerOwnershipTransferred = true;
-            return Results.Json(
+            IResult result = Results.Json(
                 new InboundMailboxAcceptedDto(
                     liveTurn.TurnId,
                     message.MessageId
                 ),
                 statusCode: StatusCodes.Status202Accepted
             );
+            _ = turnRunner.Start(session, liveTurn);
+            writerOwnershipTransferred = true;
+            return result;
         }
         finally {
             if (!writerOwnershipTransferred) {
@@ -1154,14 +1142,11 @@ static IResult BuildTurnBusyConflict(GalateaHostService hostService, UserSession
     );
 }
 
-static IResult StartAcceptedTurn(
-    UserSessionHost session,
+static IResult BuildAcceptedTurnResult(
     GalateaLiveTurn liveTurn,
-    GalateaHostService hostService,
-    IHostApplicationLifetime applicationLifetime,
     string? loopPulseOrigin = null
 ) {
-    IResult acceptedResult = loopPulseOrigin switch {
+    return loopPulseOrigin switch {
         null => Results.Json(
             new StartTurnResponseDto(liveTurn.TurnId),
             statusCode: StatusCodes.Status202Accepted
@@ -1179,70 +1164,6 @@ static IResult StartAcceptedTurn(
             "Unknown loop-pulse origin."
         )
     };
-    var runTask = Task.Run(
-        async () => {
-            try {
-                DebugUtil.Info(
-                    "Galatea.Api",
-                    $"StartAcceptedTurn background start: user={session.User.UserId}, turnId={liveTurn.TurnId}, head={session.Engine.ReadCurrentHead()}"
-                );
-                await hostService.RunTurnAsync(session, liveTurn, applicationLifetime.ApplicationStopping);
-            }
-            catch (OperationCanceledException) when (applicationLifetime.ApplicationStopping.IsCancellationRequested) {
-                DebugUtil.Warning("Galatea.Api", $"Turn cancelled by shutdown: user={session.User.UserId}, turnId={liveTurn.TurnId}");
-                liveTurn.PublishError(
-                    GalateaSseErrorCode.ServerShutdown
-                );
-            }
-            catch (GalateaTurnException ex) {
-                DebugUtil.Warning("Galatea.Api", $"Turn failed with GalateaTurnException: user={session.User.UserId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}, detail={ex.Message}");
-                liveTurn.PublishError(
-                    GalateaSseErrorClassifier.Classify(ex)
-                );
-            }
-            catch (Exception ex) when (
-                GalateaExceptionClassifier.IsNonFatal(ex)
-            ) {
-                DebugUtil.Error("Galatea.Api", $"Turn failed with exception: user={session.User.UserId}, turnId={liveTurn.TurnId}", ex);
-                liveTurn.PublishError(
-                    GalateaSseErrorCode.InternalFailure
-                );
-            }
-            catch (Exception) {
-                liveTurn.AbortTransportWithoutTerminal();
-                throw;
-            }
-            finally {
-                try {
-                    hostService.FinishTurn(session, liveTurn);
-                    liveTurn.Complete();
-                    if (!liveTurn.TransportAborted
-                        && !string.Equals(
-                            liveTurn.Status,
-                            "completed",
-                            StringComparison.Ordinal
-                        )) {
-                        await hostService
-                            .RefreshRecentTurnsBestEffortAsync(
-                                session,
-                                applicationLifetime.ApplicationStopping
-                            )
-                            .ConfigureAwait(false);
-                    }
-                    DebugUtil.Info(
-                        "Galatea.Api",
-                        $"StartAcceptedTurn background finish: user={session.User.UserId}, turnId={liveTurn.TurnId}, status={liveTurn.Status}"
-                    );
-                }
-                finally {
-                    session.TurnLock.Release();
-                }
-            }
-        },
-        CancellationToken.None
-    );
-    liveTurn.RunTask = runTask;
-    return acceptedResult;
 }
 
 static IResult RecoveryConflict(

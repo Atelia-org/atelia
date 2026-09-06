@@ -6,6 +6,7 @@ using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
@@ -13,6 +14,79 @@ namespace Atelia.Galatea.Server.Tests;
 public sealed class GalateaEndpointLockTopologyTests {
     private static readonly TimeSpan EndpointDeadline =
         TimeSpan.FromSeconds(3);
+
+    [Fact]
+    public async Task AcceptedRunner_WithoutHttpBindsTaskAndOwnsLockUntilFatalCleanup() {
+        var fatalClient = new FatalCompletionClient();
+        await using var host = GalateaTestHost.Create(
+            new SingleClientFactory(fatalClient),
+            new PassThroughNormalizer()
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        GalateaAcceptedTurnRunner runner = host.Factory.Services
+            .GetRequiredService<GalateaAcceptedTurnRunner>();
+        UserSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn liveTurn = service.StartTurn(
+            session,
+            "headless runner fixture",
+            new GalateaTurnOptions("test")
+        );
+        Task runTask = runner.Start(session, liveTurn);
+        Assert.Same(runTask, liveTurn.RunTask);
+        try {
+            await fatalClient.Entered.Task.WaitAsync(EndpointDeadline);
+            Assert.False(session.TurnLock.Wait(0));
+            Assert.Throws<InvalidOperationException>(() => {
+                _ = runner.Start(session, liveTurn);
+            });
+            Assert.Same(runTask, liveTurn.RunTask);
+        }
+        finally {
+            fatalClient.Release.TrySetResult();
+            await Assert.ThrowsAsync<OutOfMemoryException>(
+                async () => await runTask.WaitAsync(EndpointDeadline)
+            );
+        }
+
+        Assert.True(liveTurn.TransportAborted);
+        Assert.Null(session.GetCurrentTurn());
+        Assert.True(session.TurnLock.Wait(0));
+        session.TurnLock.Release();
+    }
+
+    [Fact]
+    public async Task AcceptedRunner_AlreadyStoppingStillPublishesShutdownAndReleasesLock() {
+        await using var host = CreateHost();
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        var runner = new GalateaAcceptedTurnRunner(service, new AlreadyStoppingLifetime());
+        UserSessionHost session = await service.GetSessionAsync("alice", CancellationToken.None);
+        await session.TurnLock.WaitAsync();
+        GalateaLiveTurn liveTurn = service.StartTurn(
+            session,
+            "shutdown runner fixture",
+            new GalateaTurnOptions("test")
+        );
+        using GalateaTurnSubscription subscription = liveTurn.Subscribe();
+        Task runTask = runner.Start(session, liveTurn);
+        Assert.Same(runTask, liveTurn.RunTask);
+        // Shutdown also cancels the best-effort recent refresh in cleanup.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await runTask.WaitAsync(EndpointDeadline)
+        );
+
+        List<GalateaSseFrame> frames = [];
+        await foreach (GalateaSseFrame frame in subscription.Reader.ReadAllAsync()) {
+            frames.Add(frame);
+        }
+        Assert.Contains(frames, frame => Encoding.UTF8.GetString(frame.Utf8.Span)
+            .Contains("server-shutdown", StringComparison.Ordinal));
+        Assert.Null(session.GetCurrentTurn());
+        Assert.True(session.TurnLock.Wait(0));
+        session.TurnLock.Release();
+    }
 
     [Fact]
     public async Task SessionDisposalWaitsForTurnLockBeforeDisposingEngine() {
@@ -799,6 +873,13 @@ public sealed class GalateaEndpointLockTopologyTests {
         ) => throw new InvalidOperationException(
             "Lock-topology tests must not dispatch a completion request."
         );
+    }
+
+    private sealed class AlreadyStoppingLifetime : IHostApplicationLifetime {
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+        public CancellationToken ApplicationStopping => new(canceled: true);
+        public CancellationToken ApplicationStopped => CancellationToken.None;
+        public void StopApplication() { }
     }
 
     private sealed class SingleClientFactory(ICompletionClient client)
