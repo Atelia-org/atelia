@@ -52,7 +52,7 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         CharacterNoteReceiptDeliverySnapshot delivered = fixture.Exact;
         Assert.Equal(CharacterNoteReceiptDeliveryState.Delivered, delivered.State);
         Assert.Equal(EventAddressTextCodec.Format(observation), delivered.ObservationAddress);
-        Assert.Equal(rendered, delivered.RenderedObservation);
+        Assert.Null(delivered.RenderedObservation);
         Assert.Null(fixture.Memory.ReadPendingReceiptDelivery());
         Assert.Null(fixture.Memory.ReadBoundReceiptDelivery());
 
@@ -60,6 +60,16 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         GalateaNoteReceiptDelivery.Reconcile(fixture.Memory, fixture.Engine);
         Assert.Equal(delivered, fixture.Exact);
         Assert.Equal(observation, fixture.Engine.ReadCurrentHead());
+        // The outbox releases its duplicate payload, while the raw journal
+        // still proves the original exact Observation bytes after cold reopen.
+        var proof = Assert.IsType<SessionExpectedObservationTurnReadResult.InProgress>(
+            fixture.Engine.ReadView.ProveExpectedObservationTurnAtSelectedHead(
+                new SessionExpectedObservationTurnRequest(
+                    observation,
+                    EventAddressTextCodec.Parse(delivered.ExpectedSessionHead!),
+                    rendered,
+                    observation)));
+        Assert.Equal(observation, proof.Evidence.ObservationAddress);
         Assert.Equal(1, fixture.Extractor.Calls);
     }
 
