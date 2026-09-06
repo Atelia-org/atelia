@@ -88,28 +88,36 @@ public sealed class GalateaAutonomyPostProcessingTests {
         await Assert.IsAssignableFrom<Task>(turn.RunTask)
             .WaitAsync(TestDeadline);
 
-        Assert.Equal("completed", turn.Status);
-        Assert.IsType<GalateaFreshInput.HeartbeatActivation>(turn.FreshInput);
-        Assert.Equal(1, mainClient.CallCount);
-        Assert.Equal(1, recall.CallCount);
-        Assert.Equal(1, helperClient.MailExtractorCallCount);
-        Assert.Equal(1, helperClient.NoteExtractorCallCount);
+        // The runner has released ownership. The DerivedInfo pump may now
+        // materialize journal context, so test inspection needs TurnLock too.
+        Assert.True(await session.TurnLock.WaitAsync(TestDeadline));
+        try {
+            Assert.Equal("completed", turn.Status);
+            Assert.IsType<GalateaFreshInput.HeartbeatActivation>(turn.FreshInput);
+            Assert.Equal(1, mainClient.CallCount);
+            Assert.Equal(1, recall.CallCount);
+            Assert.Equal(1, helperClient.MailExtractorCallCount);
+            Assert.Equal(1, helperClient.NoteExtractorCallCount);
 
-        GalateaDelegationStateSnapshot delegation = session
-            .DelegationHandle!.Store.ReadSnapshot();
-        Assert.Single(delegation.Captures);
-        GalateaOutboundMailSnapshot mail = Assert.Single(delegation.Mails);
-        Assert.Equal("Alice", mail.Recipient);
-        Assert.Equal(GalateaDurableMailState.Unrouted, mail.State);
+            GalateaDelegationStateSnapshot delegation = session
+                .DelegationHandle!.Store.ReadSnapshot();
+            Assert.Single(delegation.Captures);
+            GalateaOutboundMailSnapshot mail = Assert.Single(delegation.Mails);
+            Assert.Equal("Alice", mail.Recipient);
+            Assert.Equal(GalateaDurableMailState.Unrouted, mail.State);
 
-        Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
-        global::Atelia.MemoPod.MemoPod notes =
-            global::Atelia.MemoPod.MemoPod.Open(
-                session.User.CharacterMemoryStateDir,
-                CharacterNoteDefaultPodV1.PodId
-            );
-        Assert.Equal(MemoPodPhase.Frozen, notes.Phase);
-        Assert.Equal(NoteText, Assert.Single(notes.List()).ExactText);
+            Assert.NotNull(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
+            global::Atelia.MemoPod.MemoPod notes =
+                global::Atelia.MemoPod.MemoPod.Open(
+                    session.User.CharacterMemoryStateDir,
+                    CharacterNoteDefaultPodV1.PodId
+                );
+            Assert.Equal(MemoPodPhase.Frozen, notes.Phase);
+            Assert.Equal(NoteText, Assert.Single(notes.List()).ExactText);
+        }
+        finally {
+            session.TurnLock.Release();
+        }
 
         // No chat request or browser sponsor: a later server-owned pulse
         // delivers the saved Note receipt alongside independently recalled memory.
@@ -123,18 +131,24 @@ public sealed class GalateaAutonomyPostProcessingTests {
         GalateaLiveTurn second = Assert.IsType<GalateaLiveTurn>(
             service.FindTurn(session, secondAccepted.TurnId));
         await Assert.IsAssignableFrom<Task>(second.RunTask).WaitAsync(TestDeadline);
-        Assert.Equal("completed", second.Status);
-        Assert.Equal(2, mainClient.CallCount);
-        Assert.Equal(2, recall.CallCount);
-        string stored = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
-            .RequireSnapshot().Turns).ObservationContent;
-        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(stored, out PlayerTurnObservation observation));
-        Assert.Contains(NoteText, Assert.Single(observation.Notices
-            .OfType<PlayerTurnNotice.NoteSaveReceipt>()).Body);
-        Assert.Equal(AutomaticRecallProvider.UnrelatedMemory, Assert.Single(observation.Recalls));
-        Assert.Null(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
-        Assert.Equal(NoteText, Assert.Single(global::Atelia.MemoPod.MemoPod.Open(
-            session.User.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId).List()).ExactText);
+        Assert.True(await session.TurnLock.WaitAsync(TestDeadline));
+        try {
+            Assert.Equal("completed", second.Status);
+            Assert.Equal(2, mainClient.CallCount);
+            Assert.Equal(2, recall.CallCount);
+            string stored = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
+                .RequireSnapshot().Turns).ObservationContent;
+            Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(stored, out PlayerTurnObservation observation));
+            Assert.Contains(NoteText, Assert.Single(observation.Notices
+                .OfType<PlayerTurnNotice.NoteSaveReceipt>()).Body);
+            Assert.Equal(AutomaticRecallProvider.UnrelatedMemory, Assert.Single(observation.Recalls));
+            Assert.Null(session.CharacterMemoryReconciler!.ReadPendingReceiptDelivery());
+            Assert.Equal(NoteText, Assert.Single(global::Atelia.MemoPod.MemoPod.Open(
+                session.User.CharacterMemoryStateDir, CharacterNoteDefaultPodV1.PodId).List()).ExactText);
+        }
+        finally {
+            session.TurnLock.Release();
+        }
     }
 
     private static async Task AssertWaitingPulseAsync(
