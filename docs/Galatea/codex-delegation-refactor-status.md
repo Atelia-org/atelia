@@ -4,8 +4,8 @@
 >
 > 完成日期：2026-08-28
 
-现行产品契约、配置与开发 runbook 见
-[`prototypes/Galatea/README.md`](../../prototypes/Galatea/README.md)；durable authority、failure model、
+现行用法与各专题入口见 [Galatea 文档索引](README.md)，配置见[配置参考](configuration.md)，
+开发验证见[代行验证](codex-delegation-verification.md)；durable authority、failure model、
 crash matrix 与非目标见
 [`codex-delegation-durability-design.md`](codex-delegation-durability-design.md)。本文只作为阶段完成 tombstone，
 不再复制产品说明。

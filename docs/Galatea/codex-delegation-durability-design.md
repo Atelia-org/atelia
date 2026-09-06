@@ -6,7 +6,7 @@
 >
 > 完成日期：2026-08-28
 >
-> 现行产品用法与runbook见 [`prototypes/Galatea/README.md`](../../prototypes/Galatea/README.md)；
+> 现行产品用法见[运行指南](../../prototypes/Galatea/README.md)，配置、API、验证与恢复见[文档索引](README.md)；
 > 本文保留durable authority、state machine与failure-model设计真源。
 
 本文是 Galatea Codex delegation durable state machine的设计与实施真源。现行binary已经将旧

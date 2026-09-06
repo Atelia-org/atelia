@@ -21,6 +21,11 @@ docs/SessionJournal/operations/galatea-g2a-staging-acceptance.md
 prototypes/SessionJournal/README.md
 prototypes/SessionJournal.Cli/README.md
 prototypes/Galatea/README.md
+docs/Galatea/README.md
+docs/Galatea/configuration.md
+docs/Galatea/server-api.md
+docs/Galatea/runtime.md
+docs/Galatea/codex-delegation-verification.md
 
 # Evidence/archive records are intentionally not default-scanned. Their links
 # remain observable with:
