@@ -229,6 +229,23 @@ internal sealed record CharacterMemorySettleResult(
     CharacterMemoryCaptureSnapshot Capture
 );
 
+internal enum CharacterNoteReceiptDeliveryState {
+    Pending,
+    ObservationBound,
+    Delivered,
+}
+
+internal sealed record CharacterNoteReceiptDeliverySnapshot(
+    string SourceActionAddress,
+    CharacterNoteReceiptDeliveryState State,
+    string NoticeBody,
+    long CreatedRevision,
+    long StateRevision,
+    string? ExpectedSessionHead,
+    string? RenderedObservation,
+    string? ObservationAddress
+);
+
 internal enum CharacterMemoryPrepareDerivedInfoDisposition {
     Prepared,
     AlreadyPrepared,

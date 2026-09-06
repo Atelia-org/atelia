@@ -8,7 +8,7 @@ using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
 
-public sealed class CharacterMemorySqliteStoreTests {
+public sealed partial class CharacterMemorySqliteStoreTests {
     [Fact]
     public void CreateProvisionOpen_RequiresExactOwnerAndExclusiveLock() {
         using var directory = new StoreDirectory();

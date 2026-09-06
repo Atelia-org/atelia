@@ -113,68 +113,6 @@ public sealed class CharacterNoteSaveReceiptTests {
         Assert.Null(receipt);
     }
 
-    [Fact]
-    public void Queue_IsFifoAndDropsNewestAtCountBound() {
-        CharacterNoteSaveReceipt first = Create("first");
-        CharacterNoteSaveReceipt second = Create("second");
-        CharacterNoteSaveReceipt dropped = Create("third");
-        var queue = new CharacterNoteSaveReceiptQueue(
-            maximumCount: 2,
-            maximumUtf8Bytes: 1024 * 1024
-        );
-
-        Assert.True(queue.TryEnqueue(first));
-        Assert.True(queue.TryEnqueue(second));
-        Assert.False(queue.TryEnqueue(dropped));
-        Assert.Equal(2, queue.Count);
-        Assert.Equal(
-            first.Utf8Bytes + second.Utf8Bytes,
-            queue.TotalUtf8Bytes
-        );
-
-        Assert.True(queue.TryDequeue(out CharacterNoteSaveReceipt? one));
-        Assert.Same(first, one);
-        Assert.True(queue.TryDequeue(out CharacterNoteSaveReceipt? two));
-        Assert.Same(second, two);
-        Assert.False(queue.TryDequeue(out CharacterNoteSaveReceipt? none));
-        Assert.Null(none);
-        Assert.Equal(0, queue.Count);
-        Assert.Equal(0, queue.TotalUtf8Bytes);
-    }
-
-    [Fact]
-    public void Queue_DropsNewestAtTotalByteBoundWithoutMutation() {
-        CharacterNoteSaveReceipt first = Create("first");
-        CharacterNoteSaveReceipt second = Create("second");
-        var queue = new CharacterNoteSaveReceiptQueue(
-            maximumCount: CharacterNoteSaveReceiptQueue.MaximumPendingCount,
-            maximumUtf8Bytes:
-                first.Utf8Bytes + second.Utf8Bytes - 1
-        );
-
-        Assert.True(queue.TryEnqueue(first));
-        Assert.False(queue.TryEnqueue(second));
-        Assert.Equal(1, queue.Count);
-        Assert.Equal(first.Utf8Bytes, queue.TotalUtf8Bytes);
-
-        Assert.True(queue.TryDequeue(out CharacterNoteSaveReceipt? item));
-        Assert.Same(first, item);
-        Assert.True(queue.TryEnqueue(second));
-        Assert.Equal(second.Utf8Bytes, queue.TotalUtf8Bytes);
-        Assert.Equal(16,
-            CharacterNoteSaveReceiptQueue.MaximumPendingCount);
-        Assert.Equal(4 * 1024 * 1024,
-            CharacterNoteSaveReceiptQueue.MaximumPendingUtf8Bytes);
-    }
-
-    private static CharacterNoteSaveReceipt Create(string exactText) {
-        Assert.True(CharacterNoteSaveReceipt.TryCreate(
-            [Memo(0, exactText)],
-            out CharacterNoteSaveReceipt? receipt
-        ));
-        return receipt;
-    }
-
     private static CharacterNoteAppliedMemo Memo(
         int ordinal,
         string exactText

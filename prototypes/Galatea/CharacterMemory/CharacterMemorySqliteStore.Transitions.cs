@@ -386,6 +386,7 @@ internal sealed partial class CharacterMemorySqliteStore {
                         request.SourceActionAddress,
                         revision
                     );
+                    InsertPendingReceiptDelivery(connection, transaction, capture, revision);
                     return new CharacterMemorySettleResult(
                         CharacterMemorySettleDisposition.Applied,
                         revision,
@@ -408,6 +409,8 @@ internal sealed partial class CharacterMemorySqliteStore {
                                 StringComparison.Ordinal))
                         && ReadDerivedInfoWorkExact(request.SourceActionAddress)
                             is not null
+                        && (result.Disposition == CharacterMemorySettleDisposition.AlreadyApplied
+                            || ReadReceiptDeliveryExact(request.SourceActionAddress) is not null)
                         && status.StoreRevision == result.StoreRevision;
                 }
             );

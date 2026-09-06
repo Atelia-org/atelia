@@ -8,7 +8,7 @@ using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
 
-public sealed class CharacterMemorySqliteStoreTestsV2 {
+public sealed partial class CharacterMemorySqliteStoreTestsV2 {
     [Fact]
     public void ExactSettlementCreatesPendingAndPreparedBatchesRemainQueued() {
         using var fixture = new ReadyStore();
@@ -468,7 +468,7 @@ public sealed class CharacterMemorySqliteStoreTestsV2 {
                    fixture.Path,
                    Owner()
                )) {
-            Assert.Equal(2, ReadUserVersion(fixture.DatabasePath));
+            Assert.Equal(3, ReadUserVersion(fixture.DatabasePath));
             CharacterMemoryStatusSnapshot status = store.ReadStatusSnapshot();
             Assert.Equal(8, status.StoreRevision);
             Assert.Equal(Address(63), status.ActiveSourceAction);
@@ -499,7 +499,7 @@ public sealed class CharacterMemorySqliteStoreTestsV2 {
     }
 
     [Fact]
-    public void V1MigrationAfterCommitLossStrictlyReopensV2() {
+    public void V1MigrationAfterCommitLossStrictlyReopensV3() {
         using var fixture = V1Store.Create(valid: true);
         int fired = 0;
         var hooks = new CharacterMemoryStoreTestHooks(
@@ -518,7 +518,7 @@ public sealed class CharacterMemorySqliteStoreTestsV2 {
                 hooks
             );
         Assert.Equal(1, fired);
-        Assert.Equal(2, ReadUserVersion(fixture.DatabasePath));
+        Assert.Equal(3, ReadUserVersion(fixture.DatabasePath));
         Assert.NotNull(store.ReadDerivedInfoWorkExact(Address(60)));
     }
 
@@ -547,7 +547,7 @@ public sealed class CharacterMemorySqliteStoreTestsV2 {
 
         using CharacterMemorySqliteStore migrated =
             CharacterMemorySqliteStore.OpenExisting(fixture.Path, Owner());
-        Assert.Equal(2, ReadUserVersion(fixture.DatabasePath));
+        Assert.Equal(3, ReadUserVersion(fixture.DatabasePath));
         Assert.NotNull(migrated.ReadDerivedInfoWorkExact(Address(60)));
     }
 

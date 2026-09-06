@@ -532,7 +532,7 @@ internal sealed partial class CharacterMemorySqliteStore {
         string sourceActionAddress
     ) {
         using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
+        if (transaction is not null) { command.Transaction = transaction; }
         command.CommandText = """
             SELECT capture.visible_action_sha256,
                    capture.visible_action_utf8_bytes,
@@ -568,7 +568,7 @@ internal sealed partial class CharacterMemorySqliteStore {
 
         var notes = new List<CharacterMemoryDerivedInfoNoteSnapshot>();
         using SqliteCommand children = connection.CreateCommand();
-        children.Transaction = transaction;
+        if (transaction is not null) { children.Transaction = transaction; }
         children.CommandText = """
             SELECT artifact_ordinal, exact_text, memo_id,
                    derived_title, derived_gist, derived_summary

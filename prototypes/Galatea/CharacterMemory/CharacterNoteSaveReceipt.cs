@@ -6,11 +6,13 @@ using Atelia.SessionJournal;
 namespace Atelia.Galatea.Server.CharacterMemory;
 
 /// <summary>
-/// One code-owned save receipt rendered only from a durable AppliedNow result.
-/// The frozen notice is the only payload authority retained by the in-process
-/// queue.
+/// Code-owned saved-Note notification. The V3 outbox freezes this payload in
+/// the same transaction that durably settles a newly Applied capture.
 /// </summary>
 internal sealed class CharacterNoteSaveReceipt {
+    private static readonly PlayerTurnNotice.Reply MaximumRenderedReply = new(
+        new string('~', PlayerTurnObservationEnvelope.MaximumReplyUtf8Bytes)
+    );
     private const string ExactTextInfoString =
         "character-note-exact-text";
 
@@ -25,6 +27,28 @@ internal sealed class CharacterNoteSaveReceipt {
     internal PlayerTurnNotice.NoteSaveReceipt Notice { get; }
 
     internal int Utf8Bytes { get; }
+
+    // The durable outbox cannot drop a successfully saved batch just because
+    // adaptive fences make its exact-text receipt exceed an Observation budget.
+    internal static CharacterNoteSaveReceipt CreateDurable(IReadOnlyList<CharacterNoteAppliedMemo> memos) {
+        if (TryCreate(memos, out CharacterNoteSaveReceipt? receipt)
+            && PlayerTurnObservationEnvelope.FitsEveryValidPlayerText([MaximumRenderedReply, receipt.Notice])) {
+            return receipt;
+        }
+        if (memos.Count == 0) { throw new ArgumentException("A durable receipt requires saved memos.", nameof(memos)); }
+        string body = "Galatea runtime 已将以下 Note 原文成功保存到默认MemoPod。\n"
+            + "本回执只证明原文已保存；不承诺分类、metadata补全或召回。\n"
+            + "原文超出回执展示预算，以下仅列出保存标识：\n"
+            + "Source Action: " + memos[0].SourceActionAddress + "\n"
+            + string.Join("\n", memos.Select(static memo => "Memo: " + memo.MemoId.Value));
+        int bytes = TextExtractorUtf8.GetByteCount(body);
+        var notice = new PlayerTurnNotice.NoteSaveReceipt(body);
+        if (bytes > PlayerTurnObservationEnvelope.MaximumNoteSaveReceiptUtf8Bytes
+            || !PlayerTurnObservationEnvelope.FitsEveryValidPlayerText([MaximumRenderedReply, notice])) {
+            throw new InvalidDataException("Compact durable Note receipt exceeds its budget.");
+        }
+        return new CharacterNoteSaveReceipt(notice, bytes);
+    }
 
     /// <summary>
     /// Renders one receipt from a non-empty batch read back from the durable
@@ -156,60 +180,5 @@ internal sealed class CharacterNoteSaveReceipt {
                 exception
             );
         }
-    }
-}
-
-/// <summary>
-/// Bounded, caller-serialized FIFO for pending save receipts. Overflow returns
-/// false so the caller can drop the newest receipt without changing the
-/// completed durable Memo effect.
-/// </summary>
-internal sealed class CharacterNoteSaveReceiptQueue {
-    internal const int MaximumPendingCount = 16;
-    internal const int MaximumPendingUtf8Bytes = 4 * 1024 * 1024;
-
-    private readonly int _maximumCount;
-    private readonly int _maximumUtf8Bytes;
-    private readonly Queue<CharacterNoteSaveReceipt> _pending = new();
-    private int _totalUtf8Bytes;
-
-    internal CharacterNoteSaveReceiptQueue(
-        int maximumCount = MaximumPendingCount,
-        int maximumUtf8Bytes = MaximumPendingUtf8Bytes
-    ) {
-        if (maximumCount <= 0) {
-            throw new ArgumentOutOfRangeException(nameof(maximumCount));
-        }
-        if (maximumUtf8Bytes <= 0) {
-            throw new ArgumentOutOfRangeException(
-                nameof(maximumUtf8Bytes)
-            );
-        }
-        _maximumCount = maximumCount;
-        _maximumUtf8Bytes = maximumUtf8Bytes;
-    }
-
-    internal int Count => _pending.Count;
-
-    internal int TotalUtf8Bytes => _totalUtf8Bytes;
-
-    internal bool TryEnqueue(CharacterNoteSaveReceipt receipt) {
-        ArgumentNullException.ThrowIfNull(receipt);
-        if (_pending.Count >= _maximumCount
-            || receipt.Utf8Bytes
-                > _maximumUtf8Bytes - _totalUtf8Bytes) {
-            return false;
-        }
-        _pending.Enqueue(receipt);
-        _totalUtf8Bytes += receipt.Utf8Bytes;
-        return true;
-    }
-
-    internal bool TryDequeue(
-        [NotNullWhen(true)] out CharacterNoteSaveReceipt? receipt
-    ) {
-        if (!_pending.TryDequeue(out receipt)) { return false; }
-        _totalUtf8Bytes -= receipt.Utf8Bytes;
-        return true;
     }
 }

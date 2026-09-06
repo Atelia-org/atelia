@@ -14,7 +14,7 @@ namespace Atelia.Galatea.Server.CharacterMemory;
 /// exclusive filesystem lock and serializes every operation on one handle.
 /// </summary>
 internal sealed partial class CharacterMemorySqliteStore : IDisposable {
-    internal const int SchemaVersion = 2;
+    internal const int SchemaVersion = 3;
     internal const int ApplicationId = 0x47434D31; // "GCM1"
     internal const string DatabaseFileName = "character-memory.sqlite3";
     internal const string LockFileName = "character-memory.lock";
@@ -26,6 +26,8 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     // SHA-256 of NormalizeSchemaSql(sqlite_schema.sql) for each exact table.
     private const string V2MetaSchemaSha256 =
         "319ca61bea7abe13d7536cdbb31302797ff6100f4515dcd08abec1acc18b2faf";
+    private const string V3MetaSchemaSha256 =
+        "843f6eeaf776183c0195c169f673eb13d75d91548007eeac64d1d2a25641cff6";
     private const string CaptureSchemaSha256 =
         "bdd6634ced7368d131652007a23eafd62a4345095bf6583e95d707b9531429fd";
     private const string V2NoteSchemaSha256 =
@@ -169,6 +171,9 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                 connection,
                 owner,
                 hooks ?? CharacterMemoryStoreTestHooks.None
+            );
+            MigrateV2ToV3IfNeeded(
+                connection, owner, hooks ?? CharacterMemoryStoreTestHooks.None
             );
             CharacterMemoryStatusSnapshot snapshot =
                 ValidateOpenedDatabase(connection, owner);
@@ -551,7 +556,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         command.CommandText = """
             CREATE TABLE character_memory_meta (
                 singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
-                schema_version INTEGER NOT NULL CHECK(schema_version = 2),
+                schema_version INTEGER NOT NULL CHECK(schema_version = 3),
                 user_id TEXT NOT NULL,
                 session_repository_id TEXT NOT NULL,
                 capture_frontier_segment_number INTEGER NOT NULL
@@ -700,6 +705,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             WHERE state = 'Pending';
             """;
         command.ExecuteNonQuery();
+        CreateReceiptDeliverySchema(connection);
     }
 
     private static void InsertInitialState(
@@ -726,7 +732,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                     quarantine_code, quarantine_observed_pod_state_identity,
                     store_revision
                 ) VALUES (
-                    1, 2, $user, $repository, $segment, $tail, $head,
+                    1, 3, $user, $repository, $segment, $tail, $head,
                     'Provisioning', $target, NULL, NULL, NULL, NULL, NULL, 0
                 );
                 """;
@@ -796,9 +802,13 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
 
     private static CharacterMemoryStatusSnapshot ValidateOpenedDatabase(
         SqliteConnection connection,
-        CharacterMemoryStoreOwner owner
+        CharacterMemoryStoreOwner owner,
+        int expectedVersion = SchemaVersion
     ) {
-        ValidateSchemaIdentity(connection);
+        // Also used while a migration owns BEGIN IMMEDIATE. CreateCommand
+        // inherits that transaction; nullable helper arguments must preserve
+        // the inherited transaction instead of explicitly clearing it.
+        ValidateSchemaIdentity(connection, expectedVersion);
         using (SqliteCommand integrity = connection.CreateCommand()) {
             integrity.CommandText = "PRAGMA integrity_check;";
             if (!string.Equals(
@@ -819,19 +829,24 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
                 );
             }
         }
-        RequireOwner(connection, transaction: null, owner);
+        RequireOwner(connection, transaction: null, owner, expectedVersion);
         CharacterMemoryStatusSnapshot status = ReadStatusCore(
             connection,
             transaction: null
         );
         ValidateGlobalCountInvariants(connection, status);
         ValidateAllDerivedInfoWork(connection);
+        if (expectedVersion == SchemaVersion) {
+            ValidateReceiptDeliveryRows(connection);
+        }
         return status;
     }
 
-    private static void ValidateSchemaIdentity(SqliteConnection connection) {
+    private static void ValidateSchemaIdentity(
+        SqliteConnection connection, int expectedVersion = SchemaVersion
+    ) {
         RequirePragmaInteger(connection, "application_id", ApplicationId);
-        RequirePragmaInteger(connection, "user_version", SchemaVersion);
+        RequirePragmaInteger(connection, "user_version", expectedVersion);
         var actual = new HashSet<string>(StringComparer.Ordinal);
         using (SqliteCommand command = connection.CreateCommand()) {
             command.CommandText = """
@@ -852,6 +867,12 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             "index:ux_derived_info_single_planned",
             "index:ix_derived_info_pending_schedule",
         ];
+        if (expectedVersion == SchemaVersion) {
+            expected = [.. expected,
+                "table:note_receipt_delivery",
+                "index:ux_note_receipt_single_bound",
+                "index:ix_note_receipt_pending_schedule"];
+        }
         if (!actual.SetEquals(expected)) {
             throw new InvalidDataException(
                 "Character Memory SQLite schema object set is not exact."
@@ -893,7 +914,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         RequireExactTableSchema(
             connection,
             "character_memory_meta",
-            V2MetaSchemaSha256
+            expectedVersion == 2 ? V2MetaSchemaSha256 : V3MetaSchemaSha256
         );
         RequireExactTableSchema(
             connection,
@@ -910,6 +931,9 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
             "derived_info_work",
             V2DerivedInfoSchemaSha256
         );
+        if (expectedVersion == SchemaVersion) {
+            ValidateReceiptDeliverySchema(connection);
+        }
         RequireExactForeignKeys(connection, "character_note", [
             "source_action_address->note_action_capture.source_action_address:RESTRICT"
         ]);
@@ -972,7 +996,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         SqliteTransaction? transaction
     ) {
         using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
+        if (transaction is not null) { command.Transaction = transaction; }
         command.CommandText = """
             SELECT user_id, session_repository_id,
                    capture_frontier_segment_number,
@@ -1087,7 +1111,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         string sourceActionAddress
     ) {
         using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
+        if (transaction is not null) { command.Transaction = transaction; }
         command.CommandText = """
             SELECT visible_action_sha256, visible_action_utf8_bytes,
                    extractor_contract_id, extraction_commitment,
@@ -1116,7 +1140,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
 
         var notes = new List<CharacterMemoryNoteSnapshot>();
         using SqliteCommand children = connection.CreateCommand();
-        children.Transaction = transaction;
+        if (transaction is not null) { children.Transaction = transaction; }
         children.CommandText = """
             SELECT artifact_ordinal, exact_text, memo_id
             FROM character_note WHERE source_action_address = $source
@@ -1470,17 +1494,18 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     private static void RequireOwner(
         SqliteConnection connection,
         SqliteTransaction? transaction,
-        CharacterMemoryStoreOwner expected
+        CharacterMemoryStoreOwner expected,
+        int expectedVersion = SchemaVersion
     ) {
         using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
+        if (transaction is not null) { command.Transaction = transaction; }
         command.CommandText = """
             SELECT schema_version, user_id, session_repository_id
             FROM character_memory_meta WHERE singleton = 1;
             """;
         using SqliteDataReader reader = command.ExecuteReader();
         if (!reader.Read()
-            || reader.GetInt32(0) != SchemaVersion
+            || reader.GetInt32(0) != expectedVersion
             || !string.Equals(reader.GetString(1), expected.UserId,
                 StringComparison.Ordinal)
             || !string.Equals(reader.GetString(2), expected.SessionRepositoryId,
@@ -1693,7 +1718,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     ) {
         var actual = new List<string>();
         using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
+        if (transaction is not null) { command.Transaction = transaction; }
         command.CommandText = $"PRAGMA table_info('{table}');";
         using SqliteDataReader reader = command.ExecuteReader();
         while (reader.Read()) { actual.Add(reader.GetString(1)); }
@@ -1708,7 +1733,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         SqliteTransaction? transaction = null
     ) {
         using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
+        if (transaction is not null) { command.Transaction = transaction; }
         command.CommandText = """
             SELECT type, strict FROM pragma_table_list
             WHERE schema = 'main' AND name = $table;
@@ -1728,7 +1753,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         SqliteTransaction? transaction = null
     ) {
         using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
+        if (transaction is not null) { command.Transaction = transaction; }
         command.CommandText = """
             SELECT sql FROM sqlite_schema
             WHERE type = 'table' AND name = $table;
@@ -1762,7 +1787,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     ) {
         var actual = new HashSet<string>(StringComparer.Ordinal);
         using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
+        if (transaction is not null) { command.Transaction = transaction; }
         command.CommandText = $"PRAGMA foreign_key_list('{table}');";
         using SqliteDataReader reader = command.ExecuteReader();
         while (reader.Read()) {
@@ -1785,7 +1810,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     ) {
         bool found = false;
         using (SqliteCommand command = connection.CreateCommand()) {
-            command.Transaction = transaction;
+            if (transaction is not null) { command.Transaction = transaction; }
             command.CommandText = $"PRAGMA index_list('{table}');";
             using SqliteDataReader reader = command.ExecuteReader();
             while (reader.Read()) {
@@ -1811,7 +1836,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
 
         int keyCount = 0;
         using (SqliteCommand command = connection.CreateCommand()) {
-            command.Transaction = transaction;
+            if (transaction is not null) { command.Transaction = transaction; }
             command.CommandText = $"PRAGMA index_xinfo('{index}');";
             using SqliteDataReader reader = command.ExecuteReader();
             while (reader.Read()) {
@@ -1838,7 +1863,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         }
 
         using (SqliteCommand command = connection.CreateCommand()) {
-            command.Transaction = transaction;
+            if (transaction is not null) { command.Transaction = transaction; }
             command.CommandText = """
                 SELECT tbl_name, sql FROM sqlite_schema
                 WHERE type = 'index' AND name = $index;
@@ -1872,7 +1897,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
     ) {
         bool found = false;
         using (SqliteCommand command = connection.CreateCommand()) {
-            command.Transaction = transaction;
+            if (transaction is not null) { command.Transaction = transaction; }
             command.CommandText = $"PRAGMA index_list('{table}');";
             using SqliteDataReader reader = command.ExecuteReader();
             while (reader.Read()) {
@@ -1898,7 +1923,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
 
         int keyCount = 0;
         using (SqliteCommand command = connection.CreateCommand()) {
-            command.Transaction = transaction;
+            if (transaction is not null) { command.Transaction = transaction; }
             command.CommandText = $"PRAGMA index_xinfo('{index}');";
             using SqliteDataReader reader = command.ExecuteReader();
             while (reader.Read()) {
@@ -1932,7 +1957,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         }
 
         using (SqliteCommand command = connection.CreateCommand()) {
-            command.Transaction = transaction;
+            if (transaction is not null) { command.Transaction = transaction; }
             command.CommandText = """
                 SELECT tbl_name, sql FROM sqlite_schema
                 WHERE type = 'index' AND name = $index;
@@ -1985,7 +2010,7 @@ internal sealed partial class CharacterMemorySqliteStore : IDisposable {
         SqliteTransaction? transaction = null
     ) {
         using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
+        if (transaction is not null) { command.Transaction = transaction; }
         command.CommandText = $"PRAGMA {name};";
         if (Convert.ToInt64(command.ExecuteScalar()) != expected) {
             throw Corrupt($"SQLite PRAGMA {name} is not exact.");
