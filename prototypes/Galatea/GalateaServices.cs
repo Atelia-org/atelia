@@ -563,7 +563,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         out CompletionConnectionConfig connection
     ) {
         ArgumentNullException.ThrowIfNull(user);
-        string id = string.IsNullOrWhiteSpace(requestedConnectionId)
+        string id = requestedConnectionId is null
             ? user.DefaultConnectionId
             : requestedConnectionId;
         return _connectionCatalog.TryGetValue(id, out connection!);

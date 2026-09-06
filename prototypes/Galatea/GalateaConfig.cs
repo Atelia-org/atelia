@@ -40,7 +40,10 @@ internal sealed record GalateaRecapGridFileConfig(
     string CurrentAgentControlProfileId
 );
 
-/// <summary>Shape of config.json: user accounts + server settings, with no LLM binding.</summary>
+/// <summary>
+/// Shape of config.json: user accounts, their default Agent selections, and
+/// server settings. Provider connection definitions remain in connections.json.
+/// </summary>
 internal sealed record GalateaUsersFileConfig(
     [property: JsonPropertyName("v")] int Version,
     IReadOnlyList<GalateaUserFileConfig> Users,

@@ -84,8 +84,10 @@ route仍可命中hidden catalog connection，但fresh/current Agent selection不
 所有带optional `connectionId`的fresh/current入口服从同一规则：
 
 1. request显式提供nonblank ID时，使用该ID，并要求它exact命中selectable allowlist；
-2. request省略或为blank时，使用authenticated session user的`defaultConnectionId`；
+2. request省略或为JSON `null`时，使用authenticated session user的`defaultConnectionId`；
 3. unknown、wrong-case或hidden selection拒绝，不回退到任何其他connection。
+
+Blank/whitespace `connectionId`仍是invalid HTTP input，不与omitted/null共用fallback语义。
 
 HTML bootstrap为当前authenticated user输出其default。Browser已有的per-user `localStorage`
 stored selection若仍在server提供的selectable列表中则优先；stored selection缺失或失效时才使用HTML
