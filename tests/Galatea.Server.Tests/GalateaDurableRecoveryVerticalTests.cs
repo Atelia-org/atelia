@@ -22,7 +22,8 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         var normalizer = new TrackingNormalizer();
         await using var host = GalateaTestHost.Create(
             completionFactory,
-            normalizer
+            normalizer,
+            serverAgentUserIds: ["alice"]
         );
         CompletionConnectionConfig connection = GetConnection(host);
         EventAddress failedHead = await CreateFailedBoundaryAsync(
@@ -44,7 +45,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
             "/api/v1/mailbox/ready-turn",
-            new ReadyReplyTurnRequest(connection.Id)
+            new ReadyReplyTurnRequest()
         );
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);

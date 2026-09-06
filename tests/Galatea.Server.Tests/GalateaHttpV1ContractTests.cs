@@ -234,6 +234,7 @@ public sealed class GalateaHttpV1ContractTests {
     }
 
     [Theory]
+    [InlineData("{\"connectionId\":\"test\"}")]
     [InlineData("{\"connectionId\":\"test\",\"connectionId\":\"other\"}")]
     [InlineData("{\"ConnectionId\":\"test\"}")]
     [InlineData("{\"connectionId\":1}")]
@@ -274,14 +275,15 @@ public sealed class GalateaHttpV1ContractTests {
             new NoDispatchCompletionClientFactory(),
             DisabledGalateaUserMessageNormalizer.Instance,
             provisionRawOnly: false,
-            timeProvider: clock
+            timeProvider: clock,
+            serverAgentUserIds: ["alice"]
         );
         using HttpClient client = host.CreateClient();
         _ = await GalateaTestHost.LoginAsync(client);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
             "/api/v1/mailbox/ready-turn",
-            new ReadyReplyTurnRequest("test")
+            new ReadyReplyTurnRequest()
         );
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -289,7 +291,7 @@ public sealed class GalateaHttpV1ContractTests {
             "{\"state\":\"waiting\","
                 + "\"nextActivationAtUnixTimeMilliseconds\":"
                 + (clock.GetUtcNow()
-                    + GalateaBrowserSponsoredAutonomy.IdleInterval)
+                    + GalateaAutonomyCadence.IdleInterval)
                     .ToUnixTimeMilliseconds()
                 + ",\"lastActivationAtUnixTimeMilliseconds\":null,"
                 + "\"code\":null}",
@@ -298,7 +300,7 @@ public sealed class GalateaHttpV1ContractTests {
     }
 
     [Fact]
-    public void ReadyReplyTurn_WaitingBranchHasNoTraceOrInfoEmission() {
+    public void ReadyReplyTurn_AutomaticAdmissionHasNoTraceOrInfoEmission() {
         string repositoryRoot = Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory,
             "../../../../.."
@@ -322,15 +324,18 @@ public sealed class GalateaHttpV1ContractTests {
         string endpoint = source[start..end];
         Assert.DoesNotContain("DebugUtil.Trace", endpoint,
             StringComparison.Ordinal);
-        int waitingReturn = endpoint.IndexOf(
-            "return Results.Ok(LoopPulseStatusDto.FromProjection(",
-            StringComparison.Ordinal
-        );
-        int startedInfo = endpoint.IndexOf(
-            "DebugUtil.Info(",
-            StringComparison.Ordinal
-        );
-        Assert.True(waitingReturn >= 0 && startedInfo > waitingReturn);
+        Assert.DoesNotContain("DebugUtil.Info", endpoint,
+            StringComparison.Ordinal);
+        string coordinator = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "prototypes",
+            "Galatea",
+            "GalateaAutomaticTurnCoordinator.cs"
+        ));
+        Assert.DoesNotContain("DebugUtil.Trace", coordinator,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("DebugUtil.Info", coordinator,
+            StringComparison.Ordinal);
     }
 
     [Fact]

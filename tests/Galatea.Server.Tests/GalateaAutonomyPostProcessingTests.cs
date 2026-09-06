@@ -12,7 +12,7 @@ using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
 
-public sealed class GalateaBrowserSponsoredAutonomyPostProcessingTests {
+public sealed class GalateaAutonomyPostProcessingTests {
     private static readonly TimeSpan TestDeadline = TimeSpan.FromSeconds(10);
     private const string NoteText = "remember autonomous blue";
     private const string NoteEvidence =
@@ -52,7 +52,8 @@ public sealed class GalateaBrowserSponsoredAutonomyPostProcessingTests {
             outboundMailExtractorConnectionId: helper.Id,
             characterNoteExtractorConnectionId: helper.Id,
             playerTurnRecallProviderFactory: (_, _) => recall,
-            timeProvider: clock
+            timeProvider: clock,
+            serverAgentUserIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
@@ -64,16 +65,16 @@ public sealed class GalateaBrowserSponsoredAutonomyPostProcessingTests {
             CancellationToken.None
         );
 
-        await AssertWaitingPulseAsync(http, main.Id);
+        await AssertWaitingPulseAsync(http);
         for (int pulse = 1; pulse < 60; pulse++) {
             clock.Advance(TimeSpan.FromSeconds(10));
-            await AssertWaitingPulseAsync(http, main.Id);
+            await AssertWaitingPulseAsync(http);
         }
         clock.Advance(TimeSpan.FromSeconds(10));
         LoopPulseAcceptedTurnDto accepted;
         using (HttpResponseMessage response = await http.PostAsJsonAsync(
                    "/api/v1/mailbox/ready-turn",
-                   new ReadyReplyTurnRequest(main.Id))) {
+                   new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             accepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
                 await response.Content
@@ -112,18 +113,17 @@ public sealed class GalateaBrowserSponsoredAutonomyPostProcessingTests {
     }
 
     private static async Task AssertWaitingPulseAsync(
-        HttpClient http,
-        string connectionId
+        HttpClient http
     ) {
         using HttpResponseMessage response = await http.PostAsJsonAsync(
             "/api/v1/mailbox/ready-turn",
-            new ReadyReplyTurnRequest(connectionId)
+            new ReadyReplyTurnRequest()
         );
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         LoopPulseStatusDto status = Assert.IsType<LoopPulseStatusDto>(
             await response.Content.ReadFromJsonAsync<LoopPulseStatusDto>()
         );
-        Assert.Equal(GalateaBrowserSponsoredAutonomy.WaitingState,
+        Assert.Equal(GalateaAutonomyCadence.WaitingState,
             status.State);
     }
 

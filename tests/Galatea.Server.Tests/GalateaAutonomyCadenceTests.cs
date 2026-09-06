@@ -2,26 +2,50 @@ using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
 
-public sealed class GalateaBrowserSponsoredAutonomyTests {
+public sealed class GalateaAutonomyCadenceTests {
+    [Fact]
+    public void ArmStartsDeadlineOnceWithoutRearmingOnRepeatedAttach() {
+        var clock = new ManualTimeProvider();
+        var cadence = new GalateaAutonomyCadence(clock);
+        cadence.Arm();
+        long? expectedDue = cadence.ProjectStatus()
+            .NextActivationAtUnixTimeMilliseconds;
+        Assert.NotNull(expectedDue);
+
+        clock.Advance(TimeSpan.FromMinutes(5));
+        cadence.Arm();
+
+        Assert.Equal(GalateaAutonomyCadencePulseResult.Waiting,
+            cadence.ObservePulse());
+        Assert.Equal(expectedDue, cadence.ProjectStatus()
+            .NextActivationAtUnixTimeMilliseconds);
+
+        clock.Advance(TimeSpan.FromMinutes(25));
+        Assert.Equal(GalateaAutonomyCadencePulseResult.AutonomousActivationDue,
+            cadence.ObservePulse());
+        Assert.True(cadence.TryClaimAutonomousActivationStarted(out _));
+        Assert.False(cadence.TryClaimAutonomousActivationStarted(out _));
+    }
+
     [Fact]
     public void FirstPulseArmsAndContinuousPulsesDoNotMoveDeadline() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaBrowserSponsoredAutonomy(clock);
+        var cadence = new GalateaAutonomyCadence(clock);
 
-        GalateaBrowserSponsoredAutonomyStatus initial =
+        GalateaAutonomyCadenceStatus initial =
             cadence.ProjectStatus();
-        Assert.Equal(GalateaBrowserSponsoredAutonomy.WaitingState,
+        Assert.Equal(GalateaAutonomyCadence.WaitingState,
             initial.State);
         Assert.Null(initial.NextActivationAtUnixTimeMilliseconds);
         Assert.Null(initial.LastActivationAtUnixTimeMilliseconds);
         Assert.Null(initial.Code);
 
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult.Rearmed,
-            cadence.ObserveSponsorPulse()
+            GalateaAutonomyCadencePulseResult.Rearmed,
+            cadence.ObservePulse()
         );
         DateTimeOffset expectedDue = clock.GetUtcNow()
-            + GalateaBrowserSponsoredAutonomy.IdleInterval;
+            + GalateaAutonomyCadence.IdleInterval;
         Assert.Equal(
             expectedDue.ToUnixTimeMilliseconds(),
             cadence.ProjectStatus().NextActivationAtUnixTimeMilliseconds
@@ -29,8 +53,8 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
 
         clock.Advance(TimeSpan.FromSeconds(10));
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult.Waiting,
-            cadence.ObserveSponsorPulse()
+            GalateaAutonomyCadencePulseResult.Waiting,
+            cadence.ObservePulse()
         );
         Assert.Equal(
             expectedDue.ToUnixTimeMilliseconds(),
@@ -39,45 +63,44 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
     }
 
     [Fact]
-    public void ExactSponsorGapStaysContinuousButLongerGapRearms() {
+    public void DelayedPulsesKeepDeadlineAndMonotonicRegressionRearms() {
         var exactClock = new ManualTimeProvider();
-        var exactCadence = new GalateaBrowserSponsoredAutonomy(exactClock);
-        _ = exactCadence.ObserveSponsorPulse();
+        var exactCadence = new GalateaAutonomyCadence(exactClock);
+        _ = exactCadence.ObservePulse();
 
-        exactClock.Advance(
-            GalateaBrowserSponsoredAutonomy.SponsorContinuityGap
-        );
+        long? expectedDue = exactCadence.ProjectStatus()
+            .NextActivationAtUnixTimeMilliseconds;
+        exactClock.Advance(TimeSpan.FromSeconds(30));
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult.Waiting,
-            exactCadence.ObserveSponsorPulse()
+            GalateaAutonomyCadencePulseResult.Waiting,
+            exactCadence.ObservePulse()
         );
+        Assert.Equal(expectedDue, exactCadence.ProjectStatus()
+            .NextActivationAtUnixTimeMilliseconds);
 
         var overClock = new ManualTimeProvider();
-        var overCadence = new GalateaBrowserSponsoredAutonomy(overClock);
-        _ = overCadence.ObserveSponsorPulse();
-        overClock.Advance(
-            GalateaBrowserSponsoredAutonomy.SponsorContinuityGap
-                + TimeSpan.FromTicks(1)
+        var overCadence = new GalateaAutonomyCadence(overClock);
+        _ = overCadence.ObservePulse();
+        long? overExpectedDue = overCadence.ProjectStatus()
+            .NextActivationAtUnixTimeMilliseconds;
+        overClock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(
+            GalateaAutonomyCadencePulseResult.Waiting,
+            overCadence.ObservePulse()
         );
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult.Rearmed,
-            overCadence.ObserveSponsorPulse()
-        );
-        Assert.Equal(
-            (overClock.GetUtcNow()
-                + GalateaBrowserSponsoredAutonomy.IdleInterval)
-                .ToUnixTimeMilliseconds(),
+            overExpectedDue,
             overCadence.ProjectStatus().NextActivationAtUnixTimeMilliseconds
         );
 
         overClock.RegressMonotonic(TimeSpan.FromSeconds(1));
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult.Rearmed,
-            overCadence.ObserveSponsorPulse()
+            GalateaAutonomyCadencePulseResult.Rearmed,
+            overCadence.ObservePulse()
         );
         Assert.Equal(
             (overClock.GetUtcNow()
-                + GalateaBrowserSponsoredAutonomy.IdleInterval)
+                + GalateaAutonomyCadence.IdleInterval)
                 .ToUnixTimeMilliseconds(),
             overCadence.ProjectStatus().NextActivationAtUnixTimeMilliseconds
         );
@@ -86,15 +109,15 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
     [Fact]
     public void WallClockRegressionDoesNotAdvanceMonotonicDueDecision() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaBrowserSponsoredAutonomy(clock);
-        _ = cadence.ObserveSponsorPulse();
+        var cadence = new GalateaAutonomyCadence(clock);
+        _ = cadence.ObservePulse();
 
         clock.AdvanceMonotonic(TimeSpan.FromSeconds(10));
         clock.AdvanceWall(TimeSpan.FromHours(-2));
 
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult.Waiting,
-            cadence.ObserveSponsorPulse()
+            GalateaAutonomyCadencePulseResult.Waiting,
+            cadence.ObservePulse()
         );
         Assert.Equal(
             (clock.GetUtcNow() + TimeSpan.FromMinutes(9)
@@ -106,29 +129,29 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
     [Fact]
     public void ExactDueClaimsOnceAndNeverCatchesUp() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaBrowserSponsoredAutonomy(clock);
-        _ = cadence.ObserveSponsorPulse();
+        var cadence = new GalateaAutonomyCadence(clock);
+        _ = cadence.ObservePulse();
 
         for (int pulse = 1; pulse < 60; pulse++) {
             clock.Advance(TimeSpan.FromSeconds(10));
             Assert.Equal(
-                GalateaBrowserSponsoredAutonomyPulseResult.Waiting,
-                cadence.ObserveSponsorPulse()
+                GalateaAutonomyCadencePulseResult.Waiting,
+                cadence.ObservePulse()
             );
         }
 
         clock.Advance(TimeSpan.FromSeconds(10));
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult
+            GalateaAutonomyCadencePulseResult
                 .AutonomousActivationDue,
-            cadence.ObserveSponsorPulse()
+            cadence.ObservePulse()
         );
         Assert.True(cadence.TryClaimAutonomousActivationStarted(
-            out GalateaBrowserSponsoredAutonomyClaim? claim
+            out GalateaAutonomyCadenceClaim? claim
         ));
         Assert.NotNull(claim);
         Assert.False(cadence.TryClaimAutonomousActivationStarted(out _));
-        GalateaBrowserSponsoredAutonomyStatus claimed =
+        GalateaAutonomyCadenceStatus claimed =
             cadence.ProjectStatus();
         Assert.Null(claimed.NextActivationAtUnixTimeMilliseconds);
         Assert.Equal(
@@ -138,37 +161,37 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
 
         clock.Advance(TimeSpan.FromSeconds(10));
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult.Waiting,
-            cadence.ObserveSponsorPulse()
+            GalateaAutonomyCadencePulseResult.Waiting,
+            cadence.ObservePulse()
         );
         Assert.Null(cadence.ProjectStatus()
             .NextActivationAtUnixTimeMilliseconds);
     }
 
     [Fact]
-    public void CompletedMainTurnOnlyResetsPreviouslySponsoredState() {
+    public void CompletedMainTurnOnlyResetsPreviouslyArmedState() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaBrowserSponsoredAutonomy(clock);
+        var cadence = new GalateaAutonomyCadence(clock);
 
         Assert.True(cadence.SettleMainTurn(
-            new GalateaBrowserSponsoredAutonomyTurnSettlement(),
+            new GalateaAutonomyCadenceTurnSettlement(),
             isAutonomousActivation: false,
             completed: true
         ));
         Assert.Null(cadence.ProjectStatus()
             .NextActivationAtUnixTimeMilliseconds);
 
-        _ = cadence.ObserveSponsorPulse();
+        _ = cadence.ObservePulse();
         clock.Advance(TimeSpan.FromMinutes(2));
         var settlement =
-            new GalateaBrowserSponsoredAutonomyTurnSettlement();
+            new GalateaAutonomyCadenceTurnSettlement();
         Assert.True(cadence.SettleMainTurn(
             settlement,
             isAutonomousActivation: false,
             completed: true
         ));
         DateTimeOffset expected = clock.GetUtcNow()
-            + GalateaBrowserSponsoredAutonomy.IdleInterval;
+            + GalateaAutonomyCadence.IdleInterval;
         Assert.Equal(
             expected.ToUnixTimeMilliseconds(),
             cadence.ProjectStatus().NextActivationAtUnixTimeMilliseconds
@@ -189,23 +212,23 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
     [Fact]
     public void AutonomousNonCompletedOutcomePausesUntilCompletedMainTurn() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaBrowserSponsoredAutonomy(clock);
-        GalateaBrowserSponsoredAutonomyClaim claim = ClaimAtExactDue(
+        var cadence = new GalateaAutonomyCadence(clock);
+        GalateaAutonomyCadenceClaim claim = ClaimAtExactDue(
             cadence,
             clock
         );
 
         Assert.True(cadence.SettleMainTurn(
-            new GalateaBrowserSponsoredAutonomyTurnSettlement(),
+            new GalateaAutonomyCadenceTurnSettlement(),
             isAutonomousActivation: true,
             completed: false,
             autonomousClaim: claim
         ));
-        GalateaBrowserSponsoredAutonomyStatus paused =
+        GalateaAutonomyCadenceStatus paused =
             cadence.ProjectStatus();
-        Assert.Equal(GalateaBrowserSponsoredAutonomy.PausedState,
+        Assert.Equal(GalateaAutonomyCadence.PausedState,
             paused.State);
-        Assert.Equal(GalateaBrowserSponsoredAutonomy.PausedCode,
+        Assert.Equal(GalateaAutonomyCadence.PausedCode,
             paused.Code);
         Assert.Null(paused.NextActivationAtUnixTimeMilliseconds);
         Assert.Equal(
@@ -215,25 +238,25 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
 
         clock.Advance(TimeSpan.FromHours(1));
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult.AutonomyPaused,
-            cadence.ObserveSponsorPulse()
+            GalateaAutonomyCadencePulseResult.AutonomyPaused,
+            cadence.ObservePulse()
         );
-        Assert.Equal(GalateaBrowserSponsoredAutonomy.PausedState,
+        Assert.Equal(GalateaAutonomyCadence.PausedState,
             cadence.ProjectStatus().State);
 
         Assert.True(cadence.SettleMainTurn(
-            new GalateaBrowserSponsoredAutonomyTurnSettlement(),
+            new GalateaAutonomyCadenceTurnSettlement(),
             isAutonomousActivation: false,
             completed: true
         ));
-        GalateaBrowserSponsoredAutonomyStatus resumed =
+        GalateaAutonomyCadenceStatus resumed =
             cadence.ProjectStatus();
-        Assert.Equal(GalateaBrowserSponsoredAutonomy.WaitingState,
+        Assert.Equal(GalateaAutonomyCadence.WaitingState,
             resumed.State);
         Assert.Null(resumed.Code);
         Assert.Equal(
             (clock.GetUtcNow()
-                + GalateaBrowserSponsoredAutonomy.IdleInterval)
+                + GalateaAutonomyCadence.IdleInterval)
                 .ToUnixTimeMilliseconds(),
             resumed.NextActivationAtUnixTimeMilliseconds
         );
@@ -242,20 +265,20 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
     [Fact]
     public void NewInstanceAfterRestartAlwaysLateRearms() {
         var clock = new ManualTimeProvider();
-        var beforeRestart = new GalateaBrowserSponsoredAutonomy(clock);
-        _ = beforeRestart.ObserveSponsorPulse();
+        var beforeRestart = new GalateaAutonomyCadence(clock);
+        _ = beforeRestart.ObservePulse();
         clock.Advance(TimeSpan.FromMinutes(10));
 
-        var afterRestart = new GalateaBrowserSponsoredAutonomy(clock);
+        var afterRestart = new GalateaAutonomyCadence(clock);
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult.Rearmed,
-            afterRestart.ObserveSponsorPulse()
+            GalateaAutonomyCadencePulseResult.Rearmed,
+            afterRestart.ObservePulse()
         );
-        GalateaBrowserSponsoredAutonomyStatus status =
+        GalateaAutonomyCadenceStatus status =
             afterRestart.ProjectStatus();
         Assert.Equal(
             (clock.GetUtcNow()
-                + GalateaBrowserSponsoredAutonomy.IdleInterval)
+                + GalateaAutonomyCadence.IdleInterval)
                 .ToUnixTimeMilliseconds(),
             status.NextActivationAtUnixTimeMilliseconds
         );
@@ -265,20 +288,20 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
     [Fact]
     public void CurrentUnsettledClaimRollsBackExactDueAndLastActivation() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaBrowserSponsoredAutonomy(clock);
-        GalateaBrowserSponsoredAutonomyClaim firstClaim = ClaimAtExactDue(
+        var cadence = new GalateaAutonomyCadence(clock);
+        GalateaAutonomyCadenceClaim firstClaim = ClaimAtExactDue(
             cadence,
             clock
         );
         Assert.True(cadence.SettleMainTurn(
-            new GalateaBrowserSponsoredAutonomyTurnSettlement(),
+            new GalateaAutonomyCadenceTurnSettlement(),
             isAutonomousActivation: true,
             completed: true,
             autonomousClaim: firstClaim
         ));
         long previousLast = cadence.ProjectStatus()
             .LastActivationAtUnixTimeMilliseconds!.Value;
-        GalateaBrowserSponsoredAutonomyClaim secondClaim = ClaimAtExactDue(
+        GalateaAutonomyCadenceClaim secondClaim = ClaimAtExactDue(
             cadence,
             clock
         );
@@ -288,15 +311,15 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
         );
 
         var rollbackSettlement =
-            new GalateaBrowserSponsoredAutonomyTurnSettlement();
+            new GalateaAutonomyCadenceTurnSettlement();
         Assert.True(cadence.TryRollbackAutonomousActivationClaim(
             secondClaim,
             rollbackSettlement
         ));
         Assert.True(rollbackSettlement.IsSettled);
-        GalateaBrowserSponsoredAutonomyStatus restored =
+        GalateaAutonomyCadenceStatus restored =
             cadence.ProjectStatus();
-        Assert.Equal(GalateaBrowserSponsoredAutonomy.WaitingState,
+        Assert.Equal(GalateaAutonomyCadence.WaitingState,
             restored.State);
         Assert.Equal(previousLast,
             restored.LastActivationAtUnixTimeMilliseconds);
@@ -309,9 +332,9 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
             rollbackSettlement
         ));
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult
+            GalateaAutonomyCadencePulseResult
                 .AutonomousActivationDue,
-            cadence.ObserveSponsorPulse()
+            cadence.ObservePulse()
         );
         Assert.True(cadence.TryClaimAutonomousActivationStarted(out _));
     }
@@ -319,21 +342,21 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
     [Fact]
     public void RollbackValidationFailuresAreZeroMutation() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaBrowserSponsoredAutonomy(clock);
-        GalateaBrowserSponsoredAutonomyClaim current = ClaimAtExactDue(
+        var cadence = new GalateaAutonomyCadence(clock);
+        GalateaAutonomyCadenceClaim current = ClaimAtExactDue(
             cadence,
             clock
         );
-        GalateaBrowserSponsoredAutonomyStatus before =
+        GalateaAutonomyCadenceStatus before =
             cadence.ProjectStatus();
 
-        var wrong = new GalateaBrowserSponsoredAutonomyClaim(
+        var wrong = new GalateaAutonomyCadenceClaim(
             previousDueFromTimestamp: -1,
             previousLastAutonomousActivationTimestamp: null,
             claimedAtTimestamp: -1
         );
         var wrongSettlement =
-            new GalateaBrowserSponsoredAutonomyTurnSettlement();
+            new GalateaAutonomyCadenceTurnSettlement();
         Assert.False(cadence.TryRollbackAutonomousActivationClaim(
             wrong,
             wrongSettlement
@@ -343,14 +366,14 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
         Assert.False(wrongSettlement.IsSettled);
         Assert.False(current.IsSettled);
 
-        var alreadySettled = new GalateaBrowserSponsoredAutonomyClaim(
+        var alreadySettled = new GalateaAutonomyCadenceClaim(
             previousDueFromTimestamp: -2,
             previousLastAutonomousActivationTimestamp: null,
             claimedAtTimestamp: -2
         );
         Assert.True(alreadySettled.TrySettle());
         var freshSettlement =
-            new GalateaBrowserSponsoredAutonomyTurnSettlement();
+            new GalateaAutonomyCadenceTurnSettlement();
         Assert.False(cadence.TryRollbackAutonomousActivationClaim(
             alreadySettled,
             freshSettlement
@@ -361,7 +384,7 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
         Assert.False(current.IsSettled);
 
         var preconsumedSettlement =
-            new GalateaBrowserSponsoredAutonomyTurnSettlement();
+            new GalateaAutonomyCadenceTurnSettlement();
         Assert.True(preconsumedSettlement.TrySettle());
         Assert.False(cadence.TryRollbackAutonomousActivationClaim(
             current,
@@ -372,7 +395,7 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
         Assert.False(current.IsSettled);
 
         var correctSettlement =
-            new GalateaBrowserSponsoredAutonomyTurnSettlement();
+            new GalateaAutonomyCadenceTurnSettlement();
         Assert.True(cadence.TryRollbackAutonomousActivationClaim(
             current,
             correctSettlement
@@ -384,20 +407,20 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
     [Fact]
     public void TerminalSettlementValidationFailuresAreZeroMutation() {
         var clock = new ManualTimeProvider();
-        var cadence = new GalateaBrowserSponsoredAutonomy(clock);
-        GalateaBrowserSponsoredAutonomyClaim current = ClaimAtExactDue(
+        var cadence = new GalateaAutonomyCadence(clock);
+        GalateaAutonomyCadenceClaim current = ClaimAtExactDue(
             cadence,
             clock
         );
-        GalateaBrowserSponsoredAutonomyStatus before =
+        GalateaAutonomyCadenceStatus before =
             cadence.ProjectStatus();
-        var wrong = new GalateaBrowserSponsoredAutonomyClaim(
+        var wrong = new GalateaAutonomyCadenceClaim(
             previousDueFromTimestamp: -1,
             previousLastAutonomousActivationTimestamp: null,
             claimedAtTimestamp: -1
         );
         var wrongSettlement =
-            new GalateaBrowserSponsoredAutonomyTurnSettlement();
+            new GalateaAutonomyCadenceTurnSettlement();
 
         Assert.False(cadence.SettleMainTurn(
             wrongSettlement,
@@ -411,7 +434,7 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
         Assert.False(current.IsSettled);
 
         var preconsumedSettlement =
-            new GalateaBrowserSponsoredAutonomyTurnSettlement();
+            new GalateaAutonomyCadenceTurnSettlement();
         Assert.True(preconsumedSettlement.TrySettle());
         Assert.False(cadence.SettleMainTurn(
             preconsumedSettlement,
@@ -424,7 +447,7 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
         Assert.False(current.IsSettled);
 
         var correctSettlement =
-            new GalateaBrowserSponsoredAutonomyTurnSettlement();
+            new GalateaAutonomyCadenceTurnSettlement();
         Assert.True(cadence.SettleMainTurn(
             correctSettlement,
             isAutonomousActivation: true,
@@ -433,36 +456,36 @@ public sealed class GalateaBrowserSponsoredAutonomyTests {
         ));
         Assert.True(correctSettlement.IsSettled);
         Assert.True(current.IsSettled);
-        Assert.Equal(GalateaBrowserSponsoredAutonomy.PausedState,
+        Assert.Equal(GalateaAutonomyCadence.PausedState,
             cadence.ProjectStatus().State);
     }
 
-    private static GalateaBrowserSponsoredAutonomyClaim ClaimAtExactDue(
-        GalateaBrowserSponsoredAutonomy cadence,
+    private static GalateaAutonomyCadenceClaim ClaimAtExactDue(
+        GalateaAutonomyCadence cadence,
         ManualTimeProvider clock
     ) {
-        _ = cadence.ObserveSponsorPulse();
+        _ = cadence.ObservePulse();
         for (int pulse = 0; pulse < 60; pulse++) {
             clock.Advance(TimeSpan.FromSeconds(10));
-            GalateaBrowserSponsoredAutonomyPulseResult result =
-                cadence.ObserveSponsorPulse();
+            GalateaAutonomyCadencePulseResult result =
+                cadence.ObservePulse();
             if (pulse < 59) {
                 Assert.Equal(
-                    GalateaBrowserSponsoredAutonomyPulseResult.Waiting,
+                    GalateaAutonomyCadencePulseResult.Waiting,
                     result
                 );
             }
             else {
                 Assert.Equal(
-                    GalateaBrowserSponsoredAutonomyPulseResult
+                    GalateaAutonomyCadencePulseResult
                         .AutonomousActivationDue,
                     result
                 );
                 Assert.True(cadence.TryClaimAutonomousActivationStarted(
-                    out GalateaBrowserSponsoredAutonomyClaim? claim
+                    out GalateaAutonomyCadenceClaim? claim
                 ));
                 return Assert.IsType<
-                    GalateaBrowserSponsoredAutonomyClaim>(claim);
+                    GalateaAutonomyCadenceClaim>(claim);
             }
         }
         throw new InvalidOperationException("Exact due was not reached.");

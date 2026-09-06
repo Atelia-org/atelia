@@ -39,7 +39,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         var normalizer = new CountingNormalizer();
         var recallProvider = new BoundedRecallProvider(maximumCalls: 1);
-        var clock = new CountingTimeProvider(new DateTimeOffset(
+        var clock = new ManualTimeProvider(new DateTimeOffset(
             2026,
             9,
             5,
@@ -65,7 +65,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
             playerTurnRecallProviderFactory: (_, _) => recallProvider,
-            timeProvider: clock
+            timeProvider: clock,
+            serverAgentUserIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -80,12 +81,12 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
         using (HttpResponseMessage waiting = await http.PostAsJsonAsync(
                    "/api/v1/mailbox/ready-turn",
-                   new ReadyReplyTurnRequest(main.Id))) {
+                   new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.OK, waiting.StatusCode);
             LoopPulseStatusDto? status = await waiting.Content
                 .ReadFromJsonAsync<LoopPulseStatusDto>();
             Assert.NotNull(status);
-            Assert.Equal(GalateaBrowserSponsoredAutonomy.WaitingState,
+            Assert.Equal(GalateaAutonomyCadence.WaitingState,
                 status!.State);
             Assert.NotNull(status.NextActivationAtUnixTimeMilliseconds);
             Assert.Null(status.LastActivationAtUnixTimeMilliseconds);
@@ -113,21 +114,25 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         await WaitUntilAsync(() => session.DelegationHandle.Store
             .ReadSnapshot().Notices.SingleOrDefault()?.State
                 == GalateaReplyNoticeState.Ready);
-        GalateaBrowserSponsoredAutonomyPulseResult due =
+        GalateaAutonomyCadencePulseResult due =
             AdvanceCadenceToDue(session, clock);
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult
+            GalateaAutonomyCadencePulseResult
                 .AutonomousActivationDue,
             due
         );
         int shouldNormalizeBeforeReady = normalizer.ShouldNormalizeCallCount;
         int normalizeBeforeReady = normalizer.NormalizeCallCount;
-        int timeCallsBeforeReady = clock.GetUtcNowCallCount;
 
         using (HttpResponseMessage unknown = await http.PostAsJsonAsync(
                    "/api/v1/mailbox/ready-turn",
-                   new ReadyReplyTurnRequest("unknown"))) {
+                   new { connectionId = "unknown" })) {
             Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
+            using JsonDocument error = JsonDocument.Parse(
+                await unknown.Content.ReadAsStringAsync()
+            );
+            Assert.Equal("invalid-request",
+                error.RootElement.GetProperty("code").GetString());
         }
         GalateaDelegationStateSnapshot afterUnknown = session.DelegationHandle
             .Store.ReadSnapshot();
@@ -140,7 +145,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         LoopPulseAcceptedTurnDto accepted;
         using (HttpResponseMessage response = await http.PostAsJsonAsync(
                    "/api/v1/mailbox/ready-turn",
-                   new ReadyReplyTurnRequest(main.Id))) {
+                   new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             accepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
                 await response.Content.ReadFromJsonAsync<
@@ -168,7 +173,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         try {
             using HttpResponseMessage busy = await http.PostAsJsonAsync(
                 "/api/v1/mailbox/ready-turn",
-                new ReadyReplyTurnRequest(main.Id)
+                new ReadyReplyTurnRequest()
             );
             Assert.Equal(HttpStatusCode.Conflict, busy.StatusCode);
             using JsonDocument body = JsonDocument.Parse(
@@ -192,14 +197,12 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         Assert.Equal(normalizeBeforeReady, normalizer.NormalizeCallCount);
         Assert.Equal(1, recallProvider.CallCount);
-        Assert.Equal(
-            timeCallsBeforeReady + 1,
-            clock.GetUtcNowCallCount
-        );
 
         SessionCompletedTurnProjection completed = session.Engine
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
+        Assert.Equal(leased.ActiveLease.RenderedObservation,
+            completed.ObservationContent);
         Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
             completed.ObservationContent,
             out PlayerTurnObservation observation
@@ -244,12 +247,12 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
         using (HttpResponseMessage waiting = await http.PostAsJsonAsync(
                    "/api/v1/mailbox/ready-turn",
-                   new ReadyReplyTurnRequest(main.Id))) {
+                   new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.OK, waiting.StatusCode);
             LoopPulseStatusDto? status = await waiting.Content
                 .ReadFromJsonAsync<LoopPulseStatusDto>();
             Assert.NotNull(status);
-            Assert.Equal(GalateaBrowserSponsoredAutonomy.WaitingState,
+            Assert.Equal(GalateaAutonomyCadence.WaitingState,
                 status!.State);
             Assert.NotNull(status.NextActivationAtUnixTimeMilliseconds);
         }
@@ -260,13 +263,13 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     }
 
     [Fact]
-    public async Task HeartbeatActivation_SamplesOnceAndBypassesRecall() {
+    public async Task HeartbeatActivation_PreservesObservationTimestampAndBypassesRecall() {
         CompletionConnectionConfig main = Connection("test");
         var mainClient = new QueueClient(
             _ => Completed(main, "character chose to rest")
         );
         var recallProvider = new BoundedRecallProvider(maximumCalls: 0);
-        var clock = new CountingTimeProvider(new DateTimeOffset(
+        var clock = new ManualTimeProvider(new DateTimeOffset(
             2026,
             9,
             5,
@@ -294,7 +297,6 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             "alice",
             CancellationToken.None
         );
-        int callsBefore = clock.GetUtcNowCallCount;
         GalateaLiveTurn turn = session.StartTurn(
             new GalateaFreshInput.HeartbeatActivation(
                 new GalateaCharacterName("Alice")
@@ -317,7 +319,6 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.Equal("completed", turn.Status);
         Assert.Equal(1, mainClient.CallCount);
         Assert.Equal(0, recallProvider.CallCount);
-        Assert.Equal(callsBefore + 1, clock.GetUtcNowCallCount);
         SessionCompletedTurnProjection completed = Assert.Single(
             session.Engine.ReadRecentCompletedTurns(1)
                 .RequireSnapshot().Turns
@@ -356,7 +357,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         var mainClient = new QueueClient(
             _ => Completed(main, "must not run")
         );
-        var clock = new CountingTimeProvider(new DateTimeOffset(
+        var clock = new ManualTimeProvider(new DateTimeOffset(
             2026,
             9,
             5,
@@ -383,15 +384,15 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         session.TurnLock.Wait();
         try {
             Assert.Equal(
-                GalateaBrowserSponsoredAutonomyPulseResult.Rearmed,
-                session.BrowserSponsoredAutonomy.ObserveSponsorPulse()
+                GalateaAutonomyCadencePulseResult.Rearmed,
+                session.AutonomyCadence.ObservePulse()
             );
         }
         finally {
             session.TurnLock.Release();
         }
         Assert.Equal(
-            GalateaBrowserSponsoredAutonomyPulseResult
+            GalateaAutonomyCadencePulseResult
                 .AutonomousActivationDue,
             AdvanceCadenceToDue(session, clock)
         );
@@ -403,17 +404,17 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
                 new GalateaTurnOptions(main.Id)
             );
             Assert.Same(first, session.GetCurrentTurn());
-            GalateaBrowserSponsoredAutonomyStatus claimed = session
-                .BrowserSponsoredAutonomy.ProjectStatus();
+            GalateaAutonomyCadenceStatus claimed = session
+                .AutonomyCadence.ProjectStatus();
             Assert.Null(claimed.NextActivationAtUnixTimeMilliseconds);
             Assert.NotNull(claimed.LastActivationAtUnixTimeMilliseconds);
 
             service.RollbackHeartbeatActivationAdmission(session, first);
             service.FinishTurn(session, first);
 
-            GalateaBrowserSponsoredAutonomyStatus restored = session
-                .BrowserSponsoredAutonomy.ProjectStatus();
-            Assert.Equal(GalateaBrowserSponsoredAutonomy.WaitingState,
+            GalateaAutonomyCadenceStatus restored = session
+                .AutonomyCadence.ProjectStatus();
+            Assert.Equal(GalateaAutonomyCadence.WaitingState,
                 restored.State);
             Assert.Equal(
                 clock.GetUtcNow().ToUnixTimeMilliseconds(),
@@ -423,9 +424,9 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             Assert.Null(restored.Code);
             Assert.Null(session.GetCurrentTurn());
             Assert.Equal(
-                GalateaBrowserSponsoredAutonomyPulseResult
+                GalateaAutonomyCadencePulseResult
                     .AutonomousActivationDue,
-                session.BrowserSponsoredAutonomy.ObserveSponsorPulse()
+                session.AutonomyCadence.ObservePulse()
             );
 
             GalateaLiveTurn second = service.StartHeartbeatActivationTurn(
@@ -434,8 +435,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             );
             service.RollbackHeartbeatActivationAdmission(session, second);
             service.FinishTurn(session, second);
-            Assert.Equal(GalateaBrowserSponsoredAutonomy.WaitingState,
-                session.BrowserSponsoredAutonomy.ProjectStatus().State);
+            Assert.Equal(GalateaAutonomyCadence.WaitingState,
+                session.AutonomyCadence.ProjectStatus().State);
             Assert.Null(session.GetCurrentTurn());
         }
         finally {
@@ -447,7 +448,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     [Fact]
     public async Task AbortedHeartbeatTurnPausesAndReleasesTurnLock() {
         CompletionConnectionConfig main = Connection("test");
-        var clock = new CountingTimeProvider(new DateTimeOffset(
+        var clock = new ManualTimeProvider(new DateTimeOffset(
             2026,
             9,
             5,
@@ -475,7 +476,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         session.TurnLock.Wait();
         try {
-            _ = session.BrowserSponsoredAutonomy.ObserveSponsorPulse();
+            _ = session.AutonomyCadence.ObservePulse();
         }
         finally {
             session.TurnLock.Release();
@@ -497,11 +498,11 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
         Assert.True(session.TurnLock.Wait(0));
         try {
-            GalateaBrowserSponsoredAutonomyStatus paused = session
-                .BrowserSponsoredAutonomy.ProjectStatus();
-            Assert.Equal(GalateaBrowserSponsoredAutonomy.PausedState,
+            GalateaAutonomyCadenceStatus paused = session
+                .AutonomyCadence.ProjectStatus();
+            Assert.Equal(GalateaAutonomyCadence.PausedState,
                 paused.State);
-            Assert.Equal(GalateaBrowserSponsoredAutonomy.PausedCode,
+            Assert.Equal(GalateaAutonomyCadence.PausedCode,
                 paused.Code);
             Assert.Null(paused.NextActivationAtUnixTimeMilliseconds);
             Assert.Null(session.GetCurrentTurn());
@@ -521,7 +522,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             Assert.True(releaseCompletion.Wait(Deadline));
             return Completed(main, "autonomous activity completed");
         });
-        var clock = new CountingTimeProvider(new DateTimeOffset(
+        var clock = new ManualTimeProvider(new DateTimeOffset(
             2026,
             9,
             5,
@@ -537,7 +538,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main],
             selectableConnectionIds: [main.Id],
-            timeProvider: clock
+            timeProvider: clock,
+            serverAgentUserIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -550,7 +552,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
         LoopPulseStatusDto first = await PostWaitingPulseAsync(http);
         long expectedInitialDue = (clock.GetUtcNow()
-            + GalateaBrowserSponsoredAutonomy.IdleInterval)
+            + GalateaAutonomyCadence.IdleInterval)
             .ToUnixTimeMilliseconds();
         Assert.Equal(expectedInitialDue,
             first.NextActivationAtUnixTimeMilliseconds);
@@ -565,7 +567,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         LoopPulseAcceptedTurnDto accepted;
         using (HttpResponseMessage response = await http.PostAsJsonAsync(
                    "/api/v1/mailbox/ready-turn",
-                   new ReadyReplyTurnRequest(main.Id))) {
+                   new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             accepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
                 await response.Content
@@ -580,7 +582,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.IsType<GalateaFreshInput.HeartbeatActivation>(turn.FreshInput);
         using (HttpResponseMessage busy = await http.PostAsJsonAsync(
                    "/api/v1/mailbox/ready-turn",
-                   new ReadyReplyTurnRequest(main.Id))) {
+                   new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Conflict, busy.StatusCode);
         }
 
@@ -596,19 +598,19 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         );
         Assert.Equal(
             (clock.GetUtcNow()
-                + GalateaBrowserSponsoredAutonomy.IdleInterval)
+                + GalateaAutonomyCadence.IdleInterval)
                 .ToUnixTimeMilliseconds(),
             reset.NextActivationAtUnixTimeMilliseconds
         );
     }
 
     [Fact]
-    public async Task HeartbeatPulse_RearmsOnlyAfterSponsorGap() {
+    public async Task HeartbeatPulse_DelayedCheckDoesNotMoveDeadline() {
         CompletionConnectionConfig main = Connection("test");
         var mainClient = new QueueClient(
             _ => Completed(main, "must not run")
         );
-        var clock = new CountingTimeProvider(new DateTimeOffset(
+        var clock = new ManualTimeProvider(new DateTimeOffset(
             2026,
             9,
             5,
@@ -624,16 +626,15 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main],
             selectableConnectionIds: [main.Id],
-            timeProvider: clock
+            timeProvider: clock,
+            serverAgentUserIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
         LoopPulseStatusDto first = await PostWaitingPulseAsync(http);
         long firstDue = first.NextActivationAtUnixTimeMilliseconds!.Value;
 
-        clock.Advance(
-            GalateaBrowserSponsoredAutonomy.SponsorContinuityGap
-        );
+        clock.Advance(TimeSpan.FromSeconds(30));
         LoopPulseStatusDto exactGap = await PostWaitingPulseAsync(http);
 
         Assert.Equal(
@@ -641,20 +642,11 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             exactGap.NextActivationAtUnixTimeMilliseconds
         );
 
-        clock.Advance(
-            GalateaBrowserSponsoredAutonomy.SponsorContinuityGap
-                + TimeSpan.FromTicks(1)
-        );
-        LoopPulseStatusDto rearmed = await PostWaitingPulseAsync(http);
-
-        Assert.True(
-            rearmed.NextActivationAtUnixTimeMilliseconds > firstDue
-        );
+        clock.Advance(TimeSpan.FromMinutes(5));
+        LoopPulseStatusDto delayed = await PostWaitingPulseAsync(http);
         Assert.Equal(
-            (clock.GetUtcNow()
-                + GalateaBrowserSponsoredAutonomy.IdleInterval)
-                .ToUnixTimeMilliseconds(),
-            rearmed.NextActivationAtUnixTimeMilliseconds
+            firstDue,
+            delayed.NextActivationAtUnixTimeMilliseconds
         );
         Assert.Equal(0, mainClient.CallCount);
     }
@@ -675,7 +667,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             ),
             _ => Completed(extractor, "no mail")
         );
-        var clock = new CountingTimeProvider(new DateTimeOffset(
+        var clock = new ManualTimeProvider(new DateTimeOffset(
             2026,
             9,
             5,
@@ -695,7 +687,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             selectableConnectionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
             delegateTransport: new DurableTransport(backend),
-            timeProvider: clock
+            timeProvider: clock,
+            serverAgentUserIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -726,10 +719,10 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.Equal("failed", failed.Status);
 
         LoopPulseStatusDto paused = await PostPulseStatusAsync(http);
-        Assert.Equal(GalateaBrowserSponsoredAutonomy.PausedState,
+        Assert.Equal(GalateaAutonomyCadence.PausedState,
             paused.State);
         Assert.Null(paused.NextActivationAtUnixTimeMilliseconds);
-        Assert.Equal(GalateaBrowserSponsoredAutonomy.PausedCode,
+        Assert.Equal(GalateaAutonomyCadence.PausedCode,
             paused.Code);
         Assert.Equal(2, mainClient.CallCount);
 
@@ -741,7 +734,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         LoopPulseAcceptedTurnDto reply;
         using (HttpResponseMessage response = await http.PostAsJsonAsync(
                    "/api/v1/mailbox/ready-turn",
-                   new ReadyReplyTurnRequest(main.Id))) {
+                   new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             reply = Assert.IsType<LoopPulseAcceptedTurnDto>(
                 await response.Content
@@ -765,7 +758,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     [Fact]
     public async Task RestartedSessionFirstPulseLateRearms() {
         CompletionConnectionConfig main = Connection("test");
-        var clock = new CountingTimeProvider(new DateTimeOffset(
+        var clock = new ManualTimeProvider(new DateTimeOffset(
             2026,
             9,
             5,
@@ -790,7 +783,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             deleteFilesOnDispose: false,
             connections: [main],
             delegateTransport: new DurableTransport(backend),
-            timeProvider: clock
+            timeProvider: clock,
+            serverAgentUserIds: ["alice"]
         );
         GalateaTestHost? restarted = null;
         try {
@@ -814,7 +808,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
             Assert.Equal(
                 (clock.GetUtcNow()
-                    + GalateaBrowserSponsoredAutonomy.IdleInterval)
+                    + GalateaAutonomyCadence.IdleInterval)
                     .ToUnixTimeMilliseconds(),
                 status.NextActivationAtUnixTimeMilliseconds
             );
@@ -989,7 +983,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             connections: [main, extractor],
             selectableConnectionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
-            delegateTransport: new DurableTransport(backend)
+            delegateTransport: new DurableTransport(backend),
+            serverAgentUserIds: ["alice"]
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -1058,7 +1053,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         LoopPulseAcceptedTurnDto accepted;
         using (HttpResponseMessage response = await http.PostAsJsonAsync(
                    "/api/v1/mailbox/ready-turn",
-                   new ReadyReplyTurnRequest(main.Id))) {
+                   new ReadyReplyTurnRequest())) {
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             accepted = Assert.IsType<LoopPulseAcceptedTurnDto>(
                 await response.Content
@@ -1338,25 +1333,25 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         Assert.Equal(0, backend.TotalCallCount);
     }
 
-    private static GalateaBrowserSponsoredAutonomyPulseResult
+    private static GalateaAutonomyCadencePulseResult
         AdvanceCadenceToDue(
         UserSessionHost session,
-        CountingTimeProvider clock
+        ManualTimeProvider clock
     ) {
-        GalateaBrowserSponsoredAutonomyPulseResult result = default;
+        GalateaAutonomyCadencePulseResult result = default;
         for (int pulse = 0; pulse < 60; pulse++) {
             clock.AdvanceMonotonic(TimeSpan.FromSeconds(10));
             session.TurnLock.Wait();
             try {
-                result = session.BrowserSponsoredAutonomy
-                    .ObserveSponsorPulse();
+                result = session.AutonomyCadence
+                    .ObservePulse();
             }
             finally {
                 session.TurnLock.Release();
             }
             if (pulse < 59) {
                 Assert.Equal(
-                    GalateaBrowserSponsoredAutonomyPulseResult.Waiting,
+                    GalateaAutonomyCadencePulseResult.Waiting,
                     result
                 );
             }
@@ -1367,7 +1362,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     private static async Task<LoopPulseAcceptedTurnDto>
         AdvanceHttpCadenceToAcceptedAsync(
         HttpClient http,
-        CountingTimeProvider clock
+        ManualTimeProvider clock
     ) {
         for (int pulse = 1; pulse < 60; pulse++) {
             clock.Advance(TimeSpan.FromSeconds(10));
@@ -1376,7 +1371,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         clock.Advance(TimeSpan.FromSeconds(10));
         using HttpResponseMessage accepted = await http.PostAsJsonAsync(
             "/api/v1/mailbox/ready-turn",
-            new ReadyReplyTurnRequest("test")
+            new ReadyReplyTurnRequest()
         );
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
         return Assert.IsType<LoopPulseAcceptedTurnDto>(
@@ -1389,7 +1384,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         HttpClient http
     ) {
         LoopPulseStatusDto status = await PostPulseStatusAsync(http);
-        Assert.Equal(GalateaBrowserSponsoredAutonomy.WaitingState,
+        Assert.Equal(GalateaAutonomyCadence.WaitingState,
             status.State);
         Assert.NotNull(status.NextActivationAtUnixTimeMilliseconds);
         Assert.Null(status.Code);
@@ -1401,7 +1396,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     ) {
         using HttpResponseMessage response = await http.PostAsJsonAsync(
             "/api/v1/mailbox/ready-turn",
-            new ReadyReplyTurnRequest("test")
+            new ReadyReplyTurnRequest()
         );
         if (response.StatusCode != HttpStatusCode.OK) {
             Assert.Fail(
@@ -1596,21 +1591,14 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         }
     }
 
-    private sealed class CountingTimeProvider(DateTimeOffset utcNow)
+    private sealed class ManualTimeProvider(DateTimeOffset utcNow)
         : TimeProvider {
-        private int _getUtcNowCallCount;
         private long _timestamp;
         private DateTimeOffset _utcNow = utcNow;
-        internal int GetUtcNowCallCount => Volatile.Read(
-            ref _getUtcNowCallCount
-        );
         public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
 
-        public override DateTimeOffset GetUtcNow() {
-            Interlocked.Increment(ref _getUtcNowCallCount);
-            return _utcNow;
-        }
+        public override DateTimeOffset GetUtcNow() => _utcNow;
 
         public override long GetTimestamp() => _timestamp;
 
