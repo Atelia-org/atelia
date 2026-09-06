@@ -6,6 +6,8 @@
 默认MemoPod apply与诚实保存回执已经落地为V1代码级契约。MemoPod DerivedInfo更新与全文-only recall
 projection、Character Note DerivedInfo批量生成、durable apply与非阻塞runtime pump也已落地；Default MemoPod
 `MemoExactText` recall MVP现已接通，分类、多Pod与二级索引维护仍是后续设计。
+自动记忆闭环已进一步扩展为三种typed trigger共享召回、SQLite V3 durable receipt outbox；现行边界见
+[Automatic memory工作单](automatic-memory-work-order.md)。旧V1阶段的in-process receipt与player-only限制已被替代。
 
 ## 当前判断
 
@@ -84,7 +86,7 @@ Mailbox 已经证明这个方向可行：`OutboundMailExtractor`从角色叙事A
 runtime严格验证数量、ordinal exact-once覆盖、输入顺序、trim/control character、strict UTF-8与MemoPod字段上限，
 任一项无效则整批失败。`Gist`的一句话要求与`Summary`的主旨摘要要求当前属于prompt semantic，不做脆弱的标点启发式判断。
 
-这条生成契约现在已经接入自动内容增强管线。CharacterMemory SQLite V2在ExactText `Applied`结算的同一事务中
+这条生成契约现在已经接入自动内容增强管线。CharacterMemory SQLite V3延续V2，在ExactText `Applied`结算的同一事务中
 创建`Pending` work；正常写回路径为`Pending -> Prepared -> Planned -> Applied`，确定性容量不足只允许从
 `Prepared -> Rejected`分支退出。状态保存完整生成结果和Pod base/target identity。`Prepared`之后不再调用模型；
 只有`Planned`占用Pod mutation slot，并在restart/admission中按
@@ -111,18 +113,24 @@ boundary signal再做一次bounded尝试；当前不持久化attempt counter或r
 - [`GalateaFreshInput`](../../prototypes/Galatea/GalateaFreshInput.cs)
 - [`GalateaServices`](../../prototypes/Galatea/GalateaServices.cs)
 
-`PlayerTurnObservation` 当前是普通玩家回合的 runtime-owned composite Observation。它已经支持：
+`PlayerTurnObservation` 当前是PlayerAction、HeartbeatActivation与DelegateReply共享的runtime-owned composite Observation。它已经支持：
 
-- 玩家行动正文；
+- 真实typed trigger：仅PlayerAction带玩家正文；Heartbeat带code-owned活动时机，DelegateReply以真实external notices触发；
 - runtime 采样的 external local timestamp；
 - 合计0..16条`PlayerTurnNotice`：Codex delegation reply / delivery failure，以及至多1条且必须最后的`NoteSaveReceipt`；
 - 0..32 条 `PlayerTurnRecall`，目前三档是 Memo Gist / Summary / ExactText；
 - strict canonical render / parse / round-trip；
 - adaptive Markdown fence，正文不 trim、不 normalize、不 escape。
 
-Recall block 的 authority 仍然来自 runtime renderer，而不是外部 caller 自报。recent display 会显示 recall heading 与 body，但隐藏 `SourceId` anchor metadata；Undo / pop receipt 仍只把这条 Observation 当成普通 player turn，返回玩家行动正文。
+Recall block 的 authority 仍然来自 runtime renderer，而不是外部 caller 自报。recent display 会显示 recall heading 与 body，但隐藏 `SourceId` anchor metadata；只有PlayerAction支持返回玩家行动正文的Undo / pop与draft restoration，自动trigger不伪造玩家草稿。
 
-Galatea 侧的 internal `IGalateaPlayerTurnRecallProvider`已由per-session factory接入production。`galatea.memo-recall`为null或maintenance mode时使用disabled singleton，并在context selection / barrier构建之前直接绕过；enabled provider request携带preliminary typed Observation、recent visible Action、`RecallBarrier`与`CharacterNoteOriginBarrier`。当前只在没有active durable reply lease的普通player turn调用Default MemoPod selector；reply lease场景先保持无recall注入。
+Galatea侧的internal `IGalateaPlayerTurnRecallProvider`已由per-session factory接入production；历史名称不限制trigger。
+`galatea.memo-recall`为null或maintenance mode时使用disabled singleton，并在context selection / barrier构建之前绕过；
+独立的receipt delivery不因此关闭。enabled provider request携带preliminary typed Observation、recent visible Action、
+`RecallBarrier`与`CharacterNoteOriginBarrier`，服务三个fresh trigger，包括携带reply lease的PlayerAction。
+query使用`atelia.galatea.memo-recall-context.v2`，`currentTurn.trigger`保留真实kind及对应playerText/activationText，
+DelegateReply只写kind并由externalNotices提供回信；receipt不进入query。runtime先附receipt，再按剩余预算选择0..1个Memo；
+最终Observation在selector结束后才绑定到reply lease/outbox。inbound与recovery不做fresh recall，recovery复用durable bytes。
 
 ### RecapGrid / Context Candidate
 
@@ -337,7 +345,7 @@ Build(contextMessages)
 
 注意事项：
 
-- 只解析 canonical `PlayerTurnObservation`；非 player Observation、inbound mail、legacy 无 recall dialect 都应自然跳过。
+- 只解析三种trigger的canonical `PlayerTurnObservation`；其他Observation、inbound mail与legacy无recall dialect自然跳过。
 - 不对 `FormatForDisplay` 输出做正则解析；display 文本会丢失 authority 和 anchor。
 - 不把 derived context contribution 当成 raw Observation 解析。派生摘要说“某条笔记曾被召回”并不等于 anchor 当前以 recall block 形式可见。
 - 构造当前 Observation 时，先用 pre-observation context 生成 barrier，再由 `PlayerTurnObservation` 构造函数禁止同一 Observation 内重复。
@@ -356,12 +364,18 @@ terminal Action
   -> validate completed request submission + exact source grounding
   -> durable capture / zero-result tombstone
   -> Default MemoPod plan + apply
-  -> AppliedNow only: best-effort in-process NoteSaveReceipt queue
-  -> next eligible ordinary PlayerTurnObservation
+  -> Planned -> Applied atomically creates SQLite V3 Pending receipt
+  -> next eligible PlayerAction / HeartbeatActivation / DelegateReply
+  -> bind exact base + complete canonical Observation
+  -> exact raw proof of append -> Delivered
 ```
 
 它证明ExactText保存到单一默认MemoPod；保存回执仍只证明这件事，不承诺异步DerivedInfo已经补全，也不承诺分类、
 索引或召回。
+outbox以durable保存事实为资格，不要求source Action仍在selected lineage；AlreadyApplied不新建义务，旧版Applied
+迁移也不补发。NotAppended proof退回Pending，pre-dispatch failure或restart可重试；Delivered只证明durable append，
+不证明provider已读。abandon/rewind前先结算bound receipt，Delivered即使被rewind也不重发。reply cutoff为pending
+receipt预留一个notice槽位与实际预算；极端fence-heavy原文使用明确标记的Source Action/Memo IDs确认，不能静默丢通知。
 
 现行入库后DerivedInfo闭环：
 
@@ -379,13 +393,13 @@ Applied Character Note batch + exact source completed turn
 
 这条闭环已经接入生产。它是可恢复的post-store reconciler，不是绕过CharacterMemory settled Pod identity的普通
 callback；provider失败保留已保存的ExactText和`Pending` work，不撤销保存回执，也不阻断后续turn。V1 store在持有
-lifetime lock后执行strict validation，再在`BEGIN IMMEDIATE`内重验同一authority并事务化迁移到V2；历史Applied
-capture会得到Pending work，ignored live store不会由测试或提交过程主动打开。
+lifetime lock后执行strict validation，再事务化经过V2迁移到当前V3；历史Applied capture会得到DerivedInfo Pending
+work，但不补建receipt outbox。ignored live store不会由测试或提交过程主动打开。
 
 动态召回注入：
 
 ```text
-new player action + exact completion boundary
+fresh PlayerAction / HeartbeatActivation / DelegateReply + exact completion boundary
   -> materialize provider-visible context
   -> RecallBarrierBuilder parses visible PlayerTurnObservation recalls
   -> CharacterNoteOriginBarrierBuilder joins visible Actions to Applied memos
@@ -418,12 +432,13 @@ MVP之后仍真实存在的缺口大致是：
 1. 已扩展 `PlayerTurnObservation` 的强类型模型和 canonical renderer/parser，加入 `RecallType`、`RecallEntry`、`PlayerTurnRecall`，并覆盖 render/parse/display/validation/legacy rejection 测试。
 2. 已实现 `RecallBarrier` 与 parser-based 聚合器，能从多条 canonical Observation 中聚合 exact keys，并跳过 invalid / legacy / inbound / null 输入。
 3. 已把`IGalateaPlayerTurnRecallProvider`收口为host-wide factory创建per-session provider；fixed tests继续验证render、recovery、recent display与第二轮barrier，production binding vertical验证真实MemoPod no-match与configured failure顺序。
-4. 已实现capability-gated的Character Note保存Quick Start、`CharacterNoteIntent` semantic.v4提取、durable capture/zero tombstone、Default MemoPod apply，以及只由`AppliedNow`生成的honest save receipt。
+4. 已实现capability-gated的Character Note保存Quick Start、`CharacterNoteIntent` semantic.v4提取、durable capture/zero tombstone、Default MemoPod apply与honest save receipt；初版依赖AppliedNow返回值，现已由第10项的原子outbox取代。
 5. 已实现 `CharacterNoteOriginBarrier`：复用同一 provider-visible context materialization，按 runtime-derived Action 指纹与 CharacterMemory `Applied` provenance 构造 typed Memo blockers，并与 `RecallBarrier` 一起交给 provider；这避免刚写下的 Note 在来源 Action 尚可见时被零增量重复召回。
 6. 已实现`MemoPod.UpdateDerivedInfo`与prompt v3：DerivedInfo可按稳定MemoId重建更新并继续进入durable state identity，但不进入FrozenPrompt；现有MemoPod selector只消费id与ExactText。
 7. 已实现`CharacterNoteDerivedInfoEnricher`契约：按同一source turn成批生成Title/Gist/Summary，并严格验证单batch、exact ordinal映射和字段边界。
 8. 已实现CharacterMemory SQLite V2 DerivedInfo queue、strict V1->V2 migration、`UpdateDerivedInfo` plan/apply/settle与crash recovery；session-owned background pump在保存与回执之后非阻塞触发，provider失败保留Pending，Prepared不重调模型，Planned在所有新turn/capture admission前恢复。
 9. 已实现Default MemoPod recall MVP：canonical runtime query、512 KiB whole-item budget、settled Frozen epoch、Title eligibility、canonical SourceId、两道barrier、0..1 `MemoExactText`、独立optional connection binding与production no-match/failure/selected vertical。provider await不持有Pod mutation gate；disabled与maintenance路径保持零selector。完整实施记录见[`Galatea Default MemoPod Recall MVP 实施工单`](./work/completed/memo-recall-mvp-work-order.md)。
+10. 已将三trigger共享recall/query V2与SQLite V3 receipt outbox接通；Pending跨restart保留，exact raw append结算Delivered，不受后续rewind重发。Delivered清除整份Observation副本，仅保留receipt与source/base/Observation地址证据。
 
 ### 下一批候选
 

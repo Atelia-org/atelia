@@ -7,7 +7,8 @@
 
 这不是单次 provider invocation 内部的 tool call / tool result loop。它是 runtime 在 turn 边界外侧实现的通讯桥：
 主线角色模型只继续书写故事；runtime在durable turn边界读取和提取。Mail与Character Note分别进入自己的durable
-owner；只有已经durable apply到默认MemoPod的Note才可能生成in-process save receipt，再以Observation数据注入。
+owner；Note在durable apply到默认MemoPod的同一SQLite事务中建立save receipt outbox，再以Observation数据注入。
+三trigger共享记忆与durable投递的当前契约见[Automatic memory工作单](automatic-memory-work-order.md)。
 
 ## 源码地图
 
@@ -18,7 +19,7 @@ owner；只有已经durable apply到默认MemoPod的Note才可能生成in-proces
 - [`GalateaVisibleActionTextRenderer`](../../prototypes/Galatea/GalateaVisibleActionTextRenderer.cs)：从 terminal `ActionMessage` 中提取角色可见文本，排除 reasoning/tool blocks 并剥离 inline think。
 - [`GalateaTerminalActionExtractionTarget`](../../prototypes/Galatea/GalateaTerminalActionExtractionTarget.cs)：冻结一条exact terminal Action的address、visible text、SHA-256与UTF-8 byte count，供多个extractor共享。
 - [`GalateaFreshInput`](../../prototypes/Galatea/GalateaFreshInput.cs)：fresh turn 的 typed input 总入口。Mailbox 只是其中一个来源，后续 note/recall 不应把这个类型下沉到 Mailbox namespace。
-- [`PlayerTurnObservation`](../../prototypes/Galatea/PlayerTurnObservation.cs)：普通 player turn 的 composite Observation 模型。
+- [`PlayerTurnObservation`](../../prototypes/Galatea/PlayerTurnObservation.cs)：PlayerAction、HeartbeatActivation与DelegateReply共享的typed composite Observation模型。
 - [`PlayerTurnObservationEnvelope`](../../prototypes/Galatea/PlayerTurnObservation.cs)：把玩家行动、runtime metadata、reply/failure notices 渲染成 canonical Observation。
 
 Mailbox specialization：
@@ -37,11 +38,12 @@ Character Memory specialization：
 - [`CharacterNoteDefaultPodReconciler`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDefaultPodReconciler.cs)：durable capture/zero tombstone、Default MemoPod plan/apply与restart/admission恢复owner。
 - [`CharacterNoteDerivedInfoEnricher`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDerivedInfoEnricher.cs)：在ExactText已保存后，基于source turn的raw Observation、visible Action与ordered Note targets生成完整Title/Gist/Summary batch。
 - [`CharacterNoteDerivedInfoPump`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDerivedInfoPump.cs)：session-owned非阻塞调度器；只在context materialization时短暂持有`TurnLock`，provider调用与Pod apply在锁外执行。
-- [`CharacterNoteSaveReceipt`](../../prototypes/Galatea/CharacterMemory/CharacterNoteSaveReceipt.cs)：只消费durable `AppliedNow` memos并渲染诚实保存回执，同时提供per-session bounded in-process FIFO。
+- [`CharacterNoteSaveReceipt`](../../prototypes/Galatea/CharacterMemory/CharacterNoteSaveReceipt.cs)：从durable Applied Memo identities与ExactText冻结诚实保存回执；极端正文使用明确标识的compact确认。
+- [`GalateaNoteReceiptDelivery`](../../prototypes/Galatea/GalateaNoteReceiptDelivery.cs)：将SQLite V3 receipt outbox绑定到exact raw Observation，并以journal proof结算投递。
 - [`CharacterNoteOriginBarrier`](../../prototypes/Galatea/CharacterMemory/CharacterNoteOriginBarrier.cs)：把当前provider-visible raw Action与CharacterMemory durable provenance做bounded exact join，阻止来源正文仍直接可见的Memo被动态召回重复注入；production recall disabled时整条barrier路径在context selection前绕过。
 - [`GalateaMemoRecallQueryRenderer`](../../prototypes/Galatea/CharacterMemory/GalateaMemoRecallQueryRenderer.cs)：把preliminary typed Observation与同窗recent Action确定性渲染成MemoPod query，不增加前置LLM。
 - [`GalateaDefaultMemoPodRecallProvider`](../../prototypes/Galatea/CharacterMemory/GalateaDefaultMemoPodRecallProvider.cs)：在settled Default Pod Frozen epoch上调用selector，并以Title、两道barrier与Observation budget规划0..1条`MemoExactText`。
-- `PlayerTurnNotice.NoteSaveReceipt`：普通player Observation中的独立strong type；canonical顺序中至多一条且必须为最后notice。
+- `PlayerTurnNotice.NoteSaveReceipt`：三种trigger Observation中的独立strong type；canonical顺序中至多一条且必须为最后notice。
 
 入口与注入点：
 
@@ -70,10 +72,10 @@ successful fresh/recovery主Completion只读取/render一次terminal Action targ
 但Quarantined/invariant fail closed。`DeferredAfterCapture`不回执，并由下一次admission先恢复；admission自己的
 pre-capture失败也会阻止新mutation。
 
-只有`AppliedNow`携带的durable memos在final `current head == SourceAction` fence后可生成`NoteSaveReceipt`。
-`AlreadyApplied`、admission recovery、zero、Rejected、Deferred、queue full或unrenderable都不伪造或补发回执。
-非fatal Mail失败不回滚已保存Memo：若Note已经`AppliedNow`且final fence仍成立，仍queue真实回执后原样传播Mail错误；
-fatal Mail、caller cancellation与head change不queue。
+每次新的`Planned -> Applied`在同一SQLite V3事务中建立冻结回执，资格不依赖post-completion返回值或final head：
+admission recovery即使settle了off-lineage source，也仍有真实保存事实可通知。AlreadyApplied不新建义务，zero/Rejected
+无回执，Deferred等待真正Applied；旧版历史Applied migration不补发。Mail failure、caller cancellation或后续head change
+不撤销已提交的Memo与outbox。病态adaptive-fence正文改用明确标注的Source Action/Memo IDs确认，不静默丢弃。
 
 这一路的语义 authority 是分层的：
 
@@ -87,15 +89,19 @@ runtime 也不把外部事件塞进角色的 hidden state。它把外部信息�
 
 现行有两种注入形状：
 
-- 普通 player turn composite Observation：`PlayerTurnObservationEnvelope` 写入玩家行动、Observation 形成时的外界本地时间、0..N 条 reply/failure notice，以及可选且必须位于最后的单条`NoteSaveReceipt`。
+- Typed composite Observation：`PlayerTurnObservationEnvelope`写入真实trigger与单次采样的外界本地时间，再按recalls、external notices、末尾receipt顺序组合；Heartbeat不带external notices，DelegateReply必须至少带一条，所有trigger的notice总上限仍为16。
 - Inbound mail Observation：`GalateaMailboxObservationEnvelope` 把外部来信写成 escaped XML envelope，再作为 fresh input 启动一轮主线 Completion。
 
-普通 player turn 中的 notices 对位 tool-result：它们是上一次或更早 outbound artifact 的异步结果，但不在原 provider invocation 内返回。runtime 在 `BeginCutoff` 时冻结 bounded FIFO 前缀，把已经 Ready 的 notice 拼进本轮 Observation；之后才 Ready 的结果留给下一轮。
+PlayerAction与DelegateReply中的external notices对位tool-result：它们是上一次或更早outbound artifact的异步结果，
+但不在原provider invocation内返回。runtime在`BeginCutoff`时冻结bounded FIFO前缀，之后才Ready的结果留给下一轮；
+存在pending保存回执时，cutoff预留一个notice槽位和该冻结回执的实际预算。
 
-Note save receipt使用另一条in-process at-most-once attach规则：只有普通player `StartTurn`在
-`BeginCutoff == Empty`时`TryDequeue`一条，作为sole/final notice冻结进本次`PlayerAction`。Created reply cutoff、
-ready-turn、inbound与recovery都不领取；领取后的pre-dispatch stop、失败、Undo、rewind或restart不重新排队。它证明
-列出的ExactText已保存到默认MemoPod，但不承诺分类、metadata补全或召回。
+Note save receipt使用SQLite V3 `Pending -> ObservationBound -> Delivered` outbox。三个fresh trigger都可领取，
+inbound与recovery不新领取。runtime先附receipt、再调用共享Memo selector；query V2保留真实trigger，receipt不进入query。
+final canonical Observation bytes在SendAsync前绑定到exact base head。raw proof为NotAppended时回到Pending；
+InProgress或Terminal即标记Delivered，含义仅为Observation已durable append，不是provider已收到或角色已理解。
+冲突证据fail closed。abandon/rewind前先结算bound receipt；Delivered之后即使rewind也不重发。
+receipt只证明原文已保存到默认MemoPod，不承诺分类、metadata补全或召回；pending在pre-dispatch failure/restart后保留。
 
 这一路的安全/耐久边界是：
 
@@ -110,13 +116,13 @@ ready-turn、inbound与recovery都不领取；领取后的pre-dispatch stop、�
 
 已经落地的映射：
 
-- note save intent：仅当对应binding非`null`时，code-owned主prompt appendix才告诉角色如何提交长期Note完整原文；runtime用`CharacterNoteIntent`保守提取，经durable capture/apply写入默认MemoPod，并只为本进程的`AppliedNow`结果返回honest保存回执。
-- note derived-info enrichment：ExactText Applied后由CharacterMemory V2建立Pending work；background pump从SessionJournal exact source重建上下文，在锁外调用独立enricher，并用Prepared/Planned/base-target recovery把Title/Gist/Summary写回同一Memo。失败保留Pending，不改变保存回执事实。
-- note origin suppression：`CharacterNoteIntent` 不携带Action identity；runtime从canonical visible Action派生address/hash/byte count并持久化。后续普通player turn从同一provider-visible raw context重建`CharacterNoteOriginBarrier`，在来源Action仍可见时阻止对应typed Memo candidate重复注入。
+- note save intent：仅当对应binding非`null`时，code-owned主prompt appendix才告诉角色如何提交长期Note完整原文；runtime用`CharacterNoteIntent`保守提取，经durable capture/apply写入默认MemoPod，并在新的Applied事务中原子建立honest保存回执outbox。
+- note derived-info enrichment：ExactText Applied后由CharacterMemory V3建立DerivedInfo Pending work；background pump从SessionJournal exact source重建上下文，在锁外调用独立enricher，并用Prepared/Planned/base-target recovery把Title/Gist/Summary写回同一Memo。失败保留Pending，不改变保存回执事实。
+- note origin suppression：`CharacterNoteIntent`不携带Action identity；runtime从canonical visible Action派生address/hash/byte count并持久化。三个fresh trigger从同一provider-visible raw context重建`CharacterNoteOriginBarrier`，在来源Action仍可见时阻止对应typed Memo candidate重复注入。
 
-仍属后续候选的映射：
+已落地的recall映射（更细的触发策略仍留待真实使用数据）：
 
-- recall trigger：现行MVP只在没有active durable reply lease的普通player turn查询一次Default MemoPod；更细的触发策略仍留待真实使用数据。
+- recall trigger：PlayerAction、HeartbeatActivation与DelegateReply均在fresh materialization中查询一次Default MemoPod；有reply lease也不跳过。inbound/recovery不做新查询。
 - recall result planning：production provider已用current Observation加同窗recent Action构造canonical query，调用MemoPod selector后同时应用canonical recall anchor barrier与Character Note origin barrier，再把第一条Title-qualified `MemoExactText`注入现有composite Observation。
 
 应该复用的东西：
@@ -182,7 +188,7 @@ durable capture / route / dispatch
 Codex reply or delivery failure becomes Ready notice
     |
     v
-next PlayerTurnObservation includes notice block
+next PlayerAction / DelegateReply Observation includes notice block
 ```
 
 也可以把它理解成一条跨 turn 的“外置 tool loop”：

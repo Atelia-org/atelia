@@ -154,8 +154,8 @@ registry并保持client lazy。DerivedInfo enricher复用同一个Character Note
 独立实例、prompt与`ContractId`。Memo recall使用独立optional binding；它可以显式指向同一connection ID，但不会
 隐式复用Character Note binding。non-null Memo recall要求non-null Character Note binding。Character Note保存路径在successful fresh/recovery完成边界
 把提取结果交给Character Memory reconciler；
-0结果也写durable tombstone，非0结果幂等保存到每个角色的默认MemoPod。只有当前
-post-completion返回`AppliedNow`且final head仍一致时才queue保存回执；admission/restart恢复不补回执。Binding非
+0结果也写durable tombstone，非0结果幂等保存到每个角色的默认MemoPod。新的Applied settlement原子建立
+SQLite V3保存回执outbox；admission/restart恢复尚未Applied的batch也照样建立，但历史Applied不补发。Binding非
 `null`时主system prompt追加Character Note保存Quick Start，`null`时完全不出现该能力。
 Bootstrap connections template写V3、不写global default，并把outbound、Character Note与Memo recall bindings都写为`null`。
 这是一次有意的closed-shape hard cut：现有只含三个binding key的`connections.json`会在startup被拒绝。升级时必须
@@ -336,7 +336,7 @@ miss恢复时记录，不再为每秒fallback pulse刷重复行。terminal failu
 `Galatea.Delegation.Supervisor`显示store availability、pulse fail-closed、active dispatch的cold-restart保留
 与shutdown completion；`Galatea.DelegateSidecar`显示Node child启动、ready、正常stopping/stopped与真实
 transport/reap failure，正常dispose不再误报`SIDECAR_DISPOSED` Warning。
-`Galatea.CharacterMemory`每批输出identity/hash、Mail/Note outcome、durable memo/queue count与latency的single-line
+`Galatea.CharacterMemory`每批输出identity/hash、Mail/Note outcome、durable memo count与latency的single-line
 JSON；只有durable `AppliedNow`结果逐条输出JSON-escaped `PodId`、`MemoId`与`ExactText`，不输出`EvidenceQuote`。
 `Info`调用在Release被编译掉；Debug下无论console category是否
 打开，仍按`DebugUtil`规则写入`.atelia/debug-logs/galatea.mailbox.log`、
@@ -456,17 +456,18 @@ composite Observation持久化。runtime在canonical Observation materialization
 current write grammar互斥：
 
 - `PlayerAction`要求非空玩家文本，首块为`## 玩家角色试图采取的行动`/`player-action`，随后可按顺序携带
-  0..32个角色笔记recall，再携带合计0..16个notice；它是唯一可调用Memo recall、生成可恢复玩家草稿并获得
+  0..32个角色笔记recall，再携带合计0..16个notice；它是唯一生成可恢复玩家草稿并获得
   browser rewind token的variant。
-- `DelegateReply`没有player text或recall，timestamp之后直接写1..16个`Reply` / `DeliveryFailure` notice；
-  current writer不再伪造synthetic player-action块。
-- `HeartbeatActivation`没有player text、notice或recall，只写`## 角色自主活动时机` /
+- `DelegateReply`没有player text；timestamp之后可写0..32个recall，再写至少1个`Reply` / `DeliveryFailure`
+  notice与可选的末尾`NoteSaveReceipt`，总notice数仍不超过16；current writer不伪造synthetic player-action块。
+- `HeartbeatActivation`没有player text，首块为`## 角色自主活动时机` /
   `heartbeat-activation`。runtime在fresh materialization时把validated per-user
   `characterName`非递归注入code-owned模板
   `外层世界里，又有十分钟流逝。此刻，${characterName}拥有一段由自己支配的时间：可以留意正在变化的局势，把握稍纵即逝的机会，或推进自己认为重要的事。`；
-  durable parser从正文恢复并重新验证同一canonical角色名与exact rendered bytes。
+  durable parser从正文恢复并重新验证同一canonical角色名与exact rendered bytes。后续可携带recall与一条
+  `NoteSaveReceipt`，但不能携带Reply/DeliveryFailure；Ready reply由独立的`DelegateReply` trigger承接。
 
-`PlayerAction` notice中至多1个`NoteSaveReceipt`且必须位于最后（它计入16个总上限）。canonical
+三个trigger的notice中均至多1个`NoteSaveReceipt`且必须位于最后（它计入16个总上限）。canonical
 heading/info string为`Note 保存回执` /
 `character-note-save-receipt`；旧V0 `Note 请求回执` / `character-note-request-receipt`明确拒绝。recall block使用
 `SourceId: ...`单行metadata作为anchor，`RecallType+SourceId`构成exact去重key，当前三种info string为
@@ -485,7 +486,8 @@ recall `SourceId`上限512 bytes UTF-8，recall正文上限262,677 bytes，reply
 failure上限4 KiB，整份composite上限1 MiB；越界全部拒绝而不截断。
 
 `PlayerTurnObservationEnvelope` parser只接受code-owned prefix、timestamp、closed trigger shape、heading、
-info string、顺序与动态fence的canonical重渲染结果；混入player text/recall/非法notice的automatic variant都会拒绝。
+info string、顺序与动态fence的canonical重渲染结果；automatic variant混入player text、recall放在notice之后、
+Heartbeat携带external notice或DelegateReply没有external notice都会拒绝。
 recent view为三个trigger显示各自的code-owned可读文本，但只有`PlayerAction`产生`RestorablePlayerText`；
 `DelegateReply`以`本轮由 Codex 回信触发。`开头，`HeartbeatActivation`显示其code-owned trigger正文；两者都
 不能获得rewind token，也不会把synthetic text放回composer。
@@ -500,14 +502,16 @@ input normalizer只接收玩家文本，绝不接收ready notices。普通player
 failure会阻止放弃旧failed turn、创建cutoff和接受新turn；普通nonfatal normalizer exception则fail-open使用
 原始玩家文本并继续admission。取得exact effective text后才revalidate/abandon允许放弃的旧failed turn，并以SQLite transaction建立
 `CutoffFrozen` lease。cutoff之前已经Ready的bounded FIFO前缀冻结进本轮typed fresh input，之后才ready的
-结果留给下一次普通player turn；未选项保持原FIFO次序。选择前缀时为任意合法64 KiB normalized player text
-以及固定timestamp metadata的最坏adaptive-fence渲染预留空间。inbound与recovery入口都不开始新cutoff；
+结果留给下一次有资格的PlayerAction或DelegateReply；未选项保持原FIFO次序。选择前缀时为任意合法64 KiB normalized player text
+以及固定timestamp metadata的最坏adaptive-fence渲染预留空间；存在pending保存回执时，还预留一个notice槽位及
+该冻结回执的实际渲染预算。inbound与recovery入口都不开始新cutoff；
 `GalateaMailboxObservationEnvelope`也不因此增加timestamp。
 
 Galatea侧的internal `IGalateaPlayerTurnRecallProvider`由per-session factory在CharacterMemory lazy attach后构造。
 `galatea.memo-recall`为`null`或maintenance mode时使用disabled singleton，并在context selection/barrier构建前直接绕过，
-因此disabled路径没有额外CharacterMemory或selector I/O。enabled MVP只为`PlayerAction`调用provider；
-`DelegateReply`、`HeartbeatActivation`、inbound与recovery都不召回。provider request同时携带
+因此disabled recall路径没有额外的recall context/selector I/O；独立的durable保存回执投递仍照常工作。
+enabled provider服务`PlayerAction`、`DelegateReply`与`HeartbeatActivation`，包括PlayerAction携带reply lease的场景；
+inbound与recovery不做fresh召回。provider request同时携带
 `RecallBarrier`与`CharacterNoteOriginBarrier`。前者由同一轮RecapGrid online candidate source选出的provider-visible
 raw Observation后缀经`PlayerTurnObservationEnvelope` parser聚合；后者在同一次materialization中读取带exact
 source address的raw Action units，以runtime-derived visible-text SHA-256/UTF-8 byte count与CharacterMemory
@@ -518,15 +522,19 @@ selected candidate会先确认可materialize，derived context contribution与br
 `RecallBarrier`当前只做parser-based exact-key去重，尚不表达`MemoExactText`覆盖`MemoSummary`/`MemoGist`的dominance；
 origin barrier则按Memo阻止全部召回粒度，不解析`SourceId`。
 
-enabled provider把已采样timestamp且尚无recall的typed `PlayerAction` Observation、同一pre-append raw window中的
-Reply/DeliveryFailure notices与最近一条非空visible Action确定性渲染为
-`atelia.galatea.memo-recall-context.v1` JSON；不调用第二个query-builder模型。required player text完整保留，optional
+enabled provider把已采样timestamp且尚无recall的typed Observation、本轮Reply/DeliveryFailure notices与
+同一pre-append raw window中的最近一条非空visible Action确定性渲染为
+`atelia.galatea.memo-recall-context.v2` JSON；不调用第二个query-builder模型。`currentTurn.trigger`使用真实
+`kind`：`player-action`携带完整`playerText`，`heartbeat-activation`携带code-owned `activationText`，
+`delegate-reply`只携带kind、正文由`currentTurn.externalNotices`提供。automatic query没有伪playerText。optional
 notice按whole-item前缀、Action按whole item纳入512 KiB总query budget，`NoteSaveReceipt`不进入query。Default MemoPod
 在短`_podMutationGate`内按settled state identity打开独立Frozen handle，provider await发生在gate外。selector最多返回8个
 ordered IDs；Galatea按Title eligibility、origin barrier、recall barrier与1 MiB final Observation budget选择第一条
 `MemoExactText`，最终注入数量为0..1。canonical SourceId为
 `memo-pod:v1/<32-lowerhex PodId>/<canonical MemoId>`，body为完整`Title + ExactText`，不截断。selector成功返回空数组或
 候选全部被过滤是正常underfill；configured provider/authority failure fail closed并阻止main Completion。
+runtime先附加pending receipt，再按剩余budget选择recall；同一最终Observation bytes在selector结束后、
+`SendAsync`之前绑定到reply lease与receipt outbox。recovery复用已冻结bytes，不重新召回、领取或采样时间。
 
 `SessionJournal`公开的`AdaptiveMarkdownFenceRenderer.RenderBlock(infoString, exactBody)`要求1..64字符
 ASCII token作为code-owned info string。现有Recap contribution已复用它，并保持原`recap-block`输出逐字不变。
@@ -581,7 +589,7 @@ SSE期间不重复attach；轮询期间已完成的turn通过recent补看。页�
 自动/观察轮次不修改模型radio选择，不读取、提交或清空textarea；只有本tab亲自提交的manual turn成功后清空草稿。
 现有人工发送、stop、rewind能力保留；本阶段尚无运行时enrollment或管理员pause/resume API。
 
-Heartbeat仍产生正常main Completion成本，不调用player-only Memo recall，successful terminal Action仍进入
+Heartbeat仍产生正常main Completion成本，并在binding启用时调用共享Memo recall；successful terminal Action仍进入
 既有Outbound Mail与Character Note post-processing。休息是合法角色行动；本pilot不改变角色目标与动机。
 没有业务token/output cap、output deadline、自动interrupt、durable scheduler、catch-up或可调cadence。
 进程外的开机启动、crash restart与长期行为验证属于后续部署阶段。当前实施边界与验证见
@@ -627,7 +635,8 @@ deadline、`TextExtractionException`与Pod availability当best-effort；`Deferre
 Quarantined/invariant fail closed。admission先恢复pending，再对latest exact target并行结算Mail/Note；任何admission
 pre-capture失败都会阻止新mutation。
 
-non-empty ExactText batch结算为`Applied`时，CharacterMemory SQLite V2在同一事务建立DerivedInfo `Pending` work。
+non-empty ExactText batch结算为`Applied`时，CharacterMemory SQLite V3在同一事务建立DerivedInfo `Pending` work
+与保存回执outbox `Pending` entry。
 session-owned background pump使用capacity-1 wakeup channel与单调external signal generation；channel可以合并忙碌期
 wakeup，但不会丢掉每个外部signal对应的单次推进额度，也不会无signal自主热重试。每个signal至多处理一批：它短暂取得`TurnLock`，按
 source Action地址从SessionJournal重建raw Observation与visible Action并核验durable fingerprint，随即释放锁，再调用
@@ -640,8 +649,9 @@ provider完全忽略cancellation，session shutdown会继续等待该调用返�
 生成结果先durable写成`Prepared`，之后不再调用模型；Default MemoPod mutation按base/target identity执行
 `UpdateDerivedInfo -> Planned -> Freeze/confirm -> Applied`。只有Planned占用mutation slot，并在attach、fresh、recovery
 admission以及任何新ExactText capture前provider-free恢复。MemoPod document/state identity包含DerivedInfo，但FrozenPrompt v3
-仍只包含`id + exact_text`。CharacterMemory store会在strict V1 validation后事务化迁移为V2；程序测试不会主动打开ignored
-live store。
+仍只包含`id + exact_text`。CharacterMemory store在strict旧版validation后事务化迁移到V3；V1先经过V2的
+DerivedInfo migration，V2再增加receipt outbox。迁移前已经Applied的历史batch不补发receipt；尚未Applied的
+pending batch在升级后首次结算时原子建立receipt。程序测试不会主动打开ignored live store。
 
 Note extractor只把`${characterName}`本人已明确完成提交的长期Note保存请求识别为artifact；想到、计划、
 草稿、普通世界内书写、引用旧Note或仅声称已经保存都不构成提交。`ExactText`与`EvidenceQuote`必须是visible Action
@@ -650,14 +660,25 @@ Action address、visible-text SHA-256与UTF-8 byte count始终由runtime从同�
 不进入`CharacterNoteIntent`或模型tool schema。它们也供`CharacterNoteOriginBarrier`判断新近Memo的来源正文是否仍在
 当前provider-visible raw context，避免零信息增量的重复召回。
 
-只有durable `AppliedNow`且final head仍等于target Action时，1..N条`CharacterNoteAppliedMemo`才由code-owned
-renderer冻结成一条`NoteSaveReceipt`，再放入每个`UserSessionHost`私有的bounded in-process FIFO。zero、Rejected、
-Deferred、AlreadyApplied、admission recovery、render failure或queue full都不伪造/补发。只有下一次普通player
-`StartTurn`的`BeginCutoff == Empty`分支会`TryDequeue`一条，作为sole/final notice执行at-most-once attach。
-Created reply cutoff、ready-turn、inbound与recovery不领取；领取后的pre-dispatch stop、失败、Undo、rewind或restart
-都不重新排队。该回执只证明列出的ExactText已保存到默认MemoPod，不承诺分类、metadata补全或召回。非fatal Mail
-失败不回滚已保存Memo：final fence仍成立时先queue真实回执，再原样传播Mail错误；fatal/caller cancel/head change不queue。
-DerivedInfo pump signal同样在最终Mail错误传播前完成，但signal不等于metadata已生成或已落盘。
+保存回执不再依赖in-process FIFO或post-completion返回的`AppliedNow`。SQLite V3在每次新的`Planned -> Applied`
+事务中，依据durable Memo identities与ExactText冻结一条code-owned `NoteSaveReceipt`；source Action此后不在
+selected lineage、Mail失败或函数尚未返回都不撤销这份保存事实与投递资格。zero、Rejected没有回执，
+Deferred等到真正Applied才创建；AlreadyApplied与旧版历史Applied migration不重新生成投递义务。
+
+outbox按`Pending -> ObservationBound -> Delivered`投递。下一次PlayerAction、HeartbeatActivation或DelegateReply
+可附加最早的一条pending receipt；inbound和recovery不领取新的receipt。绑定冻结exact base head与完整canonical
+Observation；raw journal exact proof为NotAppended时回到Pending，因此pre-dispatch stop/failure和restart可以重试。
+proof为InProgress或Terminal时即标记Delivered，**只承诺Observation已durable append，不承诺provider已经收到、
+角色已经读懂或主Completion成功**。冲突或无法证明时fail closed；abandon/rewind前先结算bound receipt，
+Delivered之后即使该Observation被rewind也不重发。
+ObservationBound保留完整Observation bytes用于raw proof；Delivered保留receipt payload、source/base及Observation
+address，但清除整份RenderedObservation，避免长期复制外部回信和recall正文。
+
+普通回执逐字列出ExactText；极端adaptive-fence正文无法与合法player text和一条最大reply同框时，使用明确标注
+“原文超出回执展示预算”的identity-only确认，列出Source Action与Memo IDs，不静默丢弃或截断冒充完整原文。
+它只证明Note原文已经保存到默认MemoPod，不承诺分类、metadata补全或召回。DerivedInfo pump signal在最终Mail错误
+传播前完成，但signal不等于metadata已生成或已落盘。实现与验收边界见
+[automatic memory工作单](../../docs/Galatea/automatic-memory-work-order.md)。
 
 每个outbound-mail Action extraction batch由`GalateaDelegationSqliteStore`单事务全有或全无地capture；成功的0-intent
 extraction也写`action_capture` tombstone，extractor failure绝不能冒充空结果。stable dispatch ID是对length-prefixed

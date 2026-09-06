@@ -8,6 +8,10 @@
 - 本轮目标：把已识别的Character Note保存请求幂等地写入每个角色唯一的Default MemoPod，并只在durable apply已经证明成功后生成诚实回执
 - 本轮不包含：静态分类、PodCatalog、动态聚类、多Pod routing、Memo内容整理、主线程recall注入
 
+本文保留Default Pod V1的原始apply设计与已完成工作包记录。当前实现另包含DerivedInfo V2、Memo recall与
+[Automatic memory闭环](automatic-memory-work-order.md)：CharacterMemory SQLite已为V3，三种typed trigger共享
+召回和durable receipt投递。下面的receipt现行条款已更新；§10–12的V1阶段non-goals/验收历史不再表示当前缺口。
+
 ## 一句话决策
 
 首版不等待分类系统：每个启用Character Note能力的角色拥有一个稳定、始终存在的Default MemoPod；所有Note先进入该Pod。
@@ -34,17 +38,19 @@ terminal Action
   -> durable capture / zero-result tombstone
   -> Default MemoPod apply
   -> durable apply settlement
-  -> best-effort future Observation receipt
+  -> atomic SQLite V3 Pending receipt
+  -> future typed Observation + exact raw append proof
+  -> Delivered
 ```
 
 成功回执只证明本次请求对应的ExactText已经进入Default MemoPod的committed Frozen文档。它不承诺：
 
 - 已分类、生成Title/Gist/Summary或建立embedding；
-- 已接入主线程recall；
-- pending可见回执在进程重启后仍会投递；
+- 本条Memo一定会被主线程召回或已经被角色理解；
 - Undo、rewind或SessionJournal回退会自动删除Memo。
 
-只有收到`Note 保存回执`才表示保存成功。没有回执不应被解释为保存成功或失败；operator仍可通过durable store诊断。
+角色收到`Note 保存回执`才有runtime提供的成功通知。没有回执不应被解释为保存成功或失败；operator仍可通过durable store诊断。
+Pending回执会跨restart保留；Delivered只证明Observation已durable append，不承诺provider接收或角色认知。
 
 ## 2. Default Pod语义
 
@@ -67,7 +73,7 @@ V1阶段所有Note都进入Default Pod。未来出现分类Pod后，Default可�
 | Character Note extractor output | 对exact terminal Action的一次versioned语义提取结果 | `PodId`、`MemoId`或保存证明 |
 | Character-memory SQLite store | extraction capture、zero-result tombstone、operation identity、apply plan与settlement authority | 当前active Memo正文集合的查询authority |
 | Default MemoPod committed document | 当前active Memo exact text与Pod-local ID的authority | extraction provenance、SessionJournal history或分类authority |
-| in-process receipt queue | 已render的future Observation notice | durable apply authority、restart recovery queue |
+| SQLite V3 receipt outbox | 冻结notice、exact Observation绑定与持久化投递状态 | provider接收证明、角色认知或Memo corpus |
 | Debug log / SessionJournal receipt text | development evidence / narrative history副本 | replay、migration或Memo apply输入 |
 
 SQLite为了crash recovery可以永久保存captured requested ExactText；这份副本的authority问题是“角色提交了什么请求”，不是“当前Pod有哪些active Memo”。`EvidenceQuote`只用于capture前source-grounding validation，不进入store。V1不提供删除或修订，因此request evidence与active corpus不会产生lifecycle分叉；未来一旦加入Remove/correction，必须重新审视retention与current-state projection，不能自动把capture表升级成第二份Memo corpus。
@@ -134,7 +140,8 @@ ordered ExactText[]
 
 ## 5. Durable store logical schema
 
-V1使用独立的per-user SQLite store，不复用delegation SQLite schema：
+最初V1使用独立的per-user SQLite store，不复用delegation SQLite schema。以下为原始核心表；当前V3保留其authority，
+另有DerivedInfo work与下面的receipt表：
 
 ```text
 character_memory_meta
@@ -179,6 +186,18 @@ character_note
 store同一时刻最多有一个`Captured`或`Planned` batch；`active_source_action`和数据库约束共同锁定该事实。`ZeroCaptured`、`Applied`与`Rejected`是terminal，不占active slot。Quarantine是store-global health，不是某条capture的普通lifecycle state。
 
 每个store目录有process-lifetime exclusive lock。生产只允许一个writable owner；`UserSessionHost.TurnLock`继续序列化同一session的reconcile，但不能替代跨进程lock。
+
+### 5.1 当前V3 receipt outbox
+
+`note_receipt_delivery`以`source_action_address`为主键/FK，冻结`notice_body`、`created_revision`、`state_revision`，
+并保存`expected_session_head`、`rendered_observation`与`observation_address`。状态为
+`Pending | ObservationBound | Delivered`；全store最多一条ObservationBound，Pending按created revision/Source Action排序。
+只有ObservationBound保留完整`rendered_observation`供raw proof；Delivered后清除它，继续保留notice payload、
+source/base与Observation address，不永久复制外部回信或recall正文。
+每次新的非空`Planned -> Applied`在同一事务建立一条Pending receipt，不依赖caller之后是否收到`AppliedNow`。
+
+旧store先strict验证，再事务化迁移到V3；V1经过V2 DerivedInfo迁移。旧版已Applied历史不会补建receipt，
+旧Captured/Planned在V3下首次真正Applied时创建。AlreadyApplied不创建第二份义务。升级不从旧receipt正文/debug log猜测投递状态。
 
 ## 6. Apply protocol
 
@@ -278,7 +297,8 @@ Quarantined(code)
 SelectedHeadChanged
 ```
 
-只有`AppliedNow`携带从durable capture/apply重新读取的frozen batch，并有资格生成save receipt。`DeferredAfterCapture`表示capture/plan仍可由admission继续；`Rejected`是terminal single-request outcome；`Quarantined`是store-global fail-closed health。
+只有`AppliedNow`携带从durable capture/apply重新读取的frozen batch；当前V3的receipt已在Applied事务中建立，
+不依赖这个返回值创建。`DeferredAfterCapture`表示capture/plan仍可由admission继续；`Rejected`是terminal single-request outcome；`Quarantined`是store-global fail-closed health。
 
 ## 7. Runtime sequencing
 
@@ -298,11 +318,13 @@ capture if absent
 
 V1保留有限的best-effort policy：post-completion的pre-capture provider/unavailable不把已经完成的main Action改报失败；但它会留下一个latest Action gap。下一次admission不得在同样失败后继续接受新turn。只要capture已经durable，apply/recovery invariant failure必须fail closed并留下可诊断状态，不能伪装成zero/no-match。
 
-`Rejected`是terminal且无save receipt；`DeferredAfterCapture`保留active batch，post-completion可以结束但下一次admission必须阻断并继续settle；`Quarantined`在post-completion与admission都fail closed；`SelectedHeadChanged`不capture/apply/receipt并要求caller重新admit exact head。
+`Rejected`是terminal且无save receipt；`DeferredAfterCapture`保留active batch，post-completion可以结束但下一次admission必须阻断并继续settle；`Quarantined`在post-completion与admission都fail closed。`SelectedHeadChanged`阻止新的capture并要求caller重新admit exact head，但不能撤销已经captured batch后续settle的保存事实或receipt义务。
 
-只有`AppliedNow`且final head fence仍成立时，当前进程才创建并enqueue一条`Note 保存回执`。`AlreadyApplied`不自动重新queue，避免restart/admission重复可见回执；因此crash-after-apply-before-enqueue仍可能丢失可见回执，这是明确的at-most-once delivery限制，不影响Memo保存事实。
+每次新的Applied settlement原子创建`Note 保存回执`，因此crash-after-apply-before-runtime-return不会丢通知。
+source Action已不在selected lineage也仍有资格；这是保存事实的通知，不是给源Action重新授予capture权限。
 
-Mail与Note是独立durable effects。非fatal Mail失败时，如果drained Note结果已经是`AppliedNow`、caller未取消且head仍current，runtime仍可enqueue真实save receipt，然后原样传播Mail错误；fatal、caller cancellation或head change不enqueue。Mail failure不允许回滚或谎报已经settled的Memo effect。
+Mail与Note是独立durable effects。Mail失败、caller cancellation或后来head change都不撤销已提交的Memo/outbox，
+也不能伪造尚未Applied的receipt；原有异常优先级与两个任务均drain的边界保持不变。
 
 ### 7.2 Admission/restart
 
@@ -314,10 +336,16 @@ Mail与Note是独立durable effects。非fatal Mail失败时，如果drained Not
 - store baseline physical frontier覆盖启用前的历史；
 - absent capture时可以重跑extractor；
 - captured/planned batch不重跑extractor，只恢复apply；
-- admission返回`AppliedNow`也不自动enqueue receipt；可见反馈仍只属于原post-completion happy path；
+- admission恢复pending batch若首次settle Applied，同一事务照样创建receipt；AlreadyApplied不重复创建；
 - admission的pre-capture provider/timeout/invalid failure阻止新turn，确保旧Action不会被后继latest head越过。
 
 所有normal HTTP durable mutation入口继续先走同一admission gate；因此pending batch会在Undo/rewind之前settle，而已经Applied的Memo不会因SessionJournal rewind自动删除。
+
+Receipt投递在fresh PlayerAction、HeartbeatActivation与DelegateReply共享；inbound/recovery不领取新receipt。
+runtime先选Pending receipt，再做optional Memo recall，冻结完整Observation后绑定exact base head。
+`GalateaNoteReceiptDelivery`读取raw journal exact proof：NotAppended回到Pending，InProgress/Terminal标记Delivered；
+其他证据fail closed。pre-dispatch stop/failure与restart不会丢Pending。abandon/rewind前必须先结算Bound，
+Delivered后不因rewind重发；此承诺止于durable append，不是provider已读或Completion成功。
 
 ### 7.3 Cancellation/failure
 
@@ -333,7 +361,7 @@ Mail与Note是独立durable effects。非fatal Mail失败时，如果drained Not
 
 ## 8. Config and provisioning
 
-Galatea root config hard-cut到V6，每个user新增required：
+V1实施时Galatea root config hard-cut到V6，每个user新增required（当前root config为V8，见项目README）：
 
 ```json
 "characterMemoryStateDir": "character-memory/alice"
@@ -353,7 +381,7 @@ V6 exact path规则：
 
 V6把session、delegation、character-memory与optional call-log路径关系收进一个total topology validator；production loader与直接构造`GalateaConfig`的测试/consumer都必须经过同一验证，不能继续让call-log disjointness只存在于loader私有分支。
 
-Bootstrap写V6与该字段，但不创建character-memory state。Ignored live config migration必须停服、备份并单独执行；tracked tests不能代替本机迁移。
+当时Bootstrap写V6与该字段；当前写V8，仍不创建character-memory state。Ignored live config migration必须停服、备份并单独执行；tracked tests不能代替本机迁移。
 
 ## 9. Prompt and receipt hard cut
 
@@ -369,15 +397,22 @@ Extractor semantic contract从development request语义升级；tool name与字�
 
 - heading：`Note 保存回执`；
 - info string：`character-note-save-receipt`；
-- body明确`已成功保存到默认MemoPod`，逐字列出ExactText；
+- body明确`已成功保存到默认MemoPod`，正常逐字列出ExactText；病态fence-heavy正文则明确标注展示预算限制，只列Source Action与Memo IDs；
 - 仍然每轮最多一条、必须是最后notice、legacy dialect拒绝；
-- queue仍是per-session bounded in-process FIFO与at-most-once delivery attempt。
+- 投递由SQLite V3 outbox拥有；三个trigger都至多一条末尾receipt，notice总上限16。reply cutoff为pending receipt预留一个槽位与实际预算。
+
+完整回执与compact fallback都必须能容纳任意合法player text和一条最大reply，保证保存通知不会因为后续Ready reply
+持续到达而永久饥饿；optional recall只使用receipt之后的剩余Observation预算。fallback不截断原文冒充完整展示，
+不承诺metadata已补全或记忆已召回。
 
 不保留旧heading、旧info string或旧strong type compatibility reader；项目尚未发布，及时重构优于双协议。2026-08-30实施前只读审计两个configured本机SessionJournal，对旧`## Note 请求回执`heading的binary/text命中均为0，因此当前没有需要迁移或保留legacy reader的durable V0 Observation证据。
 
 ## 10. Explicit non-goals / complexity tripwires
 
-V1明确不实现：
+以下是原始V1阶段non-goals，作为历史设计边界保留。DerivedInfo、Memo recall和durable receipt后续已分别实现，
+不再是当前系统的non-goals；automatic-memory工作单是本次扩展的authority。
+
+V1当时明确不实现：
 
 - 静态分类、LLM Pod router、embedding、ANN或vector store；
 - PodCatalog、aliases、secondary membership；
