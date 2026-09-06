@@ -72,3 +72,6 @@ git diff --check
 记录 gpt/cyber 的 SessionJournal head/frontier 与 SQLite integrity，关闭页面运行至少两个完整 idle cadence 周期；确认自动轮次使用 gpt 的 default、Ready reply 优先、cyber 原始状态不变，再正常停服、strict reopen 与复查 integrity。轮次可能持续较长，验收以观察到完整周期为准。此步骤会调用真实 provider 并修改 live history，本轮没有执行。
 
 此pilot证明基础设施可以脱离页面运行。角色动机、automatic Memo recall/Note receipt闭环、TextExtractor唤醒意图、进程外重启保障仍是独立后续工作。
+
+后续进展：automatic Memo recall 与 durable Note receipt 闭环已由
+[Automatic memory工作包](automatic-memory-work-order.md)实施；其余上述方向不在该工作包范围内。
