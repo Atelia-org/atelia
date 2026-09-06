@@ -2,6 +2,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.Galatea.Server.CharacterMemory;
+using Atelia.Galatea.Prompts;
 using Atelia.MemoPod;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
@@ -76,18 +77,27 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         Assert.Empty(observation.Recalls);
     }
 
-    [Fact]
-    public async Task SelectedMemoIsHydratedInjectedAndPersisted() {
+    [Theory]
+    [InlineData("player-action")]
+    [InlineData("heartbeat-activation")]
+    [InlineData("delegate-reply")]
+    public async Task SelectedMemoIsHydratedInjectedAndPersistedWithTypedTriggerAndBarriers(
+        string triggerKind
+    ) {
         const string exactText = "旧城区的蓝门后藏着一把钥匙。";
         const string title = "旧城区的蓝门";
         var main = new MainCompletionClient([
             "[Galatea] 我把“旧城区的蓝门后藏着一把钥匙。”作为长期Note提交给runtime保存。",
+            "origin already visible",
             "main reply after recall",
+            "recall already visible",
         ]);
         var recall = new RecallCompletionClient {
             EmitNoteOnFirstExtraction = true,
         };
         recall.EnqueueSelection();
+        recall.EnqueueSelection("m1:00000001");
+        recall.EnqueueSelection("m1:00000001");
         recall.EnqueueSelection("m1:00000001");
         await using var host = CreateHost(main, recall);
         GalateaHostService service = host.Factory.Services
@@ -97,18 +107,8 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             CancellationToken.None
         );
 
-        GalateaLiveTurn first = service.StartTurn(
-            session,
-            "请把刚才的发现记下来",
-            new GalateaTurnOptions("test")
-        );
-        await service.RunTurnAsync(
-                session,
-                first,
-                CancellationToken.None
-            )
-            .WaitAsync(Deadline);
-        service.FinishTurn(session, first);
+        _ = await RunTypedTurnAsync(service, session, triggerKind,
+            "请把刚才的发现记下来");
 
         await WaitUntilAsync(() => {
             try {
@@ -125,28 +125,23 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             }
         });
 
-        EventAddress firstHead = session.Engine.ReadCurrentHead()!.Value;
-        Assert.NotNull(service.PrepareAndCommitPopLatestTurn(
-            session,
-            firstHead
-        ));
+        // Selector may nominate the Memo, but the selected source Action
+        // remains visible: automatic triggers must preserve the origin barrier.
+        _ = await RunTypedTurnAsync(service, session, triggerKind,
+            "那扇蓝门后有什么？");
+        Assert.Empty(ReadPersistedObservation(session).Recalls);
 
-        GalateaLiveTurn second = service.StartTurn(
-            session,
-            "那扇蓝门后有什么？",
-            new GalateaTurnOptions("test")
-        );
-        await service.RunTurnAsync(
-                session,
-                second,
-                CancellationToken.None
-            )
-            .WaitAsync(Deadline);
-        service.FinishTurn(session, second);
+        for (int index = 0; index < 2; index++) {
+            EventAddress head = session.Engine.ReadCurrentHead()!.Value;
+            Assert.NotNull(service.PrepareAndCommitPopLatestTurn(session, head));
+        }
 
-        Assert.Equal(2, recall.Requests.Count);
-        Assert.Equal(2, main.Requests.Count);
-        ObservationMessage finalMessage = main.Requests[1]
+        _ = await RunTypedTurnAsync(service, session, triggerKind,
+            "那扇蓝门后有什么？");
+
+        Assert.Equal(3, recall.Requests.Count);
+        Assert.Equal(3, main.Requests.Count);
+        ObservationMessage finalMessage = main.Requests[2]
             .PromptPrefix.SharedContextMessages
             .OfType<ObservationMessage>()
             .Last();
@@ -176,6 +171,74 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
         Assert.Equal(finalContent, persisted.ObservationContent);
+
+        _ = await RunTypedTurnAsync(service, session, triggerKind,
+            "继续使用刚才的记忆");
+        Assert.Empty(ReadPersistedObservation(session).Recalls);
+        Assert.Equal(4, recall.Requests.Count);
+        Assert.Equal(4, main.Requests.Count);
+        for (int index = 0; index < 4; index++) {
+            string observationContent = Assert.IsType<string>(main.Requests[index]
+                .PromptPrefix.SharedContextMessages.OfType<ObservationMessage>()
+                .Last().Content);
+            Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
+                observationContent, out PlayerTurnObservation observation));
+            using JsonDocument query = JsonDocument.Parse(Assert.IsType<string>(
+                Assert.IsType<ObservationMessage>(Assert.Single(
+                    recall.Requests[index].TailMessages)).Content));
+            Assert.Equal("atelia.galatea.memo-recall-context.v2",
+                query.RootElement.GetProperty("schema").GetString());
+            JsonElement current = query.RootElement.GetProperty("currentTurn");
+            Assert.Equal(triggerKind,
+                current.GetProperty("trigger").GetProperty("kind").GetString());
+            Assert.Equal(observation.ExternalLocalTimestamp,
+                current.GetProperty("externalLocalTimestamp").GetDateTimeOffset());
+            Assert.Equal(triggerKind switch {
+                "player-action" => PlayerTurnObservationTriggerKind.PlayerAction,
+                "heartbeat-activation" => PlayerTurnObservationTriggerKind.HeartbeatActivation,
+                _ => PlayerTurnObservationTriggerKind.DelegateReply,
+            }, observation.TriggerKind);
+            if (triggerKind == "delegate-reply") {
+                Assert.Equal("外层执行者已恢复，请继续查看蓝门。",
+                    Assert.Single(current.GetProperty("externalNotices")
+                        .EnumerateArray()).GetProperty("text").GetString());
+                Assert.False(current.GetProperty("trigger")
+                    .TryGetProperty("playerText", out _));
+            }
+        }
+    }
+
+    private static async Task<GalateaLiveTurn> RunTypedTurnAsync(
+        GalateaHostService service,
+        UserSessionHost session,
+        string triggerKind,
+        string playerText
+    ) {
+        GalateaLiveTurn turn = triggerKind == "player-action"
+            ? service.StartTurn(session, playerText, new GalateaTurnOptions("test"))
+            : session.StartTurn(triggerKind == "heartbeat-activation"
+                ? new GalateaFreshInput.HeartbeatActivation(new GalateaCharacterName("Alice"))
+                : new GalateaFreshInput.DelegateReply([
+                    new PlayerTurnNotice.Reply("外层执行者已恢复，请继续查看蓝门。"),
+                ]), new GalateaTurnOptions("test"));
+        try {
+            await service.RunTurnAsync(session, turn, CancellationToken.None)
+                .WaitAsync(Deadline);
+            Assert.Equal("completed", turn.Status);
+        }
+        finally {
+            // Typed automatic admission has no cadence claim or reply lease.
+            session.FinishTurn(turn);
+        }
+        return turn;
+    }
+
+    private static PlayerTurnObservation ReadPersistedObservation(UserSessionHost session) {
+        string content = Assert.Single(session.Engine.ReadRecentCompletedTurns(1)
+            .RequireSnapshot().Turns).ObservationContent;
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(content,
+            out PlayerTurnObservation observation));
+        return observation;
     }
 
     [Fact]

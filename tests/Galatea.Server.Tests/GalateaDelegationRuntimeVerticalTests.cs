@@ -24,7 +24,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         using var releaseAutomaticCompletion = new ManualResetEventSlim();
         var mainClient = new QueueClient(
             _ => Completed(main, "[Galatea] sent one letter."),
-            _ => {
+            request => {
+                AssertReplyRecallVisible(request);
                 automaticCompletionStarted.Set();
                 Assert.True(releaseAutomaticCompletion.Wait(Deadline));
                 return Completed(main, "received the automatic reply");
@@ -38,7 +39,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             _ => Completed(extractor, "no mail")
         );
         var normalizer = new CountingNormalizer();
-        var recallProvider = new BoundedRecallProvider(maximumCalls: 1);
+        var recallProvider = new BoundedRecallProvider(maximumCalls: 2,
+            emitRecallForReply: true);
         var clock = new ManualTimeProvider(new DateTimeOffset(
             2026,
             9,
@@ -196,7 +198,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             normalizer.ShouldNormalizeCallCount
         );
         Assert.Equal(normalizeBeforeReady, normalizer.NormalizeCallCount);
-        Assert.Equal(1, recallProvider.CallCount);
+        Assert.Equal(2, recallProvider.CallCount);
 
         SessionCompletedTurnProjection completed = session.Engine
             .ReadRecentCompletedTurns(1)
@@ -217,6 +219,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             StringComparison.Ordinal
         );
         Assert.NotNull(observation.ExternalLocalTimestamp);
+        Assert.Equal("memory useful for the reply", Assert.Single(observation.Recalls).Body);
         Assert.Equal(
             new DateTimeOffset(
                 2026,
@@ -263,12 +266,12 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
     }
 
     [Fact]
-    public async Task HeartbeatActivation_PreservesObservationTimestampAndBypassesRecall() {
+    public async Task HeartbeatActivation_PreservesObservationTimestampAndRunsRecall() {
         CompletionConnectionConfig main = Connection("test");
         var mainClient = new QueueClient(
             _ => Completed(main, "character chose to rest")
         );
-        var recallProvider = new BoundedRecallProvider(maximumCalls: 0);
+        var recallProvider = new BoundedRecallProvider(maximumCalls: 1);
         var clock = new ManualTimeProvider(new DateTimeOffset(
             2026,
             9,
@@ -318,7 +321,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
 
         Assert.Equal("completed", turn.Status);
         Assert.Equal(1, mainClient.CallCount);
-        Assert.Equal(0, recallProvider.CallCount);
+        Assert.Equal(1, recallProvider.CallCount);
         SessionCompletedTurnProjection completed = Assert.Single(
             session.Engine.ReadRecentCompletedTurns(1)
                 .RequireSnapshot().Turns
@@ -942,7 +945,10 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         const string ReplyTwo = "second reply <tag>值</tag>";
         var mainClient = new QueueClient(
             _ => Completed(main, "[Galatea] sent two letters."),
-            _ => Completed(main, "received both replies"),
+            request => {
+                AssertReplyRecallVisible(request);
+                return Completed(main, "received both replies");
+            },
             _ => Completed(main, "after undo")
         );
         var extractorClient = new QueueClient(
@@ -962,13 +968,16 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             [extractor.Id] = extractorClient,
         });
         var backend = new DurableBackend();
+        var recallProvider = new BoundedRecallProvider(maximumCalls: 3,
+            emitRecallForReply: true);
         await using GalateaTestHost host = GalateaTestHost.Create(
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, extractor],
             selectableConnectionIds: [main.Id],
             outboundMailExtractorConnectionId: extractor.Id,
-            delegateTransport: new DurableTransport(backend)
+            delegateTransport: new DurableTransport(backend),
+            playerTurnRecallProviderFactory: (_, _) => recallProvider
         );
         using HttpClient http = host.CreateClient();
         await LoginAsync(http);
@@ -1009,6 +1018,8 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             "player text"
         );
         Assert.Equal("completed", received.Status);
+        Assert.NotNull(received.DurableReplyLease);
+        Assert.Equal(2, recallProvider.CallCount);
         SessionCompletedTurnProjection receiving = session.Engine
             .ReadRecentCompletedTurns(1)
             .RequireSnapshot().Turns.Single();
@@ -1017,6 +1028,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             out PlayerTurnObservation composite
         ));
         Assert.Equal("player text", composite.PlayerText);
+        Assert.Equal("memory useful for the reply", Assert.Single(composite.Recalls).Body);
         Assert.NotNull(composite.ExternalLocalTimestamp);
         Assert.Equal(
             [ReplyOne, ReplyTwo],
@@ -1059,6 +1071,7 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             out PlayerTurnObservation afterUndoComposite
         ));
         Assert.Empty(afterUndoComposite.Notices);
+        Assert.Equal(3, recallProvider.CallCount);
         Assert.NotNull(afterUndoComposite.ExternalLocalTimestamp);
         Assert.Equal(2, backend.StartCallCount);
     }
@@ -1679,7 +1692,15 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
         }
     }
 
-    private sealed class BoundedRecallProvider(int maximumCalls)
+    private static void AssertReplyRecallVisible(CompletionRequest request) {
+        string content = Assert.IsType<string>(request.PromptPrefix
+            .SharedContextMessages.OfType<ObservationMessage>().Last().Content);
+        Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(content,
+            out PlayerTurnObservation observation));
+        Assert.Equal("memory useful for the reply", Assert.Single(observation.Recalls).Body);
+    }
+
+    private sealed class BoundedRecallProvider(int maximumCalls, bool emitRecallForReply = false)
         : IGalateaPlayerTurnRecallProvider {
         private int _callCount;
         internal int CallCount => Volatile.Read(ref _callCount);
@@ -1693,10 +1714,15 @@ public sealed class GalateaDelegationRuntimeVerticalTests {
             int call = Interlocked.Increment(ref _callCount);
             if (call > maximumCalls) {
                 throw new InvalidOperationException(
-                    "Automatic triggers must bypass player recall."
+                    "Fresh recall exceeded the expected admission count."
                 );
             }
-            return ValueTask.FromResult<IReadOnlyList<PlayerTurnRecall>>([]);
+            return ValueTask.FromResult<IReadOnlyList<PlayerTurnRecall>>(
+                emitRecallForReply && request.CurrentObservation.Notices
+                    .Any(static notice => notice is PlayerTurnNotice.Reply)
+                    ? [new PlayerTurnRecall(new RecallEntry(RecallType.MemoExactText,
+                        "reply-memory"), "memory useful for the reply")]
+                    : []);
         }
     }
 
