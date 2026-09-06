@@ -91,6 +91,7 @@ body {
 }
 
 #autonomy-state,
+#autonomy-connection,
 #autonomy-countdown,
 #autonomy-last-activation {
   display: inline-block;

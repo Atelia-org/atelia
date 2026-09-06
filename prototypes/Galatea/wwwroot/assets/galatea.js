@@ -239,100 +239,122 @@ export function formatMailboxStatus(
   return `邮箱状态：${labels[status.state]}（${suffix}）`;
 }
 
-export function requireLoopPulseStatus(value) {
+export function requireAgentStatus(value) {
   const status = requireExactKeys(value, [
-    "state", "nextActivationAtUnixTimeMilliseconds",
+    "state", "connectionId", "nextActivationAtUnixTimeMilliseconds",
     "lastActivationAtUnixTimeMilliseconds", "code",
-  ], "loop pulse status");
-  if (!["waiting", "autonomy-paused"].includes(status.state)) {
-    throw new Error("loop pulse status.state is unknown");
+  ], "agent status");
+  if (!["disabled", "starting", "waiting", "autonomy-paused", "blocked",
+    "running", "maintenance", "stopping"].includes(status.state)) {
+    throw new Error("agent status.state is unknown");
   }
-  requireNullableNonnegativeInteger(
-    status.nextActivationAtUnixTimeMilliseconds,
-    "loop pulse status.nextActivationAtUnixTimeMilliseconds",
-  );
-  requireNullableNonnegativeInteger(
-    status.lastActivationAtUnixTimeMilliseconds,
-    "loop pulse status.lastActivationAtUnixTimeMilliseconds",
-  );
+  for (const field of ["nextActivationAtUnixTimeMilliseconds",
+    "lastActivationAtUnixTimeMilliseconds"]) {
+    requireNullableNonnegativeInteger(status[field], `agent status.${field}`);
+  }
+  if (status.connectionId !== null) {
+    requireNonblankString(status.connectionId, "agent status.connectionId");
+  }
   if (status.code !== null) {
-    requireNonblankString(status.code, "loop pulse status.code");
+    requireNonblankString(status.code, "agent status.code");
   }
-  if (status.state === "waiting") {
-    if (status.nextActivationAtUnixTimeMilliseconds === null
-        || status.code !== null) {
-      throw new Error("waiting loop pulse status has an invalid state matrix");
+  if (["disabled", "starting", "maintenance", "stopping"].includes(status.state)) {
+    if (status.nextActivationAtUnixTimeMilliseconds !== null
+        || status.lastActivationAtUnixTimeMilliseconds !== null || status.code !== null) {
+      throw new Error("inactive agent status has an invalid state matrix");
     }
-  } else if (status.nextActivationAtUnixTimeMilliseconds !== null
-      || status.code === null) {
-    throw new Error("paused loop pulse status has an invalid state matrix");
+  } else if (status.state === "waiting") {
+    if (status.nextActivationAtUnixTimeMilliseconds === null || status.code !== null) {
+      throw new Error("waiting agent status has an invalid state matrix");
+    }
+  } else if (status.state === "autonomy-paused") {
+    if (status.nextActivationAtUnixTimeMilliseconds !== null
+        || status.code !== "AUTONOMOUS_TURN_FAILED") {
+      throw new Error("paused agent status has an invalid state matrix");
+    }
+  } else if (status.state === "blocked") {
+    if (status.nextActivationAtUnixTimeMilliseconds !== null || status.code === null) {
+      throw new Error("blocked agent status has an invalid state matrix");
+    }
+  } else if (status.code !== null) {
+    throw new Error("running agent status must not carry an error code");
+  }
+  if (status.state === "disabled" && status.connectionId !== null) {
+    throw new Error("disabled agent must not carry a connection");
   }
   return status;
 }
 
-export function requireLoopPulseAcceptedTurn(value) {
-  const accepted = requireExactKeys(
-    value,
-    ["turnId", "origin"],
-    "loop pulse accepted turn",
-  );
-  if (!/^[0-9a-f]{32}$/.test(accepted.turnId)) {
-    throw new Error("loop pulse accepted turn.turnId is invalid");
-  }
-  if (!["delegate-reply", "heartbeat-activation"].includes(accepted.origin)) {
-    throw new Error("loop pulse accepted turn.origin is unknown");
-  }
-  return accepted;
-}
+// Observation only. Every response is fenced against page lifecycle and local
+// turn mutations; a slow GET cannot overwrite a newer send, rewind or SSE result.
+export function createAgentStatusFollower({
+  fetchImpl, publishStatus, publishCurrent, publishRecent, attachTurn,
+  getRevision, isBusy, setTimeoutFn, clearTimeoutFn,
+}) {
+  let enabled = false;
+  let generation = 0;
+  let timer = null;
+  let inFlight = false;
+  let refreshRequested = false;
 
-export function requireLoopPulseSuccess(statusCode, value) {
-  if (statusCode === 200) {
-    return Object.freeze({
-      kind: "status",
-      status: requireLoopPulseStatus(value),
+  async function read(url, validator) {
+    const response = await fetchImpl(url, {
+      method: "GET", credentials: "same-origin", cache: "no-store",
     });
+    if (!response.ok) throw new Error(`status read failed: ${response.status}`);
+    return await readJsonResponse(response, validator);
   }
-  if (statusCode === 202) {
-    return Object.freeze({
-      kind: "accepted",
-      accepted: requireLoopPulseAcceptedTurn(value),
-    });
+  function schedule(delay = 5000) {
+    if (!enabled || inFlight || timer !== null) return;
+    timer = setTimeoutFn(() => { timer = null; void run(); }, delay);
   }
-  throw new Error("loop pulse success status is unknown");
-}
-
-export function decideLoopPulseParsedResponse(
-  statusCode,
-  value,
-  currentOptInGeneration,
-) {
-  requireBoolean(currentOptInGeneration, "current opt-in generation");
-  if (statusCode === 200 && !currentOptInGeneration) {
-    return Object.freeze({ kind: "ignore-stale-status" });
+  async function run() {
+    if (!enabled || inFlight) return;
+    inFlight = true;
+    refreshRequested = false;
+    const epoch = generation;
+    const revision = getRevision();
+    const current = () => enabled && epoch === generation && revision === getRevision();
+    try {
+      const status = await read("/api/v1/agent/status", requireAgentStatus);
+      if (!current()) return;
+      publishStatus(status);
+      if (isBusy()) return;
+      const turn = await read("/api/v1/chat/turns/current", requireCurrentTurn);
+      if (!current() || isBusy()) return;
+      publishCurrent(turn);
+      if (turn.status === "running") {
+        if (turn.turnId) {
+          // attachTurn synchronously takes UI ownership before its first await.
+          // Keep status polling alive while that separate SSE operation runs.
+          void Promise.resolve(attachTurn(turn.turnId)).catch(() => {});
+        }
+        return;
+      }
+      if (turn.status === "idle") {
+        const recent = await read("/api/v1/recent-turns", requireRecentTurnsResponse);
+        if (current() && !isBusy()) publishRecent(recent);
+      }
+    } catch {
+      if (current()) publishStatus(null);
+    } finally {
+      inFlight = false;
+      schedule(refreshRequested ? 0 : 5000);
+    }
   }
-  let success;
-  try {
-    success = requireLoopPulseSuccess(statusCode, value);
-  } catch (error) {
-    return Object.freeze({ kind: "reconcile-stop", error });
-  }
-  if (success.kind === "accepted") {
-    return Object.freeze({
-      kind: "attach",
-      accepted: success.accepted,
-    });
-  }
-  return currentOptInGeneration
-    ? Object.freeze({ kind: "apply-status", status: success.status })
-    : Object.freeze({ kind: "ignore-stale-status" });
-}
-
-export function shouldIgnoreStaleLoopPulseResponse(
-  statusCode,
-  currentOptInGeneration,
-) {
-  requireBoolean(currentOptInGeneration, "current opt-in generation");
-  return statusCode === 200 && !currentOptInGeneration;
+  return Object.freeze({
+    start() {
+      if (!enabled) { enabled = true; generation += 1; }
+      refreshRequested = true;
+      if (timer !== null) { clearTimeoutFn(timer); timer = null; }
+      schedule(0);
+    },
+    stop() {
+      enabled = false;
+      generation += 1;
+      if (timer !== null) { clearTimeoutFn(timer); timer = null; }
+    },
+  });
 }
 
 export function createAutonomyCountdownProjection(
@@ -340,7 +362,7 @@ export function createAutonomyCountdownProjection(
   receiptUnixTimeMilliseconds,
   receiptMonotonicMilliseconds,
 ) {
-  const status = requireLoopPulseStatus(statusValue);
+  const status = requireAgentStatus(statusValue);
   requireNonnegativeInteger(
     receiptUnixTimeMilliseconds,
     "countdown receipt unix time",
@@ -405,13 +427,13 @@ export function formatAutonomyCountdown(remainingMilliseconds) {
     : `约 ${seconds} 秒`;
 }
 
-export function formatAutonomyPulseStatus(
+export function formatAgentStatus(
   statusValue,
   remainingMilliseconds,
   formatActivationTime = (milliseconds) =>
     new Date(milliseconds).toLocaleString(),
 ) {
-  const status = requireLoopPulseStatus(statusValue);
+  const status = requireAgentStatus(statusValue);
   if (typeof formatActivationTime !== "function") {
     throw new Error("autonomy activation-time formatter is required");
   }
@@ -429,10 +451,23 @@ export function formatAutonomyPulseStatus(
       paused: true,
     });
   }
-  requireNonnegativeFiniteNumber(
-    remainingMilliseconds,
-    "autonomy status remaining time",
-  );
+  if (status.state !== "waiting") {
+    const labels = {
+      disabled: "未加入服务端自主运行",
+      starting: "正在启动",
+      blocked: `等待人工处理（${status.code}）`,
+      running: "正在运行",
+      maintenance: "维护模式",
+      stopping: "正在停止",
+    };
+    return Object.freeze({
+      stateText: `自主活动：${labels[status.state]}`,
+      countdownText: "",
+      lastActivationText,
+      paused: status.state === "blocked",
+    });
+  }
+  requireNonnegativeFiniteNumber(remainingMilliseconds, "autonomy status remaining time");
   return Object.freeze({
     stateText: "自主活动：等待空闲倒计时",
     countdownText: `下次自主激活：${formatAutonomyCountdown(
@@ -440,127 +475,6 @@ export function formatAutonomyPulseStatus(
     )}`,
     lastActivationText,
     paused: false,
-  });
-}
-
-export function describeAutomaticTurnOrigin(origin) {
-  switch (origin) {
-    case "delegate-reply":
-      return Object.freeze({
-        attachStatus: "收到 Codex 回信，正在继续…",
-        autonomyStatus: "自主活动：正在处理 Codex 回信；本轮完成后重新计时",
-      });
-    case "heartbeat-activation":
-      return Object.freeze({
-        attachStatus: "空闲倒计时结束，角色正在自主活动…",
-        autonomyStatus: "自主活动：角色正在自主活动…",
-      });
-    default:
-      throw new Error("automatic turn origin is unknown");
-  }
-}
-
-export function createLoopPulseScheduler({
-  runPulse,
-  canRun,
-  setTimeoutFn,
-  clearTimeoutFn,
-  setInFlight = () => {},
-  intervalMilliseconds = 10_000,
-}) {
-  for (const [name, value] of Object.entries({
-    runPulse, canRun, setTimeoutFn, clearTimeoutFn, setInFlight,
-  })) {
-    if (typeof value !== "function") {
-      throw new Error(`loop pulse scheduler ${name} is required`);
-    }
-  }
-  if (!Number.isSafeInteger(intervalMilliseconds)
-      || intervalMilliseconds <= 0) {
-    throw new Error("loop pulse scheduler interval must be a positive safe integer");
-  }
-
-  let enabled = false;
-  let generation = 0;
-  let timer = null;
-  let inFlight = false;
-  let immediateRequested = false;
-
-  function isCurrent(candidateGeneration) {
-    return enabled && candidateGeneration === generation;
-  }
-
-  function schedule(delayMilliseconds, candidateGeneration = generation) {
-    if (!isCurrent(candidateGeneration) || timer !== null || inFlight) {
-      return;
-    }
-    const scheduled = {
-      generation: candidateGeneration,
-      id: null,
-    };
-    scheduled.id = setTimeoutFn(() => {
-      if (timer === scheduled) {
-        timer = null;
-      }
-      void run(candidateGeneration);
-    }, delayMilliseconds);
-    timer = scheduled;
-  }
-
-  async function run(candidateGeneration) {
-    if (!isCurrent(candidateGeneration) || inFlight) {
-      return;
-    }
-    const context = Object.freeze({
-      generation: candidateGeneration,
-      isCurrent: () => isCurrent(candidateGeneration),
-    });
-    immediateRequested = false;
-    if (!canRun(context)) {
-      schedule(intervalMilliseconds, candidateGeneration);
-      return;
-    }
-    inFlight = true;
-    try {
-      setInFlight(true);
-      await runPulse(context);
-    } finally {
-      try {
-        setInFlight(false);
-      } finally {
-        inFlight = false;
-      }
-      if (enabled && immediateRequested) {
-        immediateRequested = false;
-        schedule(0, generation);
-      } else if (enabled && isCurrent(candidateGeneration)) {
-        schedule(intervalMilliseconds, candidateGeneration);
-      }
-    }
-  }
-
-  return Object.freeze({
-    start() {
-      if (enabled) {
-        return;
-      }
-      enabled = true;
-      generation += 1;
-      immediateRequested = true;
-      if (!inFlight) {
-        immediateRequested = false;
-        schedule(0, generation);
-      }
-    },
-    stop() {
-      enabled = false;
-      generation += 1;
-      immediateRequested = false;
-      if (timer !== null) {
-        clearTimeoutFn(timer.id);
-        timer = null;
-      }
-    },
   });
 }
 
@@ -1280,32 +1194,6 @@ export function shouldClearDraftForTurnOrigin(origin) {
   }
 }
 
-export function shouldDisableMailLoopAfterTerminal(terminalType, checked) {
-  if (terminalType !== "done" && terminalType !== "error") {
-    throw new Error("terminal type is unknown");
-  }
-  requireBoolean(checked, "mail loop checked");
-  return terminalType === "error" && checked;
-}
-
-export function shouldDisableMailLoopAfterUnrecoverableStream(
-  continuationDecision,
-  checked,
-) {
-  requireBoolean(checked, "mail loop checked");
-  switch (continuationDecision) {
-    case "stop-protocol":
-    case "stop-unconfirmed":
-      return checked;
-    case "retry-confirm":
-    case "reconnect":
-    case "refresh-stop":
-      return false;
-    default:
-      throw new Error("stream continuation decision is unknown");
-  }
-}
-
 async function readJsonResponse(response, validator) {
   const contentType = response.headers.get("content-type") ?? "";
   if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType)) {
@@ -1338,11 +1226,12 @@ function startGalateaApp() {
     stopRequested: false,
     activeTurnId: null,
     activeTurnOrigin: null,
-    terminalErrorDisabledMailLoop: false,
     streamGeneration: 0,
-    mailLoopInFlight: false,
-    mailLoopInitialized: false,
-    autonomyPulseStatus: null,
+    uiRevision: 0,
+    initializing: true,
+    recoveryTurn: null,
+    observedCurrentMessage: null,
+    agentStatus: null,
     autonomyCountdownProjection: null,
     autonomyCountdownTimerId: null,
     mailboxStatus: null,
@@ -1375,7 +1264,8 @@ function startGalateaApp() {
   const sendButton = document.getElementById("send-button");
   const undoLastButton = document.getElementById("undo-last-button");
   const stopButton = document.getElementById("stop-button");
-  const mailLoopEnabled = document.getElementById("mail-loop-enabled");
+  const resumeTurnButton = document.getElementById("resume-turn-button");
+  const autonomyConnection = document.getElementById("autonomy-connection");
   const mailboxStatus = document.getElementById("mailbox-status");
   const autonomyStatus = document.getElementById("autonomy-status");
   const autonomyState = document.getElementById("autonomy-state");
@@ -1470,7 +1360,7 @@ function startGalateaApp() {
   }
 
   function formatLastAutonomyActivation() {
-    const last = state.autonomyPulseStatus
+    const last = state.agentStatus
       ?.lastActivationAtUnixTimeMilliseconds;
     return last === null || last === undefined
       ? "上次自主激活：尚无"
@@ -1489,21 +1379,20 @@ function startGalateaApp() {
   }
 
   function renderProjectedAutonomyStatus() {
-    const status = state.autonomyPulseStatus;
+    const status = state.agentStatus;
     const projection = state.autonomyCountdownProjection;
-    if (!status || !projection || !mailLoopEnabled?.checked) {
+    if (!status || !projection) {
       return;
     }
     const remaining = projectAutonomyCountdown(
       projection,
       window.performance.now(),
     );
-    applyAutonomyView(formatAutonomyPulseStatus(status, remaining));
+    applyAutonomyView(formatAgentStatus(status, remaining));
   }
 
   function scheduleAutonomyCountdownProjection() {
-    if (!mailLoopEnabled?.checked
-        || state.autonomyCountdownProjection === null
+    if (state.autonomyCountdownProjection === null
         || state.autonomyCountdownTimerId !== null) {
       return;
     }
@@ -1514,36 +1403,58 @@ function startGalateaApp() {
     }, 1000);
   }
 
-  function publishAutonomyPulseStatus(statusValue) {
-    const status = requireLoopPulseStatus(statusValue);
+  function publishAgentStatus(status) {
     clearAutonomyCountdownTimer();
-    state.autonomyPulseStatus = status;
+    if (status === null) {
+      setTransientAutonomyStatus("自主活动：状态读取失败；服务端运行状态待确认");
+      return;
+    }
+    state.agentStatus = status;
+    if (autonomyConnection) {
+      autonomyConnection.textContent = status.connectionId === null
+        ? "后台连接：无" : `后台连接：${status.connectionId}`;
+    }
     state.autonomyCountdownProjection = createAutonomyCountdownProjection(
-      status,
-      Date.now(),
-      window.performance.now(),
+      status, Date.now(), window.performance.now(),
     );
-    if (status.state === "autonomy-paused") {
-      applyAutonomyView(formatAutonomyPulseStatus(status, 0));
+    if (status.state !== "waiting") {
+      applyAutonomyView(formatAgentStatus(status, 0));
       return;
     }
     renderProjectedAutonomyStatus();
     scheduleAutonomyCountdownProjection();
   }
 
-  function markAutonomyTurnInProgress(origin) {
-    if (!mailLoopEnabled?.checked) {
-      setTransientAutonomyStatus("自主活动：未启用");
-      return;
+  function publishObservedCurrent(current) {
+    state.recoveryTurn = current.status === "recovery-required" ? current : null;
+    refreshInteractionControls();
+    let message = null;
+    if (current.status === "recovery-required") {
+      message = current.restartRequired
+        ? "上次模型调用结果不确定；点击恢复可明确授权重新调用。"
+        : "存在待恢复轮次；点击恢复继续。";
+    } else if (current.status === "unprovisioned") {
+      message = "会话仓库尚未完成初始化。";
     }
-    const automatic = origin === "delegate-reply"
-      || origin === "heartbeat-activation"
-      ? describeAutomaticTurnOrigin(origin).autonomyStatus
-      : "自主活动：本轮完成后重新计时";
-    setTransientAutonomyStatus(automatic);
+    if (message !== null) {
+      statusText.textContent = message;
+    } else if (statusText.textContent === state.observedCurrentMessage) {
+      statusText.textContent = "";
+    }
+    state.observedCurrentMessage = message;
   }
 
-  let mailLoopScheduler = null;
+  const agentFollower = createAgentStatusFollower({
+    fetchImpl: window.fetch.bind(window),
+    publishStatus: publishAgentStatus,
+    publishCurrent: publishObservedCurrent,
+    publishRecent: (recent) => { applyRecentTurnsPayload(recent); renderTurns(); },
+    attachTurn: (turnId) => attachToTurn(turnId, "正在跟随服务端轮次…", "observed"),
+    getRevision: () => state.uiRevision,
+    isBusy: () => state.streaming || state.activeTurnId !== null,
+    setTimeoutFn: window.setTimeout.bind(window),
+    clearTimeoutFn: window.clearTimeout.bind(window),
+  });
 
   function renderTurns() {
     turnList.innerHTML = state.recentTurns.map(renderTurn).join("")
@@ -1574,14 +1485,14 @@ function startGalateaApp() {
   }
 
   function refreshInteractionControls() {
-    const admissionBusy = state.streaming || state.mailLoopInFlight;
+    const admissionBusy = state.initializing || state.streaming;
     sendButton.disabled = maintenanceMode || admissionBusy;
-    input.disabled = maintenanceMode || state.streaming;
+    input.disabled = maintenanceMode || admissionBusy;
     if (stopButton) {
-      stopButton.disabled = maintenanceMode || !state.streaming;
+      stopButton.disabled = maintenanceMode || state.initializing || !state.streaming;
     }
-    if (mailLoopEnabled) {
-      mailLoopEnabled.disabled = maintenanceMode;
+    if (resumeTurnButton) {
+      resumeTurnButton.disabled = maintenanceMode || admissionBusy || state.recoveryTurn === null;
     }
     if (connectionPicker) {
       connectionPicker.querySelectorAll('input[name="connection"]').forEach((radio) => {
@@ -1591,15 +1502,10 @@ function startGalateaApp() {
   }
 
   function setStreaming(streaming, status) {
+    state.uiRevision += 1;
     state.streaming = streaming;
     refreshInteractionControls();
     statusText.textContent = status || "";
-    refreshComposerMode();
-  }
-
-  function setMailLoopInFlight(inFlight) {
-    state.mailLoopInFlight = inFlight;
-    refreshInteractionControls();
     refreshComposerMode();
   }
 
@@ -1616,8 +1522,8 @@ function startGalateaApp() {
 
     if (undoLastButton) {
       undoLastButton.disabled = maintenanceMode
+        || state.initializing
         || state.streaming
-        || state.mailLoopInFlight
         || !hasUndoableTurn();
     }
   }
@@ -1664,7 +1570,6 @@ function startGalateaApp() {
   function clearActiveTurn() {
     state.activeTurnId = null;
     state.activeTurnOrigin = null;
-    state.terminalErrorDisabledMailLoop = false;
     state.stopRequested = false;
     state.streamGeneration += 1;
   }
@@ -1701,7 +1606,7 @@ function startGalateaApp() {
     connectionPicker.innerHTML = legend + options;
 
     connectionPicker.querySelectorAll('input[name="connection"]').forEach((radio) => {
-      radio.disabled = maintenanceMode || state.streaming || state.mailLoopInFlight;
+      radio.disabled = maintenanceMode || state.initializing || state.streaming;
       radio.addEventListener("change", () => {
         if (radio.checked) {
           selectConnection(radio.value, { persist: true });
@@ -2003,10 +1908,11 @@ function startGalateaApp() {
     return currentTurn;
   }
 
-  async function waitForCurrentTurnTerminal() {
+  async function waitForCurrentTurnTerminal(expectedTurnId) {
     while (true) {
       const currentTurn = await loadCurrentTurn();
-      if (currentTurn?.status !== "running") {
+      if (currentTurn?.status !== "running"
+          || (currentTurn.turnId !== null && currentTurn.turnId !== expectedTurnId)) {
         return currentTurn;
       }
 
@@ -2056,7 +1962,9 @@ function startGalateaApp() {
       case "done":
         if (streamEvent.recent !== null) {
           applyRecentTurnsPayload(streamEvent.recent);
-          clearPendingPoppedTurn();
+          if (shouldClearDraftForTurnOrigin(state.activeTurnOrigin)) {
+            clearPendingPoppedTurn();
+          }
           renderTurns();
         }
         resetLive();
@@ -2066,21 +1974,8 @@ function startGalateaApp() {
         }
         return;
       case "error":
-        const disableAutomaticMail = shouldDisableMailLoopAfterTerminal(
-          "error",
-          Boolean(mailLoopEnabled?.checked),
-        );
-        if (disableAutomaticMail) {
-          state.terminalErrorDisabledMailLoop = true;
-          disableMailLoop();
-        }
         resetLive();
-        setStreaming(
-          false,
-          disableAutomaticMail
-            ? `${streamEvent.message} 本轮失败，自动循环已关闭。`
-            : streamEvent.message,
-        );
+        setStreaming(true, streamEvent.message);
         return;
     }
   }
@@ -2230,12 +2125,10 @@ function startGalateaApp() {
       return;
     }
     shouldClearDraftForTurnOrigin(origin);
-    markAutonomyTurnInProgress(origin);
 
     markRecapCadenceProgressStale("active-turn");
     state.activeTurnId = normalizedTurnId;
     state.activeTurnOrigin = origin;
-    state.terminalErrorDisabledMailLoop = false;
     const generation = ++state.streamGeneration;
     let reconciliationFailures = 0;
 
@@ -2263,7 +2156,7 @@ function startGalateaApp() {
         const terminalEvent = await readEventStream(response);
         let currentTurn = null;
         try {
-          currentTurn = await waitForCurrentTurnTerminal();
+          currentTurn = await waitForCurrentTurnTerminal(normalizedTurnId);
         } catch {
           // A validated terminal ends this transport turn. Durable-view
           // reconciliation below remains bounded and never reconnects it.
@@ -2277,8 +2170,6 @@ function startGalateaApp() {
         if (terminalDecision !== "refresh-stop") {
           throw new Error("terminal stream continuation is invalid");
         }
-        const terminalErrorDisabledMailLoop =
-          state.terminalErrorDisabledMailLoop;
         clearActiveTurn();
         resetLive();
         let recentUnavailable = false;
@@ -2304,9 +2195,6 @@ function startGalateaApp() {
         } else {
           terminalStatus = "";
         }
-        if (terminalErrorDisabledMailLoop) {
-          terminalStatus += " 本轮失败，自动循环已关闭。";
-        }
         setStreaming(false, terminalStatus);
         return;
       } catch (error) {
@@ -2323,20 +2211,7 @@ function startGalateaApp() {
           if (decision !== "stop-protocol") {
             throw new Error("protocol stream continuation is invalid");
           }
-          const disabledMailLoop =
-            shouldDisableMailLoopAfterUnrecoverableStream(
-              decision,
-              Boolean(mailLoopEnabled?.checked),
-            );
-          if (disabledMailLoop) {
-            disableMailLoop();
-          }
-          setStreaming(
-            true,
-            disabledMailLoop
-              ? "生成流协议无效；已停止自动重连并关闭自动循环，请刷新页面。"
-              : "生成流协议无效；已停止自动重连，请刷新页面。",
-          );
+          setStreaming(true, "生成流协议无效；已停止自动重连，请刷新页面。");
           return;
         }
         let currentTurn;
@@ -2352,20 +2227,7 @@ function startGalateaApp() {
             reconciliationFailures,
           });
           if (decision === "stop-unconfirmed") {
-            const disabledMailLoop =
-              shouldDisableMailLoopAfterUnrecoverableStream(
-                decision,
-                Boolean(mailLoopEnabled?.checked),
-              );
-            if (disabledMailLoop) {
-              disableMailLoop();
-            }
-            setStreaming(
-              true,
-              disabledMailLoop
-                ? "无法确认生成状态；已停止自动重连并关闭自动循环，请刷新页面。"
-                : "无法确认生成状态；已停止自动重连，请刷新页面。",
-            );
+            setStreaming(true, "无法确认生成状态；已停止自动重连，请刷新页面。");
             return;
           }
           setStreaming(true, "连接已断开，正在确认生成状态…");
@@ -2406,188 +2268,9 @@ function startGalateaApp() {
     }
   }
 
-  function disableMailLoop(message) {
-    mailLoopScheduler?.stop();
-    setTransientAutonomyStatus("自主活动：未启用");
-    if (mailLoopEnabled) {
-      mailLoopEnabled.checked = false;
-    }
-    if (message) {
-      statusText.textContent = message;
-    }
-  }
-
-  async function loadObservedCurrentTurn(status) {
-    let currentTurn = await loadCurrentTurn();
-    currentTurn = await waitForPublishedCurrentTurn(currentTurn);
-    if (currentTurn?.status === "running" && currentTurn.turnId) {
-      await attachToTurn(currentTurn.turnId, status, "observed");
-      return true;
-    }
-    if (currentTurn?.status === "recovery-required") {
-      disableMailLoop(currentTurn.restartRequired
-        ? "自动循环已关闭：上次模型调用结果不确定，需要明确授权后才能恢复。"
-        : "自动循环已关闭：当前会话存在待恢复轮次。");
-      return true;
-    }
-    if (currentTurn?.status === "unprovisioned") {
-      disableMailLoop("自动循环已关闭：会话仓库尚未完成初始化。");
-      return true;
-    }
-    return false;
-  }
-
-  async function reconcileAmbiguousMailLoopAdmission(cause) {
-    disableMailLoop();
-    try {
-      if (await loadObservedCurrentTurn("自动循环响应不完整，正在跟随当前轮次…")) {
-        return;
-      }
-      await loadRecentTurns().catch(() => {});
-      disableMailLoop(
-        "自动循环请求结果不确定；已停止且未自动重发。请确认会话状态后重新勾选。",
-      );
-    } catch {
-      disableMailLoop(
-        cause?.message
-          ? `自动循环请求结果不确定；未自动重发。${cause.message}`
-          : "自动循环请求结果不确定；未自动重发。请刷新页面确认。",
-      );
-    }
-  }
-
-  async function runMailLoopPulse(context) {
-    if (
-      !context?.isCurrent()
-      || maintenanceMode
-      || !mailLoopEnabled?.checked
-      || !state.mailLoopInitialized
-      || state.streaming
-    ) {
-      return;
-    }
-
-    try {
-      let response;
-      try {
-        response = await fetch("/api/v1/mailbox/ready-turn", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            connectionId: state.selectedConnectionId,
-          }),
-        });
-      } catch (error) {
-        await reconcileAmbiguousMailLoopAdmission(error);
-        return;
-      }
-
-      if (response.status === 200 || response.status === 202) {
-        if (shouldIgnoreStaleLoopPulseResponse(
-          response.status,
-          context.isCurrent() && Boolean(mailLoopEnabled?.checked),
-        )) {
-          return;
-        }
-        let value;
-        try {
-          value = await readJsonResponse(response, (parsed) => parsed);
-        } catch (error) {
-          if (shouldIgnoreStaleLoopPulseResponse(
-            response.status,
-            context.isCurrent() && Boolean(mailLoopEnabled?.checked),
-          )) {
-            return;
-          }
-          await reconcileAmbiguousMailLoopAdmission(error);
-          return;
-        }
-        const decision = decideLoopPulseParsedResponse(
-          response.status,
-          value,
-          context.isCurrent() && Boolean(mailLoopEnabled?.checked),
-        );
-        if (decision.kind === "reconcile-stop") {
-          await reconcileAmbiguousMailLoopAdmission(decision.error);
-          return;
-        }
-        if (decision.kind === "ignore-stale-status") {
-          return;
-        }
-        if (decision.kind === "apply-status") {
-          publishAutonomyPulseStatus(decision.status);
-          return;
-        }
-        const accepted = decision.accepted;
-        const description = describeAutomaticTurnOrigin(accepted.origin);
-        markRecapCadenceProgressStale("turn-accepted");
-        await attachToTurn(
-          accepted.turnId,
-          description.attachStatus,
-          accepted.origin,
-        );
-        return;
-      }
-
-      let error;
-      try {
-        error = await readJsonResponse(response, (value) =>
-          value?.code === "turn-busy"
-            ? requireBusyError(value)
-            : requireApiError(value));
-      } catch {
-        disableMailLoop("自动循环响应协议无效，已关闭自动循环。");
-        return;
-      }
-
-      if (response.status === 409 && error.code === "turn-busy") {
-        markRecapCadenceProgressStale("active-turn");
-        if (error.turnId) {
-          await attachToTurn(error.turnId, error.error, "observed");
-          return;
-        }
-        await loadObservedCurrentTurn(error.error);
-        return;
-      }
-
-      disableMailLoop(`自动循环已关闭：${error.error}`);
-    } catch (error) {
-      disableMailLoop(
-        error?.message
-          ? `自动循环已关闭：${error.message}`
-          : "自动循环发生未知错误，已关闭。",
-      );
-    }
-  }
-
-  mailLoopScheduler = createLoopPulseScheduler({
-    runPulse: runMailLoopPulse,
-    canRun: () => !maintenanceMode
-      && Boolean(mailLoopEnabled?.checked)
-      && state.mailLoopInitialized
-      && !state.streaming
-      && !state.mailLoopInFlight,
-    setTimeoutFn: window.setTimeout.bind(window),
-    clearTimeoutFn: window.clearTimeout.bind(window),
-    setInFlight: setMailLoopInFlight,
-  });
-
-  mailLoopEnabled?.addEventListener("change", () => {
-    if (mailLoopEnabled.checked) {
-      setTransientAutonomyStatus("自主活动：正在同步…");
-      mailLoopScheduler.start();
-    } else {
-      mailLoopScheduler.stop();
-      setTransientAutonomyStatus("自主活动：未启用");
-    }
-  });
-
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (maintenanceMode || state.streaming || state.mailLoopInFlight) {
+    if (maintenanceMode || state.initializing || state.streaming) {
       return;
     }
 
@@ -2640,8 +2323,8 @@ function startGalateaApp() {
   undoLastButton?.addEventListener("click", async () => {
     if (
       maintenanceMode
+      || state.initializing
       || state.streaming
-      || state.mailLoopInFlight
       || !hasUndoableTurn()
     ) {
       return;
@@ -2651,7 +2334,7 @@ function startGalateaApp() {
   });
 
   stopButton?.addEventListener("click", async () => {
-    if (maintenanceMode || !state.streaming || !state.activeTurnId) {
+    if (maintenanceMode || state.initializing || !state.streaming || !state.activeTurnId) {
       return;
     }
 
@@ -2677,6 +2360,8 @@ function startGalateaApp() {
   });
 
   async function initializeApp() {
+    refreshInteractionControls();
+    refreshComposerMode();
     const storedConnectionId = window.localStorage.getItem(connectionStorageKey());
     selectConnection(storedConnectionId ?? bootstrapConfig.defaultConnectionId, { persist: false });
     renderConnectionPicker();
@@ -2693,13 +2378,21 @@ function startGalateaApp() {
     }
     currentTurn = await waitForPublishedCurrentTurn(currentTurn);
     if (currentTurn?.status === "running" && currentTurn.turnId) {
-      if (currentTurn.connectionId) {
-        selectConnection(currentTurn.connectionId, { updateRadio: true });
-      }
-      await attachToTurn(currentTurn.turnId, "正在恢复生成…", "observed");
+      void attachToTurn(currentTurn.turnId, "正在恢复生成…", "observed");
       return;
     }
-    if (currentTurn?.status === "recovery-required") {
+    publishObservedCurrent(currentTurn);
+
+    resetLive();
+    refreshComposerMode();
+    setStreaming(false, currentTurn.status === "idle" ? "" : statusText.textContent);
+  }
+
+  resumeTurnButton?.addEventListener("click", async () => {
+    if (maintenanceMode || state.initializing || state.streaming || state.recoveryTurn === null) return;
+    const currentTurn = state.recoveryTurn;
+    setStreaming(true, "正在恢复…");
+    try {
       const restartUncertainCompletion = currentTurn.restartRequired
         ? window.confirm(
           "上次模型调用的结果不确定。重新调用可能产生重复请求；是否明确授权重新调用？"
@@ -2742,27 +2435,41 @@ function startGalateaApp() {
       refreshComposerMode();
       setStreaming(false, error.error);
       return;
+    } catch (error) {
+      setStreaming(false, error.message || "恢复失败");
     }
+  });
 
-    resetLive();
-    refreshComposerMode();
-    setStreaming(false, "");
+  let initialized = false;
+  function startFollowers() {
+    if (!initialized || document.visibilityState === "hidden") return;
+    agentFollower.start();
   }
+  window.addEventListener("pagehide", () => {
+    agentFollower.stop();
+    clearAutonomyCountdownTimer();
+  });
+  window.addEventListener("pageshow", startFollowers);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      agentFollower.stop();
+      clearAutonomyCountdownTimer();
+    } else { startFollowers(); }
+  });
 
   mailboxStatusPoller.start();
   initializeApp()
-    .then(() => {
-      state.mailLoopInitialized = true;
-      if (mailLoopEnabled?.checked) {
-        mailLoopScheduler.stop();
-        mailLoopScheduler.start();
-      }
-    })
     .catch((error) => {
-      disableMailLoop();
       clearActiveTurn();
       resetLive();
       setStreaming(false, error.message || "加载失败");
+    })
+    .finally(() => {
+      state.initializing = false;
+      refreshInteractionControls();
+      refreshComposerMode();
+      initialized = true;
+      startFollowers();
     });
 }
 
