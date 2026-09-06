@@ -35,10 +35,9 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                 "Galatea requires strict RecapGrid runtime configuration."
             );
 
-        CompletionConnectionsFileConfig normalized =
-            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+        CompletionConnectionCatalogConfig normalized =
+            CompletionConnectionConfigLoader.NormalizeAndValidateCatalog(new(
                 config.Connections,
-                config.DefaultConnectionId,
                 config.SelectableConnectionIds,
                 new Dictionary<string, string?>(StringComparer.Ordinal) {
                     [InputNormalizerBindingKey] =
@@ -52,6 +51,10 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
                 }
             ));
         ValidateGalateaRouting(normalized);
+        GalateaConfigValidation.RequireValidConnectionDefaults(
+            config.Users,
+            normalized
+        );
 
         ICompletionClientFactory ownedFactory =
             GalateaCompletionLogging.CreateOwnedFactory(
@@ -87,7 +90,6 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
         }
 
         Connections = normalized.Connections;
-        DefaultConnectionId = normalized.DefaultConnectionId!;
         SelectableConnectionIds = normalized.SelectableConnectionIds!;
         InputNormalizerConnectionId = normalized.Bindings![
             InputNormalizerBindingKey
@@ -108,8 +110,6 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
     internal IReadOnlyList<CompletionConnectionConfig> Connections {
         get;
     }
-
-    internal string DefaultConnectionId { get; }
 
     internal IReadOnlyList<string> SelectableConnectionIds { get; }
 
@@ -177,7 +177,7 @@ internal sealed class GalateaCompletionOwner : IAsyncDisposable {
             );
 
     internal static void ValidateGalateaRouting(
-        CompletionConnectionsFileConfig config
+        CompletionConnectionCatalogConfig config
     ) {
         ArgumentNullException.ThrowIfNull(config);
         if (config.SelectableConnectionIds is null) {

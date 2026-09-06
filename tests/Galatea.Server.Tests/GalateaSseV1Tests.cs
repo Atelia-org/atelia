@@ -418,10 +418,10 @@ public sealed class GalateaSseV1Tests {
                 "/delegation-state",
                 "/character-memory-state",
                 GalateaSessionProvisioning.ExistingOnly,
-                "prompt"
+                "prompt",
+                "test"
             ),
             [new GalateaConnectionInfoDto("test", "model")],
-            "test",
             maintenanceMode: false,
             assetVersion: "fixture-token"
         );

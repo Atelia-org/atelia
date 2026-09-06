@@ -493,7 +493,8 @@ public sealed class CharacterNoteExtractorTests {
             userId
         ),
         GalateaSessionProvisioning.ExistingOnly,
-        "system prompt"
+        "system prompt",
+        "note-extractor"
     );
 
     private static ActionBlock.ToolCall Tool(

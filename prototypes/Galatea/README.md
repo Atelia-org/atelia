@@ -6,12 +6,12 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
 
 ## 配置
 
-`config.json` 使用单一 strict V6 language，必须包含exact integer `"v": 6`、至少一个user与strict
+`config.json` 使用单一 strict V7 language，必须包含exact integer `"v": 7`、至少一个user与strict
 `recapGrid`：
 
 ```json
 {
-  "v": 6,
+  "v": 7,
   "users": [
     {
       "userId": "alice",
@@ -22,6 +22,7 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
       "delegationStateDir": "delegation-state/alice",
       "characterMemoryStateDir": "character-memory/alice",
       "sessionProvisioning": "create-if-missing",
+      "defaultConnectionId": "local",
       "characterContextTemplate": "",
       "characterContextTemplateFile": "prompts/character-context-standard-zh-cn.md"
     }
@@ -38,10 +39,10 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
 ```
 
 writer固定把`v`放在首字段，reader不要求property order。missing version、future version、`null`、string、
-`6.0`或`6e0`都拒绝；V1–V5、versionless与future config都没有compatibility reader或自动迁移。
-V6保留V5的code-owned prompt composition，并新增required `characterMemoryStateDir`。V5升级时必须停服、备份并
-确认实际`Galatea:ConfigPath`，将version改为`6`并为每个user选择独立、互不嵌套的character-memory path。
-应用不会自动迁移或重写password及其他operator配置；V4及更早完整prompt的拆分要求见历史合同。
+`7.0`或`7e0`都拒绝；V1–V6、versionless与future config都没有compatibility reader或自动迁移。
+V7保留V6的prompt/storage contract，并新增required per-user `defaultConnectionId`。V6升级时必须停服、备份、
+确认实际`Galatea:ConfigPath`，将version改为`7`，并为每个user选择一个exact selectable connection。
+应用不会自动迁移或重写password及其他operator配置；更早版本的delta见历史合同。
 
 `characterName`与`playerName`都是required、already-trimmed Unicode NFC label，按strict UTF-8限制为
 1..128 bytes；它们分别表示GM扮演的主要NPC与故事内玩家角色，都不从login `userId`推导。两者拒绝控制/
@@ -114,28 +115,34 @@ repository move；`..`与
 absolute path仍是合法的lexical path，这项规则不承诺把session限制在config目录内，也不声称提供额外的no-follow
 filesystem边界。
 
-Current product contract见[root config V6](../../docs/SessionJournal/current/contracts/galatea-root-config-v6.md)。
+Current product contract见[root config V7](../../docs/SessionJournal/current/contracts/galatea-root-config-v7.md)。
+[Root config V6](../../docs/SessionJournal/current/contracts/galatea-root-config-v6.md)、
 [Root config V5](../../docs/SessionJournal/current/contracts/galatea-root-config-v5.md)、
 [Root config V4](../../docs/SessionJournal/current/contracts/galatea-root-config-v4.md)、
 [Root config V3](../../docs/SessionJournal/current/contracts/galatea-root-config-v3.md)、
 [Root config V2](../../docs/SessionJournal/current/contracts/galatea-root-config-v2.md)与
 [Root config V1 appendix](../../docs/SessionJournal/current/contracts/galatea-root-config-v1.md)仍保留其当时获批准并由
-`session-journal-contract-r2-approved-surfaces-v2`锚定的历史事实；该旧tag不认证V2–V6 delta。
+`session-journal-contract-r2-approved-surfaces-v2`锚定的历史事实；该旧tag不认证V2–V7 delta。
 
 `connections.json` 是唯一 Completion endpoint catalog，同时携带 host-level selection
-metadata。根必须包含 integer token `"v": 2`、非空 `connections`、exact
-`defaultConnectionId`、非空 `selectableConnectionIds` 与 exact `bindings` object。
+metadata。Galatea要求根包含exact integer token `"v": 3`、非空 `connections`、非空
+`selectableConnectionIds` 与 exact `bindings` object；root `defaultConnectionId`是unknown field。
 `selectableConnectionIds` 是有序的 Agent/UI allowlist：每项必须 exact 命中 catalog，
-不得重复，且必须包含 `defaultConnectionId`。不在 allowlist 中的 helper/Recap
+不得重复。每个user的`defaultConnectionId`必须exact命中该allowlist。不在 allowlist 中的 helper/Recap
 connection 仍可被内部 exact binding、RecapGrid route 或 frozen recovery 使用，但不会
 显示在 browser 中，也不能作为 fresh/current Agent connection 提交。
+
+请求显式`connectionId`优先；省略时使用authenticated session user的default。HTML bootstrap只传该user
+default。Browser的per-user `localStorage` stored selection若仍在server allowlist中则优先，缺失或失效时才回到
+bootstrap default。Frozen completion recovery继续使用durable exact identity；只有new request或需要current
+selection fallback的tool continuation读取user default。
 
 Galatea 当前要求 `bindings` exact 包含四个兄弟 key：
 `"galatea.input-normalizer"`、`"galatea.outbound-mail-extractor"` 与
 `"galatea.character-note-extractor"`、`"galatea.memo-recall"`。每个值为
 connection ID 时启用对应feature，为 `null` 时显式禁用；不存在、blank、wrong-case、
 unknown ID 或多余 binding
-都会在 startup fail closed，绝不 fallback 到 `defaultConnectionId`。Normalizer 的
+都会在 startup fail closed，绝不 fallback 到任何user default。Normalizer 的
 model/provider/surface/endpoint/secret locator 全部来自该 connection，client 只在首次真正
 需要清洗时惰性创建；OutboundMailExtractor 同样使用hidden、lazy、borrowed client，且不进入
 Agent/UI selectable allowlist。CharacterNoteExtractor也按每个user的exact `CharacterName`构造，借用同一
@@ -146,7 +153,7 @@ registry并保持client lazy。DerivedInfo enricher复用同一个Character Note
 0结果也写durable tombstone，非0结果幂等保存到每个角色的默认MemoPod。只有当前
 post-completion返回`AppliedNow`且final head仍一致时才queue保存回执；admission/restart恢复不补回执。Binding非
 `null`时主system prompt追加Character Note保存Quick Start，`null`时完全不出现该能力。
-Bootstrap connections template把outbound、Character Note与Memo recall bindings都写为`null`。
+Bootstrap connections template写V3、不写global default，并把outbound、Character Note与Memo recall bindings都写为`null`。
 这是一次有意的closed-shape hard cut：现有只含三个binding key的`connections.json`会在startup被拒绝。升级时必须
 先停服、备份，并显式增加`"galatea.memo-recall": null`；runtime不自动改写可能包含secret的sibling config，也不保留
 three-key兼容reader。
@@ -155,9 +162,10 @@ fresh turn自然触发existing exact desired-setup rotation；不引入operator 
 
 每个 connection 必须显式提供 `completionSurfaceId`，并在 `baseAddress` /
 `baseAddressEnv` 中恰好选择一个，在 `apiKey` / `apiKeyEnv` 中至多选择一个。
-Numeric V2 通用地允许 optional `selectableConnectionIds` / `bindings`；Galatea 对两者
-做上述 required 收紧，并且不接受caller-selected output cap。V1不会被读取或迁移；operator必须停服、
-备份并将code与manifest配套发布，应用不会自动改写可能含secret的文件。
+Completion V3 catalog通用地允许optional `selectableConnectionIds` / `bindings`；Galatea对两者
+做上述required收紧，并且不接受caller-selected output cap。Completion V2 default-bearing contract继续供其他
+consumer使用，但Galatea不读取V1/V2。Operator必须停服、备份，把manifest version改为3、删除global
+`defaultConnectionId`，并把每个user的default加入V7 root；应用不会自动改写可能含secret的文件。
 
 `.atelia/galatea/delegates.json` 是独立于 Completion catalog 的 required、
 machine-local Codex 代行配置。V2 是 closed schema，并且当前只允许一条 exact、
@@ -712,7 +720,7 @@ route与connection都不能覆盖该策略，并且没有 wildcard/default fallb
   derived stores。
 - Started：启动时 strict config/connections 已冻结；默认 Refuse 早于本次 current
   connection selection/client、route 与 derived owner。
-- 当前 root strict config language为V6；connections与delegate route保持owner-defined V2，profile保持owner-defined V1。当前Linux-only
+- 当前 root strict config language为V7；connections使用Completion-owned V3 catalog，delegate route保持owner-defined V2，profile保持owner-defined V1。当前Linux-only
   file loader对这些文件与`characterContextTemplateFile`都执行code-owned byte cap、existing-ancestor no-reparse与final-file
   no-follow regular-file 规则读取；bootstrap 也会在首次写前验证 parent chain。
 - ToolContinuation：先 bind frozen tool profile/operation，再以无工具的 current completion

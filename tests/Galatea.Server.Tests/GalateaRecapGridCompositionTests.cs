@@ -1741,7 +1741,8 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         first + "-delegation-state",
                         first + "-character-memory-state",
                         GalateaSessionProvisioning.ExistingOnly,
-                        "test system prompt"),
+                        "test system prompt",
+                        connection.Id),
                     new GalateaUserConfig(
                         "bob",
                         "pw",
@@ -1751,10 +1752,10 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         second + "-delegation-state",
                         second + "-character-memory-state",
                         GalateaSessionProvisioning.ExistingOnly,
-                        "test system prompt")
+                        "test system prompt",
+                        connection.Id)
                 ],
                 [connection],
-                connection.Id,
                 [connection.Id],
                 InputNormalizerConnectionId: null,
                 Delegates: GalateaDelegateTestConfiguration.Create()),
@@ -2455,9 +2456,9 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             path + "-delegation-state",
             path + "-character-memory-state",
             GalateaSessionProvisioning.ExistingOnly,
-            systemPrompt)],
+            systemPrompt,
+            connection.Id)],
         [connection],
-        connection.Id,
         [connection.Id],
         InputNormalizerConnectionId: null,
         Delegates: GalateaDelegateTestConfiguration.Create());

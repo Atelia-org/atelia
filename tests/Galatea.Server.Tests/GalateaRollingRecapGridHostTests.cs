@@ -949,9 +949,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             path + "-delegation-state",
             path + "-character-memory-state",
             GalateaSessionProvisioning.ExistingOnly,
-            "test system prompt")],
+            "test system prompt",
+            AgentConnectionId)],
         connections,
-        AgentConnectionId,
         [AgentConnectionId],
         InputNormalizerConnectionId: null,
         Delegates: GalateaDelegateTestConfiguration.Create()

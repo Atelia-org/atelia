@@ -515,7 +515,8 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                 StateDirectory,
                 Path.Combine(_root, "character-memory"),
                 GalateaSessionProvisioning.ExistingOnly,
-                "system prompt"
+                "system prompt",
+                "test"
             );
             GalateaDelegationStoreLimits limits =
                 GalateaDelegationSupervisor.CreateLimits(Route);
@@ -703,6 +704,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                     User.DelegationStateDir,
                     User.CharacterMemoryStateDir,
                     User.SessionProvisioning,
+                    User.DefaultConnectionId,
                     CharacterContextTemplate: "prompt ${characterName}"
                 )],
                 RecapGrid: new GalateaRecapGridFileConfig(

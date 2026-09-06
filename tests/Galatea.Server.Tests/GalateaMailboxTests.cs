@@ -682,7 +682,8 @@ public sealed class GalateaMailboxTests {
         "/tmp/delegation-" + userId,
         "/tmp/character-memory-" + userId,
         GalateaSessionProvisioning.ExistingOnly,
-        "system " + characterName
+        "system " + characterName,
+        "agent"
     );
 
     private static ActionMessage Message(params ActionBlock[] blocks) =>

@@ -544,6 +544,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                         TestUserId
                     ),
                     sessionProvisioning,
+                    defaultConnectionId,
                     CharacterContextTemplate: characterContextTemplate
                 )
             ],
@@ -650,10 +651,11 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string? characterNoteExtractorConnectionId = null,
         string? memoRecallConnectionId = null
     ) {
+        _ = defaultConnectionId;
         var output = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(output)) {
             writer.WriteStartObject();
-            writer.WriteNumber("v", 2);
+            writer.WriteNumber("v", 3);
             writer.WriteStartArray("connections");
             foreach (CompletionConnectionConfig connection in connections) {
                 if (!string.IsNullOrWhiteSpace(connection.BaseAddressEnv)
@@ -677,7 +679,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 writer.WriteEndObject();
             }
             writer.WriteEndArray();
-            writer.WriteString("defaultConnectionId", defaultConnectionId);
             writer.WriteStartArray("selectableConnectionIds");
             foreach (string connectionId
                      in selectableConnectionIds
@@ -738,7 +739,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             writer.WriteEndObject();
         }
         byte[] bytes = output.WrittenSpan.ToArray();
-        _ = CompletionConnectionConfigLoader.Decode(bytes);
+        _ = CompletionConnectionConfigLoader.DecodeCatalog(bytes);
         File.WriteAllBytes(path, bytes);
     }
 

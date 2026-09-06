@@ -629,7 +629,6 @@ public sealed class GalateaDelegationSupervisorTests {
     ) => new(
         Users: users,
         Connections: [],
-        DefaultConnectionId: "unused",
         SelectableConnectionIds: [],
         InputNormalizerConnectionId: null,
         Delegates: GalateaDelegateTestConfiguration.Create(root),
@@ -651,7 +650,8 @@ public sealed class GalateaDelegationSupervisorTests {
         statePath,
         statePath + "-character-memory",
         provisioning,
-        SystemPrompt: "prompt"
+        SystemPrompt: "prompt",
+        DefaultConnectionId: "unused"
     );
 
     private static GalateaDelegationSqliteStore CreateStore(

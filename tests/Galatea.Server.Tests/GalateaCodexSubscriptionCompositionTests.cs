@@ -181,9 +181,8 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
         IReadOnlyList<CompletionConnectionConfig> effectiveConnections =
             connections ?? [CodexConnection()];
         return new GalateaConfig(
-            users ?? [User("alice")],
+            users ?? [User("alice", effectiveConnections[0].Id)],
             effectiveConnections,
-            effectiveConnections[0].Id,
             effectiveConnections.Select(static value => value.Id).ToArray(),
             InputNormalizerConnectionId: null,
             Delegates: GalateaDelegateTestConfiguration.Create(),
@@ -193,7 +192,10 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
         );
     }
 
-    private static GalateaUserConfig User(string id) => new(
+    private static GalateaUserConfig User(
+        string id,
+        string defaultConnectionId = "codex"
+    ) => new(
         id,
         "pw",
         new GalateaCharacterName("Galatea"),
@@ -210,7 +212,8 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
             id
         ),
         GalateaSessionProvisioning.ExistingOnly,
-        SystemPrompt: "prompt"
+        SystemPrompt: "prompt",
+        DefaultConnectionId: defaultConnectionId
     );
 
     private static CompletionConnectionConfig CodexConnection(

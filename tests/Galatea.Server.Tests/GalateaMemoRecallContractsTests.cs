@@ -386,6 +386,7 @@ public sealed class GalateaMemoRecallContractsTests {
         "/delegation",
         "/memory",
         GalateaSessionProvisioning.ExistingOnly,
-        "system"
+        "system",
+        "memo-recall"
     );
 }

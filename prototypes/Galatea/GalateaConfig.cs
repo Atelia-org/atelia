@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json.Serialization;
 using Atelia.Completion;
 using Atelia.Galatea.Prompts;
@@ -14,7 +15,6 @@ namespace Atelia.Galatea.Server;
 public sealed record GalateaConfig(
     IReadOnlyList<GalateaUserConfig> Users,
     IReadOnlyList<CompletionConnectionConfig> Connections,
-    string DefaultConnectionId,
     IReadOnlyList<string> SelectableConnectionIds,
     string? InputNormalizerConnectionId,
     GalateaDelegateConfig Delegates,
@@ -63,6 +63,7 @@ internal sealed record GalateaUserFileConfig(
     string DelegationStateDir,
     string CharacterMemoryStateDir,
     GalateaSessionProvisioning SessionProvisioning,
+    string DefaultConnectionId,
     string CharacterContextTemplate = "",
     string? CharacterContextTemplateFile = null
 );
@@ -76,7 +77,8 @@ public sealed record GalateaUserConfig(
     string DelegationStateDir,
     string CharacterMemoryStateDir,
     GalateaSessionProvisioning SessionProvisioning,
-    string SystemPrompt
+    string SystemPrompt,
+    string DefaultConnectionId
 );
 
 [JsonConverter(typeof(JsonStringEnumConverter<GalateaSessionProvisioning>))]
@@ -88,6 +90,61 @@ public enum GalateaSessionProvisioning {
 }
 
 internal static class GalateaConfigValidation {
+    internal const int MaximumConnectionIdUtf8Bytes = 128;
+
+    internal static void RequireValidConnectionDefaults(
+        IReadOnlyList<GalateaUserConfig> users,
+        CompletionConnectionCatalogConfig catalog
+    ) {
+        ArgumentNullException.ThrowIfNull(users);
+        ArgumentNullException.ThrowIfNull(catalog);
+        if (catalog.SelectableConnectionIds is null) {
+            throw new InvalidOperationException(
+                "Galatea connections require selectableConnectionIds before "
+                + "per-user defaults can be validated."
+            );
+        }
+
+        var connectionIds = catalog.Connections
+            .Select(static connection => connection.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var selectable = catalog.SelectableConnectionIds.ToHashSet(
+            StringComparer.Ordinal
+        );
+        for (int index = 0; index < users.Count; index++) {
+            GalateaUserConfig user = users[index]
+                ?? throw new InvalidOperationException(
+                    $"Galatea config user[{index}] must not be null."
+                );
+            if (string.IsNullOrWhiteSpace(user.DefaultConnectionId)) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' must have a "
+                    + "non-empty defaultConnectionId."
+                );
+            }
+            if (Encoding.UTF8.GetByteCount(user.DefaultConnectionId)
+                > MaximumConnectionIdUtf8Bytes) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' defaultConnectionId "
+                    + "exceeds its UTF-8 byte bound."
+                );
+            }
+            if (!connectionIds.Contains(user.DefaultConnectionId)) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' defaultConnectionId "
+                    + $"'{user.DefaultConnectionId}' does not exactly match a "
+                    + "catalog connection id."
+                );
+            }
+            if (!selectable.Contains(user.DefaultConnectionId)) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' defaultConnectionId "
+                    + $"'{user.DefaultConnectionId}' is not selectable."
+                );
+            }
+        }
+    }
+
     internal static void RequireValidStorageTopology(
         IReadOnlyList<GalateaUserConfig> users,
         string? callLogDirectory

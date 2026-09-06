@@ -13,13 +13,14 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaRootConfigFieldLanguageTests {
     private const string MinimalV6 =
-        "{\"v\":6,\"users\":[{\"userId\":\"alice\",\"password\":\"pw\","
+        "{\"v\":7,\"users\":[{\"userId\":\"alice\",\"password\":\"pw\","
         + "\"characterName\":\"Galatea\","
         + "\"playerName\":\"刘世超\","
         + "\"sessionDir\":\"sessions/alice\","
         + "\"delegationStateDir\":\"delegation-state/alice\","
         + "\"characterMemoryStateDir\":\"character-memory/alice\","
         + "\"sessionProvisioning\":\"create-if-missing\","
+        + "\"defaultConnectionId\":\"test\","
         + "\"characterContextTemplate\":\"inline ${characterName}\"}],"
         + "\"recapGrid\":{\"routeManifestPath\":\"routes.json\","
         + "\"agentControlProfileFiles\":[\"profile.json\"],"
@@ -39,10 +40,11 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         + "\"delegationStateDir\":\"delegation-state/alice\","
         + "\"characterMemoryStateDir\":\"character-memory/alice\","
         + "\"sessionProvisioning\":\"existing-only\","
-        + "\"password\":\"pw\",\"\\u0075serId\":\"alice\"}],\"\\u0076\":6}";
+        + "\"defaultConnectionId\":\"test\","
+        + "\"password\":\"pw\",\"\\u0075serId\":\"alice\"}],\"\\u0076\":7}";
 
     [Fact]
-    public void HandwrittenFullV6AcceptsOrderFreeNestedAndEscapedNames() {
+    public void HandwrittenFullV7AcceptsOrderFreeNestedAndEscapedNames() {
         using var fixture = new RootConfigFixture();
 
         GalateaConfig config = fixture.Load(ReorderedEscapedFullV6);
@@ -97,6 +99,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
             ("user", "sessionDir"),
             ("user", "delegationStateDir"),
             ("user", "characterMemoryStateDir"),
+            ("user", "defaultConnectionId"),
             ("recap", "routeManifestPath"),
             ("recap", "agentControlProfileFiles"),
             ("recap", "currentAgentControlProfileId")
@@ -110,7 +113,8 @@ public sealed class GalateaRootConfigFieldLanguageTests {
                     RequiredMutation.Remove
                 ))
             );
-            if (field is "characterName" or "playerName") {
+            if (field is "characterName" or "playerName"
+                or "defaultConnectionId") {
                 Assert.IsType<InvalidDataException>(missing);
             }
             else {
@@ -354,7 +358,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
     }
 
     [Fact]
-    public void LegacyPromptFieldsRemainUnknownInV6() {
+    public void LegacyPromptFieldsRemainUnknownInV7() {
         using var fixture = new RootConfigFixture();
 
         foreach (string oldField in new[] {
@@ -778,8 +782,8 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         );
 
         string comment = MinimalV6.Replace(
-            "\"v\":6,",
-            "\"v\":6/*comment*/,",
+            "\"v\":7,",
+            "\"v\":7/*comment*/,",
             StringComparison.Ordinal
         );
         Assert.Throws<InvalidDataException>(() =>
@@ -824,6 +828,7 @@ public sealed class GalateaRootConfigFieldLanguageTests {
         ["delegationStateDir"] = $"delegation-state/{id}",
         ["characterMemoryStateDir"] = $"character-memory/{id}",
         ["sessionProvisioning"] = "existing-only",
+        ["defaultConnectionId"] = "test",
         ["characterName"] = "Galatea",
         ["playerName"] = "刘世超",
         ["characterContextTemplate"] = "inline ${characterName}"

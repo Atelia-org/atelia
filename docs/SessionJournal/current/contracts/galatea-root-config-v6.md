@@ -1,6 +1,6 @@
-# Galatea root config V6 current contract
+# Galatea root config V6 historical contract
 
-状态：**Current product contract；hard cut from V5**  
+状态：**Archived historical predecessor；current contract is [V7](galatea-root-config-v7.md)**  
 Authority：current Galatea code、`GalateaRootConfigFieldLanguageTests`、
 `GalateaConfigValidationTests`、`GalateaSessionProvisioningTests`与
 `GalateaTrackedPromptTemplateTests`  

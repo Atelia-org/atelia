@@ -60,7 +60,7 @@ public sealed class GalateaSessionProvisioningTests {
     }
 
     [Fact]
-    public async Task MissingCreateIfMissing_ConcurrentlyCreatesOneFirstTurnReadyRepositoryFromExactDefault() {
+    public async Task MissingCreateIfMissing_UsesPerUserDefaultInsteadOfCatalogOrderDecoy() {
         var factory = new CountingCompletionClientFactory();
         CompletionConnectionConfig decoy = Connection(
             "first",
@@ -81,6 +81,11 @@ public sealed class GalateaSessionProvisioningTests {
         );
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
+        GalateaConfig loadedConfig = GalateaConfigLoader.Load(host.ConfigPath);
+        Assert.Equal(
+            selected.Id,
+            Assert.Single(loadedConfig.Users).DefaultConnectionId
+        );
 
         using var ready = new CountdownEvent(16);
         using var start = new ManualResetEventSlim(false);
@@ -747,7 +752,7 @@ public sealed class GalateaSessionProvisioningTests {
             },
             new CompletionConnectionsFileConfig(
                 config.Connections,
-                config.DefaultConnectionId
+                Assert.Single(config.Users).DefaultConnectionId
             ),
             factory,
             config.RecapGrid!.AgentControlProfiles

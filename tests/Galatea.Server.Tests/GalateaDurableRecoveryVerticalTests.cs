@@ -707,7 +707,11 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             .WaitAsync(CompletionDeadline);
 
         Assert.Equal("completed", liveTurn.Status);
-        Assert.False(service.TryGetConnection(historical.Id, out _));
+        Assert.False(service.TryGetConnection(
+            session.User,
+            historical.Id,
+            out _
+        ));
         Assert.Equal(1, completionFactory.CreateCallCount);
         Assert.Equal(historical.Id, completionFactory.LastConnectionId);
         Assert.Equal(historical.Id, liveTurn.Options.ConnectionId);

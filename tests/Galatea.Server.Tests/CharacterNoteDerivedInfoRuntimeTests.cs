@@ -393,7 +393,8 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         "/delegation/" + id,
         "/memory/" + id,
         GalateaSessionProvisioning.ExistingOnly,
-        "system"
+        "system",
+        "agent"
     );
 
     private static ActionMessage Message(params ActionBlock[] blocks) =>
@@ -837,7 +838,8 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
                 Path.Combine(_root, "delegation"),
                 Path.Combine(_root, "memory"),
                 GalateaSessionProvisioning.ExistingOnly,
-                "system"
+                "system",
+                "agent"
             );
             return new UserSessionHost(
                 user,

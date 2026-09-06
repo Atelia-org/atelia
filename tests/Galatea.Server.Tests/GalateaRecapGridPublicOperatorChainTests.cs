@@ -224,6 +224,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                         repository + "-delegation-state",
                         repository + "-character-memory-state",
                         GalateaSessionProvisioning.ExistingOnly,
+                        AgentConnectionId,
                         "operator-chain ${characterName} system prompt"
                     )],
                     RecapGrid: new GalateaRecapGridFileConfig(

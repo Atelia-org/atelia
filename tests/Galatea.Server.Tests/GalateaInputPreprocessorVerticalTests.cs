@@ -69,7 +69,11 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         Assert.Equal([main.Id], service.Connections.Select(
             static value => value.Id
         ));
-        Assert.False(service.TryGetConnection(helper.Id, out _));
+        Assert.False(service.TryGetConnection(
+            session.User,
+            helper.Id,
+            out _
+        ));
         Assert.True(PlayerTurnObservationEnvelope.TryUnwrap(
             Assert.Single(session.Engine.ReadRecentCompletedTurns()
                 .RequireSnapshot().Turns).ObservationContent,

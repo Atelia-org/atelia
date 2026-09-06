@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 6;
+    internal const int CurrentConfigVersion = 7;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumUserCount = 256;
@@ -247,13 +247,13 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("6"u8)) {
+            || !reader.ValueSpan.SequenceEqual("7"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 6; "
+        "Galatea config requires exact integer version 'v': 7; "
         + "migrate the config before retrying."
     );
 
@@ -269,6 +269,7 @@ internal static class GalateaStrictConfigReader {
                 case "sessionDir":
                 case "delegationStateDir":
                 case "characterMemoryStateDir":
+                case "defaultConnectionId":
                 case "characterContextTemplate":
                     RequireToken(reader.TokenType, JsonTokenType.String, property);
                     break;
@@ -295,6 +296,11 @@ internal static class GalateaStrictConfigReader {
         if (!seen.Contains("playerName")) {
             throw new InvalidDataException(
                 "user requires string field 'playerName'."
+            );
+        }
+        if (!seen.Contains("defaultConnectionId")) {
+            throw new InvalidDataException(
+                "user requires string field 'defaultConnectionId'."
             );
         }
     }

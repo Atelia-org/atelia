@@ -248,7 +248,6 @@ app.MapGet(
             GalateaHtml.RenderAppPage(
                 configUser,
                 hostService.Connections,
-                hostService.DefaultConnectionId,
                 config.MaintenanceMode,
                 assetVersion
             ),
@@ -422,6 +421,7 @@ api.MapPost(
                 );
             }
             if (!hostService.TryGetConnection(
+                    session.User,
                     request.ConnectionId,
                     out CompletionConnectionConfig connection
                 )) {
@@ -601,6 +601,7 @@ api.MapPost(
             if (recovery is SessionRuntimeRecoveryRequirements
                     .NewRequestRequired) {
                 if (!hostService.TryGetConnection(
+                        session.User,
                         request.ConnectionId,
                         out CompletionConnectionConfig connection
                     )) {
@@ -618,7 +619,7 @@ api.MapPost(
                 // then apply Galatea's current-selection allowlist without
                 // constructing a client, and only later open Online/client.
                 connectionId = request.ConnectionId
-                    ?? hostService.DefaultConnectionId;
+                    ?? session.User.DefaultConnectionId;
             }
             else if (recovery is SessionRuntimeRecoveryRequirements
                          .FrozenCompletionRequired frozen) {
@@ -728,6 +729,7 @@ api.MapPost(
                 );
             }
             if (!hostService.TryGetConnection(
+                    session.User,
                     request.ConnectionId,
                     out CompletionConnectionConfig connection)) {
                 return Results.BadRequest(new ApiErrorDto(
@@ -922,6 +924,7 @@ api.MapPost(
                 );
             }
             if (!hostService.TryGetConnection(
+                    session.User,
                     request.ConnectionId,
                     out CompletionConnectionConfig connection)) {
                 return Results.BadRequest(new ApiErrorDto(
