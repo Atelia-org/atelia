@@ -1,17 +1,18 @@
 # Galatea
 
-Galatea 是面向真实 SessionJournal repository 的单会话 HTTP host。raw journal 和
+Galatea 是面向真实 SessionJournal repository 的 per-user Role-Play Agent host，支持静态启用的服务端持续运行与 Web 观察面板。raw journal 和
 selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、Store 都是
 可验证、可重建的 derived authority。
 
 ## 配置
 
-`config.json` 使用单一 strict V7 language，必须包含exact integer `"v": 7`、至少一个user与strict
+`config.json` 使用单一 strict V8 language，必须包含exact integer `"v": 8`、至少一个user与strict
 `recapGrid`：
 
 ```json
 {
-  "v": 7,
+  "v": 8,
+  "serverAgentUserIds": [],
   "users": [
     {
       "userId": "alice",
@@ -39,9 +40,12 @@ selected `RefId` lineage 是会话 authority；RecapGrid Timeline、Control、St
 ```
 
 writer固定把`v`放在首字段，reader不要求property order。missing version、future version、`null`、string、
-`7.0`或`7e0`都拒绝；V1–V6、versionless与future config都没有compatibility reader或自动迁移。
-V7保留V6的prompt/storage contract，并新增required per-user `defaultConnectionId`。V6升级时必须停服、备份、
-确认实际`Galatea:ConfigPath`，将version改为`7`，并为每个user选择一个exact selectable connection。
+`8.0`或`8e0`都拒绝；V1–V7、versionless与future config都没有compatibility reader或自动迁移。
+V8保留required per-user `defaultConnectionId`，新增optional `serverAgentUserIds`。省略或`[]`表示全部禁用；
+列表必须nonblank、Ordinal unique、exact命中已配置user，显式null、错误类型或未知成员拒绝。启用某个角色例如
+`"serverAgentUserIds": ["gpt"]`，每个自动轮次使用该user的default；浏览器当前选中的连接只影响人工请求。
+V7升级时必须停服、备份、确认实际`Galatea:ConfigPath`，将version改为`8`，显式选择enrollment。
+更早版本还需为每个user选择一个exact selectable default connection。
 应用不会自动迁移或重写password及其他operator配置；更早版本的delta见历史合同。
 
 `characterName`与`playerName`都是required、already-trimmed Unicode NFC label，按strict UTF-8限制为
@@ -115,14 +119,14 @@ repository move；`..`与
 absolute path仍是合法的lexical path，这项规则不承诺把session限制在config目录内，也不声称提供额外的no-follow
 filesystem边界。
 
-Current product contract见[root config V7](../../docs/SessionJournal/current/contracts/galatea-root-config-v7.md)。
+Current product contract见[root config V8](../../docs/SessionJournal/current/contracts/galatea-root-config-v8.md)。
 [Root config V6](../../docs/SessionJournal/current/contracts/galatea-root-config-v6.md)、
 [Root config V5](../../docs/SessionJournal/current/contracts/galatea-root-config-v5.md)、
 [Root config V4](../../docs/SessionJournal/current/contracts/galatea-root-config-v4.md)、
 [Root config V3](../../docs/SessionJournal/current/contracts/galatea-root-config-v3.md)、
 [Root config V2](../../docs/SessionJournal/current/contracts/galatea-root-config-v2.md)与
 [Root config V1 appendix](../../docs/SessionJournal/current/contracts/galatea-root-config-v1.md)仍保留其当时获批准并由
-`session-journal-contract-r2-approved-surfaces-v2`锚定的历史事实；该旧tag不认证V2–V7 delta。
+`session-journal-contract-r2-approved-surfaces-v2`锚定的历史事实；该旧tag不认证V2–V8 delta。
 
 `connections.json` 是唯一 Completion endpoint catalog，同时携带 host-level selection
 metadata。Galatea要求根包含exact integer token `"v": 3`、非空 `connections`、非空
@@ -165,7 +169,7 @@ fresh turn自然触发existing exact desired-setup rotation；不引入operator 
 Completion V3 catalog通用地允许optional `selectableConnectionIds` / `bindings`；Galatea对两者
 做上述required收紧，并且不接受caller-selected output cap。Completion V2 default-bearing contract继续供其他
 consumer使用，但Galatea不读取V1/V2。Operator必须停服、备份，把manifest version改为3、删除global
-`defaultConnectionId`，并把每个user的default加入V7 root；应用不会自动改写可能含secret的文件。
+`defaultConnectionId`，并把每个user的default加入当前root；应用不会自动改写可能含secret的文件。
 
 `.atelia/galatea/delegates.json` 是独立于 Completion catalog 的 required、
 machine-local Codex 代行配置。V2 是 closed schema，并且当前只允许一条 exact、
@@ -536,51 +540,52 @@ ASCII token作为code-owned info string。现有Recap contribution已复用它�
 发件人、主题与正文。来信正文在prompt中明确只是故事数据，不获得指令权限。该入口共享maintenance、
 per-session `TurnLock`、recovery admission与main connection allowlist。
 
-`POST /api/v1/mailbox/ready-turn` 是供first-party browser心跳使用的conditional mutation，接受strict JSON
-`{connectionId?}`。它不向browser暴露`reply_notice`正文，也不接受player text：server在per-session
-`TurnLock`内先结算既有lease与latest extraction gap，只允许exact `Idle` boundary，再验证main connection与
-fresh admission。每次pulse先以V1 internal discriminator执行现有`BeginCutoff`：有Ready notice时原子冻结
-bounded FIFO prefix，并以202 exact `{turnId,origin:"delegate-reply"}`启动typed `DelegateReply`；durable lease仍是
-唯一Ready-to-Leased authority。只有没有Ready prefix时，才观察process-local autonomy cadence：未到期或暂停返回
-200 exact `{state,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code}`，其中
-`state`只能是`waiting`或`autonomy-paused`：waiting要求non-null next/null code，paused要求null next/non-null
-diagnostic code，last activation在两种状态都可为null；到期则唯一claim并以202 exact
-`{turnId,origin:"heartbeat-activation"}`启动typed `HeartbeatActivation`。Ready reply即使在autonomy paused时也
-始终优先，不被pause阻断。waiting pulse不创建live turn或main-Agent provider call；但admission仍可能结算既有
-reply lease/extraction gap，必要时会调用outbound extractor并持久化capture/tombstone。两个automatic trigger都
-不经过input normalizer，textarea等browser草稿不进入Observation。busy、failed turn及其他recovery boundary返回typed
-409；尤其不会自动abandon failed turn、resume/restart recovery或claim对应Ready notice。多tab竞争由
-`TurnLock`、SQLite reply lease与process-local autonomy gate共同串行化；server endpoint自身不形成后台scheduler，
-browser opt-in仍是唯一sponsor开关。
+### 服务端 Agent loop 与 Dev 面板
 
-每个session的browser-sponsored autonomy state只存在于server进程内并由同一`TurnLock`保护；它用宿主
-`TimeProvider`的monotonic timestamp裁决10分钟idle interval，wall-clock Unix milliseconds只用于HTTP/UI投影，
-不参与due identity。首次pulse或间隔严格超过30秒的sponsor gap都会从该pulse重新arm完整10分钟；exact 30秒仍
-视为continuous sponsorship。browser休眠只会让
-激活变晚，不会提前，也不会补发missed tick。任意successful completed main turn（manual、reply、inbound、
-recovery或autonomous）在已armed时重置完整interval并清除pause。terminal `HeartbeatActivation` failure会暂停后续
-空激活；后续成功的non-autonomous turn可清除pause。server/session重启丢弃这些状态并保守地重新arm，不从
-SessionJournal或delegation SQLite恢复倒计时。
+`GalateaServerAgentHostedService`在非maintenance启动时只attach `serverAgentUserIds`中的session，
+立即检查Ready reply，随后每10秒在进程内调用`GalateaAutomaticTurnCoordinator`。关闭或休眠所有页面不影响它。
+未enrollment的账号保持原有按需attach；配置enrollment与default connection的修改需要重启。
 
-First-party browser在composer中提供默认关闭且不持久化的“页面打开时自动续接 Codex 回信，并在空闲10分钟后
-唤醒角色”开关。勾选后立即发起首个pulse，之后用single-flight递归timer每10秒调用一次同一conditional endpoint；
-前一次HTTP admission或其accepted SSE turn未结束时，同一opt-in generation不会重叠。200 waiting/paused更新
-server-authoritative状态、下次激活与上次自主激活显示；两次network pulse之间的“约”倒计时只是browser本地
-monotonic projection，不裁决due。202按server返回的exact origin沿用现有turn stream；busy只跟随已发布turn。
-paused是正常状态并继续pulse，因此显式重新勾选后仍可领取优先到达的Ready reply。任意terminal SSE error都会
-取消发起tab的勾选；server pause同时阻止其他tab反复发起空激活。recovery、
-unprovisioned、非预期协议以及无法由current/recent只读视图确认的response-loss都会fail closed并取消勾选，
-不会自动重发mutation或授权resume。自动turn从不读取、提交或清空textarea；只有本tab手动提交且亲自收到
-202的turn在`done`时清空草稿。Checkbox由每个tab各自拥有，不做browser leader election；所有页面关闭或休眠时
-没有sponsor pulse，也就没有自主激活保证。browser的10秒pulse只负责主会话admission，不改变delegation
-supervisor每秒重读SQLite的durable fallback pulse。
+Coordinator在per-session `TurnLock`内结算既有lease与latest extraction gap，只允许exact `Idle` boundary，
+再验证该user的default connection与fresh admission。先执行现有`BeginCutoff`：有Ready notice时原子冻结
+bounded FIFO prefix并启动typed `DelegateReply`；SQLite lease仍是唯一Ready-to-Leased authority。
+没有Ready prefix才检查`GalateaAutonomyCadence`，到期唯一claim并启动typed `HeartbeatActivation`。
+busy只跳过本次检查，不排队补tick。Waiting不创建live turn或main-Agent provider call，但durable admission
+必要时仍会调用extractor结算旧gap。Automatic trigger不经过input normalizer，不读取browser草稿。
 
-一次`HeartbeatActivation`会产生一次正常main Completion成本；它不调用player-only Memo recall，但successful
-terminal Action仍进入既有Outbound Mail与Character Note post-processing，角色也可能由此发送Codex邮件并产生后续
-reply turn。runtime不要求角色必须采取动作、调用工具或发送邮件，选择休息同样是合法terminal Action。本MVP没有
-自主turn count/token/output cap、`MaxTokens`/`MaxOutputTokens`、output deadline或自动interrupt，也没有durable
-scheduler、catch-up、可配置cadence、service worker或leader election；运行成本与停止权由默认关闭的checkbox、
-10分钟idle cadence、single-flight、fail-closed pause及人工取消共同约束。
+Cadence使用`TimeProvider`的monotonic timestamp判断完整10分钟idle interval；wall-clock只用于诊断投影。
+首次启动重新arm，不从raw/SQLite恢复deadline，不补停机期间missed tick。调度延迟不会重新arm，也不会补发多个
+过期tick。成功完成main turn（manual、reply、inbound、recovery或autonomous）重新计时并清除失败暂停。
+Heartbeat failure仅暂停空激活，仍检查Ready reply；DelegateReply failure则进入`AUTOMATIC_REPLY_FAILED`
+阻断，防止pre-dispatch失败退回Ready后被反复重领。成功的后续main turn可清除阻断；重启重置进程内状态，
+但durable recovery boundary仍需重新检查，绝不自动abandon、resume或restart uncertain completion。
+
+`GalateaAcceptedTurnRunner`统一四种入口的执行和收尾，持有writer lock直至terminal/post-processing结束。
+Shutdown先停止新attach/admission，再取消并等待scheduler与已接纳turn，最后释放session、SQLite、delegation和
+Completion依赖。Fatal task由宿主观察；失败不会成为无人观察的后台task。
+
+`POST /api/v1/mailbox/ready-turn`保留为已enrollment用户的一次Dev手动检查，strict body为`{}`，不再接受
+`connectionId`或player text，也不强制越过cadence。启动返回202 exact `{turnId,origin}`，origin为
+`delegate-reply`或`heartbeat-activation`；等待/暂停/未启用返回200状态投影（四字段state/next/last/code），
+busy、recovery或失败阻断返回409；maintenance write gate仍返回503。
+HTTP与后台复用同一个coordinator，不经内部HTTP自调用。
+
+`GET /api/v1/agent/status`是纯读接口，不attach、不reconcile、不领取lease、不调用provider、不等待长turn。
+响应exact `{state,connectionId,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code}`；
+state为`disabled`、`starting`、`waiting`、`autonomy-paused`、`blocked`、`running`、`maintenance`或`stopping`。
+`connectionId`显示enrolled user的default，时间只作诊断，blocked的code解释未继续运行的原因。
+
+First-party browser删除sponsor checkbox和周期POST，通过每5秒GET status/current/recent与既有SSE跟随后台轮次。
+SSE期间不重复attach；轮询期间已完成的turn通过recent补看。页面显示服务端状态、连接、约倒计时和最近激活，
+但不裁决due。打开页面不会自动resume；“恢复待处理轮次”按钮沿用exact head与uncertain restart确认。
+自动/观察轮次不修改模型radio选择，不读取、提交或清空textarea；只有本tab亲自提交的manual turn成功后清空草稿。
+现有人工发送、stop、rewind能力保留；本阶段尚无运行时enrollment或管理员pause/resume API。
+
+Heartbeat仍产生正常main Completion成本，不调用player-only Memo recall，successful terminal Action仍进入
+既有Outbound Mail与Character Note post-processing。休息是合法角色行动；本pilot不改变角色目标与动机。
+没有业务token/output cap、output deadline、自动interrupt、durable scheduler、catch-up或可调cadence。
+进程外的开机启动、crash restart与长期行为验证属于后续部署阶段。当前实施边界与验证见
+[headless pilot工作单](../../docs/Galatea/headless-agent-pilot-work-order.md)。
 
 独立的`GET /api/v1/mailbox/status`只读取supervisor已持有的delegation store，不调用
 `GetSessionAsync`、不attach session、不Signal pulse，也不触发extractor、transport或provider。它在单个
@@ -589,8 +594,7 @@ SQLite read transaction中只聚合状态、排队数量、Ready notice数量、
 `{state,queuedCount,readyNoticeCount,attemptCount,code,nextRetryAtUnixTimeMilliseconds}`并带
 `Cache-Control: no-store`；state优先级为`unavailable > quarantined > accepted-history-unavailable > backoff >
 active-running > ready-reply > queued > no-mail`。页面以独立single-in-flight、递归`setTimeout`的5秒轮询展示
-该状态和两个count，无论browser-sponsored checkbox是否勾选都会继续；它既不提供autonomy countdown，也不驱动
-或取代10秒conditional pulse，只提供delegation观察能力，不改变
+该状态和两个count；它不驱动或取代服务端10秒automatic pulse，只提供delegation观察能力，不改变
 `POST /mailbox/ready-turn`的lease/admission语义。Maintenance下existing store仍会读取并显示count，但主状态固定为
 `unavailable/MAINTENANCE_READ_ONLY`且不显示attempt/next retry，明确表示后台处理已暂停。成功的5秒poll有意不逐次
 写Debug log，避免重新制造heartbeat噪声；store read失败仍由supervisor记录Warning。
@@ -720,7 +724,7 @@ route与connection都不能覆盖该策略，并且没有 wildcard/default fallb
   derived stores。
 - Started：启动时 strict config/connections 已冻结；默认 Refuse 早于本次 current
   connection selection/client、route 与 derived owner。
-- 当前 root strict config language为V7；connections使用Completion-owned V3 catalog，delegate route保持owner-defined V2，profile保持owner-defined V1。当前Linux-only
+- 当前 root strict config language为V8；connections使用Completion-owned V3 catalog，delegate route保持owner-defined V2，profile保持owner-defined V1。当前Linux-only
   file loader对这些文件与`characterContextTemplateFile`都执行code-owned byte cap、existing-ancestor no-reparse与final-file
   no-follow regular-file 规则读取；bootstrap 也会在首次写前验证 parent chain。
 - ToolContinuation：先 bind frozen tool profile/operation，再以无工具的 current completion
@@ -744,7 +748,8 @@ route。当前versioned endpoints是：
 | POST | `/api/v1/chat/turns` | 202 `{turnId}` |
 | POST | `/api/v1/chat/turns/resume` | 202 `{turnId}` |
 | POST | `/api/v1/mailbox/inbound` | 202 `{turnId,messageId}` |
-| POST | `/api/v1/mailbox/ready-turn` | 未启动为200 `{state,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code}`；启动为202 `{turnId,origin}` |
+| GET | `/api/v1/agent/status` | 纯读 `{state,connectionId,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code}` |
+| POST | `/api/v1/mailbox/ready-turn` | enrolled user strict `{}` one-shot；未启动为200状态，启动为202 `{turnId,origin}` |
 | POST | `/api/v1/chat/turns/pop-latest` | `{poppedUserText}` |
 | GET | `/api/v1/chat/turns/current` | `status,turnId,connectionId,restartRequired,recoveryHead` |
 | POST | `/api/v1/chat/turns/{turnId}/stop` | 204 empty |

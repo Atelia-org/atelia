@@ -31,8 +31,8 @@ Root fields为required `v`、`users`、`recapGrid`，optional `listenUrls`、`ca
 - 每项必须Ordinal exact命中`users[].userId`；unknown与wrong-case拒绝，不trim或猜测。
 - 列表顺序保留，但不赋予用户优先级。
 
-Runtime `GalateaConfig.ServerAgentUserIds`为non-null只读快照。Loader、直接构造runtime config、
-production与injected host construction都使用同一语义校验；host另持有独立快照，外部mutable list
+Loader与普通构造产生的 `GalateaConfig.ServerAgentUserIds`为non-null只读快照；record initializer可覆盖该属性。
+Production与injected host construction重新使用同一语义校验并持有独立快照，外部mutable list
 及record initializer不能在host构造后改变enrollment。构造失败必须发生在启动delegation supervisor前。
 
 ## 3. 启动语义与边界
