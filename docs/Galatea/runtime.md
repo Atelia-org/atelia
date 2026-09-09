@@ -2,6 +2,24 @@
 
 本文说明 Galatea Server 的运行时职责、持久化边界与关键协议；常规启动、浏览器操作和简要日志命令由 [Galatea 文档索引](README.md) 承接。HTTP 语法见 [server-api.md](server-api.md)，连接与本地配置见 [configuration.md](configuration.md)。本文描述的是代码当前的设计合同；真实 provider/Codex 验证的证据范围见 [Codex delegation verification](codex-delegation-verification.md)。
 
+## 模型切换与 reasoning 回放排障
+
+2026-09-09 的 `gpt-5.6-sol -> gpt-6-astra` 故障在构造 Responses request 时发生：旧模型的 native reasoning 被直接
+交给 exact-Origin replay validator，HTTP 尚未发送便抛异常；由于 journal 已记录 `CompletionAttemptStarted`，旧版
+最终表现为需要显式恢复的 uncertain 状态。它不是 RecapGrid 损坏的证据，也不能用清空历史来修。
+
+当前 Responses adapter 只省略与本次完整 invocation 不匹配的 reasoning，保留可见正文、工具记录和原始历史。
+同源 native payload 仍严格校验；这一 exact validator 的已知本地拒绝使用 `CompletionRequestRejectedException`，
+由 SessionJournal 持久化为 `CompletionAttemptFailed`，不再错误停在 uncertain。适配器合同与不升级 v2 的理由见
+[Completion 的 replay 边界](../Completion/openai-codex-subscription-client-design.md#64-独立-protocol-identity)。
+
+旧版已经留下的 Started 仍须显式处理：正常停服、备份，更新并启动修复后的 Server，然后在页面选择“恢复待处理轮次”并
+明确授权重新调用。它继续使用 frozen connection/request，而不是当前下拉框选择；不要修改原始 manifest、reasoning Origin
+或临时把同一个 connectionId 改绑另一个模型。网络中断等真正不确定的调用仍不可自动重发。
+
+日志排查先看 `Galatea.TurnRunner` 的 exception stack 与 `callLogDir` 中同次调用的 `exception` / `elapsedMs`，
+不要把完整 prompt、reasoning payload 或凭据复制到 issue。新代码的 `Provider` Debug 日志记录省略块数，不记录内容。
+
 ## Completion、提取器与后处理
 
 `GalateaCompletionOwner` 是 host-wide `CompletionConnectionRegistry` 的唯一 owner。主 Agent、input normalizer、每用户的 outbound-mail extractor 和 RecapGrid 路由都借用同一套惰性 client；extractor 的按用户构造不等于另建 provider client。关闭时先 drain session 和 delegation，再由 owner 清理借用的 RecapGrid runtime 与 distinct Completion client。启用 `callLogDir` 时，统一的 Completion decorator 也会记录 normalizer 的原始输入、prompt 与输出，因此它是本地敏感数据。

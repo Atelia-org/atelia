@@ -931,12 +931,14 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         );
     }
 
-    private static async Task<EventAddress> CreateRecoveryBoundaryAsync(
+    internal static async Task<EventAddress> CreateRecoveryBoundaryAsync(
         string sessionPath,
         CompletionConnectionConfig connection,
         ICompletionClient client,
         string failpointName,
-        SessionExecutionPhase expectedPhase
+        SessionExecutionPhase expectedPhase,
+        Func<SessionJournalEngine, SessionRuntime, ValueTask<IAsyncDisposable>>?
+            bindRuntime = null
     ) {
         SessionRuntime runtime = CreateFixtureRuntime(
             connection,
@@ -983,6 +985,9 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         using var engine = Assert.IsType<SessionJournalEngine>(
             openForTest.Invoke(null, [sessionPath, runtime, hooks])
         );
+        await using IAsyncDisposable? runtimeBinding = bindRuntime is null
+            ? null
+            : await bindRuntime(engine, runtime);
 
         Exception exception = await Assert.ThrowsAnyAsync<Exception>(
             () => engine.SendAsync(
@@ -1023,7 +1028,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         return requirement.FailedHead;
     }
 
-    private static SessionRuntime CreateFixtureRuntime(
+    internal static SessionRuntime CreateFixtureRuntime(
         CompletionConnectionConfig connection,
         ICompletionClient client
     ) {
