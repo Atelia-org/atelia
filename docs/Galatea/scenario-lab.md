@@ -133,4 +133,24 @@ enrollment 和启用正式 HostedService，不保留旧 session 或自定义 rec
 
 2026-09-10 第一包 Release 定向验收：新场景与原 lab 生命周期合计 9/9，0 skipped。
 首次编译发现并修复了缺失 namespace 与 nullable 警告；独立审阅补齐等待取消令牌贯通和每轮 helper
-次数/用途断言。正式进程场景的执行记录将在其验收后追加。
+次数/用途断言。
+
+第二包 `GalateaNoteReceiptProcessCrashTests` 复用同一自动保存种子，并从创建时就把真实进程所用连接
+限定到 loopback Responses server。种子停止后只清除 enrollment，避免这一条主请求实验另起自动调度；
+此后配置保持不变。正式 Server 在 provider 收到带 receipt 的请求后被硬杀，冷读同时验证 SQLite
+`ObservationBound`、raw Observation exact proof 与 durable Started。
+
+重新启动、完成正式 attach 后，用短生命周期只读 SQLite 查询证明 receipt 已经 Delivered；此时主请求仍
+uncertain，默认恢复必须拒绝且不发请求。exact head 明确授权后 replay 完整相同的 provider 请求字节，
+最终冷读验证同一 Note、一次 receipt、两条 Observation，以及第三次 Started（首次种子、失败前请求、
+授权恢复）。恢复后的 Note extractor 仅返回无新 Note；总计两次真实 loopback 主请求、一次辅助请求。
+模拟 provider 停止并排空后才作最终计数检查、允许清理成功现场。
+
+这不是“receipt 在 SQLite 和 journal 之间原子提交”的保证，而是两个持久化边界之间的恢复协议验收。
+不改变生产恢复语义，不访问真实 Codex/public API，也不证明绑定前窗口硬杀、Memo recall、非空 RecapGrid
+或断电/fsync 耐久性。
+
+第二包独立审阅与尾修后，`scripts/test_galatea_lab.sh Release` 离线场景 16/16，Debug 全套 843/843。
+Release 首次全套为 842/843：旧 `GalateaMemoRecallProductionVerticalTests` 的 `delegate-reply` 用例
+在手工构造 Ready reply 时与后台 delegation driver 竞争 route revision；两条新增场景均通过。
+该失败报告保留，不用重复运行掩盖；后续按独立测试协调修复处理，再记录最终全套结果。
