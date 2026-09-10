@@ -263,7 +263,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
                 connection.ModelId, connection.CompletionSurfaceId, setup.SystemPrompt)));
     }
 
-    private static async ValueTask<IAsyncDisposable> BindRawOnlyRuntimeAsync(
+    internal static async ValueTask<IAsyncDisposable> BindRawOnlyRuntimeAsync(
         SessionJournalEngine engine, SessionRuntime runtime, string pendingObservation) {
         RecapGridOnlineContextHandle online = Assert.IsType<RecapGridOnlineOpenResult.Opened>(
             RecapGridOnlineFactory.Open(engine, new RejectingBatchExecutor(),
