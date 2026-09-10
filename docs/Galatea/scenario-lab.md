@@ -91,3 +91,46 @@ Release Server build 为 0 warning / 0 error，runner 通过 `bash -n`，最终 
 
 开发中场景实际拦住过：测试停服后 delegation lock 尚未释放、错误的模拟 provider route、诊断清理异常覆盖问题。
 这些失败的现场按合同保留；最终成功的实例已自动清理。只保留报告不等于删除生产历史。
+
+## 第二期：自主回合的持久状态组合验收
+
+### decision [S-LAB-PHASE2-BOUNDED] 范围与顺序
+
+沿用合成实例与真实持久化，不建立通用场景 DSL、任意生产快照 importer 或新生产管理接口。
+先验收 Note/receipt 的跨生命周期衔接，再根据这一包暴露的实际接缝决定后台调度和非空 RecapGrid
+组合的扩展范围。不同工作包保持独立审阅；不把测试通过升级为外部 exactly-once 或模型已理解通知的保证。
+
+### spec [R-LAB-NOTE-RECEIPT-CONTINUITY] Note/receipt 验收目标
+
+- 正式 HostedService 在没有 Player 输入或 HTTP pulse 的情况下驱动自动回合。
+- 第一轮保存 Note；完整停服、冷重开后下一自动轮领取 receipt；再次重开后不重复通知。
+- 核对 Note identity、源 Action 与 SQLite receipt 状态，并以 raw Observation 证明实际投递次数。
+- 冷重开按当前时刻重新等待 cadence，不把停机时间解释为需要补跑的 tick。
+- 对 ObservationBound 后尚未追加、追加后尚未确认两个窗口使用精确边界信号；不能靠固定 sleep 猜测窗口。
+- 故障现场先停止并回收 owner，再离线检查。正常 cold reopen、注入异常和真实进程硬杀分别报告，不能混称。
+
+### derived [R-LAB-PHASE2-EVIDENCE] 实施记录
+
+本期实施先限定为自动保存/通知的完整 Host 冷重开，以及 Observation 已追加、receipt 尚未确认的正式
+Server 硬杀。receipt 的确认位于主回合完成后的 reconcile，因此 provider 收到请求可作为后一窗口的
+可观测边界，不需要新生产故障开关。硬杀场景允许 HTTP Player 输入来启动这一条主路径；它不承担
+无页面自动调度的证明，后者由 HostedService 场景单独验收。
+
+绑定后尚未追加的窗口继续由现有 `GalateaNoteReceiptDeliveryTests` 的精确冷重开证明，本期不新增
+test-only 可执行入口或生产 pause hook 来把它升级为硬杀证据。
+
+非空 RecapGrid 后续应先实际生成并采用 cells，再制造 frozen request；仅注册 active recipe 的旧测试
+不能当作非空 recap 恢复证据。该工作包还需接入 lab 的失败现场保留，不在本期顺带扩张。
+
+第一包已实现并通过独立审阅：`GalateaNoteReceiptScenarioTests` 使用三个全新 Completion factory 与正式
+HostedService，跨两次完整停服/重开验证相同 Note、exact receipt 与三轮 raw Observation。
+时钟包含 timer；每次推进停机时间后仍重新等待完整十分钟。lab 只新增三个显式参数用于 Note binding、
+enrollment 和启用正式 HostedService，不保留旧 session 或自定义 recall provider 作为跨重开状态。
+
+启用 Note 会同时启动 DerivedInfo pump；种子用受控 helper 完成一份有效 DerivedInfo 后再关闭，避免把
+尚未完成的合法辅助任务误判为提前激活。该场景不配置 Memo recall，也不证明完整 DerivedInfo 故障恢复。
+主/辅助替身位于 `ICompletionClient` 边界，provider converter 的新增证据由正式进程场景单独提供。
+
+2026-09-10 第一包 Release 定向验收：新场景与原 lab 生命周期合计 9/9，0 skipped。
+首次编译发现并修复了缺失 namespace 与 nullable 警告；独立审阅补齐等待取消令牌贯通和每轮 helper
+次数/用途断言。正式进程场景的执行记录将在其验收后追加。
