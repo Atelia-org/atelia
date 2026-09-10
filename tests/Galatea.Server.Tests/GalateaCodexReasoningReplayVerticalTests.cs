@@ -27,10 +27,14 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
     private const string OldAnswer = "Visible answer from the previous model.";
     private const string NewAnswer = "Visible answer after switching models.";
     private const string ReasoningCanary = "SYNTHETIC_OLD_REASONING_CANARY";
+    // Pinned from the previous Responses adapter, before projection identity
+    // was introduced. It is intentionally not computed by the current factory.
+    private const string PreviousCodexAdapterFingerprint =
+        "sha256:8c256736bee867f3e135ff8a61b2d8a85438cae327f3299363cd03910f982fc0";
     private static readonly TimeSpan CompletionDeadline = TimeSpan.FromSeconds(10);
 
     [Fact]
-    public async Task SwitchingModel_PreservesVisibleHistoryWithoutReplayingForeignReasoning() {
+    public async Task SwitchingModel_ReplaysNativeReasoningWithoutChangingStoredOrigin() {
         var factory = new CodexFixtureFactory();
         await using var host = CreateHost(factory);
         using HttpClient http = host.CreateClient();
@@ -56,14 +60,75 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
             session.Engine.InspectExecutionBoundary().Phase);
         string[] requests = factory.Requests.ToArray();
         Assert.Equal(2, requests.Length);
-        AssertSwitchedRequest(requests[1]);
+        AssertSwitchedRequest(requests[1], originalReasoningJson);
         var completed = session.Engine.ReadRecentCompletedTurns().RequireSnapshot().Turns;
         Assert.Equal(2, completed.Count);
         Assert.Equal(NewAnswer, completed[0].TerminalAction.Message.GetFlattenedText());
-        // Projection omits incompatible replay only; it never edits raw history.
-        Assert.Equal(originalReasoningJson, Assert.Single(
+        // Cross-model replay never rewrites the provenance in raw history.
+        OpenAIResponsesReasoningBlock retainedReasoning = Assert.Single(
             completed[1].TerminalAction.Message.Blocks
-                .OfType<OpenAIResponsesReasoningBlock>()).RawItemJson);
+                .OfType<OpenAIResponsesReasoningBlock>());
+        Assert.Equal(originalReasoningJson, retainedReasoning.RawItemJson);
+        Assert.Equal(oldReasoning.Origin, retainedReasoning.Origin);
+    }
+
+    [Theory]
+    [InlineData("AfterRequestPreparedCommitted", SessionDurableDispatchState.NotStarted)]
+    [InlineData("AfterCompletionAttemptStartedCommitted",
+        SessionDurableDispatchState.StartedOutcomeUncertain)]
+    public async Task PreviousProjectionFrozenRequest_ExplicitRestartCannotReplaceAdapter(
+        string failpoint, SessionDurableDispatchState expectedDispatchState) {
+        var factory = new CodexFixtureFactory();
+        await using var host = CreateHost(factory);
+        CompletionConnectionConfig connection = Connection("test", OldModel);
+        using var client = (OpenAICodexResponsesClient)factory.Create(connection);
+        using (var engine = SessionJournalEngine.Open(host.SessionDirectory)) {
+            ReconcileModel(engine, connection);
+        }
+        EventAddress frozenHead = await GalateaDurableRecoveryVerticalTests
+            .CreateRecoveryBoundaryAsync(host.SessionDirectory, connection, client,
+                failpoint, expectedDispatchState == SessionDurableDispatchState.NotStarted
+                    ? SessionExecutionPhase.AwaitingCompletionDispatch
+                    : SessionExecutionPhase.AwaitingCompletion,
+                (engine, runtime) => {
+                    engine.UseRuntime(runtime with {
+                        CompletionTarget = runtime.CompletionTarget! with {
+                            RequestAdapterFingerprint = PreviousCodexAdapterFingerprint
+                        }
+                    });
+                    return ValueTask.FromResult<IAsyncDisposable>(new EmptyRuntimeBinding());
+                });
+        Assert.Empty(factory.Requests);
+        Assert.Equal(0, factory.CredentialReads);
+
+        using HttpClient http = host.CreateClient();
+        using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
+        Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
+        (GalateaHostService service, UserSessionHost session) = await GetSessionAsync(host);
+        var frozen = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
+            session.Engine.InspectRuntimeRecoveryRequirements());
+        Assert.Equal(expectedDispatchState, frozen.DispatchState);
+        Assert.Equal(PreviousCodexAdapterFingerprint,
+            frozen.CompletionTarget.RequestAdapterFingerprint);
+
+        using HttpResponseMessage accepted = await http.PostAsJsonAsync(
+            "/api/v1/chat/turns/resume",
+            new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead),
+                ConnectionId: null, RestartUncertainCompletion: true));
+        GalateaLiveTurn refused = await WaitForTurnAsync(accepted, service, session);
+
+        Assert.Equal("failed", refused.Status);
+        using GalateaTurnSubscription replay = refused.Subscribe();
+        GalateaSseFrame error = Assert.Single(replay.ReplayFrames,
+            frame => frame.EventName == "error");
+        Assert.Contains("\"code\":\"turn-unavailable\"",
+            Encoding.UTF8.GetString(error.Utf8.Span), StringComparison.Ordinal);
+        Assert.Equal(frozenHead, session.Engine.ReadCurrentHead());
+        Assert.Equal(expectedDispatchState, Assert.IsType<SessionRuntimeRecoveryRequirements
+            .FrozenCompletionRequired>(session.Engine.InspectRuntimeRecoveryRequirements())
+            .DispatchState);
+        Assert.Empty(factory.Requests);
+        Assert.Equal(0, factory.CredentialReads);
     }
 
     [Fact]
@@ -244,18 +309,26 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         return turn;
     }
 
-    private static void AssertSwitchedRequest(string body) {
+    private static void AssertSwitchedRequest(string body, string? originalReasoningJson = null) {
         using JsonDocument document = JsonDocument.Parse(body);
         JsonElement root = document.RootElement;
         Assert.Equal(NewModel, root.GetProperty("model").GetString());
-        Assert.DoesNotContain(ReasoningCanary, body, StringComparison.Ordinal);
-        Assert.DoesNotContain(root.GetProperty("input").EnumerateArray(),
+        JsonElement reasoning = Assert.Single(root.GetProperty("input").EnumerateArray(),
             item => item.GetProperty("type").GetString() == "reasoning");
+        Assert.Equal(ReasoningCanary, reasoning.GetProperty("encrypted_content").GetString());
+        if (originalReasoningJson is not null) {
+            using JsonDocument original = JsonDocument.Parse(originalReasoningJson);
+            Assert.True(JsonElement.DeepEquals(original.RootElement, reasoning));
+        }
         Assert.Contains(root.GetProperty("input").EnumerateArray(), item =>
             item.GetProperty("type").GetString() == "message"
             && item.GetProperty("role").GetString() == "assistant"
             && item.GetProperty("content").EnumerateArray().Any(content =>
                 content.GetProperty("text").GetString() == OldAnswer));
+    }
+
+    private sealed class EmptyRuntimeBinding : IAsyncDisposable {
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class CodexFixtureFactory : ICompletionClientFactory,

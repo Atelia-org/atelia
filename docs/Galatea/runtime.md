@@ -8,17 +8,25 @@
 交给 exact-Origin replay validator，HTTP 尚未发送便抛异常；由于 journal 已记录 `CompletionAttemptStarted`，旧版
 最终表现为需要显式恢复的 uncertain 状态。它不是 RecapGrid 损坏的证据，也不能用清空历史来修。
 
-当前 Responses adapter 只省略与本次完整 invocation 不匹配的 reasoning，保留可见正文、工具记录和原始历史。
-同源 native payload 仍严格校验；这一 exact validator 的已知本地拒绝使用 `CompletionRequestRejectedException`，
-由 SessionJournal 持久化为 `CompletionAttemptFailed`，不再错误停在 uncertain。适配器合同与不升级 v2 的理由见
+当前 Responses adapter 对相同 ProviderId/ApiSpecId 的 native reasoning 跨模型原样回放，仅省略其他 provider/profile
+的 reasoning；可见正文、工具记录、原始 Origin 与历史不变。native payload 仍严格校验；已知本地拒绝使用
+`CompletionRequestRejectedException`，由 SessionJournal 持久化为 `CompletionAttemptFailed`，不再错误停在 uncertain。
+Codex 有跨模型 live 实验依据；公共 Responses 的相同行为为 operator 授权假设。适配器合同见
 [Completion 的 replay 边界](../Completion/openai-codex-subscription-client-design.md#64-独立-protocol-identity)。
 
-旧版已经留下的 Started 仍须显式处理：正常停服、备份，更新并启动修复后的 Server，然后在页面选择“恢复待处理轮次”并
-明确授权重新调用。它继续使用 frozen connection/request，而不是当前下拉框选择；不要修改原始 manifest、reasoning Origin
-或临时把同一个 connectionId 改绑另一个模型。网络中断等真正不确定的调用仍不可自动重发。
+**2026-09-10 升级注意：** 从 omission 改为 native replay 会改变 RequestAdapterFingerprint，虽然 payload ApiSpecId
+仍为 v2。升级前先暂停新的自动 admission，在旧版本完成已有 Prepared/Started 工作，再正常停服、备份、切换新版。
+旧版 Started 的重新调用仍须在页面明确授权；授权仅允许重用 frozen request/adapter，不允许改绑新投影。
+`BindExact` 会拒绝旧 fingerprint，即使 `RestartUncertainCompletion=true`；不要连续点击恢复。
+
+若已切换新版才发现旧 frozen work，应停止新版并使用与冻结 identity 匹配的旧版本处理，再升级。
+当前 abandon 仅适用于已确定失败的轮次，不能用来放弃 Prepared/Started；Undo 也不是 pending 迁移接口。
+不要修改原始 manifest、reasoning Origin 或把同一个 connectionId 临时改绑另一个模型。
+没有 pending completion 的旧历史不需要迁移，合法 v2 native reasoning 可直接被新投影读取。
+网络中断等真正不确定的调用仍不可自动重发；本次没有修改任何真实会话状态或增加自动兼容重试。
 
 日志排查先看 `Galatea.TurnRunner` 的 exception stack 与 `callLogDir` 中同次调用的 `exception` / `elapsedMs`，
-不要把完整 prompt、reasoning payload 或凭据复制到 issue。新代码的 `Provider` Debug 日志记录省略块数，不记录内容。
+不要把完整 prompt、reasoning payload 或凭据复制到 issue。`Provider` Debug 日志只记录跨 provider/profile 的省略计数，不记录内容。
 
 ## Completion、提取器与后处理
 

@@ -115,7 +115,7 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 | Codex connection 启动失败 | account fingerprint 环境变量、认证文件配置和 loopback 监听地址 |
 | 页面显示 `disabled` | 当前登录账号是否在 `serverAgentUserIds` 中，修改后是否重启 |
 | `blocked` 或需要恢复 | 页面原因码、当前轮次、`Galatea.Autonomy` 与相关服务端错误日志 |
-| 切换模型后提示“结果不确定”，日志含 `reasoning replay requires Origin` | 旧版 Responses 投影错误；更新并重启后，再从页面显式恢复原轮次。不要修改历史 reasoning 的 Origin、清空历史或反复点击重试；详见[模型切换排障](../../docs/Galatea/runtime.md#模型切换与-reasoning-回放排障) |
+| 切换模型后提示“结果不确定”，日志含 `reasoning replay requires Origin` | 旧版 Responses 投影错误；先核对 frozen adapter identity，旧版未完成轮次应在匹配版本上显式恢复，再升级。不要修改 Origin、清空历史或反复重试；详见[模型切换排障与升级边界](../../docs/Galatea/runtime.md#模型切换与-reasoning-回放排障) |
 | 主回复已有内容但轮次未结束 | 邮件/笔记后处理可能仍在执行；检查对应日志 |
 | 邮箱持续 backoff 或 `accepted-history-unavailable` | 检查 delegation 日志；已提交任务会保守查询结果，不会自动重发 |
 | Recap 显示 `character-asset-mismatch` | 配置名字与 active asset 是否匹配，不能只改角色/玩家名 |
