@@ -19,6 +19,7 @@ using Atelia.SessionJournal.RecapGrid.Online;
 using Atelia.SessionJournal.RecapGrid.Runtime;
 using Atelia.SessionJournal.RecapGrid.Store;
 using Xunit;
+using RollingRepository = Atelia.Galatea.Server.Tests.GalateaRecapFixture.Repository;
 
 namespace Atelia.Galatea.Server.Tests;
 
@@ -551,145 +552,9 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
     }
 
     private RollingRepository CreateRollingRepository() {
-        string path = NewPath();
-        Assert.True(GalateaRecapGridAssets.TryCreateRegistrationBundle(
-            GalateaRecapGridAssets.RollingRewriteZhCnV6,
-            new GalateaRecapGridAssetParameters(
-                new GalateaCharacterName("Galatea"),
-                new GalateaPlayerName("刘世超")
-            ),
-            out RecapGridControlRegistrationBundle? created
-        ));
-        RecapGridControlRegistrationBundle bundle = created!;
-        FamilyDefinition family = Assert.Single(bundle.Families);
-        MaintainerDefinitionRevision world = bundle.Definitions[0];
-        MaintainerDefinitionRevision autobiography = bundle.Definitions[1];
-        var admission = new RecapGridControlAdmission(
-            RecapGridControlPermission.Create
-                | RecapGridControlPermission.RegisterFamily
-                | RecapGridControlPermission.RegisterDefinition
-                | RecapGridControlPermission.RegisterRecipe
-                | RecapGridControlPermission.Activate,
-            [family.Digest],
-            bundle.Definitions.Select(static value =>
-                value.Capability.CapabilityFingerprint),
-            bundle.Definitions.Select(static value => value.Target.Carrier),
-            ["world", "autobiography"],
-            maximumBootstrapRows: 64,
-            maximumProjectedCalls: 1_024
-        );
         using SessionJournalEngine engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions(
-                "agent-model",
-                "test system prompt",
-                "openai-chat/strict"
-            )
-        );
-        Assert.IsType<HistoryTimelineCreateResult.Created>(
-            HistoryTimelineFactory.Create(
-                engine.ReadView,
-                new HistoryTimelineInitialPolicySpec(
-                    HistoryPartitionAlgorithms
-                        .FirstReplaySafeBoundaryAtTargetV1,
-                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
-                    new HistoryLoadUnit(1),
-                    maxRawEvents: 64,
-                    maxRenderedBytes: 1024 * 1024
-                ),
-                _estimator
-            )
-        );
-        Assert.IsType<RecapGridCadenceCreateResult.Created>(
-            RecapGridCadenceFactory.Create(
-                engine,
-                new RecapGridCadencePolicySpec(
-                    minimumRecentHistoryLoad: 1,
-                    HistoryPartitionAlgorithms
-                        .FirstReplaySafeBoundaryAtTargetV1,
-                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
-                    targetHistoryLoad: 1,
-                    maxRawEvents: 64,
-                    maxRenderedBytes: 1024 * 1024
-                )
-            )
-        );
-        Assert.IsType<RecapGridControlCreateResult.Created>(
-            RecapGridControlFactory.Create(
-                engine.Path,
-                engine.BranchRefId,
-                admission
-            )
-        );
-        Assert.IsType<RecapGridStoreCreateResult.Created>(
-            RecapGridStoreFactory.Create(engine.Path)
-        );
-        TimelineHeadRef timeline = ReadTimelineHead(
-            engine.Path,
-            engine.BranchRefId
-        );
-        using RecapGridControlHandle control = Assert.IsType<
-            RecapGridControlOpenResult.Opened
-        >(RecapGridControlFactory.Open(
-            engine.Path,
-            engine.BranchRefId,
-            admission
-        )).Handle;
-        ControlHeadRef initial = Assert.IsType<
-            RecapGridControlSnapshotResult.Available
-        >(control.Reader.ReadSnapshot()).Snapshot.Head;
-        RecapGridControlOperation operation = RecapGridOperatorAssetCatalog
-            .CreateProvisionOperation(
-                GalateaRecapGridAssets.RollingRewriteZhCnV6,
-                initial.InstanceId
-            );
-        ControlHeadRef registered = Assert.IsType<
-            RecapGridControlOperationResult.Applied
-        >(control.Coordinator.ApplyRegistrationBundle(
-            initial,
-            timeline,
-            operation,
-            bundle
-        )).Head;
-        GridBuildRecipe recipe = GridBuildRecipe.CreateFull(
-            timeline.TimelineId,
-            bootstrapThroughRowId: null,
-            BuildTarget.Create([
-                new BuildTargetColumn(
-                    world.LogicalColumnId,
-                    world.Digest
-                ),
-                new BuildTargetColumn(
-                    autobiography.LogicalColumnId,
-                    autobiography.Digest
-                )
-            ])
-        );
-        ControlHeadRef withRecipe = Assert.IsType<
-            RecapGridControlPutResult.Stored
-        >(control.Coordinator.PutBuildRecipe(
-            registered,
-            timeline,
-            recipe,
-            bootstrapWitness: null
-        )).Head;
-        Assert.IsType<RecapGridControlActivateResult.Applied>(
-            control.Coordinator.CompareExchangeActiveRecipe(
-                withRecipe,
-                timeline,
-                recipe.Digest,
-                RecapGridControlActivationPurpose.Direct
-            )
-        );
-        return new RollingRepository(
-            path,
-            engine.BranchRefId,
-            family,
-            world,
-            autobiography,
-            recipe,
-            admission
-        );
+            NewPath(), new SessionCreateOptions("agent-model", "test system prompt", "openai-chat/strict"));
+        return GalateaRecapFixture.Provision(engine, _estimator);
     }
 
     private static RecapGridCompletionHost CreateCompletionHost(
@@ -1019,16 +884,6 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             }
         }
     }
-
-    private sealed record RollingRepository(
-        string Path,
-        RefId RefId,
-        FamilyDefinition Family,
-        MaintainerDefinitionRevision World,
-        MaintainerDefinitionRevision Autobiography,
-        GridBuildRecipe Recipe,
-        RecapGridControlAdmission Admission
-    );
 
     private sealed record RecapReply(
         string? Content,

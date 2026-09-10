@@ -175,3 +175,48 @@ revision 或关闭生产校验来消除偶发失败。该修复已通过独立�
 
 下一独立包优先验收“已实际采用非空 recap 的 frozen request 冷恢复”；Memo recall 与 receipt 的三方
 联合恢复、绑定后追加前硬杀及 SessionJournal tool-loop 硬杀仍未包含在本期证据中。
+
+## 第三期：非空 RecapGrid 的冻结请求恢复
+
+### decision [S-LAB-PHASE3-BOUNDED] 范围与边界
+
+本期只连接“实际生成并采用非空 recap → 冻结请求 → 冷恢复 → 下一 fresh turn”。
+复用合成实例、正式维护路径和现有恢复授权，不引入生产快照 importer、通用场景 DSL、生产 pause hook，
+也不为测试重新注入已退休的 fresh-turn 工具。主模型与 recap helper 均使用受控替身或 loopback provider。
+Memo recall/receipt 三方组合和外部 LLM canary 不在本期范围。
+
+### spec [R-LAB-NONEMPTY-RECAP-RECOVERY] 验收标准
+
+- 种子必须通过正式 RecapGrid 维护生成非空 cells，并证明内容实际进入主请求；仅有 active recipe、
+  store 中存在 cells 或页面展示摘要都不能替代请求采用证据。
+- 冻结前后以 durable Prepared 的 exact context 和 canonical request commitment 核对请求。
+  恢复必须复用冻结内容，不得通过重新构建 recap 得到一份“看起来相同”的新请求。
+- Prepared 尚未 Started 的确定性故障注入与 Started 后的真实进程硬杀分别报告；后者必须观察请求
+  到达 loopback provider 再硬杀并回收进程，不以 sleep 猜测持久化窗口。
+- 冷恢复保持现有 uncertain 授权边界；拒绝隐式重试时不得出现额外 provider invocation。
+- 恢复完成后必须继续一个 fresh turn，并最终冷读确认 Idle 与新增完成回合，验证恢复后的可进展性。
+- 所有 owner 停止后才能离线读写；通过全部断言才清理合成实例，失败保留现场与有限诊断。
+
+### derived [R-LAB-PHASE3-EVIDENCE] 实施与验收记录
+
+改动前 Release 定向基线：原 rolling Host/operator 6/6，原 lab/lifecycle 16/16。
+首次新场景编译通过，旧 rolling 回归 5/5；两个冷恢复场景均在种子阶段失败：第一轮主调用成功，
+但 recap 调用是 0 而非假定的 2。失败现场冷读确认 Timeline 仍为零行，cadence policy 未被覆盖。
+这是新 fixture 对首轮维护时序的错误假设，不是已经证实的生产恢复故障；保留首轮失败报告，
+后续修正种子后另记验收，不通过放宽调用计数或重复运行掩盖。
+
+两步种子通过后，第二次定向运行在冻结前维护得到 `MaintenanceContinuation`。冷读合成 SQLite 显示
+Timeline 已有三行，grid 仅完成两行：`targetHistoryLoad=1` 会把 Observation 和 Action 分别封行，
+不能把“一个主回合”当成“一个 recap row”。因此后续维护计划按精确 row/prior generation 编排，
+每个 row 恰好两列，恢复期仍为零维护；不改生产 cadence 或容忍任意额外调用。
+
+第一包 `GalateaRecapRecoveryScenarioTests` 已完成：两个正式 HTTP 种子回合（第一轮 raw-only，第二轮
+采用 V1 两列）；通过现有 SessionJournal failpoint 分别生成 Prepared/Started 边界，冻结前使用真实
+Online candidate/lifecycle 构建 V2/V3，最终采用 V3。全新 Host/factory 恢复只允许一次主调用，
+canonical bytes 与 durable commitment 相符，Prepared 地址与原 audit payload 不变，整个
+`derived`/`control` 文件快照不变。再次冷重开后 fresh 构建 V4/V5 并采用 V5，最终四个完成回合、Idle。
+每行两列、完整前代 prior 和阶段调用配额均为精确约束，不以调用总数猜测列/代数归属。
+
+共享 `GalateaRecapFixture` 从旧 rolling Host 测试机械抽取 provisioning；原测试仍复用同一路径与原断言。
+lab 仅透传现有 `provisionRawOnly` 参数，新种子在首次 Host 初始化之前创建本地 profile/routes 与派生存储。
+独立审阅及行计划尾修后，Release 两个新冷恢复用例 2/2。

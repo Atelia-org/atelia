@@ -1,0 +1,183 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using Atelia.Completion;
+using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
+using Atelia.SessionJournal;
+using Atelia.SessionJournal.HistoryTimeline;
+using Atelia.SessionJournal.RecapGrid.Hosting;
+using Atelia.SessionJournal.RecapGrid.Online;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace Atelia.Galatea.Server.Tests;
+
+/// <summary>Real nonempty Online selection with existing journal failpoints;
+/// deterministic cold reopen, not a process kill or old-version migration.</summary>
+[Trait("Category", "GalateaLab")]
+public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) {
+    [Theory]
+    [InlineData(nameof(SessionJournalFailpoint.AfterRequestPreparedCommitted), false)]
+    [InlineData(nameof(SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted), true)]
+    public async Task AdoptedNonemptyRecap_FrozenRecoverySkipsMaintenanceThenFreshTurnProgresses(
+        string failpointName, bool restartRequired) {
+        SessionJournalFailpoint failpoint = Enum.Parse<SessionJournalFailpoint>(failpointName);
+        CompletionConnectionConfig main = Connection("test", "recap-lab-main");
+        CompletionConnectionConfig recap = Connection("recap-maintainer", "recap-lab-helper");
+        var seed = new GalateaRecapFixture.Factory(1, expectedMainCalls: 2);
+        await using var lab = GalateaRecapFixture.CreateLab(
+            "nonempty-recap-recovery-" + (restartRequired ? "started" : "prepared"),
+            seed, main, recap, output.WriteLine);
+        string routesPath = Path.Combine(Path.GetDirectoryName(lab.Host.ConfigPath)!, "recap-grid-routes.json");
+
+        await GalateaRecapFixture.SeedAsync(lab, seed);
+        await lab.StopAsync();
+        seed.AssertComplete();
+        SessionPreparedRequestReconstruction seedRequest = GalateaRecapFixture.ReadLatestPrepared(lab.SessionDirectory);
+        GalateaRecapFixture.AssertAdopted(seedRequest, 1);
+        Assert.Equal(seedRequest.CanonicalBytes, seed.MainRequests.Last());
+        AssertCells(lab.SessionDirectory, 1);
+
+        var boundaryFactory = new GalateaRecapFixture.Factory(2, expectedMainCalls: 0, expectedRecapCalls: 4);
+        EventAddress frozenHead = await FreezeAsync(lab.SessionDirectory, routesPath,
+            main, recap, boundaryFactory, failpoint);
+        boundaryFactory.AssertComplete();
+        SessionPreparedRequestReconstruction frozen = GalateaRecapFixture.ReadLatestPrepared(lab.SessionDirectory);
+        GalateaRecapFixture.AssertAdopted(frozen, 3);
+        AssertCells(lab.SessionDirectory, 3);
+        SessionJournalAuditEvent[] frozenAudit = ReadAudit(lab.SessionDirectory);
+        SessionJournalAuditEvent frozenPrepared = frozenAudit.Last(entry => entry.Kind == SessionEventKind.CompletionRequestPrepared);
+        Assert.Equal(3, frozenAudit.Count(entry => entry.Kind == SessionEventKind.ObservationAccepted));
+        Assert.Equal(3, frozenAudit.Count(entry => entry.Kind == SessionEventKind.CompletionRequestPrepared));
+        SortedDictionary<string, string> frozenDerived = SnapshotDerived(lab.SessionDirectory);
+        Assert.NotEmpty(frozenDerived);
+
+        // A wholly new factory owns the restarted host. Any maintainer call is
+        // immediately rejected; no callback or online handle survives the close.
+        var recovery = new GalateaRecapFixture.Factory(3, expectedRecapCalls: 0);
+        await lab.ReopenAsync(recovery);
+        using (HttpClient http = lab.Host.CreateClient()) {
+            http.Timeout = GalateaRecapFixture.Deadline;
+            using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
+            Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
+            (GalateaHostService service, UserSessionHost session) = await GalateaRecapFixture.SessionAsync(lab);
+            var requirement = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
+                session.Engine.InspectRuntimeRecoveryRequirements());
+            Assert.Equal(restartRequired ? SessionDurableDispatchState.StartedOutcomeUncertain
+                : SessionDurableDispatchState.NotStarted, requirement.DispatchState);
+            if (restartRequired) {
+                using HttpResponseMessage refusal = await http.PostAsJsonAsync("/api/v1/chat/turns/resume",
+                    new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead), null,
+                        RestartUncertainCompletion: false));
+                Assert.Equal(HttpStatusCode.Conflict, refusal.StatusCode);
+                string body = await refusal.Content.ReadAsStringAsync();
+                Assert.Contains("uncertain-completion-restart-required", body, StringComparison.Ordinal);
+                Assert.Equal(frozenHead, session.Engine.ReadCurrentHead());
+                Assert.Equal(0, recovery.MainCalls);
+                Assert.Equal(0, recovery.RecapCalls);
+            }
+            using HttpResponseMessage accepted = await http.PostAsJsonAsync("/api/v1/chat/turns/resume",
+                new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead), null,
+                    RestartUncertainCompletion: restartRequired));
+            GalateaLiveTurn resumed = await GalateaRecapFixture.WaitAsync(accepted, service, session);
+            Assert.Equal("completed", resumed.Status);
+        }
+        await lab.StopAsync();
+        recovery.AssertComplete();
+        Assert.Equal(frozen.CanonicalBytes, Assert.Single(recovery.MainRequests));
+        SessionPreparedRequestReconstruction reopenedRequest = GalateaRecapFixture.ReadLatestPrepared(lab.SessionDirectory);
+        Assert.Equal(frozen.SourcePreparedAddress, reopenedRequest.SourcePreparedAddress);
+        Assert.Equal(frozen.CanonicalBytes, reopenedRequest.CanonicalBytes);
+        Assert.Equal(frozen.Manifest.Commitment, reopenedRequest.Manifest.Commitment);
+        GalateaRecapFixture.AssertAdopted(reopenedRequest, 3);
+        SessionJournalAuditEvent[] recoveredAudit = ReadAudit(lab.SessionDirectory);
+        Assert.Equal(frozenPrepared, recoveredAudit.Single(entry => entry.Address == frozenPrepared.Address));
+        Assert.Equal(3, recoveredAudit.Count(entry => entry.Kind == SessionEventKind.ObservationAccepted));
+        Assert.Equal(3, recoveredAudit.Count(entry => entry.Kind == SessionEventKind.CompletionRequestPrepared));
+        Assert.Equal(frozenDerived, SnapshotDerived(lab.SessionDirectory));
+        AssertCells(lab.SessionDirectory, 3);
+        using (var reopened = SessionJournalEngine.OpenReadOnly(lab.SessionDirectory)) {
+            Assert.Equal(SessionExecutionPhase.Idle, reopened.InspectExecutionBoundary().Phase);
+        }
+
+        // Fresh work must become possible again. Its legal maintenance advances
+        // the same two columns through generations 4/5; it is not frozen replay.
+        var fresh = new GalateaRecapFixture.Factory(4, expectedRecapCalls: 4);
+        await lab.ReopenAsync(fresh);
+        await GalateaRecapFixture.RunFreshAsync(lab, "Fresh observation after nonempty recap recovery.");
+        await lab.StopAsync();
+        fresh.AssertComplete();
+        SessionPreparedRequestReconstruction freshRequest = GalateaRecapFixture.ReadLatestPrepared(lab.SessionDirectory);
+        GalateaRecapFixture.AssertAdopted(freshRequest, 5);
+        Assert.Equal(freshRequest.CanonicalBytes, Assert.Single(fresh.MainRequests));
+        Assert.NotEqual(frozen.SourcePreparedAddress, freshRequest.SourcePreparedAddress);
+        AssertCells(lab.SessionDirectory, 5);
+        using (var final = SessionJournalEngine.OpenReadOnly(lab.SessionDirectory)) {
+            Assert.Equal(SessionExecutionPhase.Idle, final.InspectExecutionBoundary().Phase);
+            var turns = final.ReadRecentCompletedTurns().RequireSnapshot().Turns;
+            Assert.Equal(4, turns.Count);
+            Assert.Contains("Fresh observation after nonempty recap recovery.", turns[0].ObservationContent,
+                StringComparison.Ordinal);
+        }
+        Assert.Equal(4, ReadAudit(lab.SessionDirectory).Count(entry => entry.Kind == SessionEventKind.ObservationAccepted));
+        await lab.CompleteAsync();
+    }
+
+    private static CompletionConnectionConfig Connection(string id, string model) => new(
+        id, "openai-responses", model, "openai-responses", "http://127.0.0.1:1/", ApiKey: "synthetic-key");
+
+    private static async Task<EventAddress> FreezeAsync(string repository, string routesPath,
+        CompletionConnectionConfig main, CompletionConnectionConfig recap,
+        GalateaRecapFixture.Factory factory, SessionJournalFailpoint failpoint) {
+        ICompletionClient client = factory.Create(main);
+        CompletionDispatchIdentity identity = CompletionDispatchIdentityFactory.Create(main, client);
+        var runtime = new SessionRuntime(client, CompletionTarget: new SessionCompletionTargetIdentity(
+            identity.ConnectionId, identity.Kind, identity.ConnectionFingerprint, identity.RequestAdapterFingerprint));
+        using var timeout = new CancellationTokenSource(GalateaRecapFixture.Deadline);
+        using var engine = SessionJournalEngine.OpenForTest(repository, runtime, new SessionJournalTestHooks(failpoint));
+        await using RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
+            () => RecapGridRouteManifest.DecodeCanonical(File.ReadAllBytes(routesPath)),
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new CompletionConnectionsFileConfig(
+                [main, recap], main.Id)), factory);
+        await using RecapGridOnlineContextHandle online = Assert.IsType<RecapGridOnlineOpenResult.Opened>(
+            RecapGridOnlineFactory.Open(engine, completion.Executor, RecapGridOnlineLimits.Production,
+                new O200kBaseHistoryUnitLoadEstimator())).Handle;
+        string observation = GalateaHostService.WrapUserMessageForEngine(
+            "Frozen nonempty derived-context observation.", DateTimeOffset.UnixEpoch.AddDays(1));
+        RecapGridOnlinePassResult pass = await online.CatchUpMaintenanceAsync(observation, timeout.Token);
+        Assert.True(pass is RecapGridOnlinePassResult.Ready,
+            $"Expected exact Ready; got {pass.GetType().Name}, mainCalls={factory.MainCalls}, recapCalls={factory.RecapCalls}.");
+        engine.UseRuntime(runtime with {
+            ContextCandidateSource = online.CandidateSource, ContextLifecycle = online.Lifecycle
+        });
+        SessionJournalFailpointException failure = await Assert.ThrowsAsync<SessionJournalFailpointException>(
+            () => engine.SendAsync(observation, timeout.Token));
+        Assert.Equal(failpoint, failure.Failpoint);
+        Assert.Equal(failpoint == SessionJournalFailpoint.AfterRequestPreparedCommitted
+            ? SessionExecutionPhase.AwaitingCompletionDispatch : SessionExecutionPhase.AwaitingCompletion,
+            engine.InspectExecutionBoundary().Phase);
+        return engine.ReadCurrentHead()!.Value;
+    }
+
+    private static void AssertCells(string repository, int generation) {
+        var cells = GalateaRecapFixture.ReadHeadCells(repository);
+        Assert.Equal(GalateaRecapFixture.World(generation), cells.World.Content);
+        Assert.Equal(GalateaRecapFixture.Autobiography(generation), cells.Autobiography.Content);
+    }
+
+    private static SessionJournalAuditEvent[] ReadAudit(string repository) {
+        using var engine = SessionJournalEngine.OpenReadOnly(repository);
+        var events = new List<SessionJournalAuditEvent>();
+        engine.ScanCheckedAuditEvents(events.Add);
+        return events.ToArray();
+    }
+
+    private static SortedDictionary<string, string> SnapshotDerived(string repository) => new(
+        Directory.GetFiles(repository, "*", SearchOption.AllDirectories)
+            .Where(path => Path.GetRelativePath(repository, path).StartsWith("derived" + Path.DirectorySeparatorChar,
+                StringComparison.Ordinal) || Path.GetRelativePath(repository, path).StartsWith("control" + Path.DirectorySeparatorChar,
+                StringComparison.Ordinal))
+            .ToDictionary(path => Path.GetRelativePath(repository, path),
+                path => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)))), StringComparer.Ordinal);
+}

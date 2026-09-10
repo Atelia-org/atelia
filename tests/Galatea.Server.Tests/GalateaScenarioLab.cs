@@ -46,7 +46,8 @@ internal sealed class GalateaScenarioLab : IAsyncDisposable {
         Action<string>? reportArtifact = null,
         string? characterNoteExtractorConnectionId = null,
         IReadOnlyList<string>? serverAgentUserIds = null,
-        bool enableServerAgentHostedService = false) {
+        bool enableServerAgentHostedService = false,
+        bool provisionRawOnly = true) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         if (string.IsNullOrEmpty(name) || name.Length > 80
             || name.Any(static c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_')) {
@@ -63,7 +64,8 @@ internal sealed class GalateaScenarioLab : IAsyncDisposable {
             delegateTransport: new RejectingDelegateTransport(), timeProvider: timeProvider,
             characterNoteExtractorConnectionId: characterNoteExtractorConnectionId,
             serverAgentUserIds: serverAgentUserIds,
-            enableServerAgentHostedService: enableServerAgentHostedService);
+            enableServerAgentHostedService: enableServerAgentHostedService,
+            provisionRawOnly: provisionRawOnly);
         return new GalateaScenarioLab(name, host, normalizer, reportArtifact);
     }
 
