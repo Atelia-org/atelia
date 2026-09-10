@@ -7,6 +7,7 @@ using Atelia.Diagnostics;
 using Atelia.Galatea.Server;
 using Atelia.Galatea.Server.Mailbox;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
 using Atelia.SessionJournal;
 
 const string CookieScheme = "GalateaCookie";
@@ -28,8 +29,6 @@ string resolvedConfigPath = Path.GetFullPath(configuredConfigPath, builder.Envir
 GalateaConfigBootstrapper.EnsureExistsOrBootstrap(resolvedConfigPath);
 var config = GalateaConfigLoader.Load(resolvedConfigPath);
 string assetVersion = GalateaStaticAssetVersion.BuildToken(builder.Environment.ContentRootPath);
-ICompletionClientFactory completionClientFactory =
-    GalateaCodexSubscriptionComposition.CreateFactory(config);
 
 GalateaCodexSubscriptionComposition.ConfigureWebHost(
     builder.WebHost,
@@ -37,9 +36,20 @@ GalateaCodexSubscriptionComposition.ConfigureWebHost(
 );
 
 builder.Services.AddSingleton(config);
-builder.Services.AddSingleton<ICompletionClientFactory>(
-    completionClientFactory
-);
+// Resolve through DI so isolated hosts can replace the external boundary
+// without constructing the production credential composition first.
+builder.Services.AddSingleton<ICompletionClientFactory>(_ =>
+    GalateaCodexSubscriptionComposition.CreateFactory(config));
+string? dataProtectionKeysDirectory = builder.Configuration["Galatea:DataProtectionKeysDirectory"];
+if (dataProtectionKeysDirectory is not null) {
+    if (string.IsNullOrWhiteSpace(dataProtectionKeysDirectory)
+        || !Path.IsPathFullyQualified(dataProtectionKeysDirectory)) {
+        throw new InvalidOperationException(
+            "Galatea:DataProtectionKeysDirectory must be an absolute directory path.");
+    }
+    builder.Services.AddDataProtection().PersistKeysToFileSystem(
+        new DirectoryInfo(dataProtectionKeysDirectory));
+}
 builder.Services.AddSingleton<IGalateaUserMessageNormalizerFactory,
     GalateaUserMessageNormalizerFactory>();
 builder.Services.AddSingleton(static services => new GalateaHostService(

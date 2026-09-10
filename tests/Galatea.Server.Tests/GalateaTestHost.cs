@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace Atelia.Galatea.Server.Tests;
 
@@ -117,11 +118,11 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
 
-        string tempRoot = Path.Combine(
-            Path.GetTempPath(),
-            "atelia-galatea-server-tests",
-            Guid.NewGuid().ToString("N")
-        );
+        // The whole synthetic instance may be retained on scenario failure.
+        // CreateTempSubdirectory creates its Unix root with owner-only access.
+        string tempRoot = Directory.CreateTempSubdirectory(
+            "atelia-galatea-server-tests-"
+        ).FullName;
         string configDirectory = Path.Combine(
             tempRoot,
             ".atelia",
@@ -857,11 +858,18 @@ internal sealed class GalateaWebApplicationFactory(
     protected override void ConfigureWebHost(IWebHostBuilder builder) {
         builder.UseEnvironment("Testing");
         builder.UseSetting("Galatea:ConfigPath", configPath);
+        builder.UseSetting("Galatea:DataProtectionKeysDirectory", Path.Combine(
+            Path.GetDirectoryName(configPath)!, "data-protection"));
         builder.ConfigureTestServices(services => {
             if (!enableServerAgentHostedService) {
                 ServiceDescriptor? hosted = services.FirstOrDefault(descriptor =>
                     descriptor.ImplementationType == typeof(GalateaServerAgentHostedService));
                 if (hosted is not null) { services.Remove(hosted); }
+                // Disable automatic admission, not the production shutdown
+                // responsibility carried by the removed hosted service. In
+                // particular, StopAsync must finish releasing SQLite locks
+                // before an offline snapshot or cold reopen can begin.
+                services.AddHostedService<GalateaTestShutdownHostedService>();
             }
             services.RemoveAll<ICompletionClientFactory>();
             services.AddSingleton(completionClientFactory);
@@ -901,5 +909,12 @@ internal sealed class GalateaWebApplicationFactory(
             ArgumentNullException.ThrowIfNull(getClient);
             return normalizer;
         }
+    }
+
+    private sealed class GalateaTestShutdownHostedService(
+        GalateaHostService host
+    ) : IHostedService {
+        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StopAsync(CancellationToken cancellationToken) => host.DisposeAsync().AsTask();
     }
 }
