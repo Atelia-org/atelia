@@ -220,3 +220,18 @@ canonical bytes 与 durable commitment 相符，Prepared 地址与原 audit payl
 共享 `GalateaRecapFixture` 从旧 rolling Host 测试机械抽取 provisioning；原测试仍复用同一路径与原断言。
 lab 仅透传现有 `provisionRawOnly` 参数，新种子在首次 Host 初始化之前创建本地 profile/routes 与派生存储。
 独立审阅及行计划尾修后，Release 两个新冷恢复用例 2/2。
+
+第二包 `GalateaRecapProcessCrashTests` 复用同一两步种子。正式 Server 的第一次主请求前，真实
+Responses client 经本地 HTTP 完成 V2/V3 四次 recap；主请求在正式 Observation/Action carriers
+携带 V3 后被挂起，随后硬杀并回收子进程。离线严格重构证明非空 exact inputs 与 canonical commitment，
+raw audit 为三个 Observation、三个 Prepared、三个 Started、两个 Action。
+
+第二个正式子进程先拒绝未授权恢复；授权后发送完整相同的主请求 wire bytes，期间禁止任何 recap 调用。
+完成后再停进程，冷读核对同一 Prepared/Observation、canonical bytes、ControlHead 与 cell digests。
+第三个子进程的 fresh turn 正常生成 V4/V5 并采用 V5，最终冷读四个完成回合、Idle，以及
+四个 Observation、四个 Prepared、五个 Started、四个 Action。原始输入与 Action 均不含 helper marker，
+避免把历史原文回放误认成 recap 采用。
+
+loopback provider 严格限定三个主请求和八个 recap 请求；两列 prior、代数与阶段逐一匹配，停止并排空
+provider 后才最终核对计数、清理成功现场。部署配置与真实会话不参与实验。独立审阅通过，
+Release 首次进程场景运行 1/1；它不证明断电/fsync 耐久性、自动调度或外部调用 exactly-once。
