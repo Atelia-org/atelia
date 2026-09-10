@@ -1,5 +1,44 @@
 # SessionJournal.Cli
 
+## 离线 branch 回退
+
+`rewind-branch` 是低层 raw lineage repair，不是 Galatea 的 completed-turn Undo。
+必须先停止所有 repository owner（包括 headless Galatea），备份并确认没有打开的文件；
+EventJournal 的 CAS 是 single-driver 的 instance-local 保证，不能在运行中的服务旁修改 ref。
+
+```bash
+# 默认纯只读预览；steps 默认 1，计数单位是 Parent 事件，不是 turn 或 reflog。
+dotnet run --project prototypes/SessionJournal.Cli -- rewind-branch \
+  --input <repo-dir> --branch main --steps 5
+
+# 逐字使用预览的 refId、beforeHead、targetHead，显式接受外部副作用无法撤销。
+dotnet run --project prototypes/SessionJournal.Cli -- rewind-branch \
+  --input <repo-dir> --branch main --steps 5 --apply \
+  --confirm-ref <refId> --expected-head <beforeHead> --confirm-target <targetHead> \
+  --accept-external-effects
+
+dotnet run --project prototypes/SessionJournal.Cli -- validate --input <repo-dir> --branch main
+```
+
+JSON 报告只含地址、numeric event kind 和操作元数据，不输出会话载荷。默认只读且 no-create；
+apply 禁止 event/ref-op/ref-object 的 open-time tail repair，核对 exact Ref/head/target，
+checked-read 所跨过的 Parent suffix 与目标后，仅执行一次 `MoveRef`。不允许跨过 root 到 null。
+旧 raw events、其他 branch 和所有 sidecar 不变，reflog 追加移动记录，保留原 head 供恢复。
+
+**该命令不保证目标是合法的 SessionJournal execution boundary**，不自动选择 Idle、不解码
+Prepared、不绑定 provider、不重试 uncertain completion。应先在副本上 `validate`，再执行真实回退；
+apply 后重新 `validate` 并 reopen owner，derived owner 仍需按新 selected lineage reconcile。
+退一条 Started 往往仍停在 Started/Prepared，需要按预览明确选择本次未完成 turn 之前的边界。
+回退会使后缀（包括 Observation）离开 selected lineage，但不能撤销 provider/tool、delegation、
+CharacterMemory/receipt 等已产生的外部副作用；不要据此推断旧调用从未发生或自动重发消息。
+
+退出码：0 为 preview/applied，1 为参数错误，2 为操作不可用或提交结果不确定。
+遇到 `rewind-indeterminate` 或 stdout 丢失，先重新读取 head/reflog，不能自动重试。
+这里没有提供任意 retarget/恢复命令；如需恢复旧 head，可在停服后使用已备份的数据或
+EventJournal `MoveRef`，并重新验证。不要手工覆盖 `.rbf` 文件。
+
+## RecapGrid operator surface
+
 正式 RecapGrid operator surface：
 
 ```text

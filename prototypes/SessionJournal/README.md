@@ -50,6 +50,8 @@ materialize 后重新校验 whole Timeline head、Control head、raw boundary �
 
 ## Operator surfaces
 
+- `SessionJournal.Cli rewind-branch`：显式停服后的 raw Parent 回退，默认只读预览；
+  不是 completed-turn Undo，不撤销外部副作用，详见 [CLI README](../SessionJournal.Cli/README.md#离线-branch-回退)。
 - `SessionJournal.Cli recap-grid timeline ...`：Timeline lifecycle/maintenance
 - `SessionJournal.Cli recap-grid control ...`：Family/Definition/Recipe/activation
 - `SessionJournal.Cli recap-grid build|progress|materialize`：explicit build/read

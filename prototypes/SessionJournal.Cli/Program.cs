@@ -40,6 +40,7 @@ internal static class Program {
             }
             CliOptions options = CliOptions.Parse(args.Skip(1).ToArray());
             return command switch {
+                "rewind-branch" => BranchRewindCommand.Run(options),
                 "import-legacy-json" => RunImportLegacyJson(options),
                 "validate" => RunValidateAsync(options)
                     .GetAwaiter()
@@ -307,6 +308,11 @@ internal static class Program {
         Console.WriteLine("SessionJournal.Cli");
         Console.WriteLine();
         Console.WriteLine("Commands:");
+        Console.WriteLine(
+            "  rewind-branch --input <repo-dir> --branch <name> [--steps <n>] "
+            + "[--apply --confirm-ref <ref> --expected-head <address> "
+            + "--confirm-target <address> --accept-external-effects]"
+        );
         Console.WriteLine(
             "  recap-grid inspect|verify|export --input <repo-dir> "
             + "[--after <opaque-cursor>] [--include-content]"

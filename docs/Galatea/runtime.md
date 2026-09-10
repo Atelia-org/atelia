@@ -19,11 +19,15 @@ Codex 有跨模型 live 实验依据；公共 Responses 的相同行为为 opera
 旧版 Started 的重新调用仍须在页面明确授权；授权仅允许重用 frozen request/adapter，不允许改绑新投影。
 `BindExact` 会拒绝旧 fingerprint，即使 `RestartUncertainCompletion=true`；不要连续点击恢复。
 
-若已切换新版才发现旧 frozen work，应停止新版并使用与冻结 identity 匹配的旧版本处理，再升级。
+若已切换新版才发现旧 frozen work，需要继续该请求时，应停止新版并使用与冻结 identity 匹配的旧版本处理，再升级。
 当前 abandon 仅适用于已确定失败的轮次，不能用来放弃 Prepared/Started；Undo 也不是 pending 迁移接口。
 不要修改原始 manifest、reasoning Origin 或把同一个 connectionId 临时改绑另一个模型。
+若 operator 明确选择舍弃未完成 turn 的 selected suffix，可以停服、备份后使用
+[CLI `rewind-branch`](../../prototypes/SessionJournal.Cli/README.md#离线-branch-回退)：先在副本验证目标为 Idle，
+再用 exact Ref/head/target 确认一次 ref 移动。这不是恢复或迁移 frozen request，不删除 raw events，
+也不能撤销已发生的 provider/tool、delegation 或 CharacterMemory 副作用；不能据此自动重发旧输入。
 没有 pending completion 的旧历史不需要迁移，合法 v2 native reasoning 可直接被新投影读取。
-网络中断等真正不确定的调用仍不可自动重发；本次没有修改任何真实会话状态或增加自动兼容重试。
+网络中断等真正不确定的调用仍不可自动重发；adapter 升级不增加自动兼容重试或修改真实会话状态。
 
 日志排查先看 `Galatea.TurnRunner` 的 exception stack 与 `callLogDir` 中同次调用的 `exception` / `elapsedMs`，
 不要把完整 prompt、reasoning payload 或凭据复制到 issue。`Provider` Debug 日志只记录跨 provider/profile 的省略计数，不记录内容。
