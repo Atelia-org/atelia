@@ -7,6 +7,7 @@ using Atelia.Galatea.Prompts;
 using Atelia.MemoPod;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Xunit;
 
@@ -224,7 +225,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
     ) {
         GalateaLiveTurn turn;
         if (triggerKind == "delegate-reply") {
-            SeedReadyReply(session.DelegationHandle!.Store);
+            await SeedReadyReplyAsync(session.DelegationHandle!);
             turn = Assert.IsType<GalateaReadyReplyTurnStartResult.Started>(
                 service.StartReadyReplyTurn(session, new GalateaTurnOptions("test"))).Turn;
             Assert.NotNull(turn.DurableReplyLease);
@@ -247,7 +248,8 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         return turn;
     }
 
-    private static void SeedReadyReply(GalateaDelegationSqliteStore store) {
+    private static async Task SeedReadyReplyAsync(GalateaDelegationSessionHandle handle) {
+        GalateaDelegationSqliteStore store = handle.Store;
         int ordinal = store.ReadSnapshot().Captures.Count + 1;
         // Each fixture dispatch has its own valid, non-colliding source identity.
         // Outbound extraction is disabled here; only ready-reply admission is tested.
@@ -259,22 +261,12 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
                 GalateaDelegateConfigReader.CanonicalRecipient,
                 Subject: null, Body: "seed task", InReplyToMessageId: null,
                 EvidenceQuote: "seeded")]));
-        GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
-        if (snapshot.Route.State == GalateaDelegationRouteState.Unbound) {
-            GalateaRouteBindingSnapshot binding = store.BeginThreadBinding(
-                "seed-binding", snapshot.Route.Revision);
-            _ = store.CompleteThreadBinding(binding.BindingOperationId!,
-                "seed-thread", binding.Revision);
-            snapshot = store.ReadSnapshot();
-        }
         string dispatchId = Assert.Single(captured.DispatchIds);
-        GalateaOutboundMailSnapshot mail = snapshot.Mails.Single(
-            value => value.DispatchId == dispatchId);
-        GalateaOutboundMailSnapshot started = store.StartQueuedMail(
-            dispatchId, mail.Revision, snapshot.Route.Revision);
-        _ = store.RecordCompletedMail(dispatchId, started.Revision,
-            "seed-thread", "seed-turn-" + ordinal,
-            "外层执行者已恢复，请继续查看蓝门。");
+        // The production supervisor is the sole writer of binding/dispatch
+        // transitions. Directly seeding those states raced its fallback pulse.
+        _ = handle.Signal();
+        await WaitUntilAsync(() => store.ReadSnapshot().Notices.Any(notice =>
+            notice.DispatchId == dispatchId && notice.State == GalateaReplyNoticeState.Ready));
     }
 
     private static PlayerTurnObservation ReadPersistedObservation(UserSessionHost session) {
@@ -362,7 +354,8 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             ],
             selectableConnectionIds: ["test"],
             characterNoteExtractorConnectionId: "recall",
-            memoRecallConnectionId: "recall"
+            memoRecallConnectionId: "recall",
+            delegateTransport: new CompletedDelegateTransport()
         );
     }
 
@@ -391,6 +384,50 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         public ICompletionClient Create(
             CompletionConnectionConfig connection
         ) => clients[connection.Id];
+    }
+
+    /// <summary>Controlled external boundary; the real driver owns all durable transitions.</summary>
+    private sealed class CompletedDelegateTransport : IGalateaDurableDelegateTransport {
+        private const string ThreadId = "seed-thread";
+        private readonly ConcurrentDictionary<string, GalateaStartDelegateTurnRequest> _started =
+            new(StringComparer.Ordinal);
+        private string? _bindingOperationId;
+
+        public Task<GalateaDelegateBindingEstablished> EnsureBindingAsync(
+            GalateaEnsureDelegateBindingRequest request, CancellationToken ct) {
+            ct.ThrowIfCancellationRequested();
+            string? previous = Interlocked.CompareExchange(ref _bindingOperationId, request.BindingOperationId, null);
+            Assert.True(previous is null || previous == request.BindingOperationId,
+                "The controlled delegate must not silently establish a different binding.");
+            return Task.FromResult(new GalateaDelegateBindingEstablished(request.BindingOperationId, ThreadId));
+        }
+
+        public Task<GalateaDelegateTurnAccepted> StartTurnAsync(
+            GalateaStartDelegateTurnRequest request, CancellationToken ct) {
+            ct.ThrowIfCancellationRequested();
+            Assert.NotNull(Volatile.Read(ref _bindingOperationId));
+            Assert.Equal(ThreadId, request.ThreadId);
+            Assert.True(_started.TryAdd(request.DispatchId, request),
+                "The controlled delegate must not accept a duplicate dispatch.");
+            return Task.FromResult(new GalateaDelegateTurnAccepted(
+                request.DispatchId, ThreadId, TurnId(request.DispatchId)));
+        }
+
+        public Task<GalateaDelegateDispatchInspection> InspectDispatchAsync(
+            GalateaInspectDelegateDispatchRequest request, CancellationToken ct) {
+            ct.ThrowIfCancellationRequested();
+            Assert.True(_started.TryGetValue(request.DispatchId, out var started),
+                "The controlled delegate cannot complete an unknown dispatch.");
+            Assert.Equal(started!.ThreadId, request.ThreadId);
+            Assert.Equal(started.Task, request.Task);
+            Assert.Equal(TurnId(request.DispatchId), request.ExpectedTurnId);
+            return Task.FromResult<GalateaDelegateDispatchInspection>(new GalateaDelegateDispatchInspection.Completed(
+                request.DispatchId, ThreadId, TurnId(request.DispatchId),
+                "外层执行者已恢复，请继续查看蓝门。", GalateaDelegateInspectionSource.Live));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        private static string TurnId(string dispatchId) => "seed-turn-" + dispatchId;
     }
 
     private sealed class MainCompletionClient : ICompletionClient {

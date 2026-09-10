@@ -147,10 +147,31 @@ uncertain，默认恢复必须拒绝且不发请求。exact head 明确授权后
 模拟 provider 停止并排空后才作最终计数检查、允许清理成功现场。
 
 这不是“receipt 在 SQLite 和 journal 之间原子提交”的保证，而是两个持久化边界之间的恢复协议验收。
-不改变生产恢复语义，不访问真实 Codex/public API，也不证明绑定前窗口硬杀、Memo recall、非空 RecapGrid
+不改变生产恢复语义，不访问真实 Codex/public API，也不证明绑定后追加前窗口硬杀、Memo recall、非空 RecapGrid
 或断电/fsync 耐久性。
 
 第二包独立审阅与尾修后，`scripts/test_galatea_lab.sh Release` 离线场景 16/16，Debug 全套 843/843。
 Release 首次全套为 842/843：旧 `GalateaMemoRecallProductionVerticalTests` 的 `delegate-reply` 用例
 在手工构造 Ready reply 时与后台 delegation driver 竞争 route revision；两条新增场景均通过。
 该失败报告保留，不用重复运行掩盖；后续按独立测试协调修复处理，再记录最终全套结果。
+
+附加尾修仅修改该旧测试的 fixture：注入受控 delegation transport，种子只 Capture、Signal 并限时等待
+目标 dispatch Ready，由真实 supervisor/driver 独占 binding、start、completion 状态迁移。删除手工
+写入中间状态的第二个 writer，保留原 selector、typed trigger、origin/recall barrier 断言；不通过重试
+revision 或关闭生产校验来消除偶发失败。该修复已通过独立审阅。
+
+### derived [R-LAB-PHASE2-ACCEPTANCE] 2026-09-10 最终验收
+
+- 一键离线 lab：16/16；不启用 `--live`，两条新增场景均纳入原 runner。
+- 修复后的 Memo recall 测试组连续三次各 6/6，分别保留报告，属于修复后的稳定性检查。
+- 最终 Galatea provider-free 全套：Debug、Release 各 843/843，0 skipped；仍使用
+  `FullyQualifiedName!~LiveTests`，不把未运行的 live 当作通过。
+- Node HTTP/SSE/follower：13/13；Release Server build：0 warning / 0 error。
+- scoped docs checker：27 文件、0 diagnostics；runner `bash -n` 与 `git diff --check` 通过。
+
+首次失败报告与修复后结果分别保留为 `galatea-release.trx`、`galatea-release-final.trx`，
+最终 Debug 为 `galatea-debug-final.trx`，均在本次 runner 打印的私有结果目录中。
+本期没有修改生产代码、真实 `gpt`/`cyber` 状态或启动部署实例，也没有调用真实外部 LLM。
+
+下一独立包优先验收“已实际采用非空 recap 的 frozen request 冷恢复”；Memo recall 与 receipt 的三方
+联合恢复、绑定后追加前硬杀及 SessionJournal tool-loop 硬杀仍未包含在本期证据中。
