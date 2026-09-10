@@ -235,3 +235,20 @@ raw audit 为三个 Observation、三个 Prepared、三个 Started、两个 Acti
 loopback provider 严格限定三个主请求和八个 recap 请求；两列 prior、代数与阶段逐一匹配，停止并排空
 provider 后才最终核对计数、清理成功现场。部署配置与真实会话不参与实验。独立审阅通过，
 Release 首次进程场景运行 1/1；它不证明断电/fsync 耐久性、自动调度或外部调用 exactly-once。
+
+### derived [R-LAB-PHASE3-ACCEPTANCE] 2026-09-10 最终验收
+
+- 一键 `scripts/test_galatea_lab.sh Release`：离线 19/19，0 skipped；未启用 `--live`。
+- Galatea provider-free 全套：Release、Debug 各 846/846，0 skipped；过滤器仍为
+  `FullyQualifiedName!~LiveTests`，不把未执行的 live 算作通过。
+- Node HTTP/SSE/follower：13/13；scoped docs checker：27 文件、0 diagnostics。
+- Release Server build：0 warning / 0 error；runner `bash -n` 与最终 `git diff --check` 通过。
+- 两包均经独立代码审阅、动态问题尾修与最终文档证据边界复核；仅测试与文档变更。
+
+定向首次失败、种子修正后的第二次失败、行计划修正后的成功及最终全套报告分别保留于
+`/mnt/wsl/fast/tmp/atelia-galatea-phase3-results.J5mbPj`；一键 runner 的独立结果目录为
+`/mnt/wsl/fast/tmp/atelia-galatea-lab-results.wc1zW9`。这些是本次本机诊断路径，不是 CI 固定路径。
+未修改真实 `gpt`/`cyber` 状态、部署配置或访问真实外部 LLM。成功实例已按 lab 合同清理，失败实例保留。
+
+本期到此收口；后续按实际风险另评估 Memo recall/receipt/RecapGrid 三方组合、绑定后追加前硬杀或
+SessionJournal tool-loop 硬杀，不以当前通过结果声称所有生产 E2E 必然成功。
