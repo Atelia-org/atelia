@@ -11,6 +11,7 @@
 | 调用 HTTP、消费 SSE、理解状态字段 | [Server API](server-api.md) | 当前接口、请求示例、完整协议与限额 |
 | 修改自动轮次、邮件、记忆或恢复流程 | [运行时机制](runtime.md) | 跨组件职责、持久化边界与专题链接 |
 | 验证真实 Codex transport | [代行验证](codex-delegation-verification.md) | 可重复 canary；历史结果单独标注日期 |
+| 开发期演练升级、回退、进程 crash 与主线调用 | [Scenario lab](scenario-lab.md) | 合成隔离实例、确定性场景与显式 live canary |
 | 处理已证实完成但无法自动结算的 Codex turn | [离线恢复 runbook](codex-delegation-operator-recovery.md) | exact evidence、dry-run 与显式 apply |
 
 ## 深入到具体机制

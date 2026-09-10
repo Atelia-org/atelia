@@ -1,0 +1,2 @@
+{"stage":"first-turn-stopped","completedTurns":1,"Calls":1,"nativeItems":1,"phase":"Idle"}
+{"stage":"summary","success":true,"model":"gpt-5.6-luna","completedTurns":2,"Calls":2,"phase":"Idle","source":"synthetic","liveUserStateTouched":false,"nativeHistoryRetained":true}

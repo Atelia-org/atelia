@@ -11,6 +11,12 @@
 `Galatea:ConfigPath` 覆盖：命令行使用 `--Galatea:ConfigPath /绝对或相对路径/config.json`，环境变量使用
 `Galatea__ConfigPath`。相对路径以 content root 解析，而不是以 `config.json` 的父目录猜测。
 
+可选 ASP.NET 启动键 `Galatea:DataProtectionKeysDirectory`（环境变量
+`Galatea__DataProtectionKeysDirectory`）指定登录 cookie 的 DataProtection key-ring 目录，必须为非空绝对路径。
+未设置时维持 ASP.NET 原有默认行为；它不属于 strict `config.json`，也不改变会话/Completion identity。
+隔离实验必须显式指向自己的私有目录。指定文件系统存储不自动提供密钥静态加密，请限制目录权限；更换 key ring
+会使旧登录 cookie 无法解密，需要重新登录。实验流程见 [Scenario lab](scenario-lab.md)。
+
 首次以一个不存在的配置路径启动时，host 会在同一目录 create-new 生成：
 
 - `config.json`；
