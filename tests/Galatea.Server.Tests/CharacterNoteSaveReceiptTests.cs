@@ -20,12 +20,12 @@ public sealed class CharacterNoteSaveReceiptTests {
             receipt.Utf8Bytes
         );
         Assert.Contains(
-            "Galatea runtime 已将以下 1 条 Note 原文成功保存到默认MemoPod。",
+            "Galatea runtime 已将以下 1 条 Note 内容成功保存到默认MemoPod。",
             receipt.Notice.Body,
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "本回执只证明以下原文已保存；不承诺分类、metadata补全或召回。",
+            "本回执只证明以下Note内容已保存；不承诺分类、metadata补全或召回。",
             receipt.Notice.Body,
             StringComparison.Ordinal
         );
@@ -59,7 +59,7 @@ public sealed class CharacterNoteSaveReceiptTests {
         ));
 
         Assert.Contains(
-            "以下 2 条 Note 原文成功保存到默认MemoPod",
+            "以下 2 条 Note 内容成功保存到默认MemoPod",
             receipt.Notice.Body,
             StringComparison.Ordinal
         );

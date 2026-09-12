@@ -405,8 +405,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         CharacterNoteExtractor.ToolName,
         "note-call",
         JsonSerializer.Serialize(new {
-            exactText = ExactText,
-            evidenceQuote = "I write a note: remember blue",
+            text = ExactText,
         })
     ));
 
@@ -636,8 +635,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult<IReadOnlyList<CharacterNoteIntent>>([
                 new CharacterNoteIntent(
-                    "Exact memo: " + visibleActionText,
-                    visibleActionText
+                    "Exact memo: " + visibleActionText
                 ),
             ]);
         }

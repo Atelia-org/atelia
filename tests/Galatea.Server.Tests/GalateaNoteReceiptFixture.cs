@@ -137,7 +137,7 @@ internal static class GalateaNoteReceiptFixture {
                     if (target.Contains(NoteAction, StringComparison.Ordinal)) {
                         Assert.Equal(1, factory.Epoch);
                         Interlocked.Increment(ref factory._saveIntents);
-                        result = Tool(CharacterNoteExtractor.ToolName, new { exactText = NoteText, evidenceQuote = NoteAction });
+                        result = Tool(CharacterNoteExtractor.ToolName, new { text = NoteText });
                     }
                     else {
                         Assert.True(factory.Epoch > 1);

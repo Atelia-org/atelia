@@ -477,7 +477,6 @@ public sealed class CharacterNoteDefaultPodRecallTests {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult<IReadOnlyList<CharacterNoteIntent>>([
                 new CharacterNoteIntent(
-                    visibleActionText,
                     visibleActionText
                 )
             ]);

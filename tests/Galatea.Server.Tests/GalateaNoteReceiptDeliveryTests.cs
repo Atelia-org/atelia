@@ -171,7 +171,7 @@ public sealed class GalateaNoteReceiptDeliveryTests {
             cancellationToken.ThrowIfCancellationRequested();
             Calls++;
             return ValueTask.FromResult<IReadOnlyList<CharacterNoteIntent>>([
-                new CharacterNoteIntent("Keep this exact note.", "saved-note")]);
+                new CharacterNoteIntent("Keep this exact note.")]);
         }
     }
 

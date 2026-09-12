@@ -2,8 +2,11 @@ using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
+using Atelia.EventJournal;
 using Atelia.Galatea.Prompts;
 using Atelia.Galatea.Server.CharacterMemory;
+using Atelia.SessionJournal;
+using Atelia.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -187,12 +190,12 @@ public sealed class CharacterNoteExtractorTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "long-term Note save-request submissions",
+            "explicit current save requests",
             aliceRequest.PromptPrefix.SystemPrompt,
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "already recorded, stored, or saved is not a request submission",
+            "already recorded, stored, or saved does not establish a current save request",
             aliceRequest.PromptPrefix.SystemPrompt,
             StringComparison.Ordinal
         );
@@ -202,12 +205,12 @@ public sealed class CharacterNoteExtractorTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "earliest qualifying candidates first",
+            "earliest qualifying Notes first",
             aliceRequest.PromptPrefix.SystemPrompt,
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "Never truncate or rewrite a candidate",
+            "Never truncate or summarize a Note",
             aliceRequest.PromptPrefix.SystemPrompt,
             StringComparison.Ordinal
         );
@@ -217,12 +220,7 @@ public sealed class CharacterNoteExtractorTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "8 KiB of UTF-8 text",
-            aliceRequest.PromptPrefix.SystemPrompt,
-            StringComparison.Ordinal
-        );
-        Assert.Contains(
-            "combined emitted exactText exceed 256 KiB",
+            "combined emitted text exceed 256 KiB",
             aliceRequest.PromptPrefix.SystemPrompt,
             StringComparison.Ordinal
         );
@@ -240,24 +238,24 @@ public sealed class CharacterNoteExtractorTests {
             Assert.Single(aliceRequest.TailMessages)
         );
         Assert.Contains(
-            "claims of prior saving",
+            "earlier save results",
             aliceTail.Content,
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "up to 16 earliest qualifying long-term Note save requests",
+            "up to 16 earliest qualifying Notes",
             aliceTail.Content,
             StringComparison.Ordinal
         );
         string schema = ToolSchemaTextRenderer.RenderDefinitions(
             aliceRequest.PromptPrefix.OutputContract.Tools
         );
-        Assert.Contains("exactText", schema, StringComparison.Ordinal);
-        Assert.Contains("evidenceQuote", schema, StringComparison.Ordinal);
+        Assert.Contains("text", schema, StringComparison.Ordinal);
+        Assert.DoesNotContain("exactText", schema, StringComparison.Ordinal);
+        Assert.DoesNotContain("evidenceQuote", schema, StringComparison.Ordinal);
         Assert.Contains("64 KiB", schema, StringComparison.Ordinal);
-        Assert.Contains("8 KiB", schema, StringComparison.Ordinal);
         Assert.Contains("save request", schema, StringComparison.Ordinal);
-        Assert.Contains("completed submitting", schema,
+        Assert.Contains("emit each Note separately", schema,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
             "title",
@@ -287,25 +285,20 @@ public sealed class CharacterNoteExtractorTests {
     }
 
     [Fact]
-    public async Task ReturnsZeroAndPreservesOrderedGroundedIntents() {
+    public async Task ReturnsZeroAndPreservesOrderedTranscribedIntents() {
         const string Target = """
-[Galatea] I submitted a long-term Note save request with exact text "first exact note" and completed the submission.
-[Galatea] I submitted a long-term Note save request with exact text "second exact note" and completed the submission.
+[Galatea] I submitted two long-term Notes:
+> **First** note, on two
+> lines.
+> Literal `&gt;`, path `/notes/中文` and condition `n > 3` stay unchanged.
 """;
+        string[] texts = [
+            "First note, on two lines.",
+            "Literal `&gt;`, path `/notes/中文` and condition `n > 3` stay unchanged.",
+        ];
         var client = new QueueClient(
             _ => Message(),
-            _ => Message(
-                Tool(
-                    "note-1",
-                    "first exact note",
-                    "[Galatea] I submitted a long-term Note save request"
-                ),
-                Tool(
-                    "note-2",
-                    "second exact note",
-                    "[Galatea] I submitted a long-term Note save request"
-                )
-            )
+            _ => Message(Tool("note-1", texts[0]), Tool("note-2", texts[1]))
         );
         var extractor = CreateExtractor(client);
 
@@ -316,87 +309,113 @@ public sealed class CharacterNoteExtractorTests {
         IReadOnlyList<CharacterNoteIntent> intents =
             await extractor.ExtractAsync(Target, CancellationToken.None);
 
-        Assert.Equal(
-            ["first exact note", "second exact note"],
-            intents.Select(static intent => intent.ExactText)
-        );
-        Assert.Equal(
-            [
-                "[Galatea] I submitted a long-term Note save request",
-                "[Galatea] I submitted a long-term Note save request",
-            ],
-            intents.Select(static intent => intent.EvidenceQuote)
-        );
+        Assert.Equal(texts, intents.Select(static intent => intent.Text));
+        Assert.DoesNotContain(texts[0], Target, StringComparison.Ordinal);
+        string envelope = Assert.IsType<string>(Assert.IsType<ObservationMessage>(
+            Assert.Single(client.Requests[1].TailMessages)).Content);
+        Assert.Contains("&amp;gt;", envelope, StringComparison.Ordinal);
+        Assert.Contains("n &gt; 3", envelope, StringComparison.Ordinal);
     }
 
     [Theory]
-    [InlineData(InvalidIntentShape.BlankExactText)]
-    [InlineData(InvalidIntentShape.BlankEvidenceQuote)]
-    [InlineData(InvalidIntentShape.UngroundedExactText)]
-    [InlineData(InvalidIntentShape.UngroundedEvidenceQuote)]
-    [InlineData(InvalidIntentShape.OversizedExactText)]
-    [InlineData(InvalidIntentShape.OversizedEvidenceQuote)]
+    [InlineData(InvalidIntentShape.BlankText)]
+    [InlineData(InvalidIntentShape.MissingText)]
+    [InlineData(InvalidIntentShape.NonStringText)]
+    [InlineData(InvalidIntentShape.OversizedText)]
     [InlineData(InvalidIntentShape.InvalidUtf16Arguments)]
-    public async Task RejectsInvalidOrUngroundedArtifacts(
-        InvalidIntentShape shape
-    ) {
-        const string ValidExactText = "grounded note";
-        const string ValidEvidence = "completed submitting the Note request";
-        string target = $"{ValidExactText}; {ValidEvidence}";
+    public async Task RejectsInvalidArtifacts(InvalidIntentShape shape) {
         ActionBlock.ToolCall call = shape switch {
-            InvalidIntentShape.BlankExactText =>
-                Tool("invalid", " ", ValidEvidence),
-            InvalidIntentShape.BlankEvidenceQuote =>
-                Tool("invalid", ValidExactText, " "),
-            InvalidIntentShape.UngroundedExactText =>
-                Tool("invalid", "invented note", ValidEvidence),
-            InvalidIntentShape.UngroundedEvidenceQuote =>
-                Tool("invalid", ValidExactText, "invented evidence"),
-            InvalidIntentShape.OversizedExactText => Tool(
+            InvalidIntentShape.BlankText => Tool("invalid", " "),
+            InvalidIntentShape.MissingText => RawTool("{}"),
+            InvalidIntentShape.NonStringText => RawTool("{\"text\":42}"),
+            InvalidIntentShape.OversizedText => Tool(
                 "invalid",
-                new string(
-                    'x',
-                    CharacterNoteBounds.MaximumExactTextUtf8Bytes + 1
-                ),
-                ValidEvidence
+                new string('x', CharacterNoteBounds.MaximumExactTextUtf8Bytes + 1)
             ),
-            InvalidIntentShape.OversizedEvidenceQuote => Tool(
-                "invalid",
-                ValidExactText,
-                new string(
-                    'x',
-                    CharacterNoteBounds.MaximumEvidenceQuoteUtf8Bytes + 1
-                )
-            ),
-            InvalidIntentShape.InvalidUtf16Arguments => new(
-                new RawToolCall(
-                    CharacterNoteExtractor.ToolName,
-                    "invalid",
-                    "{\"exactText\":\"" + "\ud800"
-                        + "\",\"evidenceQuote\":\"completed submitting the Note request\"}"
-                )
-            ),
+            InvalidIntentShape.InvalidUtf16Arguments =>
+                RawTool("{\"text\":\"" + "\ud800" + "\"}"),
             _ => throw new ArgumentOutOfRangeException(nameof(shape)),
         };
-        if (shape == InvalidIntentShape.OversizedExactText) {
-            target = new string(
-                'x',
-                CharacterNoteBounds.MaximumExactTextUtf8Bytes + 1
-            ) + ValidEvidence;
-        }
-        else if (shape == InvalidIntentShape.OversizedEvidenceQuote) {
-            target = ValidExactText + new string(
-                'x',
-                CharacterNoteBounds.MaximumEvidenceQuoteUtf8Bytes + 1
-            );
-        }
-        var extractor = CreateExtractor(new QueueClient(
-            _ => Message(call)
-        ));
+        var extractor = CreateExtractor(new QueueClient(_ => Message(call)));
 
         _ = await Assert.ThrowsAsync<TextExtractionException>(() =>
-            extractor.ExtractAsync(target, CancellationToken.None).AsTask()
+            extractor.ExtractAsync("[Galatea] I submitted a Note.", CancellationToken.None).AsTask()
         );
+    }
+
+    [Fact]
+    public async Task TwoTranscribedNotesPersistWithFrozenReceiptAndColdReopenSkipsExtraction() {
+        // Anonymized shape of the two-Note incident. The response faithfully
+        // joins paragraphs; it is deliberately not an ordinal source substring.
+        const string Action = """
+[Galatea] 请把下面两条存为长期 Note：
+> **截至2026年9月13日03:12，我选择试用“小澄”这个名字。**
+> 这不是永久更名，也不证明 runtime 配置已修改；试用后再确认。
+
+> **故事内书写、向 runtime 提交请求、收到保存成功回执，必须区分。**
+> 没有回执不自动等于保存失败；不得把尚未完成的工作写成完成。
+""";
+        string[] texts = [
+            "截至2026年9月13日03:12，我选择试用“小澄”这个名字。这不是永久更名，也不证明 runtime 配置已修改；试用后再确认。",
+            "故事内书写、向 runtime 提交请求、收到保存成功回执，必须区分。没有回执不自动等于保存失败；不得把尚未完成的工作写成完成。",
+        ];
+        Assert.All(texts, text => Assert.DoesNotContain(text, Action, StringComparison.Ordinal));
+        var client = new QueueClient(_ => Message(
+            Tool("note-1", texts[0]), Tool("note-2", texts[1])));
+        var extractor = CreateExtractor(client);
+        string root = Path.Combine(Path.GetTempPath(), "atelia-note-transcription-" + Guid.NewGuid().ToString("N"));
+        string sessionPath = Path.Combine(root, "session");
+        string memoryPath = Path.Combine(root, "memory");
+        var owner = new CharacterMemoryStoreOwner("user", sessionPath);
+        GalateaTerminalActionExtractionTarget target;
+        string receiptBody;
+        long receiptRevision;
+        string[] memoIds;
+        try {
+            using (var engine = SessionJournalEngine.Create(sessionPath, new SessionCreateOptions("model", "system", "surface"))) {
+                using var memory = await CharacterNoteDefaultPodReconciler.CreateNewAsync(
+                    memoryPath, owner,
+                    new CharacterMemoryStoreBaseline(engine.ReadView.ReadPhysicalAppendFrontier(),
+                        EventAddressTextCodec.FormatNullable(engine.ReadCurrentHead())),
+                    extractor);
+                _ = engine.AppendObservation("save two notes");
+                EventAddress action = engine.AppendImportedAgentAction(
+                    Message(new ActionBlock.Text(Action)),
+                    new CompletionDescriptor("fixture", "test-v1", "model"));
+                target = new GalateaTerminalActionExtractionTarget(action, Action);
+                var applied = Assert.IsType<CharacterNoteDefaultPodReconcileResult.AppliedNow>(
+                    await memory.ReconcileTargetAsync(engine, target));
+                Assert.Equal(texts, applied.Memos.Select(static memo => memo.ExactText));
+                memoIds = applied.Memos.Select(static memo => memo.MemoId.Value).ToArray();
+                CharacterNoteReceiptDeliverySnapshot receipt = Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
+                    memory.ReadPendingReceiptDelivery());
+                Assert.All(texts, text => Assert.Contains(text, receipt.NoticeBody, StringComparison.Ordinal));
+                receiptBody = receipt.NoticeBody;
+                receiptRevision = receipt.CreatedRevision;
+            }
+
+            // A changed extraction contract must never reinterpret an existing capture.
+            var changedExtractor = new CharacterNoteExtractor(
+                new GalateaCharacterName("Changed character name"), Connection(),
+                () => throw new Xunit.Sdk.XunitException("Reopen must not invoke the extractor."));
+            Assert.NotEqual(extractor.ContractId, changedExtractor.ContractId);
+            using var reopenedEngine = SessionJournalEngine.Open(sessionPath);
+            using var reopenedMemory = await CharacterNoteDefaultPodReconciler.OpenExistingAsync(
+                memoryPath, owner, changedExtractor);
+            Assert.IsType<CharacterNoteDefaultPodReconcileResult.AlreadyApplied>(
+                await reopenedMemory.ReconcileTargetAsync(reopenedEngine, target));
+            CharacterNoteReceiptDeliverySnapshot recoveredReceipt = Assert.IsType<CharacterNoteReceiptDeliverySnapshot>(
+                reopenedMemory.ReadPendingReceiptDelivery());
+            Assert.Equal(receiptBody, recoveredReceipt.NoticeBody);
+            Assert.Equal(receiptRevision, recoveredReceipt.CreatedRevision);
+            var pod = global::Atelia.MemoPod.MemoPod.Open(memoryPath, CharacterNoteDefaultPodV1.PodId);
+            Assert.Equal(texts, pod.List().Select(static memo => memo.ExactText));
+            Assert.Equal(memoIds, pod.List().Select(static memo => memo.Id.Value));
+            Assert.Single(client.Requests);
+        }
+        finally {
+            TestDirectorySafety.DeleteOwnedTreeNoFollow(root);
+        }
     }
 
     [Fact]
@@ -410,22 +429,19 @@ public sealed class CharacterNoteExtractorTests {
             _ => Message(Enumerable.Range(0, 17)
                 .Select(index => Tool(
                     $"too-many-{index}",
-                    "same note",
-                    Evidence
+                    "same note"
                 ))
                 .ToArray()),
             _ => Message(Enumerable.Range(0, 5)
                 .Select(index => Tool(
                     $"too-large-{index}",
-                    boundaryText,
-                    Evidence
+                    boundaryText
                 ))
                 .ToArray()),
             _ => Message(Enumerable.Range(0, 4)
                 .Select(index => Tool(
                     $"boundary-{index}",
-                    boundaryText,
-                    Evidence
+                    boundaryText
                 ))
                 .ToArray())
         );
@@ -452,7 +468,7 @@ public sealed class CharacterNoteExtractorTests {
         Assert.Equal(4, boundary.Count);
         Assert.All(boundary, intent => Assert.Equal(
             boundaryText,
-            intent.ExactText
+            intent.Text
         ));
     }
 
@@ -500,24 +516,27 @@ public sealed class CharacterNoteExtractorTests {
 
     private static ActionBlock.ToolCall Tool(
         string callId,
-        string exactText,
-        string evidenceQuote
+        string text
     ) => new(new RawToolCall(
         CharacterNoteExtractor.ToolName,
         callId,
-        JsonSerializer.Serialize(new { exactText, evidenceQuote })
+        JsonSerializer.Serialize(new { text })
     ));
 
     private static ActionMessage Message(params ActionBlock[] blocks) =>
         new(blocks);
 
+    private static ActionBlock.ToolCall RawTool(string arguments) => new(new RawToolCall(
+        CharacterNoteExtractor.ToolName,
+        "invalid",
+        arguments
+    ));
+
     public enum InvalidIntentShape {
-        BlankExactText,
-        BlankEvidenceQuote,
-        UngroundedExactText,
-        UngroundedEvidenceQuote,
-        OversizedExactText,
-        OversizedEvidenceQuote,
+        BlankText,
+        MissingText,
+        NonStringText,
+        OversizedText,
         InvalidUtf16Arguments,
     }
 

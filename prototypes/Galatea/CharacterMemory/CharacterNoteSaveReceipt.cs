@@ -36,9 +36,9 @@ internal sealed class CharacterNoteSaveReceipt {
             return receipt;
         }
         if (memos.Count == 0) { throw new ArgumentException("A durable receipt requires saved memos.", nameof(memos)); }
-        string body = "Galatea runtime 已将以下 Note 原文成功保存到默认MemoPod。\n"
-            + "本回执只证明原文已保存；不承诺分类、metadata补全或召回。\n"
-            + "原文超出回执展示预算，以下仅列出保存标识：\n"
+        string body = "Galatea runtime 已将以下 Note 内容成功保存到默认MemoPod。\n"
+            + "本回执只证明Note内容已保存；不承诺分类、metadata补全或召回。\n"
+            + "Note内容超出回执展示预算，以下仅列出保存标识：\n"
             + "Source Action: " + memos[0].SourceActionAddress + "\n"
             + string.Join("\n", memos.Select(static memo => "Memo: " + memo.MemoId.Value));
         int bytes = TextExtractorUtf8.GetByteCount(body);
@@ -137,9 +137,9 @@ internal sealed class CharacterNoteSaveReceipt {
         var builder = new StringBuilder();
         _ = builder.Append("Galatea runtime 已将以下 ")
             .Append(memos.Count.ToString(CultureInfo.InvariantCulture))
-            .Append(" 条 Note 原文成功保存到默认MemoPod。\n\n")
-            .Append("本回执只证明以下原文已保存；不承诺分类、metadata补全或召回。\n\n")
-            .Append("已保存的 Note 原文：");
+            .Append(" 条 Note 内容成功保存到默认MemoPod。\n\n")
+            .Append("本回执只证明以下Note内容已保存；不承诺分类、metadata补全或召回。\n\n")
+            .Append("已保存的 Note 内容：");
 
         for (int index = 0; index < memos.Count; index++) {
             _ = builder.Append("\n\n")

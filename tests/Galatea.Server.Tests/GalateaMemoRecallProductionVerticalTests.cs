@@ -558,8 +558,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
                             CharacterNoteExtractor.ToolName,
                             "call-note",
                             JsonSerializer.Serialize(new {
-                                exactText = "旧城区的蓝门后藏着一把钥匙。",
-                                evidenceQuote = "[Galatea] 我把“旧城区的蓝门后藏着一把钥匙。”作为长期Note提交给runtime保存。",
+                                text = "旧城区的蓝门后藏着一把钥匙。",
                             })
                         )
                     )])

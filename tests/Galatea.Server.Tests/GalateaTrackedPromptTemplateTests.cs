@@ -272,15 +272,19 @@ public sealed class GalateaTrackedPromptTemplateTests {
             StringComparison.Ordinal);
         Assert.Contains("主动向Galatea runtime提交自己的长期Note", noteAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("必须由${characterName}本人", noteAppendix,
+        Assert.Contains("表达自己现在要保存的意思", noteAppendix,
             StringComparison.Ordinal);
         Assert.Contains("只有后续runtime发出的`Note 保存回执`", noteAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("才能证明相应原文已经保存成功", noteAppendix,
+        Assert.Contains("才能证明相应Note内容已经保存成功", noteAppendix,
             StringComparison.Ordinal);
         Assert.Contains("同一次回复", noteAppendix,
             StringComparison.Ordinal);
-        Assert.Contains("完整原文", noteAppendix,
+        Assert.Contains("每条Note的完整内容", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("不需要专门的提交句式", noteAppendix,
+            StringComparison.Ordinal);
+        Assert.Contains("保留事实、否定、条件和不确定性", noteAppendix,
             StringComparison.Ordinal);
         Assert.Contains("没有回执不能判断成功或失败", noteAppendix,
             StringComparison.Ordinal);

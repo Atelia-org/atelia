@@ -257,8 +257,8 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
     [Fact]
     public async Task OriginBarrierMapsExactAppliedMultiMemoCapture() {
         using var fixture = await RuntimeFixture.CreateAsync(_ => [
-            new CharacterNoteIntent("first note", "first submitted"),
-            new CharacterNoteIntent("second note", "second submitted"),
+            new CharacterNoteIntent("first note"),
+            new CharacterNoteIntent("second note"),
         ]);
         (EventAddress action, GalateaTerminalActionExtractionTarget target) =
             fixture.AppendTarget("two submitted notes");
@@ -328,7 +328,7 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
         var access = FakePodAccess.ReadyEmpty();
         access.ActiveMemoCount = MemoPodLimits.MaximumActiveMemoCount;
         using var rejected = await RuntimeFixture.CreateWithAccessAsync(
-            _ => [new CharacterNoteIntent("exact", "submitted")],
+            _ => [new CharacterNoteIntent("exact")],
             access
         );
         (EventAddress rejectedAction,
@@ -353,7 +353,7 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
     [Fact]
     public async Task OriginBarrierRejectsFingerprintMismatch() {
         using var fixture = await RuntimeFixture.CreateAsync(_ => [
-            new CharacterNoteIntent("exact", "submitted"),
+            new CharacterNoteIntent("exact"),
         ]);
         (EventAddress action, GalateaTerminalActionExtractionTarget target) =
             fixture.AppendTarget("exact submitted");
@@ -431,7 +431,7 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
         var plannedAccess = FakePodAccess.ReadyEmpty();
         plannedAccess.NextFreeze = FakeFreeze.LeaveBaseThenThrow;
         using (var planned = await RuntimeFixture.CreateWithAccessAsync(
-                   _ => [new CharacterNoteIntent("exact", "submitted")],
+                   _ => [new CharacterNoteIntent("exact")],
                    plannedAccess
                )) {
             (EventAddress action,
@@ -486,7 +486,7 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
     public async Task PreCapturePodIoFailureThrowsWithoutCapture() {
         var access = FakePodAccess.ReadyEmpty();
         using var fixture = await RuntimeFixture.CreateWithAccessAsync(
-            _ => [new CharacterNoteIntent("exact", "submitted")],
+            _ => [new CharacterNoteIntent("exact")],
             access
         );
         (_, GalateaTerminalActionExtractionTarget target) =
@@ -513,8 +513,8 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
         var access = FakePodAccess.ReadyEmpty();
         using var fixture = await RuntimeFixture.CreateWithAccessAsync(
             _ => [
-                new CharacterNoteIntent("first exact", "submitted first"),
-                new CharacterNoteIntent("second exact", "submitted second")
+                new CharacterNoteIntent("first exact"),
+                new CharacterNoteIntent("second exact")
             ],
             access
         );
@@ -756,7 +756,7 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
         var access = FakePodAccess.ReadyEmpty();
         access.NextFreeze = FakeFreeze.InstallThenThrow;
         using var fixture = await RuntimeFixture.CreateWithAccessAsync(
-            _ => [new CharacterNoteIntent("exact", "submitted")],
+            _ => [new CharacterNoteIntent("exact")],
             access
         );
         (_, GalateaTerminalActionExtractionTarget target) =
@@ -781,7 +781,7 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
         var access = FakePodAccess.ReadyEmpty();
         access.NextFreeze = FakeFreeze.LeaveBaseThenThrow;
         using var fixture = await RuntimeFixture.CreateWithAccessAsync(
-            _ => [new CharacterNoteIntent("exact", "submitted")],
+            _ => [new CharacterNoteIntent("exact")],
             access
         );
         (_, GalateaTerminalActionExtractionTarget target) =
@@ -907,7 +907,7 @@ public sealed class CharacterNoteDefaultPodReconcilerTests {
         var access = FakePodAccess.ReadyEmpty();
         access.ActiveMemoCount = MemoPodLimits.MaximumActiveMemoCount;
         using var fixture = await RuntimeFixture.CreateWithAccessAsync(
-            _ => [new CharacterNoteIntent("exact", "submitted")],
+            _ => [new CharacterNoteIntent("exact")],
             access
         );
         (EventAddress action, GalateaTerminalActionExtractionTarget target) =

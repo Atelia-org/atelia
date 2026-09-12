@@ -1706,7 +1706,7 @@ public sealed class GalateaConfigValidationTests {
             );
             Assert.Contains("只有后续runtime发出的`Note 保存回执`", noteEnabledPrompt,
                 StringComparison.Ordinal);
-            Assert.Contains("本人在同一次回复", noteEnabledPrompt,
+            Assert.Contains("在同一次回复中表达自己现在要保存的意思", noteEnabledPrompt,
                 StringComparison.Ordinal);
             Assert.Contains("不承诺分类、metadata补全或召回", noteEnabledPrompt,
                 StringComparison.Ordinal);

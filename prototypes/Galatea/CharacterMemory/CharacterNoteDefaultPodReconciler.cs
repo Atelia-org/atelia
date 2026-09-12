@@ -342,7 +342,7 @@ internal sealed partial class CharacterNoteDefaultPodReconciler
                 target.VisibleTextSha256,
                 target.VisibleTextUtf8Bytes,
                 _extractor.ContractId,
-                intents.Select(static intent => intent.ExactText).ToArray()
+                intents.Select(static intent => intent.Text).ToArray()
             ));
             return captured.Disposition switch {
                 CharacterMemoryCaptureDisposition.BaselineCovered =>

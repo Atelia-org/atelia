@@ -15,9 +15,6 @@ namespace Atelia.Galatea.Server.Tests;
 public sealed class GalateaAutonomyPostProcessingTests {
     private static readonly TimeSpan TestDeadline = TimeSpan.FromSeconds(10);
     private const string NoteText = "remember autonomous blue";
-    private const string NoteEvidence =
-        "I submitted a long-term Note save request with exact text: "
-        + "remember autonomous blue, and completed the submission.";
     private const string TerminalAction = """
         [Galatea] I sent mail body to Alice and completed sending.
         [Galatea] I submitted a long-term Note save request with exact text: remember autonomous blue, and completed the submission.
@@ -201,8 +198,7 @@ public sealed class GalateaAutonomyPostProcessingTests {
         CharacterNoteExtractor.ToolName,
         "note-call",
         JsonSerializer.Serialize(new {
-            exactText = NoteText,
-            evidenceQuote = NoteEvidence,
+            text = NoteText,
         })
     ));
 

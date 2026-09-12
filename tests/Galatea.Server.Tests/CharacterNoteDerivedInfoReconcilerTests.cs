@@ -610,8 +610,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult<IReadOnlyList<CharacterNoteIntent>>([
                 new CharacterNoteIntent(
-                    "Exact memo: " + visibleActionText,
-                    visibleActionText
+                    "Exact memo: " + visibleActionText
                 )
             ]);
         }
@@ -645,8 +644,7 @@ public sealed class CharacterNoteDerivedInfoReconcilerTests {
                 Completed.SetResult();
             }
             return [new CharacterNoteIntent(
-                "Exact memo: " + visibleActionText,
-                visibleActionText
+                "Exact memo: " + visibleActionText
             )];
         }
 

@@ -28,8 +28,6 @@ public sealed class CharacterNoteRuntimeTests {
         [Galatea] I submitted a long-term Note save request with exact text: remember blue, and completed the submission.
         """;
     private const string NoteText = "remember blue";
-    private const string NoteEvidence =
-        "I submitted a long-term Note save request with exact text: remember blue, and completed the submission.";
 
     [Fact]
     public async Task SharedClientOverlapsMailAndNoteThenReceiptAttachesOnce() {
@@ -250,8 +248,7 @@ public sealed class CharacterNoteRuntimeTests {
                 )),
                 [mail.Id] = new QueueClient(Message()),
                 [note.Id] = new QueueClient(Message(NoteTool(
-                    ExactText,
-                    Evidence
+                    ExactText
                 ))),
             }),
             DisabledGalateaUserMessageNormalizer.Instance,
@@ -1717,12 +1714,11 @@ public sealed class CharacterNoteRuntimeTests {
     ));
 
     private static ActionBlock.ToolCall NoteTool(
-        string exactText = NoteText,
-        string evidenceQuote = NoteEvidence
+        string text = NoteText
     ) => new(new RawToolCall(
         CharacterNoteExtractor.ToolName,
         "note-call",
-        JsonSerializer.Serialize(new { exactText, evidenceQuote })
+        JsonSerializer.Serialize(new { text })
     ));
 
     private static ActionMessage Message(params ActionBlock[] blocks) =>
@@ -1768,7 +1764,7 @@ public sealed class CharacterNoteRuntimeTests {
                         "note provider unavailable"
                     );
                 case NoteOutcome.Invalid:
-                    message = Message(NoteTool("not grounded", NoteEvidence));
+                    message = Message(NoteTool(" "));
                     break;
                 case NoteOutcome.Timeout:
                     try {
