@@ -163,6 +163,28 @@ test("turn/start response must match the pending dispatch identity and task", as
   assert.equal(counts.turnStartCount, 1);
 });
 
+test("sparse turn/start projections acknowledge Accepted and defer dispatch/task evidence to persistent inspection", async (t) => {
+  const value = await harness(t, { fixtureArgs: ["--sparse-start-projections"] });
+  const binding = await bind(value);
+  const task = "[NATURAL] sparse start response task";
+  const accepted = await start(value, binding.threadId, "mail-sparse", task);
+  await delay(30);
+  const request = {
+    threadId: binding.threadId, dispatchId: "mail-sparse", task,
+    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+  };
+  const inspected = await value.backend.inspectDispatch(request);
+  assert.equal(inspected.kind, "completed");
+  assert.equal(inspected.source, "persistent");
+  for (const changed of [{ task: "a different task" }, { dispatchId: "a-different-dispatch" }]) {
+    const mismatch = await value.backend.inspectDispatch({ ...request, ...changed });
+    assert.equal(mismatch.kind, "ambiguous");
+    assert.equal(mismatch.source, "persistent");
+  }
+  const counts = await value.client.request<{ turnStartCount: number }>("test/lastRequests", {});
+  assert.equal(counts.turnStartCount, 1);
+});
+
 test("Accepted missing from official turns is stable unavailable, not not-found", async (t) => {
   const sanitizedFixture = JSON.parse(await readFile(
     acceptedTurnNotVisibleFixture,

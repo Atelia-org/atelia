@@ -174,8 +174,13 @@ export class LiveTurnObservations {
     expectation?: LiveStartExpectation,
   ): boolean {
     if (expectation) {
+      if (expectation.tracked && this.pendingStarts.get(threadId) !== expectation) return false;
+      // A correlated turn/start response acknowledges the turn even when its
+      // item projection has not loaded the user message. Do not invent live
+      // evidence: Accepted inspection will match persisted dispatch and task.
+      if (!turn.items.some((item) => item.type === "userMessage")) return true;
       const user = initialUser(turn);
-      if ((expectation.tracked && this.pendingStarts.get(threadId) !== expectation) || !user
+      if (!user
           || user.dispatchId !== expectation.dispatchId
           || taskDigest(user.task) !== expectation.taskDigest) return false;
       if (!expectation.tracked) return true;

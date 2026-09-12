@@ -150,6 +150,8 @@ stdin/stdout 是 strict bounded JSONL V4，stdout 只有协议 frame，日志只
 ```
 
 失败以 `failed` frame 返回稳定的 `stage`/`code`。`turn-accepted` 只表示 `turn/start` 已返回稳定 handle；
+响应的 items 可以尚未载入 userMessage，此时不建立 live 结果证据，随后 inspect 仍须通过原 dispatch/task
+匹配。若响应已经包含 userMessage 且其身份或正文矛盾，仍拒绝接受。
 sidecar 不同步等待 final。runtime 应持续发送 `inspect-dispatch`，并处理 `not-found`、`unavailable`、
 `running`、`completed`、`failed` 或 `ambiguous`；所有semantic结果都携带exact `source=live|persistent`。
 `OutcomeUnknown`必须发送`expectedTurnId:null`并仅按dispatch marker发现；`Accepted`必须发送已持久化的exact

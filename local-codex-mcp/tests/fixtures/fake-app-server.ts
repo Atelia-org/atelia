@@ -203,11 +203,21 @@ function responseForThread(thread: Record<string, unknown>) {
 
 function turnStartResult(turn: Record<string, unknown>): { turn: Record<string, unknown> } {
   const returned = structuredClone(turn);
+  if (process.argv.includes("--sparse-start-projections")) {
+    returned.items = [];
+    returned.itemsView = "notLoaded";
+  }
   if (process.argv.includes("--mismatch-turn-start-response")) {
     const user = (returned.items as Array<Record<string, unknown>>)[0];
     if (user) user.clientId = "mismatched-client";
   }
   return { turn: returned };
+}
+
+function startedProjection(turn: Record<string, unknown>): Record<string, unknown> {
+  return process.argv.includes("--sparse-start-projections")
+    ? { ...turn, items: [], itemsView: "notLoaded" }
+    : turn;
 }
 
 const lines = readline.createInterface({ input: process.stdin });
@@ -595,21 +605,21 @@ lines.on("line", (line) => {
       persistState();
       const input = JSON.stringify(message.params?.input ?? []);
       if (input.includes("[HANG_TURN_START]")) {
-        send({ method: "turn/started", params: { threadId, turn } });
+        send({ method: "turn/started", params: { threadId, turn: startedProjection(turn) } });
         setTimeout(() => completeTurn(threadId, turnId, "completed", input), 10);
       } else if (input.includes("[STARTED_BEFORE_RESPONSE]")) {
-        send({ method: "turn/started", params: { threadId, turn } });
+        send({ method: "turn/started", params: { threadId, turn: startedProjection(turn) } });
         send({ id: message.id, result: turnStartResult(turn) });
         if (!input.includes("[LONG]")) {
           setTimeout(() => completeTurn(threadId, turnId, "completed", input), 10);
         }
       } else if (input.includes("[EARLY]")) {
-        send({ method: "turn/started", params: { threadId, turn } });
+        send({ method: "turn/started", params: { threadId, turn: startedProjection(turn) } });
         completeTurn(threadId, turnId, "completed", input);
         send({ id: message.id, result: turnStartResult(turn) });
       } else {
         send({ id: message.id, result: turnStartResult(turn) });
-        send({ method: "turn/started", params: { threadId, turn } });
+        send({ method: "turn/started", params: { threadId, turn: startedProjection(turn) } });
         if (input.includes("[CRASH]")) {
           setTimeout(() => process.exit(24), 5);
         } else if (!input.includes("[LONG]")) {
