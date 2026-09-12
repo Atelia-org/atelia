@@ -2912,13 +2912,23 @@ public sealed class GalateaHostService : IAsyncDisposable {
             currentObservation,
             context
         );
-        IReadOnlyList<PlayerTurnRecall> selected =
-            await recallProvider
+        IReadOnlyList<PlayerTurnRecall> selected;
+        try {
+            selected = await recallProvider
                 .SelectRecallsAsync(request, cancellationToken)
                 .ConfigureAwait(false)
             ?? throw new InvalidOperationException(
                 "Galatea player-turn recall provider returned null."
             );
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException
+            && GalateaExceptionClassifier.IsNonFatal(exception)) {
+            throw new GalateaTurnException(
+                "Memo recall failed before main completion.",
+                "memo-recall-failed",
+                exception
+            );
+        }
         return Array.AsReadOnly(selected.Select(static recall =>
             recall ?? throw new InvalidOperationException(
                 "Galatea player-turn recall provider returned a null recall."

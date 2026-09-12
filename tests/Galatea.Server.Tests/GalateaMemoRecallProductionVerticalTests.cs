@@ -8,6 +8,8 @@ using Atelia.MemoPod;
 using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
 using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Xunit;
 
@@ -296,15 +298,55 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             new GalateaTurnOptions("test")
         );
 
-        await Assert.ThrowsAsync<MemoRecallException>(() =>
+        GalateaTurnException failure = await Assert.ThrowsAsync<GalateaTurnException>(() =>
             service.RunTurnAsync(
                 session,
                 turn,
                 CancellationToken.None
             )
         );
+        Assert.Equal("memo-recall-failed", failure.FailureReason);
+        Assert.IsType<MemoRecallException>(failure.InnerException);
+        Assert.Equal(GalateaSseErrorCode.MemoRecallFailed,
+            GalateaSseErrorClassifier.Classify(failure));
+        Assert.Empty(session.Engine.ReadRecentCompletedTurns(1).RequireSnapshot().Turns);
+        Assert.Equal(SessionExecutionPhase.Idle,
+            session.Engine.InspectRuntimeRecoveryRequirements().Phase);
         Assert.Single(recall.Requests);
         Assert.Empty(main.Requests);
+    }
+
+    [Fact]
+    public async Task RecallFailureOverHttpKeepsStatusReadableAndReportsStage() {
+        var main = new MainCompletionClient();
+        var recall = new RecallCompletionClient {
+            Failure = new HttpRequestException("selector transport unavailable")
+        };
+        await using var host = CreateHost(main, recall, serverAgentUserIds: ["alice"]);
+        using HttpClient client = host.CreateClient();
+        using var login = await GalateaTestHost.LoginAsync(client);
+        var service = host.Factory.Services.GetRequiredService<GalateaHostService>();
+        var session = await service.GetSessionAsync("alice", CancellationToken.None);
+        using var accepted = await client.PostAsJsonAsync("/api/v1/chat/turns",
+            new { message = "继续", connectionId = "test" });
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        using var receipt = JsonDocument.Parse(await accepted.Content.ReadAsStringAsync());
+        string turnId = receipt.RootElement.GetProperty("turnId").GetString()!;
+        var turn = service.FindTurn(session, turnId)!;
+        await turn.RunTask!.WaitAsync(Deadline);
+        string stream = await client.GetStringAsync($"/api/v1/chat/turns/{turnId}/events");
+        Assert.Contains("\"code\":\"memo-recall-failed\"", stream);
+        Assert.DoesNotContain("selector transport unavailable", stream);
+        using var agent = JsonDocument.Parse(await client.GetStringAsync("/api/v1/agent/status"));
+        Assert.Equal("waiting", agent.RootElement.GetProperty("state").GetString());
+        Assert.Equal(JsonValueKind.Number,
+            agent.RootElement.GetProperty("nextActivationAtUnixTimeMilliseconds").ValueKind);
+        using var mailbox = JsonDocument.Parse(await client.GetStringAsync("/api/v1/mailbox/status"));
+        Assert.Equal("no-mail", mailbox.RootElement.GetProperty("state").GetString());
+        Assert.Empty(main.Requests);
+        Assert.Empty(session.Engine.ReadRecentCompletedTurns(1).RequireSnapshot().Turns);
+        Assert.Equal(SessionExecutionPhase.Idle,
+            session.Engine.InspectRuntimeRecoveryRequirements().Phase);
     }
 
     [Fact]
@@ -334,7 +376,8 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
     private static GalateaTestHost CreateHost(
         MainCompletionClient main,
         RecallCompletionClient recall,
-        bool maintenanceMode = false
+        bool maintenanceMode = false,
+        IReadOnlyList<string>? serverAgentUserIds = null
     ) {
         main.RecallDispatchCount = () => recall.Requests.Count;
         var factory = new RoutingClientFactory(new Dictionary<
@@ -348,6 +391,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             factory,
             DisabledGalateaUserMessageNormalizer.Instance,
             maintenanceMode: maintenanceMode,
+            serverAgentUserIds: serverAgentUserIds,
             connections: [
                 Connection("test", "main-model"),
                 Connection("recall", "recall-model"),

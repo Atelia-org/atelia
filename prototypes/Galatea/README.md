@@ -31,7 +31,7 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 字段说明、scaffold 步骤、配置示例和状态目录规则见[配置指南](../../docs/Galatea/configuration.md)。Route manifest 按需读取；启动成功并不表示完整 RecapGrid 已激活。
 
-如果 `connections.json` 包含 `openai-codex-responses`，还需在启动环境设置已 provision 的 `ATELIA_CODEX_SUBSCRIPTION_ACCOUNT_FINGERPRINT`，并将 `listenUrls` 配成 loopback 地址，例如 `http://127.0.0.1:3510`。普通模板中的 `0.0.0.0` 不适用于该模式。认证文件和环境变量细节也见配置指南。
+如果 `connections.json` 包含 `openai-codex-responses`，还需在启动环境设置已 provision 的 `ATELIA_CODEX_SUBSCRIPTION_ACCOUNT_FINGERPRINT`。`listenUrls` 与其他连接使用相同规则，可以绑定 `0.0.0.0`。认证文件和环境变量细节也见配置指南。
 
 启动成功后，打开 `listenUrls` 对应的浏览器地址。若配置为 `http://0.0.0.0:3510`，本机访问 `http://127.0.0.1:3510`；使用 `config.json` 中的 `userId` 和密码登录。登录页为 `/login`，交互页为 `/`。
 
@@ -112,7 +112,7 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj
 | 现象 | 先检查 |
 |:--|:--|
 | 启动后生成模板并退出 | 按提示检查模板，准备有效 delegates 路径及 Agent Control profile |
-| Codex connection 启动失败 | account fingerprint 环境变量、认证文件配置和 loopback 监听地址 |
+| Codex connection 启动失败 | account fingerprint 环境变量、认证文件配置和服务端异常日志 |
 | 页面显示 `disabled` | 当前登录账号是否在 `serverAgentUserIds` 中，修改后是否重启 |
 | `blocked` 或需要恢复 | 页面原因码、当前轮次、`Galatea.Autonomy` 与相关服务端错误日志 |
 | 切换模型后提示“结果不确定”，日志含 `reasoning replay requires Origin` | 旧版 Responses 投影错误；先核对 frozen adapter identity，旧版未完成轮次应在匹配版本上显式恢复，再升级。不要修改 Origin、清空历史或反复重试；详见[模型切换排障与升级边界](../../docs/Galatea/runtime.md#模型切换与-reasoning-回放排障) |

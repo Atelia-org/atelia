@@ -59,6 +59,18 @@ assert.throws(
 );
 
 const mailboxFetchCalls = [];
+for (const [response, expectedCode] of [
+  [new Response("", { status: 401 }), "HTTP_401"],
+  [new Response("", { status: 503 }), "HTTP_503"],
+  [new Response("<html></html>", { headers: { "content-type": "text/html" } }), "INVALID_CONTENT_TYPE"],
+  [new Response("{", { headers: { "content-type": "application/json" } }), "INVALID_JSON"],
+  [new Response("{}", { headers: { "content-type": "application/json" } }), "INVALID_RESPONSE"],
+]) {
+  await assert.rejects(production.fetchMailboxStatus(async () => response),
+    (error) => production.statusReadFailureCode(error) === expectedCode);
+}
+assert.equal(production.statusReadFailureCode(new TypeError("Failed to fetch")), "STATUS_READ_FAILED");
+
 const fetchedMailboxStatus = await production.fetchMailboxStatus(
   async (...args) => {
     mailboxFetchCalls.push(args);

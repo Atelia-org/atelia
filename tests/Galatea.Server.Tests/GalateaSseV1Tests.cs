@@ -63,6 +63,7 @@ public sealed class GalateaSseV1Tests {
             "operator-stop",
             "server-shutdown",
             "completion-failed",
+            "memo-recall-failed",
             "turn-unavailable",
             "internal-failure"
         ];

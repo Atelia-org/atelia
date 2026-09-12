@@ -117,6 +117,13 @@ app.Use(async (context, next) => {
             throw;
         }
         (int statusCode, ApiErrorDto error) = MapApiException(exception);
+        if (statusCode >= StatusCodes.Status500InternalServerError) {
+            DebugUtil.Error(
+                "Galatea.Api",
+                $"API request failed: method={context.Request.Method}, path={context.Request.Path}, status={statusCode}, code={error.Code}",
+                exception
+            );
+        }
         context.Response.Clear();
         await Results.Json(error, statusCode: statusCode)
             .ExecuteAsync(context);

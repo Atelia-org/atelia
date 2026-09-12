@@ -140,6 +140,8 @@ First-party browser 的读取是有条件串联，而不是三个接口无条件
 
 每个 response 都以页面 generation 与本地 mutation revision fencing，慢 GET 不能覆盖更新的 send、rewind 或 SSE 结果。页面打开不会自动 resume；SSE transport EOF 也不能被当作成功。
 
+current/recent 读取失败不会覆盖同次轮询已经成功读取的 Agent status。状态读取失败时，页面区分 `HTTP_<status>`、`INVALID_CONTENT_TYPE`、`INVALID_JSON`、`INVALID_RESPONSE` 和兜底 `STATUS_READ_FAILED`；浏览器 console 记录失败的请求或字段校验原因。服务端 API 5xx 异常记录在 `Galatea.Api` 日志中，排查时先区分请求失败与响应校验失败。
+
 ## Recent turns 与 RecapGrid readiness
 
 成功响应的顶层形状为：
@@ -207,7 +209,7 @@ done            { recent: RecentTurnsResponseV1 | null }
 error           { code, message }
 ```
 
-`status.code` 为 `generating|normalizing-input|input-normalization-finished|using-tools`；只有 `input-normalization-finished` 携带 required `changed:boolean`。`error.code` 为 `operator-stop|server-shutdown|completion-failed|turn-unavailable|internal-failure`。
+`status.code` 为 `generating|normalizing-input|input-normalization-finished|using-tools`；只有 `input-normalization-finished` 携带 required `changed:boolean`。`error.code` 为 `operator-stop|server-shutdown|completion-failed|memo-recall-failed|turn-unavailable|internal-failure`。`memo-recall-failed` 表示记忆召回阶段失败、主模型尚未开始生成；具体异常写入 `Galatea.TurnRunner` 日志。该错误码是 Stable V1 基线之后的扩展，server 与 first-party browser 必须同步更新。
 
 frame 使用 strict UTF-8 与 LF：exact 一个 `event:` 行、一个单行 `data:` JSON 和终止空行。id、retry、comment、multi-data 与 CRLF 均不属于 V1 grammar。
 

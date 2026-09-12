@@ -132,7 +132,9 @@ export async function fetchMailboxStatus(fetchImpl) {
     cache: "no-store",
   });
   if (!response.ok) {
-    throw new Error(`mailbox status request failed with ${response.status}`);
+    const error = new Error(`mailbox status request failed with ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return await readJsonResponse(response, requireMailboxStatus);
 }
@@ -171,8 +173,9 @@ export function createMailboxStatusPoller({
     inFlight = true;
     try {
       publishStatus(await readStatus());
-    } catch {
-      publishStatus(null);
+    } catch (error) {
+      console.warn("Galatea mailbox status read failed:", error?.message);
+      publishStatus(null, statusReadFailureCode(error));
     } finally {
       inFlight = false;
       schedule();
@@ -301,7 +304,11 @@ export function createAgentStatusFollower({
     const response = await fetchImpl(url, {
       method: "GET", credentials: "same-origin", cache: "no-store",
     });
-    if (!response.ok) throw new Error(`status read failed: ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(`status read failed: ${response.status} (${url})`);
+      error.status = response.status;
+      throw error;
+    }
     return await readJsonResponse(response, validator);
   }
   function schedule(delay = 5000) {
@@ -315,10 +322,12 @@ export function createAgentStatusFollower({
     const epoch = generation;
     const revision = getRevision();
     const current = () => enabled && epoch === generation && revision === getRevision();
+    let statusPublished = false;
     try {
       const status = await read("/api/v1/agent/status", requireAgentStatus);
       if (!current()) return;
       publishStatus(status);
+      statusPublished = true;
       if (isBusy()) return;
       const turn = await read("/api/v1/chat/turns/current", requireCurrentTurn);
       if (!current() || isBusy()) return;
@@ -335,8 +344,11 @@ export function createAgentStatusFollower({
         const recent = await read("/api/v1/recent-turns", requireRecentTurnsResponse);
         if (current() && !isBusy()) publishRecent(recent);
       }
-    } catch {
-      if (current()) publishStatus(null);
+    } catch (error) {
+      if (current()) {
+        console.warn("Galatea agent status follow failed:", error?.message);
+        if (!statusPublished) publishStatus(null, statusReadFailureCode(error));
+      }
     } finally {
       inFlight = false;
       schedule(refreshRequested ? 0 : 5000);
@@ -972,7 +984,7 @@ function requireSseEvent(eventName, value) {
       const payload = requireExactKeys(value, ["code", "message"], "SSE error");
       const codes = [
         "operator-stop", "server-shutdown", "completion-failed",
-        "turn-unavailable", "internal-failure",
+        "turn-unavailable", "internal-failure", "memo-recall-failed",
       ];
       if (!codes.includes(payload.code)) {
         throw new Error("SSE error.code is unknown");
@@ -1194,19 +1206,40 @@ export function shouldClearDraftForTurnOrigin(origin) {
   }
 }
 
+export function statusReadFailureCode(error) {
+  if (Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599) {
+    return `HTTP_${error.status}`;
+  }
+  if (["INVALID_CONTENT_TYPE", "INVALID_JSON", "INVALID_RESPONSE"].includes(error?.code)) {
+    return error.code;
+  }
+  return "STATUS_READ_FAILED";
+}
+
+function apiResponseError(message, code) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
 async function readJsonResponse(response, validator) {
   const contentType = response.headers.get("content-type") ?? "";
   if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType)) {
-    throw new Error("API response has an invalid Content-Type");
+    throw apiResponseError("API response has an invalid Content-Type", "INVALID_CONTENT_TYPE");
   }
   const text = await response.text();
   let value;
   try {
     value = JSON.parse(text);
   } catch {
-    throw new Error("API response is not valid JSON");
+    throw apiResponseError("API response is not valid JSON", "INVALID_JSON");
   }
-  return validator(value);
+  try {
+    return validator(value);
+  } catch (error) {
+    // Validators use code-owned field diagnostics, never response body text.
+    throw apiResponseError(error.message, "INVALID_RESPONSE");
+  }
 }
 
 function startGalateaApp() {
@@ -1318,7 +1351,7 @@ function startGalateaApp() {
 
   const mailboxStatusPoller = createMailboxStatusPoller({
     readStatus: () => fetchMailboxStatus(window.fetch.bind(window)),
-    publishStatus: (status) => {
+    publishStatus: (status, failureCode) => {
       if (status === null) {
         const previous = state.mailboxStatus;
         renderMailboxStatus({
@@ -1326,7 +1359,7 @@ function startGalateaApp() {
           queuedCount: previous?.queuedCount ?? 0,
           readyNoticeCount: previous?.readyNoticeCount ?? 0,
           attemptCount: 0,
-          code: "STATUS_READ_FAILED",
+          code: failureCode ?? "STATUS_READ_FAILED",
           nextRetryAtUnixTimeMilliseconds: null,
         });
         return;
@@ -1403,10 +1436,10 @@ function startGalateaApp() {
     }, 1000);
   }
 
-  function publishAgentStatus(status) {
+  function publishAgentStatus(status, failureCode) {
     clearAutonomyCountdownTimer();
     if (status === null) {
-      setTransientAutonomyStatus("自主活动：状态读取失败；服务端运行状态待确认");
+      setTransientAutonomyStatus(`自主活动：状态读取失败（${failureCode ?? "STATUS_READ_FAILED"}）；服务端运行状态待确认`);
       return;
     }
     state.agentStatus = status;

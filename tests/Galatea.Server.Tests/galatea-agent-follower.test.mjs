@@ -118,6 +118,29 @@ test("GET follower finds running and between-poll completed turns without duplic
   assert.equal(clock.pending.size, 0);
 });
 
+test("a failed current or recent read preserves the successful agent status", async () => {
+  for (const failedPath of ["/current", "/recent-turns"]) {
+    const clock = timers();
+    const statuses = [];
+    const follower = production.createAgentStatusFollower({
+      fetchImpl: async (url) => {
+        if (url.endsWith(failedPath)) return new Response("", { status: 409 });
+        return response(url.endsWith("/status") ? waiting : idle);
+      },
+      publishStatus: (value) => statuses.push(value),
+      publishCurrent: () => {}, publishRecent: () => assert.fail("read failed"),
+      attachTurn: () => assert.fail("idle must not attach"),
+      getRevision: () => 0, isBusy: () => false,
+      setTimeoutFn: clock.set, clearTimeoutFn: clock.clear,
+    });
+    follower.start();
+    await clock.tick(0);
+    assert.deepEqual(statuses, [waiting]);
+    assert.equal(clock.pending.size, 1, "failure keeps polling");
+    follower.stop();
+  }
+});
+
 test("GET follower fences manual mutations and stale page lifecycle responses", async () => {
   const clock = timers();
   const pending = [];

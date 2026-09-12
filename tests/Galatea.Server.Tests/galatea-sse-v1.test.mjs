@@ -60,6 +60,10 @@ function parse(bytes, limits = limitsFor(bytes), everyByte = false) {
   return { events, terminal: parser.finish() };
 }
 
+const recallError = { code: "memo-recall-failed", message: "记忆召回失败，主模型尚未开始生成。" };
+assert.deepEqual(parse(frame("error", recallError)).events,
+  [{ type: "error", ...recallError }]);
+
 const allEvents = concat(
   frame("status", { code: "generating" }),
   frame("status", { code: "normalizing-input" }),

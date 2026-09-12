@@ -92,6 +92,9 @@ internal sealed class GalateaAcceptedTurnRunner {
             liveTurn.PublishError(GalateaSseErrorCode.ServerShutdown);
         }
         catch (GalateaTurnException ex) {
+            if (ex.InnerException is not null) {
+                DebugUtil.Error("Galatea.TurnRunner", $"Turn stage failed: user={session.User.UserId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}", ex);
+            }
             DebugUtil.Warning("Galatea.TurnRunner", $"Turn failed with GalateaTurnException: user={session.User.UserId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}, detail={ex.Message}");
             liveTurn.PublishError(GalateaSseErrorClassifier.Classify(ex));
         }

@@ -1,13 +1,9 @@
-using System.Net;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
 using Atelia.Galatea.Prompts;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
@@ -102,69 +98,46 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
         );
     }
 
-    [Fact]
-    public async Task ConfigureWebHost_CodeOwnsEffectiveLoopbackEndpointsDespiteHostileConfigurationAndReload() {
+    [Theory]
+    [InlineData(false, "listenUrls")]
+    [InlineData(true, "listenUrls")]
+    [InlineData(false, "urls")]
+    [InlineData(true, "urls")]
+    [InlineData(false, "kestrel")]
+    [InlineData(true, "kestrel")]
+    public async Task ConfigureWebHost_UsesOrdinaryWildcardListenerConfiguration(
+        bool codex, string configurationSource
+    ) {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions {
             EnvironmentName = "Production"
         });
-        builder.Configuration["urls"] = "http://0.0.0.0:0";
-        builder.Configuration[
-            "Kestrel:Endpoints:Public:Url"
-        ] = "http://0.0.0.0:0";
+        if (configurationSource == "urls") {
+            builder.Configuration["urls"] = "http://0.0.0.0:0";
+        }
+        if (configurationSource == "kestrel") {
+            builder.Configuration["Kestrel:Endpoints:Public:Url"] = "http://0.0.0.0:0";
+        }
         GalateaCodexSubscriptionComposition.ConfigureWebHost(
             builder.WebHost,
-            Config(listenUrls: ["http://127.0.0.1:0/"])
+            Config(
+                connections: codex ? [CodexConnection()] : [RegularConnection()],
+                listenUrls: configurationSource == "listenUrls" ? ["http://0.0.0.0:0"]
+                    : configurationSource == "kestrel" ? ["http://127.0.0.1:0"] : null,
+                useDefaultListenUrls: false
+            )
         );
-
         await using WebApplication app = builder.Build();
         app.MapGet("/", static () => "ok");
-        using var timeout = new CancellationTokenSource(
-            TimeSpan.FromSeconds(15)
-        );
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await app.StartAsync(timeout.Token);
         try {
-            AssertActualListenersAreLoopback(app.Urls);
-            KestrelServerOptions kestrel = app.Services
-                .GetRequiredService<IOptions<KestrelServerOptions>>()
-                .Value;
-            Assert.NotNull(kestrel.ConfigurationLoader);
-            Assert.Empty(
-                kestrel.ConfigurationLoader.Configuration
-                    .GetSection("Endpoints")
-                    .GetChildren()
-            );
-
-            builder.Configuration["urls"] = "http://0.0.0.0:45678";
-            builder.Configuration[
-                "Kestrel:Endpoints:Public:Url"
-            ] = "http://0.0.0.0:45679";
-            ((IConfigurationRoot)builder.Configuration).Reload();
-            await Task.Yield();
-
-            AssertActualListenersAreLoopback(app.Urls);
+            var address = new Uri(Assert.Single(app.Urls));
+            Assert.Equal("0.0.0.0", address.Host);
+            using var client = new HttpClient(new HttpClientHandler { UseProxy = false });
+            Assert.Equal("ok", await client.GetStringAsync(
+                $"http://127.0.0.1:{address.Port}/", timeout.Token));
         }
-        finally {
-            await app.StopAsync(timeout.Token);
-        }
-    }
-
-    private static void AssertActualListenersAreLoopback(
-        ICollection<string> addresses
-    ) {
-        Assert.NotEmpty(addresses);
-        Assert.All(addresses, configured => {
-            var uri = new Uri(configured, UriKind.Absolute);
-            Assert.True(
-                string.Equals(
-                    uri.Host,
-                    "localhost",
-                    StringComparison.OrdinalIgnoreCase
-                )
-                || IPAddress.TryParse(uri.Host, out IPAddress? address)
-                    && IPAddress.IsLoopback(address),
-                $"Effective listener escaped loopback: {configured}"
-            );
-        });
+        finally { await app.StopAsync(timeout.Token); }
     }
 
     private const string OriginatorEnvironmentVariableName =
@@ -234,19 +207,4 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
         "http://localhost:8000/"
     );
 
-    private sealed class NeverCalledFactory : ICompletionClientFactory {
-        private int _createCallCount;
-
-        internal int CreateCallCount => Volatile.Read(ref _createCallCount);
-
-        public ICompletionClient Create(
-            CompletionConnectionConfig connection
-        ) {
-            _ = connection;
-            Interlocked.Increment(ref _createCallCount);
-            throw new InvalidOperationException(
-                "Codex preflight must run before factory effects."
-            );
-        }
-    }
 }

@@ -34,7 +34,7 @@
 
 根文件必须是 strict V8 JSON：`"v"` 必须是整数 `8`，必须有至少一个 `users` 和一个 `recapGrid` object。未知字段、旧版、未来版、`null` 或 `8.0` 都会拒绝；程序不会自动迁移或重写此文件。升级时应停服、备份，并显式完成 schema 变更。
 
-下面是完整、可识别的 V8 形状。路径相对于本文件所在的配置目录；这里的 loopback `listenUrls` 适合仅本机访问，若使用普通 Completion endpoint，也可按部署需要改为局域网监听地址。
+下面是完整、可识别的 V8 形状。路径相对于本文件所在的配置目录；这里的 loopback `listenUrls` 适合仅本机访问，也可按部署需要改为局域网监听地址。
 
 ```json
 {
@@ -121,7 +121,7 @@ Delegation supervisor 在 host 启动时就分类每个 user 的状态。仅当 
 - 可选 `ATELIA_CODEX_SUBSCRIPTION_ORIGINATOR`，默认 `galatea`；
 - 可选 `ATELIA_CODEX_SUBSCRIPTION_AUTH_FILE`，配置时必须是绝对路径；未配置时读取 Codex CLI 的默认 auth file。
 
-这与普通 endpoint 不同：有效 `listenUrls` 必须是无 query/fragment/path 的 HTTP/HTTPS loopback URL（`localhost` 或 loopback IP），例如 `http://127.0.0.1:3510/`。此模式下代码直接拥有 Kestrel listener，环境或 appsettings 中的 `Kestrel:Endpoints` 不能将其改为非 loopback。普通 connection 则按 `listenUrls` 使用 host URL 配置，可使用局域网监听地址。
+Codex connection 与其他 Completion connection 使用相同的 ASP.NET 监听配置：`listenUrls` 交给 `UseUrls`；未配置时采用 host 的 URL 设置，显式 `Kestrel:Endpoints` 按框架规则生效。可以使用 `http://0.0.0.0:3510`，没有 Codex 专属的 loopback 限制。
 
 ## `delegates.json`
 

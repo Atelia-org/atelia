@@ -30,6 +30,7 @@ internal enum GalateaSseErrorCode {
     OperatorStop,
     ServerShutdown,
     CompletionFailed,
+    MemoRecallFailed,
     TurnUnavailable,
     InternalFailure
 }
@@ -161,6 +162,7 @@ internal static class GalateaSseFrames {
             GalateaSseErrorCode.OperatorStop => "operator-stop",
             GalateaSseErrorCode.ServerShutdown => "server-shutdown",
             GalateaSseErrorCode.CompletionFailed => "completion-failed",
+            GalateaSseErrorCode.MemoRecallFailed => "memo-recall-failed",
             GalateaSseErrorCode.TurnUnavailable => "turn-unavailable",
             GalateaSseErrorCode.InternalFailure => "internal-failure",
             _ => throw new ArgumentOutOfRangeException(nameof(code), code, null)
@@ -174,6 +176,8 @@ internal static class GalateaSseFrames {
                 "服务器正在关闭，当前生成已终止。",
             GalateaSseErrorCode.CompletionFailed =>
                 "模型本次输出未正常结束，本轮结果未写入历史。",
+            GalateaSseErrorCode.MemoRecallFailed =>
+                "记忆召回失败，主模型尚未开始生成。请查看服务端 Galatea.TurnRunner 日志中的具体原因。",
             GalateaSseErrorCode.TurnUnavailable =>
                 "当前会话边界无法继续生成，请刷新后处理。",
             GalateaSseErrorCode.InternalFailure =>
@@ -388,6 +392,9 @@ internal static class GalateaSseErrorClassifier {
     ) {
         ArgumentNullException.ThrowIfNull(exception);
         string? reason = exception.FailureReason;
+        if (reason is "memo-recall-failed") {
+            return GalateaSseErrorCode.MemoRecallFailed;
+        }
         if (reason is "stopped-by-user"
             or "stopped-before-dispatch"
             or "recovery-stopped-before-dispatch") {
