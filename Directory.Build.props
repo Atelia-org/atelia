@@ -22,7 +22,12 @@
     <AssemblyName>Atelia.$(MSBuildProjectName)</AssemblyName>
     <RootNamespace>Atelia.$(MSBuildProjectName)</RootNamespace>
     <PackageId>Atelia.$(MSBuildProjectName)</PackageId>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="" />
+  </ItemGroup>
 
   <!-- CLI 工具等例外项目可在各自 .csproj 内覆盖 AssemblyName/RootNamespace/PackageId -->
 
