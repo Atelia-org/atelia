@@ -184,6 +184,7 @@ public sealed class GalateaCodexSubscriptionCompositionTests {
             "galatea-codex-character-memory-state",
             id
         ),
+        GalateaDelegateTestConfiguration.CreateHomeDirectory(Path.Combine(Path.GetTempPath(), "galatea-codex", id), id),
         GalateaSessionProvisioning.ExistingOnly,
         SystemPrompt: "prompt",
         DefaultConnectionId: defaultConnectionId

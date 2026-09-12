@@ -5,6 +5,32 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaTrackedPromptTemplateTests {
     [Fact]
+    public void HomePathIsLiteralDataAndParticipatesInTheFinalPromptLimit() {
+        const string home = "/galatea-homes/${characterName}/literal`path";
+        string rendered = GalateaSystemPromptComposer.Compose(
+            "${characterName} lives here.",
+            new GalateaCharacterName("Alice"),
+            new GalateaPlayerName("Player"),
+            true,
+            false,
+            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
+            home
+        );
+        Assert.Contains(System.Text.Json.JsonSerializer.Serialize(home), rendered,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("/galatea-homes/Alice/", rendered, StringComparison.Ordinal);
+        Assert.Throws<ArgumentOutOfRangeException>(() => GalateaSystemPromptComposer.Compose(
+            "${characterName} lives here.",
+            new GalateaCharacterName("Alice"),
+            new GalateaPlayerName("Player"),
+            true,
+            false,
+            System.Text.Encoding.UTF8.GetByteCount(rendered) - 1,
+            home
+        ));
+    }
+
+    [Fact]
     public void TrackedResourcesComposeFourCapabilityCombinationsInExactOrder() {
         string prefix = ReadTracked(
             "trpg-protocol-prefix-zh-cn.md"
@@ -88,9 +114,11 @@ public sealed class GalateaTrackedPromptTemplateTests {
         );
 
         Assert.Equal(neitherExpected, neither);
-        Assert.Equal(outboundExpected, outbound);
+        Assert.StartsWith(outboundExpected, outbound, StringComparison.Ordinal);
+        Assert.Contains("/galatea-homes/test", outbound, StringComparison.Ordinal);
         Assert.Equal(noteExpected, note);
-        Assert.Equal(bothExpected, both);
+        Assert.StartsWith(bothExpected, both, StringComparison.Ordinal);
+        Assert.Contains("/galatea-homes/test", both, StringComparison.Ordinal);
         Assert.DoesNotContain("${", neither, StringComparison.Ordinal);
         Assert.DoesNotContain("${", outbound, StringComparison.Ordinal);
         Assert.DoesNotContain("${", note, StringComparison.Ordinal);
@@ -148,7 +176,8 @@ public sealed class GalateaTrackedPromptTemplateTests {
         new GalateaPlayerName("Alex"),
         outboundMailEnabled,
         characterNoteSaveEnabled,
-        GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
+        GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
+        homeDir: "/galatea-homes/test"
     );
 
     [Fact]
@@ -284,7 +313,8 @@ public sealed class GalateaTrackedPromptTemplateTests {
             new GalateaPlayerName("Alex"),
             false,
             false,
-            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
+            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
+            homeDir: "/galatea-homes/test"
         );
 
         Assert.Contains("## 第三个模块", rendered,
@@ -316,8 +346,9 @@ public sealed class GalateaTrackedPromptTemplateTests {
                 new GalateaPlayerName("P"),
                 outboundMailEnabled,
                 characterNoteSaveEnabled,
-                GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
-            ));
+                GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
+                homeDir: "/galatea-homes/test")
+            );
     }
 
     private static int CountOccurrences(string value, string target) {

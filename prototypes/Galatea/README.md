@@ -23,9 +23,9 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 | 文件 | 需要准备什么 |
 |:--|:--|
-| `config.json` | V8；账号和密码、角色名与玩家名、各状态目录、默认连接、监听地址 |
+| `config.json` | V9；账号和密码、角色名与玩家名、各状态目录、个人 homeDir、默认连接、监听地址 |
 | 同目录 `connections.json` | V3；可用连接、可选连接列表，以及全部四个 feature bindings |
-| 同目录 `delegates.json` | V2；有效的 Node/Codex/sidecar 路径与工作目录，不能留下模板占位路径 |
+| 同目录 `delegates.json` | V3；有效的 Node/Codex/sidecar 路径与 allowedRoots，不能留下模板占位路径 |
 | character context 文件 | 检查角色设定，保留模板要求的名字变量 |
 | `recapGrid.agentControlProfileFiles` 指向的文件 | **启动必需，Galatea bootstrap 不会生成**；用 SessionJournal.Cli 的 `recap-grid scaffold` 准备 |
 
@@ -39,7 +39,7 @@ dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
 
 ## 启用服务端自主运行
 
-在 V8 `config.json` 根对象中，将需要持续运行的账号加入列表。例如该账号的 `userId` 为 `alice`：
+在 V9 `config.json` 根对象中，将需要持续运行的账号加入列表。例如该账号的 `userId` 为 `alice`：
 
 ```json
 "serverAgentUserIds": ["alice"]

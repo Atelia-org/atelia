@@ -813,6 +813,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             path,
             path + "-delegation-state",
             path + "-character-memory-state",
+            GalateaDelegateTestConfiguration.CreateHomeDirectory(path, "alice"),
             GalateaSessionProvisioning.ExistingOnly,
             "test system prompt",
             AgentConnectionId)],
@@ -881,6 +882,12 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         foreach (string path in _paths) {
             if (Directory.Exists(path)) {
                 Directory.Delete(path, recursive: true);
+            }
+            foreach (string userId in new[] { "alice", "bob" }) {
+                string home = path + "-home-" + userId;
+                if (Directory.Exists(home)) {
+                    Directory.Delete(home, recursive: true);
+                }
             }
         }
     }

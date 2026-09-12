@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaDelegateConfigReader {
-    internal const int CurrentVersion = 2;
+    internal const int CurrentVersion = 3;
     internal const int MaximumInputUtf8Bytes = 256 * 1024;
     internal const string CanonicalRecipient = "Codex";
     internal const string CodexAppServerKind = "codex-app-server";
@@ -102,15 +102,6 @@ internal static class GalateaDelegateConfigReader {
             "kind",
             CodexAppServerKind
         );
-        string cwd = RequireCanonicalDirectory(
-            routeElement.GetProperty("cwd").GetString(),
-            "routes[0].cwd"
-        );
-        if (!allowedRoots.Any(rootPath => IsContained(cwd, rootPath))) {
-            throw new InvalidDataException(
-                "routes[0].cwd must be contained in an allowedRoots entry."
-            );
-        }
         string modeText = routeElement.GetProperty("mode").GetString()
             ?? throw new InvalidDataException("routes[0].mode is null.");
         GalateaDelegateMode mode = modeText switch {
@@ -209,7 +200,6 @@ internal static class GalateaDelegateConfigReader {
                 new GalateaDelegateRouteConfig(
                     recipient,
                     kind,
-                    cwd,
                     mode,
                     localCommandNetwork,
                     tools,
@@ -236,7 +226,7 @@ internal static class GalateaDelegateConfigReader {
             || config.Routes is not { Count: 1 }
             || config.Sidecar is null) {
             throw new InvalidOperationException(
-                "Galatea delegate configuration is not a closed V2 configuration."
+                "Galatea delegate configuration is not a closed V3 configuration."
             );
         }
         GalateaDelegateSidecarConfig sidecar = config.Sidecar;
@@ -291,12 +281,6 @@ internal static class GalateaDelegateConfigReader {
                 StringComparison.Ordinal)) {
             throw new InvalidOperationException(
                 "Galatea delegates require the exact Codex route."
-            );
-        }
-        string cwd = RequireCanonicalDirectory(route.Cwd, "routes[0].cwd");
-        if (!roots.Any(root => IsContained(cwd, root))) {
-            throw new InvalidDataException(
-                "routes[0].cwd must be contained in an allowedRoots entry."
             );
         }
         if (route.Mode is not (
@@ -363,7 +347,6 @@ internal static class GalateaDelegateConfigReader {
                 new GalateaDelegateRouteConfig(
                     CanonicalRecipient,
                     CodexAppServerKind,
-                    cwd,
                     route.Mode,
                     route.LocalCommandNetwork,
                     new GalateaDelegateToolConfig(
@@ -384,7 +367,7 @@ internal static class GalateaDelegateConfigReader {
     internal static byte[] CreatePlaceholderTemplateUtf8() =>
         """
         {
-          "v": 2,
+          "v": 3,
           "sidecar": {
             "nodeCommand": "/REPLACE_WITH_CANONICAL_NODE_EXECUTABLE",
             "entryPoint": "/REPLACE_WITH_GALATEA_SIDECAR_ENTRY_POINT",
@@ -400,7 +383,6 @@ internal static class GalateaDelegateConfigReader {
             {
               "recipient": "Codex",
               "kind": "codex-app-server",
-              "cwd": "/REPLACE_WITH_CANONICAL_CODEX_WORKING_DIRECTORY",
               "mode": "work",
               "localCommandNetwork": true,
               "tools": {
@@ -432,7 +414,7 @@ internal static class GalateaDelegateConfigReader {
                         || !value.TryGetInt32(out int version)
                         || version != CurrentVersion) {
                         throw new InvalidDataException(
-                            "delegates requires exact integer version 'v': 2."
+                            "delegates requires exact integer version 'v': 3."
                         );
                     }
                 },
@@ -490,7 +472,6 @@ internal static class GalateaDelegateConfigReader {
         var seen = ReadProperties(ref reader, "route", new() {
             ["recipient"] = RequireString,
             ["kind"] = RequireString,
-            ["cwd"] = RequireString,
             ["mode"] = RequireString,
             ["localCommandNetwork"] = RequireBoolean,
             ["tools"] = static (ref Utf8JsonReader value) =>
@@ -502,7 +483,7 @@ internal static class GalateaDelegateConfigReader {
             ["maximumInboxUtf8Bytes"] = RequireNumber
         });
         RequireExactProperties(seen, "route", [
-            "recipient", "kind", "cwd", "mode", "localCommandNetwork",
+            "recipient", "kind", "mode", "localCommandNetwork",
             "tools",
             "maximumQueuedMails", "maximumTaskUtf8Bytes",
             "maximumReplyUtf8Bytes", "maximumInboxReplies",
@@ -714,7 +695,20 @@ internal static class GalateaDelegateConfigReader {
         return path;
     }
 
-    private static string RequireCanonicalDirectory(
+    internal static string RequireHomeDirectory(
+        string? configured,
+        string userId,
+        IReadOnlyList<string> allowedRoots
+    ) {
+        string field = $"homeDir for user '{userId}'";
+        string home = RequireCanonicalDirectory(configured, field);
+        if (!allowedRoots.Any(root => IsContained(home, root))) {
+            throw new InvalidDataException($"{field} must be contained in an allowedRoots entry.");
+        }
+        return home;
+    }
+
+    internal static string RequireCanonicalDirectory(
         string? configured,
         string field
     ) {

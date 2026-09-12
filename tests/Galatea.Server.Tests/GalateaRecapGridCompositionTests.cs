@@ -1739,6 +1739,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         first,
                         first + "-delegation-state",
                         first + "-character-memory-state",
+                        GalateaDelegateTestConfiguration.CreateHomeDirectory(first, "alice"),
                         GalateaSessionProvisioning.ExistingOnly,
                         "test system prompt",
                         connection.Id),
@@ -1750,6 +1751,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                         second,
                         second + "-delegation-state",
                         second + "-character-memory-state",
+                        GalateaDelegateTestConfiguration.CreateHomeDirectory(second, "bob"),
                         GalateaSessionProvisioning.ExistingOnly,
                         "test system prompt",
                         connection.Id)
@@ -2454,6 +2456,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             path,
             path + "-delegation-state",
             path + "-character-memory-state",
+            GalateaDelegateTestConfiguration.CreateHomeDirectory(path, "alice"),
             GalateaSessionProvisioning.ExistingOnly,
             systemPrompt,
             connection.Id)],
@@ -2481,6 +2484,12 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         foreach (string path in _paths) {
             if (Directory.Exists(path)) {
                 Directory.Delete(path, recursive: true);
+            }
+            foreach (string userId in new[] { "alice", "bob" }) {
+                string home = path + "-home-" + userId;
+                if (Directory.Exists(home)) {
+                    Directory.Delete(home, recursive: true);
+                }
             }
         }
     }

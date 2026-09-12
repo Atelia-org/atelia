@@ -392,6 +392,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
         "/session/" + id,
         "/delegation/" + id,
         "/memory/" + id,
+        GalateaDelegateTestConfiguration.CreateHomeDirectory("/session/" + id, id),
         GalateaSessionProvisioning.ExistingOnly,
         "system",
         "agent"
@@ -837,6 +838,7 @@ public sealed class CharacterNoteDerivedInfoRuntimeTests {
                 Engine.Path,
                 Path.Combine(_root, "delegation"),
                 Path.Combine(_root, "memory"),
+                GalateaDelegateTestConfiguration.CreateHomeDirectory(Engine.Path, "user"),
                 GalateaSessionProvisioning.ExistingOnly,
                 "system",
                 "agent"

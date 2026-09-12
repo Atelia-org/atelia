@@ -1,7 +1,7 @@
 # Galatea 主 system prompt source 导航
 
 状态：**Current source ownership router**  
-Current contract：[Galatea root config V6](../../SessionJournal/current/contracts/galatea-root-config-v6.md)
+Current contract：[Galatea root config V9](../../SessionJournal/current/contracts/galatea-root-config-v9.md)
 
 Galatea 主system prompt不是一份可由operator整体替换的文件。Current ownership涉及五份tracked resource：
 
@@ -28,7 +28,7 @@ prefix + "\n\n---\n\n" + operator context + "\n\n---\n\n" + mailbox base
 [when Character Note binding is non-null: "\n\n" + Character Note save appendix]
 ```
 
-组合后只执行一次closed `${characterName}` / `${playerName}` renderer。H2/H3只用于呈现；是否追加
+组合后只执行一次closed `${characterName}` / `${playerName}` renderer。outbound 启用时，随后追加配置派生的实际 `homeDir` 与相对路径说明；路径按 JSON 字符串表示，作为数据不再参与模板替换，最终 prompt（含此说明）仍受同一 UTF-8 上限约束。新鲜请求采用新路径，已冻结 Prepared request 不重新拼装。H2/H3只用于呈现；是否追加
 各appendix只看自己的validated sibling binding，不看heading或自然语言。这里没有完整prompt副本、include/module
 engine、基于Markdown heading的动态路由或operator module field。Character-context fields不能移除、替换或重排
 validated binding所选的code-owned bytes；但operator context与protocol位于同一trusted system message，prose

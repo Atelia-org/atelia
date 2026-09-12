@@ -7,7 +7,7 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaDelegateConfigTests {
     [Fact]
-    public void ValidClosedV2LoadsCanonicalExactCodexRouteAndToolPolicy() {
+    public void ValidClosedV3LoadsCanonicalExactCodexRouteAndToolPolicy() {
         using var fixture = new Fixture();
 
         GalateaDelegateConfig config = fixture.Load();
@@ -15,7 +15,7 @@ public sealed class GalateaDelegateConfigTests {
         Assert.Single(config.Routes);
         Assert.Equal("Codex", config.CodexRoute.Recipient);
         Assert.Equal("codex-app-server", config.CodexRoute.Kind);
-        Assert.Equal(fixture.Root, config.CodexRoute.Cwd);
+        Assert.Equal([fixture.Root], config.AllowedRoots);
         Assert.Equal(GalateaDelegateMode.Work, config.CodexRoute.Mode);
         Assert.False(config.CodexRoute.LocalCommandNetwork);
         Assert.Equal(
@@ -31,7 +31,7 @@ public sealed class GalateaDelegateConfigTests {
     public void LegacyV1IsRejectedWithoutCompatibilityFallback() {
         using var fixture = new Fixture();
         string legacy = fixture.ValidJson.Replace(
-            "\"v\": 2,",
+            "\"v\": 3,",
             "\"v\": 1,",
             StringComparison.Ordinal
         );
@@ -82,8 +82,8 @@ public sealed class GalateaDelegateConfigTests {
                 StringComparison.Ordinal
             ),
             "duplicate-case-variant" => json.Replace(
-                "\"v\": 2,",
-                "\"v\": 2,\n\"V\": 2,",
+                "\"v\": 3,",
+                "\"v\": 3,\n\"V\": 3,",
                 StringComparison.Ordinal
             ),
             _ => throw new ArgumentOutOfRangeException(nameof(mutation))
@@ -211,7 +211,7 @@ public sealed class GalateaDelegateConfigTests {
     }
 
     [Fact]
-    public void CwdMustBeCanonicalAndContainedInAllowedRoot() {
+    public void RemovedGlobalCwdIsRejected() {
         using var fixture = new Fixture();
         string outside = Path.Combine(
             Path.GetDirectoryName(fixture.Root)!,
@@ -266,21 +266,6 @@ public sealed class GalateaDelegateConfigTests {
                 }]
             }));
 
-        string outside = Path.Combine(
-            Path.GetDirectoryName(fixture.Root)!,
-            Guid.NewGuid().ToString("N")
-        );
-        Directory.CreateDirectory(outside);
-        try {
-            Assert.Throws<InvalidDataException>(() =>
-                new GalateaCodexDurableSidecarClient(valid with {
-                    Routes = [valid.CodexRoute with { Cwd = outside }]
-                }));
-        }
-        finally {
-            Directory.Delete(outside);
-        }
-
         var mutableRoots = valid.AllowedRoots.ToList();
         var mutableRoutes = valid.Routes.ToList();
         await using var client = new GalateaCodexDurableSidecarClient(
@@ -297,10 +282,8 @@ public sealed class GalateaDelegateConfigTests {
             JsonSerializer.Serialize(valid.AllowedRoots),
             startInfo.Environment["CODEX_BRIDGE_ALLOWED_ROOTS"]
         );
-        Assert.Equal(
-            valid.CodexRoute.Cwd,
-            startInfo.Environment["CODEX_BRIDGE_DEFAULT_CWD"]
-        );
+        Assert.Equal("/", startInfo.WorkingDirectory);
+        Assert.False(startInfo.Environment.ContainsKey("CODEX_BRIDGE_DEFAULT_CWD"));
     }
 
     [Fact]
@@ -394,7 +377,7 @@ public sealed class GalateaDelegateConfigTests {
 
         private string BuildJson() => $$"""
         {
-          "v": 2,
+          "v": 3,
           "sidecar": {
             "nodeCommand": {{JsonSerializer.Serialize(Executable)}},
             "entryPoint": {{JsonSerializer.Serialize(EntryPoint)}},
@@ -408,7 +391,6 @@ public sealed class GalateaDelegateConfigTests {
             {
               "recipient": "Codex",
               "kind": "codex-app-server",
-              "cwd": {{JsonSerializer.Serialize(Root)}},
               "mode": "work",
               "localCommandNetwork": false,
               "tools": {

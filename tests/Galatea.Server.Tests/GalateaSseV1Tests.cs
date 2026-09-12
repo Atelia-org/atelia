@@ -418,6 +418,7 @@ public sealed class GalateaSseV1Tests {
                 "/session",
                 "/delegation-state",
                 "/character-memory-state",
+                GalateaDelegateTestConfiguration.CreateHomeDirectory("/session", "alice"),
                 GalateaSessionProvisioning.ExistingOnly,
                 "prompt",
                 "test"

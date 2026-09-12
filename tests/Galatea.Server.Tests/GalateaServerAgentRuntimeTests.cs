@@ -24,6 +24,8 @@ public sealed class GalateaServerAgentRuntimeTests {
         JsonArray users = config["users"]!.AsArray();
         JsonObject bob = users[0]!.DeepClone().AsObject();
         bob["userId"] = "bob";
+        bob["homeDir"] = Directory.CreateDirectory(Path.Combine(
+            Path.GetDirectoryName(fixture.ConfigPath)!, "homes", "bob")).FullName;
         bob["defaultConnectionId"] = "other";
         bob["sessionProvisioning"] = "create-if-missing";
         string bobDirectory = Path.Combine(fixture.RootDirectory, "bob-session");

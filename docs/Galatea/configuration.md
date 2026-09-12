@@ -3,7 +3,7 @@
 本页说明 Galatea 的 operator 配置、首次生成和 RecapGrid 接入。日常启动与浏览器操作见
 [Galatea 文档索引](README.md)；HTTP 路由见 [server-api.md](server-api.md)，运行时状态、恢复与维护模式见
 [runtime.md](runtime.md)。根配置的完整 closed schema 以
-[Root config V8 合同](../SessionJournal/current/contracts/galatea-root-config-v8.md)为准。
+[Root config V9 合同](../SessionJournal/current/contracts/galatea-root-config-v9.md)为准。
 
 ## 配置目录与首次生成
 
@@ -26,19 +26,19 @@
 
 生成后程序会故意退出，必须检查并修改模板后再次启动。它不会覆盖已有文件，不会猜测 Codex/Node 路径，也不会生成
 `recapGrid.agentControlProfileFiles` 引用的 profile、route manifest 或任何 SessionJournal state。因此首次配置的顺序是：
-先让模板生成并退出，修改密码、角色、连接和 delegate placeholder，再用下面的 `scaffold` 创建 RecapGrid 文件，最后启动。
+先让模板生成并退出，修改密码、角色、连接和 delegate placeholder，创建各 user 的 home，再用下面的 `scaffold` 创建 RecapGrid 文件，最后启动。
 
 默认模板有 `alice`、`bob` 两个示例账户和本地 `local` connection；示例密码、模型 ID、API key 与 delegate 路径都不能直接用于实际服务。
 
 ## `config.json`
 
-根文件必须是 strict V8 JSON：`"v"` 必须是整数 `8`，必须有至少一个 `users` 和一个 `recapGrid` object。未知字段、旧版、未来版、`null` 或 `8.0` 都会拒绝；程序不会自动迁移或重写此文件。升级时应停服、备份，并显式完成 schema 变更。
+根文件必须是 strict V9 JSON：`"v"` 必须是整数 `9`，必须有至少一个 `users` 和一个 `recapGrid` object。未知字段、旧版、未来版、`null` 或 `9.0` 都会拒绝；程序不会自动迁移或重写此文件。升级时应停服、备份，并显式完成 schema 变更。
 
-下面是完整、可识别的 V8 形状。路径相对于本文件所在的配置目录；这里的 loopback `listenUrls` 适合仅本机访问，也可按部署需要改为局域网监听地址。
+下面是完整、可识别的 V9 形状。除必需的 absolute `homeDir` 外，相对路径以本文件所在的配置目录解析；这里的 loopback `listenUrls` 适合仅本机访问，也可按部署需要改为局域网监听地址。
 
 ```json
 {
-  "v": 8,
+  "v": 9,
   "serverAgentUserIds": [],
   "users": [{
     "userId": "alice",
@@ -48,6 +48,7 @@
     "sessionDir": "sessions/alice",
     "delegationStateDir": "delegation-state/alice",
     "characterMemoryStateDir": "character-memory/alice",
+    "homeDir": "/galatea-homes/alice",
     "sessionProvisioning": "create-if-missing",
     "defaultConnectionId": "local",
     "characterContextTemplate": "",
@@ -64,7 +65,7 @@
 }
 ```
 
-每个 user 的 `userId`、`password`、`characterName`、`playerName`、`sessionDir`、`delegationStateDir`、`characterMemoryStateDir`、`sessionProvisioning` 和 `defaultConnectionId` 都是业务配置。`characterName` 与 `playerName` 是独立故事身份，不从登录 ID 推导；它们必须已经是 NFC 且没有首尾空白，loader 会拒绝非规范输入而不会自动 `Trim` 或 normalize。已有 session 不能只改这两个名字，必须停服后迁移或重建 RecapGrid asset 并切换 active recipe。
+每个 user 的 `userId`、`password`、`characterName`、`playerName`、`sessionDir`、`delegationStateDir`、`characterMemoryStateDir`、`homeDir`、`sessionProvisioning` 和 `defaultConnectionId` 都是业务配置。`characterName` 与 `playerName` 是独立故事身份，不从登录 ID 推导；它们必须已经是 NFC 且没有首尾空白，loader 会拒绝非规范输入而不会自动 `Trim` 或 normalize。已有 session 不能只改这两个名字，必须停服后迁移或重建 RecapGrid asset 并切换 active recipe。
 
 `sessionProvisioning` 只有两种闭合策略：
 
@@ -82,6 +83,10 @@
 bootstrap 会为配置目录内的缺失文件目标 create-new；配置目录外的缺失路径不会自动创建。单个 source 以及组合后的最终 system prompt 都有 1 MiB 上限，运行时不会每回合重新读取模板文件。
 
 ### 路径、持久状态与日志
+
+`homeDir` 是每个 user 的个人文件目录，也是 Codex 新任务的默认 CWD；初始部署使用 `/galatea-homes/cyber` 与 `/galatea-homes/gpt`。它必须是预先创建的 Linux absolute canonical directory，落在 delegates 的 `allowedRoots` 内；不能与其他 home 或 session、delegation、Character Memory、call-log 目录相同或互相包含。启动只校验，不创建 home 或修补权限。bootstrap 示例使用 `/galatea-homes/alice` 与 `/galatea-homes/bob`，需在启动前按实际用户准备。
+
+个人目录不更改 Unix `$HOME`、`~`、`CODEX_HOME` 或 Codex 登录身份，不承诺强隔离。角色在 outbound-mail 能力启用时获得实际 home 路径；冻结请求仍使用原始 prompt bytes。修改 homeDir 后重启，旧派发先按原任务身份恢复结果，后续尚未派发任务在同一 Codex thread 使用新目录；不会自动搬移文件。
 
 相对 `sessionDir`、`delegationStateDir`、`characterMemoryStateDir` 和 `callLogDir` 都以 `config.json` 的目录为基准；加载后使用 canonical absolute path。Character Memory 路径必须彼此唯一且不嵌套，也不能与 session、delegation 或 call log 路径嵌套；已有路径组件不能是 symlink/reparse point。
 
@@ -125,11 +130,11 @@ Codex connection 与其他 Completion connection 使用相同的 ASP.NET 监听�
 
 ## `delegates.json`
 
-`delegates.json` 与 Completion catalog 分离，但同样位于 `config.json` 同目录，是 machine-local、启动必需的 Codex delegation 配置。它是 closed V2 schema，只允许一条大小写精确的 `recipient: "Codex"` / `kind: "codex-app-server"` route。bootstrap 写出的 placeholder 需要替换为本机已验证的 canonical path；不要保留 `REPLACE_WITH_...`。
+`delegates.json` 与 Completion catalog 分离，但同样位于 `config.json` 同目录，是 machine-local、启动必需的 Codex delegation 配置。它是 closed V3 schema，只允许一条大小写精确的 `recipient: "Codex"` / `kind: "codex-app-server"` route。bootstrap 写出的 placeholder 需要替换为本机已验证的 canonical path；不要保留 `REPLACE_WITH_...`。
 
 ```json
 {
-  "v": 2,
+  "v": 3,
   "sidecar": {
     "nodeCommand": "/canonical/path/to/node",
     "entryPoint": "/canonical/path/to/local-codex-mcp/dist/src/galatea-durable-sidecar.js",
@@ -138,11 +143,10 @@ Codex connection 与其他 Completion connection 使用相同的 ASP.NET 监听�
     "shutdownGraceMs": 5000,
     "maximumFrameUtf8Bytes": 1048576
   },
-  "allowedRoots": ["/canonical/allowed/root"],
+  "allowedRoots": ["/galatea-homes"],
   "routes": [{
     "recipient": "Codex",
     "kind": "codex-app-server",
-    "cwd": "/canonical/allowed/root",
     "mode": "work",
     "localCommandNetwork": true,
     "tools": {
@@ -159,7 +163,9 @@ Codex connection 与其他 Completion connection 使用相同的 ASP.NET 监听�
 }
 ```
 
-全部路径必须是现存的 Linux absolute canonical realpath，且配置路径及其已有祖先不能含 symlink/reparse point。`nodeCommand`、`codexCommand` 必须是 executable regular file；`entryPoint` 必须是 regular file；`cwd` 必须落在 `allowedRoots` 内。`mode` 只接受 `research` 或 `work`，`webSearch` 只接受 `disabled`、`cached`、`indexed` 或 `live`。未知/缺失字段、重复或大小写变体、额外 route、路径或范围不合法均 fail closed。
+全部路径必须是现存的 Linux absolute canonical realpath，且配置路径及其已有祖先不能含 symlink/reparse point。`nodeCommand`、`codexCommand` 必须是 executable regular file；`entryPoint` 必须是 regular file；每个 user 的 `homeDir` 必须落在 `allowedRoots` 内；全局 route 不再接受 `cwd`。`mode` 只接受 `research` 或 `work`，`webSearch` 只接受 `disabled`、`cached`、`indexed` 或 `live`。未知/缺失字段、重复或大小写变体、额外 route、路径或范围不合法均 fail closed。
+
+sidecar/app-server 进程固定从 `/` 启动；每个创建 thread / 启动 turn 请求显式携带该 user 的 home，结果查询不依赖旧目录。共享进程不会通过 `process.chdir()` 切换用户目录。
 
 task/reply/inbox 的限制按 strict UTF-8 bytes 计算；task/reply 即使经过最坏 JSON escaping 和 envelope reserve 也必须装入 `maximumFrameUtf8Bytes`，inbox 还必须容纳一条最大 reply 或 delivery failure。`rpcTimeoutMs` 仅限制单次 sidecar/app-server 控制 RPC，`shutdownGraceMs` 仅限制开始关服后的 child reap；两者都不是已接受 Codex turn 的生命周期 deadline。
 

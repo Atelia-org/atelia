@@ -1,9 +1,23 @@
 namespace Atelia.Galatea.Server.Tests;
 
 internal static class GalateaDelegateTestConfiguration {
-    internal static GalateaDelegateConfig Create(string? cwd = null) {
-        string effectiveCwd = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(cwd ?? Path.GetTempPath())
+    internal static string CreateHomeDirectory(string sessionDirectory, string userId) {
+        string home = Path.IsPathFullyQualified(sessionDirectory)
+            ? Path.TrimEndingDirectorySeparator(Path.GetFullPath(sessionDirectory)) + "-home-" + userId
+            : sessionDirectory + "-home-" + userId;
+        // Synthetic repository fixtures use /tmp or /dev/shm. Normalize first:
+        // appending a suffix to a trailing '/.' would create the session itself.
+        if (Path.IsPathFullyQualified(home)
+            && (home.StartsWith(Path.GetTempPath(), StringComparison.Ordinal)
+                || home.StartsWith("/dev/shm/", StringComparison.Ordinal))) {
+            Directory.CreateDirectory(home);
+        }
+        return home;
+    }
+
+    internal static GalateaDelegateConfig Create(string? allowedRoot = null) {
+        string effectiveRoot = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(allowedRoot ?? Path.GetPathRoot(Path.GetTempPath())!)
         );
         string processPath = Path.GetFullPath(
             Environment.ProcessPath
@@ -26,11 +40,10 @@ internal static class GalateaDelegateTestConfiguration {
                 ShutdownGraceMs: 100,
                 MaximumFrameUtf8Bytes: 1_048_576
             ),
-            [effectiveCwd],
+            [effectiveRoot],
             [new GalateaDelegateRouteConfig(
                 GalateaDelegateConfigReader.CanonicalRecipient,
                 GalateaDelegateConfigReader.CodexAppServerKind,
-                effectiveCwd,
                 GalateaDelegateMode.Work,
                 LocalCommandNetwork: false,
                 Tools: new GalateaDelegateToolConfig(

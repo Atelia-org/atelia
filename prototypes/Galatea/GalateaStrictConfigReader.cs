@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaStrictConfigReader {
-    internal const int CurrentConfigVersion = 8;
+    internal const int CurrentConfigVersion = 9;
     internal const int MaximumConfigUtf8Bytes = 1024 * 1024;
     internal const int MaximumSystemPromptUtf8Bytes = 1024 * 1024;
     internal const int MaximumUserCount = 256;
@@ -255,13 +255,13 @@ internal static class GalateaStrictConfigReader {
     ) {
         if (reader.TokenType != JsonTokenType.Number
             || reader.HasValueSequence
-            || !reader.ValueSpan.SequenceEqual("8"u8)) {
+            || !reader.ValueSpan.SequenceEqual("9"u8)) {
             throw UnsupportedConfigVersion();
         }
     }
 
     private static InvalidDataException UnsupportedConfigVersion() => new(
-        "Galatea config requires exact integer version 'v': 8; "
+        "Galatea config requires exact integer version 'v': 9; "
         + "migrate the config before retrying."
     );
 
@@ -274,6 +274,7 @@ internal static class GalateaStrictConfigReader {
                 case "password":
                 case "characterName":
                 case "playerName":
+                case "homeDir":
                 case "sessionDir":
                 case "delegationStateDir":
                 case "characterMemoryStateDir":
@@ -290,6 +291,9 @@ internal static class GalateaStrictConfigReader {
                 default:
                     throw Unknown("user", property);
             }
+        }
+        if (!seen.Contains("homeDir")) {
+            throw new InvalidDataException("user requires string field 'homeDir'.");
         }
         if (!seen.Contains("sessionProvisioning")) {
             throw new InvalidDataException(

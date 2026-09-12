@@ -1045,7 +1045,8 @@ public sealed class GalateaSessionProvisioningTests {
         new GalateaPlayerName("刘世超"),
         false,
         false,
-        GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
+        GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
+        homeDir: "/galatea-homes/test"
     );
 
     private sealed class CountingCompletionClientFactory

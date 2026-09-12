@@ -47,7 +47,7 @@ internal sealed class GalateaSidecarProcessFixture : IDisposable {
         File.WriteAllText(ScriptPath, script);
     }
 
-    internal GalateaCodexDurableSidecarClient CreateV3Client(
+    internal GalateaCodexDurableSidecarClient CreateClient(
         int rpcTimeoutMs = 2_000,
         int maximumFrameUtf8Bytes = 65_536,
         int maximumBodyUtf8Bytes = 8_000,
@@ -81,7 +81,6 @@ internal sealed class GalateaSidecarProcessFixture : IDisposable {
         [new GalateaDelegateRouteConfig(
             "Codex",
             "codex-app-server",
-            Root,
             GalateaDelegateMode.Work,
             LocalCommandNetwork: false,
             Tools: new GalateaDelegateToolConfig(

@@ -223,6 +223,7 @@ public sealed class GalateaRecapGridPublicOperatorChainTests : IDisposable {
                         repository,
                         repository + "-delegation-state",
                         repository + "-character-memory-state",
+                        GalateaDelegateTestConfiguration.CreateHomeDirectory(repository, "alice"),
                         GalateaSessionProvisioning.ExistingOnly,
                         AgentConnectionId,
                         "operator-chain ${characterName} system prompt"

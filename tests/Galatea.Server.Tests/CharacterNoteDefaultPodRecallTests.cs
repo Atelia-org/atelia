@@ -432,6 +432,7 @@ public sealed class CharacterNoteDefaultPodRecallTests {
             "/session",
             "/delegation",
             "/memory",
+            GalateaDelegateTestConfiguration.CreateHomeDirectory("/session", "alice"),
             GalateaSessionProvisioning.ExistingOnly,
             "system",
             "memo-recall"

@@ -4170,6 +4170,7 @@ internal static class GalateaConfigLoader {
             ResolveUsers(
                 usersFile.Users,
                 configDir,
+                delegates.AllowedRoots,
                 outboundMailExtractorConnectionId is not null,
                 characterNoteExtractorConnectionId is not null
             );
@@ -4349,6 +4350,7 @@ internal static class GalateaConfigLoader {
         ResolveUsers(
             IReadOnlyList<GalateaUserFileConfig> configuredUsers,
             string configDirectory,
+            IReadOnlyList<string> allowedRoots,
             bool outboundMailEnabled,
             bool characterNoteRequestEnabled
         ) {
@@ -4423,6 +4425,9 @@ internal static class GalateaConfigLoader {
                 characterMemoryStateDirectory,
                 $"characterMemoryStateDir for user '{user.UserId}'"
             );
+            string homeDirectory = GalateaDelegateConfigReader.RequireHomeDirectory(
+                user.HomeDir, user.UserId, allowedRoots
+            );
             string characterContextTemplate = ResolveCharacterContextTemplate(
                 user,
                 configDirectory
@@ -4435,7 +4440,8 @@ internal static class GalateaConfigLoader {
                     playerName,
                     outboundMailEnabled,
                     characterNoteRequestEnabled,
-                    GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
+                    GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
+                    homeDirectory
                 );
             }
             catch (ArgumentException exception) {
@@ -4455,6 +4461,7 @@ internal static class GalateaConfigLoader {
                 ),
                 delegationStateDirectory,
                 characterMemoryStateDirectory,
+                homeDirectory,
                 user.SessionProvisioning,
                 systemPrompt,
                 user.DefaultConnectionId
@@ -4835,6 +4842,7 @@ internal static class GalateaConfigTemplateFactory {
             SessionDir: sessionDir,
             DelegationStateDir: $"delegation-state/{userId}",
             CharacterMemoryStateDir: $"character-memory/{userId}",
+            HomeDir: $"/galatea-homes/{userId}",
             SessionProvisioning:
                 GalateaSessionProvisioning.CreateIfMissing,
             DefaultConnectionId: DefaultConnectionId,

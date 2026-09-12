@@ -18,7 +18,7 @@
 
 | 主题 | 入口 |
 |:--|:--|
-| root config 的字段合同 | [V8 current contract](../SessionJournal/current/contracts/galatea-root-config-v8.md)，沿其引用读取继承规则 |
+| root config 的字段合同 | [V9 current contract](../SessionJournal/current/contracts/galatea-root-config-v9.md)，沿其引用读取继承规则 |
 | prompt 的代码与 operator 分工 | [prompt 资源说明](prompt/README.md) |
 | TextExtractor 与 Observation 通讯 | [Observation Bridge](text-extractor-observation-bridge.md) |
 | Character Note、Default MemoPod | [保存合同](character-note-default-memopod-v1.md)、[自动记忆工作单](automatic-memory-work-order.md) |

@@ -681,6 +681,7 @@ public sealed class GalateaMailboxTests {
         "/tmp/session-" + userId,
         "/tmp/delegation-" + userId,
         "/tmp/character-memory-" + userId,
+        GalateaDelegateTestConfiguration.CreateHomeDirectory("/tmp/session-" + userId, userId),
         GalateaSessionProvisioning.ExistingOnly,
         "system " + characterName,
         "agent"

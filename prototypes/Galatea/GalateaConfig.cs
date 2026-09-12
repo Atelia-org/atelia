@@ -74,6 +74,7 @@ internal sealed record GalateaUserFileConfig(
     string SessionDir,
     string DelegationStateDir,
     string CharacterMemoryStateDir,
+    string HomeDir,
     GalateaSessionProvisioning SessionProvisioning,
     string DefaultConnectionId,
     string CharacterContextTemplate = "",
@@ -88,6 +89,7 @@ public sealed record GalateaUserConfig(
     string SessionDir,
     string DelegationStateDir,
     string CharacterMemoryStateDir,
+    string HomeDir,
     GalateaSessionProvisioning SessionProvisioning,
     string SystemPrompt,
     string DefaultConnectionId
@@ -223,7 +225,8 @@ internal static class GalateaConfigValidation {
             string UserId,
             string SessionDirectory,
             string DelegationStateDirectory,
-            string CharacterMemoryStateDirectory
+            string CharacterMemoryStateDirectory,
+            string HomeDirectory
         )>(users.Count);
 
         for (int index = 0; index < users.Count; index++) {
@@ -341,11 +344,16 @@ internal static class GalateaConfigValidation {
                 normalizedCharacterMemory,
                 (user.UserId, user.CharacterMemoryStateDir)
             );
+            string normalizedHome = GalateaDelegateConfigReader.RequireCanonicalDirectory(
+                user.HomeDir,
+                $"homeDir for user '{user.UserId}'"
+            );
             normalizedUsers.Add((
                 user.UserId,
                 normalizedSession,
                 normalizedDelegation,
-                normalizedCharacterMemory
+                normalizedCharacterMemory,
+                normalizedHome
             ));
         }
 
@@ -412,6 +420,23 @@ internal static class GalateaConfigValidation {
             }
         }
 
+        for (int homeIndex = 0; homeIndex < normalizedUsers.Count; homeIndex++) {
+            var home = normalizedUsers[homeIndex];
+            foreach (var user in normalizedUsers) {
+                RequireDisjoint(home.HomeDirectory, $"homeDir for user '{home.UserId}'",
+                    user.SessionDirectory, $"sessionDir for user '{user.UserId}'", comparison);
+                RequireDisjoint(home.HomeDirectory, $"homeDir for user '{home.UserId}'",
+                    user.DelegationStateDirectory, $"delegationStateDir for user '{user.UserId}'", comparison);
+                RequireDisjoint(home.HomeDirectory, $"homeDir for user '{home.UserId}'",
+                    user.CharacterMemoryStateDirectory, $"characterMemoryStateDir for user '{user.UserId}'", comparison);
+            }
+            for (int otherIndex = homeIndex + 1; otherIndex < normalizedUsers.Count; otherIndex++) {
+                var other = normalizedUsers[otherIndex];
+                RequireDisjoint(home.HomeDirectory, $"homeDir for user '{home.UserId}'",
+                    other.HomeDirectory, $"homeDir for user '{other.UserId}'", comparison);
+            }
+        }
+
         if (callLogDirectory is null) { return; }
         if (string.IsNullOrWhiteSpace(callLogDirectory)) {
             throw new InvalidOperationException(
@@ -422,6 +447,8 @@ internal static class GalateaConfigValidation {
             Path.GetFullPath(callLogDirectory)
         );
         foreach (var user in normalizedUsers) {
+            RequireDisjoint(normalizedCallLogs, "callLogDir", user.HomeDirectory,
+                $"homeDir for user '{user.UserId}'", comparison);
             RequireDisjoint(
                 normalizedCallLogs,
                 "callLogDir",

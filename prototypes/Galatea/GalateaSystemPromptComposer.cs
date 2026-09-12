@@ -54,7 +54,8 @@ internal static class GalateaSystemPromptComposer {
         GalateaPlayerName playerName,
         bool outboundMailEnabled,
         bool characterNoteSaveEnabled,
-        int maximumUtf8Bytes
+        int maximumUtf8Bytes,
+        string? homeDir
     ) {
         ArgumentNullException.ThrowIfNull(characterContextTemplate);
         ArgumentNullException.ThrowIfNull(characterName);
@@ -96,12 +97,23 @@ internal static class GalateaSystemPromptComposer {
                 CharacterNoteSaveAppendix.Value.Source
             );
         }
-        return GalateaPromptTemplate.Render(
+        string rendered = GalateaPromptTemplate.Render(
             compositeSource,
             characterName,
             playerName,
             maximumUtf8Bytes
         );
+        if (outboundMailEnabled) {
+            ArgumentException.ThrowIfNullOrWhiteSpace(homeDir);
+            // Append data after template rendering so a literal ${...} in a
+            // directory name remains a path, never another template token.
+            rendered += $"\n\n你的个人文件目录是 {System.Text.Json.JsonSerializer.Serialize(homeDir)}。通过 Codex 代行者操作本地文件时，默认工作目录和普通相对路径均指向这里；这不是 Unix $HOME。";
+            if (new UTF8Encoding(false, true).GetByteCount(rendered) > maximumUtf8Bytes) {
+                throw new ArgumentOutOfRangeException(nameof(homeDir),
+                    $"Rendered prompt exceeds {maximumUtf8Bytes} UTF-8 bytes.");
+            }
+        }
+        return rendered;
     }
 
     private static GalateaEmbeddedPromptResource LoadProtocol(
@@ -158,7 +170,8 @@ internal static class GalateaBuiltInCharacterContextTemplate {
             new GalateaPlayerName("Player"),
             false,
             false,
-            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
+            GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
+            homeDir: null
         );
         return resource;
     }

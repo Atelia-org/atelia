@@ -22,14 +22,16 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
     private const string TestPassword = "pw1";
     private static string ComposeDefaultFinalizedSystemPrompt(
         bool outboundMailEnabled,
-        bool characterNoteRequestEnabled
+        bool characterNoteRequestEnabled,
+        string homeDir
     ) => GalateaSystemPromptComposer.Compose(
         "test ${characterName} system prompt",
         new GalateaCharacterName("Galatea"),
         new GalateaPlayerName("刘世超"),
         outboundMailEnabled,
         characterNoteRequestEnabled,
-        GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes
+        GalateaStrictConfigReader.MaximumSystemPromptUtf8Bytes,
+        homeDir: homeDir
     );
 
     private readonly string _tempRoot;
@@ -137,7 +139,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                        "model-a",
                        ComposeDefaultFinalizedSystemPrompt(
                            outboundMailExtractorConnectionId is not null,
-                           characterNoteExtractorConnectionId is not null
+                           characterNoteExtractorConnectionId is not null,
+                           Path.Combine(configDirectory, "homes", TestUserId)
                        ),
                        "openai-chat/strict"
                    ))) {
@@ -554,6 +557,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                         "character-memory",
                         TestUserId
                     ),
+                    Directory.CreateDirectory(Path.Combine(configurationDirectory, "homes", TestUserId)).FullName,
                     sessionProvisioning,
                     defaultConnectionId,
                     CharacterContextTemplate: characterContextTemplate
@@ -619,7 +623,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             ),
             $$"""
             {
-              "v": 2,
+              "v": 3,
               "sidecar": {
                 "nodeCommand": {{JsonSerializer.Serialize(executable)}},
                 "entryPoint": {{JsonSerializer.Serialize(entryPoint)}},
@@ -633,7 +637,6 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 {
                   "recipient": "Codex",
                   "kind": "codex-app-server",
-                  "cwd": {{JsonSerializer.Serialize(cwd)}},
                   "mode": "work",
                   "localCommandNetwork": false,
                   "tools": {

@@ -34,7 +34,6 @@ public sealed record GalateaDelegateSidecarConfig(
 public sealed record GalateaDelegateRouteConfig(
     string Recipient,
     string Kind,
-    string Cwd,
     GalateaDelegateMode Mode,
     bool LocalCommandNetwork,
     GalateaDelegateToolConfig Tools,

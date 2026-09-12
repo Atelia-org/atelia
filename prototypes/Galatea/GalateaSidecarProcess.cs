@@ -196,7 +196,7 @@ internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
         GalateaDelegateSidecarConfig sidecar = Config.Sidecar;
         var startInfo = new ProcessStartInfo {
             FileName = sidecar.NodeCommand,
-            WorkingDirectory = Route.Cwd,
+            WorkingDirectory = "/",
             UseShellExecute = false,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -232,7 +232,6 @@ internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
         environment["CODEX_BRIDGE_ALLOW_INSECURE_HTTP"] = "false";
         environment["CODEX_BRIDGE_ALLOWED_ROOTS"] =
             JsonSerializer.Serialize(Config.AllowedRoots);
-        environment["CODEX_BRIDGE_DEFAULT_CWD"] = Route.Cwd;
         environment["CODEX_BRIDGE_CODEX_COMMAND"] = sidecar.CodexCommand;
         environment["CODEX_BRIDGE_CODEX_ARGS"] =
             "[\"app-server\",\"--listen\",\"stdio://\",\"-c\","

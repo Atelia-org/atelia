@@ -492,6 +492,7 @@ public sealed class CharacterNoteExtractorTests {
             "character-note-memory",
             userId
         ),
+        GalateaDelegateTestConfiguration.CreateHomeDirectory(Path.Combine(Path.GetTempPath(), "character-note", userId), userId),
         GalateaSessionProvisioning.ExistingOnly,
         "system prompt",
         "note-extractor"
