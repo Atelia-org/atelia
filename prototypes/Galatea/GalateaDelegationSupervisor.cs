@@ -93,7 +93,7 @@ internal sealed class GalateaDelegationSessionHandle : IDisposable {
 }
 
 /// <summary>
-/// Host-wide owner for durable delegation stores, the single V3 transport,
+/// Host-wide owner for durable delegation stores, the single V4 transport,
 /// and bounded pulse scheduling. Composition must finish every other fallible
 /// preflight before construction: writable existing slots are scheduled as
 /// soon as this constructor succeeds.
@@ -144,6 +144,11 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
         GalateaDelegateConfig delegates =
             GalateaDelegateConfigReader.Validate(config.Delegates);
         RequireGlobalUserIdentity(config.Users);
+        foreach (GalateaUserConfig user in config.Users) {
+            _ = GalateaDelegateConfigReader.RequireHomeDirectory(
+                user.HomeDir, user.UserId, delegates.AllowedRoots
+            );
+        }
 
         _maintenanceMode = config.MaintenanceMode;
         _testHooks = testHooks
@@ -160,8 +165,6 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             timeProvider ?? TimeProvider.System;
         _timeProvider = effectiveTimeProvider;
         GalateaDelegateRouteConfig route = delegates.CodexRoute;
-        string routeFingerprint = GalateaDelegationDurableContract
-            .CreateRoutePolicyFingerprint(route);
         GalateaDelegationStoreLimits limits = CreateLimits(route);
 
         var openedSlots = new Dictionary<string, UserSlot>(
@@ -181,8 +184,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                 );
                 var owner = new GalateaDelegationStoreOwner(
                     user.UserId,
-                    CreateSessionRepositoryId(sessionDirectory),
-                    routeFingerprint
+                    CreateSessionRepositoryId(sessionDirectory)
                 );
                 UserSlot slot = CreateSlot(
                     user,
@@ -201,7 +203,6 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
             foreach (UserSlot slot in openedSlots.Values) {
                 slot.CreateDriverIfWritable(
                     ownedTransport,
-                    routeFingerprint,
                     effectiveTimeProvider
                 );
             }
@@ -864,7 +865,6 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
 
         internal void CreateDriverIfWritable(
             IGalateaDurableDelegateTransport transport,
-            string routeFingerprint,
             TimeProvider timeProvider
         ) {
             lock (_gate) {
@@ -878,7 +878,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                             "A writable delegation slot has no store."
                         ),
                         transport,
-                        routeFingerprint,
+                        _user.HomeDir,
                         timeProvider
                     );
                 }
@@ -947,7 +947,7 @@ internal sealed class GalateaDelegationSupervisor : IAsyncDisposable {
                             "An attached delegation slot has no store."
                         ),
                         transport,
-                        _owner.RoutePolicyFingerprint,
+                        _user.HomeDir,
                         timeProvider
                     );
                 }

@@ -1,7 +1,8 @@
 namespace Atelia.Galatea.Server;
 
 internal sealed record GalateaEnsureDelegateBindingRequest(
-    string BindingOperationId
+    string BindingOperationId,
+    string Cwd
 );
 
 internal sealed record GalateaDelegateBindingEstablished(
@@ -12,7 +13,8 @@ internal sealed record GalateaDelegateBindingEstablished(
 internal sealed record GalateaStartDelegateTurnRequest(
     string DispatchId,
     string ThreadId,
-    string Task
+    string Task,
+    string Cwd
 );
 
 internal sealed record GalateaDelegateTurnAccepted(
@@ -161,7 +163,8 @@ internal static class GalateaDurableDelegateFailurePolicies {
             or ("ensure-binding", "CWD_NOT_ALLOWED")
             or ("start-turn", "DISPATCH_ALREADY_ACTIVE")
             or ("start-turn", "THREAD_NOT_FOUND")
-            or ("start-turn", "CWD_MISMATCH")
+            or ("start-turn", "INVALID_CWD")
+            or ("start-turn", "CWD_NOT_ALLOWED")
             or ("start-turn", "BRIDGE_BUSY") =>
                 GalateaDurableDelegateFailurePolicy.DeterministicConflict,
         ("protocol", "OPERATION_CAPACITY_EXCEEDED")

@@ -15,7 +15,7 @@ public sealed class GalateaCodexDelegationLiveFactAttribute : FactAttribute {
                 Environment.GetEnvironmentVariable(RunGate),
                 "1",
                 StringComparison.Ordinal)) {
-            Skip = $"Set {RunGate}=1 to run the real Codex V3 canary.";
+            Skip = $"Set {RunGate}=1 to run the real Codex V4 canary.";
         }
     }
 }
@@ -29,7 +29,7 @@ public sealed class GalateaCodexDelegationLiveTests {
         TimeSpan.FromSeconds(15);
 
     [GalateaCodexDelegationLiveFact]
-    public async Task DurableV3_EnsureStartInspectCompletesInCleanRepo() {
+    public async Task DurableV4_EnsureStartInspectCompletesInCleanRepo() {
         if (!string.Equals(
                 Environment.GetEnvironmentVariable(
                     GalateaCodexDelegationLiveFactAttribute.RunGate
@@ -70,7 +70,6 @@ public sealed class GalateaCodexDelegationLiveTests {
             _ = await RunGitAsync(repositoryPath, ["init", "--quiet"]);
 
             GalateaDelegateRouteConfig route = source.CodexRoute with {
-                Cwd = repositoryPath,
                 Mode = GalateaDelegateMode.Research,
                 LocalCommandNetwork = false,
                 Tools = new GalateaDelegateToolConfig(
@@ -91,10 +90,10 @@ public sealed class GalateaCodexDelegationLiveTests {
             CancellationToken ct = deadline.Token;
 
             const string bindingOperationId =
-                "galatea-live-canary-binding-v3";
+                "galatea-live-canary-binding-v4";
             GalateaDelegateBindingEstablished binding =
                 await client.EnsureBindingAsync(
-                    new(bindingOperationId),
+                    new(bindingOperationId, repositoryPath),
                     ct
                 );
             RequireExact(
@@ -104,10 +103,10 @@ public sealed class GalateaCodexDelegationLiveTests {
             );
             RequireIdentifier(binding.ThreadId, "thread");
 
-            string token = "GALATEA_V3_CANARY_"
+            string token = "GALATEA_V4_CANARY_"
                 + Guid.NewGuid().ToString("N");
             const string dispatchId =
-                "galatea-live-canary-dispatch-v3";
+                "galatea-live-canary-dispatch-v4";
             string task = "Return exactly the requested canary token as "
                 + "your entire final answer. Do not create, edit, delete, "
                 + "or rename any file in the repository. Canary token: "
@@ -115,29 +114,11 @@ public sealed class GalateaCodexDelegationLiveTests {
             var request = new GalateaStartDelegateTurnRequest(
                 dispatchId,
                 binding.ThreadId,
-                task
+                task,
+                repositoryPath
             );
-            GalateaDelegateDispatchInspection beforeStart =
-                await client.InspectDispatchAsync(
-                    GalateaInspectDelegateDispatchRequest.ForOutcomeUnknown(
-                        dispatchId,
-                        binding.ThreadId,
-                        task
-                    ),
-                    ct
-                );
-            Assert.IsType<
-                GalateaDelegateDispatchInspection.NotFound>(beforeStart);
-            RequireExact(
-                dispatchId,
-                beforeStart.DispatchId,
-                "dispatch"
-            );
-            RequireExact(
-                binding.ThreadId,
-                beforeStart.ThreadId,
-                "thread"
-            );
+            // A newly created empty thread may not have a source rollout yet.
+            // The pinned server cannot page that history until its first turn.
             GalateaDelegateTurnAccepted accepted =
                 await client.StartTurnAsync(request, ct);
             RequireExact(dispatchId, accepted.DispatchId, "dispatch");
@@ -311,7 +292,7 @@ public sealed class GalateaCodexDelegationLiveTests {
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) {
             throw new TimeoutException(
-                "The real Codex V3 canary exceeded its bounded deadline."
+                "The real Codex V4 canary exceeded its bounded deadline."
             );
         }
     }
@@ -319,7 +300,7 @@ public sealed class GalateaCodexDelegationLiveTests {
     private static string CreateIsolatedRepositoryPath() {
         string path = Path.Combine(
             Path.GetTempPath(),
-            "atelia-galatea-codex-v3-live-"
+            "atelia-galatea-codex-v4-live-"
                 + Guid.NewGuid().ToString("N")
         );
         TestDirectorySafety.EnsureExistingPathChainHasNoReparsePoint(path);

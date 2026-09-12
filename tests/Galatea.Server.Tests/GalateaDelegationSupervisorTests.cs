@@ -12,6 +12,98 @@ public sealed class GalateaDelegationSupervisorTests {
     private static readonly TimeSpan TestDeadline = TimeSpan.FromSeconds(10);
 
     [Fact]
+    public async Task SharedTransportUsesEachHomeAndReopensOriginalThreadsAfterHomeChange() {
+        using var root = new OwnedRoot();
+        GalateaUserConfig[] users = [
+            User("alice", root.Child("sessions/alice"), root.Child("delegation/alice")),
+            User("bob", root.Child("sessions/bob"), root.Child("delegation/bob"))
+        ];
+        using SessionJournalEngine alice = CreateSession(users[0].SessionDir);
+        using SessionJournalEngine bob = CreateSession(users[1].SessionDir);
+        GalateaConfig config = Config(root.Path, users);
+        for (int i = 0; i < users.Length; i++) {
+            using var store = CreateStore(i == 0 ? alice : bob, users[i], config.Delegates);
+            CaptureHomeMail(store, 1);
+        }
+
+        var first = new HomeTransport();
+        await using (var supervisor = new GalateaDelegationSupervisor(
+            config, first,
+            testHooks: new(PulseInterval: TimeSpan.FromMilliseconds(10)))) {
+            await WaitUntilAsync(() => users.All(user =>
+                supervisor.ReadMailboxStatus(user.UserId).ReadyNoticeCount == 1));
+        }
+        Assert.Equal(1, first.DisposeCount);
+        Assert.Equal(2, first.Bindings.Count);
+        Assert.Equal(2, first.Starts.Count);
+        Assert.Equal(users.Select(user => user.HomeDir).Order(),
+            first.Starts.Select(request => request.Cwd).Order());
+
+        GalateaUserConfig[] moved = users.Select(user => user with {
+            HomeDir = Directory.CreateDirectory(user.HomeDir + "-moved").FullName
+        }).ToArray();
+        GalateaConfig movedConfig = config with { Users = moved };
+        foreach (GalateaUserConfig user in moved) {
+            using var store = GalateaDelegationSqliteStore.OpenExisting(
+                user.DelegationStateDir, Owner(user, config.Delegates),
+                Limits(config.Delegates.CodexRoute));
+            CaptureHomeMail(store, 2);
+        }
+        var second = new HomeTransport();
+        await using (var supervisor = new GalateaDelegationSupervisor(
+            movedConfig, second,
+            testHooks: new(PulseInterval: TimeSpan.FromMilliseconds(10)))) {
+            await WaitUntilAsync(() => moved.All(user =>
+                supervisor.ReadMailboxStatus(user.UserId).ReadyNoticeCount == 2));
+        }
+        Assert.Equal(1, second.DisposeCount);
+        Assert.Empty(second.Bindings);
+        Assert.Equal(2, second.Starts.Count);
+        foreach (GalateaUserConfig user in users) {
+            string thread = Assert.Single(first.Starts, request => request.Cwd == user.HomeDir).ThreadId;
+            Assert.Equal(thread, Assert.Single(second.Starts,
+                request => request.Cwd == user.HomeDir + "-moved").ThreadId);
+        }
+    }
+
+    private static void CaptureHomeMail(GalateaDelegationSqliteStore store, int sequence) =>
+        store.CaptureActionBatch(new GalateaDelegationCaptureRequest(
+            $"ej1:{sequence:x16}0000000100000000", new string('a', 64),
+            VisibleActionUtf8Bytes: 12, "extractor-contract-v1",
+            [new SendMailIntent("Codex", null, "write personal.txt", null, "sent")]));
+
+    private sealed class HomeTransport : IGalateaDurableDelegateTransport {
+        internal ConcurrentQueue<GalateaEnsureDelegateBindingRequest> Bindings { get; } = new();
+        internal ConcurrentQueue<GalateaStartDelegateTurnRequest> Starts { get; } = new();
+        internal int DisposeCount { get; private set; }
+
+        public Task<GalateaDelegateBindingEstablished> EnsureBindingAsync(
+            GalateaEnsureDelegateBindingRequest request, CancellationToken ct) {
+            Bindings.Enqueue(request);
+            return Task.FromResult(new GalateaDelegateBindingEstablished(
+                request.BindingOperationId, "thread-" + request.BindingOperationId));
+        }
+
+        public Task<GalateaDelegateTurnAccepted> StartTurnAsync(
+            GalateaStartDelegateTurnRequest request, CancellationToken ct) {
+            Starts.Enqueue(request);
+            return Task.FromResult(new GalateaDelegateTurnAccepted(
+                request.DispatchId, request.ThreadId, "turn-" + request.DispatchId));
+        }
+
+        public Task<GalateaDelegateDispatchInspection> InspectDispatchAsync(
+            GalateaInspectDelegateDispatchRequest request, CancellationToken ct) =>
+            Task.FromResult<GalateaDelegateDispatchInspection>(new GalateaDelegateDispatchInspection.Completed(
+                request.DispatchId, request.ThreadId, "turn-" + request.DispatchId,
+                "written", GalateaDelegateInspectionSource.Persistent));
+
+        public ValueTask DisposeAsync() {
+            DisposeCount++;
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    [Fact]
     public async Task LazyAttachCreatesExactBaselineAndHandleIsBorrowed() {
         using var root = new OwnedRoot();
         string sessionPath = root.Child("sessions/alice");
@@ -649,6 +741,7 @@ public sealed class GalateaDelegationSupervisorTests {
         sessionPath,
         statePath,
         statePath + "-character-memory",
+        Directory.CreateDirectory(statePath + "-home").FullName,
         provisioning,
         SystemPrompt: "prompt",
         DefaultConnectionId: "unused"
@@ -685,9 +778,6 @@ public sealed class GalateaDelegationSupervisorTests {
         user.UserId,
         GalateaDelegationSupervisor.CreateSessionRepositoryId(
             user.SessionDir
-        ),
-        GalateaDelegationDurableContract.CreateRoutePolicyFingerprint(
-            delegates.CodexRoute
         )
     );
 

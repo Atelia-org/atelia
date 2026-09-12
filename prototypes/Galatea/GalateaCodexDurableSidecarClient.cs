@@ -7,13 +7,13 @@ using Atelia.Diagnostics;
 namespace Atelia.Galatea.Server;
 
 /// <summary>
-/// Production exact V3 transport for durable Codex delegation. The durable
+/// Production exact V4 transport for durable Codex delegation. The durable
 /// store and driver own business correlation and recovery state; this client
 /// owns only the exact sidecar protocol and process transport.
 /// </summary>
 internal sealed class GalateaCodexDurableSidecarClient
     : GalateaSidecarProcessClientBase, IGalateaDurableDelegateTransport {
-    private const int ProtocolVersion = 3;
+    private const int ProtocolVersion = 4;
     private const int OperationStartupMarginMs = 5_000;
     private const int BindingRpcBudgetCount = 5;
     private const int StartTurnRpcBudgetCount = 5;
@@ -40,7 +40,6 @@ internal sealed class GalateaCodexDurableSidecarClient
         "THREAD_NOT_FOUND",
         "THREAD_ID_MISMATCH",
         "THREAD_OWNERSHIP_MISMATCH",
-        "THREAD_CWD_MISMATCH",
         "THREAD_SHAPE_INVALID",
         "INSPECTION_LIMIT_EXCEEDED",
         "TURN_ID_INVALID",
@@ -79,6 +78,7 @@ internal sealed class GalateaCodexDurableSidecarClient
         CancellationToken ct
     ) {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.Cwd);
         GalateaSidecarWire.RequireIdentifier(
             request.BindingOperationId,
             nameof(request.BindingOperationId)
@@ -97,7 +97,8 @@ internal sealed class GalateaCodexDurableSidecarClient
                     ProtocolVersion,
                     "ensure-binding",
                     requestId,
-                    request.BindingOperationId
+                    request.BindingOperationId,
+                    request.Cwd
                 )),
                 () => generation.ClaimActiveBinding(pending),
                 ComputeBindingDeadline(Config.Sidecar.RpcTimeoutMs),
@@ -114,6 +115,7 @@ internal sealed class GalateaCodexDurableSidecarClient
         CancellationToken ct
     ) {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.Cwd);
         ValidateDispatchRequest(
             request.DispatchId,
             request.ThreadId,
@@ -137,7 +139,8 @@ internal sealed class GalateaCodexDurableSidecarClient
                     requestId,
                     request.DispatchId,
                     request.ThreadId,
-                    request.Task
+                    request.Task,
+                    request.Cwd
                 )),
                 () => ClaimStart(request.DispatchId),
                 ComputeStartTurnDeadline(Config.Sidecar.RpcTimeoutMs),
@@ -1267,7 +1270,8 @@ internal sealed class GalateaCodexDurableSidecarClient
         [property: JsonPropertyName("type")] string Type,
         [property: JsonPropertyName("requestId")] string RequestId,
         [property: JsonPropertyName("bindingOperationId")]
-        string BindingOperationId
+        string BindingOperationId,
+        [property: JsonPropertyName("cwd")] string Cwd
     );
 
     private sealed record StartTurnWireFrame(
@@ -1276,7 +1280,8 @@ internal sealed class GalateaCodexDurableSidecarClient
         [property: JsonPropertyName("requestId")] string RequestId,
         [property: JsonPropertyName("dispatchId")] string DispatchId,
         [property: JsonPropertyName("threadId")] string ThreadId,
-        [property: JsonPropertyName("task")] string Task
+        [property: JsonPropertyName("task")] string Task,
+        [property: JsonPropertyName("cwd")] string Cwd
     );
 
     private sealed record InspectDispatchWireFrame(
