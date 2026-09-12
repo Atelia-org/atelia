@@ -847,6 +847,7 @@ public sealed class TextExtractorTests {
                 null,
                 null,
                 null,
+                null,
             ])
         );
     }
