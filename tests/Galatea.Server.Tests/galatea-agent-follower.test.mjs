@@ -16,7 +16,7 @@ const idle = { status: "idle", turnId: null, connectionId: null,
 const running = { ...idle, status: "running", turnId, connectionId: "codex" };
 const waiting = { state: "waiting", connectionId: "codex",
   nextActivationAtUnixTimeMilliseconds: Date.now() + 600000,
-  lastActivationAtUnixTimeMilliseconds: null, code: null };
+  lastActivationAtUnixTimeMilliseconds: null, code: null, admissionFailure: null };
 const recent = (text) => ({ turns: [{ userText: "world",
   assistant: { text, reasoningText: null } }], rewindLatestToken: null,
   contextHeader: { observation: "", action: "" }, recapGridReadiness: null });
@@ -79,6 +79,23 @@ test("agent decoder enforces exact fields and state matrix", () => {
       lastActivationAtUnixTimeMilliseconds: 1,
     }));
   }
+});
+
+const admissionBlocked = { ...waiting, state: "blocked",
+  nextActivationAtUnixTimeMilliseconds: null, code: "AUTOMATIC_ADMISSION_FAILED",
+  admissionFailure: { code: "character-memory-extraction-unavailable",
+    error: "Note 提取未成功完成。 提取错误：CompletionOutputInvalid。" } };
+
+test("admission failure detail is restricted to its blocked state and rendered as text", () => {
+  assert.equal(production.requireAgentStatus(admissionBlocked), admissionBlocked);
+  assert.match(production.formatAgentStatus(admissionBlocked, 0).stateText,
+    /Note 提取未成功完成.*CompletionOutputInvalid/);
+  assert.throws(() => production.requireAgentStatus({ ...waiting,
+    admissionFailure: admissionBlocked.admissionFailure }));
+  assert.throws(() => production.requireAgentStatus({ ...admissionBlocked,
+    code: "AUTOMATIC_REPLY_FAILED" }));
+  assert.throws(() => production.requireAgentStatus({ ...admissionBlocked,
+    admissionFailure: { code: "bad", error: "" } }));
 });
 
 test("GET follower finds running and between-poll completed turns without duplicate SSE", async () => {
@@ -243,6 +260,7 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
       classList: {
         add: (name) => classes.add(name), remove: (name) => classes.delete(name),
         toggle: (name, set) => set ? classes.add(name) : classes.delete(name),
+        contains: (name) => classes.has(name),
       },
       addEventListener: (type, callback) => handlers.set(type, callback),
       querySelectorAll: () => [],
@@ -262,6 +280,7 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
   let recentPending = initialRecent;
   let currentValue = current;
   let statusValue = waiting;
+  let retryResponse = null;
   let confirms = 0;
   const fetchImpl = async (url, options = {}) => {
     requests.push({ url, options });
@@ -270,6 +289,9 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
       attemptCount: 0, code: null, nextRetryAtUnixTimeMilliseconds: null,
     });
     if (url.endsWith("/agent/status")) return response(statusValue);
+    if (url.endsWith("/retry-admission")) {
+      return retryResponse === null ? response(statusValue) : await retryResponse;
+    }
     if (url.endsWith("/current")) return response(currentValue);
     if (url.endsWith("/recent-turns")) {
       if (recentPending) { const result = recentPending; recentPending = null; return result.promise; }
@@ -310,6 +332,7 @@ function domHarness({ current = idle, maintenanceMode = false, initialRecent = n
     clock, node, requests, streams, listeners, document,
     setCurrent: (value) => { currentValue = value; },
     setStatus: (value) => { statusValue = value; },
+    setRetryResponse: (value) => { retryResponse = value; },
     setRecent: (value) => { recentValue = value; },
     deferRecent() { recentPending = deferred(); return recentPending; },
     confirms: () => confirms,
@@ -329,6 +352,62 @@ async function poll(harness) {
     await harness.clock.tick(0);
   }
 }
+
+test("retry button settles unfinished work without submitting a turn or losing a draft", async () => {
+  const h = domHarness();
+  h.setStatus(admissionBlocked);
+  await flush(); await poll(h);
+  const button = h.node("retry-admission");
+  assert.equal(button.classList.contains("hidden"), false);
+  assert.equal(button.disabled, false);
+  assert.match(h.node("autonomy-state").textContent, /CompletionOutputInvalid/);
+  h.node("message-input").value = "keep my draft";
+  const pending = deferred();
+  h.setRetryResponse(pending.promise);
+  const clicked = button.dispatch("click");
+  await flush();
+  assert.equal(button.disabled, true);
+  assert.equal(h.node("send-button").disabled, true);
+  await button.dispatch("click");
+  await h.node("chat-form").dispatch("submit");
+  const posts = h.requests.filter((x) => x.options.method === "POST");
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, "/api/v1/agent/retry-admission");
+  assert.equal(posts[0].options.body, "{}");
+  pending.resolve(response(waiting));
+  h.setStatus(waiting);
+  await clicked;
+  assert.equal(h.node("message-input").value, "keep my draft");
+  assert.equal(button.classList.contains("hidden"), true);
+  assert.equal(h.streams.length, 0);
+  assert.match(h.node("status-text").textContent, /未完成处理已完成/);
+});
+
+test("failed retry preserves error and remains retryable, while maintenance and running disable it", async () => {
+  const h = domHarness();
+  h.setStatus(admissionBlocked);
+  await flush(); await poll(h);
+  h.setRetryResponse(Promise.resolve(new Response(JSON.stringify(admissionBlocked.admissionFailure), {
+    status: 409, headers: { "content-type": "application/json" },
+  })));
+  await h.node("retry-admission").dispatch("click");
+  assert.match(h.node("status-text").textContent, /Note 提取未成功完成/);
+  assert.equal(h.node("retry-admission").classList.contains("hidden"), false);
+  assert.equal(h.node("retry-admission").disabled, false);
+  h.setCurrent(running);
+  h.listeners.get("visibilitychange")(); await poll(h);
+  assert.equal(h.node("retry-admission").disabled, true);
+  const postCount = h.requests.filter((x) => x.options.method === "POST").length;
+  await h.node("retry-admission").dispatch("click");
+  assert.equal(h.requests.filter((x) => x.options.method === "POST").length, postCount);
+  h.finish("finished"); await flush();
+
+  const maintenance = domHarness({ maintenanceMode: true });
+  maintenance.setStatus(admissionBlocked);
+  await flush(); await poll(maintenance);
+  await maintenance.node("retry-admission").dispatch("click");
+  assert.equal(maintenance.requests.some((x) => x.options.method === "POST"), false);
+});
 test("actual DOM app follows automatic SSE, preserves draft and manual connection, and refreshes completed work", async () => {
   const h = domHarness();
   await flush(); await poll(h);

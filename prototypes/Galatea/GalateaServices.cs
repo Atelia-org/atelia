@@ -1850,6 +1850,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         if (settled && completed) {
             host.AutomaticReplyFailed = false;
             host.AutomaticAdmissionFailed = false;
+            host.AutomaticAdmissionFailure = null;
         }
         else if (settled && turn.FreshInput is GalateaFreshInput.DelegateReply) {
             host.AutomaticReplyFailed = true;
@@ -3907,21 +3908,22 @@ public sealed class UserSessionHost : IAsyncDisposable {
     // Written only under TurnLock; HTTP reads the immutable cached projection.
     internal bool AutomaticReplyFailed { get; set; }
     internal bool AutomaticAdmissionFailed { get; set; }
+    internal ApiErrorDto? AutomaticAdmissionFailure { get; set; }
 
     internal GalateaAgentStatusDto ReadAgentStatus() => Volatile.Read(ref _agentStatus);
 
-    internal void SetAgentStatus(string state, string? code = null) {
+    internal void SetAgentStatus(string state, string? code = null, ApiErrorDto? admissionFailure = null) {
         GalateaAgentStatusDto previous = ReadAgentStatus();
         Volatile.Write(ref _agentStatus, new GalateaAgentStatusDto(
             state, User.DefaultConnectionId,
             state is "waiting" ? previous.NextActivationAtUnixTimeMilliseconds : null,
-            previous.LastActivationAtUnixTimeMilliseconds, code
+            previous.LastActivationAtUnixTimeMilliseconds, code, admissionFailure
         ));
     }
 
     internal void PublishAutonomyStatus() {
         if (AutomaticAdmissionFailed) {
-            SetAgentStatus("blocked", "AUTOMATIC_ADMISSION_FAILED");
+            SetAgentStatus("blocked", "AUTOMATIC_ADMISSION_FAILED", AutomaticAdmissionFailure);
             return;
         }
         if (AutomaticReplyFailed) {
@@ -4956,6 +4958,7 @@ internal static class GalateaHtml {
           <span id="autonomy-connection"></span>
           <span id="autonomy-countdown" aria-live="off"></span>
           <span id="autonomy-last-activation" aria-live="off">上次自主激活：尚无</span>
+          <button id="retry-admission" type="button" class="hidden">重试未完成处理</button>
         </div>
         <div id="mailbox-status" class="mailbox-status" role="status" aria-live="polite">邮箱状态：正在读取…</div>
         <div class="composer-actions">

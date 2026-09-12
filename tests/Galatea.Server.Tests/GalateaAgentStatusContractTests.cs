@@ -40,7 +40,7 @@ public sealed class GalateaAgentStatusContractTests {
             using JsonDocument document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             JsonElement root = document.RootElement;
             Assert.Equal(
-                new[] { "code", "connectionId", "lastActivationAtUnixTimeMilliseconds", "nextActivationAtUnixTimeMilliseconds", "state" },
+                new[] { "admissionFailure", "code", "connectionId", "lastActivationAtUnixTimeMilliseconds", "nextActivationAtUnixTimeMilliseconds", "state" },
                 root.EnumerateObject().Select(static property => property.Name).Order(StringComparer.Ordinal)
             );
             Assert.Equal(expectedState, root.GetProperty("state").GetString());

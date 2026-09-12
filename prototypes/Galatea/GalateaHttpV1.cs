@@ -287,6 +287,8 @@ internal sealed class RequestBodyLimitExceededException : IOException;
 
 internal sealed record ApiErrorDto(string Code, string Error);
 
+internal sealed record RetryAdmissionRequest;
+
 internal sealed record TurnBusyErrorDto(
     string Code,
     string Error,

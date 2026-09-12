@@ -666,7 +666,8 @@ internal sealed record GalateaAgentStatusDto(
     string? ConnectionId,
     long? NextActivationAtUnixTimeMilliseconds,
     long? LastActivationAtUnixTimeMilliseconds,
-    string? Code
+    string? Code,
+    ApiErrorDto? AdmissionFailure = null
 );
 
 internal sealed record GalateaMailboxStatusDto(

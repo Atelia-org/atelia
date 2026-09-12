@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.ExceptionServices;
 using Atelia.Completion;
+using Atelia.Diagnostics;
 using Atelia.SessionJournal;
 
 namespace Atelia.Galatea.Server;
@@ -39,6 +40,81 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         if (session is null) { _attachFailures[userId] = "AUTOMATIC_ADMISSION_FAILED"; }
     }
 
+    // Explicitly retries settlement only. It never claims a reply or creates a
+    // main-model turn; automatic pulses share this same TurnLock.
+    internal async Task<GalateaAutomaticTurnResult> RetryAdmissionAsync(string userId, CancellationToken ct) {
+        GalateaAgentStatusDto status = ReadStatus(userId);
+        if (status.State is "disabled" or "maintenance" or "stopping") {
+            return new GalateaAutomaticTurnResult.Status(status);
+        }
+        ct.ThrowIfCancellationRequested();
+        UserSessionHost? session = host.ReadAttachedSession(userId);
+        if (session is null || _attachFailures.ContainsKey(userId)) {
+            return new GalateaAutomaticTurnResult.Blocked("session-unavailable", "会话尚未就绪；请检查服务端初始化诊断。");
+        }
+        if (!session.TurnLock.Wait(0)) {
+            return new GalateaAutomaticTurnResult.Busy(session.GetCurrentTurn()?.TurnId);
+        }
+        try {
+            ct.ThrowIfCancellationRequested();
+            if (host.IsStopping || host.MaintenanceMode) {
+                return new GalateaAutomaticTurnResult.Status(ReadStatus(userId));
+            }
+            if (!session.AutomaticAdmissionFailed) {
+                return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
+            }
+            await host.ReconcileDurableAdmissionAsync(session, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            host.RequireRunning();
+            SessionRuntimeRecoveryRequirements recovery = session.Engine.InspectRuntimeRecoveryRequirements(ct);
+            if (recovery is not SessionRuntimeRecoveryRequirements.NoRuntimeRequired { Phase: SessionExecutionPhase.Idle }) {
+                bool empty = recovery.Phase == SessionExecutionPhase.Empty;
+                session.SetAgentStatus("blocked", empty ? "SESSION_UNPROVISIONED" : "RECOVERY_REQUIRED");
+                return new GalateaAutomaticTurnResult.Blocked(
+                    empty ? "session-unprovisioned" : "recovery-required",
+                    empty ? "会话仓库尚未完成初始化。" : "未完成处理已核对，但会话仍有待恢复轮次；请使用恢复轮次入口。"
+                );
+            }
+            session.AutomaticAdmissionFailed = false;
+            session.AutomaticAdmissionFailure = null;
+            session.PublishAutonomyStatus();
+            return new GalateaAutomaticTurnResult.Status(session.ReadAgentStatus());
+        }
+        catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception)
+            && !ct.IsCancellationRequested && !host.IsStopping) {
+            RecordAdmissionFailure(session, exception);
+            DebugUtil.Error("Galatea.Autonomy", $"Admission retry failed: user={userId}", exception);
+            ApiErrorDto failure = session.AutomaticAdmissionFailure!;
+            return new GalateaAutomaticTurnResult.Blocked(failure.Code, failure.Error);
+        }
+        finally { session.TurnLock.Release(); }
+    }
+
+    internal static void RecordAdmissionFailure(UserSessionHost session, Exception exception) {
+        string code = exception is GalateaTurnException { FailureReason: { } reason }
+            ? reason : "automatic-admission-failed";
+        string message = code switch {
+            "character-memory-extraction-timeout" => "Note 提取超时，尚未完成保存。",
+            "character-memory-extraction-aborted" => "Note 提取被中止，尚未完成保存。",
+            "character-memory-extraction-unavailable" => "Note 提取未成功完成。",
+            "character-memory-pod-unavailable" => "Note 存储暂时不可用。",
+            "character-memory-settlement-deferred" => "Note 保存处理暂未完成。",
+            "character-memory-quarantined" or "character-memory-state-invalid" => "Note 存储状态需要检查。",
+            "delegation-extraction-unavailable" => "发信请求提取未成功完成。",
+            _ => "轮次开始前的未完成处理失败，请重试或检查服务端诊断。",
+        };
+        // Only expose known diagnostic categories, never provider response text
+        // or arbitrary exception messages that can include request content.
+        Exception? cause = exception;
+        while (cause is not null && cause is not TextExtractionException) { cause = cause.InnerException; }
+        if (cause is TextExtractionException extraction) {
+            message += $" 提取错误：{extraction.Kind}。";
+        }
+        session.AutomaticAdmissionFailed = true;
+        session.AutomaticAdmissionFailure = new ApiErrorDto(code, message);
+        session.PublishAutonomyStatus();
+    }
+
     internal async Task<GalateaAutomaticTurnResult> TryPulseAsync(string userId, CancellationToken ct) {
         GalateaAgentStatusDto status = ReadStatus(userId);
         if (status.State is "disabled" or "maintenance" or "stopping") {
@@ -59,6 +135,18 @@ internal sealed class GalateaAutomaticTurnCoordinator(
             ct.ThrowIfCancellationRequested();
             if (host.IsStopping) { return new GalateaAutomaticTurnResult.Status(ReadStatus(userId)); }
             if (session.AutomaticReplyFailed || session.AutomaticAdmissionFailed) {
+                // A settlement retry may have established a more specific
+                // recovery boundary. Keep that diagnosis until explicit turn
+                // recovery succeeds instead of offering settlement again.
+                GalateaAgentStatusDto blockedStatus = session.ReadAgentStatus();
+                if (session.AutomaticAdmissionFailed
+                    && blockedStatus.Code is "RECOVERY_REQUIRED" or "SESSION_UNPROVISIONED") {
+                    bool empty = blockedStatus.Code == "SESSION_UNPROVISIONED";
+                    return new GalateaAutomaticTurnResult.Blocked(
+                        empty ? "session-unprovisioned" : "recovery-required",
+                        empty ? "会话仓库尚未完成初始化。" : "会话仍有待恢复轮次；请使用恢复轮次入口。"
+                    );
+                }
                 session.PublishAutonomyStatus();
                 return new GalateaAutomaticTurnResult.Blocked(
                     session.AutomaticReplyFailed ? "automatic-reply-failed" : "automatic-admission-failed",
@@ -101,8 +189,7 @@ internal sealed class GalateaAutomaticTurnCoordinator(
         catch (Exception original) when (!transferred) {
             if (GalateaExceptionClassifier.IsNonFatal(original)
                 && !ct.IsCancellationRequested && !host.IsStopping) {
-                session.AutomaticAdmissionFailed = true;
-                session.SetAgentStatus("blocked", "AUTOMATIC_ADMISSION_FAILED");
+                RecordAdmissionFailure(session, original);
             }
             if (liveTurn is null) { throw; }
             try { await host.ReconcileDurableAdmissionAsync(session, CancellationToken.None).ConfigureAwait(false); }

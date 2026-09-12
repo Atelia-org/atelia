@@ -245,7 +245,7 @@ export function formatMailboxStatus(
 export function requireAgentStatus(value) {
   const status = requireExactKeys(value, [
     "state", "connectionId", "nextActivationAtUnixTimeMilliseconds",
-    "lastActivationAtUnixTimeMilliseconds", "code",
+    "lastActivationAtUnixTimeMilliseconds", "code", "admissionFailure",
   ], "agent status");
   if (!["disabled", "starting", "waiting", "autonomy-paused", "blocked",
     "running", "maintenance", "stopping"].includes(status.state)) {
@@ -260,6 +260,12 @@ export function requireAgentStatus(value) {
   }
   if (status.code !== null) {
     requireNonblankString(status.code, "agent status.code");
+  }
+  if (status.admissionFailure !== null) {
+    requireApiError(status.admissionFailure);
+    if (status.state !== "blocked" || status.code !== "AUTOMATIC_ADMISSION_FAILED") {
+      throw new Error("admission failure requires blocked admission status");
+    }
   }
   if (["disabled", "starting", "maintenance", "stopping"].includes(status.state)) {
     if (status.nextActivationAtUnixTimeMilliseconds !== null
@@ -467,7 +473,9 @@ export function formatAgentStatus(
     const labels = {
       disabled: "未加入服务端自主运行",
       starting: "正在启动",
-      blocked: `等待人工处理（${status.code}）`,
+      blocked: status.admissionFailure === null
+        ? `等待人工处理（${status.code}）`
+        : `${status.admissionFailure.error}（${status.admissionFailure.code}）`,
       running: "正在运行",
       maintenance: "维护模式",
       stopping: "正在停止",
@@ -1256,6 +1264,7 @@ function startGalateaApp() {
     liveText: "",
     liveReasoning: "",
     streaming: false,
+    retryingAdmission: false,
     stopRequested: false,
     activeTurnId: null,
     activeTurnOrigin: null,
@@ -1302,6 +1311,7 @@ function startGalateaApp() {
   const mailboxStatus = document.getElementById("mailbox-status");
   const autonomyStatus = document.getElementById("autonomy-status");
   const autonomyState = document.getElementById("autonomy-state");
+  const retryAdmissionButton = document.getElementById("retry-admission");
   const autonomyCountdown = document.getElementById("autonomy-countdown");
   const autonomyLastActivation = document.getElementById(
     "autonomy-last-activation",
@@ -1439,10 +1449,13 @@ function startGalateaApp() {
   function publishAgentStatus(status, failureCode) {
     clearAutonomyCountdownTimer();
     if (status === null) {
+      state.agentStatus = null;
+      refreshInteractionControls();
       setTransientAutonomyStatus(`自主活动：状态读取失败（${failureCode ?? "STATUS_READ_FAILED"}）；服务端运行状态待确认`);
       return;
     }
     state.agentStatus = status;
+    refreshInteractionControls();
     if (autonomyConnection) {
       autonomyConnection.textContent = status.connectionId === null
         ? "后台连接：无" : `后台连接：${status.connectionId}`;
@@ -1484,7 +1497,7 @@ function startGalateaApp() {
     publishRecent: (recent) => { applyRecentTurnsPayload(recent); renderTurns(); },
     attachTurn: (turnId) => attachToTurn(turnId, "正在跟随服务端轮次…", "observed"),
     getRevision: () => state.uiRevision,
-    isBusy: () => state.streaming || state.activeTurnId !== null,
+    isBusy: () => state.streaming || state.retryingAdmission || state.activeTurnId !== null,
     setTimeoutFn: window.setTimeout.bind(window),
     clearTimeoutFn: window.clearTimeout.bind(window),
   });
@@ -1518,7 +1531,11 @@ function startGalateaApp() {
   }
 
   function refreshInteractionControls() {
-    const admissionBusy = state.initializing || state.streaming;
+    const admissionBusy = state.initializing || state.streaming || state.retryingAdmission;
+    if (retryAdmissionButton) {
+      retryAdmissionButton.classList.toggle("hidden", state.agentStatus?.admissionFailure == null);
+      retryAdmissionButton.disabled = maintenanceMode || admissionBusy;
+    }
     sendButton.disabled = maintenanceMode || admissionBusy;
     input.disabled = maintenanceMode || admissionBusy;
     if (stopButton) {
@@ -1557,6 +1574,7 @@ function startGalateaApp() {
       undoLastButton.disabled = maintenanceMode
         || state.initializing
         || state.streaming
+        || state.retryingAdmission
         || !hasUndoableTurn();
     }
   }
@@ -2303,7 +2321,7 @@ function startGalateaApp() {
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (maintenanceMode || state.initializing || state.streaming) {
+    if (maintenanceMode || state.initializing || state.streaming || state.retryingAdmission) {
       return;
     }
 
@@ -2358,6 +2376,7 @@ function startGalateaApp() {
       maintenanceMode
       || state.initializing
       || state.streaming
+      || state.retryingAdmission
       || !hasUndoableTurn()
     ) {
       return;
@@ -2422,7 +2441,7 @@ function startGalateaApp() {
   }
 
   resumeTurnButton?.addEventListener("click", async () => {
-    if (maintenanceMode || state.initializing || state.streaming || state.recoveryTurn === null) return;
+    if (maintenanceMode || state.initializing || state.streaming || state.retryingAdmission || state.recoveryTurn === null) return;
     const currentTurn = state.recoveryTurn;
     setStreaming(true, "正在恢复…");
     try {
@@ -2474,6 +2493,41 @@ function startGalateaApp() {
   });
 
   let initialized = false;
+  retryAdmissionButton?.addEventListener("click", async () => {
+    if (maintenanceMode || state.initializing || state.streaming || state.retryingAdmission
+        || state.agentStatus?.admissionFailure == null) return;
+    state.retryingAdmission = true;
+    state.uiRevision += 1;
+    refreshInteractionControls();
+    refreshComposerMode();
+    statusText.textContent = "正在重试未完成处理…";
+    try {
+      const response = await fetch("/api/v1/agent/retry-admission", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      if (response.ok) {
+        const status = await readJsonResponse(response, requireAgentStatus);
+        publishAgentStatus(status);
+        statusText.textContent = status.state === "waiting"
+          ? "未完成处理已完成，服务端将继续自主活动。"
+          : "处理状态已更新，请查看自主活动状态。";
+      } else {
+        const error = await readJsonResponse(response, (value) =>
+          value?.code === "turn-busy" ? requireBusyError(value) : requireApiError(value));
+        statusText.textContent = error.error;
+      }
+    } catch (error) {
+      statusText.textContent = `重试结果未确认：${error.message || "连接失败"}；正在刷新状态。`;
+    } finally {
+      state.retryingAdmission = false;
+      state.uiRevision += 1;
+      refreshInteractionControls();
+      refreshComposerMode();
+      if (document.visibilityState !== "hidden") agentFollower.start();
+    }
+  });
+
   function startFollowers() {
     if (!initialized || document.visibilityState === "hidden") return;
     agentFollower.start();

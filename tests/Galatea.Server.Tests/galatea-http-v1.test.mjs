@@ -162,6 +162,7 @@ const waitingPulseStatus = {
   nextActivationAtUnixTimeMilliseconds: 11_000,
   lastActivationAtUnixTimeMilliseconds: null,
   code: null,
+  admissionFailure: null,
 };
 const pausedPulseStatus = {
   state: "autonomy-paused",
@@ -169,6 +170,7 @@ const pausedPulseStatus = {
   nextActivationAtUnixTimeMilliseconds: null,
   lastActivationAtUnixTimeMilliseconds: 7_000,
   code: "AUTONOMOUS_TURN_FAILED",
+  admissionFailure: null,
 };
 const countdownProjection = production.createAutonomyCountdownProjection(
   waitingPulseStatus,

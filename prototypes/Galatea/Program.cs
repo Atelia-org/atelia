@@ -731,6 +731,28 @@ api.MapGet(
 );
 
 api.MapPost(
+    "/agent/retry-admission",
+    async (HttpContext httpContext, ClaimsPrincipal user, GalateaAutomaticTurnCoordinator coordinator) => {
+        _ = await GalateaHttpV1.ReadJsonBodyAsync<RetryAdmissionRequest>(httpContext);
+        string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
+            ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
+        GalateaAutomaticTurnResult result = await coordinator.RetryAdmissionAsync(userId, httpContext.RequestAborted);
+        return result switch {
+            GalateaAutomaticTurnResult.Status status => Results.Ok(status.Value),
+            GalateaAutomaticTurnResult.Busy busy => Results.Json(
+                new TurnBusyErrorDto("turn-busy", "该账号正在处理其他请求，请稍后重试。", busy.TurnId),
+                statusCode: StatusCodes.Status409Conflict
+            ),
+            GalateaAutomaticTurnResult.Blocked blocked => Results.Json(
+                new ApiErrorDto(blocked.Code, blocked.Message),
+                statusCode: StatusCodes.Status409Conflict
+            ),
+            _ => throw new InvalidOperationException("Admission retry must not create a turn.")
+        };
+    }
+).WithMetadata(GalateaHttpV1.JsonBody, GalateaHttpV1.MaintenanceWrite);
+
+api.MapPost(
     "/mailbox/inbound",
     async (
         HttpContext httpContext,
