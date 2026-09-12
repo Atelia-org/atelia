@@ -157,6 +157,9 @@ turn ID。`ACCEPTED_TURN_NOT_VISIBLE`表示官方persistent projection尚未给�
 它是可重试的`unavailable`，不是ordinary not-found、terminal、quarantine或再次`turn/start`的授权。
 `START_OUTCOME_UNKNOWN` 之后必须先 inspect，不能盲目重发 `start-turn`。
 缺失、截断或超过上限的 final 均不会伪装成完整回信。EOF、SIGINT 与 SIGTERM 会回收 app-server child。
+新 binding 检查 `thread/start` 返回空 turns，并通过 metadata read 确认 ownership；首次 turn 前可能
+尚无 source rollout，因此不要求新空 thread 能调用 `thread/turns/list`。已有 dispatch 的 inspect
+仍使用完整分页校验，不把缺失 history 的错误伪装成 `not-found`。
 `ensure-binding`、`start-turn` 必须提供绝对 `cwd`；`inspect-dispatch` 不接受目录字段。
 frame 不接受 `mode`、本地命令出网或内建工具字段；这些 capability 由启动环境决定。
 

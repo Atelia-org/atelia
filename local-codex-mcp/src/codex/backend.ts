@@ -350,6 +350,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     });
     this.throwIfStopped();
     await this.validateStartedThread(response.thread, cwd);
+    if (!Array.isArray(response.thread.turns) || response.thread.turns.length !== 0) {
+      throw new BridgeError("CODEX_PROTOCOL_ERROR", "A newly established Galatea binding must be an empty owned thread.");
+    }
     this.throwIfStopped();
     await this.options.client.request("thread/name/set", {
       threadId: response.thread.id,
@@ -358,13 +361,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     this.throwIfStopped();
     const verified = await this.readOwnedThread(response.thread.id, false);
     await this.validateThreadCwd(verified, cwd);
-    const existingTurns = await this.listTurns(response.thread.id, 1);
-    if (existingTurns.length !== 0) {
-      throw new BridgeError(
-        "CODEX_PROTOCOL_ERROR",
-        "A newly established Galatea binding must be an empty owned thread.",
-      );
-    }
+    // A new thread need not have a rollout before its first turn. The pinned
+    // app-server cannot paginate that absent history; creation plus metadata
+    // ownership verification establishes the empty binding without a model call.
     return { threadId: verified.id };
   }
 

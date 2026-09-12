@@ -381,7 +381,9 @@ lines.on("line", (line) => {
       );
       threads.set(id, thread);
       persistState();
-      send({ id: message.id, result: responseForThread(thread) });
+      const returned = structuredClone(thread);
+      if (process.argv.includes("--nonempty-start-response")) returned.turns = [{ id: "unexpected-existing-turn" }];
+      send({ id: message.id, result: responseForThread(returned) });
       break;
     }
     case "thread/read": {
@@ -420,6 +422,10 @@ lines.on("line", (line) => {
       const thread = threads.get(String(message.params?.threadId));
       if (!thread) {
         send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
+        break;
+      }
+      if (process.argv.includes("--missing-empty-rollout") && (thread.turns as unknown[]).length === 0) {
+        send({ id: message.id, error: { code: -32600, message: "invalid paginated history lineage: missing source rollout" } });
         break;
       }
       if (inspectionFixture && (thread.turns as unknown[]).length > 0) {

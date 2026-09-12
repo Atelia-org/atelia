@@ -52,13 +52,25 @@ async function start(value: Awaited<ReturnType<typeof harness>>, threadId: strin
   });
 }
 
-test("ensureBinding verifies ownership with metadata read and bounded turns page", async (t) => {
-  const value = await harness(t);
+test("ensureBinding verifies new empty thread metadata without requiring a source rollout", async (t) => {
+  const value = await harness(t, { fixtureArgs: ["--missing-empty-rollout"] });
   const binding = await bind(value);
   const requests = await value.client.request<{ threadReadIncludeTurns: boolean[]; threadTurnsListCount: number; turnStartCount: number }>("test/lastRequests", {});
   assert.match(binding.threadId, /^thread-/);
   assert.ok(requests.threadReadIncludeTurns.every((item) => item === false));
-  assert.equal(requests.threadTurnsListCount, 1);
+  assert.equal(requests.threadTurnsListCount, 0);
+  assert.equal(requests.turnStartCount, 0);
+  await assert.rejects(value.backend.inspectDispatch({
+    threadId: binding.threadId, dispatchId: "unissued-mail", task: "not sent",
+    expectedTurnId: "unavailable-turn", maximumFinalUtf8Bytes: 20_000,
+  }), /missing source rollout/);
+});
+
+test("ensureBinding rejects a nonempty thread/start response before ownership or dispatch", async (t) => {
+  const value = await harness(t, { fixtureArgs: ["--nonempty-start-response"] });
+  await assert.rejects(bind(value), /must be an empty owned thread/);
+  const requests = await value.client.request<{ threadNameSetCount: number; turnStartCount: number }>("test/lastRequests", {});
+  assert.equal(requests.threadNameSetCount, 0);
   assert.equal(requests.turnStartCount, 0);
 });
 

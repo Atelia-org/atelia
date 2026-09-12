@@ -78,6 +78,7 @@ export class GalateaDurableAdapter {
       });
     } catch (error) {
       const bridgeError = asBridgeError(error);
+      this.logOperationFailure("ensure-binding", bridgeError);
       await this.options.write({
         v: GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION,
         type: "failed",
@@ -123,6 +124,7 @@ export class GalateaDurableAdapter {
       });
     } catch (error) {
       const bridgeError = asBridgeError(error);
+      this.logOperationFailure("start-turn", bridgeError);
       await this.options.write({
         v: GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION,
         type: "failed",
@@ -293,9 +295,22 @@ export class GalateaDurableAdapter {
       : error.code;
   }
 
+  private logOperationFailure(stage: "ensure-binding" | "start-turn", error: ReturnType<typeof asBridgeError>): void {
+    // RPC messages can contain task or configuration text. Only emit bounded,
+    // code-owned identifiers and the numeric protocol status for diagnosis.
+    const method = error.details?.method;
+    this.options.logger.log("warning", "galatea_durable_operation_failed", {
+      stage,
+      error_code: error.code,
+      ...(["thread/start", "thread/name/set", "thread/read", "thread/resume", "thread/turns/list", "turn/start"].includes(String(method)) ? { rpc_method: method } : {}),
+      ...(typeof error.details?.rpc_code === "number" ? { rpc_code: error.details.rpc_code } : {}),
+    });
+  }
+
   private startErrorCode(error: ReturnType<typeof asBridgeError>): string {
     return error.code === "THREAD_NOT_FOUND"
-      || error.code === "CWD_MISMATCH"
+      || error.code === "INVALID_CWD"
+      || error.code === "CWD_NOT_ALLOWED"
       || error.code === "BRIDGE_BUSY"
       ? error.code
       : "START_OUTCOME_UNKNOWN";

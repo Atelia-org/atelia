@@ -26,6 +26,7 @@ class StubBackend implements GalateaStagedBackend {
   inspectionInput?: InspectGalateaDispatchInput;
   bindingInput?: EnsureGalateaBindingInput;
   startInput?: StartGalateaBoundTurnInput;
+  startError?: Error;
   releaseStart?: Promise<void>;
 
   async ensureBinding(input: EnsureGalateaBindingInput) {
@@ -35,6 +36,7 @@ class StubBackend implements GalateaStagedBackend {
 
   async startBoundTurn(input: StartGalateaBoundTurnInput) {
     this.startInput = input;
+    if (this.startError) throw this.startError;
     this.startCalls += 1;
     await this.releaseStart;
     return { threadId: "thread-1", turnId: "turn-1" };
@@ -141,6 +143,19 @@ test("shared adapter forwards each operation's cwd independently", async () => {
     v: 4, type: "start-turn", requestId: "start-b", dispatchId: "dispatch-b", threadId: "thread-1", task: "task b", cwd: "/home-b",
   });
   assert.equal(value.backend.startInput?.cwd, "/home-b");
+});
+
+test("invalid execution cwd remains a deterministic preflight rejection on the wire", async () => {
+  for (const code of ["INVALID_CWD", "CWD_NOT_ALLOWED"] as const) {
+    const value = harness();
+    value.backend.startError = new BridgeError(code, "Private path text must not become a diagnostic message.");
+    await value.adapter.handle(frame("start-turn", "start-invalid"));
+    assert.equal(value.frames.length, 1);
+    assert.deepEqual(value.frames[0], {
+      v: 4, type: "failed", stage: "start-turn", requestId: "start-invalid",
+      dispatchId: "dispatch-1", threadId: "thread-1", code,
+    });
+  }
 });
 
 test("durable adapter blocks only a concurrently active duplicate start", async () => {

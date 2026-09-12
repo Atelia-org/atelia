@@ -40,6 +40,7 @@ class LiveSidecar {
   private sequence = 0;
   private failure?: Error;
   private appServerPid?: number;
+  private readonly diagnostics: Record<string, unknown>[] = [];
 
   constructor(roots: string[]) {
     this.child = spawn(process.execPath, [entryPoint], { cwd: "/", env: environment(roots), stdio: "pipe" });
@@ -51,9 +52,13 @@ class LiveSidecar {
     });
     readline.createInterface({ input: this.child.stderr }).on("line", (line) => {
       try {
-        const item = JSON.parse(line) as { event?: string; pid?: number; error_code?: string };
+        const item = JSON.parse(line) as { event?: string; pid?: number; error_code?: string; stage?: string; rpc_method?: string; rpc_code?: number };
         if (item.event === "codex_started") this.appServerPid = item.pid;
         if (item.event === "galatea_durable_sidecar_failed") this.failure = new Error(`Sidecar failed: ${item.error_code}`);
+        if (item.event === "galatea_durable_operation_failed") {
+          this.diagnostics.push({ stage: item.stage, code: item.error_code, method: item.rpc_method, rpcCode: item.rpc_code });
+          if (this.diagnostics.length > 8) this.diagnostics.shift();
+        }
       } catch { /* Native stderr is deliberately not copied into canary reports. */ }
     });
   }
@@ -64,7 +69,10 @@ class LiveSidecar {
       const frame = this.frames.get(key);
       if (frame) {
         this.frames.delete(key);
-        if (frame.type === "failed") throw new Error(`Sidecar ${frame.stage}: ${frame.code}`);
+        if (frame.type === "failed") {
+          await delay(20); // Let the separate stderr pipe deliver its safe diagnostic.
+          throw new Error(`Sidecar ${frame.stage}: ${frame.code}; diagnostics=${JSON.stringify(this.diagnostics)}`);
+        }
         return frame;
       }
       if (this.failure) throw this.failure;
