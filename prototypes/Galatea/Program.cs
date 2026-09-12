@@ -13,6 +13,11 @@ using Atelia.SessionJournal;
 const string CookieScheme = "GalateaCookie";
 const string DefaultConfigPath = ".atelia/galatea/config.json";
 
+if (GalateaDelegationStoreUpgrade.IsInvocation(args)) {
+    Environment.ExitCode = GalateaDelegationStoreUpgrade.Run(args, Console.Out, Console.Error);
+    return;
+}
+
 if (GalateaDelegationOperatorRecovery.IsOperatorInvocation(args)) {
     Environment.ExitCode = GalateaDelegationOperatorRecovery.Run(
         args,

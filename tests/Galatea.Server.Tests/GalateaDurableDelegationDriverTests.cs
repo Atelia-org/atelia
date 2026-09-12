@@ -438,7 +438,7 @@ public sealed class GalateaDurableDelegationDriverTests {
         store.Bind("thread-1");
         using var sidecar = new GalateaSidecarProcessFixture(
             $$"""
-            printf '%s\n' '{"v":3,"type":"ready"}'
+            printf '%s\n' '{"v":4,"type":"ready"}'
             count=0
             while IFS= read -r line; do
               count=$((count + 1))
@@ -447,15 +447,15 @@ public sealed class GalateaDurableDelegationDriverTests {
               dispatch_id=$(printf '%s' "$line" | sed -n 's/.*"dispatchId":"\([^"]*\)".*/\1/p')
               thread_id=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
               if [ "$count" -eq 1 ]; then
-                printf '{"v":3,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-1"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                printf '{"v":4,"type":"turn-accepted","requestId":"%s","dispatchId":"%s","threadId":"%s","turnId":"turn-1"}\n' "$request_id" "$dispatch_id" "$thread_id"
               else
-                printf '{"v":3,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
+                printf '{"v":4,"type":"dispatch-inspected","requestId":"%s","dispatchId":"%s","threadId":"%s","outcome":"not-found","source":"persistent"}\n' "$request_id" "$dispatch_id" "$thread_id"
               fi
             done
             """
         );
         await using GalateaCodexDurableSidecarClient transport =
-            sidecar.CreateV3Client();
+            sidecar.CreateClient();
         GalateaDurableDelegationDriver driver = store.Driver(transport);
 
         Assert.Equal(GalateaDurableDelegationPulseStep.MailAccepted,
@@ -1487,7 +1487,6 @@ public sealed class GalateaDurableDelegationDriverTests {
         private readonly OwnedDirectory _directory = new();
         private readonly GalateaDelegationStoreOwner _owner;
         private readonly GalateaDelegationStoreLimits _limits;
-        private readonly string _fingerprint;
 
         internal DriverStore(
             IReadOnlyList<string>? bodies = null,
@@ -1504,10 +1503,7 @@ public sealed class GalateaDurableDelegationDriverTests {
                 maximumInboxReplies,
                 maximumInboxUtf8Bytes
             );
-            GalateaDelegateRouteConfig route = Route(_limits);
-            _fingerprint = GalateaDelegationDurableContract
-                .CreateRoutePolicyFingerprint(route);
-            _owner = new("user", "repository-id", _fingerprint);
+            _owner = new("user", "repository-id");
             Store = GalateaDelegationSqliteStore.CreateNew(
                 _directory.Path,
                 _owner,
@@ -1544,7 +1540,7 @@ public sealed class GalateaDurableDelegationDriverTests {
         ) => new(
             Store,
             transport,
-            _fingerprint,
+            _directory.Path,
             clock,
             static () => BindingOperationId
         );
@@ -1710,26 +1706,6 @@ public sealed class GalateaDurableDelegationDriverTests {
         public void Dispose() =>
             TestDirectorySafety.DeleteOwnedTreeNoFollow(Path);
     }
-
-    private static GalateaDelegateRouteConfig Route(
-        GalateaDelegationStoreLimits limits
-    ) => new(
-        GalateaDelegateConfigReader.CanonicalRecipient,
-        GalateaDelegateConfigReader.CodexAppServerKind,
-        "/repos/focus/atelia",
-        GalateaDelegateMode.Work,
-        LocalCommandNetwork: true,
-        new GalateaDelegateToolConfig(
-            GalateaDelegateWebSearchMode.Live,
-            ImageGeneration: true,
-            ViewImage: true
-        ),
-        limits.MaximumQueuedMails,
-        limits.MaximumTaskUtf8Bytes,
-        limits.MaximumReplyUtf8Bytes,
-        limits.MaximumInboxReplies,
-        limits.MaximumInboxUtf8Bytes
-    );
 
     private static GalateaDelegationStoreBaseline Baseline() {
         string selectedHead = Address(2);

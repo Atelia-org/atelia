@@ -20,7 +20,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 SELECT user_id, session_repository_id,
                        capture_frontier_segment_number,
                        capture_frontier_tail_offset,
-                       baseline_selected_head, route_policy_fingerprint,
+                       baseline_selected_head,
                        maximum_queued_mails, maximum_task_utf8_bytes,
                        maximum_reply_utf8_bytes, maximum_inbox_replies,
                        maximum_inbox_utf8_bytes, next_completion_sequence,
@@ -33,8 +33,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             }
             owner = new GalateaDelegationStoreOwner(
                 reader.GetString(0),
-                reader.GetString(1),
-                reader.GetString(5)
+                reader.GetString(1)
             );
             try {
                 baseline = new GalateaDelegationStoreBaseline(
@@ -53,14 +52,14 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 );
             }
             limits = new GalateaDelegationStoreLimits(
+                reader.GetInt32(5),
                 reader.GetInt32(6),
                 reader.GetInt32(7),
                 reader.GetInt32(8),
-                reader.GetInt32(9),
-                reader.GetInt32(10)
+                reader.GetInt32(9)
             );
-            nextCompletionSequence = reader.GetInt64(11);
-            storeRevision = reader.GetInt64(12);
+            nextCompletionSequence = reader.GetInt64(10);
+            storeRevision = reader.GetInt64(11);
             if (reader.Read()) {
                 throw Corrupt("delegation_meta has multiple rows.");
             }
@@ -122,7 +121,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.Transaction = transaction;
         command.CommandText = """
             SELECT state, binding_operation_id, thread_id,
-                   policy_fingerprint, active_dispatch_id,
+                   active_dispatch_id,
                    quarantine_code, ensure_attempt_count,
                    ensure_last_code, next_ensure_at_ms, revision
             FROM route_binding WHERE singleton = 1;
@@ -135,13 +134,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
             ParseExact<GalateaDelegationRouteState>(reader.GetString(0)),
             ReadNullableString(reader, 1),
             ReadNullableString(reader, 2),
-            reader.GetString(3),
+            ReadNullableString(reader, 3),
             ReadNullableString(reader, 4),
-            ReadNullableString(reader, 5),
-            reader.GetInt32(6),
-            ReadNullableString(reader, 7),
-            reader.IsDBNull(8) ? null : reader.GetInt64(8),
-            reader.GetInt64(9)
+            reader.GetInt32(5),
+            ReadNullableString(reader, 6),
+            reader.IsDBNull(7) ? null : reader.GetInt64(7),
+            reader.GetInt64(8)
         );
         if (reader.Read()) {
             throw Corrupt("route_binding has multiple rows.");
@@ -190,7 +188,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                    mail.artifact_ordinal, mail.recipient, mail.subject,
                    mail.body, mail.in_reply_to_message_id,
                    mail.evidence_quote, mail.route_class,
-                   mail.frozen_route_policy_fingerprint, mail.state,
+                   mail.state,
                    mail.operation_id, mail.requested_thread_id,
                    mail.accepted_thread_id, mail.accepted_turn_id,
                    mail.terminal_final_sha256, mail.terminal_stage,
@@ -218,19 +216,18 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 ReadNullableString(reader, 6),
                 ReadNullableString(reader, 7),
                 routeClass == "Codex",
-                ReadNullableString(reader, 9),
-                ParseExact<GalateaDurableMailState>(reader.GetString(10)),
+                ParseExact<GalateaDurableMailState>(reader.GetString(9)),
+                ReadNullableString(reader, 10),
                 ReadNullableString(reader, 11),
                 ReadNullableString(reader, 12),
                 ReadNullableString(reader, 13),
                 ReadNullableString(reader, 14),
                 ReadNullableString(reader, 15),
                 ReadNullableString(reader, 16),
-                ReadNullableString(reader, 17),
-                reader.GetInt32(18),
-                ReadNullableString(reader, 19),
-                reader.IsDBNull(20) ? null : reader.GetInt64(20),
-                reader.GetInt64(21)
+                reader.GetInt32(17),
+                ReadNullableString(reader, 18),
+                reader.IsDBNull(19) ? null : reader.GetInt64(19),
+                reader.GetInt64(20)
             ));
         }
         return result;
@@ -399,11 +396,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             );
         }
         if (storeRevision < 0 || nextCompletionSequence < 1
-            || route.Revision < 0
-            || !string.Equals(
-                route.RoutePolicyFingerprint,
-                owner.RoutePolicyFingerprint,
-                StringComparison.Ordinal)) {
+            || route.Revision < 0) {
             throw Corrupt("Delegation metadata or route revision is invalid.");
         }
         ValidateRouteShape(route, mails);
@@ -466,7 +459,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         StringComparison.Ordinal)) {
                     throw Corrupt("A captured dispatch identity is invalid.");
                 }
-                ValidateMailShape(mail, owner.RoutePolicyFingerprint);
+                ValidateMailShape(mail);
             }
         }
         if (mails.Any(mail => !captures.Any(capture =>
@@ -643,8 +636,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
     };
 
     private static void ValidateMailShape(
-        GalateaOutboundMailSnapshot mail,
-        string routePolicyFingerprint
+        GalateaOutboundMailSnapshot mail
     ) {
         if (mail.Revision < 0
             || string.IsNullOrWhiteSpace(mail.Recipient)) {
@@ -655,7 +647,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 !mail.IsCodexRouted
                 && mail.Body is not null
                 && mail.EvidenceQuote is not null
-                && mail.FrozenRoutePolicyFingerprint is null
                 && mail.OperationId is null
                 && mail.ReconcileAttemptCount == 0
                 && mail.ReconcileLastCode is null
@@ -664,7 +655,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 mail.IsCodexRouted
                 && mail.Body is not null
                 && mail.EvidenceQuote is not null
-                && mail.FrozenRoutePolicyFingerprint is null
                 && mail.OperationId is null
                 && mail.RequestedThreadId is null
                 && mail.ReconcileAttemptCount == 0
@@ -674,8 +664,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 mail.IsCodexRouted
                 && mail.Body is not null
                 && mail.EvidenceQuote is not null
-                && string.Equals(mail.FrozenRoutePolicyFingerprint,
-                    routePolicyFingerprint, StringComparison.Ordinal)
                 && mail.OperationId is not null
                 && mail.RequestedThreadId is not null
                 && mail.AcceptedThreadId is null
@@ -687,8 +675,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 mail.IsCodexRouted
                 && mail.Body is not null
                 && mail.EvidenceQuote is not null
-                && string.Equals(mail.FrozenRoutePolicyFingerprint,
-                    routePolicyFingerprint, StringComparison.Ordinal)
                 && mail.OperationId is not null
                 && mail.RequestedThreadId is not null
                 && mail.AcceptedThreadId is null
@@ -700,8 +686,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 mail.IsCodexRouted
                 && mail.Body is not null
                 && mail.EvidenceQuote is not null
-                && string.Equals(mail.FrozenRoutePolicyFingerprint,
-                    routePolicyFingerprint, StringComparison.Ordinal)
                 && mail.OperationId is not null
                 && mail.RequestedThreadId is not null
                 && mail.AcceptedThreadId is not null
@@ -713,8 +697,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 && HasValidReconcileBackoff(mail),
             GalateaDurableMailState.TerminalCompleted =>
                 mail.IsCodexRouted
-                && string.Equals(mail.FrozenRoutePolicyFingerprint,
-                    routePolicyFingerprint, StringComparison.Ordinal)
                 && mail.OperationId is not null
                 && mail.RequestedThreadId is not null
                 && mail.AcceptedThreadId is not null
@@ -730,14 +712,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 && mail.ReconcileLastCode is null
                 && mail.NextReconcileAtUnixTimeMilliseconds is null,
             GalateaDurableMailState.TerminalFailed =>
-                IsDispatchedTerminalFailure(mail, routePolicyFingerprint)
+                IsDispatchedTerminalFailure(mail)
                 || IsPreflightTaskFailure(mail),
             GalateaDurableMailState.Quarantined =>
                 mail.IsCodexRouted
                 && mail.Body is not null
                 && mail.EvidenceQuote is not null
-                && string.Equals(mail.FrozenRoutePolicyFingerprint,
-                    routePolicyFingerprint, StringComparison.Ordinal)
                 && mail.OperationId is not null
                 && mail.RequestedThreadId is not null,
             _ => false
@@ -795,13 +775,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
     }
 
     private static bool IsDispatchedTerminalFailure(
-        GalateaOutboundMailSnapshot mail,
-        string routePolicyFingerprint
+        GalateaOutboundMailSnapshot mail
     ) => mail.IsCodexRouted
-        && string.Equals(
-            mail.FrozenRoutePolicyFingerprint,
-            routePolicyFingerprint,
-            StringComparison.Ordinal)
         && mail.OperationId is not null
         && mail.RequestedThreadId is not null
         && mail.AcceptedThreadId is not null
@@ -817,7 +792,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
     private static bool IsPreflightTaskFailure(
         GalateaOutboundMailSnapshot mail
     ) => mail.IsCodexRouted
-        && mail.FrozenRoutePolicyFingerprint is null
         && mail.OperationId is null
         && mail.RequestedThreadId is null
         && mail.AcceptedThreadId is null

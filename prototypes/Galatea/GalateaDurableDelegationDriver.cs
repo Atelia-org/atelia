@@ -63,7 +63,7 @@ internal sealed class GalateaDurableDelegationDriver {
 
     private readonly GalateaDelegationSqliteStore _store;
     private readonly IGalateaDurableDelegateTransport _transport;
-    private readonly string _expectedRoutePolicyFingerprint;
+    private readonly string _homeDir;
     private readonly TimeProvider _timeProvider;
     private readonly Func<string> _bindingOperationIdFactory;
     private readonly SemaphoreSlim _pulseGate = new(1, 1);
@@ -73,29 +73,21 @@ internal sealed class GalateaDurableDelegationDriver {
     internal GalateaDurableDelegationDriver(
         GalateaDelegationSqliteStore store,
         IGalateaDurableDelegateTransport transport,
-        string expectedRoutePolicyFingerprint,
+        string homeDir,
         TimeProvider? timeProvider = null,
         Func<string>? bindingOperationIdFactory = null
     ) {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         ArgumentException.ThrowIfNullOrWhiteSpace(
-            expectedRoutePolicyFingerprint
+            homeDir
         );
-        _expectedRoutePolicyFingerprint = expectedRoutePolicyFingerprint;
+        _homeDir = homeDir;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _bindingOperationIdFactory = bindingOperationIdFactory
             ?? (() => Guid.NewGuid().ToString("N"));
 
         GalateaDelegationStateSnapshot snapshot = _store.ReadSnapshot();
-        if (!string.Equals(
-                snapshot.Owner.RoutePolicyFingerprint,
-                _expectedRoutePolicyFingerprint,
-                StringComparison.Ordinal)) {
-            throw new InvalidOperationException(
-                "The durable driver route policy does not match its store."
-            );
-        }
         LogStartupReconciliationScheduled(snapshot);
     }
 
@@ -117,7 +109,6 @@ internal sealed class GalateaDurableDelegationDriver {
     ) {
         cancellationToken.ThrowIfCancellationRequested();
         GalateaDelegationStateSnapshot snapshot = _store.ReadSnapshot();
-        RequirePolicy(snapshot);
         long now = GetUnixTimeMilliseconds();
         GalateaRouteBindingSnapshot route = snapshot.Route;
         GalateaOutboundMailSnapshot? active = ReadActiveMail(snapshot);
@@ -246,7 +237,7 @@ internal sealed class GalateaDurableDelegationDriver {
         GalateaDelegateBindingEstablished result;
         try {
             result = await _transport.EnsureBindingAsync(
-                    new(operationId),
+                    new(operationId, _homeDir),
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -405,7 +396,7 @@ internal sealed class GalateaDurableDelegationDriver {
         GalateaDelegateTurnAccepted accepted;
         try {
             accepted = await _transport.StartTurnAsync(
-                    new(started.DispatchId, threadId, task),
+                    new(started.DispatchId, threadId, task, _homeDir),
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -1104,21 +1095,6 @@ internal sealed class GalateaDurableDelegationDriver {
     ) => mail.Body is null
         || TextExtractorUtf8.GetByteCount(mail.Body)
             > limits.MaximumTaskUtf8Bytes;
-
-    private void RequirePolicy(GalateaDelegationStateSnapshot snapshot) {
-        if (!string.Equals(
-                snapshot.Owner.RoutePolicyFingerprint,
-                _expectedRoutePolicyFingerprint,
-                StringComparison.Ordinal)
-            || !string.Equals(
-                snapshot.Route.RoutePolicyFingerprint,
-                _expectedRoutePolicyFingerprint,
-                StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                "The durable route policy changed after driver construction."
-            );
-        }
-    }
 
     private long GetUnixTimeMilliseconds() {
         long value = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();

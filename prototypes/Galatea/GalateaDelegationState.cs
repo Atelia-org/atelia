@@ -121,8 +121,7 @@ internal sealed record GalateaMailboxStatusAggregate(
 
 internal sealed record GalateaDelegationStoreOwner(
     string UserId,
-    string SessionRepositoryId,
-    string RoutePolicyFingerprint
+    string SessionRepositoryId
 );
 
 internal sealed record GalateaDelegationStoreBaseline(
@@ -177,7 +176,6 @@ internal sealed record GalateaOutboundMailSnapshot(
     string? InReplyToMessageId,
     string? EvidenceQuote,
     bool IsCodexRouted,
-    string? FrozenRoutePolicyFingerprint,
     GalateaDurableMailState State,
     string? OperationId,
     string? RequestedThreadId,
@@ -196,7 +194,6 @@ internal sealed record GalateaRouteBindingSnapshot(
     GalateaDelegationRouteState State,
     string? BindingOperationId,
     string? ThreadId,
-    string RoutePolicyFingerprint,
     string? ActiveDispatchId,
     string? QuarantineCode,
     int EnsureAttemptCount,

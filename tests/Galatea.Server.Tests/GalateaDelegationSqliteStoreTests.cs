@@ -163,17 +163,6 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Throws<InvalidDataException>(() =>
             GalateaDelegationSqliteStore.OpenExisting(
                 directory.Path,
-                owner with {
-                    RoutePolicyFingerprint =
-                        GalateaDelegationDurableContract
-                            .CreateRoutePolicyFingerprint(
-                                Route() with { Mode = GalateaDelegateMode.Research }
-                            )
-                },
-                limits));
-        Assert.Throws<InvalidDataException>(() =>
-            GalateaDelegationSqliteStore.OpenExisting(
-                directory.Path,
                 owner,
                 limits with { MaximumInboxReplies = 15 }));
         Assert.Throws<InvalidDataException>(() =>
@@ -260,7 +249,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
     }
 
     [Fact]
-    public void DurableIdentityHelpers_AreGoldenAndRoutePolicyIsExact() {
+    public void DispatchIdentity_IsGolden() {
         string dispatch = GalateaDelegationDurableContract.CreateDispatchId(
             "user",
             EventAddressTextCodec.Parse(Address(1)),
@@ -271,36 +260,6 @@ public sealed class GalateaDelegationSqliteStoreTests {
                 + "d5e711cf45c1995162d3c2c4a43a1692",
             dispatch
         );
-
-        GalateaDelegateRouteConfig route = Route();
-        string fingerprint = GalateaDelegationDurableContract
-            .CreateRoutePolicyFingerprint(route);
-        Assert.StartsWith("gdrp1-", fingerprint, StringComparison.Ordinal);
-        Assert.Equal(70, fingerprint.Length);
-        GalateaDelegateRouteConfig[] drifts = [
-            route with { Recipient = "Other" },
-            route with { Kind = "other-kind" },
-            route with { Cwd = route.Cwd + "/other" },
-            route with { Mode = GalateaDelegateMode.Research },
-            route with { LocalCommandNetwork = !route.LocalCommandNetwork },
-            route with { Tools = route.Tools with {
-                WebSearch = GalateaDelegateWebSearchMode.Cached } },
-            route with { Tools = route.Tools with {
-                ImageGeneration = !route.Tools.ImageGeneration } },
-            route with { Tools = route.Tools with {
-                ViewImage = !route.Tools.ViewImage } },
-            route with { MaximumQueuedMails = route.MaximumQueuedMails + 1 },
-            route with { MaximumTaskUtf8Bytes = route.MaximumTaskUtf8Bytes + 1 },
-            route with { MaximumReplyUtf8Bytes = route.MaximumReplyUtf8Bytes + 1 },
-            route with { MaximumInboxReplies = route.MaximumInboxReplies + 1 },
-            route with {
-                MaximumInboxUtf8Bytes = route.MaximumInboxUtf8Bytes + 1 }
-        ];
-        Assert.All(drifts, drift => Assert.NotEqual(
-            fingerprint,
-            GalateaDelegationDurableContract
-                .CreateRoutePolicyFingerprint(drift)
-        ));
     }
 
     [Fact]
@@ -866,7 +825,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         bool injectUncertain = true;
         using var store = GalateaDelegationSqliteStore.CreateNew(
             directory.Path,
-            Owner(limits),
+            Owner(),
             Baseline(),
             limits,
             new GalateaDelegationStoreTestHooks(
@@ -928,7 +887,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         );
         using var store = GalateaDelegationSqliteStore.CreateNew(
             directory.Path,
-            Owner(limits),
+            Owner(),
             Baseline(),
             limits
         );
@@ -951,7 +910,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         );
         using var store = GalateaDelegationSqliteStore.CreateNew(
             directory.Path,
-            Owner(limits),
+            Owner(),
             Baseline(),
             limits
         );
@@ -1393,18 +1352,8 @@ public sealed class GalateaDelegationSqliteStoreTests {
                 directory.Path, owner, limits));
     }
 
-    private static GalateaDelegationStoreOwner Owner(
-        GalateaDelegationStoreLimits? limits = null
-    ) {
-        limits ??= Limits();
-        return new(
-            "user",
-            "repository-id",
-            GalateaDelegationDurableContract.CreateRoutePolicyFingerprint(
-                Route(limits)
-            )
-        );
-    }
+    private static GalateaDelegationStoreOwner Owner() =>
+        new("user", "repository-id");
 
     private static GalateaDelegationStoreBaseline Baseline() {
         string selectedHead = Address(2);
@@ -1415,29 +1364,6 @@ public sealed class GalateaDelegationSqliteStoreTests {
                 address.Ticket.EndOffsetExclusive
             ),
             selectedHead
-        );
-    }
-
-    private static GalateaDelegateRouteConfig Route(
-        GalateaDelegationStoreLimits? limits = null
-    ) {
-        limits ??= Limits();
-        return new(
-        Recipient: GalateaDelegateConfigReader.CanonicalRecipient,
-        Kind: GalateaDelegateConfigReader.CodexAppServerKind,
-        Cwd: "/repos/focus/atelia",
-        Mode: GalateaDelegateMode.Work,
-        LocalCommandNetwork: true,
-        Tools: new GalateaDelegateToolConfig(
-            GalateaDelegateWebSearchMode.Live,
-            ImageGeneration: true,
-            ViewImage: true
-        ),
-        MaximumQueuedMails: limits.MaximumQueuedMails,
-        MaximumTaskUtf8Bytes: limits.MaximumTaskUtf8Bytes,
-        MaximumReplyUtf8Bytes: limits.MaximumReplyUtf8Bytes,
-        MaximumInboxReplies: limits.MaximumInboxReplies,
-        MaximumInboxUtf8Bytes: limits.MaximumInboxUtf8Bytes
         );
     }
 
@@ -1633,7 +1559,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
                 maximumInboxUtf8Bytes: maximumInboxUtf8Bytes,
                 maximumReplyUtf8Bytes: maximumReplyUtf8Bytes
             );
-            _owner = Owner(_limits);
+            _owner = Owner();
             Store = GalateaDelegationSqliteStore.CreateNew(
                 _directory.Path,
                 _owner,

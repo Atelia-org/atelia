@@ -19,6 +19,26 @@ namespace Atelia.Galatea.Server.Tests;
 [SupportedOSPlatform("linux")]
 public sealed class GalateaDelegationOperatorRecoveryTests {
     [Fact]
+    public void UpgradeCommand_CurrentStoreLoadsConfigWithoutChangingBusinessState() {
+        using var fixture = new RecoveryFixture(closeStore: true);
+        string configPath = fixture.WriteConfigFiles();
+        byte[] before = DatabaseDigest(fixture.StateDirectory);
+        var output = new StringWriter();
+        var error = new StringWriter();
+
+        int exitCode = GalateaDelegationStoreUpgrade.Run(
+            ["operator", GalateaDelegationStoreUpgrade.CommandName,
+                "--config", configPath, "--user", fixture.User.UserId, "--apply"],
+            output, error
+        );
+
+        Assert.True(exitCode == 0, error.ToString());
+        Assert.Contains("outcome=AlreadyCurrent", output.ToString(), StringComparison.Ordinal);
+        Assert.Equal(before, DatabaseDigest(fixture.StateDirectory));
+        Assert.DoesNotContain(fixture.Final, output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Execute_DryRunIsBytePreservingAndLeavesAcceptedState() {
         using var fixture = new RecoveryFixture(closeStore: true);
         byte[] before = DatabaseDigest(fixture.StateDirectory);
@@ -406,7 +426,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
             error
         );
 
-        Assert.Equal(0, exitCode);
+        Assert.True(exitCode == 0, error.ToString());
         Assert.Empty(error.ToString());
         Assert.Contains("outcome=DryRunReady", output.ToString(),
             StringComparison.Ordinal);
@@ -514,6 +534,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                 sessionDirectory,
                 StateDirectory,
                 Path.Combine(_root, "character-memory"),
+                GalateaDelegateTestConfiguration.CreateHomeDirectory(sessionDirectory, "gpt"),
                 GalateaSessionProvisioning.ExistingOnly,
                 "system prompt",
                 "test"
@@ -524,9 +545,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                 User.UserId,
                 GalateaDelegationSupervisor.CreateSessionRepositoryId(
                     User.SessionDir
-                ),
-                GalateaDelegationDurableContract
-                    .CreateRoutePolicyFingerprint(Route)
+                )
             );
             string selectedHead = Address(2);
             EventAddress address = EventAddressTextCodec.Parse(selectedHead);
@@ -656,9 +675,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                     User.UserId,
                     GalateaDelegationSupervisor.CreateSessionRepositoryId(
                         User.SessionDir
-                    ),
-                    GalateaDelegationDurableContract
-                        .CreateRoutePolicyFingerprint(Route)
+                    )
                 ),
                 GalateaDelegationSupervisor.CreateLimits(Route)
             );
@@ -670,9 +687,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                     User.UserId,
                     GalateaDelegationSupervisor.CreateSessionRepositoryId(
                         User.SessionDir
-                    ),
-                    GalateaDelegationDurableContract
-                        .CreateRoutePolicyFingerprint(Route)
+                    )
                 ),
                 GalateaDelegationSupervisor.CreateLimits(Route)
             );
@@ -703,6 +718,7 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
                     User.SessionDir,
                     User.DelegationStateDir,
                     User.CharacterMemoryStateDir,
+                    User.HomeDir,
                     User.SessionProvisioning,
                     User.DefaultConnectionId,
                     CharacterContextTemplate: "prompt ${characterName}"

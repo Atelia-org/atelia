@@ -1039,29 +1039,7 @@ public sealed class GalateaDurableReplyLeaseTests {
                 maximumInboxReplies,
                 MaximumInboxUtf8Bytes: 8 * 1024 * 1024
             );
-            var route = new GalateaDelegateRouteConfig(
-                GalateaDelegateConfigReader.CanonicalRecipient,
-                GalateaDelegateConfigReader.CodexAppServerKind,
-                "/repos/focus/atelia",
-                GalateaDelegateMode.Work,
-                LocalCommandNetwork: true,
-                Tools: new GalateaDelegateToolConfig(
-                    GalateaDelegateWebSearchMode.Live,
-                    ImageGeneration: true,
-                    ViewImage: true
-                ),
-                _limits.MaximumQueuedMails,
-                _limits.MaximumTaskUtf8Bytes,
-                _limits.MaximumReplyUtf8Bytes,
-                _limits.MaximumInboxReplies,
-                _limits.MaximumInboxUtf8Bytes
-            );
-            _owner = new GalateaDelegationStoreOwner(
-                "user",
-                Engine.Path,
-                GalateaDelegationDurableContract
-                    .CreateRoutePolicyFingerprint(route)
-            );
+            _owner = new GalateaDelegationStoreOwner("user", Engine.Path);
             _storePath = Path.Combine(_root, "delegation");
             Store = GalateaDelegationSqliteStore.CreateNew(
                 _storePath,

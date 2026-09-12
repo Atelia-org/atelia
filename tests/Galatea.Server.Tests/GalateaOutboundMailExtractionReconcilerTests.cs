@@ -665,21 +665,17 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         );
         return GalateaDelegationSqliteStore.CreateNew(
             path,
-            Owner(engine.Path, limits),
+            Owner(engine.Path),
             baseline,
             limits
         );
     }
 
     private static GalateaDelegationStoreOwner Owner(
-        string repository,
-        GalateaDelegationStoreLimits limits
+        string repository
     ) => new(
         "user",
-        repository,
-        GalateaDelegationDurableContract.CreateRoutePolicyFingerprint(
-            Route(limits)
-        )
+        repository
     );
 
     private static GalateaDelegationStoreLimits Limits(
@@ -690,26 +686,6 @@ public sealed class GalateaOutboundMailExtractionReconcilerTests {
         MaximumReplyUtf8Bytes: 1024,
         MaximumInboxReplies: 16,
         MaximumInboxUtf8Bytes: 16 * 1024
-    );
-
-    private static GalateaDelegateRouteConfig Route(
-        GalateaDelegationStoreLimits limits
-    ) => new(
-        GalateaDelegateConfigReader.CanonicalRecipient,
-        GalateaDelegateConfigReader.CodexAppServerKind,
-        "/repos/focus/atelia",
-        GalateaDelegateMode.Work,
-        LocalCommandNetwork: true,
-        new GalateaDelegateToolConfig(
-            GalateaDelegateWebSearchMode.Live,
-            ImageGeneration: true,
-            ViewImage: true
-        ),
-        limits.MaximumQueuedMails,
-        limits.MaximumTaskUtf8Bytes,
-        limits.MaximumReplyUtf8Bytes,
-        limits.MaximumInboxReplies,
-        limits.MaximumInboxUtf8Bytes
     );
 
     private static SendMailIntent Mail(string recipient, string body) => new(

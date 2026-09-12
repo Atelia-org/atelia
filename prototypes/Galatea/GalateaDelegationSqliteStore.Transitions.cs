@@ -494,7 +494,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                             UPDATE outbound_mail
                             SET state = 'Started', operation_id = $operation,
                                 requested_thread_id = $thread,
-                                frozen_route_policy_fingerprint = $policy,
                                 revision = revision + 1
                             WHERE dispatch_id = $dispatch
                               AND state = 'Queued'
@@ -502,10 +501,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                             """;
                         updateMail.Parameters.AddWithValue("$operation", dispatchId);
                         updateMail.Parameters.AddWithValue("$thread", route.ThreadId);
-                        updateMail.Parameters.AddWithValue(
-                            "$policy",
-                            route.RoutePolicyFingerprint
-                        );
                         updateMail.Parameters.AddWithValue("$dispatch", dispatchId);
                         updateMail.Parameters.AddWithValue("$revision", expectedMailRevision);
                         RequireOne(updateMail.ExecuteNonQuery(), "mail start claim");
@@ -530,8 +525,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         State = GalateaDurableMailState.Started,
                         OperationId = dispatchId,
                         RequestedThreadId = route.ThreadId,
-                        FrozenRoutePolicyFingerprint =
-                            route.RoutePolicyFingerprint,
                         Revision = checked(mail.Revision + 1)
                     };
                 },
@@ -1493,14 +1486,14 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 dispatch_id, source_action_address, artifact_ordinal,
                 recipient, subject, body, in_reply_to_message_id,
                 evidence_quote, route_class,
-                frozen_route_policy_fingerprint, state, operation_id,
+                state, operation_id,
                 requested_thread_id, accepted_thread_id,
                 accepted_turn_id, terminal_final_sha256,
                 terminal_stage, terminal_code, reconcile_attempt_count,
                 reconcile_last_code, next_reconcile_at_ms, revision
             ) VALUES (
                 $dispatch, $source, $ordinal, $recipient, $subject,
-                $body, $reply, $evidence, $route, NULL, $state,
+                $body, $reply, $evidence, $route, $state,
                 NULL, NULL, NULL, NULL, NULL, NULL, NULL,
                 0, NULL, NULL, 0
             );

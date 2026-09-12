@@ -1,14 +1,11 @@
-using Microsoft.Data.Sqlite;
+namespace Atelia.Galatea.Server.Tests;
 
-namespace Atelia.Galatea.Server;
-
-internal sealed partial class GalateaDelegationSqliteStore {
-    private static void CreateSchema(SqliteConnection connection) {
-        using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = """
+// Exact V1 production DDL captured before the homeDir upgrade.
+internal static class GalateaDelegationV1Schema {
+    internal const string Sql = """
             CREATE TABLE delegation_meta (
                 singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
-                schema_version INTEGER NOT NULL CHECK(schema_version = 2),
+                schema_version INTEGER NOT NULL CHECK(schema_version = 1),
                 user_id TEXT NOT NULL,
                 session_repository_id TEXT NOT NULL,
                 capture_frontier_segment_number INTEGER NOT NULL
@@ -18,6 +15,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     CHECK(capture_frontier_tail_offset >= 4
                         AND capture_frontier_tail_offset % 4 = 0),
                 baseline_selected_head TEXT NULL,
+                route_policy_fingerprint TEXT NOT NULL,
                 maximum_queued_mails INTEGER NOT NULL
                     CHECK(maximum_queued_mails >= 1),
                 maximum_task_utf8_bytes INTEGER NOT NULL
@@ -64,6 +62,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 evidence_quote TEXT NULL,
                 route_class TEXT NOT NULL
                     CHECK(route_class IN ('Codex', 'Unrouted')),
+                frozen_route_policy_fingerprint TEXT NULL,
                 state TEXT NOT NULL CHECK(state IN (
                     'Unrouted', 'Queued', 'Started',
                     'OutcomeUnknown', 'Accepted', 'TerminalCompleted',
@@ -96,6 +95,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 )),
                 binding_operation_id TEXT NULL,
                 thread_id TEXT NULL,
+                policy_fingerprint TEXT NOT NULL,
                 active_dispatch_id TEXT NULL
                     REFERENCES outbound_mail(dispatch_id) ON DELETE RESTRICT,
                 quarantine_code TEXT NULL,
@@ -164,93 +164,4 @@ internal sealed partial class GalateaDelegationSqliteStore {
             CREATE UNIQUE INDEX ux_reply_lease_item_notice
             ON reply_lease_item(notice_id);
             """;
-        command.ExecuteNonQuery();
-    }
-
-    private static void InsertInitialState(
-        SqliteConnection connection,
-        GalateaDelegationStoreOwner owner,
-        GalateaDelegationStoreBaseline baseline,
-        GalateaDelegationStoreLimits limits
-    ) {
-        using SqliteTransaction transaction =
-            connection.BeginTransaction(deferred: false);
-        using (SqliteCommand meta = connection.CreateCommand()) {
-            meta.Transaction = transaction;
-            meta.CommandText = """
-                INSERT INTO delegation_meta(
-                    singleton, schema_version, user_id,
-                    session_repository_id,
-                    capture_frontier_segment_number,
-                    capture_frontier_tail_offset,
-                    baseline_selected_head,
-                    maximum_queued_mails, maximum_task_utf8_bytes,
-                    maximum_reply_utf8_bytes, maximum_inbox_replies,
-                    maximum_inbox_utf8_bytes, next_completion_sequence,
-                    revision
-                ) VALUES (
-                    1, $schema, $user, $repository,
-                    $frontierSegment, $frontierTail,
-                    $baseline, $maximumQueued, $maximumTaskBytes,
-                    $maximumReplyBytes, $maximumInboxReplies,
-                    $maximumInboxBytes, 1, 0
-                );
-                """;
-            meta.Parameters.AddWithValue("$schema", SchemaVersion);
-            meta.Parameters.AddWithValue("$user", owner.UserId);
-            meta.Parameters.AddWithValue(
-                "$repository",
-                owner.SessionRepositoryId
-            );
-            meta.Parameters.AddWithValue(
-                "$frontierSegment",
-                baseline.CaptureFromPhysicalFrontier.SegmentNumber
-            );
-            meta.Parameters.AddWithValue(
-                "$frontierTail",
-                baseline.CaptureFromPhysicalFrontier.TailOffset
-            );
-            meta.Parameters.AddWithValue(
-                "$baseline",
-                (object?)baseline.SelectedHead ?? DBNull.Value
-            );
-            meta.Parameters.AddWithValue(
-                "$maximumQueued",
-                limits.MaximumQueuedMails
-            );
-            meta.Parameters.AddWithValue(
-                "$maximumTaskBytes",
-                limits.MaximumTaskUtf8Bytes
-            );
-            meta.Parameters.AddWithValue(
-                "$maximumReplyBytes",
-                limits.MaximumReplyUtf8Bytes
-            );
-            meta.Parameters.AddWithValue(
-                "$maximumInboxReplies",
-                limits.MaximumInboxReplies
-            );
-            meta.Parameters.AddWithValue(
-                "$maximumInboxBytes",
-                limits.MaximumInboxUtf8Bytes
-            );
-            meta.ExecuteNonQuery();
-        }
-        using (SqliteCommand route = connection.CreateCommand()) {
-            route.Transaction = transaction;
-            route.CommandText = """
-                INSERT INTO route_binding(
-                    singleton, state, binding_operation_id, thread_id,
-                    active_dispatch_id,
-                    quarantine_code, ensure_attempt_count, ensure_last_code,
-                    next_ensure_at_ms, revision
-                ) VALUES (
-                    1, 'Unbound', NULL, NULL, NULL, NULL,
-                    0, NULL, NULL, 0
-                );
-                """;
-            route.ExecuteNonQuery();
-        }
-        transaction.Commit();
-    }
 }

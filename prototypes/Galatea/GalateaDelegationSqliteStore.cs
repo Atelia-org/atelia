@@ -8,7 +8,7 @@ namespace Atelia.Galatea.Server;
 /// Explicitly constructed durable delegation current-state authority.
 /// </summary>
 internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
-    internal const int SchemaVersion = 1;
+    internal const int SchemaVersion = 2;
     internal const int ApplicationId = 0x47444C47; // "GDLG"
     internal const string DatabaseFileName = "delegation-state.sqlite3";
     internal const string LockFileName = "delegation-state.lock";
@@ -336,9 +336,10 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
     private static GalateaDelegationStateSnapshot ValidateOpenedDatabase(
         SqliteConnection connection,
         GalateaDelegationStoreOwner owner,
-        GalateaDelegationStoreLimits limits
+        GalateaDelegationStoreLimits limits,
+        int expectedVersion = SchemaVersion
     ) {
-        ValidateSchemaIdentity(connection);
+        ValidateSchemaIdentity(connection, expectedVersion);
         using (SqliteCommand integrity = connection.CreateCommand()) {
             integrity.CommandText = "PRAGMA integrity_check;";
             if (!string.Equals(
@@ -359,13 +360,16 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
                 );
             }
         }
-        RequireOwner(connection, transaction: null, owner, limits);
+        RequireOwner(connection, transaction: null, owner, limits, expectedVersion);
         return ReadSnapshotCore(connection, transaction: null);
     }
 
-    private static void ValidateSchemaIdentity(SqliteConnection connection) {
+    private static void ValidateSchemaIdentity(
+        SqliteConnection connection,
+        int expectedVersion = SchemaVersion
+    ) {
         RequirePragmaInteger(connection, "application_id", ApplicationId);
-        RequirePragmaInteger(connection, "user_version", SchemaVersion);
+        RequirePragmaInteger(connection, "user_version", expectedVersion);
         var actual = new HashSet<string>(StringComparer.Ordinal);
         using (SqliteCommand command = connection.CreateCommand()) {
             command.CommandText = """
@@ -399,7 +403,7 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
                 "Delegation SQLite schema object set is not exact."
             );
         }
-        RequireExactColumns(connection, "delegation_meta", [
+        RequireExactColumns(connection, "delegation_meta", ColumnsForVersion([
             "singleton", "schema_version", "user_id",
             "session_repository_id", "capture_frontier_segment_number",
             "capture_frontier_tail_offset",
@@ -408,14 +412,14 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             "maximum_reply_utf8_bytes", "maximum_inbox_replies",
             "maximum_inbox_utf8_bytes", "next_completion_sequence",
             "revision"
-        ]);
+        ], expectedVersion, "route_policy_fingerprint"));
         RequireExactColumns(connection, "action_capture", [
             "source_action_address", "capture_sequence",
             "visible_action_sha256",
             "visible_action_utf8_bytes", "extractor_contract_id",
             "artifact_count", "revision"
         ]);
-        RequireExactColumns(connection, "outbound_mail", [
+        RequireExactColumns(connection, "outbound_mail", ColumnsForVersion([
             "dispatch_id", "source_action_address", "artifact_ordinal",
             "recipient", "subject", "body", "in_reply_to_message_id",
             "evidence_quote", "route_class",
@@ -424,13 +428,13 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             "accepted_turn_id", "terminal_final_sha256", "terminal_stage",
             "terminal_code", "reconcile_attempt_count",
             "reconcile_last_code", "next_reconcile_at_ms", "revision"
-        ]);
-        RequireExactColumns(connection, "route_binding", [
+        ], expectedVersion, "frozen_route_policy_fingerprint"));
+        RequireExactColumns(connection, "route_binding", ColumnsForVersion([
             "singleton", "state", "binding_operation_id", "thread_id",
             "policy_fingerprint", "active_dispatch_id",
             "quarantine_code", "ensure_attempt_count", "ensure_last_code",
             "next_ensure_at_ms", "revision"
-        ]);
+        ], expectedVersion, "policy_fingerprint"));
         RequireExactColumns(connection, "reply_notice", [
             "notice_id", "dispatch_id", "kind", "body", "stage", "code",
             "completion_sequence", "state", "consumed_action_address",
@@ -478,6 +482,12 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             "notice_id->reply_notice.notice_id:RESTRICT"
         ]);
     }
+
+    private static IReadOnlyList<string> ColumnsForVersion(
+        string[] legacyColumns, int version, string removedColumn
+    ) => version == 1
+        ? legacyColumns
+        : legacyColumns.Where(column => column != removedColumn).ToArray();
 
     private static void RequireExactColumns(
         SqliteConnection connection,
@@ -579,13 +589,14 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         SqliteConnection connection,
         SqliteTransaction? transaction,
         GalateaDelegationStoreOwner expected,
-        GalateaDelegationStoreLimits expectedLimits
+        GalateaDelegationStoreLimits expectedLimits,
+        int expectedVersion = SchemaVersion
     ) {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
             SELECT schema_version, user_id, session_repository_id,
-                   route_policy_fingerprint, maximum_queued_mails,
+                   maximum_queued_mails,
                    maximum_task_utf8_bytes, maximum_reply_utf8_bytes,
                    maximum_inbox_replies, maximum_inbox_utf8_bytes
             FROM delegation_meta
@@ -593,19 +604,16 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             """;
         using SqliteDataReader reader = command.ExecuteReader();
         if (!reader.Read()
-            || reader.GetInt32(0) != SchemaVersion
+            || reader.GetInt32(0) != expectedVersion
             || !string.Equals(reader.GetString(1), expected.UserId,
                 StringComparison.Ordinal)
             || !string.Equals(reader.GetString(2),
                 expected.SessionRepositoryId, StringComparison.Ordinal)
-            || !string.Equals(reader.GetString(3),
-                expected.RoutePolicyFingerprint,
-                StringComparison.Ordinal)
-            || reader.GetInt32(4) != expectedLimits.MaximumQueuedMails
-            || reader.GetInt32(5) != expectedLimits.MaximumTaskUtf8Bytes
-            || reader.GetInt32(6) != expectedLimits.MaximumReplyUtf8Bytes
-            || reader.GetInt32(7) != expectedLimits.MaximumInboxReplies
-            || reader.GetInt32(8) != expectedLimits.MaximumInboxUtf8Bytes
+            || reader.GetInt32(3) != expectedLimits.MaximumQueuedMails
+            || reader.GetInt32(4) != expectedLimits.MaximumTaskUtf8Bytes
+            || reader.GetInt32(5) != expectedLimits.MaximumReplyUtf8Bytes
+            || reader.GetInt32(6) != expectedLimits.MaximumInboxReplies
+            || reader.GetInt32(7) != expectedLimits.MaximumInboxUtf8Bytes
             || reader.Read()) {
             throw new InvalidDataException(
                 "Delegation store owner identity or limits do not match."
@@ -672,10 +680,6 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
         RequireBoundedText(
             owner.SessionRepositoryId,
             nameof(owner.SessionRepositoryId)
-        );
-        RequireRoutePolicyFingerprint(
-            owner.RoutePolicyFingerprint,
-            nameof(owner.RoutePolicyFingerprint)
         );
     }
 
@@ -762,21 +766,6 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
                 out _)) {
             throw new ArgumentException(
                 $"{parameter} must be a canonical EventAddress.",
-                parameter
-            );
-        }
-    }
-
-    private static void RequireRoutePolicyFingerprint(
-        string value,
-        string parameter
-    ) {
-        RequireBoundedText(value, parameter);
-        if (!value.StartsWith("gdrp1-", StringComparison.Ordinal)
-            || value.Length != 70
-            || !IsLowerHexSha256(value[6..])) {
-            throw new ArgumentException(
-                $"{parameter} must be a canonical route policy fingerprint.",
                 parameter
             );
         }

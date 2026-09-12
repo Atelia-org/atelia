@@ -103,7 +103,7 @@ internal static class GalateaDelegationOperatorRecovery {
             );
         }
 
-        GalateaDelegationStoreOwner owner = CreateOwner(user, route);
+        GalateaDelegationStoreOwner owner = CreateOwner(user);
         GalateaDelegationStoreLimits limits =
             GalateaDelegationSupervisor.CreateLimits(route);
         GalateaDelegationStateSnapshot inspected;
@@ -608,12 +608,10 @@ internal static class GalateaDelegationOperatorRecovery {
     }
 
     private static GalateaDelegationStoreOwner CreateOwner(
-        GalateaUserConfig user,
-        GalateaDelegateRouteConfig route
+        GalateaUserConfig user
     ) => new(
         user.UserId,
-        GalateaDelegationSupervisor.CreateSessionRepositoryId(user.SessionDir),
-        GalateaDelegationDurableContract.CreateRoutePolicyFingerprint(route)
+        GalateaDelegationSupervisor.CreateSessionRepositoryId(user.SessionDir)
     );
 
     private static void ValidateEvidence(
