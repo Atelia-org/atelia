@@ -115,7 +115,6 @@ export async function runGalateaDurableSidecar(
   const logger = new JsonStderrLogger(config.bridge.verbose);
   const pathPolicy = await PathPolicy.create(
     config.bridge.allowedRoots,
-    config.cwd,
   );
   const client = new CodexAppServerClient({
     command: config.bridge.codexCommand,
@@ -145,7 +144,6 @@ export async function runGalateaDurableSidecar(
   const adapter = new GalateaDurableAdapter({
     backend,
     logger,
-    cwd: config.cwd,
     mode: config.mode,
     localCommandNetwork: config.localCommandNetwork,
     tools: config.tools,
@@ -161,7 +159,6 @@ export async function runGalateaDurableSidecar(
       type: "ready",
     });
     logger.log("info", "galatea_durable_sidecar_ready", {
-      cwd: config.cwd,
       mode: config.mode,
       local_command_network: config.localCommandNetwork,
       web_search: config.tools.webSearch,

@@ -22,7 +22,6 @@ import {
 export interface GalateaDurableAdapterOptions {
   backend: GalateaStagedBackend;
   logger: BridgeLogger;
-  cwd: string;
   mode: TaskMode;
   localCommandNetwork: boolean;
   tools: BuiltInToolPolicy;
@@ -66,7 +65,7 @@ export class GalateaDurableAdapter {
   private async ensureBinding(frame: GalateaEnsureBindingFrame): Promise<void> {
     try {
       const bound = await this.options.backend.ensureBinding({
-        cwd: this.options.cwd,
+        cwd: frame.cwd,
         mode: this.options.mode,
         tools: this.options.tools,
       });
@@ -107,7 +106,7 @@ export class GalateaDurableAdapter {
     try {
       const accepted = await this.options.backend.startBoundTurn({
         threadId: frame.threadId,
-        expectedCwd: this.options.cwd,
+        cwd: frame.cwd,
         dispatchId: frame.dispatchId,
         task: frame.task,
         mode: this.options.mode,
@@ -144,7 +143,6 @@ export class GalateaDurableAdapter {
     try {
       const inspection = await this.options.backend.inspectDispatch({
         threadId: frame.threadId,
-        expectedCwd: this.options.cwd,
         dispatchId: frame.dispatchId,
         task: frame.task,
         expectedTurnId: frame.expectedTurnId,

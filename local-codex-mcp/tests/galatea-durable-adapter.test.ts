@@ -24,13 +24,17 @@ class StubBackend implements GalateaStagedBackend {
   };
   inspectError?: Error;
   inspectionInput?: InspectGalateaDispatchInput;
+  bindingInput?: EnsureGalateaBindingInput;
+  startInput?: StartGalateaBoundTurnInput;
   releaseStart?: Promise<void>;
 
-  async ensureBinding(_input: EnsureGalateaBindingInput) {
+  async ensureBinding(input: EnsureGalateaBindingInput) {
+    this.bindingInput = input;
     return { threadId: "thread-1" };
   }
 
-  async startBoundTurn(_input: StartGalateaBoundTurnInput) {
+  async startBoundTurn(input: StartGalateaBoundTurnInput) {
+    this.startInput = input;
     this.startCalls += 1;
     await this.releaseStart;
     return { threadId: "thread-1", turnId: "turn-1" };
@@ -50,7 +54,7 @@ function frame(
   requestId: string,
 ): GalateaDurableInputFrame {
   return type === "inspect-dispatch" ? {
-    v: 3,
+    v: 4,
     type,
     requestId,
     dispatchId: "dispatch-1",
@@ -58,12 +62,13 @@ function frame(
     task: "exact task",
     expectedTurnId: null,
   } : {
-    v: 3,
+    v: 4,
     type,
     requestId,
     dispatchId: "dispatch-1",
     threadId: "thread-1",
     task: "exact task",
+    cwd: "/workspace",
   };
 }
 
@@ -73,7 +78,6 @@ function harness(maximumOutputFrameBytes = 10_000) {
   const adapter = new GalateaDurableAdapter({
     backend,
     logger: new NullLogger(),
-    cwd: "/workspace",
     mode: "work",
     localCommandNetwork: false,
     tools: { webSearch: "live", imageGeneration: true, viewImage: true },
@@ -87,24 +91,28 @@ function harness(maximumOutputFrameBytes = 10_000) {
 test("durable adapter emits one short correlated response for each staged operation", async () => {
   const value = harness();
   await value.adapter.handle({
-    v: 3,
+    v: 4,
     type: "ensure-binding",
+    cwd: "/workspace",
     requestId: "request-binding",
     bindingOperationId: "binding-1",
   });
   await value.adapter.handle(frame("start-turn", "request-start"));
   await value.adapter.handle(frame("inspect-dispatch", "request-inspect"));
   assert.equal(value.backend.inspectionInput?.expectedTurnId, null);
+  assert.equal(value.backend.bindingInput?.cwd, "/workspace");
+  assert.equal(value.backend.startInput?.cwd, "/workspace");
+  assert.equal("cwd" in value.backend.inspectionInput!, false);
   assert.deepEqual(value.frames, [
     {
-      v: 3,
+      v: 4,
       type: "binding-established",
       requestId: "request-binding",
       bindingOperationId: "binding-1",
       threadId: "thread-1",
     },
     {
-      v: 3,
+      v: 4,
       type: "turn-accepted",
       requestId: "request-start",
       dispatchId: "dispatch-1",
@@ -112,7 +120,7 @@ test("durable adapter emits one short correlated response for each staged operat
       turnId: "turn-1",
     },
     {
-      v: 3,
+      v: 4,
       type: "dispatch-inspected",
       requestId: "request-inspect",
       dispatchId: "dispatch-1",
@@ -121,6 +129,18 @@ test("durable adapter emits one short correlated response for each staged operat
       source: "persistent",
     },
   ]);
+});
+
+test("shared adapter forwards each operation's cwd independently", async () => {
+  const value = harness();
+  await value.adapter.handle({
+    v: 4, type: "ensure-binding", requestId: "binding-a", bindingOperationId: "binding-a", cwd: "/home-a",
+  });
+  assert.equal(value.backend.bindingInput?.cwd, "/home-a");
+  await value.adapter.handle({
+    v: 4, type: "start-turn", requestId: "start-b", dispatchId: "dispatch-b", threadId: "thread-1", task: "task b", cwd: "/home-b",
+  });
+  assert.equal(value.backend.startInput?.cwd, "/home-b");
 });
 
 test("durable adapter blocks only a concurrently active duplicate start", async () => {
@@ -184,7 +204,7 @@ test("durable adapter preserves Accepted selector and retryable visibility outco
     code: "ACCEPTED_TURN_NOT_VISIBLE",
   };
   await value.adapter.handle({
-    v: 3,
+    v: 4,
     type: "inspect-dispatch",
     requestId: "request-known",
     dispatchId: "dispatch-1",
@@ -194,7 +214,7 @@ test("durable adapter preserves Accepted selector and retryable visibility outco
   });
   assert.equal(value.backend.inspectionInput?.expectedTurnId, "turn-expected");
   assert.deepEqual(value.frames[0], {
-    v: 3,
+    v: 4,
     type: "dispatch-inspected",
     requestId: "request-known",
     dispatchId: "dispatch-1",
@@ -215,7 +235,7 @@ test("durable adapter rejects a wrong returned Accepted turn identity", async ()
     source: "live",
   };
   await value.adapter.handle({
-    v: 3,
+    v: 4,
     type: "inspect-dispatch",
     requestId: "request-wrong-turn",
     dispatchId: "dispatch-1",

@@ -372,6 +372,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     input: StartGalateaBoundTurnInput,
   ): Promise<GalateaStartedTurn> {
     this.throwIfStopped();
+    const cwd = await this.options.pathPolicy.resolveCwd(input.cwd);
     await this.ensureReady();
     this.throwIfStopped();
     if (this.continueReservations.has(input.threadId)) {
@@ -379,21 +380,15 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     }
     this.continueReservations.add(input.threadId);
     try {
-      const preflight = await this.readOwnedThread(input.threadId, false);
+      const preflight = await this.readOwnedThreadMetadata(input.threadId, false);
       this.throwIfStopped();
-      const persistedCwd = await this.options.pathPolicy.resolveCwd(preflight.cwd);
-      const expectedCwd = await this.options.pathPolicy.resolveCwd(input.expectedCwd);
-      this.throwIfStopped();
-      if (persistedCwd !== expectedCwd) {
-        throw new BridgeError("CWD_MISMATCH", "The Codex thread cwd differs from the configured cwd.");
-      }
       if (this.options.store.hasRunning(input.threadId) || preflight.status.type === "active") {
         throw new BridgeError("BRIDGE_BUSY", "This Codex thread already has an active turn.");
       }
 
       const resumed = await this.options.client.request<ThreadResumeResponse>("thread/resume", {
         threadId: input.threadId,
-        cwd: expectedCwd,
+        cwd,
         approvalPolicy: "never",
         approvalsReviewer: "user",
         sandbox: coarseSandbox(input.mode),
@@ -401,12 +396,12 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         developerInstructions: this.profile.developerInstructions,
       });
       this.throwIfStopped();
-      await this.validateBoundGalateaThread(resumed.thread, input.threadId, expectedCwd);
+      this.validateResumedGalateaThread(resumed, input.threadId);
       this.throwIfStopped();
       return await this.startTurnAccepted(
         input.threadId,
         input.task,
-        expectedCwd,
+        cwd,
         input.mode,
         input.localCommandNetwork,
         input.dispatchId,
@@ -424,9 +419,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     const generation = this.options.client.generation;
     try {
       this.throwIfStopped();
-      const expectedCwd = await this.options.pathPolicy.resolveCwd(input.expectedCwd);
-      this.assertSameGeneration(generation);
-      const metadata = await this.readInspectionThread(input.threadId, expectedCwd, generation);
+      const metadata = await this.readInspectionThread(input.threadId, generation);
       if (!metadata.ok) return metadata.inspection;
 
       if (input.expectedTurnId !== null) {
@@ -674,7 +667,6 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
 
   private async readInspectionThread(
     threadId: string,
-    expectedCwd: string,
     generation: number,
   ): Promise<InspectionThreadRead> {
     let response: ThreadReadResponse;
@@ -721,34 +713,6 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
           threadId,
           source: "persistent",
           code: "THREAD_OWNERSHIP_MISMATCH",
-        },
-      };
-    }
-    let actualCwd: string;
-    try {
-      actualCwd = await this.options.pathPolicy.resolveCwd(thread.cwd);
-      this.assertSameGeneration(generation);
-    } catch (error) {
-      if (error instanceof PersistentInspectionError) throw error;
-      return {
-        ok: false,
-        inspection: {
-          kind: "ambiguous",
-          threadId,
-          source: "persistent",
-          code: "THREAD_CWD_MISMATCH",
-        },
-      };
-    }
-    this.throwIfStopped();
-    if (actualCwd !== expectedCwd) {
-      return {
-        ok: false,
-        inspection: {
-          kind: "ambiguous",
-          threadId,
-          source: "persistent",
-          code: "THREAD_CWD_MISMATCH",
         },
       };
     }
@@ -1012,6 +976,13 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   }
 
   private async readOwnedThread(threadId: string, includeTurns: boolean): Promise<Thread> {
+    const thread = await this.readOwnedThreadMetadata(threadId, includeTurns);
+    await this.options.pathPolicy.resolveCwd(thread.cwd);
+    this.throwIfStopped();
+    return thread;
+  }
+
+  private async readOwnedThreadMetadata(threadId: string, includeTurns: boolean): Promise<Thread> {
     this.throwIfStopped();
     const response = await this.options.client.request<ThreadReadResponse>("thread/read", {
       threadId,
@@ -1024,8 +995,6 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     ) {
       throw new BridgeError("THREAD_NOT_FOUND", "The requested thread is not owned by this bridge.");
     }
-    await this.options.pathPolicy.resolveCwd(response.thread.cwd);
-    this.throwIfStopped();
     return response.thread;
   }
 
@@ -1063,18 +1032,23 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     await this.validateThreadCwd(thread, expectedCwd);
   }
 
-  private async validateBoundGalateaThread(
-    thread: Thread,
+  private validateResumedGalateaThread(
+    response: ThreadResumeResponse,
     expectedThreadId: string,
-    expectedCwd: string,
-  ): Promise<void> {
+  ): void {
     // A resume response may omit the persisted user-facing name. The binding's
     // ownership marker was verified by the immediately preceding thread/read;
-    // this response only establishes that Codex resumed that exact thread/cwd.
-    if (thread.id !== expectedThreadId) {
+    // this response establishes the thread identity. Its nested thread.cwd is
+    // historical metadata; only the top-level cwd describes effective settings.
+    // A loaded thread can retain its old effective cwd on resume. The following
+    // turn/start explicitly overrides cwd and its sandbox for the new task.
+    if (response.thread?.id !== expectedThreadId) {
       throw new BridgeError("THREAD_NOT_FOUND", "The requested Galatea binding was not found.");
     }
-    await this.validateThreadCwd(thread, expectedCwd);
+    if (typeof response.cwd !== "string" || !path.isAbsolute(response.cwd)
+      || response.cwd.includes("\0")) {
+      throw new BridgeError("CODEX_PROTOCOL_ERROR", "Codex returned an invalid effective resume cwd.");
+    }
   }
 
   private async validateThreadCwd(thread: Thread, expectedCwd: string): Promise<void> {

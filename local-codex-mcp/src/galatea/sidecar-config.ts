@@ -19,7 +19,6 @@ const GALATEA_PARENT_CODEX_CONTEXT_KEYS = [
 
 export interface GalateaSidecarConfig {
   bridge: BridgeConfig;
-  cwd: string;
   mode: "research" | "work";
   localCommandNetwork: boolean;
   tools: BuiltInToolPolicy;
@@ -72,13 +71,6 @@ function webSearchMode(value: string | undefined): WebSearchMode {
 
 export function loadGalateaSidecarConfig(env: NodeJS.ProcessEnv = process.env): GalateaSidecarConfig {
   const bridge = loadConfig(env);
-  const cwd = bridge.defaultCwd;
-  if (!cwd) {
-    throw new BridgeError(
-      "INVALID_CONFIG",
-      "CODEX_BRIDGE_DEFAULT_CWD is required for the Galatea sidecar.",
-    );
-  }
   const mode = env.GALATEA_CODEX_MODE ?? "work";
   if (mode !== "research" && mode !== "work") {
     throw new BridgeError("INVALID_CONFIG", "GALATEA_CODEX_MODE must be research or work.");
@@ -100,7 +92,6 @@ export function loadGalateaSidecarConfig(env: NodeJS.ProcessEnv = process.env): 
 
   return {
     bridge,
-    cwd,
     mode,
     localCommandNetwork: boolean(
       env.GALATEA_CODEX_LOCAL_COMMAND_NETWORK,

@@ -537,7 +537,12 @@ lines.on("line", (line) => {
       const thread = threads.get(String(message.params?.threadId));
       if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
       else {
-        thread.cwd = message.params?.cwd ?? thread.cwd;
+        const effectiveCwd = process.argv.includes("--ignore-resume-cwd")
+          ? thread.cwd
+          : message.params?.cwd ?? thread.cwd;
+        if (!process.argv.includes("--preserve-resume-metadata")) {
+          thread.cwd = effectiveCwd;
+        }
         persistState();
         const returned = structuredClone(thread);
         if (resumeResponseThreadIdOverride) {
@@ -547,7 +552,7 @@ lines.on("line", (line) => {
         if (process.argv.includes("--drop-name-on-resume")) {
           returned.name = null;
         }
-        send({ id: message.id, result: responseForThread(returned) });
+        send({ id: message.id, result: { ...responseForThread(returned), cwd: effectiveCwd } });
       }
       break;
     }

@@ -15,7 +15,7 @@ export interface GalateaBoundThread {
 
 export interface StartGalateaBoundTurnInput {
   threadId: string;
-  expectedCwd: string;
+  cwd: string;
   dispatchId: string;
   task: string;
   mode: TaskMode;
@@ -30,7 +30,6 @@ export interface GalateaStartedTurn {
 
 export interface InspectGalateaDispatchInput {
   threadId: string;
-  expectedCwd: string;
   dispatchId: string;
   task: string;
   expectedTurnId: string | null;
@@ -51,7 +50,6 @@ export type GalateaDispatchAmbiguityCode =
   | "THREAD_NOT_FOUND"
   | "THREAD_ID_MISMATCH"
   | "THREAD_OWNERSHIP_MISMATCH"
-  | "THREAD_CWD_MISMATCH"
   | "THREAD_SHAPE_INVALID"
   | "INSPECTION_LIMIT_EXCEEDED"
   | "TURN_ID_INVALID"

@@ -107,14 +107,13 @@ stdio 的 stdout 专用于 MCP JSON-RPC，结构化日志只写 stderr。
 
 ### Galatea durable sidecar
 
-同一 backend 另有一个不暴露 MCP 的 Galatea adapter。它把工作目录、sandbox mode、本地命令
-出网权限与内建工具 policy 固定在启动环境中，并提供三个可恢复的阶段式操作：建立持久 thread binding、
+同一 backend 另有一个不暴露 MCP 的 Galatea adapter。它把 sandbox mode、本地命令
+出网权限与内建工具 policy 固定在启动环境中；创建和派发逐请求接收各 user 的工作目录。提供三个可恢复的阶段式操作：建立持久 thread binding、
 启动一个 turn、按 exact `{threadId, dispatchId, task, expectedTurnId}` 检查结果。Codex 的自然 Markdown final 原样返回，
 不使用 `AgentReport` output schema。
 
 ```bash
-export CODEX_BRIDGE_ALLOWED_ROOTS='["/repos/focus/atelia"]'
-export CODEX_BRIDGE_DEFAULT_CWD='/repos/focus/atelia'
+export CODEX_BRIDGE_ALLOWED_ROOTS='["/galatea-homes"]'
 export GALATEA_CODEX_MODE=work
 export GALATEA_CODEX_LOCAL_COMMAND_NETWORK=true
 export GALATEA_CODEX_WEB_SEARCH=live
@@ -124,7 +123,7 @@ npm run build
 npm run start:galatea
 ```
 
-Galatea C# V2 `delegates.json`当前只有`sidecar.codexCommand`、没有独立的Codex JS entrypoint args字段；因此
+Galatea C# `delegates.json`只有`sidecar.codexCommand`、没有独立的Codex JS entrypoint args字段；因此
 Linux配置必须把该字段精确设为安装后的executable wrapper：
 
 ```json
@@ -138,16 +137,16 @@ Linux配置必须把该字段精确设为安装后的executable wrapper：
 C#仍注入code-owned app-server args；不要把`node`填进该字段，否则entrypoint会丢失。wrapper必须是canonical、
 existing、executable regular file，且initialize handshake仍会验证exact version。
 
-stdin/stdout 是 strict bounded JSONL V3，stdout 只有协议 frame，日志只写 stderr。默认命令只启动这一版协议：
+stdin/stdout 是 strict bounded JSONL V4，stdout 只有协议 frame，日志只写 stderr。默认命令只启动这一版协议：
 
 ```json
-{"v":3,"type":"ready"}
-{"v":3,"type":"ensure-binding","requestId":"r1","bindingOperationId":"binding-1"}
-{"v":3,"type":"binding-established","requestId":"r1","bindingOperationId":"binding-1","threadId":"thread-id"}
-{"v":3,"type":"start-turn","requestId":"r2","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复"}
-{"v":3,"type":"turn-accepted","requestId":"r2","dispatchId":"d1","threadId":"thread-id","turnId":"turn-id"}
-{"v":3,"type":"inspect-dispatch","requestId":"r3","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复","expectedTurnId":"turn-id"}
-{"v":3,"type":"dispatch-inspected","requestId":"r3","dispatchId":"d1","threadId":"thread-id","outcome":"completed","turnId":"turn-id","final":"自然 Markdown 回信","source":"live"}
+{"v":4,"type":"ready"}
+{"v":4,"type":"ensure-binding","requestId":"r1","bindingOperationId":"binding-1","cwd":"/galatea-homes/cyber"}
+{"v":4,"type":"binding-established","requestId":"r1","bindingOperationId":"binding-1","threadId":"thread-id"}
+{"v":4,"type":"start-turn","requestId":"r2","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复","cwd":"/galatea-homes/cyber"}
+{"v":4,"type":"turn-accepted","requestId":"r2","dispatchId":"d1","threadId":"thread-id","turnId":"turn-id"}
+{"v":4,"type":"inspect-dispatch","requestId":"r3","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复","expectedTurnId":"turn-id"}
+{"v":4,"type":"dispatch-inspected","requestId":"r3","dispatchId":"d1","threadId":"thread-id","outcome":"completed","turnId":"turn-id","final":"自然 Markdown 回信","source":"live"}
 ```
 
 失败以 `failed` frame 返回稳定的 `stage`/`code`。`turn-accepted` 只表示 `turn/start` 已返回稳定 handle；
@@ -158,17 +157,20 @@ turn ID。`ACCEPTED_TURN_NOT_VISIBLE`表示官方persistent projection尚未给�
 它是可重试的`unavailable`，不是ordinary not-found、terminal、quarantine或再次`turn/start`的授权。
 `START_OUTCOME_UNKNOWN` 之后必须先 inspect，不能盲目重发 `start-turn`。
 缺失、截断或超过上限的 final 均不会伪装成完整回信。EOF、SIGINT 与 SIGTERM 会回收 app-server child。
-每封 frame 不接受 `cwd`、`mode`、本地命令出网或内建工具字段；相关 capability 只能由启动环境决定。
+`ensure-binding`、`start-turn` 必须提供绝对 `cwd`；`inspect-dispatch` 不接受目录字段。
+frame 不接受 `mode`、本地命令出网或内建工具字段；这些 capability 由启动环境决定。
 
 可选边界配置：`GALATEA_CODEX_MAX_INPUT_FRAME_BYTES`、`GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES`、
 `GALATEA_CODEX_MAX_TASK_BYTES`、`GALATEA_CODEX_MAX_FINAL_BYTES`、
 `GALATEA_CODEX_OUTPUT_WRITE_TIMEOUT_MS`。同一进程内并发的相同 `dispatchId` 会被
 `DISPATCH_ALREADY_ACTIVE` fail closed；跨进程恢复与去重由调用方的 durable outbox/inbox 状态机负责，
 并使用 `inspect-dispatch` 对已落到 app-server 的 exact turn 做 reconciliation。
-continuation 会要求 persisted thread cwd 与启动时配置的 code-owned cwd 完全一致，即使漂移后的
-目录仍位于 allowed roots 内也会拒绝。
-持久thread ownership只认response ID、profile-specific exact name marker和canonical/path-policy
-cwd；`threadSource`只是`thread/start`的optional analytics hint，持久化后为`null`也不影响
+Galatea 的新任务验证请求 cwd 后，向同一 thread 的 `thread/resume` 和 `turn/start` 显式传递它，
+`work` 的 writableRoots 也只包含该目录。历史 `thread.cwd` 不要求仍存在或位于当前 allowedRoots。
+resume 顶层 cwd 是有效配置，嵌套 `thread.cwd` 可能仍是历史 metadata；已加载 thread 的 resume 可以
+保留旧有效值，随后 turn 的显式 cwd override 才决定新任务的工作目录。
+Galatea 持久 thread ownership 核对 response ID 与 profile-specific exact name marker；
+普通 MCP 原有目录边界不变。`threadSource`只是`thread/start`的optional analytics hint，持久化后为`null`也不影响
 continue，`source`同样不参与authorization。Galatea profile启动app-server前会精确移除
 `CODEX_SESSION_ID`、`CODEX_THREAD_ID`、`CODEX_INTERNAL_ORIGINATOR_OVERRIDE`、
 `CODEX_PERMISSION_PROFILE`、`CODEX_CI`，但保留`HOME`、`PATH`、`CODEX_HOME`及
@@ -233,6 +235,19 @@ CODEX_BRIDGE_RUN_LIVE=1 npm run test:integration
 ```
 
 它会创建临时 git repo，执行 read-only 调查，停止并重启 Bridge/app-server client，再用同一 `thread_id` 创建内容精确的 `hello.txt`，最后删除临时 repo。不会修改当前仓库。
+
+Linux 的 Galatea home 真实验收另有显式入口（默认 `npm test` 跳过）：
+
+```bash
+npm run test:galatea-homes:live
+```
+
+此测试使用 repo-local pinned Codex 与现有登录身份，从 `/` 启动真实 V4 sidecar，并创建两个 canary
+thread。四个真实 turn 覆盖旧目录 seed、冷续接的新 home、第二 user 并发同名文件、热续接再次改目录。
+旧目录删除且移出 allowedRoots 后，仍查询原 accepted/unknown selector；最后用官方 turns projection
+核对两个 thread 恰有 3/1 个 turn。检查 sidecar/app-server 的实际 process CWD，保留 user/session
+环境语义。临时目录最终清理，新建的 canary thread 留在 Codex 历史中，不使用现有 Galatea 用户 thread。
+此测试证明文件落点与进程 CWD；具体配置和 instructionSources 的盘点仍需结合部署环境单独核对。
 
 SQLite projector 修复可用一份包含已知 duplicate-ordinal 形状的本机 rollout 做 provider-free 验证：
 
@@ -317,9 +332,9 @@ ChatGPT -> authenticated VPS HTTPS /mcp -> private link -> 127.0.0.1:3000/mcp
 - 成功的`imageGeneration.savedPath`会进入bounded `changed_files`投影，并在最终返回前继续接受canonical cwd containment过滤。
 - 默认 child args 关闭 inherited Codex MCP servers 与 apps；如果用 `CODEX_BRIDGE_CODEX_ARGS` 覆盖，调用者必须保留等价限制。
 - approval、permission、elicitation 与未知 server requests 全部 fail-closed；绝不自动批准 escalation。
-- Bridge-created threads 用response ID、持久化exact name marker与canonical cwd做ownership协调；optional analytics `threadSource`和origin `source`不参与。普通其他 thread ID 会返回 `THREAD_NOT_FOUND`。这是私人同一用户进程间的防误用边界，不是对同机恶意进程的认证：能直接调用 app-server 的本机进程也能伪造 title。若威胁模型包含不可信本机进程，需要在第二阶段增加bridge私有持久allowlist/签名元数据。
+- 普通 MCP 的 bridge-created threads 用response ID、持久化exact name marker与canonical cwd做ownership协调；optional analytics `threadSource`和origin `source`不参与。普通其他 thread ID 会返回 `THREAD_NOT_FOUND`。这是私人同一用户进程间的防误用边界，不是对同机恶意进程的认证：能直接调用 app-server 的本机进程也能伪造 title。若威胁模型包含不可信本机进程，需要在第二阶段增加bridge私有持久allowlist/签名元数据。
 - 只存运行时 turn 状态；重启后从 `thread/read` 恢复 persisted thread。stdio child 的 in-flight turn 不保证跨 Bridge 进程重启存活。
-- Galatea inspection先用metadata-only `thread/read`核对thread ID、ownership name和canonical cwd。Accepted只按
+- Galatea inspection先用metadata-only `thread/read`核对thread ID、ownership name，不检查工作目录。Accepted只按
   durable `expectedTurnId`选择，OutcomeUnknown只按exact `dispatchId/clientId + task`发现；两者随后使用官方
   bounded `thread/turns/list`与`thread/items/list`分页，检查page shape、cursor progress、generation、capacity、
   duplicate identity及final bounds。只有OutcomeUnknown零匹配可返回`not-found`；Accepted turn或其identity items

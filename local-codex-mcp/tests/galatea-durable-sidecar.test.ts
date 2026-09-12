@@ -66,8 +66,7 @@ test("durable sidecar fails before ready when configured Codex version drifts", 
       env: {
         ...process.env,
         CODEX_BRIDGE_ALLOWED_ROOTS: JSON.stringify([root]),
-        CODEX_BRIDGE_DEFAULT_CWD: root,
-        CODEX_BRIDGE_CODEX_COMMAND: process.execPath,
+          CODEX_BRIDGE_CODEX_COMMAND: process.execPath,
         CODEX_BRIDGE_CODEX_ARGS: JSON.stringify([
           fixture,
           "--user-agent=atelia_local_codex_mcp/0.151.0 (must-not-be-logged)",
@@ -142,7 +141,7 @@ class FrameCollector {
   }
 }
 
-test("runnable durable sidecar emits V3 ready and serves staged binding, start, and inspect", { timeout: 5_000 }, async () => {
+test("runnable durable sidecar emits V4 ready and serves staged binding, start, and inspect", { timeout: 5_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "galatea-durable-entry-"));
   const lifecycleFile = path.join(root, "lifecycle.log");
   const input = new PassThrough();
@@ -151,7 +150,6 @@ test("runnable durable sidecar emits V3 ready and serves staged binding, start, 
   try {
     const running = runGalateaDurableSidecar(input, output, {
       CODEX_BRIDGE_ALLOWED_ROOTS: JSON.stringify([root]),
-      CODEX_BRIDGE_DEFAULT_CWD: root,
       CODEX_BRIDGE_CODEX_COMMAND: process.execPath,
       CODEX_BRIDGE_CODEX_ARGS: JSON.stringify([
         fixture,
@@ -164,7 +162,7 @@ test("runnable durable sidecar emits V3 ready and serves staged binding, start, 
       GALATEA_CODEX_MAX_FINAL_BYTES: "100000",
     });
     const ready = await collector.waitFor((frame) => frame.type === "ready");
-    assert.deepEqual(ready, { v: 3, type: "ready" });
+    assert.deepEqual(ready, { v: 4, type: "ready" });
 
     input.write(`${JSON.stringify({
       v: 1,
@@ -177,11 +175,12 @@ test("runnable durable sidecar emits V3 ready and serves staged binding, start, 
       (frame) => frame.type === "failed" && frame.stage === "protocol",
     );
     assert.equal(rejected.type === "failed" && rejected.code, "INVALID_FRAME");
-    assert.equal(rejected.v, 3);
+    assert.equal(rejected.v, 4);
 
     input.write(`${JSON.stringify({
-      v: 3,
+      v: 4,
       type: "ensure-binding",
+      cwd: root,
       requestId: "binding-request",
       bindingOperationId: "binding-1",
     })}\n`);
@@ -193,8 +192,9 @@ test("runnable durable sidecar emits V3 ready and serves staged binding, start, 
 
     const task = "[NATURAL] durable task";
     input.write(`${JSON.stringify({
-      v: 3,
+      v: 4,
       type: "start-turn",
+      cwd: root,
       requestId: "start-request",
       dispatchId: "dispatch-1",
       threadId: binding.threadId,
@@ -211,7 +211,7 @@ test("runnable durable sidecar emits V3 ready and serves staged binding, start, 
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const requestId = `inspect-${attempt}`;
       input.write(`${JSON.stringify({
-        v: 3,
+        v: 4,
         type: "inspect-dispatch",
         requestId,
         dispatchId: "dispatch-1",
@@ -261,7 +261,7 @@ test("runnable durable sidecar emits V3 ready and serves staged binding, start, 
   }
 });
 
-test("durable JSONL server emits V3 protocol failures, stops on EOF, and flushes", async () => {
+test("durable JSONL server emits V4 protocol failures, stops on EOF, and flushes", async () => {
   const input = new PassThrough();
   const output = new PassThrough();
   const collector = new FrameCollector(output);
@@ -303,9 +303,9 @@ test("durable JSONL server emits V3 protocol failures, stops on EOF, and flushes
       ? [frame.v, frame.stage, frame.code]
       : [frame.v, frame.type]),
     [
-      [3, "protocol", "INVALID_UTF8"],
-      [3, "protocol", "FRAME_TOO_LARGE"],
-      [3, "protocol", "INVALID_FRAME"],
+      [4, "protocol", "INVALID_UTF8"],
+      [4, "protocol", "FRAME_TOO_LARGE"],
+      [4, "protocol", "INVALID_FRAME"],
     ],
   );
 });
@@ -331,7 +331,7 @@ test("terminal stdout EPIPE is fatal, stops input, and remains observable throug
   const adapter: GalateaDurableJsonlAdapter = {
     async handle(frame) {
       await writer.write({
-        v: 3,
+        v: 4,
         type: "binding-established",
         requestId: frame.requestId,
         bindingOperationId: "binding-epipe",
@@ -348,8 +348,9 @@ test("terminal stdout EPIPE is fatal, stops input, and remains observable throug
     new NullLogger(),
   );
   input.write(`${JSON.stringify({
-    v: 3,
+    v: 4,
     type: "ensure-binding",
+    cwd: "/workspace",
     requestId: "request-epipe",
     bindingOperationId: "binding-epipe",
   })}\n`);
@@ -383,7 +384,7 @@ test("stalled stdout backpressure hits a bounded deadline and stops the sidecar"
   const adapter: GalateaDurableJsonlAdapter = {
     async handle(frame) {
       await writer.write({
-        v: 3,
+        v: 4,
         type: "binding-established",
         requestId: frame.requestId,
         bindingOperationId: "binding-stall",
@@ -400,8 +401,9 @@ test("stalled stdout backpressure hits a bounded deadline and stops the sidecar"
     new NullLogger(),
   );
   input.write(`${JSON.stringify({
-    v: 3,
+    v: 4,
     type: "ensure-binding",
+    cwd: "/workspace",
     requestId: "request-stall",
     bindingOperationId: "binding-stall",
   })}\n`);
@@ -425,14 +427,14 @@ test("immediate EOF during durable operation cannot restart or leak app-server",
   try {
     const running = runGalateaDurableSidecar(input, output, {
       CODEX_BRIDGE_ALLOWED_ROOTS: JSON.stringify([root]),
-      CODEX_BRIDGE_DEFAULT_CWD: root,
       CODEX_BRIDGE_CODEX_COMMAND: process.execPath,
       CODEX_BRIDGE_CODEX_ARGS: JSON.stringify([fixture, `--lifecycle-file=${lifecycleFile}`]),
       CODEX_BRIDGE_RPC_TIMEOUT_MS: "1000",
     });
     input.end(`${JSON.stringify({
-      v: 3,
+      v: 4,
       type: "ensure-binding",
+      cwd: root,
       requestId: "request-eof",
       bindingOperationId: "binding-eof",
     })}\n`);

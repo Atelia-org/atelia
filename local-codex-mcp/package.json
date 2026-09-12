@@ -12,6 +12,7 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test dist/tests/*.test.js tests/*.test.mjs",
     "test:integration": "npm run build && CODEX_BRIDGE_RUN_LIVE=1 node --test dist/tests/live-integration.test.js",
+    "test:galatea-homes:live": "npm run build && CODEX_BRIDGE_RUN_GALATEA_HOME_LIVE=1 node --test dist/tests/galatea-home-live.test.js",
     "start": "node dist/src/index.js",
     "start:galatea": "node dist/src/galatea-durable-sidecar.js",
     "start:http": "CODEX_BRIDGE_TRANSPORT=http node dist/src/index.js",

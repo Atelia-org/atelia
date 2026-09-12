@@ -3,8 +3,9 @@ import type {
   GalateaDispatchFailureCode,
 } from "../backend/galatea-staged-backend.js";
 import { DEFAULT_MAX_TASK_BYTES } from "./limits.js";
+import path from "node:path";
 
-export const GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION = 3 as const;
+export const GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION = 4 as const;
 export { DEFAULT_MAX_TASK_BYTES as DEFAULT_DURABLE_MAX_TASK_BYTES } from "./limits.js";
 
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
@@ -15,6 +16,7 @@ export interface GalateaEnsureBindingFrame {
   type: "ensure-binding";
   requestId: string;
   bindingOperationId: string;
+  cwd: string;
 }
 
 export interface GalateaStartTurnFrame {
@@ -24,6 +26,7 @@ export interface GalateaStartTurnFrame {
   dispatchId: string;
   threadId: string;
   task: string;
+  cwd: string;
 }
 
 export interface GalateaInspectDispatchFrame {
@@ -43,14 +46,14 @@ export type GalateaDurableInputFrame =
 
 export type GalateaDurableFailureFrame =
   | {
-      v: 3;
+      v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
       type: "failed";
       stage: "protocol";
       requestId?: string;
       code: string;
     }
   | {
-      v: 3;
+      v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
       type: "failed";
       stage: "ensure-binding";
       requestId: string;
@@ -58,7 +61,7 @@ export type GalateaDurableFailureFrame =
       code: string;
     }
   | {
-      v: 3;
+      v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
       type: "failed";
       stage: "start-turn" | "inspect-dispatch" | "shutdown";
       requestId: string;
@@ -68,16 +71,16 @@ export type GalateaDurableFailureFrame =
     };
 
 export type GalateaDurableOutputFrame =
-  | { v: 3; type: "ready" }
+  | { v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION; type: "ready" }
   | {
-      v: 3;
+      v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
       type: "binding-established";
       requestId: string;
       bindingOperationId: string;
       threadId: string;
     }
   | {
-      v: 3;
+      v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
       type: "turn-accepted";
       requestId: string;
       dispatchId: string;
@@ -85,7 +88,7 @@ export type GalateaDurableOutputFrame =
       turnId: string;
     }
   | {
-      v: 3;
+      v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
       type: "dispatch-inspected";
       requestId: string;
       dispatchId: string;
@@ -94,7 +97,7 @@ export type GalateaDurableOutputFrame =
       source: "persistent";
     }
   | {
-      v: 3;
+      v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
       type: "dispatch-inspected";
       requestId: string;
       dispatchId: string;
@@ -105,7 +108,7 @@ export type GalateaDurableOutputFrame =
       code: "ACCEPTED_TURN_NOT_VISIBLE";
     }
   | {
-      v: 3;
+      v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
       type: "dispatch-inspected";
       requestId: string;
       dispatchId: string;
@@ -115,7 +118,7 @@ export type GalateaDurableOutputFrame =
       source: "live" | "persistent";
     }
   | {
-      v: 3;
+      v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
       type: "dispatch-inspected";
       requestId: string;
       dispatchId: string;
@@ -126,7 +129,7 @@ export type GalateaDurableOutputFrame =
       source: "live" | "persistent";
     }
   | {
-      v: 3;
+      v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
       type: "dispatch-inspected";
       requestId: string;
       dispatchId: string;
@@ -137,7 +140,7 @@ export type GalateaDurableOutputFrame =
       source: "live" | "persistent";
     }
   | {
-      v: 3;
+      v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
       type: "dispatch-inspected";
       requestId: string;
       dispatchId: string;
@@ -164,6 +167,10 @@ function isIdentifier(value: unknown): value is string {
   return typeof value === "string"
     && byteLength(value) <= maximumIdentifierBytes
     && identifierPattern.test(value);
+}
+
+function isCwd(value: unknown): value is string {
+  return typeof value === "string" && path.isAbsolute(value) && !value.includes("\0");
 }
 
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
@@ -213,7 +220,7 @@ function parseTaskFrame(
 ): GalateaDurableParseResult {
   const keys = type === "inspect-dispatch"
     ? ["v", "type", "requestId", "dispatchId", "threadId", "task", "expectedTurnId"]
-    : ["v", "type", "requestId", "dispatchId", "threadId", "task"];
+    : ["v", "type", "requestId", "dispatchId", "threadId", "task", "cwd"];
   if (!hasExactKeys(value, keys)
     || value.v !== GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION
     || value.type !== type
@@ -221,6 +228,7 @@ function parseTaskFrame(
     || !isIdentifier(value.dispatchId)
     || !isIdentifier(value.threadId)
     || typeof value.task !== "string"
+    || (type === "start-turn" && !isCwd(value.cwd))
     || (type === "inspect-dispatch"
       && value.expectedTurnId !== null
       && !isIdentifier(value.expectedTurnId))
@@ -247,6 +255,7 @@ function parseTaskFrame(
       dispatchId: value.dispatchId,
       threadId: value.threadId,
       task: value.task,
+      cwd: value.cwd as string,
     },
   };
 }
@@ -269,10 +278,11 @@ export function parseGalateaDurableFrame(
     case "ensure-binding":
       if (!hasExactKeys(
         value,
-        ["v", "type", "requestId", "bindingOperationId"],
+        ["v", "type", "requestId", "bindingOperationId", "cwd"],
       ) || value.v !== GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION
         || !isIdentifier(value.requestId)
-        || !isIdentifier(value.bindingOperationId)) {
+        || !isIdentifier(value.bindingOperationId)
+        || !isCwd(value.cwd)) {
         return { ok: false, code: "INVALID_FRAME" };
       }
       return {
@@ -282,6 +292,7 @@ export function parseGalateaDurableFrame(
           type: "ensure-binding",
           requestId: value.requestId,
           bindingOperationId: value.bindingOperationId,
+          cwd: value.cwd,
         },
       };
     case "start-turn":
