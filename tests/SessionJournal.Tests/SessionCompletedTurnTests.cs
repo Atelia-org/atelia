@@ -81,8 +81,10 @@ public sealed class SessionCompletedTurnTests : IDisposable {
 
             SessionCompletedTurnsSnapshot historical =
                 Snapshot(engine.ReadRecentCompletedTurnsAt(firstAction, 10));
-            Assert.Equal("one", Assert.Single(historical.Turns)
-                .ObservationContent);
+            Assert.Equal("one",
+                Assert.Single(historical.Turns)
+                .ObservationContent
+            );
 
             SessionCompletedTurnsSnapshot zero = Snapshot(
                 engine.ReadRecentCompletedTurns(0)
@@ -115,10 +117,12 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         EventAddress pendingObservation = engine.AppendObservation("pending");
 
         SessionCompletedTurnProjection projected = Assert.Single(
-            Snapshot(engine.ReadRecentCompletedTurnsAt(
-                pendingObservation,
-                maximumCount: 10
-            )).Turns
+            Snapshot(
+                engine.ReadRecentCompletedTurnsAt(
+                    pendingObservation,
+                    maximumCount: 10
+                )
+            ).Turns
         );
         Assert.Equal(completedAction, projected.TerminalAction.Address);
 
@@ -138,9 +142,11 @@ public sealed class SessionCompletedTurnTests : IDisposable {
     public void ReadRecentCompletedTurns_ActiveToolTailUsesLastTerminalCut() {
         string path = NewPath();
         var source = new TestContextCandidateSource();
-        ToolSession tools = new ToolRegistry([
+        ToolSession tools = new ToolRegistry(
+            [
             new TextTool("lookup", "unused")
-        ]).CreateSession();
+        ]
+        ).CreateSession();
         using var engine = SessionJournalTestRuntime.Attach(
             SessionJournalEngine.Create(
                 path,
@@ -156,12 +162,14 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             );
         _ = engine.AppendObservation("active tool turn");
         EventAddress toolAction = engine.AppendImportedAgentAction(
-            new ActionMessage([
+            new ActionMessage(
+                [
                 new ActionBlock.Text("calling"),
                 new ActionBlock.ToolCall(
                     new RawToolCall("lookup", "call-1", "{}")
                 )
-            ]),
+            ]
+            ),
             ImportedInvocation
         );
 
@@ -184,26 +192,36 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         string path = NewPath();
         var source = new TestContextCandidateSource();
         var client = new QueueCompletionClient();
-        client.Enqueue(new CompletionResult(
-            new ActionMessage([
+        client.Enqueue(
+            new CompletionResult(
+                new ActionMessage(
+                    [
                 new ActionBlock.Text("intermediate"),
                 new ActionBlock.ToolCall(
                     new RawToolCall("lookup", "call-1", "{}")
                 )
-            ]),
-            client.Descriptor("model-a")
-        ));
-        var terminal = new ActionMessage([
+            ]
+                ),
+                client.Descriptor("model-a")
+            )
+        );
+        var terminal = new ActionMessage(
+            [
             new ActionBlock.Text("final-a"),
             new ActionBlock.Text("final-b")
-        ]);
-        client.Enqueue(new CompletionResult(
-            terminal,
-            client.Descriptor("model-a")
-        ));
-        ToolSession tools = new ToolRegistry([
+        ]
+        );
+        client.Enqueue(
+            new CompletionResult(
+                terminal,
+                client.Descriptor("model-a")
+            )
+        );
+        ToolSession tools = new ToolRegistry(
+            [
             new TextTool("lookup", "tool result")
-        ]).CreateSession();
+        ]
+        ).CreateSession();
 
         using var engine = SessionJournalTestRuntime.Attach(
             SessionJournalEngine.Create(
@@ -255,8 +273,10 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         string path = NewPath();
         var source = new TestContextCandidateSource();
         var client = new QueueCompletionClient();
-        client.Enqueue(new CompletionResult(
-            new ActionMessage([
+        client.Enqueue(
+            new CompletionResult(
+                new ActionMessage(
+                    [
                 new ActionBlock.Text("first intermediate"),
                 new ActionBlock.ToolCall(
                     new RawToolCall("alpha", "call-a", "{}")
@@ -264,26 +284,36 @@ public sealed class SessionCompletedTurnTests : IDisposable {
                 new ActionBlock.ToolCall(
                     new RawToolCall("beta", "call-b", "{}")
                 )
-            ]),
-            client.Descriptor("model-a")
-        ));
-        client.Enqueue(new CompletionResult(
-            new ActionMessage([
+            ]
+                ),
+                client.Descriptor("model-a")
+            )
+        );
+        client.Enqueue(
+            new CompletionResult(
+                new ActionMessage(
+                    [
                 new ActionBlock.Text("second intermediate"),
                 new ActionBlock.ToolCall(
                     new RawToolCall("alpha", "call-c", "{}")
                 )
-            ]),
-            client.Descriptor("model-a")
-        ));
-        client.Enqueue(new CompletionResult(
-            new ActionMessage([new ActionBlock.Text(string.Empty)]),
-            client.Descriptor("model-a")
-        ));
-        ToolSession tools = new ToolRegistry([
+            ]
+                ),
+                client.Descriptor("model-a")
+            )
+        );
+        client.Enqueue(
+            new CompletionResult(
+                new ActionMessage([new ActionBlock.Text(string.Empty)]),
+                client.Descriptor("model-a")
+            )
+        );
+        ToolSession tools = new ToolRegistry(
+            [
             new TextTool("alpha", "alpha result"),
             new TextTool("beta", "beta result")
-        ]).CreateSession();
+        ]
+        ).CreateSession();
 
         using var engine = SessionJournalTestRuntime.Attach(
             SessionJournalEngine.Create(
@@ -315,25 +345,33 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         string path = NewPath();
         var source = new TestContextCandidateSource();
         var client = new QueueCompletionClient();
-        client.Enqueue(new CompletionResult(
-            new ActionMessage([
+        client.Enqueue(
+            new CompletionResult(
+                new ActionMessage(
+                    [
                 new ActionBlock.ToolCall(
                     new RawToolCall("lookup", "call-1", "{}")
                 )
-            ]),
-            client.Descriptor("model-a")
-        ));
-        client.Enqueue(new CompletionResult(
-            new ActionMessage([new ActionBlock.Text("partial")]),
-            client.Descriptor("model-a"),
-            termination: CompletionTermination.Failed(
-                "provider-failed",
-                "known failure"
+            ]
+                ),
+                client.Descriptor("model-a")
             )
-        ));
-        ToolSession tools = new ToolRegistry([
+        );
+        client.Enqueue(
+            new CompletionResult(
+                new ActionMessage([new ActionBlock.Text("partial")]),
+                client.Descriptor("model-a"),
+                termination: CompletionTermination.Failed(
+                    "provider-failed",
+                    "known failure"
+                )
+            )
+        );
+        ToolSession tools = new ToolRegistry(
+            [
             new TextTool("lookup", "tool result")
-        ]).CreateSession();
+        ]
+        ).CreateSession();
 
         using var engine = SessionJournalTestRuntime.Attach(
             SessionJournalEngine.Create(
@@ -445,9 +483,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         bool raced = false;
         var hooks = new SessionJournalTestHooks(
             BeforeTurnRefMove: journal => {
-                if (raced) {
-                    return;
-                }
+                if (raced) { return; }
                 raced = true;
                 EventAddress observed =
                     journal.GetHead(racing!.BranchRefId)!.Value;
@@ -465,10 +501,10 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             }
         );
         using (racing = SessionJournalEngine.OpenForTest(
-                   path,
-                   runtime: null!,
-                   hooks
-               )) {
+            path,
+            runtime: null!,
+            hooks
+        )) {
             var retryable = Assert.IsType<
                 SessionTurnRetractionResult.Retryable
             >(racing.RewindLatestCompletedTurn(terminal));
@@ -483,37 +519,39 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         string path = NewPath();
         var source = new TestContextCandidateSource();
         var client = new QueueCompletionClient();
-        client.Enqueue(new CompletionResult(
-            new ActionMessage([new ActionBlock.Text("partial")]),
-            client.Descriptor("model-a"),
-            termination: CompletionTermination.Failed("known")
-        ));
+        client.Enqueue(
+            new CompletionResult(
+                new ActionMessage([new ActionBlock.Text("partial")]),
+                client.Descriptor("model-a"),
+                termination: CompletionTermination.Failed("known")
+            )
+        );
         SessionJournalEngine? racing = null;
         EventAddress? concurrentHead = null;
         EventAddress? idleHead = null;
         bool raced = false;
         var hooks = new SessionJournalTestHooks(
             BeforeTurnRefMove: journal => {
-                if (raced) {
-                    return;
-                }
+                if (raced) { return; }
                 raced = true;
                 EventAddress observed =
                     journal.GetHead(racing!.BranchRefId)!.Value;
-                Assert.True(journal.MoveRef(
-                    racing.BranchRefId,
-                    observed,
-                    idleHead!.Value
-                ).IsSuccess);
+                Assert.True(
+                    journal.MoveRef(
+                        racing.BranchRefId,
+                        observed,
+                        idleHead!.Value
+                    ).IsSuccess
+                );
                 concurrentHead = idleHead;
             }
         );
         using (racing = SessionJournalEngine.CreateForTest(
-                   path,
-                   Options,
-                   Runtime(client, source),
-                   hooks
-               )) {
+            path,
+            Options,
+            Runtime(client, source),
+            hooks
+        )) {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
                 path,
                 racing,
@@ -574,9 +612,11 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         for (int index = 1; index <= 7; index++) {
             _ = engine.AppendObservation($"user-{index}");
             _ = engine.AppendImportedAgentAction(
-                new ActionMessage([
+                new ActionMessage(
+                    [
                     new ActionBlock.Text($"assistant-{index}")
-                ]),
+                ]
+                ),
                 ImportedInvocation
             );
         }
@@ -835,10 +875,11 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             _ = journal.CreateBranch("foreign", terminal).Unwrap();
         }
         using (var foreignBranch = SessionJournalEngine.Open(
-                   ownerPath,
-                   "foreign"
-               )) {
-            Assert.Throws<ArgumentException>(() =>
+            ownerPath,
+            "foreign"
+        )) {
+            Assert.Throws<ArgumentException>(
+                () =>
                 foreignBranch.CommitPreparedCompletedTurnRewind(
                     prepared
                 )
@@ -849,7 +890,8 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         using (var foreignRepository = Create(foreignPath)) {
             EventAddress foreignHead =
                 foreignRepository.ReadCurrentHead()!.Value;
-            Assert.Throws<ArgumentException>(() =>
+            Assert.Throws<ArgumentException>(
+                () =>
                 foreignRepository.CommitPreparedCompletedTurnRewind(
                     prepared
                 )
@@ -927,7 +969,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
     ) {
         var journalOptions = new EventJournalOptions {
             EventSegmentStoreOptions = new RbfSegmentStoreOptions {
-                SegmentSizeThresholdBytes = 4,
+                SegmentSizeThresholdBytes = 8,
                 HistoricalReaderPoolCapacity = 0,
                 CacheMode = RbfCacheMode.Off
             }
@@ -936,12 +978,12 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         EventAddress observation;
         EventAddress terminal;
         using (var setup = SessionJournalEngine.CreateForTest(
-                   path,
-                   Options,
-                   runtime: null,
-                   new SessionJournalTestHooks(),
-                   journalOptions
-               )) {
+            path,
+            Options,
+            runtime: null,
+            new SessionJournalTestHooks(),
+            journalOptions
+        )) {
             observation = setup.AppendObservation("one");
             terminal = setup.AppendImportedAgentAction(
                 new ActionMessage([new ActionBlock.Text("done")]),
@@ -949,9 +991,9 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             );
         }
         using (var journal = EventJournal.EventJournal.OpenExisting(
-                   path,
-                   journalOptions
-               )) {
+            path,
+            journalOptions
+        )) {
             _ = journal.AppendEventFrame(
                 terminal,
                 SessionEventCodec.Encode(
@@ -1002,13 +1044,15 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             EventAddress pending = limited.AppendObservation("pending");
             InvalidOperationException limit = Assert.Throws<
                 InvalidOperationException
-            >(() => limited.AbandonFailedTurn(
-                pending,
-                new SessionCompletedTurnsReadBudget(
-                    maximumHeaderVisits: 1,
-                    maximumDecodedLogicalPayloadBytes: 16 * 1024 * 1024
+            >(
+                () => limited.AbandonFailedTurn(
+                    pending,
+                    new SessionCompletedTurnsReadBudget(
+                        maximumHeaderVisits: 1,
+                        maximumDecodedLogicalPayloadBytes: 16 * 1024 * 1024
+                    )
                 )
-            ));
+            );
             Assert.Null(limit.InnerException);
         }
 
@@ -1042,9 +1086,10 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         EventAddress promptAddress;
         using (var setup = Create(path)) {
             promptAddress = setup.ReadCurrentLineageHeaders()
-                .HeadToRoot.Single(static node =>
+                .HeadToRoot.Single(
+                static node =>
                     node.Kind == SessionEventKind.SystemPromptSetup
-                ).Address;
+            ).Address;
         }
 
         EventAddress toolAction;
@@ -1064,11 +1109,13 @@ public sealed class SessionCompletedTurnTests : IDisposable {
                     (uint)SessionEventKind.ObservationAccepted,
                 hint: default
             ).Unwrap().EventAddress;
-            var action = new ActionMessage([
+            var action = new ActionMessage(
+                [
                 new ActionBlock.ToolCall(
                     new RawToolCall("lookup", "call-1", "{}")
                 )
-            ]);
+            ]
+            );
             toolAction = journal.CommitToRef(
                 "malformed",
                 observation,

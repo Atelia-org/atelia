@@ -92,21 +92,26 @@ public sealed class SessionBoundedLineageTests : IDisposable {
 
         var available = Assert.IsType<
             SessionHistoryPlanningWindowProofResult.Available
-        >(engine.ProveHistoryPlanningWindowInPrefix(
-            prefix,
-            capturedHead: addresses[3],
-            startExclusive: addresses[1],
-            maxRawEventCount: 2
-        ));
+        >(
+            engine.ProveHistoryPlanningWindowInPrefix(
+                prefix,
+                capturedHead: addresses[3],
+                startExclusive: addresses[1],
+                maxRawEventCount: 2
+            )
+        );
         var beyond = Assert.IsType<
             SessionHistoryPlanningWindowProofResult.BeyondPrefix
-        >(engine.ProveHistoryPlanningWindowInPrefix(
-            prefix,
-            capturedHead: addresses[3],
-            startExclusive: addresses[0],
-            maxRawEventCount: 1
-        ));
-        Assert.Throws<InvalidDataException>(() =>
+        >(
+            engine.ProveHistoryPlanningWindowInPrefix(
+                prefix,
+                capturedHead: addresses[3],
+                startExclusive: addresses[0],
+                maxRawEventCount: 1
+            )
+        );
+        Assert.Throws<InvalidDataException>(
+            () =>
             engine.ProveHistoryPlanningWindowInPrefix(
                 prefix,
                 capturedHead: Address(1000),
@@ -114,7 +119,8 @@ public sealed class SessionBoundedLineageTests : IDisposable {
                 maxRawEventCount: 2
             )
         );
-        Assert.Throws<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(
+            () =>
             engine.ProveHistoryPlanningWindowInPrefix(
                 prefix,
                 capturedHead: addresses[3],
@@ -153,20 +159,24 @@ public sealed class SessionBoundedLineageTests : IDisposable {
 
         var endpointBeyond = Assert.IsType<
             SessionHistoryPlanningWindowProofResult.BeyondPrefix
-        >(engine.ProveHistoryPlanningWindowInPrefix(
-            prefix,
-            capturedHead: addresses[2],
-            startExclusive: addresses[0],
-            maxRawEventCount: 2
-        ));
+        >(
+            engine.ProveHistoryPlanningWindowInPrefix(
+                prefix,
+                capturedHead: addresses[2],
+                startExclusive: addresses[0],
+                maxRawEventCount: 2
+            )
+        );
         var startBeyond = Assert.IsType<
             SessionHistoryPlanningWindowProofResult.BeyondPrefix
-        >(engine.ProveHistoryPlanningWindowInPrefix(
-            prefix,
-            capturedHead: addresses[4],
-            startExclusive: addresses[2],
-            maxRawEventCount: 2
-        ));
+        >(
+            engine.ProveHistoryPlanningWindowInPrefix(
+                prefix,
+                capturedHead: addresses[4],
+                startExclusive: addresses[2],
+                maxRawEventCount: 2
+            )
+        );
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
 
@@ -206,69 +216,87 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             () => engine.ReadCurrentLineagePrefix(0)
         );
 
-        Assert.Empty(typeof(SessionCurrentLineageContinuation)
-            .GetConstructors());
-        Assert.Empty(typeof(SessionCurrentLineageBeyondPrefix)
-            .GetConstructors());
-        Assert.Empty(typeof(SessionCurrentLineagePrefix)
-            .GetConstructors());
+        Assert.Empty(
+            typeof(SessionCurrentLineageContinuation)
+            .GetConstructors()
+        );
+        Assert.Empty(
+            typeof(SessionCurrentLineageBeyondPrefix)
+            .GetConstructors()
+        );
+        Assert.Empty(
+            typeof(SessionCurrentLineagePrefix)
+            .GetConstructors()
+        );
 
         EventAddress head = Address(1);
         EventAddress parent = Address(2);
         EventAddress other = Address(3);
         SessionCurrentLineageDiagnostics twoHeaders =
             new(HeaderVisits: 2, PayloadReads: 0, DecodedPayloadBytes: 0);
-        Assert.Throws<ArgumentException>(() => new SessionCurrentLineagePrefix(
-            head,
-            1,
-            [null!],
-            continuation: null,
-            new(1, 0, 0)
-        ));
-        Assert.Throws<ArgumentException>(() => new SessionCurrentLineagePrefix(
-            head,
-            2,
-            [
+        Assert.Throws<ArgumentException>(
+            () => new SessionCurrentLineagePrefix(
+                head,
+                1,
+                [null!],
+                continuation: null,
+                new(1, 0, 0)
+            )
+        );
+        Assert.Throws<ArgumentException>(
+            () => new SessionCurrentLineagePrefix(
+                head,
+                2,
+                [
                 new(head, parent, SessionEventKind.ObservationAccepted),
                 new(other, null, SessionEventKind.SessionCreated)
             ],
-            continuation: null,
-            twoHeaders
-        ));
+                continuation: null,
+                twoHeaders
+            )
+        );
         // Append-only EventJournal addresses cannot point to a future child, so a storage-level
         // Parent cycle is not writer-constructable. Lock the same authority rejection at its
         // internal shape boundary; reachable storage corruption is covered below.
-        Assert.Throws<ArgumentException>(() => new SessionCurrentLineagePrefix(
-            head,
-            2,
-            [
+        Assert.Throws<ArgumentException>(
+            () => new SessionCurrentLineagePrefix(
+                head,
+                2,
+                [
                 new(head, parent, SessionEventKind.ObservationAccepted),
                 new(parent, head, SessionEventKind.ObservationAccepted)
             ],
-            new SessionCurrentLineageContinuation(head),
-            twoHeaders
-        ));
-        Assert.Throws<ArgumentException>(() => new SessionCurrentLineagePrefix(
-            head,
-            1,
-            [new(head, null, (SessionEventKind)uint.MaxValue)],
-            continuation: null,
-            new(1, 0, 0)
-        ));
-        Assert.Throws<ArgumentException>(() => new SessionCurrentLineagePrefix(
-            head,
-            1,
-            [new(head, parent, SessionEventKind.ObservationAccepted)],
-            continuation: null,
-            new(1, 0, 0)
-        ));
-        Assert.Throws<ArgumentException>(() => new SessionCurrentLineagePrefix(
-            head,
-            1,
-            [new(head, null, SessionEventKind.SessionCreated)],
-            new SessionCurrentLineageContinuation(parent),
-            new(1, 0, 0)
-        ));
+                new SessionCurrentLineageContinuation(head),
+                twoHeaders
+            )
+        );
+        Assert.Throws<ArgumentException>(
+            () => new SessionCurrentLineagePrefix(
+                head,
+                1,
+                [new(head, null, (SessionEventKind)uint.MaxValue)],
+                continuation: null,
+                new(1, 0, 0)
+            )
+        );
+        Assert.Throws<ArgumentException>(
+            () => new SessionCurrentLineagePrefix(
+                head,
+                1,
+                [new(head, parent, SessionEventKind.ObservationAccepted)],
+                continuation: null,
+                new(1, 0, 0)
+            )
+        );
+        Assert.Throws<ArgumentException>(
+            () => new SessionCurrentLineagePrefix(
+                head,
+                1,
+                [new(head, null, SessionEventKind.SessionCreated)],
+                new SessionCurrentLineageContinuation(parent),
+                new(1, 0, 0)
+            )
+        );
     }
 
     [Fact]
@@ -391,10 +419,12 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             engine.CaptureReadDiagnostics();
         var available = Assert.IsType<
             SessionCreatedPlanningSeedReadResult.Available
-        >(engine.ReadSessionCreatedPlanningSeedAtBounded(
-            headAt512,
-            maxRawEventCount: 512
-        ));
+        >(
+            engine.ReadSessionCreatedPlanningSeedAtBounded(
+                headAt512,
+                maxRawEventCount: 512
+            )
+        );
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
 
@@ -413,10 +443,12 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         before = engine.CaptureReadDiagnostics();
         var beyond513 = Assert.IsType<
             SessionCreatedPlanningSeedReadResult.BeyondPrefix
-        >(engine.ReadSessionCreatedPlanningSeedAtBounded(
-            headAt513,
-            maxRawEventCount: 512
-        ));
+        >(
+            engine.ReadSessionCreatedPlanningSeedAtBounded(
+                headAt513,
+                maxRawEventCount: 512
+            )
+        );
         after = engine.CaptureReadDiagnostics();
         Assert.Equal(headAt513, beyond513.CapturedHead);
         Assert.Equal(513, beyond513.HeaderCount);
@@ -428,10 +460,12 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         before = engine.CaptureReadDiagnostics();
         var beyond514 = Assert.IsType<
             SessionCreatedPlanningSeedReadResult.BeyondPrefix
-        >(engine.ReadSessionCreatedPlanningSeedAtBounded(
-            headAt514,
-            maxRawEventCount: 512
-        ));
+        >(
+            engine.ReadSessionCreatedPlanningSeedAtBounded(
+                headAt514,
+                maxRawEventCount: 512
+            )
+        );
         after = engine.CaptureReadDiagnostics();
         Assert.Equal(513, beyond514.HeaderCount);
         Assert.NotEqual(start, beyond514.NextAddress);
@@ -467,10 +501,12 @@ public sealed class SessionBoundedLineageTests : IDisposable {
 
         var available = Assert.IsType<
             SessionCreatedPlanningSeedReadResult.Available
-        >(engine.ReadSessionCreatedPlanningSeedAtBounded(
-            created,
-            maxRawEventCount: 0
-        ));
+        >(
+            engine.ReadSessionCreatedPlanningSeedAtBounded(
+                created,
+                maxRawEventCount: 0
+            )
+        );
         Assert.Equal(created, available.Seed.Address);
         Assert.Equal(0, available.RawEventCountAfterStart);
         Assert.Equal(1, available.Diagnostics.HeaderVisits);
@@ -480,10 +516,12 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             engine.CaptureReadDiagnostics();
         var beyond = Assert.IsType<
             SessionCreatedPlanningSeedReadResult.BeyondPrefix
-        >(engine.ReadSessionCreatedPlanningSeedAtBounded(
-            observation,
-            maxRawEventCount: 0
-        ));
+        >(
+            engine.ReadSessionCreatedPlanningSeedAtBounded(
+                observation,
+                maxRawEventCount: 0
+            )
+        );
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
         Assert.Equal(1, beyond.HeaderCount);
@@ -511,11 +549,13 @@ public sealed class SessionBoundedLineageTests : IDisposable {
 
         var available = Assert.IsType<
             SessionGoverningSetupProofResult.Available
-        >(engine.ProveGoverningSetupAtBounded(
-            boundary,
-            setups,
-            maxHeaderCount: 3
-        ));
+        >(
+            engine.ProveGoverningSetupAtBounded(
+                boundary,
+                setups,
+                maxHeaderCount: 3
+            )
+        );
         SessionJournalReadDiagnostics afterProof =
             engine.CaptureReadDiagnostics();
 
@@ -527,8 +567,10 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             before.PayloadReadCount,
             afterProof.PayloadReadCount
         );
-        Assert.Empty(typeof(SessionGoverningSetupProof)
-            .GetConstructors());
+        Assert.Empty(
+            typeof(SessionGoverningSetupProof)
+            .GetConstructors()
+        );
 
         SessionHistoryPlanningSeed seed =
             engine.MaterializeHistoryPlanningSeed(available.Proof);
@@ -561,11 +603,13 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             engine.CaptureReadDiagnostics();
         var available = Assert.IsType<
             SessionGoverningSetupProofResult.Available
-        >(engine.ProveGoverningSetupInPrefix(
-            prefix,
-            boundary,
-            setups
-        ));
+        >(
+            engine.ProveGoverningSetupInPrefix(
+                prefix,
+                boundary,
+                setups
+            )
+        );
         SessionJournalReadDiagnostics afterProof =
             engine.CaptureReadDiagnostics();
 
@@ -573,10 +617,12 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             beforeProof.PayloadReadCount,
             afterProof.PayloadReadCount
         );
-        engine.ValidateGoverningSetupPayloads([
+        engine.ValidateGoverningSetupPayloads(
+            [
             available.Proof,
             available.Proof
-        ]);
+        ]
+        );
         SessionJournalReadDiagnostics afterValidation =
             engine.CaptureReadDiagnostics();
 
@@ -605,11 +651,13 @@ public sealed class SessionBoundedLineageTests : IDisposable {
 
         var beyond = Assert.IsType<
             SessionGoverningSetupProofResult.BeyondPrefix
-        >(engine.ProveGoverningSetupInPrefix(
-            prefix,
-            headAt514,
-            setups
-        ));
+        >(
+            engine.ProveGoverningSetupInPrefix(
+                prefix,
+                headAt514,
+                setups
+            )
+        );
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
 
@@ -652,26 +700,33 @@ public sealed class SessionBoundedLineageTests : IDisposable {
 
         var beyond = Assert.IsType<
             SessionGoverningSetupProofResult.BeyondPrefix
-        >(engine.ProveGoverningSetupInPrefix(
-            bounded,
-            boundary,
-            setups
-        ));
+        >(
+            engine.ProveGoverningSetupInPrefix(
+                bounded,
+                boundary,
+                setups
+            )
+        );
         var boundaryBeyond = Assert.IsType<
             SessionGoverningSetupProofResult.BeyondPrefix
-        >(engine.ProveGoverningSetupInPrefix(
-            bounded,
-            start,
-            setups
-        ));
+        >(
+            engine.ProveGoverningSetupInPrefix(
+                bounded,
+                start,
+                setups
+            )
+        );
         var available = Assert.IsType<
             SessionGoverningSetupProofResult.Available
-        >(engine.ProveGoverningSetupInPrefix(
-            complete,
-            boundary,
-            setups
-        ));
-        Assert.Throws<InvalidDataException>(() =>
+        >(
+            engine.ProveGoverningSetupInPrefix(
+                complete,
+                boundary,
+                setups
+            )
+        );
+        Assert.Throws<InvalidDataException>(
+            () =>
             engine.ProveGoverningSetupInPrefix(
                 complete,
                 Address(1000),
@@ -741,28 +796,34 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         };
         SessionGoverningSetupProof hashProof = Assert.IsType<
             SessionGoverningSetupProofResult.Available
-        >(engine.ProveGoverningSetupInPrefix(
-            prefix,
-            boundary,
-            wrongHash
-        )).Proof;
+        >(
+            engine.ProveGoverningSetupInPrefix(
+                prefix,
+                boundary,
+                wrongHash
+            )
+        ).Proof;
         SessionGoverningSetupProof schemaProof = Assert.IsType<
             SessionGoverningSetupProofResult.Available
-        >(engine.ProveGoverningSetupInPrefix(
-            prefix,
-            boundary,
-            wrongSchema
-        )).Proof;
+        >(
+            engine.ProveGoverningSetupInPrefix(
+                prefix,
+                boundary,
+                wrongSchema
+            )
+        ).Proof;
 
         Assert.Contains(
             "hash mismatch",
-            Assert.Throws<InvalidDataException>(() =>
+            Assert.Throws<InvalidDataException>(
+                () =>
                 engine.ValidateGoverningSetupPayloads([hashProof])
             ).Message
         );
         Assert.Contains(
             "schema version mismatch",
-            Assert.Throws<InvalidDataException>(() =>
+            Assert.Throws<InvalidDataException>(
+                () =>
                 engine.ValidateGoverningSetupPayloads([schemaProof])
             ).Message
         );
@@ -795,11 +856,13 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             first.ReadLineagePrefixAt(boundary, 513);
         SessionGoverningSetupProof valid = Assert.IsType<
             SessionGoverningSetupProofResult.Available
-        >(first.ProveGoverningSetupInPrefix(
-            prefix,
-            boundary,
-            setups
-        )).Proof;
+        >(
+            first.ProveGoverningSetupInPrefix(
+                prefix,
+                boundary,
+                setups
+            )
+        ).Proof;
         var conflictingSetups = setups with {
             RuntimeConfig = setups.RuntimeConfig with {
                 PayloadSha256 = new string('0', 64)
@@ -807,32 +870,40 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         };
         SessionGoverningSetupProof conflicting = Assert.IsType<
             SessionGoverningSetupProofResult.Available
-        >(first.ProveGoverningSetupInPrefix(
-            prefix,
-            boundary,
-            conflictingSetups
-        )).Proof;
+        >(
+            first.ProveGoverningSetupInPrefix(
+                prefix,
+                boundary,
+                conflictingSetups
+            )
+        ).Proof;
         EventAddress foreignBoundary = second.ReadCurrentHead()!.Value;
         SessionContextAnchorSetupReferences foreignSetups =
             second.ResolveContextAnchorSetupReferences(foreignBoundary);
         SessionGoverningSetupProof foreign = Assert.IsType<
             SessionGoverningSetupProofResult.Available
-        >(second.ProveGoverningSetupInPrefix(
-            second.ReadLineagePrefixAt(foreignBoundary, 513),
-            foreignBoundary,
-            foreignSetups
-        )).Proof;
+        >(
+            second.ProveGoverningSetupInPrefix(
+                second.ReadLineagePrefixAt(foreignBoundary, 513),
+                foreignBoundary,
+                foreignSetups
+            )
+        ).Proof;
         SessionJournalReadDiagnostics before =
             first.CaptureReadDiagnostics();
 
-        Assert.Throws<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(
+            () =>
             first.ValidateGoverningSetupPayloads([foreign])
         );
-        Assert.Throws<InvalidDataException>(() =>
-            first.ValidateGoverningSetupPayloads([
+        Assert.Throws<InvalidDataException>(
+            () =>
+            first.ValidateGoverningSetupPayloads(
+                [
                 valid,
                 conflicting
-            ])
+            ]
+            )
         );
         SessionJournalReadDiagnostics after =
             first.CaptureReadDiagnostics();
@@ -853,9 +924,11 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         );
         engine.AppendObservation("observation");
         EventAddress endpoint = engine.AppendImportedAgentAction(
-            new ActionMessage([
+            new ActionMessage(
+                [
                 new ActionBlock.Text("answer")
-            ]),
+            ]
+            ),
             new CompletionDescriptor("import", "v1", "model-A")
         );
         SessionHistoryPlanningWindow window =
@@ -865,18 +938,22 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             engine.ReadLineagePrefixAt(endpoint, 513);
         SessionGoverningSetupProof startProof = Assert.IsType<
             SessionGoverningSetupProofResult.Available
-        >(engine.ProveGoverningSetupInPrefix(
-            prefix,
-            start,
-            window.StartSetups
-        )).Proof;
+        >(
+            engine.ProveGoverningSetupInPrefix(
+                prefix,
+                start,
+                window.StartSetups
+            )
+        ).Proof;
         SessionHistoryPlanningWindowProof routeProof = Assert.IsType<
             SessionHistoryPlanningWindowProofResult.Available
-        >(engine.ProveHistoryPlanningWindowAtBounded(
-            endpoint,
-            start,
-            maxRawEventCount: 8
-        )).Proof;
+        >(
+            engine.ProveHistoryPlanningWindowAtBounded(
+                endpoint,
+                start,
+                maxRawEventCount: 8
+            )
+        ).Proof;
         Assert.True(routeProof.Diagnostics.HeaderVisits > 0);
         SessionJournalReadDiagnostics beforeTransition =
             engine.CaptureReadDiagnostics();
@@ -901,7 +978,8 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             routeProof.LogicalCoverage,
             endpointProof.LogicalCoverage
         );
-        Assert.Throws<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(
+            () =>
             engine.ProveGoverningSetupTransition(
                 routeProof,
                 endpointProof,
@@ -973,18 +1051,22 @@ public sealed class SessionBoundedLineageTests : IDisposable {
 
         var beyond513 = Assert.IsType<
             SessionGoverningSetupProofResult.BeyondPrefix
-        >(engine.ProveGoverningSetupAtBounded(
-            boundary,
-            setups,
-            maxHeaderCount: 513
-        ));
+        >(
+            engine.ProveGoverningSetupAtBounded(
+                boundary,
+                setups,
+                maxHeaderCount: 513
+            )
+        );
         var beyond514 = Assert.IsType<
             SessionGoverningSetupProofResult.BeyondPrefix
-        >(engine.ProveGoverningSetupAtBounded(
-            boundary,
-            setups,
-            maxHeaderCount: 514
-        ));
+        >(
+            engine.ProveGoverningSetupAtBounded(
+                boundary,
+                setups,
+                maxHeaderCount: 514
+            )
+        );
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
 
@@ -1013,7 +1095,7 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         var journalOptions = new EventJournalOptions {
             EventSegmentStoreOptions =
                 new RbfSegmentStoreOptions {
-                    SegmentSizeThresholdBytes = 4,
+                    SegmentSizeThresholdBytes = 8,
                     CacheMode = RbfCacheMode.Off
                 }
         };
@@ -1109,11 +1191,13 @@ public sealed class SessionBoundedLineageTests : IDisposable {
 
         var available = Assert.IsType<
             SessionGoverningSetupProofResult.Available
-        >(engine.ProveGoverningSetupAtBounded(
-            boundary,
-            setups,
-            maxHeaderCount: 8
-        ));
+        >(
+            engine.ProveGoverningSetupAtBounded(
+                boundary,
+                setups,
+                maxHeaderCount: 8
+            )
+        );
         SessionJournalReadDiagnostics afterProof =
             engine.CaptureReadDiagnostics();
 
@@ -1144,20 +1228,24 @@ public sealed class SessionBoundedLineageTests : IDisposable {
 
         var first = Assert.IsType<
             SessionHistoryPlanningWindowProofResult.Available
-        >(engine.ProveHistoryPlanningWindowAtBounded(
-            headAt512,
-            start,
-            maxRawEventCount: 512
-        ));
+        >(
+            engine.ProveHistoryPlanningWindowAtBounded(
+                headAt512,
+                start,
+                maxRawEventCount: 512
+            )
+        );
         SessionJournalReadDiagnostics afterFirstProof =
             engine.CaptureReadDiagnostics();
         var second = Assert.IsType<
             SessionHistoryPlanningWindowProofResult.BeyondPrefix
-        >(engine.ProveHistoryPlanningWindowAtBounded(
-            headAt513,
-            start,
-            maxRawEventCount: 512
-        ));
+        >(
+            engine.ProveHistoryPlanningWindowAtBounded(
+                headAt513,
+                start,
+                maxRawEventCount: 512
+            )
+        );
         SessionJournalReadDiagnostics afterAllProofs =
             engine.CaptureReadDiagnostics();
 
@@ -1183,8 +1271,10 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             engine.CaptureReadDiagnostics().PayloadReadCount
                 > afterAllProofs.PayloadReadCount
         );
-        Assert.Empty(typeof(SessionHistoryPlanningWindowProof)
-            .GetConstructors());
+        Assert.Empty(
+            typeof(SessionHistoryPlanningWindowProof)
+            .GetConstructors()
+        );
     }
 
     [Fact]
@@ -1213,11 +1303,13 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             engine.CaptureReadDiagnostics();
         var atHead = Assert.IsType<
             SessionHistoryPlanningWindowReadResult.Available
-        >(engine.ReadHistoryPlanningWindowAtBounded(
-            start,
-            seed,
-            maxRawEventCount: 0
-        ));
+        >(
+            engine.ReadHistoryPlanningWindowAtBounded(
+                start,
+                seed,
+                maxRawEventCount: 0
+            )
+        );
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
         Assert.Empty(atHead.Window.RawAddresses);
@@ -1231,11 +1323,13 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         before = engine.CaptureReadDiagnostics();
         var oneEvent = Assert.IsType<
             SessionHistoryPlanningWindowReadResult.Available
-        >(engine.ReadHistoryPlanningWindowAtBounded(
-            head,
-            seed,
-            maxRawEventCount: 1
-        ));
+        >(
+            engine.ReadHistoryPlanningWindowAtBounded(
+                head,
+                seed,
+                maxRawEventCount: 1
+            )
+        );
         after = engine.CaptureReadDiagnostics();
         Assert.Equal([head], oneEvent.Window.RawAddresses);
         Assert.Equal(2, oneEvent.PrefixDiagnostics.HeaderVisits);
@@ -1253,7 +1347,7 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         var journalOptions = new EventJournalOptions {
             EventSegmentStoreOptions =
                 new RbfSegmentStoreOptions {
-                    SegmentSizeThresholdBytes = 4,
+                    SegmentSizeThresholdBytes = 8,
                     CacheMode = RbfCacheMode.Off
                 }
         };
@@ -1375,11 +1469,13 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             engine.CaptureReadDiagnostics();
         var available = Assert.IsType<
             SessionHistoryPlanningWindowReadResult.Available
-        >(engine.ReadHistoryPlanningWindowAtBounded(
-            head,
-            seed,
-            maxRawEventCount: 1
-        ));
+        >(
+            engine.ReadHistoryPlanningWindowAtBounded(
+                head,
+                seed,
+                maxRawEventCount: 1
+            )
+        );
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
         Assert.Equal([head], available.Window.RawAddresses);
@@ -1390,13 +1486,14 @@ public sealed class SessionBoundedLineageTests : IDisposable {
                 - before.HeaderPreviewReadCount
         );
         InvalidOperationException missingError =
-            Assert.Throws<InvalidOperationException>(() =>
+            Assert.Throws<InvalidOperationException>(
+                () =>
             engine.ReadHistoryPlanningWindowAtBounded(
                 head,
                 missing,
                 maxRawEventCount: 2
             )
-        );
+            );
         Assert.Contains(
             "Short read",
             missingError.ToString(),
@@ -1441,7 +1538,7 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         var journalOptions = new EventJournalOptions {
             EventSegmentStoreOptions =
                 new RbfSegmentStoreOptions {
-                    SegmentSizeThresholdBytes = 4,
+                    SegmentSizeThresholdBytes = 8,
                     CacheMode = RbfCacheMode.Off
                 }
         };
@@ -1480,12 +1577,12 @@ public sealed class SessionBoundedLineageTests : IDisposable {
 
         InvalidOperationException error =
             Assert.Throws<InvalidOperationException>(
-            () => engine.ReadHistoryPlanningWindowAtBounded(
-                head,
-                seed,
-                maxRawEventCount: 1
-            )
-        );
+                () => engine.ReadHistoryPlanningWindowAtBounded(
+                    head,
+                    seed,
+                    maxRawEventCount: 1
+                )
+            );
 
         Assert.True(proofCompleted, error.ToString());
         Assert.Contains(
@@ -1617,11 +1714,11 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             startPoint: null
         ).Unwrap();
         var runtimeBody = new SessionRuntimeConfiguration(
-                "model-A",
-                "surface-A",
-                SessionJournalDefaults.Schema,
-                new(0)
-            );
+            "model-A",
+            "surface-A",
+            SessionJournalDefaults.Schema,
+            new(0)
+        );
         byte[] runtimePayload = SessionEventCodec.Encode(
             SessionEventKind.RuntimeConfigSetup,
             runtimeBody
@@ -1682,9 +1779,11 @@ public sealed class SessionBoundedLineageTests : IDisposable {
                 observation,
                 SessionEventKind.ImportedAgentAction,
                 new AgentActionProducedBody(
-                    new ActionMessage([
+                    new ActionMessage(
+                        [
                         new ActionBlock.Text($"answer-{index}")
-                    ]),
+                    ]
+                    ),
                     new CompletionDescriptor(
                         "import",
                         "import-v1",
@@ -1708,9 +1807,11 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             headAt513,
             SessionEventKind.ImportedAgentAction,
             new AgentActionProducedBody(
-                new ActionMessage([
+                new ActionMessage(
+                    [
                     new ActionBlock.Text("pending-answer")
-                ]),
+                ]
+                ),
                 new CompletionDescriptor(
                     "import",
                     "import-v1",
