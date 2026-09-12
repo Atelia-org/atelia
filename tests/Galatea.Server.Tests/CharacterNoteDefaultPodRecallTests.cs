@@ -81,6 +81,36 @@ public sealed class CharacterNoteDefaultPodRecallTests {
     }
 
     [Fact]
+    public async Task PlanningProviderClassifiesInvalidSelectorOutput() {
+        using var fixture = await RuntimeFixture.CreateAsync();
+        var client = new RecallCompletionClient(_ => ["m1:00000001"]);
+        var provider = new GalateaDefaultMemoPodRecallProvider(
+            fixture.Reconciler,
+            Connection(),
+            () => client
+        );
+
+        GalateaMemoRecallStageException failure = await Assert.ThrowsAsync<
+            GalateaMemoRecallStageException>(() => provider.PlanRecallsAsync(
+                Request(
+                    RecallBarrier.Empty,
+                    CharacterNoteOriginBarrier.Empty
+                ),
+                CancellationToken.None
+            ).AsTask());
+
+        Assert.Equal(
+            GalateaMemoRecallFailureStage.SelectorExecution,
+            failure.Stage
+        );
+        Assert.Equal(
+            GalateaMemoRecallFailureKind.InvalidModelOutput,
+            failure.FailureKind
+        );
+        Assert.IsType<MemoRecallException>(failure.InnerException);
+    }
+
+    [Fact]
     public async Task RecallReleasesPodGateAndKeepsOpenedFrozenEpoch() {
         using var fixture = await RuntimeFixture.CreateAsync();
         var client = new BlockingRecallCompletionClient();
@@ -302,6 +332,160 @@ public sealed class CharacterNoteDefaultPodRecallTests {
     }
 
     [Fact]
+    public void PlannerReportsEmptySelectorResultAsNoMatch() {
+        GalateaMemoRecallPlanningResult planning =
+            GalateaDefaultMemoPodRecallPlanner.Plan(
+                Request(
+                    RecallBarrier.Empty,
+                    CharacterNoteOriginBarrier.Empty
+                ),
+                CharacterNoteDefaultPodV1.PodId,
+                Array.Empty<Memo>()
+            );
+
+        Assert.Equal(GalateaMemoRecallPlanningOutcome.NoMatch,
+            planning.Outcome);
+        Assert.Empty(planning.Recalls);
+        Assert.Equal(0, planning.NominatedCount);
+        Assert.Equal(0, planning.EvaluatedCount);
+        Assert.Equal(0, planning.SelectedCount);
+        Assert.Equal(0, planning.MissingTitleSkipCount);
+        Assert.Equal(0, planning.OriginVisibleSkipCount);
+        Assert.Equal(0, planning.PriorRecallSkipCount);
+        Assert.Equal(0, planning.ObservationBudgetSkipCount);
+        Assert.Equal(0, planning.UnexaminedCount);
+        AssertPlanningInvariant(planning);
+    }
+
+    [Fact]
+    public async Task PlannerCountsOnlyFirstHitFallsBackAndStopsAfterSelection() {
+        string oversizedExactText = new(
+            'x',
+            MemoPodLimits.MaximumMemoExactTextUtf8Bytes
+        );
+        string oversizedTitle = new(
+            't',
+            MemoPodLimits.MaximumMemoTitleUtf8Bytes
+        );
+        using var pod = await PlannerPod.CreateAsync(
+            ("no title", null),
+            ("origin and prior", "Origin"),
+            ("prior", "Prior"),
+            (oversizedExactText, oversizedTitle),
+            ("selected body", "Selected")
+        );
+        Memo[] podMemos = pod.Pod.List().ToArray();
+        var origin = new CharacterNoteVisibleActionIdentity(
+            new EventAddress(
+                Atelia.Data.SizedPtr.Create(12, 4),
+                1,
+                AddressHint.None
+            ),
+            GalateaVisibleActionFingerprint.Derive("visible action")
+        );
+        var originBarrier = new CharacterNoteOriginBarrier([
+            new CharacterNoteOriginBarrierEntry(
+                CharacterNoteDefaultPodV1.PodId,
+                podMemos[0].Id,
+                origin
+            ),
+            new CharacterNoteOriginBarrierEntry(
+                CharacterNoteDefaultPodV1.PodId,
+                podMemos[1].Id,
+                origin
+            ),
+        ]);
+        var recallBarrier = new RecallBarrier([
+            RecallEntryFor(podMemos[0]),
+            RecallEntryFor(podMemos[1]),
+            RecallEntryFor(podMemos[2]),
+        ]);
+        var crowded = new PlayerTurnObservation(
+            new string('p', GalateaHttpV1.MaximumMessageUtf8Bytes),
+            Timestamp,
+            [
+                new PlayerTurnNotice.Reply(new string('a', 256 * 1024)),
+                new PlayerTurnNotice.Reply(new string('b', 256 * 1024)),
+                new PlayerTurnNotice.Reply(new string('c', 256 * 1024)),
+            ]
+        );
+        _ = PlayerTurnObservationEnvelope.Wrap(crowded);
+        IReadOnlyList<Memo> candidates = Array.AsReadOnly<Memo>([
+            .. podMemos,
+            // A null sentinel proves the tail is not evaluated after selection.
+            null!,
+        ]);
+
+        GalateaMemoRecallPlanningResult planning =
+            GalateaDefaultMemoPodRecallPlanner.Plan(
+                Request(recallBarrier, originBarrier, crowded),
+                CharacterNoteDefaultPodV1.PodId,
+                candidates
+            );
+
+        Assert.Equal(GalateaMemoRecallPlanningOutcome.Selected,
+            planning.Outcome);
+        Assert.Single(planning.Recalls);
+        Assert.Equal(6, planning.NominatedCount);
+        Assert.Equal(5, planning.EvaluatedCount);
+        Assert.Equal(1, planning.SelectedCount);
+        Assert.Equal(1, planning.MissingTitleSkipCount);
+        Assert.Equal(1, planning.OriginVisibleSkipCount);
+        Assert.Equal(1, planning.PriorRecallSkipCount);
+        Assert.Equal(1, planning.ObservationBudgetSkipCount);
+        Assert.Equal(1, planning.UnexaminedCount);
+        AssertPlanningInvariant(planning);
+    }
+
+    [Fact]
+    public async Task PlannerReportsAllNominatedCandidatesFiltered() {
+        using var pod = await PlannerPod.CreateAsync(
+            ("no title", null),
+            ("origin", "Origin"),
+            ("prior", "Prior")
+        );
+        Memo[] memos = pod.Pod.List().ToArray();
+        var origin = new CharacterNoteVisibleActionIdentity(
+            new EventAddress(
+                Atelia.Data.SizedPtr.Create(12, 4),
+                1,
+                AddressHint.None
+            ),
+            GalateaVisibleActionFingerprint.Derive("visible action")
+        );
+        var originBarrier = new CharacterNoteOriginBarrier([
+            new CharacterNoteOriginBarrierEntry(
+                CharacterNoteDefaultPodV1.PodId,
+                memos[1].Id,
+                origin
+            ),
+        ]);
+        var recallBarrier = new RecallBarrier([
+            RecallEntryFor(memos[2]),
+        ]);
+
+        GalateaMemoRecallPlanningResult planning =
+            GalateaDefaultMemoPodRecallPlanner.Plan(
+                Request(recallBarrier, originBarrier),
+                CharacterNoteDefaultPodV1.PodId,
+                memos
+            );
+
+        Assert.Equal(GalateaMemoRecallPlanningOutcome.AllFiltered,
+            planning.Outcome);
+        Assert.Empty(planning.Recalls);
+        Assert.Equal(3, planning.NominatedCount);
+        Assert.Equal(3, planning.EvaluatedCount);
+        Assert.Equal(0, planning.SelectedCount);
+        Assert.Equal(1, planning.MissingTitleSkipCount);
+        Assert.Equal(1, planning.OriginVisibleSkipCount);
+        Assert.Equal(1, planning.PriorRecallSkipCount);
+        Assert.Equal(0, planning.ObservationBudgetSkipCount);
+        Assert.Equal(0, planning.UnexaminedCount);
+        AssertPlanningInvariant(planning);
+    }
+
+    [Fact]
     public async Task PlannerSupportsAutomaticTriggersWithReceiptAndPreservesBothBarriers() {
         using var pod = await PlannerPod.CreateAsync(("remember", "Memory"));
         Memo memo = Assert.Single(pod.Pod.List());
@@ -409,6 +593,31 @@ public sealed class CharacterNoteDefaultPodRecallTests {
         GalateaMemoRecallMvpPolicy.MaximumFrozenPromptUtf8Bytes,
         GalateaMemoRecallMvpPolicy.MaximumHydratedExactTextUtf8Bytes
     );
+
+    private static RecallEntry RecallEntryFor(Memo memo) => new(
+        RecallType.MemoExactText,
+        GalateaMemoRecallSourceIdCodec.Format(
+            CharacterNoteDefaultPodV1.PodId,
+            memo.Id
+        )
+    );
+
+    private static void AssertPlanningInvariant(
+        GalateaMemoRecallPlanningResult planning
+    ) {
+        Assert.Equal(
+            planning.EvaluatedCount,
+            planning.MissingTitleSkipCount
+                + planning.OriginVisibleSkipCount
+                + planning.PriorRecallSkipCount
+                + planning.ObservationBudgetSkipCount
+                + planning.SelectedCount
+        );
+        Assert.Equal(
+            planning.UnexaminedCount,
+            planning.NominatedCount - planning.EvaluatedCount
+        );
+    }
 
     private static CompletionConnectionConfig Connection() =>
         new(

@@ -70,6 +70,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     internal Func<Task>? BeforeDelegationAttachForTest { get; set; }
     internal TimeSpan? CharacterNoteDerivedInfoDeadlineForTest { get; set; }
     internal Action<string>? CharacterNoteDiagnosticSinkForTest { get; set; }
+    internal Action<string>? MemoRecallDiagnosticSinkForTest { get; set; }
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly object _lifecycleGate = new();
     private bool _stopping;
@@ -2651,6 +2652,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CompletionStreamObserver observer,
         CancellationToken cancellationToken
     ) {
+        WriteMemoRecallDiagnostic(GalateaMemoRecallDiagnostic.NotScheduled(
+            GalateaMemoRecallNotScheduledReason.Recovery
+        ));
         SessionRuntimeRecoveryRequirements requirement =
             host.Engine.InspectRuntimeRecoveryRequirements(
                 cancellationToken
@@ -2851,17 +2855,46 @@ public sealed class GalateaHostService : IAsyncDisposable {
             SessionUncertainCompletionRecoveryPolicy.Refuse));
         IGalateaPlayerTurnRecallProvider recallProvider =
             host.PlayerTurnRecallProvider;
-        if (preliminaryPlayerObservation is not null
-            && recallProvider
-                is not DisabledGalateaPlayerTurnRecallProvider) {
-            GalateaPlayerTurnRecallContext recallContext =
-                await BuildCurrentRecallContextAsync(
-                host,
-                online.CandidateSource,
-                ready.GoverningSetup,
-                turn.RawHistoryAuthorized,
-                cancellationToken
-            ).ConfigureAwait(false);
+        if (preliminaryPlayerObservation is null) {
+            WriteMemoRecallDiagnostic(
+                GalateaMemoRecallDiagnostic.NotScheduled(
+                    GalateaMemoRecallNotScheduledReason.UnsupportedTrigger
+                )
+            );
+        }
+        else if (recallProvider
+                is DisabledGalateaPlayerTurnRecallProvider) {
+            WriteMemoRecallDiagnostic(
+                GalateaMemoRecallDiagnostic.NotScheduled(
+                    _maintenanceMode
+                        ? GalateaMemoRecallNotScheduledReason.MaintenanceMode
+                        : GalateaMemoRecallNotScheduledReason.ProviderDisabled
+                )
+            );
+        }
+        else {
+            GalateaPlayerTurnRecallContext recallContext;
+            try {
+                recallContext = await BuildCurrentRecallContextAsync(
+                    host,
+                    online.CandidateSource,
+                    ready.GoverningSetup,
+                    turn.RawHistoryAuthorized,
+                    cancellationToken
+                ).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (
+                exception is not OperationCanceledException
+                && GalateaExceptionClassifier.IsNonFatal(exception)
+            ) {
+                WriteMemoRecallDiagnostic(
+                    GalateaMemoRecallDiagnostic.Failed(
+                        GalateaMemoRecallFailureStage.ContextConstruction,
+                        GalateaMemoRecallFailureClassifier.Classify(exception)
+                    )
+                );
+                throw;
+            }
             IReadOnlyList<PlayerTurnRecall> recalls =
                 await SelectPlayerTurnRecallsAsync(
                     host,
@@ -2914,27 +2947,126 @@ public sealed class GalateaHostService : IAsyncDisposable {
             context
         );
         IReadOnlyList<PlayerTurnRecall> selected;
+        GalateaMemoRecallPlanningResult? planning = null;
         try {
-            selected = await recallProvider
-                .SelectRecallsAsync(request, cancellationToken)
-                .ConfigureAwait(false)
-            ?? throw new InvalidOperationException(
-                "Galatea player-turn recall provider returned null."
+            if (recallProvider
+                    is IGalateaPlayerTurnRecallPlanningProvider planner) {
+                planning = await planner
+                    .PlanRecallsAsync(request, cancellationToken)
+                    .ConfigureAwait(false);
+                if (planning is null) {
+                    throw InvalidRecallProviderResult(
+                        "Galatea player-turn recall planner returned null."
+                    );
+                }
+                selected = planning.Recalls;
+            }
+            else {
+                selected = await recallProvider
+                    .SelectRecallsAsync(request, cancellationToken)
+                    .ConfigureAwait(false);
+                if (selected is null) {
+                    throw InvalidRecallProviderResult(
+                        "Galatea player-turn recall provider returned null."
+                    );
+                }
+            }
+        }
+        catch (GalateaMemoRecallStageException exception) {
+            WriteMemoRecallDiagnostic(GalateaMemoRecallDiagnostic.Failed(
+                exception.Stage,
+                exception.FailureKind
+            ));
+            throw new GalateaTurnException(
+                "Memo recall failed before main completion.",
+                "memo-recall-failed",
+                exception.InnerException ?? exception
             );
         }
         catch (Exception exception) when (exception is not OperationCanceledException
             && GalateaExceptionClassifier.IsNonFatal(exception)) {
+            WriteMemoRecallDiagnostic(GalateaMemoRecallDiagnostic.Failed(
+                GalateaMemoRecallFailureStage.SelectorExecution,
+                GalateaMemoRecallFailureClassifier.Classify(exception)
+            ));
             throw new GalateaTurnException(
                 "Memo recall failed before main completion.",
                 "memo-recall-failed",
                 exception
             );
         }
-        return Array.AsReadOnly(selected.Select(static recall =>
-            recall ?? throw new InvalidOperationException(
-                "Galatea player-turn recall provider returned a null recall."
-            )
-        ).ToArray());
+        IReadOnlyList<PlayerTurnRecall> frozen;
+        try {
+            frozen = Array.AsReadOnly(selected.Select(static recall =>
+                recall ?? throw new InvalidOperationException(
+                    "Galatea player-turn recall provider returned a null recall."
+                )
+            ).ToArray());
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException
+            && GalateaExceptionClassifier.IsNonFatal(exception)
+        ) {
+            WriteMemoRecallDiagnostic(GalateaMemoRecallDiagnostic.Failed(
+                GalateaMemoRecallFailureStage.ProviderResultValidation,
+                GalateaMemoRecallFailureClassifier.Classify(exception)
+            ));
+            throw;
+        }
+        if (planning is not null) {
+            WriteMemoRecallDiagnostic(
+                GalateaMemoRecallDiagnostic.Completed(planning)
+            );
+        }
+        return frozen;
+    }
+
+    private static GalateaMemoRecallStageException
+        InvalidRecallProviderResult(string message) => new(
+            GalateaMemoRecallFailureStage.ProviderResultValidation,
+            GalateaMemoRecallFailureKind.ContractViolation,
+            new InvalidOperationException(message)
+        );
+
+    private void WriteMemoRecallDiagnostic(
+        GalateaMemoRecallDiagnostic diagnostic
+    ) {
+        string serialized;
+        try {
+            serialized = GalateaMemoRecallDiagnosticRenderer.Render(
+                diagnostic
+            );
+        }
+        catch {
+            return;
+        }
+
+        try {
+            MemoRecallDiagnosticSinkForTest?.Invoke(serialized);
+        }
+        catch {
+            // Diagnostics must never affect recall or turn recovery.
+        }
+
+        try {
+            bool failed = diagnostic.Outcome
+                is GalateaMemoRecallDiagnosticOutcome.Failed;
+            DebugUtil.Log(
+                failed ? DebugLevel.Warning : DebugLevel.Info,
+                "Galatea.MemoRecall",
+                serialized,
+                exception: null,
+                eventKind: failed
+                    ? DebugEventKind.Failure
+                    : diagnostic.Outcome
+                        is GalateaMemoRecallDiagnosticOutcome.NotScheduled
+                        ? DebugEventKind.Skip
+                        : DebugEventKind.Success
+            );
+        }
+        catch {
+            // Diagnostics must never affect recall or turn recovery.
+        }
     }
 
     private async ValueTask<GalateaPlayerTurnRecallContext>

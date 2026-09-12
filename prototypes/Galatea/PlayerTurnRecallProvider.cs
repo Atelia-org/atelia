@@ -100,6 +100,14 @@ internal interface IGalateaPlayerTurnRecallProvider {
     );
 }
 
+internal interface IGalateaPlayerTurnRecallPlanningProvider
+    : IGalateaPlayerTurnRecallProvider {
+    ValueTask<GalateaMemoRecallPlanningResult> PlanRecallsAsync(
+        GalateaPlayerTurnRecallRequest request,
+        CancellationToken cancellationToken
+    );
+}
+
 internal delegate IGalateaPlayerTurnRecallProvider
     GalateaPlayerTurnRecallProviderFactory(
         GalateaUserConfig user,

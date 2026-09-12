@@ -1,11 +1,12 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.MemoPod;
+using System.Runtime.ExceptionServices;
 
 namespace Atelia.Galatea.Server.CharacterMemory;
 
 internal sealed class GalateaDefaultMemoPodRecallProvider
-    : IGalateaPlayerTurnRecallProvider {
+    : IGalateaPlayerTurnRecallPlanningProvider {
     private readonly CharacterNoteDefaultPodReconciler _reconciler;
     private readonly CompletionConnectionConfig _connection;
     private readonly Func<ICompletionClient> _completionClientAccessor;
@@ -37,21 +38,60 @@ internal sealed class GalateaDefaultMemoPodRecallProvider
         GalateaPlayerTurnRecallRequest request,
         CancellationToken cancellationToken
     ) {
+        try {
+            GalateaMemoRecallPlanningResult result = await PlanRecallsAsync(
+                    request,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+            return result.Recalls;
+        }
+        catch (GalateaMemoRecallStageException exception) {
+            ExceptionDispatchInfo.Capture(exception.InnerException!).Throw();
+            throw;
+        }
+    }
+
+    public async ValueTask<GalateaMemoRecallPlanningResult>
+        PlanRecallsAsync(
+        GalateaPlayerTurnRecallRequest request,
+        CancellationToken cancellationToken
+    ) {
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        string query = GalateaMemoRecallQueryRenderer.Render(
-            request.User.CharacterName,
-            request.CurrentObservation,
-            request.Context
-        );
-        ICompletionClient completionClient =
-            _completionClientAccessor()
-            ?? throw new InvalidOperationException(
-                "The Memo recall Completion client accessor returned null."
+        string query;
+        try {
+            query = GalateaMemoRecallQueryRenderer.Render(
+                request.User.CharacterName,
+                request.CurrentObservation,
+                request.Context
             );
-        MemoRecallResult result =
-            await _reconciler.RecallSettledDefaultPodAsync(
+        }
+        catch (Exception exception) when (ShouldClassify(exception)) {
+            throw Classified(
+                GalateaMemoRecallFailureStage.QueryRendering,
+                exception
+            );
+        }
+
+        ICompletionClient completionClient;
+        try {
+            completionClient = _completionClientAccessor()
+                ?? throw new InvalidOperationException(
+                    "The Memo recall Completion client accessor returned null."
+                );
+        }
+        catch (Exception exception) when (ShouldClassify(exception)) {
+            throw Classified(
+                GalateaMemoRecallFailureStage.ClientResolution,
+                exception
+            );
+        }
+
+        MemoRecallResult result;
+        try {
+            result = await _reconciler.RecallSettledDefaultPodAsync(
                     completionClient,
                     _connection.ModelId,
                     query,
@@ -59,17 +99,149 @@ internal sealed class GalateaDefaultMemoPodRecallProvider
                     cancellationToken
                 )
                 .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (ShouldClassify(exception)) {
+            throw Classified(
+                GalateaMemoRecallFailureStage.SelectorExecution,
+                exception
+            );
+        }
 
-        return GalateaDefaultMemoPodRecallPlanner.Select(
-            request,
-            CharacterNoteDefaultPodV1.PodId,
-            result.Memos
-        );
+        try {
+            return GalateaDefaultMemoPodRecallPlanner.Plan(
+                request,
+                CharacterNoteDefaultPodV1.PodId,
+                result.Memos
+            );
+        }
+        catch (Exception exception) when (ShouldClassify(exception)) {
+            throw Classified(
+                GalateaMemoRecallFailureStage.PlannerEvaluation,
+                exception
+            );
+        }
     }
+
+    private static bool ShouldClassify(Exception exception) =>
+        exception is not OperationCanceledException
+        && GalateaExceptionClassifier.IsNonFatal(exception);
+
+    private static GalateaMemoRecallStageException Classified(
+        GalateaMemoRecallFailureStage stage,
+        Exception exception
+    ) => new(
+        stage,
+        GalateaMemoRecallFailureClassifier.Classify(exception),
+        exception
+    );
+}
+
+internal enum GalateaMemoRecallPlanningOutcome {
+    NoMatch,
+    AllFiltered,
+    Selected,
+}
+
+internal sealed class GalateaMemoRecallPlanningResult {
+    internal GalateaMemoRecallPlanningResult(
+        GalateaMemoRecallPlanningOutcome outcome,
+        IReadOnlyList<PlayerTurnRecall> recalls,
+        int nominatedCount,
+        int evaluatedCount,
+        int missingTitleSkipCount,
+        int originVisibleSkipCount,
+        int priorRecallSkipCount,
+        int observationBudgetSkipCount
+    ) {
+        ArgumentNullException.ThrowIfNull(recalls);
+        int[] counts = [
+            nominatedCount,
+            evaluatedCount,
+            missingTitleSkipCount,
+            originVisibleSkipCount,
+            priorRecallSkipCount,
+            observationBudgetSkipCount,
+        ];
+        if (counts.Any(static count => count < 0)) {
+            throw new ArgumentOutOfRangeException(
+                nameof(nominatedCount),
+                "Memo recall planning counts must be non-negative."
+            );
+        }
+        if (recalls.Count > 1) {
+            throw new ArgumentOutOfRangeException(
+                nameof(recalls),
+                "Memo recall planning must select zero or one recall."
+            );
+        }
+        int selectedCount = recalls.Count;
+        int skipCount = checked(
+            missingTitleSkipCount
+                + originVisibleSkipCount
+                + priorRecallSkipCount
+                + observationBudgetSkipCount
+        );
+        if (evaluatedCount != checked(skipCount + selectedCount)) {
+            throw new ArgumentException(
+                "Evaluated Memo recall candidates must equal first-hit skips plus selections.",
+                nameof(evaluatedCount)
+            );
+        }
+        if (evaluatedCount > nominatedCount) {
+            throw new ArgumentException(
+                "Evaluated Memo recall candidates cannot exceed nominations.",
+                nameof(evaluatedCount)
+            );
+        }
+        bool validOutcome = outcome switch {
+            GalateaMemoRecallPlanningOutcome.NoMatch =>
+                nominatedCount == 0 && selectedCount == 0,
+            GalateaMemoRecallPlanningOutcome.AllFiltered =>
+                nominatedCount > 0
+                && evaluatedCount == nominatedCount
+                && selectedCount == 0,
+            GalateaMemoRecallPlanningOutcome.Selected => selectedCount == 1,
+            _ => false,
+        };
+        if (!validOutcome) {
+            throw new ArgumentException(
+                "Memo recall planning outcome does not match its counts.",
+                nameof(outcome)
+            );
+        }
+
+        Outcome = outcome;
+        Recalls = recalls;
+        NominatedCount = nominatedCount;
+        EvaluatedCount = evaluatedCount;
+        SelectedCount = selectedCount;
+        MissingTitleSkipCount = missingTitleSkipCount;
+        OriginVisibleSkipCount = originVisibleSkipCount;
+        PriorRecallSkipCount = priorRecallSkipCount;
+        ObservationBudgetSkipCount = observationBudgetSkipCount;
+        UnexaminedCount = nominatedCount - evaluatedCount;
+    }
+
+    internal GalateaMemoRecallPlanningOutcome Outcome { get; }
+    internal IReadOnlyList<PlayerTurnRecall> Recalls { get; }
+    internal int NominatedCount { get; }
+    internal int EvaluatedCount { get; }
+    internal int SelectedCount { get; }
+    internal int MissingTitleSkipCount { get; }
+    internal int OriginVisibleSkipCount { get; }
+    internal int PriorRecallSkipCount { get; }
+    internal int ObservationBudgetSkipCount { get; }
+    internal int UnexaminedCount { get; }
 }
 
 internal static class GalateaDefaultMemoPodRecallPlanner {
     internal static IReadOnlyList<PlayerTurnRecall> Select(
+        GalateaPlayerTurnRecallRequest request,
+        MemoPodId podId,
+        IReadOnlyList<Memo> memos
+    ) => Plan(request, podId, memos).Recalls;
+
+    internal static GalateaMemoRecallPlanningResult Plan(
         GalateaPlayerTurnRecallRequest request,
         MemoPodId podId,
         IReadOnlyList<Memo> memos
@@ -85,9 +257,20 @@ internal static class GalateaDefaultMemoPodRecallPlanner {
         _ = PlayerTurnObservationEnvelope.Wrap(
             request.CurrentObservation
         );
+        int evaluatedCount = 0;
+        int missingTitleSkipCount = 0;
+        int originVisibleSkipCount = 0;
+        int priorRecallSkipCount = 0;
+        int observationBudgetSkipCount = 0;
         foreach (Memo memo in memos) {
+            evaluatedCount = checked(evaluatedCount + 1);
             ArgumentNullException.ThrowIfNull(memo);
-            if (memo.Title is null) { continue; }
+            if (memo.Title is null) {
+                missingTitleSkipCount = checked(
+                    missingTitleSkipCount + 1
+                );
+                continue;
+            }
 
             string sourceId = GalateaMemoRecallSourceIdCodec.Format(
                 podId,
@@ -100,9 +283,15 @@ internal static class GalateaDefaultMemoPodRecallPlanner {
             if (request.Context.CharacterNoteOriginBarrier.Contains(
                     podId,
                     memo.Id)) {
+                originVisibleSkipCount = checked(
+                    originVisibleSkipCount + 1
+                );
                 continue;
             }
             if (request.Context.RecallBarrier.Contains(entry)) {
+                priorRecallSkipCount = checked(
+                    priorRecallSkipCount + 1
+                );
                 continue;
             }
 
@@ -122,10 +311,33 @@ internal static class GalateaDefaultMemoPodRecallPlanner {
                     "rendered",
                     StringComparison.Ordinal
                 )) {
+                observationBudgetSkipCount = checked(
+                    observationBudgetSkipCount + 1
+                );
                 continue;
             }
-            return Array.AsReadOnly([recall]);
+            return new GalateaMemoRecallPlanningResult(
+                GalateaMemoRecallPlanningOutcome.Selected,
+                Array.AsReadOnly([recall]),
+                memos.Count,
+                evaluatedCount,
+                missingTitleSkipCount,
+                originVisibleSkipCount,
+                priorRecallSkipCount,
+                observationBudgetSkipCount
+            );
         }
-        return Array.AsReadOnly(Array.Empty<PlayerTurnRecall>());
+        return new GalateaMemoRecallPlanningResult(
+            memos.Count == 0
+                ? GalateaMemoRecallPlanningOutcome.NoMatch
+                : GalateaMemoRecallPlanningOutcome.AllFiltered,
+            Array.AsReadOnly(Array.Empty<PlayerTurnRecall>()),
+            memos.Count,
+            evaluatedCount,
+            missingTitleSkipCount,
+            originVisibleSkipCount,
+            priorRecallSkipCount,
+            observationBudgetSkipCount
+        );
     }
 }

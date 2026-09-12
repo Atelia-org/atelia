@@ -25,6 +25,8 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         await using var host = CreateHost(main, recall);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
+        var diagnostics = new List<string>();
+        service.MemoRecallDiagnosticSinkForTest = diagnostics.Add;
         UserSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
@@ -77,8 +79,25 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
                 ? parsed
                 : throw new Xunit.Sdk.XunitException(
                     "The production turn did not persist a canonical Observation."
-                );
+        );
         Assert.Empty(observation.Recalls);
+        string diagnostic = Assert.Single(diagnostics);
+        using JsonDocument diagnosticJson = JsonDocument.Parse(diagnostic);
+        JsonElement diagnosticRoot = diagnosticJson.RootElement;
+        Assert.Equal("no-match",
+            diagnosticRoot.GetProperty("outcome").GetString());
+        Assert.Equal(0,
+            diagnosticRoot.GetProperty("nominatedCount").GetInt32());
+        Assert.Equal(0,
+            diagnosticRoot.GetProperty("evaluatedCount").GetInt32());
+        Assert.Equal(0,
+            diagnosticRoot.GetProperty("selectedCount").GetInt32());
+        Assert.Equal(0,
+            diagnosticRoot.GetProperty("unexaminedCount").GetInt32());
+        AssertDiagnosticIsBodyFree(
+            diagnostic,
+            "寻找和旧城区有关的记忆"
+        );
     }
 
     [Theory]
@@ -106,6 +125,8 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         await using var host = CreateHost(main, recall);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
+        var diagnostics = new List<string>();
+        service.MemoRecallDiagnosticSinkForTest = diagnostics.Add;
         UserSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
@@ -217,6 +238,21 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
                     .TryGetProperty("playerText", out _));
             }
         }
+        Assert.Contains(diagnostics, static diagnostic => {
+            using JsonDocument parsed = JsonDocument.Parse(diagnostic);
+            return string.Equals(
+                parsed.RootElement.GetProperty("outcome").GetString(),
+                "selected",
+                StringComparison.Ordinal
+            );
+        });
+        Assert.All(diagnostics, diagnostic => AssertDiagnosticIsBodyFree(
+            diagnostic,
+            exactText,
+            title,
+            "那扇蓝门后有什么？",
+            "继续使用刚才的记忆"
+        ));
     }
 
     private static async Task<GalateaLiveTurn> RunTypedTurnAsync(
@@ -281,20 +317,24 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
 
     [Fact]
     public async Task ConfiguredSelectorFailurePreventsMainCompletion() {
+        const string syntheticContext = "SYNTHETIC-CONTEXT-DO-NOT-LOG";
+        const string syntheticFailure = "SYNTHETIC-FAILURE-DO-NOT-LOG";
         var main = new MainCompletionClient();
         var recall = new RecallCompletionClient {
-            Failure = new IOException("selector unavailable")
+            Failure = new IOException(syntheticFailure)
         };
         await using var host = CreateHost(main, recall);
         GalateaHostService service = host.Factory.Services
             .GetRequiredService<GalateaHostService>();
+        var diagnostics = new List<string>();
+        service.MemoRecallDiagnosticSinkForTest = diagnostics.Add;
         UserSessionHost session = await service.GetSessionAsync(
             "alice",
             CancellationToken.None
         );
         GalateaLiveTurn turn = service.StartTurn(
             session,
-            "继续",
+            syntheticContext,
             new GalateaTurnOptions("test")
         );
 
@@ -314,6 +354,96 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             session.Engine.InspectRuntimeRecoveryRequirements().Phase);
         Assert.Single(recall.Requests);
         Assert.Empty(main.Requests);
+        string diagnostic = Assert.Single(diagnostics);
+        using JsonDocument diagnosticJson = JsonDocument.Parse(diagnostic);
+        JsonElement diagnosticRoot = diagnosticJson.RootElement;
+        Assert.Equal("failed",
+            diagnosticRoot.GetProperty("outcome").GetString());
+        Assert.Equal("selector-execution",
+            diagnosticRoot.GetProperty("failureStage").GetString());
+        Assert.Equal("provider-failure",
+            diagnosticRoot.GetProperty("failureKind").GetString());
+        Assert.Equal(JsonValueKind.Null,
+            diagnosticRoot.GetProperty("nominatedCount").ValueKind);
+        AssertDiagnosticIsBodyFree(
+            diagnostic,
+            syntheticContext,
+            syntheticFailure
+        );
+    }
+
+    [Fact]
+    public async Task DisabledProviderReportsNotScheduledWithoutRecallDispatch() {
+        var main = new MainCompletionClient {
+            RequireRecallBeforeDispatch = false,
+        };
+        var recall = new RecallCompletionClient();
+        await using var host = CreateHost(
+            main,
+            recall,
+            memoRecallEnabled: false
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        var diagnostics = new List<string>();
+        service.MemoRecallDiagnosticSinkForTest = diagnostics.Add;
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "ordinary synthetic input",
+            new GalateaTurnOptions("test")
+        );
+
+        await service.RunTurnAsync(session, turn, CancellationToken.None)
+            .WaitAsync(Deadline);
+        service.FinishTurn(session, turn);
+
+        Assert.Empty(recall.Requests);
+        Assert.Single(main.Requests);
+        string diagnostic = Assert.Single(diagnostics);
+        using JsonDocument diagnosticJson = JsonDocument.Parse(diagnostic);
+        JsonElement diagnosticRoot = diagnosticJson.RootElement;
+        Assert.Equal("not-scheduled",
+            diagnosticRoot.GetProperty("outcome").GetString());
+        Assert.Equal("provider-disabled",
+            diagnosticRoot.GetProperty("notScheduledReason").GetString());
+        Assert.Equal(JsonValueKind.Null,
+            diagnosticRoot.GetProperty("selectedCount").ValueKind);
+        AssertDiagnosticIsBodyFree(
+            diagnostic,
+            "ordinary synthetic input"
+        );
+    }
+
+    [Fact]
+    public async Task DiagnosticSinkFailureDoesNotChangeNoMatchTurn() {
+        var main = new MainCompletionClient();
+        var recall = new RecallCompletionClient();
+        await using var host = CreateHost(main, recall);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        service.MemoRecallDiagnosticSinkForTest = _ =>
+            throw new InvalidOperationException("synthetic sink failure");
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        GalateaLiveTurn turn = service.StartTurn(
+            session,
+            "continue after diagnostic failure",
+            new GalateaTurnOptions("test")
+        );
+
+        await service.RunTurnAsync(session, turn, CancellationToken.None)
+            .WaitAsync(Deadline);
+        service.FinishTurn(session, turn);
+
+        Assert.Single(recall.Requests);
+        Assert.Single(main.Requests);
+        Assert.Equal("completed", turn.Status);
     }
 
     [Fact]
@@ -377,7 +507,8 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         MainCompletionClient main,
         RecallCompletionClient recall,
         bool maintenanceMode = false,
-        IReadOnlyList<string>? serverAgentUserIds = null
+        IReadOnlyList<string>? serverAgentUserIds = null,
+        bool memoRecallEnabled = true
     ) {
         main.RecallDispatchCount = () => recall.Requests.Count;
         var factory = new RoutingClientFactory(new Dictionary<
@@ -398,9 +529,40 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             ],
             selectableConnectionIds: ["test"],
             characterNoteExtractorConnectionId: "recall",
-            memoRecallConnectionId: "recall",
+            memoRecallConnectionId: memoRecallEnabled ? "recall" : null,
             delegateTransport: new CompletedDelegateTransport()
         );
+    }
+
+    private static void AssertDiagnosticIsBodyFree(
+        string diagnostic,
+        params string[] forbiddenValues
+    ) {
+        string[] allowedProperties = [
+            "event",
+            "schemaVersion",
+            "outcome",
+            "notScheduledReason",
+            "failureStage",
+            "failureKind",
+            "nominatedCount",
+            "evaluatedCount",
+            "selectedCount",
+            "missingTitleSkipCount",
+            "originVisibleSkipCount",
+            "priorRecallSkipCount",
+            "observationBudgetSkipCount",
+            "unexaminedCount",
+        ];
+        using JsonDocument parsed = JsonDocument.Parse(diagnostic);
+        foreach (JsonProperty property in parsed.RootElement
+                     .EnumerateObject()) {
+            Assert.Contains(property.Name, allowedProperties);
+        }
+        foreach (string forbidden in forbiddenValues) {
+            Assert.DoesNotContain(forbidden, diagnostic,
+                StringComparison.Ordinal);
+        }
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition) {
@@ -485,6 +647,7 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
         public string ApiSpecId => "test-v1";
         internal List<CompletionRequest> Requests { get; } = [];
         internal Func<int>? RecallDispatchCount { get; set; }
+        internal bool RequireRecallBeforeDispatch { get; init; } = true;
 
         public Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
@@ -492,10 +655,12 @@ public sealed class GalateaMemoRecallProductionVerticalTests {
             CancellationToken cancellationToken = default
         ) {
             cancellationToken.ThrowIfCancellationRequested();
-            Assert.True(
-                RecallDispatchCount?.Invoke() > Requests.Count,
-                "Memo recall selector must complete before each main dispatch."
-            );
+            if (RequireRecallBeforeDispatch) {
+                Assert.True(
+                    RecallDispatchCount?.Invoke() > Requests.Count,
+                    "Memo recall selector must complete before each main dispatch."
+                );
+            }
             Requests.Add(request);
             string reply = _replies.Dequeue();
             observer?.OnTextDelta(reply);
