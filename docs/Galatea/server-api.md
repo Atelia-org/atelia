@@ -31,6 +31,7 @@ matched V1 endpoint 的 failure 只有 `turn-busy` 使用 `{code,error,turnId}`�
 | GET | `/api/v1/recap-cadence-progress` | 200；独立 Timeline/Cadence HistoryLoad telemetry |
 | GET | `/api/v1/mailbox/status` | 200；delegation store 的只读聚合状态 |
 | GET | `/api/v1/agent/status` | 200；server Agent loop 的只读状态 |
+| POST | `/api/v1/agent/retry-admission` | strict `{}`；200 Agent 状态，或 409 busy/具体未完成原因；不创建主线轮次 |
 | GET | `/api/v1/chat/turns/current` | 200；current/recovery 状态 |
 | POST | `/api/v1/chat/turns` | 202 `{turnId}`；接纳 fresh player turn |
 | POST | `/api/v1/chat/turns/resume` | 202 `{turnId}`；在 exact recovery head 恢复 |
@@ -118,10 +119,24 @@ Stop 没有 request body。`turnId` 必须使用接纳响应或 current 返回�
 `GET /api/v1/agent/status` 返回 exact object：
 
 ```text
-{state,connectionId,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code}
+{state,connectionId,nextActivationAtUnixTimeMilliseconds,lastActivationAtUnixTimeMilliseconds,code,admissionFailure}
 ```
 
-它不 attach、不 reconcile、不领取 lease、不调用 provider、不等待长 turn。state 为 `disabled|starting|waiting|autonomy-paused|blocked|running|maintenance|stopping`；`connectionId` 显示 enrolled user 的 default connection，时间字段只作诊断，blocked 的 `code` 解释阻断原因。响应带 `Cache-Control: no-store`。
+它不 attach、不 reconcile、不领取 lease、不调用 provider、不等待长 turn。state 为 `disabled|starting|waiting|autonomy-paused|blocked|running|maintenance|stopping`；`connectionId` 显示 enrolled user 的 default connection，时间字段只作诊断，blocked 的 `code` 解释阻断原因。`admissionFailure`为nullable `{code,error}`，在`AUTOMATIC_ADMISSION_FAILED`时可补充具体处理失败；没有细节时为null，不能据此推断未发生失败。它只提供受限的错误类别与说明，不返回provider正文或任意异常消息。响应带 `Cache-Control: no-store`。
+
+`POST /api/v1/agent/retry-admission`接受strict `{}`，遵守同一认证、JSON与Maintenance写操作guard；维护模式返回503。它尝试立即取得本用户`TurnLock`，只重试旧的未完成admission处理，不创建角色轮次、不领取新轮次的cutoff。旧Action尚未capture时，此操作可能调用extractor provider；已capture内容沿原有恢复流程处理。
+
+成功返回200及上述Agent状态；没有admission失败时只返回当前状态。200不承诺已经开始自主活动，也不清除独立的reply失败暂停。已有运行/恢复需求仍须按其入口处理，不能借此跳过runtime recovery。忙碌返回409 `{code:"turn-busy",error,turnId}`；提取、存储、会话未就绪或恢复未完成返回409 `{code,error}`，保留阻断和具体原因。它不把失败写成零Note结果，也不在失败后推进角色head。示例：
+
+```js
+const retry = await fetch("/api/v1/agent/retry-admission", {
+  method: "POST",
+  credentials: "same-origin",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({}),
+}).then(async response => ({ status: response.status, body: await response.json() }));
+console.log(retry);
+```
 
 `GET /api/v1/mailbox/status` 返回：
 

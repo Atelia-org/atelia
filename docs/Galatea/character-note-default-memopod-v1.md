@@ -10,7 +10,7 @@
 
 本文保留Default Pod V1的原始apply设计与已完成工作包记录。当前实现另包含DerivedInfo V2、Memo recall与
 [Automatic memory闭环](automatic-memory-work-order.md)：CharacterMemory SQLite已为V3，三种typed trigger共享
-召回和durable receipt投递。下面的receipt现行条款已更新；§10–12的V1阶段non-goals/验收历史不再表示当前缺口。
+召回和durable receipt投递。[Note 忠实代写](character-note-transcription.md)进一步放宽capture前的文字提取：不要求叙事原文逐字符匹配。下面的提取与receipt现行条款已更新；§10–12的V1阶段non-goals/验收历史不再表示当前缺口。
 
 ## 一句话决策
 
@@ -30,7 +30,7 @@ durable extraction capture
 
 ## 1. 用户可见产品形状
 
-角色继续通过叙事Action明确提交保存请求。主线角色模型不直接调用Memo工具，也不提供`PodId`、分类、标签或`MemoId`。
+角色继续通过叙事Action表达当前保存请求与完整内容，不需要专门的提交句式。Extractor忠实整理文字，可以归整多段叙述，但不能增删事实、改变否定、条件或不确定性。主线角色模型不直接调用Memo工具，也不提供`PodId`、分类、标签或`MemoId`。
 
 ```text
 terminal Action
@@ -43,7 +43,7 @@ terminal Action
   -> Delivered
 ```
 
-成功回执只证明本次请求对应的ExactText已经进入Default MemoPod的committed Frozen文档。它不承诺：
+成功回执只证明本次采纳的Note内容已经进入Default MemoPod的committed Frozen文档。持久层`ExactText`表示采纳后精确保留的正文，不表示它是叙事Action的逐字子串。它不承诺：
 
 - 已分类、生成Title/Gist/Summary或建立embedding；
 - 本条Memo一定会被主线程召回或已经被角色理解；
@@ -76,7 +76,7 @@ V1阶段所有Note都进入Default Pod。未来出现分类Pod后，Default可�
 | SQLite V3 receipt outbox | 冻结notice、exact Observation绑定与持久化投递状态 | provider接收证明、角色认知或Memo corpus |
 | Debug log / SessionJournal receipt text | development evidence / narrative history副本 | replay、migration或Memo apply输入 |
 
-SQLite为了crash recovery可以永久保存captured requested ExactText；这份副本的authority问题是“角色提交了什么请求”，不是“当前Pod有哪些active Memo”。`EvidenceQuote`只用于capture前source-grounding validation，不进入store。V1不提供删除或修订，因此request evidence与active corpus不会产生lifecycle分叉；未来一旦加入Remove/correction，必须重新审视retention与current-state projection，不能自动把capture表升级成第二份Memo corpus。
+SQLite为了crash recovery可以永久保存captured requested ExactText；这份副本的authority问题是“首次采纳了哪些保存正文”，不是“当前Pod有哪些active Memo”。当前`CharacterNoteIntent`只含`Text`（JSON `text`）；不要求`EvidenceQuote`，也不执行正文的ordinal substring检查。语义忠实由extractor判断，runtime验证非空、Unicode与数量/字节上限。持久格式保持不变。V1不提供删除或修订，因此capture与active corpus不会产生lifecycle分叉；未来一旦加入Remove/correction，必须重新审视retention与current-state projection，不能自动把capture表升级成第二份Memo corpus。
 
 ## 4. Stable identity
 
@@ -387,22 +387,22 @@ V6把session、delegation、character-memory与optional call-log路径关系收�
 
 启用Character Note binding时，main prompt从development request appendix hard-cut为真实保存Quick Start：
 
-- 教角色明确提交完整Note原文；
+- 教角色用自然语言表达当前保存请求与完整Note内容，不要求固定格式或提交仪式；
 - 明确只有后续`Note 保存回执`证明保存成功；
 - 不承诺分类、metadata enrichment或recall。
 
-Extractor semantic contract从development request语义升级；tool name与字段保持不变，`ContractId`自然变化。
+V1当时从development request升级时保留了tool字段；当前[忠实代写合同](character-note-transcription.md)保留tool name，字段已收敛为`text`，`ContractId`随语义与tool合同变化。历史capture仍用首次采纳内容，不因新合同重提取。
 
 `PlayerTurnNotice.NoteRequestReceipt` hard-cut为`NoteSaveReceipt`：
 
 - heading：`Note 保存回执`；
 - info string：`character-note-save-receipt`；
-- body明确`已成功保存到默认MemoPod`，正常逐字列出ExactText；病态fence-heavy正文则明确标注展示预算限制，只列Source Action与Memo IDs；
+- body明确`已成功保存到默认MemoPod`，以“已保存的 Note 内容”正常逐字列出采纳后的ExactText；病态fence-heavy正文则明确标注展示预算限制，只列Source Action与Memo IDs；
 - 仍然每轮最多一条、必须是最后notice、legacy dialect拒绝；
 - 投递由SQLite V3 outbox拥有；三个trigger都至多一条末尾receipt，notice总上限16。reply cutoff为pending receipt预留一个槽位与实际预算。
 
 完整回执与compact fallback都必须能容纳任意合法player text和一条最大reply，保证保存通知不会因为后续Ready reply
-持续到达而永久饥饿；optional recall只使用receipt之后的剩余Observation预算。fallback不截断原文冒充完整展示，
+持续到达而永久饥饿；optional recall只使用receipt之后的剩余Observation预算。fallback不截断保存正文冒充完整展示，
 不承诺metadata已补全或记忆已召回。
 
 不保留旧heading、旧info string或旧strong type compatibility reader；项目尚未发布，及时重构优于双协议。2026-08-30实施前只读审计两个configured本机SessionJournal，对旧`## Note 请求回执`heading的binary/text命中均为0，因此当前没有需要迁移或保留legacy reader的durable V0 Observation证据。

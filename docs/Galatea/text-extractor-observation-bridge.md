@@ -34,7 +34,7 @@ Mailbox specialization：
 
 Character Memory specialization：
 
-- [`CharacterNoteIntent` / `CharacterNoteExtractor`](../../prototypes/Galatea/CharacterMemory/CharacterNoteExtractor.cs)：保守提取角色本人已明确完成提交、且正文exact source-grounded的长期Note保存请求；仅声称已经保存不构成提交。
+- [`CharacterNoteIntent` / `CharacterNoteExtractor`](../../prototypes/Galatea/CharacterMemory/CharacterNoteExtractor.cs)：识别角色本人当前明确的长期Note保存请求，忠实整理为单字段`Text`；不要求专门提交句式或原文子串匹配，仅声称已经保存不构成新请求。
 - [`CharacterNoteDefaultPodReconciler`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDefaultPodReconciler.cs)：durable capture/zero tombstone、Default MemoPod plan/apply与restart/admission恢复owner。
 - [`CharacterNoteDerivedInfoEnricher`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDerivedInfoEnricher.cs)：在ExactText已保存后，基于source turn的raw Observation、visible Action与ordered Note targets生成完整Title/Gist/Summary batch。
 - [`CharacterNoteDerivedInfoPump`](../../prototypes/Galatea/CharacterMemory/CharacterNoteDerivedInfoPump.cs)：session-owned非阻塞调度器；只在context materialization时短暂持有`TurnLock`，provider调用与Pod apply在锁外执行。
@@ -80,8 +80,9 @@ admission recovery即使settle了off-lineage source，也仍有真实保存事�
 这一路的语义 authority 是分层的：
 
 - “角色是否真的发送了邮件”“邮件正文是什么”“recipient 是否来自叙事 Action”由 extractor LLM 按 code-owned prompt 保守判断。
+- Character Note同样由extractor判断当前保存意图及归属，并忠实整理正文；可以归整多段表达，无需固定提交句式或逐字子串。事实、否定、条件与不确定性必须保留，不能补写或摘要。其artifact只有`text`；详情见[Note 忠实代写](character-note-transcription.md)。
 - runtime 只证明 artifact 的结构、bounds、route policy、durable identity 与幂等边界。
-- `evidenceQuote` 是 extractor provenance，不是 runtime 对 raw Action 的机械 source-grounding 证明。
+- Mail的`evidenceQuote`是extractor provenance，不是runtime对raw Action的机械source-grounding证明；Note不再携带该字段。
 
 ### 2. runtime 到角色：复合 Observation 注入
 
@@ -101,7 +102,7 @@ inbound与recovery不新领取。runtime先附receipt、再调用共享Memo sele
 final canonical Observation bytes在SendAsync前绑定到exact base head。raw proof为NotAppended时回到Pending；
 InProgress或Terminal即标记Delivered，含义仅为Observation已durable append，不是provider已收到或角色已理解。
 冲突证据fail closed。abandon/rewind前先结算bound receipt；Delivered之后即使rewind也不重发。
-receipt只证明原文已保存到默认MemoPod，不承诺分类、metadata补全或召回；pending在pre-dispatch failure/restart后保留。
+receipt只证明采纳的Note内容已保存到默认MemoPod，不承诺与叙事Action逐字符一致，也不承诺分类、metadata补全或召回；pending在pre-dispatch failure/restart后保留。
 
 这一路的安全/耐久边界是：
 
@@ -116,7 +117,7 @@ receipt只证明原文已保存到默认MemoPod，不承诺分类、metadata补�
 
 已经落地的映射：
 
-- note save intent：仅当对应binding非`null`时，code-owned主prompt appendix才告诉角色如何提交长期Note完整原文；runtime用`CharacterNoteIntent`保守提取，经durable capture/apply写入默认MemoPod，并在新的Applied事务中原子建立honest保存回执outbox。
+- note save intent：仅当对应binding非`null`时，code-owned主prompt appendix才告诉角色如何表达长期Note保存请求与完整内容；runtime用单字段`CharacterNoteIntent.Text`忠实提取，经durable capture/apply精确保留采纳后的正文，并在新的Applied事务中原子建立honest保存回执outbox。
 - note derived-info enrichment：ExactText Applied后由CharacterMemory V3建立DerivedInfo Pending work；background pump从SessionJournal exact source重建上下文，在锁外调用独立enricher，并用Prepared/Planned/base-target recovery把Title/Gist/Summary写回同一Memo。失败保留Pending，不改变保存回执事实。
 - note origin suppression：`CharacterNoteIntent`不携带Action identity；runtime从canonical visible Action派生address/hash/byte count并持久化。三个fresh trigger从同一provider-visible raw context重建`CharacterNoteOriginBarrier`，在来源Action仍可见时阻止对应typed Memo candidate重复注入。
 

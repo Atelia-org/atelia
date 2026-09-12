@@ -29,7 +29,7 @@ future Observation     -> visible recall result
 - `RecallEntry` 只表示 anchor；真正渲染进 Observation 的 payload 是 `PlayerTurnRecall`，携带 `RecallEntry` 加上本次注入的 visible text。
 - Barrier 的输入是本次 Completion provider-visible raw Observation 后缀，而不是 browser recent list，也不是整条 SessionJournal 历史。V0 已在 `GalateaServices` 内通过同一轮 RecapGrid online candidate source 构造。
 - V0 barrier 只做 exact-key de-dupe，不做 `MemoExactText covers MemoSummary covers MemoGist` 这种 dominance 推理。
-- `CharacterNoteIntent` 仍只表达模型从角色叙事中提取出的 `ExactText` / `EvidenceQuote`；Action address、visible-text SHA-256 与 UTF-8 byte count 必须由 runtime 派生并由 CharacterMemory 持久化，不能成为模型自报字段。
+- `CharacterNoteIntent`只表达模型从角色叙事中忠实整理出的`Text`（JSON `text`），不再携带`EvidenceQuote`或要求正文是原文子串；当前明确保存请求无需专门提交句式。首次采纳后正文以持久层`ExactText`精确保留，详见[Note 忠实代写](character-note-transcription.md)。Action address、visible-text SHA-256与UTF-8 byte count仍由runtime派生并由CharacterMemory持久化，不能成为模型自报字段。
 - `CharacterNoteOriginBarrier` 是与 `RecallBarrier` 并列的第二道屏障：前者阻止来源 Action 仍直接可见的 Character Note Memo，后者阻止已经作为 canonical recall block 注入过的 exact recall anchor。
 - 首个真实 recall MVP 应优先支持 `MemoExactText`，但 `Title` 是所有 Memo recall 的硬 eligibility 条件：正文已入库而 Title 尚未补齐的 Memo 暂不召回，不用占位标题冒充完成。实施顺序仍是先 ExactText、后 Gist/Summary，不改变三档渐进式可见粒度的长期设计。
 
@@ -68,7 +68,7 @@ MemoPod 不负责：
 `TextExtractor` 解决的是“角色到 runtime”的方向：角色继续用叙事化 Action 行动，runtime 在 turn 边界外读取 visible Action text，提取 typed artifact。这个模式避免要求主线角色模型显式进入 Assistant / Agent / tool-call 行为模式，减少出戏风险。
 
 Mailbox 已经证明这个方向可行：`OutboundMailExtractor`从角色叙事Action中提取`SendMailIntent`。现行
-`CharacterNoteIntent` / `CharacterNoteExtractor`已复用该模式，保守提取角色明确完成提交的长期Note保存请求；对应binding
+`CharacterNoteIntent` / `CharacterNoteExtractor`已复用该模式，识别角色当前明确的长期Note保存请求并忠实整理内容；对应binding
 非`null`时主prompt才追加保存Quick Start。提取结果本身不表示保存；只有Default MemoPod真正durable Applied
 settlement才在同一SQLite事务建立保存回执，不依赖后续AppliedNow函数返回值。
 
@@ -381,7 +381,7 @@ terminal Action
 outbox以durable保存事实为资格，不要求source Action仍在selected lineage；AlreadyApplied不新建义务，旧版Applied
 迁移也不补发。NotAppended proof退回Pending，pre-dispatch failure或restart可重试；Delivered只证明durable append，
 不证明provider已读。abandon/rewind前先结算bound receipt，Delivered即使被rewind也不重发。reply cutoff为pending
-receipt预留一个notice槽位与实际预算；极端fence-heavy原文使用明确标记的Source Action/Memo IDs确认，不能静默丢通知。
+receipt预留一个notice槽位与实际预算；极端fence-heavy保存正文使用明确标记的Source Action/Memo IDs确认，不能静默丢通知。
 
 现行入库后DerivedInfo闭环：
 
