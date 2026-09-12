@@ -95,7 +95,7 @@ Codex app-server提供owned thread/turn history与同generation lifecycle notifi
 最多保留bounded process-local live observation，不是durable ownership authority；history可读也不构成provider
 exactly-once承诺。
 
-reconciliation 必须用 code-owned thread ownership marker、canonical cwd、stable `dispatchId` /
+reconciliation 必须用 code-owned thread ownership marker、stable `dispatchId` /
 `clientUserMessageId` 以及已知 `threadId`/`turnId` 的 exact 组合证据证明同一个外部
 operation。“现在没查到”不是“当时绝对没有执行”的证据。
 
@@ -169,7 +169,7 @@ baseline 只在初次 hard cut 建立，不随 process restart、SessionJournal 
 变化自动前移。缺失、重复或与当前 repository identity 不匹配时 fail closed，不静默
 重建 baseline。
 
-baseline创建失败或existing store的schema/owner/route policy/limits/integrity/lock不匹配时，该user
+baseline创建失败或existing store的schema/owner/limits/integrity/lock不匹配时，该user
 fail closed/unavailable；runtime不adopt、reset、迁移、删除数据库或换用内存路径。当前binary没有旧owner，
 因此baseline写入前后都不存在“删掉candidate后继续process-local运行”的产品或operator分支。修复
 filesystem/config后必须重启并继续使用同一durable composition。
@@ -239,7 +239,7 @@ Codex-routed row 的状态集合为：
 - 非 Codex recipient 在 capture 时直接成为 terminal `Unrouted`，永不进入 dispatcher。
 
 row 同时保存 stable operation ID（当前即 `dispatchId`）、known durable requested
-thread ID、冻结的 exact route policy fingerprint、accepted `threadId/turnId`、bounded terminal
+thread ID、accepted `threadId/turnId`、bounded terminal
 stage/code 或 final digest，以及 revision。`Started` 表示 effect boundary 已可能跨过，不得
 透明再发。`OutcomeUnknown` 还必须持久 reconciliation attempt count、last code 与
 code-owned `nextReconcileAt` backoff frontier，使 unavailable/not-found 跨重启不忙轮询。
@@ -247,7 +247,7 @@ code-owned `nextReconcileAt` backoff frontier，使 unavailable/not-found 跨重
 #### `route_binding`
 
 per-user singleton，状态集合为 `Unbound|Binding|Bound|Quarantined`。它保存
-stable binding operation identity、已证明的 fixed `threadId`、路由/runtime policy fingerprint、
+stable binding operation identity、已证明的 fixed `threadId`、
 active mail `dispatchId`、bounded quarantine code 和 revision。`Binding` 只表示正在建立一个
 尚未承载任何 mail turn 的 empty owned thread；不得在此状态预先填入 mail
 `dispatchId`。`Bound(threadId, activeDispatchId?)` 在 Started、Accepted 和 OutcomeUnknown 期间始终
@@ -276,7 +276,7 @@ SessionJournal head 或 exact composite Observation。
 canonical bytes/byte count/SHA-256，并将 state 改为 `ObservationBound`。之后可选写入
 durable Observation/terminal Action addresses。
 
-SQLite schema保持V1且不增加renderer/version列。当前writer使用角色中立reply/failure headings；strict
+SQLite schema现为V2，不增加renderer/version列。当前writer使用角色中立reply/failure headings；strict
 reader同时接受current neutral dialect与旧Galatea-heading dialect，但同一envelope禁止混用。对于
 `ObservationBound|ObservationCommitted|Quarantined`中已有rendered Observation，open/reopen按stored
 dialect做exact canonical parse，再逐项核对player text和notice kind/order/body；不得用current writer重渲染
@@ -326,7 +326,7 @@ extraction。因为 extractor 无外部业务 side effect，后续 admission 可
 `Bound(threadId, activeDispatchId=null)` 时推进。route 仍是 `Unbound|Binding`
 时只能执行第 7.2 节的 `ensure-binding`，mail 保持 `Queued`。一个新 dispatch
 只有一个 effect 前转移：单事务将 mail `Queued -> Started`，同时冻结 stable
-operation ID、known durable requested `threadId`、exact route policy，并将
+operation ID、known durable requested `threadId`，并将
 `route_binding.activeDispatchId` 从 null 改为该 `dispatchId`。commit 后才调用
 sidecar/app-server `start-turn`。
 
@@ -346,13 +346,13 @@ mail 在整个 binding 过程中保持 `Queued`：
    验证；
 4. 验证后单事务 `Binding(bindingOperationId) -> Bound(threadId)`；
 5. 只有 `Bound(threadId)` durable 后，第一封 mail 才和后续 mail 一样进入
-   `Queued -> Started`，并调用独立 `start-turn(threadId, dispatchId, body)`。
+   `Queued -> Started`，并调用独立 `start-turn(threadId, dispatchId, body, cwd)`。
 
 如果进程在 `ensure-binding` 创建/验证 thread 后、`Bound` commit 前崩溃，恢复可以
 重新执行 `ensure-binding`。每次这类不确定尝试最坏只会留下一个从未执行过 mail
 `turn/start` 的 empty orphan thread，不会重复邮件 side effect；反复崩溃可以留下多个
 这类 empty orphan，本阶段不治理它们。明确的 ensure 失败可以保留 `Binding` 后重试；
-ownership/cwd/identity 冲突则 quarantine。一旦
+ownership/identity 冲突则 quarantine。一旦
 `Bound(threadId)` durable，binding 永不被后来的 ensure 或 mail result 覆盖。
 
 已经 Bound 的 route 不因单封信的断线丢失已证明 thread ID，但在该信 terminal
@@ -373,7 +373,7 @@ death、protocol loss 或 host crash，都使 mail row 进入 `OutcomeUnknown`�
   保持 `OutcomeUnknown`，持久 code-owned backoff 后再做 read-only retry；
 - Accepted的exact turn或identity items尚未出现在official persistent projection：mail保持`Accepted`，持久
   `ACCEPTED_TURN_NOT_VISIBLE`与同一bounded backoff后重试；不得退回dispatch selector；
-- 发现 multiple candidates、ownership/cwd/body/client-message/thread/turn identity 的确定性冲突：
+- 发现 multiple candidates、ownership/body/client-message/thread/turn identity 的确定性冲突：
   持久 `Quarantined`。
 
 不得把未查到候选当作重新 `turn/start` 的授权，不得将 `OutcomeUnknown`
@@ -389,12 +389,12 @@ turn，mail 改为 Accepted 但 active dispatch 保留到 terminal settlement，
 
 ### 7.4 Accepted、live observation 与 terminal polling
 
-accepted `threadId/turnId`持久后，staged V3没有V1式terminal Task；host-local signal只提示
-supervisor尽快pulse，pulse以exact IDs调用read-only `inspect-dispatch`。V3用required
+accepted `threadId/turnId`持久后，staged V4没有V1式terminal Task；host-local signal只提示
+supervisor尽快pulse，pulse以exact IDs调用read-only `inspect-dispatch`。V4用required
 `expectedTurnId:string|null`硬分离selector：Accepted只能按exact turn，OutcomeUnknown只能按dispatch discovery。
 每个semantic result都携带`source=live|persistent`。
 
-Node先以metadata-only thread read核对ownership/cwd；同一app-server generation的`turn/start` response与官方
+Node先以metadata-only thread read核对ownership；同一app-server generation的`turn/start` response与官方
 turn/item notifications可建立一份bounded、non-durable exact live observation。它只保存task digest与必要的
 bounded identity/final evidence，terminal压过late Running，conflict fail closed；process exit/stop/generation
 replacement全部清理，persisted `TaskStore` hydration不能建立它。live miss后只用official bounded
@@ -535,14 +535,14 @@ non-overlap gate，不允许 signal 和 timer 同时对同一 user 执行 effect
 与ContractId。这是因为
 existing writable store可能立即被pulse；composition不能在此后再保留会使host半构造失败的preflight。
 
-Supervisor拥有一个shared lazy V3 transport及每user store/driver。Existing state目录只在matching session
+Supervisor拥有一个shared lazy V4 transport及每user store/driver。Existing state目录只在matching session
 目录也存在时于host启动strict-open并取得lifetime writer lock；`SESSION_MISSING`在store open前fail closed。
 Missing state目录只在第一次writable SessionJournal attach时按§4创建
 baseline。Maintenance只read-only open existing store，不attach writable session、不启动scheduler，也不
 执行transport call。
 
 Production source已删除旧C# coordinator/ledger/ReplyInbox/V1 client以及Node V1 entry/adapter/protocol。
-同一extraction batch没有dual-write，reply cutoff没有双authority，`npm run start:galatea`只指向durable V3。
+同一extraction batch没有dual-write，reply cutoff没有双authority，`npm run start:galatea`只指向durable V4。
 这里没有hidden feature flag、fallback branch、`AbandonDurableCandidate`或任何恢复旧owner的operator路径；
 store/baseline失败只会使该user fail closed，不能靠删除durable evidence继续运行。
 
@@ -594,7 +594,7 @@ Galatea host/SQLite vertical。同日ignored `cyber` production smoke独立验�
 - crash/restart tests必须同时断言transport start count与最终state，不能只看最终state而遗漏重复effect。
 - `Started/OutcomeUnknown`恢复路径对`turn/start`是零调用，只允许read-only reconciliation；
   unavailable/not-found持久backoff并继续OutcomeUnknown。Accepted只按durable turn ID，persistent projection
-  缺失使用`ACCEPTED_TURN_NOT_VISIBLE`并继续Accepted；只有确定性ownership/cwd/multiple/identity冲突
+  缺失使用`ACCEPTED_TURN_NOT_VISIBLE`并继续Accepted；只有确定性ownership/multiple/identity冲突
   durable quarantine。所有路径始终带known bound thread ID。
 - `ensure-binding` 的deterministic protocol/backend tests证明它只执行thread start/name/verify，对
   `turn/start` 零调用。在 thread 建立与 `Bound` commit 之间崩溃可重新 ensure，但
@@ -602,9 +602,9 @@ Galatea host/SQLite vertical。同日ignored `cyber` production smoke独立验�
 - 任何 mail（包括首封）只能在 `Bound(threadId)` durable 后 Started；所有
   信件只使用该 exact bound thread，不存在 accepted mail 反向建立 binding 的路径。
 - mail 没有 `Prepared` state 或 Started-to-Prepared 退回；`Queued -> Started` 与冻结
-  thread/policy、设置 route active dispatch 是一个 transaction，provider I/O 只发生在其后。
+  thread、设置 route active dispatch 是一个 transaction，provider I/O 只发生在其后。
 - accepted后signal或inspection attempt丢失时，使用persisted thread/turn继续read-only inspect final，不重发body；
-  staged V3没有可等待的terminal Task。warm live evidence与cold official pagination都必须经过同一个C#
+  staged V4没有可等待的terminal Task。warm live evidence与cold official pagination都必须经过同一个C#
   terminal CAS。
 - capture 后 Undo 不减少 outbox，不 interrupt active turn，不清除 Ready notice。
 - reply lease 覆盖 cutoff 后 bind 前、`BindObservationBase` 后 Observation 前、Observation 后、
@@ -638,15 +638,13 @@ Galatea host/SQLite vertical。同日ignored `cyber` production smoke独立验�
 
 ## 14. Local resilience slice（2026-09-04）
 
-当前tracked runtime已将Galatea sidecar hard-cut到V3，并以state-specific selector、same-generation live
+此阶段将Galatea sidecar hard-cut到V3，并以state-specific selector、same-generation live
 observation及official paginated cold inspection处理Codex rebuildable projection滞后。实现仍保持本设计的三个
 authority、fixed thread与at-most-one start law；没有新增SQLite列、sidecar ledger、raw rollout reader、自动重发、
 elapsed turn deadline或thread rollover。
 
-`GalateaDelegationDurableContract.RouteProtocolVersion`的historical值仍为
-`galatea-codex-sidecar-jsonrpc-v2`。该字符串已经进入existing store的route-policy fingerprint，是旧durable
-policy identity，不是当前wire parser/version宣告；wire唯一接受V3。改变该fingerprint会使existing store
-identity失配并需要单独设计的停服迁移，因此不属于本local resilience slice。
+该阶段曾保留 route policy fingerprint。后续 [user home 重构](user-home-design.md) 删除了整个
+policy hash 及三处持久字段；执行配置不再是 store 或历史邮件身份，当前 wire 为 V4。
 
 Accepted projection长期不可见时，runtime只继续durable backoff并暴露诊断，不尝试修复Codex私有存储。
 当前ignored mail的人工处置必须走单独授权的backup-first operator gate，见
@@ -693,3 +691,16 @@ route active dispatch；下一封`Queued` mail保持不变；第二次apply为�
 返回正文、recipient、subject、durable identity或hash。前端以独立低频single-flight timer显示queue、ready、
 backoff、history-unavailable、quarantine与maintenance-paused状态；checkbox仍只控制`POST ready-turn`。
 成功状态poll有意不逐次写Debug log，避免重新制造heartbeat噪声。
+
+## 16. Per-user home（2026-09-13）
+
+当前 root config V9 的 `users[].homeDir` 是每个 user 的新任务执行目录；delegates V3 不再保存
+全局 CWD。一个共享 sidecar/app-server 从 `/` 启动，wire V4 的 ensure/start 显式传目录，inspect
+不带目录。已经绑定的 thread 保持不变，resume 与 turn/start 都接收当前 home；历史 metadata CWD
+不要求仍存在、属于当前 allowedRoots 或与新 home 相等。新建空 thread 由创建响应和 metadata
+确认身份，不要求尚未物化 rollout 的分页历史可读。
+
+SQLite V2 删除 owner/route/mail 三处 policy fingerprint；业务 owner、任务身份、容量限额、
+reply lease 与 active-first 恢复保持原义。旧 V1 通过显式离线命令备份后升级，不在普通打开时
+隐式转换；之后修改 home 无需重新绑定或迁移历史策略。完整设计、命令及验证见
+[user home 设计与实施记录](user-home-design.md)。

@@ -14,6 +14,10 @@ crash matrix 与非目标见
 [`codex-delegation-local-resilience-work-order.md`](codex-delegation-local-resilience-work-order.md)；它不重新打开
 本文已完成的V2 hard-cut清单。
 
+2026-09-13 的 [user home 重构](user-home-design.md) 将当前配置/协议推进为 root V9、delegates V3、
+wire V4 与 delegation SQLite V2：逐用户执行目录、原 thread 延续，以及删除 policy fingerprint。
+下文保留早期阶段的提交与验证记录；当前操作和验证以该实施记录为准。
+
 2026-09-05 的dependency follow-up已将sidecar hard-cut到repo-local
 `@openai/codex@0.154.0-alpha.3` exact pin，并以initialize版本preflight拒绝旧/错误binary。该官方版本包含
 duplicate/regressed ordinal tolerant projector；真实故障形状已在disposable、provider-free copied-home canary
