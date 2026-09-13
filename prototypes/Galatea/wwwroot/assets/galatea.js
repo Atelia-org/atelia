@@ -209,9 +209,9 @@ export function formatMailboxStatus(
     "no-mail": "邮箱空闲",
     queued: "邮件已排队",
     "active-running": "Codex 正在处理邮件",
-    backoff: "后台暂时失败，正在等待重试",
+    backoff: "后台暂时失败，正在有限恢复",
     "accepted-history-unavailable":
-      "Codex 已接受邮件，但持久历史暂不可见；正在安全重试",
+      "Codex 已接受邮件，结果暂不可确认；正在有限检查",
     "ready-reply": "Codex 回信已就绪",
     quarantined: "邮件链路已隔离，等待人工检查",
     unavailable: status.code === "MAINTENANCE_READ_ONLY"
@@ -222,7 +222,7 @@ export function formatMailboxStatus(
   if (status.attemptCount > 0) {
     detail.push(status.state === "quarantined"
       ? `此前尝试 ${status.attemptCount} 次`
-      : `尝试 ${status.attemptCount} 次`);
+      : `连续恢复失败 ${status.attemptCount}/8 次`);
   }
   if (status.nextRetryAtUnixTimeMilliseconds !== null) {
     detail.push(
