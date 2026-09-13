@@ -71,12 +71,16 @@ live 先要求离线场景通过，再运行两次 completion invocation 的 can
 |:--|:--|:--|
 | 连接变化后的离线回退 | 连接不匹配时不发请求；一次 CLI ref 移动；原 raw/sidecar 保留；新回合完成 | 旧 binary/旧 schema 的任意迁移；原请求透明续接 |
 | 旧 v7 adapter 标签恢复 | 相同逻辑请求用当前 adapter 完成；404 回退；v7/v8 冷开审计；非空摘要零重算 | 逐字 HTTP wire 相同；真实 provider 接受；无需授权重发 Started |
+| Control 回执 v2 → v3（CLI 生产链） | 固定旧 receipt 跨两个 Journal 提交窗口冷恢复；已有工具结果保真；未提交结果用 operationKey 输出；Control 重放零写入 | 真实 provider、进程硬杀、非空 Recap 或派生引用图迁移 |
 | 进程硬杀恢复 | durable Started 后杀进程；重启不隐式重发；明确授权后继续 | 外部调用只执行一次；断电/fsync 耐久性 |
 | Luna live cold reopen | 当前账户/后端的两次真实调用、持久历史跨 host 生命周期可用 | 所有模型和网络条件；模型实际利用了 opaque reasoning |
 
 第一期主线是当前 Galatea 的 no-tools fresh turn、raw-only RecapGrid。不能为了测试 tool-loop 而把生产已退休的工具
 重新注入；SessionJournal 原有工具恢复测试仍保留。下一批按价值补：真实旧版本生成的匿名种子、settled ToolResult
 硬杀续接、Note/receipt 的跨进程恢复、Ready reply 与非空 RecapGrid/heartbeat 的组合场景。
+
+Control 回执升级使用独立的旧版本合成目录与既有 failpoint，不向 fresh 模型请求重新注入工具；
+场景与验证入口见[回执简化实施记录](control-receipt-simplification-plan.md#4-实施与验收)。
 
 评判标准包括安全性和可进展性：允许“明确 Blocked + 已验收的操作路径”，不要求所有 uncertain 故障自动成功。
 参考 [runtime 恢复边界](runtime.md) 与 [CLI 回退合同](../../prototypes/SessionJournal.Cli/README.md#离线-branch-回退)。

@@ -29,6 +29,9 @@ accumulator，reconcile以prefix commitment截断，不再复制immutable trie s
 recipe、operation receipts 与 whole head。Cadence保存per-Ref R、exact expected Timeline partition fields、
 generation/domain digest；它不属于SessionJournal RuntimeConfig。Grid SQLite保存 canonical cells、row views 与 fulfilled records。
 
+Control 目录仍为 `v1`，文件内容 writer 为 v3；旧 v2 按源格式读取并保留原 Head/bytes，
+正常持久 mutation 才升级。回执与升级边界见[Control 回执简化](../../../Galatea/control-receipt-simplification-plan.md)。
+
 ## Durable rules
 
 - 所有 canonical codecs 都是 strict versioned wire：拒绝 unknown/duplicate/reordered/non-canonical fields、

@@ -1,6 +1,6 @@
 # Galatea / RecapGrid 身份与恢复校验简化设计
 
-> 状态：§5 已实现，并在唯一 Dev 实例完成真实调用与冷重开验证；下一切片为 [Control 回执简化计划](control-receipt-simplification-plan.md)，尚未实施。代码阶段见 §10，实例 E2E 与额外修复见 §11。
+> 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)已实现并通过本地验证，尚未部署。后续为 §6.1/§6.3 的联合格式与迁移设计。首轮代码见 §10，首轮 E2E 见 §11。
 >
 > 日期：2026-09-14。代码基线：`277baeea`。本文区分目标设计、当前实现和历史验证；不继承其他工作单的实施授权。
 
@@ -139,7 +139,7 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 ## 6. 后续切片：先移除重复身份，再整理缓存
 
-发布顺序：§5 独立发布；§6.2 可作为不改命令编码的小切片先完成；§6.1 与 §6.3 开发可分工作包，但采用一个目标格式组合、一次派生数据转换和发布，不上线中间格式。这避免为了先删 DescriptorDigest、再改结果主键而重编码同一数据图两次。
+§5 已发布验证；§6.2 已独立实现和本地验证，待部署。下一阶段 §6.1 与 §6.3 开发可分工作包，但采用一个目标格式组合、一次派生数据转换和发布，不上线中间格式。这避免为了先删 DescriptorDigest、再改结果主键而重编码同一数据图两次。
 
 ### 6.1 合并 Timeline 行身份
 
@@ -159,15 +159,15 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 ### 6.2 简化 Control 操作回执
 
-下一实施入口为 [Control 回执简化计划](control-receipt-simplification-plan.md)，已按 `48a9ec92` 重新核对源码并完成三视角交叉质询；本轮仅规划。
+已在 `0e9524d6` 实现；设计、固定旧样本与实际验证见 [Control 回执简化实施记录](control-receipt-simplification-plan.md)。八个项目 1,793 通过、0 失败、0 跳过；本轮没有部署或真实实例操作。
 
 删除 `hash(commandDigest, terminalKind)` 这层 ResultIdentity，直接返回已有 OperationKey。保留 sequence、command/runtime 匹配、首次 instance/generation 和 receipt 与语义变更共同提交；不改命令编码、输入定义或 runtime identity。
 
-Control 当前为 canonical JSON v2；目标 writer v3。旧文件在 codec 按源格式验证后投影到唯一当前 receipt，保留原 Head 与 CanonicalBytes；下一次正常持久 mutation 才写新格式。纯读、重放、export/backup 不触发升级，restore 对已归一化的 receipt 做 union 与冲突判断。
+Control writer 为 canonical JSON v3。旧 v2 文件在 codec 按源格式验证后投影到唯一当前 receipt，保留原 Head 与 CanonicalBytes；下一次正常持久 mutation 才写新格式。纯读、重放、export/backup 不触发升级，restore 对已归一化的 receipt 做 union 与冲突判断。
 
 AgentControl 当前输出升级为 schemaVersion 2 与 operationKey；已有 Journal raw tool result 原文不改。当前 receipt 重放本来就返回当前 Head 与 replayed 状态，不为它新增旧输出 renderer 或全文结果快照。
 
-本切片不改命令/引用图，无需先收敛旧 pending 或批量转换数据。具体工作包、旧格式与跨提交窗口验收、发布边界由上述计划单独维护。
+本切片不改命令/引用图，无需先收敛旧 pending 或批量转换数据。旧格式与跨提交窗口验收、发布边界由上述实施记录单独维护。
 
 ### 6.3 结果主键与缓存身份
 
@@ -195,7 +195,7 @@ ConnectionFingerprint 的替代需要单独决定 endpoint/reasoning 改配的�
 
 ## 8. 实施入口、验证与完成定义
 
-第一轮 §5 已完成，以下第一切片验证入口保留供回归参考，不是待实施清单。下一切片范围与验收见 [Control 回执简化计划](control-receipt-simplification-plan.md)；§6.1/§6.3 暂未进入实施。历史 E2E 授权与证据见 §11，本次规划不执行新的部署或真实会话操作。
+§5 与 §6.2 已完成代码实施，以下第一切片验证入口保留供回归参考，不是待实施清单。第二切片验收见 [Control 回执简化实施记录](control-receipt-simplification-plan.md)；§6.1/§6.3 暂未进入实施。历史 E2E 授权与证据见 §11，本次 Control 实施没有执行新的部署或真实会话操作。
 
 开始前检查 `git status` 和 `git log`，重新确认本文列出的关键类型与 schema，保留并行会话已提交修复。以当前生产消费者划范围，不把全部公共类型快照测试当成设计保留理由。
 

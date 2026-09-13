@@ -1,8 +1,8 @@
-# Control 回执简化：下一实施切片
+# Control 回执简化：设计与实施
 
-> 状态：规划完成，经过三视角独立审查与交叉质询；尚未实施。
+> 状态：已实现并通过本地验证；代码提交 `0e9524d6`。未部署或改动真实会话数据。
 > 日期：2026-09-14；源码核对基线：`48a9ec92`，包含 E2E 修复 `351095b5`。
-> 承接[总设计 §6.2](identity-simplification-design.md#62-简化-control-操作回执)。本轮用户请求是规划；本文不授予实施、部署或真实数据操作权限。
+> 承接[总设计 §6.2](identity-simplification-design.md#62-简化-control-操作回执)。用户后续已明确授权带领 subagents 实施、按需提交和维护文档；本轮不部署或操作真实实例。
 
 ## 1. 最小目标与需求来源
 
@@ -23,13 +23,13 @@ Receipt = OperationKey + ExecutionSequence + RuntimeIdentityDigest
 | 保留现有持久状态，重启后不重复应用已完成操作 | `ControlRuntime.TryReplay/PublishTerminalOperation`，Control receipt 与 crash 测试 |
 | 同操作必须匹配命令、执行序号、runtime；保留首次生效坐标 | 当前 receipt 字段、restore 合并与重放消费者 |
 | 已提交 Journal 工具结果保持原文；冻结请求保持原逻辑输入 | SessionJournal 的 `ToolResultObserved`、Prepared 重构与 CLI tool continuation 测试 |
-| 本轮只规划下个切片 | 用户最新请求；先前首轮和 E2E 的完成记录不能代替本轮实施证据 |
+| 落实本切片并验证、提交、维护文档 | 用户采纳计划后的明确实施请求；先前首轮和 E2E 的记录不能代替本轮证据 |
 
 实际故障模型是本地进程崩溃、重启、重试、文件发布结果不明、CAS 与备份恢复。Control 和 Journal 分别持久提交，存在“Control 已生效，Journal 尚未记录工具结果”的窗口；不新增分布式事务或外部 exactly-once 承诺。
 
 当前 `OperationKey` 本身仍是既有 operation-id 派生键。本切片删的是另一层结果摘要，不改 operation key 算法，也不把 hash 换个名字继续计算。
 
-## 2. 源码结论与边界
+## 2. 实施前源码结论与边界（`48a9ec92`）
 
 | 位置 | 已核实的消费者与结论 |
 |---|---|
@@ -45,7 +45,7 @@ Receipt = OperationKey + ExecutionSequence + RuntimeIdentityDigest
 
 最新 E2E 修复 `351095b5` 保留已冻结 Note 通知正文，避免当前 renderer 否决旧文案。这里沿用“尊重已落盘事实”的原则，但不为 Control 新增正文快照：Control receipt 只存生效事实；已提交工具输出的正文权威在 Journal。
 
-## 3. 一次贯通的目标变更
+## 3. 当前实现合同
 
 ### 3.1 当前模型与输出
 
@@ -56,7 +56,7 @@ Receipt = OperationKey + ExecutionSequence + RuntimeIdentityDigest
 
 ### 3.2 持久格式：旧格式仅在 codec 边界存在
 
-当前 Control 文件 writer 升为 v3，receipt 不写结果摘要；state body 使用 v3 schema 与对应 `atelia.recap-grid.control-state.v3` domain。旧 v2 继续按原 domain 和原字段布局验证。v1 仍不支持，不新增历史执行分支；实施前若版本被其他提交占用，先核对并调整编号。
+Control 文件 writer 为 v3，receipt 不写结果摘要；state body 使用 v3 schema 与对应 `atelia.recap-grid.control-state.v3` domain。旧 v2 继续按原 domain 和原字段布局验证。v1 仍不支持，不新增历史执行分支。
 
 读取顺序：
 
@@ -81,17 +81,20 @@ v2 的旧 `resultIdentity` 只做原有形状校验，随后丢弃；不新增�
 4. **restore/reinitialize。** 保留现有 receipt union。v2/v3 先投影成同一当前 record，再比较所有剩余字段；不同 command/runtime/sequence 或首次 instance/generation 仍是冲突。不能只保留旧 backup 的 receipts，丢掉当前新 receipt 会使后续恢复重复生效。
 5. **Journal 边界。** 已提交的 v1 tool result 原文继续读取和审计；尚未提交结果的旧 pending 操作，允许 receipt 重放后生成当前 v2 输出。不新增 v1 renderer、结果正文表或完整命令副本。
 
-## 4. 工作包与验收
+## 4. 实施与验收
 
 按一条生产链集成，不发布“只删输出但仍计算和持久保存 ResultIdentity”的中间补丁。
 
-| 包 | 写入范围与交付 | 依赖 |
+| 已实现部分 | 交付 | 证据入口 |
 |---|---|---|
-| A：Control 模型与持久格式 | `Control/` 与对应 Control 测试；固定非空 v2 receipt/backup 样本，完成 v3 writer、旧读取、发布与 restore | 先保留基线旧样本，再改 writer |
-| B：AgentControl 与会话续行 | `AgentControl/`、AgentControl 测试、CLI tool continuation 测试；当前输出、旧 pending 恢复、旧 raw 保真 | 依赖 A 的结果/codec 合同；可先独立设计场景 |
-| C：集成审查与文档 | 主线程串行验证，独立 reviewer 查漏；更新现行协议/运行说明 | A、B 集成后 |
+| Control 模型与持久格式 | 删除结果派生层；writer v3、旧 v2 投影、restore 归一化比较 | [ControlLegacyV2Tests](../../tests/SessionJournal.RecapGrid.Control.Tests/ControlLegacyV2Tests.cs)及既有 wire/crash/settlement 测试 |
+| AgentControl 输出 | 输出 v2 + OperationKey，保留输入/runtime/command golden | [AgentControlVerticalTests](../../tests/SessionJournal.RecapGrid.AgentControl.Tests/AgentControlVerticalTests.cs) |
+| CLI 旧状态续行 | 两个提交窗口与冻结 Prepared，真实入口恢复、旧 raw 保真 | [ProgramControlReceiptUpgradeTests](../../tests/SessionJournal.Cli.Tests/ProgramControlReceiptUpgradeTests.cs) |
+| 相邻消费者 | Getter/Galatea 当前 Control schema 负面样本同步为 v3 | GetterTailClosureTests、GalateaRecapGridCompositionTests |
 
-旧格式 fixture 从基线合成数据固定完整字节及来源版本，不能仅由新 writer 换版本号反造。无需把私人实例正文加入测试。
+旧格式 fixture 在更改 production writer 之前由 `6a544481` 合成并固定完整字节。
+[Control 样本](../../tests/SessionJournal.RecapGrid.Control.Tests/Fixtures/LegacyV2/README.md)含非空 receipt 和真实 backup；
+[CLI 样本](../../tests/SessionJournal.Cli.Tests/Fixtures/ControlReceiptV2/README.md)记录三个状态及其生成边界，不含私人实例数据。
 
 | 验收场景 | 核心断言 |
 |---|---|
@@ -106,11 +109,33 @@ v2 的旧 `resultIdentity` 只做原有形状校验，随后丢弃；不新增�
 | strict codec 负面样本 | v2 缺失/非法旧字段与错误摘要仍拒绝；v3 拒绝旧字段；未知版本、重复字段等既有边界保留 |
 | AgentControl 输出与绑定 | 成功、重放、inspect、失败都用新输出版本；既有 input/runtime/command golden 不变 |
 
-上述 Journal 场景优先扩充现有 CLI 垂直测试，使用真实恢复入口和合成旧持久样本；结果已提交与 Prepared 已存在的两个断点可在同一场景顺序验证。只把 ref 移回旧 Action 的测试可以证明 receipt 重放，但不能冒充进程在跨组件窗口中断的证据；新增场景需实际保留已提交 Control 与尚缺结果的 Journal 状态并冷重开。若现有 hooks 无法形成该窗口，仅加最小测试 hook，不建设通用故障注入平台。
+两个 Journal 窗口由基线代码的既有 `AfterToolExecutionBeforeResultCommitted`、`AfterToolResultCommitted` failpoint 实际中断产生，随后关闭所有 owner。已有 Prepared 的第三样本是正常完成后把 ref 定点到已持久 Prepared，只证明冻结重构，不作为 crash 证据；本轮没有新增生产 hook。
 
-验证项目：`SessionJournal.RecapGrid.Control.Tests`、`Control.PublicSurface.Tests`、`AgentControl.Tests`、`AgentControl.PublicSurface.Tests`（后三者同样带 `SessionJournal.RecapGrid.` 前缀），以及 `SessionJournal.Cli.Tests`、`SessionJournal.Tests`、`Galatea.Server.Tests`。按 `tests/<项目名>/<项目名>.csproj` 执行，重 .NET 工作串行使用 `--no-restore -m:1 -nr:false`；Server 与 CLI 独立 build。Galatea 使用 [E2E 指南](e2e-testing.md#离线与非-live-命令)的明确 Live 类过滤与受限 xUnit 并发，不能用会误排除 `Delivery` 的 `!~Live`。
+已 ToolResult 场景移除 admission 文件并省略 CLI 参数，使 Host 没有工具 profile；续行成功可发现误入工具重新绑定的问题。两个续行场景都断言 Control bytes/Head 不变，第三场景对照基线 request bytes、commitment、ExactContextInputs 与旧 raw。样本尚无已选 recap row，ExactContextInputs 为 `[]`；非空 RecapGrid 的冻结恢复由既有 Galatea 回归覆盖，不能把这些最小样本冒充新增非空摘要证据。
 
-本轮未运行这些实现测试；上述均为实施验收要求。真实 provider 调用不是该格式重放证据的前提，fresh 浏览器对话也不能代替旧 Control receipt 续行场景。
+验证项目：`SessionJournal.RecapGrid.Control.Tests`、`Control.PublicSurface.Tests`、`AgentControl.Tests`、`AgentControl.PublicSurface.Tests`、`Getter.Tests`（后四者同样带 `SessionJournal.RecapGrid.` 前缀），以及 `SessionJournal.Cli.Tests`、`SessionJournal.Tests`、`Galatea.Server.Tests`。Getter 的当前 Control schema 负面测试也需要同步升级。按 `tests/<项目名>/<项目名>.csproj` 执行，重 .NET 工作串行使用 `--no-restore -m:1 -nr:false`；Server 与 CLI 独立 build。Galatea 使用 [E2E 指南](e2e-testing.md#离线与非-live-命令)的明确 Live 类过滤与受限 xUnit 并发，不能用会误排除 `Delivery` 的 `!~Live`。
+
+最终串行验证结果（2026-09-14）：
+
+| 项目 | 通过 |
+|---|---:|
+| SessionJournal.RecapGrid.Control.Tests | 86 |
+| SessionJournal.RecapGrid.AgentControl.Tests | 32 |
+| SessionJournal.RecapGrid.Control.PublicSurface.Tests | 3 |
+| SessionJournal.RecapGrid.AgentControl.PublicSurface.Tests | 1 |
+| SessionJournal.RecapGrid.Getter.Tests | 29 |
+| SessionJournal.Tests | 517 |
+| SessionJournal.Cli.Tests | 142 |
+| Galatea.Server.Tests（明确排除三个 Live 类） | 983 |
+| **合计** | **1,793** |
+
+八个项目均 0 失败、0 跳过；Server 与 CLI 独立 build 均 0 warnings、0 errors。
+文档检查 35 文件、0 diagnostics，`git diff --check` 通过。
+本机最终日志为 `/tmp/receipt-final-<项目名>.log` 与 `/tmp/receipt-final-build-<入口名>.log`，不是持久协议的一部分。
+
+独立 code review 覆盖生产链、codec 与跨格式测试；指出的两处证据缺口已补齐：正确旧摘要下的非法结果字段明确拒绝，以及 backup-only/current-only receipt 合并后两者均可重放。最终无未解决 findings。
+样本捕获/重开期间修正了测试 owner 生命周期、锁文件保留与 Unix 权限恢复，没有放宽生产打开规则。
+未调用真实 provider、未启动或修改现有 Dev 实例；fresh 浏览器对话不能代替本轮旧 Control receipt 续行证据。
 
 ## 5. 发布边界与完成条件
 
@@ -118,9 +143,9 @@ v2 的旧 `resultIdentity` 只做原有形状校验，随后丢弃；不新增�
 
 Timeline 行身份与 Store 结果/缓存身份仍按总设计 §6.1/§6.3 合并为后续一次整图转换。该阶段才适用旧命令收敛前提。`ControlStateDigest`、ConnectionFingerprint、tool catalog/runtime identity、Prepared 局部 hash 均留给各自切片。
 
-实施完成时更新[当前 Grid 概念](../SessionJournal/current/derived-recap/concepts.md)、CLI 指南和 Galatea 相关运行/场景说明；旧 WP-07C 与 API evidence 保留历史定位，必要时加后继设计链接，不重写当时验收。总设计 §6.2 只保留结果与后继入口；本文的工作包不持续追加已完成待办，改为简短实际交付与验证记录。
+现行入口为[当前 Grid 概念](../SessionJournal/current/derived-recap/concepts.md)、[CLI 指南](../../prototypes/SessionJournal.Cli/README.md)与 [Galatea 运行机制](runtime.md)。R2 合同已注明 Control 后继边界；旧 WP-07C 与 API evidence 保留历史定位，不重写当时验收。总设计 §6.2 保留结果与后继入口，本文不继续累积已完成工作包。
 
-完成意味着当前运行模型、结果 API、新输出与新状态均不再包含 ResultIdentity；旧样本与跨提交窗口通过真实生产链验收，文档如实记录证据。预计减少 **1 个派生身份概念、1 个 hash 计算函数及其 DTO/参数传播**。codec 暂留旧格式读取，暂不承诺总代码行减少。
+当前运行模型、结果 API、新输出与新状态均不再包含 ResultIdentity；仅旧 codec wire DTO 和字段形状检查保留该名字。旧样本与跨提交窗口已通过真实生产链验收。删除了 **1 个派生身份概念、1 个 hash 计算函数及其 DTO/参数传播**；旧格式读取和验证样本仍有成本，不将本轮描述为总代码行减少。
 
 ## 6. 辩证裁决
 

@@ -136,6 +136,14 @@ profile，也不向新的completion注入`recap_grid_control`；`--admission`只
 operational failure 返回 2，success/idempotent 返回 0；Busy、Stale、Unsupported、
 Indeterminate 均不自动 retry。
 
+Control 新写入文件为 schema v3；旧 v2 按原格式校验后可直接读取和重放，纯读、
+export/backup 和 receipt 重放不改 Head 或文件字节。正常持久 mutation 才写 v3，
+无需先执行完旧 pending 或批量转换。AgentControl 输出 schemaVersion 2，用既有
+`operationKey` 代替派生 `resultIdentity`；同 operation 仍须匹配 command/runtime/sequence，
+receipt 与首次生效坐标在 restore/reinitialize 时保留。已写入 Journal 的旧 tool result
+原文不重渲染。v3 写入后的二进制回退须配合匹配的数据快照，详见
+[Control 回执简化](../../docs/Galatea/control-receipt-simplification-plan.md)。
+
 `recap-grid legacy-root` 只处理固定七个旧 slot。`inspect` 产生 bounded opaque
 manifest，并报告 canonical repository、selected branch、RefId 与 raw head；`archive`
 和 `delete` 必须显式提供 `--branch --confirm-ref --confirm-raw-head`，在同一个

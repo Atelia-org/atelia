@@ -15,6 +15,11 @@ approval anchors：immutable v1 `session-journal-contract-r2-approved-surfaces-v
 > Prepared-v5 approval record and are intentionally not rewritten. Current code retains v5 only as a
 > read-only historical verifier so existing raw addresses remain valid; v5 is not executable recovery.
 
+> **Control successor:** [Control receipt simplification](../../../Galatea/control-receipt-simplification-plan.md)
+> supersedes the Control V2-only/no-dual-reader policy below: current writes use v3 and retain a narrow
+> v2 reader preserving the source Head and bytes until a normal mutation. Command/runtime binding stays
+> unchanged. The original R2 inventory below remains historical; this does not change other companion formats.
+
 本文是current SessionJournal、HistoryTimeline与RecapGrid contract的Shape/Rule入口。它把明确支持的
 .NET role、raw/companion/operational wire与upgrade policy放在同一张地图中，但只有
 [R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)记录了prior source `a77ed16c`的final gates；

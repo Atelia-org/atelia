@@ -22,9 +22,14 @@
 10. Online 在合法 lifecycle boundary先经Cadence reconcile/seal Timeline，再做pure-read readiness；只有
    `Unfulfilled` 才惰性打开 Manager/Store/provider。
 11. AgentControl 的 terminal receipt提供 operation replay/settlement，不承诺外部工具 effect exactly-once。
+    回执使用既有 `OperationKey`，不再计算或保存独立 `ResultIdentity`；command/runtime/sequence
+    匹配与首次 instance/generation 保留。Control writer 为 v3，v2 经源格式验证后投影到同一当前模型；
+    读取、重放与 export/backup 保留原 Head/bytes，正常持久 mutation 才写 v3。
+    AgentControl 输出为 schemaVersion 2 与 operationKey，已有 Journal 工具结果原文保持。
 12. candidate build 与 promotion分离；promotion必须 fresh re-prove head-through fulfillment，并以
     `MaximumNewCalls = 0` 保证不在 promotion阶段启动 recap provider。
 13. old `derived/recap` v4-v8 与 rebuild/v1 都是 inert legacy slots；只有显式 manifest-confirmed
     legacy-root archive/delete会触碰它们。
 
 Owning code 与 tests见[架构与代码地图](../architecture-and-code-map.md)。
+Control 格式、跨提交窗口与回退边界见[回执简化设计](../../../Galatea/control-receipt-simplification-plan.md)。

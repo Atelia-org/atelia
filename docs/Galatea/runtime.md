@@ -159,6 +159,13 @@ admission失败保留`AUTOMATIC_ADMISSION_FAILED`及nullable `{code,error}`细�
 3. **`ToolContinuation`**：先 bind frozen tool profile/operation，再以无工具的 current completion 继续；tool settlement 后才打开 Online readiness。
 4. **`ToolResult` 后的 `NewRequest`**：不绑定 current tool profile，保留 ToolResult raw tail；只有它和 fresh request 创建 per-turn Online context。
 
+Control 回执以既有 `OperationKey` 引用，不再附带派生 `ResultIdentity`。旧 Control v2 文件
+按源格式验证后读取，保持原 Head 与 bytes；正常持久 mutation 才写 v3。历史 pending
+工具操作继续匹配 frozen runtime、command 和 sequence，已生效的 receipt 重放不重复
+推进 Control。尚未写入 Journal 的工具结果用当前 schemaVersion 2 与 operationKey 输出；
+已经写入的旧工具结果保持原文。该升级不要求先收敛旧 pending，也不改变工具输入或
+runtime identity；写入 v3 后的程序回退需匹配数据快照，见[回执简化设计](control-receipt-simplification-plan.md)。
+
 当前 root strict config language 为 V9，connections 是 Completion-owned V3 catalog，delegate route 是 owner-defined V4，profile 是 owner-defined V1。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
 
 Fresh/NewRequest 生命周期在合法 raw boundary 执行 Timeline reconcile/seal，必要时 Manager build，随后 Getter 给出 coherent candidate。empty Timeline 或 no-active recipe 使用 `raw-only`：不打开 Store，也不调用 recap provider。恢复路径不能借“补齐当前上下文”为由绕过 frozen identity。
