@@ -27,7 +27,7 @@ internal static class SessionRequestManifestCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    public static CompletionRequestPreparedBody Decode(JsonElement body) {
+    public static CompletionRequestPreparedBody Decode(JsonElement body, bool legacyTarget = false) {
         RequireExactProperties(
             body,
             "completion-request-prepared body",
@@ -49,7 +49,7 @@ internal static class SessionRequestManifestCodec {
             ReadParameters(ReadRequiredObject(body, "parameters")),
             ReadToolSet(ReadRequiredObject(body, "toolSet")),
             ReadRecipe(ReadRequiredObject(body, "recipe")),
-            ReadTarget(ReadRequiredObject(body, "target")),
+            ReadTarget(ReadRequiredObject(body, "target"), legacyTarget),
             ReadCommitment(ReadRequiredObject(body, "commitment"))
         );
         Validate(result);
@@ -275,7 +275,6 @@ internal static class SessionRequestManifestCodec {
         writer.WriteString("connectionId", value.Connection.ConnectionId);
         writer.WriteString("kind", value.Connection.Kind);
         writer.WriteString("connectionFingerprint", value.Connection.ConnectionFingerprint);
-        writer.WriteString("requestAdapterFingerprint", value.Connection.RequestAdapterFingerprint);
         writer.WriteEndObject();
         writer.WriteString("clientName", value.ClientName);
         writer.WriteString("apiSpecId", value.ApiSpecId);
@@ -400,7 +399,7 @@ internal static class SessionRequestManifestCodec {
         );
     }
 
-    internal static SessionRequestTarget ReadTarget(JsonElement element) {
+    internal static SessionRequestTarget ReadTarget(JsonElement element, bool legacyTarget = false) {
         RequireExactProperties(
             element,
             "target",
@@ -409,20 +408,35 @@ internal static class SessionRequestManifestCodec {
             "apiSpecId"
         );
         JsonElement connection = ReadRequiredObject(element, "connection");
-        RequireExactProperties(
-            connection,
-            "target connection",
-            "connectionId",
-            "kind",
-            "connectionFingerprint",
-            "requestAdapterFingerprint"
-        );
+        if (legacyTarget) {
+            RequireExactProperties(
+                connection,
+                "target connection",
+                "connectionId",
+                "kind",
+                "connectionFingerprint",
+                "requestAdapterFingerprint"
+            );
+            // Old layouts carry a manual adapter label, not execution authority.
+            RequireText(
+                ReadRequiredString(connection, "requestAdapterFingerprint"),
+                "target.connection.requestAdapterFingerprint"
+            );
+        }
+        else {
+            RequireExactProperties(
+                connection,
+                "target connection",
+                "connectionId",
+                "kind",
+                "connectionFingerprint"
+            );
+        }
         return new SessionRequestTarget(
             new SessionCompletionTargetIdentity(
                 ReadRequiredString(connection, "connectionId"),
                 ReadRequiredString(connection, "kind"),
-                ReadRequiredString(connection, "connectionFingerprint"),
-                ReadRequiredString(connection, "requestAdapterFingerprint")
+                ReadRequiredString(connection, "connectionFingerprint")
             ),
             ReadRequiredString(element, "clientName"),
             ReadRequiredString(element, "apiSpecId")
@@ -450,7 +464,6 @@ internal static class SessionRequestManifestCodec {
         RequireText(value.ConnectionId, "target.connection.connectionId");
         RequireText(value.Kind, "target.connection.kind");
         RequireText(value.ConnectionFingerprint, "target.connection.connectionFingerprint");
-        RequireText(value.RequestAdapterFingerprint, "target.connection.requestAdapterFingerprint");
     }
 
     private static void ValidateToolRuntimeIdentity(SessionToolRuntimeIdentity value, string path) {

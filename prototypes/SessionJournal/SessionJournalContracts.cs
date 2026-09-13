@@ -74,8 +74,7 @@ public enum SessionCreationOrigin {
 public sealed record SessionCompletionTargetIdentity(
     string ConnectionId,
     string Kind,
-    string ConnectionFingerprint,
-    string RequestAdapterFingerprint
+    string ConnectionFingerprint
 );
 
 /// <summary>
@@ -306,8 +305,8 @@ internal sealed record ToolResultObservedBody(
 );
 
 /// <summary>
-/// Current Prepared v7 body. This is the only Prepared body that may be reconstructed into a
-/// dispatchable CompletionRequest; historical versions use distinct verification-only types.
+/// Current logical Prepared body, written as v8 and also decoded from v7. Both versions share
+/// request reconstruction; historical v5 retains a distinct verification-only body.
 /// </summary>
 internal sealed record CompletionRequestPreparedBody(
     SessionRequestOrigin Origin,

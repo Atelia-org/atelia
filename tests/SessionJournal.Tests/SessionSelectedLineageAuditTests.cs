@@ -374,8 +374,7 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
                 CompletionTarget: new SessionCompletionTargetIdentity(
                     "audit-extend-test",
                     "test",
-                    "audit-extend-v1",
-                    "audit-extend-adapter-v1"
+                    "audit-extend-v1"
                 ),
                 ContextCandidateSource: source
             ),
@@ -432,8 +431,7 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
                 CompletionTarget: new SessionCompletionTargetIdentity(
                     "audit-extend-cancel-test",
                     "test",
-                    "audit-extend-v1",
-                    "audit-extend-adapter-v1"),
+                    "audit-extend-v1"),
                 ContextCandidateSource: source),
             new SessionJournalTestHooks(
                 AfterPendingRangeExtendEntryRead: cancellation.Cancel));
@@ -458,8 +456,7 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
                 CompletionTarget: new SessionCompletionTargetIdentity(
                     "audit-extend-invalid-test",
                     "test",
-                    "audit-extend-v1",
-                    "audit-extend-adapter-v1"),
+                    "audit-extend-v1"),
                 ContextCandidateSource: source),
             new SessionJournalTestHooks(
                 RewritePendingRangeExtendEntry: entry => entry with {
@@ -709,8 +706,7 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
             CompletionTarget: new SessionCompletionTargetIdentity(
                 "audit-final-range",
                 "test",
-                "audit-final-range-v1",
-                "audit-final-range-adapter-v1"
+                "audit-final-range-v1"
             ),
             ContextCandidateSource: source
         );

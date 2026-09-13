@@ -4921,10 +4921,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
             target.ConnectionFingerprint,
             "CompletionTarget.ConnectionFingerprint"
         );
-        ValidateRequired(
-            target.RequestAdapterFingerprint,
-            "CompletionTarget.RequestAdapterFingerprint"
-        );
         ArgumentNullException.ThrowIfNull(runtime.CompletionClient);
         ValidateRequired(
             runtime.CompletionClient.Name,

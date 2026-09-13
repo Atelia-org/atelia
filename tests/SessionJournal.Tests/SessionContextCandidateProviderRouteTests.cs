@@ -637,7 +637,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task EmptyLineageBootstrap_CommitsPreparedV7AndReopensWithoutDerivedSource() {
+    public async Task EmptyLineageBootstrap_CommitsPreparedV8AndReopensWithoutDerivedSource() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource {
@@ -2101,8 +2101,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         new SessionCompletionTargetIdentity(
             "candidate-test-connection",
             "test",
-            "candidate-test-connection-v1",
-            "candidate-test-adapter-v1"
+            "candidate-test-connection-v1"
         ),
         ToolRuntimeIdentity: ToolRuntimeIdentity,
         ContextCandidateSource: source

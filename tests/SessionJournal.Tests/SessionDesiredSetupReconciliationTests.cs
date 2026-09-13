@@ -298,8 +298,7 @@ public sealed class SessionDesiredSetupReconciliationTests : IDisposable {
             CompletionTarget: new SessionCompletionTargetIdentity(
                 "connection-a",
                 "test",
-                "connection-fingerprint-a",
-                "adapter-fingerprint-a"
+                "connection-fingerprint-a"
             ),
             ContextCandidateSource: source
         );

@@ -50,15 +50,16 @@ internal static class SessionEventCodec {
             bodySchemaVersion = ReadRequiredInt32(root, "v");
             bool supportedHistoricalPrepared =
                 kind == SessionEventKind.CompletionRequestPrepared
-                && bodySchemaVersion
-                    == SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5;
+                && bodySchemaVersion is
+                    SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5
+                    or SessionRequestManifestDefaults.LegacyBodySchemaVersionV7;
             if (bodySchemaVersion != currentBodySchemaVersion
                 && !supportedHistoricalPrepared) {
                 throw new NotSupportedException(
                     $"Unsupported body schema version for session event kind '{kind}': "
                     + $"actual={bodySchemaVersion}, expected={currentBodySchemaVersion}"
                     + (kind == SessionEventKind.CompletionRequestPrepared
-                        ? $", readableHistorical={SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5}."
+                        ? $", readableHistorical={SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5},{SessionRequestManifestDefaults.LegacyBodySchemaVersionV7}."
                         : ".")
                 );
             }
@@ -78,6 +79,8 @@ internal static class SessionEventCodec {
                     SessionEventKind.CompletionRequestPrepared => bodySchemaVersion switch {
                         SessionRequestManifestDefaults.CurrentBodySchemaVersion =>
                             SessionRequestManifestCodec.Decode(body),
+                        SessionRequestManifestDefaults.LegacyBodySchemaVersionV7 =>
+                            SessionRequestManifestCodec.Decode(body, legacyTarget: true),
                         SessionRequestManifestDefaults.HistoricalBodySchemaVersionV5 =>
                             SessionRequestManifestV5HistoricalCodec.Decode(body),
                         _ => throw new NotSupportedException(

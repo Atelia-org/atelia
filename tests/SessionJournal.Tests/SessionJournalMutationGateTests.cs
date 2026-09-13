@@ -351,8 +351,7 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
         CompletionTarget: new SessionCompletionTargetIdentity(
             connectionId,
             "test",
-            $"{connectionId}-fingerprint-v1",
-            "test-request-adapter-v1"
+            $"{connectionId}-fingerprint-v1"
         ),
         ContextCandidateSource: candidates
     );

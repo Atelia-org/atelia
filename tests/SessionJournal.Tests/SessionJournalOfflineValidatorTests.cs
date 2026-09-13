@@ -26,8 +26,7 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
                 CompletionTarget: new SessionCompletionTargetIdentity(
                     "offline-validation",
                     "test",
-                    "offline-validation-v1",
-                    "offline-adapter-v1"
+                    "offline-validation-v1"
                 ),
                 ContextCandidateSource: candidateSource
             ),

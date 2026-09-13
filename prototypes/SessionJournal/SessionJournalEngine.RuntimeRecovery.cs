@@ -155,11 +155,12 @@ public sealed partial class SessionJournalEngine {
             );
             throw new NotSupportedException(
                 "Historical CompletionRequestPrepared v5 was verified but cannot be resumed. "
-                + "Only current v7 requests can enter completion dispatch."
+                + "Only v7 and v8 requests can enter completion dispatch."
             );
         }
-        if (bodySchemaVersion
-            != SessionRequestManifestDefaults.CurrentBodySchemaVersion) {
+        if (bodySchemaVersion is not (
+            SessionRequestManifestDefaults.CurrentBodySchemaVersion
+            or SessionRequestManifestDefaults.LegacyBodySchemaVersionV7)) {
             throw new NotSupportedException(
                 $"CompletionRequestPrepared v{bodySchemaVersion} cannot be resumed."
             );

@@ -354,8 +354,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     [Fact]
-    public void PreparedV7_RejectsMultiCarrierExactContextInput() {
-        CompletionRequestPreparedBody manifest = PreparedV7Fixture.Create(
+    public void PreparedV8_RejectsMultiCarrierExactContextInput() {
+        CompletionRequestPreparedBody manifest = PreparedFixture.Create(
             "correlation", "observation", Address(1), Address(2), Address(3), Address(4),
             "model", [], null
         );
@@ -662,8 +662,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             new SessionCompletionTargetIdentity(
                 "connection-A",
                 "test",
-                "connection-fingerprint-A",
-                "adapter-fingerprint-A"
+                "connection-fingerprint-A"
             ),
             "client-A",
             "api-A"

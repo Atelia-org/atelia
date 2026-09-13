@@ -1520,8 +1520,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         };
         var rejection = new CompletionRequestRejectedException(
             CompletionTermination.Failed(
-                "openai.responses.invalid-function-name",
-                "The adapter rejected an invalid function name before dispatch."
+                "openai.responses.invalid-function-name"
             ),
             callerErrors
         );
@@ -3547,8 +3546,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         new SessionCompletionTargetIdentity(
             ConnectionId: "test-connection",
             Kind: "test",
-            ConnectionFingerprint: "test-connection-fingerprint-v1",
-            RequestAdapterFingerprint: "test-request-adapter-v1"
+            ConnectionFingerprint: "test-connection-fingerprint-v1"
         ),
         ToolRuntimeIdentity: toolRuntimeIdentity ?? ToolRuntimeIdentity,
         ContextCandidateSource:

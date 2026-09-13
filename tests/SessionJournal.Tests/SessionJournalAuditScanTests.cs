@@ -665,8 +665,7 @@ public sealed class SessionJournalAuditScanTests : IDisposable {
             new SessionCompletionTargetIdentity(
                 "audit-test",
                 "test",
-                "audit-test-v1",
-                "audit-adapter-v1"
+                "audit-test-v1"
             ),
         ContextCandidateSource: source
     );

@@ -57,10 +57,9 @@ internal static class HistoricalPreparedV5TestFixture {
             historical.Target,
             historical.Commitment
         );
-        string json = Encoding.UTF8.GetString(SessionEventCodec.Encode(
-            SessionEventKind.CompletionRequestPrepared,
-            currentCarrier
-        ));
+        string json = Encoding.UTF8.GetString(
+            LegacyPreparedV7TestFixture.Encode(currentCarrier)
+        );
         json = ReplaceOnce(json, "{\"v\":7,", "{\"v\":5,");
         string modelLiteral = JsonSerializer.Serialize(
             historical.Parameters.ModelId

@@ -14,11 +14,117 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     private static readonly SessionCompletionTargetIdentity DefaultTarget = new(
         "recovery-connection",
         "test",
-        "recovery-connection-v1",
-        "recovery-adapter-v1"
+        "recovery-connection-v1"
     );
 
     private readonly List<string> _tempDirectories = [];
+
+    [Theory]
+    [InlineData(false, "original-adapter-v1")]
+    [InlineData(false, "changed-adapter-v99")]
+    [InlineData(true, "original-adapter-v1")]
+    [InlineData(true, "changed-adapter-v99")]
+    public async Task LegacyV7_RecoversFrozenRequestAndAuditsMixedV8Lineage(
+        bool started,
+        string adapterLabel
+    ) {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        SessionRuntime runtime = CreateRuntime(client);
+        EventAddress currentPrepared = await CreatePreparedAsync(path, runtime);
+        EventAddress legacyPrepared;
+        byte[] legacyBytes;
+        byte[] expectedRequestBytes;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            SessionPreparedRequestReconstruction original =
+                SessionPreparedRequestReconstructor.Reconstruct(journal, currentPrepared);
+            expectedRequestBytes = original.CanonicalBytes;
+            legacyBytes = LegacyPreparedV7TestFixture.Encode(original.Manifest, adapterLabel);
+            RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
+            Assert.True(journal.MoveRef(main, currentPrepared, original.RawEndInclusive).Unwrap());
+            legacyPrepared = journal.CommitToRef(
+                main,
+                original.RawEndInclusive,
+                legacyBytes,
+                opaqueEventKind: (uint)SessionEventKind.CompletionRequestPrepared,
+                hint: default
+            ).Unwrap().EventAddress;
+            if (started) {
+                _ = journal.CommitToRef(
+                    main,
+                    legacyPrepared,
+                    SessionEventCodec.Encode(
+                        SessionEventKind.CompletionAttemptStarted,
+                        new CompletionAttemptStartedBody()
+                    ),
+                    opaqueEventKind: (uint)SessionEventKind.CompletionAttemptStarted,
+                    hint: default
+                ).Unwrap();
+            }
+        }
+
+        using (var inspection = SessionJournalEngine.OpenReadOnly(path)) {
+            SessionExecutionRecovery recovery = inspection.ResolveExecutionTail();
+            Assert.Equal(7, recovery.PreparedRuntime!.BodySchemaVersion);
+            var requirement = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
+                inspection.InspectRuntimeRecoveryRequirements()
+            );
+            Assert.Equal(
+                started ? SessionDurableDispatchState.StartedOutcomeUncertain : SessionDurableDispatchState.NotStarted,
+                requirement.DispatchState
+            );
+        }
+        if (started) {
+            EventAddress head = ReadHead(path);
+            using var refused = SessionJournalTestRuntime.Attach(SessionJournalEngine.Open(path), runtime);
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => refused.ResumeAsync(CancellationToken.None)
+            );
+            Assert.Equal(head, refused.ReadCurrentHead());
+            Assert.Equal(0, client.Calls);
+        }
+
+        client.Enqueue(request => {
+            Assert.Equal(expectedRequestBytes, SessionRequestCanonicalizer.Canonicalize(request));
+            return Success(request, "legacy recovered");
+        });
+        var recoverySource = new TestContextCandidateSource();
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(path),
+            CreateRuntime(client, recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt)
+                with { ContextCandidateSource = recoverySource }
+        )) {
+            ResumeOutcome result = await reopened.ResumeAsync(CancellationToken.None);
+            Assert.Equal("legacy recovered", result.Message?.GetFlattenedText());
+            Assert.Equal(0, recoverySource.SelectionCount);
+            Assert.Equal(legacyBytes, reopened.ReadPayloadBytes(legacyPrepared));
+
+            client.Enqueue(request => Success(request, "current answer"));
+            reopened.UseRuntime(runtime);
+            TurnResult next = await reopened.SendAsync("next observation", CancellationToken.None);
+            Assert.Equal("current answer", next.Message.GetFlattenedText());
+        }
+
+        using var auditEngine = SessionJournalEngine.OpenReadOnly(path);
+        var events = new List<SessionJournalAuditEvent>();
+        SessionJournalAuditScanResult audit = auditEngine.ScanCheckedAuditEvents(events.Add);
+        Assert.Equal(2, audit.Diagnostics.PreparedReconstructionCount);
+        Assert.Equal(
+            [7, 8],
+            events.Where(static entry => entry.Kind == SessionEventKind.CompletionRequestPrepared)
+                .Select(static entry => entry.BodySchemaVersion).ToArray()
+        );
+        Assert.Equal(legacyBytes, auditEngine.ReadPayloadBytes(legacyPrepared));
+        Assert.Equal(2, Assert.IsType<SessionCompletedTurnsReadResult.Snapshot>(
+            auditEngine.ReadRecentCompletedTurns(10)
+        ).Value.Turns.Count);
+        SessionSelectedLineageAuditSession selected = auditEngine.BeginSelectedLineageAudit();
+        while (!selected.IsCaptureComplete) {
+            _ = selected.ReadNextPage(maxEventCount: 3);
+        }
+        Assert.Equal(audit.CapturedHead, selected.Complete().Capture.CapturedHead);
+        Assert.Equal(2, client.Calls);
+    }
 
     public void Dispose() {
         foreach (string path in _tempDirectories) {
@@ -251,7 +357,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task CompletedHistoricalV5_RemainsAuditableAndCanBeFollowedByCurrentV7() {
+    public async Task CompletedHistoricalV5_RemainsAuditableAndCanBeFollowedByCurrentV8() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         SessionRuntime runtime = CreateRuntime(client);
@@ -322,7 +428,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 .ScanCheckedAuditEvents(events.Add);
             Assert.Equal(2, audit.Diagnostics.PreparedReconstructionCount);
             Assert.Equal(
-                [5, 7],
+                [5, 8],
                 events
                     .Where(static entry => entry.Kind
                         == SessionEventKind.CompletionRequestPrepared)
@@ -419,7 +525,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ToolBearingCompletedHistoricalV5_ContinuesWithCurrentV7AfterToolResult() {
+    public async Task ToolBearingCompletedHistoricalV5_ContinuesWithCurrentV8AfterToolResult() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var tool = new RecordingTool("lookup");
@@ -483,7 +589,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             .ScanCheckedAuditEvents(events.Add);
         Assert.Equal(2, audit.Diagnostics.PreparedReconstructionCount);
         Assert.Equal(
-            [5, 7],
+            [5, 8],
             events
                 .Where(static entry => entry.Kind
                     == SessionEventKind.CompletionRequestPrepared)

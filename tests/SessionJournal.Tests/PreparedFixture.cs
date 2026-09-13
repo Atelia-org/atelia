@@ -4,7 +4,7 @@ using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal.Tests;
 
-internal static class PreparedV7Fixture {
+internal static class PreparedFixture {
     public static CompletionRequestPreparedBody Create(
         string correlationId,
         string reason,
@@ -55,8 +55,7 @@ internal static class PreparedV7Fixture {
                 new SessionCompletionTargetIdentity(
                     "connection",
                     "test",
-                    "connection-fingerprint",
-                    "adapter-fingerprint"
+                    "connection-fingerprint"
                 ),
                 "scripted",
                 "test-api-v1"

@@ -47,7 +47,8 @@ internal static class SessionRequestManifestV5HistoricalCodec {
                 SessionRequestManifestCodec.ReadRequiredObject(body, "recipe")
             ),
             SessionRequestManifestCodec.ReadTarget(
-                SessionRequestManifestCodec.ReadRequiredObject(body, "target")
+                SessionRequestManifestCodec.ReadRequiredObject(body, "target"),
+                legacyTarget: true
             ),
             SessionRequestManifestCodec.ReadCommitment(
                 SessionRequestManifestCodec.ReadRequiredObject(body, "commitment")

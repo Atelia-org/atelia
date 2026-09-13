@@ -55,7 +55,7 @@ internal sealed record SessionGoverningSetupReferences(
 );
 
 /// <summary>
-/// Current Prepared v7 provider-neutral request parameters. The absence of an output ceiling is
+/// Current Prepared v8 provider-neutral request parameters. The absence of an output ceiling is
 /// intentional: optional provider fields are omitted and required fields use the model maximum
 /// inside the concrete provider client, never in SessionJournal durable state.
 /// </summary>
@@ -108,7 +108,8 @@ internal sealed record SessionRequestCommitment(
 );
 
 internal static class SessionRequestManifestDefaults {
-    public const int CurrentBodySchemaVersion = 7;
+    public const int CurrentBodySchemaVersion = 8;
+    public const int LegacyBodySchemaVersionV7 = 7;
     public const int HistoricalBodySchemaVersionV5 = 5;
     public const string RecipeId =
         "atelia.session-journal.coherent-artifact-tail.recipe.v1";
@@ -154,7 +155,8 @@ internal sealed record SessionPreparedManifestView(
         int bodySchemaVersion,
         object body
     ) => (bodySchemaVersion, body) switch {
-        (SessionRequestManifestDefaults.CurrentBodySchemaVersion,
+        (SessionRequestManifestDefaults.CurrentBodySchemaVersion
+            or SessionRequestManifestDefaults.LegacyBodySchemaVersionV7,
             CompletionRequestPreparedBody current) => new(
                 bodySchemaVersion,
                 current.Origin,

@@ -1252,8 +1252,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         new SessionCompletionTargetIdentity(
             "test-connection",
             "test",
-            "test-connection-fingerprint-v1",
-            "test-request-adapter-v1"
+            "test-connection-fingerprint-v1"
         ),
         ToolRuntimeIdentity: ToolRuntimeIdentity,
         ContextCandidateSource: source

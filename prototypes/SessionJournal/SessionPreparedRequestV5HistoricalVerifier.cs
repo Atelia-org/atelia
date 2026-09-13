@@ -110,7 +110,7 @@ internal static class SessionPreparedRequestV5HistoricalVerifier {
 }
 
 /// <summary>
-/// Routes read-only audit verification by Prepared body version. Only current v7 reconstruction
+/// Routes read-only audit verification by Prepared body version. Only v7/v8 reconstruction
 /// can return a dispatchable request; this facade intentionally discards that result.
 /// </summary>
 internal static class SessionPreparedRequestAuditVerifier {
@@ -122,6 +122,7 @@ internal static class SessionPreparedRequestAuditVerifier {
     ) {
         switch (bodySchemaVersion) {
             case SessionRequestManifestDefaults.CurrentBodySchemaVersion:
+            case SessionRequestManifestDefaults.LegacyBodySchemaVersionV7:
                 _ = SessionPreparedRequestReconstructor.Reconstruct(
                     reader,
                     sourcePreparedAddress,

@@ -18,7 +18,7 @@ public sealed class SessionEventBodySchemaVersionTests {
     }
 
     [Fact]
-    public void ExpectedVersionMap_DefinesPreparedV7AndCurrentPerKindVersions() {
+    public void ExpectedVersionMap_DefinesPreparedV8AndCurrentPerKindVersions() {
         SessionEventKind[] kinds = Enum.GetValues<SessionEventKind>();
 
         Assert.NotEmpty(kinds);
@@ -119,7 +119,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=2", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=7", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=8", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -133,7 +133,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=3", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=7", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=8", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -147,7 +147,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=4", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=7", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=8", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -161,7 +161,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=6", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=7", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=8", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -209,7 +209,7 @@ public sealed class SessionEventBodySchemaVersionTests {
 
     private static int ExpectedVersion(SessionEventKind kind)
         => kind switch {
-            SessionEventKind.CompletionRequestPrepared => 7,
+            SessionEventKind.CompletionRequestPrepared => 8,
             SessionEventKind.RuntimeConfigSetup => 2,
             SessionEventKind.SessionCreated => 2,
             SessionEventKind.CompletionAttemptFailed => 2,

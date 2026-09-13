@@ -1190,8 +1190,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         CompletionTarget: new SessionCompletionTargetIdentity(
             "tail-connection",
             "test",
-            "tail-connection-v1",
-            "tail-adapter-v1"
+            "tail-connection-v1"
         ),
         ToolRuntimeIdentity: toolRuntimeIdentity,
         ContextCandidateSource: new TestContextCandidateSource(candidate)
@@ -1209,8 +1208,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             CompletionTarget: new SessionCompletionTargetIdentity(
                 "tail-connection",
                 "test",
-                "tail-connection-v1",
-                "tail-adapter-v1"
+                "tail-connection-v1"
             ),
             ContextCandidateSource: new TestContextCandidateSource()
         );

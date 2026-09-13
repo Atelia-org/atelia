@@ -12,8 +12,7 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
     private static readonly SessionCompletionTargetIdentity Target = new(
         "recovery-connection",
         "test",
-        "connection-fingerprint-v1",
-        "adapter-fingerprint-v1"
+        "connection-fingerprint-v1"
     );
     private static readonly SessionToolRuntimeIdentity ToolIdentity = new(
         "recovery-tools",

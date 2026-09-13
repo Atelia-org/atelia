@@ -29,7 +29,7 @@ internal sealed record SessionPreparedRequestMaterialization(
 
 /// <summary>
 /// The only reconstruction path that can produce a current dispatchable request. This component
-/// accepts Prepared v7 only and is intentionally read-only: it never plans, opens a derived
+/// accepts Prepared v7 and v8 and is intentionally read-only: it never plans, opens a derived
 /// artifact store, or substitutes current runtime configuration for pinned setup references.
 /// Historical v5 is handled by a separate verifier that cannot return CompletionRequest.
 /// </summary>
@@ -73,10 +73,10 @@ internal static class SessionPreparedRequestReconstructor {
         );
         var manifest = decoded as CompletionRequestPreparedBody
             ?? throw new InvalidDataException(
-                $"CompletionRequestPrepared at {sourcePreparedAddress} is body v{bodySchemaVersion}; only current v{SessionRequestManifestDefaults.CurrentBodySchemaVersion} can be reconstructed for dispatch."
+                $"CompletionRequestPrepared at {sourcePreparedAddress} is body v{bodySchemaVersion}; only v7 and v8 can be reconstructed for dispatch."
             );
 
-        return Reconstruct(reader, manifest, rawEndInclusive, cancellationToken) with {
+        return ReconstructCore(reader, manifest, rawEndInclusive, bodySchemaVersion, cancellationToken) with {
             SourcePreparedAddress = sourcePreparedAddress
         };
     }
@@ -100,13 +100,27 @@ internal static class SessionPreparedRequestReconstructor {
         CompletionRequestPreparedBody manifest,
         EventAddress authoritativeRawEndInclusive,
         CancellationToken cancellationToken = default
+    ) => ReconstructCore(
+        reader,
+        manifest,
+        authoritativeRawEndInclusive,
+        SessionRequestManifestDefaults.CurrentBodySchemaVersion,
+        cancellationToken
+    );
+
+    private static SessionPreparedRequestReconstruction ReconstructCore(
+        SessionJournalEventReader reader,
+        CompletionRequestPreparedBody manifest,
+        EventAddress authoritativeRawEndInclusive,
+        int bodySchemaVersion,
+        CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(manifest);
         cancellationToken.ThrowIfCancellationRequested();
         SessionRequestManifestCodec.Validate(manifest);
         SessionPreparedManifestView view = SessionPreparedManifestView.FromDecoded(
-            SessionRequestManifestDefaults.CurrentBodySchemaVersion,
+            bodySchemaVersion,
             manifest
         );
 

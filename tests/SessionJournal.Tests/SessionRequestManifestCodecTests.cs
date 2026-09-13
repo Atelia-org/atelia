@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
+using System.Text.Json.Nodes;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Xunit;
@@ -14,8 +15,91 @@ public sealed class SessionRequestManifestCodecTests {
     private static readonly EventAddress PromptSetup =
         EventAddressTextCodec.Parse("ej1:00000000000000040000000100000000");
 
+    // Captured from the v7 writer before adapter identity removal, independent of today's writer.
+    private const string LegacyV7Golden = """
+        {"v":7,"body":{"origin":{"correlationId":"correlation-01","reason":"observation"},"execution":{"lastIssuedToolExecutionSequence":17},"plan":{"rawStartExclusive":"ej1:00000000000000010000000100000000","rawRangeSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rawStartSetups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"exactContextInputs":[{"contentSha256":"e6babf8c03395cef81dcfa83a6dbb4ec4a8892a9fe188a4b37d99123b79b67df","contextSnapshot":{"systemPromptFragment":"system recap","observationMessage":"","actionMessage":""}},{"contentSha256":"60b37427fabe85d010aa6c32e7b5239eda1d3cc0472fc9a02ae6027f3aba4d02","contextSnapshot":{"systemPromptFragment":"","observationMessage":"world recap","actionMessage":""}}]},"setups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"parameters":{"modelId":"model-A"},"toolSet":{"codecId":"atelia.tool-definition.canonical-json.v1","sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","runtimeIdentity":null,"definitions":[]},"recipe":{"recipeId":"atelia.session-journal.coherent-artifact-tail.recipe.v1","canonicalRequestCodecId":"atelia.completion-request.canonical-json.v2"},"target":{"connection":{"connectionId":"connection-A","kind":"test","connectionFingerprint":"connection-fingerprint-A","requestAdapterFingerprint":"adapter-fingerprint-A"},"clientName":"client-A","apiSpecId":"api-A"},"commitment":{"byteLength":123,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}
+        """;
+
     [Fact]
-    public void CompletionRequestPreparedV7_RoundtripsCanonicalLiteralGolden() {
+    public void LegacyPreparedV7_BaselineLiteralRemainsReadable() {
+        var decoded = Assert.IsType<CompletionRequestPreparedBody>(
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                Encoding.UTF8.GetBytes(LegacyV7Golden),
+                out int version
+            )
+        );
+        CompletionRequestPreparedBody expected = CreateManifest();
+        Assert.Equal(7, version);
+        Assert.Equal(expected.Target, decoded.Target);
+        Assert.Equal(expected.Commitment, decoded.Commitment);
+        Assert.Equal(
+            SessionEventCodec.Encode(SessionEventKind.CompletionRequestPrepared, expected),
+            SessionEventCodec.Encode(SessionEventKind.CompletionRequestPrepared, decoded)
+        );
+    }
+
+    [Theory]
+    [InlineData("original-adapter-v1")]
+    [InlineData("unrelated-adapter-v99")]
+    public void LegacyPreparedV7_ProjectsAdapterLabelIntoCurrentBody(string label) {
+        CompletionRequestPreparedBody current = CreateManifest();
+        byte[] legacy = LegacyPreparedV7TestFixture.Encode(current, label);
+        var decoded = Assert.IsType<CompletionRequestPreparedBody>(
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                legacy,
+                out int version
+            )
+        );
+        Assert.Equal(7, version);
+        Assert.Equal(7, SessionPreparedManifestView.FromDecoded(version, decoded).BodySchemaVersion);
+        Assert.Equal(current.Target, decoded.Target);
+        Assert.Equal(current.Commitment, decoded.Commitment);
+        Assert.Equal(
+            SessionEventCodec.Encode(SessionEventKind.CompletionRequestPrepared, current),
+            SessionEventCodec.Encode(SessionEventKind.CompletionRequestPrepared, decoded)
+        );
+        Assert.DoesNotContain("requestAdapterFingerprint", Encoding.UTF8.GetString(
+            SessionEventCodec.Encode(SessionEventKind.CompletionRequestPrepared, decoded)
+        ));
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("null")]
+    [InlineData("number")]
+    [InlineData("empty")]
+    [InlineData("duplicate")]
+    public void LegacyPreparedV7_StillRequiresValidLegacyTargetLayout(string mutation) {
+        JsonNode envelope = JsonNode.Parse(LegacyPreparedV7TestFixture.Encode(CreateManifest()))!;
+        JsonObject connection = envelope["body"]!["target"]!["connection"]!.AsObject();
+        switch (mutation) {
+            case "missing": connection.Remove("requestAdapterFingerprint"); break;
+            case "null": connection["requestAdapterFingerprint"] = null; break;
+            case "number": connection["requestAdapterFingerprint"] = 42; break;
+            case "empty": connection["requestAdapterFingerprint"] = ""; break;
+        }
+        string json = envelope.ToJsonString();
+        if (mutation == "duplicate") {
+            json = json.Replace(
+                "\"requestAdapterFingerprint\":",
+                "\"requestAdapterFingerprint\":\"duplicate\",\"requestAdapterFingerprint\":",
+                StringComparison.Ordinal
+            );
+        }
+        AssertStrictDecodeRejected(json);
+    }
+
+    [Fact]
+    public void CurrentPreparedV8_RejectsLegacyAdapterField() {
+        JsonNode envelope = JsonNode.Parse(LegacyPreparedV7TestFixture.Encode(CreateManifest()))!;
+        envelope["v"] = 8;
+        AssertStrictDecodeRejected(envelope.ToJsonString());
+    }
+
+    [Fact]
+    public void CompletionRequestPreparedV8_RoundtripsCanonicalLiteralGolden() {
         CompletionRequestPreparedBody body = CreateManifest();
 
         byte[] encoded = SessionEventCodec.Encode(
@@ -30,7 +114,7 @@ public sealed class SessionRequestManifestCodecTests {
             )
         );
 
-        Assert.Equal(7, version);
+        Assert.Equal(8, version);
         Assert.Equal(encoded,
             SessionEventCodec.Encode(
                 SessionEventKind.CompletionRequestPrepared,
@@ -55,14 +139,14 @@ public sealed class SessionRequestManifestCodecTests {
         Assert.Equal(body.Commitment, decoded.Commitment);
         Assert.Equal(
             """
-            {"v":7,"body":{"origin":{"correlationId":"correlation-01","reason":"observation"},"execution":{"lastIssuedToolExecutionSequence":17},"plan":{"rawStartExclusive":"ej1:00000000000000010000000100000000","rawRangeSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rawStartSetups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"exactContextInputs":[{"contentSha256":"e6babf8c03395cef81dcfa83a6dbb4ec4a8892a9fe188a4b37d99123b79b67df","contextSnapshot":{"systemPromptFragment":"system recap","observationMessage":"","actionMessage":""}},{"contentSha256":"60b37427fabe85d010aa6c32e7b5239eda1d3cc0472fc9a02ae6027f3aba4d02","contextSnapshot":{"systemPromptFragment":"","observationMessage":"world recap","actionMessage":""}}]},"setups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"parameters":{"modelId":"model-A"},"toolSet":{"codecId":"atelia.tool-definition.canonical-json.v1","sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","runtimeIdentity":null,"definitions":[]},"recipe":{"recipeId":"atelia.session-journal.coherent-artifact-tail.recipe.v1","canonicalRequestCodecId":"atelia.completion-request.canonical-json.v2"},"target":{"connection":{"connectionId":"connection-A","kind":"test","connectionFingerprint":"connection-fingerprint-A","requestAdapterFingerprint":"adapter-fingerprint-A"},"clientName":"client-A","apiSpecId":"api-A"},"commitment":{"byteLength":123,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}
+            {"v":8,"body":{"origin":{"correlationId":"correlation-01","reason":"observation"},"execution":{"lastIssuedToolExecutionSequence":17},"plan":{"rawStartExclusive":"ej1:00000000000000010000000100000000","rawRangeSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rawStartSetups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"exactContextInputs":[{"contentSha256":"e6babf8c03395cef81dcfa83a6dbb4ec4a8892a9fe188a4b37d99123b79b67df","contextSnapshot":{"systemPromptFragment":"system recap","observationMessage":"","actionMessage":""}},{"contentSha256":"60b37427fabe85d010aa6c32e7b5239eda1d3cc0472fc9a02ae6027f3aba4d02","contextSnapshot":{"systemPromptFragment":"","observationMessage":"world recap","actionMessage":""}}]},"setups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"parameters":{"modelId":"model-A"},"toolSet":{"codecId":"atelia.tool-definition.canonical-json.v1","sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","runtimeIdentity":null,"definitions":[]},"recipe":{"recipeId":"atelia.session-journal.coherent-artifact-tail.recipe.v1","canonicalRequestCodecId":"atelia.completion-request.canonical-json.v2"},"target":{"connection":{"connectionId":"connection-A","kind":"test","connectionFingerprint":"connection-fingerprint-A"},"clientName":"client-A","apiSpecId":"api-A"},"commitment":{"byteLength":123,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}
             """.Trim(),
             Encoding.UTF8.GetString(encoded)
         );
     }
 
     [Fact]
-    public void CompletionRequestPreparedV7_StrictDecodeRejectsHistoricalMaxTokensField() {
+    public void CompletionRequestPreparedV8_StrictDecodeRejectsHistoricalMaxTokensField() {
         string canonical = EncodeManifestJson();
 
         AssertStrictDecodeRejected(ReplaceOnce(
@@ -230,7 +314,7 @@ public sealed class SessionRequestManifestCodecTests {
     [InlineData("\"commitment\":{\"byteLength\":", "\"commitment\":{\"unknown\":true,\"byteLength\":")]
     [InlineData("\"correlationId\":\"correlation-01\",", "\"correlationId\":\"duplicate\",\"correlationId\":\"correlation-01\",")]
     [InlineData("\"recipeId\":\"atelia.session-journal.coherent-artifact-tail.recipe.v1\",", "\"recipeId\":\"duplicate\",\"recipeId\":\"atelia.session-journal.coherent-artifact-tail.recipe.v1\",")]
-    public void CompletionRequestPreparedV7_StrictDecodeRejectsUnknownOrDuplicateProperties(
+    public void CompletionRequestPreparedV8_StrictDecodeRejectsUnknownOrDuplicateProperties(
         string marker,
         string replacement
     ) {
@@ -243,7 +327,7 @@ public sealed class SessionRequestManifestCodecTests {
     [InlineData("\"recipe\":{", "\"removedRecipe\":{")]
     [InlineData("\"rawStartExclusive\":", "\"removedRawStart\":")]
     [InlineData("\"rawStartSetups\":", "\"removedRawStartSetups\":")]
-    public void CompletionRequestPreparedV7_StrictDecodeRejectsMissingRequiredProperties(
+    public void CompletionRequestPreparedV8_StrictDecodeRejectsMissingRequiredProperties(
         string marker,
         string replacement
     ) {
@@ -377,7 +461,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CompletionRequestPreparedV7_PreservesAbsentNullAndNumericToolDefaults() {
+    public void CompletionRequestPreparedV8_PreservesAbsentNullAndNumericToolDefaults() {
         CompletionRequestPreparedBody body = CreateManifest(
             CreateToolDefinitions()
         );
@@ -421,7 +505,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CompletionRequestPreparedV7_RoundtripsComprehensiveNestedToolSchemasInOrder() {
+    public void CompletionRequestPreparedV8_RoundtripsComprehensiveNestedToolSchemasInOrder() {
         CompletionRequestPreparedBody body = CreateManifest(
             CreateComprehensiveToolDefinitions()
         );
@@ -732,7 +816,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CompletionRequestPreparedV7_StrictDecodeRejectsNestedSnapshotAndToolSchemaDrift() {
+    public void CompletionRequestPreparedV8_StrictDecodeRejectsNestedSnapshotAndToolSchemaDrift() {
         string canonical = EncodeManifestJson(CreateToolDefinitions());
         (string Marker, string Replacement)[] mutations = [
             (
@@ -822,8 +906,7 @@ public sealed class SessionRequestManifestCodecTests {
                 new SessionCompletionTargetIdentity(
                     "connection-A",
                     "test",
-                    "connection-fingerprint-A",
-                    "adapter-fingerprint-A"
+                    "connection-fingerprint-A"
                 ),
                 "client-A",
                 "api-A"

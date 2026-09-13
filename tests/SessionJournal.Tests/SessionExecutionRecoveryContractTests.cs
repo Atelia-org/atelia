@@ -170,8 +170,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             CompletionTarget: new SessionCompletionTargetIdentity(
                 "test-connection",
                 "test",
-                "test-connection-fingerprint-v1",
-                "test-request-adapter-v1"
+                "test-connection-fingerprint-v1"
             ),
             ContextCandidateSource: new TestContextCandidateSource()
         );

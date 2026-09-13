@@ -361,8 +361,7 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
         CompletionTarget: new SessionCompletionTargetIdentity(
             "performance-connection",
             "test",
-            "performance-connection-v1",
-            "performance-adapter-v1"
+            "performance-connection-v1"
         ),
         ToolRuntimeIdentity: tools is null
             ? null
