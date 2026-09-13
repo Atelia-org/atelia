@@ -29,6 +29,7 @@ docs/Galatea/scenario-lab.md
 docs/Galatea/codex-delegation-verification.md
 docs/Galatea/codex-delegation-recovery-refactor-plan.md
 docs/Galatea/user-home-design.md
+docs/Galatea/identity-simplification-design.md
 docs/Galatea/character-note-transcription.md
 docs/SessionJournal/current/contracts/galatea-root-config-v9.md
 

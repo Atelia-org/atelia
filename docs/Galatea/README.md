@@ -27,6 +27,7 @@
 | per-user 本地个人目录 | [User home 设计与实施](user-home-design.md)：`/galatea-homes/`、原 thread 延续、格式升级与实际验证 |
 | 服务端自动轮次 | [headless pilot 工作单与验收](headless-agent-pilot-work-order.md) |
 | SessionJournal / RecapGrid authority | [当前架构与代码地图](../SessionJournal/current/architecture-and-code-map.md) |
+| 简化 Galatea / RecapGrid 身份与恢复校验 | [实施前设计](identity-simplification-design.md)：取消 adapter 指纹门槛、合并重复身份与迁移边界；尚未实施 |
 | RecapGrid operator CLI | [SessionJournal.Cli 指南](../../prototypes/SessionJournal.Cli/README.md) |
 
 ## 源码与验证入口
