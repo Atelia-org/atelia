@@ -1,6 +1,6 @@
 # Galatea / RecapGrid 身份与恢复校验简化设计
 
-> 状态：§5 已实现并通过本地集成验证；§6 仍为后续设计。实施记录见 §10；未部署到长期实例。
+> 状态：§5 已实现，并在唯一 Dev 实例完成真实调用与冷重开验证；§6 仍为后续设计。代码阶段见 §10，实例 E2E 与额外修复见 §11。
 >
 > 日期：2026-09-14。代码基线：`277baeea`。本文区分目标设计、当前实现和历史验证；不继承其他工作单的实施授权。
 
@@ -203,7 +203,7 @@ ConnectionFingerprint 的替代需要单独决定 endpoint/reasoning 改配的�
 ```bash
 dotnet test tests/Completion.Tests/Completion.Tests.csproj --no-restore -m:1 -nr:false
 dotnet test tests/SessionJournal.Tests/SessionJournal.Tests.csproj --no-restore -m:1 -nr:false
-dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'FullyQualifiedName!~Live'
+dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'FullyQualifiedName!~CharacterNoteTranscriptionLiveTests&FullyQualifiedName!~GalateaCodexDelegationLiveTests&FullyQualifiedName!~GalateaScenarioLabLiveTests' -- xUnit.MaxParallelThreads=4
 dotnet build prototypes/Galatea/Galatea.Server.csproj --no-restore -m:1 -nr:false
 dotnet build prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj --no-restore -m:1 -nr:false
 ```
@@ -243,9 +243,35 @@ dotnet build prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj --no-restor
 旧格式生产链夹具只在停止的合成测试目录追加替代 lineage，不改写已有事件，更不操作真实会话。
 
 验证统一串行使用 `--no-restore -m:1 -nr:false`；除 §8 所列项目，补跑 `SessionJournal.Cli.Tests` 及上述四个 RecapGrid 测试项目。
-Galatea 使用 `FullyQualifiedName!~Live`，且进程环境移除了 Note、Lab、Codex delegation 的 live opt-in 开关。
+首轮 Galatea 使用 `FullyQualifiedName!~Live`，且进程环境移除了 Note、Lab、Codex delegation 的 live opt-in 开关。后续 E2E 收尾发现此子串过滤也会误排除 `Delivery` 测试；§8 已改为只排除三个真实 Live 类，扩大后的补验见 §11。本节保留首轮实际执行数字，不把它冒充完整非 Live 集合。
 最终八个项目合计 2,589 通过、1 跳过（Windows 专用测试），0 失败；文档检查 33 文件、0 diagnostics，`git diff --check` 通过。
 Galatea Server 与 SessionJournal CLI 的独立 build 均为 0 warnings、0 errors。
 
-本轮没有部署或重启长期实例，没有转换 Timeline/Control/Store。§6.2 的独立格式升级方案已补入设计，
+首轮代码阶段没有部署或重启长期实例，没有转换 Timeline/Control/Store。§6.2 的独立格式升级方案已补入设计，
 随后 §6.1/§6.3 仍须按单次目标格式和迁移约束推进，不将本轮完成误记为整份后续路线全部完成。
+
+## 11. 唯一 Dev 实例 E2E（2026-09-14）
+
+用户明确授权使用 `prototypes/Galatea/.atelia` 的两个测试账号进行真实 E2E，允许撤销测试叙事并保留外部 Codex/邮件影响。执行前确认实例停止，完整备份 `.atelia` 到 `/mnt/e/bak/atelia-full-identity-e2e-20260913T201405Z.7z`，通过 `7z t` 并保存校验文件；没有只备份其中一个用户。
+
+初始两个活动命名 `main` 分支均通过 full audit 与 selected-lineage audit：`cyber` 为 AwaitingCompletion（228 events，Prepared v5=14/v7=5），`gpt` 为 Idle（252 events，v5=21/v7=40）。这是活动命名分支盘点，不宣称扫描全部历史物理 Ref/reflog。
+
+真实 Chrome 登录后发现并修复了单元夹具未覆盖的旧状态问题：`gpt` 的已 Delivered Note 回执使用旧版“原文”文案，当前 renderer 改为“内容”文案后，`ValidateReceiptDeliveryRows` 重渲染并全文比较旧 body，使 `/api/v1/chat/turns/current` 返回 500。`351095b5` 删除这项重复门槛，按 Applied 事务中已冻结的 `notice_body` 读取；保留严格 UTF-8、非空、预算、来源/修订及 Bound Observation 检查。新增旧文案三种状态冷重开、append-before-ack 恢复和真实 Host 读取测试，focused 85/85 通过，独立审阅无阻断 findings。真实数据库未执行 SQL 修复，原 412-byte Delivered 回执及修订号保持不变。
+
+实际调用与浏览器验证：
+
+- `cyber` 的旧 v7 Started 请求经页面明确授权恢复成功，继续使用原中转站与 `claude-opus-4-6`；Models API 404 实际触发 `max_tokens=128000` 回退。
+- 两个用户各完成两条测试输入，主连接分别为 Opus 4.6 与 Codex backend 的 `gpt-6-astra`。第一轮后真实停服、重新启动，两用户页面中的对应输入/回答逐字保持，current 为 Idle；第二轮验证重开后仍可继续发送。
+- 共完成 5 次主线调用（1 次旧请求恢复、4 次 fresh），均有真实 SSE `done` 与正常页面收尾。Completion 日志另记录 20 次成功的 normalizer/Codex helper 调用。
+- 首次 Anthropic 恢复在 Models GET 上发生 TLS EOF，未到 Messages POST；之后独立 GET 确认 404、小 Messages 请求成功，再经明确授权完成上述恢复。记录保留这次失败，不把重试包装成首次成功，也未增加自动重发生成请求。
+- 私有浏览器脚本两处假设已纠正：SSE 按完整 `done/error` 帧结束观察，不等待 HTTP EOF；normalizer 将测试时间戳规范化为等价 ISO 拼法时不误判消息丢失。第二轮 cyber 的原失败报告保留，随后只读定向检查确认实际对应回合已显示，没有为补验重发消息。
+
+四条测试输入都通过真实页面 Undo 撤销，且每次先确认最新用户卡片匹配本次测试标记。清理后两用户均 Idle，活动 lineage 不再包含 v8 测试轮次；验证期间已经证明 v5/v7/v8 共存可读。原始测试事件与 ref 移动历史保留，未冒充目录回滚。`cyber` 保留旧请求恢复产生的两个 Started 和 Action（231 events）；`gpt` 保留正常配置同步的 SystemPromptSetup（253 events）。一封原有 gpt Ready 回信已按正常流程转为 Consumed，邮件记录保留；没有新增 outbound mail。
+
+清理后 full/selected audit 再次通过，7 个活动 SQLite 库 `quick_check=ok`，旧 gpt 回执字段对比不变。私有逐次元数据证据位于 `gitignore/galatea-identity-e2e-20260913T201405Z/`；原故事、Note、凭据和完整调用日志不进入版本库。
+
+撤销后再次冷启动并通过真实 Chrome 检查：两用户 current=Idle，页面没有 console/page/API 错误；cyber Recap 为 exact/ready，gpt 为 exact/raw-only，均无错误 code。最终停止服务，没有把 Dev 实例留在后台运行。
+
+最后停服的 full/selected audit 确认此次冷重开没有改变清理后的两个 head，旧 gpt 回执仍原样保留。验证后完整快照为 `/mnt/e/bak/atelia-full-identity-e2e-20260913T201405Z-verified.7z`，与升级前备份分别保留；两份均通过归档完整性检查。
+
+回归补验：原 `!~Live` 子串过滤漏掉了 `Delivery` 测试，已改成只排除三个 Live 类；此前满并行出现的一个 delegation 短时限测试隔离 2/2 通过，随后使用 `xUnit.MaxParallelThreads=4` 的完整非 Live 集合 **983/983 通过**。Server 独立 build 为 0 warnings、0 errors；文档检查 33 文件、0 diagnostics。未因测试时序抖动放宽生产 deadline。
