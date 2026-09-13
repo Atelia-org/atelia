@@ -1433,11 +1433,13 @@ public sealed class CharacterNoteRuntimeTests {
     [Fact]
     public async Task PlayerTurnWithReplyDeliversDurableReceiptInSameObservation() {
         CompletionConnectionConfig main = Connection("test");
-        await using GalateaTestHost host = CreateReceiptHost(main);
+        var transport = new ReadyReplyTransport();
+        await using GalateaTestHost host = CreateReceiptHost(main, transport);
         (GalateaHostService service, UserSessionHost session) =
             await GetRuntimeAsync(host);
         await SaveNoteAsync(service, session, main.Id);
-        ProduceReadyReply(session);
+        await ProduceReadyReplyAsync(session);
+        Assert.Equal(1, transport.StartCount);
 
         await session.TurnLock.WaitAsync();
         try {
@@ -1570,7 +1572,9 @@ public sealed class CharacterNoteRuntimeTests {
         "character-note-durable-memo"
     ));
 
-    private static GalateaTestHost CreateReceiptHost(CompletionConnectionConfig main) {
+    private static GalateaTestHost CreateReceiptHost(
+        CompletionConnectionConfig main, IGalateaDurableDelegateTransport? delegateTransport = null
+    ) {
         CompletionConnectionConfig note = Connection("note");
         return GalateaTestHost.Create(
             new RoutingFactory(new Dictionary<string, ICompletionClient>(StringComparer.Ordinal) {
@@ -1584,7 +1588,8 @@ public sealed class CharacterNoteRuntimeTests {
             DisabledGalateaUserMessageNormalizer.Instance,
             connections: [main, note],
             selectableConnectionIds: [main.Id],
-            characterNoteExtractorConnectionId: note.Id);
+            characterNoteExtractorConnectionId: note.Id,
+            delegateTransport: delegateTransport);
     }
 
     private static async Task SaveNoteAsync(
@@ -1609,7 +1614,7 @@ public sealed class CharacterNoteRuntimeTests {
         return observation;
     }
 
-    private static void ProduceReadyReply(UserSessionHost session) {
+    private static async Task ProduceReadyReplyAsync(UserSessionHost session) {
         const string VisibleAction = "ready reply source";
         GalateaDelegationSqliteStore store = session.DelegationHandle!.Store;
         string sourceAction = EventAddressTextCodec.Format(
@@ -1632,39 +1637,45 @@ public sealed class CharacterNoteRuntimeTests {
                 )]
             )
         );
-        GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
-        GalateaRouteBindingSnapshot binding = store.BeginThreadBinding(
-            "runtime-test-binding",
-            snapshot.Route.Revision,
-            Assert.Single(captured.DispatchIds),
-            snapshot.Mails.Single(value => value.DispatchId == captured.DispatchIds[0]).Revision
-        );
-        _ = store.CompleteThreadBinding(
-            binding.BindingOperationId!,
-            "runtime-test-thread",
-            binding.Revision
-        );
-        snapshot = store.ReadSnapshot();
         string dispatchId = Assert.Single(captured.DispatchIds);
-        GalateaOutboundMailSnapshot mail = snapshot.Mails.Single(value =>
-            string.Equals(
-                value.DispatchId,
-                dispatchId,
-                StringComparison.Ordinal
-            )
-        );
-        GalateaOutboundMailSnapshot started = store.StartQueuedMail(
-            dispatchId,
-            mail.Revision,
-            snapshot.Route.Revision
-        );
-        _ = store.RecordCompletedMail(
-            dispatchId,
-            started.Revision,
-            "runtime-test-thread",
-            "runtime-test-turn",
-            "ready reply"
-        );
+        // The supervisor is the only driver of the mail state machine. Manual
+        // Started/Completed writes raced its recovery pulse and invalidated CAS.
+        session.DelegationHandle!.Signal();
+        await WaitUntilAsync(() => store.ReadSnapshot().Notices.Any(value =>
+            value.DispatchId == dispatchId && value.State == GalateaReplyNoticeState.Ready));
+        GalateaReplyNoticeSnapshot notice = Assert.Single(store.ReadSnapshot().Notices);
+        Assert.Equal(GalateaReplyNoticeKind.Reply, notice.Kind);
+        Assert.Equal("ready reply", notice.Body);
+    }
+
+    private sealed class ReadyReplyTransport : IGalateaDurableDelegateTransport {
+        private int _startCount;
+        internal int StartCount => Volatile.Read(ref _startCount);
+
+        public Task<GalateaDelegateBindingEstablished> EnsureBindingAsync(
+            GalateaEnsureDelegateBindingRequest request, CancellationToken ct
+        ) => Task.FromResult(new GalateaDelegateBindingEstablished(
+            request.BindingOperationId, "runtime-test-thread"));
+
+        public Task<GalateaDelegateTurnAccepted> StartTurnAsync(
+            GalateaStartDelegateTurnRequest request, CancellationToken ct
+        ) {
+            Assert.Equal("task", request.Task);
+            Interlocked.Increment(ref _startCount);
+            return Task.FromResult(new GalateaDelegateTurnAccepted(
+                request.DispatchId, request.ThreadId, "runtime-test-turn"));
+        }
+
+        public Task<GalateaDelegateDispatchInspection> InspectDispatchAsync(
+            GalateaInspectDelegateDispatchRequest request, CancellationToken ct
+        ) {
+            Assert.Equal("runtime-test-turn", request.ExpectedTurnId);
+            return Task.FromResult<GalateaDelegateDispatchInspection>(
+                new GalateaDelegateDispatchInspection.Completed(request.DispatchId,
+                    request.ThreadId, "runtime-test-turn", "ready reply", GalateaDelegateInspectionSource.Live));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition) {
