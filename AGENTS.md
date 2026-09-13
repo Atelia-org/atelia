@@ -78,6 +78,10 @@ Copilot可以理解成一种职业，这并不与LLM会话的底层模型切换�
 > `InternalsVisibleTo` 只应授予白盒测试入口（如 `Atelia.DebugApps`），不应授予普通消费者。
 > 详见 `docs/StateJournal/usage-guide.md` §0 和 §12。
 
+## atelia-storage 拆仓任务入口
+
+五个存储基础项目的拆仓范围、分阶段任务、自动化入口与资源准备见 [atelia-storage 实施计划](docs/plans/atelia-storage-extraction-plan.md)。涉及该迁移时从此计划继续；文档状态与实际实施证据应区分。
+
 ---
 
 ## 目标分解树
