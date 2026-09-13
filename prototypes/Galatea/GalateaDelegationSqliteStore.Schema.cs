@@ -8,7 +8,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.CommandText = """
             CREATE TABLE delegation_meta (
                 singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
-                schema_version INTEGER NOT NULL CHECK(schema_version = 2),
+                schema_version INTEGER NOT NULL CHECK(schema_version = 3),
                 user_id TEXT NOT NULL,
                 session_repository_id TEXT NOT NULL,
                 capture_frontier_segment_number INTEGER NOT NULL
@@ -76,12 +76,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 terminal_final_sha256 TEXT NULL,
                 terminal_stage TEXT NULL,
                 terminal_code TEXT NULL,
-                reconcile_attempt_count INTEGER NOT NULL DEFAULT 0
-                    CHECK(reconcile_attempt_count >= 0),
-                reconcile_last_code TEXT NULL,
-                next_reconcile_at_ms INTEGER NULL
-                    CHECK(next_reconcile_at_ms IS NULL
-                        OR next_reconcile_at_ms >= 0),
+                recovery_failure_count INTEGER NOT NULL DEFAULT 0
+                    CHECK(recovery_failure_count >= 0),
+                recovery_last_code TEXT NULL,
+                next_retry_at_ms INTEGER NULL
+                    CHECK(next_retry_at_ms IS NULL
+                        OR next_retry_at_ms >= 0),
                 revision INTEGER NOT NULL CHECK(revision >= 0)
             ) STRICT;
 
@@ -99,12 +99,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 active_dispatch_id TEXT NULL
                     REFERENCES outbound_mail(dispatch_id) ON DELETE RESTRICT,
                 quarantine_code TEXT NULL,
-                ensure_attempt_count INTEGER NOT NULL DEFAULT 0
-                    CHECK(ensure_attempt_count >= 0),
-                ensure_last_code TEXT NULL,
-                next_ensure_at_ms INTEGER NULL
-                    CHECK(next_ensure_at_ms IS NULL
-                        OR next_ensure_at_ms >= 0),
                 revision INTEGER NOT NULL CHECK(revision >= 0)
             ) STRICT;
 
@@ -242,11 +236,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 INSERT INTO route_binding(
                     singleton, state, binding_operation_id, thread_id,
                     active_dispatch_id,
-                    quarantine_code, ensure_attempt_count, ensure_last_code,
-                    next_ensure_at_ms, revision
+                    quarantine_code, revision
                 ) VALUES (
-                    1, 'Unbound', NULL, NULL, NULL, NULL,
-                    0, NULL, NULL, 0
+                    1, 'Unbound', NULL, NULL, NULL, NULL, 0
                 );
                 """;
             route.ExecuteNonQuery();

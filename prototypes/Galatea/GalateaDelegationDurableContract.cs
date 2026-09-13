@@ -12,6 +12,12 @@ namespace Atelia.Galatea.Server;
 /// store and durable transport.
 /// </summary>
 internal static class GalateaDelegationDurableContract {
+    internal const int MaximumRecoveryFailures = 8;
+    internal const long MaximumRecoveryBackoffMilliseconds = 60_000;
+    internal const string LocalRecoveryStage = "local-recovery";
+    internal const string ResultUnconfirmedCode = "RESULT_UNCONFIRMED";
+    internal const string NotDispatchedRetriesExhaustedCode = "NOT_DISPATCHED_RETRIES_EXHAUSTED";
+
     internal const int MaximumCandidateCount = 4_096;
     internal const int MaximumCandidateUtf8Bytes = 64 * 1024 * 1024;
     internal const int MaximumActionHeadTombstones = 4_096;
@@ -60,6 +66,11 @@ internal static class GalateaDelegationDurableContract {
     ) {
         string safeStage = NormalizeFailureToken(stage, "delegate");
         string safeCode = NormalizeFailureToken(code, "DELEGATE_FAILURE");
+        if (safeStage == LocalRecoveryStage) {
+            return safeCode == ResultUnconfirmedCode
+                ? "Codex 未能确认本次任务结果。后台恢复已结束；此前可能产生部分工作，旧工作也可能仍在运行，请先核查现状。后续任务可以继续。"
+                : $"Codex 本次任务尚未开始，后台恢复已结束（错误代码：{safeCode}）。后续任务可以继续。";
+        }
         return $"外界代行者 Codex 未能处理这封信（阶段：{safeStage}；错误代码：{safeCode}）。";
     }
 

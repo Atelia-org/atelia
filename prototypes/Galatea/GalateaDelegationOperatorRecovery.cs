@@ -462,11 +462,11 @@ internal static class GalateaDelegationOperatorRecovery {
                 StringComparison.Ordinal
             )
             || !string.Equals(
-                mail.ReconcileLastCode,
+                mail.RecoveryLastCode,
                 RequiredReconcileCode,
                 StringComparison.Ordinal
             )
-            || mail.ReconcileAttemptCount < 1
+            || mail.RecoveryFailureCount < 1
             || snapshot.Notices.Any(value => string.Equals(
                 value.DispatchId,
                 evidence.DispatchId,
@@ -531,9 +531,9 @@ internal static class GalateaDelegationOperatorRecovery {
             TerminalFinalSha256 = evidence.FinalSha256,
             TerminalStage = null,
             TerminalCode = null,
-            ReconcileAttemptCount = 0,
-            ReconcileLastCode = null,
-            NextReconcileAtUnixTimeMilliseconds = null,
+            RecoveryFailureCount = 0,
+            RecoveryLastCode = null,
+            NextRetryAtUnixTimeMilliseconds = null,
             Revision = checked(beforeMail.Revision + 1)
         };
         var expectedNotice = new GalateaReplyNoticeSnapshot(

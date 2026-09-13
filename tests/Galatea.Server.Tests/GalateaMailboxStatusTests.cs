@@ -126,6 +126,29 @@ public sealed class GalateaMailboxStatusTests {
     }
 
     [Fact]
+    public void Projection_QueuedRecoveryBudgetSurvivesBindingReplacement() {
+        foreach (GalateaDelegationRouteState routeState in new[] {
+            GalateaDelegationRouteState.Unbound,
+            GalateaDelegationRouteState.Binding,
+            GalateaDelegationRouteState.Bound
+        }) {
+            GalateaMailboxStatusProjection status = GalateaDelegationSqliteStore.ProjectMailboxStatus(
+                Baseline() with {
+                    RouteState = routeState,
+                    QueuedCount = 1,
+                    QueuedMailAttemptCount = 3,
+                    QueuedMailLastCode = "THREAD_NOT_FOUND",
+                    QueuedMailNextRetryAtUnixTimeMilliseconds = 4_000
+                });
+
+            Assert.Equal(GalateaMailboxStatusState.Backoff, status.State);
+            Assert.Equal(3, status.AttemptCount);
+            Assert.Equal("THREAD_NOT_FOUND", status.Code);
+            Assert.Equal(4_000, status.NextRetryAtUnixTimeMilliseconds);
+        }
+    }
+
+    [Fact]
     public void DtoHasOnlyThePublicAggregateFields() {
         Assert.Equal(
             [
@@ -148,9 +171,9 @@ public sealed class GalateaMailboxStatusTests {
     private static GalateaMailboxStatusAggregate Baseline() => new(
         GalateaDelegationRouteState.Bound,
         RouteQuarantineCode: null,
-        RouteAttemptCount: 0,
-        RouteLastCode: null,
-        RouteNextRetryAtUnixTimeMilliseconds: null,
+        QueuedMailAttemptCount: 0,
+        QueuedMailLastCode: null,
+        QueuedMailNextRetryAtUnixTimeMilliseconds: null,
         RouteHasActiveMail: false,
         ActiveMailState: null,
         ActiveMailTerminalCode: null,

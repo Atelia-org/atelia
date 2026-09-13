@@ -122,8 +122,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.CommandText = """
             SELECT state, binding_operation_id, thread_id,
                    active_dispatch_id,
-                   quarantine_code, ensure_attempt_count,
-                   ensure_last_code, next_ensure_at_ms, revision
+                   quarantine_code, revision
             FROM route_binding WHERE singleton = 1;
             """;
         using SqliteDataReader reader = command.ExecuteReader();
@@ -136,10 +135,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
             ReadNullableString(reader, 2),
             ReadNullableString(reader, 3),
             ReadNullableString(reader, 4),
-            reader.GetInt32(5),
-            ReadNullableString(reader, 6),
-            reader.IsDBNull(7) ? null : reader.GetInt64(7),
-            reader.GetInt64(8)
+            reader.GetInt64(5)
         );
         if (reader.Read()) {
             throw Corrupt("route_binding has multiple rows.");
@@ -192,8 +188,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                    mail.operation_id, mail.requested_thread_id,
                    mail.accepted_thread_id, mail.accepted_turn_id,
                    mail.terminal_final_sha256, mail.terminal_stage,
-                   mail.terminal_code, mail.reconcile_attempt_count,
-                   mail.reconcile_last_code, mail.next_reconcile_at_ms,
+                   mail.terminal_code, mail.recovery_failure_count,
+                   mail.recovery_last_code, mail.next_retry_at_ms,
                    mail.revision
             FROM outbound_mail AS mail
             JOIN action_capture AS capture
@@ -561,22 +557,19 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 route.BindingOperationId is null
                 && route.ThreadId is null
                 && route.ActiveDispatchId is null
-                && route.QuarantineCode is null
-                && HasNoEnsureBackoff(route),
+                && route.QuarantineCode is null,
             GalateaDelegationRouteState.Binding =>
                 route.BindingOperationId is not null
                 && route.ThreadId is null
                 && route.ActiveDispatchId is null
                 && route.QuarantineCode is null
-                && HasValidEnsureBackoff(route),
+                && mails.Any(mail => mail.State == GalateaDurableMailState.Queued),
             GalateaDelegationRouteState.Bound =>
                 route.BindingOperationId is not null
                 && route.ThreadId is not null
-                && route.QuarantineCode is null
-                && HasNoEnsureBackoff(route),
+                && route.QuarantineCode is null,
             GalateaDelegationRouteState.Quarantined =>
-                route.QuarantineCode is not null
-                && HasNoEnsureBackoff(route),
+                route.QuarantineCode is not null,
             _ => false
         };
         if (!valid) { throw Corrupt("route_binding shape is invalid."); }
@@ -590,12 +583,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
             if (route.QuarantineCode is not null) {
                 RequireFailureToken(route.QuarantineCode,
                     nameof(route.QuarantineCode));
-            }
-            if (route.EnsureLastCode is not null) {
-                RequireFailureToken(
-                    route.EnsureLastCode,
-                    nameof(route.EnsureLastCode)
-                );
             }
         }
         catch (Exception exception) when (exception is ArgumentException) {
@@ -619,22 +606,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
     }
 
-    private static bool HasNoEnsureBackoff(
-        GalateaRouteBindingSnapshot route
-    ) => route.EnsureAttemptCount == 0
-        && route.EnsureLastCode is null
-        && route.NextEnsureAtUnixTimeMilliseconds is null;
-
-    private static bool HasValidEnsureBackoff(
-        GalateaRouteBindingSnapshot route
-    ) => route.EnsureAttemptCount switch {
-        0 => route.EnsureLastCode is null
-            && route.NextEnsureAtUnixTimeMilliseconds is null,
-        > 0 => route.EnsureLastCode is not null
-            && route.NextEnsureAtUnixTimeMilliseconds is >= 0,
-        _ => false
-    };
-
     private static void ValidateMailShape(
         GalateaOutboundMailSnapshot mail
     ) {
@@ -648,18 +619,18 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 && mail.Body is not null
                 && mail.EvidenceQuote is not null
                 && mail.OperationId is null
-                && mail.ReconcileAttemptCount == 0
-                && mail.ReconcileLastCode is null
-                && mail.NextReconcileAtUnixTimeMilliseconds is null,
+                && mail.RecoveryFailureCount == 0
+                && mail.RecoveryLastCode is null
+                && mail.NextRetryAtUnixTimeMilliseconds is null,
             GalateaDurableMailState.Queued =>
                 mail.IsCodexRouted
                 && mail.Body is not null
                 && mail.EvidenceQuote is not null
                 && mail.OperationId is null
                 && mail.RequestedThreadId is null
-                && mail.ReconcileAttemptCount == 0
-                && mail.ReconcileLastCode is null
-                && mail.NextReconcileAtUnixTimeMilliseconds is null,
+                && mail.AcceptedThreadId is null
+                && mail.AcceptedTurnId is null
+                && HasValidRecoveryBackoff(mail),
             GalateaDurableMailState.Started =>
                 mail.IsCodexRouted
                 && mail.Body is not null
@@ -668,9 +639,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 && mail.RequestedThreadId is not null
                 && mail.AcceptedThreadId is null
                 && mail.AcceptedTurnId is null
-                && mail.ReconcileAttemptCount == 0
-                && mail.ReconcileLastCode is null
-                && mail.NextReconcileAtUnixTimeMilliseconds is null,
+                && HasValidRecoveryBackoff(mail),
             GalateaDurableMailState.OutcomeUnknown =>
                 mail.IsCodexRouted
                 && mail.Body is not null
@@ -679,9 +648,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 && mail.RequestedThreadId is not null
                 && mail.AcceptedThreadId is null
                 && mail.AcceptedTurnId is null
-                && mail.ReconcileAttemptCount > 0
-                && mail.ReconcileLastCode is not null
-                && mail.NextReconcileAtUnixTimeMilliseconds is not null,
+                && mail.RecoveryFailureCount > 0
+                && mail.RecoveryLastCode is not null
+                && mail.NextRetryAtUnixTimeMilliseconds is not null,
             GalateaDurableMailState.Accepted =>
                 mail.IsCodexRouted
                 && mail.Body is not null
@@ -694,7 +663,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     mail.RequestedThreadId,
                     mail.AcceptedThreadId,
                     StringComparison.Ordinal)
-                && HasValidReconcileBackoff(mail),
+                && HasValidRecoveryBackoff(mail),
             GalateaDurableMailState.TerminalCompleted =>
                 mail.IsCodexRouted
                 && mail.OperationId is not null
@@ -708,12 +677,13 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 && mail.TerminalCode is null
                 && mail.Body is null
                 && mail.EvidenceQuote is null
-                && mail.ReconcileAttemptCount == 0
-                && mail.ReconcileLastCode is null
-                && mail.NextReconcileAtUnixTimeMilliseconds is null,
+                && mail.RecoveryFailureCount == 0
+                && mail.RecoveryLastCode is null
+                && mail.NextRetryAtUnixTimeMilliseconds is null,
             GalateaDurableMailState.TerminalFailed =>
                 IsDispatchedTerminalFailure(mail)
-                || IsPreflightTaskFailure(mail),
+                || IsPreflightTaskFailure(mail)
+                || IsLocalTerminalFailure(mail),
             GalateaDurableMailState.Quarantined =>
                 mail.IsCodexRouted
                 && mail.Body is not null
@@ -764,15 +734,27 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 RequireFailureToken(mail.TerminalCode,
                     nameof(mail.TerminalCode));
             }
-            if (mail.ReconcileLastCode is not null) {
-                RequireFailureToken(mail.ReconcileLastCode,
-                    nameof(mail.ReconcileLastCode));
+            if (mail.RecoveryLastCode is not null) {
+                RequireFailureToken(mail.RecoveryLastCode,
+                    nameof(mail.RecoveryLastCode));
             }
         }
         catch (Exception exception) when (exception is ArgumentException) {
             throw Corrupt("An outbound mail contains invalid bounded data.", exception);
         }
     }
+
+    private static bool IsLocalTerminalFailure(GalateaOutboundMailSnapshot mail) =>
+        mail.IsCodexRouted
+        && mail.TerminalStage == GalateaDelegationDurableContract.LocalRecoveryStage
+        && mail.TerminalCode is not null
+        && (mail.OperationId is null) == (mail.RequestedThreadId is null)
+        && (mail.AcceptedThreadId is null) == (mail.AcceptedTurnId is null)
+        && (mail.AcceptedThreadId is null || mail.AcceptedThreadId == mail.RequestedThreadId)
+        && mail.TerminalFinalSha256 is null && mail.Body is null && mail.EvidenceQuote is null
+        && mail.NextRetryAtUnixTimeMilliseconds is null
+        && (mail.RecoveryFailureCount == 0 ? mail.RecoveryLastCode is null
+            : mail.RecoveryFailureCount > 0 && mail.RecoveryLastCode is not null);
 
     private static bool IsDispatchedTerminalFailure(
         GalateaOutboundMailSnapshot mail
@@ -811,17 +793,17 @@ internal sealed partial class GalateaDelegationSqliteStore {
     ) => mail.TerminalFinalSha256 is null
         && mail.Body is null
         && mail.EvidenceQuote is null
-        && mail.ReconcileAttemptCount == 0
-        && mail.ReconcileLastCode is null
-        && mail.NextReconcileAtUnixTimeMilliseconds is null;
+        && mail.RecoveryFailureCount == 0
+        && mail.RecoveryLastCode is null
+        && mail.NextRetryAtUnixTimeMilliseconds is null;
 
-    private static bool HasValidReconcileBackoff(
+    private static bool HasValidRecoveryBackoff(
         GalateaOutboundMailSnapshot mail
-    ) => mail.ReconcileAttemptCount switch {
-        0 => mail.ReconcileLastCode is null
-            && mail.NextReconcileAtUnixTimeMilliseconds is null,
-        > 0 => mail.ReconcileLastCode is not null
-            && mail.NextReconcileAtUnixTimeMilliseconds is >= 0,
+    ) => mail.RecoveryFailureCount switch {
+        0 => mail.RecoveryLastCode is null
+            && mail.NextRetryAtUnixTimeMilliseconds is null,
+        > 0 => mail.RecoveryLastCode is not null
+            && mail.NextRetryAtUnixTimeMilliseconds is >= 0,
         _ => false
     };
 

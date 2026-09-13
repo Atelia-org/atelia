@@ -13,15 +13,15 @@ internal sealed partial class GalateaDelegationSqliteStore {
         command.CommandText = """
             SELECT route.state,
                    route.quarantine_code,
-                   route.ensure_attempt_count,
-                   route.ensure_last_code,
-                   route.next_ensure_at_ms,
+                   COALESCE(queued.recovery_failure_count, 0),
+                   queued.recovery_last_code,
+                   queued.next_retry_at_ms,
                    route.active_dispatch_id IS NOT NULL,
                    active.state,
                    active.terminal_code,
-                   active.reconcile_attempt_count,
-                   active.reconcile_last_code,
-                   active.next_reconcile_at_ms,
+                   active.recovery_failure_count,
+                   active.recovery_last_code,
+                   active.next_retry_at_ms,
                    EXISTS(
                        SELECT 1 FROM reply_lease
                        WHERE active_slot = 1 AND state = 'Quarantined'
@@ -44,6 +44,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
             FROM route_binding AS route
             LEFT JOIN outbound_mail AS active
               ON active.dispatch_id = route.active_dispatch_id
+            LEFT JOIN outbound_mail AS queued ON queued.dispatch_id = (
+                SELECT candidate.dispatch_id FROM outbound_mail AS candidate
+                JOIN action_capture AS capture ON capture.source_action_address = candidate.source_action_address
+                WHERE candidate.route_class = 'Codex' AND candidate.state = 'Queued'
+                ORDER BY capture.capture_sequence, candidate.artifact_ordinal LIMIT 1
+            )
             WHERE route.singleton = 1;
             """;
         using SqliteDataReader reader = command.ExecuteReader();
@@ -94,7 +100,7 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
         ArgumentOutOfRangeException.ThrowIfNegative(value.QueuedCount);
         ArgumentOutOfRangeException.ThrowIfNegative(value.ReadyNoticeCount);
-        ArgumentOutOfRangeException.ThrowIfNegative(value.RouteAttemptCount);
+        ArgumentOutOfRangeException.ThrowIfNegative(value.QueuedMailAttemptCount);
         ArgumentOutOfRangeException.ThrowIfNegative(
             value.ActiveMailAttemptCount
         );
@@ -207,15 +213,15 @@ internal sealed partial class GalateaDelegationSqliteStore {
     private static int AttemptCount(GalateaMailboxStatusAggregate value) =>
         value.ActiveMailState is not null
             ? value.ActiveMailAttemptCount
-            : value.RouteAttemptCount;
+            : value.QueuedMailAttemptCount;
 
     private static string? LastCode(GalateaMailboxStatusAggregate value) =>
         value.ActiveMailState is not null
             ? value.ActiveMailLastCode
-            : value.RouteLastCode;
+            : value.QueuedMailLastCode;
 
     private static long? NextRetry(GalateaMailboxStatusAggregate value) =>
         value.ActiveMailState is not null
             ? value.ActiveMailNextRetryAtUnixTimeMilliseconds
-            : value.RouteNextRetryAtUnixTimeMilliseconds;
+            : value.QueuedMailNextRetryAtUnixTimeMilliseconds;
 }

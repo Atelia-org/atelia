@@ -112,7 +112,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
 
     internal GalateaRouteBindingSnapshot BeginThreadBinding(
         string bindingOperationId,
-        long expectedRouteRevision
+        long expectedRouteRevision,
+        string dispatchId,
+        long expectedMailRevision
     ) {
         RequireOperationId(bindingOperationId);
         lock (_gate) {
@@ -129,6 +131,12 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         GalateaDelegationRouteState.Unbound,
                         expectedRouteRevision
                     );
+                    GalateaOutboundMailSnapshot head = ReadMailRequired(connection, transaction, dispatchId);
+                    RequireMail(head, GalateaDurableMailState.Queued, expectedMailRevision);
+                    RequireEarliestQueuedMail(connection, transaction, dispatchId);
+                    if (head.RecoveryFailureCount >= GalateaDelegationDurableContract.MaximumRecoveryFailures) {
+                        throw Conflict("Recovery is exhausted; the FIFO head must settle before binding.");
+                    }
                     using (SqliteCommand queued = connection.CreateCommand()) {
                         queued.Transaction = transaction;
                         queued.CommandText = """
@@ -178,90 +186,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     return route with {
                         State = GalateaDelegationRouteState.Binding,
                         BindingOperationId = bindingOperationId,
-                        Revision = checked(route.Revision + 1)
-                    };
-                },
-                (snapshot, result) => snapshot.Route == result
-            );
-        }
-    }
-
-    internal GalateaRouteBindingSnapshot RecordThreadBindingEnsureMiss(
-        string bindingOperationId,
-        long expectedRouteRevision,
-        string code,
-        long nowUnixTimeMilliseconds
-    ) {
-        RequireOperationId(bindingOperationId);
-        RequireFailureToken(code, nameof(code));
-        ArgumentOutOfRangeException.ThrowIfNegative(nowUnixTimeMilliseconds);
-        lock (_gate) {
-            ThrowIfNotWritable();
-            return ExecuteWrite(
-                "record-thread-binding-ensure-miss",
-                (connection, transaction) => {
-                    GalateaRouteBindingSnapshot route = ReadRoute(
-                        connection,
-                        transaction
-                    );
-                    RequireRoute(
-                        route,
-                        GalateaDelegationRouteState.Binding,
-                        expectedRouteRevision
-                    );
-                    if (!string.Equals(
-                            route.BindingOperationId,
-                            bindingOperationId,
-                            StringComparison.Ordinal)) {
-                        throw Conflict(
-                            "Thread binding operation identity changed."
-                        );
-                    }
-                    if (nowUnixTimeMilliseconds > long.MaxValue - 300_000
-                        || (route.NextEnsureAtUnixTimeMilliseconds is { } due
-                            && nowUnixTimeMilliseconds < due)) {
-                        throw Conflict(
-                            "Thread binding ensure backoff is not due."
-                        );
-                    }
-                    int attempt = checked(route.EnsureAttemptCount + 1);
-                    long next = checked(
-                        nowUnixTimeMilliseconds
-                        + ComputeReconcileDelayMilliseconds(attempt)
-                    );
-                    _ = IncrementStoreRevision(connection, transaction);
-                    using SqliteCommand update = connection.CreateCommand();
-                    update.Transaction = transaction;
-                    update.CommandText = """
-                        UPDATE route_binding
-                        SET ensure_attempt_count = $attempt,
-                            ensure_last_code = $code,
-                            next_ensure_at_ms = $next,
-                            revision = revision + 1
-                        WHERE singleton = 1
-                          AND state = 'Binding'
-                          AND binding_operation_id = $operation
-                          AND revision = $revision;
-                        """;
-                    update.Parameters.AddWithValue("$attempt", attempt);
-                    update.Parameters.AddWithValue("$code", code);
-                    update.Parameters.AddWithValue("$next", next);
-                    update.Parameters.AddWithValue(
-                        "$operation",
-                        bindingOperationId
-                    );
-                    update.Parameters.AddWithValue(
-                        "$revision",
-                        expectedRouteRevision
-                    );
-                    RequireOne(
-                        update.ExecuteNonQuery(),
-                        "thread binding ensure miss"
-                    );
-                    return route with {
-                        EnsureAttemptCount = attempt,
-                        EnsureLastCode = code,
-                        NextEnsureAtUnixTimeMilliseconds = next,
                         Revision = checked(route.Revision + 1)
                     };
                 },
@@ -339,9 +263,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     update.CommandText = """
                         UPDATE route_binding
                         SET state = 'Bound', thread_id = $thread,
-                            ensure_attempt_count = 0,
-                            ensure_last_code = NULL,
-                            next_ensure_at_ms = NULL,
                             revision = revision + 1
                         WHERE singleton = 1
                           AND state = 'Binding'
@@ -355,9 +276,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     return route with {
                         State = GalateaDelegationRouteState.Bound,
                         ThreadId = threadId,
-                        EnsureAttemptCount = 0,
-                        EnsureLastCode = null,
-                        NextEnsureAtUnixTimeMilliseconds = null,
                         Revision = checked(route.Revision + 1)
                     };
                 },
@@ -399,9 +317,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     update.CommandText = """
                         UPDATE route_binding
                         SET state = 'Quarantined', quarantine_code = $code,
-                            ensure_attempt_count = 0,
-                            ensure_last_code = NULL,
-                            next_ensure_at_ms = NULL,
                             revision = revision + 1
                         WHERE singleton = 1 AND state = 'Binding'
                           AND binding_operation_id = $operation
@@ -421,9 +336,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     return route with {
                         State = GalateaDelegationRouteState.Quarantined,
                         QuarantineCode = code,
-                        EnsureAttemptCount = 0,
-                        EnsureLastCode = null,
-                        NextEnsureAtUnixTimeMilliseconds = null,
                         Revision = checked(route.Revision + 1)
                     };
                 },
@@ -433,8 +345,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
     }
 
     /// <summary>
-    /// Crosses the possible external-effect boundary. The known fixed thread
-    /// and route active slot are frozen in the same durable transaction.
+    /// Claims the bound thread and route active slot before calling the transport.
+    /// Started alone does not prove whether the external request was sent.
     /// </summary>
     internal GalateaOutboundMailSnapshot StartQueuedMail(
         string dispatchId,
@@ -470,7 +382,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         GalateaDurableMailState.Queued,
                         expectedMailRevision
                     );
-                    if (mail.Body is null
+                    if (mail.RecoveryFailureCount >= GalateaDelegationDurableContract.MaximumRecoveryFailures
+                        || mail.Body is null
                         || StrictUtf8.GetByteCount(mail.Body)
                             > _limits.MaximumTaskUtf8Bytes) {
                         throw Conflict(
@@ -596,9 +509,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                                 body = NULL, evidence_quote = NULL,
                                 terminal_stage = $stage,
                                 terminal_code = $code,
-                                reconcile_attempt_count = 0,
-                                reconcile_last_code = NULL,
-                                next_reconcile_at_ms = NULL,
+                                recovery_failure_count = 0,
+                                recovery_last_code = NULL,
+                                next_retry_at_ms = NULL,
                                 revision = revision + 1
                             WHERE dispatch_id = $dispatch
                               AND state = 'Queued'
@@ -695,53 +608,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
     }
 
-    internal GalateaOutboundMailSnapshot MarkMailOutcomeUnknown(
-        string dispatchId,
-        long expectedMailRevision,
-        string code,
-        long nowUnixTimeMilliseconds
-    ) {
-        RequireFailureToken(code, nameof(code));
-        ArgumentOutOfRangeException.ThrowIfNegative(
-            nowUnixTimeMilliseconds
-        );
-        return TransitionActiveMail(
-            "mark-mail-outcome-unknown",
-            dispatchId,
-            expectedMailRevision,
-            [GalateaDurableMailState.Started],
-            GalateaDurableMailState.OutcomeUnknown,
-            acceptedThreadId: null,
-            acceptedTurnId: null,
-            reconcileCode: code,
-            reconcileNowUnixTimeMilliseconds: nowUnixTimeMilliseconds
-        );
-    }
-
-    internal GalateaOutboundMailSnapshot RecordMailAccepted(
-        string dispatchId,
-        long expectedMailRevision,
-        string threadId,
-        string turnId
-    ) {
-        RequireWireIdentity(threadId, nameof(threadId));
-        RequireWireIdentity(turnId, nameof(turnId));
-        return TransitionActiveMail(
-            "record-mail-accepted",
-            dispatchId,
-            expectedMailRevision,
-            [
-                GalateaDurableMailState.Started,
-                GalateaDurableMailState.OutcomeUnknown
-            ],
-            GalateaDurableMailState.Accepted,
-            threadId,
-            turnId,
-            reconcileCode: null,
-            reconcileNowUnixTimeMilliseconds: null
-        );
-    }
-
     /// <summary>
     /// Clears the current reconciliation-miss streak after an exact Running
     /// observation confirms the already-Accepted thread and turn. This is a
@@ -793,9 +659,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                             mail.AcceptedTurnId,
                             turnId,
                             StringComparison.Ordinal)
-                        || mail.ReconcileAttemptCount <= 0
-                        || mail.ReconcileLastCode is null
-                        || mail.NextReconcileAtUnixTimeMilliseconds is null) {
+                        || mail.RecoveryFailureCount <= 0
+                        || mail.RecoveryLastCode is null
+                        || mail.NextRetryAtUnixTimeMilliseconds is null) {
                         throw Conflict(
                             "Accepted Running confirmation identity or reconciliation state conflicts."
                         );
@@ -805,18 +671,18 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     update.Transaction = transaction;
                     update.CommandText = """
                         UPDATE outbound_mail
-                        SET reconcile_attempt_count = 0,
-                            reconcile_last_code = NULL,
-                            next_reconcile_at_ms = NULL,
+                        SET recovery_failure_count = 0,
+                            recovery_last_code = NULL,
+                            next_retry_at_ms = NULL,
                             revision = revision + 1
                         WHERE dispatch_id = $dispatch
                           AND state = 'Accepted'
                           AND requested_thread_id = $thread
                           AND accepted_thread_id = $thread
                           AND accepted_turn_id = $turn
-                          AND reconcile_attempt_count > 0
-                          AND reconcile_last_code IS NOT NULL
-                          AND next_reconcile_at_ms IS NOT NULL
+                          AND recovery_failure_count > 0
+                          AND recovery_last_code IS NOT NULL
+                          AND next_retry_at_ms IS NOT NULL
                           AND revision = $revision;
                         """;
                     update.Parameters.AddWithValue("$dispatch", dispatchId);
@@ -831,9 +697,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                         "Accepted mail Running confirmation"
                     );
                     return mail with {
-                        ReconcileAttemptCount = 0,
-                        ReconcileLastCode = null,
-                        NextReconcileAtUnixTimeMilliseconds = null,
+                        RecoveryFailureCount = 0,
+                        RecoveryLastCode = null,
+                        NextRetryAtUnixTimeMilliseconds = null,
                         Revision = checked(mail.Revision + 1)
                     };
                 },
@@ -847,96 +713,6 @@ internal sealed partial class GalateaDelegationSqliteStore {
                     && string.Equals(
                         snapshot.Route.ThreadId,
                         threadId,
-                        StringComparison.Ordinal)
-            );
-        }
-    }
-
-    internal GalateaOutboundMailSnapshot RecordMailPollMiss(
-        string dispatchId,
-        long expectedMailRevision,
-        string code,
-        long nowUnixTimeMilliseconds
-    ) {
-        RequireFailureToken(code, nameof(code));
-        ArgumentOutOfRangeException.ThrowIfNegative(
-            nowUnixTimeMilliseconds
-        );
-        RequireDispatchId(dispatchId);
-        lock (_gate) {
-            ThrowIfNotWritable();
-            return ExecuteWrite(
-                "record-mail-poll-miss",
-                (connection, transaction) => {
-                    GalateaRouteBindingSnapshot route = ReadRoute(
-                        connection,
-                        transaction
-                    );
-                    GalateaOutboundMailSnapshot mail = ReadMailRequired(
-                        connection,
-                        transaction,
-                        dispatchId
-                    );
-                    if (route.State != GalateaDelegationRouteState.Bound
-                        || !string.Equals(
-                            route.ActiveDispatchId,
-                            dispatchId,
-                            StringComparison.Ordinal)
-                        || route.ThreadId is null
-                        || mail.State is not (
-                            GalateaDurableMailState.OutcomeUnknown
-                            or GalateaDurableMailState.Accepted)
-                        || mail.Revision != expectedMailRevision
-                        || !string.Equals(
-                            mail.RequestedThreadId,
-                            route.ThreadId,
-                            StringComparison.Ordinal)
-                        || nowUnixTimeMilliseconds > long.MaxValue - 300_000
-                        || (mail.NextReconcileAtUnixTimeMilliseconds
-                                is { } previous
-                            && nowUnixTimeMilliseconds < previous)) {
-                        throw Conflict(
-                            "Mail polling identity or backoff precondition failed."
-                        );
-                    }
-                    int attempt = checked(mail.ReconcileAttemptCount + 1);
-                    long next = checked(
-                        nowUnixTimeMilliseconds
-                        + ComputeReconcileDelayMilliseconds(attempt)
-                    );
-                    _ = IncrementStoreRevision(connection, transaction);
-                    using SqliteCommand update = connection.CreateCommand();
-                    update.Transaction = transaction;
-                    update.CommandText = """
-                        UPDATE outbound_mail
-                        SET reconcile_attempt_count = $attempt,
-                            reconcile_last_code = $code,
-                            next_reconcile_at_ms = $next,
-                            revision = revision + 1
-                        WHERE dispatch_id = $dispatch
-                          AND state IN ('OutcomeUnknown', 'Accepted')
-                          AND revision = $revision;
-                        """;
-                    update.Parameters.AddWithValue("$attempt", attempt);
-                    update.Parameters.AddWithValue("$code", code);
-                    update.Parameters.AddWithValue("$next", next);
-                    update.Parameters.AddWithValue("$dispatch", dispatchId);
-                    update.Parameters.AddWithValue(
-                        "$revision",
-                        expectedMailRevision
-                    );
-                    RequireOne(update.ExecuteNonQuery(), "mail poll miss");
-                    return mail with {
-                        ReconcileAttemptCount = attempt,
-                        ReconcileLastCode = code,
-                        NextReconcileAtUnixTimeMilliseconds = next,
-                        Revision = checked(mail.Revision + 1)
-                    };
-                },
-                (snapshot, result) => snapshot.Mails.Contains(result)
-                    && string.Equals(
-                        snapshot.Route.ActiveDispatchId,
-                        dispatchId,
                         StringComparison.Ordinal)
             );
         }
@@ -1060,112 +836,46 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
     }
 
-    private GalateaOutboundMailSnapshot TransitionActiveMail(
-        string operation,
-        string dispatchId,
-        long expectedMailRevision,
-        IReadOnlyCollection<GalateaDurableMailState> expectedStates,
-        GalateaDurableMailState targetState,
-        string? acceptedThreadId,
-        string? acceptedTurnId,
-        string? reconcileCode,
-        long? reconcileNowUnixTimeMilliseconds
+    internal GalateaOutboundMailSnapshot RecordMailAccepted(
+        string dispatchId, long expectedMailRevision, string threadId, string turnId
     ) {
         RequireDispatchId(dispatchId);
+        RequireWireIdentity(threadId, nameof(threadId));
+        RequireWireIdentity(turnId, nameof(turnId));
         lock (_gate) {
             ThrowIfNotWritable();
-            return ExecuteWrite(
-                operation,
-                (connection, transaction) => {
-                    GalateaRouteBindingSnapshot route = ReadRoute(connection, transaction);
-                    GalateaOutboundMailSnapshot mail = ReadMailRequired(
-                        connection, transaction, dispatchId);
-                    if (route.State != GalateaDelegationRouteState.Bound
-                        || !string.Equals(route.ActiveDispatchId, dispatchId,
-                            StringComparison.Ordinal)
-                        || route.ThreadId is null
-                        || !expectedStates.Contains(mail.State)
-                        || mail.Revision != expectedMailRevision
-                        || !string.Equals(mail.RequestedThreadId, route.ThreadId,
-                            StringComparison.Ordinal)
-                        || (acceptedThreadId is not null
-                            && !string.Equals(acceptedThreadId, route.ThreadId,
-                                StringComparison.Ordinal))) {
-                        throw Conflict("The active mail transition precondition failed.");
-                    }
-                    if (targetState == GalateaDurableMailState.OutcomeUnknown
-                        && (reconcileNowUnixTimeMilliseconds is not { } now
-                            || now < 0
-                            || now > long.MaxValue - 300_000
-                            || (mail.NextReconcileAtUnixTimeMilliseconds
-                                    is { } previous
-                                && now < previous))) {
-                        throw Conflict(
-                            "OutcomeUnknown reconciliation backoff is not due."
-                        );
-                    }
-                    int reconcileAttempt = targetState
-                            == GalateaDurableMailState.OutcomeUnknown
-                        ? checked(mail.ReconcileAttemptCount + 1)
-                        : 0;
-                    long? nextReconcileAtUnixTimeMilliseconds =
-                        targetState == GalateaDurableMailState.OutcomeUnknown
-                            ? checked(
-                                reconcileNowUnixTimeMilliseconds!.Value
-                                + ComputeReconcileDelayMilliseconds(
-                                    reconcileAttempt
-                                ))
-                            : null;
-                    _ = IncrementStoreRevision(connection, transaction);
-                    using SqliteCommand update = connection.CreateCommand();
-                    update.Transaction = transaction;
-                    update.CommandText = """
-                        UPDATE outbound_mail
-                        SET state = $state,
-                            accepted_thread_id = $thread,
-                            accepted_turn_id = $turn,
-                            reconcile_attempt_count = CASE
-                                WHEN $state = 'OutcomeUnknown'
-                                    THEN reconcile_attempt_count + 1
-                                ELSE 0 END,
-                            reconcile_last_code = $reconcileCode,
-                            next_reconcile_at_ms = $nextReconcileAt,
-                            revision = revision + 1
-                        WHERE dispatch_id = $dispatch
-                          AND revision = $revision;
-                        """;
-                    update.Parameters.AddWithValue("$state", targetState.ToString());
-                    update.Parameters.AddWithValue(
-                        "$thread", (object?)acceptedThreadId ?? DBNull.Value);
-                    update.Parameters.AddWithValue(
-                        "$turn", (object?)acceptedTurnId ?? DBNull.Value);
-                    update.Parameters.AddWithValue(
-                        "$reconcileCode",
-                        (object?)reconcileCode ?? DBNull.Value
-                    );
-                    update.Parameters.AddWithValue(
-                        "$nextReconcileAt",
-                        (object?)nextReconcileAtUnixTimeMilliseconds
-                            ?? DBNull.Value
-                    );
-                    update.Parameters.AddWithValue("$dispatch", dispatchId);
-                    update.Parameters.AddWithValue("$revision", expectedMailRevision);
-                    RequireOne(update.ExecuteNonQuery(), "active mail transition");
-                    return mail with {
-                        State = targetState,
-                        AcceptedThreadId = acceptedThreadId,
-                        AcceptedTurnId = acceptedTurnId,
-                        ReconcileAttemptCount = reconcileAttempt,
-                        ReconcileLastCode = reconcileCode,
-                        NextReconcileAtUnixTimeMilliseconds =
-                            nextReconcileAtUnixTimeMilliseconds,
-                        Revision = checked(mail.Revision + 1)
-                    };
-                },
-                (snapshot, result) => snapshot.Mails.Contains(result)
-                    && string.Equals(snapshot.Route.ActiveDispatchId,
-                        dispatchId, StringComparison.Ordinal)
-            );
+            return ExecuteWrite("record-mail-accepted", (connection, transaction) => {
+                GalateaRouteBindingSnapshot route = ReadRoute(connection, transaction);
+                GalateaOutboundMailSnapshot mail = ReadMailRequired(connection, transaction, dispatchId);
+                if (route.State != GalateaDelegationRouteState.Bound
+                    || route.ActiveDispatchId != dispatchId || route.ThreadId != threadId
+                    || mail.State is not (GalateaDurableMailState.Started or GalateaDurableMailState.OutcomeUnknown)
+                    || mail.Revision != expectedMailRevision || mail.RequestedThreadId != threadId) {
+                    throw Conflict("Accepted mail identity or revision changed.");
+                }
+                _ = IncrementStoreRevision(connection, transaction);
+                using SqliteCommand update = connection.CreateCommand();
+                update.Transaction = transaction;
+                // An accepted handle is new knowledge, not evidence of current
+                // liveness. The mail's failure streak remains untouched.
+                update.CommandText = """
+                    UPDATE outbound_mail SET state = 'Accepted',
+                        accepted_thread_id = $thread, accepted_turn_id = $turn,
+                        revision = revision + 1
+                    WHERE dispatch_id = $dispatch AND revision = $revision;
+                    """;
+                update.Parameters.AddWithValue("$thread", threadId);
+                update.Parameters.AddWithValue("$turn", turnId);
+                update.Parameters.AddWithValue("$dispatch", dispatchId);
+                update.Parameters.AddWithValue("$revision", expectedMailRevision);
+                RequireOne(update.ExecuteNonQuery(), "record accepted mail");
+                return mail with {
+                    State = GalateaDurableMailState.Accepted,
+                    AcceptedThreadId = threadId, AcceptedTurnId = turnId,
+                    Revision = checked(mail.Revision + 1)
+                };
+            }, (snapshot, result) => snapshot.Mails.Contains(result)
+                && snapshot.Route.ActiveDispatchId == dispatchId);
         }
     }
 
@@ -1222,7 +932,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
                             StringComparison.Ordinal)
                         && string.Equals(currentMail.TerminalFinalSha256,
                             finalSha256, StringComparison.Ordinal);
-                    if (exact) { return currentNotice!; }
+                    if (exact || (currentNotice is not null
+                        && currentMail.TerminalStage == GalateaDelegationDurableContract.LocalRecoveryStage)) {
+                        return currentNotice!;
+                    }
                     QuarantineRouteForTerminalConflict(current.Route);
                     throw Conflict(
                         "Repeated terminal evidence conflicts with durable state."
@@ -1267,9 +980,9 @@ internal sealed partial class GalateaDelegationSqliteStore {
                                 terminal_final_sha256 = $final,
                                 terminal_stage = $stage,
                                 terminal_code = $code,
-                                reconcile_attempt_count = 0,
-                                reconcile_last_code = NULL,
-                                next_reconcile_at_ms = NULL,
+                                recovery_failure_count = 0,
+                                recovery_last_code = NULL,
+                                next_retry_at_ms = NULL,
                                 revision = revision + 1
                             WHERE dispatch_id = $dispatch
                               AND revision = $revision;
@@ -1399,17 +1112,19 @@ internal sealed partial class GalateaDelegationSqliteStore {
     private static (long Sequence, long StoreRevision)
         AllocateCompletionSequence(
             SqliteConnection connection,
-            SqliteTransaction transaction
+            SqliteTransaction transaction,
+            bool incrementStoreRevision = true
         ) {
         using SqliteCommand update = connection.CreateCommand();
         update.Transaction = transaction;
         update.CommandText = """
             UPDATE delegation_meta
             SET next_completion_sequence = next_completion_sequence + 1,
-                revision = revision + 1
+                revision = revision + $increment
             WHERE singleton = 1
             RETURNING next_completion_sequence - 1, revision;
             """;
+        update.Parameters.AddWithValue("$increment", incrementStoreRevision ? 1 : 0);
         using SqliteDataReader reader = update.ExecuteReader();
         if (!reader.Read()) {
             throw Corrupt("delegation_meta completion allocation failed.");
@@ -1489,8 +1204,8 @@ internal sealed partial class GalateaDelegationSqliteStore {
                 state, operation_id,
                 requested_thread_id, accepted_thread_id,
                 accepted_turn_id, terminal_final_sha256,
-                terminal_stage, terminal_code, reconcile_attempt_count,
-                reconcile_last_code, next_reconcile_at_ms, revision
+                terminal_stage, terminal_code, recovery_failure_count,
+                recovery_last_code, next_retry_at_ms, revision
             ) VALUES (
                 $dispatch, $source, $ordinal, $recipient, $subject,
                 $body, $reply, $evidence, $route, $state,
@@ -1800,10 +1515,10 @@ internal sealed partial class GalateaDelegationSqliteStore {
         }
     }
 
-    private static long ComputeReconcileDelayMilliseconds(int attempt) {
+    private static long ComputeRecoveryDelayMilliseconds(int attempt) {
         ArgumentOutOfRangeException.ThrowIfLessThan(attempt, 1);
         int shift = Math.Min(attempt - 1, 8);
-        return Math.Min(1_000L << shift, 300_000L);
+        return Math.Min(1_000L << shift, GalateaDelegationDurableContract.MaximumRecoveryBackoffMilliseconds);
     }
 
     private static void RequireReplyBody(string value, string parameter) =>

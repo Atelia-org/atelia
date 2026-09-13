@@ -2,21 +2,13 @@ using Microsoft.Data.Sqlite;
 
 namespace Atelia.Galatea.Server;
 
-internal sealed record GalateaDelegationStoreUpgradeResult(
-    string Outcome,
-    string? BackupPath
-);
+internal sealed record GalateaDelegationStoreUpgradeResult(string Outcome, string? BackupPath);
 
 internal sealed partial class GalateaDelegationSqliteStore {
-    /// <summary>
-    /// Explicit offline format upgrade. Ordinary opens never migrate a store.
-    /// The original lifetime lock covers validation, backup, migration and reopen.
-    /// </summary>
+    /// <summary>Explicit offline upgrade. Ordinary opens accept only V3.</summary>
     internal static GalateaDelegationStoreUpgradeResult UpgradeExisting(
-        string storeDirectory,
-        GalateaDelegationStoreOwner owner,
-        GalateaDelegationStoreLimits limits,
-        bool apply,
+        string storeDirectory, GalateaDelegationStoreOwner owner,
+        GalateaDelegationStoreLimits limits, bool apply,
         GalateaDelegationStoreTestHooks? hooks = null
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(storeDirectory);
@@ -31,58 +23,123 @@ internal sealed partial class GalateaDelegationSqliteStore {
         string databasePath = Path.Combine(fullPath, DatabaseFileName);
         RejectReparsePoint(databasePath, "delegation database");
         string? backupPath;
-        GalateaDelegationStateSnapshot before;
-        const string operation = "upgrade-delegation-v1-to-v2";
-        using (SqliteConnection connection = OpenConnection(databasePath, create: false, readOnly: !apply)) {
-            ConfigureOpenedDatabase(connection, readOnly: !apply);
-            using SqliteCommand versionCommand = connection.CreateCommand();
+        GalateaDelegationStateSnapshot expected;
+        using (SqliteConnection source = OpenConnection(databasePath, create: false, readOnly: !apply)) {
+            ConfigureOpenedDatabase(source, readOnly: !apply);
+            using SqliteCommand versionCommand = source.CreateCommand();
             versionCommand.CommandText = "PRAGMA user_version;";
             int version = Convert.ToInt32(versionCommand.ExecuteScalar());
             if (version == SchemaVersion) {
-                _ = ValidateOpenedDatabase(connection, owner, limits);
+                _ = ValidateOpenedDatabase(source, owner, limits);
                 return new("AlreadyCurrent", null);
             }
-            if (version != 1) {
+            if (version is not (1 or 2)) {
                 throw new InvalidDataException($"Delegation schema version {version} cannot be upgraded.");
             }
-            // V1 has the same business columns. The current projection ignores
-            // the three retired policy columns and validates the actual state.
-            before = ValidateOpenedDatabase(connection, owner, limits, expectedVersion: 1);
+            ValidateLegacyUpgradeSource(source, owner, limits, version);
+            string sql = (version == 1 ? UpgradeV1ColumnsSql : "") + UpgradeRecoveryColumnsSql + UpgradeMetaToV3Sql;
+            // The only legacy projection lives in this offline upgrader. A
+            // disposable copy lets dry-run validate the exact future V3 state
+            // without runtime dual-format readers or modifying the source.
+            using (var projected = new SqliteConnection("Data Source=:memory:")) {
+                projected.Open();
+                source.BackupDatabase(projected);
+                using SqliteCommand projection = projected.CreateCommand();
+                projection.CommandText = sql;
+                _ = projection.ExecuteNonQuery();
+                expected = ValidateOpenedDatabase(projected, owner, limits);
+            }
             if (!apply) { return new("DryRunReady", null); }
-            backupPath = CreateUpgradeBackup(connection, databasePath, owner, limits);
-            using SqliteTransaction transaction = connection.BeginTransaction(deferred: false);
-            using SqliteCommand upgrade = connection.CreateCommand();
+            backupPath = CreateUpgradeBackup(source, databasePath, owner, limits, version);
+            string operation = $"upgrade-delegation-v{version}-to-v3";
+            using SqliteTransaction transaction = source.BeginTransaction(deferred: false);
+            using SqliteCommand upgrade = source.CreateCommand();
             upgrade.Transaction = transaction;
-            upgrade.CommandText = UpgradeV1ToV2Sql;
+            upgrade.CommandText = sql;
             _ = upgrade.ExecuteNonQuery();
-            RequireSameUpgradeState(before, ReadSnapshotCore(connection, transaction));
+            RequireSameUpgradeState(expected, ReadSnapshotCore(source, transaction));
             hooks?.BeforeCommit?.Invoke(operation);
             transaction.Commit();
             hooks?.AfterCommitBeforeReturn?.Invoke(operation);
         }
-        // A caller interrupted after commit can rerun the command: V2 is
-        // complete and is reported as AlreadyCurrent, without another backup.
         using (SqliteConnection reopened = OpenConnection(databasePath, create: false, readOnly: true)) {
             ConfigureOpenedDatabase(reopened, readOnly: true);
-            RequireSameUpgradeState(before, ValidateOpenedDatabase(reopened, owner, limits));
+            RequireSameUpgradeState(expected, ValidateOpenedDatabase(reopened, owner, limits));
         }
         return new("Upgraded", backupPath);
     }
 
-    private static string CreateUpgradeBackup(
-        SqliteConnection source,
-        string databasePath,
-        GalateaDelegationStoreOwner owner,
-        GalateaDelegationStoreLimits limits
+    private static void ValidateLegacyUpgradeSource(
+        SqliteConnection source, GalateaDelegationStoreOwner owner,
+        GalateaDelegationStoreLimits limits, int version
     ) {
-        string backupPath = databasePath + ".v1-backup-"
+        ValidateSchemaIdentity(source, version);
+        RequireOwner(source, transaction: null, owner, limits, version);
+        using (SqliteCommand integrity = source.CreateCommand()) {
+            integrity.CommandText = "PRAGMA integrity_check;";
+            if (!string.Equals(integrity.ExecuteScalar() as string, "ok", StringComparison.Ordinal)) {
+                throw new InvalidDataException("Legacy delegation integrity check failed.");
+            }
+        }
+        using (SqliteCommand keys = source.CreateCommand()) {
+            keys.CommandText = "PRAGMA foreign_key_check;";
+            using SqliteDataReader reader = keys.ExecuteReader();
+            if (reader.Read()) { throw new InvalidDataException("Legacy delegation foreign key check failed."); }
+        }
+        using (SqliteCommand route = source.CreateCommand()) {
+            route.CommandText = "SELECT state, ensure_attempt_count, ensure_last_code, next_ensure_at_ms FROM route_binding;";
+            using SqliteDataReader reader = route.ExecuteReader();
+            if (!reader.Read()) { throw Corrupt("Legacy route singleton is missing."); }
+            string state = reader.GetString(0);
+            int count = reader.GetInt32(1);
+            string? code = ReadNullableString(reader, 2);
+            long? next = reader.IsDBNull(3) ? null : reader.GetInt64(3);
+            bool valid = count == 0 ? code is null && next is null
+                : state == "Binding" && count > 0 && code is not null && next is >= 0;
+            if (!valid) { throw Corrupt("Legacy binding recovery shape is invalid."); }
+            if (code is not null) {
+                try { RequireFailureToken(code, nameof(code)); }
+                catch (ArgumentException exception) { throw new InvalidDataException("Legacy recovery code is invalid.", exception); }
+            }
+            if (reader.Read()) { throw Corrupt("Legacy route has multiple rows."); }
+        }
+        // V3 deliberately broadens these shapes. Validate the old restrictions
+        // before projection so a rename cannot launder an invalid legacy row.
+        using SqliteCommand shape = source.CreateCommand();
+        shape.CommandText = """
+            SELECT COUNT(*) FROM outbound_mail WHERE
+                (state IN ('Queued', 'Started') AND
+                    (reconcile_attempt_count != 0 OR reconcile_last_code IS NOT NULL OR next_reconcile_at_ms IS NOT NULL))
+                OR (state = 'TerminalFailed' AND NOT COALESCE((
+                    (operation_id IS NOT NULL AND requested_thread_id IS NOT NULL
+                        AND accepted_thread_id = requested_thread_id AND accepted_turn_id IS NOT NULL
+                        AND terminal_stage IS NOT NULL AND terminal_code IS NOT NULL)
+                    OR (operation_id IS NULL AND requested_thread_id IS NULL
+                        AND accepted_thread_id IS NULL AND accepted_turn_id IS NULL
+                        AND terminal_stage = 'preflight' AND terminal_code = 'TASK_INVALID_OR_TOO_LARGE')
+                ), 0))
+                OR terminal_stage = 'local-recovery';
+            """;
+        if (Convert.ToInt64(shape.ExecuteScalar()) != 0) { throw Corrupt("Legacy mail shape is invalid."); }
+        shape.CommandText = """
+            SELECT COUNT(*) FROM route_binding WHERE state = 'Binding'
+                AND NOT EXISTS(SELECT 1 FROM outbound_mail WHERE route_class = 'Codex' AND state = 'Queued');
+            """;
+        if (Convert.ToInt64(shape.ExecuteScalar()) != 0) { throw Corrupt("Legacy binding has no FIFO mail owner."); }
+    }
+
+    private static string CreateUpgradeBackup(
+        SqliteConnection source, string databasePath,
+        GalateaDelegationStoreOwner owner, GalateaDelegationStoreLimits limits, int version
+    ) {
+        string backupPath = databasePath + $".v{version}-backup-"
             + DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ", System.Globalization.CultureInfo.InvariantCulture)
             + "-" + Guid.NewGuid().ToString("N") + ".sqlite3";
         using (new FileStream(backupPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
         using (SqliteConnection backup = OpenConnection(backupPath, create: false)) {
             source.BackupDatabase(backup);
             ConfigureOpenedDatabase(backup, readOnly: true);
-            _ = ValidateOpenedDatabase(backup, owner, limits, expectedVersion: 1);
+            ValidateLegacyUpgradeSource(backup, owner, limits, version);
         }
         using (var file = new FileStream(backupPath, FileMode.Open, FileAccess.Write, FileShare.None)) {
             file.Flush(flushToDisk: true);
@@ -91,35 +148,50 @@ internal sealed partial class GalateaDelegationSqliteStore {
         return backupPath;
     }
 
-    private static void RequireSameUpgradeState(
-        GalateaDelegationStateSnapshot before,
-        GalateaDelegationStateSnapshot after
-    ) {
+    private static void RequireSameUpgradeState(GalateaDelegationStateSnapshot before, GalateaDelegationStateSnapshot after) {
         GalateaReplyLeaseSnapshot? left = before.ActiveLease;
         GalateaReplyLeaseSnapshot? right = after.ActiveLease;
         bool sameLease = left is null ? right is null
-            : right is not null
-                && (left with { NoticeIds = right.NoticeIds }) == right
+            : right is not null && (left with { NoticeIds = right.NoticeIds }) == right
                 && left.NoticeIds.SequenceEqual(right.NoticeIds);
         if (before.Owner != after.Owner || before.Baseline != after.Baseline
             || before.Limits != after.Limits || before.StoreRevision != after.StoreRevision
             || before.NextCompletionSequence != after.NextCompletionSequence
             || before.Route != after.Route || !before.Captures.SequenceEqual(after.Captures)
-            || !before.Mails.SequenceEqual(after.Mails) || !before.Notices.SequenceEqual(after.Notices)
-            || !sameLease) {
-            throw new InvalidDataException("Delegation upgrade changed existing business state.");
+            || !before.Mails.SequenceEqual(after.Mails) || !before.Notices.SequenceEqual(after.Notices) || !sameLease) {
+            throw new InvalidDataException("Delegation upgrade changed expected business state.");
         }
     }
 
-    // Neither removed column participates in an index or a foreign key.
-    // Only meta needs rebuilding because V1 CHECKs schema_version = 1.
-    private const string UpgradeV1ToV2Sql = """
+    private const string UpgradeV1ColumnsSql = """
         ALTER TABLE outbound_mail DROP COLUMN frozen_route_policy_fingerprint;
         ALTER TABLE route_binding DROP COLUMN policy_fingerprint;
-        ALTER TABLE delegation_meta RENAME TO delegation_meta_v1;
+        """;
+
+    private const string UpgradeRecoveryColumnsSql = """
+        ALTER TABLE outbound_mail RENAME COLUMN reconcile_attempt_count TO recovery_failure_count;
+        ALTER TABLE outbound_mail RENAME COLUMN reconcile_last_code TO recovery_last_code;
+        ALTER TABLE outbound_mail RENAME COLUMN next_reconcile_at_ms TO next_retry_at_ms;
+        UPDATE outbound_mail
+        SET recovery_failure_count = (SELECT ensure_attempt_count FROM route_binding WHERE singleton = 1),
+            recovery_last_code = (SELECT ensure_last_code FROM route_binding WHERE singleton = 1),
+            next_retry_at_ms = (SELECT next_ensure_at_ms FROM route_binding WHERE singleton = 1)
+        WHERE dispatch_id = (
+            SELECT mail.dispatch_id FROM outbound_mail AS mail
+            JOIN action_capture AS capture ON capture.source_action_address = mail.source_action_address
+            WHERE mail.route_class = 'Codex' AND mail.state = 'Queued'
+            ORDER BY capture.capture_sequence, mail.artifact_ordinal LIMIT 1
+        ) AND EXISTS(SELECT 1 FROM route_binding WHERE state = 'Binding');
+        ALTER TABLE route_binding DROP COLUMN ensure_attempt_count;
+        ALTER TABLE route_binding DROP COLUMN ensure_last_code;
+        ALTER TABLE route_binding DROP COLUMN next_ensure_at_ms;
+        """;
+
+    private const string UpgradeMetaToV3Sql = """
+        ALTER TABLE delegation_meta RENAME TO delegation_meta_old;
         CREATE TABLE delegation_meta (
             singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
-            schema_version INTEGER NOT NULL CHECK(schema_version = 2),
+            schema_version INTEGER NOT NULL CHECK(schema_version = 3),
             user_id TEXT NOT NULL,
             session_repository_id TEXT NOT NULL,
             capture_frontier_segment_number INTEGER NOT NULL
@@ -142,13 +214,13 @@ internal sealed partial class GalateaDelegationSqliteStore {
             baseline_selected_head, maximum_queued_mails, maximum_task_utf8_bytes,
             maximum_reply_utf8_bytes, maximum_inbox_replies, maximum_inbox_utf8_bytes,
             next_completion_sequence, revision
-        ) SELECT singleton, 2, user_id, session_repository_id,
+        ) SELECT singleton, 3, user_id, session_repository_id,
             capture_frontier_segment_number, capture_frontier_tail_offset,
             baseline_selected_head, maximum_queued_mails, maximum_task_utf8_bytes,
             maximum_reply_utf8_bytes, maximum_inbox_replies, maximum_inbox_utf8_bytes,
             next_completion_sequence, revision
-        FROM delegation_meta_v1;
-        DROP TABLE delegation_meta_v1;
-        PRAGMA user_version = 2;
+        FROM delegation_meta_old;
+        DROP TABLE delegation_meta_old;
+        PRAGMA user_version = 3;
         """;
 }

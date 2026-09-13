@@ -585,7 +585,9 @@ public sealed class GalateaDelegationOperatorRecoveryTests {
             GalateaDelegationStateSnapshot initial = _store.ReadSnapshot();
             GalateaRouteBindingSnapshot binding = _store.BeginThreadBinding(
                 "bind-op",
-                initial.Route.Revision
+                initial.Route.Revision,
+                initial.Mails[0].DispatchId,
+                initial.Mails[0].Revision
             );
             GalateaRouteBindingSnapshot bound = _store.CompleteThreadBinding(
                 "bind-op",

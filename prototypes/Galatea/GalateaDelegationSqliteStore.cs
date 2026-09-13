@@ -8,7 +8,7 @@ namespace Atelia.Galatea.Server;
 /// Explicitly constructed durable delegation current-state authority.
 /// </summary>
 internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
-    internal const int SchemaVersion = 2;
+    internal const int SchemaVersion = 3;
     internal const int ApplicationId = 0x47444C47; // "GDLG"
     internal const string DatabaseFileName = "delegation-state.sqlite3";
     internal const string LockFileName = "delegation-state.lock";
@@ -426,14 +426,13 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
             "frozen_route_policy_fingerprint", "state", "operation_id",
             "requested_thread_id", "accepted_thread_id",
             "accepted_turn_id", "terminal_final_sha256", "terminal_stage",
-            "terminal_code", "reconcile_attempt_count",
-            "reconcile_last_code", "next_reconcile_at_ms", "revision"
+            "terminal_code", "recovery_failure_count",
+            "recovery_last_code", "next_retry_at_ms", "revision"
         ], expectedVersion, "frozen_route_policy_fingerprint"));
         RequireExactColumns(connection, "route_binding", ColumnsForVersion([
             "singleton", "state", "binding_operation_id", "thread_id",
             "policy_fingerprint", "active_dispatch_id",
-            "quarantine_code", "ensure_attempt_count", "ensure_last_code",
-            "next_ensure_at_ms", "revision"
+            "quarantine_code", "revision"
         ], expectedVersion, "policy_fingerprint"));
         RequireExactColumns(connection, "reply_notice", [
             "notice_id", "dispatch_id", "kind", "body", "stage", "code",
@@ -484,10 +483,25 @@ internal sealed partial class GalateaDelegationSqliteStore : IDisposable {
     }
 
     private static IReadOnlyList<string> ColumnsForVersion(
-        string[] legacyColumns, int version, string removedColumn
-    ) => version == 1
-        ? legacyColumns
-        : legacyColumns.Where(column => column != removedColumn).ToArray();
+        string[] columns, int version, string removedColumn
+    ) {
+        IEnumerable<string> result = version == 1 ? columns
+            : columns.Where(column => column != removedColumn);
+        if (version < 3) {
+            result = result.Select(column => column switch {
+                "recovery_failure_count" => "reconcile_attempt_count",
+                "recovery_last_code" => "reconcile_last_code",
+                "next_retry_at_ms" => "next_reconcile_at_ms",
+                _ => column
+            });
+            if (removedColumn == "policy_fingerprint") {
+                result = result.SelectMany(column => column == "revision"
+                    ? new[] { "ensure_attempt_count", "ensure_last_code", "next_ensure_at_ms", column }
+                    : new[] { column });
+            }
+        }
+        return result.ToArray();
+    }
 
     private static void RequireExactColumns(
         SqliteConnection connection,

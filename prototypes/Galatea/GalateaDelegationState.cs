@@ -104,9 +104,9 @@ internal sealed record GalateaMailboxStatusProjection(
 internal sealed record GalateaMailboxStatusAggregate(
     GalateaDelegationRouteState RouteState,
     string? RouteQuarantineCode,
-    int RouteAttemptCount,
-    string? RouteLastCode,
-    long? RouteNextRetryAtUnixTimeMilliseconds,
+    int QueuedMailAttemptCount,
+    string? QueuedMailLastCode,
+    long? QueuedMailNextRetryAtUnixTimeMilliseconds,
     bool RouteHasActiveMail,
     GalateaDurableMailState? ActiveMailState,
     string? ActiveMailTerminalCode,
@@ -184,9 +184,9 @@ internal sealed record GalateaOutboundMailSnapshot(
     string? TerminalFinalSha256,
     string? TerminalStage,
     string? TerminalCode,
-    int ReconcileAttemptCount,
-    string? ReconcileLastCode,
-    long? NextReconcileAtUnixTimeMilliseconds,
+    int RecoveryFailureCount,
+    string? RecoveryLastCode,
+    long? NextRetryAtUnixTimeMilliseconds,
     long Revision
 );
 
@@ -196,9 +196,6 @@ internal sealed record GalateaRouteBindingSnapshot(
     string? ThreadId,
     string? ActiveDispatchId,
     string? QuarantineCode,
-    int EnsureAttemptCount,
-    string? EnsureLastCode,
-    long? NextEnsureAtUnixTimeMilliseconds,
     long Revision
 );
 
