@@ -127,7 +127,7 @@ public sealed class CadenceTimelineSealTests : IDisposable {
         cloneOwner.UseRuntime(new SessionRuntime(
             new EchoCompletionClient(),
             CompletionTarget: new SessionCompletionTargetIdentity(
-                "cadence-clone", "test", "v1", "adapter-v1"),
+                "cadence-clone", "test", "v1"),
             ContextCandidateSource: new EmptySource(),
             ContextLifecycle: new RawLifecycle()));
         _ = await cloneOwner.SendAsync(

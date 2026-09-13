@@ -27,7 +27,7 @@ public sealed class OnlineVerticalTests : IDisposable {
         writer.UseRuntime(new SessionRuntime(
             new TextCompletionClient(),
             CompletionTarget: new SessionCompletionTargetIdentity(
-                "online-tests", "test", "online-tests-v1", "adapter-v1"),
+                "online-tests", "test", "online-tests-v1"),
             ContextCandidateSource: new EmptySource(),
             ContextLifecycle: lifecycle
         ));
@@ -60,7 +60,7 @@ public sealed class OnlineVerticalTests : IDisposable {
         var runtime = new SessionRuntime(
             new TextCompletionClient(),
             CompletionTarget: new SessionCompletionTargetIdentity(
-                "online-tests", "test", "online-tests-v1", "adapter-v1"),
+                "online-tests", "test", "online-tests-v1"),
             ContextCandidateSource: new EmptySource(),
             ContextLifecycle: lifecycle);
         owner = SessionJournalEngine.CreateForTest(
@@ -106,7 +106,7 @@ public sealed class OnlineVerticalTests : IDisposable {
         var runtime = new SessionRuntime(
             new TextCompletionClient(),
             CompletionTarget: new SessionCompletionTargetIdentity(
-                "online-tests", "test", "online-tests-v1", "adapter-v1"),
+                "online-tests", "test", "online-tests-v1"),
             ContextCandidateSource: new EmptySource(),
             ContextLifecycle: lifecycle);
         owner = SessionJournalEngine.CreateForTest(
@@ -1374,7 +1374,7 @@ public sealed class OnlineVerticalTests : IDisposable {
         ContextLifecycle: online.Lifecycle);
 
     private static SessionCompletionTargetIdentity CompletionTarget()
-        => new("online-tests", "test", "online-tests-v1", "adapter-v1");
+        => new("online-tests", "test", "online-tests-v1");
 
     private static void CreateRawHistory(string path, int turns) {
         using SessionJournalEngine writer = SessionJournalEngine.Create(

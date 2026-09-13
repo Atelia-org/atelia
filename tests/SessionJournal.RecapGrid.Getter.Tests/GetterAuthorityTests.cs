@@ -20,8 +20,7 @@ public sealed partial class GetterVerticalTests {
             CompletionTarget: new SessionCompletionTargetIdentity(
                 "getter-e2e",
                 "test",
-                "getter-e2e-v1",
-                "getter-e2e-adapter-v1"
+                "getter-e2e-v1"
             ),
             ContextCandidateSource: getter,
             ContextLifecycle: getter

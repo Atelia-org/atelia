@@ -2598,8 +2598,7 @@ public sealed class ManagerVerticalTests : IDisposable {
             CompletionTarget: new SessionCompletionTargetIdentity(
                 "manager-tests",
                 "test",
-                "manager-tests-v1",
-                "manager-tests-adapter-v1"
+                "manager-tests-v1"
             ),
             ContextCandidateSource: new EmptyContextSource(),
             ContextLifecycle: new RawHistoryLifecycle()

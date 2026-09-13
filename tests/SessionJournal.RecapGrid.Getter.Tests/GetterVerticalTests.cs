@@ -303,8 +303,7 @@ public sealed partial class GetterVerticalTests : IDisposable {
             CompletionTarget: new SessionCompletionTargetIdentity(
                 "getter-tests",
                 "test",
-                "getter-tests-v1",
-                "getter-tests-adapter-v1"
+                "getter-tests-v1"
             ),
             ContextCandidateSource: new EmptySource(),
             ContextLifecycle: new RawLifecycle()
