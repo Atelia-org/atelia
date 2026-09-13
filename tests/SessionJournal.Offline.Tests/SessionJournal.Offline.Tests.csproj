@@ -17,7 +17,8 @@
   <ItemGroup>
     <ProjectReference Include="../../prototypes/SessionJournal.Offline/SessionJournal.Offline.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
-    <ProjectReference Include="../../src/EventJournal/EventJournal.csproj" />
+    <PackageReference Include="Atelia.EventJournal" Version="$(StoragePackageVersion)" Condition="'$(UseStorageSources)' != 'true'" />
+    <ProjectReference Include="$(StorageSourceRoot)/src/EventJournal/EventJournal.csproj" Condition="'$(UseStorageSources)' == 'true'" />
     <ProjectReference Include="../../src/Completion.Abstractions/Completion.Abstractions.csproj" />
   </ItemGroup>
 

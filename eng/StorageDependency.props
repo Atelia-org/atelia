@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <StoragePackageVersion Condition="'$(StoragePackageVersion)' == ''">0.1.1-dev.20260913.4</StoragePackageVersion>
+    <StorageSourceRevision>09d979941d2c671a1e7a8ffabfa6e2b340e00f69</StorageSourceRevision>
+    <StorageRepositoryUrl>https://github.com/Atelia-org/atelia-storage.git</StorageRepositoryUrl>
+    <UseStorageSources Condition="'$(UseStorageSources)' == ''">false</UseStorageSources>
+  </PropertyGroup>
+</Project>

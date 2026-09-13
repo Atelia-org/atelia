@@ -12,6 +12,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Development Commands
 
+Storage libraries are maintained in atelia-storage and consumed as pinned packages. Before the first build, run `pwsh ./eng/Prepare-Storage.ps1`; see [storage dependency setup](docs/storage-dependency.md) for local acquisition, source development, and documentation at the pinned commit.
+
 ### Core Commands
 ```bash
 # Build entire solution
@@ -33,7 +35,7 @@ pwsh ./format.ps1 -Scope staged
 ### Running Individual Tests
 ```bash
 # Run tests for a specific project
-dotnet test tests/Data.Tests/Data.Tests.csproj
+dotnet test tests/SessionJournal.Offline.Tests/SessionJournal.Offline.Tests.csproj
 
 # Run a specific test
 dotnet test --filter "FullyQualifiedName~TestMethodName"
@@ -41,16 +43,16 @@ dotnet test --filter "FullyQualifiedName~TestMethodName"
 
 ## Architecture
 
-### Core Libraries (`src/`)
+### Core Libraries (local `src/` and external storage packages)
 
-- **Data**: High-performance data structures
+- **Data** (atelia-storage): High-performance data structures
   - `ChunkedReservableWriter`: Buffer writer with reserve-and-backfill support for serialization
   - Used for message framing, nested structures, length/CRC backfilling
 
 - **StateJournal**: Memory and persistence system for agent state
   - Provides durable storage for agent memory and state transitions
 
-- **Rbf** (Reversible Binary Framing): Binary serialization format
+- **Rbf** (atelia-storage; Reversible Binary Framing): Binary serialization format
   - Implements `IRbfFrame` interface (ref struct can implement interfaces in C# 14)
 
 - **Diagnostics**: Debugging utilities
@@ -58,7 +60,7 @@ dotnet test --filter "FullyQualifiedName~TestMethodName"
   - Controlled by `ATELIA_DEBUG_CATEGORIES` environment variable
   - Logs to `.atelia/debug-logs/{category}.log` or `gitignore/debug-logs/{category}.log`
 
-- **Primitives**: Core primitive types and utilities
+- **Primitives** (atelia-storage): Core primitive types and utilities
   - Includes `AteliaResult` with `allows ref struct` constraint
 
 - **Analyzers.Style**: Custom Roslyn analyzers for code style enforcement

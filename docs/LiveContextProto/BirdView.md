@@ -18,7 +18,7 @@
 ## 现实差距（阻塞 Recap 接入的两个前置条件）
 1. **历史截断/裁剪机制缺位**
    - TODO-History裁剪与反射.md 明确计划引入 `HistoryLimitOptions`（限制条数/字节数）与缓存策略，但代码里还没有任何实现。
-   - 辅助数据结构（如 `src/Data/SlidingQueue`）已经存在，可作为按需压缩的工具，但尚未与 AgentState 打通。
+   - 辅助数据结构（如 atelia-storage 的 `src/Data/SlidingQueue.cs`，[按依赖版本定位](../storage-dependency.md)）已经存在，可作为按需压缩的工具，但尚未与 AgentState 打通。
 2. **历史反射/编辑能力未落地**
    - 目前历史只支持 append，不支持“回溯编辑/摘取”。RecapMaintainer 想变更旧条目或将其转录进 Recap，需要新增 API：比如按索引读取批量条目、标记“已摘要”的条目、替换条目的细节等级等。
    - TODO 文档提到要让 RecapMaintainer、Daemon/Analyzer SubAgent 可以直接操作历史，这意味着 AgentState 需要暴露受控的编辑接口（并考虑持久化、并发与事件协调）。

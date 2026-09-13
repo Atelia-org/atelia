@@ -920,5 +920,5 @@ repo.Commit(root).Value;
 - [`docs/StateJournal/container-api-design-note.md`](container-api-design-note.md)
 - [`docs/StateJournal/fork-as-mutable-design.md`](fork-as-mutable-design.md)
 - [`docs/StateJournal/frozen-durable-object-design.md`](frozen-durable-object-design.md)
-- [`docs/Rbf/rbf-interface.md`](../Rbf/rbf-interface.md)
-- [`docs/Data/Draft/SizedPtr.md`](../Data/Draft/SizedPtr.md)
+- atelia-storage 的 `docs/Rbf/rbf-interface.md`（[按依赖版本定位](../storage-dependency.md)）
+- atelia-storage 的 `docs/Data/Draft/SizedPtr.md`（[按依赖版本定位](../storage-dependency.md)）

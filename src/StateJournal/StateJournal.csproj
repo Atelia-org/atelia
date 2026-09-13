@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -22,8 +22,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Rbf\Rbf.csproj" />
-    <ProjectReference Include="..\Primitives\Primitives.csproj" />
+    <PackageReference Include="Atelia.Rbf" Version="$(StoragePackageVersion)" Condition="'$(UseStorageSources)' != 'true'" />
+    <ProjectReference Include="$(StorageSourceRoot)/src/Rbf/Rbf.csproj" Condition="'$(UseStorageSources)' == 'true'" />
+    <PackageReference Include="Atelia.Primitives" Version="$(StoragePackageVersion)" Condition="'$(UseStorageSources)' != 'true'" />
+    <ProjectReference Include="$(StorageSourceRoot)/src/Primitives/Primitives.csproj" Condition="'$(UseStorageSources)' == 'true'" />
     <ProjectReference Include="..\Diagnostics\Diagnostics.csproj" />
     <ProjectReference Include="..\StateJournal.Generators\StateJournal.Generators.csproj"
                       OutputItemType="Analyzer"

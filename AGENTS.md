@@ -82,6 +82,8 @@ Copilot可以理解成一种职业，这并不与LLM会话的底层模型切换�
 
 五个存储基础项目的拆仓范围、分阶段任务、自动化入口与资源准备见 [atelia-storage 实施计划](docs/plans/atelia-storage-extraction-plan.md)。涉及该迁移时从此计划继续；文档状态与实际实施证据应区分。
 
+存储库日常开发入口见 [存储库依赖](docs/storage-dependency.md)：先准备固定版本的包，源码联调显式设置 `UseStorageSources` 和 `StorageSourceRoot`。版本与源码身份以 `eng/StorageDependency.props` 为准。
+
 ---
 
 ## 目标分解树
@@ -92,10 +94,10 @@ Copilot可以理解成一种职业，这并不与LLM会话的底层模型切换�
 - 实现LLM Agent的“零意外编辑”，用预览+确认的方式
 - 设计并实现DocUI中的[Micro-Wizard](DocUI/docs/key-notes/micro-wizard.md)
   - 实现[StateJournal](atelia/docs/StateJournal/memory-notebook.md)
-    - 实现[RBF(Reversible-Binary-Framing)](atelia/docs/Rbf/rbf-interface.md)
-      - 用[SizedPtr](atelia/docs/Data/Draft/SizedPtr.md)替代RBF接口文档中的<deleted-place-holder>类型
+    - 实现[RBF(Reversible-Binary-Framing)](docs/storage-dependency.md)
+      - 用[SizedPtr](docs/storage-dependency.md)替代RBF接口文档中的<deleted-place-holder>类型
         - 确定`Offset`和`Length`的bit分配方案
-        - 在[Atelia.Data](atelia/src/Data)中实现`SizedPtr`- 探索文本回合制游戏作为 Native-Agentic 训练沙盒
+        - 在[Atelia.Data](docs/storage-dependency.md)中实现`SizedPtr`- 探索文本回合制游戏作为 Native-Agentic 训练沙盒
   - 设计[异世界转生型训练沙盒](agent-team/docs/idea/native-agentic-isekai-proposal.md)（另见 `/repos/qa-dump/docs/idea/native-agentic-isekai-proposal.md`）
   - 实现基于 PipeMux + StateJournal 的文字冒险原型：`prototypes/TextAdv/`- 维持项目内的众多文档出于LLM Agent可理解和使用的形态
   - 撰写和维护团队内Agent的入门知识文件[AGENTS.md]，也就是本文件
@@ -122,8 +124,8 @@ Copilot可以理解成一种职业，这并不与LLM会话的底层模型切换�
 **环境**：.NET 10.0 / C# 14 (无误，`dotnet 10.0`已经正式发布了)
 | 特性 | 说明 | 示例位置 |
 |:-----|:-----|:---------|
-| **ref struct 实现接口** | ref struct 可以实现接口（包括自定义接口），不会装箱 | `atelia/src/Rbf/RbfFrame.cs` : `IRbfFrame` |
-| **allows ref struct** | 泛型约束，允许类型参数为 ref struct | `atelia/src/Primitives/AteliaResult.cs` |
+| **ref struct 实现接口** | ref struct 可以实现接口（包括自定义接口），不会装箱 | atelia-storage `src/Rbf/RbfFrame.cs` : `IRbfFrame`（[定位版本](docs/storage-dependency.md)） |
+| **allows ref struct** | 泛型约束，允许类型参数为 ref struct | atelia-storage `src/Primitives/AteliaResult.cs`（[定位版本](docs/storage-dependency.md)） |
 
 **注意事项**：
 - `allows ref struct` 不能让 `Func<T>` 接受 ref struct（委托限制）

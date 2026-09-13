@@ -1,7 +1,9 @@
 # Atelia.Data - LLM友好使用指南
 
-**创建时间**: 2025-08-26 08:00  
-**目标读者**: LLM Agent和开发者  
+> 迁移说明：Atelia.Data 已迁入 atelia-storage。本指南保留原写作时期的说明，以下组件版本与旧路径不代表当前包版本；请从[存储库依赖](storage-dependency.md)按 `StorageSourceRevision` 定位对应源码及现行文档。
+
+**创建时间**: 2025-08-26 08:00
+**目标读者**: LLM Agent和开发者
 **组件版本**: v1.0 (稳定版本)
 
 ---
@@ -82,7 +84,7 @@ writer.Write("}"u8);
 ```csharp
 var options = new ChunkedReservableWriterOptions {
     MinChunkSize = 4096,        // 最小块大小
-    MaxChunkSize = 65536,       // 最大块大小  
+    MaxChunkSize = 65536,       // 最大块大小
     Pool = ArrayPool<byte>.Shared // 自定义内存池
 };
 
@@ -193,10 +195,10 @@ ChunkedReservableWriter体现了以下设计原则：
 
 ## 🔗 **相关资源**
 
-- **源码**: `src/Data/ChunkedReservableWriter.cs`
-- **接口定义**: `src/Data/IReservableBufferWriter.cs`
-- **配置选项**: `src/Data/ChunkedReservableWriterOptions.cs`
-- **测试用例**: `src/Data/*Tests.cs`
+- **源码**: atelia-storage 中的 `src/Data/ChunkedReservableWriter.cs`（[按固定版本定位](storage-dependency.md)）
+- **接口定义**: atelia-storage 中的 `src/Data/IReservableBufferWriter.cs`（[按固定版本定位](storage-dependency.md)）
+- **配置选项**: 历史路径 `src/Data/ChunkedReservableWriterOptions.cs`，以[固定版本源码](storage-dependency.md)为准
+- **测试用例**: 历史路径 `src/Data/*Tests.cs`；现行测试在 atelia-storage 的 `tests/Data.Tests/`（[按固定版本定位](storage-dependency.md)）
 - **设计讨论**: `docs/MessageHistoryStorage/`
 
 ---
@@ -212,5 +214,5 @@ ChunkedReservableWriter体现了以下设计原则：
 **ChunkedReservableWriter - 让复杂的序列化变得简单而高效！** 🚀
 
 ---
-*文档作者: 刘德智*  
+*文档作者: 刘德智*
 *最后更新: 2025-08-26 08:00*

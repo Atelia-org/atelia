@@ -1,4 +1,17 @@
 <Project>
+  <Target Name="ValidateStorageSourceConfiguration" BeforeTargets="CollectPackageReferences;PrepareForBuild">
+    <Error Condition="'$(UseStorageSources)' != 'true' AND '$(UseStorageSources)' != 'false'"
+           Text="UseStorageSources must be true or false." />
+    <Error Condition="'$(UseStorageSources)' == 'true' AND '$(StorageSourceRoot)' == ''"
+           Text="UseStorageSources=true requires StorageSourceRoot to be the absolute path of an atelia-storage checkout." />
+    <Error Condition="'$(UseStorageSources)' == 'true' AND '$(StorageSourceRoot)' != '' AND !$([System.IO.Path]::IsPathFullyQualified('$(StorageSourceRoot)'))"
+           Text="StorageSourceRoot must be an absolute path." />
+    <Error Condition="'$(UseStorageSources)' == 'true' AND (!Exists('$(StorageSourceRoot)/src/Primitives/Primitives.csproj') OR !Exists('$(StorageSourceRoot)/src/Data/Data.csproj') OR !Exists('$(StorageSourceRoot)/src/Rbf/Rbf.csproj') OR !Exists('$(StorageSourceRoot)/src/RbfSegmentStore/RbfSegmentStore.csproj') OR !Exists('$(StorageSourceRoot)/src/EventJournal/EventJournal.csproj'))"
+           Text="StorageSourceRoot must contain the five atelia-storage projects: $(StorageSourceRoot)" />
+  </Target>
+  <Target Name="RejectStorageSourcePack" BeforeTargets="Pack;GenerateNuspec;_IntermediatePack" Condition="'$(UseStorageSources)' == 'true'">
+    <Error Text="Packing a consumer with UseStorageSources=true is unsupported. Pack atelia-storage with a unique version first, then pack this repository with UseStorageSources=false and StoragePackageVersion set to that version." />
+  </Target>
   <!-- Optional self-analysis support. Invoke with: dotnet build <analyzer csproj> -p:UseSelfAnalyzers=true -->
   <PropertyGroup>
     <!-- Off by default to avoid accidental two-phase behavior in normal solution builds -->

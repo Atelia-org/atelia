@@ -8,7 +8,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Diagnostics/Diagnostics.csproj" />
-    <ProjectReference Include="../../src/EventJournal/EventJournal.csproj" />
+    <PackageReference Include="Atelia.EventJournal" Version="$(StoragePackageVersion)" Condition="'$(UseStorageSources)' != 'true'" />
+    <ProjectReference Include="$(StorageSourceRoot)/src/EventJournal/EventJournal.csproj" Condition="'$(UseStorageSources)' == 'true'" />
     <ProjectReference Include="../../src/Completion.Abstractions/Completion.Abstractions.csproj" />
     <ProjectReference Include="../../src/Completion.Tools/Completion.Tools.csproj" />
   </ItemGroup>

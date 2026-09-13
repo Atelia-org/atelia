@@ -50,3 +50,4 @@ tests/MemoTree.Tests/
 BenchmarkDotNet.Artifacts/
 .atelia/
 *.lscache
+.artifacts/

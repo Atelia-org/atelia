@@ -21,8 +21,8 @@
 - [`prototypes/ChatSession/ChatSessionEngine.State.cs`](../../../../prototypes/ChatSession/ChatSessionEngine.State.cs)
 - [`prototypes/ChatSession/MessageRecord.cs`](../../../../prototypes/ChatSession/MessageRecord.cs)
 - [`src/Completion.Abstractions/ActionMessageSerialization.cs`](../../../../src/Completion.Abstractions/ActionMessageSerialization.cs)
-- [`docs/Rbf/rbf-guide.md`](../../../Rbf/rbf-guide.md)
-- [`docs/Rbf/rbf-interface.md`](../../../Rbf/rbf-interface.md)
+- atelia-storage 的 `docs/Rbf/rbf-guide.md`（[按依赖版本定位](../../../storage-dependency.md)）
+- atelia-storage 的 `docs/Rbf/rbf-interface.md`（[按依赖版本定位](../../../storage-dependency.md)）
 - [`docs/StateJournal/usage-guide.md`](../../../StateJournal/usage-guide.md)
 
 ## 目标

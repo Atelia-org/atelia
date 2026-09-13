@@ -7,7 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/EventJournal/EventJournal.csproj" />
+    <PackageReference Include="Atelia.EventJournal" Version="$(StoragePackageVersion)" Condition="'$(UseStorageSources)' != 'true'" />
+    <ProjectReference Include="$(StorageSourceRoot)/src/EventJournal/EventJournal.csproj" Condition="'$(UseStorageSources)' == 'true'" />
     <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
     <ProjectReference Include="../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj" />
   </ItemGroup>

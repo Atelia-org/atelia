@@ -59,7 +59,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
-                "../../src/EventJournal/EventJournal.csproj",
+                "$(StorageSourceRoot)/src/EventJournal/EventJournal.csproj",
                 "../../src/Completion.Abstractions/Completion.Abstractions.csproj",
                 "../../src/Completion.Tools/Completion.Tools.csproj",
                 "../SessionJournal/SessionJournal.csproj",
@@ -79,7 +79,7 @@ public sealed class AssemblyDependencyBoundaryTests {
         );
         Assert.Equal(
             [
-                "../../src/EventJournal/EventJournal.csproj",
+                "$(StorageSourceRoot)/src/EventJournal/EventJournal.csproj",
                 "../SessionJournal/SessionJournal.csproj",
                 "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj"
             ],
@@ -111,21 +111,27 @@ public sealed class AssemblyDependencyBoundaryTests {
             ["Atelia.SessionJournal.HistoryTimeline.Tests"],
             XDocument.Load(o200kProject)
                 .Descendants("InternalsVisibleTo")
-                .Select(static element =>
-                    (string?)element.Attribute("Include"))
+                .Select(
+                static element =>
+                    (string?)element.Attribute("Include")
+            )
                 .Where(static value => value is not null)
                 .Select(static value => value!)
                 .ToArray()
         );
         Assert.Equal(
             [
+                "Atelia.EventJournal@$(StoragePackageVersion)",
                 "Microsoft.Data.Sqlite@10.0.10",
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12"
             ],
             DirectPackageReferences(recapGridProject)
         );
         Assert.Empty(DirectPackageReferences(hostingProject));
-        Assert.Empty(DirectPackageReferences(cadenceProject));
+        Assert.Equal(
+            ["Atelia.EventJournal@$(StoragePackageVersion)"],
+            DirectPackageReferences(cadenceProject)
+        );
         Assert.Empty(DirectPackageReferences(galateaAssetProject));
         XDocument recapGridDocument = XDocument.Load(recapGridProject);
         Assert.Equal(
@@ -142,8 +148,10 @@ public sealed class AssemblyDependencyBoundaryTests {
                 "Atelia.SessionJournal.RecapGrid.AgentControl.Tests"
             ],
             recapGridDocument.Descendants("InternalsVisibleTo")
-                .Select(static element =>
-                    (string?)element.Attribute("Include"))
+                .Select(
+                static element =>
+                    (string?)element.Attribute("Include")
+            )
                 .Where(static value => value is not null)
                 .Select(static value => value!)
                 .ToArray()
@@ -183,14 +191,14 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Select(File.ReadAllText)
         );
         foreach (string forbidden in new[] {
-                     "Microsoft.Data.Sqlite",
-                     "SQLitePCLRaw",
-                     "RecapGrid.Control",
-                     "RecapGrid.Store",
-                     "RecapGrid.Manager",
-                     "CompletionConnectionRegistry",
-                     "Galatea",
-                     "DerivedRecap"
+            "Microsoft.Data.Sqlite",
+            "SQLitePCLRaw",
+            "RecapGrid.Control",
+            "RecapGrid.Store",
+            "RecapGrid.Manager",
+            "CompletionConnectionRegistry",
+            "Galatea",
+            "DerivedRecap"
                  }) {
             Assert.DoesNotContain(
                 forbidden,
@@ -198,15 +206,19 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparison.Ordinal
             );
         }
-        XDocument project = XDocument.Load(Path.Combine(
-            cadenceRoot,
-            "SessionJournal.RecapGrid.Cadence.csproj"
-        ));
+        XDocument project = XDocument.Load(
+            Path.Combine(
+                cadenceRoot,
+                "SessionJournal.RecapGrid.Cadence.csproj"
+            )
+        );
         Assert.Equal(
             ["Atelia.SessionJournal.RecapGrid.Cadence.Tests"],
             project.Descendants("InternalsVisibleTo")
-                .Select(static element =>
-                    (string?)element.Attribute("Include"))
+                .Select(
+                static element =>
+                    (string?)element.Attribute("Include")
+            )
                 .Where(static value => value is not null)
                 .Select(static value => value!)
                 .ToArray()
@@ -216,99 +228,130 @@ public sealed class AssemblyDependencyBoundaryTests {
             2,
             product.Split(
                 "ExecuteDerivedSidecarMutation",
-                StringSplitOptions.None).Length - 1);
+                StringSplitOptions.None
+            ).Length - 1
+        );
         foreach (string forbiddenMutationSurface in new[] {
-                     ".SendAsync(",
-                     ".ResumeAsync(",
-                     ".Append(",
-                     "AppendEvent",
-                     "ReadPayloadBytes"
+            ".SendAsync(",
+            ".ResumeAsync(",
+            ".Append(",
+            "AppendEvent",
+            "ReadPayloadBytes"
                  }) {
             Assert.DoesNotContain(
                 forbiddenMutationSurface,
                 product,
-                StringComparison.Ordinal);
+                StringComparison.Ordinal
+            );
         }
 
         string[] sessionJournalProductionFriends = [.. File.ReadLines(
-                Path.Combine(
-                    root,
-                    "prototypes",
-                    "SessionJournal",
-                    "Properties",
-                    "AssemblyInfo.cs"))
-            .Where(static line => line.Contains(
+            Path.Combine(
+                root,
+                "prototypes",
+                "SessionJournal",
+                "Properties",
+                "AssemblyInfo.cs"
+            )
+        )
+            .Where(
+            static line => line.Contains(
                 "InternalsVisibleTo",
-                StringComparison.Ordinal))
-            .Where(static line => !line.Contains(
+                StringComparison.Ordinal
+            )
+        )
+            .Where(
+            static line => !line.Contains(
                 ".Tests\")",
-                StringComparison.Ordinal))];
+                StringComparison.Ordinal
+            )
+        )];
         Assert.Equal(
             ["[assembly: InternalsVisibleTo(\"Atelia.SessionJournal.RecapGrid.Cadence\")]"],
-            sessionJournalProductionFriends);
+            sessionJournalProductionFriends
+        );
 
         string timelineRoot = Path.Combine(
             root,
             "prototypes",
-            "SessionJournal.HistoryTimeline");
-        string timelineCoordinator = File.ReadAllText(Path.Combine(
-            timelineRoot,
-            "HistoryTimelineCoordinator.cs"));
+            "SessionJournal.HistoryTimeline"
+        );
+        string timelineCoordinator = File.ReadAllText(
+            Path.Combine(
+                timelineRoot,
+                "HistoryTimelineCoordinator.cs"
+            )
+        );
         foreach (string mutation in new[] {
-                     "PlanNextRow",
-                     "CommitRow",
-                     "OpenOfflineBuilder"
+            "PlanNextRow",
+            "CommitRow",
+            "OpenOfflineBuilder"
                  }) {
             Assert.DoesNotContain(
                 typeof(HistoryTimelineCoordinator).GetMethods(
                     BindingFlags.Public
                     | BindingFlags.Instance
-                    | BindingFlags.DeclaredOnly),
+                    | BindingFlags.DeclaredOnly
+                ),
                 method => string.Equals(
                     method.Name,
                     mutation,
-                    StringComparison.Ordinal));
+                    StringComparison.Ordinal
+                )
+            );
         }
         Assert.DoesNotContain(
             typeof(Atelia.SessionJournal.RecapGrid.Cadence
                 .RecapGridCadenceTimelineSealOperation).GetMethods(
-                    BindingFlags.Public
+                BindingFlags.Public
                     | BindingFlags.Instance
-                    | BindingFlags.DeclaredOnly),
+                    | BindingFlags.DeclaredOnly
+            ),
             static method => method.Name == "OpenOfflineBuilder"
-                && method.GetParameters().Any(parameter =>
+                && method.GetParameters().Any(
+                    parameter =>
                     parameter.ParameterType == typeof(
                         Atelia.SessionJournal
-                            .SessionSelectedLineageForwardCursor)));
+                            .SessionSelectedLineageForwardCursor)
+                )
+        );
         Assert.Contains("CreateNoReservePolicyForTests", timelineCoordinator,
-            StringComparison.Ordinal);
+            StringComparison.Ordinal
+        );
         Assert.DoesNotContain(
             "CreateNoReservePolicyForTests",
             product,
-            StringComparison.Ordinal);
+            StringComparison.Ordinal
+        );
         Assert.DoesNotContain(
             "CreateForTest",
             product,
-            StringComparison.Ordinal);
+            StringComparison.Ordinal
+        );
         Assert.DoesNotContain(
             "PlanNextRowForTests",
             product,
-            StringComparison.Ordinal);
+            StringComparison.Ordinal
+        );
         Assert.DoesNotContain(
             "OpenOfflineBuilderForTests",
             product,
-            StringComparison.Ordinal);
+            StringComparison.Ordinal
+        );
         Assert.DoesNotContain(
             "HistoryRecentReserveProof",
             product,
-            StringComparison.Ordinal);
+            StringComparison.Ordinal
+        );
         Assert.DoesNotMatch(
             @"new\s+HistoryRowCommitCandidate\s*\(",
-            product);
+            product
+        );
         Assert.Contains(".PlanNextRow(", product, StringComparison.Ordinal);
         Assert.Contains(".CommitRow(", product, StringComparison.Ordinal);
         Assert.Contains(".OpenOfflineBuilder(", product,
-            StringComparison.Ordinal);
+            StringComparison.Ordinal
+        );
     }
 
     [Fact]
@@ -330,14 +373,14 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Select(File.ReadAllText)
         );
         foreach (string forbidden in new[] {
-                     "Microsoft.Data.Sqlite",
-                     "SQLitePCLRaw",
-                     "Atelia.Completion.OpenAI",
-                     "Atelia.Completion.Anthropic",
-                     "Atelia.Completion.Gemini",
-                     "CompletionConnectionRegistry",
-                     "Galatea",
-                     "DerivedRecap"
+            "Microsoft.Data.Sqlite",
+            "SQLitePCLRaw",
+            "Atelia.Completion.OpenAI",
+            "Atelia.Completion.Anthropic",
+            "Atelia.Completion.Gemini",
+            "CompletionConnectionRegistry",
+            "Galatea",
+            "DerivedRecap"
                  }) {
             Assert.DoesNotContain(
                 forbidden,
@@ -345,10 +388,12 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparison.Ordinal
             );
         }
-        Assembly productAssembly = Assembly.LoadFrom(Path.Combine(
-            AppContext.BaseDirectory,
-            "Atelia.SessionJournal.RecapGrid.dll"
-        ));
+        Assembly productAssembly = Assembly.LoadFrom(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "Atelia.SessionJournal.RecapGrid.dll"
+            )
+        );
         Assert.DoesNotContain(
             ProductModuleTypes(productAssembly, "AgentControl"),
             static type => type.Name.Contains(
@@ -377,13 +422,13 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Select(File.ReadAllText)
         );
         foreach (string forbidden in new[] {
-                     "IHistoryTimelineLedgerPort",
-                     "SqliteHistoryTimelineLedger",
-                     "Microsoft.Data.Sqlite",
-                     "CompletionConnectionRegistry",
-                     "Atelia.Completion",
-                     "Galatea",
-                     "DerivedRecap"
+            "IHistoryTimelineLedgerPort",
+            "SqliteHistoryTimelineLedger",
+            "Microsoft.Data.Sqlite",
+            "CompletionConnectionRegistry",
+            "Atelia.Completion",
+            "Galatea",
+            "DerivedRecap"
                  }) {
             Assert.DoesNotContain(
                 forbidden,
@@ -391,11 +436,14 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparison.Ordinal
             );
         }
-        Assembly online = Assembly.LoadFrom(Path.Combine(
-            AppContext.BaseDirectory,
-            "Atelia.SessionJournal.RecapGrid.dll"
-        ));
-        Assert.DoesNotContain(ProductModuleTypes(online, "Online"), static type =>
+        Assembly online = Assembly.LoadFrom(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "Atelia.SessionJournal.RecapGrid.dll"
+            )
+        );
+        Assert.DoesNotContain(ProductModuleTypes(online, "Online"),
+            static type =>
             type.Name.Contains("Backend", StringComparison.OrdinalIgnoreCase)
             || type.Name.Contains("Ledger", StringComparison.OrdinalIgnoreCase)
             || type.Name.Contains("Coordinator", StringComparison.OrdinalIgnoreCase)
@@ -411,57 +459,78 @@ public sealed class AssemblyDependencyBoundaryTests {
             "Galatea",
             "GalateaRecapGridComposition.cs"
         );
-        string owner = File.ReadAllText(Path.Combine(
-            root,
-            "prototypes",
-            "Galatea",
-            "GalateaCompletionOwner.cs"
-        ));
+        string owner = File.ReadAllText(
+            Path.Combine(
+                root,
+                "prototypes",
+                "Galatea",
+                "GalateaCompletionOwner.cs"
+            )
+        );
         string composition = File.ReadAllText(compositionPath);
 
         Assert.Contains(
             "internal sealed class GalateaRecapGridComposition",
             composition,
-            StringComparison.Ordinal);
+            StringComparison.Ordinal
+        );
         Assert.Contains(
             "new GalateaRecapGridComposition",
             owner,
-            StringComparison.Ordinal);
+            StringComparison.Ordinal
+        );
         Assert.DoesNotContain(
             "Environment.GetEnvironmentVariable",
             composition,
-            StringComparison.Ordinal);
+            StringComparison.Ordinal
+        );
 
-        XDocument galateaProject = XDocument.Load(Path.Combine(
-            root, "prototypes", "Galatea", "Galatea.Server.csproj"));
+        XDocument galateaProject = XDocument.Load(
+            Path.Combine(
+                root, "prototypes", "Galatea", "Galatea.Server.csproj"
+            )
+        );
         Assert.Equal(
             ["Atelia.Galatea.Server.Tests"],
             galateaProject.Descendants("AssemblyAttribute")
-                .Where(static element => string.Equals(
+                .Where(
+                static element => string.Equals(
                     (string?)element.Attribute("Include"),
                     "System.Runtime.CompilerServices.InternalsVisibleTo",
-                    StringComparison.Ordinal))
-                .SelectMany(static element =>
-                    element.Elements("_Parameter1"))
+                    StringComparison.Ordinal
+                )
+            )
+                .SelectMany(
+                static element =>
+                    element.Elements("_Parameter1")
+            )
                 .Select(static element => element.Value)
-                .ToArray());
+                .ToArray()
+        );
 
-        string[] cliFriends = [.. File.ReadLines(Path.Combine(
+        string[] cliFriends = [.. File.ReadLines(
+            Path.Combine(
                 root,
                 "prototypes",
                 "SessionJournal.Cli",
                 "Properties",
-                "AssemblyInfo.cs"))
-            .Where(static line => line.Contains(
+                "AssemblyInfo.cs"
+            )
+        )
+            .Where(
+            static line => line.Contains(
                 "InternalsVisibleTo",
-                StringComparison.Ordinal))];
+                StringComparison.Ordinal
+            )
+        )];
         Assert.Equal(
             [
                 "[assembly: InternalsVisibleTo(\"Atelia.SessionJournal.Cli.Tests\")]",
                 "[assembly: InternalsVisibleTo(\"Atelia.SessionJournal.Cli.LegacyRoot.CrashHarness\")]",
                 "[assembly: InternalsVisibleTo(\"Atelia.Galatea.Server.Tests\")]"
             ],
-            cliFriends);
+            cliFriends
+        );
     }
 
     [Fact]
@@ -482,14 +551,14 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Select(File.ReadAllText)
         );
         foreach (string forbidden in new[] {
-                     "Microsoft.Data.Sqlite",
-                     "HistoryTimelineCoordinator",
-                     "RecapGridControlCoordinator",
-                     "RecapGridStoreWriter",
-                     "Registry.Resolve",
-                     "CompletionConnectionConfigLoader.LoadFile",
-                     "Galatea",
-                     "DerivedRecap"
+            "Microsoft.Data.Sqlite",
+            "HistoryTimelineCoordinator",
+            "RecapGridControlCoordinator",
+            "RecapGridStoreWriter",
+            "Registry.Resolve",
+            "CompletionConnectionConfigLoader.LoadFile",
+            "Galatea",
+            "DerivedRecap"
                  }) {
             Assert.DoesNotContain(
                 forbidden,
@@ -497,11 +566,14 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparison.Ordinal
             );
         }
-        Assembly hosting = Assembly.LoadFrom(Path.Combine(
-            AppContext.BaseDirectory,
-            "Atelia.SessionJournal.RecapGrid.Hosting.dll"
-        ));
-        Assert.DoesNotContain(hosting.GetExportedTypes(), static type =>
+        Assembly hosting = Assembly.LoadFrom(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "Atelia.SessionJournal.RecapGrid.Hosting.dll"
+            )
+        );
+        Assert.DoesNotContain(hosting.GetExportedTypes(),
+            static type =>
             type.Name.Contains("Scheduler", StringComparison.OrdinalIgnoreCase)
             || type.Name.Contains("Backend", StringComparison.OrdinalIgnoreCase)
         );
@@ -526,16 +598,16 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Select(File.ReadAllText)
         );
         foreach (string forbidden in new[] {
-                     "SessionJournal.DerivedRecap",
-                     "Galatea.Server",
-                     "Microsoft.Data.Sqlite",
-                     "SQLitePCLRaw",
-                     "CompletionConnectionRegistry.Resolve",
-                     "DefaultConnectionId",
-                     "DerivedRecapRebuildSpool",
-                     "DerivedRecapEpoch",
-                     "RowBuildSpec.Create",
-                     "RecapGridStoreWriter"
+            "SessionJournal.DerivedRecap",
+            "Galatea.Server",
+            "Microsoft.Data.Sqlite",
+            "SQLitePCLRaw",
+            "CompletionConnectionRegistry.Resolve",
+            "DefaultConnectionId",
+            "DerivedRecapRebuildSpool",
+            "DerivedRecapEpoch",
+            "RowBuildSpec.Create",
+            "RecapGridStoreWriter"
                  }) {
             Assert.DoesNotContain(
                 forbidden,
@@ -564,10 +636,13 @@ public sealed class AssemblyDependencyBoundaryTests {
             DirectProjectReferences(galateaServerProject),
             StringComparer.Ordinal
         );
-        Assert.Empty(Directory.EnumerateFiles(
-            Path.Combine(root, "prototypes", "SessionJournal.Cli"),
-            "RecapGridCandidate*.cs",
-            SearchOption.TopDirectoryOnly));
+        Assert.Empty(
+            Directory.EnumerateFiles(
+                Path.Combine(root, "prototypes", "SessionJournal.Cli"),
+                "RecapGridCandidate*.cs",
+                SearchOption.TopDirectoryOnly
+            )
+        );
     }
 
     [Fact]
@@ -590,17 +665,17 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Select(File.ReadAllText)
         );
         foreach (string forbidden in new[] {
-                     "Microsoft.Data.Sqlite",
-                     "SQLitePCLRaw",
-                     "Atelia.Completion.OpenAI",
-                     "Atelia.Completion.Anthropic",
-                     "Atelia.Completion.Gemini",
-                     "Completion.Tools",
-                     "HistoryTimelineCoordinator",
-                     "RecapGridControlCoordinator",
-                     "RecapGridStoreWriter",
-                     "Galatea",
-                     "DerivedRecap"
+            "Microsoft.Data.Sqlite",
+            "SQLitePCLRaw",
+            "Atelia.Completion.OpenAI",
+            "Atelia.Completion.Anthropic",
+            "Atelia.Completion.Gemini",
+            "Completion.Tools",
+            "HistoryTimelineCoordinator",
+            "RecapGridControlCoordinator",
+            "RecapGridStoreWriter",
+            "Galatea",
+            "DerivedRecap"
                  }) {
             Assert.DoesNotContain(
                 forbidden,
@@ -608,11 +683,14 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparison.Ordinal
             );
         }
-        Assembly runtime = Assembly.LoadFrom(Path.Combine(
-            AppContext.BaseDirectory,
-            "Atelia.SessionJournal.RecapGrid.dll"
-        ));
-        Assert.DoesNotContain(ProductModuleTypes(runtime, "Runtime"), static type =>
+        Assembly runtime = Assembly.LoadFrom(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "Atelia.SessionJournal.RecapGrid.dll"
+            )
+        );
+        Assert.DoesNotContain(ProductModuleTypes(runtime, "Runtime"),
+            static type =>
             type.Name.Contains("Backend", StringComparison.OrdinalIgnoreCase)
             || type.Name.Contains("Coordinator", StringComparison.OrdinalIgnoreCase)
             || type.Name.Contains("OpenAI", StringComparison.OrdinalIgnoreCase)
@@ -625,24 +703,26 @@ public sealed class AssemblyDependencyBoundaryTests {
     public void RuntimeWhiteBoxFriendAccessIsTestOnlyAndExact() {
         string root = FindRepositoryRoot();
         foreach (string project in new[] {
-                     Path.Combine(
-                         root,
-                         "prototypes",
-                         "SessionJournal.HistoryTimeline",
-                         "SessionJournal.HistoryTimeline.csproj"
-                     ),
-                     Path.Combine(
-                         root,
-                         "prototypes",
-                         "SessionJournal.RecapGrid",
-                         "SessionJournal.RecapGrid.csproj"
-                     )
+            Path.Combine(
+                root,
+                "prototypes",
+                "SessionJournal.HistoryTimeline",
+                "SessionJournal.HistoryTimeline.csproj"
+            ),
+            Path.Combine(
+                root,
+                "prototypes",
+                "SessionJournal.RecapGrid",
+                "SessionJournal.RecapGrid.csproj"
+            )
                  }) {
             XDocument document = XDocument.Load(project);
             string[] friends = [.. document
                 .Descendants("InternalsVisibleTo")
-                .Select(static element =>
-                    (string?)element.Attribute("Include"))
+                .Select(
+                static element =>
+                    (string?)element.Attribute("Include")
+            )
                 .Where(static value => value is not null)
                 .Select(static value => value!)];
             Assert.Contains(
@@ -661,17 +741,21 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparer.Ordinal
             );
         }
-        string[] completionFriends = [.. File.ReadLines(Path.Combine(
+        string[] completionFriends = [.. File.ReadLines(
+            Path.Combine(
                 root,
                 "src",
                 "Completion",
                 "Properties",
                 "AssemblyInfo.cs"
-            ))
-            .Where(static line => line.Contains(
+            )
+        )
+            .Where(
+            static line => line.Contains(
                 "InternalsVisibleTo",
                 StringComparison.Ordinal
-            ))];
+            )
+        )];
         Assert.Equal(
             [
                 "[assembly: InternalsVisibleTo(\"Atelia.Completion.Tests\")]",
@@ -712,16 +796,16 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Select(File.ReadAllText)
         );
         foreach (string forbidden in new[] {
-                     "HistoryTimelineCoordinator",
-                     "IHistoryTimelineLedgerPort",
-                     "SqliteHistoryTimelineLedger",
-                     "RecapGridControlCoordinator",
-                     "RecapGridStoreWriter",
-                     "Microsoft.Data.Sqlite",
-                     "Atelia.Completion",
-                     "Galatea",
-                     "DerivedRecap",
-                     "RecapGridManager"
+            "HistoryTimelineCoordinator",
+            "IHistoryTimelineLedgerPort",
+            "SqliteHistoryTimelineLedger",
+            "RecapGridControlCoordinator",
+            "RecapGridStoreWriter",
+            "Microsoft.Data.Sqlite",
+            "Atelia.Completion",
+            "Galatea",
+            "DerivedRecap",
+            "RecapGridManager"
                  }) {
             Assert.DoesNotContain(
                 forbidden,
@@ -729,11 +813,14 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparison.Ordinal
             );
         }
-        Assembly getter = Assembly.LoadFrom(Path.Combine(
-            AppContext.BaseDirectory,
-            "Atelia.SessionJournal.RecapGrid.dll"
-        ));
-        Assert.DoesNotContain(ProductModuleTypes(getter, "Getter"), static type =>
+        Assembly getter = Assembly.LoadFrom(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "Atelia.SessionJournal.RecapGrid.dll"
+            )
+        );
+        Assert.DoesNotContain(ProductModuleTypes(getter, "Getter"),
+            static type =>
             type.Name.Contains("Backend", StringComparison.OrdinalIgnoreCase)
             || type.Name.Contains("Coordinator", StringComparison.OrdinalIgnoreCase)
         );
@@ -759,15 +846,15 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Select(File.ReadAllText)
         );
         foreach (string forbidden in new[] {
-                     "HistoryTimelineCoordinator",
-                     "IHistoryTimelineLedgerPort",
-                     "SqliteHistoryTimelineLedger",
-                     "RecapGridControlCoordinator",
-                     "MaximumSelectedRows",
-                     "Microsoft.Data.Sqlite",
-                     "Atelia.Completion",
-                     "Galatea",
-                     "DerivedRecap"
+            "HistoryTimelineCoordinator",
+            "IHistoryTimelineLedgerPort",
+            "SqliteHistoryTimelineLedger",
+            "RecapGridControlCoordinator",
+            "MaximumSelectedRows",
+            "Microsoft.Data.Sqlite",
+            "Atelia.Completion",
+            "Galatea",
+            "DerivedRecap"
                  }) {
             Assert.DoesNotContain(
                 forbidden,
@@ -775,16 +862,20 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparison.Ordinal
             );
         }
-        Assembly manager = Assembly.LoadFrom(Path.Combine(
-            AppContext.BaseDirectory,
-            "Atelia.SessionJournal.RecapGrid.dll"
-        ));
-        Assert.DoesNotContain(ProductModuleTypes(manager, "Manager"), static type =>
+        Assembly manager = Assembly.LoadFrom(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "Atelia.SessionJournal.RecapGrid.dll"
+            )
+        );
+        Assert.DoesNotContain(ProductModuleTypes(manager, "Manager"),
+            static type =>
             type.Name.Contains("Backend", StringComparison.OrdinalIgnoreCase)
             || type.Name.Contains(
                 "Coordinator",
                 StringComparison.OrdinalIgnoreCase
-            ));
+            )
+        );
     }
 
     [Fact]
@@ -805,22 +896,29 @@ public sealed class AssemblyDependencyBoundaryTests {
         string[] newProjects = [.. new[] {
             Path.Combine(root, "prototypes"),
             Path.Combine(root, "tests")
-        }.SelectMany(static parent => Directory.EnumerateDirectories(
-            parent,
-            "SessionJournal.*",
-            SearchOption.TopDirectoryOnly
-        )).Where(static directory => directory.Contains(
-            "SessionJournal.HistoryTimeline",
-            StringComparison.Ordinal
-        ) || directory.Contains(
-            "SessionJournal.RecapGrid",
-            StringComparison.Ordinal
-        )).SelectMany(static directory => Directory.EnumerateFiles(
-            directory,
-            "*.csproj",
-            SearchOption.TopDirectoryOnly
-        ))];
-        string[] sqliteOwners = [.. newProjects.Where(project =>
+        }.SelectMany(
+            static parent => Directory.EnumerateDirectories(
+                parent,
+                "SessionJournal.*",
+                SearchOption.TopDirectoryOnly
+            )
+        ).Where(
+            static directory => directory.Contains(
+                "SessionJournal.HistoryTimeline",
+                StringComparison.Ordinal
+            ) || directory.Contains(
+                "SessionJournal.RecapGrid",
+                StringComparison.Ordinal
+            )
+        ).SelectMany(
+            static directory => Directory.EnumerateFiles(
+                directory,
+                "*.csproj",
+                SearchOption.TopDirectoryOnly
+            )
+        )];
+        string[] sqliteOwners = [.. newProjects.Where(
+            project =>
             DirectPackageReferences(project).Contains(
                 "Microsoft.Data.Sqlite@10.0.10",
                 StringComparer.Ordinal
@@ -832,7 +930,8 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Order(StringComparer.Ordinal),
             sqliteOwners
         );
-        string[] bundleOwners = [.. newProjects.Where(project =>
+        string[] bundleOwners = [.. newProjects.Where(
+            project =>
             DirectPackageReferences(project).Contains(
                 "SQLitePCLRaw.bundle_e_sqlite3@2.1.12",
                 StringComparer.Ordinal
@@ -845,14 +944,18 @@ public sealed class AssemblyDependencyBoundaryTests {
             bundleOwners
         );
 
-        Assembly product = Assembly.LoadFrom(Path.Combine(
-            AppContext.BaseDirectory,
-            "Atelia.SessionJournal.HistoryTimeline.dll"
-        ));
-        Assert.Null(product.GetType(
-            "Atelia.SessionJournal.HistoryTimeline.InMemoryHistoryTimelineLedger",
-            throwOnError: false
-        ));
+        Assembly product = Assembly.LoadFrom(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "Atelia.SessionJournal.HistoryTimeline.dll"
+            )
+        );
+        Assert.Null(
+            product.GetType(
+                "Atelia.SessionJournal.HistoryTimeline.InMemoryHistoryTimelineLedger",
+                throwOnError: false
+            )
+        );
         Assert.DoesNotContain(
             product.GetExportedTypes(),
             static type => type.Name.Contains(
@@ -864,10 +967,12 @@ public sealed class AssemblyDependencyBoundaryTests {
                 StringComparison.OrdinalIgnoreCase
             )
         );
-        Assembly store = Assembly.LoadFrom(Path.Combine(
-            AppContext.BaseDirectory,
-            "Atelia.SessionJournal.RecapGrid.dll"
-        ));
+        Assembly store = Assembly.LoadFrom(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "Atelia.SessionJournal.RecapGrid.dll"
+            )
+        );
         Assert.DoesNotContain(
             ProductModuleTypes(store, "Store"),
             static type => type.Name.Contains(
@@ -900,20 +1005,20 @@ public sealed class AssemblyDependencyBoundaryTests {
                 .Select(File.ReadAllText)
         );
         foreach (string forbidden in new[] {
-                     "Atelia.SessionJournal.HistoryTimeline",
-                     "HistoryTimelineFactory",
-                     "HistoryTimelineCoordinator",
-                     "SessionJournalReadView",
-                     "SessionJournalEngine",
-                     "RecapGrid.Control",
-                     "Completion",
-                     "DerivedRecap",
-                     "MaximumDatabaseBytes",
-                     "MaximumCellCount",
-                     "MaximumRowViewCount",
-                     "MaximumRowViewMemberCount",
-                     "MaximumFulfilledViewCount",
-                     "SchemaV1.sql"
+            "Atelia.SessionJournal.HistoryTimeline",
+            "HistoryTimelineFactory",
+            "HistoryTimelineCoordinator",
+            "SessionJournalReadView",
+            "SessionJournalEngine",
+            "RecapGrid.Control",
+            "Completion",
+            "DerivedRecap",
+            "MaximumDatabaseBytes",
+            "MaximumCellCount",
+            "MaximumRowViewCount",
+            "MaximumRowViewMemberCount",
+            "MaximumFulfilledViewCount",
+            "SchemaV1.sql"
                  }) {
             Assert.DoesNotContain(
                 forbidden,
@@ -926,12 +1031,14 @@ public sealed class AssemblyDependencyBoundaryTests {
     [Fact]
     public void WalkingSkeletonHasNoPrivateTimelineIdentityOwner() {
         string root = FindRepositoryRoot();
-        string skeleton = File.ReadAllText(Path.Combine(
-            root,
-            "tests",
-            "SessionJournal.RecapGrid.WalkingSkeleton.Tests",
-            "GridWalkingSkeletonTests.cs"
-        ));
+        string skeleton = File.ReadAllText(
+            Path.Combine(
+                root,
+                "tests",
+                "SessionJournal.RecapGrid.WalkingSkeleton.Tests",
+                "GridWalkingSkeletonTests.cs"
+            )
+        );
         foreach (string forbidden in new[] {
             "HistorySegmentDescriptorShape",
             "record TimelineId",
@@ -951,12 +1058,14 @@ public sealed class AssemblyDependencyBoundaryTests {
     [Fact]
     public void WalkingSkeletonHasNoPrivateGridShapeOrHasherOwner() {
         string root = FindRepositoryRoot();
-        string skeleton = File.ReadAllText(Path.Combine(
-            root,
-            "tests",
-            "SessionJournal.RecapGrid.WalkingSkeleton.Tests",
-            "GridWalkingSkeletonTests.cs"
-        ));
+        string skeleton = File.ReadAllText(
+            Path.Combine(
+                root,
+                "tests",
+                "SessionJournal.RecapGrid.WalkingSkeleton.Tests",
+                "GridWalkingSkeletonTests.cs"
+            )
+        );
         foreach (string forbidden in new[] {
             "record DefinitionShape",
             "record RecipeShape",
@@ -992,7 +1101,8 @@ public sealed class AssemblyDependencyBoundaryTests {
             "public interface IHistoryUnitLoadEstimator",
             "public static class HistoryLoadProjector"
         }) {
-            string owner = Assert.Single(sourceFiles, path =>
+            string owner = Assert.Single(sourceFiles,
+                path =>
                 File.ReadAllText(path).Contains(
                     declaration,
                     StringComparison.Ordinal
@@ -1005,10 +1115,11 @@ public sealed class AssemblyDependencyBoundaryTests {
             );
         }
         foreach (string declaration in new[] {
-                     "public sealed class O200kBaseHistoryUnitLoadEstimator",
-                     "public const string EstimatorId"
+            "public sealed class O200kBaseHistoryUnitLoadEstimator",
+            "public const string EstimatorId"
                  }) {
-            string owner = Assert.Single(sourceFiles, path =>
+            string owner = Assert.Single(sourceFiles,
+                path =>
                 File.ReadAllText(path).Contains(
                     declaration,
                     StringComparison.Ordinal
@@ -1027,7 +1138,8 @@ public sealed class AssemblyDependencyBoundaryTests {
             "record RecapHistoryLoadBaseline",
             "class RecapHistoryLoadBaselineResolver"
         }) {
-            Assert.DoesNotContain(sourceFiles, path =>
+            Assert.DoesNotContain(sourceFiles,
+                path =>
                 File.ReadAllText(path).Contains(
                     legacyDeclaration,
                     StringComparison.Ordinal
@@ -1036,7 +1148,8 @@ public sealed class AssemblyDependencyBoundaryTests {
         }
         const string o200kIdentity =
             "atelia.history-load.o200k-base.history-unit-v1";
-        string o200kOwner = Assert.Single(sourceFiles, path =>
+        string o200kOwner = Assert.Single(sourceFiles,
+            path =>
             File.ReadAllText(path).Contains(
                 o200kIdentity,
                 StringComparison.Ordinal
@@ -1047,7 +1160,8 @@ public sealed class AssemblyDependencyBoundaryTests {
             o200kOwner,
             StringComparison.Ordinal
         );
-        Assert.DoesNotContain(sourceFiles, path =>
+        Assert.DoesNotContain(sourceFiles,
+            path =>
             path.EndsWith(
                 "/SessionJournal.DerivedRecap.Planner/HistoryLoadContracts.cs",
                 StringComparison.Ordinal
@@ -1069,41 +1183,49 @@ public sealed class AssemblyDependencyBoundaryTests {
         string timelineRoot = Path.Combine(
             root,
             "prototypes",
-            "SessionJournal.HistoryTimeline");
+            "SessionJournal.HistoryTimeline"
+        );
         string[] sourceFiles = [.. Directory.EnumerateFiles(
             timelineRoot,
             "*.cs",
             SearchOption.AllDirectories
         ).Where(static path => !IsBuildOutput(path))];
         string combined = string.Join('\n',
-            sourceFiles.Select(File.ReadAllText));
+            sourceFiles.Select(File.ReadAllText)
+        );
 
         Assert.Contains(
             "internal const int SchemaVersion = 2;",
             combined,
-            StringComparison.Ordinal);
+            StringComparison.Ordinal
+        );
         Assert.Contains(
             "CREATE TABLE current_selected_path",
             combined,
-            StringComparison.Ordinal);
-        string storage = File.ReadAllText(Path.Combine(
-            timelineRoot,
-            "HistoryTimelineStorage.cs"));
+            StringComparison.Ordinal
+        );
+        string storage = File.ReadAllText(
+            Path.Combine(
+                timelineRoot,
+                "HistoryTimelineStorage.cs"
+            )
+        );
         Assert.Contains("\"v2\"", storage, StringComparison.Ordinal);
         Assert.DoesNotContain("\"v1\"", storage, StringComparison.Ordinal);
         foreach (string forbidden in new[] {
-                     "SqliteSelectedPathTrie",
-                     "selected_path_nodes",
-                     "selected_path_snapshots",
-                     "MaximumRowCount",
-                     "MaximumTrieNodeCount",
-                     "MaximumDatabaseBytes",
-                     "MaximumRestoreCopyBytes"
+            "SqliteSelectedPathTrie",
+            "selected_path_nodes",
+            "selected_path_snapshots",
+            "MaximumRowCount",
+            "MaximumTrieNodeCount",
+            "MaximumDatabaseBytes",
+            "MaximumRestoreCopyBytes"
                  }) {
             Assert.DoesNotContain(
                 forbidden,
                 combined,
-                StringComparison.Ordinal);
+                StringComparison.Ordinal
+            );
         }
     }
 
@@ -1128,44 +1250,53 @@ public sealed class AssemblyDependencyBoundaryTests {
             Assert.Contains(
                 "../SessionJournal.HistoryTimeline/SessionJournal.HistoryTimeline.csproj",
                 references,
-                StringComparer.Ordinal);
+                StringComparer.Ordinal
+            );
             Assert.Contains(
                 "../SessionJournal.HistoryTimeline.O200k/SessionJournal.HistoryTimeline.O200k.csproj",
                 references,
-                StringComparer.Ordinal);
+                StringComparer.Ordinal
+            );
             Assert.DoesNotContain(
                 DirectPackageReferences(project),
                 static package => package.StartsWith(
                     "Microsoft.ML.Tokenizers",
-                    StringComparison.Ordinal));
+                    StringComparison.Ordinal
+                )
+            );
         }
     }
 
     [Fact]
     public void LegacyDerivedRecapProjectsAndReferencesAreAbsent() {
         string root = FindRepositoryRoot();
-        Assert.Empty(Directory.EnumerateFiles(
-            Path.Combine(root, "prototypes"),
-            "SessionJournal.DerivedRecap.*.csproj",
-            SearchOption.AllDirectories));
-        Assert.Empty(Directory.EnumerateFiles(
-            Path.Combine(root, "tests"),
-            "SessionJournal.DerivedRecap.*.csproj",
-            SearchOption.AllDirectories));
+        Assert.Empty(
+            Directory.EnumerateFiles(
+                Path.Combine(root, "prototypes"),
+                "SessionJournal.DerivedRecap.*.csproj",
+                SearchOption.AllDirectories
+            )
+        );
+        Assert.Empty(
+            Directory.EnumerateFiles(
+                Path.Combine(root, "tests"),
+                "SessionJournal.DerivedRecap.*.csproj",
+                SearchOption.AllDirectories
+            )
+        );
         foreach (string sourceRoot in new[] {
-                     Path.Combine(root, "prototypes"),
-                     Path.Combine(root, "tests")
+            Path.Combine(root, "prototypes"),
+            Path.Combine(root, "tests")
                  }) {
             foreach (string project in Directory.EnumerateFiles(
-                         sourceRoot, "*.csproj", SearchOption.AllDirectories)) {
-                if (project.Contains("/bin/", StringComparison.Ordinal)
-                    || project.Contains("/obj/", StringComparison.Ordinal)) {
-                    continue;
-                }
+                sourceRoot, "*.csproj", SearchOption.AllDirectories
+            )) {
+                if (IsBuildOutput(project)) { continue; }
                 Assert.DoesNotContain(
                     "SessionJournal.DerivedRecap",
                     File.ReadAllText(project),
-                    StringComparison.Ordinal);
+                    StringComparison.Ordinal
+                );
             }
         }
     }
@@ -1178,30 +1309,35 @@ public sealed class AssemblyDependencyBoundaryTests {
             Path.Combine(root, "prototypes", "SessionJournal.Cli", "README.md"),
             Path.Combine(root, "prototypes", "Galatea", "README.md")
         };
-        files.AddRange(Directory.EnumerateFiles(
-            Path.Combine(root, "prototypes"),
-            "*",
-            SearchOption.AllDirectories
-        ).Where(static path =>
-            !path.Contains("/bin/", StringComparison.Ordinal)
-            && !path.Contains("/obj/", StringComparison.Ordinal)
-            && !path.Contains("/.atelia/", StringComparison.Ordinal)
-            && Path.GetExtension(path) is ".cs" or ".csproj" or ".json"));
-        files.AddRange(Directory.EnumerateFiles(
-            Path.Combine(root, "docs", "SessionJournal", "current"),
-            "*.md",
-            SearchOption.AllDirectories
-        ));
+        files.AddRange(
+            Directory.EnumerateFiles(
+                Path.Combine(root, "prototypes"),
+                "*",
+                SearchOption.AllDirectories
+            ).Where(
+                static path =>
+            !IsBuildOutput(path)
+            && !path.Replace('\\', '/').Contains("/.atelia/", StringComparison.Ordinal)
+            && Path.GetExtension(path) is ".cs" or ".csproj" or ".json"
+            )
+        );
+        files.AddRange(
+            Directory.EnumerateFiles(
+                Path.Combine(root, "docs", "SessionJournal", "current"),
+                "*.md",
+                SearchOption.AllDirectories
+            )
+        );
 
         string combined = string.Join('\n', files.Select(File.ReadAllText));
         foreach (string forbidden in new[] {
-                     "SessionJournal.DerivedRecap",
-                     "DerivedRecapEpoch",
-                     "DerivedRecapRebuildSpool",
-                     "recapMaintainerConnections",
-                     "GalateaRecapComposition",
-                     "RecapGridCandidateComposition",
-                     "RecapGridCandidateCommands"
+            "SessionJournal.DerivedRecap",
+            "DerivedRecapEpoch",
+            "DerivedRecapRebuildSpool",
+            "recapMaintainerConnections",
+            "GalateaRecapComposition",
+            "RecapGridCandidateComposition",
+            "RecapGridCandidateCommands"
                  }) {
             Assert.DoesNotContain(forbidden, combined, StringComparison.Ordinal);
         }
@@ -1215,18 +1351,23 @@ public sealed class AssemblyDependencyBoundaryTests {
         string[] oldRootOwners = [.. files
         .Append(legacyOwner)
         .Distinct(StringComparer.Ordinal)
-        .Where(path => new[] {
-            "derived/recap/v4",
-            "derived/recap/v5",
-            "derived/recap/v6",
-            "derived/recap/v7",
-            "derived/recap/v8",
-            "derived/recap/v9",
-            "derived/recap/rebuild/v1",
-            "config/recap-planner-config.json"
-        }.Any(token => File.ReadAllText(path).Contains(
-            token,
-            StringComparison.Ordinal)))];
+        .Where(
+            path => new[] {
+                "derived/recap/v4",
+                "derived/recap/v5",
+                "derived/recap/v6",
+                "derived/recap/v7",
+                "derived/recap/v8",
+                "derived/recap/v9",
+                "derived/recap/rebuild/v1",
+                "config/recap-planner-config.json"
+        }.Any(
+                token => File.ReadAllText(path).Contains(
+                    token,
+                    StringComparison.Ordinal
+                )
+            )
+        )];
         Assert.Equal([legacyOwner], oldRootOwners);
     }
 
@@ -1250,18 +1391,24 @@ public sealed class AssemblyDependencyBoundaryTests {
             recapGridProject
         );
 
-        Assert.DoesNotContain(closure, path => path.EndsWith(
-            "/src/Completion/Completion.csproj",
-            StringComparison.OrdinalIgnoreCase
-        ));
-        Assert.DoesNotContain(closure, path => path.Contains(
-            "/prototypes/Galatea/",
-            StringComparison.OrdinalIgnoreCase
-        ));
-        Assert.DoesNotContain(closure, path => path.Contains(
-            "/SessionJournal.DerivedRecap.",
-            StringComparison.OrdinalIgnoreCase
-        ));
+        Assert.DoesNotContain(closure,
+            path => path.EndsWith(
+                "/src/Completion/Completion.csproj",
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
+        Assert.DoesNotContain(closure,
+            path => path.Contains(
+                "/prototypes/Galatea/",
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
+        Assert.DoesNotContain(closure,
+            path => path.Contains(
+                "/SessionJournal.DerivedRecap.",
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
     }
 
     [Fact]
@@ -1270,13 +1417,16 @@ public sealed class AssemblyDependencyBoundaryTests {
             "Atelia.SessionJournal.HistoryTimeline.dll",
             "Atelia.SessionJournal.HistoryTimeline.O200k.dll"
         }) {
-            Assembly assembly = Assembly.LoadFrom(Path.Combine(
-                AppContext.BaseDirectory,
-                assemblyFileName
-            ));
+            Assembly assembly = Assembly.LoadFrom(
+                Path.Combine(
+                    AppContext.BaseDirectory,
+                    assemblyFileName
+                )
+            );
             string[] references = [.. assembly.GetReferencedAssemblies()
                 .Select(static item => item.Name ?? string.Empty)];
-            Assert.DoesNotContain(references, static name =>
+            Assert.DoesNotContain(references,
+                static name =>
                 string.Equals(name, "Atelia.Completion", StringComparison.Ordinal)
                 || string.Equals(
                     name,
@@ -1287,35 +1437,44 @@ public sealed class AssemblyDependencyBoundaryTests {
                 || name.Contains(
                     "SessionJournal.DerivedRecap",
                     StringComparison.Ordinal
-                ));
+                )
+            );
         }
-        Assembly recapGrid = Assembly.LoadFrom(Path.Combine(
-            AppContext.BaseDirectory,
-            "Atelia.SessionJournal.RecapGrid.dll"
-        ));
+        Assembly recapGrid = Assembly.LoadFrom(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "Atelia.SessionJournal.RecapGrid.dll"
+            )
+        );
         string[] recapGridReferences = [.. recapGrid.GetReferencedAssemblies()
             .Select(static item => item.Name ?? string.Empty)];
-        Assert.DoesNotContain(recapGridReferences, static name =>
+        Assert.DoesNotContain(recapGridReferences,
+            static name =>
             string.Equals(name, "Atelia.Completion", StringComparison.Ordinal)
             || name.Contains("Galatea", StringComparison.Ordinal)
             || name.Contains(
                 "SessionJournal.DerivedRecap",
                 StringComparison.Ordinal
-            ));
+            )
+        );
         foreach (string legacyAssemblyFileName in new[] {
-                     "Atelia.SessionJournal.RecapGrid.Abstractions.dll",
-                     "Atelia.SessionJournal.RecapGrid.Control.dll",
-                     "Atelia.SessionJournal.RecapGrid.Store.dll",
-                     "Atelia.SessionJournal.RecapGrid.Manager.dll",
-                     "Atelia.SessionJournal.RecapGrid.Runtime.dll",
-                     "Atelia.SessionJournal.RecapGrid.Getter.dll",
-                     "Atelia.SessionJournal.RecapGrid.Online.dll",
-                     "Atelia.SessionJournal.RecapGrid.AgentControl.dll"
+            "Atelia.SessionJournal.RecapGrid.Abstractions.dll",
+            "Atelia.SessionJournal.RecapGrid.Control.dll",
+            "Atelia.SessionJournal.RecapGrid.Store.dll",
+            "Atelia.SessionJournal.RecapGrid.Manager.dll",
+            "Atelia.SessionJournal.RecapGrid.Runtime.dll",
+            "Atelia.SessionJournal.RecapGrid.Getter.dll",
+            "Atelia.SessionJournal.RecapGrid.Online.dll",
+            "Atelia.SessionJournal.RecapGrid.AgentControl.dll"
                  }) {
-            Assert.False(File.Exists(Path.Combine(
-                AppContext.BaseDirectory,
-                legacyAssemblyFileName
-            )), $"Legacy product assembly remained: {legacyAssemblyFileName}");
+            Assert.False(
+                File.Exists(
+                    Path.Combine(
+                        AppContext.BaseDirectory,
+                        legacyAssemblyFileName
+                    )
+                ), $"Legacy product assembly remained: {legacyAssemblyFileName}"
+            );
         }
     }
 
@@ -1342,6 +1501,7 @@ public sealed class AssemblyDependencyBoundaryTests {
 
     private static string[] DirectProjectReferences(string projectPath) {
         XDocument document = XDocument.Load(projectPath);
+        AssertStorageReferencePairs(document);
         return [.. document
             .Descendants("ProjectReference")
             .Select(element => (string?)element.Attribute("Include"))
@@ -1351,15 +1511,20 @@ public sealed class AssemblyDependencyBoundaryTests {
 
     private static string[] DirectPackageReferences(string projectPath) {
         XDocument document = XDocument.Load(projectPath);
+        AssertStorageReferencePairs(document);
         return [.. document
             .Descendants("PackageReference")
-            .Select(element => new {
+            .Select(
+            element => new {
                 Include = (string?)element.Attribute("Include"),
                 Version = (string?)element.Attribute("Version")
-            })
+            }
+        )
             .Where(static value => value.Include is not null)
-            .Select(static value =>
-                $"{value.Include}@{value.Version}")];
+            .Select(
+            static value =>
+                $"{value.Include}@{value.Version}"
+        )];
     }
 
     private static bool IsBuildOutput(string path) {
@@ -1368,12 +1533,45 @@ public sealed class AssemblyDependencyBoundaryTests {
             || normalized.Contains("/obj/", StringComparison.OrdinalIgnoreCase);
     }
 
+    // These five dependencies are external library endpoints. Inspect declarations
+    // here; restore/build separately verifies the evaluated package/source graphs.
+    private static readonly string[] StorageProjectNames =
+        ["Primitives", "Data", "Rbf", "RbfSegmentStore", "EventJournal"];
+
+    private static bool IsStorageSourceReference(string reference) =>
+        StorageProjectNames.Any(
+            name => string.Equals(
+                reference,
+                $"$(StorageSourceRoot)/src/{name}/{name}.csproj",
+                StringComparison.Ordinal
+            )
+        );
+
+    private static void AssertStorageReferencePairs(XDocument document) {
+        foreach (string name in StorageProjectNames) {
+            XElement[] source = [.. document.Descendants("ProjectReference")
+                .Where(
+                element => ((string?)element.Attribute("Include"))
+                    ?.Replace('\\', '/') == $"$(StorageSourceRoot)/src/{name}/{name}.csproj"
+            )];
+            XElement[] package = [.. document.Descendants("PackageReference")
+                .Where(element => (string?)element.Attribute("Include") == $"Atelia.{name}")];
+            if (source.Length == 0 && package.Length == 0) { continue; }
+            XElement sourceReference = Assert.Single(source);
+            XElement packageReference = Assert.Single(package);
+            Assert.Equal("'$(UseStorageSources)' == 'true'", (string?)sourceReference.Attribute("Condition"));
+            Assert.Equal("'$(UseStorageSources)' != 'true'", (string?)packageReference.Attribute("Condition"));
+            Assert.Equal("$(StoragePackageVersion)", (string?)packageReference.Attribute("Version"));
+        }
+    }
+
     private static IEnumerable<Type> ProductModuleTypes(
         Assembly assembly,
         string module
     ) {
         string moduleNamespace = $"Atelia.SessionJournal.RecapGrid.{module}";
-        return assembly.GetExportedTypes().Where(type =>
+        return assembly.GetExportedTypes().Where(
+            type =>
             string.Equals(type.Namespace, moduleNamespace, StringComparison.Ordinal)
             || type.Namespace?.StartsWith(
                 moduleNamespace + ".",
@@ -1386,14 +1584,17 @@ public sealed class AssemblyDependencyBoundaryTests {
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var pending = new Stack<string>(roots.Select(Path.GetFullPath));
         while (pending.TryPop(out string? projectPath)) {
-            if (!visited.Add(projectPath.Replace('\\', '/'))) {
-                continue;
-            }
+            if (!visited.Add(projectPath.Replace('\\', '/'))) { continue; }
             string directory = Path.GetDirectoryName(projectPath)
                 ?? throw new InvalidOperationException(
                     "A project path has no parent directory."
                 );
             foreach (string reference in DirectProjectReferences(projectPath)) {
+                if (IsStorageSourceReference(reference)) {
+                    visited.Add(reference);
+                    continue;
+                }
+                Assert.DoesNotContain("$(", reference);
                 pending.Push(Path.GetFullPath(reference, directory));
             }
         }
@@ -1403,9 +1604,7 @@ public sealed class AssemblyDependencyBoundaryTests {
     private static string FindRepositoryRoot() {
         DirectoryInfo? directory = new(AppContext.BaseDirectory);
         while (directory is not null) {
-            if (File.Exists(Path.Combine(directory.FullName, "Atelia.sln"))) {
-                return directory.FullName;
-            }
+            if (File.Exists(Path.Combine(directory.FullName, "Atelia.sln"))) { return directory.FullName; }
             directory = directory.Parent;
         }
         throw new InvalidOperationException(
