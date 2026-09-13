@@ -1,6 +1,6 @@
 # Galatea / RecapGrid 身份与恢复校验简化设计
 
-> 状态：§5 已实现，并在唯一 Dev 实例完成真实调用与冷重开验证；§6 仍为后续设计。代码阶段见 §10，实例 E2E 与额外修复见 §11。
+> 状态：§5 已实现，并在唯一 Dev 实例完成真实调用与冷重开验证；下一切片为 [Control 回执简化计划](control-receipt-simplification-plan.md)，尚未实施。代码阶段见 §10，实例 E2E 与额外修复见 §11。
 >
 > 日期：2026-09-14。代码基线：`277baeea`。本文区分目标设计、当前实现和历史验证；不继承其他工作单的实施授权。
 
@@ -159,15 +159,15 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 ### 6.2 简化 Control 操作回执
 
-删除 `hash(commandDigest, terminalKind)` 这层 ResultIdentity；使用已有稳定 operation key 作为回执引用，无需新建全局 ReceiptRegistry。保留 execution sequence、既有 command digest 与 runtime 绑定检查、已应用结果与 generation；本切片不改变命令编码，也不新存第二份完整命令正文。
+下一实施入口为 [Control 回执简化计划](control-receipt-simplification-plan.md)，已按 `48a9ec92` 重新核对源码并完成三视角交叉质询；本轮仅规划。
 
-旧 receipt 解码时接受并丢弃派生结果字段；新结果输出以明确的 operation/receipt 字段表达，不能继续在名为 `ResultIdentity` 的字段里悄悄更换语义。跨 Control 提交后、SessionJournal tool result 前崩溃，恢复应返回已应用结果且不二次推进语义状态。该独立切片不借输出字段清理改变 operation/runtime 的判重身份，否则应并入需要先收敛旧操作的迁移发布。
+删除 `hash(commandDigest, terminalKind)` 这层 ResultIdentity，直接返回已有 OperationKey。保留 sequence、command/runtime 匹配、首次 instance/generation 和 receipt 与语义变更共同提交；不改命令编码、输入定义或 runtime identity。
 
-该切片涉及历史 tool result 的审计读取与当前 receipt 的输出格式；不修改已有 raw tool result 文本，也不重新执行旧操作。若有当前代码消费者依赖旧结果字段，必须一起重构而非增加长期双输出。
+Control 当前为 canonical JSON v2；目标 writer v3。旧文件在 codec 按源格式验证后投影到唯一当前 receipt，保留原 Head 与 CanonicalBytes；下一次正常持久 mutation 才写新格式。纯读、重放、export/backup 不触发升级，restore 对已归一化的 receipt 做 union 与冲突判断。
 
-实施再审视已确认该切片可独立，但需明确文件升级边界：当前 `ControlState` 是 canonical JSON v2，receipt 内有结果摘要，读取会对照原 canonical bytes 与 state digest。后续 writer 应写 v3；旧 v2 在 codec 验证后投影为当前 receipt，保留读入的原 Head 与 CanonicalBytes，直到下一次正常 mutation 才写新格式。不能在纯读取时重算 Head，否则旧 backup manifest、CAS 与 restore 会失配。
+AgentControl 当前输出升级为 schemaVersion 2 与 operationKey；已有 Journal raw tool result 原文不改。当前 receipt 重放本来就返回当前 Head 与 replayed 状态，不为它新增旧输出 renderer 或全文结果快照。
 
-当前 AgentControl 的输出 DTO 不进入 runtime identity；后续输出改为 `schemaVersion: 2` 与 `operationKey`，同时保持输入定义、工具说明、catalog、命令编码及既有 runtime identity。验证需包含旧 v2 receipt 冷读/重放不写文件、不递增 generation，正常 mutation 后写 v3、旧操作仍可重放，以及 v2 backup 与 v3 状态的 receipt 合并。这里是后续切片的具体方案，尚未修改 Control 实现。
+本切片不改命令/引用图，无需先收敛旧 pending 或批量转换数据。具体工作包、旧格式与跨提交窗口验收、发布边界由上述计划单独维护。
 
 ### 6.3 结果主键与缓存身份
 
@@ -187,14 +187,15 @@ ConnectionFingerprint 的替代需要单独决定 endpoint/reasoning 改配的�
 
 - 不因为“未发布”就清空真实会话、Control receipt 或已提交摘要；无需支持不存在的下游，但真实当前数据是迁移对象。
 - 第一切片只引入旧 v7 的窄读取兼容，不改写 Journal。删除旧读取分支的条件是所有仍需读取/恢复的实际数据已另行有可用路径，不能仅看没有 pending turn。
-- 涉及 Timeline/Control/Store 的后续格式迁移须先满足 §6.1 的旧 Control 操作收敛前提，再停服，连同原始 Journal、派生存储和相关配置制作一份可恢复快照。先在隔离副本转换、重开与遍历引用，不边跑服务边改库。
-- 多文件不能假装一条 SQLite transaction 就原子升级完毕。选完整目录副本作为迁移/回退单位；转换成功后整体切换，失败恢复原副本。不新增常驻迁移协调服务。
+- §6.1/§6.3 改变命令与引用图的组合迁移，须先满足旧 Control 操作收敛前提，再停服，连同原始 Journal、派生存储和相关配置制作可恢复快照。先在隔离副本转换、重开与遍历引用，不边跑服务边改库。
+- 上述多文件转换不能假装一条 SQLite transaction 就原子升级完毕。选完整目录副本作为迁移/回退单位；转换成功后整体切换，失败恢复原副本。不新增常驻迁移协调服务。
+- §6.2 保持命令身份，通过旧格式读取与正常写入升级；不套用旧操作收敛和整图转换前提。实际部署仍保留完整快照和匹配数据回退边界。
 - 迁移不调用 provider；保持历史内容、前驱、已选择结果、操作回执与执行序号。仅改变键与引用表达。
 - 旧程序不能打开新写入格式时，部署回退需恢复匹配快照；不能只回退二进制，也不能暗示升级后产生的新轮次会自动保留在旧快照里。
 
 ## 8. 实施入口、验证与完成定义
 
-第一轮只实施 §5，顺带更新其实际协议/运行文档；§6 按其发布顺序随后推进。没有 `/goal` 指令，没有自动发布或真实会话操作授权。
+第一轮 §5 已完成，以下第一切片验证入口保留供回归参考，不是待实施清单。下一切片范围与验收见 [Control 回执简化计划](control-receipt-simplification-plan.md)；§6.1/§6.3 暂未进入实施。历史 E2E 授权与证据见 §11，本次规划不执行新的部署或真实会话操作。
 
 开始前检查 `git status` 和 `git log`，重新确认本文列出的关键类型与 schema，保留并行会话已提交修复。以当前生产消费者划范围，不把全部公共类型快照测试当成设计保留理由。
 
