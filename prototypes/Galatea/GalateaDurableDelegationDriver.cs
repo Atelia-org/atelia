@@ -15,6 +15,7 @@ internal enum GalateaDurableDelegationPulseStep {
     BindingEstablished,
     MailAccepted,
     MailOutcomeUnknown,
+    MailRequeued,
     RecoveredStarted,
     InspectionNotFound,
     AcceptedTurnNotVisible,
@@ -46,14 +47,12 @@ internal sealed class GalateaDurableDelegationDriver {
         GalateaDelegateDispatchInspection.AcceptedTurnNotVisible.FailureCode;
     private const string BindingCancelledCode = "BINDING_CANCELLED";
     private const string BindingFatalCode = "BINDING_FATAL_TRANSPORT";
-    private const string BindingPolicyCode = "BINDING_FAILURE_POLICY_INVALID";
     private const string BindingResultCode = "BINDING_RESULT_IDENTITY_MISMATCH";
     private const string StartCancelledCode = "START_CANCELLED";
     private const string StartExceptionCode = "START_EXCEPTION";
     private const string StartResultCode = "START_RESULT_IDENTITY_MISMATCH";
     private const string InspectionCancelledCode = "INSPECTION_CANCELLED";
     private const string InspectionFatalCode = "INSPECTION_FATAL_TRANSPORT";
-    private const string InspectionPolicyCode = "INSPECTION_FAILURE_POLICY_INVALID";
     private const string InspectionResultCode = "INSPECTION_RESULT_IDENTITY_MISMATCH";
     private const string InspectionTurnCode = "INSPECTION_TURN_IDENTITY_MISMATCH";
     private const string FinalBlankCode = "FINAL_BLANK";
@@ -67,6 +66,10 @@ internal sealed class GalateaDurableDelegationDriver {
     private readonly TimeProvider _timeProvider;
     private readonly Func<string> _bindingOperationIdFactory;
     private readonly SemaphoreSlim _pulseGate = new(1, 1);
+    private string? _retryDispatchId;
+    private long _retryRevision = -1;
+    private long _retryObservedTimestamp;
+    private TimeSpan _retryDelay;
     private string? _debugRunningLivenessDispatchId;
     private long _debugNextRunningLivenessAtUnixTimeMilliseconds;
 
@@ -114,11 +117,19 @@ internal sealed class GalateaDurableDelegationDriver {
         GalateaOutboundMailSnapshot? active = ReadActiveMail(snapshot);
 
         if (route.State == GalateaDelegationRouteState.Quarantined) {
+            GalateaOutboundMailSnapshot? stranded = active ?? ReadEarliestQueued(snapshot);
+            if (stranded is not null && IsRecoverableLegacyQuarantine(route.QuarantineCode)) {
+                return FinishLocally(snapshot, stranded,
+                    active is null ? "NOT_DISPATCHED_RETRIES_EXHAUSTED" : "RESULT_UNCONFIRMED");
+            }
             return new(GalateaDurableDelegationPulseStep.Quarantined,
                 active?.DispatchId, route.ThreadId,
                 Code: route.QuarantineCode);
         }
         if (active is not null) {
+            if (active.RecoveryFailureCount >= GalateaDelegationDurableContract.MaximumRecoveryFailures) {
+                return FinishLocally(snapshot, active, "RESULT_UNCONFIRMED");
+            }
             return await PulseActiveMailAsync(
                     active,
                     route,
@@ -162,16 +173,24 @@ internal sealed class GalateaDurableDelegationDriver {
             }
         }
 
+        if (!RetryIsDue(queued, now)) {
+            return new(GalateaDurableDelegationPulseStep.Backoff,
+                queued.DispatchId, route.ThreadId, Code: queued.RecoveryLastCode);
+        }
+        if (queued.RecoveryFailureCount >= GalateaDelegationDurableContract.MaximumRecoveryFailures) {
+            return FinishLocally(snapshot, queued, "NOT_DISPATCHED_RETRIES_EXHAUSTED");
+        }
         return route.State switch {
             GalateaDelegationRouteState.Unbound => BeginBinding(
                 snapshot,
-                route
+                route,
+                queued
             ),
             GalateaDelegationRouteState.Binding =>
                 await EnsureBindingAsync(
                         snapshot,
                         route,
-                        now,
+                        queued,
                         cancellationToken
                     )
                     .ConfigureAwait(false),
@@ -191,7 +210,8 @@ internal sealed class GalateaDurableDelegationDriver {
 
     private GalateaDurableDelegationPulseResult BeginBinding(
         GalateaDelegationStateSnapshot snapshot,
-        GalateaRouteBindingSnapshot route
+        GalateaRouteBindingSnapshot route,
+        GalateaOutboundMailSnapshot queued
     ) {
         string operationId = _bindingOperationIdFactory();
         if (!IsCanonicalLowerHex32(operationId)) {
@@ -201,7 +221,9 @@ internal sealed class GalateaDurableDelegationDriver {
         }
         GalateaRouteBindingSnapshot bound = _store.BeginThreadBinding(
             operationId,
-            route.Revision
+            route.Revision,
+            queued.DispatchId,
+            queued.Revision
         );
         DebugUtil.Info(
             LogCategory,
@@ -220,20 +242,13 @@ internal sealed class GalateaDurableDelegationDriver {
         EnsureBindingAsync(
         GalateaDelegationStateSnapshot snapshot,
         GalateaRouteBindingSnapshot route,
-        long now,
+        GalateaOutboundMailSnapshot queued,
         CancellationToken cancellationToken
     ) {
         string operationId = route.BindingOperationId
             ?? throw new InvalidDataException(
                 "A Binding route has no durable operation identity."
             );
-        if (route.NextEnsureAtUnixTimeMilliseconds is { } due && now < due) {
-            return new(
-                GalateaDurableDelegationPulseStep.Backoff,
-                Code: route.EnsureLastCode
-            );
-        }
-
         GalateaDelegateBindingEstablished result;
         try {
             result = await _transport.EnsureBindingAsync(
@@ -242,40 +257,25 @@ internal sealed class GalateaDurableDelegationDriver {
                 )
                 .ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            throw;
+        }
         catch (OperationCanceledException) {
-            return RecordBindingMiss(
-                snapshot,
-                route,
-                operationId,
-                BindingCancelledCode,
-                GetUnixTimeMilliseconds()
-            );
+            return RecordBindingMiss(snapshot, route, queued, operationId,
+                BindingCancelledCode, GetUnixTimeMilliseconds());
         }
         catch (GalateaDurableDelegateTransportException exception) {
-            return exception.FailurePolicy switch {
-                GalateaDurableDelegateFailurePolicy.RetryableBinding
-                    or GalateaDurableDelegateFailurePolicy.PreWriteRejected
-                    or GalateaDurableDelegateFailurePolicy.Stopped =>
-                    RecordBindingMiss(
-                        snapshot,
-                        route,
-                        operationId,
-                        SafeCode(exception.Code, BindingFatalCode),
-                        GetUnixTimeMilliseconds()
-                    ),
-                GalateaDurableDelegateFailurePolicy.DeterministicConflict
-                    or GalateaDurableDelegateFailurePolicy.FatalTransport =>
-                    QuarantineBinding(
-                        snapshot,
-                        route,
-                        SafeCode(exception.Code, BindingFatalCode)
-                    ),
-                _ => QuarantineBinding(snapshot, route, BindingPolicyCode)
-            };
+            cancellationToken.ThrowIfCancellationRequested();
+            string code = SafeCode(exception.Code, BindingFatalCode);
+            return IsConfigurationFailure(code)
+                ? FinishLocally(snapshot, queued, code)
+                : RecordBindingMiss(snapshot, route, queued, operationId,
+                    code, GetUnixTimeMilliseconds());
         }
-        catch (Exception exception) when (
-            GalateaExceptionClassifier.IsNonFatal(exception)) {
-            return QuarantineBinding(snapshot, route, BindingFatalCode);
+        catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception)) {
+            cancellationToken.ThrowIfCancellationRequested();
+            return RecordBindingMiss(snapshot, route, queued, operationId,
+                BindingFatalCode, GetUnixTimeMilliseconds());
         }
 
         if (!string.Equals(
@@ -283,7 +283,7 @@ internal sealed class GalateaDurableDelegationDriver {
                 operationId,
                 StringComparison.Ordinal)
             || !IsWireIdentity(result.ThreadId)) {
-            return QuarantineBinding(snapshot, route, BindingResultCode);
+            return FinishLocally(snapshot, queued, BindingResultCode);
         }
         GalateaRouteBindingSnapshot established =
             _store.CompleteThreadBinding(
@@ -308,50 +308,29 @@ internal sealed class GalateaDurableDelegationDriver {
     private GalateaDurableDelegationPulseResult RecordBindingMiss(
         GalateaDelegationStateSnapshot snapshot,
         GalateaRouteBindingSnapshot route,
+        GalateaOutboundMailSnapshot queued,
         string operationId,
         string code,
         long now
     ) {
-        GalateaRouteBindingSnapshot deferred =
-            _store.RecordThreadBindingEnsureMiss(
-                operationId,
-                route.Revision,
-                code,
-                now
-            );
-        DebugUtil.Warning(
-            LogCategory,
-            "Durable thread binding deferred: "
-                + $"user={Safe(snapshot.Owner.UserId)}, "
-                + $"bindingOperationId={operationId}, code={code}, "
-                + $"attempt={deferred.EnsureAttemptCount}, "
-                + $"nextAt={deferred.NextEnsureAtUnixTimeMilliseconds}."
-        );
-        return new(
-            GalateaDurableDelegationPulseStep.BindingDeferred,
-            Code: code
-        );
-    }
-
-    private GalateaDurableDelegationPulseResult QuarantineBinding(
-        GalateaDelegationStateSnapshot snapshot,
-        GalateaRouteBindingSnapshot route,
-        string code
-    ) {
-        string operationId = route.BindingOperationId
-            ?? throw new InvalidDataException(
-                "A Binding route has no durable operation identity."
-            );
-        _ = _store.QuarantineThreadBinding(
-            operationId,
-            route.Revision,
-            code
-        );
-        LogQuarantine(snapshot, dispatchId: null, code);
-        return new(
-            GalateaDurableDelegationPulseStep.Quarantined,
-            Code: code
-        );
+        GalateaOutboundMailSnapshot deferred;
+        try {
+            deferred = _store.RecordThreadBindingEnsureMiss(operationId,
+                route.Revision, queued.DispatchId, queued.Revision, code, now);
+        }
+        catch (GalateaDelegationInboxBackpressureException backpressure) {
+            LogBackpressure(snapshot, backpressure, queued.DispatchId);
+            return new(GalateaDurableDelegationPulseStep.InboxBackpressure, queued.DispatchId);
+        }
+        ObserveRetry(deferred, now);
+        DebugUtil.Warning(LogCategory,
+            $"Durable thread binding deferred: user={Safe(snapshot.Owner.UserId)}, "
+            + $"dispatchId={queued.DispatchId}, code={code}, "
+            + $"attempt={deferred.RecoveryFailureCount}, nextAt={deferred.NextRetryAtUnixTimeMilliseconds}.");
+        return new(deferred.State == GalateaDurableMailState.TerminalFailed
+                ? GalateaDurableDelegationPulseStep.TerminalFailed
+                : GalateaDurableDelegationPulseStep.BindingDeferred,
+            queued.DispatchId, Code: deferred.TerminalCode ?? code);
     }
 
     private async Task<GalateaDurableDelegationPulseResult>
@@ -401,6 +380,9 @@ internal sealed class GalateaDurableDelegationDriver {
                 )
                 .ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            throw;
+        }
         catch (OperationCanceledException) {
             return MarkOutcomeUnknownAfterStart(
                 snapshot,
@@ -410,15 +392,26 @@ internal sealed class GalateaDurableDelegationDriver {
             );
         }
         catch (GalateaDurableDelegateTransportException exception) {
-            return MarkOutcomeUnknownAfterStart(
-                snapshot,
-                started,
-                SafeCode(exception.Code, StartExceptionCode),
-                GetUnixTimeMilliseconds()
-            );
+            cancellationToken.ThrowIfCancellationRequested();
+            string code = SafeCode(exception.Code, StartExceptionCode);
+            if (exception.DispatchState == GalateaDelegateDispatchState.NotDispatched) {
+                if (IsConfigurationFailure(code)) {
+                    return FinishLocally(_store.ReadSnapshot(), started, code, exception.DispatchState);
+                }
+                GalateaOutboundMailSnapshot requeued = _store.RequeueNotDispatchedMail(
+                    started.DispatchId, started.Revision, _store.ReadSnapshot().Route.Revision,
+                    exception.DispatchState, code, IsInvalidBinding(code), GetUnixTimeMilliseconds());
+                ObserveRetry(requeued, GetUnixTimeMilliseconds());
+                return new(requeued.State == GalateaDurableMailState.TerminalFailed
+                        ? GalateaDurableDelegationPulseStep.TerminalFailed
+                        : GalateaDurableDelegationPulseStep.MailRequeued,
+                    started.DispatchId, Code: requeued.TerminalCode ?? code);
+            }
+            return MarkOutcomeUnknownAfterStart(snapshot, started, code, GetUnixTimeMilliseconds());
         }
         catch (Exception exception) when (
             GalateaExceptionClassifier.IsNonFatal(exception)) {
+            cancellationToken.ThrowIfCancellationRequested();
             return MarkOutcomeUnknownAfterStart(
                 snapshot,
                 started,
@@ -436,7 +429,7 @@ internal sealed class GalateaDurableDelegationDriver {
                 threadId,
                 StringComparison.Ordinal)
             || !IsWireIdentity(accepted.TurnId)) {
-            return QuarantineActive(
+            return RejectRemoteResult(
                 snapshot,
                 started,
                 StartResultCode
@@ -478,12 +471,15 @@ internal sealed class GalateaDurableDelegationDriver {
             code,
             now
         );
+        ObserveRetry(unknown, now);
         LogOutcomeUnknown(snapshot, unknown, code);
         return new(
-            GalateaDurableDelegationPulseStep.MailOutcomeUnknown,
+            unknown.State == GalateaDurableMailState.TerminalFailed
+                ? GalateaDurableDelegationPulseStep.TerminalFailed
+                : GalateaDurableDelegationPulseStep.MailOutcomeUnknown,
             unknown.DispatchId,
             unknown.RequestedThreadId,
-            Code: code
+            Code: unknown.TerminalCode ?? code
         );
     }
 
@@ -532,12 +528,15 @@ internal sealed class GalateaDurableDelegationDriver {
             RecoveredStartedCode,
             now
         );
+        ObserveRetry(unknown, now);
         LogOutcomeUnknown(snapshot, unknown, RecoveredStartedCode);
         return new(
-            GalateaDurableDelegationPulseStep.RecoveredStarted,
+            unknown.State == GalateaDurableMailState.TerminalFailed
+                ? GalateaDurableDelegationPulseStep.TerminalFailed
+                : GalateaDurableDelegationPulseStep.RecoveredStarted,
             mail.DispatchId,
             mail.RequestedThreadId,
-            Code: RecoveredStartedCode
+            Code: unknown.TerminalCode ?? RecoveredStartedCode
         );
     }
 
@@ -549,12 +548,12 @@ internal sealed class GalateaDurableDelegationDriver {
         long now,
         CancellationToken cancellationToken
     ) {
-        if (mail.NextReconcileAtUnixTimeMilliseconds is { } due && now < due) {
+        if (!RetryIsDue(mail, now)) {
             return new(
                 GalateaDurableDelegationPulseStep.Backoff,
                 mail.DispatchId,
                 route.ThreadId,
-                Code: mail.ReconcileLastCode
+                Code: mail.RecoveryLastCode
             );
         }
         string threadId = route.ThreadId
@@ -607,54 +606,18 @@ internal sealed class GalateaDurableDelegationDriver {
                 source: null
             );
         }
-        catch (GalateaDurableDelegateTransportException exception) when (
-            cancellationToken.IsCancellationRequested
-            && exception.FailurePolicy is (
-                GalateaDurableDelegateFailurePolicy.InspectionUnavailable
-                or GalateaDurableDelegateFailurePolicy.PreWriteRejected
-                or GalateaDurableDelegateFailurePolicy.Stopped)) {
-            throw new OperationCanceledException(cancellationToken);
-        }
         catch (GalateaDurableDelegateTransportException exception) {
-            return exception.FailurePolicy switch {
-                GalateaDurableDelegateFailurePolicy.InspectionUnavailable
-                    or GalateaDurableDelegateFailurePolicy.PreWriteRejected
-                    or GalateaDurableDelegateFailurePolicy.Stopped =>
-                    RecordPollMiss(
-                        snapshot,
-                        mail,
-                        SafeCode(exception.Stage, FailureStage),
-                        SafeCode(exception.Code, InspectionFatalCode),
-                        GetUnixTimeMilliseconds(),
-                        source: null
-                    ),
-                GalateaDurableDelegateFailurePolicy.DeterministicConflict
-                    or GalateaDurableDelegateFailurePolicy.FatalTransport =>
-                    QuarantineActive(
-                        snapshot,
-                        mail,
-                        SafeCode(exception.Code, InspectionFatalCode),
-                        source: null,
-                        stage: SafeCode(exception.Stage, FailureStage)
-                    ),
-                _ => QuarantineActive(
-                    snapshot,
-                    mail,
-                    InspectionPolicyCode,
-                    source: null,
-                    stage: FailureStage
-                )
-            };
+            cancellationToken.ThrowIfCancellationRequested();
+            string code = SafeCode(exception.Code, InspectionFatalCode);
+            return IsIdentityFailure(code)
+                ? RejectRemoteResult(snapshot, mail, code)
+                : RecordPollMiss(snapshot, mail, SafeCode(exception.Stage, FailureStage),
+                    code, GetUnixTimeMilliseconds(), source: null);
         }
-        catch (Exception exception) when (
-            GalateaExceptionClassifier.IsNonFatal(exception)) {
-            return QuarantineActive(
-                snapshot,
-                mail,
-                InspectionFatalCode,
-                source: null,
-                stage: FailureStage
-            );
+        catch (Exception exception) when (GalateaExceptionClassifier.IsNonFatal(exception)) {
+            cancellationToken.ThrowIfCancellationRequested();
+            return RecordPollMiss(snapshot, mail, FailureStage,
+                InspectionFatalCode, GetUnixTimeMilliseconds(), source: null);
         }
 
         if (!string.Equals(
@@ -665,7 +628,7 @@ internal sealed class GalateaDurableDelegationDriver {
                 inspection.ThreadId,
                 threadId,
                 StringComparison.Ordinal)) {
-            return QuarantineActive(
+            return RejectRemoteResult(
                 snapshot,
                 mail,
                 InspectionResultCode,
@@ -690,7 +653,7 @@ internal sealed class GalateaDurableDelegationDriver {
                         GetUnixTimeMilliseconds(),
                         notFound.Source
                     )
-                    : QuarantineActive(
+                    : RejectRemoteResult(
                         snapshot,
                         mail,
                         InspectionResultCode,
@@ -713,7 +676,7 @@ internal sealed class GalateaDurableDelegationDriver {
                         GetUnixTimeMilliseconds(),
                         unavailable.Source
                     )
-                    : QuarantineActive(
+                    : RejectRemoteResult(
                         snapshot,
                         mail,
                         InspectionTurnCode,
@@ -732,14 +695,14 @@ internal sealed class GalateaDurableDelegationDriver {
             GalateaDelegateDispatchInspection.Failed failed =>
                 RecordFailed(snapshot, mail, failed),
             GalateaDelegateDispatchInspection.Ambiguous ambiguous =>
-                QuarantineActive(
+                RejectRemoteResult(
                     snapshot,
                     mail,
                     SafeCode(ambiguous.Code, InspectionResultCode),
                     ambiguous.Source,
                     FailureStage
                 ),
-            _ => QuarantineActive(
+            _ => RejectRemoteResult(
                 snapshot,
                 mail,
                 InspectionResultCode,
@@ -763,6 +726,11 @@ internal sealed class GalateaDurableDelegationDriver {
             code,
             now
         );
+        ObserveRetry(deferred, now);
+        if (deferred.State == GalateaDurableMailState.TerminalFailed) {
+            return new(GalateaDurableDelegationPulseStep.TerminalFailed,
+                deferred.DispatchId, Code: deferred.TerminalCode);
+        }
         string message = FormatInspectionDeferredDiagnostic(
             snapshot,
             mail,
@@ -806,9 +774,9 @@ internal sealed class GalateaDurableDelegationDriver {
         + $"knownTurnId={before.AcceptedTurnId ?? "<none>"}, "
         + $"source={InspectionSourceText(source)}, "
         + $"stage={stage}, code={code}, "
-        + $"recovered={(before.ReconcileAttemptCount > 0).ToString().ToLowerInvariant()}, "
-        + $"attempt={after.ReconcileAttemptCount}, "
-        + $"nextAt={after.NextReconcileAtUnixTimeMilliseconds}.";
+        + $"recovered={(before.RecoveryFailureCount > 0).ToString().ToLowerInvariant()}, "
+        + $"attempt={after.RecoveryFailureCount}, "
+        + $"nextAt={after.NextRetryAtUnixTimeMilliseconds}.";
 
     internal static bool ShouldWarnInspectionDeferred(
         GalateaOutboundMailSnapshot mail,
@@ -823,7 +791,7 @@ internal sealed class GalateaDurableDelegationDriver {
         CancellationToken cancellationToken
     ) {
         if (!IsWireIdentity(running.TurnId)) {
-            return QuarantineActive(
+            return RejectRemoteResult(
                 snapshot,
                 mail,
                 InspectionResultCode,
@@ -840,7 +808,7 @@ internal sealed class GalateaDurableDelegationDriver {
                     mail.AcceptedTurnId,
                     running.TurnId,
                     StringComparison.Ordinal)) {
-                return QuarantineActive(
+                return RejectRemoteResult(
                     snapshot,
                     mail,
                     InspectionTurnCode,
@@ -849,7 +817,11 @@ internal sealed class GalateaDurableDelegationDriver {
                 );
             }
             cancellationToken.ThrowIfCancellationRequested();
-            if (mail.ReconcileAttemptCount > 0) {
+            if (running.Source != GalateaDelegateInspectionSource.Live) {
+                return RecordPollMiss(snapshot, mail, FailureStage,
+                    "RUNNING_NOT_CONFIRMED", GetUnixTimeMilliseconds(), running.Source);
+            }
+            if (mail.RecoveryFailureCount > 0) {
                 _ = _store.ConfirmAcceptedMailRunning(
                     mail.DispatchId,
                     mail.Revision,
@@ -872,6 +844,14 @@ internal sealed class GalateaDurableDelegationDriver {
             running.ThreadId,
             running.TurnId
         );
+        if (running.Source != GalateaDelegateInspectionSource.Live) {
+            return RecordPollMiss(_store.ReadSnapshot(), accepted, FailureStage,
+                "RUNNING_NOT_CONFIRMED", GetUnixTimeMilliseconds(), running.Source);
+        }
+        if (accepted.RecoveryFailureCount > 0) {
+            _ = _store.ConfirmAcceptedMailRunning(accepted.DispatchId, accepted.Revision,
+                running.ThreadId, running.TurnId);
+        }
         LogRunningConfirmed(snapshot, mail, running);
         return new(
             GalateaDurableDelegationPulseStep.MailAccepted,
@@ -887,7 +867,7 @@ internal sealed class GalateaDurableDelegationDriver {
         GalateaDelegateDispatchInspection.Completed completed
     ) {
         if (!TerminalTurnMatches(mail, completed.ThreadId, completed.TurnId)) {
-            return QuarantineActive(
+            return RejectRemoteResult(
                 snapshot,
                 mail,
                 InspectionTurnCode,
@@ -941,7 +921,7 @@ internal sealed class GalateaDurableDelegationDriver {
         GalateaDelegateDispatchInspection.Failed failed
     ) {
         if (!TerminalTurnMatches(mail, failed.ThreadId, failed.TurnId)) {
-            return QuarantineActive(
+            return RejectRemoteResult(
                 snapshot,
                 mail,
                 InspectionTurnCode,
@@ -1024,25 +1004,70 @@ internal sealed class GalateaDurableDelegationDriver {
         return true;
     }
 
-    private GalateaDurableDelegationPulseResult QuarantineActive(
+    private GalateaDurableDelegationPulseResult RejectRemoteResult(
         GalateaDelegationStateSnapshot snapshot,
         GalateaOutboundMailSnapshot mail,
         string code,
         GalateaDelegateInspectionSource? source = null,
         string? stage = null
+    ) => FinishLocally(_store.ReadSnapshot(), mail, code);
+
+    private GalateaDurableDelegationPulseResult FinishLocally(
+        GalateaDelegationStateSnapshot snapshot,
+        GalateaOutboundMailSnapshot mail,
+        string code,
+        GalateaDelegateDispatchState dispatchState = GalateaDelegateDispatchState.MayHaveDispatched
     ) {
-        _ = _store.QuarantineActiveMail(
-            mail.DispatchId,
-            mail.Revision,
-            code
-        );
-        LogQuarantine(snapshot, mail, code, source, stage);
-        return new(
-            GalateaDurableDelegationPulseStep.Quarantined,
-            mail.DispatchId,
-            mail.RequestedThreadId,
-            Code: code
-        );
+        try {
+            GalateaReplyNoticeSnapshot notice = _store.FinishMailLocally(
+                mail.DispatchId, mail.Revision, snapshot.Route.Revision, code,
+                resetBinding: true, dispatchState: dispatchState);
+            LogTerminal(snapshot, mail, notice, source: null);
+            return new(GalateaDurableDelegationPulseStep.TerminalFailed,
+                mail.DispatchId, mail.RequestedThreadId, Code: notice.Code);
+        }
+        catch (GalateaDelegationInboxBackpressureException backpressure) {
+            LogBackpressure(snapshot, backpressure, mail.DispatchId);
+            return new(GalateaDurableDelegationPulseStep.InboxBackpressure,
+                mail.DispatchId, Code: code);
+        }
+    }
+
+    // Only remote lifecycle failures from the old permanent-quarantine policy.
+    // Identity conflicts and invalid durable state still require operator recovery.
+    private static bool IsRecoverableLegacyQuarantine(string? code) => code is
+        "THREAD_NOT_FOUND" or "INSPECTION_UNAVAILABLE" or "INSPECTION_FATAL_TRANSPORT"
+        or "BINDING_FATAL_TRANSPORT" or "BINDING_OUTCOME_UNKNOWN"
+        or "SIDECAR_PROCESS_EXITED" or "SIDECAR_READY_TIMEOUT";
+
+    private static bool IsConfigurationFailure(string code) => code is
+        "INVALID_CWD" or "CWD_NOT_ALLOWED" or "INVALID_CONFIG" or "INVALID_CODEX_CONFIG"
+        or "CODEX_VERSION_MISMATCH";
+
+    private static bool IsInvalidBinding(string code) => code is
+        "THREAD_NOT_FOUND" or "THREAD_NOT_RESUMABLE" or "THREAD_ID_MISMATCH"
+        or "THREAD_CWD_MISMATCH" or "CWD_MISMATCH" or "THREAD_OWNERSHIP_MISMATCH";
+
+    private static bool IsIdentityFailure(string code) => code is
+        "INSPECTION_SELECTOR_MISMATCH" or "THREAD_ID_MISMATCH"
+        or "THREAD_CWD_MISMATCH" or "CWD_MISMATCH" or "THREAD_OWNERSHIP_MISMATCH";
+
+    private void ObserveRetry(GalateaOutboundMailSnapshot mail, long now) {
+        if (_retryDispatchId == mail.DispatchId && _retryRevision == mail.Revision) {
+            return;
+        }
+        _retryDispatchId = mail.DispatchId;
+        _retryRevision = mail.Revision;
+        _retryObservedTimestamp = _timeProvider.GetTimestamp();
+        long remaining = mail.NextRetryAtUnixTimeMilliseconds is { } due
+            ? Math.Clamp(due - now, 0, GalateaDelegationDurableContract.MaximumRecoveryBackoffMilliseconds)
+            : 0;
+        _retryDelay = TimeSpan.FromMilliseconds(remaining);
+    }
+
+    private bool RetryIsDue(GalateaOutboundMailSnapshot mail, long now) {
+        ObserveRetry(mail, now);
+        return _timeProvider.GetElapsedTime(_retryObservedTimestamp) >= _retryDelay;
     }
 
     private static bool TerminalTurnMatches(
@@ -1187,7 +1212,7 @@ internal sealed class GalateaDurableDelegationDriver {
         GalateaOutboundMailSnapshot mail,
         GalateaDelegateDispatchInspection.Running running
     ) {
-        bool recovered = mail.ReconcileAttemptCount > 0;
+        bool recovered = mail.RecoveryFailureCount > 0;
         if (!ShouldLogDebugRunningLiveness(mail.DispatchId, recovered)) {
             return;
         }
@@ -1201,8 +1226,8 @@ internal sealed class GalateaDurableDelegationDriver {
                 + $"source={InspectionSourceText(running.Source)}, "
                 + $"threadId={running.ThreadId}, turnId={running.TurnId}, "
                 + $"recovered={recovered.ToString().ToLowerInvariant()}, "
-                + $"clearedAttempt={mail.ReconcileAttemptCount}, "
-                + $"clearedCode={mail.ReconcileLastCode ?? "<none>"}.",
+                + $"clearedAttempt={mail.RecoveryFailureCount}, "
+                + $"clearedCode={mail.RecoveryLastCode ?? "<none>"}.",
             eventKind: DebugEventKind.Success
         );
     }
@@ -1242,8 +1267,8 @@ internal sealed class GalateaDurableDelegationDriver {
         "Durable mail outcome unknown: "
             + $"user={Safe(snapshot.Owner.UserId)}, "
             + $"dispatchId={mail.DispatchId}, code={code}, "
-            + $"attempt={mail.ReconcileAttemptCount}, "
-            + $"nextAt={mail.NextReconcileAtUnixTimeMilliseconds}."
+            + $"attempt={mail.RecoveryFailureCount}, "
+            + $"nextAt={mail.NextRetryAtUnixTimeMilliseconds}."
     );
 
     [Conditional("DEBUG")]
@@ -1277,36 +1302,6 @@ internal sealed class GalateaDurableDelegationDriver {
             eventKind: DebugEventKind.Success
         );
     }
-
-    private static void LogQuarantine(
-        GalateaDelegationStateSnapshot snapshot,
-        string? dispatchId,
-        string code
-    ) => DebugUtil.Info(
-        LogCategory,
-        "Durable delegation quarantined: "
-            + $"user={Safe(snapshot.Owner.UserId)}, "
-            + $"dispatchId={dispatchId ?? "<none>"}, code={code}.",
-        eventKind: DebugEventKind.Failure
-    );
-
-    private static void LogQuarantine(
-        GalateaDelegationStateSnapshot snapshot,
-        GalateaOutboundMailSnapshot mail,
-        string code,
-        GalateaDelegateInspectionSource? source,
-        string? stage
-    ) => DebugUtil.Info(
-        LogCategory,
-        "Durable delegation quarantined: "
-            + $"user={Safe(snapshot.Owner.UserId)}, "
-            + $"dispatchId={mail.DispatchId}, "
-            + $"selectorMode={SelectorMode(mail)}, "
-            + $"knownTurnId={mail.AcceptedTurnId ?? "<none>"}, "
-            + $"source={InspectionSourceText(source)}, "
-            + $"stage={stage ?? "<none>"}, code={code}.",
-        eventKind: DebugEventKind.Failure
-    );
 
     private static void LogBackpressure(
         GalateaDelegationStateSnapshot snapshot,
