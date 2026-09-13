@@ -76,7 +76,7 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
     [InlineData("AfterRequestPreparedCommitted", SessionDurableDispatchState.NotStarted)]
     [InlineData("AfterCompletionAttemptStartedCommitted",
         SessionDurableDispatchState.StartedOutcomeUncertain)]
-    public async Task PreviousProjectionFrozenRequest_ExplicitRestartCannotReplaceAdapter(
+    public async Task PreviousProjectionFrozenV7Request_ExplicitRestartUsesCurrentAdapter(
         string failpoint, SessionDurableDispatchState expectedDispatchState) {
         var factory = new CodexFixtureFactory();
         await using var host = CreateHost(factory);
@@ -91,13 +91,11 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
                     ? SessionExecutionPhase.AwaitingCompletionDispatch
                     : SessionExecutionPhase.AwaitingCompletion,
                 (engine, runtime) => {
-                    engine.UseRuntime(runtime with {
-                        CompletionTarget = runtime.CompletionTarget! with {
-                            RequestAdapterFingerprint = PreviousCodexAdapterFingerprint
-                        }
-                    });
+                    engine.UseRuntime(runtime);
                     return ValueTask.FromResult<IAsyncDisposable>(new EmptyRuntimeBinding());
                 });
+        frozenHead = LegacyPreparedV7Fixture.ReplacePending(
+            host.SessionDirectory, frozenHead, PreviousCodexAdapterFingerprint);
         Assert.Empty(factory.Requests);
         Assert.Equal(0, factory.CredentialReads);
 
@@ -108,27 +106,19 @@ public sealed class GalateaCodexReasoningReplayVerticalTests {
         var frozen = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
             session.Engine.InspectRuntimeRecoveryRequirements());
         Assert.Equal(expectedDispatchState, frozen.DispatchState);
-        Assert.Equal(PreviousCodexAdapterFingerprint,
-            frozen.CompletionTarget.RequestAdapterFingerprint);
 
         using HttpResponseMessage accepted = await http.PostAsJsonAsync(
             "/api/v1/chat/turns/resume",
             new ResumeTurnRequest(EventAddressTextCodec.Format(frozenHead),
                 ConnectionId: null, RestartUncertainCompletion: true));
-        GalateaLiveTurn refused = await WaitForTurnAsync(accepted, service, session);
+        GalateaLiveTurn recovered = await WaitForTurnAsync(accepted, service, session);
 
-        Assert.Equal("failed", refused.Status);
-        using GalateaTurnSubscription replay = refused.Subscribe();
-        GalateaSseFrame error = Assert.Single(replay.ReplayFrames,
-            frame => frame.EventName == "error");
-        Assert.Contains("\"code\":\"turn-unavailable\"",
-            Encoding.UTF8.GetString(error.Utf8.Span), StringComparison.Ordinal);
-        Assert.Equal(frozenHead, session.Engine.ReadCurrentHead());
-        Assert.Equal(expectedDispatchState, Assert.IsType<SessionRuntimeRecoveryRequirements
-            .FrozenCompletionRequired>(session.Engine.InspectRuntimeRecoveryRequirements())
-            .DispatchState);
-        Assert.Empty(factory.Requests);
-        Assert.Equal(0, factory.CredentialReads);
+        Assert.Equal("completed", recovered.Status);
+        Assert.Equal(SessionExecutionPhase.Idle, session.Engine.InspectExecutionBoundary().Phase);
+        Assert.Single(factory.Requests);
+        Assert.Equal(1, factory.CredentialReads);
+        Assert.Equal(OldAnswer, session.Engine.ReadRecentCompletedTurns().RequireSnapshot()
+            .Turns[0].TerminalAction.Message.GetFlattenedText());
     }
 
     [Fact]

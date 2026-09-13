@@ -137,8 +137,7 @@ internal sealed class GalateaRecapGridComposition
             frozen.CompletionTarget.Kind,
             frozen.CompletionTarget.ConnectionFingerprint,
             frozen.ClientName,
-            frozen.ApiSpecId,
-            frozen.CompletionTarget.RequestAdapterFingerprint);
+            frozen.ApiSpecId);
         CompletionDispatchBindingResult binding =
             _completion.BindPreparedExact(required);
         if (binding is not CompletionDispatchBindingResult.Bound bound) {

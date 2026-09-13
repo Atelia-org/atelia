@@ -694,8 +694,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
             CompletionTarget: new SessionCompletionTargetIdentity(
                 dispatch.ConnectionId,
                 dispatch.Kind,
-                dispatch.ConnectionFingerprint,
-                dispatch.RequestAdapterFingerprint
+                dispatch.ConnectionFingerprint
             ),
             ContextCandidateSource: new EmptyCandidateSource()
         );
@@ -729,8 +728,7 @@ public sealed class GalateaRollingRecapGridHostTests : IDisposable {
         var target = new SessionCompletionTargetIdentity(
             dispatch.ConnectionId,
             dispatch.Kind,
-            dispatch.ConnectionFingerprint,
-            dispatch.RequestAdapterFingerprint
+            dispatch.ConnectionFingerprint
         );
         using SessionJournalEngine engine = SessionJournalEngine.OpenForTest(
             fixture.Path,

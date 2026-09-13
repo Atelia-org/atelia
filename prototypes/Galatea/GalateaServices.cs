@@ -3376,8 +3376,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         CompletionTarget: new SessionCompletionTargetIdentity(
             turn.Identity.ConnectionId,
             turn.Identity.Kind,
-            turn.Identity.ConnectionFingerprint,
-            turn.Identity.RequestAdapterFingerprint),
+            turn.Identity.ConnectionFingerprint),
         UncertainCompletionRecoveryPolicy: recoveryPolicy,
         ToolRuntimeIdentity: turn.AgentControl?.RuntimeIdentity,
         ContextCandidateSource: candidates,

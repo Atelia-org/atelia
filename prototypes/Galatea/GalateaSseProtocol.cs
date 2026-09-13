@@ -414,8 +414,6 @@ internal static class GalateaSseErrorClassifier {
                 .ClientNameMismatch)
             or nameof(CompletionDispatchBindingUnavailableReason
                 .ClientApiSpecIdMismatch)
-            or nameof(CompletionDispatchBindingUnavailableReason
-                .RequestAdapterFingerprintMismatch)
             || reason?.StartsWith(
                 "recovery-",
                 StringComparison.Ordinal

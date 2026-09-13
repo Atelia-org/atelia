@@ -1044,8 +1044,7 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             CompletionTarget: new SessionCompletionTargetIdentity(
                 dispatch.ConnectionId,
                 dispatch.Kind,
-                dispatch.ConnectionFingerprint,
-                dispatch.RequestAdapterFingerprint
+                dispatch.ConnectionFingerprint
             ),
             ContextCandidateSource: new EmptyLineageCandidateSource()
         );

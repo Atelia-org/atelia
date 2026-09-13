@@ -1057,8 +1057,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 new SessionCompletionTargetIdentity(
                     dispatch.ConnectionId,
                     dispatch.Kind,
-                    dispatch.ConnectionFingerprint,
-                    dispatch.RequestAdapterFingerprint
+                    dispatch.ConnectionFingerprint
                 ),
                 ToolRuntimeIdentity: agent.RuntimeIdentity,
                 ContextCandidateSource: new EmptyCandidateSource()
@@ -1159,8 +1158,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
                 new SessionCompletionTargetIdentity(
                     identity.ConnectionId,
                     identity.Kind,
-                    identity.ConnectionFingerprint,
-                    identity.RequestAdapterFingerprint
+                    identity.ConnectionFingerprint
                 ),
                 ToolRuntimeIdentity: agent.RuntimeIdentity,
                 ContextCandidateSource: new EmptyCandidateSource()
@@ -1781,8 +1779,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
             CompletionTarget: new SessionCompletionTargetIdentity(
                 dispatch.ConnectionId,
                 dispatch.Kind,
-                dispatch.ConnectionFingerprint,
-                dispatch.RequestAdapterFingerprint),
+                dispatch.ConnectionFingerprint),
             ContextCandidateSource: new EmptyCandidateSource());
         using SessionJournalEngine engine =
             SessionJournalEngine.CreateForTest(
@@ -1829,8 +1826,7 @@ public sealed class GalateaRecapGridCompositionTests : IDisposable {
         var completionTarget = new SessionCompletionTargetIdentity(
             identity.ConnectionId,
             identity.Kind,
-            identity.ConnectionFingerprint,
-            identity.RequestAdapterFingerprint
+            identity.ConnectionFingerprint
         );
         var initialRuntime = new SessionRuntime(
             fixtureClient,

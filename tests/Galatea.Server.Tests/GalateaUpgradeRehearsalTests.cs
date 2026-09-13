@@ -19,7 +19,7 @@ using Journal = Atelia.EventJournal.EventJournal;
 namespace Atelia.Galatea.Server.Tests;
 
 /// <summary>
-/// A synthetic previous-adapter contract rehearsal, not an old-binary migration
+/// A synthetic changed-connection contract rehearsal, not an old-binary migration
 /// or hard-crash test. Keeps the existing raw-only Galatea context boundary and
 /// exercises the real Codex converter/parser against a rejecting scripted transport.
 /// </summary>
@@ -30,21 +30,21 @@ public sealed class GalateaUpgradeRehearsalTests(ITestOutputHelper output) {
     private const string RetainedAnswer = "Retained completed answer.";
     private const string FreshAnswer = "Fresh turn after explicit repair.";
     private const string NativeJson = """{"id":"rs_lab","type":"reasoning","encrypted_content":"SYNTHETIC_LAB_REASONING"}""";
-    private const string PreviousFingerprint =
-        "sha256:8c256736bee867f3e135ff8a61b2d8a85438cae327f3299363cd03910f982fc0";
 
     [Theory]
     [InlineData("AfterRequestPreparedCommitted", SessionExecutionPhase.AwaitingCompletionDispatch,
         SessionDurableDispatchState.NotStarted, 2)]
     [InlineData("AfterCompletionAttemptStartedCommitted", SessionExecutionPhase.AwaitingCompletion,
         SessionDurableDispatchState.StartedOutcomeUncertain, 3)]
-    public async Task PreviousAdapterPending_ExplicitOfflineRepairThenFreshTurnSurvivesColdReopen(
+    public async Task ChangedConnectionPending_ExplicitOfflineRepairThenFreshTurnSurvivesColdReopen(
         string failpoint, SessionExecutionPhase pendingPhase,
         SessionDurableDispatchState pendingDispatch, int steps) {
         var factory = new ScriptedCodexFactory();
         CompletionConnectionConfig oldConnection = Connection("test", OldModel);
+        string previousConnectionFingerprint = CompletionDispatchIdentityFactory
+            .ComputeConnectionFingerprint(oldConnection with { ReasoningEffort = CompletionReasoningEffort.Low });
         await using var lab = GalateaScenarioLab.Create(
-            "previous-adapter-repair-" + pendingDispatch, factory,
+            "changed-connection-repair-" + pendingDispatch, factory,
             connections: [oldConnection, Connection("astra", NewModel)],
             reportArtifact: output.WriteLine);
 
@@ -73,7 +73,7 @@ public sealed class GalateaUpgradeRehearsalTests(ITestOutputHelper output) {
                 (engine, runtime) => GalateaCodexReasoningReplayVerticalTests.BindRawOnlyRuntimeAsync(
                     engine, runtime with {
                         CompletionTarget = runtime.CompletionTarget! with {
-                            RequestAdapterFingerprint = PreviousFingerprint
+                            ConnectionFingerprint = previousConnectionFingerprint
                         }
                     }, GalateaUserMessageEnvelope.Wrap("fixture observation")));
         }
@@ -96,7 +96,7 @@ public sealed class GalateaUpgradeRehearsalTests(ITestOutputHelper output) {
             var frozen = Assert.IsType<SessionRuntimeRecoveryRequirements.FrozenCompletionRequired>(
                 session.Engine.InspectRuntimeRecoveryRequirements());
             Assert.Equal(pendingDispatch, frozen.DispatchState);
-            Assert.Equal(PreviousFingerprint, frozen.CompletionTarget.RequestAdapterFingerprint);
+            Assert.Equal(previousConnectionFingerprint, frozen.CompletionTarget.ConnectionFingerprint);
             Assert.Single(factory.Requests);
             Assert.Equal(credentialsBeforeRefusal, factory.CredentialReads);
         }

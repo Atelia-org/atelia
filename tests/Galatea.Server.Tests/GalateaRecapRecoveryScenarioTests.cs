@@ -43,6 +43,8 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
         EventAddress frozenHead = await FreezeAsync(lab.SessionDirectory, routesPath,
             main, recap, boundaryFactory, failpoint);
         boundaryFactory.AssertComplete();
+        frozenHead = LegacyPreparedV7Fixture.ReplacePending(lab.SessionDirectory,
+            frozenHead, "old-recap-adapter-" + failpointName);
         SessionPreparedRequestReconstruction frozen = GalateaRecapFixture.ReadLatestPrepared(lab.SessionDirectory);
         GalateaRecapFixture.AssertAdopted(frozen, 3);
         AssertCells(lab.SessionDirectory, 3);
@@ -133,7 +135,7 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
         ICompletionClient client = factory.Create(main);
         CompletionDispatchIdentity identity = CompletionDispatchIdentityFactory.Create(main, client);
         var runtime = new SessionRuntime(client, CompletionTarget: new SessionCompletionTargetIdentity(
-            identity.ConnectionId, identity.Kind, identity.ConnectionFingerprint, identity.RequestAdapterFingerprint));
+            identity.ConnectionId, identity.Kind, identity.ConnectionFingerprint));
         using var timeout = new CancellationTokenSource(GalateaRecapFixture.Deadline);
         using var engine = SessionJournalEngine.OpenForTest(repository, runtime, new SessionJournalTestHooks(failpoint));
         await using RecapGridCompletionHost completion = RecapGridCompletionHost.Create(
