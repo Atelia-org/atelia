@@ -7,7 +7,7 @@ namespace Atelia.SessionJournal.Cli.Tests;
 
 public sealed class CompletionTargetIdentityFactoryTests {
     [Fact]
-    public void Create_PreservesWireFingerprintsAndExcludesSecrets() {
+    public void Create_PreservesConnectionIdentityAndExcludesSecrets() {
         CompletionConnectionConfig connection = CreateConnection();
         var client = new IdentityCompletionClient(
             "client-a",
@@ -35,32 +35,15 @@ public sealed class CompletionTargetIdentityFactoryTests {
             + "da4e5c52666959b02dceb9eaaf88275e",
             identity.ConnectionFingerprint
         );
-        Assert.Equal(
-            "sha256:"
-            + "3fa2e051a2424462acd1d2c7096000d9"
-            + "aad88ce524185a5886a87a5ebed4bf72",
-            identity.RequestAdapterFingerprint
-        );
         Assert.Equal(identity, changedSecrets);
     }
 
     [Fact]
-    public void FingerprintsCoverEverySemanticFieldFamily() {
+    public void ConnectionFingerprintCoversSemanticFields() {
         CompletionConnectionConfig connection = CreateConnection();
-        var client = new IdentityCompletionClient(
-            "client-a",
-            "api-a"
-        );
         string connectionBaseline =
             CompletionTargetIdentityFactory
                 .ComputeConnectionFingerprint(connection);
-        string adapterBaseline =
-            CompletionTargetIdentityFactory
-                .ComputeRequestAdapterFingerprint(
-                    client,
-                    connection
-                );
-
         string[] connectionVariants = [
             CompletionTargetIdentityFactory
                 .ComputeConnectionFingerprint(
@@ -87,37 +70,6 @@ public sealed class CompletionTargetIdentityFactoryTests {
                     }
                 ),
         ];
-        string[] adapterVariants = [
-            CompletionTargetIdentityFactory
-                .ComputeRequestAdapterFingerprint(
-                    new IdentityCompletionClient(
-                        "client-b",
-                        "api-a"
-                    ),
-                    connection
-                ),
-            CompletionTargetIdentityFactory
-                .ComputeRequestAdapterFingerprint(
-                    new IdentityCompletionClient(
-                        "client-a",
-                        "api-b"
-                    ),
-                    connection
-                ),
-            CompletionTargetIdentityFactory
-                .ComputeRequestAdapterFingerprint(
-                    client,
-                    connection with { Kind = "kind-b" }
-                ),
-            CompletionTargetIdentityFactory
-                .ComputeRequestAdapterFingerprint(
-                    client,
-                    connection with {
-                        CompletionSurfaceId = "surface-b"
-                    }
-                )
-        ];
-
         Assert.All(
             connectionVariants,
             fingerprint => Assert.NotEqual(
@@ -128,17 +80,6 @@ public sealed class CompletionTargetIdentityFactoryTests {
         Assert.Equal(
             connectionVariants.Length,
             connectionVariants.Distinct(StringComparer.Ordinal).Count()
-        );
-        Assert.All(
-            adapterVariants,
-            fingerprint => Assert.NotEqual(
-                adapterBaseline,
-                fingerprint
-            )
-        );
-        Assert.Equal(
-            adapterVariants.Length,
-            adapterVariants.Distinct(StringComparer.Ordinal).Count()
         );
     }
 

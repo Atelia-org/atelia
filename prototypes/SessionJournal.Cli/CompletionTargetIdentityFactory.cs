@@ -17,18 +17,11 @@ internal static class CompletionTargetIdentityFactory {
     ) => new(
         identity.ConnectionId,
         identity.Kind,
-        identity.ConnectionFingerprint,
-        identity.RequestAdapterFingerprint
+        identity.ConnectionFingerprint
     );
 
     internal static string ComputeConnectionFingerprint(
         CompletionConnectionConfig connection
     ) => CompletionDispatchIdentityFactory
         .ComputeConnectionFingerprint(connection);
-
-    internal static string ComputeRequestAdapterFingerprint(
-        ICompletionClient client,
-        CompletionConnectionConfig connection
-    ) => CompletionDispatchIdentityFactory
-        .ComputeRequestAdapterFingerprint(client, connection);
 }

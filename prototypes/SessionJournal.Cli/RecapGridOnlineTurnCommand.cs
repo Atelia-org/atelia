@@ -499,8 +499,7 @@ internal static partial class RecapGridCommands {
         frozen.CompletionTarget.Kind,
         frozen.CompletionTarget.ConnectionFingerprint,
         frozen.ClientName,
-        frozen.ApiSpecId,
-        frozen.CompletionTarget.RequestAdapterFingerprint
+        frozen.ApiSpecId
     );
 
     private static SessionGoverningSetup ReconcileOnlineSetup(
