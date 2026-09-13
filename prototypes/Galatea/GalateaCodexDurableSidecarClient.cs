@@ -7,13 +7,13 @@ using Atelia.Diagnostics;
 namespace Atelia.Galatea.Server;
 
 /// <summary>
-/// Production exact V4 transport for durable Codex delegation. The durable
+/// Production exact V5 transport for durable Codex delegation. The durable
 /// store and driver own business correlation and recovery state; this client
 /// owns only the exact sidecar protocol and process transport.
 /// </summary>
 internal sealed class GalateaCodexDurableSidecarClient
     : GalateaSidecarProcessClientBase, IGalateaDurableDelegateTransport {
-    private const int ProtocolVersion = 4;
+    private const int ProtocolVersion = 5;
     private const int OperationStartupMarginMs = 5_000;
     private const int BindingRpcBudgetCount = 5;
     private const int StartTurnRpcBudgetCount = 5;
@@ -64,10 +64,15 @@ internal sealed class GalateaCodexDurableSidecarClient
         StringComparer.Ordinal
     );
 
+    private readonly TimeSpan _inspectionDeadline;
+
     internal GalateaCodexDurableSidecarClient(
         GalateaDelegateConfig config,
-        GalateaSidecarProcessTestHooks? processHooks = null
-    ) : base(config, processHooks) { }
+        GalateaSidecarProcessTestHooks? processHooks = null,
+        TimeSpan? inspectionDeadlineForTest = null
+    ) : base(config, processHooks) {
+        _inspectionDeadline = inspectionDeadlineForTest ?? TimeSpan.FromSeconds(45);
+    }
 
     internal bool HasStartedProcessForTest => HasStartedProcess;
     internal int GenerationCountForTest => GenerationCount;
@@ -84,30 +89,39 @@ internal sealed class GalateaCodexDurableSidecarClient
             nameof(request.BindingOperationId)
         );
         ct.ThrowIfCancellationRequested();
-        var generation = (Generation)await GetReadyGenerationAsync(ct)
-            .ConfigureAwait(false);
-        string requestId = Guid.NewGuid().ToString("N");
-        var pending = new PendingBinding(
-            requestId,
-            request.BindingOperationId
-        );
-        return await generation.ExecuteAsync(
-                pending,
-                SerializeFrame(new EnsureBindingWireFrame(
-                    ProtocolVersion,
+        TimeSpan totalDeadline = ComputeBindingDeadline(Config.Sidecar.RpcTimeoutMs);
+        long startedAt = Stopwatch.GetTimestamp();
+        using var deadline = new CancellationTokenSource(totalDeadline);
+        using var operation = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        try {
+            var generation = (Generation)await GetReadyGenerationAsync(operation.Token)
+                .ConfigureAwait(false);
+            string requestId = Guid.NewGuid().ToString("N");
+            var pending = new PendingBinding(
+                requestId,
+                request.BindingOperationId
+            );
+            return await generation.ExecuteAsync(
+                    pending,
+                    SerializeFrame(new EnsureBindingWireFrame(
+                        ProtocolVersion,
+                        "ensure-binding",
+                        requestId,
+                        request.BindingOperationId,
+                        request.Cwd
+                    )),
+                    () => generation.ClaimActiveBinding(pending),
+                    RemainingDeadline(startedAt, totalDeadline),
                     "ensure-binding",
-                    requestId,
-                    request.BindingOperationId,
-                    request.Cwd
-                )),
-                () => generation.ClaimActiveBinding(pending),
-                ComputeBindingDeadline(Config.Sidecar.RpcTimeoutMs),
-                "ensure-binding",
-                "BINDING_OUTCOME_UNKNOWN",
-                detachOnCallerCancellation: false,
-                ct
-            )
-            .ConfigureAwait(false);
+                    "BINDING_OUTCOME_UNKNOWN",
+                    detachOnCallerCancellation: false,
+                    operation.Token
+                )
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && deadline.IsCancellationRequested) {
+            throw new GalateaDurableDelegateTransportException("ensure-binding", "BINDING_OUTCOME_UNKNOWN");
+        }
     }
 
     public async Task<GalateaDelegateTurnAccepted> StartTurnAsync(
@@ -122,8 +136,10 @@ internal sealed class GalateaCodexDurableSidecarClient
             request.Task
         );
         ct.ThrowIfCancellationRequested();
-        var generation = (Generation)await GetReadyGenerationAsync(ct)
-            .ConfigureAwait(false);
+        TimeSpan totalDeadline = ComputeStartTurnDeadline(Config.Sidecar.RpcTimeoutMs);
+        long startedAt = Stopwatch.GetTimestamp();
+        using var deadline = new CancellationTokenSource(totalDeadline);
+        using var operation = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
         string requestId = Guid.NewGuid().ToString("N");
         var pending = new PendingStart(
             requestId,
@@ -131,25 +147,66 @@ internal sealed class GalateaCodexDurableSidecarClient
             request.ThreadId,
             request.Task
         );
-        return await generation.ExecuteAsync(
-                pending,
-                SerializeFrame(new StartTurnWireFrame(
-                    ProtocolVersion,
+        byte[] frame = SerializeFrame(new StartTurnWireFrame(
+            ProtocolVersion, "start-turn", requestId, request.DispatchId,
+            request.ThreadId, request.Task, request.Cwd
+        ));
+        OperationClaim claim = ClaimStart(pending);
+        if (claim != OperationClaim.Claimed) {
+            throw new GalateaDurableDelegateTransportException(
+                "protocol",
+                claim == OperationClaim.Duplicate
+                    ? pending.DuplicateCode : "OPERATION_CAPACITY_EXCEEDED",
+                claim == OperationClaim.Duplicate
+                    ? GalateaDelegateDispatchState.MayHaveDispatched
+                    : GalateaDelegateDispatchState.NotDispatched
+            );
+        }
+        try {
+            var generation = (Generation)await GetReadyGenerationAsync(operation.Token)
+                .ConfigureAwait(false);
+            return await generation.ExecuteAsync(
+                    pending,
+                    frame,
+                    () => {
+                        // The claim predates startup. This flag marks the first
+                        // point at which its frame may reach the sidecar.
+                        pending.FrameWriteStarted = true;
+                        return OperationClaim.Claimed;
+                    },
+                    RemainingDeadline(startedAt, totalDeadline),
                     "start-turn",
-                    requestId,
-                    request.DispatchId,
-                    request.ThreadId,
-                    request.Task,
-                    request.Cwd
-                )),
-                () => ClaimStart(request.DispatchId),
-                ComputeStartTurnDeadline(Config.Sidecar.RpcTimeoutMs),
-                "start-turn",
-                "START_OUTCOME_UNKNOWN",
-                detachOnCallerCancellation: false,
-                ct
-            )
-            .ConfigureAwait(false);
+                    "START_OUTCOME_UNKNOWN",
+                    detachOnCallerCancellation: false,
+                    operation.Token
+                ).ConfigureAwait(false);
+        }
+        catch (GalateaDurableDelegateTransportException exception) when (
+            !pending.FrameWriteStarted) {
+            ReleaseStart(pending);
+            throw new GalateaDurableDelegateTransportException(
+                exception.Stage, exception.Code,
+                GalateaDelegateDispatchState.NotDispatched
+            );
+        }
+        catch (OperationCanceledException) when (!pending.FrameWriteStarted) {
+            ReleaseStart(pending);
+            if (!ct.IsCancellationRequested && deadline.IsCancellationRequested) {
+                throw new GalateaDurableDelegateTransportException(
+                    "start-turn", "START_OUTCOME_UNKNOWN", GalateaDelegateDispatchState.NotDispatched
+                );
+            }
+            throw;
+        }
+        catch (Exception exception) when (!pending.FrameWriteStarted
+            && exception is System.ComponentModel.Win32Exception
+                or IOException or InvalidOperationException) {
+            ReleaseStart(pending);
+            throw new GalateaDurableDelegateTransportException(
+                "protocol", "SIDECAR_START_FAILED",
+                GalateaDelegateDispatchState.NotDispatched
+            );
+        }
     }
 
     public async Task<GalateaDelegateDispatchInspection>
@@ -170,35 +227,43 @@ internal sealed class GalateaCodexDurableSidecarClient
             );
         }
         ct.ThrowIfCancellationRequested();
-        var generation = (Generation)await GetReadyGenerationAsync(ct)
-            .ConfigureAwait(false);
-        string requestId = Guid.NewGuid().ToString("N");
-        var pending = new PendingInspection(
-            requestId,
-            request.DispatchId,
-            request.ThreadId,
-            request.Task,
-            request.ExpectedTurnId
-        );
-        return await generation.ExecuteAsync(
-                pending,
-                SerializeFrame(new InspectDispatchWireFrame(
-                    ProtocolVersion,
+        long startedAt = Stopwatch.GetTimestamp();
+        using var deadline = new CancellationTokenSource(_inspectionDeadline);
+        using var operation = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        try {
+            var generation = (Generation)await GetReadyGenerationAsync(operation.Token)
+                .ConfigureAwait(false);
+            string requestId = Guid.NewGuid().ToString("N");
+            var pending = new PendingInspection(
+                requestId,
+                request.DispatchId,
+                request.ThreadId,
+                request.Task,
+                request.ExpectedTurnId
+            );
+            return await generation.ExecuteAsync(
+                    pending,
+                    SerializeFrame(new InspectDispatchWireFrame(
+                        ProtocolVersion,
+                        "inspect-dispatch",
+                        requestId,
+                        request.DispatchId,
+                        request.ThreadId,
+                        request.Task,
+                        request.ExpectedTurnId
+                    )),
+                    beforeWrite: null,
+                    responseDeadline: RemainingDeadline(startedAt, _inspectionDeadline),
                     "inspect-dispatch",
-                    requestId,
-                    request.DispatchId,
-                    request.ThreadId,
-                    request.Task,
-                    request.ExpectedTurnId
-                )),
-                beforeWrite: null,
-                responseDeadline: null,
-                "inspect-dispatch",
-                "INSPECTION_UNAVAILABLE",
-                detachOnCallerCancellation: true,
-                ct
-            )
-            .ConfigureAwait(false);
+                    "INSPECTION_UNAVAILABLE",
+                    detachOnCallerCancellation: true,
+                    operation.Token
+                )
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && deadline.IsCancellationRequested) {
+            throw new GalateaDurableDelegateTransportException("inspect-dispatch", "INSPECTION_UNAVAILABLE");
+        }
     }
 
     internal static TimeSpan ComputeBindingDeadline(int rpcTimeoutMs) =>
@@ -595,10 +660,16 @@ internal sealed class GalateaCodexDurableSidecarClient
             return;
         }
         if (stage is "start-turn" or "inspect-dispatch" or "shutdown") {
-            GalateaSidecarWire.RequireExactKeys(properties, [
-                "v", "type", "stage", "requestId", "dispatchId",
-                "threadId", "code"
-            ]);
+            GalateaSidecarWire.RequireExactKeys(properties, stage == "start-turn"
+                ? ["v", "type", "stage", "requestId", "dispatchId", "threadId", "code", "dispatchState"]
+                : ["v", "type", "stage", "requestId", "dispatchId", "threadId", "code"]);
+            GalateaDelegateDispatchState dispatchState = stage == "start-turn"
+                ? GalateaSidecarWire.RequireString(properties, "dispatchState") switch {
+                    "not-dispatched" => GalateaDelegateDispatchState.NotDispatched,
+                    "may-have-dispatched" => GalateaDelegateDispatchState.MayHaveDispatched,
+                    _ => throw new InvalidDataException("Invalid start dispatch state.")
+                }
+                : GalateaDelegateDispatchState.MayHaveDispatched;
             if (!generation.FailDispatch(
                     GalateaSidecarWire.RequireIdentifier(
                         properties,
@@ -613,7 +684,8 @@ internal sealed class GalateaCodexDurableSidecarClient
                         "threadId"
                     ),
                     stage,
-                    code
+                    code,
+                    dispatchState
                 )) {
                 throw new InvalidDataException(
                     "Durable dispatch failure is not correlated."
@@ -626,9 +698,19 @@ internal sealed class GalateaCodexDurableSidecarClient
         );
     }
 
-    private OperationClaim ClaimStart(string dispatchId) {
+    private OperationClaim ClaimStart(PendingStart pending) {
         lock (_operationGate) {
-            return Claim(_startTombstones, dispatchId);
+            OperationClaim claim = Claim(_startTombstones, pending.DispatchId);
+            pending.OwnsStartClaim = claim == OperationClaim.Claimed;
+            return claim;
+        }
+    }
+
+    private void ReleaseStart(PendingStart pending) {
+        lock (_operationGate) {
+            if (!pending.OwnsStartClaim) return;
+            _startTombstones.Remove(pending.DispatchId);
+            pending.OwnsStartClaim = false;
         }
     }
 
@@ -705,6 +787,11 @@ internal sealed class GalateaCodexDurableSidecarClient
             );
     }
 
+    private static TimeSpan RemainingDeadline(long startedAt, TimeSpan budget) {
+        TimeSpan remaining = budget - Stopwatch.GetElapsedTime(startedAt);
+        return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+    }
+
     private static TimeSpan ComputeOperationDeadline(
         int rpcTimeoutMs,
         int rpcCount
@@ -747,6 +834,7 @@ internal sealed class GalateaCodexDurableSidecarClient
             bool detachOnCallerCancellation,
             CancellationToken ct
         ) {
+            long writeStartedAt = Stopwatch.GetTimestamp();
             lock (_pendingGate) {
                 if (IsFailed) {
                     throw CurrentFailure();
@@ -807,6 +895,9 @@ internal sealed class GalateaCodexDurableSidecarClient
                 throw;
             }
 
+            if (responseDeadline is { } totalRemaining) {
+                responseDeadline = RemainingDeadline(writeStartedAt, totalRemaining);
+            }
             if (!detachOnCallerCancellation) {
                 return await AwaitAttachedResponseAsync(
                         pending,
@@ -859,12 +950,7 @@ internal sealed class GalateaCodexDurableSidecarClient
                 exception is TimeoutException
                     || exception is OperationCanceledException
                         && ct.IsCancellationRequested) {
-                _owner.FailGenerationForGeneration(
-                    this,
-                    stage,
-                    outcomeUnknownCode,
-                    graceful: false
-                );
+                RemoveAndFail(pending, stage, outcomeUnknownCode);
                 ObservePendingFault(pending);
                 throw new GalateaDurableDelegateTransportException(
                     stage,
@@ -893,12 +979,7 @@ internal sealed class GalateaCodexDurableSidecarClient
                 );
             }
             catch (TimeoutException) {
-                _owner.FailGenerationForGeneration(
-                    this,
-                    stage,
-                    outcomeUnknownCode,
-                    graceful: false
-                );
+                RemoveAndFail(pending, stage, outcomeUnknownCode);
                 ObservePendingFault(pending);
                 throw new GalateaDurableDelegateTransportException(
                     stage,
@@ -922,7 +1003,8 @@ internal sealed class GalateaCodexDurableSidecarClient
             string bindingOperationId,
             string threadId
         ) {
-            PendingBinding pending = Take<PendingBinding>(requestId);
+            PendingBinding? pending = Take<PendingBinding>(requestId);
+            if (pending is null) return;
             if (!string.Equals(
                     pending.BindingOperationId,
                     bindingOperationId,
@@ -945,7 +1027,8 @@ internal sealed class GalateaCodexDurableSidecarClient
             string threadId,
             string turnId
         ) {
-            PendingStart pending = Take<PendingStart>(requestId);
+            PendingStart? pending = Take<PendingStart>(requestId);
+            if (pending is null) return;
             if (!pending.Matches(dispatchId, threadId)) {
                 Restore(pending);
                 throw new InvalidDataException(
@@ -965,7 +1048,8 @@ internal sealed class GalateaCodexDurableSidecarClient
             string threadId,
             GalateaDelegateDispatchInspection result
         ) {
-            PendingInspection pending = Take<PendingInspection>(requestId);
+            PendingInspection? pending = Take<PendingInspection>(requestId);
+            if (pending is null) return;
             if (!pending.Matches(dispatchId, threadId)
                 || !pending.MatchesSelector(result)) {
                 pending.Fail(new GalateaDurableDelegateTransportException(
@@ -986,7 +1070,8 @@ internal sealed class GalateaCodexDurableSidecarClient
         ) {
             PendingRequest? pending = TakeAny(requestId);
             if (pending is null) {
-                return false;
+                LogUnmatchedResponse(requestId);
+                return true;
             }
             pending.Fail(new GalateaDurableDelegateTransportException(
                 stage,
@@ -1003,6 +1088,10 @@ internal sealed class GalateaCodexDurableSidecarClient
             string code
         ) {
             PendingRequest? value = TakeAny(requestId);
+            if (value is null) {
+                LogUnmatchedResponse(requestId);
+                return true;
+            }
             if (value is not PendingBinding pending
                 || !string.Equals(
                     pending.BindingOperationId,
@@ -1026,9 +1115,14 @@ internal sealed class GalateaCodexDurableSidecarClient
             string dispatchId,
             string threadId,
             string stage,
-            string code
+            string code,
+            GalateaDelegateDispatchState dispatchState
         ) {
             PendingRequest? pending = TakeAny(requestId);
+            if (pending is null) {
+                LogUnmatchedResponse(requestId);
+                return true;
+            }
             if (pending is not IPendingDispatch request
                 || !request.Matches(dispatchId, threadId)
                 || stage == "start-turn" && pending is not PendingStart
@@ -1039,9 +1133,19 @@ internal sealed class GalateaCodexDurableSidecarClient
                 }
                 return false;
             }
+            if (pending is PendingStart start
+                && dispatchState == GalateaDelegateDispatchState.NotDispatched) {
+                // Only this correlated, owning Pending can return its claim.
+                // Even a contradictory duplicate rejection cannot prove unsent.
+                if (code == "DISPATCH_ALREADY_ACTIVE") {
+                    dispatchState = GalateaDelegateDispatchState.MayHaveDispatched;
+                }
+                else {
+                    _owner.ReleaseStart(start);
+                }
+            }
             pending.Fail(new GalateaDurableDelegateTransportException(
-                stage,
-                code
+                stage, code, dispatchState
             ));
             return true;
         }
@@ -1064,9 +1168,13 @@ internal sealed class GalateaCodexDurableSidecarClient
             }
         }
 
-        private TPending Take<TPending>(string requestId)
+        private TPending? Take<TPending>(string requestId)
             where TPending : PendingRequest {
             PendingRequest? pending = TakeAny(requestId);
+            if (pending is null) {
+                LogUnmatchedResponse(requestId);
+                return null;
+            }
             if (pending is TPending typed) {
                 return typed;
             }
@@ -1077,6 +1185,11 @@ internal sealed class GalateaCodexDurableSidecarClient
                 "Durable sidecar response kind is not correlated."
             );
         }
+
+        private void LogUnmatchedResponse(string requestId) => DebugUtil.Info(
+            LogCategory,
+            $"Ignoring completed or retired durable request: generation={Id}, requestId={requestId}."
+        );
 
         private PendingRequest? TakeAny(string requestId) {
             lock (_pendingGate) {
@@ -1190,6 +1303,8 @@ internal sealed class GalateaCodexDurableSidecarClient
             task
         );
 
+        internal bool OwnsStartClaim { get; set; }
+        internal bool FrameWriteStarted { get; set; }
         internal string DispatchId => _identity.DispatchId;
         internal string ThreadId => _identity.ThreadId;
         internal string Task => _identity.Task;

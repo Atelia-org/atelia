@@ -135,7 +135,7 @@ internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
                     "SIDECAR_READY_TIMEOUT",
                     graceful: false
                 );
-                await generation.CleanupTask.ConfigureAwait(false);
+                await generation.CleanupTask.WaitAsync(ct).ConfigureAwait(false);
                 throw CreateFailureException(
                     "protocol",
                     "SIDECAR_READY_TIMEOUT"
@@ -476,6 +476,7 @@ internal abstract class GalateaSidecarProcessGeneration {
             if (IsFailed) {
                 throw CurrentFailure();
             }
+            linked.Token.ThrowIfCancellationRequested();
             beforeWrite?.Invoke();
             writeStarted = true;
             Task write = _process.StandardInput.BaseStream.WriteAsync(

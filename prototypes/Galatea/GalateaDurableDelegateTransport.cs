@@ -114,22 +114,30 @@ internal abstract record GalateaDelegateDispatchInspection(
     }
 }
 
+internal enum GalateaDelegateDispatchState {
+    NotDispatched,
+    MayHaveDispatched
+}
+
 internal sealed class GalateaDurableDelegateTransportException
     : GalateaSidecarOperationException {
     internal GalateaDurableDelegateTransportException(
         string stage,
-        string code
+        string code,
+        GalateaDelegateDispatchState dispatchState = GalateaDelegateDispatchState.MayHaveDispatched
     ) : base(
         $"Galatea durable delegate transport failed at {stage}: {code}.",
         stage,
         code
     ) {
+        DispatchState = dispatchState;
         FailurePolicy = GalateaDurableDelegateFailurePolicies.Classify(
             stage,
             code
         );
     }
 
+    internal GalateaDelegateDispatchState DispatchState { get; }
     internal GalateaDurableDelegateFailurePolicy FailurePolicy { get; }
 }
 
@@ -169,6 +177,7 @@ internal static class GalateaDurableDelegateFailurePolicies {
                 GalateaDurableDelegateFailurePolicy.DeterministicConflict,
         ("protocol", "OPERATION_CAPACITY_EXCEEDED")
             or ("protocol", "SIDECAR_READY_TIMEOUT")
+            or ("protocol", "SIDECAR_START_FAILED")
             or ("protocol", "SIDECAR_WRITE_CANCELLED_BEFORE_START")
             or ("protocol", "SIDECAR_WRITE_GATE_TIMEOUT")
             or ("protocol", "SIDECAR_WRITE_FAILED") =>

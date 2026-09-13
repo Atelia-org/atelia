@@ -51,12 +51,15 @@ internal sealed class GalateaSidecarProcessFixture : IDisposable {
         int rpcTimeoutMs = 2_000,
         int maximumFrameUtf8Bytes = 65_536,
         int maximumBodyUtf8Bytes = 8_000,
-        GalateaSidecarProcessTestHooks? processHooks = null
+        GalateaSidecarProcessTestHooks? processHooks = null,
+        TimeSpan? inspectionDeadlineForTest = null,
+        string? nodeExecutableForTest = null
     ) => new(CreateConfig(
         rpcTimeoutMs,
         maximumFrameUtf8Bytes,
-        maximumBodyUtf8Bytes
-    ), processHooks);
+        maximumBodyUtf8Bytes,
+        nodeExecutableForTest
+    ), processHooks, inspectionDeadlineForTest);
 
     public void Dispose() {
         if (Directory.Exists(Root)) {
@@ -67,10 +70,11 @@ internal sealed class GalateaSidecarProcessFixture : IDisposable {
     private GalateaDelegateConfig CreateConfig(
         int rpcTimeoutMs,
         int maximumFrameUtf8Bytes,
-        int maximumBodyUtf8Bytes
+        int maximumBodyUtf8Bytes,
+        string? nodeExecutableForTest
     ) => new(
         new GalateaDelegateSidecarConfig(
-            "/usr/bin/dash",
+            nodeExecutableForTest ?? "/usr/bin/dash",
             ScriptPath,
             "/usr/bin/true",
             RpcTimeoutMs: rpcTimeoutMs,
