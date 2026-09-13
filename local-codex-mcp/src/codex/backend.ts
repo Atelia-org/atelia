@@ -1,3 +1,5 @@
+import { OperationDeadline } from "./operation-deadline.js";
+import { GalateaStartFailure, type GalateaDispatchState } from "../backend/galatea-staged-backend.js";
 import path from "node:path";
 import type { JsonValue } from "../../schemas/serde_json/JsonValue.js";
 import type { Account } from "../../schemas/v2/Account.js";
@@ -129,6 +131,8 @@ export interface CodexBackendOptions {
   logger: BridgeLogger;
   profile?: CodexBackendProfile;
   galateaMaximumFinalUtf8Bytes?: number;
+  /** Operation-wide bound; defaults to 45 seconds. */
+  galateaInspectionTimeoutMs?: number;
   /** Explicit native config overrides, fixed for this Galatea sidecar lifetime. */
   galateaCodexConfig?: Record<string, JsonValue>;
 }
@@ -342,10 +346,11 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   async ensureBinding(
     input: EnsureGalateaBindingInput,
   ): Promise<GalateaBoundThread> {
+    const deadline = new OperationDeadline(5 * this.options.client.requestTimeoutMs);
     this.throwIfStopped();
-    const cwd = await this.options.pathPolicy.resolveCwd(input.cwd);
+    const cwd = await deadline.wait(this.options.pathPolicy.resolveCwd(input.cwd));
     this.throwIfStopped();
-    await this.ensureReady();
+    await this.ensureReady(deadline);
     this.throwIfStopped();
     const response = await this.options.client.request<ThreadStartResponse>("thread/start", {
       cwd,
@@ -354,9 +359,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
       developerInstructions: this.profile.developerInstructions,
       ephemeral: false,
       threadSource: this.profile.analyticsThreadSource,
-    });
+    }, deadline);
     this.throwIfStopped();
-    await this.validateStartedThread(response.thread, cwd);
+    await deadline.wait(this.validateStartedThread(response.thread, cwd));
     if (!Array.isArray(response.thread.turns) || response.thread.turns.length !== 0) {
       throw new BridgeError("CODEX_PROTOCOL_ERROR", "A newly established Galatea binding must be an empty owned thread.");
     }
@@ -364,10 +369,10 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     await this.options.client.request("thread/name/set", {
       threadId: response.thread.id,
       name: this.ownershipName(response.thread.id),
-    });
+    }, deadline);
     this.throwIfStopped();
-    const verified = await this.readOwnedThread(response.thread.id, false);
-    await this.validateThreadCwd(verified, cwd);
+    const verified = await this.readOwnedThread(response.thread.id, false, deadline);
+    await deadline.wait(this.validateThreadCwd(verified, cwd));
     // A new thread need not have a rollout before its first turn. The pinned
     // app-server cannot paginate that absent history; creation plus metadata
     // ownership verification establishes the empty binding without a model call.
@@ -378,60 +383,69 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   async startBoundTurn(
     input: StartGalateaBoundTurnInput,
   ): Promise<GalateaStartedTurn> {
-    this.throwIfStopped();
-    const cwd = await this.options.pathPolicy.resolveCwd(input.cwd);
-    await this.ensureReady();
-    this.throwIfStopped();
-    if (this.continueReservations.has(input.threadId)) {
-      throw new BridgeError("BRIDGE_BUSY", "This Codex thread already has an active turn.");
-    }
-    this.continueReservations.add(input.threadId);
+    const deadline = new OperationDeadline(5 * this.options.client.requestTimeoutMs);
+    let dispatchState: GalateaDispatchState = "not-dispatched";
     try {
-      const preflight = await this.readOwnedThreadMetadata(input.threadId, false);
       this.throwIfStopped();
-      if (this.options.store.hasRunning(input.threadId) || preflight.status.type === "active") {
+      const cwd = await deadline.wait(this.options.pathPolicy.resolveCwd(input.cwd));
+      await this.ensureReady(deadline);
+      this.throwIfStopped();
+      if (this.continueReservations.has(input.threadId)) {
         throw new BridgeError("BRIDGE_BUSY", "This Codex thread already has an active turn.");
       }
-
-      const freshInThisProcess = this.freshGalateaBindings.get(input.threadId)
-        === this.options.client.generation && preflight.status.type === "idle";
-      this.freshGalateaBindings.delete(input.threadId);
-      // thread/start already loaded the fresh thread with this configuration.
-      // Before its first turn there is no rollout for thread/resume to read.
-      // Never infer this exemption from missing files or across process generations.
-      if (!freshInThisProcess) {
-        const resumed = await this.options.client.request<ThreadResumeResponse>("thread/resume", {
-          threadId: input.threadId,
-          cwd,
-          ...this.galateaConfigParams,
-          developerInstructions: this.profile.developerInstructions,
-          excludeTurns: true,
-        });
+      this.continueReservations.add(input.threadId);
+      try {
+        const preflight = await this.readOwnedThreadMetadata(input.threadId, false, deadline);
         this.throwIfStopped();
-        this.validateResumedGalateaThread(resumed, input.threadId);
+        if (this.options.store.hasRunning(input.threadId) || preflight.status.type === "active") {
+          throw new BridgeError("BRIDGE_BUSY", "This Codex thread already has an active turn.");
+        }
+
+        const freshInThisProcess = this.freshGalateaBindings.get(input.threadId)
+          === this.options.client.generation && preflight.status.type === "idle";
+        this.freshGalateaBindings.delete(input.threadId);
+        // thread/start already loaded the fresh thread with this configuration.
+        // Before its first turn there is no rollout for thread/resume to read.
+        // Never infer this exemption from missing files or across process generations.
+        if (!freshInThisProcess) {
+          const resumed = await this.options.client.request<ThreadResumeResponse>("thread/resume", {
+            threadId: input.threadId,
+            cwd,
+            ...this.galateaConfigParams,
+            developerInstructions: this.profile.developerInstructions,
+            excludeTurns: true,
+          }, deadline);
+          this.throwIfStopped();
+          this.validateResumedGalateaThread(resumed, input.threadId);
+        }
+        this.throwIfStopped();
+        return await this.startTurnAccepted(
+          input.threadId,
+          input.task,
+          cwd,
+          {},
+          input.dispatchId,
+          deadline,
+          () => { dispatchState = "may-have-dispatched"; },
+        );
+      } finally {
+        this.continueReservations.delete(input.threadId);
       }
-      this.throwIfStopped();
-      return await this.startTurnAccepted(
-        input.threadId,
-        input.task,
-        cwd,
-        {},
-        input.dispatchId,
-      );
-    } finally {
-      this.continueReservations.delete(input.threadId);
+    } catch (error) {
+      throw new GalateaStartFailure(error, dispatchState);
     }
   }
 
   async inspectDispatch(
     input: InspectGalateaDispatchInput,
   ): Promise<GalateaDispatchInspection> {
+    const deadline = new OperationDeadline(this.options.galateaInspectionTimeoutMs ?? 45_000);
     this.throwIfStopped();
-    await this.ensureReady();
+    await this.ensureReady(deadline);
     const generation = this.options.client.generation;
     try {
       this.throwIfStopped();
-      const metadata = await this.readInspectionThread(input.threadId, generation);
+      const metadata = await this.readInspectionThread(input.threadId, generation, deadline);
       if (!metadata.ok) return metadata.inspection;
 
       if (input.expectedTurnId !== null) {
@@ -455,6 +469,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
           input,
           input.expectedTurnId,
           generation,
+          deadline,
         );
         if (!awaitingLiveTerminal) return persistent;
         this.assertSameGeneration(generation);
@@ -464,7 +479,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
           input.dispatchId,
           input.task,
         );
-        if (completedLive) return completedLive;
+        if (completedLive && (completedLive.kind !== "running" || metadata.thread.status.type === "active")) return completedLive;
         const reconciled = reconcilePendingLiveCompletion(input.threadId, persistent);
         if (reconciled) return reconciled;
         throw new BridgeError(
@@ -472,7 +487,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
           "Live and persistent terminal evidence is incomplete; retry inspection.",
         );
       }
-      return await this.inspectUnknownDispatch(input, generation);
+      return await this.inspectUnknownDispatch(input, generation, deadline);
     } catch (error) {
       if (error instanceof PersistentInspectionError) {
         return { kind: "ambiguous", threadId: input.threadId, source: "persistent", code: error.code };
@@ -485,8 +500,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     input: InspectGalateaDispatchInput,
     expectedTurnId: string,
     generation: number,
+    deadline?: OperationDeadline,
   ): Promise<GalateaDispatchInspection> {
-    const turns = await this.listTurns(input.threadId, DefaultGalateaDispatchInspectionLimits.maximumTurns, generation);
+    const turns = await this.listTurns(input.threadId, DefaultGalateaDispatchInspectionLimits.maximumTurns, generation, deadline);
     const matches = turns.filter((turn) => turn.id === expectedTurnId);
     if (matches.length === 0) {
       return {
@@ -503,6 +519,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
       expectedTurnId,
       DefaultGalateaDispatchInspectionLimits.maximumItems,
       generation,
+      deadline,
     );
     if (!items.some((entry) => entry.item.type === "userMessage")) {
       return {
@@ -527,12 +544,14 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   private async inspectUnknownDispatch(
     input: InspectGalateaDispatchInput,
     generation: number,
+    deadline?: OperationDeadline,
   ): Promise<GalateaDispatchInspection> {
     const entries = await this.listItems(
       input.threadId,
       null,
       DefaultGalateaDispatchInspectionLimits.maximumItems,
       generation,
+      deadline,
     );
     const matches = entries.filter(
       (entry) => entry.item.type === "userMessage" && entry.item.clientId === input.dispatchId,
@@ -545,7 +564,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     if (!hasExactTaskBody(match.item, input.task)) {
       throw new PersistentInspectionError("DISPATCH_BODY_MISMATCH");
     }
-    const turns = await this.listTurns(input.threadId, DefaultGalateaDispatchInspectionLimits.maximumTurns, generation);
+    const turns = await this.listTurns(input.threadId, DefaultGalateaDispatchInspectionLimits.maximumTurns, generation, deadline);
     const turnMatches = turns.filter((turn) => turn.id === match.turnId);
     if (turnMatches.length !== 1) {
       throw new PersistentInspectionError(
@@ -566,7 +585,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     );
   }
 
-  private async listTurns(threadId: string, maximumTurns: number, generation = this.options.client.generation): Promise<Turn[]> {
+  private async listTurns(threadId: string, maximumTurns: number, generation = this.options.client.generation, deadline?: OperationDeadline): Promise<Turn[]> {
     const turns: Turn[] = [];
     const ids = new Set<string>();
     const cursors = new Set<string>();
@@ -579,7 +598,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         limit: requestedLimit,
         sortDirection: "desc",
         itemsView: "notLoaded",
-      });
+      }, deadline);
       this.assertSameGeneration(generation);
       const page = validatePage(response);
       if (page.data.length > requestedLimit) {
@@ -609,6 +628,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     turnId: string | null,
     maximumItems: number,
     generation: number,
+    deadline?: OperationDeadline,
   ): Promise<ThreadItemEntry[]> {
     const entries: ThreadItemEntry[] = [];
     const ids = new Set<string>();
@@ -622,7 +642,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         cursor,
         limit: requestedLimit,
         sortDirection: "asc",
-      });
+      }, deadline);
       this.assertSameGeneration(generation);
       const page = validatePage(response);
       if (page.data.length > requestedLimit) {
@@ -680,13 +700,14 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   private async readInspectionThread(
     threadId: string,
     generation: number,
+    deadline?: OperationDeadline,
   ): Promise<InspectionThreadRead> {
     let response: ThreadReadResponse;
     try {
       response = await this.options.client.request<ThreadReadResponse>("thread/read", {
         threadId,
         includeTurns: false,
-      });
+      }, deadline);
     } catch (error) {
       this.assertSameGeneration(generation);
       const bridgeError = asBridgeError(error);
@@ -899,14 +920,16 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     }
   }
 
-  private async ensureReady(): Promise<void> {
+  private async ensureReady(deadline?: OperationDeadline): Promise<void> {
     this.throwIfStopped();
-    await this.options.client.start();
+    if (deadline) await deadline.wait(this.options.client.start());
+    else await this.options.client.start();
+    deadline?.remainingMs();
     this.throwIfStopped();
     if (this.authenticated) return;
     const response = await this.options.client.request<GetAccountResponse>("account/read", {
       refreshToken: false,
-    });
+    }, deadline);
     this.throwIfStopped();
     if (!this.isAuthenticated(response.account)) {
       throw new BridgeError(
@@ -955,12 +978,16 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     cwd: string,
     overrides: Pick<TurnStartParams, "approvalPolicy" | "approvalsReviewer" | "sandboxPolicy" | "summary">,
     clientUserMessageId?: string,
+    deadline?: OperationDeadline,
+    beforeDispatch?: () => void,
   ): Promise<GalateaStartedTurn> {
     this.throwIfStopped();
     const expectation = clientUserMessageId === undefined
       ? undefined
       : this.liveObservations.beginStart(threadId, clientUserMessageId, task);
     try {
+      deadline?.remainingMs();
+      beforeDispatch?.();
       const response = await this.options.client.request<TurnStartResponse>("turn/start", {
         threadId,
         ...(clientUserMessageId === undefined ? {} : { clientUserMessageId }),
@@ -968,7 +995,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         cwd,
         ...overrides,
         ...(this.profile.outputSchema === undefined ? {} : { outputSchema: this.profile.outputSchema }),
-      });
+      }, deadline);
       this.throwIfStopped();
       if (!isTurn(response.turn) || response.turn.id.length === 0) {
         throw new BridgeError("CODEX_PROTOCOL_ERROR", "Codex returned an invalid turn identity.");
@@ -987,19 +1014,20 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     }
   }
 
-  private async readOwnedThread(threadId: string, includeTurns: boolean): Promise<Thread> {
-    const thread = await this.readOwnedThreadMetadata(threadId, includeTurns);
-    await this.options.pathPolicy.resolveCwd(thread.cwd);
+  private async readOwnedThread(threadId: string, includeTurns: boolean, deadline?: OperationDeadline): Promise<Thread> {
+    const thread = await this.readOwnedThreadMetadata(threadId, includeTurns, deadline);
+    if (deadline) await deadline.wait(this.options.pathPolicy.resolveCwd(thread.cwd));
+    else await this.options.pathPolicy.resolveCwd(thread.cwd);
     this.throwIfStopped();
     return thread;
   }
 
-  private async readOwnedThreadMetadata(threadId: string, includeTurns: boolean): Promise<Thread> {
+  private async readOwnedThreadMetadata(threadId: string, includeTurns: boolean, deadline?: OperationDeadline): Promise<Thread> {
     this.throwIfStopped();
     const response = await this.options.client.request<ThreadReadResponse>("thread/read", {
       threadId,
       includeTurns,
-    });
+    }, deadline);
     this.throwIfStopped();
     if (
       response.thread.id !== threadId ||

@@ -34,6 +34,7 @@ const userAgentArgument = process.argv.find((argument) => argument.startsWith("-
 const userAgent = userAgentArgument?.slice("--user-agent=".length)
   ?? "atelia_local_codex_mcp/0.154.0-alpha.3 (fixture) unknown (fixture; 0.1.0)";
 
+let inspectionRpcDelayMs = 0;
 let initialized = false;
 let initializeCount = 0;
 let nextThread = restored?.nextThread ?? 1;
@@ -221,10 +222,19 @@ function startedProjection(turn: Record<string, unknown>): Record<string, unknow
 }
 
 const lines = readline.createInterface({ input: process.stdin });
-lines.on("line", (line) => {
+lines.on("line", async (line) => {
   const message = JSON.parse(line) as Message;
   if (lifecycleFile && message.id !== undefined && message.method) {
     appendFileSync(lifecycleFile, `rpc:${process.pid}:${message.method}\n`);
+  }
+
+  if (message.method === "test/setInspectionRpcDelay") {
+    inspectionRpcDelayMs = Number(message.params?.delayMs ?? 0);
+    send({ id: message.id, result: {} });
+    return;
+  }
+  if (["thread/read", "thread/turns/list", "thread/items/list"].includes(message.method ?? "")) {
+    await new Promise<void>((resolve) => setTimeout(resolve, inspectionRpcDelayMs));
   }
 
   if (message.id !== undefined && message.method === undefined) {

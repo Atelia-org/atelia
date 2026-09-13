@@ -133,16 +133,16 @@ Linux配置必须把该字段精确设为安装后的executable wrapper：
 C#仍注入code-owned app-server args；不要把`node`填进该字段，否则entrypoint会丢失。wrapper必须是canonical、
 existing、executable regular file，且initialize handshake仍会验证exact version。
 
-stdin/stdout 是 strict bounded JSONL V4，stdout 只有协议 frame，日志只写 stderr。默认命令只启动这一版协议：
+stdin/stdout 是 strict bounded JSONL V5，stdout 只有协议 frame，日志只写 stderr。默认命令只启动这一版协议：
 
 ```json
-{"v":4,"type":"ready"}
-{"v":4,"type":"ensure-binding","requestId":"r1","bindingOperationId":"binding-1","cwd":"/galatea-homes/cyber"}
-{"v":4,"type":"binding-established","requestId":"r1","bindingOperationId":"binding-1","threadId":"thread-id"}
-{"v":4,"type":"start-turn","requestId":"r2","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复","cwd":"/galatea-homes/cyber"}
-{"v":4,"type":"turn-accepted","requestId":"r2","dispatchId":"d1","threadId":"thread-id","turnId":"turn-id"}
-{"v":4,"type":"inspect-dispatch","requestId":"r3","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复","expectedTurnId":"turn-id"}
-{"v":4,"type":"dispatch-inspected","requestId":"r3","dispatchId":"d1","threadId":"thread-id","outcome":"completed","turnId":"turn-id","final":"自然 Markdown 回信","source":"live"}
+{"v":5,"type":"ready"}
+{"v":5,"type":"ensure-binding","requestId":"r1","bindingOperationId":"binding-1","cwd":"/galatea-homes/cyber"}
+{"v":5,"type":"binding-established","requestId":"r1","bindingOperationId":"binding-1","threadId":"thread-id"}
+{"v":5,"type":"start-turn","requestId":"r2","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复","cwd":"/galatea-homes/cyber"}
+{"v":5,"type":"turn-accepted","requestId":"r2","dispatchId":"d1","threadId":"thread-id","turnId":"turn-id"}
+{"v":5,"type":"inspect-dispatch","requestId":"r3","dispatchId":"d1","threadId":"thread-id","task":"请调查并回复","expectedTurnId":"turn-id"}
+{"v":5,"type":"dispatch-inspected","requestId":"r3","dispatchId":"d1","threadId":"thread-id","outcome":"completed","turnId":"turn-id","final":"自然 Markdown 回信","source":"live"}
 ```
 
 失败以 `failed` frame 返回稳定的 `stage`/`code`。`turn-accepted` 只表示 `turn/start` 已返回稳定 handle；
@@ -153,7 +153,15 @@ sidecar 不同步等待 final。runtime 应持续发送 `inspect-dispatch`，并
 `OutcomeUnknown`必须发送`expectedTurnId:null`并仅按dispatch marker发现；`Accepted`必须发送已持久化的exact
 turn ID。`ACCEPTED_TURN_NOT_VISIBLE`表示官方persistent projection尚未给出完整accepted turn/item view，
 它是可重试的`unavailable`，不是ordinary not-found、terminal、quarantine或再次`turn/start`的授权。
-`START_OUTCOME_UNKNOWN` 之后必须先 inspect，不能盲目重发 `start-turn`。
+`failed` 的 `stage=start-turn` 必须携带 `dispatchState`：受控启动链在调用 `turn/start` 前失败才是
+`not-dispatched`；越过调用边界、未知异常和 `DISPATCH_ALREADY_ACTIVE` 均为 `may-have-dispatched`。
+调用方只可在前者释放自己持有的启动 claim 并有限重试；后者只能检查旧任务，不能自动重发。
+`thread/resume` 的 `no rollout found` / `missing source rollout` 归为 `THREAD_NOT_FOUND`，是否允许重试仍由阶段证明决定。
+`running` 的 `source=persistent` 仅表示历史 `inProgress`，不能证明进程仍在执行或清除恢复失败次数。
+只有精确 live Running 且当前 metadata active 才是活性证据。所有检查失败由 Galatea 持久预算有限处理；
+耗尽后通知角色结果不明并继续队列，不宣称旧工作已经停止。
+ensure/start 的单调总截止为 `5 × CODEX_BRIDGE_RPC_TIMEOUT_MS`；inspection 总截止为 45 秒，
+覆盖启动、metadata 和全部分页，逐 RPC 使用剩余预算。到期后不再发后续 RPC，也不杀共享 app-server。
 缺失、截断或超过上限的 final 均不会伪装成完整回信。EOF、SIGINT 与 SIGTERM 会回收 app-server child。
 新 binding 检查 `thread/start` 返回空 turns，并通过 metadata read 确认 ownership；首次 turn 前可能
 尚无 source rollout，因此不要求新空 thread 能调用 `thread/turns/list`。已有 dispatch 的 inspect
@@ -252,7 +260,7 @@ Linux 的 Galatea home 真实验收另有显式入口（默认 `npm test` 跳过
 npm run test:galatea-homes:live
 ```
 
-此测试使用 repo-local pinned Codex 与现有登录身份，从 `/` 启动真实 V4 sidecar，并创建两个 canary
+此测试使用 repo-local pinned Codex 与现有登录身份，从 `/` 启动真实 V5 sidecar，并创建两个 canary
 thread。四个真实 turn 覆盖旧目录 seed、冷续接的新 home、第二 user 并发同名文件、热续接再次改目录。
 旧目录删除且移出 allowedRoots 后，仍查询原 accepted/unknown selector；最后用官方 turns projection
 核对两个 thread 恰有 3/1 个 turn。检查 sidecar/app-server 的实际 process CWD，保留 user/session

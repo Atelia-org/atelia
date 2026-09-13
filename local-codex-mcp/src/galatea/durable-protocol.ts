@@ -5,7 +5,7 @@ import type {
 import { DEFAULT_MAX_TASK_BYTES } from "./limits.js";
 import path from "node:path";
 
-export const GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION = 4 as const;
+export const GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION = 5 as const;
 export { DEFAULT_MAX_TASK_BYTES as DEFAULT_DURABLE_MAX_TASK_BYTES } from "./limits.js";
 
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
@@ -63,7 +63,17 @@ export type GalateaDurableFailureFrame =
   | {
       v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
       type: "failed";
-      stage: "start-turn" | "inspect-dispatch" | "shutdown";
+      stage: "start-turn";
+      requestId: string;
+      dispatchId: string;
+      threadId: string;
+      dispatchState: "not-dispatched" | "may-have-dispatched";
+      code: string;
+    }
+  | {
+      v: typeof GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION;
+      type: "failed";
+      stage: "inspect-dispatch" | "shutdown";
       requestId: string;
       dispatchId: string;
       threadId: string;

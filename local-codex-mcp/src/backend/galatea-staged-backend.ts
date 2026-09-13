@@ -1,3 +1,15 @@
+import { BridgeError, asBridgeError } from "../errors.js";
+
+export type GalateaDispatchState = "not-dispatched" | "may-have-dispatched";
+
+/** Only the controlled start pipeline may provide proof of non-dispatch. */
+export class GalateaStartFailure extends BridgeError {
+  constructor(error: unknown, readonly dispatchState: GalateaDispatchState) {
+    const failure = asBridgeError(error);
+    super(failure.code, failure.message, { cause: error, details: failure.details });
+  }
+}
+
 export interface EnsureGalateaBindingInput {
   cwd: string;
 }

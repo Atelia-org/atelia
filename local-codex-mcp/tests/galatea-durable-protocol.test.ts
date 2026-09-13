@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { encodeGalateaDurableOutputFrame, parseGalateaDurableFrame } from "../src/galatea/durable-protocol.js";
 
-test("durable protocol accepts only exact V4 request shapes", () => {
+test("durable protocol accepts only exact V5 request shapes", () => {
   const frames = [
-    { v: 4, type: "ensure-binding", cwd: "/workspace", requestId: "request-1", bindingOperationId: "binding-1" },
-    { v: 4, type: "start-turn", cwd: "/workspace", requestId: "request-2", dispatchId: "dispatch-1", threadId: "thread-1", task: "exact\ntext" },
-    { v: 4, type: "inspect-dispatch", requestId: "request-3", dispatchId: "dispatch-1", threadId: "thread-1", task: "exact\ntext", expectedTurnId: null },
-    { v: 4, type: "inspect-dispatch", requestId: "request-4", dispatchId: "dispatch-1", threadId: "thread-1", task: "exact\ntext", expectedTurnId: "turn-1" },
+    { v: 5, type: "ensure-binding", cwd: "/workspace", requestId: "request-1", bindingOperationId: "binding-1" },
+    { v: 5, type: "start-turn", cwd: "/workspace", requestId: "request-2", dispatchId: "dispatch-1", threadId: "thread-1", task: "exact\ntext" },
+    { v: 5, type: "inspect-dispatch", requestId: "request-3", dispatchId: "dispatch-1", threadId: "thread-1", task: "exact\ntext", expectedTurnId: null },
+    { v: 5, type: "inspect-dispatch", requestId: "request-4", dispatchId: "dispatch-1", threadId: "thread-1", task: "exact\ntext", expectedTurnId: "turn-1" },
   ] as const;
   for (const expected of frames) {
     const parsed = parseGalateaDurableFrame(JSON.stringify(expected));
@@ -19,6 +19,7 @@ test("durable protocol accepts only exact V4 request shapes", () => {
     { ...frames[0], type: "Ensure-Binding" },
     { ...frames[0], cwd: undefined },
     { ...frames[0], v: 3 },
+    { ...frames[0], v: 4 },
     { ...frames[1], cwd: undefined },
     { ...frames[1], cwd: "" },
     { ...frames[1], cwd: "relative" },
@@ -33,13 +34,13 @@ test("durable protocol accepts only exact V4 request shapes", () => {
     assert.deepEqual(parseGalateaDurableFrame(JSON.stringify(invalid)), { ok: false, code: "INVALID_FRAME" });
   }
   assert.deepEqual(
-    parseGalateaDurableFrame('{"v":4,"type":"inspect-dispatch","requestId":"r","dispatchId":"d","dispatchId":"e","threadId":"t","task":"x","expectedTurnId":null}'),
+    parseGalateaDurableFrame('{"v":5,"type":"inspect-dispatch","requestId":"r","dispatchId":"d","dispatchId":"e","threadId":"t","task":"x","expectedTurnId":null}'),
     { ok: false, code: "INVALID_FRAME" },
   );
 });
 
 test("durable protocol preserves exact task and enforces UTF-8 bounds", () => {
-  const source = { v: 4, type: "inspect-dispatch", requestId: "r", dispatchId: "d", threadId: "t", task: "你好", expectedTurnId: null };
+  const source = { v: 5, type: "inspect-dispatch", requestId: "r", dispatchId: "d", threadId: "t", task: "你好", expectedTurnId: null };
   assert.deepEqual(parseGalateaDurableFrame(JSON.stringify(source), 5), { ok: false, code: "FRAME_TOO_LARGE" });
   const parsed = parseGalateaDurableFrame(JSON.stringify(source), 6);
   assert.equal(parsed.ok, true);
@@ -48,7 +49,7 @@ test("durable protocol preserves exact task and enforces UTF-8 bounds", () => {
 test("durable output encoder requires inspection source", () => {
   assert.equal(
     encodeGalateaDurableOutputFrame({
-      v: 4,
+      v: 5,
       type: "dispatch-inspected",
       requestId: "r",
       dispatchId: "d",
@@ -56,6 +57,6 @@ test("durable output encoder requires inspection source", () => {
       outcome: "not-found",
       source: "persistent",
     }),
-    '{"v":4,"type":"dispatch-inspected","requestId":"r","dispatchId":"d","threadId":"t","outcome":"not-found","source":"persistent"}\n',
+    '{"v":5,"type":"dispatch-inspected","requestId":"r","dispatchId":"d","threadId":"t","outcome":"not-found","source":"persistent"}\n',
   );
 });

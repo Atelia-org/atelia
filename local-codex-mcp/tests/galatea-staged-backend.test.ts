@@ -1,3 +1,5 @@
+import { GalateaStartFailure } from "../src/backend/galatea-staged-backend.js";
+import { OperationDeadline } from "../src/codex/operation-deadline.js";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
@@ -19,7 +21,7 @@ const acceptedTurnNotVisibleFixture = path.join(
   "tests/fixtures/accepted-turn-not-visible.json",
 );
 
-async function harness(t: TestContext, options: { requestTimeoutMs?: number; fixtureArgs?: string[]; persistent?: boolean; codexConfig?: Record<string, JsonValue> } = {}) {
+async function harness(t: TestContext, options: { requestTimeoutMs?: number; inspectionTimeoutMs?: number; fixtureArgs?: string[]; persistent?: boolean; codexConfig?: Record<string, JsonValue> } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "galatea-staged-backend-"));
   const lifecycleFile = options.persistent ? path.join(root, "lifecycle.log") : undefined;
   const stateFile = options.persistent ? path.join(root, "state.json") : undefined;
@@ -38,6 +40,7 @@ async function harness(t: TestContext, options: { requestTimeoutMs?: number; fix
     profile: galateaCodexBackendProfile,
     galateaCodexConfig: options.codexConfig,
     galateaMaximumFinalUtf8Bytes: 20_000,
+    galateaInspectionTimeoutMs: options.inspectionTimeoutMs,
   });
   t.after(async () => { await backend.stop(); await rm(root, { recursive: true }); });
   return { root, client, backend, store, lifecycleFile };
@@ -117,7 +120,9 @@ test("fresh binding exemption cannot survive an app-server restart", async (t) =
   const value = await harness(t, { fixtureArgs: ["--missing-empty-rollout"], persistent: true });
   const binding = await bind(value);
   await value.client.stop();
-  await assert.rejects(start(value, binding.threadId, "cold-first-mail", "not sent"), /no rollout found/);
+  await assert.rejects(start(value, binding.threadId, "cold-first-mail", "not sent"), (error: unknown) =>
+    error instanceof GalateaStartFailure && error.dispatchState === "not-dispatched"
+      && error.code === "THREAD_NOT_FOUND");
   const requests = await value.client.request<{ threadResumeCount: number; turnStartCount: number }>("test/lastRequests", {});
   assert.equal(requests.threadResumeCount, 1);
   assert.equal(requests.turnStartCount, 0);
@@ -300,7 +305,9 @@ test("OutcomeUnknown alone returns persistent not-found and discovers a timed-ou
   assert.deepEqual(missing, { kind: "not-found", threadId: binding.threadId, source: "persistent" });
 
   const task = "[HANG_TURN_START][NATURAL] exact task";
-  await assert.rejects(start(value, binding.threadId, "mail-unknown", task), /timed out/);
+  await assert.rejects(start(value, binding.threadId, "mail-unknown", task), (error: unknown) =>
+    error instanceof GalateaStartFailure && error.dispatchState === "may-have-dispatched"
+      && /timed out/.test(error.message));
   await delay(30);
   const recovered = await value.backend.inspectDispatch({
     threadId: binding.threadId, dispatchId: "mail-unknown", task,
@@ -503,4 +510,46 @@ test("two users share one backend while concurrent turns receive their own cwd w
     assert.equal(turn.cwd, homes[index]);
     assert.equal(turn.sandboxPolicy, undefined);
   }
+});
+
+
+test("one inspection deadline bounds metadata and the entire page chain, with no late paging", async (t) => {
+  const value = await harness(t, { inspectionTimeoutMs: 350, fixtureArgs: ["--inspection-page-size=1"] });
+  const binding = await bind(value);
+  for (let index = 0; index < 6; index++) {
+    await start(value, binding.threadId, `page-mail-${index}`, "[EARLY][NATURAL] task");
+  }
+  await value.client.request("test/setInspectionRpcDelay", { delayMs: 120 });
+  const began = performance.now();
+  await assert.rejects(value.backend.inspectDispatch({
+    threadId: binding.threadId, dispatchId: "missing", task: "not sent",
+    expectedTurnId: null, maximumFinalUtf8Bytes: 20_000,
+  }), /timed out/);
+  assert.ok(performance.now() - began < 900);
+  await delay(200); // Let the one already-issued RPC arrive late.
+  const first = await value.client.request<{ threadItemsListCount: number }>("test/lastRequests", {});
+  assert.ok(first.threadItemsListCount > 0 && first.threadItemsListCount < 6);
+  await delay(300);
+  const last = await value.client.request<{ threadItemsListCount: number }>("test/lastRequests", {});
+  assert.equal(last.threadItemsListCount, first.threadItemsListCount);
+  assert.equal(value.client.isRunning, true);
+});
+
+test("expired operation cannot dispatch after a delayed client startup resumes", async (t) => {
+  const value = await harness(t);
+  const binding = await bind(value);
+  const originalStart = value.client.start.bind(value.client);
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => { release = resolve; });
+  value.client.start = async () => { await barrier; await originalStart(); };
+  const call = value.client.request("turn/start", {
+    threadId: binding.threadId,
+    input: [{ type: "text", text: "must never be sent", text_elements: [] }],
+  }, new OperationDeadline(30));
+  await assert.rejects(call, /timed out/);
+  release();
+  value.client.start = originalStart;
+  await delay(50);
+  const requests = await value.client.request<{ turnStartCount: number }>("test/lastRequests", {});
+  assert.equal(requests.turnStartCount, 0);
 });

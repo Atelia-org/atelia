@@ -1,3 +1,4 @@
+import { GalateaStartFailure } from "../backend/galatea-staged-backend.js";
 import type {
   GalateaDispatchInspection,
   GalateaStagedBackend,
@@ -91,6 +92,7 @@ export class GalateaDurableAdapter {
         dispatchId: frame.dispatchId,
         threadId: frame.threadId,
         code: "DISPATCH_ALREADY_ACTIVE",
+        dispatchState: "may-have-dispatched",
       });
       return;
     }
@@ -121,6 +123,7 @@ export class GalateaDurableAdapter {
         dispatchId: frame.dispatchId,
         threadId: frame.threadId,
         code: this.startErrorCode(bridgeError),
+        dispatchState: error instanceof GalateaStartFailure ? error.dispatchState : "may-have-dispatched",
       });
     } finally {
       this.activeDispatches.delete(frame.dispatchId);
@@ -300,6 +303,9 @@ export class GalateaDurableAdapter {
       || error.code === "INVALID_CWD"
       || error.code === "CWD_NOT_ALLOWED"
       || error.code === "BRIDGE_BUSY"
+      || error.code === "INVALID_CONFIG"
+      || error.code === "CODEX_VERSION_MISMATCH"
+      || error.code === "CWD_MISMATCH"
       ? error.code
       : "START_OUTCOME_UNKNOWN";
   }

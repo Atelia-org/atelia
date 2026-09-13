@@ -87,7 +87,7 @@ class LiveSidecar {
   }
 
   async ready(): Promise<void> {
-    assert.deepEqual(await this.wait("ready"), { v: 4, type: "ready" });
+    assert.deepEqual(await this.wait("ready"), { v: 5, type: "ready" });
     assert.equal(await readlink(`/proc/${this.child.pid}/cwd`), "/");
     for (let attempt = 0; this.appServerPid === undefined && attempt < 100; attempt += 1) await delay(20);
     assert.ok(this.appServerPid);
@@ -100,7 +100,7 @@ class LiveSidecar {
 
   async request(input: Omit<GalateaDurableInputFrame, "v" | "requestId"> | Record<string, unknown>): Promise<GalateaDurableOutputFrame> {
     const requestId = `home-canary-${++this.sequence}`;
-    this.child.stdin.write(`${JSON.stringify({ ...input, v: 4, requestId })}\n`);
+    this.child.stdin.write(`${JSON.stringify({ ...input, v: 5, requestId })}\n`);
     return this.wait(requestId);
   }
 

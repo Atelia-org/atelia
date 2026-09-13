@@ -1,3 +1,4 @@
+import { OperationDeadline } from "./operation-deadline.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 import type { InitializeResponse } from "../../schemas/InitializeResponse.js";
@@ -63,6 +64,8 @@ export class CodexAppServerClient {
   private appServerGeneration = 0;
 
   constructor(private readonly options: CodexClientOptions) {}
+
+  get requestTimeoutMs(): number { return this.options.requestTimeoutMs; }
 
   get isRunning(): boolean {
     const child = this.connection?.child;
@@ -225,13 +228,16 @@ export class CodexAppServerClient {
     return this.stopPromise;
   }
 
-  async request<T>(method: string, params?: unknown): Promise<T> {
-    await this.start();
+  async request<T>(method: string, params?: unknown, deadline?: OperationDeadline): Promise<T> {
+    deadline?.remainingMs();
+    if (deadline) await deadline.wait(this.start());
+    else await this.start();
+    deadline?.remainingMs();
     const connection = this.connection;
     if (!connection) {
       throw new BridgeError("CODEX_START_FAILED", "Codex app-server is not running.");
     }
-    return this.rawRequest<T>(connection, method, params);
+    return this.rawRequest<T>(connection, method, params, deadline);
   }
 
   async notify(method: string, params?: unknown): Promise<void> {
@@ -243,7 +249,8 @@ export class CodexAppServerClient {
     await this.rawNotify(connection, method, params);
   }
 
-  private rawRequest<T>(connection: Connection, method: string, params?: unknown): Promise<T> {
+  private rawRequest<T>(connection: Connection, method: string, params?: unknown, deadline?: OperationDeadline): Promise<T> {
+    const timeoutMs = Math.min(this.options.requestTimeoutMs, deadline?.remainingMs() ?? Infinity);
     const id = this.nextRequestId++;
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -255,7 +262,7 @@ export class CodexAppServerClient {
             details: { method, timeout: true },
           }),
         );
-      }, this.options.requestTimeoutMs);
+      }, timeoutMs);
       this.pending.set(id, {
         method,
         connection,
@@ -353,7 +360,9 @@ export class CodexAppServerClient {
         const message = response.error.message ?? `Codex RPC ${request.method} failed.`;
         const normalized = message.toLowerCase();
         const code =
-          request.method.startsWith("thread/") && normalized.includes("not found")
+          request.method.startsWith("thread/") && (normalized.includes("not found")
+            || (request.method === "thread/resume" && (normalized.includes("no rollout found")
+              || normalized.includes("missing source rollout"))))
             ? "THREAD_NOT_FOUND"
             : normalized.includes("sandbox")
               ? "SANDBOX_DENIED"

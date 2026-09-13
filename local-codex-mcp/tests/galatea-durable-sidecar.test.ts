@@ -141,7 +141,7 @@ class FrameCollector {
   }
 }
 
-test("runnable durable sidecar emits V4 ready and serves staged binding, start, and inspect", { timeout: 5_000 }, async () => {
+test("runnable durable sidecar emits V5 ready and serves staged binding, start, and inspect", { timeout: 5_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "galatea-durable-entry-"));
   const lifecycleFile = path.join(root, "lifecycle.log");
   const input = new PassThrough();
@@ -162,7 +162,7 @@ test("runnable durable sidecar emits V4 ready and serves staged binding, start, 
       GALATEA_CODEX_MAX_FINAL_BYTES: "100000",
     });
     const ready = await collector.waitFor((frame) => frame.type === "ready");
-    assert.deepEqual(ready, { v: 4, type: "ready" });
+    assert.deepEqual(ready, { v: 5, type: "ready" });
 
     input.write(`${JSON.stringify({
       v: 1,
@@ -175,10 +175,10 @@ test("runnable durable sidecar emits V4 ready and serves staged binding, start, 
       (frame) => frame.type === "failed" && frame.stage === "protocol",
     );
     assert.equal(rejected.type === "failed" && rejected.code, "INVALID_FRAME");
-    assert.equal(rejected.v, 4);
+    assert.equal(rejected.v, 5);
 
     input.write(`${JSON.stringify({
-      v: 4,
+      v: 5,
       type: "ensure-binding",
       cwd: root,
       requestId: "binding-request",
@@ -192,7 +192,7 @@ test("runnable durable sidecar emits V4 ready and serves staged binding, start, 
 
     const task = "[NATURAL] durable task";
     input.write(`${JSON.stringify({
-      v: 4,
+      v: 5,
       type: "start-turn",
       cwd: root,
       requestId: "start-request",
@@ -211,7 +211,7 @@ test("runnable durable sidecar emits V4 ready and serves staged binding, start, 
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const requestId = `inspect-${attempt}`;
       input.write(`${JSON.stringify({
-        v: 4,
+        v: 5,
         type: "inspect-dispatch",
         requestId,
         dispatchId: "dispatch-1",
@@ -261,7 +261,7 @@ test("runnable durable sidecar emits V4 ready and serves staged binding, start, 
   }
 });
 
-test("durable JSONL server emits V4 protocol failures, stops on EOF, and flushes", async () => {
+test("durable JSONL server emits V5 protocol failures, stops on EOF, and flushes", async () => {
   const input = new PassThrough();
   const output = new PassThrough();
   const collector = new FrameCollector(output);
@@ -303,9 +303,9 @@ test("durable JSONL server emits V4 protocol failures, stops on EOF, and flushes
       ? [frame.v, frame.stage, frame.code]
       : [frame.v, frame.type]),
     [
-      [4, "protocol", "INVALID_UTF8"],
-      [4, "protocol", "FRAME_TOO_LARGE"],
-      [4, "protocol", "INVALID_FRAME"],
+      [5, "protocol", "INVALID_UTF8"],
+      [5, "protocol", "FRAME_TOO_LARGE"],
+      [5, "protocol", "INVALID_FRAME"],
     ],
   );
 });
@@ -331,7 +331,7 @@ test("terminal stdout EPIPE is fatal, stops input, and remains observable throug
   const adapter: GalateaDurableJsonlAdapter = {
     async handle(frame) {
       await writer.write({
-        v: 4,
+        v: 5,
         type: "binding-established",
         requestId: frame.requestId,
         bindingOperationId: "binding-epipe",
@@ -348,7 +348,7 @@ test("terminal stdout EPIPE is fatal, stops input, and remains observable throug
     new NullLogger(),
   );
   input.write(`${JSON.stringify({
-    v: 4,
+    v: 5,
     type: "ensure-binding",
     cwd: "/workspace",
     requestId: "request-epipe",
@@ -384,7 +384,7 @@ test("stalled stdout backpressure hits a bounded deadline and stops the sidecar"
   const adapter: GalateaDurableJsonlAdapter = {
     async handle(frame) {
       await writer.write({
-        v: 4,
+        v: 5,
         type: "binding-established",
         requestId: frame.requestId,
         bindingOperationId: "binding-stall",
@@ -401,7 +401,7 @@ test("stalled stdout backpressure hits a bounded deadline and stops the sidecar"
     new NullLogger(),
   );
   input.write(`${JSON.stringify({
-    v: 4,
+    v: 5,
     type: "ensure-binding",
     cwd: "/workspace",
     requestId: "request-stall",
@@ -432,7 +432,7 @@ test("immediate EOF during durable operation cannot restart or leak app-server",
       CODEX_BRIDGE_RPC_TIMEOUT_MS: "1000",
     });
     input.end(`${JSON.stringify({
-      v: 4,
+      v: 5,
       type: "ensure-binding",
       cwd: root,
       requestId: "request-eof",

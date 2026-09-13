@@ -1,3 +1,4 @@
+import { GalateaStartFailure } from "../src/backend/galatea-staged-backend.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type {
@@ -56,7 +57,7 @@ function frame(
   requestId: string,
 ): GalateaDurableInputFrame {
   return type === "inspect-dispatch" ? {
-    v: 4,
+    v: 5,
     type,
     requestId,
     dispatchId: "dispatch-1",
@@ -64,7 +65,7 @@ function frame(
     task: "exact task",
     expectedTurnId: null,
   } : {
-    v: 4,
+    v: 5,
     type,
     requestId,
     dispatchId: "dispatch-1",
@@ -90,7 +91,7 @@ function harness(maximumOutputFrameBytes = 10_000) {
 test("durable adapter emits one short correlated response for each staged operation", async () => {
   const value = harness();
   await value.adapter.handle({
-    v: 4,
+    v: 5,
     type: "ensure-binding",
     cwd: "/workspace",
     requestId: "request-binding",
@@ -104,14 +105,14 @@ test("durable adapter emits one short correlated response for each staged operat
   assert.equal("cwd" in value.backend.inspectionInput!, false);
   assert.deepEqual(value.frames, [
     {
-      v: 4,
+      v: 5,
       type: "binding-established",
       requestId: "request-binding",
       bindingOperationId: "binding-1",
       threadId: "thread-1",
     },
     {
-      v: 4,
+      v: 5,
       type: "turn-accepted",
       requestId: "request-start",
       dispatchId: "dispatch-1",
@@ -119,7 +120,7 @@ test("durable adapter emits one short correlated response for each staged operat
       turnId: "turn-1",
     },
     {
-      v: 4,
+      v: 5,
       type: "dispatch-inspected",
       requestId: "request-inspect",
       dispatchId: "dispatch-1",
@@ -133,11 +134,11 @@ test("durable adapter emits one short correlated response for each staged operat
 test("shared adapter forwards each operation's cwd independently", async () => {
   const value = harness();
   await value.adapter.handle({
-    v: 4, type: "ensure-binding", requestId: "binding-a", bindingOperationId: "binding-a", cwd: "/home-a",
+    v: 5, type: "ensure-binding", requestId: "binding-a", bindingOperationId: "binding-a", cwd: "/home-a",
   });
   assert.equal(value.backend.bindingInput?.cwd, "/home-a");
   await value.adapter.handle({
-    v: 4, type: "start-turn", requestId: "start-b", dispatchId: "dispatch-b", threadId: "thread-1", task: "task b", cwd: "/home-b",
+    v: 5, type: "start-turn", requestId: "start-b", dispatchId: "dispatch-b", threadId: "thread-1", task: "task b", cwd: "/home-b",
   });
   assert.equal(value.backend.startInput?.cwd, "/home-b");
 });
@@ -145,12 +146,12 @@ test("shared adapter forwards each operation's cwd independently", async () => {
 test("invalid execution cwd remains a deterministic preflight rejection on the wire", async () => {
   for (const code of ["INVALID_CWD", "CWD_NOT_ALLOWED"] as const) {
     const value = harness();
-    value.backend.startError = new BridgeError(code, "Private path text must not become a diagnostic message.");
+    value.backend.startError = new GalateaStartFailure(new BridgeError(code, "Private path text must not become a diagnostic message."), "not-dispatched");
     await value.adapter.handle(frame("start-turn", "start-invalid"));
     assert.equal(value.frames.length, 1);
     assert.deepEqual(value.frames[0], {
-      v: 4, type: "failed", stage: "start-turn", requestId: "start-invalid",
-      dispatchId: "dispatch-1", threadId: "thread-1", code,
+      v: 5, type: "failed", stage: "start-turn", requestId: "start-invalid",
+      dispatchId: "dispatch-1", threadId: "thread-1", code, dispatchState: "not-dispatched",
     });
   }
 });
@@ -170,6 +171,7 @@ test("durable adapter blocks only a concurrently active duplicate start", async 
     value.frames[0]?.type === "failed" && value.frames[0].code,
     "DISPATCH_ALREADY_ACTIVE",
   );
+  assert.equal("dispatchState" in value.frames[0]! && value.frames[0].dispatchState, "may-have-dispatched");
   assert.equal(value.frames[1]?.type, "turn-accepted");
 
   await value.adapter.handle(frame("start-turn", "request-later"));
@@ -216,7 +218,7 @@ test("durable adapter preserves Accepted selector and retryable visibility outco
     code: "ACCEPTED_TURN_NOT_VISIBLE",
   };
   await value.adapter.handle({
-    v: 4,
+    v: 5,
     type: "inspect-dispatch",
     requestId: "request-known",
     dispatchId: "dispatch-1",
@@ -226,7 +228,7 @@ test("durable adapter preserves Accepted selector and retryable visibility outco
   });
   assert.equal(value.backend.inspectionInput?.expectedTurnId, "turn-expected");
   assert.deepEqual(value.frames[0], {
-    v: 4,
+    v: 5,
     type: "dispatch-inspected",
     requestId: "request-known",
     dispatchId: "dispatch-1",
@@ -247,7 +249,7 @@ test("durable adapter rejects a wrong returned Accepted turn identity", async ()
     source: "live",
   };
   await value.adapter.handle({
-    v: 4,
+    v: 5,
     type: "inspect-dispatch",
     requestId: "request-wrong-turn",
     dispatchId: "dispatch-1",
@@ -261,4 +263,12 @@ test("durable adapter rejects a wrong returned Accepted turn identity", async ()
     assert.equal(result.outcome, "ambiguous");
     if (result.outcome === "ambiguous") assert.equal(result.code, "DISPATCH_TURN_MISMATCH");
   }
+});
+
+
+test("untyped failures never provide non-dispatch proof even with preflight error codes", async () => {
+  const value = harness();
+  value.backend.startError = new BridgeError("THREAD_NOT_FOUND", "unknown execution stage");
+  await value.adapter.handle(frame("start-turn", "untyped"));
+  assert.equal("dispatchState" in value.frames[0]! && value.frames[0].dispatchState, "may-have-dispatched");
 });
