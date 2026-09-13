@@ -252,6 +252,8 @@ Galatea Server 与 SessionJournal CLI 的独立 build 均为 0 warnings、0 erro
 
 ## 11. 唯一 Dev 实例 E2E（2026-09-14）
 
+下次执行可复用的流程与踩坑经验已整理到 [E2E 操作指南](e2e-testing.md)；本节保留本次实际证据。
+
 用户明确授权使用 `prototypes/Galatea/.atelia` 的两个测试账号进行真实 E2E，允许撤销测试叙事并保留外部 Codex/邮件影响。执行前确认实例停止，完整备份 `.atelia` 到 `/mnt/e/bak/atelia-full-identity-e2e-20260913T201405Z.7z`，通过 `7z t` 并保存校验文件；没有只备份其中一个用户。
 
 初始两个活动命名 `main` 分支均通过 full audit 与 selected-lineage audit：`cyber` 为 AwaitingCompletion（228 events，Prepared v5=14/v7=5），`gpt` 为 Idle（252 events，v5=21/v7=40）。这是活动命名分支盘点，不宣称扫描全部历史物理 Ref/reflog。

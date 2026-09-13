@@ -27,6 +27,7 @@ docs/Galatea/configuration.md
 docs/Galatea/server-api.md
 docs/Galatea/runtime.md
 docs/Galatea/scenario-lab.md
+docs/Galatea/e2e-testing.md
 docs/Galatea/codex-delegation-verification.md
 docs/Galatea/codex-delegation-recovery-refactor-plan.md
 docs/Galatea/user-home-design.md
