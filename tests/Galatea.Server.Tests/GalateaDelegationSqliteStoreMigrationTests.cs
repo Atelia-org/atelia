@@ -10,19 +10,25 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaDelegationSqliteStoreMigrationTests {
+    public static TheoryData<int, string> LegacyStates {
+        get {
+            var cases = new TheoryData<int, string>();
+            foreach (int version in new[] { 1, 2 }) {
+                foreach (string state in new[] {
+                    "Queued", "Binding", "Started", "OutcomeUnknown", "Accepted",
+                    "TerminalCompleted", "TerminalFailed", "Quarantined", "Leased", "Consumed"
+                }) {
+                    cases.Add(version, state);
+                }
+            }
+            return cases;
+        }
+    }
+
     [Theory]
-    [InlineData("Queued")]
-    [InlineData("Binding")]
-    [InlineData("Started")]
-    [InlineData("OutcomeUnknown")]
-    [InlineData("Accepted")]
-    [InlineData("TerminalCompleted")]
-    [InlineData("TerminalFailed")]
-    [InlineData("Quarantined")]
-    [InlineData("Leased")]
-    [InlineData("Consumed")]
-    public void Upgrade_PreservesEveryBusinessColumnAndSnapshot(string state) {
-        using var fixture = new MigrationFixture(state);
+    [MemberData(nameof(LegacyStates))]
+    public void Upgrade_PreservesEveryBusinessColumnAndSnapshot(int version, string state) {
+        using var fixture = new MigrationFixture(state, version);
         Assert.Throws<InvalidDataException>(() => fixture.Open());
         Assert.Throws<InvalidDataException>(() =>
             GalateaDelegationSqliteStore.OpenExistingReadOnly(
@@ -32,10 +38,10 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
 
         Assert.Equal("Upgraded", result.Outcome);
         Assert.NotNull(result.BackupPath);
-        Assert.Equal(1L, Scalar(result.BackupPath, "PRAGMA user_version;"));
-        Assert.Equal(fixture.V1Rows, ReadBusinessRows(result.BackupPath));
+        Assert.Equal((long)version, Scalar(result.BackupPath, "PRAGMA user_version;"));
+        Assert.Equal(fixture.LegacyRows, ReadBusinessRows(result.BackupPath, normalize: false));
         Assert.Equal(fixture.BusinessRows, ReadBusinessRows(fixture.DatabasePath));
-        Assert.Equal(2L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+        Assert.Equal(3L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
         using (GalateaDelegationSqliteStore store = fixture.Open()) {
             Assert.Equal(fixture.Snapshot, JsonSerializer.Serialize(store.ReadSnapshot()));
         }
@@ -47,34 +53,38 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         Assert.Single(fixture.Backups());
     }
 
-    [Fact]
-    public void DryRun_IsBytePreservingAndCreatesNoBackup() {
-        using var fixture = new MigrationFixture("Leased");
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void DryRun_IsBytePreservingAndCreatesNoBackup(int version) {
+        using var fixture = new MigrationFixture("Leased", version);
         byte[] before = File.ReadAllBytes(fixture.DatabasePath);
         GalateaDelegationStoreUpgradeResult result = fixture.Upgrade(apply: false);
         Assert.Equal("DryRunReady", result.Outcome);
         Assert.Null(result.BackupPath);
         Assert.Equal(before, File.ReadAllBytes(fixture.DatabasePath));
         Assert.Empty(fixture.Backups());
-        Assert.Equal(1L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+        Assert.Equal((long)fixture.LegacyVersion, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void CommitBoundary_RetryRecognizesWholeOldOrNewFormat(bool afterCommit) {
-        using var fixture = new MigrationFixture("Consumed");
+    [InlineData(1, false)]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    [InlineData(2, true)]
+    public void CommitBoundary_RetryRecognizesWholeOldOrNewFormat(int version, bool afterCommit) {
+        using var fixture = new MigrationFixture("Consumed", version);
         Action<string> fail = _ => throw new IOException("injected upgrade failure");
         var hooks = afterCommit
             ? new GalateaDelegationStoreTestHooks(AfterCommitBeforeReturn: fail)
             : new GalateaDelegationStoreTestHooks(BeforeCommit: fail);
         Assert.Throws<IOException>(() => fixture.Upgrade(apply: true, hooks));
-        Assert.Equal(afterCommit ? 2L : 1L,
+        Assert.Equal(afterCommit ? 3L : version,
             Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
-        Assert.Equal(afterCommit ? 0L : 1L, Scalar(fixture.DatabasePath,
+        Assert.Equal(afterCommit || version == 2 ? 0L : 1L, Scalar(fixture.DatabasePath,
             "SELECT count(*) FROM pragma_table_info('outbound_mail') WHERE name = 'frozen_route_policy_fingerprint';"));
-        Assert.Equal(afterCommit ? fixture.BusinessRows : fixture.V1Rows,
-            ReadBusinessRows(fixture.DatabasePath));
+        Assert.Equal(afterCommit ? fixture.BusinessRows : fixture.LegacyRows,
+            ReadBusinessRows(fixture.DatabasePath, normalize: afterCommit));
         GalateaDelegationStoreUpgradeResult retry = fixture.Upgrade(apply: true);
         Assert.Equal(afterCommit ? "AlreadyCurrent" : "Upgraded", retry.Outcome);
         using GalateaDelegationSqliteStore store = fixture.Open();
@@ -110,7 +120,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
             FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         Assert.ThrowsAny<IOException>(() => fixture.Upgrade(apply: true));
         Assert.Empty(fixture.Backups());
-        Assert.Equal(1L, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+        Assert.Equal((long)fixture.LegacyVersion, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
     }
 
     [Fact]
@@ -128,11 +138,14 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
     }
 
     [Theory]
-    [InlineData("Started")]
-    [InlineData("OutcomeUnknown")]
-    [InlineData("Accepted")]
-    public async Task UpgradedActiveMail_InspectsOriginalIdentityWithoutStartingAgain(string state) {
-        using var fixture = new MigrationFixture(state);
+    [InlineData(1, "Started")]
+    [InlineData(1, "OutcomeUnknown")]
+    [InlineData(1, "Accepted")]
+    [InlineData(2, "Started")]
+    [InlineData(2, "OutcomeUnknown")]
+    [InlineData(2, "Accepted")]
+    public async Task UpgradedActiveMail_InspectsOriginalIdentityWithoutStartingAgain(int version, string state) {
+        using var fixture = new MigrationFixture(state, version);
         _ = fixture.Upgrade(apply: true);
         using GalateaDelegationSqliteStore store = fixture.Open();
         GalateaOutboundMailSnapshot original = store.ReadSnapshot().Mails[0];
@@ -155,6 +168,119 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         Assert.Equal("reply after upgrade", Assert.Single(store.ReadSnapshot().Notices).Body);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void BindingRecoveryBudget_MovesOnlyToFifoOwnerAndSurvivesReopen(int version) {
+        using var fixture = new MigrationFixture("Binding", version);
+        Execute(fixture.DatabasePath, """
+            UPDATE route_binding SET ensure_attempt_count = 7,
+                ensure_last_code = 'BINDING_UNAVAILABLE', next_ensure_at_ms = 123456;
+            """);
+        string before = ReadBusinessRows(fixture.DatabasePath, normalize: false);
+        byte[] bytes = File.ReadAllBytes(fixture.DatabasePath);
+        Assert.Equal("DryRunReady", fixture.Upgrade(apply: false).Outcome);
+        Assert.Equal(bytes, File.ReadAllBytes(fixture.DatabasePath));
+        Assert.Empty(fixture.Backups());
+
+        GalateaDelegationStoreUpgradeResult result = fixture.Upgrade(apply: true);
+
+        Assert.Equal(before, ReadBusinessRows(result.BackupPath!, normalize: false));
+        using GalateaDelegationSqliteStore store = fixture.Open();
+        GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
+        GalateaOutboundMailSnapshot first = snapshot.Mails[0];
+        Assert.Equal("original task", first.Body);
+        Assert.Equal(7, first.RecoveryFailureCount);
+        Assert.Equal("BINDING_UNAVAILABLE", first.RecoveryLastCode);
+        Assert.Equal(123456L, first.NextRetryAtUnixTimeMilliseconds);
+        Assert.Equal(GalateaDurableMailState.Queued, first.State);
+        Assert.Null(first.OperationId);
+        Assert.Null(first.RequestedThreadId);
+        Assert.All(snapshot.Mails.Skip(1), mail => {
+            Assert.Equal(0, mail.RecoveryFailureCount);
+            Assert.Null(mail.RecoveryLastCode);
+            Assert.Null(mail.NextRetryAtUnixTimeMilliseconds);
+        });
+        Assert.Equal(GalateaDelegationRouteState.Binding, snapshot.Route.State);
+        Assert.Equal("bind", snapshot.Route.BindingOperationId);
+        Assert.Null(snapshot.Route.ActiveDispatchId);
+        Assert.Empty(snapshot.Notices);
+        Assert.Equal(0L, Scalar(fixture.DatabasePath,
+            "SELECT COUNT(*) FROM pragma_table_info('route_binding') WHERE name LIKE 'ensure_%' OR name = 'next_ensure_at_ms';"));
+    }
+
+    [Theory]
+    [InlineData(1, "OutcomeUnknown", 8)]
+    [InlineData(1, "Accepted", 11)]
+    [InlineData(2, "OutcomeUnknown", 11)]
+    [InlineData(2, "Accepted", 8)]
+    public async Task ExhaustedLegacyRecovery_FirstPulseFinishesLocallyWithoutAnyRpc(
+        int version, string state, int failures
+    ) {
+        using var fixture = new MigrationFixture(state, version);
+        Execute(fixture.DatabasePath, $"""
+            UPDATE outbound_mail SET reconcile_attempt_count = {failures},
+                reconcile_last_code = 'INSPECTION_UNAVAILABLE', next_reconcile_at_ms = 0
+            WHERE state = '{state}';
+            """);
+        _ = fixture.Upgrade(apply: true);
+        string dispatchId;
+        await using var transport = new InspectOnlyTransport();
+        using (GalateaDelegationSqliteStore store = fixture.Open()) {
+            GalateaOutboundMailSnapshot before = store.ReadSnapshot().Mails[0];
+            dispatchId = before.DispatchId;
+            Assert.Equal(failures, before.RecoveryFailureCount);
+            Assert.Equal("INSPECTION_UNAVAILABLE", before.RecoveryLastCode);
+            Assert.Equal("original-thread", before.RequestedThreadId);
+            Assert.Equal(state == "Accepted" ? "original-turn" : null, before.AcceptedTurnId);
+            Assert.Empty(store.ReadSnapshot().Notices);
+            var driver = new GalateaDurableDelegationDriver(store, transport, fixture.HomeDirectory, new MigrationClock());
+
+            _ = await driver.PulseAsync();
+
+            Assert.Empty(transport.Requests);
+            Assert.Equal(0, transport.StartCalls);
+            Assert.Equal(0, transport.EnsureCalls);
+        }
+        using GalateaDelegationSqliteStore reopened = fixture.Open();
+        GalateaDelegationStateSnapshot after = reopened.ReadSnapshot();
+        GalateaOutboundMailSnapshot finished = after.Mails[0];
+        Assert.Equal(dispatchId, finished.DispatchId);
+        Assert.Equal(GalateaDurableMailState.TerminalFailed, finished.State);
+        Assert.Equal("RESULT_UNCONFIRMED", finished.TerminalCode);
+        Assert.Equal(failures, finished.RecoveryFailureCount);
+        Assert.Equal("INSPECTION_UNAVAILABLE", finished.RecoveryLastCode);
+        Assert.Null(finished.NextRetryAtUnixTimeMilliseconds);
+        GalateaReplyNoticeSnapshot notice = Assert.Single(after.Notices);
+        Assert.Equal(dispatchId, notice.DispatchId);
+        Assert.Equal(GalateaReplyNoticeKind.DeliveryFailure, notice.Kind);
+        Assert.Equal("RESULT_UNCONFIRMED", notice.Code);
+        Assert.Null(after.Route.ActiveDispatchId);
+        Assert.Equal(GalateaDurableMailState.Queued, after.Mails[1].State);
+    }
+
+    [Theory]
+    [InlineData(1, "Queued", "UPDATE outbound_mail SET reconcile_attempt_count = 1, reconcile_last_code = 'BROKEN', next_reconcile_at_ms = 0 WHERE state = 'Queued';")]
+    [InlineData(2, "Started", "UPDATE outbound_mail SET reconcile_attempt_count = 1, reconcile_last_code = 'BROKEN', next_reconcile_at_ms = 0 WHERE state = 'Started';")]
+    [InlineData(1, "Binding", "UPDATE route_binding SET ensure_attempt_count = 1;")]
+    [InlineData(2, "Binding", "UPDATE route_binding SET ensure_last_code = 'BROKEN';")]
+    [InlineData(2, "Queued", "UPDATE route_binding SET ensure_attempt_count = 1, ensure_last_code = 'BROKEN', next_ensure_at_ms = 0;")]
+    [InlineData(1, "TerminalFailed", "UPDATE outbound_mail SET terminal_stage = 'local-recovery', terminal_code = 'RESULT_UNCONFIRMED' WHERE state = 'TerminalFailed';")]
+    [InlineData(2, "TerminalFailed", "UPDATE outbound_mail SET accepted_thread_id = NULL, accepted_turn_id = NULL WHERE state = 'TerminalFailed';")]
+    [InlineData(2, "Binding", "UPDATE outbound_mail SET state = 'Unrouted', route_class = 'Unrouted';")]
+    public void InvalidLegacyShape_RejectsBeforeBackupOrMutation(int version, string state, string mutation) {
+        using var fixture = new MigrationFixture(state, version);
+        Execute(fixture.DatabasePath, mutation);
+        byte[] before = File.ReadAllBytes(fixture.DatabasePath);
+
+        Assert.Throws<InvalidDataException>(() => fixture.Upgrade(apply: false));
+        Assert.Throws<InvalidDataException>(() => fixture.Upgrade(apply: true));
+
+        Assert.Equal(before, File.ReadAllBytes(fixture.DatabasePath));
+        Assert.Empty(fixture.Backups());
+        Assert.Equal((long)version, Scalar(fixture.DatabasePath, "PRAGMA user_version;"));
+    }
+
     private static readonly GalateaDelegationStoreOwner Owner = new("user", "repository-id");
     private static readonly GalateaDelegationStoreLimits Limits = new(32, 100_000, 1024, 16, 16 * 1024);
     private static readonly string[] Tables = [
@@ -165,14 +291,15 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
 
     private sealed class MigrationFixture : IDisposable {
         private readonly string _root;
-        internal MigrationFixture(string state) {
+        internal MigrationFixture(string state, int version = 2) {
+            LegacyVersion = version;
             _root = Path.Combine(Path.GetTempPath(), "galatea-upgrade-test-" + Guid.NewGuid().ToString("N"));
             TestDirectorySafety.EnsureExistingPathChainHasNoReparsePoint(_root);
             TestDirectorySafety.CreateDirectoryNew(_root);
             HomeDirectory = Path.Combine(_root, "home");
             TestDirectorySafety.CreateDirectoryNew(HomeDirectory);
-            string sourceDirectory = Path.Combine(_root, "v2-source");
-            StoreDirectory = Path.Combine(_root, "v1-target");
+            string sourceDirectory = Path.Combine(_root, "v3-source");
+            StoreDirectory = Path.Combine(_root, "legacy-target");
             TestDirectorySafety.CreateDirectoryNew(StoreDirectory);
             using (File.Create(Path.Combine(StoreDirectory, GalateaDelegationSqliteStore.LockFileName))) { }
             EventAddress head = EventAddressTextCodec.Parse(Address(2));
@@ -185,16 +312,17 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
             }
             string sourcePath = Path.Combine(sourceDirectory, GalateaDelegationSqliteStore.DatabaseFileName);
             BusinessRows = ReadBusinessRows(sourcePath);
-            CreateV1(sourcePath, DatabasePath);
-            V1Rows = ReadBusinessRows(DatabasePath);
+            CreateLegacy(sourcePath, DatabasePath, version);
+            LegacyRows = ReadBusinessRows(DatabasePath, normalize: false);
         }
         internal string HomeDirectory { get; }
         internal string StoreDirectory { get; }
         internal string DatabasePath => Path.Combine(StoreDirectory, GalateaDelegationSqliteStore.DatabaseFileName);
         internal string Snapshot { get; }
         internal string BusinessRows { get; }
-        internal string V1Rows { get; }
-        internal string[] Backups() => Directory.GetFiles(StoreDirectory, "*.v1-backup-*");
+        internal int LegacyVersion { get; }
+        internal string LegacyRows { get; }
+        internal string[] Backups() => Directory.GetFiles(StoreDirectory, $"*.v{LegacyVersion}-backup-*");
         internal GalateaDelegationStoreUpgradeResult Upgrade(bool apply, GalateaDelegationStoreTestHooks? hooks = null) =>
             GalateaDelegationSqliteStore.UpgradeExisting(StoreDirectory, Owner, Limits, apply, hooks);
         internal GalateaDelegationSqliteStore Open() =>
@@ -209,10 +337,12 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
             new SendMailIntent("other", null, "unrouted task", null, "sent")
         ]));
         if (state == "Queued") { return; }
-        GalateaRouteBindingSnapshot route = store.BeginThreadBinding("bind", store.ReadSnapshot().Route.Revision);
+        GalateaOutboundMailSnapshot mail = store.ReadSnapshot().Mails[0];
+        GalateaRouteBindingSnapshot route = store.BeginThreadBinding(
+            "bind", store.ReadSnapshot().Route.Revision, mail.DispatchId, mail.Revision);
         if (state == "Binding") { return; }
         route = store.CompleteThreadBinding("bind", "original-thread", route.Revision);
-        GalateaOutboundMailSnapshot mail = store.ReadSnapshot().Mails[0];
+        mail = store.ReadSnapshot().Mails[0];
         mail = store.StartQueuedMail(mail.DispatchId, mail.Revision, route.Revision);
         if (state == "Started") { return; }
         if (state == "OutcomeUnknown") {
@@ -242,11 +372,21 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         store.ConsumeReplyLease(lease.LeaseId, lease.Revision, Address(22));
     }
 
-    private static void CreateV1(string sourcePath, string targetPath) {
+    private static void CreateLegacy(string sourcePath, string targetPath, int version) {
         using SqliteConnection target = Connect(targetPath, SqliteOpenMode.ReadWriteCreate);
         using (SqliteCommand ddl = target.CreateCommand()) {
-            ddl.CommandText = GalateaDelegationV1Schema.Sql
-                + $"PRAGMA application_id = {GalateaDelegationSqliteStore.ApplicationId}; PRAGMA user_version = 1;";
+            // V2 differs from the captured V1 DDL only in its version and
+            // the three retired route-policy columns. Keep this legacy fixture
+            // independent of the current production schema/migration SQL.
+            string schema = GalateaDelegationV1Schema.Sql;
+            if (version == 2) {
+                schema = schema.Replace("schema_version = 1", "schema_version = 2", StringComparison.Ordinal)
+                    .Replace("route_policy_fingerprint TEXT NOT NULL,", "", StringComparison.Ordinal)
+                    .Replace("frozen_route_policy_fingerprint TEXT NULL,", "", StringComparison.Ordinal)
+                    .Replace("policy_fingerprint TEXT NOT NULL,", "", StringComparison.Ordinal);
+            }
+            ddl.CommandText = schema
+                + $"PRAGMA application_id = {GalateaDelegationSqliteStore.ApplicationId}; PRAGMA user_version = {version};";
             ddl.ExecuteNonQuery();
         }
         using (SqliteCommand attach = target.CreateCommand()) {
@@ -257,7 +397,12 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         foreach (string table in Tables) {
             List<string> columns = Columns(target, table);
             string[] values = columns.Select(column => column switch {
-                "schema_version" => "1",
+                "schema_version" => version.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "reconcile_attempt_count" => Quote("recovery_failure_count"),
+                "reconcile_last_code" => Quote("recovery_last_code"),
+                "next_reconcile_at_ms" => Quote("next_retry_at_ms"),
+                "ensure_attempt_count" => "0",
+                "ensure_last_code" or "next_ensure_at_ms" => "NULL",
                 "route_policy_fingerprint" or "policy_fingerprint" => "'gdrp1-" + new string('a', 64) + "'",
                 "frozen_route_policy_fingerprint" => "CASE WHEN operation_id IS NOT NULL THEN 'gdrp1-" + new string('a', 64) + "' ELSE NULL END",
                 _ => Quote(column)
@@ -269,14 +414,21 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
     }
 
     // Compare every retained database column independently of the snapshot projection.
-    private static string ReadBusinessRows(string path) {
+    private static string ReadBusinessRows(string path, bool normalize = true) {
         using SqliteConnection connection = Connect(path, SqliteOpenMode.ReadOnly);
         var tables = new List<object>();
         foreach (string table in Tables) {
-            string[] columns = Columns(connection, table).Where(column =>
-                column is not ("route_policy_fingerprint" or "policy_fingerprint" or "frozen_route_policy_fingerprint" or "schema_version")).ToArray();
+            string[] storedColumns = Columns(connection, table).Where(column => !normalize ||
+                column is not ("route_policy_fingerprint" or "policy_fingerprint" or "frozen_route_policy_fingerprint"
+                    or "schema_version" or "ensure_attempt_count" or "ensure_last_code" or "next_ensure_at_ms")).ToArray();
+            string[] columns = storedColumns.Select(column => normalize ? column switch {
+                "reconcile_attempt_count" => "recovery_failure_count",
+                "reconcile_last_code" => "recovery_last_code",
+                "next_reconcile_at_ms" => "next_retry_at_ms",
+                _ => column
+            } : column).ToArray();
             using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = $"SELECT {string.Join(',', columns.Select(Quote))} FROM {Quote(table)} ORDER BY {string.Join(',', columns.Select(Quote))};";
+            command.CommandText = $"SELECT {string.Join(',', storedColumns.Select(Quote))} FROM {Quote(table)} ORDER BY {string.Join(',', storedColumns.Select(Quote))};";
             using SqliteDataReader reader = command.ExecuteReader();
             var rows = new List<object?[]>();
             while (reader.Read()) {
@@ -296,6 +448,12 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
         return result;
     }
     private static string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"") + "\"";
+    private static void Execute(string path, string sql) {
+        using SqliteConnection connection = Connect(path, SqliteOpenMode.ReadWrite);
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
     private static long Scalar(string path, string sql) {
         using SqliteConnection connection = Connect(path, SqliteOpenMode.ReadOnly);
         using SqliteCommand command = connection.CreateCommand();
@@ -313,8 +471,11 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
     private sealed class InspectOnlyTransport : IGalateaDurableDelegateTransport {
         internal List<GalateaInspectDelegateDispatchRequest> Requests { get; } = [];
         internal int StartCalls { get; private set; }
-        public Task<GalateaDelegateBindingEstablished> EnsureBindingAsync(GalateaEnsureDelegateBindingRequest request, CancellationToken ct) =>
+        internal int EnsureCalls { get; private set; }
+        public Task<GalateaDelegateBindingEstablished> EnsureBindingAsync(GalateaEnsureDelegateBindingRequest request, CancellationToken ct) {
+            EnsureCalls++;
             throw new InvalidOperationException("Existing binding must survive upgrade.");
+        }
         public Task<GalateaDelegateTurnAccepted> StartTurnAsync(GalateaStartDelegateTurnRequest request, CancellationToken ct) {
             StartCalls++;
             throw new InvalidOperationException("An existing dispatch must never restart.");
@@ -330,5 +491,7 @@ public sealed class GalateaDelegationSqliteStoreMigrationTests {
     private sealed class MigrationClock : TimeProvider {
         internal DateTimeOffset Now { get; set; } = DateTimeOffset.UnixEpoch.AddDays(10);
         public override DateTimeOffset GetUtcNow() => Now;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => Now.Ticks;
     }
 }
