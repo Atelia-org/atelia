@@ -1635,7 +1635,9 @@ public sealed class CharacterNoteRuntimeTests {
         GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
         GalateaRouteBindingSnapshot binding = store.BeginThreadBinding(
             "runtime-test-binding",
-            snapshot.Route.Revision
+            snapshot.Route.Revision,
+            Assert.Single(captured.DispatchIds),
+            snapshot.Mails.Single(value => value.DispatchId == captured.DispatchIds[0]).Revision
         );
         _ = store.CompleteThreadBinding(
             binding.BindingOperationId!,

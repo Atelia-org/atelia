@@ -1109,7 +1109,9 @@ public sealed class GalateaDurableReplyLeaseTests {
                 GalateaRouteBindingSnapshot binding =
                     Store.BeginThreadBinding(
                         "binding-operation",
-                        snapshot.Route.Revision
+                        snapshot.Route.Revision,
+                        Assert.Single(captured.DispatchIds),
+                        snapshot.Mails.Single(value => value.DispatchId == captured.DispatchIds[0]).Revision
                     );
                 _ = Store.CompleteThreadBinding(
                     binding.BindingOperationId!,
