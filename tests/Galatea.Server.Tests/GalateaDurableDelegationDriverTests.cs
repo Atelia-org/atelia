@@ -559,7 +559,9 @@ public sealed class GalateaDurableDelegationDriverTests {
         Assert.Equal(
             quarantine
                 ? GalateaDurableDelegationPulseStep.TerminalFailed
-                : GalateaDurableDelegationPulseStep.Backoff,
+                : code == "ACCEPTED_TURN_NOT_VISIBLE"
+                    ? GalateaDurableDelegationPulseStep.AcceptedTurnNotVisible
+                    : GalateaDurableDelegationPulseStep.Backoff,
             result.Step
         );
     }
@@ -1105,6 +1107,61 @@ public sealed class GalateaDurableDelegationDriverTests {
         Assert.Equal("RESULT_UNCONFIRMED", snapshot.Mails.Single().TerminalCode);
         Assert.Equal(1, transport.StartCallCount);
         Assert.Equal(1, transport.InspectCallCount);
+    }
+
+    [Fact]
+    public async Task BindingConfigurationFailure_InboxFullPersistsSettlementWithoutAnotherEnsure() {
+        using var fixture = new DriverStore(bodies: ["first", "second"], maximumInboxReplies: 1);
+        GalateaDelegationStateSnapshot initial = fixture.Store.ReadSnapshot();
+        GalateaOutboundMailSnapshot first = initial.Mails[0];
+        _ = fixture.Store.FinishMailLocally(first.DispatchId, first.Revision,
+            initial.Route.Revision, "INVALID_CONFIG", resetBinding: true);
+        await using var transport = new ScriptedTransport();
+        transport.EnsureSteps.Enqueue((_, _) => Task.FromException<GalateaDelegateBindingEstablished>(
+            new GalateaDurableDelegateTransportException("ensure-binding", "INVALID_CONFIG")));
+        GalateaDurableDelegationDriver driver = fixture.Driver(transport);
+        Assert.Equal(GalateaDurableDelegationPulseStep.BindingClaimed, (await driver.PulseAsync()).Step);
+        Assert.Equal(GalateaDurableDelegationPulseStep.InboxBackpressure, (await driver.PulseAsync()).Step);
+        GalateaOutboundMailSnapshot second = fixture.Store.ReadSnapshot().Mails[1];
+        Assert.Equal(8, second.RecoveryFailureCount);
+        Assert.Equal("INVALID_CONFIG", second.RecoveryLastCode);
+        fixture.Reopen();
+        driver = fixture.Driver(transport);
+        Assert.Equal(GalateaDurableDelegationPulseStep.InboxBackpressure, (await driver.PulseAsync()).Step);
+        Assert.Equal(1, transport.EnsureCallCount);
+        Assert.Equal(0, transport.StartCallCount);
+        Assert.Single(fixture.Store.ReadSnapshot().Notices);
+    }
+
+    [Fact]
+    public async Task RecoveryBudget_SurvivesBindingRequeueRebindingAndAcceptance() {
+        using var fixture = new DriverStore();
+        var clock = new ManualTimeProvider();
+        await using var transport = new ScriptedTransport();
+        transport.EnsureSteps.Enqueue((_, _) => Task.FromException<GalateaDelegateBindingEstablished>(new IOException("offline")));
+        transport.EnsureSteps.Enqueue((request, _) => Task.FromResult(new GalateaDelegateBindingEstablished(request.BindingOperationId, "thread-1")));
+        transport.EnsureSteps.Enqueue((request, _) => Task.FromResult(new GalateaDelegateBindingEstablished(request.BindingOperationId, "thread-2")));
+        transport.StartSteps.Enqueue((_, _) => Task.FromException<GalateaDelegateTurnAccepted>(
+            new GalateaDurableDelegateTransportException("start-turn", "THREAD_NOT_FOUND", GalateaDelegateDispatchState.NotDispatched)));
+        transport.StartSteps.Enqueue(Accept("turn-1"));
+        transport.InspectSteps.Enqueue((_, _) => Task.FromException<GalateaDelegateDispatchInspection>(new IOException("offline")));
+        GalateaDurableDelegationDriver driver = fixture.Driver(transport, clock);
+        _ = await driver.PulseAsync(); // claim
+        _ = await driver.PulseAsync(); // binding miss
+        Assert.Equal(1, fixture.Store.ReadSnapshot().Mails.Single().RecoveryFailureCount);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        _ = await driver.PulseAsync(); // binding succeeds
+        Assert.Equal(1, fixture.Store.ReadSnapshot().Mails.Single().RecoveryFailureCount);
+        Assert.Equal(GalateaDurableDelegationPulseStep.MailRequeued, (await driver.PulseAsync()).Step);
+        Assert.Equal(2, fixture.Store.ReadSnapshot().Mails.Single().RecoveryFailureCount);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        _ = await driver.PulseAsync(); // rebind claim
+        _ = await driver.PulseAsync(); // rebind succeeds
+        Assert.Equal(GalateaDurableDelegationPulseStep.MailAccepted, (await driver.PulseAsync()).Step);
+        Assert.Equal(2, fixture.Store.ReadSnapshot().Mails.Single().RecoveryFailureCount);
+        _ = await driver.PulseAsync(); // inspect miss
+        Assert.Equal(3, fixture.Store.ReadSnapshot().Mails.Single().RecoveryFailureCount);
+        Assert.Equal(2, transport.StartCallCount);
     }
 
     [Theory]

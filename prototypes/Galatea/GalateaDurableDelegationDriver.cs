@@ -173,12 +173,13 @@ internal sealed class GalateaDurableDelegationDriver {
             }
         }
 
+        if (queued.RecoveryFailureCount >= GalateaDelegationDurableContract.MaximumRecoveryFailures) {
+            return FinishLocally(snapshot, queued,
+                queued.RecoveryLastCode ?? "NOT_DISPATCHED_RETRIES_EXHAUSTED");
+        }
         if (!RetryIsDue(queued, now)) {
             return new(GalateaDurableDelegationPulseStep.Backoff,
                 queued.DispatchId, route.ThreadId, Code: queued.RecoveryLastCode);
-        }
-        if (queued.RecoveryFailureCount >= GalateaDelegationDurableContract.MaximumRecoveryFailures) {
-            return FinishLocally(snapshot, queued, "NOT_DISPATCHED_RETRIES_EXHAUSTED");
         }
         return route.State switch {
             GalateaDelegationRouteState.Unbound => BeginBinding(
@@ -1010,7 +1011,13 @@ internal sealed class GalateaDurableDelegationDriver {
         string code,
         GalateaDelegateInspectionSource? source = null,
         string? stage = null
-    ) => FinishLocally(_store.ReadSnapshot(), mail, code);
+    ) {
+        DebugUtil.Warning(LogCategory,
+            $"Durable delegate result rejected: user={Safe(snapshot.Owner.UserId)}, "
+            + $"dispatchId={mail.DispatchId}, stage={stage ?? FailureStage}, code={code}, "
+            + $"source={InspectionSourceText(source)}.");
+        return FinishLocally(_store.ReadSnapshot(), mail, code);
+    }
 
     private GalateaDurableDelegationPulseResult FinishLocally(
         GalateaDelegationStateSnapshot snapshot,
