@@ -1,5 +1,8 @@
 # Goal prompt: Galatea Codex delegation local resilience
 
+> 历史已完成阶段的 prompt。2026-09-14 的下一阶段实施请阅读
+> [自动恢复重构方案](codex-delegation-recovery-refactor-plan.md)，不要重新运行下方旧 Goal。
+
 Paste the following as one Codex Goal request:
 
 ```text

@@ -8,6 +8,10 @@
 >
 > Intended consumer: a fresh Codex Goal implementation agent
 
+> 后继方案（2026-09-14，尚未实施）：[委派自动恢复重构](codex-delegation-recovery-refactor-plan.md)。
+> 用户已选择有限恢复后告知角色并继续队列；后续实施从新方案进入。
+> 本文的禁止换线程、无限只读对账等约束仅记录旧阶段，不作为新阶段需求。
+
 ## 1. Authority and evidence
 
 ### 1.1 User-approved decisions
