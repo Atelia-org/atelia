@@ -1,12 +1,12 @@
 # atelia-storage 拆仓验收证据
 
-2026-09-13；阶段状态见[实施计划](atelia-storage-extraction-plan.md)。日志、冻结二进制与隔离候选在仓库外 `E:/repos/Atelia-org/.storage-extraction/`，以下路径以该目录为根。机器重启前中断的命令不算成功。
+2026-09-13；P0–P4 本地证据与 P5 公开证据分开记录，最终公开版本为 `0.1.1-preview.2`。阶段状态见[实施计划](atelia-storage-extraction-plan.md)。日志、冻结二进制与隔离候选在仓库外 `E:/repos/Atelia-org/.storage-extraction/`，以下路径以该目录为根。机器重启前中断的命令不算成功。
 
 ## 固定输入与交付边界
 
 - 原 atelia：`6242f3bb6b631079d2513288ca54d823f630802f`；原 durable-graph：`4f74ee5662b54b68916bcd9d9759a708e802666b`。启动时均干净。
 - 新仓：`E:/repos/Atelia-org/atelia-storage`，Git 历史过滤保留 259 个相关提交；过滤后 HEAD `8c43265b4d52a3f61d30dc3e7d6ac3c736ac8726`。清单、来源及 commit-map 保存在新仓 `docs/extraction-*`。
-- 当前固定存储提交：`09d979941d2c671a1e7a8ffabfa6e2b340e00f69`，五个包统一版本 **`0.1.1-dev.20260913.4`**。程序集版本仍为 `1.0.0.0`，80 个 runtime C# 文件保持原基准字节。
+- 本地阶段固定存储提交：`09d979941d2c671a1e7a8ffabfa6e2b340e00f69`，五个包统一版本 **`0.1.1-dev.20260913.4`**。程序集版本仍为 `1.0.0.0`，80 个 runtime C# 文件保持原基准字节。
 - 新仓包含五库、五组测试、两个 benchmark 项目、独立 solution、MIT 许可证、包与验证脚本、公开 API 示例、GitHub CI 和手动发布 workflow。不包含原仓两个 Style analyzer 项目。
 - Windows 上三个约 1 TiB 的 RBF 边界测试使用 sparse file 准备数据；只改测试准备，不改存储运行时逻辑。已删除本次旧测试遗留的一个确认过的 1 TiB 临时文件，证据 `removed-test-artifact.txt`。
 - 两个消费者已从 `atelia-candidate`、`dg-candidate` 的完整二进制 diff 与新增文件哈希清单集成回原工作树；保留主线程的计划与旧数据 harness。Atelia 实际迁出 16 个目录、172 个受版本管理文件，并移除 12 个 solution 项目；旧 bin/obj 已移到实验根 `migrated-build-residue/`，不留重复源码。
@@ -67,4 +67,26 @@ P4 干净 Windows 物化复验通过，详见实验根 `fresh-validation-4.md` �
 Atelia 已安装的 pre-commit hook 另对同一个架构测试文件执行四轮格式化并收敛，随后恢复原 `.editorconfig`。最终文件与干净候选的 6159 个 C# token kind/value 逐项相同，Roslyn `NormalizeWhitespace` 输出字节也完全相同，记录在 `hook-format-equivalence.json`；最终文件 SHA256 为 `6236b150c268488ff35a5db4939182982f4638936f0bf04658db3c3d327e02a7`。这项格式化不冒充初始快照字节。
 格式化后的最终文件重新编译，WalkingSkeleton **27/27** 通过（`atelia-post-commit-walking.log`）。
 
-没有创建 GitHub 远端、push 或发布 NuGet 包。现有 Git credential 的只读核实表明 Robird 对相关仓和 Atelia-org 有管理权限；用户仍需确定新仓可见性与 nuget.org 包账号。准备好的 workflow 使用 Trusted Publishing，用户无需在对话中提供 token。公开源可取得与远端 Source Link 必须在 P5 实测。
+P0–P4 收尾时尚未创建 GitHub 远端、push 或发布 NuGet 包。现有 Git credential 的只读核实表明 Robird 对相关仓和 Atelia-org 有管理权限；用户仍需确定新仓可见性与 nuget.org 包账号。准备好的 workflow 使用 Trusted Publishing，用户无需在对话中提供 token。公开源可取得与远端 Source Link 必须在 P5 实测。
+
+## P5：公开发布与默认消费验收
+
+最终公开版本 **0.1.1-preview.2**，源码 **976aa345f923da09e2a5cf1dc25ba592b3818b63**，tag `v0.1.1-preview.2`。Trusted Publishing 策略 `atelia-storage-publish` 的组织 owner 为 Atelia，GitHub environment 为 nuget，登录用户为 Robird；[发布 workflow](https://github.com/Atelia-org/atelia-storage/actions/runs/34761840379) 的测试、OIDC 登录和五包/符号上传均成功。首次 preview.1 留作首次上传记录，因包内 README 仍是本地阶段说明而另发修正文档的 preview.2，没有覆盖既有版本。
+
+公开入口：[Atelia.EventJournal](https://www.nuget.org/packages/Atelia.EventJournal/0.1.1-preview.2)；引用它即可还原其余四个存储依赖。五包 Owners 均且仅为 Atelia。
+
+| 检查 | 公开版本结果与实验根证据 |
+| --- | --- |
+| 下载/身份/签名 | 五个实际 nupkg；ID、版本、repository commit、MIT/XML/README/LICENSE 和 `dotnet nuget verify --all` 均通过，`public-release-verification/0.1.1-preview.2/` |
+| 独立公开消费 | 唯一 source 为 nuget.org、独立目录/缓存、仅一个 EventJournal PackageReference，真实读写/关闭/只读重开通过；`public-smoke.log` |
+| 真实公开符号与源码 | 五个 symbol-server PDB 的 GUID/协议 checksum 匹配公开 DLL；PDB Source Link 指向的 80 个远端源码全部下载并匹配 checksum |
+| 两仓默认构建 | 两个完整 Release Rebuild 通过，0 warning/error；全新私有 NuGet/HTTP cache，实际 assets 仅有 nuget.org source，五包 cache hash 匹配公开下载 receipt；`public-consumer-results.jsonl`、`public-{atelia,durable-graph}-assets.json` |
+| 重点回归 | DG Storage 202/202、Atelia WalkingSkeleton 27/27 通过；本阶段没有重跑存在既有平台失败的 Atelia 全套测试 |
+| DG 真实包回归 | EventHistory 与 recovery 均通过，`public-dg-{eventhistory,recovery}.log`；五个公开 S 包和四个本地产出的 G 包版本独立 |
+| 旧数据 | 冻结旧 writer、DG 和模型不变，仅换五个公开存储包；冷读/续写/冷读通过，18 个旧完整 frame 不变；`public-cold-witness.log`，attempt `94b9fcf8704e4cb89a2425be97b2ff97` |
+
+两个消费仓默认 nuget.config 只使用 nuget.org，普通构建不调用 Prepare。更新后的 Prepare 仅下载公开五包并生成 schema 2 receipt；两仓首次下载与后续 DG probes 中的缓存复用均已实际通过。旧 schema 1 本地产物不作为公开下载证据；脚本只检查签名条目存在，完整信任链验证已由上面的 NuGet CLI 实测另行完成。源码联调和唯一版本开发包入口仍保留。
+
+**重建字节差异边界**：GitHub 编译宿主 CLR 为 10.0.12，本地为 10.0.5，SDK 都是 10.0.201。公开包的五个 DLL 与本地未签名候选不同，不能用 NuGet 签名解释；1345 个方法体、方法/程序集声明相同，差异仅在 MVID、COFF timestamp、CodeView GUID/stamp 和 PDB checksum，归零这些字段后的 DLL 字节完全相同。PDB 文档及生成文件 checksum 相同，仅归一编译 runtime-version 后其余 Custom Debug Information 相同。公开签名包是最终交付，不能宣称仅固定 SDK 就足以跨 CLR patch 重建相同字节。完整数据在 `public-release-verification/REPORT.md`、`pe-comparison.json`、`pdb-comparison.json`。
+
+P0–P4 的测试计数、原 Atelia 平台失败与长测限制保持原记录，不借 P5 公开包通过改写历史结果。本阶段没有改变五库运行时源码、持久化格式或 DG 的产品源码。

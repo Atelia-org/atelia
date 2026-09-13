@@ -82,7 +82,7 @@ Copilot可以理解成一种职业，这并不与LLM会话的底层模型切换�
 
 五个存储基础项目的拆仓范围、分阶段任务、自动化入口与资源准备见 [atelia-storage 实施计划](docs/plans/atelia-storage-extraction-plan.md)。涉及该迁移时从此计划继续；文档状态与实际实施证据应区分。
 
-存储库日常开发入口见 [存储库依赖](docs/storage-dependency.md)：先准备固定版本的包，源码联调显式设置 `UseStorageSources` 和 `StorageSourceRoot`。版本与源码身份以 `eng/StorageDependency.props` 为准。
+存储库日常开发入口见 [存储库依赖](docs/storage-dependency.md)：普通 build/test 直接从 nuget.org restore，无须 Prepare；源码联调显式设置 `UseStorageSources` 和 `StorageSourceRoot`。本地开发包使用唯一版本和显式自定义 NuGet 配置。版本与源码身份以 `eng/StorageDependency.props` 为准。
 
 ---
 

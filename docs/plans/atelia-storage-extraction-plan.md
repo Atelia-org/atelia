@@ -1,6 +1,6 @@
 # atelia-storage 分阶段拆仓实施计划
 
-> 状态：2026-09-13 P0–P4 本地迁移已验收并形成三仓提交；P5 已确认公开远端、CI 和 GitHub 发布设置，待用户创建 NuGet Trusted Publishing 策略。用户已授权 subagents、Git、本地文件和必要网络操作。
+> 状态：2026-09-13 P0–P5 已实施并验收；五库公开发布为 `0.1.1-preview.2`，两消费仓默认从 nuget.org 还原。本文保留迁移阶段与历史证据；日常使用请读各仓依赖指南。
 > 实施基准：atelia `6242f3bb6b631079d2513288ca54d823f630802f`，durable-graph `4f74ee5662b54b68916bcd9d9759a708e802666b`，启动时两仓干净。
 > 本文件是迁移任务的唯一实施计划；以下工作清单须结合阶段状态判断，不能把计划命令当作已执行证据。实验日志和冻结包位于仓库外 `../.storage-extraction/`。
 > 精简裁决与证据边界见 [审视记录](atelia-storage-extraction-review.md)；续工只需先读本计划。
@@ -66,13 +66,13 @@ P0 必须将此清单核实成精确文件列表。强制链接验收限于根�
 
 ### 3.2 包准备与源码联调
 
-本地阶段的消费入口应能从固定的新仓 commit 准备五个包到仓库内忽略的 feed，再执行普通 PackageReference restore/build。CI 用同一流程。禁止默认从任意兄弟工作目录的当前 HEAD 打包。
+P0–P4 的本地引导阶段使用固定源码 commit 准备五个包；当时的 Prepare 克隆指定 commit 并调用上游 Pack，该行为与证据保留在对应历史提交中。
 
-每个消费仓用一个薄 `eng/Prepare-Storage.ps1` 读取本仓 pin、取得并校验固定源码 revision，再调用新仓唯一的 `eng/Pack.ps1`。五库项目清单和 pack 算法只归新仓所有，不能复制到两个 Prepare 或 DG 各个 probe。DG probes 复用本仓一个小的准备函数，再取得五个 S 包与自己的 G 包组成完整 feed；不另建跨仓通用依赖管理工具。
+P5 公开发布后，日常构建直接通过 nuget.org 的明确版本 PackageReference restore，不需要 Prepare 或存储源码检出。两仓根 NuGet.Config 只配置 nuget.org，并清空继承的 source mapping。
 
-迁移期间本地仓尚未发布时，可把明确的本地仓路径作为源码取得位置覆盖，依然校验指定 commit。P4 定义的未提交候选物化规则适用于 P2–P4：先把精确候选打成独立版本的包，再显式指定该版本/feed，以正常 PackageReference 图测试消费方。这是验收准备，不成为第三种日常依赖模式。
+当前 `eng/Prepare-Storage.ps1` 仅为独立包 probes 下载公开五个 nupkg：核验版本、repository commit/URL、签名条目存在和下载哈希，生成 schema 2 的公开来源 receipt；完整签名信任验证由 NuGet restore 与发布验收负责。它不再 clone 或重打存储包，不将历史 schema 1 未签名产物复用为公开包。DG probes 继续组成五个 S 加四个本地 G 的完整 feed，保留 `S != G`。
 
-若 Pack/构建文件尚未提交，P3 不要求从旧提取 commit 运行不存在的 Pack；此时报告“候选包通过”。固定 commit 的 Prepare 端到端验收在 P4 存储仓提交后补跑，此前不能报告“固定来源取得通过”。这样既不漏掉未提交候选，也不形成 P3 等待 P4 的循环。
+本地开发包仍由新仓唯一的 Pack 生成唯一 S_dev，通过显式自定义 NuGet.Config 和 StoragePackageVersion 覆盖选择；正常根配置保持公开来源。以该次 Pack manifest.sourceRevision 定位开发源码。不重建同一个公开版本来代替已发布的签名包。
 
 源码联调约定：`UseStorageSources=true` + `StorageSourceRoot=<absolute-path>`。默认 false；不能依据 `Exists(../atelia-storage)` 自动切换。显式请求源码而路径缺失时应清晰报错，不能静默退回包。需要的五库依赖在一个最终构建图中必须一致，不同时引入两份身份相同的程序集。切换模式时重新 restore，避免复用另一模式的 assets。
 
@@ -97,7 +97,7 @@ P0 必须将此清单核实成精确文件列表。强制链接验收限于根�
 | P2 | 五包与独立公开 API 示例 | 已通过；最终 `.4` 五包及独立 smoke、80 源校验和通过，三处环境 10 包哈希完全一致 |
 | P3 | 两消费仓、双模式与跨版本旧数据验证 | 已完成并集成；最终 `.4` 双模式、负向检查、真实包 probes、旧数据 witness 通过；Atelia 既有失败单列 |
 | P4 | 干净候选复验与本地交付 | 已完成；两仓干净物化、固定来源 Prepare、私有缓存、构建/重点测试与独立 review 通过，本地提交交付 |
-| P5 | 远端发布及正式获取验证 | 两仓已公开 push，Storage CI 通过，GitHub environment/变量就绪；预发布候选已验证，尚未上传 NuGet |
+| P5 | 远端发布及正式获取验证 | 已通过；五个签名公开包、真实 PDB 与 80 源文件、两仓独立缓存及旧数据验证全部通过 |
 
 实施入口与已执行证据见 [验收记录](atelia-storage-extraction-validation.md)。重启前未完成的验证不算成功；本轮按项目串行复验。新仓 RBF 的三个约 1 TiB 边界测试改用 Windows 稀疏测试文件，运行时代码不变。
 
@@ -178,13 +178,13 @@ P0 必须将此清单核实成精确文件列表。强制链接验收限于根�
 
 P4 完成即构成本地迁移可验收结果，nuget.org 账号和远端操作不应阻塞 P0–P4 的本地准备。
 
-**当前交接**：用户已将 atelia `721897c6` 和 atelia-storage `09d9799` push 到公开远端；[Storage CI](https://github.com/Atelia-org/atelia-storage/actions/runs/34760578290) 通过。GitHub 已创建 `nuget` environment，并设置 repository variable `NUGET_USER=Robird`。NuGet 个人账号为 `Robird`，组织为 `Atelia`；不创建长期 API Key。
+**实施结果**：用户创建的 `atelia-storage-publish` 策略已生效，Package owner 为 `Atelia`，GitHub repo 为 `Atelia-org/atelia-storage`，workflow 为 `publish.yml`，environment 为 `nuget`；repository variable `NUGET_USER=Robird`。没有建立长期 API Key。
 
-用户在 nuget.org 的 Trusted Publishing 页面创建策略：Package owner 选择 `Atelia`，Repository owner 填 `Atelia-org`，Repository 填 `atelia-storage`，Workflow file 填 `publish.yml`（只有文件名），Environment 填 `nuget`；允许发布新包和新版本，包名 glob 为 `Atelia.*`。workflow 的登录用户名仍为个人账号 `Robird`，不改成组织名。
+首次 `.1` 上传成功后，独立审阅发现包内 README 仍含本地阶段说明。因此仅修文档、发布新版本 `.2`，不覆盖 `.1`。最终版本 **`0.1.1-preview.2`** 对应源码 **`976aa345f923da09e2a5cf1dc25ba592b3818b63`**，固定 tag `v0.1.1-preview.2`；[发布 workflow](https://github.com/Atelia-org/atelia-storage/actions/runs/34761840379) 完成测试、OIDC 登录以及五包和符号上传。
 
-首次发布候选定为 `0.1.1-preview.1`，源码仍为 `09d979941d2c671a1e7a8ffabfa6e2b340e00f69`。实验根 `release-preview-1/` 已保存本地候选五包/符号及 manifest，独立 smoke 和 80 源校验通过；`remote-source-verification.json` 另证实固定 commit 的 80 个 runtime 源可从 GitHub 下载且字节匹配。尚未运行发布 workflow，不把这些本地产物当作已经上传的公开包。
+五包 Owners 均为 Atelia，公开下载和签名验证通过；从真实 NuGet symbol-server PDB 提取的 Source Link 实际下载 80 个源码并匹配 checksum。两原仓从全新私有缓存、唯一 nuget.org source 完整构建通过，DG Storage 202 项、Atelia WalkingSkeleton 27 项通过；公开包 EventHistory/recovery probes 和冻结旧存档的 18 个旧完整帧验证再次通过。详见[验收记录](atelia-storage-extraction-validation.md)新增的 P5 部分。
 
-策略建好后的顺序：从 `main` 手动触发现有 `publish.yml`，输入上述版本；等待五包可索引后，用全新缓存下载公开包并核验公开 API、来源和 Source Link；再调整两消费仓的版本与 NuGet source mapping，使正常构建从 nuget.org 取得五库。NuGet 仓库签名可能改变 nupkg 容器字节，公开下载的哈希应单独记录，不能冒充本地未签名包哈希。DG 本地迁移提交 `f80da5e` 尚未 push，随最终消费配置同步。当前远端 DG 仍是 `4f74ee5`。
+复现边界：相同 SDK 仍可能使用不同编译宿主 CLR patch。本地 10.0.5 与 GitHub 10.0.12 导致 DLL/PDB 构建与调试身份不同，1345 个方法体及其他 DLL 内容相同。公开包是最终交付依据；不把 NuGet 容器签名当作 DLL 变化原因，也不声称仅固定 SDK 即保证任意机器重建字节一致。
 
 1. Agent 核实五个 PackageId 的可用性，用户确定 `Atelia-org/atelia-storage` 的归属/可见性与包账号所有权。若包名已被无权限主体占用，停止该发布并报告具体冲突，不擅自修改本计划保留的 PackageId；本地工作可继续。
 2. Agent 准备 GitHub 仓库/CI 和发布配置的可审阅结果，发布 workflow 调用同一 Pack/验证入口。包按依赖顺序上传；五包都能在独立缓存恢复后，消费者才切到公开版本。
@@ -236,10 +236,10 @@ P4 完成即构成本地迁移可验收结果，nuget.org 账号和远端操作�
 | 固定 SDK | 新仓 `global.json` 固定 10.0.201；WSL 的 SDK 安装在任务专属目录，未修改系统 PATH | 换机器时安装此 SDK；升级 SDK 时随源码提交产生新包版本 |
 | 真实存档 | 冻结旧包生成的真实业务样本，最终新包冷读/续写/冷读通过 | 无需提供私人业务目录 |
 | GitHub | 两仓已公开 push，Storage CI 通过；`nuget` environment 与 `NUGET_USER=Robird` 已配置 | 当前无需额外操作 |
-| nuget.org | 用户已创建个人账号 Robird 和组织 Atelia；发布 workflow 已准备 | 按 P5 当前交接创建 Trusted Publishing 策略；不通过对话交付 token |
-| 正式发布 | workflow 调用同一个 Pack 与 smoke，按依赖顺序上传 | P5 确认账号/包所有权及发布范围后再执行；发布后验证远端 Source Link 与全新缓存还原 |
+| nuget.org | Robird / Atelia 的 Trusted Publishing 已生效，五包已公开发布 | 当前无需额外操作 |
+| 正式发布 | `.2` 已完成公开包、符号、Source Link 和两仓消费验证 | 后续发布使用新版本并复用手动 workflow |
 
-本地首次 Prepare 可明确指定 `-SourceRepository E:/repos/Atelia-org/atelia-storage`，仍按固定 commit 取得源码。公开端点尚未可用时，不把本地 Prepare 成功写成远端取得成功。
+当前普通构建直接从 nuget.org 还原；Prepare 只用于下载公开五包组成实验 feed。历史本地 SourceRepository 覆盖属于 P0–P4 的旧脚本，不再作为当前参数。
 
 ## 7. 核验资料
 

@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Development Commands
 
-Storage libraries are maintained in atelia-storage and consumed as pinned packages. Before the first build, run `pwsh ./eng/Prepare-Storage.ps1`; see [storage dependency setup](docs/storage-dependency.md) for local acquisition, source development, and documentation at the pinned commit.
+Storage libraries are maintained in atelia-storage and consumed as pinned packages. Normal build/test restores them directly from nuget.org; no Prepare step or sibling source checkout is required. See [storage dependency setup](docs/storage-dependency.md) for explicit source development, unique local dev packages with a dedicated NuGet.Config, and documentation at the commit pinned in `eng/StorageDependency.props`.
 
 ### Core Commands
 ```bash
