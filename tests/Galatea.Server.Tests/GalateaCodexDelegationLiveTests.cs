@@ -16,7 +16,7 @@ public sealed class GalateaCodexDelegationLiveFactAttribute : FactAttribute {
                 Environment.GetEnvironmentVariable(RunGate),
                 "1",
                 StringComparison.Ordinal)) {
-            Skip = $"Set {RunGate}=1 to run the real Codex V4 canary.";
+            Skip = $"Set {RunGate}=1 to run the real Codex V5 canary.";
         }
     }
 }
@@ -30,7 +30,7 @@ public sealed class GalateaCodexDelegationLiveTests {
         TimeSpan.FromSeconds(15);
 
     [GalateaCodexDelegationLiveFact]
-    public async Task DurableV4_EnsureStartInspectCompletesInCleanRepo() {
+    public async Task DurableV5_EnsureStartInspectCompletesInCleanRepo() {
         if (!string.Equals(
                 Environment.GetEnvironmentVariable(
                     GalateaCodexDelegationLiveFactAttribute.RunGate
@@ -104,7 +104,7 @@ public sealed class GalateaCodexDelegationLiveTests {
             );
             RequireIdentifier(binding.ThreadId, "thread");
 
-            string token = "GALATEA_V4_CANARY_"
+            string token = "GALATEA_V5_CANARY_"
                 + Guid.NewGuid().ToString("N");
             const string dispatchId =
                 "galatea-live-canary-dispatch-v4";
@@ -293,7 +293,7 @@ public sealed class GalateaCodexDelegationLiveTests {
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) {
             throw new TimeoutException(
-                "The real Codex V4 canary exceeded its bounded deadline."
+                "The real Codex V5 canary exceeded its bounded deadline."
             );
         }
     }

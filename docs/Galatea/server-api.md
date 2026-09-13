@@ -146,6 +146,8 @@ console.log(retry);
 
 state 为 `no-mail|queued|active-running|backoff|accepted-history-unavailable|ready-reply|quarantined|unavailable`。它只读 supervisor 已持有的 delegation store：不调用 `GetSessionAsync`、不 attach session、不 signal pulse，也不触发 extractor、transport 或 provider；不会返回正文或 message/dispatch/thread/turn identity。它在单个 SQLite read transaction 中聚合状态，响应带 `Cache-Control: no-store`。
 
+`attemptCount` 表示当前邮件的连续恢复失败次数，绑定、启动前失败和结果检查共用上限 8；不是模型调用次数。backoff/accepted-history-unavailable 表示有限恢复；耗尽后生成正常失败回信并继续队列。`nextRetryAtUnixTimeMilliseconds` 是显示与重开调度提示，不承诺绝对墙钟执行时间。结果不明的失败回信不表示旧工作已经停止。JSON 字段不变。
+
 First-party browser 的读取是有条件串联，而不是三个接口无条件固定轮询：
 
 - mailbox status 使用独立 single-in-flight、递归 `setTimeout` 的约 5 秒 poller；它只观察，不驱动 server 的 10 秒 automatic pulse。

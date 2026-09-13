@@ -1,10 +1,10 @@
 # Galatea Codex 委派自动恢复重构方案
 
-> 状态：方案已完成三方独立审查与交叉质询，可用于下一轮实施；尚未实施。
+> 状态：WP0–WP4 已实施、审阅并通过本地 Debug/Release 验证；真实实例部署与 live canary 尚未执行。
 >
 > 日期：2026-09-14。实施入口：本文；不重新执行旧 `GOAL-codex-delegation-local-resilience.md`。
 >
-> 本轮只编写方案。下一轮依据最终决策实施；不得把文中状态和测试目标当成已实现事实。
+> 设计轮完成后，用户已明确授权带领 subagents 实施并按需提交；不重新执行旧 GOAL。历史分析与验收矩阵仍保留。
 
 ## 0. 压缩后的接续摘要
 
@@ -36,9 +36,9 @@
 - `7ab556d6`：Galatea route manifest 接受普通 JSON 空白和字段顺序；Hosting 29 pass、Galatea config 51 pass。用户确认可运行。
 - 本次委派故障没有要求回退这些修复，也不应重新改它们。
 
-### 1.3 接续时必须保留的未提交修复
+### 1.3 实施前保留的首轮修复
 
-当前 HEAD `7ab556d6`。以下文件有本会话已完成、未提交的首轮启动修复：
+设计时 HEAD 为 `7ab556d6`。以下首轮启动修复现已归并提交 `e913e4c6`：
 
 - `local-codex-mcp/src/codex/backend.ts`：`freshGalateaBindings` 记录本 generation 新建空线程；首次 start 直接发 turn/start；资格使用一次，进程退出/stop 清除。
 - `local-codex-mcp/tests/fixtures/fake-app-server.ts`：模拟空线程 resume 缺少 rollout。
@@ -158,7 +158,7 @@ SQLite integrity / FK、限定行差异及生产 `OpenExistingReadOnly` 严格�
 
 ### 6.1 自定义 sidecar wire
 
-当前 wire V4 → 建议 V5，同步 C#/TS strict parser；不升级固定 Codex 二进制或原生 schema。只给 start failure 增加 `dispatchState: not-dispatched | may-have-dispatched`；保留现有 requestId/dispatchId/threadId 关联。普通协议错误或响应缺失默认不明，不能仅看 error code 猜未执行。
+实施采用 wire V5（原 V4），同步 C#/TS strict parser；不升级固定 Codex 二进制或原生 schema。只给 start failure 增加 `dispatchState: not-dispatched | may-have-dispatched`；保留现有 requestId/dispatchId/threadId 关联。普通协议错误或响应缺失默认不明，不能仅看 error code 猜未执行。
 
 C# 的 dispatch tombstone 继续按 dispatchId。将 claim 的获取/归还做成受控的一次所有权操作：
 
@@ -244,7 +244,7 @@ inbox 满时必须保留失败结果/待结算状态，不丢信；优先利用 
 
 ### 8.1 格式
 
-预计 delegation SQLite V2 → V3；复用/重命名 reconcile_attempt_count 为通用恢复计数、统一 next_retry_at，删除或迁移 route.ensure_* 的第二套预算字段，扩展 TerminalFailed 的合法形状。延续已有 `UpgradeExisting` 备份、事务、严格重开流程；不新增运行时双版本状态机。wire V5 与数据库迁移须作为同一部署包验证。
+实施采用 delegation SQLite V3，并提供 V1/V2 离线升级；复用/重命名 reconcile_attempt_count 为通用恢复计数、统一 next_retry_at，删除或迁移 route.ensure_* 的第二套预算字段，扩展 TerminalFailed 的合法形状。延续已有 `UpgradeExisting` 备份、事务、严格重开流程；不新增运行时双版本状态机。wire V5 与数据库迁移须作为同一部署包验证。
 
 建议旧值映射：
 
@@ -323,13 +323,13 @@ V2 的 operation_id 等于 dispatch_id，这个旧值本身仍是合法尝试标
 
 ```bash
 cd /repos/focus/atelia/local-codex-mcp
-unset CODEX_BRIDGE_RUN_LIVE CODEX_BRIDGE_RUN_GALATEA_HOME_LIVE ATELIA_RUN_GALATEA_CODEX_DELEGATION_LIVE
+unset CODEX_BRIDGE_RUN_LIVE CODEX_BRIDGE_RUN_GALATEA_HOME_LIVE ATELIA_RUN_GALATEA_CODEX_DELEGATION_LIVE ATELIA_RUN_GALATEA_NOTE_LIVE ATELIA_RUN_GALATEA_LAB_LIVE
 npm run check
 npm test
 cd /repos/focus/atelia
 dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'FullyQualifiedName~GalateaDurable|FullyQualifiedName~GalateaDelegation'
-dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'Category!=Live'
-dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj -c Release --no-restore -m:1 -nr:false --filter 'Category!=Live'
+dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj --no-restore -m:1 -nr:false --filter 'Category!=Live&Category!=GalateaNoteLive&Category!=GalateaLabLive'
+dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj -c Release --no-restore -m:1 -nr:false --filter 'Category!=Live&Category!=GalateaNoteLive&Category!=GalateaLabLive'
 python3 scripts/check_session_journal_docs.py
 git diff --check
 ```
@@ -378,7 +378,7 @@ git diff --check
 
 概念减少（相对本文初稿，可直接数）：不新增 attempt 表；去掉 start_attempt 与 recovery_started_at 两个候选字段；去掉新增 UUID operationId 及对应 wire 字段；取消恢复提示消费状态、停止协议与 retired-requestId 缓存提案。保留一个任务恢复计数和两个具名存储操作，不演变为通用工作流框架。
 
-## 11. 下一轮实施提示
+## 11. 原实施提示（历史入口）
 
 以本文最终版和本轮用户答复为目标，先验证现有状态再改代码。不要运行旧 GOAL 文本，也不要恢复其中的“无限只读检查”约束。不要将 RecapGrid/hash 清理、主模型 retry、全面 Codex 升级或通用任务编排系统混入。
 
@@ -387,3 +387,22 @@ git diff --check
 可直接作为下一轮开场任务：
 
 > 请按 `docs/Galatea/codex-delegation-recovery-refactor-plan.md` 最终方案实施。先核查并保留首轮启动的四个未提交文件，沿 WP0–WP4 完成代码、迁移测试、文档和本地验证。用户已明确选择：可能执行但有限恢复仍不明时，告知角色、结束旧任务、继续队列，不自动重发。复用 dispatchId/requestId/revision；不新增 attempt 表或 UUID，不引入总时长持久字段。重点验证 claim 所有权、迟到结果不隔离新 route、普通超时不杀共享进程、时钟回拨不无限退避、唯一失败回信和后续任务推进。不要执行旧 GOAL；不要混入 hash/RecapGrid 重构，不调用真实 provider，不改写私有 live 状态。以实际工具结果报告完成范围，说明尚需单独执行的部署验证。
+
+
+## 12. 实施记录（2026-09-14）
+
+本轮采用 `two-layer-refactor-driving`：协议、Store、Driver 与跨层测试分包；独立 reviewer 检查跨包边界，发现直接压回本包修复。真实 provider 与用户状态不在本次本地验证内。
+
+具体设计收口：
+
+- 不扩张 inspection wire：历史仍可返回 `running/source=persistent`；Driver 消耗恢复预算。只有 live Running 才清零。
+- 本地终结保留已发生的恢复失败次数与最后诊断码，清除 retry 时间；普通远端 terminal 保持原有清理规则。notice 的 terminal code 是最终结果说明。
+- SQLite V1/V2 仅由离线 upgrader 处理：先验证旧格式，在内存副本执行同一迁移并严格验证预期 V3，再备份源库、事务迁移与严格重开。运行时只有 V3 一条路径。
+- 回信、active slot 和路由释放仍同事务；没有新增 attempt 表、operation UUID、总时长字段或额外恢复账本。
+
+主要提交：`e913e4c6` 首轮空线程；`5d822063` 批准方案；`c5f5ad42` Node V5/阶段证明/总截止；`29563546` C# transport；`d2037b36` / `c124ba1e` Driver；`2ce1cbbc` SQLite V3/恢复事务；`ba9ae8de` 迁移测试；`6af424b0` / `e79551a7` 跨层与事务测试；`fc9b1b93` 消除回信测试的后台写入竞态。前端和取消检查另有小幅提交。最终集成验证见[验证记录](codex-delegation-verification.md)。
+
+
+完成结论：WP0 首轮修复已保留；WP1 V5 发送证明与 claim 已贯穿；WP2 统一预算、有限恢复和本地终结已实施；WP3 V1/V2 迁移及两封邮件闭环已验证；WP4 runtime/API/sidecar/升级说明已同步。Debug 与 Release 各 971 pass / 1 live skip，Node 116 pass / 2 live skip，浏览器 17 pass，Store/migration 定向 82 pass，文档 31 files / 0 diagnostics。
+
+最终 code review 无未决 finding。部署剩余事项仅为明确停服窗口后的真实库离线升级与按需 live 验证；本次未操作真实用户库、未重发真实任务、未启动真实 provider。已确认的产品边界继续见 §6.4 与 §10.4。

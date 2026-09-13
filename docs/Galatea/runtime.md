@@ -95,13 +95,19 @@ selector 最多返回 8 个 ordered ID；runtime 以 Title eligibility、`Charac
 
 outbound extractor 从可见 Action 产出有序 `SendMailIntent`（Recipient、可选 Subject、Body、可选 `InReplyToMessageId` 与 `EvidenceQuote`）。runtime 只校验结构、UTF-8 边界和格式；谁实际发送、actor ownership、正文和引用的语义由 extractor LLM 的保守 prompt 判断。当前唯一可路由 recipient 是大小写精确的 `Codex`，其他邮件 durable terminal 为 `Unrouted`，不会启动 sidecar。`EvidenceQuote` 是 provenance，不是 runtime authority；sidecar task 精确等于已验证的 Body，route capability 只来自 code-owned route。
 
-delegation 采用 SQLite-backed durable owner。transport 是 strict bounded JSONL V4：`ensure-binding`、`start-turn`、`inspect-dispatch` 分别对应 binding、接受 turn 与 `not-found|unavailable|running|completed|failed|ambiguous` inspection；inspection 标示 `source=live|persistent`。`ensure-binding` 只建立并核验固定 owned thread，不能携带邮件正文或开始 turn。`Accepted` inspection 必须带 durable exact `turnId`；`OutcomeUnknown` 只能传 null，按 dispatch 发现。wire、thread ownership、环境清洗、工具能力和 durable law 的完整约束见 [delegation durability design](codex-delegation-durability-design.md) 与 [当前重构状态](codex-delegation-refactor-status.md)。
+delegation 采用 SQLite-backed durable owner。transport 是 strict bounded JSONL V5：`ensure-binding`、`start-turn`、`inspect-dispatch` 分别对应 binding、接受 turn 与 `not-found|unavailable|running|completed|failed|ambiguous` inspection；inspection 标示 `source=live|persistent`。`ensure-binding` 只建立并核验固定 owned thread，不能携带邮件正文或开始 turn。`Accepted` inspection 必须带 durable exact `turnId`；`OutcomeUnknown` 只能传 null，按 dispatch 发现。wire、thread ownership、环境清洗、工具能力和 durable law 的完整约束见 [delegation durability design](codex-delegation-durability-design.md) 与 [当前重构状态](codex-delegation-refactor-status.md)。
 
-`Queued -> Started`、冻结 operation/thread 和占用 active dispatch 在一个 SQLite transaction 中完成，commit 后才允许 `start-turn`。timeout、cancel、EOF、process death、协议丢失及冷启动遗留 Started 都转成 `OutcomeUnknown`，绝不回到 Queued 或重发 task；只能以持久的指数退避 read-only inspect 结算。exact terminal 在同一事务写 `Reply`/`DeliveryFailure` notice 并释放 route；身份、body 或多重匹配冲突使 route/mail quarantine。running evidence、官方分页历史与 generation-local live observation 只帮助正常 driver 做 terminal CAS，均不是第二份 durable authority。
+`Queued -> Started`、冻结 operation/thread 和占用 active dispatch 在一个 SQLite transaction 中完成，commit 后才允许 `start-turn`。启动失败带受控 `dispatchState`：只有本次持有 claim 且确证未调用 `turn/start` 时，才可重排队；失效线程随之解除绑定。发出后丢回应、进程崩溃或冷启动遗留 Started 均按 `OutcomeUnknown` 检查，不自动重发原任务。重复请求拒绝不能作为未发送证明。
 
-每个 user 的 `homeDir` 是代行者执行新任务的工作目录。共享 sidecar/app-server 的进程目录为 `/`；`ensure-binding` 和 `start-turn` 逐请求传 `cwd`，后者通过原 thread 的 resume 与显式 turn override 使用当前 home。`inspect-dispatch` 不带 CWD，也不要求历史目录仍存在或属于当前 allowedRoots。delegation SQLite V2 删除 route policy fingerprint；改 home、mode 或工具配置不会因此拒绝旧库。先恢复旧 active/unknown，再在原 thread 派发下一封 Queued，保留 Ready/Leased 回信和 frozen 主线请求。初次 V1 格式升级与本地部署见 [user home 设计](user-home-design.md)。
+绑定、发送前失败和结果检查共用邮件上的 `recovery_failure_count`，最多连续失败 8 次，指数退避最多 60 秒。成功绑定或 Accepted 不清零；仅同 generation 的精确 live Running 且当前 metadata active 才清零。历史 `inProgress` 只表示旧状态，不能无限延长恢复。inspection 总截止 45 秒；单请求超时不关闭其他用户共享的 sidecar。retry 时间在每个持久 revision 首次观察时映射到单调时钟，重启最多重新等待 60 秒，不重置失败次数。
 
-关闭时 nonterminal dispatch 保持 active，下一次只做 read-only reconciliation，不会重发 `start-turn`。C# client 在 start frame 可能写出时登记有限 tombstone，拒绝同一 dispatch 的跨 generation 重发；严格 UTF-8 framing、correlation、大小和 child reap 任一失守均 fail closed。未来可移除 Node hop，但直接 C# stdio 实现必须等价保留 framing/bounds、RPC correlation、ownership、环境清洗、outcome-unknown fencing 和 kill/reap；不能改变 SQLite driver 与 durable reply lease 的产品合同。
+耗尽后，同一 SQLite 事务终结本地等待、写入唯一 DeliveryFailure notice 并释放 active slot。`RESULT_UNCONFIRMED` 明确告诉角色结果未确认、旧工作可能仍在运行；`NOT_DISPATCHED_RETRIES_EXHAUSTED` 表示确认未发送。下一封邮件可以创建新线程继续；本地 terminal 不被迟到结果覆盖，该旧任务也不能隔离新任务的 route；普通远端矛盾证据仍按原规则处理。inbox 满时保留状态并等待容量，不继续外部调用。数据库/本地状态损坏仍需人工检查。完整决策与边界见[有限恢复方案](codex-delegation-recovery-refactor-plan.md)。
+
+每个 user 的 `homeDir` 是代行者执行新任务的工作目录。共享 sidecar/app-server 的进程目录为 `/`；`ensure-binding` 和 `start-turn` 逐请求传 `cwd`，已使用的 thread 通过 resume 与显式 turn override 使用当前 home；同 generation 新建空线程的首轮直接 start，避免缺 rollout 的 resume 错误。`inspect-dispatch` 不带 CWD，也不要求历史目录仍存在或属于当前 allowedRoots。delegation SQLite V3 统一任务恢复计数，移除 route 的 ensure 预算；V2 已删除 route policy fingerprint。改 home 或 Codex 配置不会因此拒绝旧库。健康时保留同用户线程；失效或结果不明终结后解除绑定。Ready/Leased 回信和 frozen 主线请求继续保留。现有库必须停服后显式离线升级；操作见[恢复与升级说明](codex-delegation-operator-recovery.md)。
+
+关闭时 nonterminal dispatch 保持持久状态；重启后继续有限恢复。C# client 按 dispatch 持有 start claim；只有匹配当前 Pending/requestId 的受控未发送回执能一次释放，迟到或重复帧无权释放后续调用的 claim。格式合法但没有 Pending 的迟到响应只记录诊断；真正的 framing、correlation、ownership 或 child reap 故障仍走进程故障处理。SQLite 和 reply lease 仍是持久任务与回信的唯一所有者。
+
+本地不明终结不等于远端中止。后续任务可能与旧工作同时访问同一 homeDir；FIFO 在此指本地提交顺序。角色应根据失败回信核查当前文件状态。本阶段没有自动 interrupt、重跑原任务或重建 Codex 全部上下文。
 
 ### Capture、reply lease 与 Undo
 
@@ -148,6 +154,6 @@ admission失败保留`AUTOMATIC_ADMISSION_FAILED`及nullable `{code,error}`细�
 3. **`ToolContinuation`**：先 bind frozen tool profile/operation，再以无工具的 current completion 继续；tool settlement 后才打开 Online readiness。
 4. **`ToolResult` 后的 `NewRequest`**：不绑定 current tool profile，保留 ToolResult raw tail；只有它和 fresh request 创建 per-turn Online context。
 
-当前 root strict config language 为 V9，connections 是 Completion-owned V3 catalog，delegate route 是 owner-defined V3，profile 是 owner-defined V1。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
+当前 root strict config language 为 V9，connections 是 Completion-owned V3 catalog，delegate route 是 owner-defined V4，profile 是 owner-defined V1。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
 
 Fresh/NewRequest 生命周期在合法 raw boundary 执行 Timeline reconcile/seal，必要时 Manager build，随后 Getter 给出 coherent candidate。empty Timeline 或 no-active recipe 使用 `raw-only`：不打开 Store，也不调用 recap provider。恢复路径不能借“补齐当前上下文”为由绕过 frozen identity。

@@ -1,5 +1,8 @@
 # Galatea Codex 代行闭环重构状态
 
+> 2026-09-14 后继实施见[有限恢复方案](codex-delegation-recovery-refactor-plan.md)与[验证记录](codex-delegation-verification.md)。当前 wire V5、SQLite V3；下文的 Complete 和测试数量只属于历史阶段。
+
+
 > 状态：**Complete**
 >
 > 完成日期：2026-08-28

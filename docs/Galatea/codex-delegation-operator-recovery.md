@@ -4,17 +4,34 @@
 > performed merely by having the command available; each `--apply` remains a
 > separate operator-authorized action after backup and dry-run.
 
-This runbook is the separate, operator-authorized gate for a durable Galatea mail
-whose Codex turn cannot be reconciled through the supported app-server history
-APIs. Normal runtime behavior is defined by
-[`codex-delegation-durability-design.md`](codex-delegation-durability-design.md).
-The runtime never reads Codex rollout JSONL or private SQLite state.
+普通 Codex 进程崩溃、线程缺失或历史检查失败由运行时自动有限恢复。当前 wire V5 / SQLite V3 的规则见[运行时](runtime.md)与[恢复方案](codex-delegation-recovery-refactor-plan.md)。运行时不读取 Codex 私有 SQLite 或 rollout JSONL。
 
-## Preconditions
+## 识别当前状态
 
-Do not begin merely because an `Accepted` turn is temporarily invisible. The
-runtime keeps that mail active and retries with durable backoff. Recovery requires
-separate explicit authority for the exact user, dispatch, and intended action.
+- `backoff` / `accepted-history-unavailable`：连续恢复失败尚未达到 8 次；等待正常调度即可。这里的次数不是模型调用次数。
+- 回信含 `RESULT_UNCONFIRMED`：本地等待已结束，旧工作可能仍执行或已经留下部分改动；角色应核查工作目录。后续邮件可继续，不自动重发原任务。
+- 回信含 `NOT_DISPATCHED_RETRIES_EXHAUSTED`：已确认未发送，但有限恢复未成功；修正环境后可由角色重新委派。
+- `quarantined` / 无法打开数据库：检查受限错误码、所有者、格式、锁和备份；不要把删除数据库作为恢复步骤。
+
+inbox 容量被占满时需正常消费已有回信；后台保留待结算邮件，不通过丢信绕过容量。重启保留失败计数，不能用反复重启重置预算。
+
+## SQLite V3 离线升级
+
+代码升级后，已有 V1/V2 store 必须显式升级；普通启动不会自动改写旧库。先停服并确认 writer lock 已释放，然后执行：
+
+```bash
+dotnet run --project prototypes/Galatea/Galatea.Server.csproj -- \
+  operator upgrade-delegation-store \
+  --config /absolute/path/to/config.json --user exact-user
+```
+
+默认 dry-run。确认目标、备份位置和诊断后，在明确的部署窗口用相同命令追加 `--apply`。命令持有原生命周期锁，先备份，再事务迁移并严格重开；重复执行当前格式返回 `AlreadyCurrent`。保持原 baseline/frontier、capture、邮件 ID、terminal 和 notice/lease 事实；旧 Started/Unknown 不凭空获得未发送证明。同步部署 C# 和重新构建的 Node V5 sidecar，不能混用旧 wire。
+
+本次代码与模拟测试不等于真实用户库已迁移，也不等于 live provider 验证。首次恢复后检查失败回信是否正常消费、下一任务是否推进；保留升级备份。
+
+## 可选的人工完成证据恢复
+
+以下命令只用于仍未结算、且有明确完成证据的旧 Accepted 任务。已经本地不明终结的邮件不覆盖成成功；首个持久终结生效。不要仅因短暂历史不可见启动人工操作。人工取证/写入需要限定到具体用户和任务；不由普通自动恢复隐式触发。
 
 Before any write:
 
@@ -41,8 +58,7 @@ Choose one recovery action explicitly; do not combine them implicitly:
   task identity, terminal status, and bounded final/failure evidence agree.
 - **Quarantine:** when identity or terminal evidence conflicts and automatic
   settlement would be unsafe.
-- **Rebind/abandon:** changes fixed-thread continuity and requires its own design
-  and authorization. It is not a fallback for history invisibility.
+- **Manual state replacement:** remains separate from the bounded runtime recovery path; this completed-evidence command does not perform it.
 
 For **Apply proven terminal evidence**, use the Galatea-owned offline command:
 
