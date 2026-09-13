@@ -1,4 +1,6 @@
+using System.Text;
 using Atelia.Galatea.Server.CharacterMemory;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
@@ -119,14 +121,58 @@ public sealed partial class CharacterMemorySqliteStoreTests {
         Assert.Equal(pending, fixture.Store.ReadPendingReceiptDelivery());
     }
 
-    [Fact]
-    public void ReceiptDelivery_StrictOpenRejectsTamperedPayload() {
+    [Theory]
+    [InlineData("blank")]
+    [InlineData("oversized")]
+    [InlineData("invalid-utf8")]
+    [InlineData("capture-revision")]
+    public void ReceiptDelivery_StrictOpenRejectsInvalidPayloadOrCaptureRelation(string variant) {
         using var fixture = new ReadyStore();
         _ = fixture.Store.SettleApplied(PrepareReceiptBatch(fixture, Address(97)));
         fixture.DisposeStore();
         ExecuteSql(System.IO.Path.Combine(fixture.DirectoryPath, CharacterMemorySqliteStore.DatabaseFileName),
-            "UPDATE note_receipt_delivery SET notice_body = 'fabricated saved note';");
+            variant switch {
+                "blank" => "UPDATE note_receipt_delivery SET notice_body = '   ';",
+                "oversized" => "UPDATE note_receipt_delivery SET notice_body = hex(zeroblob(262145));",
+                "invalid-utf8" => "UPDATE note_receipt_delivery SET notice_body = CAST(X'80' AS TEXT);",
+                _ => "UPDATE note_receipt_delivery SET created_revision = created_revision - 1;",
+            });
         Assert.Throws<InvalidDataException>(() => CharacterMemorySqliteStore.OpenExisting(fixture.DirectoryPath, fixture.Owner));
+    }
+
+    [Theory]
+    [InlineData("Pending")]
+    [InlineData("ObservationBound")]
+    [InlineData("Delivered")]
+    public void ReceiptDelivery_OldWordingColdReopensWithoutChangingPayloadOrRevisions(
+        string stateName) {
+        CharacterNoteReceiptDeliveryState state = Enum.Parse<CharacterNoteReceiptDeliveryState>(stateName);
+        using var fixture = new ReadyStore();
+        _ = fixture.Store.SettleApplied(PrepareReceiptBatch(fixture, Address(101)));
+        CharacterNoteReceiptDeliverySnapshot receipt = fixture.Store.ReadPendingReceiptDelivery()!;
+        if (state != CharacterNoteReceiptDeliveryState.Pending) {
+            receipt = fixture.Store.BindReceiptDelivery(receipt.SourceActionAddress,
+                receipt.StateRevision, Address(102), RenderReceiptObservation(receipt));
+        }
+        if (state == CharacterNoteReceiptDeliveryState.Delivered) {
+            receipt = fixture.Store.CompleteReceiptDelivery(receipt.SourceActionAddress,
+                receipt.StateRevision, Address(103));
+        }
+        CharacterMemoryStatusSnapshot status = fixture.Store.ReadStatusSnapshot();
+        string oldBody = HistoricalNoteReceiptFixture.OldWording(receipt.NoticeBody);
+        CharacterNoteReceiptDeliverySnapshot historical = receipt with {
+            NoticeBody = oldBody,
+            RenderedObservation = state == CharacterNoteReceiptDeliveryState.ObservationBound
+                ? RenderReceiptObservation(receipt with { NoticeBody = oldBody }) : null,
+        };
+        fixture.DisposeStore();
+        HistoricalNoteReceiptFixture.WriteFrozenNotice(fixture.DirectoryPath, historical);
+        using CharacterMemorySqliteStore reopened = CharacterMemorySqliteStore.OpenExisting(
+            fixture.DirectoryPath, fixture.Owner);
+        CharacterNoteReceiptDeliverySnapshot actual = reopened.ReadReceiptDeliveryExact(receipt.SourceActionAddress)!;
+        Assert.Equal(historical, actual);
+        Assert.Equal(Encoding.UTF8.GetBytes(oldBody), Encoding.UTF8.GetBytes(actual.NoticeBody));
+        Assert.Equal(status, reopened.ReadStatusSnapshot());
     }
 
     [Fact]
@@ -169,6 +215,35 @@ public sealed partial class CharacterMemorySqliteStoreTests {
         PlayerTurnObservationEnvelope.Wrap(new PlayerTurnObservation("next", notices: [
             new PlayerTurnNotice.NoteSaveReceipt(receipt.NoticeBody),
         ]));
+}
+
+// Synthetic legacy payload only. Production does not recognize renderer versions.
+internal static class HistoricalNoteReceiptFixture {
+    internal static string OldWording(string current) {
+        const string currentPrefix = "Galatea runtime 已将以下 1 条 Note 内容成功保存到默认MemoPod。\n\n"
+            + "本回执只证明以下Note内容已保存；不承诺分类、metadata补全或召回。\n\n已保存的 Note 内容：";
+        const string oldPrefix = "Galatea runtime 已将以下 1 条 Note 原文成功保存到默认MemoPod。\n\n"
+            + "本回执只证明以下原文已保存；不承诺分类、metadata补全或召回。\n\n已保存的 Note 原文：";
+        Assert.StartsWith(currentPrefix, current, StringComparison.Ordinal);
+        return oldPrefix + current[currentPrefix.Length..];
+    }
+
+    internal static void WriteFrozenNotice(string directory, CharacterNoteReceiptDeliverySnapshot historical) {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder {
+            DataSource = System.IO.Path.Combine(directory, CharacterMemorySqliteStore.DatabaseFileName),
+            Mode = SqliteOpenMode.ReadWrite, Pooling = false,
+        }.ToString());
+        connection.Open();
+        using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE note_receipt_delivery SET notice_body = $body, rendered_observation = $observation
+            WHERE source_action_address = $source;
+            """;
+        command.Parameters.AddWithValue("$body", historical.NoticeBody);
+        command.Parameters.AddWithValue("$observation", (object?)historical.RenderedObservation ?? DBNull.Value);
+        command.Parameters.AddWithValue("$source", historical.SourceActionAddress);
+        Assert.Equal(1, command.ExecuteNonQuery());
+    }
 }
 
 public sealed partial class CharacterMemorySqliteStoreTestsV2 {

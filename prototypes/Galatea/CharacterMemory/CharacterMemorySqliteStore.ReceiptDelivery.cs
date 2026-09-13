@@ -76,7 +76,7 @@ internal sealed partial class CharacterMemorySqliteStore {
         using SqliteCommand command = connection.CreateCommand();
         if (transaction is not null) { command.Transaction = transaction; }
         command.CommandText = """
-            SELECT source_action_address, state, notice_body, created_revision,
+            SELECT source_action_address, state, CAST(notice_body AS BLOB), created_revision,
                    state_revision, expected_session_head, rendered_observation,
                    observation_address
             FROM note_receipt_delivery WHERE
@@ -91,13 +91,30 @@ internal sealed partial class CharacterMemorySqliteStore {
             _ => throw Corrupt("Unknown Character Note receipt delivery state."),
         };
         var result = new CharacterNoteReceiptDeliverySnapshot(
-            reader.GetString(0), state, reader.GetString(2), reader.GetInt64(3),
+            reader.GetString(0), state, ReadFrozenReceiptBody(reader, 2), reader.GetInt64(3),
             reader.GetInt64(4), reader.IsDBNull(5) ? null : reader.GetString(5),
             reader.IsDBNull(6) ? null : reader.GetString(6),
             reader.IsDBNull(7) ? null : reader.GetString(7)
         );
         if (reader.Read()) { throw Corrupt("Multiple Character Note receipt delivery rows matched."); }
         return result;
+    }
+
+    private static string ReadFrozenReceiptBody(SqliteDataReader reader, int ordinal) {
+        // Decode the original SQLite TEXT bytes strictly; GetString would
+        // replace malformed UTF-8 before the payload contract could reject it.
+        byte[] bytes = reader.GetFieldValue<byte[]>(ordinal);
+        if (bytes.Length > PlayerTurnObservationEnvelope.MaximumNoteSaveReceiptUtf8Bytes) {
+            throw Corrupt("Frozen receipt body exceeds its UTF-8 budget.");
+        }
+        try {
+            string body = StrictUtf8.GetString(bytes);
+            _ = new PlayerTurnNotice.NoteSaveReceipt(body);
+            return body;
+        }
+        catch (ArgumentException) {
+            throw Corrupt("Frozen receipt body must be nonblank valid UTF-8 text.");
+        }
     }
 
     internal CharacterNoteReceiptDeliverySnapshot BindReceiptDelivery(
@@ -243,13 +260,8 @@ internal sealed partial class CharacterMemorySqliteStore {
                 || row.StateRevision > storeRevision) {
                 throw Corrupt("Receipt delivery does not match its durable Applied capture.");
             }
-            CharacterNoteAppliedMemo[] memos = capture.Notes.Select(note => new CharacterNoteAppliedMemo(
-                source, note.ArtifactOrdinal, CharacterNoteDefaultPodV1.PodId,
-                MemoId.Parse(note.MemoId!), note.ExactText)).ToArray();
-            if (!string.Equals(CharacterNoteSaveReceipt.CreateDurable(memos).Notice.Body,
-                    row.NoticeBody, StringComparison.Ordinal)) {
-                throw Corrupt("Receipt payload does not match its durable Applied capture.");
-            }
+            // NoticeBody is frozen in the Applied transaction. Later renderer
+            // wording changes must not invalidate or rewrite that saved notice.
             if (row.ExpectedSessionHead is { } head) { RequireEventAddress(head, nameof(head)); }
             if (row.ObservationAddress is { } address) { RequireEventAddress(address, nameof(address)); }
             if (row.RenderedObservation is { } observation

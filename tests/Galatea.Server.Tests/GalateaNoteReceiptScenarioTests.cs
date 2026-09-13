@@ -1,3 +1,4 @@
+using System.Net;
 using Atelia.Galatea.Server.CharacterMemory;
 using Atelia.SessionJournal;
 using Xunit;
@@ -7,8 +8,10 @@ namespace Atelia.Galatea.Server.Tests;
 
 [Trait("Category", "GalateaLab")]
 public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
-    [Fact]
-    public async Task HostedNoteReceiptAcrossColdReopensSavesOnceAndDeliversOnceWithoutPlayer() {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HostedNoteReceiptAcrossColdReopensSavesOnceAndDeliversOnceWithoutPlayer(bool historicalWording) {
         var clock = new GalateaLabClock();
         var firstFactory = new GalateaNoteReceiptFixture.Factory(epoch: 1);
         await using var lab = GalateaScenarioLab.Create("hosted-note-receipt", firstFactory,
@@ -27,7 +30,14 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
         Assert.Equal(pending.Receipt.CreatedRevision, pending.Receipt.StateRevision);
         Assert.Equal(1, firstFactory.SaveIntents);
         Assert.Equal(1, firstFactory.DerivedCalls);
+        string memoryDirectory = first.Session.User.CharacterMemoryStateDir;
         await lab.StopAsync();
+        if (historicalWording) {
+            pending = pending with { Receipt = pending.Receipt with {
+                NoticeBody = HistoricalNoteReceiptFixture.OldWording(pending.Receipt.NoticeBody),
+            } };
+            HistoricalNoteReceiptFixture.WriteFrozenNotice(memoryDirectory, pending.Receipt);
+        }
 
         // Missed downtime ticks are not replayed. A new host gets a fresh full
         // cadence interval, using freshly constructed external dependencies.
@@ -63,6 +73,14 @@ public sealed class GalateaNoteReceiptScenarioTests(ITestOutputHelper output) {
         await lab.ReopenAsync(thirdFactory);
         var third = await GalateaNoteReceiptFixture.StartEpochAsync(lab, clock, thirdFactory);
         Assert.Equal(delivered.Receipt, (await GalateaNoteReceiptFixture.ReadStateAsync(third)).Receipt);
+        // The real Host must attach a ledger containing a Delivered legacy
+        // receipt before the browser can read its current turn.
+        using (HttpClient http = lab.Host.CreateClient()) {
+            using HttpResponseMessage login = await GalateaTestHost.LoginAsync(http);
+            Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
+            using HttpResponseMessage currentResponse = await http.GetAsync("/api/v1/chat/turns/current");
+            Assert.Equal(HttpStatusCode.OK, currentResponse.StatusCode);
+        }
         await GalateaNoteReceiptFixture.AdvanceHeartbeatAsync(third);
         var final = await GalateaNoteReceiptFixture.ReadStateAsync(third);
         Assert.Equal(3, final.Turns.Count);

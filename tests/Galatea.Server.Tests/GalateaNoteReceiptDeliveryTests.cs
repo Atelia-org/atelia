@@ -39,9 +39,18 @@ public sealed class GalateaNoteReceiptDeliveryTests {
         Assert.Equal(CharacterNoteReceiptDeliveryState.Delivered, fixture.Exact.State);
     }
 
-    [Fact]
-    public async Task AppendedObservationBeforeLedgerAck_ColdReopenDeliversInProgressExactlyOnce() {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AppendedObservationBeforeLedgerAck_ColdReopenDeliversInProgressExactlyOnce(bool historicalWording) {
         using var fixture = await Fixture.CreateAsync();
+        if (historicalWording) {
+            CharacterNoteReceiptDeliverySnapshot historical = fixture.Pending with {
+                NoticeBody = HistoricalNoteReceiptFixture.OldWording(fixture.Pending.NoticeBody),
+            };
+            await fixture.ColdReopenAsync(historical);
+            Assert.Equal(historical, fixture.Pending);
+        }
         string rendered = fixture.Bind();
         EventAddress observation = fixture.Engine.AppendObservation(rendered);
         Assert.Equal(CharacterNoteReceiptDeliveryState.ObservationBound, fixture.Exact.State);
@@ -218,9 +227,12 @@ public sealed class GalateaNoteReceiptDeliveryTests {
             return rendered;
         }
 
-        internal async Task ColdReopenAsync() {
+        internal async Task ColdReopenAsync(CharacterNoteReceiptDeliverySnapshot? historical = null) {
             Memory.Dispose();
             Engine.Dispose();
+            if (historical is not null) {
+                HistoricalNoteReceiptFixture.WriteFrozenNotice(MemoryPath, historical);
+            }
             Engine = SessionJournalEngine.Open(SessionPath);
             Memory = await CharacterNoteDefaultPodReconciler.OpenExistingAsync(MemoryPath, Owner, Extractor);
         }
