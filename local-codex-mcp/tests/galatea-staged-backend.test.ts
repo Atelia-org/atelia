@@ -67,6 +67,7 @@ for (const codexConfig of configCases) {
     // The sidecar owns a configuration snapshot; caller mutation cannot change it.
     if (codexConfig && "features" in codexConfig) codexConfig.features = { apps: false };
     const binding = await bind(value);
+    await start(value, binding.threadId, "config-warmup", "[EARLY][NATURAL] warmup");
     await start(value, binding.threadId, "config-mail", "[EARLY][NATURAL] task");
     const requests = await value.client.request<{
       lastThreadStartParams: Record<string, unknown>;
@@ -100,6 +101,26 @@ test("ensureBinding verifies new empty thread metadata without requiring a sourc
     threadId: binding.threadId, dispatchId: "unissued-mail", task: "not sent",
     expectedTurnId: "unavailable-turn", maximumFinalUtf8Bytes: 20_000,
   }), /missing source rollout/);
+});
+
+test("fresh binding starts its first turn without resuming an absent rollout", async (t) => {
+  const value = await harness(t, { fixtureArgs: ["--missing-empty-rollout"] });
+  const binding = await bind(value);
+  const accepted = await start(value, binding.threadId, "first-mail", "[EARLY][NATURAL] first task");
+  const requests = await value.client.request<{ threadResumeCount: number; turnStartCount: number }>("test/lastRequests", {});
+  assert.equal(accepted.threadId, binding.threadId);
+  assert.equal(requests.threadResumeCount, 0);
+  assert.equal(requests.turnStartCount, 1);
+});
+
+test("fresh binding exemption cannot survive an app-server restart", async (t) => {
+  const value = await harness(t, { fixtureArgs: ["--missing-empty-rollout"], persistent: true });
+  const binding = await bind(value);
+  await value.client.stop();
+  await assert.rejects(start(value, binding.threadId, "cold-first-mail", "not sent"), /no rollout found/);
+  const requests = await value.client.request<{ threadResumeCount: number; turnStartCount: number }>("test/lastRequests", {});
+  assert.equal(requests.threadResumeCount, 1);
+  assert.equal(requests.turnStartCount, 0);
 });
 
 test("ensureBinding rejects a nonempty thread/start response before ownership or dispatch", async (t) => {
@@ -399,6 +420,7 @@ for (const ignoreResumeCwd of [false, true]) {
     });
     const binding = await bind(value);
     const oldCwd = path.join(os.tmpdir(), "galatea-removed-old-directory");
+    await start(value, binding.threadId, "home-warmup", "[EARLY][NATURAL] warmup");
     await value.client.request("test/setThreadCwd", { threadId: binding.threadId, cwd: oldCwd });
     const home = path.join(value.root, "new-home");
     await mkdir(home);
@@ -417,7 +439,7 @@ for (const ignoreResumeCwd of [false, true]) {
     assert.equal(requests.lastTurnParams.cwd, home);
     assert.equal(requests.lastTurnParams.sandboxPolicy, undefined);
     assert.equal(requests.threadStartCount, 1);
-    assert.equal(requests.turnStartCount, 1);
+    assert.equal(requests.turnStartCount, 2);
     const metadata = await value.client.request<{ thread: { cwd: string } }>("thread/read", { threadId: binding.threadId, includeTurns: false });
     assert.equal(metadata.thread.cwd, oldCwd);
     const inspected = await value.backend.inspectDispatch({

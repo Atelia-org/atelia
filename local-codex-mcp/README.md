@@ -167,6 +167,10 @@ frame 不接受原生 Codex 配置；这些设置由启动环境的 `GALATEA_COD
 `DISPATCH_ALREADY_ACTIVE` fail closed；跨进程恢复与去重由调用方的 durable outbox/inbox 状态机负责，
 并使用 `inspect-dispatch` 对已落到 app-server 的 exact turn 做 reconciliation。
 Galatea 的新任务验证请求 cwd 后，向同一 thread 的 `thread/resume` 和 `turn/start` 显式传递它，
+但同一 app-server generation 内刚由 `ensure-binding` 创建的空线程，首轮直接 `turn/start`：
+固定版本在首轮之前尚无 rollout，提前 `thread/resume` 会返回 `no rollout found`。
+这项首轮资格只在内存保留、使用一次，进程退出后清除；不能根据历史文件缺失推断任务从未执行，
+也不会自动重发已经标记为 OutcomeUnknown 的旧任务。
 沙盒写入范围由原生 Codex 配置决定。`allowedRoots` 只约束任务 cwd，不代表全盘读写边界。历史 `thread.cwd` 不要求仍存在或位于当前 allowedRoots。
 resume 顶层 cwd 是有效配置，嵌套 `thread.cwd` 可能仍是历史 metadata；已加载 thread 的 resume 可以
 保留旧有效值，随后 turn 的显式 cwd override 才决定新任务的工作目录。

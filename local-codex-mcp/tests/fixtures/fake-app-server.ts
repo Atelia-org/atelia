@@ -553,6 +553,10 @@ lines.on("line", (line) => {
       const thread = threads.get(String(message.params?.threadId));
       if (!thread) send({ id: message.id, error: { code: -32001, message: "Thread not found" } });
       else {
+        if (process.argv.includes("--missing-empty-rollout") && (thread.turns as unknown[]).length === 0) {
+          send({ id: message.id, error: { code: -32600, message: "no rollout found for thread id" } });
+          break;
+        }
         const effectiveCwd = process.argv.includes("--ignore-resume-cwd")
           ? thread.cwd
           : message.params?.cwd ?? thread.cwd;

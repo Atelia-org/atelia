@@ -295,6 +295,7 @@ function nextCursor(
 export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   private authenticated = false;
   private readonly continueReservations = new Set<string>();
+  private readonly freshGalateaBindings = new Map<string, number>();
   private readonly profile: CodexBackendProfile;
   private readonly galateaConfigParams: { config?: Record<string, JsonValue> };
   private readonly liveObservations: LiveTurnObservations;
@@ -314,6 +315,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     this.options.client.subscribe((notification) => {
       if (notification.method === "bridge/processExited") {
         this.authenticated = false;
+        this.freshGalateaBindings.clear();
         this.liveObservations.clear();
       } else {
         this.observeLiveTurnNotification(notification);
@@ -330,6 +332,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   async stop(): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
     this.stopped = true;
+    this.freshGalateaBindings.clear();
     this.authenticated = false;
     this.liveObservations.clear();
     this.stopPromise = this.options.client.stop();
@@ -368,6 +371,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     // A new thread need not have a rollout before its first turn. The pinned
     // app-server cannot paginate that absent history; creation plus metadata
     // ownership verification establishes the empty binding without a model call.
+    this.freshGalateaBindings.set(verified.id, this.options.client.generation);
     return { threadId: verified.id };
   }
 
@@ -389,15 +393,23 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         throw new BridgeError("BRIDGE_BUSY", "This Codex thread already has an active turn.");
       }
 
-      const resumed = await this.options.client.request<ThreadResumeResponse>("thread/resume", {
-        threadId: input.threadId,
-        cwd,
-        ...this.galateaConfigParams,
-        developerInstructions: this.profile.developerInstructions,
-        excludeTurns: true,
-      });
-      this.throwIfStopped();
-      this.validateResumedGalateaThread(resumed, input.threadId);
+      const freshInThisProcess = this.freshGalateaBindings.get(input.threadId)
+        === this.options.client.generation && preflight.status.type === "idle";
+      this.freshGalateaBindings.delete(input.threadId);
+      // thread/start already loaded the fresh thread with this configuration.
+      // Before its first turn there is no rollout for thread/resume to read.
+      // Never infer this exemption from missing files or across process generations.
+      if (!freshInThisProcess) {
+        const resumed = await this.options.client.request<ThreadResumeResponse>("thread/resume", {
+          threadId: input.threadId,
+          cwd,
+          ...this.galateaConfigParams,
+          developerInstructions: this.profile.developerInstructions,
+          excludeTurns: true,
+        });
+        this.throwIfStopped();
+        this.validateResumedGalateaThread(resumed, input.threadId);
+      }
       this.throwIfStopped();
       return await this.startTurnAccepted(
         input.threadId,
