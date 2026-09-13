@@ -100,7 +100,7 @@ internal sealed class RecapGridAgentControlTool {
                 "available",
                 authority.ControlHead,
                 authority.TimelineHead,
-                resultIdentity: null,
+                operationKey: null,
                 headAdvancedSinceApply: false,
                 instanceReplaced: false
             );
@@ -596,7 +596,7 @@ internal sealed class RecapGridAgentControlTool {
         TimelineHeadRef timelineHead
     ) => result switch {
         RecapGridControlOperationResult.Applied value => Success(
-            "applied", value.Head, timelineHead, value.ResultIdentity,
+            "applied", value.Head, timelineHead, value.OperationKey,
             false, false),
         RecapGridControlOperationResult.Replayed value => Success(
             value.InstanceReplaced
@@ -606,7 +606,7 @@ internal sealed class RecapGridAgentControlTool {
                     : "replayed",
             value.CurrentHead,
             timelineHead,
-            value.ResultIdentity,
+            value.OperationKey,
             value.HeadAdvancedSinceApply,
             value.InstanceReplaced
         ),
@@ -647,13 +647,13 @@ internal sealed class RecapGridAgentControlTool {
         string status,
         ControlHeadRef control,
         TimelineHeadRef timeline,
-        string? resultIdentity,
+        string? operationKey,
         bool headAdvancedSinceApply,
         bool instanceReplaced
     ) => Result(
         ToolExecutionStatus.Success,
         new AgentControlResultDto(
-            1,
+            2,
             status,
             null,
             control.InstanceId.Value,
@@ -663,7 +663,7 @@ internal sealed class RecapGridAgentControlTool {
             timeline.TimelineId.Value,
             timeline.Generation,
             timeline.HeadRowId?.Value,
-            resultIdentity,
+            operationKey,
             headAdvancedSinceApply,
             instanceReplaced
         )
@@ -673,7 +673,7 @@ internal sealed class RecapGridAgentControlTool {
         => Result(
             ToolExecutionStatus.Failed,
             new AgentControlResultDto(
-                1,
+                2,
                 code,
                 RecapGridAgentControlFactory.Bound(detail),
                 null,
@@ -734,7 +734,7 @@ internal sealed class RecapGridAgentControlTool {
         string? TimelineId,
         long? TimelineGeneration,
         string? TimelineHeadRowId,
-        string? ResultIdentity,
+        string? OperationKey,
         bool HeadAdvancedSinceApply,
         bool InstanceReplaced
     );

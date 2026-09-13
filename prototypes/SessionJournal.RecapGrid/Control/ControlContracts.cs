@@ -759,14 +759,14 @@ public abstract record RecapGridControlOperationResult {
 
     public sealed record Applied(
         ControlHeadRef Head,
-        string ResultIdentity
+        string OperationKey
     ) : RecapGridControlOperationResult;
 
     public sealed record Replayed(
         ControlHeadRef CurrentHead,
         ControlInstanceId OriginalInstanceId,
         long OriginalGeneration,
-        string ResultIdentity,
+        string OperationKey,
         bool HeadAdvancedSinceApply,
         bool InstanceReplaced
     ) : RecapGridControlOperationResult;

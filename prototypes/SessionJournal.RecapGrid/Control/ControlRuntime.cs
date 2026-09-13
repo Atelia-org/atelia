@@ -764,8 +764,7 @@ public sealed class RecapGridControlCoordinator {
                 state,
                 working,
                 durableOperation,
-                commandDigest,
-                "registration"
+                commandDigest
             );
         }
         catch (Exception exception) when (!ControlError.IsFatal(exception)) {
@@ -867,8 +866,7 @@ public sealed class RecapGridControlCoordinator {
                 state,
                 working,
                 durableOperation,
-                commandDigest,
-                "promotion"
+                commandDigest
             );
         }
         catch (Exception exception) when (!ControlError.IsFatal(exception)) {
@@ -880,20 +878,14 @@ public sealed class RecapGridControlCoordinator {
         ControlState original,
         ControlState semanticState,
         RecapGridControlOperation operation,
-        string commandDigest,
-        string terminalKind
+        string commandDigest
     ) {
         long generation = checked(original.Head.Generation + 1);
-        string resultIdentity = ControlOperationCanonicalizer.ResultIdentity(
-            commandDigest,
-            terminalKind
-        );
         var receipt = new ControlOperationReceipt(
             operation.OperationKey,
             operation.ExecutionSequence,
             operation.RuntimeIdentityDigest,
             commandDigest,
-            resultIdentity,
             original.Head.InstanceId,
             generation
         );
@@ -910,7 +902,7 @@ public sealed class RecapGridControlCoordinator {
             );
             return new RecapGridControlOperationResult.Applied(
                 next.Head,
-                resultIdentity
+                operation.OperationKey
             );
         }
         catch (ControlStatePublishIndeterminateException exception) {
@@ -925,7 +917,7 @@ public sealed class RecapGridControlCoordinator {
                 if (settled is RecapGridControlOperationResult.Replayed replay) {
                     return new RecapGridControlOperationResult.Applied(
                         replay.CurrentHead,
-                        replay.ResultIdentity
+                        replay.OperationKey
                     );
                 }
                 if (settled is RecapGridControlOperationResult.Conflict) {
@@ -973,7 +965,7 @@ public sealed class RecapGridControlCoordinator {
             state.Head,
             receipt.OriginalInstanceId,
             receipt.OriginalGeneration,
-            receipt.ResultIdentity,
+            receipt.OperationKey,
             headAdvancedSinceApply,
             instanceReplaced
         );

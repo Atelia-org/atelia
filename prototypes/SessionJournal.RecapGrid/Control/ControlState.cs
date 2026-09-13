@@ -11,7 +11,7 @@ using Atelia.SessionJournal.HistoryTimeline;
 namespace Atelia.SessionJournal.RecapGrid.Control;
 
 internal sealed class ControlState {
-    internal const int SchemaVersion = 2;
+    internal const int SchemaVersion = 3;
     private readonly SortedDictionary<string, FamilyDefinition> _families;
     private readonly SortedDictionary<string, MaintainerDefinitionRevision>
         _definitions;
@@ -257,9 +257,53 @@ internal sealed class ControlState {
         if (unsupportedSchemaVersion is int version) {
             throw new ControlUnsupportedSchemaException(version);
         }
-        ControlFileDto? dto;
+        ControlFileDto dto = DecodeWire(bytes);
+        if (dto.SchemaVersion is not (2 or SchemaVersion)) {
+            throw new ControlUnsupportedSchemaException(dto.SchemaVersion);
+        }
+        return DecodeGraph(dto, bytes);
+    }
+
+    // Historical shape exists only while validating the original wire value.
+    // The running state keeps the original Head/bytes and one current receipt.
+    private static ControlFileDto DecodeWire(ReadOnlySpan<byte> bytes) {
+        if (bytes.StartsWith("{\"schemaVersion\":2,"u8)) {
+            LegacyControlFileV2Dto legacy = DecodeCanonical<LegacyControlFileV2Dto>(bytes);
+            VerifyDigest(legacy.Head, "atelia.recap-grid.control-state.v2",
+                new LegacyControlBodyV2Dto(
+                    legacy.SchemaVersion, legacy.Head.InstanceId, legacy.Head.RefId,
+                    legacy.Head.TimelineId, legacy.Head.Generation, legacy.Head.ActiveRecipeDigest,
+                    legacy.Families, legacy.Definitions, legacy.Recipes, legacy.OperationReceipts));
+            var receipts = new ControlOperationReceiptDto[legacy.OperationReceipts.Length];
+            for (int index = 0; index < receipts.Length; index++) {
+                LegacyControlOperationReceiptV2Dto entry = legacy.OperationReceipts[index];
+                try {
+                    RecapGridControlOperation.RequireSha256(entry.ResultIdentity, nameof(entry.ResultIdentity));
+                }
+                catch (ArgumentException exception) {
+                    throw new ControlStoreException("ControlOperationReceiptInvalid",
+                        "A legacy receipt contains an invalid derived result value.", exception);
+                }
+                receipts[index] = new ControlOperationReceiptDto(
+                    entry.OperationKey, entry.ExecutionSequence, entry.RuntimeIdentityDigest,
+                    entry.CommandDigest, entry.OriginalInstanceId, entry.OriginalGeneration);
+            }
+            return new ControlFileDto(legacy.SchemaVersion, legacy.Head,
+                legacy.Families, legacy.Definitions, legacy.Recipes, receipts);
+        }
+        ControlFileDto current = DecodeCanonical<ControlFileDto>(bytes);
+        VerifyDigest(current.Head, "atelia.recap-grid.control-state.v3",
+            new ControlBodyDto(
+                current.SchemaVersion, current.Head.InstanceId, current.Head.RefId,
+                current.Head.TimelineId, current.Head.Generation, current.Head.ActiveRecipeDigest,
+                current.Families, current.Definitions, current.Recipes, current.OperationReceipts));
+        return current;
+    }
+
+    private static T DecodeCanonical<T>(ReadOnlySpan<byte> bytes) where T : class {
+        T? dto;
         try {
-            dto = JsonSerializer.Deserialize<ControlFileDto>(
+            dto = JsonSerializer.Deserialize<T>(
                 bytes,
                 ControlJson.Options
             );
@@ -281,9 +325,18 @@ internal sealed class ControlState {
                 "The Control state is not the exact canonical encoding."
             );
         }
-        if (dto.SchemaVersion != SchemaVersion) {
-            throw new ControlUnsupportedSchemaException(dto.SchemaVersion);
+        return dto;
+    }
+
+    private static void VerifyDigest<T>(ControlHeadDto head, string domain, T body) {
+        string digest = Hash(domain, JsonSerializer.SerializeToUtf8Bytes(body, ControlJson.Options));
+        if (!string.Equals(digest, head.StateDigest, StringComparison.Ordinal)) {
+            throw new ControlStoreException("ControlStateDigestMismatch",
+                "The Control head digest differs from its canonical state.");
         }
+    }
+
+    private static ControlState DecodeGraph(ControlFileDto dto, ReadOnlySpan<byte> bytes) {
         RequireSortedUnique(dto.Families.Select(static entry => entry.Digest));
         RequireSortedUnique(dto.Definitions.Select(static entry => entry.Digest));
         RequireSortedUnique(dto.Recipes.Select(static entry => entry.Digest));
@@ -402,27 +455,16 @@ internal sealed class ControlState {
                 "The active recipe is absent from the stored closure."
             );
         }
-        ControlState valueState = Create(
+        var storedHead = new ControlHeadRef(
             new ControlInstanceId(dto.Head.InstanceId),
             new RefId(dto.Head.RefId),
             new TimelineId(dto.Head.TimelineId),
             dto.Head.Generation,
-            active,
-            families,
-            definitions,
-            recipes,
-            receipts
+            new ControlStateDigest(dto.Head.StateDigest),
+            active
         );
-        if (!string.Equals(
-                valueState.Head.StateDigest.Value,
-                dto.Head.StateDigest,
-                StringComparison.Ordinal)) {
-            throw new ControlStoreException(
-                "ControlStateDigestMismatch",
-                "The Control head digest differs from its canonical state."
-            );
-        }
-        return valueState;
+        ValidateGraph(storedHead.RefId, storedHead.TimelineId, active, families, definitions, recipes, receipts);
+        return new ControlState(storedHead, families, definitions, recipes, receipts, bytes.ToArray());
     }
 
     private static int? ReadUnsupportedSchemaVersion(
@@ -439,7 +481,7 @@ internal sealed class ControlState {
                 || !reader.Read()
                 || reader.TokenType != JsonTokenType.Number
                 || !reader.TryGetInt32(out int version)
-                || version == SchemaVersion) {
+                || version is 2 or SchemaVersion) {
                 return null;
             }
 
@@ -512,7 +554,7 @@ internal sealed class ControlState {
             operationReceipts
         );
         ControlStateDigest digest = new(Hash(
-            "atelia.recap-grid.control-state.v2",
+            "atelia.recap-grid.control-state.v3",
             JsonSerializer.SerializeToUtf8Bytes(body, ControlJson.Options)
         ));
         ControlHeadRef head = new(
@@ -757,7 +799,6 @@ internal sealed class ControlState {
                 value.ExecutionSequence,
                 value.RuntimeIdentityDigest,
                 value.CommandDigest,
-                value.ResultIdentity,
                 new ControlInstanceId(value.OriginalInstanceId),
                 value.OriginalGeneration
             );
@@ -790,10 +831,6 @@ internal sealed class ControlState {
                 receipt.CommandDigest,
                 nameof(receipt.CommandDigest)
             );
-            RecapGridControlOperation.RequireSha256(
-                receipt.ResultIdentity,
-                nameof(receipt.ResultIdentity)
-            );
         }
         catch (ArgumentException exception) {
             throw new ControlStoreException(
@@ -821,7 +858,6 @@ internal sealed class ControlState {
         value.ExecutionSequence,
         value.RuntimeIdentityDigest,
         value.CommandDigest,
-        value.ResultIdentity,
         value.OriginalInstanceId.Value,
         value.OriginalGeneration
     );
@@ -929,7 +965,6 @@ internal sealed record ControlOperationReceiptDto(
     long ExecutionSequence,
     string RuntimeIdentityDigest,
     string CommandDigest,
-    string ResultIdentity,
     string OriginalInstanceId,
     long OriginalGeneration
 );
@@ -979,9 +1014,39 @@ internal sealed record ControlOperationReceipt(
     long ExecutionSequence,
     string RuntimeIdentityDigest,
     string CommandDigest,
-    string ResultIdentity,
     ControlInstanceId OriginalInstanceId,
     long OriginalGeneration
+);
+
+// Codec-only v2 wire shapes. Never retained in a running ControlState.
+internal sealed record LegacyControlOperationReceiptV2Dto(
+    string OperationKey,
+    long ExecutionSequence,
+    string RuntimeIdentityDigest,
+    string CommandDigest,
+    string ResultIdentity,
+    string OriginalInstanceId,
+    long OriginalGeneration
+);
+internal sealed record LegacyControlBodyV2Dto(
+    int SchemaVersion,
+    string InstanceId,
+    ulong RefId,
+    string TimelineId,
+    long Generation,
+    string? ActiveRecipeDigest,
+    CanonicalEntryDto[] Families,
+    CanonicalEntryDto[] Definitions,
+    RecipeEntryDto[] Recipes,
+    LegacyControlOperationReceiptV2Dto[] OperationReceipts
+);
+internal sealed record LegacyControlFileV2Dto(
+    int SchemaVersion,
+    ControlHeadDto Head,
+    CanonicalEntryDto[] Families,
+    CanonicalEntryDto[] Definitions,
+    RecipeEntryDto[] Recipes,
+    LegacyControlOperationReceiptV2Dto[] OperationReceipts
 );
 
 internal sealed class ControlStoreException : Exception {

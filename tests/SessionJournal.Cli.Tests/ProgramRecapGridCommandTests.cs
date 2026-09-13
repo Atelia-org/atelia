@@ -20,7 +20,7 @@ using Xunit;
 namespace Atelia.SessionJournal.Cli.Tests;
 
 [Collection(ConsoleSerialCollection.Name)]
-public sealed class ProgramRecapGridCommandTests : IDisposable {
+public sealed partial class ProgramRecapGridCommandTests : IDisposable {
     private static GalateaRecapGridAssetParameters GalateaParameters => new(
         new GalateaCharacterName("Galatea"),
         new GalateaPlayerName("刘世超")

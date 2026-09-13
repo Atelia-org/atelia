@@ -50,6 +50,13 @@ public sealed class AgentControlVerticalTests : IDisposable {
                 applied.ExecuteResult.Status);
             Assert.Contains("\"status\":\"applied\"",
                 applied.ExecuteResult.GetFlattenedText());
+            string operationKey = RecapGridControlOperation.Create(
+                "durable-operation-1",
+                1,
+                RecapGridAgentControlFactory.RuntimeIdentityDigest(
+                    handle.RuntimeIdentity)
+            ).OperationKey;
+            AssertCurrentOutput(applied, operationKey);
 
             ToolCallExecutionResult replay = await handle.ToolSession
                 .ExecuteReservedAsync(
@@ -66,6 +73,7 @@ public sealed class AgentControlVerticalTests : IDisposable {
                 replay.ExecuteResult.Status);
             Assert.Contains("\"status\":\"replayed\"",
                 replay.ExecuteResult.GetFlattenedText());
+            AssertCurrentOutput(replay, operationKey);
 
             Assert.True(RecapGridAgentControlBuiltIns
                 .TryCreateRegistrationBundle(
@@ -91,6 +99,19 @@ public sealed class AgentControlVerticalTests : IDisposable {
                 conflict.ExecuteResult.Status);
             Assert.Contains("operation-conflict",
                 conflict.ExecuteResult.GetFlattenedText());
+            AssertCurrentOutput(conflict, operationKey: null);
+
+            ToolCallExecutionResult inspected = await handle.ToolSession
+                .ExecuteReservedAsync(
+                    new RawToolCall("recap_grid_control", "inspect-call",
+                        "{\"action\":\"inspect\"}"),
+                    2,
+                    "inspect-operation",
+                    TestContext.Current.CancellationToken
+                );
+            Assert.Equal(ToolExecutionStatus.Success,
+                inspected.ExecuteResult.Status);
+            AssertCurrentOutput(inspected, operationKey: null);
 
             using RecapGridControlReaderHandle reader = Assert.IsType<
                 RecapGridControlReaderOpenResult.Opened
@@ -105,6 +126,18 @@ public sealed class AgentControlVerticalTests : IDisposable {
             Assert.Equal(2, snapshot.Definitions.Count);
             Assert.Equal(1, snapshot.Head.Generation);
         }
+    }
+
+    private static void AssertCurrentOutput(
+        ToolCallExecutionResult result,
+        string? operationKey
+    ) {
+        using JsonDocument output = JsonDocument.Parse(
+            result.ExecuteResult.GetFlattenedText());
+        Assert.Equal(2, output.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(operationKey,
+            output.RootElement.GetProperty("operationKey").GetString());
+        Assert.False(output.RootElement.TryGetProperty("resultIdentity", out _));
     }
 
     [Fact]

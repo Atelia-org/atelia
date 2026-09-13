@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <Compile Include="../TestInfrastructure/TestDirectorySafety.cs" Link="TestInfrastructure/TestDirectorySafety.cs" />
+    <None Update="Fixtures/ControlReceiptV2/*.zip" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

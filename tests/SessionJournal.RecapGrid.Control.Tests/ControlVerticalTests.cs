@@ -1454,7 +1454,7 @@ public sealed partial class ControlVerticalTests : IDisposable {
             source.OperationReceipts
         );
         string digest = Hash(
-            "atelia.recap-grid.control-state.v2",
+            "atelia.recap-grid.control-state.v3",
             JsonSerializer.SerializeToUtf8Bytes(body, ControlJson.Options)
         );
         return source with {

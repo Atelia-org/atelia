@@ -59,7 +59,7 @@ public sealed partial class ControlVerticalTests {
             bundle
         ));
         Assert.Equal(applied.Head, replay.CurrentHead);
-        Assert.Equal(applied.ResultIdentity, replay.ResultIdentity);
+        Assert.Equal(applied.OperationKey, replay.OperationKey);
         Assert.False(replay.HeadAdvancedSinceApply);
         Assert.False(replay.InstanceReplaced);
 
@@ -481,7 +481,6 @@ public sealed partial class ControlVerticalTests {
                 sequence,
                 new string('a', 64),
                 new string('b', 64),
-                new string('c', 64),
                 new ControlInstanceId(
                     "00112233445566778899aabbccddeeff"
                 ),
@@ -975,12 +974,12 @@ public sealed partial class ControlVerticalTests {
             created
         );
         string current = File.ReadAllText(statePath);
-        Assert.StartsWith("{\"schemaVersion\":2,", current,
+        Assert.StartsWith("{\"schemaVersion\":3,", current,
             StringComparison.Ordinal);
         File.WriteAllText(
             statePath,
             "{\"schemaVersion\":1," + current[
-                "{\"schemaVersion\":2,".Length..]
+                "{\"schemaVersion\":3,".Length..]
         );
 
         RecapGridControlOpenResult.UnsupportedSchema unsupported =

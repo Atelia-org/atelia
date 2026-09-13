@@ -41,17 +41,6 @@ internal static class ControlOperationCanonicalizer {
         )
     );
 
-    internal static string ResultIdentity(
-        string commandDigest,
-        string terminalKind
-    ) => RecapGridControlOperation.DomainHash(
-        "atelia.recap-grid.control-operation-result.v1",
-        JsonSerializer.SerializeToUtf8Bytes(
-            new ResultDto(commandDigest, terminalKind),
-            ControlJson.Options
-        )
-    );
-
     private sealed record RegistrationCommandDto(
         byte[][] Families,
         byte[][] Definitions,
@@ -66,11 +55,6 @@ internal static class ControlOperationCanonicalizer {
 
     private sealed record PromotionCommandDto(
         string RecipeDigest
-    );
-
-    private sealed record ResultDto(
-        string CommandDigest,
-        string TerminalKind
     );
 
 }
