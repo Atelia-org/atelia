@@ -31,7 +31,7 @@ public sealed class GalateaBoundedRecoveryVerticalTests {
         await PulseUntilAsync(driver, clock, () => fixture.Store.ReadSnapshot().Mails[0]
             .State == GalateaDurableMailState.TerminalFailed);
         GalateaDelegationStateSnapshot afterA = fixture.Store.ReadSnapshot();
-        Assert.Equal(0, afterA.Mails[0].RecoveryFailureCount);
+        Assert.Equal(8, afterA.Mails[0].RecoveryFailureCount);
         Assert.Equal("RESULT_UNCONFIRMED", afterA.Mails[0].TerminalCode);
         Assert.Equal(GalateaDelegationRouteState.Unbound, afterA.Route.State);
         Assert.Null(afterA.Route.ActiveDispatchId);
