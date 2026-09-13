@@ -82,6 +82,7 @@ internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
     protected async Task<GalateaSidecarProcessGeneration>
         GetReadyGenerationAsync(CancellationToken ct) {
         while (true) {
+            ct.ThrowIfCancellationRequested();
             GalateaSidecarProcessGeneration? generation;
             Task barrier;
             lock (_stateGate) {
