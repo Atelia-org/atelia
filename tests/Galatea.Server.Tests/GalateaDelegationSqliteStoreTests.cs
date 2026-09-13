@@ -228,7 +228,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             Assert.Throws<GalateaDelegationStoreReadOnlyException>(() =>
                 readOnly.BeginThreadBinding(
                     "bind-read-only",
-                    snapshot.Route.Revision
+                    snapshot.Route.Revision, snapshot.Mails[0].DispatchId, snapshot.Mails[0].Revision
                 ));
             Assert.ThrowsAny<IOException>(() =>
                 GalateaDelegationSqliteStore.OpenExisting(
@@ -504,7 +504,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         using var fixture = new RoutedStore(hooks: hooks);
         GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
         GalateaRouteBindingSnapshot binding = fixture.Store.BeginThreadBinding(
-            "bind", snapshot.Route.Revision);
+            "bind", snapshot.Route.Revision, snapshot.Mails[0].DispatchId, snapshot.Mails[0].Revision);
         GalateaRouteBindingSnapshot bound = fixture.Store.CompleteThreadBinding(
             "bind", "thread", binding.Revision);
         GalateaOutboundMailSnapshot started = fixture.Store.StartQueuedMail(
@@ -565,7 +565,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
                 initial.Route.Revision));
 
         GalateaRouteBindingSnapshot binding = fixture.Store.BeginThreadBinding(
-            "bind-op", initial.Route.Revision);
+            "bind-op", initial.Route.Revision, mail.DispatchId, mail.Revision);
         GalateaRouteBindingSnapshot bound = fixture.Store.CompleteThreadBinding(
             "bind-op", "thread-1", binding.Revision);
         GalateaOutboundMailSnapshot started = fixture.Store.StartQueuedMail(
@@ -588,13 +588,13 @@ public sealed class GalateaDelegationSqliteStoreTests {
             fixture.Store.ReadSnapshot().Route.State);
         Assert.Equal(mail.DispatchId,
             fixture.Store.ReadSnapshot().Route.ActiveDispatchId);
-        Assert.Equal(1, unknown.ReconcileAttemptCount);
+        Assert.Equal(1, unknown.RecoveryFailureCount);
         Assert.Equal(2000,
-            unknown.NextReconcileAtUnixTimeMilliseconds);
+            unknown.NextRetryAtUnixTimeMilliseconds);
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
             fixture.Store.RecordMailPollMiss(
                 mail.DispatchId,
-                unknown.Revision,
+                unknown.Revision - 1,
                 "NOT_FOUND",
                 nowUnixTimeMilliseconds: 1999
             ));
@@ -605,10 +605,10 @@ public sealed class GalateaDelegationSqliteStoreTests {
             nowUnixTimeMilliseconds: 2000
         );
         Assert.Equal(GalateaDurableMailState.OutcomeUnknown, unknown.State);
-        Assert.Equal(2, unknown.ReconcileAttemptCount);
-        Assert.Equal("NOT_FOUND", unknown.ReconcileLastCode);
+        Assert.Equal(2, unknown.RecoveryFailureCount);
+        Assert.Equal("NOT_FOUND", unknown.RecoveryLastCode);
         Assert.Equal(4000,
-            unknown.NextReconcileAtUnixTimeMilliseconds);
+            unknown.NextRetryAtUnixTimeMilliseconds);
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
             fixture.Store.StartQueuedMail(
                 fixture.Store.ReadSnapshot().Mails[1].DispatchId,
@@ -621,22 +621,9 @@ public sealed class GalateaDelegationSqliteStoreTests {
             "thread-1",
             "turn-1"
         );
-        Assert.Equal(0, accepted.ReconcileAttemptCount);
-        Assert.Null(accepted.ReconcileLastCode);
-        Assert.Null(accepted.NextReconcileAtUnixTimeMilliseconds);
-        long cleanAcceptedStoreRevision = fixture.Store.ReadSnapshot()
-            .StoreRevision;
-        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
-            fixture.Store.ConfirmAcceptedMailRunning(
-                mail.DispatchId,
-                accepted.Revision,
-                "thread-1",
-                "turn-1"
-            ));
-        Assert.Equal(
-            cleanAcceptedStoreRevision,
-            fixture.Store.ReadSnapshot().StoreRevision
-        );
+        // An Accepted handle improves identity knowledge but does not prove live progress.
+        Assert.Equal(2, accepted.RecoveryFailureCount);
+        Assert.Equal("NOT_FOUND", accepted.RecoveryLastCode);
         accepted = fixture.Store.RecordMailPollMiss(
             mail.DispatchId,
             accepted.Revision,
@@ -646,7 +633,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Equal(GalateaDurableMailState.Accepted, accepted.State);
         Assert.Equal("thread-1", accepted.AcceptedThreadId);
         Assert.Equal("turn-1", accepted.AcceptedTurnId);
-        Assert.Equal(1, accepted.ReconcileAttemptCount);
+        Assert.Equal(3, accepted.RecoveryFailureCount);
         long missedStoreRevision = fixture.Store.ReadSnapshot().StoreRevision;
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
             fixture.Store.ConfirmAcceptedMailRunning(
@@ -684,9 +671,9 @@ public sealed class GalateaDelegationSqliteStoreTests {
             "turn-1"
         );
         Assert.False(injectRunningConfirmationUncertain);
-        Assert.Equal(0, accepted.ReconcileAttemptCount);
-        Assert.Null(accepted.ReconcileLastCode);
-        Assert.Null(accepted.NextReconcileAtUnixTimeMilliseconds);
+        Assert.Equal(0, accepted.RecoveryFailureCount);
+        Assert.Null(accepted.RecoveryLastCode);
+        Assert.Null(accepted.NextRetryAtUnixTimeMilliseconds);
         Assert.Equal(
             missedStoreRevision + 1,
             fixture.Store.ReadSnapshot().StoreRevision
@@ -696,9 +683,9 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Equal(GalateaDurableMailState.Accepted, accepted.State);
         Assert.Equal("thread-1", accepted.AcceptedThreadId);
         Assert.Equal("turn-1", accepted.AcceptedTurnId);
-        Assert.Equal(0, accepted.ReconcileAttemptCount);
-        Assert.Null(accepted.ReconcileLastCode);
-        Assert.Null(accepted.NextReconcileAtUnixTimeMilliseconds);
+        Assert.Equal(0, accepted.RecoveryFailureCount);
+        Assert.Null(accepted.RecoveryLastCode);
+        Assert.Null(accepted.NextRetryAtUnixTimeMilliseconds);
         GalateaReplyNoticeSnapshot notice = fixture.Store.RecordCompletedMail(
             mail.DispatchId,
             accepted.Revision,
@@ -723,16 +710,9 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Equal(notice, repeated);
         Assert.Equal(revisionAfterTerminal,
             fixture.Store.ReadSnapshot().StoreRevision);
-        Assert.Throws<GalateaDelegationStoreConflictException>(() =>
-            fixture.Store.RecordFailedMail(
-                mail.DispatchId,
-                accepted.Revision,
-                "thread-1",
-                "turn-1",
-                "terminal",
-                "CONFLICTING_STATUS",
-                "conflicting failure"
-            ));
+        Assert.Throws<GalateaDelegationStoreConflictException>(() => fixture.Store.RecordFailedMail(
+            mail.DispatchId, accepted.Revision, "thread-1", "turn-1",
+            "terminal", "CONFLICTING_STATUS", "conflicting failure"));
         Assert.Equal(GalateaDelegationRouteState.Quarantined,
             fixture.Store.ReadSnapshot().Route.State);
     }
@@ -740,78 +720,248 @@ public sealed class GalateaDelegationSqliteStoreTests {
     [Fact]
     public void BindingIdentityConflict_CanDurablyQuarantineBeforeAnyMailStart() {
         using var fixture = new RoutedStore();
-        GalateaRouteBindingSnapshot route = fixture.Store.ReadSnapshot().Route;
-        route = fixture.Store.BeginThreadBinding("bind", route.Revision);
-        route = fixture.Store.RecordThreadBindingEnsureMiss(
-            "bind",
-            route.Revision,
-            "ENSURE_OUTCOME_UNKNOWN",
-            nowUnixTimeMilliseconds: 1_000
-        );
-
-        GalateaRouteBindingSnapshot quarantined =
-            fixture.Store.QuarantineThreadBinding(
-                "bind",
-                route.Revision,
-                "OWNERSHIP_CONFLICT"
-            );
-
-        Assert.Equal(GalateaDelegationRouteState.Quarantined,
-            quarantined.State);
+        GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
+        GalateaOutboundMailSnapshot mail = snapshot.Mails[0];
+        GalateaRouteBindingSnapshot route = fixture.Store.BeginThreadBinding(
+            "bind", snapshot.Route.Revision, mail.DispatchId, mail.Revision);
+        mail = fixture.Store.RecordThreadBindingEnsureMiss(
+            "bind", route.Revision, mail.DispatchId, mail.Revision,
+            "ENSURE_OUTCOME_UNKNOWN", 1_000);
+        route = fixture.Store.ReadSnapshot().Route;
+        GalateaRouteBindingSnapshot quarantined = fixture.Store.QuarantineThreadBinding(
+            "bind", route.Revision, "OWNERSHIP_CONFLICT");
+        Assert.Equal(GalateaDelegationRouteState.Quarantined, quarantined.State);
         Assert.Null(quarantined.ThreadId);
-        Assert.Equal(0, quarantined.EnsureAttemptCount);
-        Assert.Null(quarantined.EnsureLastCode);
-        Assert.Null(quarantined.NextEnsureAtUnixTimeMilliseconds);
+        Assert.Equal(1, fixture.Store.ReadSnapshot().Mails[0].RecoveryFailureCount);
         Assert.All(fixture.Store.ReadSnapshot().Mails,
-            static mail => Assert.Equal(
-                GalateaDurableMailState.Queued,
-                mail.State));
+            static value => Assert.Equal(GalateaDurableMailState.Queued, value.State));
     }
 
     [Fact]
-    public void BindingEnsureBackoff_IsDurableAndKeepsOneOperationIdentity() {
+    public void BindingFailureBudget_IsMailOwned_DurableAndCheckedByRevisionInsteadOfWallClock() {
         using var fixture = new RoutedStore();
-        GalateaRouteBindingSnapshot route = fixture.Store.ReadSnapshot().Route;
-        route = fixture.Store.BeginThreadBinding("bind-op", route.Revision);
-        route = fixture.Store.RecordThreadBindingEnsureMiss(
-            "bind-op",
-            route.Revision,
-            "SIDECAR_UNAVAILABLE",
-            nowUnixTimeMilliseconds: 1_000
-        );
-        Assert.Equal(1, route.EnsureAttemptCount);
-        Assert.Equal(2_000, route.NextEnsureAtUnixTimeMilliseconds);
-
+        GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
+        GalateaOutboundMailSnapshot mail = snapshot.Mails[0];
+        GalateaRouteBindingSnapshot route = fixture.Store.BeginThreadBinding(
+            "bind-op", snapshot.Route.Revision, mail.DispatchId, mail.Revision);
+        mail = fixture.Store.RecordThreadBindingEnsureMiss("bind-op", route.Revision,
+            mail.DispatchId, mail.Revision, "SIDECAR_UNAVAILABLE", 1_000);
+        Assert.Equal(1, mail.RecoveryFailureCount);
+        Assert.Equal(2_000, mail.NextRetryAtUnixTimeMilliseconds);
         fixture.Reopen();
         route = fixture.Store.ReadSnapshot().Route;
+        mail = fixture.Store.ReadSnapshot().Mails[0];
         Assert.Equal("bind-op", route.BindingOperationId);
-        Assert.Equal("SIDECAR_UNAVAILABLE", route.EnsureLastCode);
+        Assert.Equal("SIDECAR_UNAVAILABLE", mail.RecoveryLastCode);
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
-            fixture.Store.RecordThreadBindingEnsureMiss(
-                "bind-op",
-                route.Revision,
-                "SIDECAR_UNAVAILABLE",
-                nowUnixTimeMilliseconds: 1_999
-            ));
-        route = fixture.Store.RecordThreadBindingEnsureMiss(
-            "bind-op",
-            route.Revision,
-            "SIDECAR_UNAVAILABLE",
-            nowUnixTimeMilliseconds: 2_000
-        );
-        Assert.Equal(2, route.EnsureAttemptCount);
-        Assert.Equal(4_000, route.NextEnsureAtUnixTimeMilliseconds);
-
-        route = fixture.Store.CompleteThreadBinding(
-            "bind-op",
-            "thread-fixed",
-            route.Revision
-        );
+            fixture.Store.RecordThreadBindingEnsureMiss("bind-op", route.Revision,
+                mail.DispatchId, mail.Revision - 1, "SIDECAR_UNAVAILABLE", 999));
+        // The driver owns monotonic due scheduling. A wall-clock rollback must not reject its CAS.
+        mail = fixture.Store.RecordThreadBindingEnsureMiss("bind-op", route.Revision,
+            mail.DispatchId, mail.Revision, "SIDECAR_UNAVAILABLE", 999);
+        Assert.Equal(2, mail.RecoveryFailureCount);
+        Assert.Equal(2_999, mail.NextRetryAtUnixTimeMilliseconds);
+        route = fixture.Store.ReadSnapshot().Route;
+        route = fixture.Store.CompleteThreadBinding("bind-op", "thread-fixed", route.Revision);
         Assert.Equal(GalateaDelegationRouteState.Bound, route.State);
         Assert.Equal("thread-fixed", route.ThreadId);
-        Assert.Equal(0, route.EnsureAttemptCount);
-        Assert.Null(route.EnsureLastCode);
-        Assert.Null(route.NextEnsureAtUnixTimeMilliseconds);
+        Assert.Equal(2, fixture.Store.ReadSnapshot().Mails[0].RecoveryFailureCount);
+    }
+
+    [Fact]
+    public void UnknownRecovery_EighthFailureAtomicallySettlesNoticeAndReleasesReservation() {
+        using var fixture = new RoutedStore(maximumInboxReplies: 1);
+        GalateaOutboundMailSnapshot mail = StartEarliest(fixture.Store, "thread-a");
+        mail = fixture.Store.MarkMailOutcomeUnknown(mail.DispatchId, mail.Revision, "START_OUTCOME_UNKNOWN", 1_000);
+        for (int failure = 2; failure <= 8; failure++) {
+            mail = fixture.Store.RecordMailPollMiss(mail.DispatchId, mail.Revision, "INSPECTION_UNAVAILABLE", failure * 100_000L);
+            Assert.Equal(failure, mail.RecoveryFailureCount);
+            if (failure < 8) {
+                Assert.Empty(fixture.Store.ReadSnapshot().Notices);
+                Assert.Equal(mail.DispatchId, fixture.Store.ReadSnapshot().Route.ActiveDispatchId);
+            }
+        }
+        fixture.Reopen();
+        GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
+        Assert.Equal(GalateaDurableMailState.TerminalFailed, snapshot.Mails[0].State);
+        Assert.Equal("RESULT_UNCONFIRMED", snapshot.Mails[0].TerminalCode);
+        Assert.Equal(8, snapshot.Mails[0].RecoveryFailureCount);
+        Assert.Null(snapshot.Mails[0].NextRetryAtUnixTimeMilliseconds);
+        Assert.Equal(GalateaDelegationRouteState.Unbound, snapshot.Route.State);
+        Assert.Null(snapshot.Route.ActiveDispatchId);
+        GalateaReplyNoticeSnapshot notice = Assert.Single(snapshot.Notices);
+        Assert.Equal(GalateaReplyNoticeKind.DeliveryFailure, notice.Kind);
+        Assert.Equal("RESULT_UNCONFIRMED", notice.Code);
+        Assert.Equal(1, notice.CompletionSequence);
+        Assert.Equal(2, Assert.Single(snapshot.Captures).ArtifactCount);
+        Assert.Equal(2, snapshot.Mails.Count);
+    }
+
+    [Fact]
+    public void NotDispatched_RequeuesSameDispatch_PreservesBudgetAndRejectsUnknownEvidence() {
+        using var fixture = new RoutedStore();
+        GalateaOutboundMailSnapshot started = StartEarliest(fixture.Store, "thread-a");
+        GalateaRouteBindingSnapshot route = fixture.Store.ReadSnapshot().Route;
+        Assert.Throws<ArgumentException>(() => fixture.Store.RequeueNotDispatchedMail(
+            started.DispatchId, started.Revision, route.Revision,
+            GalateaDelegateDispatchState.MayHaveDispatched, "THREAD_NOT_FOUND", true, 0));
+        GalateaOutboundMailSnapshot queued = fixture.Store.RequeueNotDispatchedMail(
+            started.DispatchId, started.Revision, route.Revision,
+            GalateaDelegateDispatchState.NotDispatched, "THREAD_NOT_FOUND", true, 0);
+        Assert.Equal(started.DispatchId, queued.DispatchId);
+        Assert.Equal(started.Body, queued.Body);
+        Assert.Equal(GalateaDurableMailState.Queued, queued.State);
+        Assert.Equal(1, queued.RecoveryFailureCount);
+        Assert.Null(queued.OperationId);
+        Assert.Null(queued.RequestedThreadId);
+        fixture.Reopen();
+        Assert.Equal(GalateaDelegationRouteState.Unbound, fixture.Store.ReadSnapshot().Route.State);
+        Assert.Empty(fixture.Store.ReadSnapshot().Notices);
+        GalateaOutboundMailSnapshot retried = StartEarliest(fixture.Store, "thread-b");
+        Assert.Equal(started.DispatchId, retried.DispatchId);
+        Assert.Equal(started.DispatchId, retried.OperationId);
+        Assert.Equal(1, retried.RecoveryFailureCount);
+        Assert.Equal("thread-b", retried.RequestedThreadId);
+        Assert.Throws<GalateaDelegationStoreConflictException>(() => fixture.Store.RequeueNotDispatchedMail(
+            started.DispatchId, started.Revision, route.Revision,
+            GalateaDelegateDispatchState.NotDispatched, "THREAD_NOT_FOUND", true, 0));
+    }
+
+    [Fact]
+    public void LocalTerminal_LateSuccessReturnsFirstNoticeWithoutQuarantiningNextTask() {
+        using var fixture = new RoutedStore();
+        GalateaOutboundMailSnapshot first = StartEarliest(fixture.Store, "thread-a");
+        GalateaReplyNoticeSnapshot local = fixture.Store.FinishMailLocally(first.DispatchId,
+            first.Revision, fixture.Store.ReadSnapshot().Route.Revision, "RESULT_UNCONFIRMED", true);
+        GalateaOutboundMailSnapshot second = StartEarliest(fixture.Store, "thread-b");
+        GalateaDelegationStateSnapshot beforeLate = fixture.Store.ReadSnapshot();
+        GalateaReplyNoticeSnapshot late = fixture.Store.RecordCompletedMail(first.DispatchId,
+            first.Revision, "thread-a", "turn-a", "late success");
+        Assert.Equal(local, late);
+        Assert.Equal(beforeLate.Route, fixture.Store.ReadSnapshot().Route);
+        Assert.Equal(beforeLate.StoreRevision, fixture.Store.ReadSnapshot().StoreRevision);
+        Assert.Equal(second.DispatchId, fixture.Store.ReadSnapshot().Route.ActiveDispatchId);
+        Assert.Equal(GalateaDelegationRouteState.Bound, fixture.Store.ReadSnapshot().Route.State);
+        fixture.Store.RecordCompletedMail(second.DispatchId, second.Revision, "thread-b", "turn-b", "second success");
+        fixture.Reopen();
+        Assert.Equal(2, fixture.Store.ReadSnapshot().Notices.Count);
+        Assert.Equal("RESULT_UNCONFIRMED", fixture.Store.ReadSnapshot().Notices[0].Code);
+        Assert.Equal("second success", fixture.Store.ReadSnapshot().Notices[1].Body);
+    }
+
+    [Fact]
+    public void RemoteTerminal_LocalTimeoutReturnsFirstSuccessEvenAfterRouteAdvanced() {
+        using var fixture = new RoutedStore();
+        GalateaOutboundMailSnapshot first = StartEarliest(fixture.Store, "thread-a");
+        long oldRouteRevision = fixture.Store.ReadSnapshot().Route.Revision;
+        GalateaReplyNoticeSnapshot completed = fixture.Store.RecordCompletedMail(first.DispatchId,
+            first.Revision, "thread-a", "turn-a", "actual success");
+        GalateaOutboundMailSnapshot second = StartEarliest(fixture.Store, "thread-a");
+        GalateaDelegationStateSnapshot before = fixture.Store.ReadSnapshot();
+        Assert.Equal(completed, fixture.Store.FinishMailLocally(first.DispatchId, first.Revision,
+            oldRouteRevision, "RESULT_UNCONFIRMED", true));
+        Assert.Equal(before.StoreRevision, fixture.Store.ReadSnapshot().StoreRevision);
+        Assert.Equal(second.DispatchId, fixture.Store.ReadSnapshot().Route.ActiveDispatchId);
+        Assert.Single(fixture.Store.ReadSnapshot().Notices);
+    }
+
+    [Fact]
+    public void QueuedLocalFailure_FullInboxPersistsExhaustedMailUntilCapacityIsConsumed() {
+        using var fixture = new RoutedStore(maximumInboxReplies: 1);
+        GalateaOutboundMailSnapshot first = StartEarliest(fixture.Store, "thread-a");
+        GalateaReplyNoticeSnapshot reply = fixture.Store.RecordCompletedMail(first.DispatchId,
+            first.Revision, "thread-a", "turn-a", "reply");
+        GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
+        GalateaOutboundMailSnapshot second = snapshot.Mails[1];
+        Assert.Throws<GalateaDelegationInboxBackpressureException>(() => fixture.Store.FinishMailLocally(
+            second.DispatchId, second.Revision, snapshot.Route.Revision, "INVALID_CWD", true));
+        fixture.Reopen();
+        snapshot = fixture.Store.ReadSnapshot();
+        second = snapshot.Mails[1];
+        Assert.Equal(GalateaDurableMailState.Queued, second.State);
+        Assert.Equal(8, second.RecoveryFailureCount);
+        Assert.Equal("INVALID_CWD", second.RecoveryLastCode);
+        Assert.Equal("second", second.Body);
+        Assert.Single(snapshot.Notices);
+        Assert.Throws<GalateaDelegationStoreConflictException>(() => fixture.Store.StartQueuedMail(
+            second.DispatchId, second.Revision, snapshot.Route.Revision));
+        ConsumeReadyReply(fixture.Store, reply);
+        GalateaReplyNoticeSnapshot failed = fixture.Store.FinishMailLocally(second.DispatchId,
+            second.Revision, fixture.Store.ReadSnapshot().Route.Revision, "INVALID_CWD", true);
+        Assert.Equal("INVALID_CWD", failed.Code);
+        Assert.Equal(2, failed.CompletionSequence);
+        fixture.Reopen();
+        Assert.Equal(2, fixture.Store.ReadSnapshot().Notices.Count);
+        Assert.Equal(GalateaReplyNoticeState.Consumed, fixture.Store.ReadSnapshot().Notices[0].State);
+        Assert.Equal(GalateaDurableMailState.TerminalFailed, fixture.Store.ReadSnapshot().Mails[1].State);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RecoverySettlement_CommitFailureReopensAsWholeStateWithOneNotice(bool afterCommit) {
+        bool armed = false;
+        bool injected = false;
+        void Fail(string operation) {
+            if (armed && !injected && operation == "record-mail-poll-miss") {
+                injected = true;
+                throw new IOException("injected recovery settlement commit failure");
+            }
+        }
+        var hooks = afterCommit
+            ? new GalateaDelegationStoreTestHooks(AfterCommitBeforeReturn: Fail)
+            : new GalateaDelegationStoreTestHooks(BeforeCommit: Fail);
+        using var fixture = new RoutedStore(hooks: hooks);
+        GalateaOutboundMailSnapshot mail = StartEarliest(fixture.Store, "thread-a");
+        mail = fixture.Store.MarkMailOutcomeUnknown(mail.DispatchId, mail.Revision, "START_OUTCOME_UNKNOWN", 0);
+        for (int failure = 2; failure <= 7; failure++) {
+            mail = fixture.Store.RecordMailPollMiss(mail.DispatchId, mail.Revision, "INSPECTION_UNAVAILABLE", failure * 100_000L);
+        }
+        armed = true;
+        if (afterCommit) {
+            mail = fixture.Store.RecordMailPollMiss(mail.DispatchId, mail.Revision, "INSPECTION_UNAVAILABLE", 800_000);
+            Assert.Equal(GalateaDurableMailState.TerminalFailed, mail.State);
+        }
+        else {
+            Assert.Throws<IOException>(() => fixture.Store.RecordMailPollMiss(
+                mail.DispatchId, mail.Revision, "INSPECTION_UNAVAILABLE", 800_000));
+        }
+        Assert.True(injected);
+        fixture.Reopen();
+        mail = fixture.Store.ReadSnapshot().Mails[0];
+        if (!afterCommit) {
+            Assert.Equal(7, mail.RecoveryFailureCount);
+            Assert.Empty(fixture.Store.ReadSnapshot().Notices);
+            Assert.Equal(mail.DispatchId, fixture.Store.ReadSnapshot().Route.ActiveDispatchId);
+            fixture.Store.RecordMailPollMiss(mail.DispatchId, mail.Revision, "INSPECTION_UNAVAILABLE", 800_000);
+            fixture.Reopen();
+        }
+        GalateaDelegationStateSnapshot terminal = fixture.Store.ReadSnapshot();
+        Assert.Equal(8, terminal.Mails[0].RecoveryFailureCount);
+        Assert.Equal(GalateaDurableMailState.TerminalFailed, terminal.Mails[0].State);
+        Assert.Null(terminal.Route.ActiveDispatchId);
+        Assert.Equal(GalateaDelegationRouteState.Unbound, terminal.Route.State);
+        Assert.Equal(1, Assert.Single(terminal.Notices).CompletionSequence);
+    }
+
+    private static GalateaOutboundMailSnapshot StartEarliest(GalateaDelegationSqliteStore store, string threadId) {
+        GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
+        GalateaOutboundMailSnapshot mail = snapshot.Mails.First(value => value.State == GalateaDurableMailState.Queued);
+        if (snapshot.Route.State == GalateaDelegationRouteState.Unbound) {
+            GalateaRouteBindingSnapshot binding = store.BeginThreadBinding("bind-" + threadId,
+                snapshot.Route.Revision, mail.DispatchId, mail.Revision);
+            store.CompleteThreadBinding(binding.BindingOperationId!, threadId, binding.Revision);
+            snapshot = store.ReadSnapshot();
+        }
+        return store.StartQueuedMail(mail.DispatchId, mail.Revision, snapshot.Route.Revision);
+    }
+
+    private static void ConsumeReadyReply(GalateaDelegationSqliteStore store, GalateaReplyNoticeSnapshot reply) {
+        GalateaReplyLeaseSnapshot lease = store.BeginReplyLeaseMembership("consume-ready", "player",
+            [new(reply.NoticeId, reply.Revision)]);
+        lease = store.BindReplyLeaseObservationBase(lease.LeaseId, lease.Revision, Address(20), Observation("player", reply.Body));
+        lease = store.RecordLeaseObservationCommitted(lease.LeaseId, lease.Revision, Address(21));
+        store.ConsumeReplyLease(lease.LeaseId, lease.Revision, Address(22));
     }
 
     [Fact]
@@ -846,7 +996,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
             store.BeginThreadBinding(
                 "bind-before-preflight",
-                initial.Route.Revision
+                initial.Route.Revision, initial.Mails[0].DispatchId, initial.Mails[0].Revision
             ));
         Assert.Throws<GalateaDelegationStoreConflictException>(() =>
             store.FailQueuedMailPreflight(
@@ -921,7 +1071,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         GalateaDelegationStateSnapshot snapshot = store.ReadSnapshot();
         GalateaRouteBindingSnapshot binding = store.BeginThreadBinding(
             "bind",
-            snapshot.Route.Revision
+            snapshot.Route.Revision, snapshot.Mails[0].DispatchId, snapshot.Mails[0].Revision
         );
         GalateaRouteBindingSnapshot bound = store.CompleteThreadBinding(
             "bind",
@@ -956,7 +1106,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
         );
         GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
         GalateaRouteBindingSnapshot binding = fixture.Store.BeginThreadBinding(
-            "bind", snapshot.Route.Revision);
+            "bind", snapshot.Route.Revision, snapshot.Mails[0].DispatchId, snapshot.Mails[0].Revision);
         GalateaRouteBindingSnapshot bound = fixture.Store.CompleteThreadBinding(
             "bind", "thread", binding.Revision);
         GalateaOutboundMailSnapshot first = fixture.Store.StartQueuedMail(
@@ -1594,7 +1744,7 @@ public sealed class GalateaDelegationSqliteStoreTests {
             var fixture = new RoutedStore(hooks: hooks);
             GalateaDelegationStateSnapshot snapshot = fixture.Store.ReadSnapshot();
             GalateaRouteBindingSnapshot binding = fixture.Store.BeginThreadBinding(
-                "bind", snapshot.Route.Revision);
+                "bind", snapshot.Route.Revision, snapshot.Mails[0].DispatchId, snapshot.Mails[0].Revision);
             GalateaRouteBindingSnapshot bound = fixture.Store.CompleteThreadBinding(
                 "bind", "thread", binding.Revision);
             GalateaOutboundMailSnapshot started = fixture.Store.StartQueuedMail(
