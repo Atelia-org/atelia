@@ -107,18 +107,14 @@ stdio 的 stdout 专用于 MCP JSON-RPC，结构化日志只写 stderr。
 
 ### Galatea durable sidecar
 
-同一 backend 另有一个不暴露 MCP 的 Galatea adapter。它把 sandbox mode、本地命令
-出网权限与内建工具 policy 固定在启动环境中；创建和派发逐请求接收各 user 的工作目录。提供三个可恢复的阶段式操作：建立持久 thread binding、
+同一 backend 另有一个不暴露 MCP 的 Galatea adapter。可选的原生 Codex 配置在启动时取得快照；未配置的项交给 Codex 正常加载默认配置。创建和派发逐请求接收各 user 的工作目录。提供三个可恢复的阶段式操作：建立持久 thread binding、
 启动一个 turn、按 exact `{threadId, dispatchId, task, expectedTurnId}` 检查结果。Codex 的自然 Markdown final 原样返回，
 不使用 `AgentReport` output schema。
 
 ```bash
 export CODEX_BRIDGE_ALLOWED_ROOTS='["/galatea-homes"]'
-export GALATEA_CODEX_MODE=work
-export GALATEA_CODEX_LOCAL_COMMAND_NETWORK=true
-export GALATEA_CODEX_WEB_SEARCH=live
-export GALATEA_CODEX_IMAGE_GENERATION=true
-export GALATEA_CODEX_VIEW_IMAGE=true
+# 可选：省略时不添加原生配置覆盖。此例明确关闭沙盒和命令审批。
+export GALATEA_CODEX_CONFIG='{"sandbox_mode":"danger-full-access","approval_policy":"never"}'
 npm run build
 npm run start:galatea
 ```
@@ -163,7 +159,7 @@ turn ID。`ACCEPTED_TURN_NOT_VISIBLE`表示官方persistent projection尚未给�
 尚无 source rollout，因此不要求新空 thread 能调用 `thread/turns/list`。已有 dispatch 的 inspect
 仍使用完整分页校验，不把缺失 history 的错误伪装成 `not-found`。
 `ensure-binding`、`start-turn` 必须提供绝对 `cwd`；`inspect-dispatch` 不接受目录字段。
-frame 不接受 `mode`、本地命令出网或内建工具字段；这些 capability 由启动环境决定。
+frame 不接受原生 Codex 配置；这些设置由启动环境的 `GALATEA_CODEX_CONFIG` 决定，对应 strict delegates V4 的可选 `routes[0].codexConfig`。省略或 `{}` 不发送 thread `config`；显式值原样透传，Galatea 不补 sandbox、approval、reviewer、summary 或工具默认值，也不再用启动参数关闭 inherited MCP/apps。
 
 可选边界配置：`GALATEA_CODEX_MAX_INPUT_FRAME_BYTES`、`GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES`、
 `GALATEA_CODEX_MAX_TASK_BYTES`、`GALATEA_CODEX_MAX_FINAL_BYTES`、
@@ -171,7 +167,7 @@ frame 不接受 `mode`、本地命令出网或内建工具字段；这些 capabi
 `DISPATCH_ALREADY_ACTIVE` fail closed；跨进程恢复与去重由调用方的 durable outbox/inbox 状态机负责，
 并使用 `inspect-dispatch` 对已落到 app-server 的 exact turn 做 reconciliation。
 Galatea 的新任务验证请求 cwd 后，向同一 thread 的 `thread/resume` 和 `turn/start` 显式传递它，
-`work` 的 writableRoots 也只包含该目录。历史 `thread.cwd` 不要求仍存在或位于当前 allowedRoots。
+沙盒写入范围由原生 Codex 配置决定。`allowedRoots` 只约束任务 cwd，不代表全盘读写边界。历史 `thread.cwd` 不要求仍存在或位于当前 allowedRoots。
 resume 顶层 cwd 是有效配置，嵌套 `thread.cwd` 可能仍是历史 metadata；已加载 thread 的 resume 可以
 保留旧有效值，随后 turn 的显式 cwd override 才决定新任务的工作目录。
 Galatea 持久 thread ownership 核对 response ID 与 profile-specific exact name marker；
@@ -180,6 +176,11 @@ continue，`source`同样不参与authorization。Galatea profile启动app-serve
 `CODEX_SESSION_ID`、`CODEX_THREAD_ID`、`CODEX_INTERNAL_ORIGINATOR_OVERRIDE`、
 `CODEX_PERMISSION_PROFILE`、`CODEX_CI`，但保留`HOME`、`PATH`、`CODEX_HOME`及
 auth/provider/proxy环境；默认MCP profile不启用这层Galatea-specific scrub。
+原生配置在创建和冷恢复 thread 时应用；已加载 thread 的 resume 可能忽略新配置，所以修改配置后须重启 Galatea。省略设置不强制清除 Codex 为已有 thread 保存的设置。若继承的策略产生人工审批，现有非交互客户端会拒绝请求；`approval_policy: "never"` 不会询问命令审批。
+
+`npm run canary:config`（先 `npm run build`）使用隔离的临时 `CODEX_HOME` 和 pinned app-server，
+验证公共配置继承、嵌套局部覆盖、已有 thread 的冷/热恢复，以及 `danger-full-access` 下 TMPDIR 的实际读写。
+它不读取真实 auth/config/session，也不调用模型；只用一个 no-op shell turn 物化临时 thread 历史，结束后清理。
 
 需要 Streamable HTTP 时：
 
@@ -331,11 +332,11 @@ ChatGPT -> authenticated VPS HTTPS /mcp -> private link -> 127.0.0.1:3000/mcp
 
 ## 安全与语义边界
 
-- `work`：`approvalPolicy=never`，`workspaceWrite`，唯一 writable root 是 canonical cwd，默认 `local_command_network=true`，并排除 `/tmp` 写入。
-- `research`：`readOnly`。`local_command_network`只控制sandboxed command出网；`web_search`独立选择`disabled|cached|indexed|live`。开发默认分别为`true`与`live`。
+- 普通 MCP `work`：`approvalPolicy=never`，`workspaceWrite`，唯一 writable root 是 canonical cwd，默认 `local_command_network=true`，并排除 `/tmp` 写入。
+- 普通 MCP `research`：`readOnly`。`local_command_network`只控制sandboxed command出网；`web_search`独立选择`disabled|cached|indexed|live`。开发默认分别为`true`与`live`。
 - `image_generation`与`view_image`也按turn显式配置，默认开启；provider或运行环境不支持时仍由Codex/app-server给出真实能力结果，不由Bridge伪造fallback。
 - 成功的`imageGeneration.savedPath`会进入bounded `changed_files`投影，并在最终返回前继续接受canonical cwd containment过滤。
-- 默认 child args 关闭 inherited Codex MCP servers 与 apps；如果用 `CODEX_BRIDGE_CODEX_ARGS` 覆盖，调用者必须保留等价限制。
+- 普通 MCP 默认 child args 关闭 inherited Codex MCP servers 与 apps；Galatea 不注入这些默认覆盖。
 - approval、permission、elicitation 与未知 server requests 全部 fail-closed；绝不自动批准 escalation。
 - 普通 MCP 的 bridge-created threads 用response ID、持久化exact name marker与canonical cwd做ownership协调；optional analytics `threadSource`和origin `source`不参与。普通其他 thread ID 会返回 `THREAD_NOT_FOUND`。这是私人同一用户进程间的防误用边界，不是对同机恶意进程的认证：能直接调用 app-server 的本机进程也能伪造 title。若威胁模型包含不可信本机进程，需要在第二阶段增加bridge私有持久allowlist/签名元数据。
 - 只存运行时 turn 状态；重启后从 `thread/read` 恢复 persisted thread。stdio child 的 in-flight turn 不保证跨 Bridge 进程重启存活。
@@ -350,8 +351,8 @@ ChatGPT -> authenticated VPS HTTPS /mcp -> private link -> 127.0.0.1:3000/mcp
   app-server exit、Bridge stop或generation切换会清空它，`TaskStore.hydrate()`绝不重建live evidence。它只是
   persistent projection损坏时的warm-process低延迟证据，Galatea SQLite terminal CAS仍是唯一local publication
   authority。通用MCP `status/read`仍可按自身接口读取history，不参与Galatea reconciliation。
-- 当前本机生成的 `SandboxPolicy` 还没有官方新文档展示的 restricted read roots 字段。因此 allowed roots 严格控制 cwd 与**写入**，但本版本不能承诺 Codex 完全无法读取 cwd 外文件。需要更强读取隔离时，应升级到支持该协议的 Codex 或增加 OS/container sandbox。
-- `local_command_network`不再连带控制hosted tools；要关闭全部外部访问，必须显式使用`local_command_network=false, web_search=disabled`。Codex apps/MCP仍由child args独立关闭；本地Codex hooks/未来新增执行通道仍应在部署时审计。
+- 当前本机生成的 `SandboxPolicy` 还没有官方新文档展示的 restricted read roots 字段。普通 MCP 的 cwd 策略与沙盒写入策略分别生效；Galatea 的 allowed roots 只检查 cwd，实际读写权限由原生配置决定。本版本不能承诺 Codex 完全无法读取 cwd 外文件。需要更强读取隔离时，应升级到支持该协议的 Codex 或增加 OS/container sandbox。
+- `local_command_network`不再连带控制hosted tools；要关闭全部外部访问，必须显式使用`local_command_network=false, web_search=disabled`。普通 MCP 的 Codex apps/MCP仍由child args独立关闭；本地Codex hooks/未来新增执行通道仍应在部署时审计。
 - MCP output 有字符/数组硬上限，不返回 reasoning、命令 stdout、完整 diff、完整文件或 thread transcript。
 
 工具 annotations 按真实能力声明：delegate/continue 是 write + potentially destructive + open-world；status/read 是 read-only；interrupt 会改变运行状态但不声明 destructive。

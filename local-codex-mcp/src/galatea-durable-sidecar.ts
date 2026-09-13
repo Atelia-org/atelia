@@ -133,6 +133,7 @@ export async function runGalateaDurableSidecar(
     store,
     logger,
     profile: galateaCodexBackendProfile,
+    galateaCodexConfig: config.codexConfig,
     galateaMaximumFinalUtf8Bytes: config.maxFinalBytes,
   });
   const writer = new JsonlFrameWriter<GalateaDurableOutputFrame>(
@@ -144,9 +145,6 @@ export async function runGalateaDurableSidecar(
   const adapter = new GalateaDurableAdapter({
     backend,
     logger,
-    mode: config.mode,
-    localCommandNetwork: config.localCommandNetwork,
-    tools: config.tools,
     maximumFinalUtf8Bytes: config.maxFinalBytes,
     maximumOutputFrameBytes: config.maxOutputFrameBytes,
     write: (frame) => writer.write(frame),
@@ -159,11 +157,7 @@ export async function runGalateaDurableSidecar(
       type: "ready",
     });
     logger.log("info", "galatea_durable_sidecar_ready", {
-      mode: config.mode,
-      local_command_network: config.localCommandNetwork,
-      web_search: config.tools.webSearch,
-      image_generation: config.tools.imageGeneration,
-      view_image: config.tools.viewImage,
+      codex_configured: config.codexConfig !== undefined,
     });
     await serveGalateaDurableJsonl(
       input,

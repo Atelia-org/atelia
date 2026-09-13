@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
+using System.Text.Json;
 using Atelia.Galatea.Server;
 using Atelia.Testing;
 using Xunit;
@@ -70,13 +71,13 @@ public sealed class GalateaCodexDelegationLiveTests {
             _ = await RunGitAsync(repositoryPath, ["init", "--quiet"]);
 
             GalateaDelegateRouteConfig route = source.CodexRoute with {
-                Mode = GalateaDelegateMode.Research,
-                LocalCommandNetwork = false,
-                Tools = new GalateaDelegateToolConfig(
-                    GalateaDelegateWebSearchMode.Disabled,
-                    ImageGeneration: false,
-                    ViewImage: false
-                )
+                CodexConfig = new Dictionary<string, JsonElement> {
+                    ["sandbox_mode"] = JsonSerializer.SerializeToElement("read-only"),
+                    ["approval_policy"] = JsonSerializer.SerializeToElement("never"),
+                    ["web_search"] = JsonSerializer.SerializeToElement("disabled"),
+                    ["features"] = JsonSerializer.SerializeToElement(new { image_generation = false }),
+                    ["tools"] = JsonSerializer.SerializeToElement(new { view_image = false })
+                }
             };
             var isolated = new GalateaDelegateConfig(
                 source.Sidecar,

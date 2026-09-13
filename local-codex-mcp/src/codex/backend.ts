@@ -15,6 +15,7 @@ import type { ThreadTurnsListResponse } from "../../schemas/v2/ThreadTurnsListRe
 import type { Turn } from "../../schemas/v2/Turn.js";
 import type { TurnInterruptResponse } from "../../schemas/v2/TurnInterruptResponse.js";
 import type { TurnStartResponse } from "../../schemas/v2/TurnStartResponse.js";
+import type { TurnStartParams } from "../../schemas/v2/TurnStartParams.js";
 import type {
   ContinueTaskInput,
   DelegateTaskInput,
@@ -128,6 +129,8 @@ export interface CodexBackendOptions {
   logger: BridgeLogger;
   profile?: CodexBackendProfile;
   galateaMaximumFinalUtf8Bytes?: number;
+  /** Explicit native config overrides, fixed for this Galatea sidecar lifetime. */
+  galateaCodexConfig?: Record<string, JsonValue>;
 }
 
 type InspectionThreadRead =
@@ -293,12 +296,16 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
   private authenticated = false;
   private readonly continueReservations = new Set<string>();
   private readonly profile: CodexBackendProfile;
+  private readonly galateaConfigParams: { config?: Record<string, JsonValue> };
   private readonly liveObservations: LiveTurnObservations;
   private stopped = false;
   private stopPromise?: Promise<void>;
 
   constructor(private readonly options: CodexBackendOptions) {
     this.profile = { ...(options.profile ?? mcpCodexBackendProfile) };
+    this.galateaConfigParams = options.galateaCodexConfig && Object.keys(options.galateaCodexConfig).length > 0
+      ? { config: structuredClone(options.galateaCodexConfig) }
+      : {};
     this.liveObservations = new LiveTurnObservations({
       maximumObservations: MAXIMUM_LIVE_TURN_OBSERVATIONS,
       maximumFinalUtf8Bytes: options.galateaMaximumFinalUtf8Bytes
@@ -339,10 +346,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     this.throwIfStopped();
     const response = await this.options.client.request<ThreadStartResponse>("thread/start", {
       cwd,
-      approvalPolicy: "never",
-      approvalsReviewer: "user",
-      sandbox: coarseSandbox(input.mode),
-      config: threadConfig(input.tools),
+      ...this.galateaConfigParams,
       serviceName: this.profile.serviceName,
       developerInstructions: this.profile.developerInstructions,
       ephemeral: false,
@@ -388,11 +392,9 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
       const resumed = await this.options.client.request<ThreadResumeResponse>("thread/resume", {
         threadId: input.threadId,
         cwd,
-        approvalPolicy: "never",
-        approvalsReviewer: "user",
-        sandbox: coarseSandbox(input.mode),
-        config: threadConfig(input.tools),
+        ...this.galateaConfigParams,
         developerInstructions: this.profile.developerInstructions,
+        excludeTurns: true,
       });
       this.throwIfStopped();
       this.validateResumedGalateaThread(resumed, input.threadId);
@@ -401,8 +403,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         input.threadId,
         input.task,
         cwd,
-        input.mode,
-        input.localCommandNetwork,
+        {},
         input.dispatchId,
       );
     } finally {
@@ -921,8 +922,12 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
       threadId,
       task,
       cwd,
-      mode,
-      localCommandNetwork,
+      {
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandboxPolicy: preciseSandbox(mode, cwd, localCommandNetwork),
+        summary: "concise",
+      },
       clientUserMessageId,
     );
     return this.options.store.waitForTurn(
@@ -936,8 +941,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     threadId: string,
     task: string,
     cwd: string,
-    mode: TaskMode,
-    localCommandNetwork: boolean,
+    overrides: Pick<TurnStartParams, "approvalPolicy" | "approvalsReviewer" | "sandboxPolicy" | "summary">,
     clientUserMessageId?: string,
   ): Promise<GalateaStartedTurn> {
     this.throwIfStopped();
@@ -950,10 +954,7 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
         ...(clientUserMessageId === undefined ? {} : { clientUserMessageId }),
         input: [{ type: "text", text: task, text_elements: [] }],
         cwd,
-        approvalPolicy: "never",
-        approvalsReviewer: "user",
-        sandboxPolicy: preciseSandbox(mode, cwd, localCommandNetwork),
-        summary: "concise",
+        ...overrides,
         ...(this.profile.outputSchema === undefined ? {} : { outputSchema: this.profile.outputSchema }),
       });
       this.throwIfStopped();
@@ -1040,7 +1041,8 @@ export class CodexBackend implements TaskBackend, GalateaStagedBackend {
     // this response establishes the thread identity. Its nested thread.cwd is
     // historical metadata; only the top-level cwd describes effective settings.
     // A loaded thread can retain its old effective cwd on resume. The following
-    // turn/start explicitly overrides cwd and its sandbox for the new task.
+    // turn/start explicitly overrides cwd for the new task. Native configuration
+    // is fixed for the sidecar lifetime; restarting applies changes on cold resume.
     if (response.thread?.id !== expectedThreadId) {
       throw new BridgeError("THREAD_NOT_FOUND", "The requested Galatea binding was not found.");
     }

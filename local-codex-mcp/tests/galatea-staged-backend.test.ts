@@ -11,15 +11,15 @@ import { TaskStore } from "../src/codex/task-store.js";
 import { galateaCodexBackendProfile } from "../src/galatea/backend-profile.js";
 import { NullLogger } from "../src/logger.js";
 import { PathPolicy } from "../src/security/paths.js";
+import type { JsonValue } from "../schemas/serde_json/JsonValue.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-app-server.js", import.meta.url));
 const acceptedTurnNotVisibleFixture = path.join(
   process.cwd(),
   "tests/fixtures/accepted-turn-not-visible.json",
 );
-const tools = { webSearch: "live", imageGeneration: true, viewImage: true } as const;
 
-async function harness(t: TestContext, options: { requestTimeoutMs?: number; fixtureArgs?: string[]; persistent?: boolean } = {}) {
+async function harness(t: TestContext, options: { requestTimeoutMs?: number; fixtureArgs?: string[]; persistent?: boolean; codexConfig?: Record<string, JsonValue> } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "galatea-staged-backend-"));
   const lifecycleFile = options.persistent ? path.join(root, "lifecycle.log") : undefined;
   const stateFile = options.persistent ? path.join(root, "state.json") : undefined;
@@ -36,6 +36,7 @@ async function harness(t: TestContext, options: { requestTimeoutMs?: number; fix
     store,
     logger: new NullLogger(),
     profile: galateaCodexBackendProfile,
+    galateaCodexConfig: options.codexConfig,
     galateaMaximumFinalUtf8Bytes: 20_000,
   });
   t.after(async () => { await backend.stop(); await rm(root, { recursive: true }); });
@@ -43,12 +44,47 @@ async function harness(t: TestContext, options: { requestTimeoutMs?: number; fix
 }
 
 async function bind(value: Awaited<ReturnType<typeof harness>>) {
-  return value.backend.ensureBinding({ cwd: value.root, mode: "work", tools });
+  return value.backend.ensureBinding({ cwd: value.root });
 }
 
 async function start(value: Awaited<ReturnType<typeof harness>>, threadId: string, dispatchId: string, task: string) {
   return value.backend.startBoundTurn({
-    threadId, cwd: value.root, dispatchId, task, mode: "work", localCommandNetwork: false, tools,
+    threadId, cwd: value.root, dispatchId, task,
+  });
+}
+
+const configCases: (Record<string, JsonValue> | undefined)[] = [undefined, {}, {
+  sandbox_mode: "danger-full-access",
+  approval_policy: "never",
+  features: { apps: true, image_generation: false },
+  sandbox_workspace_write: { writable_roots: ["/tmp/shared"], exclude_tmpdir_env_var: false },
+  model_reasoning_effort: "high",
+}];
+for (const codexConfig of configCases) {
+  test(`Galatea only forwards explicit native config: ${JSON.stringify(codexConfig)}`, async (t) => {
+    const expected = structuredClone(codexConfig);
+    const value = await harness(t, { codexConfig });
+    // The sidecar owns a configuration snapshot; caller mutation cannot change it.
+    if (codexConfig && "features" in codexConfig) codexConfig.features = { apps: false };
+    const binding = await bind(value);
+    await start(value, binding.threadId, "config-mail", "[EARLY][NATURAL] task");
+    const requests = await value.client.request<{
+      lastThreadStartParams: Record<string, unknown>;
+      lastResumeParams: Record<string, unknown>;
+      lastTurnParams: Record<string, unknown>;
+    }>("test/lastRequests", {});
+    for (const params of [requests.lastThreadStartParams, requests.lastResumeParams]) {
+      if (expected && Object.keys(expected).length > 0) assert.deepEqual(params.config, expected);
+      else assert.equal(Object.hasOwn(params, "config"), false);
+      for (const key of ["approvalPolicy", "approvalsReviewer", "sandbox"]) {
+        assert.equal(Object.hasOwn(params, key), false, key);
+      }
+    }
+    for (const key of ["config", "approvalPolicy", "approvalsReviewer", "sandboxPolicy", "summary"]) {
+      assert.equal(Object.hasOwn(requests.lastTurnParams, key), false, key);
+    }
+    assert.equal(requests.lastTurnParams.cwd, value.root);
+    assert.equal(requests.lastTurnParams.clientUserMessageId, "config-mail");
   });
 }
 
@@ -369,18 +405,17 @@ for (const ignoreResumeCwd of [false, true]) {
     const task = "[EARLY][NATURAL] new home task";
     const accepted = await value.backend.startBoundTurn({
       threadId: binding.threadId, cwd: home, dispatchId: "mail-home", task,
-      mode: "work", localCommandNetwork: false, tools,
     });
     assert.equal(accepted.threadId, binding.threadId);
     const requests = await value.client.request<{
       lastResumeParams: { cwd: string };
-      lastTurnParams: { cwd: string; sandboxPolicy: { writableRoots: string[] } };
+      lastTurnParams: { cwd: string; sandboxPolicy?: unknown };
       threadStartCount: number;
       turnStartCount: number;
     }>("test/lastRequests", {});
     assert.equal(requests.lastResumeParams.cwd, home);
     assert.equal(requests.lastTurnParams.cwd, home);
-    assert.deepEqual(requests.lastTurnParams.sandboxPolicy.writableRoots, [home]);
+    assert.equal(requests.lastTurnParams.sandboxPolicy, undefined);
     assert.equal(requests.threadStartCount, 1);
     assert.equal(requests.turnStartCount, 1);
     const metadata = await value.client.request<{ thread: { cwd: string } }>("thread/read", { threadId: binding.threadId, includeTurns: false });
@@ -426,26 +461,24 @@ test("new invalid cwd is rejected before any Codex request", async (t) => {
   for (const [cwd, code] of [[path.join(value.root, "missing"), "INVALID_CWD"], [os.tmpdir(), "CWD_NOT_ALLOWED"]]) {
     await assert.rejects(value.backend.startBoundTurn({
       threadId: binding.threadId, cwd: cwd!, dispatchId: "mail-invalid-home", task: "task",
-      mode: "work", localCommandNetwork: false, tools,
     }), (error: unknown) => typeof error === "object" && error !== null && "code" in error && error.code === code);
   }
   assert.deepEqual(await value.client.request("test/lastRequests", {}), before);
 });
 
-test("two users share one backend while concurrent turns receive their own cwd and writable root", async (t) => {
+test("two users share one backend while concurrent turns receive their own cwd without overriding native sandbox policy", async (t) => {
   const value = await harness(t);
   const homes = [path.join(value.root, "a"), path.join(value.root, "b")];
   await Promise.all(homes.map((home) => mkdir(home)));
-  const bindings = await Promise.all(homes.map((cwd) => value.backend.ensureBinding({ cwd, mode: "work", tools })));
+  const bindings = await Promise.all(homes.map((cwd) => value.backend.ensureBinding({ cwd })));
   const accepted = await Promise.all(bindings.map((binding, index) => value.backend.startBoundTurn({
     threadId: binding.threadId, cwd: homes[index]!, dispatchId: `mail-user-${index}`, task: `[EARLY][NATURAL] user ${index}`,
-    mode: "work", localCommandNetwork: false, tools,
   })));
   assert.notEqual(accepted[0]!.threadId, accepted[1]!.threadId);
-  const requests = await value.client.request<{ allTurnParams: { threadId: string; cwd: string; sandboxPolicy: { writableRoots: string[] } }[] }>("test/lastRequests", {});
+  const requests = await value.client.request<{ allTurnParams: { threadId: string; cwd: string; sandboxPolicy?: unknown }[] }>("test/lastRequests", {});
   for (let index = 0; index < homes.length; index += 1) {
     const turn = requests.allTurnParams.find((request) => request.threadId === bindings[index]!.threadId)!;
     assert.equal(turn.cwd, homes[index]);
-    assert.deepEqual(turn.sandboxPolicy.writableRoots, [homes[index]]);
+    assert.equal(turn.sandboxPolicy, undefined);
   }
 });

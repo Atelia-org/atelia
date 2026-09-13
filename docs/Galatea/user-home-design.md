@@ -160,7 +160,7 @@ Galatea 专用静态 [backend profile](../../local-codex-mcp/src/galatea/backend
 ## 实施记录（2026-09-13）
 
 按配置/prompt、TS 协议/backend、SQLite/driver/离线升级三个工作包实施，独立审阅后由主线程完成
-C# transport/Supervisor 接线和集成验证。当前版本为 root V9、delegates V3、wire V4、delegation SQLite V2。
+C# transport/Supervisor 接线和集成验证。当前版本为 root V9、delegates V4、wire V4、delegation SQLite V2。delegates V4 的原生配置继承规则见 [configuration](configuration.md)。
 
 已通过的隔离验证：Galatea Server 全集 882 passed、1 个默认跳过的 live test；代行/恢复/升级与
 TextExtractor 定向 243/243；Node 全集 106 passed、2 个默认跳过的 live tests；文档 scoped 检查

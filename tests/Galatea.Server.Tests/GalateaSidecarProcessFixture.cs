@@ -81,13 +81,7 @@ internal sealed class GalateaSidecarProcessFixture : IDisposable {
         [new GalateaDelegateRouteConfig(
             "Codex",
             "codex-app-server",
-            GalateaDelegateMode.Work,
-            LocalCommandNetwork: false,
-            Tools: new GalateaDelegateToolConfig(
-                GalateaDelegateWebSearchMode.Live,
-                ImageGeneration: true,
-                ViewImage: true
-            ),
+            CodexConfig: null,
             MaximumQueuedMails: 16,
             MaximumTaskUtf8Bytes: maximumBodyUtf8Bytes,
             MaximumReplyUtf8Bytes: maximumBodyUtf8Bytes,

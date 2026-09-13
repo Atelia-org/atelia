@@ -1,12 +1,5 @@
-import type {
-  BuiltInToolPolicy,
-  TaskMode,
-} from "./task-backend.js";
-
 export interface EnsureGalateaBindingInput {
   cwd: string;
-  mode: TaskMode;
-  tools: BuiltInToolPolicy;
 }
 
 export interface GalateaBoundThread {
@@ -18,9 +11,6 @@ export interface StartGalateaBoundTurnInput {
   cwd: string;
   dispatchId: string;
   task: string;
-  mode: TaskMode;
-  localCommandNetwork: boolean;
-  tools: BuiltInToolPolicy;
 }
 
 export interface GalateaStartedTurn {

@@ -80,9 +80,6 @@ function harness(maximumOutputFrameBytes = 10_000) {
   const adapter = new GalateaDurableAdapter({
     backend,
     logger: new NullLogger(),
-    mode: "work",
-    localCommandNetwork: false,
-    tools: { webSearch: "live", imageGeneration: true, viewImage: true },
     maximumFinalUtf8Bytes: 1_000,
     maximumOutputFrameBytes,
     write: async (output) => { frames.push(output); },

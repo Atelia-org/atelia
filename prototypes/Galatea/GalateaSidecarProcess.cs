@@ -234,8 +234,7 @@ internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
             JsonSerializer.Serialize(Config.AllowedRoots);
         environment["CODEX_BRIDGE_CODEX_COMMAND"] = sidecar.CodexCommand;
         environment["CODEX_BRIDGE_CODEX_ARGS"] =
-            "[\"app-server\",\"--listen\",\"stdio://\",\"-c\","
-            + "\"mcp_servers={}\",\"-c\",\"features.apps=false\"]";
+            "[\"app-server\",\"--listen\",\"stdio://\"]";
         environment["CODEX_BRIDGE_DEFAULT_WAIT_MS"] = "0";
         environment["CODEX_BRIDGE_MAX_WAIT_MS"] = "60000";
         environment["CODEX_BRIDGE_RPC_TIMEOUT_MS"] =
@@ -245,24 +244,9 @@ internal abstract class GalateaSidecarProcessClientBase : IAsyncDisposable {
         environment["CODEX_BRIDGE_MAX_RESULT_CHARS"] = "12000";
         environment["CODEX_BRIDGE_MAX_PROGRESS_CHARS"] = "2000";
         environment["CODEX_BRIDGE_VERBOSE"] = "false";
-        environment["GALATEA_CODEX_MODE"] =
-            Route.Mode == GalateaDelegateMode.Work ? "work" : "research";
-        environment["GALATEA_CODEX_LOCAL_COMMAND_NETWORK"] =
-            Route.LocalCommandNetwork ? "true" : "false";
-        environment["GALATEA_CODEX_WEB_SEARCH"] =
-            Route.Tools.WebSearch switch {
-                GalateaDelegateWebSearchMode.Disabled => "disabled",
-                GalateaDelegateWebSearchMode.Cached => "cached",
-                GalateaDelegateWebSearchMode.Indexed => "indexed",
-                GalateaDelegateWebSearchMode.Live => "live",
-                _ => throw new InvalidOperationException(
-                    "Galatea delegate web-search mode is invalid."
-                )
-            };
-        environment["GALATEA_CODEX_IMAGE_GENERATION"] =
-            Route.Tools.ImageGeneration ? "true" : "false";
-        environment["GALATEA_CODEX_VIEW_IMAGE"] =
-            Route.Tools.ViewImage ? "true" : "false";
+        if (Route.CodexConfig is { Count: > 0 }) {
+            environment["GALATEA_CODEX_CONFIG"] = JsonSerializer.Serialize(Route.CodexConfig);
+        }
         environment["GALATEA_CODEX_MAX_INPUT_FRAME_BYTES"] =
             sidecar.MaximumFrameUtf8Bytes.ToString(
                 System.Globalization.CultureInfo.InvariantCulture

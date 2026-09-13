@@ -26,11 +26,15 @@ function environment(roots: string[]): NodeJS.ProcessEnv {
     ...env,
     CODEX_BRIDGE_ALLOWED_ROOTS: JSON.stringify(roots),
     CODEX_BRIDGE_RPC_TIMEOUT_MS: "60000",
-    GALATEA_CODEX_MODE: "work",
-    GALATEA_CODEX_LOCAL_COMMAND_NETWORK: "false",
-    GALATEA_CODEX_WEB_SEARCH: "disabled",
-    GALATEA_CODEX_IMAGE_GENERATION: "false",
-    GALATEA_CODEX_VIEW_IMAGE: "false",
+    CODEX_BRIDGE_CODEX_ARGS: JSON.stringify(["app-server", "--listen", "stdio://", "-c", "mcp_servers={}", "-c", "features.apps=false"]),
+    GALATEA_CODEX_CONFIG: JSON.stringify({
+      sandbox_mode: "workspace-write",
+      approval_policy: "never",
+      sandbox_workspace_write: { network_access: false, exclude_tmpdir_env_var: true, exclude_slash_tmp: true },
+      web_search: "disabled",
+      features: { apps: false, image_generation: false },
+      tools: { view_image: false },
+    }),
   };
 }
 

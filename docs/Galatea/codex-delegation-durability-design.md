@@ -694,7 +694,7 @@ backoff、history-unavailable、quarantine与maintenance-paused状态；checkbox
 
 ## 16. Per-user home（2026-09-13）
 
-当前 root config V9 的 `users[].homeDir` 是每个 user 的新任务执行目录；delegates V3 不再保存
+当前 root config V9 的 `users[].homeDir` 是每个 user 的新任务执行目录；delegates V4 不再保存
 全局 CWD。一个共享 sidecar/app-server 从 `/` 启动，wire V4 的 ensure/start 显式传目录，inspect
 不带目录。已经绑定的 thread 保持不变，resume 与 turn/start 都接收当前 home；历史 metadata CWD
 不要求仍存在、属于当前 allowedRoots 或与新 home 相等。新建空 thread 由创建响应和 metadata

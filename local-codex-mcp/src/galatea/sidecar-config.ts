@@ -1,4 +1,4 @@
-import type { BuiltInToolPolicy, WebSearchMode } from "../backend/task-backend.js";
+import type { JsonValue } from "../../schemas/serde_json/JsonValue.js";
 import { loadConfig, type BridgeConfig } from "../config.js";
 import { BridgeError } from "../errors.js";
 import {
@@ -19,9 +19,7 @@ const GALATEA_PARENT_CODEX_CONTEXT_KEYS = [
 
 export interface GalateaSidecarConfig {
   bridge: BridgeConfig;
-  mode: "research" | "work";
-  localCommandNetwork: boolean;
-  tools: BuiltInToolPolicy;
+  codexConfig?: Record<string, JsonValue>;
   maxInputFrameBytes: number;
   maxOutputFrameBytes: number;
   maxTaskBytes: number;
@@ -51,30 +49,27 @@ function integer(
   return parsed;
 }
 
-function boolean(value: string | undefined, fallback: boolean, name: string): boolean {
-  if (value === undefined) return fallback;
-  if (value === "1" || value === "true") return true;
-  if (value === "0" || value === "false") return false;
-  throw new BridgeError("INVALID_CONFIG", `${name} must be true, false, 1, or 0.`);
-}
-
-function webSearchMode(value: string | undefined): WebSearchMode {
-  const mode = value ?? "live";
-  if (mode === "disabled" || mode === "cached" || mode === "indexed" || mode === "live") {
-    return mode;
+function readCodexConfig(value: string | undefined): Record<string, JsonValue> | undefined {
+  if (value === undefined) return undefined;
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch {
+    throw new BridgeError("INVALID_CONFIG", "GALATEA_CODEX_CONFIG must be a JSON object.");
   }
-  throw new BridgeError(
-    "INVALID_CONFIG",
-    "GALATEA_CODEX_WEB_SEARCH must be disabled, cached, indexed, or live.",
-  );
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new BridgeError("INVALID_CONFIG", "GALATEA_CODEX_CONFIG must be a JSON object.");
+  }
+  // Codex owns the configuration schema. Preserve explicit false values and
+  // native nested tables; an empty object has the same semantics as omission.
+  return Object.keys(parsed).length > 0 ? parsed as Record<string, JsonValue> : undefined;
 }
 
 export function loadGalateaSidecarConfig(env: NodeJS.ProcessEnv = process.env): GalateaSidecarConfig {
-  const bridge = loadConfig(env);
-  const mode = env.GALATEA_CODEX_MODE ?? "work";
-  if (mode !== "research" && mode !== "work") {
-    throw new BridgeError("INVALID_CONFIG", "GALATEA_CODEX_MODE must be research or work.");
-  }
+  const bridge = loadConfig({
+    ...env,
+    // The generic MCP bridge has its own restrictive defaults. Galatea only
+    // adds native Codex overrides explicitly supplied by its operator.
+    CODEX_BRIDGE_CODEX_ARGS: env.CODEX_BRIDGE_CODEX_ARGS ?? JSON.stringify(["app-server", "--listen", "stdio://"]),
+  });
   const maxInputFrameBytes = integer(
     env.GALATEA_CODEX_MAX_INPUT_FRAME_BYTES,
     DEFAULT_MAX_INPUT_FRAME_BYTES,
@@ -92,25 +87,7 @@ export function loadGalateaSidecarConfig(env: NodeJS.ProcessEnv = process.env): 
 
   return {
     bridge,
-    mode,
-    localCommandNetwork: boolean(
-      env.GALATEA_CODEX_LOCAL_COMMAND_NETWORK,
-      true,
-      "GALATEA_CODEX_LOCAL_COMMAND_NETWORK",
-    ),
-    tools: {
-      webSearch: webSearchMode(env.GALATEA_CODEX_WEB_SEARCH),
-      imageGeneration: boolean(
-        env.GALATEA_CODEX_IMAGE_GENERATION,
-        true,
-        "GALATEA_CODEX_IMAGE_GENERATION",
-      ),
-      viewImage: boolean(
-        env.GALATEA_CODEX_VIEW_IMAGE,
-        true,
-        "GALATEA_CODEX_VIEW_IMAGE",
-      ),
-    },
+    codexConfig: readCodexConfig(env.GALATEA_CODEX_CONFIG),
     maxInputFrameBytes,
     maxOutputFrameBytes: integer(
       env.GALATEA_CODEX_MAX_OUTPUT_FRAME_BYTES,

@@ -130,11 +130,11 @@ Codex connection 与其他 Completion connection 使用相同的 ASP.NET 监听�
 
 ## `delegates.json`
 
-`delegates.json` 与 Completion catalog 分离，但同样位于 `config.json` 同目录，是 machine-local、启动必需的 Codex delegation 配置。它是 closed V3 schema，只允许一条大小写精确的 `recipient: "Codex"` / `kind: "codex-app-server"` route。bootstrap 写出的 placeholder 需要替换为本机已验证的 canonical path；不要保留 `REPLACE_WITH_...`。
+`delegates.json` 与 Completion catalog 分离，但同样位于 `config.json` 同目录，是 machine-local、启动必需的 Codex delegation 配置。它是 closed V4 schema，只允许一条大小写精确的 `recipient: "Codex"` / `kind: "codex-app-server"` route。bootstrap 写出的 placeholder 需要替换为本机已验证的 canonical path；不要保留 `REPLACE_WITH_...`。
 
 ```json
 {
-  "v": 3,
+  "v": 4,
   "sidecar": {
     "nodeCommand": "/canonical/path/to/node",
     "entryPoint": "/canonical/path/to/local-codex-mcp/dist/src/galatea-durable-sidecar.js",
@@ -147,12 +147,9 @@ Codex connection 与其他 Completion connection 使用相同的 ASP.NET 监听�
   "routes": [{
     "recipient": "Codex",
     "kind": "codex-app-server",
-    "mode": "work",
-    "localCommandNetwork": true,
-    "tools": {
-      "webSearch": "live",
-      "imageGeneration": true,
-      "viewImage": true
+    "codexConfig": {
+      "sandbox_mode": "danger-full-access",
+      "approval_policy": "never"
     },
     "maximumQueuedMails": 128,
     "maximumTaskUtf8Bytes": 100000,
@@ -163,7 +160,13 @@ Codex connection 与其他 Completion connection 使用相同的 ASP.NET 监听�
 }
 ```
 
-全部路径必须是现存的 Linux absolute canonical realpath，且配置路径及其已有祖先不能含 symlink/reparse point。`nodeCommand`、`codexCommand` 必须是 executable regular file；`entryPoint` 必须是 regular file；每个 user 的 `homeDir` 必须落在 `allowedRoots` 内；全局 route 不再接受 `cwd`。`mode` 只接受 `research` 或 `work`，`webSearch` 只接受 `disabled`、`cached`、`indexed` 或 `live`。未知/缺失字段、重复或大小写变体、额外 route、路径或范围不合法均 fail closed。
+全部路径必须是现存的 Linux absolute canonical realpath，且配置路径及其已有祖先不能含 symlink/reparse point。`nodeCommand`、`codexCommand` 必须是 executable regular file；`entryPoint` 必须是 regular file；每个 user 的 `homeDir` 必须落在 `allowedRoots` 内；全局 route 不再接受 `cwd`。V4 删除了旧 `mode`、`localCommandNetwork`、`tools` 字段，不接受 V1–V3 配置。除可选 `codexConfig` 外，未知/缺失字段、重复或大小写变体、额外 route、路径或范围不合法均 fail closed。
+
+`codexConfig` 使用 Codex 原生配置名，是传给 app-server thread 配置的 JSON object。省略或设为 `{}` 都不会添加配置覆盖；显式 `false` 等值会照常传递。对象可包含嵌套对象、数组、字符串、数字和布尔值，不能包含 TOML 无法表示的 `null`，各层对象键不能重复或存在大小写冲突。具体原生字段及其合法值交给 app-server 处理，Galatea 不维护另一套 Codex 配置 schema。上例显式关闭 Codex 沙盒并设置 `approval_policy: "never"`；删除整个 `codexConfig` 就恢复由 Codex 自身决定默认值。
+
+Galatea 保留父进程的 `HOME` / `CODEX_HOME`，不会因 user 的 `homeDir` 创建另一套 Codex home。未显式配置时，新 thread 由 Codex 正常加载公共 `config.toml` 及其原生配置层级；恢复已有 thread 时也遵循 Codex 的恢复规则，可能沿用已持久化的设置，并不强制重置为公共默认值。Galatea 不再附加 `mcp_servers={}`、`features.apps=false` 启动参数，也不再替沙盒、审批、工具开关填入隐式覆盖。
+
+配置在 sidecar 启动时取得快照；修改 `delegates.json` 后需重启 Galatea 才会生效。显式配置会在创建 thread 和冷恢复已有 thread 时传入；同一 app-server 已加载的 thread 可能保留当前设置，不依赖 warm resume 热更新配置。bridge 仍是非交互客户端：如果继承的审批策略产生人工审批请求，现有客户端会拒绝该请求；无人值守且无需审批时应显式设置 `approval_policy: "never"`。
 
 sidecar/app-server 进程固定从 `/` 启动；每个创建 thread / 启动 turn 请求显式携带该 user 的 home，结果查询不依赖旧目录。共享进程不会通过 `process.chdir()` 切换用户目录。
 

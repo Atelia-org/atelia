@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+using System.Text.Json;
 
 namespace Atelia.Galatea.Server;
 
@@ -34,38 +34,10 @@ public sealed record GalateaDelegateSidecarConfig(
 public sealed record GalateaDelegateRouteConfig(
     string Recipient,
     string Kind,
-    GalateaDelegateMode Mode,
-    bool LocalCommandNetwork,
-    GalateaDelegateToolConfig Tools,
+    IReadOnlyDictionary<string, JsonElement>? CodexConfig,
     int MaximumQueuedMails,
     int MaximumTaskUtf8Bytes,
     int MaximumReplyUtf8Bytes,
     int MaximumInboxReplies,
     int MaximumInboxUtf8Bytes
 );
-
-public sealed record GalateaDelegateToolConfig(
-    GalateaDelegateWebSearchMode WebSearch,
-    bool ImageGeneration,
-    bool ViewImage
-);
-
-[JsonConverter(typeof(JsonStringEnumConverter<GalateaDelegateMode>))]
-public enum GalateaDelegateMode {
-    [JsonStringEnumMemberName("research")]
-    Research,
-    [JsonStringEnumMemberName("work")]
-    Work
-}
-
-[JsonConverter(typeof(JsonStringEnumConverter<GalateaDelegateWebSearchMode>))]
-public enum GalateaDelegateWebSearchMode {
-    [JsonStringEnumMemberName("disabled")]
-    Disabled,
-    [JsonStringEnumMemberName("cached")]
-    Cached,
-    [JsonStringEnumMemberName("indexed")]
-    Indexed,
-    [JsonStringEnumMemberName("live")]
-    Live
-}

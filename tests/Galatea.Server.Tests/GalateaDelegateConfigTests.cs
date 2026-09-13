@@ -7,7 +7,7 @@ namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaDelegateConfigTests {
     [Fact]
-    public void ValidClosedV3LoadsCanonicalExactCodexRouteAndToolPolicy() {
+    public void ValidClosedV4LoadsCanonicalExactCodexRouteWithoutImplicitConfig() {
         using var fixture = new Fixture();
 
         GalateaDelegateConfig config = fixture.Load();
@@ -16,23 +16,19 @@ public sealed class GalateaDelegateConfigTests {
         Assert.Equal("Codex", config.CodexRoute.Recipient);
         Assert.Equal("codex-app-server", config.CodexRoute.Kind);
         Assert.Equal([fixture.Root], config.AllowedRoots);
-        Assert.Equal(GalateaDelegateMode.Work, config.CodexRoute.Mode);
-        Assert.False(config.CodexRoute.LocalCommandNetwork);
-        Assert.Equal(
-            GalateaDelegateWebSearchMode.Live,
-            config.CodexRoute.Tools.WebSearch
-        );
-        Assert.True(config.CodexRoute.Tools.ImageGeneration);
-        Assert.True(config.CodexRoute.Tools.ViewImage);
+        Assert.Null(config.CodexRoute.CodexConfig);
         Assert.Equal(1_048_576, config.Sidecar.MaximumFrameUtf8Bytes);
     }
 
-    [Fact]
-    public void LegacyV1IsRejectedWithoutCompatibilityFallback() {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void LegacyVersionsAreRejectedWithoutCompatibilityFallback(int version) {
         using var fixture = new Fixture();
         string legacy = fixture.ValidJson.Replace(
-            "\"v\": 3,",
-            "\"v\": 1,",
+            "\"v\": 4,",
+            $"\"v\": {version},",
             StringComparison.Ordinal
         );
 
@@ -82,8 +78,8 @@ public sealed class GalateaDelegateConfigTests {
                 StringComparison.Ordinal
             ),
             "duplicate-case-variant" => json.Replace(
-                "\"v\": 3,",
-                "\"v\": 3,\n\"V\": 3,",
+                "\"v\": 4,",
+                "\"v\": 4,\n\"V\": 4,",
                 StringComparison.Ordinal
             ),
             _ => throw new ArgumentOutOfRangeException(nameof(mutation))
@@ -122,16 +118,84 @@ public sealed class GalateaDelegateConfigTests {
     }
 
     [Theory]
-    [InlineData("Disabled")]
-    [InlineData("unknown")]
-    [InlineData("")]
-    public void WebSearchModeIsClosedAndCaseSensitive(string mode) {
+    [InlineData("mode")]
+    [InlineData("localCommandNetwork")]
+    [InlineData("tools")]
+    public void RetiredRoutePolicyFieldsAreRejected(string property) {
         using var fixture = new Fixture();
         JsonObject root = fixture.Parse();
-        root["routes"]!.AsArray()[0]!.AsObject()["tools"]!
-            .AsObject()["webSearch"] = mode;
-
+        root["routes"]!.AsArray()[0]!.AsObject()[property] = "retired";
         Assert.Throws<InvalidDataException>(() => fixture.Load(root));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("true")]
+    [InlineData("{\"sandbox_mode\":null}")]
+    [InlineData("{\"features\":{\"x\":true,\"X\":false}}")]
+    [InlineData("{\"items\":[null]}")]
+    [InlineData("{\"x\":1,\"x\":2}")]
+    public void NativeConfigRejectsNonObjectsNullAndDuplicateKeys(string value) {
+        using var fixture = new Fixture();
+        string json = fixture.ValidJson.Replace(
+            "\"kind\": \"codex-app-server\",",
+            "\"kind\": \"codex-app-server\", \"codexConfig\": " + value + ",",
+            StringComparison.Ordinal);
+        Assert.Throws<InvalidDataException>(() => fixture.Load(json));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MissingOrEmptyConfigDoesNotOverrideCodexDefaults(bool empty) {
+        using var fixture = new Fixture();
+        JsonObject root = fixture.Parse();
+        if (empty) { root["routes"]!.AsArray()[0]!.AsObject()["codexConfig"] = new JsonObject(); }
+        await using var client = new GalateaCodexDurableSidecarClient(fixture.Load(root));
+        ProcessStartInfo start = client.CreateStartInfoForTest();
+        Assert.False(start.Environment.ContainsKey("GALATEA_CODEX_CONFIG"));
+        Assert.Equal(new[] { "app-server", "--listen", "stdio://" },
+            JsonSerializer.Deserialize<string[]>(start.Environment["CODEX_BRIDGE_CODEX_ARGS"]!));
+        Assert.False(start.Environment.ContainsKey("GALATEA_CODEX_MODE"));
+        Assert.False(start.Environment.ContainsKey("GALATEA_CODEX_LOCAL_COMMAND_NETWORK"));
+        Assert.False(start.Environment.ContainsKey("GALATEA_CODEX_WEB_SEARCH"));
+        Assert.False(start.Environment.ContainsKey("GALATEA_CODEX_IMAGE_GENERATION"));
+        Assert.False(start.Environment.ContainsKey("GALATEA_CODEX_VIEW_IMAGE"));
+        Assert.Equal(Environment.GetEnvironmentVariable("HOME"), (start.Environment.TryGetValue("HOME", out string? home) ? home : null));
+        Assert.Equal(Environment.GetEnvironmentVariable("CODEX_HOME"), (start.Environment.TryGetValue("CODEX_HOME", out string? codexHome) ? codexHome : null));
+        Assert.False(start.Environment.ContainsKey("CODEX_THREAD_ID"));
+        Assert.False(start.Environment.ContainsKey("CODEX_PERMISSION_PROFILE"));
+    }
+
+    [Fact]
+    public async Task ExplicitNativeConfigSurvivesDocumentDisposalAndProgrammaticMutation() {
+        using var fixture = new Fixture();
+        JsonObject root = fixture.Parse();
+        root["routes"]!.AsArray()[0]!.AsObject()["codexConfig"] = JsonNode.Parse("""
+            {"sandbox_mode":"danger-full-access","approval_policy":"never",
+             "features":{"apps":false},"future_setting":["first",2,true]}
+            """);
+        GalateaDelegateConfig loaded = fixture.Load(root);
+        var mutable = loaded.CodexRoute.CodexConfig!.ToDictionary(static entry => entry.Key, static entry => entry.Value);
+        string expected = JsonSerializer.Serialize(mutable);
+        await using var client = new GalateaCodexDurableSidecarClient(loaded with {
+            Routes = [loaded.CodexRoute with { CodexConfig = mutable }]
+        });
+        mutable.Clear();
+        Assert.Equal(expected, client.CreateStartInfoForTest().Environment["GALATEA_CODEX_CONFIG"]);
+    }
+
+    [Fact]
+    public void ProgrammaticNativeConfigReceivesTheSameShapeValidation() {
+        using var fixture = new Fixture();
+        GalateaDelegateConfig loaded = fixture.Load();
+        foreach (string json in new[] { "{\"value\":null}", "{\"value\":1,\"VALUE\":2}" }) {
+            var config = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)!;
+            Assert.Throws<InvalidDataException>(() => new GalateaCodexDurableSidecarClient(loaded with {
+                Routes = [loaded.CodexRoute with { CodexConfig = config }]
+            }));
+        }
     }
 
     [Theory]
@@ -377,7 +441,7 @@ public sealed class GalateaDelegateConfigTests {
 
         private string BuildJson() => $$"""
         {
-          "v": 3,
+          "v": 4,
           "sidecar": {
             "nodeCommand": {{JsonSerializer.Serialize(Executable)}},
             "entryPoint": {{JsonSerializer.Serialize(EntryPoint)}},
@@ -391,13 +455,6 @@ public sealed class GalateaDelegateConfigTests {
             {
               "recipient": "Codex",
               "kind": "codex-app-server",
-              "mode": "work",
-              "localCommandNetwork": false,
-              "tools": {
-                "webSearch": "live",
-                "imageGeneration": true,
-                "viewImage": true
-              },
               "maximumQueuedMails": 16,
               "maximumTaskUtf8Bytes": 100000,
               "maximumReplyUtf8Bytes": 100000,

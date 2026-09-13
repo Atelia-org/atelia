@@ -1,10 +1,11 @@
+using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace Atelia.Galatea.Server;
 
 internal static class GalateaDelegateConfigReader {
-    internal const int CurrentVersion = 3;
+    internal const int CurrentVersion = 4;
     internal const int MaximumInputUtf8Bytes = 256 * 1024;
     internal const string CanonicalRecipient = "Codex";
     internal const string CodexAppServerKind = "codex-app-server";
@@ -102,38 +103,10 @@ internal static class GalateaDelegateConfigReader {
             "kind",
             CodexAppServerKind
         );
-        string modeText = routeElement.GetProperty("mode").GetString()
-            ?? throw new InvalidDataException("routes[0].mode is null.");
-        GalateaDelegateMode mode = modeText switch {
-            "research" => GalateaDelegateMode.Research,
-            "work" => GalateaDelegateMode.Work,
-            _ => throw new InvalidDataException(
-                "routes[0].mode must be exactly 'research' or 'work'."
-            )
-        };
-        bool localCommandNetwork = routeElement
-            .GetProperty("localCommandNetwork")
-            .GetBoolean();
-        JsonElement toolsElement = routeElement.GetProperty("tools");
-        string webSearchText = toolsElement.GetProperty("webSearch").GetString()
-            ?? throw new InvalidDataException(
-                "routes[0].tools.webSearch is null."
-            );
-        GalateaDelegateWebSearchMode webSearch = webSearchText switch {
-            "disabled" => GalateaDelegateWebSearchMode.Disabled,
-            "cached" => GalateaDelegateWebSearchMode.Cached,
-            "indexed" => GalateaDelegateWebSearchMode.Indexed,
-            "live" => GalateaDelegateWebSearchMode.Live,
-            _ => throw new InvalidDataException(
-                "routes[0].tools.webSearch must be exactly 'disabled', "
-                + "'cached', 'indexed', or 'live'."
-            )
-        };
-        var tools = new GalateaDelegateToolConfig(
-            webSearch,
-            toolsElement.GetProperty("imageGeneration").GetBoolean(),
-            toolsElement.GetProperty("viewImage").GetBoolean()
-        );
+        IReadOnlyDictionary<string, JsonElement>? codexConfig =
+            routeElement.TryGetProperty("codexConfig", out JsonElement configElement)
+                ? ReadCodexConfig(configElement)
+                : null;
         int maximumQueuedMails = ReadBoundedInteger(
             routeElement,
             "maximumQueuedMails",
@@ -200,9 +173,7 @@ internal static class GalateaDelegateConfigReader {
                 new GalateaDelegateRouteConfig(
                     recipient,
                     kind,
-                    mode,
-                    localCommandNetwork,
-                    tools,
+                    codexConfig,
                     maximumQueuedMails,
                     maximumTaskUtf8Bytes,
                     maximumReplyUtf8Bytes,
@@ -226,7 +197,7 @@ internal static class GalateaDelegateConfigReader {
             || config.Routes is not { Count: 1 }
             || config.Sidecar is null) {
             throw new InvalidOperationException(
-                "Galatea delegate configuration is not a closed V3 configuration."
+                "Galatea delegate configuration is not a closed V4 configuration."
             );
         }
         GalateaDelegateSidecarConfig sidecar = config.Sidecar;
@@ -283,22 +254,8 @@ internal static class GalateaDelegateConfigReader {
                 "Galatea delegates require the exact Codex route."
             );
         }
-        if (route.Mode is not (
-                GalateaDelegateMode.Research or GalateaDelegateMode.Work)) {
-            throw new InvalidDataException(
-                "routes[0].mode must be research or work."
-            );
-        }
-        if (route.Tools is null
-            || route.Tools.WebSearch is not (
-                GalateaDelegateWebSearchMode.Disabled
-                or GalateaDelegateWebSearchMode.Cached
-                or GalateaDelegateWebSearchMode.Indexed
-                or GalateaDelegateWebSearchMode.Live)) {
-            throw new InvalidDataException(
-                "routes[0].tools contains an invalid webSearch mode."
-            );
-        }
+        IReadOnlyDictionary<string, JsonElement>? codexConfig =
+            SnapshotCodexConfig(route.CodexConfig);
         RequireBoundedInteger(route.MaximumQueuedMails,
             "maximumQueuedMails", 1, MaximumQueueCount);
         RequireBoundedInteger(route.MaximumTaskUtf8Bytes,
@@ -347,13 +304,7 @@ internal static class GalateaDelegateConfigReader {
                 new GalateaDelegateRouteConfig(
                     CanonicalRecipient,
                     CodexAppServerKind,
-                    route.Mode,
-                    route.LocalCommandNetwork,
-                    new GalateaDelegateToolConfig(
-                        route.Tools.WebSearch,
-                        route.Tools.ImageGeneration,
-                        route.Tools.ViewImage
-                    ),
+                    codexConfig,
                     route.MaximumQueuedMails,
                     route.MaximumTaskUtf8Bytes,
                     route.MaximumReplyUtf8Bytes,
@@ -367,7 +318,7 @@ internal static class GalateaDelegateConfigReader {
     internal static byte[] CreatePlaceholderTemplateUtf8() =>
         """
         {
-          "v": 3,
+          "v": 4,
           "sidecar": {
             "nodeCommand": "/REPLACE_WITH_CANONICAL_NODE_EXECUTABLE",
             "entryPoint": "/REPLACE_WITH_GALATEA_SIDECAR_ENTRY_POINT",
@@ -383,13 +334,6 @@ internal static class GalateaDelegateConfigReader {
             {
               "recipient": "Codex",
               "kind": "codex-app-server",
-              "mode": "work",
-              "localCommandNetwork": true,
-              "tools": {
-                "webSearch": "live",
-                "imageGeneration": true,
-                "viewImage": true
-              },
               "maximumQueuedMails": 128,
               "maximumTaskUtf8Bytes": 100000,
               "maximumReplyUtf8Bytes": 100000,
@@ -414,7 +358,7 @@ internal static class GalateaDelegateConfigReader {
                         || !value.TryGetInt32(out int version)
                         || version != CurrentVersion) {
                         throw new InvalidDataException(
-                            "delegates requires exact integer version 'v': 3."
+                            "delegates requires exact integer version 'v': 4."
                         );
                     }
                 },
@@ -472,10 +416,8 @@ internal static class GalateaDelegateConfigReader {
         var seen = ReadProperties(ref reader, "route", new() {
             ["recipient"] = RequireString,
             ["kind"] = RequireString,
-            ["mode"] = RequireString,
-            ["localCommandNetwork"] = RequireBoolean,
-            ["tools"] = static (ref Utf8JsonReader value) =>
-                ValidateTools(ref value),
+            ["codexConfig"] = static (ref Utf8JsonReader value) =>
+                ValidateCodexConfig(ref value),
             ["maximumQueuedMails"] = RequireNumber,
             ["maximumTaskUtf8Bytes"] = RequireNumber,
             ["maximumReplyUtf8Bytes"] = RequireNumber,
@@ -483,8 +425,7 @@ internal static class GalateaDelegateConfigReader {
             ["maximumInboxUtf8Bytes"] = RequireNumber
         });
         RequireExactProperties(seen, "route", [
-            "recipient", "kind", "mode", "localCommandNetwork",
-            "tools",
+            "recipient", "kind",
             "maximumQueuedMails", "maximumTaskUtf8Bytes",
             "maximumReplyUtf8Bytes", "maximumInboxReplies",
             "maximumInboxUtf8Bytes"
@@ -496,16 +437,66 @@ internal static class GalateaDelegateConfigReader {
         }
     }
 
-    private static void ValidateTools(ref Utf8JsonReader reader) {
-        RequireToken(reader.TokenType, JsonTokenType.StartObject, "tools");
-        var seen = ReadProperties(ref reader, "tools", new() {
-            ["webSearch"] = RequireString,
-            ["imageGeneration"] = RequireBoolean,
-            ["viewImage"] = RequireBoolean
-        });
-        RequireExactProperties(seen, "tools", [
-            "webSearch", "imageGeneration", "viewImage"
-        ]);
+    // Codex owns the native key schema. Only JSON/TOML representation and
+    // unambiguous object keys are validated here, without imposing defaults.
+    private static void ValidateCodexConfig(ref Utf8JsonReader reader) {
+        RequireToken(reader.TokenType, JsonTokenType.StartObject, "codexConfig");
+        ValidateCodexValue(ref reader);
+    }
+
+    private static void ValidateCodexValue(ref Utf8JsonReader reader) {
+        if (reader.TokenType == JsonTokenType.StartObject) {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndObject) {
+                RequireToken(reader.TokenType, JsonTokenType.PropertyName, "codexConfig");
+                if (!seen.Add(reader.GetString()!)) {
+                    throw new InvalidDataException("codexConfig contains duplicate object keys.");
+                }
+                if (!reader.Read()) {
+                    throw new InvalidDataException("codexConfig value is missing.");
+                }
+                ValidateCodexValue(ref reader);
+            }
+            RequireToken(reader.TokenType, JsonTokenType.EndObject, "codexConfig");
+        }
+        else if (reader.TokenType == JsonTokenType.StartArray) {
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndArray) {
+                ValidateCodexValue(ref reader);
+            }
+            RequireToken(reader.TokenType, JsonTokenType.EndArray, "codexConfig");
+        }
+        else if (reader.TokenType is not (JsonTokenType.String
+                     or JsonTokenType.Number or JsonTokenType.True or JsonTokenType.False)) {
+            throw new InvalidDataException("codexConfig values must be representable in TOML; null is not supported.");
+        }
+    }
+
+    private static IReadOnlyDictionary<string, JsonElement> ReadCodexConfig(
+        JsonElement element
+    ) => new ReadOnlyDictionary<string, JsonElement>(element.EnumerateObject()
+        .ToDictionary(static property => property.Name,
+            static property => property.Value.Clone(), StringComparer.Ordinal));
+
+    private static IReadOnlyDictionary<string, JsonElement>? SnapshotCodexConfig(
+        IReadOnlyDictionary<string, JsonElement>? config
+    ) {
+        if (config is null) { return null; }
+        try {
+            byte[] utf8 = JsonSerializer.SerializeToUtf8Bytes(config);
+            if (utf8.Length > MaximumInputUtf8Bytes) {
+                throw new InvalidDataException("codexConfig exceeds the configuration byte limit.");
+            }
+            var reader = new Utf8JsonReader(utf8, new JsonReaderOptions {
+                MaxDepth = MaximumDepth
+            });
+            RequireRead(ref reader, JsonTokenType.StartObject, "codexConfig");
+            ValidateCodexConfig(ref reader);
+            using JsonDocument document = JsonDocument.Parse(utf8);
+            return ReadCodexConfig(document.RootElement);
+        }
+        catch (Exception error) when (error is JsonException or InvalidOperationException) {
+            throw new InvalidDataException("codexConfig has an invalid JSON value.", error);
+        }
     }
 
     private static void ValidateStringArray(
@@ -576,13 +567,6 @@ internal static class GalateaDelegateConfigReader {
 
     private static void RequireNumber(ref Utf8JsonReader reader) =>
         RequireToken(reader.TokenType, JsonTokenType.Number, "number");
-
-    private static void RequireBoolean(ref Utf8JsonReader reader) {
-        if (reader.TokenType is not (
-                JsonTokenType.True or JsonTokenType.False)) {
-            throw new InvalidDataException("boolean has an invalid JSON token.");
-        }
-    }
 
     private static void RequireRead(
         ref Utf8JsonReader reader,

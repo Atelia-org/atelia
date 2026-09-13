@@ -1,8 +1,4 @@
 import type {
-  BuiltInToolPolicy,
-  TaskMode,
-} from "../backend/task-backend.js";
-import type {
   GalateaDispatchInspection,
   GalateaStagedBackend,
 } from "../backend/galatea-staged-backend.js";
@@ -22,9 +18,6 @@ import {
 export interface GalateaDurableAdapterOptions {
   backend: GalateaStagedBackend;
   logger: BridgeLogger;
-  mode: TaskMode;
-  localCommandNetwork: boolean;
-  tools: BuiltInToolPolicy;
   maximumFinalUtf8Bytes: number;
   maximumOutputFrameBytes: number;
   write(frame: GalateaDurableOutputFrame): Promise<void>;
@@ -66,8 +59,6 @@ export class GalateaDurableAdapter {
     try {
       const bound = await this.options.backend.ensureBinding({
         cwd: frame.cwd,
-        mode: this.options.mode,
-        tools: this.options.tools,
       });
       await this.options.write({
         v: GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION,
@@ -110,9 +101,6 @@ export class GalateaDurableAdapter {
         cwd: frame.cwd,
         dispatchId: frame.dispatchId,
         task: frame.task,
-        mode: this.options.mode,
-        localCommandNetwork: this.options.localCommandNetwork,
-        tools: this.options.tools,
       });
       await this.options.write({
         v: GALATEA_DURABLE_SIDECAR_PROTOCOL_VERSION,
