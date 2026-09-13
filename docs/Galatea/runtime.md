@@ -14,12 +14,15 @@
 Codex 有跨模型 live 实验依据；公共 Responses 的相同行为为 operator 授权假设。适配器合同见
 [Completion 的 replay 边界](../Completion/openai-codex-subscription-client-design.md#64-独立-protocol-identity)。
 
-**2026-09-10 升级注意：** 从 omission 改为 native replay 会改变 RequestAdapterFingerprint，虽然 payload ApiSpecId
-仍为 v2。升级前先暂停新的自动 admission，在旧版本完成已有 Prepared/Started 工作，再正常停服、备份、切换新版。
-旧版 Started 的重新调用仍须在页面明确授权；授权仅允许重用 frozen request/adapter，不允许改绑新投影。
-`BindExact` 会拒绝旧 fingerprint，即使 `RestartUncertainCompletion=true`；不要连续点击恢复。
+**2026-09-14 恢复语义更新：** 当前代码删除了手工 `RequestAdapterFingerprint` 门槛。
+旧 Prepared v7 的 adapter 字段只在格式读取时校验并丢弃，v7/v8 使用同一当前 adapter 重构与调用。
+已冻结的模型、prompt、history、tools 及逻辑请求 commitment 仍保留；connection、client/API、原生载荷和工具权限检查继续有效。
+`StartedOutcomeUncertain` 的重新调用仍须在页面明确授权。授权允许当前修复后的 adapter 执行，不能据此更换连接或模型。
 
-若已切换新版才发现旧 frozen work，需要继续该请求时，应停止新版并使用与冻结 identity 匹配的旧版本处理，再升级。
+新 Prepared 写 v8；v5 保持历史审计可读、completion 不可执行。部署前正常停服并保留完整数据快照，
+回退旧程序时需要匹配的数据快照，不能只换回二进制；恢复旧快照不保留升级后新增轮次。
+详见 [Prepared 合同](../SessionJournal/current/contracts/completion-request-prepared-v7.md)。
+若其余绑定检查失败，应先核查实际连接/载荷差异，不要连续点击恢复或修改冻结身份。
 当前 abandon 仅适用于已确定失败的轮次，不能用来放弃 Prepared/Started；Undo 也不是 pending 迁移接口。
 不要修改原始 manifest、reasoning Origin 或把同一个 connectionId 临时改绑另一个模型。
 若 operator 明确选择舍弃未完成 turn 的 selected suffix，可以停服、备份后使用
@@ -27,7 +30,7 @@ Codex 有跨模型 live 实验依据；公共 Responses 的相同行为为 opera
 再用 exact Ref/head/target 确认一次 ref 移动。这不是恢复或迁移 frozen request，不删除 raw events，
 也不能撤销已发生的 provider/tool、delegation 或 CharacterMemory 副作用；不能据此自动重发旧输入。
 没有 pending completion 的旧历史不需要迁移，合法 v2 native reasoning 可直接被新投影读取。
-网络中断等真正不确定的调用仍不可自动重发；adapter 升级不增加自动兼容重试或修改真实会话状态。
+网络中断等真正不确定的调用仍不可自动重发；adapter 升级不增加自动重试权限。
 
 日志排查先看 `Galatea.TurnRunner` 的 exception stack 与 `callLogDir` 中同次调用的 `exception` / `elapsedMs`，
 不要把完整 prompt、reasoning payload 或凭据复制到 issue。`Provider` Debug 日志只记录跨 provider/profile 的省略计数，不记录内容。

@@ -11,7 +11,7 @@ approval anchors：immutable v1 `session-journal-contract-r2-approved-surfaces-v
 记录日期：2026-08-19
 
 > **Post-R2 successor:** current `CompletionRequestPrepared` write/recovery language has been superseded by
-> [Prepared v7](completion-request-prepared-v7.md). The R2 tables and claims below remain the immutable
+> [Prepared v8](completion-request-prepared-v7.md). The R2 tables and claims below remain the immutable
 > Prepared-v5 approval record and are intentionally not rewritten. Current code retains v5 only as a
 > read-only historical verifier so existing raw addresses remain valid; v5 is not executable recovery.
 

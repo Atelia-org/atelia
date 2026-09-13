@@ -1,6 +1,6 @@
 # Galatea / RecapGrid 身份与恢复校验简化设计
 
-> 状态：设计已获用户采纳，进入实施。首切片为 §5，后续范围见 §6；实际完成情况另行记录。
+> 状态：§5 已实现并通过本地集成验证；§6 仍为后续设计。实施记录见 §10；未部署到长期实例。
 >
 > 日期：2026-09-14。代码基线：`277baeea`。本文区分目标设计、当前实现和历史验证；不继承其他工作单的实施授权。
 
@@ -46,7 +46,7 @@ B 项说明真实需求，不把现有测试对每一个字段的断言升级成
 - `7ab556d6`：route manifest 的 operator JSON 已改用宽容排版的 `ParseJson`；空白、字段顺序不影响配置加载，schema/重复字段仍校验。**不再把这件事列入待办。**
 - `277baeea` 及其前序委派提交：已实现有限恢复、已知未发送与结果不明的区分。见[委派恢复方案](codex-delegation-recovery-refactor-plan.md)。本方案不修改恢复预算、不自动重发结果不明的委派，不把该方案的阶段授权移用到这里。
 
-当前证据入口：
+实施前基线证据入口（`277baeea`；§5 涉及的旧符号已在实施中删除）：
 
 | 机制 | 代码与消费者 | 结论强度 |
 |---|---|---|
@@ -80,7 +80,7 @@ B 项说明真实需求，不把现有测试对每一个字段的断言升级成
 
 ### 5.1 行为合同
 
-在 D1 被采纳后：旧 adapter 标签差异不再构成 Prepared 恢复的拒绝理由。模型、prompt、history、可见工具定义及最后执行序号仍来自持久输入；能力查询和 provider request 转换使用当前代码。真正不兼容的升级仍可能被其余绑定或载荷检查拒绝，不承诺任意升级都能恢复。
+依据已采纳的 D1：旧 adapter 标签差异不再构成 Prepared 恢复的拒绝理由。模型、prompt、history、可见工具定义及最后执行序号仍来自持久输入；能力查询和 provider request 转换使用当前代码。真正不兼容的升级仍可能被其余绑定或载荷检查拒绝，不承诺任意升级都能恢复。
 
 - connectionId 必须精确查找，不回落默认连接。
 - 第一切片保留 ConnectionFingerprint、client name、API spec、原生 reasoning Origin/type 和工具权限检查。**不顺便允许切换模型、endpoint、reasoning 或工具实现。**
@@ -165,6 +165,10 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 该切片涉及历史 tool result 的审计读取与当前 receipt 的输出格式；不修改已有 raw tool result 文本，也不重新执行旧操作。若有当前代码消费者依赖旧结果字段，必须一起重构而非增加长期双输出。
 
+实施再审视已确认该切片可独立，但需明确文件升级边界：当前 `ControlState` 是 canonical JSON v2，receipt 内有结果摘要，读取会对照原 canonical bytes 与 state digest。后续 writer 应写 v3；旧 v2 在 codec 验证后投影为当前 receipt，保留读入的原 Head 与 CanonicalBytes，直到下一次正常 mutation 才写新格式。不能在纯读取时重算 Head，否则旧 backup manifest、CAS 与 restore 会失配。
+
+当前 AgentControl 的输出 DTO 不进入 runtime identity；后续输出改为 `schemaVersion: 2` 与 `operationKey`，同时保持输入定义、工具说明、catalog、命令编码及既有 runtime identity。验证需包含旧 v2 receipt 冷读/重放不写文件、不递增 generation，正常 mutation 后写 v3、旧操作仍可重放，以及 v2 backup 与 v3 状态的 receipt 合并。这里是后续切片的具体方案，尚未修改 Control 实现。
+
 ### 6.3 结果主键与缓存身份
 
 Cell/RowResult 用 store 内不可变主键；保留 cell 对 evaluation cache key 的唯一约束，以及 row 对 `(ref,timeline,recipe,row)` 的唯一约束、previous/member FK。不同 store 的 ID 不相互解析，保留 store 实例边界。
@@ -223,3 +227,25 @@ dotnet build prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj --no-restor
 | 为 receipt 再保存全文命令 | 与现有 command digest 形成重复状态 | 只删结果派生 hash，命令匹配暂不动 |
 
 用户已采纳 D1；以后允许哪些 connection 改配继续重试仍待独立决定，不阻塞 §5。整体 hash 清零、逐字 HTTP 回放和所有缓存命中保留都不是本设计的完成条件。
+
+## 10. 第一轮实施记录（2026-09-14）
+
+按 §8 的首轮范围完成 §5，工作包经过源码再审视、分工实施与独立审阅：
+
+| 工作包 | 实际改动与证据 |
+|---|---|
+| Completion 路由身份（`b5fd03db`） | 删除 adapter 字段、mapping 标签、计算函数和 mismatch reason；精确 connection/client/API 绑定保留；822 通过、1 跳过 |
+| SessionJournal 持久恢复（`3ff8080b`） | writer v8；v5/v7 旧布局在 codec 读取丢弃 adapter；v7/v8 共用 body/重构/audit，保留实际 source version；517 通过 |
+| Galatea / CLI 集成 | 映射与运行时错误出口同步收缩；旧 v7 经真实 Anthropic Client 与模拟 Models 404 的生产链验证、Codex 恢复、非空 RecapGrid 零重算验证通过；Galatea（`087c5e87`）非 Live 942 通过，CLI（`0ebfd6cd`）139 通过 |
+| 相邻测试迁移（`1755c884`） | Cadence、Getter、Manager、Online 的目标构造同步删第四参数；对应测试分别 29、29、78、33 通过；没有扩大到 RecapGrid 的键或持久 schema |
+
+独立审阅提出固定旧 v7 golden 的建议已落实：样本取自实施前的完整字面量，不随当前 writer 自动变化。
+旧格式生产链夹具只在停止的合成测试目录追加替代 lineage，不改写已有事件，更不操作真实会话。
+
+验证统一串行使用 `--no-restore -m:1 -nr:false`；除 §8 所列项目，补跑 `SessionJournal.Cli.Tests` 及上述四个 RecapGrid 测试项目。
+Galatea 使用 `FullyQualifiedName!~Live`，且进程环境移除了 Note、Lab、Codex delegation 的 live opt-in 开关。
+最终八个项目合计 2,589 通过、1 跳过（Windows 专用测试），0 失败；文档检查 33 文件、0 diagnostics，`git diff --check` 通过。
+Galatea Server 与 SessionJournal CLI 的独立 build 均为 0 warnings、0 errors。
+
+本轮没有部署或重启长期实例，没有转换 Timeline/Control/Store。§6.2 的独立格式升级方案已补入设计，
+随后 §6.1/§6.3 仍须按单次目标格式和迁移约束推进，不将本轮完成误记为整份后续路线全部完成。

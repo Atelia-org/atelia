@@ -51,8 +51,9 @@ identity、head fence 与重建边界的 companion state；它们不回写 raw h
 | formal CLI / Galatea composition | `SessionJournal.Cli.Tests`, `Galatea.Server.Tests` |
 | dependency and retired-owner absence | `SessionJournal.RecapGrid.WalkingSkeleton.Tests` |
 
-Current raw request contract is [CompletionRequestPrepared v7](contracts/completion-request-prepared-v7.md).
-The writer emits only v7 with canonical request codec v2 and no caller-selected output ceiling. A distinct
+Current raw request contract is [CompletionRequestPrepared v8](contracts/completion-request-prepared-v7.md).
+The writer emits only v8 with canonical request codec v2 and no caller-selected output ceiling.
+Legacy v7 shares current reconstruction after its old target layout is decoded. A distinct
 read-only v5 decoder/verifier preserves existing append-only history and exact Action-address provenance;
 historical v5 never produces a dispatchable `CompletionRequest`.
 
@@ -66,7 +67,7 @@ historical v5 never produces a dispatchable `CompletionRequest`.
 - Timeline writers must enter a Cadence-owned reserve-aware seal operation. Getter validates exact Cadence and
   Timeline policy, then selects the latest healthy R-eligible fulfillment; healthy bootstrap shortage is a
   distinct `ReserveBootstrapRawOnly` state rather than `Unfulfilled` fallback.
-- Current v7 Prepared/Started recovery binds the frozen completion/tool identity before current configuration;
+- Current v7/v8 Prepared/Started recovery binds the frozen connection/protocol/tool identity before current configuration;
   Prepared performs no derived open and Started refuses before connection construction. Historical v5
   Prepared/Started is commitment-verified and then fails closed before a frozen requirement, client binding,
   provider call, or journal write.

@@ -3,16 +3,20 @@
 ## 目标与第一期范围
 
 把“开发期代码正确”和“有状态实例能走完操作流程”接成可执行验收，同时保留真实 journal/SQLite 持久化。
-实验使用独立合成实例，不在长期 `gpt`/`cyber` 会话中试错。不修改 SessionJournal 的 frozen identity、
-uncertain recovery、tool-loop 或外部 exactly-once 合同。
+实验使用独立合成实例，不在长期 `gpt`/`cyber` 会话中试错。恢复身份采用
+[当前合同](../SessionJournal/current/contracts/completion-request-prepared-v7.md)，uncertain 重试授权与工具副作用边界保持。
 
 第一期采用三个有界工作包（explorer → worker → independent review → 集成验证）：
 
 1. `GalateaScenarioLab`：完整合成状态目录、明确外部依赖、stop/reopen、成功清理/失败保留。
-2. `GalateaUpgradeRehearsalTests`：旧投影 fingerprint 的 Prepared/Started 被新版拒绝 → 真 CLI 显式回退 →
+2. `GalateaUpgradeRehearsalTests`：连接 reasoning 配置改变后的 Prepared/Started 被拒绝 → 真 CLI 显式回退 →
    新回合经过 production Codex converter/受控 HTTP/parser 完成 → 冷重开验证。
 3. `GalateaProcessCrashRehearsalTests`：正式 Server 子进程向本地 provider 发出请求后硬杀 → 重启拒绝隐式重试 →
    exact head 显式授权后完成。
+
+身份简化补充 `GalateaAnthropicPreparedV7RecoveryTests`：真实旧布局 v7 持久样本经 Host、Registry 和当前
+Anthropic Client 恢复；模拟 Models 404 后使用回退 max_tokens，产生 Action，再冷开追加 v8 并审计混合历史。
+`GalateaRecapRecoveryScenarioTests` 同时覆盖非空 RecapGrid 的 v7 冻结恢复，要求摘要零重算。
 
 补充 live canary 只用 `gpt-5.6-luna` 合成数学输入，经过 Galatea HTTP/主线与真实 Codex client，
 两轮之间释放并重新打开同一实例，验证结果、native reasoning 和 Idle 持久状态。
@@ -63,7 +67,8 @@ live 先要求离线场景通过，再运行两次 completion invocation 的 can
 
 | 场景 | 实际证明 | 不证明 |
 |:--|:--|:--|
-| 旧 fingerprint 修复 | 旧合同 fixture 拒绝、不发请求；一次 CLI ref 移动；原 raw/sidecar 保留；新回合完成 | 旧 binary/旧 schema 的任意迁移；原请求透明续接 |
+| 连接变化后的离线回退 | 连接不匹配时不发请求；一次 CLI ref 移动；原 raw/sidecar 保留；新回合完成 | 旧 binary/旧 schema 的任意迁移；原请求透明续接 |
+| 旧 v7 adapter 标签恢复 | 相同逻辑请求用当前 adapter 完成；404 回退；v7/v8 冷开审计；非空摘要零重算 | 逐字 HTTP wire 相同；真实 provider 接受；无需授权重发 Started |
 | 进程硬杀恢复 | durable Started 后杀进程；重启不隐式重发；明确授权后继续 | 外部调用只执行一次；断电/fsync 耐久性 |
 | Luna live cold reopen | 当前账户/后端的两次真实调用、持久历史跨 host 生命周期可用 | 所有模型和网络条件；模型实际利用了 opaque reasoning |
 
