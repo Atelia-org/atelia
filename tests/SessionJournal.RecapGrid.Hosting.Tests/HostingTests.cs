@@ -41,6 +41,17 @@ public sealed class HostingTests {
             decoded.ToCanonicalBytes()));
     }
 
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void Manifest_OperatorJsonAllowsTrailingNewline(string newline) {
+        byte[] canonical = Manifest(null).ToCanonicalBytes();
+        byte[] input = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(canonical) + newline);
+
+        Assert.Throws<InvalidDataException>(() => RecapGridRouteManifest.DecodeCanonical(input));
+        Assert.Equal(canonical, RecapGridRouteManifest.ParseJson(input).ToCanonicalBytes());
+    }
+
     [Fact]
     public void Manifest_DefensivelyFreezesRoutesAndCanonicalBytes() {
         RecapGridRouteManifestEntry original = Manifest(null).Routes[0];
@@ -154,6 +165,17 @@ public sealed class HostingTests {
             RecapGridRouteManifest.DecodeCanonical(
                 Encoding.UTF8.GetBytes(invalid)
             ));
+        if (kind is "root-order" or "entry-order" or "whitespace") {
+            Assert.Equal(
+                canonical,
+                Encoding.UTF8.GetString(RecapGridRouteManifest.ParseJson(
+                    Encoding.UTF8.GetBytes(invalid)).ToCanonicalBytes())
+            );
+        }
+        else {
+            Assert.Throws<InvalidDataException>(() =>
+                RecapGridRouteManifest.ParseJson(Encoding.UTF8.GetBytes(invalid)));
+        }
     }
 
     [Fact]

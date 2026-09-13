@@ -4474,7 +4474,7 @@ internal static class GalateaConfigLoader {
 
     internal static RecapGridRouteManifest LoadRouteManifest(
         string canonicalPath
-    ) => RecapGridRouteManifest.DecodeCanonical(ReadBoundedFile(
+    ) => RecapGridRouteManifest.ParseJson(ReadBoundedFile(
         canonicalPath,
         RecapGridRouteManifestLimits.MaximumCanonicalUtf8Bytes,
         "RecapGrid route manifest"

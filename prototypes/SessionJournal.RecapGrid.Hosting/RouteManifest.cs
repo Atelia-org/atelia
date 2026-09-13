@@ -126,6 +126,20 @@ public sealed class RecapGridRouteManifest {
     public static RecapGridRouteManifest DecodeCanonical(
         ReadOnlySpan<byte> bytes
     ) {
+        RecapGridRouteManifest decoded = ParseJson(bytes);
+        if (!bytes.SequenceEqual(decoded._canonicalBytes)) {
+            throw new InvalidDataException(
+                "Route manifest bytes are not exact canonical V2 bytes."
+            );
+        }
+        return decoded;
+    }
+
+    /// <summary>
+    /// Reads operator-authored JSON, allowing whitespace and property ordering.
+    /// Schema, duplicate properties, route uniqueness and bounds remain enforced.
+    /// </summary>
+    public static RecapGridRouteManifest ParseJson(ReadOnlySpan<byte> bytes) {
         if (bytes.Length is < 1
             or > RecapGridRouteManifestLimits.MaximumCanonicalUtf8Bytes) {
             throw new InvalidDataException(
@@ -191,13 +205,7 @@ public sealed class RecapGridRouteManifest {
                         "dispatchTimeoutMilliseconds").GetInt64())
                 ));
             }
-            RecapGridRouteManifest decoded = Create(routes);
-            if (!bytes.SequenceEqual(decoded._canonicalBytes)) {
-                throw new InvalidDataException(
-                    "Route manifest bytes are not exact canonical V2 bytes."
-                );
-            }
-            return decoded;
+            return Create(routes);
         }
         catch (InvalidDataException) {
             throw;
@@ -275,9 +283,11 @@ public sealed class RecapGridRouteManifest {
         }
         string[] actual = [.. value.EnumerateObject()
             .Select(static property => property.Name)];
-        if (!actual.SequenceEqual(exactNames, StringComparer.Ordinal)) {
+        if (actual.Length != exactNames.Length
+            || !new HashSet<string>(actual, StringComparer.Ordinal)
+                .SetEquals(exactNames)) {
             throw new InvalidDataException(
-                "JSON properties are missing, duplicated, unknown, or out of order."
+                "JSON properties are missing, duplicated, or unknown."
             );
         }
     }

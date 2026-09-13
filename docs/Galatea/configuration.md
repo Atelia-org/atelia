@@ -178,6 +178,8 @@ task/reply/inbox 的限制按 strict UTF-8 bytes 计算；task/reply 即使经�
 
 `recapGrid` 指向 route manifest、一个或多个现有 Agent Control profile，以及 current profile ID。profile 文件必须已经存在；它是 missing-session structural bootstrap 所需的 admission authority。历史 profile 也要保留，供冻结的 Prepared/ToolContinuation 使用。route manifest 在首次 RecapGrid 工作时才读取；每条 route 精确拥有自己的 `connectionId`、并发和 timeout，不能用 default/wildcard route 或业务 output cap 覆盖 provider 的输出策略。
 
+Galatea 将 route manifest 作为普通 V2 JSON 配置读取，允许缩进、末尾换行和属性顺序变化；仍拒绝重复/未知/缺失字段、重复 route key 和越界值。内部 canonical 编码不要求人工编辑的配置文件逐字节匹配。修改后需重启，避免继续使用已缓存的路由加载结果。
+
 以下命令是根据当前 CLI 参数和公共 operator-chain 测试核对过的首次 scaffold 示例。将 `<配置目录>`、`<角色名>`、`<玩家名>` 和 `<RecapGrid连接ID>` 换成实际值；三个输出路径须不存在，CLI 以 create-new 写入：
 
 ```bash
@@ -204,6 +206,6 @@ dotnet run --project prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj -- 
   --route-output '<配置目录>/recap-grid-routes.json'
 ```
 
-将 `config.json` 的 `routeManifestPath`、`agentControlProfileFiles` 和 `currentAgentControlProfileId` 对应到上述 route/profile 输出。profile 是启动必需的 bootstrap admission；但完整 RecapGrid 是可选增强：没有 active recipe 的 existing/raw-only session 仍可按日常 Galatea 流程运行，host 不会为既有 repository 补写派生状态或调用 Recap provider，主 Agent 仍会调用其 Completion connection。只在要为一个适格的 session 显式启用完整 RecapGrid 时，才按 [SessionJournal.Cli operator 指南](../../prototypes/SessionJournal.Cli/README.md)运行 `recap-grid init`、`control provision-asset`、compose/put/activate recipe 与 build；不要把 `init` 对已有 repository 当成通用修复命令。`provision-asset` 必须使用与 scaffold 完全相同的 `--character-name` 和 `--player-name`。scaffold 不会创建 provider、Timeline、Control 或 Store，Galatea 只消费它们的 strict canonical outputs。
+将 `config.json` 的 `routeManifestPath`、`agentControlProfileFiles` 和 `currentAgentControlProfileId` 对应到上述 route/profile 输出。profile 是启动必需的 bootstrap admission；但完整 RecapGrid 是可选增强：没有 active recipe 的 existing/raw-only session 仍可按日常 Galatea 流程运行，host 不会为既有 repository 补写派生状态或调用 Recap provider，主 Agent 仍会调用其 Completion connection。只在要为一个适格的 session 显式启用完整 RecapGrid 时，才按 [SessionJournal.Cli operator 指南](../../prototypes/SessionJournal.Cli/README.md)运行 `recap-grid init`、`control provision-asset`、compose/put/activate recipe 与 build；不要把 `init` 对已有 repository 当成通用修复命令。`provision-asset` 必须使用与 scaffold 完全相同的 `--character-name` 和 `--player-name`。scaffold 不会创建 provider、Timeline、Control 或 Store，Galatea 的 route manifest 读取允许上述 JSON 格式化；其他持久产物仍使用各自的 canonical 格式。
 
 该 asset 包含 `world-understanding` 与 `autobiography` 两列。Host 会在 fresh admission 前验证 active recipe 是否精确匹配该 user 的两个名字；不匹配时以 `character-asset-mismatch` fail closed。CLI 的完整 operator 链见 [SessionJournal.Cli operator 指南](../../prototypes/SessionJournal.Cli/README.md)，运行期观察字段见 [runtime.md](runtime.md)。

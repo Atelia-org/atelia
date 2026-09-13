@@ -14,6 +14,34 @@ using Xunit;
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaConfigValidationTests {
+    [Fact]
+    public void LoadRouteManifest_AcceptsFormattedOperatorJsonWithFinalNewline() {
+        string path = Path.GetTempFileName();
+        try {
+            File.WriteAllText(path, """
+                {
+                  "routes": [{
+                    "connectionId": "gpt5-6-sol-codex",
+                    "semanticModelId": null,
+                    "runtimeProtocolId": "text-runtime-v3",
+                    "familyDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "dispatchTimeoutMilliseconds": 900000,
+                    "maximumConcurrency": 1
+                  }],
+                  "v": 2
+                }
+                """ + "\n");
+
+            var route = Assert.Single(GalateaConfigLoader.LoadRouteManifest(path).Routes);
+            Assert.Equal("gpt5-6-sol-codex", route.ConnectionId);
+            Assert.Equal(1, route.MaximumConcurrency);
+            Assert.Equal(TimeSpan.FromMinutes(15), route.DispatchTimeout);
+        }
+        finally {
+            File.Delete(path);
+        }
+    }
+
     [Theory]
     [InlineData("relative")]
     [InlineData("missing")]
