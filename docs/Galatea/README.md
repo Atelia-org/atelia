@@ -26,6 +26,7 @@
 | TextExtractor 与 Observation 通讯 | [Observation Bridge](text-extractor-observation-bridge.md) |
 | Character Note、Default MemoPod | [忠实代写](character-note-transcription.md)、[保存合同](character-note-default-memopod-v1.md)、[自动记忆工作单](automatic-memory-work-order.md) |
 | durable Codex delegation | [状态机设计](codex-delegation-durability-design.md)、[V3 resilience 实施记录](codex-delegation-local-resilience-work-order.md) |
+| 角色间站内信（设计，未实现） | [角色间站内信设计](character-mail-design.md)：地址簿、提示词、可靠入箱与 recovery 边界 |
 | per-user 本地个人目录 | [User home 设计与实施](user-home-design.md)：`/galatea-homes/`、原 thread 延续、格式升级与实际验证 |
 | 服务端自动轮次 | [headless pilot 工作单与验收](headless-agent-pilot-work-order.md) |
 | SessionJournal / RecapGrid authority | [当前架构与代码地图](../SessionJournal/current/architecture-and-code-map.md) |
