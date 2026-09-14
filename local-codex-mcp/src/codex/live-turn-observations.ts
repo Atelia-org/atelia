@@ -47,8 +47,7 @@ interface Observation {
   turnId: string;
   dispatchId: string;
   taskDigest: string;
-  userItemId: string;
-  userFingerprint: string;
+  userItemId?: string;
   explicit: FinalSlot;
   legacy: FinalSlot;
   terminal?: TerminalEvidence;
@@ -80,10 +79,6 @@ function valueFingerprint(value: unknown): string {
     .update("atelia.galatea.live-turn-evidence.v1\0", "utf8")
     .update(JSON.stringify(value) ?? "undefined", "utf8")
     .digest("hex");
-}
-
-function key(threadId: string, turnId: string): string {
-  return `${threadId}\0${turnId}`;
 }
 
 function exactUser(item: ThreadItem): { id: string; dispatchId: string; task: string } | undefined {
@@ -132,7 +127,6 @@ function terminalFingerprint(baseFingerprint: string, observation: Observation):
 
 export class LiveTurnObservations {
   private readonly observations = new Map<string, Observation>();
-  private readonly currentTurnByThread = new Map<string, string>();
   private readonly pendingStarts = new Map<string, LiveStartExpectation>();
 
   constructor(private readonly options: LiveTurnObservationOptions) {
@@ -144,7 +138,6 @@ export class LiveTurnObservations {
 
   clear(): void {
     this.observations.clear();
-    this.currentTurnByThread.clear();
     this.pendingStarts.clear();
   }
 
@@ -175,17 +168,20 @@ export class LiveTurnObservations {
   ): boolean {
     if (expectation) {
       if (expectation.tracked && this.pendingStarts.get(threadId) !== expectation) return false;
-      // A correlated turn/start response acknowledges the turn even when its
-      // item projection has not loaded the user message. Do not invent live
-      // evidence: Accepted inspection will match persisted dispatch and task.
-      if (!turn.items.some((item) => item.type === "userMessage")) return true;
-      const user = initialUser(turn);
-      if (!user
-          || user.dispatchId !== expectation.dispatchId
-          || taskDigest(user.task) !== expectation.taskDigest) return false;
+      // Request/response correlation binds the submitted identity to this turn.
+      // Sparse projections are normal; a supplied user item must still agree.
+      if (turn.items.some((item) => item.type === "userMessage")) {
+        const user = initialUser(turn);
+        if (!user
+            || user.dispatchId !== expectation.dispatchId
+            || taskDigest(user.task) !== expectation.taskDigest) return false;
+      }
       if (!expectation.tracked) return true;
+      const current = this.currentObservation(threadId, turn.id);
+      if (current && (current.dispatchId !== expectation.dispatchId
+          || current.taskDigest !== expectation.taskDigest)) return false;
     }
-    this.observeStarted(threadId, turn, true);
+    this.observeStarted(threadId, turn, true, expectation);
     return true;
   }
 
@@ -238,11 +234,14 @@ export class LiveTurnObservations {
     if (!observation || !item || typeof item.id !== "string" || !item.id) return;
     const user = exactUser(item);
     if (item.type === "userMessage") {
-      if (!user || user.id !== observation.userItemId
-          || user.dispatchId !== observation.dispatchId
+      if (!user || user.dispatchId !== observation.dispatchId
           || taskDigest(user.task) !== observation.taskDigest
-          || valueFingerprint(user) !== observation.userFingerprint) {
+          || (observation.userItemId !== undefined && user.id !== observation.userItemId)
+          || (observation.explicit.kind === "one" && user.id === observation.explicit.itemId)
+          || (observation.legacy.kind === "one" && user.id === observation.legacy.itemId)) {
         observation.conflict = true;
+      } else {
+        observation.userItemId = user.id;
       }
       return;
     }
@@ -322,37 +321,39 @@ export class LiveTurnObservations {
       && !observation.conflict;
   }
 
-  private observeStarted(threadId: string, turn: Turn, trustedResponse: boolean): void {
+  private observeStarted(
+    threadId: string,
+    turn: Turn,
+    trustedResponse: boolean,
+    responseExpectation?: LiveStartExpectation,
+  ): void {
     if (!isBoundedIdentifier(threadId) || !turn || typeof turn.id !== "string"
         || !isBoundedIdentifier(turn.id)) return;
-    const currentTurnId = this.currentTurnByThread.get(threadId);
-    if (currentTurnId !== turn.id) {
+    const current = this.observations.get(threadId);
+    if (current?.turnId !== turn.id) {
       const user = initialUser(turn);
-      const expected = this.pendingStarts.get(threadId);
+      const expected = responseExpectation ?? this.pendingStarts.get(threadId);
       const matchesPending = user !== undefined && expected !== undefined
         && user.dispatchId === expected.dispatchId && taskDigest(user.task) === expected.taskDigest;
       if (!trustedResponse && !matchesPending) return;
-      if (!user) return;
+      const identity = responseExpectation ?? (user === undefined ? undefined : {
+        dispatchId: user.dispatchId,
+        taskDigest: taskDigest(user.task),
+      });
+      if (!identity) return;
       const terminalCandidate = expected?.terminalBarriers?.get(turn.id);
       if (expected?.terminalBarrierOverflow && !terminalCandidate) return;
-      if (currentTurnId) {
-        this.observations.delete(key(threadId, currentTurnId));
-        this.currentTurnByThread.delete(threadId);
-      }
-      if (this.observations.size >= this.options.maximumObservations) return;
+      if (!current && this.observations.size >= this.options.maximumObservations) return;
       const observation: Observation = {
         threadId,
         turnId: turn.id,
-        dispatchId: user.dispatchId,
-        taskDigest: taskDigest(user.task),
-        userItemId: user.id,
-        userFingerprint: valueFingerprint(user),
+        dispatchId: identity.dispatchId,
+        taskDigest: identity.taskDigest,
         explicit: { kind: "none" },
         legacy: { kind: "none" },
         conflict: false,
       };
-      this.observations.set(key(threadId, turn.id), observation);
-      this.currentTurnByThread.set(threadId, turn.id);
+      this.observations.set(threadId, observation);
     }
     for (const item of turn.items) this.observeItem(threadId, turn.id, item);
     const expected = this.pendingStarts.get(threadId);
@@ -401,15 +402,13 @@ export class LiveTurnObservations {
   }
 
   private currentObservation(threadId: string, turnId: string): Observation | undefined {
-    return this.currentTurnByThread.get(threadId) === turnId
-      ? this.observations.get(key(threadId, turnId))
-      : undefined;
+    const observation = this.observations.get(threadId);
+    return observation?.turnId === turnId ? observation : undefined;
   }
 
   private discardObservation(observation: Observation): void {
-    this.observations.delete(key(observation.threadId, observation.turnId));
-    if (this.currentTurnByThread.get(observation.threadId) === observation.turnId) {
-      this.currentTurnByThread.delete(observation.threadId);
+    if (this.observations.get(observation.threadId) === observation) {
+      this.observations.delete(observation.threadId);
     }
   }
 

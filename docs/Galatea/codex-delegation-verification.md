@@ -2,6 +2,24 @@
 
 本文把可重复的 live canary 操作与已带日期的历史证据分开。它只验证指定链路，不能推导 app-server/provider 的 exactly-once 承诺；运行时语义见 [运行时机制](runtime.md)，当前实现/测试状态见 [delegation 重构状态](codex-delegation-refactor-status.md)。
 
+## 2026-09-14 空启动投影修复验证
+
+[故障与辩证裁决](codex-delegation-live-observation.md)：关联的 sparse start response 现在建立 live 身份；后续 user item 验证一致性。冷恢复和 SQLite V3 无变更。
+
+- `npm run check` 通过；`npm test`：131 passed、2 explicit live skipped、0 failed。默认 fake start/started 使用空 items，completed 使用不含 userMessage 的 summary；覆盖正常/缺少 user 通知的 10 次 live Running、零历史分页、早到终态、迟到 final、身份冲突、容量限制和 generation 清除。
+- Galatea Driver 与 BoundedRecoveryVertical 定向测试：65 passed、0 skipped、0 failed。覆盖 live 清零、persistent 失败耗尽、单次发送和唯一回信。使用真实 SQLite 与生产 Driver；该集合的外部 transport 为测试替身。
+- 固定 `0.154.0-alpha.3` 原生 app-server canary：旧 dist 在第一次检查因 `source=persistent` 失败；修复后通过 10 次 live Running → live Completed，历史分页 0 次，本地合成 Responses 请求 1 次。
+
+原生 canary 可重复运行：
+
+```bash
+cd local-codex-mcp
+npm run build
+npm run canary:live-observation
+```
+
+它经过生产 CodexBackend/Client 和 pinned app-server，在临时 HOME/CODEX_HOME 中写入合成配置与明确的假凭证，只连接 localhost SSE fixture。以事件 barrier 延迟 final，等待真实 user/started 通知，不依赖 HTTP/stdout 的到达顺序。结束后回收进程和临时目录；不读取真实 auth/config/session，不调用真实模型，不重发现场邮件。这份证据证明实际 app-server 协议与桥接实现一致，不代表现场旧任务已恢复或真实 provider E2E 已通过。
+
 ## 2026-09-14 有限恢复重构本地验证
 
 本轮按[批准方案](codex-delegation-recovery-refactor-plan.md)实施 wire V5、SQLite V3 和有限恢复。全部验证关闭 live gates；没有迁移真实 `.atelia` 用户库或调用真实模型。

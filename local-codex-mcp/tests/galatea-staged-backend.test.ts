@@ -136,7 +136,7 @@ test("ensureBinding rejects a nonempty thread/start response before ownership or
   assert.equal(requests.turnStartCount, 0);
 });
 
-test("Accepted uses exact live turn and completion survives early start-response reordering", async (t) => {
+test("Accepted recovers a summary completion that precedes its sparse start response", async (t) => {
   const value = await harness(t);
   const binding = await bind(value);
   const task = "[EARLY][NATURAL] exact task";
@@ -146,8 +146,10 @@ test("Accepted uses exact live turn and completion survives early start-response
     expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   });
   assert.equal(result.kind, "completed");
-  assert.equal(result.source, "live");
+  assert.equal(result.source, "persistent");
   if (result.kind === "completed") assert.match(result.final, /事情已经办妥/);
+  const counts = await value.client.request<{ turnStartCount: number }>("test/lastRequests", {});
+  assert.equal(counts.turnStartCount, 1);
 });
 
 test("live Running cannot hide a persistent terminal when terminal notifications are lost", async (t) => {
@@ -212,7 +214,7 @@ test("incomplete live terminal allows later healthy persistent final recovery wi
 });
 
 test("turn/start response must match the pending dispatch identity and task", async (t) => {
-  const value = await harness(t, { fixtureArgs: ["--mismatch-turn-start-response"] });
+  const value = await harness(t, { fixtureArgs: ["--full-start-projections", "--mismatch-turn-start-response"] });
   const binding = await bind(value);
   await assert.rejects(start(
     value,
@@ -225,24 +227,75 @@ test("turn/start response must match the pending dispatch identity and task", as
   assert.equal(counts.turnStartCount, 1);
 });
 
-test("sparse turn/start projections acknowledge Accepted and defer dispatch/task evidence to persistent inspection", async (t) => {
-  const value = await harness(t, { fixtureArgs: ["--sparse-start-projections"] });
+for (const dropUserSignals of [false, true]) {
+  test(`sparse Accepted long task stays live and completes without history paging (drop user signals: ${dropUserSignals})`, async (t) => {
+    const value = await harness(t, { fixtureArgs: dropUserSignals ? ["--drop-user-item-signals"] : [] });
+    const binding = await bind(value);
+    const task = "[LONG][NATURAL] sparse start response task";
+    const accepted = await start(value, binding.threadId, "mail-sparse", task);
+    const request = {
+      threadId: binding.threadId, dispatchId: "mail-sparse", task,
+      expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+    };
+    // Ten healthy polls exceed the durable driver's eight-failure recovery
+    // budget. Every poll must supply live evidence instead of a historical
+    // inProgress projection that would consume that budget.
+    for (let poll = 0; poll < 10; poll += 1) {
+      assert.deepEqual(await value.backend.inspectDispatch(request), {
+        kind: "running", threadId: binding.threadId, turnId: accepted.turnId, source: "live",
+      });
+    }
+    const runningCounts = await value.client.request<{
+      turnStartCount: number; threadTurnsListCount: number; threadItemsListCount: number;
+    }>("test/lastRequests", {});
+    assert.equal(runningCounts.turnStartCount, 1);
+    assert.equal(runningCounts.threadTurnsListCount, 0);
+    assert.equal(runningCounts.threadItemsListCount, 0);
+
+    await value.client.request("test/completeTurn", { threadId: binding.threadId, turnId: accepted.turnId });
+    const inspected = await value.backend.inspectDispatch(request);
+    assert.equal(inspected.kind, "completed");
+    assert.equal(inspected.source, "live");
+    if (inspected.kind === "completed") assert.match(inspected.final, /事情已经办妥/);
+    const completedCounts = await value.client.request<{
+      threadTurnsListCount: number; threadItemsListCount: number;
+    }>("test/lastRequests", {});
+    assert.equal(completedCounts.threadTurnsListCount, 0);
+    assert.equal(completedCounts.threadItemsListCount, 0);
+
+    for (const [changed, code] of [
+      [{ task: "a different task" }, "DISPATCH_BODY_MISMATCH"],
+      [{ dispatchId: "a-different-dispatch" }, "DISPATCH_TURN_MISMATCH"],
+    ] as const) {
+      const mismatch = await value.backend.inspectDispatch({ ...request, ...changed });
+      assert.deepEqual(mismatch, {
+        kind: "ambiguous", threadId: binding.threadId, source: "persistent", code,
+      });
+    }
+    const counts = await value.client.request<{ turnStartCount: number }>("test/lastRequests", {});
+    assert.equal(counts.turnStartCount, 1);
+  });
+}
+
+test("early sparse completion cannot revive as Running when the correlated sparse response arrives later", async (t) => {
+  const value = await harness(t, { fixtureArgs: ["--sparse-completed-projections", "--omit-turns-list"] });
   const binding = await bind(value);
-  const task = "[NATURAL] sparse start response task";
-  const accepted = await start(value, binding.threadId, "mail-sparse", task);
-  await delay(30);
+  const task = "[EARLY][NATURAL] terminal before start response";
+  const accepted = await start(value, binding.threadId, "mail-early-sparse", task);
   const request = {
-    threadId: binding.threadId, dispatchId: "mail-sparse", task,
+    threadId: binding.threadId, dispatchId: "mail-early-sparse", task,
     expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
   };
-  const inspected = await value.backend.inspectDispatch(request);
-  assert.equal(inspected.kind, "completed");
-  assert.equal(inspected.source, "persistent");
-  for (const changed of [{ task: "a different task" }, { dispatchId: "a-different-dispatch" }]) {
-    const mismatch = await value.backend.inspectDispatch({ ...request, ...changed });
-    assert.equal(mismatch.kind, "ambiguous");
-    assert.equal(mismatch.source, "persistent");
-  }
+  // The early final item preceded correlation and was not retained. The
+  // retained terminal barrier must block both Running and FINAL_MISSING.
+  await assert.rejects(value.backend.inspectDispatch(request), (error: unknown) =>
+    typeof error === "object" && error !== null && "code" in error
+      && error.code === "CODEX_PROTOCOL_ERROR");
+  await value.client.request("test/emitTurnFinal", { threadId: binding.threadId, turnId: accepted.turnId });
+  const completed = await value.backend.inspectDispatch(request);
+  assert.equal(completed.kind, "completed");
+  assert.equal(completed.source, "live");
+  if (completed.kind === "completed") assert.match(completed.final, /事情已经办妥/);
   const counts = await value.client.request<{ turnStartCount: number }>("test/lastRequests", {});
   assert.equal(counts.turnStartCount, 1);
 });
@@ -319,7 +372,7 @@ test("OutcomeUnknown alone returns persistent not-found and discovers a timed-ou
   assert.equal(counts.turnStartCount, 1);
 });
 
-test("cold restart clears live observations and pages the persisted exact Accepted turn", async (t) => {
+test("cold restart discards sparse-response live identity even when history hydration reports Running", async (t) => {
   const value = await harness(t, { persistent: true });
   const binding = await bind(value);
   const task = "[LONG] exact task";
@@ -330,12 +383,21 @@ test("cold restart clears live observations and pages the persisted exact Accept
   })).source, "live");
   await assert.rejects(value.client.request("test/crash", {}));
   assert.equal((await value.backend.status(binding.threadId)).status, "running");
-  const cold = await value.backend.inspectDispatch({
-    threadId: binding.threadId, dispatchId: "mail-restart", task,
-    expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
-  });
-  assert.equal(cold.kind, "running");
-  assert.equal(cold.source, "persistent");
+  for (let poll = 0; poll < 2; poll += 1) {
+    assert.deepEqual(await value.backend.inspectDispatch({
+      threadId: binding.threadId, dispatchId: "mail-restart", task,
+      expectedTurnId: accepted.turnId, maximumFinalUtf8Bytes: 20_000,
+    }), {
+      kind: "running", threadId: binding.threadId, turnId: accepted.turnId, source: "persistent",
+    });
+  }
+  const counts = await value.client.request<{
+    turnStartCount: number; threadResumeCount: number; threadTurnsListCount: number; threadItemsListCount: number;
+  }>("test/lastRequests", {});
+  assert.equal(counts.turnStartCount, 0);
+  assert.equal(counts.threadResumeCount, 0);
+  assert.ok(counts.threadTurnsListCount >= 2);
+  assert.ok(counts.threadItemsListCount >= 2);
   assert.ok(value.lifecycleFile);
   assert.equal((await readFile(value.lifecycleFile, "utf8")).split("\n").filter((line) => line.startsWith("start:")).length, 2);
 });
@@ -460,8 +522,9 @@ for (const ignoreResumeCwd of [false, true]) {
 test("live and persistent inspection survive a removed cwd outside current allowed roots without starting a turn", async (t) => {
   const value = await harness(t, { persistent: true });
   const binding = await bind(value);
-  const task = "[EARLY][NATURAL] old completed task";
+  const task = "[LONG][NATURAL] old completed task";
   const accepted = await start(value, binding.threadId, "mail-old-home", task);
+  await value.client.request("test/completeTurn", { threadId: binding.threadId, turnId: accepted.turnId });
   const outside = await mkdtemp(path.join(os.tmpdir(), "galatea-former-home-"));
   await value.client.request("test/setThreadCwd", { threadId: binding.threadId, cwd: outside });
   await rm(outside, { recursive: true });

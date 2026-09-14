@@ -184,7 +184,16 @@ function completeTurn(
     send({ method: "item/completed", params: { threadId, turnId, item: agentItem, completedAtMs: Date.now() } });
     send({ method: "item/completed", params: { threadId, turnId, item: fileItem, completedAtMs: Date.now() } });
   }
-  send({ method: "turn/completed", params: { threadId, turn } });
+  send({ method: "turn/completed", params: {
+    threadId,
+    turn: process.argv.includes("--sparse-completed-projections")
+      ? { ...turn, items: [], itemsView: "notLoaded" }
+      : {
+        ...turn,
+        items: (turn.items as Array<Record<string, unknown>>).filter((item) => item.type === "agentMessage"),
+        itemsView: "summary",
+      },
+  } });
 }
 
 function responseForThread(thread: Record<string, unknown>) {
@@ -203,8 +212,17 @@ function responseForThread(thread: Record<string, unknown>) {
 }
 
 function turnStartResult(turn: Record<string, unknown>): { turn: Record<string, unknown> } {
-  const returned = structuredClone(turn);
-  if (process.argv.includes("--sparse-start-projections")) {
+  const returned = {
+    ...structuredClone(turn),
+    status: "inProgress",
+    error: null,
+    startedAt: null,
+    completedAt: null,
+    durationMs: null,
+  } as Record<string, unknown>;
+  // The pinned app-server always returns unloaded start projections. Full
+  // projections are an explicit adversarial fixture for identity validation.
+  if (!process.argv.includes("--full-start-projections")) {
     returned.items = [];
     returned.itemsView = "notLoaded";
   }
@@ -216,9 +234,19 @@ function turnStartResult(turn: Record<string, unknown>): { turn: Record<string, 
 }
 
 function startedProjection(turn: Record<string, unknown>): Record<string, unknown> {
-  return process.argv.includes("--sparse-start-projections")
-    ? { ...turn, items: [], itemsView: "notLoaded" }
-    : turn;
+  return process.argv.includes("--full-start-projections")
+    ? turn
+    : { ...turn, items: [], itemsView: "notLoaded" };
+}
+
+function emitTurnStarted(threadId: string, turn: Record<string, unknown>): void {
+  send({ method: "turn/started", params: { threadId, turn: startedProjection(turn) } });
+  if (process.argv.includes("--drop-user-item-signals")) return;
+  for (const item of turn.items as Array<Record<string, unknown>>) {
+    if (item.type !== "userMessage") continue;
+    send({ method: "item/started", params: { threadId, turnId: turn.id, item } });
+    send({ method: "item/completed", params: { threadId, turnId: turn.id, item, completedAtMs: Date.now() } });
+  }
 }
 
 const lines = readline.createInterface({ input: process.stdin });
@@ -305,6 +333,34 @@ lines.on("line", async (line) => {
         },
       });
       break;
+    case "test/completeTurn": {
+      const threadId = String(message.params?.threadId);
+      const turnId = String(message.params?.turnId);
+      const thread = threads.get(threadId);
+      if (!(thread?.turns as Array<Record<string, unknown>> | undefined)?.some((turn) => turn.id === turnId)) {
+        send({ id: message.id, error: { code: -32001, message: "Turn not found" } });
+        break;
+      }
+      completeTurn(threadId, turnId, "completed", String(message.params?.behavior ?? "[NATURAL]"));
+      send({ id: message.id, result: {} });
+      break;
+    }
+    case "test/emitTurnFinal": {
+      const threadId = String(message.params?.threadId);
+      const turnId = String(message.params?.turnId);
+      const thread = threads.get(threadId);
+      const turn = (thread?.turns as Array<Record<string, unknown>> | undefined)?.find((value) => value.id === turnId);
+      const final = (turn?.items as Array<Record<string, unknown>> | undefined)?.find(
+        (item) => item.type === "agentMessage" && item.phase === "final_answer",
+      );
+      if (!final) {
+        send({ id: message.id, error: { code: -32001, message: "Final item not found" } });
+        break;
+      }
+      send({ method: "item/completed", params: { threadId, turnId, item: final, completedAtMs: Date.now() } });
+      send({ id: message.id, result: {} });
+      break;
+    }
     case "test/environment": {
       const keys = Array.isArray(message.params?.keys)
         ? message.params.keys.filter((key): key is string => typeof key === "string")
@@ -619,21 +675,21 @@ lines.on("line", async (line) => {
       persistState();
       const input = JSON.stringify(message.params?.input ?? []);
       if (input.includes("[HANG_TURN_START]")) {
-        send({ method: "turn/started", params: { threadId, turn: startedProjection(turn) } });
+        emitTurnStarted(threadId, turn);
         setTimeout(() => completeTurn(threadId, turnId, "completed", input), 10);
       } else if (input.includes("[STARTED_BEFORE_RESPONSE]")) {
-        send({ method: "turn/started", params: { threadId, turn: startedProjection(turn) } });
+        emitTurnStarted(threadId, turn);
         send({ id: message.id, result: turnStartResult(turn) });
         if (!input.includes("[LONG]")) {
           setTimeout(() => completeTurn(threadId, turnId, "completed", input), 10);
         }
       } else if (input.includes("[EARLY]")) {
-        send({ method: "turn/started", params: { threadId, turn: startedProjection(turn) } });
+        emitTurnStarted(threadId, turn);
         completeTurn(threadId, turnId, "completed", input);
         send({ id: message.id, result: turnStartResult(turn) });
       } else {
         send({ id: message.id, result: turnStartResult(turn) });
-        send({ method: "turn/started", params: { threadId, turn: startedProjection(turn) } });
+        emitTurnStarted(threadId, turn);
         if (input.includes("[CRASH]")) {
           setTimeout(() => process.exit(24), 5);
         } else if (!input.includes("[LONG]")) {

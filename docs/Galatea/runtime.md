@@ -104,6 +104,8 @@ delegation 采用 SQLite-backed durable owner。transport 是 strict bounded JSO
 
 绑定、发送前失败和结果检查共用邮件上的 `recovery_failure_count`，最多连续失败 8 次，指数退避最多 60 秒。成功绑定或 Accepted 不清零；仅同 generation 的精确 live Running 且当前 metadata active 才清零。历史 `inProgress` 只表示旧状态，不能无限延长恢复。inspection 总截止 45 秒；单请求超时不关闭其他用户共享的 sidecar。retry 时间在每个持久 revision 首次观察时映射到单调时钟，重启最多重新等待 60 秒，不重置失败次数。
 
+live 身份由同 generation 的 `turn/start` 请求与关联响应建立，不要求启动投影包含 userMessage；后续 user item 验证一致性，terminal/final 通知推进结果。进程结束后不会从历史重建 live 身份。空投影导致的误恢复诊断与简化依据见[空启动投影与 live 观察](codex-delegation-live-observation.md)。
+
 耗尽后，同一 SQLite 事务终结本地等待、写入唯一 DeliveryFailure notice 并释放 active slot。`RESULT_UNCONFIRMED` 明确告诉角色结果未确认、旧工作可能仍在运行；`NOT_DISPATCHED_RETRIES_EXHAUSTED` 表示确认未发送。下一封邮件可以创建新线程继续；本地 terminal 不被迟到结果覆盖，该旧任务也不能隔离新任务的 route；普通远端矛盾证据仍按原规则处理。inbox 满时保留状态并等待容量，不继续外部调用。数据库/本地状态损坏仍需人工检查。完整决策与边界见[有限恢复方案](codex-delegation-recovery-refactor-plan.md)。
 
 每个 user 的 `homeDir` 是代行者执行新任务的工作目录。共享 sidecar/app-server 的进程目录为 `/`；`ensure-binding` 和 `start-turn` 逐请求传 `cwd`，已使用的 thread 通过 resume 与显式 turn override 使用当前 home；同 generation 新建空线程的首轮直接 start，避免缺 rollout 的 resume 错误。`inspect-dispatch` 不带 CWD，也不要求历史目录仍存在或属于当前 allowedRoots。delegation SQLite V3 统一任务恢复计数，移除 route 的 ensure 预算；V2 已删除 route policy fingerprint。改 home 或 Codex 配置不会因此拒绝旧库。健康时保留同用户线程；失效或结果不明终结后解除绑定。Ready/Leased 回信和 frozen 主线请求继续保留。现有库必须停服后显式离线升级；操作见[恢复与升级说明](codex-delegation-operator-recovery.md)。

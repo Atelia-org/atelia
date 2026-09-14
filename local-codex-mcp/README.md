@@ -146,8 +146,9 @@ stdin/stdout 是 strict bounded JSONL V5，stdout 只有协议 frame，日志只
 ```
 
 失败以 `failed` frame 返回稳定的 `stage`/`code`。`turn-accepted` 只表示 `turn/start` 已返回稳定 handle；
-响应的 items 可以尚未载入 userMessage，此时不建立 live 结果证据，随后 inspect 仍须通过原 dispatch/task
-匹配。若响应已经包含 userMessage 且其身份或正文矛盾，仍拒绝接受。
+响应的 items 可以尚未载入 userMessage。同一 app-server generation 内，关联的请求与响应将原
+dispatch/task 绑定到返回的 exact turn ID，建立 live 观察；后续 item/terminal 通知补充结果证据。
+userMessage 一旦出现，其身份或正文矛盾仍拒绝接受；进程重启后只能通过持久历史匹配原 dispatch/task。
 sidecar 不同步等待 final。runtime 应持续发送 `inspect-dispatch`，并处理 `not-found`、`unavailable`、
 `running`、`completed`、`failed` 或 `ambiguous`；所有semantic结果都携带exact `source=live|persistent`。
 `OutcomeUnknown`必须发送`expectedTurnId:null`并仅按dispatch marker发现；`Accepted`必须发送已持久化的exact
@@ -193,6 +194,10 @@ auth/provider/proxy环境；默认MCP profile不启用这层Galatea-specific scr
 `npm run canary:config`（先 `npm run build`）使用隔离的临时 `CODEX_HOME` 和 pinned app-server，
 验证公共配置继承、嵌套局部覆盖、已有 thread 的冷/热恢复，以及 `danger-full-access` 下 TMPDIR 的实际读写。
 它不读取真实 auth/config/session，也不调用模型；只用一个 no-op shell turn 物化临时 thread 历史，结束后清理。
+
+`npm run canary:live-observation`（先 `npm run build`）把生产 backend 接到 pinned app-server 和
+localhost 合成 Responses SSE，验证空启动投影、10 次 live Running、live Completed、零历史分页。
+HOME/CODEX_HOME、配置和假凭证全部隔离，不读取真实 auth/config/session，不调用真实模型。
 
 需要 Streamable HTTP 时：
 

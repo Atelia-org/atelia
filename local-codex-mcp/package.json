@@ -20,6 +20,7 @@
     "codex:verify": "node scripts/manage-pinned-codex.mjs verify",
     "canary:initialize": "node scripts/provider-free-initialize-canary.mjs",
     "canary:config": "node scripts/provider-free-config-canary.mjs",
+    "canary:live-observation": "node scripts/provider-free-live-observation-canary.mjs",
     "canary:projection": "node scripts/provider-free-projection-canary.mjs",
     "schemas:generate": "node scripts/manage-pinned-codex.mjs generate-schemas",
     "schemas:verify": "node scripts/manage-pinned-codex.mjs verify-schemas",
