@@ -1,6 +1,6 @@
 # RecapGrid Store SQLite v4
 
-状态：2026-09-14 Timeline 单一行身份切片实施中，集成验证待补；设计与验收入口为 [Timeline 计划](../../../Galatea/timeline-row-identity-simplification-plan.md)。
+状态：2026-09-14 Timeline 单一行身份已实现并通过 2,001 项本地测试，尚未部署；设计与验收入口为 [Timeline 计划](../../../Galatea/timeline-row-identity-simplification-plan.md)。
 
 本说明记录当前 Store 模型与 operator 边界。旧 [v2 合同](recap-grid-store-sqlite-v2.md)与 [v3 说明](recap-grid-store-sqlite-v3.md)保留其历史证据，
 不作为 v4 的 schema/API 合同；旧 Store 数据不转换。DDL 的唯一 owner 是

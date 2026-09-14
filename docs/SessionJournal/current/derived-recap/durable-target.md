@@ -1,6 +1,6 @@
 # RecapGrid durable target
 
-状态：WP-08 与 C2D 的历史交付完成；当前 Timeline 单一行身份切片实施中，验证待补，未操作真实实例。
+状态：WP-08 与 C2D 的历史交付完成；当前 Timeline 单一行身份已实现并通过 2,001 项本地测试，尚未部署，未操作真实实例。
 
 ## Canonical durable layout
 

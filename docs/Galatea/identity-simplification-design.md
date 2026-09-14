@@ -2,7 +2,7 @@
 
 > 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)与[前置输入对象简化](recap-prior-input-simplification-plan.md)均已实现并通过本地验证，尚未部署。前置输入代码见 `258125fd`，验证见实施记录；后续采用“丢弃旧 Recap，全部重构完成后统一重建”；[Store 简化](recap-store-simplification-plan.md)已实现，25 个项目的 1,771 项本地测试通过，尚未部署。首轮代码见 §10，首轮 E2E 见 §11。
 >
-> 日期：2026-09-14。首轮代码基线：`277baeea`；Store 规划基线：`4f718d87`；Timeline 规划基线：`6d87a4c1`。本文区分目标设计、当前实现和历史验证；[Timeline 单一行身份计划](timeline-row-identity-simplification-plan.md)已获批准、正在实施，集成验证待补。本轮维护代码、测试与文档，不执行清库、部署或真实模型重建。
+> 日期：2026-09-14。首轮代码基线：`277baeea`；Store 规划基线：`4f718d87`；Timeline 规划基线：`6d87a4c1`。本文区分目标设计、当前实现和历史验证；[Timeline 单一行身份切片](timeline-row-identity-simplification-plan.md)已实现、完成独立审阅并通过 27 个项目的 2,001 项测试，尚未部署。本轮维护代码、测试与文档，不执行清库、部署或真实模型重建。
 
 ## 1. 目标与最小模型
 
@@ -67,7 +67,7 @@ B 项说明真实需求，不把现有测试对每一个字段的断言升级成
 |---|---|---|
 | RequestAdapterFingerprint | delete | 删除执行硬门槛及当前身份字段，不用另一个手工标签或常量 hash 替代 |
 | ConnectionFingerprint | defer | 第一切片保持当前行为；改变 endpoint/reasoning 后如何恢复是另一项产品选择 |
-| HistoryRowId + DescriptorDigest | merge，实施中 | 保留一个不可变 HistoryRowId，暂沿用现有 RowId 算法；无需顺便换 UUID |
+| HistoryRowId + DescriptorDigest | merge，已完成 | 保留一个不可变 HistoryRowId，暂沿用现有 RowId 算法；无需顺便换 UUID |
 | CellDigest / RowViewDigest | simplify，已完成 | 改普通 CellId/RowResultId，保留唯一约束、前驱及成员 FK |
 | Content / Projection / Evaluation 三层摘要 | delete | 用普通 CellSlot 关联工作与首个结果，不计算新的缓存 hash；前驱和规则由不可变关系确定并校验 |
 | Control ResultIdentity | delete | 回执返回稳定操作/回执 ID，保留命令匹配与已应用结果 |
@@ -144,15 +144,15 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 已完成的前置输入切片见[实施记录](recap-prior-input-simplification-plan.md)，它在当时保持了旧 digest 和持久格式。其后 Store 切片已按新的可丢弃缓存要求完成；下文分别标明已完成部分与后继目标。
 
-### 6.1 Timeline 行身份：当前实施
+### 6.1 Timeline 行身份：实施结果
 
-详细设计见 [Timeline 单一行身份计划](timeline-row-identity-simplification-plan.md)。保留原 HistoryRowId 算法及其 body 编码，删除同一 descriptor 的第二个 DescriptorDigest；外层格式升级不改变行 ID，不重新划分历史或改变 row frontier。
+实现与验证见 [Timeline 单一行身份记录](timeline-row-identity-simplification-plan.md)。保留原 HistoryRowId 算法及其 body 编码，删除同一 descriptor 的第二个 DescriptorDigest；外层格式升级不改变行 ID，不重新划分历史或改变 row frontier。
 
 源码复查收窄了原先的迁移范围：Cadence 持久文件没有 DescriptorDigest，Recipe 正文本身也只引用 BootstrapThroughRowId。它们的格式和内容键保持；变化位于 Timeline 行记录、Control bootstrap 附加记录与 registration 命令、Store/构建及显示消费者。
 
 Timeline schema 3 / descriptor 外层 wire v2 提供 `UpgradeSchemaV2(repositoryPath, RefId, TimelineId)` 限定离线格式升级，保留全部行（含非当前路径行）、原 head、policy 和 selected-path 结构；当前 reader 只读新格式。Control 复用既有旧格式 codec 投影，保留源 Head/bytes，下一次真实 mutation 才写 v4 布局，不另建 Control/backup 转换器。旧 Recap Store 仍只在最终整体 Reset，不做结果图转换。
 
-registration 的 domain 和整套工具 runtime 保持；只删 Recipe DTO 的重复字段，因此 Recipes 非空的命令摘要变化，family/definition-only 和 promotion 命令不变。最终切换前正常收敛受影响的 recipe registration，以及原有 Store 清空前要求收敛的 promotion；不改写 receipt 或冻结工具结果。精确语料、非空分叉旧样本和验收工作包见该计划。
+registration 的 domain 和整套工具 runtime 保持；只删 Recipe DTO 的重复字段，因此 Recipes 非空的命令摘要变化，family/definition-only 和 promotion 命令不变。最终切换前正常收敛受影响的 recipe registration，以及原有 Store 清空前要求收敛的 promotion；不改写 receipt 或冻结工具结果。精确语料、非空分叉旧样本和实际提交见该实施记录。
 
 ### 6.2 Control 操作回执：已完成
 
@@ -204,7 +204,7 @@ Prepared 保存的 ContextSnapshot 正文没有 Cell/Row/Store ID。旧冻结请
 
 ## 8. 实施入口、验证与完成定义
 
-当前实施入口为 [Timeline 单一行身份计划](timeline-row-identity-simplification-plan.md)，各工作包实施中、最终验证待补。[Store 简化计划](recap-store-simplification-plan.md)的 A/B/C 已完成，实际提交与验证见其 §7。其他已完成切片的代码与验证分别见 §10、[Control 实施记录](control-receipt-simplification-plan.md)和[前置输入实施记录](recap-prior-input-simplification-plan.md)。下面首轮验证命令保留作历史回归参考，不是新切片工作清单；历史 E2E 见 §11。
+[Timeline 单一行身份](timeline-row-identity-simplification-plan.md)已实现并通过本地验证；已完成工作不再作为待实施入口。后续只保留 §6.4 暂缓项与 §7 的最终真实数据处置。[Store 简化计划](recap-store-simplification-plan.md)的 A/B/C 已完成，实际提交与验证见其 §7。其他已完成切片的代码与验证分别见 §10、[Control 实施记录](control-receipt-simplification-plan.md)和[前置输入实施记录](recap-prior-input-simplification-plan.md)。下面首轮验证命令保留作历史回归参考，不是新切片工作清单；历史 E2E 见 §11。
 
 开始前检查 `git status` 和 `git log`，重新确认本文列出的关键类型与 schema，保留并行会话已提交修复。以当前生产消费者划范围，不把全部公共类型快照测试当成设计保留理由。
 

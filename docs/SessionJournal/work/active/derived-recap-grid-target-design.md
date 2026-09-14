@@ -1,6 +1,6 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：WP-00至WP-08 与 Store v3 切片已完成；当前 [Timeline 单一行身份](../../../Galatea/timeline-row-identity-simplification-plan.md)实施中，最终验证待补。旧测试数不认证本次新格式。
+状态：WP-00至WP-08 与 Store v3 切片已完成；当前 [Timeline 单一行身份](../../../Galatea/timeline-row-identity-simplification-plan.md)已实现并通过 2,001 项本地测试，尚未部署。旧测试数不认证本次新格式。
 
 当前单一 HistoryRowId、CellSlot、普通结果 ID、SQL 单份数据与来源诊断以[Timeline 计划](../../../Galatea/timeline-row-identity-simplification-plan.md)及 [Store v4](../../current/contracts/recap-grid-store-sqlite-v4.md)和当前源码为准。本文已同步对应 Shape/Rule；末尾旧工作包与审查记录只认证当时实现。
 

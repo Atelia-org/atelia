@@ -2,7 +2,7 @@
 
 状态：2026-09-14 已实现并通过本地验证，尚未部署；本轮设计与验收入口为 [Store 简化计划](../../../Galatea/recap-store-simplification-plan.md)。
 
-> 历史后继边界：当前 [Store v4](recap-grid-store-sqlite-v4.md) 随 Timeline 单一行身份切片实施，删除第二行身份，
+> 历史后继边界：当前 [Store v4](recap-grid-store-sqlite-v4.md) 已随 Timeline 单一行身份切片落地，删除第二行身份，
 > fulfillment 使用 ThroughRowId、cursor 升 v2。下文记录已完成的 v3 切片，不把 v3 测试数当作 v4 验证。
 
 本说明记录当时 Store 模型与 operator 边界。旧 [v2 合同](recap-grid-store-sqlite-v2.md)保留其批准历史，

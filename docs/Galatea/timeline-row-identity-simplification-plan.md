@@ -1,7 +1,7 @@
-# Timeline 单一行身份：实施计划
+# Timeline 单一行身份：设计与实施记录
 
-> 状态：设计已获用户批准，工作包正在实施，最终集成验证待补；设计已完成三视角独立审查与交叉质询。
-> 日期：2026-09-14；源码基线：`6d87a4c1`。
+> 状态：代码、独立审阅与本地验证完成；27 个项目、2,001 项通过，0 失败、0 跳过，尚未部署。设计已完成三视角独立审查与交叉质询。
+> 日期：2026-09-14；规划基线：`6d87a4c1`；实施与旧样本生成基线：`3c1fd372`。
 > 承接[身份简化总设计](identity-simplification-design.md)与已完成的 [Store 切片](recap-store-simplification-plan.md)。真实数据处置和 LLM 重建仍留到全部重构完成后。
 
 ## 1. 最小模型
@@ -45,7 +45,7 @@ FulfilledViewKey = (RefId, TimelineId, TimelineHeadGeneration, ThroughRowId, Rec
 | [ControlMaintenance](../../prototypes/SessionJournal.RecapGrid/Control/ControlMaintenance.cs) | export/backup 使用源 Head/bytes；旧 backup 的读取与 receipt union 已有真实消费者 |
 | [StoreContracts](../../prototypes/SessionJournal.RecapGrid/Store/StoreContracts.cs) `RecapGridStoreExportCursor` | fulfilled cursor 的 through 固定 64 hex，旧 digest 与新 RowId 长度相同；须显式区分新语义 |
 
-## 3. 当前代码的目标形状
+## 3. 当前代码形状
 
 ### 3.1 Timeline 与选择证明
 
@@ -59,7 +59,7 @@ TimelineHead、locator、PartitionPolicy、selected-path leaf/Merkle/root、行�
 
 `RegisteredRecipeBootstrap` 删除 DescriptorDigest，保留已有 TimelineHead 和 RowId；检查 RowId 与 `Recipe.BootstrapThroughRowId` 一致，以及当前选中行与作用域。空 bootstrap 与非空 bootstrap 仍分别验证。
 
-目标 writer 为 Control v4。v2/v3 仅在 codec 内按各自原格式校验 canonical bytes、state digest、旧字段形状和 RowId/DescriptorDigest 的 null 配对，然后丢弃旧 descriptor 值，投影到同一个当前 graph。旧 v2 的 ResultIdentity 继续沿现有 codec 边界丢弃，不重新进入运行模型。
+当前 writer 为 Control v4。v2/v3 仅在 codec 内按各自原格式校验 canonical bytes、state digest、旧字段形状和 RowId/DescriptorDigest 的 null 配对，然后丢弃旧 descriptor 值，投影到同一个当前 graph。旧 v2 的 ResultIdentity 继续沿现有 codec 边界丢弃，不重新进入运行模型。
 
 读取、成功 receipt replay、export、backup 保留原 Head/CanonicalBytes；下一次真实 mutation 才按 v4 生成新状态并按既有规则推进 generation。不得为升级格式制造空写入。Restore 先读取两边为同一模型，再沿现有 receipt union 与新实例发布流程处理。
 
@@ -86,7 +86,7 @@ Family、Definition、BuildTarget、Recipe 的 canonical bytes 和 digest 原值
 
 删除 `RowViewCoordinate/RowBuildSpec.HistorySegmentDigest`、`RecapRowView.RowDescriptorDigest`、Manager proof/progress/authority 及 Getter selection 中与已有 RowId 重复的属性和参数。只有旧 descriptor 的 through 位置改为 `HistoryRowId ThroughRowId`；已有 through RowId 的 DTO 直接删重复字段，不再传两份相同 RowId。
 
-目标 Store schema v4：row_view 删 `row_descriptor_digest`；fulfilled 的 through 改为 `through_history_row_id`。保留 `(ref,timeline,recipe,historyRow)` assignment 唯一性，fulfilled 的 FK 精确绑定结果 ID、作用域、recipe 和 through HistoryRowId，删除只服务旧 descriptor 的索引，复用必要的列组合约束。不得只把旧 descriptor 字符串改名当成 RowId。
+当前 Store schema v4：row_view 删 `row_descriptor_digest`；fulfilled 的 through 改为 `through_history_row_id`。保留 `(ref,timeline,recipe,historyRow)` assignment 唯一性，fulfilled 的 FK 精确绑定结果 ID、作用域、recipe 和 through HistoryRowId，删除只服务旧 descriptor 的索引，复用必要的列组合约束。不得只把旧 descriptor 字符串改名当成 RowId。
 
 CellSlot、CellId、RowResultId、winner、前驱与成员语义保持。Manager/Runtime 的独立 frozen expected 校验改用实际 RowId，Overlay 与 Getter 来源关系保持；不加入新的输入 hash。
 
@@ -119,11 +119,11 @@ UnsupportedSchema、LimitExceeded、Invalid 和 `PublishIndeterminate(Head, Obse
 
 Store 旧库（包括本次已实现但未部署的 v3）不参与转换；普通打开旧 Store 仍 unsupported，最终只 Reset 一次。Control 的旧文件/备份由 §3.2 的已有读取边界处理。Cadence 文件逐字保持，不增加升级阶段。
 
-## 5. 最小纵向实施与验收
+## 5. 已实施范围与验收合同
 
-先冻结当前生产版本生成的非空旧样本，再修改模型。不能在新 writer 写出的数据上删除几个字段，冒充真实旧格式证据。
+本轮先用 `3c1fd372` 的旧生产 APIs 冻结非空样本，再修改模型，来源见 §8。没有在新 writer 的输出中删除字段伪造旧格式。
 
-| 工作包 | 范围与完成条件 |
+| 已实施工作包 | 范围与验收责任 |
 |---|---|
 | A：Timeline | 单一 RowId、外层 codec/SQL、witness/proof、限定离线升级一起贯通；原分区和所有行保持 |
 | B：Control | 单一 bootstrap、2/3 源格式投影和 writer4、实际 command 变化范围、receipt/backup/restore 验证 |
@@ -149,7 +149,7 @@ Store 旧库（包括本次已实现但未部署的 v3）不参与转换；普�
 
 规划时只读检查了现有 `LegacyV2/repository.zip` 与 `ControlReceiptV2` 三个 ZIP：四个 Timeline 都是 schema 2、rows=0。它们继续证明既有 Journal/Control 边界，**不能证明本次非空行格式升级**。新增样本至少含非空 bootstrap、多个行、selected 与 retained 非selected 行，记录生成基线；旧 ZIP 原字节保留。
 
-实现后按影响串行验证 Timeline/其 public surface、Cadence、Control/AgentControl、RecapGrid Abstractions/Store/Manager/Runtime/Getter/Hosting/Online/WalkingSkeleton、相关 public surface、CLI、Galatea 与 analyzer。统一 `--no-restore -m:1 -nr:false`，测试加 `-- xUnit.MaxParallelThreads=4`；Server 使用 [E2E 指南](e2e-testing.md)的精确三类 Live 排除，并清除 live opt-in。独立 build Server/CLI/Timeline/RecapGrid，检查 JS 与 scoped docs。数字只在真正执行后填写。
+本轮按影响串行验证 Timeline/其 public surface、Cadence、Control/AgentControl、RecapGrid Abstractions/Store/Manager/Runtime/Getter/Hosting/Online/WalkingSkeleton、相关 public surface、CLI、Galatea 与 analyzer。统一 `--no-restore -m:1 -nr:false`，测试加 `-- xUnit.MaxParallelThreads=4`；Server 使用 [E2E 指南](e2e-testing.md)的精确三类 Live 排除，并清除 live opt-in。独立 build Server/CLI/Timeline/RecapGrid，检查 JS 与 scoped docs。数字只在真正执行后填写。
 
 ## 6. 最终真实切换条件
 
@@ -182,11 +182,11 @@ Store 旧库（包括本次已实现但未部署的 v3）不参与转换；普�
 | 把旧零行 ZIP 当升级成功证据 | 修正验收 | 只读实查四个 rows=0，需先冻结非空/分叉旧样本 |
 | 原 RowId/Recipe/TimelineHead、路径算法、receipt 与冻结请求 | keep | 都有当前持久或恢复消费者，不因删冗余字段重编码 |
 
-在所查 Timeline、RecapGrid、Cadence、Galatea、CLI、analyzer 六个生产目录，目标符号及拼写变体命中 30 个源文件，Cadence 为 0；这是当前传播范围，不是预计删除行数。可确认的减少是一种公开 digest 类型及其生成/存储/参数/比较链；没有增加新的行身份。升级路线收缩为一种 Timeline 专用转换，取消 Cadence 迁移、Control 离线转换和旧 Store 整图转换。
+规划基线在 Timeline、RecapGrid、Cadence、Galatea、CLI、analyzer 六个生产目录的目标符号及拼写变体命中 30 个源文件，Cadence 为 0；这是当时的传播范围，不是最终删除行数。可确认的减少是一种公开 digest 类型及其生成/存储/参数/比较链；没有增加新的行身份。升级路线收缩为一种 Timeline 专用转换，取消 Cadence 迁移、Control 离线转换和旧 Store 整图转换。
 
-完成时当前生产链及新写入数据不再含第二行身份。只允许明确的旧 Control wire DTO、离线 Timeline 源解码和固定历史证据保留旧字段名；不得借兼容之名把它投影回运行对象。实施文档记录实际提交/验证，待办只保留未完成工作。
+当前生产链及新写入数据已不再含第二行身份。只允许明确的旧 Control wire DTO、离线 Timeline 源解码和固定历史证据保留旧字段名；不得借兼容之名把它投影回运行对象。下节记录实际实施与验收；这张工作包表不继续充当待实施清单。
 
-## 8. 实施记录（集成验证待补）
+## 8. 实施记录与验证
 
 已锁定的版本组合为 Timeline SQL 3 / descriptor 外层 wire 2、Control writer 4、Store SQL 4 / cursor wire 2。
 原 RowId 的 body/domain v1、Recipe/Family/Definition 内容键、Cadence 文件、tool catalog/runtime 与 Journal 格式保持。
@@ -203,5 +203,104 @@ recap-grid timeline upgrade-schema-v2 --input <stopped-repository-copy> --ref <p
 status 为 upgraded/already-current/absent/busy/unsupported-schema/limit/invalid/publish-indeterminate；
 不确定发布返回 exit 2，不自动重试。详细操作说明见 [CLI README](../../prototypes/SessionJournal.Cli/README.md#timeline-schema-2-离线升级)。
 
-工作包提交、固定旧样本来源、命令语料、实际测试/build/review 与文档检查结果，在集成完成后填写；
-当前不引用 Store v3 的通过数作为本切片证据。真实 Timeline 升级、Store Reset、LLM 重建与部署均留到最终阶段。
+### 8.1 提交与实现
+
+| 工作包 | 提交与结果 |
+|---|---|
+| A0：真实旧格式语料 | `ef0e1d34`：旧基线生成非空分叉 Timeline、Control v3 与原 backup、命令与原文件快照 |
+| A：Timeline | `2e2339e3`：单一 RowId、schema 3/外层 wire 2、明确离线升级；`5611524c`：升级、旧身份与崩溃恢复测试 |
+| B：Control | `92734f33`：bootstrap 单一 RowId、2/3 codec 原格式校验后投影、writer 4、固定命令语料与 receipt/backup/restore |
+| C：Store 与抽象 | `dc83a0fe`、`df618293`：Store/Abstractions 的单一 RowId、Store 4/ThroughRowId、cursor 2 与分页 |
+| D：构建与执行链 | `ff110410`：Manager/Runtime/Getter 与相邻测试同步单一行身份 |
+| 消费者与 CLI | `8590f8eb`：CLI/Galatea 消费者与明确升级命令 |
+| 纵向集成 | `0bc1a365`：旧 Timeline 升级、旧规则保留、新正式 runtime 规则构建、冷重开 missing-only |
+| 集成尾修 | `dddbbcf1`：Store metadata 创建使用统一 SchemaVersion，避免残留硬编码 3 |
+| 文档 | `bc601ef7`：当前合同与明确升级操作；本节记录最终实际验证 |
+
+A/B/C 包分别完成独立只读 review；主线程复核接口与跨包接缝。发现并在本切片修复两处生产问题：
+
+- Timeline 原 full verify 没有充分检查 selected-path 的 leaf/previous 与非峰 Merkle node。现在复用点读的
+  assignment/inclusion 验证，避免仅因为 mutation guard 为 0 就漏过物理数据损坏。
+  [升级测试](../../tests/SessionJournal.HistoryTimeline.Tests/HistoryTimelineSchemaUpgradeTests.cs)直接修改旧库
+  commitment 数据字节，证明 SQLite integrity 仍 ok、guard=0、head 不变时仍拒绝升级且不发布。
+- 新 Store DDL 为 v4 时 metadata 初始化曾残留硬编码 3；`dddbbcf1` 统一使用 `SchemaVersion` 参数，
+  创建与当前 DDL 不再分叉。
+
+测试尾修只更新已退役字段/版本的断言及 crash harness；没有为取得通过而放宽 scope、head、前驱或 frozen 校验。
+
+### 8.2 固定旧样本与实际生产链
+
+[A0 README](../../tests/SessionJournal.HistoryTimeline.Tests/Fixtures/RowIdentityV2/README.md)记录完整生成步骤与证据范围。
+样本来自旧基线 `3c1fd372` 的真实生产 APIs：Timeline schema 2，12 个持久行、11 个 selected 行、1 个 retained
+非 selected 行，1 policy、19 个 Merkle 节点，head generation 13。Control v3 generation 10，含非空 bootstrap
+与 3 条真实 registration receipts，另附旧 maintenance API 生成的原 backup/manifest。SQL 与全部文件快照保留
+原 head/path、行事实和升级范围外的字节证据；旧 `LegacyV2/ControlReceiptV2` ZIP 未改写。
+
+固定 commands 含实际应用的 family-only、definition-only、nonempty-witness recipe，及只编码的 null-witness recipe；
+后者没有在非空 Timeline 上非法应用。空 bundle 由旧构造器拒绝，不存在人为编造的空命令。
+新测试核对无 Recipes 的原 bytes/digest 与 receipt replay、Recipes 非空时 command 改变与旧 receipt Conflict，
+promotion digest、builtin 空 Recipes 及既有 runtime golden 保持。
+
+旧 v3 非空 bootstrap 覆盖 source hash/canonical/null 配对/字段形状与 graph 校验、read/export/backup 原 Head/bytes，
+下一真实 mutation 写 v4、旧 backup restore 后 union 保留新增 receipt，以及后续 activation。
+真实 v2 固定样本含 receipt 但没有非空 bootstrap；非空证明来自 v3，两版本共用 `ProjectLegacyRecipes`。
+这项证据范围明确保留，不声称创建过非空 v2 样本，也不以新 writer 伪造它。
+
+[Manager 纵向测试](../../tests/SessionJournal.RecapGrid.Manager.Tests/TimelineIdentityUpgradeIntegrationTests.cs)
+先升级旧库并验证旧规则/receipt 保留，再注册受正式 V3 RecapCompletionRuntime 支持的 Family/Definitions/recipe；
+Control 正常新 mutation 写 v4，真实 Manager→Runtime→假 provider 构建 11 行两列，共 22 次调用，冷重开后零新增调用。
+旧样本原有 `runtime-v1` Family 本身不支持正式 Runtime，因此未把它冒称为可直接驱动模型的规则。
+
+所有样本都是隔离的合成 repository，不含真实 `.atelia` 数据或凭据；以上 fake-provider 验证不等于真实 LLM 运行。
+
+### 8.3 最终验证与后续
+
+完整实现与测试范围为 `3c1fd372..bb76fbd4`。最终串行验证为 **27 个项目、2,001 项通过，0 失败、0 跳过**；
+所有最终 test logs 均无 warning。分项如下，RecapGrid 行省略共同前缀 `SessionJournal.RecapGrid`：
+
+| 测试项目 | 通过 |
+|---|---:|
+| SessionJournal.HistoryTimeline | 202 |
+| Abstractions | 33 |
+| Store | 72 |
+| Manager | 84 |
+| Runtime | 70 |
+| Getter | 31 |
+| Hosting | 29 |
+| WalkingSkeleton | 27 |
+| Online | 33 |
+| AgentControl | 33 |
+| Control | 92 |
+| Cadence | 29 |
+| Galatea.RecapGrid | 9 |
+| Analyzers.Style | 88 |
+| SessionJournal.Cli | 143 |
+| Galatea.Server（精确排除三类 Live） | 985 |
+| 相关 public-surface 十一个项目 | 41 |
+
+public-surface 分项为 HistoryTimeline 8、Store 5、Manager 3、Runtime 4、Getter 3、Hosting 7、Online 3、
+AgentControl 1、Control 4、Cadence 2、Galatea.RecapGrid 1。Timeline 最终 202 项包括新增两项 raw-byte 损坏测试
+与 65,537 行规模测试；较早的 200 项运行不作为本次最终计数。
+
+测试使用 `dotnet test tests/<项目>/<项目>.csproj --no-restore -m:1 -nr:false -- xUnit.MaxParallelThreads=4`，
+重 .NET 工作串行。Server 先清除 `ATELIA_RUN_GALATEA_NOTE_LIVE`、`ATELIA_RUN_GALATEA_LAB_LIVE`、
+`ATELIA_RUN_GALATEA_CODEX_DELEGATION_LIVE`，并在 `--` 前加入以下精确 filter：
+
+```text
+FullyQualifiedName!~CharacterNoteTranscriptionLiveTests&FullyQualifiedName!~GalateaCodexDelegationLiveTests&FullyQualifiedName!~GalateaScenarioLabLiveTests
+```
+
+最终四个独立 build 均使用 `dotnet build <csproj> --no-restore -m:1 -nr:false`，每项 0 warning、0 error：
+`SessionJournal.HistoryTimeline`、`SessionJournal.RecapGrid`、`Galatea.Server`、`SessionJournal.Cli`。
+`node --check prototypes/Galatea/wwwroot/assets/galatea.js` 通过；
+`python3 scripts/check_session_journal_docs.py` 为 41 files、0 diagnostics，`git diff --check` 通过。
+
+本机最终汇总为 `/tmp/timeline-identity-validation-final.json`，测试日志为 `/tmp/timeline-identity-test-<项目>.log`，
+build 日志为 `/tmp/timeline-identity-build-{Timeline,RecapGrid,Server,CLI}.log`。临时日志不是仓库持久证据；
+固定 fixture、生成器及复现步骤已归档，旧基线临时 worktree 已清理。
+
+原四个 ZIP、Cadence/Journal/Completion、Recipe body 与 builtin 生产路径在实施范围内的 git diff 为空。
+本轮没有真实 Timeline 升级、Store Reset、LLM 调用、部署或 push。旧样本仍保留原字节，所有可写实验均在合成隔离副本进行。
+
+剩余内容只有 §6 的最终真实升级/Reset/LLM 重建与部署，以及[总设计 §6.4](identity-simplification-design.md#64-暂缓项目)
+列出的独立暂缓项。Timeline 行身份与 Store/Control 字段收口已完成，不再作为下一轮工作包重复规划。

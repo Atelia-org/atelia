@@ -3,7 +3,7 @@
 > 状态：工作包 A/B/C 已实现并通过本地验证：25 个项目、1,771 项通过，0 失败、0 跳过；尚未部署。设计经过三视角独立审查、交叉质询和剩余争议裁决。
 > 日期：2026-09-14；设计基线：`4f718d87`；实施基线：`e7693a64`。
 > 承接[身份简化总设计](identity-simplification-design.md)。本轮代码、测试与文档已完成；真实清库、部署与 LLM 重建留到全部重构完成后。
-> 后继边界：[Timeline 单一行身份切片](timeline-row-identity-simplification-plan.md)正在实施，将 Store 改为 schema 4、ThroughRowId 与 cursor v2。
+> 后继边界：[Timeline 单一行身份切片](timeline-row-identity-simplification-plan.md)已将 Store 改为 schema 4、ThroughRowId 与 cursor v2。
 > 本文 v3 实施提交与 1,771 项测试保留当时证据，不认证后继格式；当前 Store 入口为 [v4 说明](../SessionJournal/current/contracts/recap-grid-store-sqlite-v4.md)。
 
 ## 1. 最小模型与需求来源
