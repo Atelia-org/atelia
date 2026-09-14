@@ -105,7 +105,6 @@ public sealed class RecapRowView {
     public RefId RefId => Coordinate.RefId;
     public TimelineId TimelineId => Coordinate.TimelineId;
     public HistoryRowId HistoryRowId => Coordinate.HistoryRowId;
-    public HistorySegmentDescriptorDigest RowDescriptorDigest => Coordinate.HistorySegmentDigest;
     public GridBuildRecipeDigest RecipeDigest => Coordinate.RecipeDigest;
     public BuildTargetDigest TargetDigest => Coordinate.TargetDigest;
     public HistoryRowId? PreviousHistoryRowId => Coordinate.PreviousHistoryRowId;
@@ -144,31 +143,31 @@ public sealed class RecapRowView {
 
 public sealed record FulfilledViewKey {
     internal FulfilledViewKey(RefId refId, TimelineId timelineId, long timelineHeadGeneration,
-        HistorySegmentDescriptorDigest throughRowDescriptorDigest, GridBuildRecipeDigest recipeDigest) {
+        HistoryRowId throughRowId, GridBuildRecipeDigest recipeDigest) {
         if (refId.IsDefault) { throw new ArgumentException("Ref must not be default.", nameof(refId)); }
         RecapGridSyntax.RequireTypedValue(timelineId.Value, 32, nameof(timelineId));
-        RecapGridSyntax.RequireTypedValue(throughRowDescriptorDigest.Value, 64, nameof(throughRowDescriptorDigest));
+        RecapGridSyntax.RequireTypedValue(throughRowId.Value, 64, nameof(throughRowId));
         RecapGridSyntax.RequireTypedValue(recipeDigest.Value, 64, nameof(recipeDigest));
         if (timelineHeadGeneration < 0) { throw new ArgumentOutOfRangeException(nameof(timelineHeadGeneration)); }
         RefId = refId;
         TimelineId = timelineId;
         TimelineHeadGeneration = timelineHeadGeneration;
-        ThroughRowDescriptorDigest = throughRowDescriptorDigest;
+        ThroughRowId = throughRowId;
         RecipeDigest = recipeDigest;
     }
     public RefId RefId { get; }
     public TimelineId TimelineId { get; }
     public long TimelineHeadGeneration { get; }
-    public HistorySegmentDescriptorDigest ThroughRowDescriptorDigest { get; }
+    public HistoryRowId ThroughRowId { get; }
     public GridBuildRecipeDigest RecipeDigest { get; }
     public static FulfilledViewKey Create(RefId refId, TimelineHeadRef timelineHead,
-        HistorySegmentDescriptorDigest throughRowDescriptorDigest, GridBuildRecipe recipe) {
+        HistoryRowId throughRowId, GridBuildRecipe recipe) {
         ArgumentNullException.ThrowIfNull(timelineHead);
         ArgumentNullException.ThrowIfNull(recipe);
         if (timelineHead.RefId != refId || timelineHead.TimelineId != recipe.TimelineId) {
             throw new ArgumentException("The fulfillment must bind one Ref and Timeline.");
         }
         return new FulfilledViewKey(refId, timelineHead.TimelineId, timelineHead.Generation,
-            throughRowDescriptorDigest, recipe.Digest);
+            throughRowId, recipe.Digest);
     }
 }

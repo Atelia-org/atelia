@@ -333,8 +333,8 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
             "SELECT content FROM cell_artifact WHERE recipe_digest = $key AND history_row_id = $key AND logical_column_id = $key",
             "SELECT cell_id FROM cell_artifact WHERE cell_id > $key ORDER BY cell_id LIMIT 129",
             "SELECT row_result_id FROM row_view WHERE row_result_id > $key ORDER BY row_result_id LIMIT 129",
-            "SELECT row_result_id FROM fulfilled_view_ref WHERE ref_id = $key AND timeline_id = $key AND timeline_head_generation = 1 AND through_row_descriptor_digest = $key AND recipe_digest = $key",
-            "SELECT ref_id FROM fulfilled_view_ref WHERE (ref_id, timeline_id, timeline_head_generation, through_row_descriptor_digest, recipe_digest) > ($key, $key, 0, $key, $key) ORDER BY ref_id, timeline_id, timeline_head_generation, through_row_descriptor_digest, recipe_digest LIMIT 129"
+            "SELECT row_result_id FROM fulfilled_view_ref WHERE ref_id = $key AND timeline_id = $key AND timeline_head_generation = 1 AND through_history_row_id = $key AND recipe_digest = $key",
+            "SELECT ref_id FROM fulfilled_view_ref WHERE (ref_id, timeline_id, timeline_head_generation, through_history_row_id, recipe_digest) > ($key, $key, 0, $key, $key) ORDER BY ref_id, timeline_id, timeline_head_generation, through_history_row_id, recipe_digest LIMIT 129"
         }) {
             using SqliteCommand command = connection.CreateCommand();
             command.CommandText = "EXPLAIN QUERY PLAN " + sql;
@@ -428,7 +428,7 @@ public sealed class StoreMaintenanceAndFailureTests : IDisposable {
                 FulfilledViewKey key = StoreFixture.Fulfilled(spec, index);
                 Assert.IsType<RecapGridFulfilledPutResult.Inserted>(handle.Writer.PutFulfilled(key, view.Id));
                 string cursorKey = RecapGridStoreExportCursor.CreateFulfilled(key.RefId.ToHexString(), key.TimelineId.Value,
-                    key.TimelineHeadGeneration, key.ThroughRowDescriptorDigest.Value, key.RecipeDigest.Value).Key;
+                    key.TimelineHeadGeneration, key.ThroughRowId.Value, key.RecipeDigest.Value).Key;
                 expected.Add(cursorKey, view.Id);
             }
         }

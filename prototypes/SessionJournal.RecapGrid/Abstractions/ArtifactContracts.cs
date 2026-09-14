@@ -49,7 +49,6 @@ public sealed record RowViewCoordinate {
         RefId refId,
         TimelineId timelineId,
         HistoryRowId historyRowId,
-        HistorySegmentDescriptorDigest historySegmentDigest,
         GridBuildRecipeDigest recipeDigest,
         BuildTargetDigest targetDigest,
         HistoryRowId? previousHistoryRowId,
@@ -61,11 +60,6 @@ public sealed record RowViewCoordinate {
         }
         RecapGridSyntax.RequireTypedValue(timelineId.Value, 32, nameof(timelineId));
         RecapGridSyntax.RequireTypedValue(historyRowId.Value, 64, nameof(historyRowId));
-        RecapGridSyntax.RequireTypedValue(
-            historySegmentDigest.Value,
-            64,
-            nameof(historySegmentDigest)
-        );
         RecapGridSyntax.RequireTypedValue(recipeDigest.Value, 64, nameof(recipeDigest));
         RecapGridSyntax.RequireTypedValue(targetDigest.Value, 64, nameof(targetDigest));
         if (previousHistoryRowId is { } previousRow) {
@@ -96,7 +90,6 @@ public sealed record RowViewCoordinate {
         RefId = refId;
         TimelineId = timelineId;
         HistoryRowId = historyRowId;
-        HistorySegmentDigest = historySegmentDigest;
         RecipeDigest = recipeDigest;
         TargetDigest = targetDigest;
         PreviousHistoryRowId = previousHistoryRowId;
@@ -107,7 +100,6 @@ public sealed record RowViewCoordinate {
     public RefId RefId { get; }
     public TimelineId TimelineId { get; }
     public HistoryRowId HistoryRowId { get; }
-    public HistorySegmentDescriptorDigest HistorySegmentDigest { get; }
     public GridBuildRecipeDigest RecipeDigest { get; }
     public BuildTargetDigest TargetDigest { get; }
     public HistoryRowId? PreviousHistoryRowId { get; }
@@ -176,8 +168,6 @@ public sealed class RowBuildSpec {
     public RefId RefId => Coordinate.RefId;
     public TimelineId TimelineId => Coordinate.TimelineId;
     public HistoryRowId HistoryRowId => Coordinate.HistoryRowId;
-    public HistorySegmentDescriptorDigest HistorySegmentDigest =>
-        Coordinate.HistorySegmentDigest;
     public GridBuildRecipeDigest RecipeDigest => Coordinate.RecipeDigest;
     public BuildTargetDigest TargetDigest => Coordinate.TargetDigest;
     public HistoryRowId? PreviousHistoryRowId =>

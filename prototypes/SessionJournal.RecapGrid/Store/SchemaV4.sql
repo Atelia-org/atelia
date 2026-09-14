@@ -1,6 +1,6 @@
 CREATE TABLE store_metadata(
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    schema_version INTEGER NOT NULL CHECK(schema_version = 3),
+    schema_version INTEGER NOT NULL CHECK(schema_version = 4),
     store_instance_id TEXT NOT NULL,
     cell_count INTEGER NOT NULL CHECK(cell_count >= 0),
     row_view_count INTEGER NOT NULL CHECK(row_view_count >= 0),
@@ -25,7 +25,6 @@ CREATE TABLE row_view(
     ref_id TEXT NOT NULL,
     timeline_id TEXT NOT NULL,
     history_row_id TEXT NOT NULL,
-    row_descriptor_digest TEXT NOT NULL,
     recipe_digest TEXT NOT NULL,
     target_digest TEXT NOT NULL,
     previous_history_row_id TEXT,
@@ -38,7 +37,7 @@ CREATE TABLE row_view(
     UNIQUE(row_result_id, ref_id, timeline_id, recipe_digest,
         history_row_id, target_digest),
     UNIQUE(row_result_id, ref_id, timeline_id, recipe_digest,
-        row_descriptor_digest),
+        history_row_id),
     FOREIGN KEY(previous_row_result_id, ref_id, timeline_id, recipe_digest,
         previous_history_row_id, target_digest)
         REFERENCES row_view(row_result_id, ref_id, timeline_id, recipe_digest,
@@ -62,13 +61,13 @@ CREATE TABLE fulfilled_view_ref(
     ref_id TEXT NOT NULL,
     timeline_id TEXT NOT NULL,
     timeline_head_generation INTEGER NOT NULL CHECK(timeline_head_generation >= 0),
-    through_row_descriptor_digest TEXT NOT NULL,
+    through_history_row_id TEXT NOT NULL,
     recipe_digest TEXT NOT NULL,
     row_result_id TEXT NOT NULL,
     PRIMARY KEY(ref_id, timeline_id, timeline_head_generation,
-        through_row_descriptor_digest, recipe_digest),
+        through_history_row_id, recipe_digest),
     FOREIGN KEY(row_result_id, ref_id, timeline_id, recipe_digest,
-        through_row_descriptor_digest)
+        through_history_row_id)
         REFERENCES row_view(row_result_id, ref_id, timeline_id, recipe_digest,
-            row_descriptor_digest)
+            history_row_id)
 ) STRICT, WITHOUT ROWID;

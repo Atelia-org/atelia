@@ -19,7 +19,7 @@ public sealed class StoreCellVerticalTests : IDisposable {
         RecapGridStoreCreateResult.Created created = Assert.IsType<
             RecapGridStoreCreateResult.Created
         >(RecapGridStoreFactory.Create(_root));
-        Assert.Equal(3, created.Identity.SchemaVersion);
+        Assert.Equal(4, created.Identity.SchemaVersion);
         Assert.IsType<RecapGridStoreCreateResult.AlreadyExists>(
             RecapGridStoreFactory.Create(_root)
         );
@@ -207,7 +207,7 @@ public sealed class StoreCellVerticalTests : IDisposable {
         GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(full.Recipe, full.HistoryRowId,
             full.Recipe.Target, [StoreFixture.Column]);
         var coordinate = new RowViewCoordinate(full.RefId, full.TimelineId, full.HistoryRowId,
-            full.HistorySegmentDigest, overlay.Digest, overlay.Target.Digest, null, null, bootstrapCompleted: true);
+            overlay.Digest, overlay.Target.Digest, null, null, bootstrapCompleted: true);
         RowBuildSpec spec = RowBuildSpec.CreateOverlayBootstrap(overlay, coordinate, [
             new RowBuildAssignment.Evaluate(new CellSlot(overlay.Digest, full.HistoryRowId, StoreFixture.Column)),
             new RowBuildAssignment.Reuse(baseTwo.LogicalColumnId, baseTwo)
@@ -228,7 +228,7 @@ public sealed class StoreCellVerticalTests : IDisposable {
         GridBuildRecipe overlay = GridBuildRecipe.CreateOverlay(full.Recipe, new HistoryRowId(new string('d', 64)),
             full.Recipe.Target, [StoreFixture.Column]);
         RowBuildSpec partial = RowBuildSpec.CreateOverlayBootstrap(overlay,
-            new RowViewCoordinate(full.RefId, full.TimelineId, full.HistoryRowId, full.HistorySegmentDigest,
+            new RowViewCoordinate(full.RefId, full.TimelineId, full.HistoryRowId,
                 overlay.Digest, overlay.Target.Digest, null, null, bootstrapCompleted: false),
             [new RowBuildAssignment.Evaluate(new CellSlot(overlay.Digest, full.HistoryRowId, StoreFixture.Column))]);
         FulfilledViewKey key = StoreFixture.Fulfilled(partial);

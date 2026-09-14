@@ -23,7 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Store/SchemaV3.sql" LogicalName="Atelia.SessionJournal.RecapGrid.Store.SchemaV3.sql" />
+    <EmbeddedResource Include="Store/SchemaV4.sql" LogicalName="Atelia.SessionJournal.RecapGrid.Store.SchemaV4.sql" />
     <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Control.Tests" />
     <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Control.CrashHarness" />
     <InternalsVisibleTo Include="Atelia.SessionJournal.RecapGrid.Store.Tests" />

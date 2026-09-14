@@ -148,16 +148,17 @@ public sealed class StoredResultContractTests {
         GridBuildRecipe recipe = Recipe("alpha");
         TimelineHeadRef head = new(Timeline, new RefId(1), null, new string('c', 64), null, 0,
             HistoryTimelineSelectedPath.EmptyDigest, generation: 0);
-        HistorySegmentDescriptorDigest descriptor = new(new string('b', 64));
-        FulfilledViewKey key = FulfilledViewKey.Create(new RefId(1), head, descriptor, recipe);
-        Assert.Equal(key, FulfilledViewKey.Create(new RefId(1), head, descriptor, recipe));
+        HistoryRowId through = new(new string('b', 64));
+        FulfilledViewKey key = FulfilledViewKey.Create(new RefId(1), head, through, recipe);
+        Assert.Equal(through, key.ThroughRowId);
+        Assert.Equal(key, FulfilledViewKey.Create(new RefId(1), head, through, recipe));
         Assert.NotEqual(key, FulfilledViewKey.Create(new RefId(1), head, new(new string('d', 64)), recipe));
         GridBuildRecipe other = GridBuildRecipe.CreateFull(Timeline, Row('b'), recipe.Target);
-        Assert.NotEqual(key, FulfilledViewKey.Create(new RefId(1), head, descriptor, other));
-        Assert.Throws<ArgumentException>(() => FulfilledViewKey.Create(new RefId(2), head, descriptor, recipe));
+        Assert.NotEqual(key, FulfilledViewKey.Create(new RefId(1), head, through, other));
+        Assert.Throws<ArgumentException>(() => FulfilledViewKey.Create(new RefId(2), head, through, recipe));
         GridBuildRecipe foreignTimeline = GridBuildRecipe.CreateFull(new(new string('2', 32)), Row('a'), recipe.Target);
-        Assert.Throws<ArgumentException>(() => FulfilledViewKey.Create(new RefId(1), head, descriptor, foreignTimeline));
-        Assert.Throws<ArgumentException>(() => FulfilledViewKey.Create(default, head, descriptor, recipe));
+        Assert.Throws<ArgumentException>(() => FulfilledViewKey.Create(new RefId(1), head, through, foreignTimeline));
+        Assert.Throws<ArgumentException>(() => FulfilledViewKey.Create(default, head, through, recipe));
     }
 
     [Theory]
@@ -189,5 +190,5 @@ public sealed class StoredResultContractTests {
     private static RowBuildSpec Spec(GridBuildRecipe recipe) => RowBuildSpec.CreateFull(recipe, Coordinate(recipe),
         recipe.Target.OrderedColumns.Select(column => new RowBuildAssignment.Evaluate(new CellSlot(recipe.Digest, Row('a'), column.LogicalColumnId))));
     private static RowViewCoordinate Coordinate(GridBuildRecipe recipe, char row = 'a', HistoryRowId? previousRow = null, RowResultId? previousResult = null) =>
-        new(new RefId(1), Timeline, Row(row), new(new string('b', 64)), recipe.Digest, recipe.Target.Digest, previousRow, previousResult, true);
+        new(new RefId(1), Timeline, Row(row), recipe.Digest, recipe.Target.Digest, previousRow, previousResult, true);
 }

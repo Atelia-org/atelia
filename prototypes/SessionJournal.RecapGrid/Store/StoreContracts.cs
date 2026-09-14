@@ -71,7 +71,7 @@ public sealed record RecapGridStoreInfo(
 );
 
 public sealed record RecapGridStoreExportCursor {
-    private const byte WireVersion = 1;
+    private const byte WireVersion = 2;
     private const byte CellKind = 1;
     private const byte RowViewKind = 2;
     private const byte FulfilledKind = 3;
@@ -122,7 +122,7 @@ public sealed record RecapGridStoreExportCursor {
         }
         if (bytes.Length < 2 || bytes[0] != WireVersion) {
             throw new ArgumentException(
-                "The export cursor has an invalid V1 header.",
+                "The export cursor has an invalid V2 header.",
                 nameof(value)
             );
         }
@@ -143,7 +143,7 @@ public sealed record RecapGridStoreExportCursor {
                 ReadLowerHex(bytes.AsSpan(122, 64), 64, nameof(value))
             ),
             _ => throw new ArgumentException(
-                "The export cursor has an invalid V1 shape.",
+                "The export cursor has an invalid V2 shape.",
                 nameof(value)
             )
         };

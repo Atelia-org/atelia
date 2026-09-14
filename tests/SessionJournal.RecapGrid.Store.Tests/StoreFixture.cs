@@ -24,7 +24,7 @@ internal static class StoreFixture {
         HistoryRowId actualRow = row ?? new HistoryRowId(new string('c', 64));
         var coordinate = new RowViewCoordinate(
             refId ?? new RefId(1), Timeline, actualRow,
-            new HistorySegmentDescriptorDigest(actualRow.Value), recipe.Digest, recipe.Target.Digest,
+            recipe.Digest, recipe.Target.Digest,
             previous?.HistoryRowId, previous?.Id, bootstrapCompleted: true);
         RowBuildAssignment[] assignments = recipe.Target.OrderedColumns.Select(column =>
             (RowBuildAssignment)new RowBuildAssignment.Evaluate(new CellSlot(recipe.Digest, actualRow, column.LogicalColumnId))).ToArray();
@@ -47,6 +47,6 @@ internal static class StoreFixture {
     internal static FulfilledViewKey Fulfilled(RowBuildSpec spec, long generation = 1) {
         var head = new TimelineHeadRef(Timeline, spec.Coordinate.RefId, null, new string('d', 64), null,
             0, HistoryTimelineSelectedPath.EmptyDigest, generation);
-        return FulfilledViewKey.Create(head.RefId, head, spec.HistorySegmentDigest, spec.Recipe);
+        return FulfilledViewKey.Create(head.RefId, head, spec.HistoryRowId, spec.Recipe);
     }
 }

@@ -5,7 +5,7 @@ using Microsoft.Data.Sqlite;
 namespace Atelia.SessionJournal.RecapGrid.Store;
 
 internal sealed class SqliteRecapGridStore {
-    internal const int SchemaVersion = 3;
+    internal const int SchemaVersion = 4;
     internal const int ApplicationId = 0x41544752;
     private const long SqliteNativeMaximumPageCountRequest = 4_294_967_294L;
 
@@ -638,8 +638,8 @@ internal sealed class SqliteRecapGridStore {
                 if (view.RefId != key.RefId
                     || view.TimelineId != key.TimelineId
                     || view.RecipeDigest != key.RecipeDigest
-                    || view.RowDescriptorDigest
-                        != key.ThroughRowDescriptorDigest) {
+                    || view.HistoryRowId
+                        != key.ThroughRowId) {
                     transaction.Rollback();
                     return new RecapGridFulfilledPutResult.Rejected(
                         "FulfilledViewScopeMismatch"
@@ -866,15 +866,14 @@ internal sealed class SqliteRecapGridStore {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO row_view(row_result_id,ref_id,timeline_id,history_row_id,row_descriptor_digest,
+            INSERT INTO row_view(row_result_id,ref_id,timeline_id,history_row_id,
                 recipe_digest,target_digest,previous_history_row_id,previous_row_result_id,bootstrap_completed)
-            VALUES($id,$ref,$timeline,$row,$descriptor,$recipe,$target,$previousRow,$previous,$bootstrap);
+            VALUES($id,$ref,$timeline,$row,$recipe,$target,$previousRow,$previous,$bootstrap);
             """;
         command.Parameters.AddWithValue("$id", view.Id.Value);
         command.Parameters.AddWithValue("$ref", view.RefId.ToHexString());
         command.Parameters.AddWithValue("$timeline", view.TimelineId.Value);
         command.Parameters.AddWithValue("$row", view.HistoryRowId.Value);
-        command.Parameters.AddWithValue("$descriptor", view.RowDescriptorDigest.Value);
         command.Parameters.AddWithValue("$recipe", view.RecipeDigest.Value);
         command.Parameters.AddWithValue("$target", view.TargetDigest.Value);
         command.Parameters.AddWithValue("$previousRow", (object?)view.PreviousHistoryRowId?.Value ?? DBNull.Value);
@@ -940,7 +939,7 @@ internal sealed class SqliteRecapGridStore {
         using SqliteCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT ref_id,timeline_id,history_row_id,row_descriptor_digest,recipe_digest,target_digest,
+            SELECT ref_id,timeline_id,history_row_id,recipe_digest,target_digest,
                 previous_history_row_id,previous_row_result_id,bootstrap_completed
             FROM row_view WHERE row_result_id=$id;
             """;
@@ -949,11 +948,11 @@ internal sealed class SqliteRecapGridStore {
         using (SqliteDataReader reader = command.ExecuteReader()) {
             if (!reader.Read()) { return null; }
             coordinate = new RowViewCoordinate(ParseRef(reader.GetString(0)),
-                new(reader.GetString(1)), new(reader.GetString(2)), new(reader.GetString(3)),
-                new(reader.GetString(4)), new(reader.GetString(5)),
-                reader.IsDBNull(6) ? null : new Atelia.SessionJournal.HistoryTimeline.HistoryRowId(reader.GetString(6)),
-                reader.IsDBNull(7) ? null : new RowResultId(reader.GetString(7)),
-                reader.GetInt64(8) switch { 0 => false, 1 => true, _ => throw new InvalidDataException("Invalid bootstrap flag.") });
+                new(reader.GetString(1)), new(reader.GetString(2)),
+                new(reader.GetString(3)), new(reader.GetString(4)),
+                reader.IsDBNull(5) ? null : new Atelia.SessionJournal.HistoryTimeline.HistoryRowId(reader.GetString(5)),
+                reader.IsDBNull(6) ? null : new RowResultId(reader.GetString(6)),
+                reader.GetInt64(7) switch { 0 => false, 1 => true, _ => throw new InvalidDataException("Invalid bootstrap flag.") });
         }
         using SqliteCommand members = connection.CreateCommand();
         members.Transaction = transaction;
@@ -994,7 +993,7 @@ internal sealed class SqliteRecapGridStore {
         command.Transaction = transaction;
         command.CommandText = """
             INSERT INTO fulfilled_view_ref(ref_id,timeline_id,timeline_head_generation,
-                through_row_descriptor_digest,recipe_digest,row_result_id)
+                through_history_row_id,recipe_digest,row_result_id)
             VALUES($ref,$timeline,$generation,$through,$recipe,$id);
             """;
         BindFulfilled(command, key);
@@ -1006,7 +1005,7 @@ internal sealed class SqliteRecapGridStore {
         command.Parameters.AddWithValue("$ref", key.RefId.ToHexString());
         command.Parameters.AddWithValue("$timeline", key.TimelineId.Value);
         command.Parameters.AddWithValue("$generation", key.TimelineHeadGeneration);
-        command.Parameters.AddWithValue("$through", key.ThroughRowDescriptorDigest.Value);
+        command.Parameters.AddWithValue("$through", key.ThroughRowId.Value);
         command.Parameters.AddWithValue("$recipe", key.RecipeDigest.Value);
     }
 
@@ -1016,7 +1015,7 @@ internal sealed class SqliteRecapGridStore {
         command.Transaction = transaction;
         command.CommandText = """
             SELECT row_result_id FROM fulfilled_view_ref WHERE ref_id=$ref AND timeline_id=$timeline
-                AND timeline_head_generation=$generation AND through_row_descriptor_digest=$through AND recipe_digest=$recipe;
+                AND timeline_head_generation=$generation AND through_history_row_id=$through AND recipe_digest=$recipe;
             """;
         BindFulfilled(command, key);
         if (command.ExecuteScalar() is not string value) { return null; }
@@ -1030,7 +1029,7 @@ internal sealed class SqliteRecapGridStore {
         RecapRowView view = ReadRowViewCore(connection, transaction, id)
             ?? throw new InvalidDataException("A fulfillment references a missing row.");
         if (view.RefId != key.RefId || view.TimelineId != key.TimelineId
-            || view.RecipeDigest != key.RecipeDigest || view.RowDescriptorDigest != key.ThroughRowDescriptorDigest) {
+            || view.RecipeDigest != key.RecipeDigest || view.HistoryRowId != key.ThroughRowId) {
             throw new InvalidDataException("A fulfillment differs from its row scope.");
         }
     }
@@ -1530,10 +1529,10 @@ internal sealed class SqliteRecapGridStore {
     private static string ReadSchemaSql() {
         Assembly assembly = typeof(SqliteRecapGridStore).Assembly;
         using Stream stream = assembly.GetManifestResourceStream(
-            "Atelia.SessionJournal.RecapGrid.Store.SchemaV3.sql"
+            "Atelia.SessionJournal.RecapGrid.Store.SchemaV4.sql"
         )
             ?? throw new InvalidOperationException(
-                "The RecapGrid Store V3 schema resource is missing."
+                "The RecapGrid Store V4 schema resource is missing."
             );
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
@@ -1552,7 +1551,7 @@ internal sealed class SqliteRecapGridStore {
     private static byte[] ExportRowJson(RecapRowView row) => RecapGridCanonical.Encode(new {
         schemaVersion = SchemaVersion, id = row.Id.Value,
         refId = row.RefId.Packed, timelineId = row.TimelineId.Value, historyRowId = row.HistoryRowId.Value,
-        rowDescriptorDigest = row.RowDescriptorDigest.Value, recipeDigest = row.RecipeDigest.Value,
+        recipeDigest = row.RecipeDigest.Value,
         targetDigest = row.TargetDigest.Value, previousHistoryRowId = row.PreviousHistoryRowId?.Value,
         previousRowResultId = row.PreviousRowResultId?.Value, bootstrapCompleted = row.BootstrapCompleted,
         orderedCells = row.OrderedCells.Select(static cell => new {
@@ -1562,7 +1561,7 @@ internal sealed class SqliteRecapGridStore {
 
     private static byte[] ExportFulfilledJson(FulfilledViewKey key) => RecapGridCanonical.Encode(new {
         refId = key.RefId.Packed, timelineId = key.TimelineId.Value, timelineHeadGeneration = key.TimelineHeadGeneration,
-        throughRowDescriptorDigest = key.ThroughRowDescriptorDigest.Value, recipeDigest = key.RecipeDigest.Value
+        throughRowId = key.ThroughRowId.Value, recipeDigest = key.RecipeDigest.Value
     });
 
     private static bool ExportIdTable(
@@ -1635,26 +1634,26 @@ internal sealed class SqliteRecapGridStore {
         command.CommandText = after is null
             ? """
                 SELECT ref_id, timeline_id, timeline_head_generation,
-                       through_row_descriptor_digest, recipe_digest,
+                       through_history_row_id, recipe_digest,
                        row_result_id
                 FROM fulfilled_view_ref
                 WHERE (ref_id, timeline_id, timeline_head_generation,
-                       through_row_descriptor_digest, recipe_digest)
+                       through_history_row_id, recipe_digest)
                     >= ('', '', 0, '', '')
                 ORDER BY ref_id, timeline_id, timeline_head_generation,
-                         through_row_descriptor_digest, recipe_digest
+                         through_history_row_id, recipe_digest
                 LIMIT $limit;
                 """
             : """
                 SELECT ref_id, timeline_id, timeline_head_generation,
-                       through_row_descriptor_digest, recipe_digest,
+                       through_history_row_id, recipe_digest,
                        row_result_id
                 FROM fulfilled_view_ref
                 WHERE (ref_id, timeline_id, timeline_head_generation,
-                       through_row_descriptor_digest, recipe_digest)
+                       through_history_row_id, recipe_digest)
                     > ($ref, $timeline, $generation, $through, $recipe)
                 ORDER BY ref_id, timeline_id, timeline_head_generation,
-                         through_row_descriptor_digest, recipe_digest
+                         through_history_row_id, recipe_digest
                 LIMIT $limit;
                 """;
         command.Parameters.AddWithValue("$limit", queryLimit);
@@ -1821,26 +1820,26 @@ internal sealed class SqliteRecapGridStore {
             command.CommandText = after is null
                 ? """
                     SELECT ref_id, timeline_id, timeline_head_generation,
-                           through_row_descriptor_digest, recipe_digest,
+                           through_history_row_id, recipe_digest,
                            row_result_id
                     FROM fulfilled_view_ref
                     WHERE (ref_id, timeline_id, timeline_head_generation,
-                           through_row_descriptor_digest, recipe_digest)
+                           through_history_row_id, recipe_digest)
                         >= ('', '', 0, '', '')
                     ORDER BY ref_id, timeline_id, timeline_head_generation,
-                             through_row_descriptor_digest, recipe_digest
+                             through_history_row_id, recipe_digest
                     LIMIT 128;
                     """
                 : """
                     SELECT ref_id, timeline_id, timeline_head_generation,
-                           through_row_descriptor_digest, recipe_digest,
+                           through_history_row_id, recipe_digest,
                            row_result_id
                     FROM fulfilled_view_ref
                     WHERE (ref_id, timeline_id, timeline_head_generation,
-                           through_row_descriptor_digest, recipe_digest)
+                           through_history_row_id, recipe_digest)
                         > ($ref, $timeline, $generation, $through, $recipe)
                     ORDER BY ref_id, timeline_id, timeline_head_generation,
-                             through_row_descriptor_digest, recipe_digest
+                             through_history_row_id, recipe_digest
                     LIMIT 128;
                     """;
             if (after is not null) {

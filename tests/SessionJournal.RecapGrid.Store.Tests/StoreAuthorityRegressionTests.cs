@@ -5,7 +5,7 @@ using Xunit;
 
 namespace Atelia.SessionJournal.RecapGrid.Store.Tests;
 
-public sealed class StoreAuthorityRegressionTests : IDisposable {
+public sealed partial class StoreAuthorityRegressionTests : IDisposable {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "atelia-recap-grid-authority", Guid.NewGuid().ToString("N"));
 
     [Theory]
@@ -95,6 +95,9 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
             Assert.DoesNotContain("key_canonical", names);
             Assert.DoesNotContain("evaluation_key_digest", names);
             Assert.DoesNotContain("content_digest", names);
+            Assert.DoesNotContain("row_descriptor_digest", names);
+            Assert.DoesNotContain("through_row_descriptor_digest", names);
+            Assert.Contains("through_history_row_id", names);
             Assert.Contains("cell_id", names);
             Assert.Contains("row_result_id", names);
         }
@@ -115,10 +118,11 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
         RowBuildSpec spec = StoreFixture.Spec();
         RecapCellArtifact cell = StoreFixture.Put(handle, spec);
         RecapRowView stored = Assert.IsType<RecapGridRowViewPutResult.Inserted>(handle.Writer.PutRowView(spec, [cell])).Winner;
-        var coordinate = new RowViewCoordinate(spec.RefId, spec.TimelineId, spec.HistoryRowId,
-            new HistorySegmentDescriptorDigest(new string('e', 64)), spec.RecipeDigest, spec.TargetDigest,
-            null, null, bootstrapCompleted: true);
-        RowBuildSpec conflicting = RowBuildSpec.CreateFull(spec.Recipe, coordinate, spec.OrderedAssignments);
+        RowBuildSpec predecessorSpec = StoreFixture.Spec(row: new HistoryRowId(new string('b', 64)));
+        RecapCellArtifact predecessorCell = StoreFixture.Put(handle, predecessorSpec);
+        RecapRowView predecessor = Assert.IsType<RecapGridRowViewPutResult.Inserted>(
+            handle.Writer.PutRowView(predecessorSpec, [predecessorCell])).Winner;
+        RowBuildSpec conflicting = StoreFixture.Spec(previous: predecessor);
         var invalid = Assert.IsType<RecapGridRowViewPutResult.Invalid>(handle.Writer.PutRowView(conflicting, [cell]));
         Assert.Equal("RowViewAssignmentConflict", invalid.Code);
         Assert.Equal(invalid.Code, Assert.IsType<RecapGridCellPutResult.Invalid>(
@@ -153,8 +157,10 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
         Assert.IsType<RecapGridStoreVerifyResult.Unhealthy>(RecapGridStoreMaintenance.Verify(_root));
     }
 
-    [Fact]
-    public void LegacySchemaOpenIsReadOnlyUnsupportedAndExplicitResetNeedsNoLegacyReader() {
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void LegacySchemaOpenIsReadOnlyUnsupportedAndExplicitResetNeedsNoLegacyReader(int oldSchema) {
         Directory.CreateDirectory(_root);
         StorePaths paths = new(_root);
         // A valid older store also has the durable lifetime-lock slot. Without
@@ -164,15 +170,15 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
             connection.Open();
             using SqliteCommand command = connection.CreateCommand();
             // Deliberately not a decodable old graph: the version boundary must run before graph reads.
-            command.CommandText = "PRAGMA application_id = 1096042322; PRAGMA user_version = 2; CREATE TABLE old_state(value TEXT); INSERT INTO old_state VALUES ('preserved');";
+            command.CommandText = $"PRAGMA application_id = 1096042322; PRAGMA user_version = {oldSchema}; CREATE TABLE old_state(value TEXT); INSERT INTO old_state VALUES ('preserved');";
             command.ExecuteNonQuery();
         }
         byte[] before = File.ReadAllBytes(paths.DatabasePath);
-        Assert.Equal(2, Assert.IsType<RecapGridStoreOpenResult.UnsupportedSchema>(RecapGridStoreFactory.Open(_root)).SchemaVersion);
-        Assert.Equal(2, Assert.IsType<RecapGridStoreReaderOpenResult.UnsupportedSchema>(RecapGridStoreFactory.OpenReader(_root)).SchemaVersion);
+        Assert.Equal(oldSchema, Assert.IsType<RecapGridStoreOpenResult.UnsupportedSchema>(RecapGridStoreFactory.Open(_root)).SchemaVersion);
+        Assert.Equal(oldSchema, Assert.IsType<RecapGridStoreReaderOpenResult.UnsupportedSchema>(RecapGridStoreFactory.OpenReader(_root)).SchemaVersion);
         Assert.Equal(before, File.ReadAllBytes(paths.DatabasePath));
         var witness = Assert.IsType<RecapGridStorePrepareResetResult.Prepared>(RecapGridStoreMaintenance.PrepareReset(_root)).Witness;
-        Assert.Equal(3, Assert.IsType<RecapGridStoreResetResult.Reset>(RecapGridStoreMaintenance.Reset(_root, witness)).Identity.SchemaVersion);
+        Assert.Equal(4, Assert.IsType<RecapGridStoreResetResult.Reset>(RecapGridStoreMaintenance.Reset(_root, witness)).Identity.SchemaVersion);
         Assert.IsType<RecapGridStoreVerifyResult.Healthy>(RecapGridStoreMaintenance.Verify(_root));
         using RecapGridStoreHandle handle = Open();
         StoreFixture.Put(handle, StoreFixture.Spec());
@@ -289,7 +295,7 @@ public sealed class StoreAuthorityRegressionTests : IDisposable {
                     singleton, schema_version, store_instance_id,
                     cell_count, row_view_count,
                     row_view_member_count, fulfilled_view_count
-                ) VALUES (2, 3, '00112233445566778899aabbccddeeff',
+                ) VALUES (2, 4, '00112233445566778899aabbccddeeff',
                     0, 0, 0, 0);
                 """,
             "metadata-singleton" => """
