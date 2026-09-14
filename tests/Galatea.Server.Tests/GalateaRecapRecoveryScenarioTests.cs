@@ -8,6 +8,7 @@ using Atelia.SessionJournal;
 using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.Hosting;
 using Atelia.SessionJournal.RecapGrid.Online;
+using Atelia.SessionJournal.RecapGrid.Store;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -18,10 +19,12 @@ namespace Atelia.Galatea.Server.Tests;
 [Trait("Category", "GalateaLab")]
 public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) {
     [Theory]
-    [InlineData(nameof(SessionJournalFailpoint.AfterRequestPreparedCommitted), false)]
-    [InlineData(nameof(SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted), true)]
+    [InlineData(nameof(SessionJournalFailpoint.AfterRequestPreparedCommitted), false, false)]
+    [InlineData(nameof(SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted), true, false)]
+    [InlineData(nameof(SessionJournalFailpoint.AfterRequestPreparedCommitted), false, true)]
+    [InlineData(nameof(SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted), true, true)]
     public async Task AdoptedNonemptyRecap_FrozenRecoverySkipsMaintenanceThenFreshTurnProgresses(
-        string failpointName, bool restartRequired) {
+        string failpointName, bool restartRequired, bool resetStore) {
         SessionJournalFailpoint failpoint = Enum.Parse<SessionJournalFailpoint>(failpointName);
         CompletionConnectionConfig main = Connection("test", "recap-lab-main");
         CompletionConnectionConfig recap = Connection("recap-maintainer", "recap-lab-helper");
@@ -52,6 +55,18 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
         SessionJournalAuditEvent frozenPrepared = frozenAudit.Last(entry => entry.Kind == SessionEventKind.CompletionRequestPrepared);
         Assert.Equal(3, frozenAudit.Count(entry => entry.Kind == SessionEventKind.ObservationAccepted));
         Assert.Equal(3, frozenAudit.Count(entry => entry.Kind == SessionEventKind.CompletionRequestPrepared));
+        if (resetStore) {
+            // Only this stopped, lab-owned repository is reset. The old v7
+            // Prepared's nonempty context survives after its source cells vanish.
+            RecapGridStoreInfo before = ReadStoreInfo(lab.SessionDirectory);
+            Assert.True(before.CellCount > 0);
+            RecapGridStorePhysicalWitness witness = Assert.IsType<RecapGridStorePrepareResetResult.Prepared>(
+                RecapGridStoreMaintenance.PrepareReset(lab.SessionDirectory)).Witness;
+            RecapGridStoreResetResult.Reset reset = Assert.IsType<RecapGridStoreResetResult.Reset>(
+                RecapGridStoreMaintenance.Reset(lab.SessionDirectory, witness));
+            Assert.NotEqual(before.Identity.InstanceId, reset.Identity.InstanceId);
+            AssertEmptyStore(lab.SessionDirectory);
+        }
         SortedDictionary<string, string> frozenDerived = SnapshotDerived(lab.SessionDirectory);
         Assert.NotEmpty(frozenDerived);
 
@@ -92,20 +107,28 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
         Assert.Equal(frozen.SourcePreparedAddress, reopenedRequest.SourcePreparedAddress);
         Assert.Equal(frozen.CanonicalBytes, reopenedRequest.CanonicalBytes);
         Assert.Equal(frozen.Manifest.Commitment, reopenedRequest.Manifest.Commitment);
+        Assert.NotEmpty(frozen.Manifest.Plan.ExactContextInputs);
+        Assert.Equal(frozen.Manifest.Plan.ExactContextInputs, reopenedRequest.Manifest.Plan.ExactContextInputs);
         GalateaRecapFixture.AssertAdopted(reopenedRequest, 3);
         SessionJournalAuditEvent[] recoveredAudit = ReadAudit(lab.SessionDirectory);
         Assert.Equal(frozenPrepared, recoveredAudit.Single(entry => entry.Address == frozenPrepared.Address));
         Assert.Equal(3, recoveredAudit.Count(entry => entry.Kind == SessionEventKind.ObservationAccepted));
         Assert.Equal(3, recoveredAudit.Count(entry => entry.Kind == SessionEventKind.CompletionRequestPrepared));
         Assert.Equal(frozenDerived, SnapshotDerived(lab.SessionDirectory));
-        AssertCells(lab.SessionDirectory, 3);
+        if (resetStore) {
+            AssertEmptyStore(lab.SessionDirectory);
+        }
+        else {
+            AssertCells(lab.SessionDirectory, 3);
+        }
         using (var reopened = SessionJournalEngine.OpenReadOnly(lab.SessionDirectory)) {
             Assert.Equal(SessionExecutionPhase.Idle, reopened.InspectExecutionBoundary().Phase);
         }
 
-        // Fresh work must become possible again. Its legal maintenance advances
-        // the same two columns through generations 4/5; it is not frozen replay.
-        var fresh = new GalateaRecapFixture.Factory(4, expectedRecapCalls: 4);
+        // Fresh work advances the retained Store through generations 4/5, or
+        // rebuilds all five rows from FirstRow when the old Store was discarded.
+        var fresh = new GalateaRecapFixture.Factory(resetStore ? 1 : 4,
+            expectedRecapCalls: resetStore ? 10 : 4);
         await lab.ReopenAsync(fresh);
         await GalateaRecapFixture.RunFreshAsync(lab, "Fresh observation after nonempty recap recovery.");
         await lab.StopAsync();
@@ -166,6 +189,16 @@ public sealed class GalateaRecapRecoveryScenarioTests(ITestOutputHelper output) 
         var cells = GalateaRecapFixture.ReadHeadCells(repository);
         Assert.Equal(GalateaRecapFixture.World(generation), cells.World.Content);
         Assert.Equal(GalateaRecapFixture.Autobiography(generation), cells.Autobiography.Content);
+    }
+
+    private static RecapGridStoreInfo ReadStoreInfo(string repository) =>
+        Assert.IsType<RecapGridStoreInspectResult.Available>(RecapGridStoreMaintenance.Inspect(repository)).Info;
+
+    private static void AssertEmptyStore(string repository) {
+        RecapGridStoreInfo info = ReadStoreInfo(repository);
+        Assert.Equal(0, info.CellCount);
+        Assert.Equal(0, info.RowViewCount);
+        Assert.Equal(0, info.FulfilledViewCount);
     }
 
     private static SessionJournalAuditEvent[] ReadAudit(string repository) {
