@@ -2,7 +2,7 @@
 
 > 状态：已实施并通过本地验证；代码提交 `258125fd`，验证结果见 §8；尚未部署。
 > 日期：2026-09-14；规划源码基线：`f53ac2e2`；实施基线：`606f3c04`。
-> 承接[身份简化总设计](identity-simplification-design.md)。仅改变瞬态计算与传递，不改变持久格式或真实实例。
+> 承接[身份简化总设计](identity-simplification-design.md)。本文 §1–5、§7–8 保留 `258125fd` 当时的无格式变更合同与验证；后续已按用户新决定改为清旧 Recap、全部重构后统一重建，见 §6。
 
 ## 1. 最小目标
 
@@ -17,7 +17,7 @@ Runtime：校验前驱成员 → 从实际 cells 计算原 digest → 对照 Spe
 
 删除两个瞬态公开模型及其完整 wire 表示，保留现有 digest 算法和值。这个切片不改 Timeline、Control、Store、EvaluationKey 或 Prepared 格式，不需要迁移数据。
 
-这是联合迁移之前的一个可独立交付步骤，**不算完成总设计 §6.1/§6.3，也不减少持久 hash 数量**。比只删无人调用的 decoder 更有价值：一起消除 Manager → Runtime 的重复输入与对账；又不要求先确定普通结果 ID 和全图转换算法。
+这是当时可独立交付的无格式变更步骤，**不算完成总设计 §6.1/§6.3，也不减少持久 hash 数量**。比只删无人调用的 decoder 更有价值：一起消除 Manager → Runtime 的重复输入与对账；又不要求先确定普通结果 ID 和全图转换算法。
 
 ## 2. 需求台账与证据
 
@@ -125,21 +125,17 @@ API 与调用方一次收口，不提交需要长期保留两种 batch 构造形
 
 重 .NET 验证串行使用 `--no-restore -m:1 -nr:false`；Server/CLI 独立 build；Galatea 用 [E2E 指南](e2e-testing.md#离线与非-live-命令)的明确 Live 类过滤。规划阶段仅做源码实验，实施验证单独记录；不部署或操作真实实例。
 
-## 6. 后续联合迁移：保留方向，减少前置工程
+## 6. 后续路线已修订：丢弃旧 Recap，最后统一重建
 
-总设计 §6.1/§6.3 仍按一个目标格式、一次副本转换推进。该阶段真正开始实施前再定稿目标 DDL 和 converter，本切片不预建 vNext schema、ID 注册服务或通用盘点框架。
+用户在本切片完成后明确接受：旧 Recap 内容和缓存命中可以全部放弃，所有重构代码完成后最后统一调用 LLM 重建，不要求正文相同。原先的整图 converter、old projection→正文映射、保全部孤立 winner 与一次旧格式转换要求已撤销。
 
-本次审查得到的后续约束：
+下一实施入口为[Store 简化计划](recap-store-simplification-plan.md)：普通随机 Cell/Row ID、`CellSlot(recipe, historyRow, column)`、SQL 一份持久数据。它将删除本切片暂留的 `FromCells`、Content/Prior/Evaluation digest 和独立 EvaluationKey，取消跨 recipe 的自动内容等价复用；保留同 Slot 首个结果、行前沿、显式 Overlay Reuse 及必要关系校验。
 
-- **Prepared 不参与改图。** 当前仅保存 ContextSnapshot 正文与内容证明，没有 Cell/RowView/Store ID。旧 Journal、raw tool result、Prepared 字节保持；由非空冻结恢复测试证明。
-- **默认保留全部 cell/row。** 包括尚未挂入 RowView 的 first-winner。离线从旧 row/member 恢复 prior 内容映射；任何必需输入缺失就停止该数据集转换并报告，不先实现精确可达性 GC，也不补调用模型。
-- **只收敛受影响的旧命令。** 盘点所有仍支持执行的 ref/分支和 pending，但仅对目标 command/runtime 编码确实变化的操作安排正常收敛。含 recipe 的 registration 删除 bootstrap 字段会变化，即使原值为 null；空 recipes 的 family/definition 注册、promotion 未必变化。用固定命令语料判定，不凭入口名猜测。
-- **普通 ID 必须返回已存 winner。** cell 同 cache key 即使生成内容不同，也返回首个已提交结果 AlreadyFilled，不能改成 Conflict。row 按 assignment 唯一约束结算：同坐标、同成员/前驱的竞争提交返回实际持久 row，不能只因候选随机 ID 不同而报冲突；row 的成员、前驱等业务差异才是 Conflict。
-- **ID 表达与 SQL 权威一起定稿。** 局部整数需要明确 store 作用域；普通随机 ID 也不能取消现有实例边界。新 Store 可将 SQL 列/成员关系作为唯一持久表示，删除 cell/row/fulfilled 的整对象 canonical 副本；canonical 仅导出时生成。具体取舍与所有返回路径须在联合实施前完成审查，本轮未选定 ID 编码或发布该格式。
+Timeline、Cadence、Control 格式先保持，后续再单独收口仍保留数据的身份。Journal、Prepared 固定正文、规则和 Control 生效回执不属于可清缓存。最终清库前还须正常收敛依赖旧 Store proof 的 pending promotion，具体条件见[总设计 §7](identity-simplification-design.md#7-保留范围与最终重建边界)。
 
-这些是后续设计输入，不把未实现的联合迁移描述为已可用于真实数据。
+本轮只更新后续文档，不删除数据或调用模型。下面的旧 digest golden 与 1,454 项结果是已完成切片的历史证据，不是新 Store 的兼容要求或完成证据。
 
-## 7. 辩证裁决
+## 7. 当时的辩证裁决
 
 三位 reviewer 分别从需求、最小架构、语义保护出发独立查源码；第二轮比较大迁移与无格式前置切口，第三轮只裁决“删 wire”是否应进一步收口为“删完整重复对象”。主线程核对消费者并补做字节边界实验。
 
@@ -182,7 +178,7 @@ Runtime rendering 与 Hosting 证据字段保持；没有 adapter、双 reader�
 不把它当作完整进程重启证据；非空 Prepared 冷恢复继续由现有 Galatea 恢复套件验证。
 
 生产与测试经交叉只读审查，无阻断发现。测试迁移没有删减 Store first-winner、Manager missing-only
-与 row-frontier 回归。持久 hash 数量不变；后续入口仍是 §6 的联合格式迁移设计。
+与 row-frontier 回归。该已完成切片的持久 hash 数量不变；当时的联合迁移后续路线已由 §6 的新需求替代。
 
 最终串行验证结果：
 

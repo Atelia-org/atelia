@@ -1,26 +1,28 @@
 # Galatea / RecapGrid 身份与恢复校验简化设计
 
-> 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)与[前置输入对象简化](recap-prior-input-simplification-plan.md)均已实现并通过本地验证，尚未部署。前置输入代码见 `258125fd`，验证见实施记录；下一阶段为 §6.1/§6.3 联合格式迁移。首轮代码见 §10，首轮 E2E 见 §11。
+> 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)与[前置输入对象简化](recap-prior-input-simplification-plan.md)均已实现并通过本地验证，尚未部署。前置输入代码见 `258125fd`，验证见实施记录；后续采用“丢弃旧 Recap，全部重构完成后统一重建”；下一切片见[Store 简化计划](recap-store-simplification-plan.md)。首轮代码见 §10，首轮 E2E 见 §11。
 >
-> 日期：2026-09-14。代码基线：`277baeea`。本文区分目标设计、当前实现和历史验证；不继承其他工作单的实施授权。
+> 日期：2026-09-14。首轮代码基线：`277baeea`；本次规划基线：`4f718d87`。本文区分目标设计、当前实现和历史验证；本次仅修订文档与规划，不执行清库、部署或真实模型重建。
 
 ## 1. 目标与最小模型
 
-用少量明确的身份表达：**哪段历史、哪种摘要规则、哪个已落盘结果、哪次操作**。保留一个内部摘要缓存键和必要的持久恢复内容，取消把正常修复和升级变成恢复失败的手工 adapter 指纹门槛。
+用少量明确的身份表达：**哪段历史、哪种摘要规则、哪个已落盘结果、哪次操作**。以构建位置复用已提交摘要，保留必要的持久恢复内容，取消把正常修复和升级变成恢复失败的手工 adapter 指纹门槛。
 
 目标模型：
 
 ```text
 HistoryRow：不可变历史区间 + 前驱
 Definition / Recipe：不可变规则快照 + 构建关系
-EvaluationCacheKey：历史输入 + 规则内容 + 有序前置摘要实际内容
-Cell / RowResult：普通不可变记录 ID + UNIQUE / FK
+CellSlot：(RecipeDigest, HistoryRowId, LogicalColumnId)，普通结构坐标
+Cell / RowResult：Store 分配的普通随机 ID + UNIQUE / FK
 Head：实例身份 + 单调 generation
 OperationReceipt：稳定操作 ID + 命令匹配依据 + 结果
 Prepared：已准备的逻辑请求输入 + 必要调用目标 + 一处最终内容校验
 ```
 
-这些是业务概念，不要求新建七套 framework/API。已有类型能收缩就收缩。hash 可以作为内部索引实现，不再默认成为每层对象的公开身份、持久格式和恢复兼容合同。
+原始历史、不可变规则和已生效操作是保留对象；旧 Recap 物化结果可整体丢弃。所有重构完成后，最后统一调用 LLM 重建，不要求新旧正文相同。正常运行时，同一 CellSlot 仍沿用首个已提交结果；不再承诺跨 recipe 的同输入或同正文自动共享。Overlay 的显式 base-cell 复用保留。
+
+这些是业务概念，不要求新建 framework/API。hash 不再默认成为每层对象的公开身份、持久格式和恢复兼容合同。
 
 ## 2. 需求台账与证据等级
 
@@ -29,12 +31,13 @@ Prepared：已准备的逻辑请求输入 + 必要调用目标 + 一处最终内
 | U1 | 个人自用、未发布、无下游，优先简单、及时重构 | 用户与根 AGENTS.md，明确 |
 | U2 | 不需要应用层防恶意篡改；质疑 hash/fingerprint 的数量与价值 | 本次用户，明确 |
 | U3 | 设计经 dialectical-simplification 完善后已获采纳；授权带领 subagents 实施、维护文档并按需提交 | 2026-09-14 用户后续指令，明确 |
-| B1 | 已有会话、摘要、工具回执和未完成请求需要跨进程重启保留 | 生产代码、当前实例使用与现有恢复测试 |
-| B2 | 摘要不可混用历史区间、规则、前置输入；重复构建沿用首个已提交结果 | Store/Manager 真实消费者与 first-winner 测试 |
+| U4 | 允许清空旧 Recap 内容；全部重构代码完成后最后统一 LLM 重建，不保旧正文或旧缓存命中 | 用户最新明确决定，替代先前的旧摘要迁移要求 |
+| B1 | 原始会话、规则、工具回执、冻结请求保留；新 Store 正常重启仍保已提交结果 | 当前恢复消费者；U4 只放弃重构切换时的旧摘要缓存 |
+| B2 | 摘要不可混用历史区间、规则和前驱；同一构建位置的重试沿用首个结果，Overlay 显式复用保留 | Store/Manager 当前调用链；缓存粒度按 U4 简化 |
 | B3 | 操作已生效、会话结果尚未提交时，恢复不能重复应用副作用 | Control receipt 与 SessionJournal 工具执行链 |
 | B4 | 不同用户/仓库不能误绑定；真实工具权限和原生 provider 载荷解析边界仍有效 | 当前执行与隔离消费者；U2 不等于取消业务权限 |
 | D1 | 重试沿用原模型与已准备 prompt/history/tools，允许当前修好的 adapter 执行；不承诺旧 HTTP wire 逐字不变 | 本设计建议，已随用户采纳整体方案而确认 |
-| D2 | 当前 store 内相同内容、不同来源的摘要仍可通过内部缓存键复用 | 当前行为及设计建议；不要求跨 store 全局去重或保住所有孤立缓存命中率 |
+| D2 | 撤销跨来源同正文自动复用要求；以 recipe/历史行/列为构建位置，删除独立求值 hash 链 | 用户接受需求精简；本次源码审查确认不可变规则与唯一前驱足以确定输入 |
 
 B 项说明真实需求，不把现有测试对每一个字段的断言升级成不可修改的产品律。实施采用 D1 的恢复语义。
 
@@ -66,7 +69,7 @@ B 项说明真实需求，不把现有测试对每一个字段的断言升级成
 | ConnectionFingerprint | defer | 第一切片保持当前行为；改变 endpoint/reasoning 后如何恢复是另一项产品选择 |
 | HistoryRowId + DescriptorDigest | merge | 保留一个不可变 HistoryRowId，暂沿用现有 RowId 算法；无需顺便换 UUID |
 | CellDigest / RowViewDigest | simplify | 后续改普通记录 ID，保留唯一约束、前驱及成员 FK |
-| Content / Projection / Evaluation 三层摘要 | merge | 逐步收敛为一个内部缓存键；不漏掉实际前置内容，也不以来源 ID 代替内容相等 |
+| Content / Projection / Evaluation 三层摘要 | delete | 用普通 CellSlot 关联工作与首个结果，不计算新的缓存 hash；前驱和规则由不可变关系确定并校验 |
 | Control ResultIdentity | delete | 回执返回稳定操作/回执 ID，保留命令匹配与已应用结果 |
 | ControlStateDigest | defer | 可从在线 CAS 移除；需确认所有写入都递增 generation，再独立处理 |
 | Prepared ContextSnapshot 的重复 ContentSha256 | simplify | 后续删同份快照的重复证明；保留最终逻辑请求 commitment |
@@ -137,70 +140,69 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 至少一条测试必须走实际 Galatea Host → Registry → SessionJournal → 假 provider → Action 的生产链，并使用旧格式持久样本。只构造 identity record 或只断言异常消失不够。成功样本与负面样本都不使用真实账号。
 
-## 6. 后续切片：先移除重复身份，再整理缓存
+## 6. 后续路线：丢弃旧缓存，完成重构后统一重建
 
-§5 已发布验证；§6.2 已独立实现和本地验证，待部署。[前置输入对象简化](recap-prior-input-simplification-plan.md)已删除重复的 PriorInputProjection 对象、Manager→Runtime 转运及完整 wrapper；Manager、Runtime、Getter 共用 `PriorInputProjectionDigest.FromCells`，以 PreviousCells 为实际内容，保留现有 digest 算法与所有持久字节。该切片零格式变化，无需数据迁移，也不算完成 §6.3 的 hash 合并。
+已完成的前置输入切片见[实施记录](recap-prior-input-simplification-plan.md)，它在当时保持了旧 digest 和持久格式。以下是后继目标，不把新决定追溯成已实施行为。
 
-随后 §6.1 与 §6.3 开发可分工作包，但采用一个目标格式组合、一次派生数据转换和发布，不上线中间格式。这避免为了先删 DescriptorDigest、再改结果主键而重编码同一数据图两次。
+### 6.1 Timeline 行身份：后续单独收口
 
-### 6.1 合并 Timeline 行身份
+仍计划保留一个不可变 HistoryRowId，删除同一 descriptor 的第二个 DescriptorDigest。暂沿用现有 RowId 算法，不重新划分历史或改变 row frontier。
 
-保留现有 HistoryRowId 值与前驱关系，删除单独 DescriptorDigest 的运行身份。需要迁移的引用包括 descriptor、Control bootstrap witness、Cadence seal、RecapGrid evaluation key、row coordinate、fulfilled view key、Manager/Runtime 及其持久 schema。
+下一 Store 切片直接使用现有 HistoryRowId；Timeline、Cadence、Control 的持久格式先不动。旧 Store 无需保留，因此不再需要把 Timeline 与 Cell/Row 整图转换绑定成一次实现。
 
-迁移时不能把旧 DescriptorDigest 字符串直接当 RowId：两者 domain 不同。必须从已解码历史行建立 `old descriptor digest → existing rowId` 映射，在同一停服快照中更新引用。沿用原来的历史区间和 row frontier，不重新切历史，不重新调用摘要模型。
+未来真正删除 DescriptorDigest 时，只处理仍保留的 Timeline/Cadence/Control 引用及实际受影响的命令。包含 recipe/bootstrap 的 registration 编码会变化，不能因旧 Recap 可清空就改写或丢掉 receipt。届时依据实际命令与仍支持执行的分支定稿最小处置；不提前建设通用迁移器或旧命令框架。
 
-该替换会改变 EvaluationKey canonical，进而改变旧 CellDigest、RowViewDigest、成员与前驱引用。不能只改 SQL 列：读取器还对照 canonical BLOB。与 §6.3 一起按依赖顺序转换完整数据图，原始 Journal 的历史审计字节不改。
+### 6.2 Control 操作回执：已完成
 
-转换输入不能从 digest 反推：旧 EvaluationKey 仅存 prior projection digest，没有 projection 正文表。迁移工具从旧 RowView 及成员建立临时 `oldProjectionDigest → ordered(columnId, content)` 映射，FirstRow 单独编码，然后转换需要保留的 cell、row、previous/member/fulfilled 引用。映射只存在于离线转换工具，不成为新的运行时注册库。
+`0e9524d6` 已删除派生 ResultIdentity，返回已有 OperationKey；保留 command/runtime/sequence、首次应用坐标和 receipt 原子发布。writer v3、旧 v2 codec 投影与 1,793 项本地验证见[实施记录](control-receipt-simplification-plan.md)。
 
-默认保留全部现存 cell/row，包括未挂入 RowView 的已提交 first-winner；不为此次转换先实现精确可达性 GC。任一所需 prior 输入无法恢复时，副本转换停止并报告，不靠重新调用模型补洞。只有出现具体数据障碍时再单独决定能否丢弃某组缓存，不把自动清理加入默认迁移路径，也不新增跨 store 全局去重。
+这部分生效事实和规则图不属于可丢弃的 Recap 内容。清空 Store 不授权清空 Control、改变命令匹配或改写 Journal 工具结果。
 
-还有一个迁移前提：含 recipe 的旧 registration command 编码包含 bootstrap DescriptorDigest，删字段即使旧值为 null 也会令 CommandDigest 改变；receipt 没有完整命令可供逆向转换。**先盘点，再正常收敛仍需执行/回放且目标 command/runtime 编码确实变化的操作，停服迁移前复查。** 清点包括该数据集所有仍允许执行的持久 ref/分支、未打开的会话，以及已持久化但尚未调用 Control 的工具命令；不能只看当前网页或只查 receipt 表。空 recipes 的 family/definition 注册与 promotion 未必改变编码，用固定 old/new 命令语料确认，无需为不受影响的操作引入额外执行前提。
+### 6.3 下一切片：Store 与构建位置
 
-无法收敛时不得重执行、改写 receipt 摘要或只凭 operationId 跳过命令检查；暂缓该数据集转换，另行处理具体未决操作。已完成历史仅作审计读取，不借迁移从旧历史重新复活已不受支持的 pending 操作。本设计不为该迁移新增旧命令执行兼容框架。
+详细工作包见[Store 简化计划](recap-store-simplification-plan.md)。最小目标为：
 
-### 6.2 简化 Control 操作回执
+```text
+CellSlot = (RecipeDigest, HistoryRowId, LogicalColumnId)
+同 Slot 的重试 → 已存 Cell
+RowResult = 同 recipe / history row 的有序成员 + 前驱
+CellId / RowResultId = Store 分配的普通随机 128-bit ID
+```
 
-已在 `0e9524d6` 实现；设计、固定旧样本与实际验证见 [Control 回执简化实施记录](control-receipt-simplification-plan.md)。八个项目 1,793 通过、0 失败、0 跳过；本轮没有部署或真实实例操作。
+recipe 固定列与不可变 Definition；HistoryRow 固定历史区间与前驱；同 recipe/row 的已发布结果唯一且不可变。三者已确定求值输入，无需再持久保存 EvaluationKey、ContentDigest 或 PriorInputProjectionDigest，也不另存可推导的 cell 前驱字段。规则与 recipe 的既有内容键暂留，不新增版本注册器。
 
-删除 `hash(commandDigest, terminalKind)` 这层 ResultIdentity，直接返回已有 OperationKey。保留 sequence、command/runtime 匹配、首次 instance/generation 和 receipt 与语义变更共同提交；不改命令编码、输入定义或 runtime identity。
+Cell 按 Slot 唯一：竞争者正文不同也返回首个已存结果。Row 按 assignment 唯一：同成员与前驱返回已存 row，不能把候选随机 ID 当成冲突；真实业务差异仍拒绝。SQL 列和成员关系成为唯一持久表示，删除 cell/row/fulfilled 的整对象 canonical 副本及重复对账。
 
-Control writer 为 canonical JSON v3。旧 v2 文件在 codec 按源格式验证后投影到唯一当前 receipt，保留原 Head 与 CanonicalBytes；下一次正常持久 mutation 才写新格式。纯读、重放、export/backup 不触发升级，restore 对已归一化的 receipt 做 union 与冲突判断。
+Overlay 的 Reuse 引用原 base cell，保留它的源 Slot；不是把它复制到 candidate Slot。Getter 改用来源关系诊断，不为保留旧“同正文即对齐”的指标重建 hash 层。
 
-AgentControl 当前输出升级为 schemaVersion 2 与 operationKey；已有 Journal raw tool result 原文不改。当前 receipt 重放本来就返回当前 Head 与 replayed 状态，不为它新增旧输出 renderer 或全文结果快照。
+### 6.4 暂缓项目
 
-本切片不改命令/引用图，无需先收敛旧 pending 或批量转换数据。旧格式与跨提交窗口验收、发布边界由上述实施记录单独维护。
+ConnectionFingerprint、Prepared 局部 hash、ControlStateDigest、tool catalog/runtime identity 各自仍有真实消费者，本次 Store 切片不顺带删除。最终逻辑请求 commitment 保留；已冻结请求使用其已保存正文，不用新 Recap 重渲染。
 
-### 6.3 结果主键与缓存身份
+所有计划中的重构完成并验证后，再统一执行真实数据处置与 LLM 重建；中间代码切片只使用隔离测试库，不为每个中间 schema 重建真实摘要。
 
-Cell/RowResult 用 store 内不可变主键；保留 cell 对 evaluation cache key 的唯一约束，以及 row 对 `(ref,timeline,recipe,row)` 的唯一约束、previous/member FK。不同 store 的 ID 不相互解析，保留 store 实例边界。
+## 7. 保留范围与最终重建边界
 
-普通 ID 的具体表达与分配归属在联合实施前定稿：整数 ID 须显式处理 store 作用域，随机 ID 也不取消实例绑定。cell 同 cache key 即使竞争者内容不同，也返回首个已提交结果 AlreadyFilled。row 同 assignment、同成员/前驱等业务内容时返回已存 row，不能把候选新 ID 纳入 whole-canonical 相等后误判冲突；只有 row 的成员、前驱等业务差异才拒绝。新 schema 可收敛为 SQL 列/成员关系这一份持久表示，完整 canonical 只作导出投影；不要改了 ID 却继续维护两份全量对象权威。
+| 数据 | 后续处置 |
+|---|---|
+| Grid Store 的旧 cells、rows、members、fulfilled 标记及旧缓存命中 | 整体丢弃，不做 old→new 转换、prior 逆向映射或孤立结果保留 |
+| Journal 原始历史、Prepared 正文、raw tool result、执行序号 | 保持原字节与既有恢复语义 |
+| Control 规则、recipe、操作回执，相关配置 | 保留；格式改动另按实际消费者处理 |
+| Timeline 行、Cadence、前驱与分区关系 | 下一 Store 切片保持；不能把“清 Recap”解释成清整个 derived 目录 |
 
-EvaluationCacheKey 在当前 store 内覆盖 `(HistoryRowId, Definition内容键, FirstRow | ordered(columnId, UTF8 content))`；不要只使用 previous RowViewId，不能混淆列顺序、空内容和 FirstRow。两个不同构建来源产生相同内容时由该键自然复用，不引入跨 store 全局去重。规则修改不要求操作者记得手工 bump version。Definition/Recipe 可暂保留一个内部内容标识，避免额外引入版本注册服务。
+最终步骤是：所有代码完成 → 在旧状态仍可读时收敛必要的 pending 操作 → 停服并保留完整匹配快照 → 初始化新 Store → 最后统一 LLM 重建 → 检查后恢复正常使用。当前 Store 位于 `derived/recap-grid/v1/grid.sqlite`，目录版本不等于数据库 schema；优先复用现有离线 Reset/锁与实例更换机制，不新增常驻迁移服务。
 
-把 ContentDigest、PriorProjectionDigest、EvaluationKeyDigest 的公开类型、序列化对象和层层对账合并，不能仅在末端新包一层 cache key。内部编码稳定规则只服务缓存，普通 operator JSON 的属性顺序/空白不进入身份。
+有一条具体的 pending 前提：当前 `AgentControlTool.PromoteAsync` 在查 receipt 前先要求 Store 的 candidate 构建证明。最终清库前，所有仍支持继续执行的分支中待执行的 promotion，须通过正常工具续行到对应 ToolResultObserved 或更后的收敛状态；包括 Action 内尚未轮到执行的调用。未收敛则暂缓该数据集清库，不能把失败当成功或跳过 receipt。未受影响的 registration 不要求额外执行；不默认增加“重建全部 inactive candidate 后再重放”第二套路径。
 
-### 6.4 暂缓的项目
+普通启动遇到旧或不支持的 Store schema，明确返回既有 unsupported 结果，不自动清库或调用 LLM。新 Store 运行期间保留事务、首个结果、missing-only 恢复与调用预算；整体 Reset 更换 StoreInstanceId，关闭旧 handle。不支持为本次简化增加局部删 winner、跨实例拼表或运行中替换前驱。
 
-ConnectionFingerprint 的替代需要单独决定 endpoint/reasoning 改配的恢复语义；第一切片不替用户选“自动采用所有新配置”。Prepared 局部 hash、ControlStateDigest 与整个 tool catalog 指纹分别等到有具体切片与消费者盘点再动，不顺手扩大变更。
+Prepared 保存的 ContextSnapshot 正文没有 Cell/Row/Store ID。旧冻结请求必须在旧 Store 已不可用时仍保持 canonical request、commitment 和 ExactContextInputs，并且零 recap 调用。只有最后重建后的新请求才使用新摘要。
 
-最终 request commitment 暂保留一处：它可以发现代码升级导致旧输入被展开成不同 prompt。保存直接可加载的完整 request snapshot 是另一种方案，但不为删除一处 SHA 再引入第二份全文持久数据。
-
-## 7. 持久数据与迁移约束
-
-- 不因为“未发布”就清空真实会话、Control receipt 或已提交摘要；无需支持不存在的下游，但真实当前数据是迁移对象。
-- 第一切片只引入旧 v7 的窄读取兼容，不改写 Journal。删除旧读取分支的条件是所有仍需读取/恢复的实际数据已另行有可用路径，不能仅看没有 pending turn。
-- §6.1/§6.3 改变命令与引用图的组合迁移，须先满足旧 Control 操作收敛前提，再停服，连同原始 Journal、派生存储和相关配置制作可恢复快照。先在隔离副本转换、重开与遍历引用，不边跑服务边改库。
-- 上述多文件转换不能假装一条 SQLite transaction 就原子升级完毕。选完整目录副本作为迁移/回退单位；转换成功后整体切换，失败恢复原副本。不新增常驻迁移协调服务。
-- §6.2 保持命令身份，通过旧格式读取与正常写入升级；不套用旧操作收敛和整图转换前提。实际部署仍保留完整快照和匹配数据回退边界。
-- 迁移不调用 provider；保持历史内容、前驱、已选择结果、操作回执与执行序号。仅改变键与引用表达。
-- 当前 Prepared 直接保存上下文正文，不含 Grid Cell/RowView/Store ID；联合迁移不改写 Journal、旧 raw tool result 或 Prepared。以非空冻结请求 canonical/commitment 保真和零 recap 调用验证该边界。
-- 旧程序不能打开新写入格式时，部署回退需恢复匹配快照；不能只回退二进制，也不能暗示升级后产生的新轮次会自动保留在旧快照里。
+回退采用匹配代码与完整数据快照；本次文档规划没有清库、调用真实模型或执行部署。
 
 ## 8. 实施入口、验证与完成定义
 
-§5 与 §6.2 已完成代码实施，以下第一切片验证入口保留供回归参考，不是待实施清单。第二切片验收见 [Control 回执简化实施记录](control-receipt-simplification-plan.md)；第三切片见[前置输入对象简化实施记录](recap-prior-input-simplification-plan.md)，§6.1/§6.3 暂未进入实施。历史 E2E 授权与证据见 §11；本次前置输入切片没有执行新的部署或真实会话操作。
+唯一下一实施入口为[Store 简化计划](recap-store-simplification-plan.md)，尚未实施。已完成切片的代码与验证分别见 §10、[Control 实施记录](control-receipt-simplification-plan.md)和[前置输入实施记录](recap-prior-input-simplification-plan.md)。下面首轮验证命令保留作历史回归参考，不是新切片工作清单；历史 E2E 见 §11。
 
 开始前检查 `git status` 和 `git log`，重新确认本文列出的关键类型与 schema，保留并行会话已提交修复。以当前生产消费者划范围，不把全部公共类型快照测试当成设计保留理由。
 
@@ -214,22 +216,22 @@ dotnet build prototypes/Galatea/Galatea.Server.csproj --no-restore -m:1 -nr:fals
 dotnet build prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj --no-restore -m:1 -nr:false
 ```
 
-串行执行；restore 未准备时先恢复依赖。场景与项目过滤须检查当时测试命名，live opt-in 环境变量不得意外开启。后续切片增加受影响的 Timeline/RecapGrid Control/Store/Manager/Runtime/Getter/Cadence 测试，重点验证引用迁移、同输入 first-winner、相同内容复用、旧操作 receipt 重放和非空摘要冷恢复。
+串行执行；restore 未准备时先恢复依赖。场景与项目过滤须检查当时测试命名，live opt-in 环境变量不得意外开启。后续切片增加受影响的 Timeline/RecapGrid Control/Store/Manager/Runtime/Getter/Cadence 测试，重点验证构建位置 first-winner、显式 Overlay 复用、清空后重建、旧操作 receipt 边界和非空冻结请求恢复；不再验收旧 Store 转换或跨来源正文相等复用。
 
-完成定义：目标门槛/重复身份确实从当前代码与新写入数据消失；没有常量 hash 或伪造旧身份；旧实际数据可读可恢复；负面绑定与副作用边界仍成立；文档说清当前格式及回退限制。验证次数、测试通过数和 live 证据只记录实际执行结果。
+完成定义：目标门槛/重复身份确实从当前代码与新写入数据消失；没有常量 hash 或伪造旧身份；保留范围内的实际数据可读可恢复，旧 Recap 可重建；负面绑定与副作用边界仍成立；文档说清当前格式及回退限制。验证次数、测试通过数和 live 证据只记录实际执行结果。
 
-## 9. 辩证审查记录
+## 9. 辩证审查记录（首轮）
 
-已进行三个独立视角的完整阅读、源码核对和交叉质询：需求质疑、最小架构、语义辩护。以下修订来自具体消费者和执行轨迹，不以票数作裁决。
+首轮已进行三个独立视角的完整阅读、源码核对和交叉质询。以下保留当时决策来源；涉及旧 Store 转换与缓存保留的三项已被最新用户决定替代，当前裁决见[Store 简化计划](recap-store-simplification-plan.md)。
 
 | 初稿问题 | 反例或成本 | 修订结果 |
 |---|---|---|
 | “adapter 升级后可以恢复”过宽 | 真正非法的原生载荷仍不能执行，易扩成兼容协商工程 | 只删除标签否决权，其他检查维持 |
 | v7 兼容可能复制完整历史模型 | 同一逻辑请求只因 target 多一字段 | codec 边界投影，v7/v8 同一 body 与重构器 |
 | 只关注未决请求 | 已完成 v7 的 audit 分派、v5 的共享 target reader 也会被新布局破坏 | 明确可读/可执行版本及混合 lineage 审计验收 |
-| Timeline 与结果主键分两次部署 | EvaluationKey→Cell→RowView→前驱引用整图改写两次 | 开发可拆，后续派生格式只转换发布一次 |
-| “保留 receipt 就可恢复”不充分 | bootstrap descriptor 改变 command hash，旧已应用操作回放变 conflict | 先正常收敛旧操作，再改命令相关格式 |
-| 从旧结果直接生成新缓存键 | 旧 prior 只有 digest，没有正文表 | 从旧 row/member 建临时映射，保留可恢复 first winner，不可丢状态不靠重算 |
+| 当时要求 Timeline 与结果主键合并迁移 | 旧 hash 引用图会被重编码两次 | 已替代：旧 Store 丢弃，代码可分片，全部完成后统一重建 |
+| “保留 receipt 就可恢复”不充分 | 改 command 编码可能冲突；promotion 还会先读 Store proof | 保留针对实际受影响操作的收敛边界，不再把全部 pending 都纳入迁移前提 |
+| 当时需从旧结果生成新缓存键 | 旧 prior 只有 digest，没有正文表 | 已撤销：不转换旧摘要，不建映射，也不保旧缓存命中 |
 | 为 receipt 再保存全文命令 | 与现有 command digest 形成重复状态 | 只删结果派生 hash，命令匹配暂不动 |
 
 用户已采纳 D1；以后允许哪些 connection 改配继续重试仍待独立决定，不阻塞 §5。整体 hash 清零、逐字 HTTP 回放和所有缓存命中保留都不是本设计的完成条件。
@@ -254,7 +256,7 @@ dotnet build prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj --no-restor
 Galatea Server 与 SessionJournal CLI 的独立 build 均为 0 warnings、0 errors。
 
 首轮代码阶段没有部署或重启长期实例，没有转换 Timeline/Control/Store。§6.2 的独立格式升级方案已补入设计，
-随后 §6.1/§6.3 仍须按单次目标格式和迁移约束推进，不将本轮完成误记为整份后续路线全部完成。
+当时的 §6.1/§6.3 整图迁移路线已被本次“清旧 Recap、最后统一重建”决定替代；首轮实施与验证事实保持。
 
 ## 11. 唯一 Dev 实例 E2E（2026-09-14）
 

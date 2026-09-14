@@ -141,7 +141,12 @@ v2 的旧 `resultIdentity` 只做原有形状校验，随后丢弃；不新增�
 
 本切片不改命令/引用图，不要求先收敛旧 pending，不需要离线批量转换工具。将来部署按 [E2E 指南](e2e-testing.md)保留完整匹配快照；已有旧数据可正常读取和重放，下一次原本就需要的持久写入自然升级。v3 写入后旧程序不能直接打开，回退须配合数据快照；快照之后的新操作不会自动保留到旧数据中。
 
-Timeline 行身份与 Store 结果/缓存身份仍按总设计 §6.1/§6.3 合并为后续一次整图转换。该阶段才适用旧命令收敛前提。`ControlStateDigest`、ConnectionFingerprint、tool catalog/runtime identity、Prepared 局部 hash 均留给各自切片。
+后续路线已按用户新决定改为“丢弃旧 Recap，全部重构后统一重建”，不再做旧 Store 整图转换。
+下一切片见 [Store 简化计划](recap-store-simplification-plan.md)，先保持 Timeline/Control 持久格式和命令编码。
+Control 规则与 receipt 不属于可清空缓存。当前 promotion 工具在查 receipt 前依赖 Store proof，
+因此最终清 Store 前须正常收敛相关 pending promotion；不能因 command 字节不变就宣称所有恢复无影响。
+具体处置见[总设计 §7](identity-simplification-design.md#7-保留范围与最终重建边界)。
+`ControlStateDigest`、ConnectionFingerprint、tool catalog/runtime identity、Prepared 局部 hash 均留给各自切片。
 
 现行入口为[当前 Grid 概念](../SessionJournal/current/derived-recap/concepts.md)、[CLI 指南](../../prototypes/SessionJournal.Cli/README.md)与 [Galatea 运行机制](runtime.md)。R2 合同已注明 Control 后继边界；旧 WP-07C 与 API evidence 保留历史定位，不重写当时验收。总设计 §6.2 保留结果与后继入口，本文不继续累积已完成工作包。
 
