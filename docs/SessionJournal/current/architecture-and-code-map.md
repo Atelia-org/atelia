@@ -26,7 +26,7 @@ identity、head fence 与重建边界的 companion state；它们不回写 raw h
 | Assembly | Owns |
 |---|---|
 | `SessionJournal` | raw replay、selected Parent lineage、setup authority、bounded planning/audit、neutral context lifecycle |
-| `SessionJournal.HistoryTimeline` | immutable timeline rows、selected-path head、policy、branch reconcile、owner-bound build reads |
+| `SessionJournal.HistoryTimeline` | 单一 HistoryRowId、schema 3 rows、selected-path head、policy、branch reconcile、owner-bound build reads 与显式 UpgradeSchemaV2 |
 | `SessionJournal.HistoryTimeline.O200k` | fixed o200k estimator、renderer 与 tokenizer adapter |
 | `SessionJournal.RecapGrid.Cadence` | per-Ref R/expected Timeline policy、reserve-aware seal authority、strict CAS/no-create reader |
 | `SessionJournal.RecapGrid` | 以 namespace/source module 分隔的 规则 canonical contracts、普通结果模型、Control、Store、Manager、Runtime、Getter、Online 与 AgentControl；source-module 依赖由 RG0001/RG0002 守门 |

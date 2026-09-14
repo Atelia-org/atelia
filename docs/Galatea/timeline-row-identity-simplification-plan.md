@@ -1,6 +1,6 @@
-# Timeline 单一行身份：下一实施切片
+# Timeline 单一行身份：实施计划
 
-> 状态：设计已完成三视角独立审查与交叉质询，待实施；本轮只修改文档。
+> 状态：设计已获用户批准，工作包正在实施，最终集成验证待补；设计已完成三视角独立审查与交叉质询。
 > 日期：2026-09-14；源码基线：`6d87a4c1`。
 > 承接[身份简化总设计](identity-simplification-design.md)与已完成的 [Store 切片](recap-store-simplification-plan.md)。真实数据处置和 LLM 重建仍留到全部重构完成后。
 
@@ -25,7 +25,7 @@ FulfilledViewKey = (RefId, TimelineId, TimelineHeadGeneration, ThroughRowId, Rec
 |---|---|
 | 个人未发布项目；不需要应用层防恶意篡改或假想下游兼容 | 用户与根 AGENTS.md |
 | 旧 Recap 可以丢弃，全部重构完成后最后统一 LLM 重建 | 用户已采纳决定；仅放弃摘要物化内容和旧缓存命中 |
-| 本轮规划并完善下一切片 | 本次用户请求；不授权提前实现或操作真实数据 |
+| 实施已采纳设计并维护文档/提交 | 本次用户明确授权；真实数据处置和 LLM 重建仍留最终阶段 |
 | 保留 Journal、冻结请求、raw tool result、执行序号、规则与 receipt | 当前持久恢复消费者；清 Store 不等于清整个 derived/control |
 | 保留 Timeline 的实际分区、前驱和非当前路径行 | 当前 ledger、rewind/reconcile、Control bootstrap 消费者 |
 | 同 Slot 首个结果、missing-only、Overlay、预算与事务恢复继续有效 | 上一切片已实现的 Store/Manager/Runtime |
@@ -73,7 +73,8 @@ Family、Definition、BuildTarget、Recipe 的 canonical bytes 和 digest 原值
 
 | 命令 | 预期 bytes / digest |
 |---|---|
-| 空 bundle、family-only、definition-only（Recipes 为空） | 不变 |
+| family-only、definition-only（Recipes 为空） | 不变 |
+| 空 bundle | 构造器继续拒绝；不生成虚构空命令或其 digest |
 | 任意 Recipes 非空的 registration，包括 witness 为 null | 改变；旧 DTO 即使为 null 也写出被删字段 |
 | promotion | 不变，只使用 RecipeDigest |
 
@@ -95,11 +96,13 @@ CLI selection 输出与 Galatea readiness DTO/JS 校验删重复 descriptor 字�
 
 ## 4. Timeline 的一次离线格式转换
 
-按本基线，目标为 Timeline SQLite schema 3、descriptor 外层 wire v2；目录仍为 `derived/history-timeline/v2/...`，路径名字不充当 schema 版本。Control writer v4、Store v4 与 cursor v2 是各自独立版本。实施前检查并行提交是否已占号，只对实际变更的格式取下一版本。
+本轮已锁定 Timeline SQLite schema 3、descriptor 外层 wire v2；目录仍为 `derived/history-timeline/v2/...`，路径名字不充当 schema 版本。Control writer v4、Store v4 与 cursor v2 是各自独立版本。RowId 的 body/domain v1 保持原值。
 
 普通 Timeline reader 只读新格式；打开旧 schema 返回明确 unsupported，不能自动重切历史、改文件或调用模型。旧 row decoder/hash 只属于限定的离线升级入口，不形成第二套在线 Timeline 服务。
 
-实现一个具体的 Timeline maintenance 操作及 CLI 入口即可，对停止的完整 repository 隔离副本工作，沿现有 Ref 独占锁按明确的物理 RefId/TimelineId 逐库处理。范围不能只取 active locator；需要继续使用的 retained Timeline 也纳入最终清点，不新增自动 GC：
+明确的 API 为 `HistoryTimelineMaintenance.UpgradeSchemaV2(string repositoryPath, RefId refId, TimelineId timelineId)`。
+它与 CLI 入口对停止的完整 repository 隔离副本工作，沿现有 Ref 独占锁按明确的物理 RefId/TimelineId 逐库处理。
+范围不能只取 active locator；需要继续使用的 retained Timeline 也纳入最终清点，不新增自动 GC：
 
 1. 对指定 scope 取得离线独占权，验证源 schema 2、Ref/Timeline/head、旧 descriptor/行索引及完整关系，验证和转换阶段不改源文件；该 Ref 的 locator 保持原值，不要求每个待转换库都处于 active 状态。
 2. 按确切目标 DDL 新建同目录临时数据库，分页处理**所有 rows**，包括 rewind 后未在 current_selected_path 的行。去掉第二身份的 SQL 列和外层 canonical 字段，保留原 RowId、previous、区间、setup、规则、测量事实。当前 reader 严格比较 SQLite schema SQL，不能假定一次 `ALTER DROP COLUMN` 就满足新 schema。
@@ -107,6 +110,10 @@ CLI selection 输出与 Galatea readiness DTO/JS 校验删重复 descriptor 字�
 4. 关闭连接，沿既有持久文件发布机制替换该数据库，严格冷开复验。目标已是健康新格式时只验证并返回已完成，不推进 head/generation。
 
 不把这项操作伪装成现有 Restore：当前 Restore 要求可读的当前格式，不能直接完成旧 schema 转换。可复用锁、临时文件、发布与验证机制，源格式读取必须明确实现。单库发布边界前后中断，只能留下完整旧库或完整新库；下次可明确验证状态。副本内可暂时存在不同 schema 的多个库，全部完成并验证后才能用于最终切换；不把逐库替换宣称为跨文件原子事务，也不建设迁移任务日志或协调器。
+
+`HistoryTimelineUpgradeResult` 区分 `Upgraded(Head)`、`AlreadyCurrent(Head)`、Absent、Busy、
+UnsupportedSchema、LimitExceeded、Invalid 和 `PublishIndeterminate(Head, ObservedSchemaVersion)`。
+发布后的不确定结果须重新核验目标状态，不能以错误返回推断源库一定未替换；重复健康 schema 3 仅验证，不推进 generation。
 
 旧备份保持原样用于匹配旧代码的回退；不得重写其 manifest 冒称原备份。需要升级备份时，先用匹配旧格式的程序在隔离 repository 副本恢复，或直接还原完整旧 repository 快照，再执行同一个具体升级操作；不能调用新 Restore 直接读取旧 schema。新备份由新代码按实际新数据库生成。
 
@@ -142,7 +149,7 @@ Store 旧库（包括本次已实现但未部署的 v3）不参与转换；普�
 
 规划时只读检查了现有 `LegacyV2/repository.zip` 与 `ControlReceiptV2` 三个 ZIP：四个 Timeline 都是 schema 2、rows=0。它们继续证明既有 Journal/Control 边界，**不能证明本次非空行格式升级**。新增样本至少含非空 bootstrap、多个行、selected 与 retained 非selected 行，记录生成基线；旧 ZIP 原字节保留。
 
-实现后按影响串行验证 Timeline/其 public surface、Cadence、Control/AgentControl、RecapGrid Abstractions/Store/Manager/Runtime/Getter/Hosting/Online/WalkingSkeleton、相关 public surface、CLI、Galatea 与 analyzer；不为文档规划重跑上一切片全部测试。统一 `--no-restore -m:1 -nr:false`，测试加 `-- xUnit.MaxParallelThreads=4`；Server 使用 [E2E 指南](e2e-testing.md)的精确三类 Live 排除，并清除 live opt-in。独立 build Server/CLI/Timeline/RecapGrid，检查 JS 与 scoped docs。数字只在真正执行后填写。
+实现后按影响串行验证 Timeline/其 public surface、Cadence、Control/AgentControl、RecapGrid Abstractions/Store/Manager/Runtime/Getter/Hosting/Online/WalkingSkeleton、相关 public surface、CLI、Galatea 与 analyzer。统一 `--no-restore -m:1 -nr:false`，测试加 `-- xUnit.MaxParallelThreads=4`；Server 使用 [E2E 指南](e2e-testing.md)的精确三类 Live 排除，并清除 live opt-in。独立 build Server/CLI/Timeline/RecapGrid，检查 JS 与 scoped docs。数字只在真正执行后填写。
 
 ## 6. 最终真实切换条件
 
@@ -178,3 +185,23 @@ Store 旧库（包括本次已实现但未部署的 v3）不参与转换；普�
 在所查 Timeline、RecapGrid、Cadence、Galatea、CLI、analyzer 六个生产目录，目标符号及拼写变体命中 30 个源文件，Cadence 为 0；这是当前传播范围，不是预计删除行数。可确认的减少是一种公开 digest 类型及其生成/存储/参数/比较链；没有增加新的行身份。升级路线收缩为一种 Timeline 专用转换，取消 Cadence 迁移、Control 离线转换和旧 Store 整图转换。
 
 完成时当前生产链及新写入数据不再含第二行身份。只允许明确的旧 Control wire DTO、离线 Timeline 源解码和固定历史证据保留旧字段名；不得借兼容之名把它投影回运行对象。实施文档记录实际提交/验证，待办只保留未完成工作。
+
+## 8. 实施记录（集成验证待补）
+
+已锁定的版本组合为 Timeline SQL 3 / descriptor 外层 wire 2、Control writer 4、Store SQL 4 / cursor wire 2。
+原 RowId 的 body/domain v1、Recipe/Family/Definition 内容键、Cadence 文件、tool catalog/runtime 与 Journal 格式保持。
+当前 Store 接口见 [v4 说明](../SessionJournal/current/contracts/recap-grid-store-sqlite-v4.md)，Timeline 持久布局与升级边界见
+[durable target](../SessionJournal/current/derived-recap/durable-target.md)。
+
+CLI 明确入口为：
+
+```text
+recap-grid timeline upgrade-schema-v2 --input <stopped-repository-copy> --ref <physicalRefId> --timeline <physicalTimelineId>
+```
+
+该命令按物理 scope 调用 `HistoryTimelineMaintenance.UpgradeSchemaV2`，不依赖 branch name、active locator 或自动枚举。
+status 为 upgraded/already-current/absent/busy/unsupported-schema/limit/invalid/publish-indeterminate；
+不确定发布返回 exit 2，不自动重试。详细操作说明见 [CLI README](../../prototypes/SessionJournal.Cli/README.md#timeline-schema-2-离线升级)。
+
+工作包提交、固定旧样本来源、命令语料、实际测试/build/review 与文档检查结果，在集成完成后填写；
+当前不引用 Store v3 的通过数作为本切片证据。真实 Timeline 升级、Store Reset、LLM 重建与部署均留到最终阶段。

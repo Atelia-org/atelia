@@ -2,7 +2,7 @@
 
 > 状态：§5 已实现并完成唯一 Dev 实例 E2E；§6.2 [Control 回执简化](control-receipt-simplification-plan.md)与[前置输入对象简化](recap-prior-input-simplification-plan.md)均已实现并通过本地验证，尚未部署。前置输入代码见 `258125fd`，验证见实施记录；后续采用“丢弃旧 Recap，全部重构完成后统一重建”；[Store 简化](recap-store-simplification-plan.md)已实现，25 个项目的 1,771 项本地测试通过，尚未部署。首轮代码见 §10，首轮 E2E 见 §11。
 >
-> 日期：2026-09-14。首轮代码基线：`277baeea`；Store 规划基线：`4f718d87`；下一切片规划基线：`6d87a4c1`。本文区分目标设计、当前实现和历史验证；[Timeline 单一行身份计划](timeline-row-identity-simplification-plan.md)已完成辩证审查、待实施。本轮只维护计划，不执行清库、部署或真实模型重建。
+> 日期：2026-09-14。首轮代码基线：`277baeea`；Store 规划基线：`4f718d87`；Timeline 规划基线：`6d87a4c1`。本文区分目标设计、当前实现和历史验证；[Timeline 单一行身份计划](timeline-row-identity-simplification-plan.md)已获批准、正在实施，集成验证待补。本轮维护代码、测试与文档，不执行清库、部署或真实模型重建。
 
 ## 1. 目标与最小模型
 
@@ -56,7 +56,7 @@ B 项说明真实需求，不把现有测试对每一个字段的断言升级成
 | Adapter 指纹 | [CompletionDispatchIdentity](../../src/Completion/CompletionDispatchIdentity.cs)，[Registry.BindExact](../../src/Completion/CompletionConnections.cs)，[Galatea BindPrepared](../../prototypes/Galatea/GalateaRecapGridComposition.cs) | 已确认：hash 的是手工 mapping 标签，不是实际 adapter 代码/HTTP 请求 |
 | 恢复二次比对 | [SessionJournalEngine](../../prototypes/SessionJournal/SessionJournalEngine.cs) `ValidateRecoveryRuntimeCompatibility`、[RuntimeRecovery](../../prototypes/SessionJournal/SessionJournalEngine.RuntimeRecovery.cs) `CreateFrozenCompletionRequirement` | 已确认：不只 Registry 一处检查；只绕过 Host 门槛不足以正确完成变更 |
 | 同 body 双身份 | [HistoryTimelineCanonicalCodec](../../prototypes/SessionJournal.HistoryTimeline/HistoryTimelineCanonicalCodec.cs) `RowIdDomain` / `DescriptorDomain` | 已确认：同 descriptor body 换 domain 计算两遍 |
-| 结果身份与唯一性 | 基线 `Store/SchemaV2.sql`（已退役；当前为 [SchemaV3.sql](../../prototypes/SessionJournal.RecapGrid/Store/SchemaV3.sql)）、[SqliteRecapGridStore](../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs) | 已确认：cell 的 evaluation key 唯一；row 的 `(ref,timeline,recipe,row)` 唯一 |
+| 结果身份与唯一性 | 基线 `Store/SchemaV2.sql`（已退役；当前为 [SchemaV4.sql](../../prototypes/SessionJournal.RecapGrid/Store/SchemaV4.sql)）、[SqliteRecapGridStore](../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs) | 基线事实：cell 的 evaluation key 唯一；row 的 `(ref,timeline,recipe,row)` 唯一；后继已改 Slot/普通结果 ID |
 | 摘要缓存输入 | [ManagerRowBuild](../../prototypes/SessionJournal.RecapGrid/Manager/ManagerRowBuild.cs)、[BuildContracts](../../prototypes/SessionJournal.RecapGrid/Abstractions/BuildContracts.cs) | 已确认：缓存区分规则、历史和前置摘要内容 |
 | 操作结果摘要 | [ControlOperationCanonicalizer](../../prototypes/SessionJournal.RecapGrid/Control/ControlOperationCanonicalizer.cs)、[ControlRuntime](../../prototypes/SessionJournal.RecapGrid/Control/ControlRuntime.cs) `TryReplay` | 已确认：ResultIdentity 不参与操作判重；receipt 参与 |
 | Prepared 内容证明 | [Manifest](../../prototypes/SessionJournal/SessionRequestManifest.cs)、[Reconstructor](../../prototypes/SessionJournal/SessionPreparedRequestReconstructor.cs) | 已确认：局部 hash 与最终 commitment 并存；最终检查可发现重构变化，但该故障场景目前是结构推论 |
@@ -67,7 +67,7 @@ B 项说明真实需求，不把现有测试对每一个字段的断言升级成
 |---|---|---|
 | RequestAdapterFingerprint | delete | 删除执行硬门槛及当前身份字段，不用另一个手工标签或常量 hash 替代 |
 | ConnectionFingerprint | defer | 第一切片保持当前行为；改变 endpoint/reasoning 后如何恢复是另一项产品选择 |
-| HistoryRowId + DescriptorDigest | merge | 保留一个不可变 HistoryRowId，暂沿用现有 RowId 算法；无需顺便换 UUID |
+| HistoryRowId + DescriptorDigest | merge，实施中 | 保留一个不可变 HistoryRowId，暂沿用现有 RowId 算法；无需顺便换 UUID |
 | CellDigest / RowViewDigest | simplify，已完成 | 改普通 CellId/RowResultId，保留唯一约束、前驱及成员 FK |
 | Content / Projection / Evaluation 三层摘要 | delete | 用普通 CellSlot 关联工作与首个结果，不计算新的缓存 hash；前驱和规则由不可变关系确定并校验 |
 | Control ResultIdentity | delete | 回执返回稳定操作/回执 ID，保留命令匹配与已应用结果 |
@@ -144,13 +144,13 @@ Record 相等比较仍可用于归一化后的当前 target。Manifest 自身与
 
 已完成的前置输入切片见[实施记录](recap-prior-input-simplification-plan.md)，它在当时保持了旧 digest 和持久格式。其后 Store 切片已按新的可丢弃缓存要求完成；下文分别标明已完成部分与后继目标。
 
-### 6.1 Timeline 行身份：下一实施切片
+### 6.1 Timeline 行身份：当前实施
 
 详细设计见 [Timeline 单一行身份计划](timeline-row-identity-simplification-plan.md)。保留原 HistoryRowId 算法及其 body 编码，删除同一 descriptor 的第二个 DescriptorDigest；外层格式升级不改变行 ID，不重新划分历史或改变 row frontier。
 
 源码复查收窄了原先的迁移范围：Cadence 持久文件没有 DescriptorDigest，Recipe 正文本身也只引用 BootstrapThroughRowId。它们的格式和内容键保持；变化位于 Timeline 行记录、Control bootstrap 附加记录与 registration 命令、Store/构建及显示消费者。
 
-Timeline 提供限定的离线格式升级，保留全部行（含非当前路径行）、原 head、policy 和 selected-path 结构；当前 reader 只读新格式。Control 复用既有旧格式 codec 投影，保留源 Head/bytes，下一次真实 mutation 才写新布局，不另建 Control/backup 转换器。旧 Recap Store 仍只在最终整体 Reset，不做结果图转换。
+Timeline schema 3 / descriptor 外层 wire v2 提供 `UpgradeSchemaV2(repositoryPath, RefId, TimelineId)` 限定离线格式升级，保留全部行（含非当前路径行）、原 head、policy 和 selected-path 结构；当前 reader 只读新格式。Control 复用既有旧格式 codec 投影，保留源 Head/bytes，下一次真实 mutation 才写 v4 布局，不另建 Control/backup 转换器。旧 Recap Store 仍只在最终整体 Reset，不做结果图转换。
 
 registration 的 domain 和整套工具 runtime 保持；只删 Recipe DTO 的重复字段，因此 Recipes 非空的命令摘要变化，family/definition-only 和 promotion 命令不变。最终切换前正常收敛受影响的 recipe registration，以及原有 Store 清空前要求收敛的 promotion；不改写 receipt 或冻结工具结果。精确语料、非空分叉旧样本和验收工作包见该计划。
 
@@ -190,11 +190,11 @@ ConnectionFingerprint、Prepared 局部 hash、ControlStateDigest、tool catalog
 | Grid Store 的旧 cells、rows、members、fulfilled 标记及旧缓存命中 | 整体丢弃，不做 old→new 转换、prior 逆向映射或孤立结果保留 |
 | Journal 原始历史、Prepared 正文、raw tool result、执行序号 | 保持原字节与既有恢复语义 |
 | Control 规则、recipe、操作回执，相关配置 | 保留；格式改动另按实际消费者处理 |
-| Timeline 行、Cadence、前驱与分区关系 | Store 切片保持；下一 Timeline 切片保留原行身份与关系，仅离线升级行表示，Cadence 原字节保持 |
+| Timeline 行、Cadence、前驱与分区关系 | Store 切片保持；本次 Timeline 切片保留原行身份与关系，仅离线升级行表示，Cadence 原字节保持 |
 
 最终步骤是：所有代码完成 → 在旧状态仍可读时收敛必要的 pending 操作 → 停服并保留完整匹配快照 → 在完整隔离副本完成所需 Timeline 格式升级并验证 → 初始化新 Store → 最后统一 LLM 重建 → 检查后恢复正常使用。当前 Store 位于 `derived/recap-grid/v1/grid.sqlite`，目录版本不等于数据库 schema；优先复用现有离线 Reset/锁与实例更换机制，不新增常驻迁移服务。
 
-pending 前提按实际消费者限定：当前 `AgentControlTool.PromoteAsync` 在查 receipt 前先要求 Store 的 candidate 构建证明；下一 Timeline 切片还会改变 Recipes 非空的 registration 命令摘要。最终切换前，所有仍支持继续执行的分支中这两类待执行/重放调用，须通过正常工具续行到对应 ToolResultObserved 或更后状态，包括 Action 内尚未轮到的调用。未收敛则暂缓该数据集，不能把失败当成功、重写 command digest 或跳过 receipt。family/definition-only registration 不受这次编码变化影响；不默认增加“重建全部 inactive candidate 后再重放”第二套路径。
+pending 前提按实际消费者限定：当前 `AgentControlTool.PromoteAsync` 在查 receipt 前先要求 Store 的 candidate 构建证明；本次 Timeline 切片改变 Recipes 非空的 registration 命令摘要。最终切换前，所有仍支持继续执行的分支中这两类待执行/重放调用，须通过正常工具续行到对应 ToolResultObserved 或更后状态，包括 Action 内尚未轮到的调用。未收敛则暂缓该数据集，不能把失败当成功、重写 command digest 或跳过 receipt。family/definition-only registration 不受这次编码变化影响；不默认增加“重建全部 inactive candidate 后再重放”第二套路径。
 
 普通启动遇到旧或不支持的 Store schema，明确返回既有 unsupported 结果，不自动清库或调用 LLM。新 Store 运行期间保留事务、首个结果、missing-only 恢复与调用预算；整体 Reset 更换 StoreInstanceId，关闭旧 handle。不支持为本次简化增加局部删 winner、跨实例拼表或运行中替换前驱。
 
@@ -204,7 +204,7 @@ Prepared 保存的 ContextSnapshot 正文没有 Cell/Row/Store ID。旧冻结请
 
 ## 8. 实施入口、验证与完成定义
 
-下一实施入口为 [Timeline 单一行身份计划](timeline-row-identity-simplification-plan.md)，当前只完成规划。[Store 简化计划](recap-store-simplification-plan.md)的 A/B/C 已完成，实际提交与验证见其 §7。其他已完成切片的代码与验证分别见 §10、[Control 实施记录](control-receipt-simplification-plan.md)和[前置输入实施记录](recap-prior-input-simplification-plan.md)。下面首轮验证命令保留作历史回归参考，不是新切片工作清单；历史 E2E 见 §11。
+当前实施入口为 [Timeline 单一行身份计划](timeline-row-identity-simplification-plan.md)，各工作包实施中、最终验证待补。[Store 简化计划](recap-store-simplification-plan.md)的 A/B/C 已完成，实际提交与验证见其 §7。其他已完成切片的代码与验证分别见 §10、[Control 实施记录](control-receipt-simplification-plan.md)和[前置输入实施记录](recap-prior-input-simplification-plan.md)。下面首轮验证命令保留作历史回归参考，不是新切片工作清单；历史 E2E 见 §11。
 
 开始前检查 `git status` 和 `git log`，重新确认本文列出的关键类型与 schema，保留并行会话已提交修复。以当前生产消费者划范围，不把全部公共类型快照测试当成设计保留理由。
 

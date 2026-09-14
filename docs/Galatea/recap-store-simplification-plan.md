@@ -3,6 +3,8 @@
 > 状态：工作包 A/B/C 已实现并通过本地验证：25 个项目、1,771 项通过，0 失败、0 跳过；尚未部署。设计经过三视角独立审查、交叉质询和剩余争议裁决。
 > 日期：2026-09-14；设计基线：`4f718d87`；实施基线：`e7693a64`。
 > 承接[身份简化总设计](identity-simplification-design.md)。本轮代码、测试与文档已完成；真实清库、部署与 LLM 重建留到全部重构完成后。
+> 后继边界：[Timeline 单一行身份切片](timeline-row-identity-simplification-plan.md)正在实施，将 Store 改为 schema 4、ThroughRowId 与 cursor v2。
+> 本文 v3 实施提交与 1,771 项测试保留当时证据，不认证后继格式；当前 Store 入口为 [v4 说明](../SessionJournal/current/contracts/recap-grid-store-sqlite-v4.md)。
 
 ## 1. 最小模型与需求来源
 
@@ -36,7 +38,7 @@ CellId / RowResultId = Store 分配的普通随机 128-bit ID
 |---|---|
 | [ManagerRowBuild](../../prototypes/SessionJournal.RecapGrid/Manager/ManagerRowBuild.cs) `DeriveRowPlan` | 前驱必须属于同 ref/Timeline/recipe/target，并是 Timeline 指定的上一行 |
 | 同文件 `DeriveAssignments`；[ArtifactContracts](../../prototypes/SessionJournal.RecapGrid/Abstractions/ArtifactContracts.cs) | recipe 固定列与 definition；Evaluate 使用当前输入，Reuse 引用同历史行 base cell |
-| 规划基线 `4f718d87` 的 `Store/SchemaV2.sql`；当前 [SchemaV3.sql](../../prototypes/SessionJournal.RecapGrid/Store/SchemaV3.sql) | 旧版 cell 按 evaluation hash 唯一、SQL 与 canonical BLOB 并存；v3 改 Slot 唯一与普通结果 ID |
+| 规划基线 `4f718d87` 的 `Store/SchemaV2.sql`；当前 基线 `Store/SchemaV3.sql`（见 `ed9b113a`；后继 DDL 为 [SchemaV4.sql](../../prototypes/SessionJournal.RecapGrid/Store/SchemaV4.sql)） | 旧版 cell 按 evaluation hash 唯一、SQL 与 canonical BLOB 并存；v3 改 Slot 唯一与普通结果 ID |
 | [SqliteRecapGridStore](../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs) `PutCell/PutRowView` | cell 返回首个 winner；row 改按业务关系比较并返回实际持久 winner |
 | [Getter materializer](../../prototypes/SessionJournal.RecapGrid/Getter/RecapGridContextMaterializer.cs) | 原内容等价仅用于 provenance 诊断；现改来源关系与正文/数量预算 |
 | [RuntimeContracts](../../prototypes/SessionJournal.RecapGrid/Runtime/RuntimeContracts.cs)、[RuntimeHosting](../../prototypes/SessionJournal.RecapGrid.Hosting/RuntimeHosting.cs) | outcome/work 关联和日志统一使用 Slot、StoreIdentity 与必要前驱 ID |

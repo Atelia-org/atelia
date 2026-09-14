@@ -1,8 +1,8 @@
 # DerivedRecap Sparse Versioned Grid 目标设计
 
-状态：WP-00至WP-08 complete，independent closure Closed；2026-09-14 Store v3 简化已实现，25 个项目的 1,771 项本地测试通过。
+状态：WP-00至WP-08 与 Store v3 切片已完成；当前 [Timeline 单一行身份](../../../Galatea/timeline-row-identity-simplification-plan.md)实施中，最终验证待补。旧测试数不认证本次新格式。
 
-当前 CellSlot、普通结果 ID、SQL 单份数据与新来源诊断以[Store 简化计划](../../../Galatea/recap-store-simplification-plan.md)和当前源码为准。本文已同步对应 Shape/Rule；末尾旧工作包与审查记录只认证当时实现。
+当前单一 HistoryRowId、CellSlot、普通结果 ID、SQL 单份数据与来源诊断以[Timeline 计划](../../../Galatea/timeline-row-identity-simplification-plan.md)及 [Store v4](../../current/contracts/recap-grid-store-sqlite-v4.md)和当前源码为准。本文已同步对应 Shape/Rule；末尾旧工作包与审查记录只认证当时实现。
 
 ## 1. Intent
 
@@ -129,8 +129,8 @@ RecapGrid Cadence V1 policy持有；Cadence同时提交exact expected partition 
 Timeline拥有HistoryLoad estimator的provider-neutral contracts、metric identity和goldens；provider token/cost估算仍与
 HistoryLoad分离。旧Planner中的同类pure contracts在施工时迁到这个单一owner，不能复制第二套EstimatorId或算法。
 
-assembly ownership从`SessionJournal <- HistoryTimeline <- RecapGrid.Abstractions`开始。`TimelineId`、`HistoryRowId`与
-`HistorySegmentDescriptorDigest`由HistoryTimeline定义，Grid只消费这些typed values，不能重新包装一套字符串identity；是否将来再拆
+assembly ownership从`SessionJournal <- HistoryTimeline <- RecapGrid.Abstractions`开始。`TimelineId` 与 `HistoryRowId`
+由 HistoryTimeline 定义，Grid 只消费这些 typed values，不再有第二个 descriptor digest；是否将来再拆
 轻量contracts assembly只能由实测依赖重量驱动，首版不预建第三个项目。
 
 首版`TimelineId`绑定一个exact `RefId`，只在同一Ref内复用row prefix；不同Ref即使共享raw prefix也各自建立
@@ -284,15 +284,14 @@ HistorySegmentDescriptor {
   MeasuredRenderedUtf8Bytes
   RawEventCount
   RawRangeSha256
-  DescriptorDigest: HistorySegmentDescriptorDigest
 }
 ```
 
 边界、创建时目标长度和实际长度都是已经发生的值事实。以后修改 BuildInterval不能改变旧 descriptor。
 正文始终按 Start/End 从 raw读取，不保存在 descriptor。同一Timeline row chain允许相邻rows采用不同
 `PartitionPolicyDigestAtCreation`，但不得跨`TimelineId`或脱离selected `TimelineHeadRef` chain。
-`RowId`与`HistorySegmentDescriptorDigest`必须由不含二者自循环的同一canonical identity body、以不同domain hash确定性导出；
-Grid只把typed `HistorySegmentDescriptorDigest`当semantic commitment。
+`RowId` 继续由原 `RowIdDomain` 与原 identity body v1 确定性导出，验证 ID 与 body 一致。descriptor 外层 wire v2
+不再包含第二个 digest；外层格式升级不改变 ID preimage。Grid 的构建、selection、fulfillment 统一使用原 HistoryRowId。
 
 ### 5.3 TimelineHeadRef
 
@@ -568,16 +567,16 @@ wavefront rebuild全部columns。
 ## 8. Persistence backend decision
 
 RecapGrid 使用单一 SQLite Store；DDL owner 为
-[`SchemaV3.sql`](../../../../prototypes/SessionJournal.RecapGrid/Store/SchemaV3.sql)。当前规则见
-[Store v3 说明](../../current/contracts/recap-grid-store-sqlite-v3.md)。旧 v2 逻辑 schema 的批准与测试指纹是历史证据，
-不自动认证 v3。
+[`SchemaV4.sql`](../../../../prototypes/SessionJournal.RecapGrid/Store/SchemaV4.sql)。当前规则见
+[Store v4 说明](../../current/contracts/recap-grid-store-sqlite-v4.md)。旧 v2 逻辑 schema 的批准与测试指纹是历史证据，
+不自动认证 v4。
 
 ### 8.1 单一持久表示
 
 - cell：普通 CellId、源 Slot、正文/结果字段；Slot 三字段均非 null，并有 UNIQUE。
 - row：普通 RowResultId、唯一 assignment、前驱 ID 与必要状态。
 - members：row、ordinal、column/definition 与已存 CellId；有序唯一成员与 FK。
-- fulfillment：exact Timeline head/recipe/through → 已存 RowResult，保留 scope 与前沿验证。
+- fulfillment：exact Timeline head/recipe/ThroughRowId → 已存 RowResult，保留 scope 与前沿验证。
 
 SQL columns 与成员关系直接物化对象；没有 `cell.canonical`、`row.canonical`、`fulfilled.key_canonical`。
 不再需要 nullable prior 唯一键、FirstRow sentinel 索引或额外 producer prior 字段。导出为临时诊断投影，
@@ -594,7 +593,7 @@ Reset 更换 StoreInstanceId；新 CellId/RowResultId 不从内容生成，陌�
 
 ### 8.3 Operator 与 schema 切换
 
-物理槽位仍为 `derived/recap-grid/v1/grid.sqlite`，SQLite schema 为 v3。普通打开旧 schema 返回
+物理槽位仍为 `derived/recap-grid/v1/grid.sqlite`，SQLite schema 为 v4。普通打开旧 schema 返回
 UnsupportedSchema，不自动清库、迁移或调用模型。显式离线 Reset 复用已有文件 witness、lease 与原子替换机制，
 不解码旧 cell，不保留旧 schema reader。
 
@@ -603,8 +602,15 @@ CLI owner 提供。inspect/verify/export read-only/no-create；导出正文须�
 不要手工编辑 live 数据库，或为绕过 Slot first-winner 局部删除 cell。
 
 旧 Recap 不转换；全部重构代码完成后才统一重建。最终清库前须在旧 Store 仍可读时正常收敛所有仍支持执行分支的
-pending promotion，因为工具先查 Store proof 才查 Control receipt。随后停服并备份匹配快照、显式 Reset、新库构建。
+pending promotion（工具先查 Store proof 才查 receipt）与 Recipes 非空 registration（删除字段改变 command）。
+随后停服备份，在完整隔离副本逐库执行明确的 Timeline schema 2→3 升级，保留所有行/head/path，最后 Reset、新库构建。
 没有完成这个前提就暂缓对应数据集；不清 Timeline、Control、Journal 或冻结请求。
+
+Store export cursor wire v2 明确拒绝 v1；旧 fulfilled cursor 与 RowId 同为 64 hex 也不能混用。
+Timeline 独立维护 API 为 `HistoryTimelineMaintenance.UpgradeSchemaV2(repositoryPath, refId, timelineId)`；
+普通 reader 仅支持 schema 3，旧 row 解码只在该离线入口。目录仍为 `derived/history-timeline/v2`。
+Control writer v4，旧 v2/v3 在 codec 验证后投影到单一 bootstrap RowId，纯读/receipt replay/export/backup 保留原 Head/bytes；
+下一真实 mutation 才升级。Recipe 正文、Cadence、catalog/runtime 不变，空 registration bundle 继续拒绝。
 
 ### 8.4 Backend invariants
 

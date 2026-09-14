@@ -45,7 +45,7 @@ EventJournal `MoveRef`，并重新验证。不要手工覆盖 `.rbf` 文件。
 recap-grid inspect|verify|export|reset ...
 recap-grid scaffold ...
 recap-grid init ...
-recap-grid timeline create|sync|inspect|verify|export|backup|restore|abandon ...
+recap-grid timeline create|sync|inspect|verify|export|backup|restore|abandon|upgrade-schema-v2 ...
 recap-grid timeline history-load inspect ...
 recap-grid cadence inspect ...
 recap-grid cadence set-reserve --confirm-ref <ref> --expected-generation <generation> --expected-domain-digest <sha256> --minimum-recent-history-load <R> ...
@@ -128,15 +128,16 @@ Hosting的provider-free exact route inspection只报告configured connection/mod
 Family、Definition、Recipe 或 CellSlot。Cell/Row 使用 Store 分配的普通结果 ID。
 Runtime 日志直接携带 Slot、StoreIdentity 与必要前驱 ID，不再记录 EvaluationKey/PriorProjection digest。
 
-Grid Store 当前为 SQLite schema v3，物理槽位仍是 `derived/recap-grid/v1/grid.sqlite`。
+Grid Store 当前为 SQLite schema v4，物理槽位仍是 `derived/recap-grid/v1/grid.sqlite`。
 同 `CellSlot(recipe, history row, column)` 保留首个结果；不同 recipe 不自动共享同正文缓存，
 Overlay 通过原 CellId/Slot 显式复用。SQL 列与成员关系是唯一持久数据，导出 JSON 只是临时投影：
-输出使用 `jsonBase64/fulfilledRowResultId`，selection 使用 `rowResultId`；旧 digest cursor 不兼容。
+输出使用 `jsonBase64/fulfilledRowResultId`，selection 使用 `rowResultId`；cursor wire v2 拒绝旧 v1；fulfilled through 使用 HistoryRowId，不能把旧 descriptor digest 当同长 RowId。
 Getter provenance 为 `priorSourceAligned` 与行/cell/member/实际正文 UTF-8 bytes 计数，合法 Overlay 的
-来源不同不拒绝正文。具体模型见 [Store v3 说明](../../docs/SessionJournal/current/contracts/recap-grid-store-sqlite-v3.md)。
+来源不同不拒绝正文。具体模型见 [Store v4 说明](../../docs/SessionJournal/current/contracts/recap-grid-store-sqlite-v4.md)。
 
 普通打开旧 Store schema 返回 Unsupported，不自动迁移、Reset 或调用模型。全部重构完成后才统一清旧 Recap
-并重建：先在旧库仍可读时正常收敛相关 pending promotion，再停服备份并用已有显式离线 Reset 初始化新库。
+并重建：先在旧库仍可读时正常收敛相关 pending promotion 与 Recipes 非空 registration，再停服备份、
+在隔离副本完成所需 Timeline 升级，最后用已有显式离线 Reset 初始化新库。
 Timeline/Cadence、Control 与 Journal/Prepared 保留；本代码切片不执行真实数据处置。
 
 `run-online-turn` 是唯一正式 online CLI。Prepared 按 frozen identity exact bind；
@@ -148,13 +149,12 @@ profile，也不向新的completion注入`recap_grid_control`；`--admission`只
 operational failure 返回 2，success/idempotent 返回 0；Busy、Stale、Unsupported、
 Indeterminate 均不自动 retry。
 
-Control 新写入文件为 schema v3；旧 v2 按原格式校验后可直接读取和重放，纯读、
-export/backup 和 receipt 重放不改 Head 或文件字节。正常持久 mutation 才写 v3，
-无需先执行完旧 pending 或批量转换。AgentControl 输出 schemaVersion 2，用既有
-`operationKey` 代替派生 `resultIdentity`；同 operation 仍须匹配 command/runtime/sequence，
-receipt 与首次生效坐标在 restore/reinitialize 时保留。已写入 Journal 的旧 tool result
-原文不重渲染。v3 写入后的二进制回退须配合匹配的数据快照，详见
-[Control 回执简化](../../docs/Galatea/control-receipt-simplification-plan.md)。
+Control 新写入文件为 schema v4；旧 v2/v3 按各自原格式验证后投影到同一 graph，bootstrap 只保留 RowId。
+纯读、receipt 成功重放及 export/backup 保留原 Head/bytes，下一真实 mutation 才写 v4。receipt 的
+operationKey、command/runtime/sequence 与首次生效坐标仍保留。Recipes 非空 registration 的新命令摘要改变，
+旧 receipt 按新命令会 Conflict；family/definition-only 与 promotion 的命令不变，空 bundle 仍拒绝。
+AgentControl 输出继续 schemaVersion 2/operationKey，Journal 旧工具结果不重渲染。最终 pending 收敛与回退边界见
+[Timeline 单一行身份计划](../../docs/Galatea/timeline-row-identity-simplification-plan.md)。
 
 `recap-grid legacy-root` 只处理固定七个旧 slot。`inspect` 产生 bounded opaque
 manifest，并报告 canonical repository、selected branch、RefId 与 raw head；`archive`
@@ -164,3 +164,27 @@ create-only V2 manifest，提交 branch/ref/raw authority；该 V2 operator 是 
 在任何archive/delete写入前要求no-follow/fsync capability；`delete` 还要求 fresh source
 witness 与已验证 archive witness。Busy、non-Idle、raw drift、v9、symlink/device 与未知
 sibling均 fail closed；未知 sibling 一律不触碰。
+
+
+## Timeline schema 2 离线升级
+
+该操作保留已有 Timeline 分区，供停止的完整 repository 隔离副本使用；本轮代码实施不等于已操作真实数据。
+不依赖 branch name 或 active locator，也不自动枚举其他 Timeline：每次明确指定一个 physical RefId/TimelineId。
+
+```text
+recap-grid timeline upgrade-schema-v2 --input <stopped-repository-copy> --ref <physicalRefId> --timeline <physicalTimelineId>
+```
+
+命令校验 input 路径和严格 hex ID，调用
+`HistoryTimelineMaintenance.UpgradeSchemaV2(repositoryPath, refId, timelineId)`。它取得 Ref 独占锁，从 schema 2
+分页转换所有行（包括非当前路径行）到 schema 3；descriptor 外层 wire 为 v2，原 RowId/body/domain v1 不变。
+head/generation、policies、selected path/Merkle、guard 与 locator 原值保留；目标 verify 后发布并冷验。
+健康 schema 3 再执行仅验证，不写文件或推进 head。Timeline 目录仍是 `derived/history-timeline/v2`。
+
+报告 status 为 `upgraded`、`already-current`、`absent`、`busy`、`unsupported-schema`、`limit`、`invalid` 或
+`publish-indeterminate`。不确定发布返回 exit 2；先重新核验目标状态，不自动重试或推断源库一定未替换。
+该命令不是 Restore：旧备份先用匹配旧代码恢复到完整隔离副本，再调用同一升级；不改旧 backup manifest。
+多个 Timeline 逐库发布不构成跨文件原子事务，需用的所有 scope 都升级并验证后才进入最终真实切换。
+
+普通 Timeline reader 打开旧 schema 只返回 unsupported，不自动升级、重新分段或调用模型。Cadence/Recipe/
+Journal 格式保持，Control 沿 codec 读取旧文件；Store 不转换，所有计划重构完成后才统一 Reset 与 LLM 重建。

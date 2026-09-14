@@ -24,6 +24,11 @@ approval anchors：immutable v1 `session-journal-contract-r2-approved-surfaces-v
 > 与 SQL 单份数据；旧 v2 schema、canonical artifacts、digest cursor 和旧 Store JSON 字段不继续作为保留合同。
 > v2 approval anchors 与下文证据保持历史原义，不能认证 v3；当前验证见[实施计划](../../../Galatea/recap-store-simplification-plan.md)。
 
+> **Timeline successor:** 当前 [单一行身份切片](../../../Galatea/timeline-row-identity-simplification-plan.md)实施 Timeline schema 3、
+> Control writer 4（保留 2/3 codec 投影）与 [Store 4](recap-grid-store-sqlite-v4.md)。下面旧 approval 与上述 successor 的
+> 当时验证证据不认证本切片。行 ID、Recipe/Cadence、tool catalog/runtime 与 Journal 格式保持；离线升级和相关 pending
+> 收敛要求以新计划为准，不据旧 companion reprovision 描述重建保留的 Timeline。
+
 本文是current SessionJournal、HistoryTimeline与RecapGrid contract的Shape/Rule入口。它把明确支持的
 .NET role、raw/companion/operational wire与upgrade policy放在同一张地图中，但只有
 [R5 candidate evidence](../../evidence/contract-freeze-r2-r5-candidate.md)记录了prior source `a77ed16c`的final gates；

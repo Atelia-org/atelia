@@ -159,12 +159,15 @@ admission失败保留`AUTOMATIC_ADMISSION_FAILED`及nullable `{code,error}`细�
 3. **`ToolContinuation`**：先 bind frozen tool profile/operation，再以无工具的 current completion 继续；tool settlement 后才打开 Online readiness。
 4. **`ToolResult` 后的 `NewRequest`**：不绑定 current tool profile，保留 ToolResult raw tail；只有它和 fresh request 创建 per-turn Online context。
 
-Control 回执以既有 `OperationKey` 引用，不再附带派生 `ResultIdentity`。旧 Control v2 文件
-按源格式验证后读取，保持原 Head 与 bytes；正常持久 mutation 才写 v3。历史 pending
-工具操作继续匹配 frozen runtime、command 和 sequence，已生效的 receipt 重放不重复
-推进 Control。尚未写入 Journal 的工具结果用当前 schemaVersion 2 与 operationKey 输出；
-已经写入的旧工具结果保持原文。该升级不要求先收敛旧 pending，也不改变工具输入或
-runtime identity；写入 v3 后的程序回退需匹配数据快照，见[回执简化设计](control-receipt-simplification-plan.md)。
+Control 回执以既有 `OperationKey` 引用，不再附带派生 `ResultIdentity`。writer v4 删除 bootstrap 的第二行身份；
+旧 Control v2/v3 按源格式验证后投影到同一 graph，保持原 Head/bytes，下一真实 mutation 才写 v4。
+receipt 仍匹配 frozen runtime、command 和 sequence，成功重放不重复推进 Control。尚未写入 Journal 的工具结果
+用既有 schemaVersion 2 与 operationKey 输出；已有旧工具结果保持原文，tool input/catalog/runtime identity 不变。
+
+Recipes 非空 registration 的 command preimage 删除旧字段，旧 recipe receipt 按新命令会 Conflict；
+family/definition-only registration 与 promotion 命令不变。最终真实切换前须在旧状态可读时正常收敛受影响的
+recipe registration，以及依赖旧 Store proof 的 promotion，不能以 receipt 存在绕过 command/proof 检查。
+当前实施与最终处置见 [Timeline 单一行身份](timeline-row-identity-simplification-plan.md)。
 
 当前 root strict config language 为 V9，connections 是 Completion-owned V3 catalog，delegate route 是 owner-defined V4，profile 是 owner-defined V1。Linux loader 对这些文件和 `characterContextTemplateFile` 都执行 code-owned byte cap、existing-ancestor no-reparse、final-file no-follow regular-file 检查；bootstrap 在首次写前也验证 parent chain。
 
@@ -175,5 +178,5 @@ Manager 向 Runtime 传递前驱 view 与实际 cells；Runtime 对照 frozen sp
 
 RecapGrid 构建改用 `CellSlot(recipe, history row, column)` 与 Store 分配的 `CellId/RowResultId`；
 同 Slot 重开复用首个结果，Overlay 显式复用 base cell。Getter `PriorSourceAligned` 比较来源前驱，
-不再以摘要内容 hash 判断等价；合法 Overlay 来源不同仍可读。Store schema v3 遇旧库明确 unsupported，
-不会随刷新或恢复自动清库。最终统一 Reset/重建的 pending promotion 前提见 [Store 简化计划](recap-store-simplification-plan.md)。
+不再以摘要内容 hash 判断等价；合法 Overlay 来源不同仍可读。Store schema v4 遇旧库明确 unsupported，
+不会随刷新或恢复自动清库。Timeline schema 3 的行 ID 保持原值，当前 reader 不读旧 schema；最终离线升级与 Reset/重建前提见 [Timeline 计划](timeline-row-identity-simplification-plan.md)。

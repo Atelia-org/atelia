@@ -49,11 +49,13 @@ replay-safe overshoot时门槛相应上移。
 ## 4. Canonical row evidence
 
 一个Timeline row descriptor提交exact raw range、rendered-byte evidence、creation policy digest、estimator
-identity、previous RowId与descriptor digest。Plan之后必须从raw owner精确rematerialize到selected point，
+identity、previous RowId 与唯一的当前 RowId。Plan之后必须从raw owner精确rematerialize到selected point，
 使用同一seed/policy/estimator重新partition并逐字段比较，最后再做raw head与whole Timeline head fence。
 
-RowId和DescriptorDigest使用分离的hash domain；任何policy/descriptor/previous-chain变化都会产生不同
-identity。打开旧row时使用其creation policy和estimator，而不是当前active policy。
+RowId 使用原 identity body/domain v1；任何 policy/descriptor/previous-chain 事实变化都会改变该身份。
+descriptor 外层 wire v2 删除第二个 digest，不改变 ID preimage。打开旧 row 时使用其 creation policy 和
+estimator，而不是当前 active policy。旧 schema 2 通过明确离线升级保留原行，不重新 partition，见
+[Timeline 单一行身份计划](../../../Galatea/timeline-row-identity-simplification-plan.md)。
 
 ## 5. Online and offline
 

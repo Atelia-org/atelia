@@ -1,13 +1,10 @@
-# RecapGrid Store SQLite v3
+# RecapGrid Store SQLite v4
 
-状态：2026-09-14 已实现并通过本地验证，尚未部署；本轮设计与验收入口为 [Store 简化计划](../../../Galatea/recap-store-simplification-plan.md)。
+状态：2026-09-14 Timeline 单一行身份切片实施中，集成验证待补；设计与验收入口为 [Timeline 计划](../../../Galatea/timeline-row-identity-simplification-plan.md)。
 
-> 历史后继边界：当前 [Store v4](recap-grid-store-sqlite-v4.md) 随 Timeline 单一行身份切片实施，删除第二行身份，
-> fulfillment 使用 ThroughRowId、cursor 升 v2。下文记录已完成的 v3 切片，不把 v3 测试数当作 v4 验证。
-
-本说明记录当时 Store 模型与 operator 边界。旧 [v2 合同](recap-grid-store-sqlite-v2.md)保留其批准历史，
-不作为 v3 的 schema/API 合同；旧数据不转换。DDL 的唯一 owner 是
-`Store/SchemaV3.sql`（见 v3 实施提交 `ed9b113a`；当前 DDL 已转向 v4），读写与维护由
+本说明记录当前 Store 模型与 operator 边界。旧 [v2 合同](recap-grid-store-sqlite-v2.md)与 [v3 说明](recap-grid-store-sqlite-v3.md)保留其历史证据，
+不作为 v4 的 schema/API 合同；旧 Store 数据不转换。DDL 的唯一 owner 是
+[`SchemaV4.sql`](../../../../prototypes/SessionJournal.RecapGrid/Store/SchemaV4.sql)，读写与维护由
 [`SqliteRecapGridStore`](../../../../prototypes/SessionJournal.RecapGrid/Store/SqliteRecapGridStore.cs)和
 [`StoreMaintenance`](../../../../prototypes/SessionJournal.RecapGrid/Store/StoreMaintenance.cs)实现。
 
@@ -27,7 +24,7 @@ Store 的 `PutCell(spec, draft)` 与 `PutRowView(spec, stored cells)` 由已验�
 
 ## SQL 是唯一持久表示
 
-物理槽位继续为 `derived/recap-grid/v1/grid.sqlite`；SQLite `user_version` 与 metadata schema 为 `3`，
+物理槽位继续为 `derived/recap-grid/v1/grid.sqlite`；SQLite `user_version` 与 metadata schema 为 `4`，
 目录中的 `v1` 不是数据库 schema 版本。
 
 | 表 | 责任 |
@@ -36,7 +33,11 @@ Store 的 `PutCell(spec, draft)` 与 `PutRowView(spec, stored cells)` 由已验�
 | `cell_artifact` | 普通 ID、源 Slot、规则/历史关系与正文/Outcome；Slot 三字段非 null 且 UNIQUE |
 | `row_view` | 普通 ID、唯一 row assignment、前驱与必要状态；前驱 FK 保留同 scope/recipe/target |
 | `row_view_member` | row 的有序列、definition 与 CellId；成员列唯一、引用已存 cell |
-| `fulfilled_view_ref` | exact Timeline head/recipe/through 选择条件到已存 RowResult 的引用 |
+| `fulfilled_view_ref` | exact Timeline head/recipe/ThroughRowId 到已存 RowResult 的引用；FK 精确绑定结果、scope、recipe 与历史行 |
+
+历史行只有原 `HistoryRowId`；row 不保存 `row_descriptor_digest`，fulfilled 的 through 列为
+`through_history_row_id`。`FulfilledViewKey` 使用 `(RefId, TimelineId, TimelineHeadGeneration, ThroughRowId, RecipeDigest)`；
+`RowBuildSpec/RowViewCoordinate/RecapRowView` 及 Getter/Manager 不再携带第二个行身份。
 
 SQL 列和成员关系直接物化对象。删除 cell/row 的整对象 canonical BLOB、fulfilled key canonical 副本及重复对账。
 读回与 verify 校验类型、业务关系、唯一性、FK、计数与资源上限；没有另一份隐藏 JSON 权威。
@@ -49,7 +50,8 @@ Completion 与历史/前驱渲染在事务外；cell、row+members、fulfilled �
 
 inspect/verify/export 为 read-only/no-create，保留分页、记录数与正文预算。导出只是当次 SQL 数据的 JSON 投影，
 不作为生产导入格式；`RecapGridStoreExportItem` 使用 `JsonUtf8Bytes/Json/FulfilledRowResultId`，CLI 使用
-`jsonBase64/fulfilledRowResultId`。cursor 使用当前 32 位结果 ID；旧 digest cursor 不是兼容输入。
+`jsonBase64/fulfilledRowResultId`。cursor wire 为 v2；旧 v1 一律拒绝，不把旧 64 位 descriptor digest 静默解释为 RowId。
+cell/row cursor 仍使用 32 位结果 ID，fulfilled cursor 使用确切 `ThroughRowId`。
 
 Getter selection 使用 `SelectedRowResultId/CurrentRowResultId`，CLI selection 输出 `rowResultId`。
 `PriorSourceAligned` 比较由 cell 源 Slot 推导的前驱 RowResult 与当前 row 前驱；它不承诺旧的正文等价。
@@ -59,7 +61,7 @@ Runtime telemetry 使用 Slot、既有身份的 `StoreInstanceId/StoreSchemaVers
 不保留旧 digest 字段名，也不新增 Runtime → Store 模块依赖。
 
 Store 从 SQL 物化 Abstractions 所使用的 Timeline 坐标，因此 RG0001 允许它构造
-`TimelineId/HistoryRowId/HistorySegmentDescriptorDigest` 三种不可变值；该例外不开放 Timeline 的读取、维护或写入 API。
+`TimelineId/HistoryRowId` 两种不可变值；该例外不开放 Timeline 的读取、维护或写入 API。
 
 ## 旧 schema 与最终 Reset
 
@@ -68,7 +70,7 @@ Store 从 SQL 物化 Abstractions 所使用的 Timeline 坐标，因此 RG0001 �
 physical witness、独占 lease、原子替换与 commit-indeterminate 合同；成功后更换 StoreInstanceId。
 旧 handle 不可认领新实例，陌生结果 ID 返回 Missing 即可。
 
-真实处置等全部计划重构完成后统一进行：先在旧 Store 可读时正常收敛所有仍支持执行分支的 pending promotion，
-再停服备份、Reset 与 LLM 重建。promotion 先查 Store proof 后查 receipt；仅保留 Control 文件不能保证未结束的
+真实处置等全部计划重构完成后统一进行：先在旧状态可读时正常收敛所有仍支持执行分支的 pending promotion 与 Recipes 非空 registration，
+再停服备份、在隔离副本升级所需 Timeline、Reset Store 与 LLM 重建。promotion 先查 Store proof 后查 receipt；仅保留 Control 文件不能保证未结束的
 promotion 可在空 Store 上重放。Journal/Prepared、Timeline/Cadence 和 Control 规则/回执全部保留。
 旧冻结请求使用已保存的 ContextSnapshot，恢复时不读取新旧 Recap；新请求才使用新建摘要。

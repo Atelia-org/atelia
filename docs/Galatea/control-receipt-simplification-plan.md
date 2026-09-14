@@ -1,5 +1,8 @@
 # Control 回执简化：设计与实施
 
+> 后继边界：本文保留 ResultIdentity 删除与 Control writer v3 的历史实现；当前 [Timeline 切片](timeline-row-identity-simplification-plan.md)实施 writer v4、旧 2/3 codec 投影和单一 bootstrap RowId。
+> Recipes 非空 registration 命令变化，最终真实切换前须收敛相关 pending；不能沿用本次历史切片“无需先收敛”的结论。
+
 > 状态：已实现并通过本地验证；代码提交 `0e9524d6`。未部署或改动真实会话数据。
 > 日期：2026-09-14；源码核对基线：`48a9ec92`，包含 E2E 修复 `351095b5`。
 > 承接[总设计 §6.2](identity-simplification-design.md#62-简化-control-操作回执)。用户后续已明确授权带领 subagents 实施、按需提交和维护文档；本轮不部署或操作真实实例。
