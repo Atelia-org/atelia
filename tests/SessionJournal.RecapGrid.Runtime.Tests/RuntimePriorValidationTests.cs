@@ -1,3 +1,4 @@
+using Atelia.SessionJournal.HistoryTimeline;
 using Atelia.SessionJournal.RecapGrid.Manager;
 using Xunit;
 
@@ -41,13 +42,33 @@ public sealed class RuntimePriorValidationTests {
         // expected predecessor changes, so member checks cannot explain rejection.
         RowViewCoordinate original = valid.Spec.Coordinate;
         var coordinate = new RowViewCoordinate(original.RefId, original.TimelineId,
-            original.HistoryRowId, original.HistorySegmentDigest, original.RecipeDigest,
+            original.HistoryRowId, original.RecipeDigest,
             original.TargetDigest, original.PreviousHistoryRowId,
             new RowResultId(Guid.NewGuid().ToString("N")), original.BootstrapCompleted);
         RowBuildSpec spec = RowBuildSpec.CreateNormal(valid.Recipe, coordinate,
             valid.Spec.OrderedAssignments);
         await AssertRejected(Copy(valid, valid.PreviousView, valid.PreviousCells, spec),
             "PriorSourceMismatch");
+    }
+
+    [Fact]
+    public async Task ActualHistorySegmentMustMatchIndependentSpecRowId() {
+        FrozenRowBatch valid = RuntimeTestFixture.BatchWithPrior();
+        RowViewCoordinate original = valid.Spec.Coordinate;
+        var expectedRow = new HistoryRowId(new string('f', 64));
+        var coordinate = new RowViewCoordinate(original.RefId, original.TimelineId,
+            expectedRow, original.RecipeDigest, original.TargetDigest,
+            original.PreviousHistoryRowId, original.PreviousRowResultId, original.BootstrapCompleted);
+        // Spec and missing work agree with each other. The actual opened history
+        // stays unchanged, so rejection must compare it with frozen expected RowId.
+        FrozenRecapCellWork[] work = valid.OrderedMissingWork.Select(item =>
+            new FrozenRecapCellWork(item.Ordinal,
+                new CellSlot(item.Slot.RecipeDigest, expectedRow, item.LogicalColumnId),
+                item.Definition, item.Family)).ToArray();
+        RowBuildSpec spec = RowBuildSpec.CreateNormal(valid.Recipe, coordinate,
+            work.Select(item => new RowBuildAssignment.Evaluate(item.Slot)));
+        await AssertRejected(Copy(valid, valid.PreviousView, valid.PreviousCells, spec, work),
+            "BatchAuthorityMismatch");
     }
 
     [Theory]

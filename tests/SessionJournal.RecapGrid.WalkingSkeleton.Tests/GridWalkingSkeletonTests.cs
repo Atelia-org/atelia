@@ -71,7 +71,7 @@ public sealed class GridWalkingSkeletonTests {
             new BuildTargetColumn(suspect.LogicalColumnId, suspect.Digest)]);
         var overlay = GridBuildRecipe.CreateOverlay(fixture.Recipe, RowId('2'), target,
             [suspect.LogicalColumnId]);
-        var coordinate = Coordinate(overlay, RowId('2'), HistoryDigest('2'),
+        var coordinate = Coordinate(overlay, RowId('2'),
             new RowResultId(new string('d', 32)));
         var historical = Cell(fixture.World, Slot(fixture.Recipe, RowId('2'), fixture.World), "Service passage.");
         var current = Cell(suspect, Slot(overlay, RowId('2'), suspect), "X knew the passage.");
@@ -101,7 +101,7 @@ public sealed class GridWalkingSkeletonTests {
 
     private static RowBuildSpec FullSpec(Fixture fixture, HistoryRowId row, RowResultId? previous)
         => RowBuildSpec.CreateFull(fixture.Recipe,
-            Coordinate(fixture.Recipe, row, new HistorySegmentDescriptorDigest(row.Value), previous),
+            Coordinate(fixture.Recipe, row, previous),
             [new RowBuildAssignment.Evaluate(Slot(fixture.Recipe, row, fixture.Culprit)),
              new RowBuildAssignment.Evaluate(Slot(fixture.Recipe, row, fixture.World))]);
 
@@ -184,22 +184,17 @@ public sealed class GridWalkingSkeletonTests {
         cells
     );
 
-    private static HistorySegmentDescriptorDigest HistoryDigest(char value)
-        => new(new string(value, 64));
-
     private static HistoryRowId RowId(char value)
         => new(new string(value, 64));
 
     private static RowViewCoordinate Coordinate(
         GridBuildRecipe recipe,
         HistoryRowId rowId,
-        HistorySegmentDescriptorDigest descriptor,
         RowResultId? previousView
     ) => new(
         new RefId(1),
         recipe.TimelineId,
         rowId,
-        descriptor,
         recipe.Digest,
         recipe.Target.Digest,
         previousView is null ? null : RowId('1'),

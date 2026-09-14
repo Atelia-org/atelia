@@ -41,8 +41,7 @@ public sealed partial class RecapGridManager {
             frozen.ControlSnapshot.Head,
             frozen.StoreIdentity,
             frozen.RequestedRecipe.Recipe.Digest,
-            frozen.Through.Descriptor.RowId,
-            frozen.Through.Descriptor.DescriptorDigest
+            frozen.Through.Descriptor.RowId
         );
         ProgressionAttempt discovery = DiscoverProgression(
             frozen,
@@ -192,7 +191,7 @@ public sealed partial class RecapGridManager {
             key = FulfilledViewKey.Create(
                 frozen.TimelineHead.RefId,
                 frozen.TimelineHead,
-                frozen.Through.Descriptor.DescriptorDigest,
+                frozen.Through.Descriptor.RowId,
                 frozen.RequestedRecipe.Recipe
             );
         }
@@ -249,7 +248,6 @@ public sealed partial class RecapGridManager {
                 frozen.StoreIdentity,
                 frozen.RequestedRecipe.Recipe.Digest,
                 frozen.Through.Descriptor.RowId,
-                frozen.Through.Descriptor.DescriptorDigest,
                 key,
                 requestedFinal.View.Id
             )

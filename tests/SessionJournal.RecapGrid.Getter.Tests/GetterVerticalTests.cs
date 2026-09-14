@@ -225,7 +225,7 @@ public sealed partial class GetterVerticalTests : IDisposable {
             RowBuildSpec spec = RowBuildSpec.CreateFull(
                 fixture.Recipe,
                 new RowViewCoordinate(fixture.Journal.BranchRefId, descriptor.TimelineId,
-                    descriptor.RowId, descriptor.DescriptorDigest, fixture.Recipe.Digest,
+                    descriptor.RowId, fixture.Recipe.Digest,
                     fixture.Recipe.Target.Digest, descriptor.PreviousRowId, previous?.Id,
                     bootstrapCompleted: true),
                 [new RowBuildAssignment.Evaluate(slot)]);
@@ -240,7 +240,7 @@ public sealed partial class GetterVerticalTests : IDisposable {
         FulfilledViewKey fulfilled = FulfilledViewKey.Create(
             fixture.Journal.BranchRefId,
             fixture.TimelineHead,
-            head.DescriptorDigest,
+            head.RowId,
             fixture.Recipe
         );
         Assert.IsType<RecapGridFulfilledPutResult.Inserted>(

@@ -3037,7 +3037,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         return FulfilledViewKey.Create(
             current.RefId,
             differentHead,
-            current.ThroughRowDescriptorDigest,
+            current.ThroughRowId,
             fixture.Recipe
         );
     }

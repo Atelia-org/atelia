@@ -220,7 +220,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
             currentKey = FulfilledViewKey.Create(
                 _refId,
                 timelineHead,
-                currentRow.Descriptor.DescriptorDigest,
+                currentRow.Descriptor.RowId,
                 recipe
             );
         }
@@ -375,9 +375,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
             return crossedHealth;
         }
         if (healthyReserveRow.Descriptor.RowId
-                != reserveRow.Descriptor.RowId
-            || healthyReserveRow.Descriptor.DescriptorDigest
-                != reserveRow.Descriptor.DescriptorDigest) {
+                != reserveRow.Descriptor.RowId) {
             return Invalid(
                 RecapGridContextComponent.Timeline,
                 "RecentReserveAnchorMismatch",
@@ -546,7 +544,6 @@ public sealed partial class RecapGridContextHandle : IDisposable,
     ) {
         if (view.TimelineId != descriptor.TimelineId
             || view.HistoryRowId != descriptor.RowId
-            || view.RowDescriptorDigest != descriptor.DescriptorDigest
             || view.RecipeDigest != recipe.Digest
             || view.TargetDigest != recipe.Target.Digest
             || (view.PreviousRowResultId is null)
@@ -674,9 +671,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
                 examined = checked(examined + 1);
                 if (examined == 1) {
                     if (row.Descriptor.RowId
-                            != currentRow.Descriptor.RowId
-                        || row.Descriptor.DescriptorDigest
-                            != currentRow.Descriptor.DescriptorDigest) {
+                            != currentRow.Descriptor.RowId) {
                         return Invalid(
                             RecapGridContextComponent.Timeline,
                             "RecentReservePathInvalid",
@@ -929,7 +924,7 @@ public sealed partial class RecapGridContextHandle : IDisposable,
         AppendText(currentKey.RefId.ToHexString());
         AppendText(currentKey.TimelineId.Value);
         AppendText(currentKey.TimelineHeadGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        AppendText(currentKey.ThroughRowDescriptorDigest.Value);
+        AppendText(currentKey.ThroughRowId.Value);
         AppendText(currentKey.RecipeDigest.Value);
         AppendText(currentRowResultId.Value);
         AppendBytes(selectedDescriptor.ToCanonicalBytes());

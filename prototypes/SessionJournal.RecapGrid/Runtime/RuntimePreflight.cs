@@ -52,9 +52,7 @@ public sealed partial class RecapCompletionRuntime {
                 "A recap completion batch must contain missing work."
             );
         }
-        if (batch.HistorySegment.Descriptor.DescriptorDigest
-                != batch.Spec.HistorySegmentDigest
-            || batch.HistorySegment.Descriptor.RowId
+        if (batch.HistorySegment.Descriptor.RowId
                 != batch.Spec.HistoryRowId
             || batch.HistorySegment.Descriptor.TimelineId
                 != batch.Spec.TimelineId

@@ -243,7 +243,7 @@ internal static class RuntimeTestFixture {
             new RowResultId(Guid.NewGuid().ToString("N")), first.Spec, cells);
         var currentRowId = new HistoryRowId(new string('9', 64));
         HistorySegmentDescriptor descriptor = Descriptor(first.Spec.TimelineId,
-            currentRowId, digestCharacter: 'a', previousRowId: first.Spec.HistoryRowId);
+            currentRowId, previousRowId: first.Spec.HistoryRowId);
         FrozenRecapCellWork[] work = [.. first.OrderedMissingWork.Select(item =>
             new FrozenRecapCellWork(item.Ordinal,
                 new CellSlot(first.Recipe.Digest, currentRowId, item.LogicalColumnId),
@@ -305,7 +305,6 @@ internal static class RuntimeTestFixture {
     private static HistorySegmentDescriptor Descriptor(
         TimelineId timelineId,
         HistoryRowId rowId,
-        char digestCharacter = '8',
         HistoryRowId? previousRowId = null
     ) {
         SessionContextAnchorSetupReferences setups = Setups();
@@ -324,10 +323,7 @@ internal static class RuntimeTestFixture {
             new HistoryLoadUnit(1),
             rawEventCount: 1,
             measuredRenderedUtf8Bytes: 1,
-            new string('7', 64),
-            new HistorySegmentDescriptorDigest(
-                new string(digestCharacter, 64)
-            )
+            new string('7', 64)
         );
     }
 
@@ -339,7 +335,6 @@ internal static class RuntimeTestFixture {
         descriptor.RefId,
         descriptor.TimelineId,
         descriptor.RowId,
-        descriptor.DescriptorDigest,
         recipe.Digest,
         recipe.Target.Digest,
         descriptor.PreviousRowId,

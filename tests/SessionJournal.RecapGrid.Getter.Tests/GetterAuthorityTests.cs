@@ -427,8 +427,7 @@ public sealed partial class GetterVerticalTests {
                 recipe,
                 new RegisteredRecipeBootstrap(
                     fixture.TimelineHead,
-                    bootstrap.RowId,
-                    bootstrap.DescriptorDigest
+                    bootstrap.RowId
                 )
             ))
             .WithActive(recipe.Digest);

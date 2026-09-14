@@ -708,7 +708,7 @@ public sealed partial class GetterVerticalTests {
                     fixture.Definition.LogicalColumnId);
                 RowBuildSpec spec = RowBuildSpec.CreateFull(fixture.Recipe,
                     new RowViewCoordinate(fixture.Journal.BranchRefId, row.Descriptor.TimelineId,
-                        row.Descriptor.RowId, row.Descriptor.DescriptorDigest, fixture.Recipe.Digest,
+                        row.Descriptor.RowId, fixture.Recipe.Digest,
                         fixture.Recipe.Target.Digest, row.Descriptor.PreviousRowId, previous.Id,
                         bootstrapCompleted: true),
                     [new RowBuildAssignment.Evaluate(slot)]);
@@ -722,7 +722,7 @@ public sealed partial class GetterVerticalTests {
             FulfilledViewKey fulfilled = FulfilledViewKey.Create(
                 fixture.Journal.BranchRefId,
                 siblingHead,
-                sibling.Descriptor.DescriptorDigest,
+                sibling.Descriptor.RowId,
                 fixture.Recipe
             );
             Assert.IsType<RecapGridFulfilledPutResult.Inserted>(

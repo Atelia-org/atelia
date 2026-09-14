@@ -828,7 +828,6 @@ public sealed class HostingTests {
                 descriptor.RefId,
                 timelineId,
                 rowId,
-                descriptor.DescriptorDigest,
                 recipe.Digest,
                 target.Digest,
                 previousHistoryRowId: null,
@@ -900,8 +899,7 @@ public sealed class HostingTests {
             new HistoryLoadUnit(1),
             rawEventCount: 1,
             measuredRenderedUtf8Bytes: 1,
-            new string('7', 64),
-            new HistorySegmentDescriptorDigest(new string('8', 64))
+            new string('7', 64)
         );
     }
 

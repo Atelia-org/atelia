@@ -119,7 +119,7 @@ public sealed partial class RecapGridManager {
             key = FulfilledViewKey.Create(
                 frozen.TimelineHead.RefId,
                 frozen.TimelineHead,
-                through.Descriptor.DescriptorDigest,
+                through.Descriptor.RowId,
                 frozen.RequestedRecipe.Recipe
             );
         }
@@ -241,7 +241,6 @@ public sealed partial class RecapGridManager {
                     frozen.StoreIdentity,
                     frozen.RequestedRecipe.Recipe.Digest,
                     through.Descriptor.RowId,
-                    through.Descriptor.DescriptorDigest,
                     key,
                     requestedFinal.View.Id
                 )
@@ -254,7 +253,6 @@ public sealed partial class RecapGridManager {
                 frozen.StoreIdentity,
                 frozen.RequestedRecipe.Recipe.Digest,
                 through.Descriptor.RowId,
-                through.Descriptor.DescriptorDigest,
                 key,
                 requestedFinal.View.Id
             )

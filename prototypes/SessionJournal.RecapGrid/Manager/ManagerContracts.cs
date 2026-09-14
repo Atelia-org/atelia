@@ -253,7 +253,6 @@ public sealed class RecapGridFulfillmentReceipt {
         RecapGridStoreIdentity storeIdentity,
         GridBuildRecipeDigest recipeDigest,
         HistoryRowId throughRowId,
-        HistorySegmentDescriptorDigest throughDescriptorDigest,
         FulfilledViewKey fulfilledKey,
         RowResultId rowResultId
     ) {
@@ -261,7 +260,6 @@ public sealed class RecapGridFulfillmentReceipt {
         StoreIdentity = storeIdentity;
         RecipeDigest = recipeDigest;
         ThroughRowId = throughRowId;
-        ThroughDescriptorDigest = throughDescriptorDigest;
         FulfilledKey = fulfilledKey;
         RowResultId = rowResultId;
     }
@@ -270,7 +268,6 @@ public sealed class RecapGridFulfillmentReceipt {
     public RecapGridStoreIdentity StoreIdentity { get; }
     public GridBuildRecipeDigest RecipeDigest { get; }
     public HistoryRowId ThroughRowId { get; }
-    public HistorySegmentDescriptorDigest ThroughDescriptorDigest { get; }
     public FulfilledViewKey FulfilledKey { get; }
     public RowResultId RowResultId { get; }
 }
@@ -282,7 +279,6 @@ public sealed class RecapGridPromotableProof {
         RecapGridStoreIdentity storeIdentity,
         GridBuildRecipeDigest recipeDigest,
         HistoryRowId throughRowId,
-        HistorySegmentDescriptorDigest throughDescriptorDigest,
         FulfilledViewKey fulfilledKey,
         RowResultId rowResultId
     ) {
@@ -291,7 +287,6 @@ public sealed class RecapGridPromotableProof {
         StoreIdentity = storeIdentity;
         RecipeDigest = recipeDigest;
         ThroughRowId = throughRowId;
-        ThroughDescriptorDigest = throughDescriptorDigest;
         FulfilledKey = fulfilledKey;
         RowResultId = rowResultId;
     }
@@ -301,7 +296,6 @@ public sealed class RecapGridPromotableProof {
     public RecapGridStoreIdentity StoreIdentity { get; }
     public GridBuildRecipeDigest RecipeDigest { get; }
     public HistoryRowId ThroughRowId { get; }
-    public HistorySegmentDescriptorDigest ThroughDescriptorDigest { get; }
     public FulfilledViewKey FulfilledKey { get; }
     public RowResultId RowResultId { get; }
 }
@@ -448,15 +442,13 @@ public sealed record RecapGridBuildProgressAuthority {
         ControlHeadRef controlHead,
         RecapGridStoreIdentity storeIdentity,
         GridBuildRecipeDigest recipeDigest,
-        HistoryRowId throughRowId,
-        HistorySegmentDescriptorDigest throughDescriptorDigest
+        HistoryRowId throughRowId
     ) {
         TimelineHead = timelineHead;
         ControlHead = controlHead;
         StoreIdentity = storeIdentity;
         RecipeDigest = recipeDigest;
         ThroughRowId = throughRowId;
-        ThroughDescriptorDigest = throughDescriptorDigest;
     }
 
     public TimelineHeadRef TimelineHead { get; }
@@ -464,7 +456,6 @@ public sealed record RecapGridBuildProgressAuthority {
     public RecapGridStoreIdentity StoreIdentity { get; }
     public GridBuildRecipeDigest RecipeDigest { get; }
     public HistoryRowId ThroughRowId { get; }
-    public HistorySegmentDescriptorDigest ThroughDescriptorDigest { get; }
 }
 
 public sealed record RecapGridMissingAssignmentProgress {

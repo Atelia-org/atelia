@@ -318,23 +318,20 @@ public sealed partial class RecapGridManager {
                 if (selectedError is not null) {
                     return (null, selectedError);
                 }
-                if (child.Bootstrap.RowId != bootstrap
-                    || child.Bootstrap.DescriptorDigest is null) {
+                if (child.Bootstrap.RowId != bootstrap) {
                     return (null, Invalid(
                         "RecipeBootstrapNotSelected",
                         "A frozen recipe bootstrap is not on the selected path."
                     ));
                 }
-                if (selected!.Descriptor.DescriptorDigest
-                    != child.Bootstrap.DescriptorDigest) {
+                if (selected!.Descriptor.RowId != child.Bootstrap.RowId) {
                     return (null, Invalid(
-                        "RecipeBootstrapDescriptorMismatch",
-                        "The selected bootstrap descriptor differs from Control evidence."
+                        "RecipeBootstrapRowMismatch",
+                        "The selected bootstrap row differs from Control evidence."
                     ));
                 }
             }
-            else if (child.Bootstrap.RowId is null
-                     && child.Bootstrap.DescriptorDigest is null) {
+            else if (child.Bootstrap.RowId is null) {
             }
             else {
                 return (null, Invalid(

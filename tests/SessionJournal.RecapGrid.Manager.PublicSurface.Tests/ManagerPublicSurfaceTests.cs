@@ -74,9 +74,7 @@ public sealed class ManagerPublicSurfaceTests {
                 ("ControlHead", typeof(ControlHeadRef)),
                 ("StoreIdentity", typeof(RecapGridStoreIdentity)),
                 ("RecipeDigest", typeof(GridBuildRecipeDigest)),
-                ("ThroughRowId", typeof(HistoryRowId)),
-                ("ThroughDescriptorDigest", typeof(
-                    HistorySegmentDescriptorDigest))
+                ("ThroughRowId", typeof(HistoryRowId))
             ]
         );
         AssertProgressRecordShape(

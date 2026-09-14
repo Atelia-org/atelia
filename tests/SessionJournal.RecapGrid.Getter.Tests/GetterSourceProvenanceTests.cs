@@ -39,7 +39,7 @@ public sealed partial class GetterVerticalTests {
             Assert.NotEqual(baseRows[last.RowId].OrderedCells[1].CellId, active.OrderedCells[1].CellId);
             Assert.IsType<RecapGridFulfilledPutResult.Inserted>(store.Writer.PutFulfilled(
                 FulfilledViewKey.Create(fixture.Journal.BranchRefId, fixture.TimelineHead,
-                    last.DescriptorDigest, overlay), active.Id));
+                    last.RowId, overlay), active.Id));
         }
 
         if (missingSource) {
@@ -82,7 +82,7 @@ public sealed partial class GetterVerticalTests {
                     : new RowBuildAssignment.Evaluate(new CellSlot(recipe.Digest, descriptor.RowId,
                         definition.LogicalColumnId))).ToArray();
             var coordinate = new RowViewCoordinate(fixture.Journal.BranchRefId, descriptor.TimelineId,
-                descriptor.RowId, descriptor.DescriptorDigest, recipe.Digest, recipe.Target.Digest,
+                descriptor.RowId, recipe.Digest, recipe.Target.Digest,
                 descriptor.PreviousRowId, previous?.Id,
                 bootstrapCompleted: baseRows is null || recipe.BootstrapThroughRowId == descriptor.RowId);
             RowBuildSpec spec = baseRows is null

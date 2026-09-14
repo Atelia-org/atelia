@@ -123,8 +123,6 @@ public sealed class RecapGridContextSelection {
     public RecapGridStoreIdentity StoreIdentity { get; }
     public GridBuildRecipe Recipe { get; }
     public HistoryRowId SelectedRowId => SelectedRow.Descriptor.RowId;
-    public HistorySegmentDescriptorDigest SelectedDescriptorDigest =>
-        SelectedRow.Descriptor.DescriptorDigest;
     public RowResultId SelectedRowResultId => SelectedView.Id;
     public FulfilledViewKey CurrentFulfilledKey { get; }
     public RowResultId CurrentRowResultId { get; }

@@ -63,7 +63,6 @@ public sealed partial class RecapGridManager {
                 descriptor.RefId,
                 descriptor.TimelineId,
                 descriptor.RowId,
-                descriptor.DescriptorDigest,
                 plan.Recipe.Digest,
                 plan.Recipe.Target.Digest,
                 descriptor.PreviousRowId,

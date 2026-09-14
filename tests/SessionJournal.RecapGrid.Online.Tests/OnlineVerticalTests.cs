@@ -1066,7 +1066,7 @@ public sealed class OnlineVerticalTests : IDisposable {
             key = FulfilledViewKey.Create(
                 fixture.Writer.BranchRefId,
                 timelineBefore,
-                row.Descriptor.DescriptorDigest,
+                row.Descriptor.RowId,
                 fixture.Recipe);
             RemoveFulfillmentForTest(path);
             using RecapGridStoreReaderHandle missingReader = Assert.IsType<

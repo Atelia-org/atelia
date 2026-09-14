@@ -32,7 +32,7 @@ public sealed class ManagerProgressRecordContractTests {
         Assert.Equal(
             "RecapGridBuildProgressAuthority { TimelineHead = , "
                 + "ControlHead = , StoreIdentity = , RecipeDigest = , "
-                + "ThroughRowId = , ThroughDescriptorDigest =  }",
+                + "ThroughRowId =  }",
             first.ToString()
         );
     }

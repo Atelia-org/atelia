@@ -256,7 +256,6 @@ public sealed partial class RecapGridManager {
         if (view.RefId != descriptor.RefId
             || view.TimelineId != descriptor.TimelineId
             || view.HistoryRowId != descriptor.RowId
-            || view.RowDescriptorDigest != descriptor.DescriptorDigest
             || view.RecipeDigest != plan.Recipe.Digest
             || view.TargetDigest != plan.Recipe.Target.Digest
             || view.PreviousHistoryRowId != descriptor.PreviousRowId
