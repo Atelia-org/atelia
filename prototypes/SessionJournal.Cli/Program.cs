@@ -11,7 +11,7 @@ internal static class Program {
         "gitignore/session-journal/llm-smoke-calls";
 
     public static int Main(string[] args)
-        => MainCore(args, new DefaultCompletionClientFactory());
+        => MainCore(args, new CliCompletionClientFactory());
 
     internal static int MainCore(
         string[] args,

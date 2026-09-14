@@ -168,14 +168,14 @@ public sealed class PublicSurfaceTests {
     }
 
     [Fact]
-    public void BorrowingFactoryExposesOptionalAgentControlComposition() {
-        Type[][] signatures = typeof(RecapGridCompletionHost).GetMethods()
+    public void BorrowingFactoryExposesOptionalAgentControlAndLiveTelemetryComposition() {
+        var factories = typeof(RecapGridCompletionHost).GetMethods()
             .Where(static method => string.Equals(
                 method.Name,
                 nameof(RecapGridCompletionHost.CreateBorrowingRegistry),
                 StringComparison.Ordinal
-            ))
-            .Select(static method => method.GetParameters()
+            )).ToArray();
+        Type[][] signatures = factories.Select(static method => method.GetParameters()
                 .Select(static parameter => parameter.ParameterType)
                 .ToArray())
             .ToArray();
@@ -185,15 +185,23 @@ public sealed class PublicSurfaceTests {
             typeof(Func<RecapGridRouteManifest>),
             typeof(CompletionConnectionRegistry),
             typeof(RecapCompletionRuntimeOptions),
-            typeof(int)
+            typeof(int),
+            typeof(IRecapCompletionTelemetry)
         ]));
         Assert.Contains(signatures, static signature => signature.SequenceEqual([
             typeof(Func<RecapGridRouteManifest>),
             typeof(CompletionConnectionRegistry),
             typeof(RecapGridAgentControlProfileRegistry),
             typeof(RecapCompletionRuntimeOptions),
-            typeof(int)
+            typeof(int),
+            typeof(IRecapCompletionTelemetry)
         ]));
+        Assert.All(factories, static method => {
+            var liveTelemetry = method.GetParameters()[^1];
+            Assert.Equal("liveTelemetry", liveTelemetry.Name);
+            Assert.True(liveTelemetry.IsOptional);
+            Assert.Null(liveTelemetry.DefaultValue);
+        });
     }
 
     [Fact]

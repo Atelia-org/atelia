@@ -18,9 +18,10 @@ public sealed partial class RecapGridManager {
     private async ValueTask<RecapGridBuildResult> RunWavefrontAsync(
         RecapGridBuildRequest request,
         IRecapCellBatchExecutor executor,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        Action<RecapGridRowCommitProgress>? rowCommitted
     ) {
-        var state = new BuildState(request.Budget, _timeProvider);
+        var state = new BuildState(request.Budget, _timeProvider, rowCommitted);
         RecapGridBuildResult result = await RunWavefrontCoreAsync(
             request,
             executor,

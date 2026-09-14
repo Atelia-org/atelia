@@ -144,12 +144,7 @@ internal static partial class RecapGridCommands {
         object? detail = null,
         int exitCode = 0
     ) {
-        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(new {
-            schema = ReportSchema,
-            command,
-            status,
-            detail
-        });
+        byte[] bytes = SerializeReport(command, status, detail);
         if (bytes.Length > MaximumReportUtf8Bytes) {
             bytes = JsonSerializer.SerializeToUtf8Bytes(new {
                 schema = ReportSchema,
@@ -162,6 +157,14 @@ internal static partial class RecapGridCommands {
         Console.WriteLine(Encoding.UTF8.GetString(bytes));
         return exitCode;
     }
+
+    private static byte[] SerializeReport(string command, string status, object? detail)
+        => JsonSerializer.SerializeToUtf8Bytes(new {
+            schema = ReportSchema,
+            command,
+            status,
+            detail
+        });
 
     private static SessionJournalEngine OpenBranch(CliOptions options) {
         string repository = options.RequireSingle("input");

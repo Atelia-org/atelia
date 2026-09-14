@@ -105,12 +105,12 @@ internal static partial class RecapGridCommands {
         RequireConfirmedRef(options, engine.BranchRefId);
         RecapGridBuildRequest request = ReadBuildRequest(options);
         RecapGridRouteManifest manifest = RecapGridRouteManifest
-            .DecodeCanonical(ReadBoundedFile(
+            .ParseJson(ReadBoundedFile(
                 options.RequireSingle("routes"),
                 RecapGridRouteManifestLimits.MaximumCanonicalUtf8Bytes
             ));
-        CompletionConnectionsFileConfig connections =
-            CompletionConnectionConfigLoader.Decode(ReadBoundedFile(
+        CompletionConnectionCatalogConfig connections =
+            CompletionConnectionConfigLoader.DecodeCatalog(ReadBoundedFile(
                 options.RequireSingle("connections"),
                 CompletionConnectionConfigLoader.MaximumInputUtf8Bytes
             ));
@@ -131,16 +131,21 @@ internal static partial class RecapGridCommands {
             );
         }
         using (manager.Handle) {
-            await using RecapGridRuntimeHost host = RecapGridRuntimeHost.Create(
-                manifest,
-                connections,
-                buildClientFactory
-            );
+            await using var progress = new RecapGridBuildProgressWriter(Console.Error);
+            await using var registry = new CompletionConnectionRegistry(
+                CompletionConnectionConfigLoader.NormalizeAndValidateCatalog(connections),
+                buildClientFactory);
+            await using RecapGridCompletionHost host = RecapGridCompletionHost.CreateBorrowingRegistry(
+                () => manifest,
+                registry,
+                liveTelemetry: progress);
             RecapGridBuildResult result = await manager.Handle.Manager
                 .BuildAsync(
                     request,
-                    host.Executor
+                    host.Executor,
+                    rowCommitted: progress.RecordRowCommitted
                 ).ConfigureAwait(false);
+            await progress.FinishAsync(result).ConfigureAwait(false);
             return PrintBuildResult(
                 "build",
                 result,
@@ -323,13 +328,12 @@ internal static partial class RecapGridCommands {
     private static object DescribeManagerOpen(RecapGridManagerOpenResult result)
         => result;
 
-    private static int PrintBuildResult(
+    internal static int PrintBuildResult(
         string command,
         RecapGridBuildResult result,
         RecapCompletionTelemetrySnapshot? evidence = null
-    ) => Print(
-        command,
-        result switch {
+    ) {
+        string status = result switch {
             RecapGridBuildResult.Fulfilled => "fulfilled",
             RecapGridBuildResult.FulfilledThrough => "fulfilled-through",
             RecapGridBuildResult.NoRows => "no-rows",
@@ -350,13 +354,25 @@ internal static partial class RecapGridCommands {
             RecapGridBuildResult.Disposed => "disposed",
             RecapGridBuildResult.Invalid => "invalid",
             _ => "invalid-outcome"
-        },
-        evidence is null ? result : new { result, evidence },
-        result is RecapGridBuildResult.Fulfilled
+        };
+        int exitCode = result is RecapGridBuildResult.Fulfilled
             or RecapGridBuildResult.FulfilledThrough
             or RecapGridBuildResult.NoRows
-            ? 0 : 2
-    );
+            ? 0 : 2;
+        object detail = evidence is null ? result : new { result = (object)result, evidence };
+        if (evidence is not null
+            && SerializeReport(command, status, detail).Length > MaximumReportUtf8Bytes) {
+            // Operational evidence may expand during JSON escaping. Keep the
+            // business outcome and make the omitted evidence explicit.
+            detail = new {
+                result = (object)result,
+                evidenceOmitted = true,
+                evidenceOmittedEventCount = evidence.Events.Count,
+                evidenceDroppedEventCount = evidence.DroppedEventCount
+            };
+        }
+        return Print(command, status, detail, exitCode);
+    }
 
     private static string ProgressStatus(RecapGridBuildProgressResult result)
         => result switch {

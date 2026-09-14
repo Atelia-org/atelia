@@ -281,7 +281,11 @@ public sealed class RuntimeRenderingAndSchedulingTests {
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             throw new InvalidOperationException("unreachable");
         });
-        using var runtime = Runtime(RuntimeTestFixture.Route(batch, invoker));
+        var telemetry = new CapturingTelemetry();
+        using var runtime = new RecapCompletionRuntime(
+            new ScriptedResolver(_ => new RecapCompletionRouteResolution.Bound(
+                RuntimeTestFixture.Route(batch, invoker))),
+            telemetry: telemetry);
         using var cancellation = new CancellationTokenSource();
 
         Task<RecapCellBatchExecutionResult> execution = runtime
@@ -297,6 +301,10 @@ public sealed class RuntimeRenderingAndSchedulingTests {
         Assert.All(completed.OrderedOutcomes.Skip(1), static outcome =>
             Assert.IsType<RecapCellExecutionOutcome.NotStartedDueToCallerCancellation>(outcome));
         AssertCallCountEquivalent(invoker, completed);
+        Assert.Equal(["completion-started", "completion-settled"],
+            telemetry.Events.Select(static value => value.Kind));
+        Assert.All(telemetry.Events, value =>
+            Assert.Equal(batch.OrderedMissingWork[0].Slot, value.Slot));
     }
 
     [Fact]
@@ -579,7 +587,15 @@ public sealed class RuntimeRenderingAndSchedulingTests {
 
         _ = await runtime.ExecuteAsync(batch, default);
 
-        RecapCompletionTelemetryEvent[] events = telemetry.Events.ToArray();
+        RecapCompletionTelemetryEvent[] allEvents = telemetry.Events.ToArray();
+        Assert.Equal(4, allEvents.Length);
+        foreach (FrozenRecapCellWork work in batch.OrderedMissingWork) {
+            Assert.Equal(["completion-started", "completion-settled"],
+                allEvents.Where(value => value.Slot == work.Slot)
+                    .Select(static value => value.Kind));
+        }
+        RecapCompletionTelemetryEvent[] events = allEvents
+            .Where(static value => value.Kind == "completion-settled").ToArray();
         Assert.Equal(2, events.Length);
         Assert.Equal(
             [RecapCompletionWorkRole.Leader, RecapCompletionWorkRole.Follower],
@@ -610,6 +626,105 @@ public sealed class RuntimeRenderingAndSchedulingTests {
             Assert.True(value.AdmissionWait >= TimeSpan.Zero);
             Assert.True(value.LaneWait >= TimeSpan.Zero);
         }
+    }
+
+    [Fact]
+    public async Task Telemetry_StartIsObservableWhileInvokerIsStillRunning() {
+        FrozenRowBatch batch = RuntimeTestFixture.Batch();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var telemetry = new CapturingTelemetry();
+        ScriptedInvoker? invoker = null;
+        invoker = new ScriptedInvoker(async (request, _) => {
+            Assert.Equal("completion-started", Assert.Single(telemetry.Events).Kind);
+            entered.TrySetResult();
+            await release.Task;
+            return RuntimeTestFixture.Updated(request, invoker!);
+        });
+        using var runtime = new RecapCompletionRuntime(
+            new ScriptedResolver(_ => new RecapCompletionRouteResolution.Bound(
+                RuntimeTestFixture.Route(batch, invoker))),
+            telemetry: telemetry);
+
+        Task<RecapCellBatchExecutionResult> execution = runtime.ExecuteAsync(batch, default).AsTask();
+        try {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(execution.IsCompleted);
+            RecapCompletionTelemetryEvent start = Assert.Single(telemetry.Events);
+            Assert.Equal("completion-started", start.Kind);
+            Assert.False(start.ResultReceived);
+            Assert.Null(start.Termination);
+            Assert.Null(start.Usage);
+            Assert.Null(start.Code);
+            Assert.Null(start.Detail);
+        }
+        finally {
+            release.TrySetResult();
+        }
+        var completed = Assert.IsType<RecapCellBatchExecutionResult.Completed>(await execution);
+        Assert.IsType<RecapCellExecutionOutcome.Updated>(Assert.Single(completed.OrderedOutcomes));
+        Assert.Equal(["completion-started", "completion-settled"],
+            telemetry.Events.Select(static value => value.Kind));
+    }
+
+    [Fact]
+    public async Task Telemetry_LaneCancellationDoesNotReportAnInvocationStart() {
+        FrozenRowBatch batch = RuntimeTestFixture.Batch();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var telemetry = new CapturingTelemetry();
+        ScriptedInvoker? invoker = null;
+        invoker = new ScriptedInvoker(async (request, _) => {
+            entered.TrySetResult();
+            await release.Task;
+            return RuntimeTestFixture.Updated(request, invoker!);
+        });
+        RecapCompletionRoute route = RuntimeTestFixture.Route(batch, invoker, maximumConcurrency: 1);
+        using var runtime = new RecapCompletionRuntime(
+            new ScriptedResolver(_ => new RecapCompletionRouteResolution.Bound(route)),
+            telemetry: telemetry);
+        Task<RecapCellBatchExecutionResult> first = runtime.ExecuteAsync(batch, default).AsTask();
+        try {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            using var cancellation = new CancellationTokenSource();
+            Task<RecapCellBatchExecutionResult> second = runtime.ExecuteAsync(batch, cancellation.Token).AsTask();
+            Assert.False(second.IsCompleted);
+            cancellation.Cancel();
+            var cancelled = Assert.IsType<RecapCellBatchExecutionResult.Completed>(await second);
+            Assert.IsType<RecapCellExecutionOutcome.NotStartedDueToCallerCancellation>(
+                Assert.Single(cancelled.OrderedOutcomes));
+            Assert.Equal(1, invoker.CallCount);
+            Assert.Equal(["completion-started", "completion-settled"],
+                telemetry.Events.Select(static value => value.Kind));
+            Assert.Equal("caller-cancelled-before-dispatch", telemetry.Events.Last().ProviderOutcome);
+            Assert.False(telemetry.Events.Last().ResultReceived);
+        }
+        finally {
+            release.TrySetResult();
+            await first;
+        }
+        Assert.Equal(1, telemetry.Events.Count(static value => value.Kind == "completion-started"));
+        Assert.Equal(2, telemetry.Events.Count(static value => value.Kind == "completion-settled"));
+    }
+
+    [Fact]
+    public async Task Telemetry_NonfatalObserverFailureDoesNotChangeCompletion() {
+        FrozenRowBatch batch = RuntimeTestFixture.Batch();
+        ScriptedInvoker? invoker = null;
+        invoker = new ScriptedInvoker((request, _) =>
+            ValueTask.FromResult(RuntimeTestFixture.Updated(request, invoker!)));
+        var telemetry = new CallbackTelemetry(() => throw new IOException("observer failed"));
+        using var runtime = new RecapCompletionRuntime(
+            new ScriptedResolver(_ => new RecapCompletionRouteResolution.Bound(
+                RuntimeTestFixture.Route(batch, invoker))),
+            telemetry: telemetry);
+
+        var completed = Assert.IsType<RecapCellBatchExecutionResult.Completed>(
+            await runtime.ExecuteAsync(batch, default));
+
+        Assert.IsType<RecapCellExecutionOutcome.Updated>(Assert.Single(completed.OrderedOutcomes));
+        Assert.Equal(1, invoker.CallCount);
+        Assert.Equal(2, telemetry.Count);
     }
 
     [Fact]
@@ -714,7 +829,7 @@ public sealed class RuntimeRenderingAndSchedulingTests {
         Assert.IsType<RecapCellExecutionOutcome.Updated>(
             Assert.Single(completed.OrderedOutcomes)
         );
-        Assert.Equal(1, telemetry.Count);
+        Assert.Equal(2, telemetry.Count);
         Assert.Equal(1, invoker.DisposeCount);
     }
 

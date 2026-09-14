@@ -237,7 +237,7 @@ public sealed class RecapGridRuntimeHost : IDisposable, IAsyncDisposable {
             var runtime = new RecapCompletionRuntime(
                 resolver,
                 runtimeOptions,
-                telemetry
+                new LiveRecapCompletionTelemetry(telemetry, null)
             );
             return new RecapGridRuntimeHost(registry, runtime, telemetry);
         }
@@ -318,7 +318,7 @@ public sealed class RecapGridRuntimeHost : IDisposable, IAsyncDisposable {
                     and not AccessViolationException) {
                 return new RecapCompletionRouteResolution.Invalid(
                     "RouteClientConstructionFailed",
-                    exception.GetType().Name
+                    RecapGridHostingDiagnostics.DescribeException(exception)
                 );
             }
         }
@@ -343,7 +343,7 @@ public abstract record RecapGridAgentConnectionResult {
 /// Candidate-host completion boundary. One strict connection registry serves
 /// both the main agent and lazy RecapGrid routes. A host created with
 /// <see cref="Create"/> owns that registry; a host created with
-/// <see cref="CreateBorrowingRegistry(Func{RecapGridRouteManifest},CompletionConnectionRegistry,RecapCompletionRuntimeOptions,int)"/>
+/// <see cref="CreateBorrowingRegistry(Func{RecapGridRouteManifest},CompletionConnectionRegistry,RecapCompletionRuntimeOptions,int,IRecapCompletionTelemetry)"/>
 /// borrows it. Runtime disposal always drains before an owned registry releases
 /// its distinct clients.
 /// </summary>
@@ -424,14 +424,16 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         Func<RecapGridRouteManifest> routeManifestLoader,
         CompletionConnectionRegistry registry,
         RecapCompletionRuntimeOptions? runtimeOptions = null,
-        int maximumTelemetryEvents = 1_024
+        int maximumTelemetryEvents = 1_024,
+        IRecapCompletionTelemetry? liveTelemetry = null
     ) => CreateWithRegistry(
         routeManifestLoader,
         registry,
         agentControl: null,
         runtimeOptions,
         maximumTelemetryEvents,
-        ownsRegistry: false
+        ownsRegistry: false,
+        liveTelemetry: liveTelemetry
     );
 
     /// <summary>
@@ -448,7 +450,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         CompletionConnectionRegistry registry,
         RecapGridAgentControlProfileRegistry agentControl,
         RecapCompletionRuntimeOptions? runtimeOptions = null,
-        int maximumTelemetryEvents = 1_024
+        int maximumTelemetryEvents = 1_024,
+        IRecapCompletionTelemetry? liveTelemetry = null
     ) {
         ArgumentNullException.ThrowIfNull(agentControl);
         return CreateWithRegistry(
@@ -457,7 +460,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             agentControl,
             runtimeOptions,
             maximumTelemetryEvents,
-            ownsRegistry: false
+            ownsRegistry: false,
+            liveTelemetry: liveTelemetry
         );
     }
 
@@ -497,7 +501,8 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
         RecapGridAgentControlProfileRegistry? agentControl,
         RecapCompletionRuntimeOptions? runtimeOptions,
         int maximumTelemetryEvents,
-        bool ownsRegistry
+        bool ownsRegistry,
+        IRecapCompletionTelemetry? liveTelemetry = null
     ) {
         ArgumentNullException.ThrowIfNull(routeManifestLoader);
         ArgumentNullException.ThrowIfNull(registry);
@@ -507,7 +512,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             routeManifestLoader,
             registry);
         var runtime = new RecapCompletionRuntime(
-            resolver, runtimeOptions, telemetry);
+            resolver, runtimeOptions, new LiveRecapCompletionTelemetry(telemetry, liveTelemetry));
         return new RecapGridCompletionHost(
             registry,
             resolver,
@@ -705,7 +710,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             catch (Exception exception) when (IsNonFatal(exception)) {
                 return new RecapCompletionRouteResolution.Invalid(
                     "RouteClientConstructionFailed",
-                    exception.GetType().Name);
+                    RecapGridHostingDiagnostics.DescribeException(exception));
             }
         }
 
@@ -727,7 +732,7 @@ public sealed class RecapGridCompletionHost : IDisposable, IAsyncDisposable {
             }
             catch (Exception exception) when (IsNonFatal(exception)) {
                 return new RecapGridConfiguredRouteInspectionResult.Invalid(
-                    "RouteManifestLoadFailed", exception.GetType().Name);
+                    "RouteManifestLoadFailed", RecapGridHostingDiagnostics.DescribeException(exception));
             }
             if (!routes.TryGetValue(key, out route)) {
                 return new RecapGridConfiguredRouteInspectionResult

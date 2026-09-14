@@ -5,6 +5,14 @@ using Atelia.SessionJournal.RecapGrid.Store;
 
 namespace Atelia.SessionJournal.RecapGrid.Manager;
 
+/// <summary>A stored row winner confirmed after validating its requested assignment.</summary>
+public sealed record RecapGridRowCommitProgress(
+    GridBuildRecipeDigest RecipeDigest,
+    HistoryRowId RowId,
+    RowResultId RowResultId,
+    bool AlreadyPresent
+);
+
 public abstract record RecapGridBuildSelection {
     private RecapGridBuildSelection() { }
 

@@ -7,11 +7,11 @@ internal static class GalateaCodexSubscriptionComposition {
     internal const string ConnectionKind =
         CodexSubscriptionCompletionClientFactory.ConnectionKind;
     internal const string AccountFingerprintEnvironmentVariable =
-        "ATELIA_CODEX_SUBSCRIPTION_ACCOUNT_FINGERPRINT";
+        CodexSubscriptionCompletionClientFactory.AccountFingerprintEnvironmentVariable;
     internal const string OriginatorEnvironmentVariable =
-        "ATELIA_CODEX_SUBSCRIPTION_ORIGINATOR";
+        CodexSubscriptionCompletionClientFactory.OriginatorEnvironmentVariable;
     internal const string AuthFileEnvironmentVariable =
-        "ATELIA_CODEX_SUBSCRIPTION_AUTH_FILE";
+        CodexSubscriptionCompletionClientFactory.AuthFileEnvironmentVariable;
 
     private const string DefaultOriginator = "galatea";
 
@@ -28,49 +28,8 @@ internal static class GalateaCodexSubscriptionComposition {
         var fallback = new DefaultCompletionClientFactory();
         if (!ContainsCodexConnection(config)) { return fallback; }
 
-        string expectedAccountFingerprint = RequireEnvironmentValue(
-            readEnvironmentVariable,
-            AccountFingerprintEnvironmentVariable
-        );
-        string? configuredOriginator = readEnvironmentVariable(
-            OriginatorEnvironmentVariable
-        );
-        string originator = configuredOriginator is null
-            ? DefaultOriginator
-            : RequireNonBlankEnvironmentValue(
-                configuredOriginator,
-                OriginatorEnvironmentVariable
-            );
-        string? configuredAuthFile = readEnvironmentVariable(
-            AuthFileEnvironmentVariable
-        );
-        ICodexSubscriptionCredentialProvider credentialProvider;
-        if (configuredAuthFile is null) {
-            credentialProvider = new CodexCliAuthFileCredentialProvider();
-        }
-        else {
-            string authFile = RequireNonBlankEnvironmentValue(
-                configuredAuthFile,
-                AuthFileEnvironmentVariable
-            );
-            if (!Path.IsPathFullyQualified(authFile)) {
-                throw new InvalidOperationException(
-                    $"{AuthFileEnvironmentVariable} must contain an "
-                    + "absolute path when configured."
-                );
-            }
-            credentialProvider = new CodexCliAuthFileCredentialProvider(
-                authFile
-            );
-        }
-
-        return new CodexSubscriptionCompletionClientFactory(
-            credentialProvider,
-            expectedAccountFingerprint,
-            originator,
-            fallback,
-            productName: "Atelia.Galatea"
-        );
+        return CodexSubscriptionCompletionClientFactory.CreateFromEnvironment(
+            fallback, DefaultOriginator, "Atelia.Galatea", readEnvironmentVariable);
     }
 
     internal static void ConfigureWebHost(
@@ -90,24 +49,4 @@ internal static class GalateaCodexSubscriptionComposition {
             StringComparison.Ordinal
         ));
 
-    private static string RequireEnvironmentValue(
-        Func<string, string?> readEnvironmentVariable,
-        string name
-    ) => RequireNonBlankEnvironmentValue(
-        readEnvironmentVariable(name),
-        name
-    );
-
-    private static string RequireNonBlankEnvironmentValue(
-        string? value,
-        string name
-    ) {
-        if (string.IsNullOrWhiteSpace(value)) {
-            throw new InvalidOperationException(
-                $"{name} is required and must not be blank when Galatea "
-                + "uses an openai-codex-responses connection."
-            );
-        }
-        return value;
-    }
 }

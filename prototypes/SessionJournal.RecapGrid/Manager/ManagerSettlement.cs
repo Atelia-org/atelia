@@ -71,9 +71,11 @@ public sealed partial class RecapGridManager {
             default:
                 return (null, Invalid("RowViewPutOutcomeInvalid", "The Store returned an unknown RowView put outcome."));
         }
-        return MatchesRow(winner, spec, cells)
-            ? (winner, null)
-            : (null, Invalid("RowViewSettlementMismatch", "The stored RowView differs from the requested business assignment."));
+        if (!MatchesRow(winner, spec, cells)) {
+            return (null, Invalid("RowViewSettlementMismatch", "The stored RowView differs from the requested business assignment."));
+        }
+        state.RecordRowCommitted(winner, put is RecapGridRowViewPutResult.AlreadyPresent);
+        return (winner, null);
     }
 
     private static bool MatchesRow(RecapRowView row, RowBuildSpec spec,

@@ -31,7 +31,8 @@ public sealed partial class RecapGridManager {
     public async ValueTask<RecapGridBuildResult> BuildAsync(
         RecapGridBuildRequest request,
         IRecapCellBatchExecutor executor,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        Action<RecapGridRowCommitProgress>? rowCommitted = null
     ) {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(executor);
@@ -42,13 +43,15 @@ public sealed partial class RecapGridManager {
         return await BuildCoreAsync(
             request,
             executor,
-            cancellationToken
+            cancellationToken,
+            rowCommitted
         ).ConfigureAwait(false);
     }
 
     private ValueTask<RecapGridBuildResult> BuildCoreAsync(
         RecapGridBuildRequest request,
         IRecapCellBatchExecutor executor,
-        CancellationToken cancellationToken
-    ) => RunWavefrontAsync(request, executor, cancellationToken);
+        CancellationToken cancellationToken,
+        Action<RecapGridRowCommitProgress>? rowCommitted
+    ) => RunWavefrontAsync(request, executor, cancellationToken, rowCommitted);
 }

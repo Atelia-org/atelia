@@ -8,7 +8,8 @@ namespace Atelia.SessionJournal.RecapGrid.Manager;
 public sealed partial class RecapGridManager {
     private sealed class BuildState(
         RecapGridBuildBudget budget,
-        TimeProvider timeProvider
+        TimeProvider timeProvider,
+        Action<RecapGridRowCommitProgress>? rowCommitted = null
     ) {
         private readonly long _started = timeProvider.GetTimestamp();
 
@@ -19,6 +20,17 @@ public sealed partial class RecapGridManager {
         internal int CellsCommitted { get; set; }
         internal int RowViewsCommitted { get; set; }
         internal OnlineSelectedRawCapture? RawCapture { get; set; }
+
+        internal void RecordRowCommitted(RecapRowView row, bool alreadyPresent) {
+            try {
+                rowCommitted?.Invoke(new RecapGridRowCommitProgress(
+                    row.Coordinate.RecipeDigest, row.Coordinate.HistoryRowId,
+                    row.Id, alreadyPresent));
+            }
+            catch (Exception exception) when (!IsFatal(exception)) {
+                // Progress observation cannot change a confirmed Store result.
+            }
+        }
 
         internal bool HasElapsed()
             => timeProvider.GetElapsedTime(_started)

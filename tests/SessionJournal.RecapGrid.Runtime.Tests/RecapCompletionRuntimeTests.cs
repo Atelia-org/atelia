@@ -453,8 +453,10 @@ public sealed class RecapCompletionRuntimeTests {
         );
         Assert.Equal("Role-Play Agent remains exact.", updated.Content);
         Assert.Equal(1, invoker.CallCount);
+        Assert.Equal(["completion-started", "completion-settled"],
+            telemetry.Events.Select(static value => value.Kind));
         RecapCompletionTelemetryEvent evidence = Assert.Single(
-            telemetry.Events
+            telemetry.Events, static value => value.Kind == "completion-settled"
         );
         Assert.Equal("updated", evidence.ProviderOutcome);
         Assert.Null(evidence.Code);

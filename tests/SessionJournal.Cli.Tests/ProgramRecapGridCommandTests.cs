@@ -2020,18 +2020,17 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
                 )
             ]).ToCanonicalBytes()
         );
-        string connections = Path.Combine(_root, "connections.json");
+        string connections = Path.Combine(_root, "build-catalog.json");
         File.WriteAllText(connections, """
             {
-              "v": 2,
+              "v": 3,
               "connections": [{
                 "id": "test",
                 "kind": "test",
                 "modelId": "test-model",
                 "completionSurfaceId": "test-v1",
                 "baseAddress": "https://example.invalid"
-              }],
-              "defaultConnectionId": "test"
+              }]
             }
             """);
         string noVersionConnections = Path.Combine(
@@ -2041,7 +2040,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
         File.WriteAllText(
             noVersionConnections,
             File.ReadAllText(connections).Replace(
-                "\"v\": 2,",
+                "\"v\": 3,",
                 string.Empty,
                 StringComparison.Ordinal
             )
@@ -2256,6 +2255,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
             .GetProperty("FulfillmentPresent").GetBoolean());
         Assert.Equal(1, factory.CallCount);
 
+        string onlineConnections = WriteConnections();
         int requestsBeforeOnline = factory.RequestCount;
         int recapRequestsBeforePromotion = factory.RecapRequestCount;
         int receiptsBeforePromotion = ReadControlReceiptCount(
@@ -2295,7 +2295,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
                 "--message", "continue the investigation",
                 "--connection", "test",
                 "--admission", admission,
-                "--connections", connections,
+                "--connections", onlineConnections,
                 "--routes", routes);
         Assert.Equal(0, firstOnlineCode);
         Assert.Equal("completed",
@@ -2364,7 +2364,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
                 "--message", "reconsider X",
                 "--connection", "test",
                 "--admission", admission,
-                "--connections", connections,
+                "--connections", onlineConnections,
                 "--routes", routes);
         Assert.Equal(0, secondOnlineCode);
         Assert.Equal("completed",

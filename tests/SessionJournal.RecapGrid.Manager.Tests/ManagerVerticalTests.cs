@@ -558,6 +558,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     [InlineData(true)]
     public async Task IndeterminateWritesSettleFromSameHandleExactReads(bool differentReportedRowId) {
         Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
+        var progress = new List<RecapGridRowCommitProgress>();
         var hooks = new ManagerTestHooks(
             PutCell: (_, cell, next) => {
                 Assert.IsType<RecapGridCellPutResult.Inserted>(next());
@@ -588,8 +589,12 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 RecapGridBuildResult.Fulfilled
             >(await manager.Manager.BuildAsync(
                 Request(),
-                new RecordingExecutor()
+                new RecordingExecutor(),
+                rowCommitted: progress.Add
             ));
+            Assert.Equal(fixture.Rows.Count, progress.Count);
+            Assert.All(progress, value => Assert.False(value.AlreadyPresent));
+            Assert.Equal(result.Proof.RowResultId, progress[^1].RowResultId);
             Assert.Equal(fixture.Rows.Count,
                 result.Metrics.CellsCommitted);
             Assert.Equal(fixture.Rows.Count,
@@ -609,6 +614,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
         RecapGridBuildCommitKind kind
     ) {
         Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
+        var progress = new List<RecapGridRowCommitProgress>();
         var hooks = new ManagerTestHooks(
             PutCell: kind == RecapGridBuildCommitKind.Cell
                 ? (_, cell, _) => new RecapGridCellPutResult
@@ -630,9 +636,17 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 RecapGridBuildResult.SettlementRequired
             >(await manager.Manager.BuildAsync(
                 Request(),
-                new RecordingExecutor()
+                new RecordingExecutor(),
+                rowCommitted: progress.Add
             ));
             Assert.Equal(kind, result.Kind);
+            if (kind == RecapGridBuildCommitKind.Fulfilled) {
+                // The row was confirmed before fulfillment became uncertain.
+                Assert.Equal(fixture.Rows.Count, progress.Count);
+            }
+            else {
+                Assert.Empty(progress);
+            }
             if (kind == RecapGridBuildCommitKind.RowView) {
                 Assert.NotNull(result.ObservedIdentity);
             }
@@ -645,6 +659,7 @@ public sealed partial class ManagerVerticalTests : IDisposable {
     [Fact]
     public async Task IndeterminateRowViewWrongAssignmentIsInvalidEvenWhenStoredRecordMatches() {
         Fixture fixture = CreateFullFixture(turns: 1, zeroColumns: false);
+        var progress = new List<RecapGridRowCommitProgress>();
         var hooks = new ManagerTestHooks(
             PutRowView: (spec, _, next) => {
                 RecapRowView winner = Assert.IsType<RecapGridRowViewPutResult.Inserted>(next()).Winner;
@@ -665,9 +680,11 @@ public sealed partial class ManagerVerticalTests : IDisposable {
                 RecapGridBuildResult.Invalid
             >(await manager.Manager.BuildAsync(
                 Request(),
-                new RecordingExecutor()
+                new RecordingExecutor(),
+                rowCommitted: progress.Add
             ));
             Assert.Equal("RowViewSettlementIntendedMismatch", result.Code);
+            Assert.Empty(progress);
         }
     }
 

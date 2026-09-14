@@ -14,7 +14,7 @@ using Xunit;
 
 namespace Atelia.SessionJournal.RecapGrid.Hosting.Tests;
 
-public sealed class HostingTests {
+public sealed partial class HostingTests {
     private static readonly FamilyDefinitionDigest Family =
         new(new string('a', 64));
 
@@ -614,7 +614,7 @@ public sealed class HostingTests {
                 invalid.InspectRouteExact(key)
             );
             Assert.Equal("RouteManifestLoadFailed", failure.Code);
-            Assert.Equal(nameof(InvalidDataException), failure.Detail);
+            Assert.Equal("InvalidDataException: invalid", failure.Detail);
             Assert.Equal(0, factory.CreateCount);
         }
     }

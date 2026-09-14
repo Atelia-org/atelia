@@ -194,6 +194,10 @@ public sealed partial class RecapCompletionRuntime {
                 timeout.Token
             );
             SignalStartedOrTerminal();
+            // This is a local invoker boundary, not evidence of network delivery.
+            RecordTelemetry(prepared, priority, admissionWait, laneWait,
+                elapsed.Elapsed, null, "invoking", null, null,
+                kind: "completion-started");
             completionResult = await prepared.Route.Invoker.InvokeAsync(
                 prepared.Request,
                 _options.InvocationOptions,
@@ -299,12 +303,13 @@ public sealed partial class RecapCompletionRuntime {
         CompletionResult? result,
         string providerOutcome,
         string? code,
-        string? detail
+        string? detail,
+        string kind = "completion-settled"
     ) {
         if (_telemetry is null) { return; }
         try {
             _telemetry.Record(new RecapCompletionTelemetryEvent(
-                "completion-settled",
+                kind,
                 prepared.Route.Key,
                 prepared.Route.ConnectionId,
                 prepared.Route.ModelId,
