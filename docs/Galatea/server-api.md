@@ -98,6 +98,8 @@ Undo/pop-latest body 为：
 
 token 必须来自最新 `recent-turns` 并逐字回传。recent operation 共享最多 4,096 次 physical header preview visit 与 16 MiB cumulative decoded logical payload，最终 production JSON 最多 4 MiB。pop display source 最多 256 KiB UTF-8，exact receipt 最多 2 MiB；receipt 在 CAS 前预编码。response-loss 时刷新 current/recent，不得盲目重试 mutation。
 
+recent/cadence 查询与后台检查也短暂持有会话锁。没有已发布 live turn 时，pop 最多等待 1 秒取得锁，再检查 exact head；等待期间 head 改变仍返回 `409 rewind-not-available`。已有 live turn 或等待超时返回 `409 turn-busy`，请求取消则取消等待，不自动重发。
+
 Stop 没有 request body。`turnId` 必须使用接纳响应或 current 返回的 canonical id；成功返回 204，未知或已经完成返回 404 `turn-not-found`。
 
 ## 只读状态与 browser 读取策略

@@ -16,6 +16,49 @@ public sealed class GalateaRecentRewindHostTests {
     private static readonly TimeSpan OperationDeadline =
         TimeSpan.FromSeconds(10);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Pop_WaitsForShortIdleLockAndRechecksExactHead(bool changeHead) {
+        var completion = new QueueCompletionClient("answer");
+        await using var host = CreateHost(completion);
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        (GalateaHostService service, UserSessionHost session) = await GetSessionAsync(host);
+        await CompleteTurnAsync(client, service, session, "owned input");
+        RecentTurnsResponseDto recent = await GetRecentAsync(client);
+        string token = Assert.IsType<string>(recent.RewindLatestToken);
+
+        await session.TurnLock.WaitAsync();
+        Task<HttpResponseMessage> pending;
+        try {
+            pending = PostPopAsync(client, token);
+            // A read/admission owner has no published live turn. The old
+            // nonblocking acquisition returned 409 during this window.
+            await Task.Delay(100);
+            Assert.False(pending.IsCompleted);
+            if (changeHead) {
+                _ = session.Engine.AppendObservation(
+                    GalateaUserMessageEnvelope.Wrap("competing input")
+                );
+            }
+        }
+        finally {
+            session.TurnLock.Release();
+        }
+
+        using HttpResponseMessage response = await pending.WaitAsync(OperationDeadline);
+        Assert.Equal(changeHead ? HttpStatusCode.Conflict : HttpStatusCode.OK, response.StatusCode);
+        if (changeHead) {
+            ApiErrorDto? error = await response.Content.ReadFromJsonAsync<ApiErrorDto>();
+            Assert.Equal("rewind-not-available", Assert.IsType<ApiErrorDto>(error).Code);
+        } else {
+            PopLatestTurnReceiptDto? receipt = await response.Content.ReadFromJsonAsync<PopLatestTurnReceiptDto>();
+            Assert.Equal("owned input", Assert.IsType<PopLatestTurnReceiptDto>(receipt).PoppedUserText);
+        }
+        Assert.Equal(1, completion.DispatchCallCount);
+    }
+
     [Fact]
     public async Task Recent_DefaultLimitIsSixCompletedTurns() {
         await using var host = CreateHost(new QueueCompletionClient());

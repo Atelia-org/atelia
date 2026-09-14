@@ -12,6 +12,7 @@
 | 修改自动轮次、邮件、记忆或恢复流程 | [运行时机制](runtime.md) | 跨组件职责、持久化边界与专题链接 |
 | 验证真实 Codex transport | [代行验证](codex-delegation-verification.md) | 可重复 canary；历史结果单独标注日期 |
 | 对现有实例做真实 E2E、冷重开与清理 | [E2E 操作指南](e2e-testing.md) | 可复用流程、浏览器观察、测试筛选与实测经验 |
+| 查看 Timeline/Recap 重构后的真实浏览器验收 | [2026-09-14 E2E 记录](e2e-20260914-refactor-acceptance.md) | 两 backend、冷重启、Undo 竞争修复、数据结束状态 |
 | 开发期演练升级、回退、进程 crash、记忆通知与摘要恢复 | [Scenario lab](scenario-lab.md) | 合成隔离实例、持久状态组合验收与显式 live canary |
 | 处理已证实完成但无法自动结算的 Codex turn | [离线恢复 runbook](codex-delegation-operator-recovery.md) | exact evidence、dry-run 与显式 apply |
 | 委派自动恢复、失败回信与失效线程重建 | [自动恢复重构方案](codex-delegation-recovery-refactor-plan.md) | 已实施与本地验证；含决策、测试和部署边界 |

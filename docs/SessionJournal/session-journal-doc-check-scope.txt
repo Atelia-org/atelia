@@ -31,6 +31,7 @@ docs/Galatea/server-api.md
 docs/Galatea/runtime.md
 docs/Galatea/scenario-lab.md
 docs/Galatea/e2e-testing.md
+docs/Galatea/e2e-20260914-refactor-acceptance.md
 docs/Galatea/codex-delegation-verification.md
 docs/Galatea/codex-delegation-recovery-refactor-plan.md
 docs/Galatea/user-home-design.md

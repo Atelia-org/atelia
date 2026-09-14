@@ -913,7 +913,17 @@ api.MapPost(
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
 
-        if (!session.TurnLock.Wait(0)) { return BuildTurnBusyConflict(hostService, session); }
+        // Recent/cadence reads and automatic admission checks also own TurnLock.
+        // Let those short operations finish instead of rejecting an idle Undo.
+        // Never wait behind a published model turn; the exact head CAS below
+        // still rejects a competing mutation that wins during this bounded wait.
+        if (session.GetCurrentTurn() is not null
+            || !await session.TurnLock.WaitAsync(
+                TimeSpan.FromSeconds(1),
+                httpContext.RequestAborted
+            )) {
+            return BuildTurnBusyConflict(hostService, session);
+        }
         try {
             hostService.RequireRunning();
             await hostService.ReconcileDurableAdmissionAsync(

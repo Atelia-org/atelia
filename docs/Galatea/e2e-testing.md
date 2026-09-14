@@ -23,7 +23,7 @@
 1. **记录起点。** 核对 Git HEAD、工作区、实际 ConfigPath、用户的 session/CharacterMemory/delegation 路径、连接和后台 enrollment。检查进程及打开文件；锁文件存在本身不等于仍有 owner。沿用本轮已有的真实调用、恢复和撤销授权，不逐步重复询问。
 2. **停服备份。** 备份覆盖本轮操作的完整数据范围，验证归档能打开。2026-09-14 的唯一实例是 `prototypes/Galatea/.atelia`，用户是 `cyber`/`gpt`；这些是当时配置，下一次重新读取。已有本机 `gitignore/backup-galatea.sh` 只覆盖 `.atelia/galatea`，不能把它说成完整 `.atelia` 备份。
 3. **先做离线盘点。** 每个活动命名分支做 full audit，按需补 selected-lineage audit；记录 head、phase、Prepared 版本分布及相关 SQLite 健康状态。发现旧 Prepared/Started 时先确定恢复路径，不先发送 fresh 探针。`quick_check=ok` 只证明 SQLite 结构，不能证明应用的 strict open 或 Host attach 成功。
-4. **启动实际配置。** 显式保证 ContentRoot/工作目录正确，使用现有连接与环境变量；先经真实浏览器登录，验证 current、recent、Agent、Mailbox 和 Recap 显示。HTTP 200、登录成功、数据库健康各自都不等于完整会话可用。
+4. **启动实际配置。** 显式保证 ContentRoot/工作目录正确，使用现有连接与环境变量；先经真实浏览器登录，验证 current、recent、Agent、Mailbox、`recap-cadence-progress` 和 Recap 显示。已配置摘要时还应检查 context header 正文确实显示。HTTP 200、登录成功、数据库健康各自都不等于完整会话可用。
 5. **执行有界操作。** 必要时明确恢复旧请求，再各测一条目标路线。确认终态后真正停服、重开，核对已显示的输入/回答，再发下一轮验证重启后可继续使用。每次 mutation 只提交一次；响应丢失或脚本报错后先查 current、SSE 与日志，不盲目重发。
 6. **清理本次探针。** 如需要撤销，先核对最新真实用户卡片确属本轮测试，再使用页面 Undo。不要因为“知道点了几次发送”就连续撤销任意最近轮次。保留本来就待恢复的真实剧情结果。
 7. **检查结束状态。** 再冷开页面，停服后复核 audit、数据库及关键旧记录；比较的是约定的语义状态和保留字段，不默认要求整个目录字节完全不变。记录是否留下运行进程、备份位置和无法由 Undo 撤销的影响。
@@ -81,6 +81,7 @@ env -u ATELIA_RUN_GALATEA_NOTE_LIVE \
 - **不假设测试输入字节不变。** normalizer 可能合法改写时间格式。优先核对本次已接纳轮次、实际归一化文本和最终 DOM；若用标记匹配，只接受已证实的等价形式，不扩大成模糊成功，也不靠再发一遍制造绿灯。
 - **排除 context header。** 它也使用 user/assistant 卡片样式，属于摘要而非额外完成轮次，不能混入轮次数量或 Undo 目标。
 - **同时捕获多种错误。** 记录 pageerror、console error、失败请求、API status/code，并检查 `#status-text`。有些错误被前端 catch 后只显示在页面，不会触发 pageerror。计划内停服的断连与运行中的失败分别记录。
+- **mutation 拒绝也保存响应 code。** 单独的 HTTP 409 不能区分 `turn-busy` 与 `rewind-not-available`；在私有报告中保存经过处理的 `{code,error}`。Idle 并不保证会话锁空闲，recent/cadence 查询和后台检查也持有同一锁。不要通过禁用正常轮询来掩盖实际操作竞争。
 
 密码从本地配置在内存读取；不要输出登录 body、Cookie、凭据或完整故事。私有报告可保留经过处理的错误 message/stack，只有摘要或 hash 会让真实失败难以定位。长操作定期打印阶段与计数，避免为了“查看进展”额外提交 mutation。
 
@@ -93,6 +94,7 @@ env -u ATELIA_RUN_GALATEA_NOTE_LIVE \
 | Anthropic Models 404 | 对照当前 Client 的固化回退；metadata endpoint 缺失不等于 Messages 或模型不可用 |
 | metadata 查询 TLS 失败 | 区分 GET 查询与 Messages POST；独立诊断请求不能代替完整 E2E，瞬时成功也不证明永不抖动 |
 | POST 202 后脚本失败 | 查 SSE terminal、current、DOM、provider 日志，先判断是业务失败还是观察器假设错误 |
+| Idle 下 Undo 返回 409 | 检查具体 code、runningTurn 与同刻的读取/后台检查；现有 pop 会有界等待短时锁，再核验 exact head |
 | 满并行偶发时限失败 | 隔离原失败场景，核对 request 是否真正发出，再用受限测试并发复验 |
 
 不要仅因取消一个过度校验就删除所有输入关系检查。2026-09-14 的回执修复保留了 Applied 来源/修订、UTF-8、预算和 Bound Observation 关系；真正被删除的是“旧文案必须等于当前 renderer 输出”的重复门槛。
@@ -102,6 +104,8 @@ env -u ATELIA_RUN_GALATEA_NOTE_LIVE \
 每轮只需留下：代码版本和数据范围、备份、初始/最终 phase/head、实际路线与成功/失败次数、冷重开及页面结果、修复提交、清理和残余影响。保留原失败报告；脚本误判由新的只读证据解释，不涂改单次结果。
 
 **Undo 不是整目录或副作用回滚。** 原始事件、ref 移动历史、正常 setup 同步、Note 和邮件状态可能保留，已领取的回信不会自动变回 Ready。记录这些差异；不要为追求“完全还原”手工复活回执或删除数据库。
+
+涉及 Recap CLI 装配改动时，可在停服后按[正式 CLI 用法](../../prototypes/SessionJournal.Cli/README.md#构建与即时诊断)执行只读 `progress`，再以现有 V3 catalog/route 和 `--max-new-calls 0` 执行 `build`。检查 `NewCalls/CellsCommitted/RowViewsCommitted`、实际文件变化和 call-log 目录；fulfilled 零调用只证明重开与复用，不证明缺失摘要的真实生成链。运行中的 call-log 文件可能只是已预留的空文件，应在调用结算后汇总，不能把暂时无法解析当作 provider 失败。
 
 2026-09-14 的私有 driver、只读 audit harness 和逐次报告位于本机 `gitignore/galatea-identity-e2e-20260913T201405Z/`，仅作为调试参考，可能被清理，不是正式 runner。公开的结果见[实机记录](identity-simplification-design.md#11-唯一-dev-实例-e2e2026-09-14)。
 
