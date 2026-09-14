@@ -233,5 +233,6 @@ promotion 回归先真实构建并提交 Control receipt，再关闭 handles、R
 `budget-exceeded`，Control bytes 与 Journal head 不变。它证明实际工具的 proof-before-replay 顺序，
 不冒称 Journal failpoint 实验；真实清库前仍须按 §5 收敛 pending promotion。
 
-本轮不执行真实数据清空、部署、LLM 重建或 push。Timeline 身份合并与其他后续切片仍按总设计推进；
-全部完成后才统一处理真实 Store。
+本轮不执行真实数据清空、部署、LLM 重建或 push。下一切片见 [Timeline 单一行身份计划](timeline-row-identity-simplification-plan.md)：
+保留原 RowId，删除第二个 descriptor 身份；Timeline 窄升级，Control 复用旧格式投影，Cadence/Recipe 内容键保持。
+该计划尚未实施，不改变本节 Store v3 的完成证据；全部重构完成后才统一处理真实 Store。
