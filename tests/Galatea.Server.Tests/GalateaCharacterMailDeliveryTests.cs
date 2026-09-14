@@ -98,6 +98,44 @@ public sealed class GalateaCharacterMailDeliveryTests {
         Assert.Equal(GalateaInternalMailState.Pending, fixture.Source.Outbox.State);
     }
 
+    [Fact]
+    public async Task RelayTargetCheck_RejectsSameRepositoryAfterCharacterRename() {
+        await using var fixture = await Fixture.CreateAsync();
+        GalateaUserConfig renamed = fixture.TargetUser with {
+            CharacterName = new GalateaCharacterName("Bob Renamed")
+        };
+        GalateaCharacterRecipientDirectory directory =
+            GalateaCharacterRecipientDirectory.Create([
+                fixture.SourceUser,
+                renamed
+            ]);
+
+        Assert.False(GalateaHostService.IsCurrentInternalMailTarget(
+            directory, fixture.Source));
+    }
+
+    [Fact]
+    public async Task BoundRowForRenamedCharacter_BlocksWithoutResetting() {
+        await using var fixture = await Fixture.CreateAsync(
+            targetCharacterName: "Bob Renamed");
+        GalateaInternalMailSourceOutbox source = fixture.Source;
+        _ = source.Store.BindInternalMailObservation(
+            source.Outbox.DispatchId, source.Outbox.Revision,
+            EventAddressTextCodec.Format(
+                fixture.Target.Engine.ReadCurrentHead()!.Value),
+            GalateaMailboxObservationEnvelope.Wrap(
+                GalateaCharacterMailDeliveryReconciler.RestoreMessage(source)));
+
+        GalateaTurnException error = Assert.Throws<GalateaTurnException>(() =>
+            GalateaCharacterMailDeliveryReconciler.Reconcile(
+                fixture.Supervisor, fixture.Target));
+
+        Assert.Equal("character-mail-target-recipient-mismatch",
+            error.FailureReason);
+        Assert.Equal(GalateaInternalMailState.ObservationBound,
+            fixture.Source.Outbox.State);
+    }
+
     private sealed class Fixture : IAsyncDisposable {
         private readonly string _root = Path.Combine(Path.GetTempPath(),
             "atelia-character-mail-delivery-" + Guid.NewGuid().ToString("N"));
@@ -106,18 +144,21 @@ public sealed class GalateaCharacterMailDeliveryTests {
         internal UserSessionHost Target { get; private set; } = null!;
         private GalateaUserConfig Alice { get; set; } = null!;
         private GalateaUserConfig Bob { get; set; } = null!;
+        internal GalateaUserConfig SourceUser => Alice;
+        internal GalateaUserConfig TargetUser => Bob;
 
         internal GalateaInternalMailSourceOutbox Source => Assert.Single(
             Supervisor.ReadInternalMailOutboxesForTarget(Bob.UserId));
 
         internal static Task<Fixture> CreateAsync(
-            string? targetRepositoryId = null
+            string? targetRepositoryId = null,
+            string targetCharacterName = "Bob"
         ) {
             var fixture = new Fixture();
             Directory.CreateDirectory(fixture._root);
             Directory.CreateDirectory(Path.Combine(fixture._root, "delegation"));
             fixture.Alice = fixture.User("alice", "Alice");
-            fixture.Bob = fixture.User("bob", "Bob");
+            fixture.Bob = fixture.User("bob", targetCharacterName);
             using SessionJournalEngine aliceEngine = CreateEngine(
                 fixture.Alice.SessionDir);
             SessionJournalEngine bobEngine = CreateEngine(fixture.Bob.SessionDir);

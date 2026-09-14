@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
@@ -101,6 +102,71 @@ public sealed class GalateaMailboxTests {
             ),
             out _
         ));
+    }
+
+    [Fact]
+    public async Task CharacterMail_RealHostRelayRunsExtractionToBoundInboundDelivery() {
+        CompletionConnectionConfig main = Connection("test");
+        CompletionConnectionConfig extractor = Connection("mail-helper");
+        var mainClient = new QueueClient(
+            _ => Message(new ActionBlock.Text("Alice sent a letter to Bob.")),
+            _ => Message(new ActionBlock.Text("Bob received Alice's letter."))
+        );
+        var extractorClient = new QueueClient(
+            _ => Message(Tool("mail-alice-bob", "Bob", "greeting", "hello Bob",
+                null, "sent")),
+            _ => Message()
+        );
+        var factory = new RoutingFactory(new Dictionary<string, ICompletionClient>(
+            StringComparer.Ordinal) {
+            [main.Id] = mainClient,
+            [extractor.Id] = extractorClient,
+        });
+        await using GalateaTestHost testHost = GalateaTestHost.Create(
+            factory, normalizer: null,
+            connections: [main, extractor],
+            selectableConnectionIds: [main.Id],
+            outboundMailExtractorConnectionId: extractor.Id
+        );
+        AddSecondLoaderUser(testHost, "bob", "Bob");
+
+        using HttpClient http = testHost.CreateClient();
+        await Login(http);
+        GalateaHostService service = testHost.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost alice = await service.GetSessionAsync(
+            "alice", CancellationToken.None);
+        using HttpResponseMessage response = await http.PostAsJsonAsync(
+            "/api/v1/chat/turns", new ChatStreamRequest("send to Bob", main.Id));
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        StartTurnResponseDto accepted = Assert.IsType<StartTurnResponseDto>(
+            await response.Content.ReadFromJsonAsync<StartTurnResponseDto>());
+        GalateaLiveTurn aliceTurn = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(alice, accepted.TurnId));
+        await aliceTurn.RunTask!.WaitAsync(Deadline);
+
+        await WaitUntilAsync(() => service.ReadAttachedSession("bob") is { } bob
+            && bob.DelegationHandle!.Store.ReadSnapshot().InternalMailOutboxes
+                .Count == 0
+            && alice.DelegationHandle!.Store.ReadSnapshot().InternalMailOutboxes
+                .SingleOrDefault()?.State == GalateaInternalMailState.Delivered);
+        UserSessionHost bob = Assert.IsType<UserSessionHost>(
+            service.ReadAttachedSession("bob"));
+        // Delivered is the target Observation append, not Completion. Wait
+        // for the accepted runner to release its Journal lease before reading
+        // the completed-turn projection below.
+        await WaitUntilAsync(() => bob.GetCurrentTurn() is null);
+        SessionCompletedTurnProjection received = Assert.Single(
+            bob.Engine.ReadRecentCompletedTurns(1).RequireSnapshot().Turns);
+        Assert.True(GalateaMailboxObservationEnvelope.TryUnwrap(
+            received.ObservationContent, out MailboxMessage mail));
+        Assert.Equal("Galatea", mail.From);
+        Assert.Equal("Bob", mail.To);
+        Assert.Equal("hello Bob", mail.Body);
+        GalateaInternalMailOutboxSnapshot delivered = Assert.Single(
+            alice.DelegationHandle!.Store.ReadSnapshot().InternalMailOutboxes);
+        Assert.Equal(GalateaInternalMailState.Delivered, delivered.State);
+        Assert.NotNull(delivered.ObservationAddress);
     }
 
     [Fact]
@@ -627,6 +693,41 @@ public sealed class GalateaMailboxTests {
     private static async Task Login(HttpClient http) {
         HttpResponseMessage response = await GalateaTestHost.LoginAsync(http);
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+    }
+
+    private static void AddSecondLoaderUser(
+        GalateaTestHost host,
+        string userId,
+        string characterName
+    ) {
+        JsonObject config = JsonNode.Parse(
+            File.ReadAllText(host.ConfigPath))!.AsObject();
+        JsonArray users = config["users"]!.AsArray();
+        JsonObject user = users[0]!.DeepClone().AsObject();
+        string configDirectory = Path.GetDirectoryName(host.ConfigPath)
+            ?? throw new InvalidOperationException("Test config has no directory.");
+        user["userId"] = userId;
+        user["characterName"] = characterName;
+        user["sessionDir"] = Path.Combine(host.RootDirectory, "session-" + userId);
+        user["delegationStateDir"] = Path.Combine(configDirectory,
+            "delegation-state", userId);
+        user["characterMemoryStateDir"] = Path.Combine(configDirectory,
+            "character-memory", userId);
+        user["homeDir"] = Directory.CreateDirectory(Path.Combine(
+            configDirectory, "homes", userId)).FullName;
+        user["sessionProvisioning"] = "create-if-missing";
+        users.Add(user);
+        File.WriteAllText(host.ConfigPath, config.ToJsonString());
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> predicate) {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + Deadline;
+        while (!predicate()) {
+            if (DateTimeOffset.UtcNow >= deadline) {
+                throw new TimeoutException("Character-mail relay did not settle.");
+            }
+            await Task.Delay(25);
+        }
     }
 
     private static CompletionConnectionConfig Connection(string id) => new(

@@ -127,10 +127,12 @@ internal sealed class GalateaCharacterMailRelay : BackgroundService {
         IReadOnlyList<GalateaInternalMailSourceOutbox> rows
     ) {
         GalateaInternalMailSourceOutbox[] valid = rows
-            .Where(value => _host.IsCurrentInternalMailTarget(value.Outbox))
-            .Where(static value => value.Outbox.State is
-                GalateaInternalMailState.Pending
-                or GalateaInternalMailState.ObservationBound)
+            // A stale Pending row is deliberately inert, but a stale Bound
+            // row must still enter the target gate and block its writers.
+            .Where(value => value.Outbox.State
+                == GalateaInternalMailState.ObservationBound
+                || value.Outbox.State == GalateaInternalMailState.Pending
+                    && _host.IsCurrentInternalMailTarget(value))
             .ToArray();
         GalateaInternalMailSourceOutbox? bound = valid
             .Where(static value => value.Outbox.State

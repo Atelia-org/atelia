@@ -135,7 +135,6 @@ internal static class GalateaCharacterMailDeliveryReconciler {
                 throw Blocked("character-mail-proof-corruption",
                     "Character mail Observation proof found Journal corruption.");
             case SessionExpectedObservationTurnReadResult.Abandoned:
-                Quarantine(source, outbox, "OBSERVATION_ABANDONED");
                 throw Blocked("character-mail-proof-abandoned",
                     "A bound character mail Observation was abandoned unexpectedly.");
             case SessionExpectedObservationTurnReadResult.LimitExceeded:

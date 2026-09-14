@@ -604,13 +604,33 @@ public sealed class GalateaHostService : IAsyncDisposable {
             ?? Array.Empty<GalateaCharacterRecipient>();
 
     internal bool IsCurrentInternalMailTarget(
-        GalateaInternalMailOutboxSnapshot outbox
-    ) => _characterRecipientDirectory?.Recipients.Any(recipient =>
-            string.Equals(recipient.UserId, outbox.TargetUserId,
-                StringComparison.Ordinal)
-            && string.Equals(recipient.SessionRepositoryId,
+        GalateaInternalMailSourceOutbox source
+    ) => _characterRecipientDirectory is { } directory
+        && IsCurrentInternalMailTarget(directory, source);
+
+    internal static bool IsCurrentInternalMailTarget(
+        GalateaCharacterRecipientDirectory directory,
+        GalateaInternalMailSourceOutbox source
+    ) {
+        ArgumentNullException.ThrowIfNull(directory);
+        ArgumentNullException.ThrowIfNull(source);
+        GalateaInternalMailOutboxSnapshot outbox = source.Outbox;
+        GalateaCharacterRecipient? target = directory.Recipients
+            .SingleOrDefault(recipient =>
+                string.Equals(recipient.UserId, outbox.TargetUserId,
+                    StringComparison.Ordinal));
+        if (target is null
+            || !string.Equals(target.SessionRepositoryId,
                 outbox.TargetSessionRepositoryId,
-                StringComparison.Ordinal)) == true;
+                StringComparison.Ordinal)) {
+            return false;
+        }
+        GalateaOutboundMailSnapshot? mail = source.Store.ReadSnapshot().Mails
+            .SingleOrDefault(value => string.Equals(value.DispatchId,
+                outbox.DispatchId, StringComparison.Ordinal));
+        return mail is not null && string.Equals(mail.Recipient,
+            target.CharacterName.Value, StringComparison.Ordinal);
+    }
 
     internal UserSessionHost? ReadAttachedSession(string userId) {
         if (!_sessions.TryGetValue(userId, out var lazy) || !lazy.IsValueCreated) {
