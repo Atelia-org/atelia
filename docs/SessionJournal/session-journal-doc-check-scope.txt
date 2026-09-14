@@ -27,6 +27,7 @@ prototypes/SessionJournal.Cli/README.md
 prototypes/Galatea/README.md
 docs/Galatea/README.md
 docs/Galatea/configuration.md
+docs/Galatea/recap-grid-existing-session-upgrade.md
 docs/Galatea/server-api.md
 docs/Galatea/runtime.md
 docs/Galatea/scenario-lab.md
