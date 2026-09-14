@@ -1047,7 +1047,7 @@ public sealed partial class ProgramRecapGridCommandTests : IDisposable {
                    $"Data Source={databasePath};Mode=ReadWrite;Pooling=False")) {
             connection.Open();
             using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = "PRAGMA user_version = 3;";
+            command.CommandText = "PRAGMA user_version = 99;";
             _ = command.ExecuteNonQuery();
         }
         DomainSnapshot before = SnapshotDomains();

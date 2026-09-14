@@ -318,7 +318,7 @@ public sealed class ProgramRecapGridStoreCommandTests : IDisposable {
 
     private static RecapGridStoreExportCursor ParseCellCursor(string key) {
         var bytes = new byte[34];
-        bytes[0] = 1;
+        bytes[0] = 2;
         bytes[1] = 1;
         Encoding.ASCII.GetBytes(key, bytes.AsSpan(2));
         string value = Convert.ToBase64String(bytes)
